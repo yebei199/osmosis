@@ -19,6 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Android SDK + NDK ------------------------------------------------------
+# JVM proxy args (host build.sh passes -Dhttp(s).proxyHost=... when a proxy is
+# set) so sdkmanager can reach dl.google.com from behind a proxy. Empty by
+# default; curl/rustup/cargo pick up the predefined http_proxy build args.
+ARG JAVA_TOOL_OPTIONS=
 ENV ANDROID_HOME=/opt/android-sdk
 ENV ANDROID_SDK_ROOT=$ANDROID_HOME
 ARG CMDLINE_TOOLS=11076708
@@ -35,7 +39,7 @@ RUN mkdir -p $ANDROID_HOME/cmdline-tools \
 
 ENV PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
 
-RUN yes | sdkmanager --licenses > /dev/null \
+RUN export JAVA_TOOL_OPTIONS="$JAVA_TOOL_OPTIONS"; yes | sdkmanager --licenses > /dev/null \
     && sdkmanager \
         "platform-tools" \
         "platforms;android-${ANDROID_PLATFORM}" \

@@ -30,18 +30,39 @@ fi
 
 IMAGE=slint-study-builder
 
+# Behind a proxy (common in mainland China: dl.google.com / crates.io / gradle
+# are otherwise unreachable), forward the host proxy into the build. --network=host
+# lets the container reach a 127.0.0.1 proxy; curl/rustup/cargo read the predefined
+# http_proxy args, and JVM tools (sdkmanager, gradle) need -Dhttp(s).proxyHost.
+DOCKER_BUILD_EXTRA=()
+DOCKER_RUN_EXTRA=()
+PROXY="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+if [ -n "$PROXY" ]; then
+    echo "==> Using proxy $PROXY (host network) for the build"
+    hostport="${PROXY#*://}"
+    jvm_proxy="-Dhttp.proxyHost=${hostport%%:*} -Dhttp.proxyPort=${hostport##*:} -Dhttps.proxyHost=${hostport%%:*} -Dhttps.proxyPort=${hostport##*:}"
+    DOCKER_BUILD_EXTRA=(--network=host
+        --build-arg "http_proxy=$PROXY" --build-arg "https_proxy=$PROXY"
+        --build-arg "HTTP_PROXY=$PROXY" --build-arg "HTTPS_PROXY=$PROXY"
+        --build-arg "JAVA_TOOL_OPTIONS=$jvm_proxy")
+    DOCKER_RUN_EXTRA=(--network=host
+        -e "http_proxy=$PROXY" -e "https_proxy=$PROXY"
+        -e "HTTP_PROXY=$PROXY" -e "HTTPS_PROXY=$PROXY"
+        -e "JAVA_TOOL_OPTIONS=$jvm_proxy")
+fi
+
 build_image() {
     if [ "${SKIP_IMAGE_BUILD:-0}" = "1" ]; then
         echo "==> SKIP_IMAGE_BUILD=1: reusing existing '$IMAGE' image"
         return 0
     fi
-    "$DOCKER" build -t "$IMAGE" docker/
+    "$DOCKER" build "${DOCKER_BUILD_EXTRA[@]}" -t "$IMAGE" docker/
 }
 
 run_in_container() {
     # Named volumes cache the cargo registry and gradle artifacts across builds;
     # the repo bind mount carries the rust target dir (.docker-target).
-    "$DOCKER" run --rm \
+    "$DOCKER" run --rm "${DOCKER_RUN_EXTRA[@]}" \
         -v "$PWD:/work:z" \
         -v slint-study-cargo-registry:/opt/cargo/registry \
         -v slint-study-gradle-home:/root/.gradle \
