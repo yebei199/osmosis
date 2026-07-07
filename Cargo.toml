@@ -1,0 +1,44 @@
+[package]
+name = "slint-study"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A minimal Slint Android app (counter), modelled on ntrack's build shape"
+
+[lib]
+name = "slint_study"
+# cdylib: the .so loaded by NativeActivity on Android. rlib: lets the desktop
+# binary link the same code.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "slint-study-desktop"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[dependencies]
+log = "0.4"
+slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+[features]
+default = []
+# Desktop dev build: `cargo run --features desktop`
+desktop = ["slint/backend-winit", "slint/renderer-femtovg", "slint/renderer-software"]
+# Android build (via cargo-ndk): android-activity backend, Skia renderer.
+android = ["slint/backend-android-activity-06"]
+
+[build-dependencies]
+slint-build = "1.16"
+
+# Native libs shipped in the APK use the release profile (small, optimized .so).
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

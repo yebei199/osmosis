@@ -1,0 +1,17 @@
+# Rust
+/target
+/.docker-target
+
+# Build artifacts
+/dist
+/android/app/src/main/jniLibs
+/android/app/build
+/android/build
+/android/.gradle
+
+# IDE / misc
+*.iml
+.idea/
+.vscode/
+*.log
+local.properties

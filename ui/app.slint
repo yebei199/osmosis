@@ -1,0 +1,46 @@
+// Minimal single-window phone UI: a tap counter.
+// The count lives in Rust and is pushed here as a property; the button tap
+// flows back through the `bump` callback — the same UI<->Rust glue ntrack uses,
+// stripped to one value.
+import { Button, Palette } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    // Pushed from Rust.
+    in property <int> count: 0;
+    // Tapped by the user; handled in Rust.
+    callback bump();
+
+    title: "Slint Study";
+    background: #0f1117;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 24px;
+        // Base padding plus the safe-area insets, so content clears the status
+        // and navigation bars on the edge-to-edge Android window.
+        padding-top: 32px + root.safe-area-insets.top;
+        padding-bottom: 32px + root.safe-area-insets.bottom;
+        padding-left: 32px + root.safe-area-insets.left;
+        padding-right: 32px + root.safe-area-insets.right;
+
+        Text {
+            text: "Slint on Android";
+            color: #e6e8ef;
+            font-size: 22px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.count;
+            color: #7aa2f7;
+            font-size: 72px;
+            horizontal-alignment: center;
+        }
+
+        Button {
+            text: "Tap me";
+            primary: true;
+            clicked => { root.bump(); }
+        }
+    }
+}
