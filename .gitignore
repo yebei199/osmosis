@@ -15,3 +15,6 @@
 .vscode/
 *.log
 local.properties
+
+# direnv cache
+/.direnv
