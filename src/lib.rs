@@ -14,7 +14,8 @@ use slint::ComponentHandle;
 /// Create the window, wire the counter callback, then run the event loop until
 /// the window closes. Shared by both entry points.
 pub fn run_app() {
-    let ui = MainWindow::new().expect("failed to create main window");
+    let ui = MainWindow::new()
+        .expect("failed to create main window");
 
     // The count lives here in Rust; the button just asks us to bump it.
     let count = Rc::new(Cell::new(0));
@@ -29,7 +30,10 @@ pub fn run_app() {
     ui.run().expect("event loop failed");
 }
 
-#[cfg(all(target_os = "android", not(feature = "android")))]
+#[cfg(all(
+    target_os = "android",
+    not(feature = "android")
+))]
 compile_error!(
     "Android builds need the android-activity backend: pass `--no-default-features --features android` (scripts/build-apk.sh does this)"
 );
@@ -37,7 +41,7 @@ compile_error!(
 /// Android entry point, invoked by the android-activity glue after
 /// `MainActivity` loads this library.
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
@@ -46,6 +50,7 @@ fn android_main(app: slint::android::AndroidApp) {
     );
     log::info!("slint_study starting");
 
-    slint::android::init(app).expect("slint android init failed");
+    slint::android::init(app)
+        .expect("slint android init failed");
     run_app();
 }
