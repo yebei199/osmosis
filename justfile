@@ -5,6 +5,11 @@ dev:
     SLINT_LIVE_PREVIEW=1 cargo run --features slint/live-preview,desktop
 
 
+# 在 Docker 里交叉编译 dist APK(宿主机只需 Docker/Podman)
+# ABIS 可选:默认 arm64-v8a;模拟器用 x86_64
+build-apk:
+    ./build.sh
+
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 install-apk:
     adb install -r {{apk}}
