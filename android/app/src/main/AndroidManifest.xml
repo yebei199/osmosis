@@ -11,8 +11,8 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
-            <!-- NativeActivity loads this library and calls into the
-                 android-activity glue, which runs our android_main. -->
+            <!-- NativeActivity 加载这个库,并调用 android-activity 胶水代码,
+                 后者会运行我们的 android_main。 -->
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="slint_study" />
