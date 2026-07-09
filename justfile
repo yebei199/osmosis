@@ -5,10 +5,15 @@ dev:
     SLINT_LIVE_PREVIEW=1 cargo run --features slint/live-preview,desktop
 
 
-# 在 Docker 里交叉编译 dist APK(宿主机只需 Docker/Podman)
+# 在 Docker 里交叉编译 dist APK —— 给没有 nix 的机器/CI 用(宿主机只需 Docker/Podman)
 # ABIS 可选:默认 arm64-v8a;模拟器用 x86_64
 build-apk:
-    ./build.sh
+    ./docker/build.sh
+
+# NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
+# ABIS 可选:ABIS="x86_64" just build-apk-native
+build-apk-native:
+    nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android scripts/build-apk.sh'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 install-apk:

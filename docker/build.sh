@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Slint Study 构建入口 —— 一切都在 Docker 容器里运行,宿主机唯一
-# 需要的就是 Docker(或 Podman)。
+# Slint Study 的 Docker 构建入口 —— 一切都在 Docker 容器里运行,宿主机唯一
+# 需要的就是 Docker(或 Podman)。这是给「没有 nix」的机器/CI 准备的;
+# NixOS 本机原生编译请用 `just build-apk-native`(见 docker/README.md)。
 #
 # 用法:
-#   ./build.sh            构建 debug APK -> dist/slint-study-debug.apk
-#   ./build.sh image      只(重新)构建 builder 镜像
-#   ./build.sh shell      在 builder 容器内打开交互式 shell
-#   ./build.sh clean      清理构建产物
+#   ./docker/build.sh            构建 debug APK -> dist/slint-study-debug.apk
+#   ./docker/build.sh image      只(重新)构建 builder 镜像
+#   ./docker/build.sh shell      在 builder 容器内打开交互式 shell
+#   ./docker/build.sh clean      清理构建产物
 #
 # 环境变量:
 #   ABIS="arm64-v8a armeabi-v7a x86_64"   要构建的 ABI(默认 arm64-v8a;
@@ -15,7 +16,8 @@
 #   DOCKER=podman                         强制指定容器工具
 
 set -euo pipefail
-cd "$(dirname "$0")"
+# 脚本位于 docker/,但一切以仓库根为准:/work 挂的是仓库根,镜像上下文是 docker/。
+cd "$(dirname "$0")/.."
 
 if [ -z "${DOCKER:-}" ]; then
     if command -v docker >/dev/null 2>&1; then
@@ -68,6 +70,7 @@ run_in_container() {
         -v slint-study-cargo-registry:/opt/cargo/registry \
         -v slint-study-gradle-home:/root/.gradle \
         -e ABIS="${ABIS:-arm64-v8a}" \
+        -e CARGO_TARGET_DIR="/work/.docker-target" \
         -e CHOWN_UID="$(id -u)" \
         -e CHOWN_GID="$(id -g)" \
         "$IMAGE" "$@"
