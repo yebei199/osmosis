@@ -48,43 +48,53 @@ export component MainWindow inherits Window {
     title: "Slint Study";
     background: #0f1117;
 
-    // Frame-rate readout, pinned to the top-left inside the safe area.
-    Text {
-        x: 12px + root.safe-area-insets.left;
-        y: 8px + root.safe-area-insets.top;
-        text: "FPS " + round(root.fps);
-        color: #51cf66;
-        font-size: 14px;
-        font-weight: 700;
-    }
-
+    // Single top-level layout so the window auto-fills it and stays resizable.
+    // (A sibling element here would flip the window to a fixed size.)
     VerticalLayout {
-        alignment: center;
-        spacing: 24px;
         // Base padding plus the safe-area insets, so content clears the status
         // and navigation bars on the edge-to-edge Android window.
-        padding-top: 32px + root.safe-area-insets.top;
+        padding-top: 8px + root.safe-area-insets.top;
         padding-bottom: 32px + root.safe-area-insets.bottom;
-        padding-left: 32px + root.safe-area-insets.left;
-        padding-right: 32px + root.safe-area-insets.right;
+        padding-left: 16px + root.safe-area-insets.left;
+        padding-right: 16px + root.safe-area-insets.right;
 
+        // Frame-rate readout, top-left.
         Text {
-            text: "Slint on Android";
-            color: #e6e8ef;
-            font-size: 22px;
-            horizontal-alignment: center;
+            text: "FPS " + round(root.fps);
+            color: #51cf66;
+            font-size: 14px;
+            font-weight: 700;
         }
 
-        Text {
-            text: root.count;
-            color: #7aa2f7;
-            font-size: 72px;
-            horizontal-alignment: center;
-        }
+        // Main content, centered in the space left below the FPS row.
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 24px;
 
-        HoverButton {
-            text: "Tap me";
-            clicked => { root.bump(); }
+            Text {
+                text: "Slint on Android";
+                color: #e6e8ef;
+                font-size: 22px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: root.count;
+                color: #7aa2f7;
+                font-size: 72px;
+                horizontal-alignment: center;
+            }
+
+            // Wrap the fixed-width button in a stretchable row; otherwise its
+            // 220px width caps the whole column and locks the window width.
+            HorizontalLayout {
+                alignment: center;
+                HoverButton {
+                    text: "Tap me";
+                    clicked => { root.bump(); }
+                }
+            }
         }
     }
 }
