@@ -1,5 +1,10 @@
 apk := "dist/slint-study-debug.apk"
 
+# 热重载 UI 开发:编辑 ui/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
+dev:
+    SLINT_LIVE_PREVIEW=1 cargo run --features slint/live-preview,desktop
+
+
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 install-apk:
     adb install -r {{apk}}

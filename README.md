@@ -40,6 +40,15 @@ Run the same UI on the desktop (needs `libfontconfig1-dev`):
 cargo run --features desktop
 ```
 
+For hot-reloading UI work, use `just dev` instead: it enables Slint's
+`live-preview` feature so editing `ui/*.slint` reloads the running window
+without recompiling or restarting (Rust logic is preserved; changing Rust
+code still needs a restart).
+
+```sh
+just dev
+```
+
 ## License
 
 MIT
