@@ -15,6 +15,7 @@ android/           Gradle 项目:NativeActivity、manifest、资源
 docker/Dockerfile  构建器镜像(JDK、Android SDK+NDK、Rust、cargo-ndk)
 scripts/build-apk.sh   cargo-ndk 交叉构建 + gradle assembleDebug
 build.sh           宿主机入口(驱动 Docker)
+docs/build-apk.md  APK 构建全流程与编译逻辑详解
 ```
 
 ## 为什么有 Java 代码?
