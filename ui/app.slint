@@ -2,16 +2,61 @@
 // The count lives in Rust and is pushed here as a property; the button tap
 // flows back through the `bump` callback — the same UI<->Rust glue ntrack uses,
 // stripped to one value.
-import { Button, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
+
+// Button with a hover lift: on hover the background lightens and a soft shadow
+// grows so it reads as raised; on press it darkens and sinks. All animated.
+component HoverButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+
+    property <bool> hovered: touch.has-hover;
+    property <bool> down: touch.pressed;
+
+    height: 56px;
+    width: 220px;
+    border-radius: 14px;
+    background: down ? #2f45c5 : hovered ? #5c7cfa : #4263eb;
+    drop-shadow-color: #4263eb80;
+    drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
+    drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
+    animate background, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    Text {
+        text: root.text;
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
 
 export component MainWindow inherits Window {
     // Pushed from Rust.
     in property <int> count: 0;
+    // Frames per second, measured and pushed from Rust.
+    in property <float> fps: 0;
     // Tapped by the user; handled in Rust.
     callback bump();
 
     title: "Slint Study";
     background: #0f1117;
+
+    // Frame-rate readout, pinned to the top-left inside the safe area.
+    Text {
+        x: 12px + root.safe-area-insets.left;
+        y: 8px + root.safe-area-insets.top;
+        text: "FPS " + round(root.fps);
+        color: #51cf66;
+        font-size: 14px;
+        font-weight: 700;
+    }
 
     VerticalLayout {
         alignment: center;
@@ -37,9 +82,8 @@ export component MainWindow inherits Window {
             horizontal-alignment: center;
         }
 
-        Button {
+        HoverButton {
             text: "Tap me";
-            primary: true;
             clicked => { root.bump(); }
         }
     }
