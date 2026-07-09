@@ -1,6 +1,7 @@
 # Rust
 /target
 /.docker-target
+/target-android
 
 # Build artifacts
 /dist

@@ -1,25 +1,33 @@
-# APK 构建逻辑:为什么是 `build.sh`
+# APK 构建逻辑
 
-## 一句话
+## 两条路,一个内核
 
-`build.sh` 本身不编译任何东西,它是**宿主机入口**:准备好一个装齐了工具链的
-Docker 容器,再在容器里跑真正干活的 `scripts/build-apk.sh`。之所以「编译 APK =
-跑 build.sh」,是因为编译 Android APK 需要一大堆宿主机通常没有的东西(Android
-SDK、NDK、cargo-ndk、Gradle、JDK……),项目选择把它们全部塞进容器,让宿主机
-**只依赖 Docker**。
+真正的编译逻辑只有一份:`scripts/build-apk.sh`(cargo-ndk 交叉编译 → gradle 打包)。
+它**容器和本机通用**,靠 `ANDROID_HOME` / `ANDROID_NDK_HOME` 找工具链,不假设自己
+在哪。外面套两种「怎么把工具链准备好」的方式:
 
 ```
-你 → just build-apk → build.sh(宿主机)→ Docker 容器 → scripts/build-apk.sh(真正编译)
+                                        ┌─ docker/build.sh ─→ Docker 容器 ─┐
+你 → just build-apk / build-apk-native ─┤                                  ├─→ scripts/build-apk.sh(真正编译)
+                                        └─ nix-shell Android.nix ──────────┘
 ```
+
+| 路径 | 命令 | 工具链来源 | 适合 |
+|------|------|-----------|------|
+| Docker | `just build-apk` | `docker/Dockerfile` 镜像 | 没有 nix 的机器 / CI,只需 Docker |
+| NixOS 原生 | `just build-apk-native` | `Android.nix`(nix-shell) | 你在 NixOS 本机,更快、无镜像开销 |
+
+两者产物完全一致。下面先讲 Docker 那层「外围事务」,再讲两条路共用的编译内核。
 
 ## 为什么要套一层 Docker
 
 一个能出 APK 的机器要同时具备:JDK 17、Android SDK(platform 34 + build-tools)、
 NDK r27、Gradle 8.11、带 Android target 的 Rust、cargo-ndk。手工在每台机器上装齐
 既慢又容易版本漂移。`docker/Dockerfile` 把这些固定成一个可复现的镜像
-`slint-study-builder`,于是构建结果不再依赖「你这台机器装了什么」。
+`slint-study-builder`,于是构建结果不再依赖「你这台机器装了什么」。(NixOS 上则由
+`Android.nix` 从 nix 二进制缓存提供同样版本的工具链,见文末「NixOS 原生路径」。)
 
-`build.sh` 负责的就是这层「外围事务」,它自己不碰编译:
+`docker/build.sh` 负责的就是这层「外围事务」,它自己不碰编译:
 
 - **选容器工具**:优先 `docker`,没有就用 `podman`。
 - **透传代理**:检测到 `HTTPS_PROXY`/`http_proxy` 时,用 `--network=host` 把宿主机
@@ -70,7 +78,24 @@ cd android && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug
 ### 3. 收尾
 
 把 `android/app/build/outputs/apk/debug/app-debug.apk` 拷成
-`dist/slint-study-debug.apk`,并把产物属主交回宿主机用户。
+`dist/slint-study-debug.apk`。若设了 `CHOWN_UID`(仅 Docker 传)则把产物属主交回
+宿主机用户;本机原生构建不设这个变量,自然跳过。
+
+## NixOS 原生路径
+
+`just build-apk-native` 不用 Docker,而是 `nix-shell Android.nix --run
+'CARGO_TARGET_DIR=target-android scripts/build-apk.sh'`——**编译内核是同一个脚本**,
+只是工具链来自 nix 而非容器。`Android.nix` 提供和 Docker 镜像同版本的 SDK/NDK/Gradle/
+cargo-ndk,并在 `shellHook` 里填了两处 NixOS 特有的坑:
+
+- **aapt2**:AGP 默认从 Maven 拉的 `aapt2` 二进制在 NixOS 上跑不了(FHS 动态链接);
+  用 `-Dorg.gradle.project.android.aapt2FromMavenOverride=...` 指向 androidenv 里
+  已 patchelf 过的 aapt2。
+- **rustup target**:进 shell 时自动 `rustup target add aarch64-linux-android ...`
+  (前提:已 `rustup default stable` 且联网)。
+
+产物与 Docker 完全一致。哪条更快:热构建两边几乎相同(瓶颈都是 Slint+Skia 的
+release 编译);冷启动原生更快(nix 二进制缓存替换 vs Docker 现装镜像)。
 
 ## ABI 与变体
 
@@ -83,9 +108,10 @@ cd android && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug
 
 | 文件 | 职责 |
 |------|------|
-| `build.sh` | 宿主机入口:建镜像、透传代理、挂卷、跑容器、交回属主 |
+| `docker/build.sh` | Docker 宿主机入口:建镜像、透传代理、挂卷、跑容器、交回属主 |
 | `docker/Dockerfile` | 可复现的工具链镜像(JDK/SDK/NDK/Gradle/Rust/cargo-ndk) |
-| `scripts/build-apk.sh` | 容器内真正的编译逻辑(cargo-ndk → gradle → dist) |
+| `Android.nix` | NixOS 本机原生工具链(nix-shell),Docker 的等价替代 |
+| `scripts/build-apk.sh` | 真正的编译逻辑,容器/本机通用(cargo-ndk → gradle → dist) |
 | `Cargo.toml` | `crate-type=cdylib`、`android`/`desktop` feature、release profile |
 | `android/app/build.gradle` | Android 打包配置、abiFilters、buildTypes |
 | `android/.../MainActivity.java` | 极薄 NativeActivity,只做全面屏 |

@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# 构建 Slint Study 的 debug APK。在 slint-study-builder 容器内运行
-# (参见 ../build.sh),仓库挂载在 /work。
+# 真正的 APK 编译逻辑,容器/本机通用:
+#   - Docker 路径:在 slint-study-builder 容器内跑,仓库挂在 /work(见 ../docker/build.sh)
+#   - NixOS 原生路径:nix-shell Android.nix 里跑(见 ../Android.nix / `just build-apk-native`)
+# 两者都靠 ANDROID_HOME / ANDROID_NDK_HOME 找工具链,脚本本身不假设自己在哪。
 #
 # 环境变量:
-#   ABIS        空格分隔的 Android ABI 列表(默认 "arm64-v8a";
-#               也支持 armeabi-v7a x86_64)
-#   CHOWN_UID/CHOWN_GID  把产物的所有权交还给这个宿主机用户
+#   ABIS               空格分隔的 Android ABI 列表(默认 "arm64-v8a";也支持 armeabi-v7a x86_64)
+#   CARGO_TARGET_DIR   Rust target 目录(默认仓库内 target-android)
+#   CHOWN_UID/CHOWN_GID 仅 Docker 用:把产物所有权交还给宿主机用户(本机不设即跳过)
 
 set -euo pipefail
-cd /work
+# 以仓库根为工作目录,无论从哪调用(容器里 /work,本机是仓库路径)。
+cd "$(dirname "$0")/.."
 
 ABIS="${ABIS:-arm64-v8a}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/work/.docker-target}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-android}"
 JNILIBS=android/app/src/main/jniLibs
 
 # 无论 APK 是哪个变体,native 库一律用 release profile 构建:debug

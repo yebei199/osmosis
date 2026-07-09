@@ -12,9 +12,11 @@ ui/app.slint       整个 UI(一个计数器)
 src/lib.rs         android_main + run_app(UI<->Rust 的胶水代码)
 src/main.rs        桌面开发入口
 android/           Gradle 项目:NativeActivity、manifest、资源
+docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
+docker/build.sh    Docker 宿主机入口
 docker/Dockerfile  构建器镜像(JDK、Android SDK+NDK、Rust、cargo-ndk)
-scripts/build-apk.sh   cargo-ndk 交叉构建 + gradle assembleDebug
-build.sh           宿主机入口(驱动 Docker)
+Android.nix        NixOS 本机原生工具链(nix-shell)
+scripts/build-apk.sh   真正的编译逻辑,容器/本机通用(cargo-ndk + gradle assembleDebug)
 docs/build-apk.md  APK 构建全流程与编译逻辑详解
 ```
 
@@ -36,17 +38,23 @@ Rust/Slint 渲染出的画面正是被这个 Activity 加载的 native `.so` 绘
 
 ## 构建 APK
 
+两条路,产物一致,按环境选一条:
+
 ```sh
-./build.sh                 # -> dist/slint-study-debug.apk
+just build-apk         # Docker:给没有 nix 的机器/CI(= ./docker/build.sh)
+just build-apk-native  # NixOS 本机原生:更快、无镜像开销(nix-shell Android.nix)
 adb install -r dist/slint-study-debug.apk
 ```
 
 为模拟器(x86_64)或多个 ABI 构建:
 
 ```sh
-ABIS="x86_64" ./build.sh
-ABIS="arm64-v8a armeabi-v7a x86_64" ./build.sh
+ABIS="x86_64" just build-apk               # 或 just build-apk-native
+ABIS="arm64-v8a armeabi-v7a x86_64" just build-apk
 ```
+
+- Docker 路径细节见 [`docker/README.md`](docker/README.md);
+- 完整编译流程见 [`docs/build-apk.md`](docs/build-apk.md)。
 
 ## 桌面开发构建
 
