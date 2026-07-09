@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Slint Study build entrypoint — everything runs in a Docker container, so the
-# only host requirement is Docker (or Podman).
+# Slint Study 构建入口 —— 一切都在 Docker 容器里运行,宿主机唯一
+# 需要的就是 Docker(或 Podman)。
 #
-# Usage:
-#   ./build.sh            build the debug APK -> dist/slint-study-debug.apk
-#   ./build.sh image      (re)build the builder image only
-#   ./build.sh shell      interactive shell in the builder container
-#   ./build.sh clean      remove build artifacts
+# 用法:
+#   ./build.sh            构建 debug APK -> dist/slint-study-debug.apk
+#   ./build.sh image      只(重新)构建 builder 镜像
+#   ./build.sh shell      在 builder 容器内打开交互式 shell
+#   ./build.sh clean      清理构建产物
 #
-# Environment:
-#   ABIS="arm64-v8a armeabi-v7a x86_64"   ABIs to build (default arm64-v8a;
-#                                         use x86_64 for the emulator)
-#   SKIP_IMAGE_BUILD=1                    reuse an existing builder image
-#   DOCKER=podman                         force a specific container tool
+# 环境变量:
+#   ABIS="arm64-v8a armeabi-v7a x86_64"   要构建的 ABI(默认 arm64-v8a;
+#                                         模拟器请用 x86_64)
+#   SKIP_IMAGE_BUILD=1                    复用已有的 builder 镜像
+#   DOCKER=podman                         强制指定容器工具
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -30,10 +30,11 @@ fi
 
 IMAGE=slint-study-builder
 
-# Behind a proxy (common in mainland China: dl.google.com / crates.io / gradle
-# are otherwise unreachable), forward the host proxy into the build. --network=host
-# lets the container reach a 127.0.0.1 proxy; curl/rustup/cargo read the predefined
-# http_proxy args, and JVM tools (sdkmanager, gradle) need -Dhttp(s).proxyHost.
+# 处于代理之后时(国内常见情况: dl.google.com / crates.io / gradle
+# 否则都无法访问),把宿主机代理转发进构建过程。--network=host 让
+# 容器能访问 127.0.0.1 的代理;curl/rustup/cargo 读取预置的
+# http_proxy 参数,而 JVM 工具(sdkmanager、gradle)需要
+# -Dhttp(s).proxyHost。
 DOCKER_BUILD_EXTRA=()
 DOCKER_RUN_EXTRA=()
 PROXY="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
@@ -60,8 +61,8 @@ build_image() {
 }
 
 run_in_container() {
-    # Named volumes cache the cargo registry and gradle artifacts across builds;
-    # the repo bind mount carries the rust target dir (.docker-target).
+    # 具名 volume 用于跨构建缓存 cargo registry 和 gradle 产物;
+    # 仓库的 bind mount 承载 rust 的 target 目录(.docker-target)。
     "$DOCKER" run --rm "${DOCKER_RUN_EXTRA[@]}" \
         -v "$PWD:/work:z" \
         -v slint-study-cargo-registry:/opt/cargo/registry \

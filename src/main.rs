@@ -1,5 +1,5 @@
-//! Desktop development entry point.
-//! Build with: `cargo run --features desktop`
+//! 桌面开发入口。
+//! 构建命令: `cargo run --features desktop`
 
 fn main() {
     env_logger::Builder::from_env(
