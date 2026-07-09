@@ -6,11 +6,11 @@ import android.os.Bundle;
 import android.view.View;
 
 /**
- * Thin NativeActivity subclass. All UI lives in Rust (Slint); this class only
- * lays the window out edge-to-edge so the Slint UI owns the full window,
- * including the area behind the status and navigation bars. The Slint Android
- * backend reads the insets itself and exposes them as `safe-area-insets`, which
- * the UI pads around — so no manual inset plumbing is needed here.
+ * 极薄的 NativeActivity 子类。所有 UI 都在 Rust(Slint)里;这个类只负责
+ * 把窗口布局成全面屏(edge-to-edge),让 Slint UI 占据整个窗口,包括状态栏
+ * 和导航栏底下的区域。Slint 的 Android 后端会自己读取这些安全区域并以
+ * `safe-area-insets` 暴露给 UI,由 UI 自行留出内边距——所以这里不需要手动
+ * 处理任何 inset。
  */
 public class MainActivity extends NativeActivity {
 
