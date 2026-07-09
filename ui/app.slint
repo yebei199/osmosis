@@ -1,11 +1,11 @@
-// Minimal single-window phone UI: a tap counter.
-// The count lives in Rust and is pushed here as a property; the button tap
-// flows back through the `bump` callback — the same UI<->Rust glue ntrack uses,
-// stripped to one value.
+// 最小化单窗口手机 UI:一个点击计数器。
+// 计数值保存在 Rust 一侧,以 property 形式推送到这里;按钮点击通过
+// `bump` 回调传回去——和 ntrack 使用的 UI<->Rust 通信方式相同,
+// 这里只精简到一个值。
 import { Palette } from "std-widgets.slint";
 
-// Button with a hover lift: on hover the background lightens and a soft shadow
-// grows so it reads as raised; on press it darkens and sinks. All animated.
+// 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
+// 观感;按下时变暗下沉。全部带动画过渡。
 component HoverButton inherits Rectangle {
     in property <string> text;
     callback clicked;
@@ -38,27 +38,27 @@ component HoverButton inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    // Pushed from Rust.
+    // 由 Rust 推送。
     in property <int> count: 0;
-    // Frames per second, measured and pushed from Rust.
+    // 帧率,由 Rust 测量并推送。
     in property <float> fps: 0;
-    // Tapped by the user; handled in Rust.
+    // 用户点击触发,在 Rust 侧处理。
     callback bump();
 
     title: "Slint Study";
     background: #0f1117;
 
-    // Single top-level layout so the window auto-fills it and stays resizable.
-    // (A sibling element here would flip the window to a fixed size.)
+    // 只有一个顶层布局,窗口才会自动撑满且保持可调整大小。
+    // (这里如果放一个兄弟元素,窗口就会变成固定大小。)
     VerticalLayout {
-        // Base padding plus the safe-area insets, so content clears the status
-        // and navigation bars on the edge-to-edge Android window.
+        // 基础内边距叠加安全区域,让内容在全面屏 Android 窗口上
+        // 不被状态栏和导航栏遮挡。
         padding-top: 8px + root.safe-area-insets.top;
         padding-bottom: 32px + root.safe-area-insets.bottom;
         padding-left: 16px + root.safe-area-insets.left;
         padding-right: 16px + root.safe-area-insets.right;
 
-        // Frame-rate readout, top-left.
+        // 帧率读数,左上角显示。
         Text {
             text: "FPS " + round(root.fps);
             color: #51cf66;
@@ -66,7 +66,7 @@ export component MainWindow inherits Window {
             font-weight: 700;
         }
 
-        // Main content, centered in the space left below the FPS row.
+        // 主内容区,在帧率行下方的剩余空间中居中。
         VerticalLayout {
             vertical-stretch: 1;
             alignment: center;
@@ -86,8 +86,8 @@ export component MainWindow inherits Window {
                 horizontal-alignment: center;
             }
 
-            // Wrap the fixed-width button in a stretchable row; otherwise its
-            // 220px width caps the whole column and locks the window width.
+            // 把固定宽度的按钮包在一个可伸缩的行里;否则它的 220px
+            // 宽度会限制整列,进而把窗口宽度锁死。
             HorizontalLayout {
                 alignment: center;
                 HoverButton {

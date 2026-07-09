@@ -1,8 +1,8 @@
-//! Minimal Slint app: a tap counter, shared by the Android and desktop builds.
+//! 最小化 Slint 应用:一个点击计数器,Android 与桌面构建共用。
 //!
-//! Entry points:
-//! * Android: [`android_main`] (cdylib, loaded by `MainActivity`)
-//! * Desktop dev build: `src/main.rs` (`--features desktop`)
+//! 入口点:
+//! * Android: [`android_main`](cdylib,由 `MainActivity` 加载)
+//! * 桌面开发构建: `src/main.rs`(`--features desktop`)
 
 slint::include_modules!();
 
@@ -14,13 +14,13 @@ use slint::{
     ComponentHandle, RenderingState, Timer, TimerMode,
 };
 
-/// Create the window, wire the counter callback, then run the event loop until
-/// the window closes. Shared by both entry points.
+/// 创建窗口、绑定计数器回调,然后运行事件循环直到窗口关闭。
+/// 两个入口点共用此函数。
 pub fn run_app() {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    // The count lives here in Rust; the button just asks us to bump it.
+    // 计数值保存在 Rust 这一侧;按钮只是请求把它加一。
     let count = Rc::new(Cell::new(0));
     let weak = ui.as_weak();
     ui.on_bump(move || {
@@ -30,11 +30,10 @@ pub fn run_app() {
         }
     });
 
-    // Frame-rate meter: count frames in the rendering notifier and, twice a
-    // second, push the rate to the UI. We request a redraw each frame so the
-    // meter stays live instead of reading 0 when the UI is idle.
-    // ponytail: continuous redraw pegs the render loop; fine for a dev/study
-    // build, drop the request_redraw if battery ever matters on device.
+    // 帧率计:在渲染通知回调里累计帧数,每半秒把帧率推送给 UI。
+    // 每帧都主动请求重绘,否则 UI 空闲时读到的会是 0 而不是实际帧率。
+    // ponytail: 持续重绘会让渲染循环一直满转,对开发/学习用途没问题;
+    // 如果以后在设备上要考虑功耗,再去掉这个 request_redraw。
     let frames = Rc::new(Cell::new(0u32));
     let frames_render = frames.clone();
     let weak_render = ui.as_weak();
@@ -76,8 +75,8 @@ compile_error!(
     "Android builds need the android-activity backend: pass `--no-default-features --features android` (scripts/build-apk.sh does this)"
 );
 
-/// Android entry point, invoked by the android-activity glue after
-/// `MainActivity` loads this library.
+/// Android 入口点,在 `MainActivity` 加载本库后由 android-activity
+/// 胶水代码调用。
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {

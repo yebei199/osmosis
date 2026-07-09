@@ -1,18 +1,18 @@
-# Slint desktop dev shell — native deps for `cargo run --features desktop`.
+# Slint 桌面开发 shell —— `cargo run --features desktop` 所需的 native 依赖。
 #
-# The winit + femtovg backend links system fontconfig via yeslogic-fontconfig-sys
-# (pkg-config at build time) and dlopen's wayland / libxkbcommon / libGL / X11 at
-# runtime. A bare NixOS shell has none of these on PKG_CONFIG_PATH/LD_LIBRARY_PATH,
-# so the fontconfig build.rs panics. This shell supplies both.
+# winit + femtovg 后端在构建期通过 yeslogic-fontconfig-sys(pkg-config)
+# 链接系统 fontconfig,运行期则 dlopen wayland / libxkbcommon / libGL / X11。
+# 裸的 NixOS shell 的 PKG_CONFIG_PATH/LD_LIBRARY_PATH 上没有这些东西,
+# 所以 fontconfig 的 build.rs 会 panic。这个 shell 把两者都补上。
 #
 #   nix-shell slint.nix --run "cargo run --features desktop"
-#   # or automatically via direnv (.envrc: `use nix slint.nix`)
+#   # 或者通过 direnv 自动加载(.envrc: `use nix slint.nix`)
 #
-# Pinned to <nixpkgs> so it tracks the same channel the host uses.
+# 固定用 <nixpkgs>,以跟随宿主机使用的同一个 channel。
 { pkgs ? import <nixpkgs> { } }:
 let
-  # dlopen'd at runtime by winit/femtovg — must be on LD_LIBRARY_PATH, not just
-  # linked. fontconfig/freetype are also found by pkg-config at build time.
+  # winit/femtovg 在运行期 dlopen 这些库——必须出现在 LD_LIBRARY_PATH
+  # 里,只是链接是不够的。fontconfig/freetype 在构建期还会被 pkg-config 找到。
   runtimeLibs = with pkgs; [
     fontconfig
     freetype

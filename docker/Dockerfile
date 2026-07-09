@@ -1,11 +1,11 @@
-# Build environment for the Slint Study Android APK.
+# Slint Study Android APK 的构建环境。
 #
-# Contains: JDK 17, Android SDK (platform 34 + build-tools), NDK r27,
-# Gradle, stable Rust with Android targets, and cargo-ndk.
+# 包含: JDK 17、Android SDK(platform 34 + build-tools)、NDK r27、
+# Gradle、带 Android target 的 stable Rust,以及 cargo-ndk。
 #
-# Build the image:    docker build -t slint-study-builder docker/
-# Then build the APK: see ../build.sh (mounts the repo at /work and runs
-#                     scripts/build-apk.sh inside the container)
+# 构建镜像:      docker build -t slint-study-builder docker/
+# 构建 APK:      见 ../build.sh(把仓库挂载到 /work,并在容器内
+#                运行 scripts/build-apk.sh)
 
 ARG BASE_IMAGE=ubuntu:24.04
 FROM ${BASE_IMAGE}
@@ -19,9 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Android SDK + NDK ------------------------------------------------------
-# JVM proxy args (host build.sh passes -Dhttp(s).proxyHost=... when a proxy is
-# set) so sdkmanager can reach dl.google.com from behind a proxy. Empty by
-# default; curl/rustup/cargo pick up the predefined http_proxy build args.
+# JVM 代理参数(宿主机 build.sh 在设置了代理时会传入
+# -Dhttp(s).proxyHost=...),让 sdkmanager 能在代理后访问
+# dl.google.com。默认为空;curl/rustup/cargo 会读取预置的
+# http_proxy 构建参数。
 ARG JAVA_TOOL_OPTIONS=
 ENV ANDROID_HOME=/opt/android-sdk
 ENV ANDROID_SDK_ROOT=$ANDROID_HOME
