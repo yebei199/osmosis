@@ -2,7 +2,7 @@
 name = "app-core"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "客户端领域:应用持有的状态,以及改变状态的规则"
 
 # 只依赖 contract。这个 crate 必须能编到 wasm32-unknown-unknown,

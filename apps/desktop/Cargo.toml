@@ -2,7 +2,7 @@
 name = "app-desktop"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "桌面平台入口(linux / windows / macOS)"
 
 [[bin]]

@@ -2,7 +2,7 @@
 name = "ui"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "界面的声明,以及界面与客户端领域之间的双向绑定"
 
 [dependencies]
