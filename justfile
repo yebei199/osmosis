@@ -1,11 +1,17 @@
 apk := "dist/slint-study-debug.apk"
 
+# 无参数时列出全部配方(按 group 分组),而非直接跑第一条
+_default:
+    @just --list
+
 # 本地跑一遍 CI 会跑的全部检查。dev 上的 push 不触发 CI,提交前跑这个
 # 与 .github/workflows/ci.yml 一一对应,命令逐字相同
+[group('ci')]
 ci: ci-test ci-cross ci-boundaries
     @echo "==> CI 全部通过"
 
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致)
+[group('ci')]
 ci-test:
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test'
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p xtask'
@@ -13,20 +19,25 @@ ci-test:
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p server -p xtask'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
+[group('ci')]
 ci-cross:
     nix-shell slint.nix --run 'cargo check -p app-web --target wasm32-unknown-unknown'
     nix-shell slint.nix --run 'cargo check -p app-ios --target aarch64-apple-ios'
     nix-shell Android.nix --run 'cargo check -p app-android --target aarch64-linux-android'
 
 # 架构边界(docs/adr/0001、0002)。与 CI 调的是同一份 xtask 代码
+[group('ci')]
 ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
+[group('三端')]
+[group('桌面')]
 dev:
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
 
 # 同上,外加左上角帧率读数。注意 debug-fps 会让渲染循环满转
+[group('桌面')]
 dev-fps:
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
 
@@ -34,6 +45,7 @@ dev-fps:
 # 本命令自带 dev-server,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
+[group('三端')]
 dev-web:
     nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
     nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
@@ -56,6 +68,7 @@ dev-web:
 # 同一个字体上,不依赖逐字形回退。
 # 漏字不会静默:cargo test -p ui 的 describe_only_uses_subset_glyphs 会报出缺哪个字。
 # name-IDs 13/14 是 OFL 的许可声明,必须随子集一起分发,故显式保留。
+[group('工具')]
 font-subset:
     nix-shell -p python3Packages.fonttools --run "pyftsubset \
       $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
@@ -67,35 +80,42 @@ font-subset:
     @ls -la crates/ui/fonts/cjk-subset.ttf
 
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
+[group('服务端')]
 dev-server:
     cargo run -p server
 
 # 打一次真实的 GET /health(需要 dev-server 正在另一个终端里跑)
+[group('服务端')]
 test-api:
     cargo test -p api -- --ignored
 
-
 # 在 Docker 里交叉编译 dist APK —— 给没有 nix 的机器/CI 用(宿主机只需 Docker/Podman)
 # ABIS 可选:默认 arm64-v8a;模拟器用 x86_64
+[group('安卓')]
 build-apk:
     ./docker/build.sh
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just build-apk-native
+[group('三端')]
+[group('安卓')]
 build-apk-native:
     nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
+[group('安卓')]
 install-apk:
     adb install -r {{apk}}
 
 # 把手机的 127.0.0.1:3000 转发到开发机的 dev-server
 # 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
 # adb 重连后需要重新执行
+[group('安卓')]
 adb-reverse:
     adb reverse tcp:3000 tcp:3000
 
 # 装 APK、接通端口转发,然后看日志。前提:dev-server 已在另一个终端里跑
+[group('安卓')]
 run-android: install-apk adb-reverse
     adb shell am start -n io.github.slintstudy/.MainActivity
     adb logcat -s slint_study
@@ -103,5 +123,6 @@ run-android: install-apk adb-reverse
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
 # 连的是别人的移动热点/公司 WiFi 多半被隔离,手机连不上,请改用 install-apk
+[group('安卓')]
 serve-apk:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
