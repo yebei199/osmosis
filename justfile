@@ -37,6 +37,9 @@ dev-web:
     nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
     nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
     cp apps/web/index.html dist/web/
+    # 上次 Ctrl-C 没杀干净的 server 还占着 8080,先收尸。只匹配本命令起的进程,不误伤别人的 8080。
+    # [.] 是为了让这行自己的命令行不被这个正则匹配上 —— 否则 pkill 会连本 recipe 一起杀。
+    pkill -f 'http[.]server 8080 -d dist/web' || true
     nix-shell slint.nix --run 'python3 -m http.server 8080 -d dist/web'
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
