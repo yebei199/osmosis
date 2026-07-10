@@ -4,9 +4,9 @@
 # 以及配好 Android target 的 rustup。
 #
 #   nix-shell Android.nix
-#   cargo ndk -t arm64-v8a --platform 26 -o android/app/src/main/jniLibs \
-#       build --lib --release --no-default-features --features android
-#   (cd android && gradle --no-daemon assembleDebug)
+#   cargo ndk -t arm64-v8a --platform 26 -o apps/android/gradle/app/src/main/jniLibs \
+#       build -p app-android --lib --release
+#   (cd apps/android/gradle && gradle --no-daemon assembleDebug)
 #
 # 体积很重(SDK+NDK 有几个 GB)且是 unfree 包,所以要手动 `nix-shell`,
 # 不作为 direnv 的默认加载项。这里导入 nixpkgs 时接受了许可协议,

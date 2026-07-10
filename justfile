@@ -1,8 +1,12 @@
 apk := "dist/slint-study-debug.apk"
 
-# 热重载 UI 开发:编辑 ui/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
+# 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
 dev:
-    SLINT_LIVE_PREVIEW=1 cargo run --features slint/live-preview,desktop
+    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
+
+# 同上,外加左上角帧率读数。注意 debug-fps 会让渲染循环满转
+dev-fps:
+    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
 
 
 # 在 Docker 里交叉编译 dist APK —— 给没有 nix 的机器/CI 用(宿主机只需 Docker/Podman)

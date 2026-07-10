@@ -1,11 +1,13 @@
 // 最小化单窗口手机 UI:一个点击计数器。
-// 计数值保存在 Rust 一侧,以 property 形式推送到这里;按钮点击通过
-// `bump` 回调传回去——和 ntrack 使用的 UI<->Rust 通信方式相同,
-// 这里只精简到一个值。
-import { Palette } from "std-widgets.slint";
+// 计数值保存在 Rust 一侧(crates/app-core),以 property 形式推送到这里;
+// 按钮点击通过 `bump` 回调传回去。
 
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
+//
+// 触摸设备上没有"悬停但未按下"这个状态,因此只会看到按下时的下沉效果。
+// 这是刻意的优雅降级,不是缺陷:slint 在触摸按下时同样会置 has-hover,
+// 但优先级更高的 `down` 分支盖住了它。
 component HoverButton inherits Rectangle {
     in property <string> text;
     callback clicked;
@@ -40,8 +42,10 @@ component HoverButton inherits Rectangle {
 export component MainWindow inherits Window {
     // 由 Rust 推送。
     in property <int> count: 0;
-    // 帧率,由 Rust 测量并推送。
+    // 帧率,由 Rust 测量并推送。仅在 `debug-fps` feature 下有意义。
     in property <float> fps: 0;
+    // 是否显示帧率读数。由 Rust 根据 `debug-fps` feature 设置。
+    in property <bool> show-fps: false;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
 
@@ -59,7 +63,7 @@ export component MainWindow inherits Window {
         padding-right: 16px + root.safe-area-insets.right;
 
         // 帧率读数,左上角显示。
-        Text {
+        if root.show-fps: Text {
             text: "FPS " + round(root.fps);
             color: #51cf66;
             font-size: 14px;

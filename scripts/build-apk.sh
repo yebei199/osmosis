@@ -15,7 +15,8 @@ cd "$(dirname "$0")/.."
 
 ABIS="${ABIS:-arm64-v8a}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target-android}"
-JNILIBS=android/app/src/main/jniLibs
+GRADLE_PROJECT=apps/android/gradle
+JNILIBS="$GRADLE_PROJECT/app/src/main/jniLibs"
 
 # 无论 APK 是哪个变体,native 库一律用 release profile 构建:debug
 # profile 的 Slint+Skia 构建体积巨大且很慢,所以即使是"debug" APK
@@ -34,8 +35,10 @@ fi
 
 TARGET_FLAGS=()
 for abi in $ABIS; do TARGET_FLAGS+=(-t "$abi"); done
+# `-p app-android` 是必须的:workspace 的 default-members 不含它(见 docs/adr/0003),
+# 而它的 Cargo.toml 已经静态选好了 android-activity 后端,无需再传 feature。
 cargo ndk "${TARGET_FLAGS[@]}" --platform 26 -o "$JNILIBS" \
-    build --lib --release --no-default-features --features android
+    build -p app-android --lib --release
 
 # 打包 libc++_shared.so:Skia(Slint 的 Android 渲染器)链接的是
 # 共享版 C++ STL。
@@ -54,16 +57,16 @@ done
 
 echo "==> Building debug APK"
 ABIS_CSV="${ABIS// /,}"
-(cd android && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug)
+(cd "$GRADLE_PROJECT" && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug)
 
 mkdir -p dist
 OUT="dist/slint-study-debug.apk"
-cp "android/app/build/outputs/apk/debug/app-debug.apk" "$OUT"
+cp "$GRADLE_PROJECT/app/build/outputs/apk/debug/app-debug.apk" "$OUT"
 
 # 通过 bind mount 的构建以 root 身份运行;把产物的所有权交还给宿主机用户。
 if [ -n "${CHOWN_UID:-}" ]; then
     chown -R "${CHOWN_UID}:${CHOWN_GID:-$CHOWN_UID}" \
-        dist "$JNILIBS" android/app/build android/.gradle 2>/dev/null || true
+        dist "$JNILIBS" "$GRADLE_PROJECT/app/build" "$GRADLE_PROJECT/.gradle" 2>/dev/null || true
 fi
 
 echo "==> Done: $OUT"

@@ -97,7 +97,7 @@ case "${1:-apk}" in
     clean)
         build_image
         run_in_container bash -c \
-            "rm -rf /work/.docker-target /work/dist /work/android/app/build /work/android/build /work/android/.gradle /work/android/app/src/main/jniLibs"
+            "rm -rf /work/.docker-target /work/dist /work/apps/android/gradle/app/build /work/apps/android/gradle/build /work/apps/android/gradle/.gradle /work/apps/android/gradle/app/src/main/jniLibs"
         ;;
     *)
         echo "unknown command: $1 (expected: apk | image | shell | clean)" >&2
