@@ -46,8 +46,12 @@ export component MainWindow inherits Window {
     in property <float> fps: 0;
     // 是否显示帧率读数。由 Rust 根据 `debug-fps` feature 设置。
     in property <bool> show-fps: false;
+    // 服务端健康状态的一行文案,由 Rust 根据领域状态渲染后推送。
+    in property <string> health-text;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
+    // 请求一次 GET /health。
+    callback check-health();
 
     title: "Slint Study";
     background: #0f1117;
@@ -98,6 +102,24 @@ export component MainWindow inherits Window {
                     text: "Tap me";
                     clicked => { root.bump(); }
                 }
+            }
+
+            // 穿透式示例:一次真实的网络往返,验证 contract → api →
+            // app-core → ui 整条链路在各端都通。
+            HorizontalLayout {
+                alignment: center;
+                HoverButton {
+                    text: "Check server";
+                    clicked => { root.check-health(); }
+                }
+            }
+
+            Text {
+                text: root.health-text;
+                color: #9aa0b4;
+                font-size: 13px;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
         }
     }
