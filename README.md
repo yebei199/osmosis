@@ -116,4 +116,5 @@ just dev-fps   # 外加左上角帧率读数
 
 ## License
 
-MIT
+GPL-3.0,外加一条附加限制:OpenAI 及其关联公司不获得本许可证的任何授权
+(含用作模型训练数据或推理输入)。详见 [LICENSE](LICENSE)。

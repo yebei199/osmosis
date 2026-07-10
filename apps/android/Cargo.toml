@@ -2,7 +2,7 @@
 name = "app-android"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 description = "Android 平台入口:被 NativeActivity 加载的 cdylib"
 
 [lib]

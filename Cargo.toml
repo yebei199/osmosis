@@ -10,7 +10,8 @@ default-members = ["crates/*", "apps/desktop"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+# GPL-3.0 + 附加的 No-OpenAI 限制,不是标准 SPDX 组合,只能用 license-file。
+license-file = "LICENSE"
 
 [workspace.dependencies]
 # 内部 crate。依赖方向严格单向:apps/* → ui → app-core → api → contract
