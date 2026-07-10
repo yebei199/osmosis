@@ -51,6 +51,8 @@ export component MainWindow inherits Window {
     in property <float> fps: 0;
     // 是否显示帧率读数。由 Rust 根据 `debug-fps` feature 设置。
     in property <bool> show-fps: false;
+    // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
+    in property <string> platform;
     // 服务端健康状态的一行文案,由 Rust 根据领域状态渲染后推送。
     in property <string> health-text;
     // 用户点击触发,在 Rust 侧处理。
@@ -86,7 +88,7 @@ export component MainWindow inherits Window {
             spacing: 24px;
 
             Text {
-                text: "Slint on Android";
+                text: "Slint on " + root.platform;
                 color: #e6e8ef;
                 font-size: 22px;
                 horizontal-alignment: center;
