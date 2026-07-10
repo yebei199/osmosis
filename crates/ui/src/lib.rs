@@ -23,11 +23,25 @@ pub fn run() {
     bind_health(&ui);
 
     ui.set_show_fps(cfg!(feature = "debug-fps"));
+    ui.set_platform(platform_name().into());
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     #[cfg(feature = "debug-fps")]
     let _fps_timer = fps::start(&ui);
 
     ui.run().expect("event loop failed");
+}
+
+/// 当前编译目标的平台名,显示在标题里。
+///
+/// wasm 上 `std::env::consts::OS` 是 `"unknown"`,所以它得单独一支;其余各端
+/// consts::OS 已经给出 android / ios / linux / windows / macos。
+/// 全小写,与 cargo target 名对齐 —— 你看到的就是编译时选的那个 target。
+fn platform_name() -> &'static str {
+    if cfg!(target_arch = "wasm32") {
+        "wasm"
+    } else {
+        std::env::consts::OS
+    }
 }
 
 /// 计数值由 app-core 持有;按钮只是请求把它加一,然后把新值推给 UI。
