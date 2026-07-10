@@ -6,7 +6,9 @@ license.workspace = true
 description = "界面的声明,以及界面与客户端领域之间的双向绑定"
 
 [dependencies]
+# ui 是组装点:它把 api 的请求函数注入 app-core,二者互不相识。
 app-core.workspace = true
+api.workspace = true
 slint.workspace = true
 
 # 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。

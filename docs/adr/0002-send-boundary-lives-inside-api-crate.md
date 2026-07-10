@@ -35,6 +35,33 @@ wasm 实现内部直接 `await` `fetch`。差异到 `api` 为止,不再向上传
 
 ## 连带约束
 
-从后台线程回到 UI 线程走 `slint::invoke_from_event_loop(f)`,要求 `f: FnOnce() + Send`。
-因此 `contract` 与 `api` 中跨越该边界的类型必须是 `Send`。
+`api` 中跨越线程边界的类型必须是 `Send`。`contract` 的 DTO 天然满足。
 **不要在这些类型里放 `Rc`** —— 一旦放了,这条路当场断掉。
+
+## 一个未预料到的好结果
+
+为了让 `app-core` 能脱离网络单测,`fetch` 必须可注入:
+
+```rust
+pub async fn refresh<Fetch, Fut, Error>(health: &RefCell<Health>, fetch: Fetch)
+where Fetch: FnOnce() -> Fut, Fut: Future<Output = Result<HealthDto, Error>>, Error: fmt::Display
+```
+
+而一旦注入,`app-core` 就**不再需要依赖 `api`** —— 它只需要 `contract` 里的 DTO。
+依赖图因此从一条链变成一棵更浅的树,`ui` 成为把二者接起来的组装点:
+
+```
+apps/*  →  ui  →  ┬─ app-core ─┐
+                  └─ api ──────┴─→ contract
+```
+
+这不是额外的设计,而是本 ADR 的直接后果:`Send` 一旦被关进 `api`,`api` 就成了叶子。
+
+## 可验证
+
+这两条断言由命令而非记忆保证,CI 应当固化它们:
+
+```sh
+cargo tree -p api --target wasm32-unknown-unknown | grep tokio   # 必须无输出
+cargo check -p app-core --target wasm32-unknown-unknown          # 必须通过
+```

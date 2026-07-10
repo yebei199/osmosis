@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*"]
+members = ["crates/*", "apps/*", "server"]
 # 裸 `cargo build` / `cargo test` / IDE 的 cargo check 只走桌面链路。
 # apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 将来拉的
 # wasm-bindgen 在 linux 上也是白搭 —— 它们一律靠 `-p` 显式构建。
@@ -24,6 +24,7 @@ ui = { path = "crates/ui" }
 # 由各平台入口 crate 各自追加 —— 否则 feature 会被统一,android 会拉进 winit。
 slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2"] }
 slint-build = "1.16"
+serde = { version = "1", features = ["derive"] }
 log = "0.4"
 android_logger = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }

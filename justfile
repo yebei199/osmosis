@@ -8,6 +8,14 @@ dev:
 dev-fps:
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
 
+# 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
+dev-server:
+    cargo run -p server
+
+# 打一次真实的 GET /health(需要 dev-server 正在另一个终端里跑)
+test-api:
+    cargo test -p api -- --ignored
+
 
 # 在 Docker 里交叉编译 dist APK —— 给没有 nix 的机器/CI 用(宿主机只需 Docker/Podman)
 # ABIS 可选:默认 arm64-v8a;模拟器用 x86_64
@@ -22,6 +30,17 @@ build-apk-native:
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 install-apk:
     adb install -r {{apk}}
+
+# 把手机的 127.0.0.1:3000 转发到开发机的 dev-server
+# 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
+# adb 重连后需要重新执行
+adb-reverse:
+    adb reverse tcp:3000 tcp:3000
+
+# 装 APK、接通端口转发,然后看日志。前提:dev-server 已在另一个终端里跑
+run-android: install-apk adb-reverse
+    adb shell am start -n io.github.slintstudy/.MainActivity
+    adb logcat -s slint_study
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)

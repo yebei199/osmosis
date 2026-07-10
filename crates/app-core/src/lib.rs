@@ -1,54 +1,17 @@
 //! 客户端领域:应用持有的状态,以及改变该状态的规则。
 //!
 //! 这一层不知道自己被画成了什么样子(不依赖 slint),也不知道数据是怎么拿到的
-//! (不依赖 HTTP)。它必须能编到 `wasm32-unknown-unknown`,因此不碰文件系统、
-//! 不开线程。见 `docs/adr/0002`。
+//! (不依赖 `api`、不依赖 HTTP)。它必须能编到 `wasm32-unknown-unknown`,
+//! 因此不碰文件系统、不开线程,其 future 也不要求 `Send`。见 `docs/adr/0002`。
+//!
+//! 需要网络的地方由调用方**注入**一个返回 future 的闭包 —— 见 [`health::refresh`]。
+//! 这既让本 crate 可以脱离网络单测,也让它不必依赖 `api`。
 
-/// 点击计数器。
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Counter(i32);
+mod counter;
+mod health;
 
-impl Counter {
-    /// 当前计数值。
-    pub fn value(self) -> i32 {
-        self.0
-    }
+pub use counter::Counter;
+pub use health::{Health, HealthState, refresh};
 
-    /// 计数加一。
-    ///
-    /// 饱和到 [`i32::MAX`]:计数器溢出不是一种需要让应用崩溃的情况,
-    /// 而且 debug profile 下的整数溢出会 panic,release 下会静默回绕成负数 ——
-    /// 两种行为都不可接受,所以这里显式选择饱和。
-    pub fn bump(&mut self) {
-        self.0 = self.0.saturating_add(1);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 新建的计数器从 0 开始。
-    #[test]
-    fn 新建计数器为零() {
-        assert_eq!(Counter::default().value(), 0);
-    }
-
-    /// 每次 bump 让计数值加一。
-    #[test]
-    fn bump_使计数值加一() {
-        let mut counter = Counter::default();
-        counter.bump();
-        assert_eq!(counter.value(), 1);
-        counter.bump();
-        assert_eq!(counter.value(), 2);
-    }
-
-    /// 边界:计数值到达 i32::MAX 后继续 bump 应当饱和,而不是 panic 或回绕。
-    #[test]
-    fn bump_在最大值处饱和() {
-        let mut counter = Counter(i32::MAX);
-        counter.bump();
-        assert_eq!(counter.value(), i32::MAX);
-    }
-}
+/// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
+pub use contract::HealthDto;

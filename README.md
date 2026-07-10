@@ -8,26 +8,55 @@ iOS / android 六端,当前已实现 android 与 linux。
 
 ## 目录结构
 
-Cargo workspace。依赖方向严格单向:`apps/* → ui → app-core → api → contract`。
+Cargo workspace。依赖方向严格单向,反向永久禁止:
 
 ```
-crates/contract/   线上格式(请求体、响应体、错误码)。依赖只允许 serde
+apps/*  →  ui  →  ┬─ app-core ─┐
+                  └─ api ──────┴─→ contract
+```
+
+```
+crates/contract/   线上格式(响应体、协议版本号)。依赖只允许 serde
 crates/app-core/   客户端领域:状态与改变状态的规则。不依赖 slint,不做 IO
 crates/api/        HTTP 客户端。native/wasm 的差异在此吸收,不向上传播
-crates/ui/         Slint 界面声明 + 与 app-core 的双向绑定
+crates/ui/         Slint 界面声明 + 组装点:把 api 注入 app-core
 apps/desktop/      桌面平台入口(linux / windows / macOS)
 apps/android/      Android 平台入口(cdylib)+ gradle/ 打包工程
+server/            开发用 axum 服务端,与客户端共享 contract
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
 scripts/build-apk.sh   APK 编译逻辑,容器/本机通用(cargo-ndk + gradle assembleDebug)
 docs/build-apk.md  APK 构建全流程与编译逻辑详解
 ```
 
-`contract` 与 `api` 目前是占位,内容随穿透式请求链路加入。
+`app-core` 不知道 `api` 的存在:网络由 `ui` 注入。这既让领域逻辑能脱离网络单测,
+也让 `Send` 约束被关在 `api` 内部,`app-core` 因此能原样编到 wasm。见
+[`docs/adr/0002`](docs/adr/0002-send-boundary-lives-inside-api-crate.md)。
 
 裸 `cargo build` 只构建桌面链路(workspace 的 `default-members`)。
-android / web / ios 一律靠 `-p` 显式构建 —— 因为 `android_main` 在宿主机
+android / web / ios / server 一律靠 `-p` 显式构建 —— 因为 `android_main` 在宿主机
 target 上根本编不过。
+
+## 跑通客户端-服务端往返
+
+```sh
+just dev-server              # 终端 1:axum,监听 127.0.0.1:3000
+just dev                     # 终端 2:桌面端,点「Check server」
+just test-api                # 终端 2:或者直接打一次真实请求
+```
+
+Android 真机:
+
+```sh
+just dev-server              # 终端 1
+just build-apk-native        # 终端 2
+just run-android             # 装 APK + adb reverse + 看日志
+```
+
+手机上的 `127.0.0.1` 指的是**手机自己**,所以必须 `adb reverse tcp:3000 tcp:3000`
+把它转发到开发机(`just run-android` 已包含这一步,adb 重连后需重新执行)。
+另外 Android 9 起默认禁止明文 HTTP,`usesCleartextTraffic` 只在 debug 变体的
+manifest 里打开。
 
 ## 为什么有 Java 代码?
 
