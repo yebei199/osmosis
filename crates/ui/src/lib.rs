@@ -154,3 +154,59 @@ mod fps {
         timer
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use api::ApiError;
+    use app_core::HealthDto;
+
+    use super::*;
+
+    /// 生产侧由 `app.slint` 的 `import` 内嵌;测试自己再读一份来查字形覆盖。
+    const CJK_SUBSET: &[u8] =
+        include_bytes!("../fonts/cjk-subset.ttf");
+
+    /// 子集字体必须覆盖 [`describe`] 可能吐出的每一个非 ASCII 字符。
+    ///
+    /// 字符集不是手抄的:直接遍历 `describe` 在各状态下的真实输出。新增中文
+    /// 文案而忘了重新裁字体时,这里就会红。
+    #[test]
+    fn describe_only_uses_subset_glyphs() {
+        let face = ttf_parser::Face::parse(CJK_SUBSET, 0)
+            .expect("子集字体应能被解析");
+
+        // Failed 里的 message 是 `ApiError` 的 Display,自带中文 —— 这三个变体
+        // 必须逐一走到,否则漏字要等到线上点出错误才看得见。
+        let failures = [
+            ApiError::Transport("error sending request".to_owned()),
+            ApiError::Decode("expected value".to_owned()),
+            ApiError::VersionMismatch { expected: 1, actual: 2 },
+        ];
+
+        let states = [
+            HealthState::Idle,
+            HealthState::Loading,
+            // status 由服务端给,恒为 ASCII 的 "ok"。
+            HealthState::Loaded(HealthDto {
+                status: "ok".to_owned(),
+                protocol_version: 1,
+            }),
+        ]
+        .into_iter()
+        .chain(
+            failures
+                .into_iter()
+                .map(|err| HealthState::Failed(err.to_string())),
+        )
+        .collect::<Vec<_>>();
+
+        for state in &states {
+            for ch in describe(state).chars().filter(|c| !c.is_ascii()) {
+                assert!(
+                    face.glyph_index(ch).is_some(),
+                    "子集字体缺字形 {ch:?} —— 重跑 `just font-subset` 并把它加进字符集",
+                );
+            }
+        }
+    }
+}

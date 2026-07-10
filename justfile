@@ -39,6 +39,23 @@ dev-web:
     cp apps/web/index.html dist/web/
     nix-shell slint.nix --run 'python3 -m http.server 8080 -d dist/web'
 
+# 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
+# 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
+# 改了界面上的中文文案后跑一遍,把新字符补进 --text —— 注意 api::ApiError 的
+# Display 也会原样显示到界面上。ASCII 一并裁入,好让中英混排的那行文案整体落在
+# 同一个字体上,不依赖逐字形回退。
+# 漏字不会静默:cargo test -p ui 的 describe_only_uses_subset_glyphs 会报出缺哪个字。
+# name-IDs 13/14 是 OFL 的许可声明,必须随子集一起分发,故显式保留。
+font-subset:
+    nix-shell -p python3Packages.fonttools --run "pyftsubset \
+      $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
+      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,' \
+      --unicodes=U+0020-007E \
+      --layout-features= --no-hinting --desubroutinize \
+      --notdef-outline --name-IDs+=13,14 \
+      --output-file=crates/ui/fonts/cjk-subset.ttf"
+    @ls -la crates/ui/fonts/cjk-subset.ttf
+
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
 dev-server:
     cargo run -p server

@@ -2,6 +2,11 @@
 // 计数值保存在 Rust 一侧(crates/app-core),以 property 形式推送到这里;
 // 按钮点击通过 `bump` 回调传回去。
 
+// slint 自带的 Inter 没有汉字,wasm 上又没有系统字体可回退,健康状态那行中文
+// 会渲染成豆腐块。这里内嵌一份裁到只剩所需字符的子集(见 `just font-subset`),
+// 由 slint 编译器把字节打进产物,再按 family 名引用。
+import "../fonts/cjk-subset.ttf";
+
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
 //
@@ -114,8 +119,11 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // 全 UI 唯一一处中文。子集字体连 ASCII 一起裁了,所以这行中英混排
+            // 的文案整体落在同一个字体上,不依赖 slint 的逐字形回退。
             Text {
                 text: root.health-text;
+                font-family: "Maple Mono NF CN";
                 color: #9aa0b4;
                 font-size: 13px;
                 horizontal-alignment: center;
