@@ -12,6 +12,7 @@
 //! 见 `docs/adr/0004`。
 
 mod android;
+mod boundaries;
 mod shell;
 
 use std::process::ExitCode;
@@ -22,6 +23,7 @@ const USAGE: &str = "\
 
 命令:
   android [--abis \"<abi> ...\"]   交叉编译 native 库并打出 debug APK
+  boundaries                     校验 ADR 里的架构约束(CI 与 `just ci` 共用)
 
 环境变量:
   ABIS               空格分隔的 ABI 列表(默认 arm64-v8a),被 --abis 覆盖
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
 
     let result = match command.as_str() {
         "android" => android::build_apk(&args[1..]),
+        "boundaries" => boundaries::verify(&args[1..]),
         other => Err(format!("未知命令: {other}\n\n{USAGE}")),
     };
 

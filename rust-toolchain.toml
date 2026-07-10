@@ -1,0 +1,23 @@
+[toolchain]
+channel = "stable"
+profile = "default"
+
+# 交叉编译 target。`just ci` 会逐个 check 它们,列在这里让 rustup 自动装上,
+# 新克隆的机器无需手动 `rustup target add`。
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-linux-android",  # apps/android
+    "wasm32-unknown-unknown", # apps/web
+    "aarch64-apple-ios",      # apps/ios(只验证编译,打包需 macOS)
+]
+
+# 必备组件:确保团队成员的 IDE 都能正常工作。
+#
+# 只能填 rustup **组件**。`xtask` 不是组件,而是 .cargo/config.toml 里的一个
+# cargo alias(`cargo xtask` → `cargo run -p xtask --`);写在这里只会让 rustup
+# 每次都打印 "skipping unavailable component xtask"。
+components = [
+    "rust-src", # 标准库源码(跳转查看源码必备)
+    "clippy",   # 代码检查
+    "rustfmt",  # 代码格式化
+]

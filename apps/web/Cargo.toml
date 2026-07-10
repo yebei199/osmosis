@@ -1,0 +1,15 @@
+[package]
+name = "app-web"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Web 平台入口:编译为 wasm,由浏览器加载"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ui.workspace = true
+wasm-bindgen = "0.2"
+# wasm 上 winit 走 canvas,femtovg 走 WebGL。
+slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }

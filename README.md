@@ -1,10 +1,19 @@
 # Slint Study
 
-一个横跨多端的 [Slint](https://slint.dev) 应用骨架 —— 目前是一个点击计数器。
-UI 用 Slint 编写,逻辑用 Rust 编写。目标覆盖 web / linux / windows / macOS /
-iOS / android 六端,当前已实现 android 与 linux。
+一个横跨多端的 [Slint](https://slint.dev) 应用骨架 —— 目前是一个点击计数器,
+外加一次真实的客户端-服务端往返。UI 用 Slint 编写,逻辑用 Rust 编写。
+
+| 端 | 状态 |
+|----|------|
+| linux | 能构建、能运行 |
+| android | 能构建、能运行(真机) |
+| web / iOS | 能编译(CI 保证),尚未打包 |
+| windows / macOS | 复用 `apps/desktop`,只差一个 target |
 
 术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/)。
+
+**提交前跑 `just ci`** —— 它逐字复述 `.github/workflows/ci.yml` 的命令序列。
+`dev` 分支上的 push 不触发 CI,这是唯一的防线。
 
 ## 目录结构
 
@@ -22,10 +31,12 @@ crates/api/        HTTP 客户端。native/wasm 的差异在此吸收,不向上�
 crates/ui/         Slint 界面声明 + 组装点:把 api 注入 app-core
 apps/desktop/      桌面平台入口(linux / windows / macOS)
 apps/android/      Android 平台入口(cdylib)+ gradle/ 打包工程
+apps/ios/          iOS 平台入口(staticlib)。只验证编译,打包需 macOS
+apps/web/          Web 平台入口(cdylib + wasm-bindgen)。只验证编译
 server/            开发用 axum 服务端,与客户端共享 contract
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
-scripts/build-apk.sh   APK 编译逻辑,容器/本机通用(cargo-ndk + gradle assembleDebug)
+xtask/             构建逻辑(`cargo xtask android`),容器/本机通用
 docs/build-apk.md  APK 构建全流程与编译逻辑详解
 ```
 

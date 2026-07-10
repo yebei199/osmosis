@@ -44,6 +44,27 @@ pub fn run_in(
     Ok(())
 }
 
+/// 在仓库根下跑一条命令并捕获其标准输出。
+pub fn capture(
+    program: &str,
+    args: &[&str],
+) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .current_dir(repo_root())
+        .output()
+        .map_err(|e| format!("无法执行 {program}: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "{program} 失败:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("{program} 的输出不是 UTF-8: {e}"))
+}
+
 /// 读取必需的环境变量。
 pub fn require_env(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| {
