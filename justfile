@@ -30,6 +30,15 @@ dev:
 dev-fps:
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
 
+# 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8080
+# 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
+# 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
+dev-web:
+    nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
+    nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
+    cp apps/web/index.html dist/web/
+    nix-shell slint.nix --run 'python3 -m http.server 8080 -d dist/web'
+
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
 dev-server:
     cargo run -p server
