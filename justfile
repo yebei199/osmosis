@@ -31,18 +31,15 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
-# TMPDIR=/tmp:本配方不走 nix-shell,却继承了全局的 sccache(RUSTC_WRAPPER)。若当前 shell
-# 的 TMPDIR 指向一个已被清理的 nix-shell 目录,sccache 建不出临时目录会整个编译失败。CI 配方
-# 都包在 nix-shell 里、每次拿到全新 TMPDIR,故永远碰不到,只有裸 cargo run 的 dev 会踩。
 [group('三端')]
 [group('桌面')]
 dev:
-    TMPDIR=/tmp SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
+    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
 
 # 同上,外加左上角帧率读数。注意 debug-fps 会让渲染循环满转
 [group('桌面')]
 dev-fps:
-    TMPDIR=/tmp SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
+    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8080
 # 本命令自带 dev-server,不必另开终端 —— 「Check server」开箱即通。
