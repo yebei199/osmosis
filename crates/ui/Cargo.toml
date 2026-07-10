@@ -15,6 +15,10 @@ slint.workspace = true
 [build-dependencies]
 slint-build.workspace = true
 
+# 只用来在测试里查子集字体的 cmap。slint 自己也依赖它,不引入新的下载。
+[dev-dependencies]
+ttf-parser = "0.25"
+
 [features]
 default = []
 # 帧率计。开启后每帧主动请求重绘,渲染循环会一直满转 —— 移动端上白耗电,
