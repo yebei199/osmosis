@@ -5,7 +5,7 @@
 #
 # 构建镜像:      docker build -t slint-study-builder docker/
 # 构建 APK:      见 ./build.sh(把仓库挂载到 /work,并在容器内
-#                运行 scripts/build-apk.sh)
+#                运行 cargo xtask android)
 
 ARG BASE_IMAGE=ubuntu:24.04
 FROM ${BASE_IMAGE}

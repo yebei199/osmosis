@@ -2,13 +2,13 @@
 
 ## 两条路,一个内核
 
-真正的编译逻辑只有一份:`scripts/build-apk.sh`(cargo-ndk 交叉编译 → gradle 打包)。
+真正的编译逻辑只有一份:`cargo xtask android`(cargo-ndk 交叉编译 → gradle 打包)。
 它**容器和本机通用**,靠 `ANDROID_HOME` / `ANDROID_NDK_HOME` 找工具链,不假设自己
 在哪。外面套两种「怎么把工具链准备好」的方式:
 
 ```
                                         ┌─ docker/build.sh ─→ Docker 容器 ─┐
-你 → just build-apk / build-apk-native ─┤                                  ├─→ scripts/build-apk.sh(真正编译)
+你 → just build-apk / build-apk-native ─┤                                  ├─→ cargo xtask android(真正编译)
                                         └─ nix-shell Android.nix ──────────┘
 ```
 
@@ -38,9 +38,9 @@ NDK r27、Gradle 8.11、带 Android target 的 Rust、cargo-ndk。手工在每�
 - **分发子命令**:`apk`(默认)/ `image` / `shell` / `clean`。
 - **交回属主**:容器内以 root 构建,产物用 `CHOWN_UID/GID` 改回当前宿主机用户。
 
-真正的编译逻辑全部在容器内的 `scripts/build-apk.sh`。
+真正的编译逻辑全部在容器内的 `cargo xtask android`。
 
-## `scripts/build-apk.sh` 的三步编译
+## `cargo xtask android` 的三步编译
 
 ### 1. 用 cargo-ndk 交叉编译 Rust native 库(release profile)
 
@@ -53,8 +53,9 @@ cargo ndk -t <abi> --platform 26 -o apps/android/gradle/app/src/main/jniLibs \
   `NativeActivity` 加载的那个 `.so`。
 - **即使是「debug」APK,native 库也一律用 `--release`**:debug profile 的
   Slint + Skia 体积巨大且极慢,所以打包进去的始终是 release profile 的 `.so`。
-- `-p app-android` 指定平台入口 crate;它的 Cargo.toml 静态选定了 `slint/backend-android-activity-06`(Android 后端 +
-  Skia 渲染器);`--no-default-features` 关掉桌面用的 winit/femtovg。
+- `-p app-android` 指定平台入口 crate;它的 Cargo.toml 静态选定了
+  `slint/backend-android-activity-06`(Android 后端 + Skia 渲染器)。桌面用的
+  winit/femtovg 只出现在 `apps/desktop` 的依赖图里,不会被牵连进来。
 - 输出直接落进 Gradle 会打包的 `jniLibs/<abi>/`。
 - 额外从 NDK sysroot 拷一份 `libc++_shared.so`:Skia 链接的是共享版 C++ STL。
 
@@ -84,7 +85,7 @@ cd apps/android/gradle && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDeb
 ## NixOS 原生路径
 
 `just build-apk-native` 不用 Docker,而是 `nix-shell Android.nix --run
-'CARGO_TARGET_DIR=target-android scripts/build-apk.sh'`——**编译内核是同一个脚本**,
+'CARGO_TARGET_DIR=target-android cargo xtask android'`——**编译内核是同一份 Rust 代码**,
 只是工具链来自 nix 而非容器。`Android.nix` 提供和 Docker 镜像同版本的 SDK/NDK/Gradle/
 cargo-ndk,并在 `shellHook` 里填了两处 NixOS 特有的坑:
 
@@ -111,7 +112,8 @@ release 编译);冷启动原生更快(nix 二进制缓存替换 vs Docker 现装
 | `docker/build.sh` | Docker 宿主机入口:建镜像、透传代理、挂卷、跑容器、交回属主 |
 | `docker/Dockerfile` | 可复现的工具链镜像(JDK/SDK/NDK/Gradle/Rust/cargo-ndk) |
 | `Android.nix` | NixOS 本机原生工具链(nix-shell),Docker 的等价替代 |
-| `scripts/build-apk.sh` | 真正的编译逻辑,容器/本机通用(cargo-ndk → gradle → dist) |
-| `Cargo.toml` | `crate-type=cdylib`、`android`/`desktop` feature、release profile |
+| `xtask/src/android.rs` | 真正的编译逻辑,容器/本机通用(cargo-ndk → gradle → dist) |
+| `Cargo.toml`(根) | workspace 成员、`default-members`、统一依赖版本、release profile |
+| `apps/android/Cargo.toml` | `crate-type=cdylib`、`[lib] name=slint_study`、android 后端 |
 | `apps/android/gradle/app/build.gradle` | Android 打包配置、abiFilters、buildTypes |
 | `apps/android/gradle/.../MainActivity.java` | 极薄 NativeActivity,只做全面屏 |

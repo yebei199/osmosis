@@ -4,6 +4,7 @@
 # 以及配好 Android target 的 rustup。
 #
 #   nix-shell Android.nix
+#   cargo xtask android            # 等价于下面两步
 #   cargo ndk -t arm64-v8a --platform 26 -o apps/android/gradle/app/src/main/jniLibs \
 #       build -p app-android --lib --release
 #   (cd apps/android/gradle && gradle --no-daemon assembleDebug)

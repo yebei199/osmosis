@@ -25,7 +25,7 @@ build-apk:
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just build-apk-native
 build-apk-native:
-    nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android scripts/build-apk.sh'
+    nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 install-apk:

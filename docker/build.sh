@@ -82,7 +82,7 @@ case "${1:-apk}" in
         ;;
     apk)
         build_image
-        run_in_container scripts/build-apk.sh
+        run_in_container cargo xtask android
         echo
         echo "Install with: adb install -r dist/slint-study-debug.apk"
         ;;
