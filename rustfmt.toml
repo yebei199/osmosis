@@ -1,0 +1,24 @@
+# 指定 Rust 版本
+edition = "2024"
+# 每行最大宽度
+max_width = 60
+# 缩进空格数
+tab_spaces = 4
+# 换行符风格，使用 Unix 风格换行符
+newline_style = "Unix"
+# 是否使用硬制表符（tab）而不是空格
+hard_tabs = false
+# 是否使用小型启发式规则来格式化代码
+use_small_heuristics = "Default"
+# 是否重新排序导入语句
+reorder_imports = true
+# 是否重新排序模块声明
+reorder_modules = true
+# 是否移除嵌套的括号
+remove_nested_parens = true
+# 是否合并派生宏（derive macros）
+merge_derives = true
+# 是否使用 ? 操作符简写形式（代替 try! 宏）
+use_try_shorthand = true
+# 是否使用字段初始化简写形式
+use_field_init_shorthand = true
