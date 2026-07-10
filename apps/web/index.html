@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!--
+  宿主页面。slint 的 winit 后端在 wasm 上会去找 id 为 `canvas` 的元素,
+  名字不能改。宽高由 slint 按窗口尺寸接管,这里给的是首帧前的占位值。
+-->
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>slint_study (web)</title>
+    <style>
+      body { margin: 0; background: #1e1e1e; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <script type="module">
+      // wasm-bindgen 以 crate 名(下划线形式)命名产物。
+      import init from "./app_web.js";
+      init();
+    </script>
+  </body>
+</html>

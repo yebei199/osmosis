@@ -27,7 +27,13 @@ let
   ];
 in
 pkgs.mkShell {
-  nativeBuildInputs = [ pkgs.pkg-config ];
+  nativeBuildInputs = [
+    pkgs.pkg-config
+    # wasm 链路:版本必须与 Cargo.lock 里的 wasm-bindgen 完全一致,
+    # 否则 CLI 直接拒绝生成胶水代码。python3 只用来起静态服务器。
+    pkgs.wasm-bindgen-cli_0_2_126
+    pkgs.python3
+  ];
   buildInputs = runtimeLibs;
 
   shellHook = ''
