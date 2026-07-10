@@ -32,8 +32,21 @@ docker run ... cargo xtask android
 代价是每一条 `cp` 都从一行变成三行。这笔账在只有一个端的时候是亏的;六个端、
 每端一套产物路径之后才划算 —— 这也是为什么这一步排在结构重构之后,而不是之前。
 
+## 架构边界检查也归 xtask
+
+`cargo xtask boundaries` 把 ADR-0001 与 ADR-0002 的约束变成断言(contract 的依赖白名单、
+api 在 wasm 上无 tokio、app-core 能编到 wasm)。
+
+它**不能**写成 CI workflow 里的一段 bash。写在那里,本地就永远跑不到同一份代码,
+只能靠手打一遍等价命令来"验证" —— 而那正是它要防的那类漂移。现在 CI 与
+`just ci` 调的是同一个二进制,且 `depends_on` 的前缀误报(`tokio-util` 不是 `tokio`)
+有单元测试兜着。
+
 ## 保留 just
 
 `just` 是命令目录,`just --list` 就是文档;`xtask` 是实现。换实现不换入口。
 `just dev` / `install-apk` / `adb-reverse` / `serve-apk` 这类"一行命令包一下 adb 或
 miniserve"的 recipe 不进 xtask —— 把它们包成 Rust 子命令是纯亏。
+
+`just ci` 是个例外中的例外:它逐字复述 `.github/workflows/ci.yml` 的命令序列。
+`dev` 分支上的 push 不触发 CI,因此提交前跑 `just ci` 是唯一的防线。

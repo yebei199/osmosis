@@ -1,5 +1,27 @@
 apk := "dist/slint-study-debug.apk"
 
+# 本地跑一遍 CI 会跑的全部检查。dev 上的 push 不触发 CI,提交前跑这个
+# 与 .github/workflows/ci.yml 一一对应,命令逐字相同
+ci: ci-test ci-cross ci-boundaries
+    @echo "==> CI 全部通过"
+
+# 桌面链路:单测 + clippy(-D warnings,和 CI 一致)
+ci-test:
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test'
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p xtask'
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets'
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p server -p xtask'
+
+# 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
+ci-cross:
+    nix-shell slint.nix --run 'cargo check -p app-web --target wasm32-unknown-unknown'
+    nix-shell slint.nix --run 'cargo check -p app-ios --target aarch64-apple-ios'
+    nix-shell Android.nix --run 'cargo check -p app-android --target aarch64-linux-android'
+
+# 架构边界(docs/adr/0001、0002)。与 CI 调的是同一份 xtask 代码
+ci-boundaries:
+    nix-shell slint.nix --run 'cargo xtask boundaries'
+
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
 dev:
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
