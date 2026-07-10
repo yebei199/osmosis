@@ -14,7 +14,7 @@
 | `Dockerfile` | 构建器镜像:JDK 17、Android SDK(platform 34)、NDK r27、Gradle 8、带 Android target 的 Rust、cargo-ndk |
 | `build.sh` | 宿主机入口:建镜像、透传代理、挂载缓存卷、跑容器、把产物属主交回你 |
 
-真正的编译逻辑不在这里,而在 `../scripts/build-apk.sh`——那份脚本**容器和本机通用**,
+真正的编译逻辑不在这里,而在 `../xtask/`——`cargo xtask android` **容器和本机通用**,
 Docker 路径和 `Android.nix` 原生路径都调它,只是工具链来源不同。
 
 ## 用法

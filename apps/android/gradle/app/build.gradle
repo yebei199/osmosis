@@ -39,7 +39,7 @@ android {
     }
 
     // libslint_study.so (+ libc++_shared.so) are placed in
-    // src/main/jniLibs/<abi>/ by scripts/build-apk.sh via cargo-ndk.
+    // src/main/jniLibs/<abi>/ by `cargo xtask android` via cargo-ndk.
 }
 
 dependencies {
