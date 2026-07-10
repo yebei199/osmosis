@@ -1,42 +1,35 @@
-[package]
-name = "slint-study"
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+# 裸 `cargo build` / `cargo test` / IDE 的 cargo check 只走桌面链路。
+# apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 将来拉的
+# wasm-bindgen 在 linux 上也是白搭 —— 它们一律靠 `-p` 显式构建。
+# 见 docs/adr/0003。
+default-members = ["crates/*", "apps/desktop"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "A minimal Slint Android app (counter), modelled on ntrack's build shape"
 
-[lib]
-name = "slint_study"
-# cdylib: the .so loaded by NativeActivity on Android. rlib: lets the desktop
-# binary link the same code.
-crate-type = ["cdylib", "rlib"]
+[workspace.dependencies]
+# 内部 crate。依赖方向严格单向:apps/* → ui → app-core → api → contract
+contract = { path = "crates/contract" }
+api = { path = "crates/api" }
+app-core = { path = "crates/app-core" }
+ui = { path = "crates/ui" }
 
-[[bin]]
-name = "slint-study-desktop"
-path = "src/main.rs"
-required-features = ["desktop"]
-
-[dependencies]
-log = "0.4"
+# 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
+# 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
+# 由各平台入口 crate 各自追加 —— 否则 feature 会被统一,android 会拉进 winit。
 slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2"] }
-
-[target.'cfg(target_os = "android")'.dependencies]
+slint-build = "1.16"
+log = "0.4"
 android_logger = "0.15"
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
-[features]
-default = []
-# Desktop dev build: `cargo run --features desktop`
-desktop = ["slint/backend-winit", "slint/renderer-femtovg", "slint/renderer-software"]
-# Android build (via cargo-ndk): android-activity backend, Skia renderer.
-android = ["slint/backend-android-activity-06"]
-
-[build-dependencies]
-slint-build = "1.16"
-
-# Native libs shipped in the APK use the release profile (small, optimized .so).
+# APK 里打包的 native 库一律用 release profile:debug profile 的 Slint+Skia
+# 构建体积巨大且很慢,即使是 "debug" APK 也装 release 的 .so。
 [profile.release]
 lto = "fat"
 codegen-units = 1

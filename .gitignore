@@ -5,10 +5,10 @@
 
 # Build artifacts
 /dist
-/android/app/src/main/jniLibs
-/android/app/build
-/android/build
-/android/.gradle
+/apps/android/gradle/app/src/main/jniLibs
+/apps/android/gradle/app/build
+/apps/android/gradle/build
+/apps/android/gradle/.gradle
 
 # IDE / misc
 *.iml

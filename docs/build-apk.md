@@ -45,26 +45,26 @@ NDK r27、Gradle 8.11、带 Android target 的 Rust、cargo-ndk。手工在每�
 ### 1. 用 cargo-ndk 交叉编译 Rust native 库(release profile)
 
 ```
-cargo ndk -t <abi> --platform 26 -o android/app/src/main/jniLibs \
-    build --lib --release --no-default-features --features android
+cargo ndk -t <abi> --platform 26 -o apps/android/gradle/app/src/main/jniLibs \
+    build -p app-android --lib --release
 ```
 
 - 编的是 `[lib] crate-type = ["cdylib"]`,产物是 `libslint_study.so`——APK 里被
   `NativeActivity` 加载的那个 `.so`。
 - **即使是「debug」APK,native 库也一律用 `--release`**:debug profile 的
   Slint + Skia 体积巨大且极慢,所以打包进去的始终是 release profile 的 `.so`。
-- `--features android` 启用 `slint/backend-android-activity-06`(Android 后端 +
+- `-p app-android` 指定平台入口 crate;它的 Cargo.toml 静态选定了 `slint/backend-android-activity-06`(Android 后端 +
   Skia 渲染器);`--no-default-features` 关掉桌面用的 winit/femtovg。
 - 输出直接落进 Gradle 会打包的 `jniLibs/<abi>/`。
 - 额外从 NDK sysroot 拷一份 `libc++_shared.so`:Skia 链接的是共享版 C++ STL。
 
 > 顺带一提:`build.rs` 在这一步里由 Cargo 触发,用 `slint-build` 把
-> `ui/app.slint` 编译成 Rust 代码(material 风格),和 Android 无关,桌面构建也走同一条。
+> `crates/ui/slint/app.slint` 编译成 Rust 代码(material 风格),和 Android 无关,桌面构建也走同一条。
 
 ### 2. 用 Gradle 打包 APK
 
 ```
-cd android && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug
+cd apps/android/gradle && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug
 ```
 
 - 此时 Rust 已经编完,Gradle **不碰 Rust**,只负责组装 Android 壳:
@@ -77,7 +77,7 @@ cd android && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDebug
 
 ### 3. 收尾
 
-把 `android/app/build/outputs/apk/debug/app-debug.apk` 拷成
+把 `apps/android/gradle/app/build/outputs/apk/debug/app-debug.apk` 拷成
 `dist/slint-study-debug.apk`。若设了 `CHOWN_UID`(仅 Docker 传)则把产物属主交回
 宿主机用户;本机原生构建不设这个变量,自然跳过。
 
@@ -113,5 +113,5 @@ release 编译);冷启动原生更快(nix 二进制缓存替换 vs Docker 现装
 | `Android.nix` | NixOS 本机原生工具链(nix-shell),Docker 的等价替代 |
 | `scripts/build-apk.sh` | 真正的编译逻辑,容器/本机通用(cargo-ndk → gradle → dist) |
 | `Cargo.toml` | `crate-type=cdylib`、`android`/`desktop` feature、release profile |
-| `android/app/build.gradle` | Android 打包配置、abiFilters、buildTypes |
-| `android/.../MainActivity.java` | 极薄 NativeActivity,只做全面屏 |
+| `apps/android/gradle/app/build.gradle` | Android 打包配置、abiFilters、buildTypes |
+| `apps/android/gradle/.../MainActivity.java` | 极薄 NativeActivity,只做全面屏 |

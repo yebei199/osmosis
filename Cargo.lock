@@ -219,6 +219,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "contract",
+]
+
+[[package]]
+name = "app-android"
+version = "0.1.0"
+dependencies = [
+ "android_logger",
+ "log",
+ "slint",
+ "ui",
+]
+
+[[package]]
+name = "app-core"
+version = "0.1.0"
+
+[[package]]
+name = "app-desktop"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "slint",
+ "ui",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -809,6 +839,10 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "contract"
+version = "0.1.0"
 
 [[package]]
 name = "convert_case"
@@ -4380,17 +4414,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slint-study"
-version = "0.1.0"
-dependencies = [
- "android_logger",
- "env_logger",
- "log",
- "slint",
- "slint-build",
-]
-
-[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4949,6 +4972,15 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ui"
+version = "0.1.0"
+dependencies = [
+ "app-core",
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

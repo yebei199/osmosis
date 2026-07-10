@@ -1,0 +1,22 @@
+[package]
+name = "app-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "桌面平台入口(linux / windows / macOS)"
+
+[[bin]]
+name = "slint-study-desktop"
+path = "src/main.rs"
+
+[dependencies]
+ui.workspace = true
+env_logger.workspace = true
+# 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
+# 否则 android 构建会被 feature 统一拉进 winit。
+slint = { workspace = true, features = ["backend-winit", "renderer-femtovg", "renderer-software"] }
+
+[features]
+default = []
+# 透传给 ui:显示帧率读数(会让渲染循环满转)。
+debug-fps = ["ui/debug-fps"]
