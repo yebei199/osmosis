@@ -5,7 +5,17 @@ members = ["crates/*", "apps/*", "server", "xtask"]
 # apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 将来拉的
 # wasm-bindgen 在 linux 上也是白搭 —— 它们一律靠 `-p` 显式构建。
 # 见 docs/adr/0003。
-default-members = ["crates/*", "apps/desktop"]
+#
+# render3d 也显式排除:它拉整个 bevy(debug 产物数百 MB),只有 apps/desktop 的
+# `bevy-3d` feature 才需要。留在默认成员里会让 IDE 的 cargo check 每次都编 bevy。
+# 不能用 `crates/*` glob 再排除单个,cargo 不支持,只能逐一列出。
+default-members = [
+    "crates/contract",
+    "crates/api",
+    "crates/app-core",
+    "crates/ui",
+    "apps/desktop",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -33,12 +43,11 @@ android_logger = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
-# 用 git main 而非 0.19 稳定版:bsn! 宏(Bevy Scene Notation)与新特性只在 main。
-# 钉死到具体 rev 保证可复现 —— main 是移动靶,不钉会随时间漂、连编译都不稳。
-# main 仍依赖 wgpu 29,与 slint 的 wgpu-29 由 cargo 统一为同一份(纹理共享的硬前提)。
+# 用 0.19 稳定版(crates.io):bsn! 只在未发布的 main,权衡后不追新特性、要稳定。
+# 0.19 依赖 wgpu 29,与 slint 的 wgpu-29 由 cargo 统一为同一份(纹理共享的硬前提)。
 # default-features=false + 手挑最小 feature:不要 bevy_winit(它会抢窗口)、
 # 不要 audio/gilrs(会拉 alsa/udev 系统库)。features 是最小起步值,缺什么编译器会报。
-bevy = { git = "https://github.com/bevyengine/bevy", rev = "85899e2e6e830f60afcbb4b3606e1860e4543edf", default-features = false, features = [
+bevy = { version = "0.19", default-features = false, features = [
     "std",
     "bevy_asset",
     "bevy_render",

@@ -1,7 +1,7 @@
 # render3d
 
-3D 桥:用 **bevy**(git main,含 `bsn!` 等新特性)在**共享的** wgpu-29 device 上
-离屏渲染,产出一张 `slint::Image` 交给 UI 层合成。
+3D 桥:用 **bevy**(0.19 稳定版)在**共享的** wgpu-29 device 上离屏渲染,
+产出一张 `slint::Image` 交给 UI 层合成。
 
 ## 为什么存在 / 边界
 
@@ -22,10 +22,9 @@
 3. **wgpu 版本对齐**:bevy 与 slint 必须共享同一 wgpu 大版本(现为 29,Cargo.lock
    里实为单份 `wgpu 29.0.4`)。升级任一方前先核对,否则 `wgpu::Texture` 类型不兼容。
 
-## 依赖钉扎
+## 依赖版本
 
-bevy 用 git `rev` 钉死(见根 `Cargo.toml`)。main 是移动靶,不钉会随时间漂到连
-编译都不稳;`bsn!` 只在 main,故不能用 0.19 稳定版。
+bevy 用 0.19 稳定版(crates.io)。`bsn!` 宏只在未发布的 main,权衡后选稳定、不追它。
 
 ## 运行
 
