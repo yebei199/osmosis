@@ -24,4 +24,5 @@ default = []
 debug-fps = ["ui/debug-fps"]
 # 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
 # 需要 vulkan 运行期库,用仓库根的 render3d.nix。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "slint/renderer-femtovg-wgpu"]
+# ui/debug-fps:3D 页本就每帧重绘,顺带在左上角显示诚实即时帧率(已去强制重绘,不额外耗电)。
+bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "slint/renderer-femtovg-wgpu", "ui/debug-fps"]

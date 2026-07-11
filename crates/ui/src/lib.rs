@@ -164,9 +164,10 @@ fn describe(state: &HealthState) -> String {
 
 /// 帧率计。仅在 `debug-fps` feature 下编译。
 ///
-/// 在渲染通知回调里累计帧数,每个采样周期把帧率推送给 UI。每帧都主动请求重绘,
-/// 否则 UI 空闲时读到的会是 0 而不是实际帧率 —— 代价是渲染循环一直满转,
-/// 移动端上白耗电。这正是它默认关闭的原因。
+/// 在渲染通知回调里累计**真实发生的**帧数,每个采样周期算出帧率推给 UI。
+/// 刻意不主动请求重绘 —— Slint 是惰性渲染,空闲时本就不重绘,读数会自动趴到
+/// ~1(交互/动画时才飙高),这正是诚实的即时帧率,也不会白耗电。3D 页由
+/// `run_with_renderer` 的 Timer 每帧驱动重绘,这里自然就读到满帧。
 #[cfg(feature = "debug-fps")]
 mod fps {
     use std::cell::Cell;
@@ -188,19 +189,10 @@ mod fps {
         let frames = Rc::new(Cell::new(0u32));
 
         let frames_render = frames.clone();
-        let weak_render = ui.as_weak();
         ui.window()
             .set_rendering_notifier(move |state, _| {
-                if matches!(
-                    state,
-                    RenderingState::BeforeRendering
-                ) {
-                    frames_render
-                        .set(frames_render.get() + 1);
-                    if let Some(ui) = weak_render.upgrade()
-                    {
-                        ui.window().request_redraw();
-                    }
+                if matches!(state, RenderingState::BeforeRendering) {
+                    frames_render.set(frames_render.get() + 1);
                 }
             })
             .ok();
