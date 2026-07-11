@@ -27,16 +27,10 @@ fn android_main(app: slint::android::AndroidApp) {
     slint::android::init(app)
         .expect("slint android init failed");
 
-    // 下面这段 3D 分派与 apps/desktop/src/main.rs 里的一份**逐字相同**,故意不抽:
-    // 只两处、且签名漂移编译器会两边一起报错。若给某一端的 bevy 分支加初始化步骤,
-    // 记得同步另一端。
+    // 分派闭包已收敛进 render3d::run(三端共用),这里只构造:安卓有阻塞线程,走同步
+    // Scene::new。构造必须在建窗口前,原因见上面的 init 顺序说明。
     #[cfg(feature = "bevy-3d")]
-    {
-        let mut scene = render3d::Scene::new();
-        ui::run_with_renderer(move |yaw, pitch, w, h| {
-            scene.render_frame(yaw, pitch, w, h)
-        });
-    }
+    render3d::run(render3d::Scene::new());
     #[cfg(not(feature = "bevy-3d"))]
     ui::run();
 }

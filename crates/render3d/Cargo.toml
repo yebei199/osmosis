@@ -6,6 +6,9 @@ license-file.workspace = true
 description = "3D 桥:bevy 在共享 wgpu-29 device 上离屏渲染,产出 slint::Image 交给 UI 合成"
 
 [dependencies]
+# run() 把 Scene 接到 ui::run_with_renderer 的 seam 上。依赖方向 render3d → ui 无环:
+# ui 对 bevy/wgpu 一无所知(见 crates/ui),render3d 站在它的 seam 之上。
+ui.workspace = true
 bevy.workspace = true
 # 只开 unstable-wgpu-29 拿到 BackendSelector::require_wgpu_29 与 Image::try_from(wgpu::Texture) 的 API。
 # 实际渲染后端(backend-winit / renderer-femtovg-wgpu)由平台入口 crate 追加,这里不选。
