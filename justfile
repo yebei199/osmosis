@@ -31,15 +31,11 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
+# 可透传额外 feature,如左上角帧率读数:just dev debug-fps
 [group('三端')]
 [group('桌面')]
-dev:
-    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview
-
-# 同上,外加左上角帧率读数。注意 debug-fps 会让渲染循环满转
-[group('桌面')]
-dev-fps:
-    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview,debug-fps
+dev extra="":
+    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}
 
 # 桌面 + 嵌入的 bevy 3D 面板(见 crates/render3d)。走 render3d.nix 拿 vulkan 运行期库。
 # 无热重载:bevy 场景在 Rust 里,改完重跑。首帧就绪后窗口中间会出现一个自转的立方体。
@@ -94,12 +90,6 @@ dev-server:
 [group('服务端')]
 test-api:
     cargo test -p api -- --ignored
-
-# 在 Docker 里交叉编译 dist APK —— 给没有 nix 的机器/CI 用(宿主机只需 Docker/Podman)
-# ABIS 可选:默认 arm64-v8a;模拟器用 x86_64
-[group('安卓')]
-build-apk:
-    ./docker/build.sh
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just build-apk-native
