@@ -108,6 +108,12 @@ build-apk:
 build-apk-native:
     nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
 
+# 同上,但把 bevy 3D 面板(见 crates/render3d)编进 APK。native 库仍是 release
+# profile(bevy debug 产物几百 MB)。装机后窗口中间会出现自转立方体。
+[group('安卓')]
+build-apk-3d:
+    nix-shell Android.nix --run 'FEATURES=bevy-3d CARGO_TARGET_DIR=target-android cargo xtask android'
+
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
 install-apk:

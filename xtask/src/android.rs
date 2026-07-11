@@ -129,6 +129,10 @@ fn build_native_libs(
         unsafe { std::env::set_var("ANDROID_JAR", &jar) };
     }
 
+    // 可选透传 cargo features(仿照 ABIS 用环境变量,避免动 build_apk 的参数解析)。
+    // 例:`FEATURES=bevy-3d cargo xtask android` 出带 3D 的 APK。
+    let features = std::env::var("FEATURES").ok();
+
     // 走 `cargo ndk` 而非直接调 `cargo-ndk`:cargo 子命令期望 argv[1] 是子命令名。
     let mut args: Vec<&str> = vec!["ndk"];
     for abi in abis {
@@ -147,6 +151,10 @@ fn build_native_libs(
         "--lib",
         "--release",
     ]);
+    if let Some(features) = features.as_deref() {
+        args.push("--features");
+        args.push(features);
+    }
     run("cargo", &args)
 }
 
