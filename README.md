@@ -51,21 +51,21 @@ target 上根本编不过。
 ## 跑通客户端-服务端往返
 
 ```sh
-just dev-server              # 终端 1:axum,监听 127.0.0.1:3000
-just dev                     # 终端 2:桌面端,点「Check server」
-just test-api                # 终端 2:或者直接打一次真实请求
+just server-dev              # 终端 1:axum,监听 127.0.0.1:3000
+just desktop-dev             # 终端 2:桌面端,点「Check server」
+just server-test             # 终端 2:或者直接打一次真实请求
 ```
 
 Android 真机:
 
 ```sh
-just dev-server              # 终端 1
-just build-apk-native        # 终端 2
-just run-android             # 装 APK + adb reverse + 看日志
+just server-dev              # 终端 1
+just android-build           # 终端 2
+just android-run             # 装 APK + adb reverse + 看日志
 ```
 
 手机上的 `127.0.0.1` 指的是**手机自己**,所以必须 `adb reverse tcp:3000 tcp:3000`
-把它转发到开发机(`just run-android` 已包含这一步,adb 重连后需重新执行)。
+把它转发到开发机(`just android-run` 已包含这一步,adb 重连后需重新执行)。
 另外 Android 9 起默认禁止明文 HTTP,`usesCleartextTraffic` 只在 debug 变体的
 manifest 里打开。
 
@@ -90,16 +90,16 @@ Rust/Slint 渲染出的画面正是被这个 Activity 加载的 native `.so` 绘
 两条路,产物一致,按环境选一条:
 
 ```sh
-just build-apk         # Docker:给没有 nix 的机器/CI(= ./docker/build.sh)
-just build-apk-native  # NixOS 本机原生:更快、无镜像开销(nix-shell Android.nix)
+./docker/build.sh      # Docker:给没有 nix 的机器/CI
+just android-build     # NixOS 本机原生:更快、无镜像开销(nix-shell Android.nix)
 adb install -r dist/slint-study-debug.apk
 ```
 
 为模拟器(x86_64)或多个 ABI 构建:
 
 ```sh
-ABIS="x86_64" just build-apk               # 或 just build-apk-native
-ABIS="arm64-v8a armeabi-v7a x86_64" just build-apk
+ABIS="x86_64" just android-build           # 或 ABIS="x86_64" ./docker/build.sh
+ABIS="arm64-v8a armeabi-v7a x86_64" just android-build
 ```
 
 - Docker 路径细节见 [`docker/README.md`](docker/README.md);
@@ -113,13 +113,13 @@ ABIS="arm64-v8a armeabi-v7a x86_64" just build-apk
 cargo run -p app-desktop
 ```
 
-如果需要热重载 UI,改用 `just dev`:它启用了 Slint 的 `live-preview`
+如果需要热重载 UI,改用 `just desktop-dev`:它启用了 Slint 的 `live-preview`
 特性,编辑 `crates/ui/slint/*.slint` 会直接刷新运行中的窗口,无需重新编译或
 重启(Rust 逻辑会保留;修改 Rust 代码仍需重启)。
 
 ```sh
-just dev       # 热重载
-just dev-fps   # 外加左上角帧率读数
+just desktop-dev             # 热重载
+just desktop-dev debug-fps   # 外加左上角帧率读数
 ```
 
 帧率计藏在 `debug-fps` feature 后面,默认关闭:它每帧都主动请求重绘,会让

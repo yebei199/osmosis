@@ -31,24 +31,24 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
-# 可透传额外 feature,如左上角帧率读数:just dev debug-fps
+# 可透传额外 feature,如左上角帧率读数:just desktop-dev debug-fps
 [group('三端')]
 [group('桌面')]
-dev extra="":
+desktop-dev extra="":
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}
 
 # 桌面 + 嵌入的 bevy 3D 面板(见 crates/render3d)。走 render3d.nix 拿 vulkan 运行期库。
 # 无热重载:bevy 场景在 Rust 里,改完重跑。首帧就绪后窗口中间会出现一个自转的立方体。
 [group('桌面')]
-dev-3d:
+desktop-dev-3d:
     nix-shell render3d.nix --run 'cargo run -p app-desktop --features bevy-3d'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8080
-# 本命令自带 dev-server,不必另开终端 —— 「Check server」开箱即通。
+# 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
 [group('三端')]
-dev-web:
+web-dev:
     nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
     nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
     cp apps/web/index.html dist/web/
@@ -83,48 +83,48 @@ font-subset:
 
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
 [group('服务端')]
-dev-server:
+server-dev:
     cargo run -p server
 
-# 打一次真实的 GET /health(需要 dev-server 正在另一个终端里跑)
+# 打一次真实的 GET /health(需要 server-dev 正在另一个终端里跑)
 [group('服务端')]
-test-api:
+server-test:
     cargo test -p api -- --ignored
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
-# ABIS 可选:ABIS="x86_64" just build-apk-native
+# ABIS 可选:ABIS="x86_64" just android-build
 [group('三端')]
 [group('安卓')]
-build-apk-native:
+android-build:
     nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # 同上,但把 bevy 3D 面板(见 crates/render3d)编进 APK。native 库仍是 release
 # profile(bevy debug 产物几百 MB)。装机后窗口中间会出现自转立方体。
 [group('安卓')]
-build-apk-3d:
+android-build-3d:
     nix-shell Android.nix --run 'FEATURES=bevy-3d CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
-install-apk:
+android-install:
     adb install -r {{apk}}
 
-# 把手机的 127.0.0.1:3000 转发到开发机的 dev-server
+# 把手机的 127.0.0.1:3000 转发到开发机的 server-dev
 # 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
 # adb 重连后需要重新执行
 [group('安卓')]
-adb-reverse:
+android-reverse:
     adb reverse tcp:3000 tcp:3000
 
-# 装 APK、接通端口转发,然后看日志。前提:dev-server 已在另一个终端里跑
+# 装 APK、接通端口转发,然后看日志。前提:server-dev 已在另一个终端里跑
 [group('安卓')]
-run-android: install-apk adb-reverse
+android-run: android-install android-reverse
     adb shell am start -n io.github.slintstudy/.MainActivity
     adb logcat -s slint_study
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
-# 连的是别人的移动热点/公司 WiFi 多半被隔离,手机连不上,请改用 install-apk
+# 连的是别人的移动热点/公司 WiFi 多半被隔离,手机连不上,请改用 android-install
 [group('安卓')]
-serve-apk:
+android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
