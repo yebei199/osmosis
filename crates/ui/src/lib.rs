@@ -13,8 +13,11 @@ use std::time::Duration;
 use app_core::{Counter, Health, HealthState};
 use slint::{ComponentHandle, Timer, TimerMode};
 
-/// 3D 面板的驱动间隔。约 60fps —— 每帧驱动一次外部渲染器并请求重绘。
-const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// 3D 面板的驱动间隔。取 1ms 以**不人为设帧率上限**:实际帧率由 present(vsync)
+/// 与渲染耗时决定,能跑到显示器/Slint 原生刷新率(之前固定 16ms 把 3D 压在 ~62fps,
+/// 而同机 Slint 页能到更高)。只在 3D 页激活时驱动(render-active),不在其余页空耗。
+/// Slint 的 Timer 与事件循环单线程,回调超时也不会叠加,故等价于「有多快跑多快」。
+const FRAME_INTERVAL: Duration = Duration::from_millis(1);
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
@@ -57,7 +60,8 @@ pub fn run() {
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
 pub fn run_with_renderer(
-    mut on_frame: impl FnMut(f32, f32, u32, u32) -> slint::Image + 'static,
+    mut on_frame: impl FnMut(f32, f32, u32, u32) -> slint::Image
+    + 'static,
 ) {
     let ui = build_ui();
     #[cfg(feature = "debug-fps")]
@@ -68,19 +72,29 @@ pub fn run_with_renderer(
     // Timer 与其捕获的 `on_frame` 必须活到事件循环结束,所以持有到 run() 返回。
     let weak = ui.as_weak();
     let timer = Timer::default();
-    timer.start(TimerMode::Repeated, FRAME_INTERVAL, move || {
-        let Some(ui) = weak.upgrade() else { return };
-        if !ui.get_render_active() {
-            return;
-        }
-        let scale = ui.window().scale_factor();
-        let w = (ui.get_scene_w() * scale).max(1.0) as u32;
-        let h = (ui.get_scene_h() * scale).max(1.0) as u32;
-        let frame =
-            on_frame(ui.get_rot_yaw(), ui.get_rot_pitch(), w, h);
-        ui.set_scene_3d(frame);
-        ui.window().request_redraw();
-    });
+    timer.start(
+        TimerMode::Repeated,
+        FRAME_INTERVAL,
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if !ui.get_render_active() {
+                return;
+            }
+            let scale = ui.window().scale_factor();
+            let w =
+                (ui.get_scene_w() * scale).max(1.0) as u32;
+            let h =
+                (ui.get_scene_h() * scale).max(1.0) as u32;
+            let frame = on_frame(
+                ui.get_rot_yaw(),
+                ui.get_rot_pitch(),
+                w,
+                h,
+            );
+            ui.set_scene_3d(frame);
+            ui.window().request_redraw();
+        },
+    );
 
     ui.run().expect("event loop failed");
     drop(timer);
@@ -135,7 +149,8 @@ fn bind_health(ui: &MainWindow) {
             app_core::refresh(&health, api::health).await;
             if let Some(ui) = weak.upgrade() {
                 ui.set_health_text(
-                    describe(health.borrow().state()).into(),
+                    describe(health.borrow().state())
+                        .into(),
                 );
             }
         })
@@ -191,8 +206,12 @@ mod fps {
         let frames_render = frames.clone();
         ui.window()
             .set_rendering_notifier(move |state, _| {
-                if matches!(state, RenderingState::BeforeRendering) {
-                    frames_render.set(frames_render.get() + 1);
+                if matches!(
+                    state,
+                    RenderingState::BeforeRendering
+                ) {
+                    frames_render
+                        .set(frames_render.get() + 1);
                 }
             })
             .ok();
@@ -239,9 +258,14 @@ mod tests {
         // Failed 里的 message 是 `ApiError` 的 Display,自带中文 —— 这三个变体
         // 必须逐一走到,否则漏字要等到线上点出错误才看得见。
         let failures = [
-            ApiError::Transport("error sending request".to_owned()),
+            ApiError::Transport(
+                "error sending request".to_owned(),
+            ),
             ApiError::Decode("expected value".to_owned()),
-            ApiError::VersionMismatch { expected: 1, actual: 2 },
+            ApiError::VersionMismatch {
+                expected: 1,
+                actual: 2,
+            },
         ];
 
         let states = [
@@ -254,15 +278,16 @@ mod tests {
             }),
         ]
         .into_iter()
-        .chain(
-            failures
-                .into_iter()
-                .map(|err| HealthState::Failed(err.to_string())),
-        )
+        .chain(failures.into_iter().map(|err| {
+            HealthState::Failed(err.to_string())
+        }))
         .collect::<Vec<_>>();
 
         for state in &states {
-            for ch in describe(state).chars().filter(|c| !c.is_ascii()) {
+            for ch in describe(state)
+                .chars()
+                .filter(|c| !c.is_ascii())
+            {
                 assert!(
                     face.glyph_index(ch).is_some(),
                     "子集字体缺字形 {ch:?} —— 重跑 `just font-subset` 并把它加进字符集",
