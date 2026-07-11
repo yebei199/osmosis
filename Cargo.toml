@@ -64,3 +64,10 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# dev 构建里把**依赖**(bevy / slint / wgpu 等)编成优化版,本地 crate 仍 opt-level=0
+# 保持可调试、增量快。这是 bevy 官方推荐的开发配置:debug 的 bevy/wgpu 慢到离谱
+# (app.update() 实测 ~20ms/帧,直接把 3D 压到十几帧),优化依赖后回到正常帧率,
+# 而改自己的代码依旧秒级增量。首次编译会重编依赖(慢一次),之后走缓存。
+[profile.dev.package."*"]
+opt-level = 3
