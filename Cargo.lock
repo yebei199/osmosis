@@ -243,6 +243,7 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "log",
+ "render3d",
  "slint",
  "ui",
 ]

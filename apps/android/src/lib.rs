@@ -16,7 +16,17 @@ fn android_main(app: slint::android::AndroidApp) {
     );
     log::info!("slint_study starting");
 
+    // 必须先 init 设好 android 平台;render3d::Scene::new 里的
+    // require_wgpu_29(Manual).select() 是把共享 device 转发给这个已设好的平台,
+    // 顺序反了就没平台可转发。见 i-slint-backend-selector 的 android 分支。
     slint::android::init(app)
         .expect("slint android init failed");
+
+    #[cfg(feature = "bevy-3d")]
+    {
+        let mut scene = render3d::Scene::new();
+        ui::run_with_renderer(move || scene.render_frame());
+    }
+    #[cfg(not(feature = "bevy-3d"))]
     ui::run();
 }
