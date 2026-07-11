@@ -90,8 +90,11 @@ ydotool 用的是 uinput,看不到控件树,只认屏幕像素坐标——每次
 若 `ydotool` 报连不上 socket,用 `YDOTOOL_SOCKET=/run/ydotoold/socket ydotool …`。
 
 socket 权限:ydotoold 跑在 `root:ydotool` 组、0660。用户 `yb` 已由 nix
-(`nixos_config/hosts/reusable/ai-gui-automation.nix`)加入 `ydotool` 组,但**组成员要重新登录才生效**。
-若 `getent group ydotool` 里有 yb 却仍 `Permission denied`,是当前会话早于加组——注销重登即可。
+(`nixos_config/hosts/reusable/ai-gui-automation.nix`)加入 `ydotool` 组。
+若 `getent group ydotool` 里有 yb 却仍 `Permission denied`:补充组只在**完整 PAM 登录**时刷新,
+Claude Code 进程从旧父进程继承组集——**重启终端/会话不够,得彻底注销图形会话再登录**
+(登出到 display manager 或重启),再新开终端起 Claude Code。届时 `id` 里才有 ydotool。
+沙箱内 `sg`/`newgrp` 临时切组会被 `setgroups: Operation not permitted` 挡掉,别走这条。
 
 ## ③ web(playwright MCP)
 
