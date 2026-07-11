@@ -55,6 +55,10 @@ export component MainWindow inherits Window {
     in property <string> platform;
     // 服务端健康状态的一行文案,由 Rust 根据领域状态渲染后推送。
     in property <string> health-text;
+    // bevy 离屏渲染的 3D 画面,由 render3d 每帧推送(见 crates/render3d)。
+    // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
+    // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
+    in property <image> scene-3d;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
     // 请求一次 GET /health。
@@ -92,6 +96,14 @@ export component MainWindow inherits Window {
                 color: #e6e8ef;
                 font-size: 22px;
                 horizontal-alignment: center;
+            }
+
+            // 3D 面板:受控占位,固定尺寸,由 render3d 把 bevy 的离屏纹理推到 scene-3d。
+            // width == 0 表示未设值(web / ios,或桌面尚未产出首帧),此时整块不渲染。
+            if root.scene-3d.width > 0: Image {
+                source: root.scene-3d;
+                width: 320px;
+                height: 240px;
             }
 
             Text {

@@ -8,14 +8,18 @@ slint::include_modules!();
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use app_core::{Counter, Health, HealthState};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Timer, TimerMode};
 
-/// 创建窗口、把领域状态绑定到 UI,然后运行事件循环直到窗口关闭。
+/// 3D 面板的驱动间隔。约 60fps —— 每帧驱动一次外部渲染器并请求重绘。
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
+/// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-pub fn run() {
+fn build_ui() -> MainWindow {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
@@ -24,11 +28,50 @@ pub fn run() {
 
     ui.set_show_fps(cfg!(feature = "debug-fps"));
     ui.set_platform(platform_name().into());
+    ui
+}
+
+/// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
+///
+/// 各平台入口在初始化好渲染后端后调用。不带 3D 的普通路径(web / ios,以及
+/// 未启用 3D 的桌面)走这里。
+pub fn run() {
+    let ui = build_ui();
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     #[cfg(feature = "debug-fps")]
     let _fps_timer = fps::start(&ui);
 
     ui.run().expect("event loop failed");
+}
+
+/// 同 [`run`],但额外每帧驱动一个外部渲染器,把它产出的画面推到 3D 面板。
+///
+/// `on_frame` 由平台入口提供(见 `render3d`):每帧调用一次,内部驱动 bevy 前进
+/// 一帧,返回当前离屏纹理包装成的 [`slint::Image`]。ui 对 bevy / wgpu 一无所知,
+/// 只经这个 seam 收 `Image` —— 二者的依赖边界因此干净分离。
+///
+/// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
+/// 产出的纹理不属于 Slint 的 device,采样不出来。
+pub fn run_with_renderer(
+    mut on_frame: impl FnMut() -> slint::Image + 'static,
+) {
+    let ui = build_ui();
+    #[cfg(feature = "debug-fps")]
+    let _fps_timer = fps::start(&ui);
+
+    // 每帧:驱动渲染器一帧 → 拿到纹理图 → 推给 UI → 主动请求重绘。
+    // 不请求重绘的话,UI 空闲时 Slint 不会重新采样那张纹理,3D 会定格。
+    // Timer 与其捕获的 `on_frame` 必须活到事件循环结束,所以持有到 run() 返回。
+    let weak = ui.as_weak();
+    let timer = Timer::default();
+    timer.start(TimerMode::Repeated, FRAME_INTERVAL, move || {
+        let Some(ui) = weak.upgrade() else { return };
+        ui.set_scene_3d(on_frame());
+        ui.window().request_redraw();
+    });
+
+    ui.run().expect("event loop failed");
+    drop(timer);
 }
 
 /// 当前编译目标的平台名,显示在标题里。
