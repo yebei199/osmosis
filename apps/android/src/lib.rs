@@ -7,6 +7,11 @@
 
 /// Android 入口点,在 `MainActivity` 加载本库后由 android-activity
 /// 胶水代码调用。
+///
+/// `unsafe(no_mangle)`:关掉名字修饰,把符号以裸名 `android_main` 暴露给链接层,
+/// 供 android-activity 的 C 胶水按约定名字 + 签名调用。Rust 2024 要求这类属性
+/// 显式标 `unsafe` —— 裸符号可能与其他库撞名,且调用方签名编译器无法校验,契约
+/// 由本函数保证。
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
