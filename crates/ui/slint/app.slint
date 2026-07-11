@@ -165,19 +165,22 @@ export component MainWindow inherits Window {
         content := Rectangle {
             horizontal-stretch: 1;
 
+            // fps 浮层:左上角,覆盖在页内容之上,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
+            if root.show-fps: Text {
+                x: 8px;
+                y: 8px;
+                text: "FPS " + round(root.fps);
+                color: #51cf66;
+                font-size: 14px;
+                font-weight: 700;
+            }
+
             // Home:平台标题 + 计数器
             if root.current-tab == 0: VerticalLayout {
                 padding: 16px;
                 alignment: center;
                 spacing: 24px;
 
-                if root.show-fps: Text {
-                    text: "FPS " + round(root.fps);
-                    color: #51cf66;
-                    font-size: 14px;
-                    font-weight: 700;
-                    horizontal-alignment: center;
-                }
                 Text {
                     text: "Slint on " + root.platform;
                     color: #e6e8ef;
