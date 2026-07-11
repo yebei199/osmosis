@@ -9,9 +9,8 @@
 //!   绝不调 `App::run()` —— 事件循环永远归 Slint。
 //! - bevy 与 Slint 共享同一 wgpu 大版本(现为 29),纹理类型才是同一个,才能被 Slint 采样。
 //!
-//! 用法(见 `apps/desktop` / `apps/android`):先 [`Scene::new`](Scene::new) —— 它顺带配好
-//! Slint 的 wgpu 后端,必须在建窗口**之前**调 —— 再交给 [`run`],由它接到
-//! `ui::run_with_renderer` 的 seam 上。桌面与安卓的 3D 分派闭包相同,收敛于此。
+//! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
+//! 必须在建窗口**之前**调 —— 再把 `move || scene.render_frame()` 交给 `ui::run_with_renderer`。
 
 use std::sync::Arc;
 
@@ -290,17 +289,6 @@ impl Default for Scene {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// 把建好的 [`Scene`] 接到 UI 的渲染 seam 上,跑事件循环到窗口关闭。
-///
-/// 桌面与安卓入口的 3D 分派**闭包完全相同**(每帧以拖动角与面板物理尺寸驱动 bevy 一帧、
-/// 把纹理推给 UI),收敛于此,不再逐字复制。构造 [`Scene`] 留在各入口,因为它必须在建窗口
-/// 之前、且各端建窗口的前置(如安卓的 `slint::android::init`)不同。
-pub fn run(mut scene: Scene) {
-    ui::run_with_renderer(move |yaw, pitch, w, h| {
-        scene.render_frame(yaw, pitch, w, h)
-    });
 }
 
 /// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回 (立方体, 相机) 实体。

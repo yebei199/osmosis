@@ -27,10 +27,20 @@ fn android_main(app: slint::android::AndroidApp) {
     slint::android::init(app)
         .expect("slint android init failed");
 
-    // 分派闭包已收敛进 render3d::run(三端共用),这里只构造:安卓有阻塞线程,走同步
-    // Scene::new。构造必须在建窗口前,原因见上面的 init 顺序说明。
+    // 下面这段 3D 分派与 apps/desktop/src/main.rs 里的一份**逐字相同**,故意不抽:
+    // 只两处、且签名漂移编译器会两边一起报错。若给某一端的 bevy 分支加初始化步骤,
+    // 记得同步另一端。
+    // 曾抽成 render3d::run(scene) 试过,划不来:重复的只有这一行闭包,却要给 render3d
+    // 加 ui 依赖、把它从「产帧的 3D 桥」抬成「驱动整个 app」,越过 SRP。入口 crate 本就
+    // 同时依赖 ui 与 render3d,是接 seam 的天然组合根。等 web-3d 随 slint#11580 复活、
+    // 成三处且构造分叉(web 异步)时再抽不迟。
     #[cfg(feature = "bevy-3d")]
-    render3d::run(render3d::Scene::new());
+    {
+        let mut scene = render3d::Scene::new();
+        ui::run_with_renderer(move |yaw, pitch, w, h| {
+            scene.render_frame(yaw, pitch, w, h)
+        });
+    }
     #[cfg(not(feature = "bevy-3d"))]
     ui::run();
 }

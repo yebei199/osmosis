@@ -5696,7 +5696,6 @@ dependencies = [
  "bevy",
  "log",
  "slint",
- "ui",
 ]
 
 [[package]]
