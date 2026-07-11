@@ -20,7 +20,7 @@ render3d = { workspace = true, optional = true }
 
 [features]
 default = []
-# 透传给 ui:显示帧率读数(会让渲染循环满转)。
+# 透传给 ui:左上角显示诚实的即时帧率(数真实发生的帧,不主动重绘、不额外耗电)。
 debug-fps = ["ui/debug-fps"]
 # 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
 # 需要 vulkan 运行期库,用仓库根的 render3d.nix。
