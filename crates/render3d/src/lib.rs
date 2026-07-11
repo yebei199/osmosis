@@ -46,7 +46,11 @@ pub struct Scene {
     target: Handle<Image>,
     /// 被 UI 拖动控制角度的立方体。每帧按传入的 yaw/pitch 设其绝对朝向。
     cube: Entity,
-    /// 首帧渲染出纹理后才 `Some`。之前返回空图,UI 的 `scene-3d.width > 0` 守卫会让面板暂不显示。
+    /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
+    camera: Entity,
+    /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
+    size: (u32, u32),
+    /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `scene-3d.width > 0` 守卫据此不显示。
     image: Option<slint::Image>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
@@ -125,18 +129,12 @@ impl Scene {
                 .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
         );
 
-        // 4) 造离屏目标图 —— Rgba8Unorm 满足 Slint 的导入要求(格式 + TEXTURE_BINDING|RENDER_ATTACHMENT)。
-        let image = Image::new_target_texture(
-            WIDTH,
-            HEIGHT,
-            TextureFormat::Rgba8Unorm,
-            Some(TextureFormat::Rgba8UnormSrgb),
-        );
-        let target = app.world_mut().resource_mut::<Assets<Image>>().add(image);
+        // 4) 造初始离屏目标图。UI 传来的面板尺寸会触发按需重建(动态分辨率,见 render_frame)。
+        let target = make_target(&mut app, WIDTH, HEIGHT);
 
         // 5) 造网格/材质并摆好相机、光、立方体。相机渲染进离屏目标图。
         //    立方体的朝向不再由系统自转,而是每帧按 UI 传入的角度设定(见 render_frame)。
-        let cube = spawn_scene(&mut app, &target);
+        let (cube, camera) = spawn_scene(&mut app, &target);
 
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
@@ -146,19 +144,32 @@ impl Scene {
             app,
             target,
             cube,
+            camera,
+            size: (WIDTH, HEIGHT),
             image: None,
             frames: 0,
         }
     }
 
-    /// 按 UI 传入的角度设定立方体朝向,驱动 bevy 前进一帧,返回离屏纹理包装成的 [`slint::Image`]。
+    /// 按 UI 传入的角度和面板尺寸渲染一帧,返回离屏纹理包装成的 [`slint::Image`]。
     ///
-    /// `yaw` / `pitch` 为弧度绝对角(由 Slint 侧的拖动累加得到)。先设朝向再 update,
-    /// 这样本帧渲染就反映最新角度。
+    /// `yaw` / `pitch` 为弧度绝对角(Slint 侧拖动累加)。`width` / `height` 为面板的
+    /// 物理像素尺寸;与当前纹理尺寸不同就按需重建纹理(动态分辨率),0 尺寸忽略。
+    /// 先设尺寸/朝向再 update,这样本帧渲染就反映最新状态。
     ///
-    /// 首帧纹理还没就绪时返回空图(UI 面板据此暂不显示)。纹理一旦建出就身份稳定,
-    /// 只包装一次、之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
-    pub fn render_frame(&mut self, yaw: f32, pitch: f32) -> slint::Image {
+    /// 纹理未就绪(首帧或刚重建)时返回空图。尺寸不变时纹理身份稳定,只包装一次、
+    /// 之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
+    pub fn render_frame(
+        &mut self,
+        yaw: f32,
+        pitch: f32,
+        width: u32,
+        height: u32,
+    ) -> slint::Image {
+        if width > 0 && height > 0 && (width, height) != self.size {
+            self.resize(width, height);
+        }
+
         if let Some(mut transform) =
             self.app.world_mut().get_mut::<Transform>(self.cube)
         {
@@ -201,6 +212,39 @@ impl Scene {
         // GpuImage.texture: render_resource::Texture, Deref 到 wgpu::Texture。
         Some((*gpu_image.texture).clone())
     }
+
+    /// 按新尺寸重建离屏目标纹理,把相机的 RenderTarget 指过去,释放旧纹理。
+    ///
+    /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理。
+    /// 重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
+    fn resize(&mut self, width: u32, height: u32) {
+        let new_target = make_target(&mut self.app, width, height);
+        self.app
+            .world_mut()
+            .entity_mut(self.camera)
+            .insert(RenderTarget::Image(new_target.clone().into()));
+
+        let old = std::mem::replace(&mut self.target, new_target);
+        self.app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .remove(&old);
+
+        self.size = (width, height);
+        self.image = None;
+    }
+}
+
+/// 造一张 bevy 离屏渲染目标图(Rgba8Unorm,满足 Slint 导入要求:格式 +
+/// TEXTURE_BINDING|RENDER_ATTACHMENT),返回其资源句柄。
+fn make_target(app: &mut App, width: u32, height: u32) -> Handle<Image> {
+    let image = Image::new_target_texture(
+        width,
+        height,
+        TextureFormat::Rgba8Unorm,
+        Some(TextureFormat::Rgba8UnormSrgb),
+    );
+    app.world_mut().resource_mut::<Assets<Image>>().add(image)
 }
 
 impl Default for Scene {
@@ -209,8 +253,9 @@ impl Default for Scene {
     }
 }
 
-/// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回立方体实体供每帧设朝向。
-fn spawn_scene(app: &mut App, target: &Handle<Image>) -> Entity {
+/// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回 (立方体, 相机) 实体。
+/// 立方体供每帧设朝向,相机供尺寸变化时改 RenderTarget。
+fn spawn_scene(app: &mut App, target: &Handle<Image>) -> (Entity, Entity) {
     let world = app.world_mut();
 
     let mesh = world
@@ -239,15 +284,17 @@ fn spawn_scene(app: &mut App, target: &Handle<Image>) -> Entity {
     ));
 
     // 相机:渲染进离屏目标图,而非屏幕。0.19 起 RenderTarget 是独立组件,不再是 Camera 的字段。
-    world.spawn((
-        Camera3d::default(),
-        Camera::default(),
-        RenderTarget::Image(target.clone().into()),
-        // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
-        // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
-        Tonemapping::None,
-        Transform::from_xyz(0.0, 1.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+    let camera = world
+        .spawn((
+            Camera3d::default(),
+            Camera::default(),
+            RenderTarget::Image(target.clone().into()),
+            // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
+            // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
+            Tonemapping::None,
+            Transform::from_xyz(0.0, 1.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ))
+        .id();
 
-    cube
+    (cube, camera)
 }

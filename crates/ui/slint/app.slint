@@ -7,9 +7,6 @@
 // 由 slint 编译器把字节打进产物,再按 family 名引用。
 import "../fonts/cjk-subset.ttf";
 
-// 顶部标签页容器。三个 tab:主页 / 服务器 / 3D。
-import { TabWidget } from "std-widgets.slint";
-
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
 //
@@ -47,6 +44,51 @@ component HoverButton inherits Rectangle {
     }
 }
 
+// 左侧导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
+// 图标用 Path 内嵌(不引外部资源);标签用英文,免得中文落到无 CJK 的默认字体上变豆腐。
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon; // SVG path 数据,viewbox 24×24
+    in property <bool> active;
+    callback clicked;
+
+    height: 68px;
+    border-radius: 12px;
+    background: active ? #1c2233 : (touch.has-hover ? #141824 : transparent);
+    animate background { duration: 120ms; easing: ease-out; }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 26px;
+                height: 26px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: active ? #7aa2f7 : #8b91a5;
+                stroke-width: 1.8px;
+                fill: transparent;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: active ? #e6e8ef : #8b91a5;
+            font-size: 12px;
+            font-weight: active ? 700 : 500;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
 export component MainWindow inherits Window {
     // 由 Rust 推送。
     in property <int> count: 0;
@@ -62,10 +104,17 @@ export component MainWindow inherits Window {
     // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
     // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> scene-3d;
-    // 3D 立方体的朝向(弧度),由「3D」tab 上的拖动累加得到,Rust 每帧读出后
+    // 3D 立方体的朝向(弧度),由「3D」页上的拖动累加得到,Rust 每帧读出后
     // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
     in-out property <float> rot-yaw: 0;
     in-out property <float> rot-pitch: 0;
+    // 当前选中的导航页:0=Home、1=Server、2=3D。由左侧导航栏点击设置。
+    in-out property <int> current-tab: 0;
+    // 3D 内容区的逻辑尺寸。Rust 每帧乘窗口缩放系数得物理像素,让 bevy 按该分辨率渲染。
+    out property <length> scene-w: content.width;
+    out property <length> scene-h: content.height;
+    // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
+    out property <bool> render-active: root.current-tab == 2;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
     // 请求一次 GET /health。
@@ -75,116 +124,131 @@ export component MainWindow inherits Window {
     background: #0f1117;
 
     // safe-area 内边距包在最外层;单一顶层布局 → 窗口撑满且可调整大小。
-    // 三个 tab 各自的内容内边距在自己里面加。
-    VerticalLayout {
+    HorizontalLayout {
         padding-top: root.safe-area-insets.top;
         padding-bottom: root.safe-area-insets.bottom;
         padding-left: root.safe-area-insets.left;
         padding-right: root.safe-area-insets.right;
 
-        TabWidget {
-            // ── 主页:平台标题 + 计数器 ──
-            Tab {
-                title: "主页";
-                VerticalLayout {
-                    padding: 16px;
+        // ── 左侧导航栏 ──
+        Rectangle {
+            width: 96px;
+            background: #0b0d13;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+                alignment: start;
+
+                NavItem {
+                    label: "Home";
+                    icon: "M3 12 L12 4 L21 12 M5.5 10 L5.5 20 L18.5 20 L18.5 10";
+                    active: root.current-tab == 0;
+                    clicked => { root.current-tab = 0; }
+                }
+                NavItem {
+                    label: "Server";
+                    icon: "M4 5 L20 5 L20 10 L4 10 Z M4 13 L20 13 L20 18 L4 18 Z";
+                    active: root.current-tab == 1;
+                    clicked => { root.current-tab = 1; }
+                }
+                NavItem {
+                    label: "3D";
+                    icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5";
+                    active: root.current-tab == 2;
+                    clicked => { root.current-tab = 2; }
+                }
+            }
+        }
+
+        // ── 右侧内容区。三页共用这块矩形(尺寸恒定,故 scene-w/h 始终有效),
+        //    按 current-tab 切换子内容 ──
+        content := Rectangle {
+            horizontal-stretch: 1;
+
+            // Home:平台标题 + 计数器
+            if root.current-tab == 0: VerticalLayout {
+                padding: 16px;
+                alignment: center;
+                spacing: 24px;
+
+                if root.show-fps: Text {
+                    text: "FPS " + round(root.fps);
+                    color: #51cf66;
+                    font-size: 14px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Slint on " + root.platform;
+                    color: #e6e8ef;
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.count;
+                    color: #7aa2f7;
+                    font-size: 72px;
+                    horizontal-alignment: center;
+                }
+                HorizontalLayout {
                     alignment: center;
-                    spacing: 24px;
-
-                    if root.show-fps: Text {
-                        text: "FPS " + round(root.fps);
-                        color: #51cf66;
-                        font-size: 14px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                    }
-
-                    Text {
-                        text: "Slint on " + root.platform;
-                        color: #e6e8ef;
-                        font-size: 22px;
-                        horizontal-alignment: center;
-                    }
-
-                    Text {
-                        text: root.count;
-                        color: #7aa2f7;
-                        font-size: 72px;
-                        horizontal-alignment: center;
-                    }
-
-                    HorizontalLayout {
-                        alignment: center;
-                        HoverButton {
-                            text: "Tap me";
-                            clicked => { root.bump(); }
-                        }
+                    HoverButton {
+                        text: "Tap me";
+                        clicked => { root.bump(); }
                     }
                 }
             }
 
-            // ── 服务器:一次真实网络往返,验证 contract → api → app-core → ui 全链路 ──
-            Tab {
-                title: "服务器";
-                VerticalLayout {
-                    padding: 16px;
+            // Server:一次真实网络往返,验证 contract → api → app-core → ui 全链路
+            if root.current-tab == 1: VerticalLayout {
+                padding: 16px;
+                alignment: center;
+                spacing: 24px;
+
+                HorizontalLayout {
                     alignment: center;
-                    spacing: 24px;
-
-                    HorizontalLayout {
-                        alignment: center;
-                        HoverButton {
-                            text: "Check server";
-                            clicked => { root.check-health(); }
-                        }
+                    HoverButton {
+                        text: "Check server";
+                        clicked => { root.check-health(); }
                     }
-
-                    // 固定高度:文案变长变短不再改变本行占位,居中列不回流 → 点击不抖。
-                    // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
-                    Text {
-                        text: root.health-text;
-                        font-family: "Maple Mono NF CN";
-                        color: #9aa0b4;
-                        font-size: 13px;
-                        height: 56px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                    }
+                }
+                // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
+                // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
+                Text {
+                    text: root.health-text;
+                    font-family: "Maple Mono NF CN";
+                    color: #9aa0b4;
+                    font-size: 13px;
+                    height: 56px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
                 }
             }
 
-            // ── 3D:bevy 离屏画面正中心,拖动控制立方体朝向 ──
-            Tab {
-                title: "3D";
-                VerticalLayout {
-                    alignment: center;
-                    HorizontalLayout {
-                        alignment: center;
-                        // 空图(未就绪 / web·ios)时不渲染这块。
-                        if root.scene-3d.width > 0: Image {
-                            source: root.scene-3d;
-                            width: 320px;
-                            height: 240px;
+            // 3D:bevy 离屏画面铺满内容区,分辨率随 content 尺寸动态变化,拖动控制朝向。
+            // 空图(未就绪 / web·ios,或刚切进来还没渲染出首帧)时不渲染这块。
+            if root.current-tab == 2 && root.scene-3d.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: fill;
+                source: root.scene-3d;
 
-                            // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
-                            drag := TouchArea {
-                                property <length> last-x;
-                                property <length> last-y;
-                                pointer-event(e) => {
-                                    if (e.kind == PointerEventKind.down) {
-                                        drag.last-x = drag.mouse-x;
-                                        drag.last-y = drag.mouse-y;
-                                    }
-                                }
-                                moved => {
-                                    root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
-                                    root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
-                                    drag.last-x = drag.mouse-x;
-                                    drag.last-y = drag.mouse-y;
-                                }
-                            }
+                // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
+                drag := TouchArea {
+                    property <length> last-x;
+                    property <length> last-y;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) {
+                            drag.last-x = drag.mouse-x;
+                            drag.last-y = drag.mouse-y;
                         }
+                    }
+                    moved => {
+                        root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
+                        root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
+                        drag.last-x = drag.mouse-x;
+                        drag.last-y = drag.mouse-y;
                     }
                 }
             }
