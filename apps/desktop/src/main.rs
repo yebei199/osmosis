@@ -17,10 +17,15 @@ fn main() {
     .init();
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
-    // 分派闭包已收敛进 render3d::run(见那里),这里只负责**构造**:桌面有阻塞线程,
-    // 走同步 Scene::new。web 入口改用 Scene::new_async().await,构造之外完全一致。
+    // 下面这段与 apps/android/src/lib.rs 里的一份**逐字相同**,故意不抽(理由见那边)。
+    // 改动 bevy 分支时记得同步另一端。
     #[cfg(feature = "bevy-3d")]
-    render3d::run(render3d::Scene::new());
+    {
+        let mut scene = render3d::Scene::new();
+        ui::run_with_renderer(move |yaw, pitch, w, h| {
+            scene.render_frame(yaw, pitch, w, h)
+        });
+    }
     #[cfg(not(feature = "bevy-3d"))]
     ui::run();
 }
