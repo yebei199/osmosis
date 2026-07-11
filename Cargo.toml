@@ -19,6 +19,8 @@ contract = { path = "crates/contract" }
 api = { path = "crates/api" }
 app-core = { path = "crates/app-core" }
 ui = { path = "crates/ui" }
+# 3D 桥。只有桌面/android 入口依赖它,web/ios 永不碰 —— 由 xtask boundaries 守住。
+render3d = { path = "crates/render3d" }
 
 # 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
 # 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
@@ -29,6 +31,22 @@ serde = { version = "1", features = ["derive"] }
 log = "0.4"
 android_logger = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+# bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
+# 用 git main 而非 0.19 稳定版:bsn! 宏(Bevy Scene Notation)与新特性只在 main。
+# 钉死到具体 rev 保证可复现 —— main 是移动靶,不钉会随时间漂、连编译都不稳。
+# main 仍依赖 wgpu 29,与 slint 的 wgpu-29 由 cargo 统一为同一份(纹理共享的硬前提)。
+# default-features=false + 手挑最小 feature:不要 bevy_winit(它会抢窗口)、
+# 不要 audio/gilrs(会拉 alsa/udev 系统库)。features 是最小起步值,缺什么编译器会报。
+bevy = { git = "https://github.com/bevyengine/bevy", rev = "85899e2e6e830f60afcbb4b3606e1860e4543edf", default-features = false, features = [
+    "std",
+    "bevy_asset",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_window",
+    "multi_threaded",
+] }
 
 # APK 里打包的 native 库一律用 release profile:debug profile 的 Slint+Skia
 # 构建体积巨大且很慢,即使是 "debug" APK 也装 release 的 .so。
