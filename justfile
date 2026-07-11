@@ -47,9 +47,10 @@ desktop-dev-3d:
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
+# 可透传额外 feature,如左上角帧率读数:just web-dev ui/debug-fps
 [group('三端')]
-web-dev:
-    nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
+web-dev extra="":
+    nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release{{ if extra != "" { " --features " + extra } else { "" } }}'
     nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
     cp apps/web/index.html dist/web/
     # server 不在 default-members 里,裸 cargo build 从不编它。先编完再起,否则页面

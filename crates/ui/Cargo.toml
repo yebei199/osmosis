@@ -21,6 +21,7 @@ ttf-parser = "0.25"
 
 [features]
 default = []
-# 帧率计。开启后每帧主动请求重绘,渲染循环会一直满转 —— 移动端上白耗电,
-# 所以只在需要观察帧率时打开:`cargo run -p app-desktop --features ui/debug-fps`
+# 帧率计。数渲染通知里真实发生的帧,刻意不主动请求重绘 —— Slint 惰性渲染,空闲时
+# 读数自然趴到 ~1,交互/动画才飙高,是诚实的即时帧率,不额外耗电(见 src/lib.rs 的 fps 模块)。
+# 平时不开只为省掉这点开销与那行 UI:`cargo run -p app-desktop --features ui/debug-fps`
 debug-fps = []
