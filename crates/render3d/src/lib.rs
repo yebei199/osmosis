@@ -19,14 +19,15 @@ use bevy::prelude::*;
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::render::RenderApp;
+use bevy::render::RenderPlugin;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::renderer::{
-    RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue, WgpuWrapper,
+    RenderAdapter, RenderAdapterInfo, RenderDevice,
+    RenderInstance, RenderQueue, WgpuWrapper,
 };
 use bevy::render::settings::RenderCreation;
 use bevy::render::texture::GpuImage;
-use bevy::render::RenderPlugin;
 use bevy::window::{ExitCondition, WindowPlugin};
 use slint::wgpu_29::wgpu;
 
@@ -78,7 +79,11 @@ impl Scene {
         let (device, queue) = bevy::tasks::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("render3d-shared"),
-                required_features: adapter.features(),
+                // 请求 adapter 支持的特性,但**摘掉 MAPPABLE_PRIMARY_BUFFERS** ——
+                // wgpu 自己警告它在独显上是「massive performance footgun」:强制缓冲区
+                // 走可映射的慢速内存,拖垮渲染吞吐(实测桌面因此卡到 12fps)。bevy 用不到它。
+                required_features: adapter.features()
+                    .difference(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS),
                 required_limits: adapter.limits(),
                 // adapter.features() 含实验特性(mesh shader / ray query 等),要请求它们
                 // 就必须同时启用 experimental_features,否则 request_device 报
@@ -93,22 +98,32 @@ impl Scene {
 
         // 2) 把同一套 wgpu 交给 Slint —— 它的渲染器就用这个 device,才能采样 bevy 产的纹理。
         slint::BackendSelector::new()
-            .require_wgpu_29(slint::wgpu_29::WGPUConfiguration::Manual {
-                instance: instance.clone(),
-                adapter: adapter.clone(),
-                device: device.clone(),
-                queue: queue.clone(),
-            })
+            .require_wgpu_29(
+                slint::wgpu_29::WGPUConfiguration::Manual {
+                    instance: instance.clone(),
+                    adapter: adapter.clone(),
+                    device: device.clone(),
+                    queue: queue.clone(),
+                },
+            )
             .select()
             .expect("选择 Slint 的 wgpu-29 后端失败");
 
         // 3) 用同一套 wgpu 建 bevy App(Manual),禁窗口/winit,无头。
         let render_creation = RenderCreation::manual(
             RenderDevice::from(device.clone()),
-            RenderQueue(Arc::new(WgpuWrapper::new(queue.clone()))),
-            RenderAdapterInfo(WgpuWrapper::new(adapter.get_info())),
-            RenderAdapter(Arc::new(WgpuWrapper::new(adapter.clone()))),
-            RenderInstance(Arc::new(WgpuWrapper::new(instance.clone()))),
+            RenderQueue(Arc::new(WgpuWrapper::new(
+                queue.clone(),
+            ))),
+            RenderAdapterInfo(WgpuWrapper::new(
+                adapter.get_info(),
+            )),
+            RenderAdapter(Arc::new(WgpuWrapper::new(
+                adapter.clone(),
+            ))),
+            RenderInstance(Arc::new(WgpuWrapper::new(
+                instance.clone(),
+            ))),
         );
 
         let mut app = App::new();
@@ -166,15 +181,24 @@ impl Scene {
         width: u32,
         height: u32,
     ) -> slint::Image {
-        if width > 0 && height > 0 && (width, height) != self.size {
+        if width > 0
+            && height > 0
+            && (width, height) != self.size
+        {
             self.resize(width, height);
         }
 
         if let Some(mut transform) =
-            self.app.world_mut().get_mut::<Transform>(self.cube)
+            self.app
+                .world_mut()
+                .get_mut::<Transform>(self.cube)
         {
-            transform.rotation =
-                Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+            transform.rotation = Quat::from_euler(
+                EulerRot::YXZ,
+                yaw,
+                pitch,
+                0.0,
+            );
         }
 
         self.app.update();
@@ -191,11 +215,15 @@ impl Scene {
                         );
                         self.image = Some(img);
                     }
-                    Err(e) => log::error!("wgpu 纹理导入 Slint 失败: {e:?}"),
+                    Err(e) => log::error!(
+                        "wgpu 纹理导入 Slint 失败: {e:?}"
+                    ),
                 }
             } else if self.frames == 120 {
                 // 两秒还没就绪,多半是渲染子世界里没准备出 GpuImage —— 值得告警排查。
-                log::warn!("render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示");
+                log::warn!(
+                    "render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示"
+                );
             }
         }
         self.image.clone().unwrap_or_default()
@@ -218,13 +246,17 @@ impl Scene {
     /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理。
     /// 重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
     fn resize(&mut self, width: u32, height: u32) {
-        let new_target = make_target(&mut self.app, width, height);
+        let new_target =
+            make_target(&mut self.app, width, height);
         self.app
             .world_mut()
             .entity_mut(self.camera)
-            .insert(RenderTarget::Image(new_target.clone().into()));
+            .insert(RenderTarget::Image(
+                new_target.clone().into(),
+            ));
 
-        let old = std::mem::replace(&mut self.target, new_target);
+        let old =
+            std::mem::replace(&mut self.target, new_target);
         self.app
             .world_mut()
             .resource_mut::<Assets<Image>>()
@@ -237,14 +269,20 @@ impl Scene {
 
 /// 造一张 bevy 离屏渲染目标图(Rgba8Unorm,满足 Slint 导入要求:格式 +
 /// TEXTURE_BINDING|RENDER_ATTACHMENT),返回其资源句柄。
-fn make_target(app: &mut App, width: u32, height: u32) -> Handle<Image> {
+fn make_target(
+    app: &mut App,
+    width: u32,
+    height: u32,
+) -> Handle<Image> {
     let image = Image::new_target_texture(
         width,
         height,
         TextureFormat::Rgba8Unorm,
         Some(TextureFormat::Rgba8UnormSrgb),
     );
-    app.world_mut().resource_mut::<Assets<Image>>().add(image)
+    app.world_mut()
+        .resource_mut::<Assets<Image>>()
+        .add(image)
 }
 
 impl Default for Scene {
@@ -255,7 +293,10 @@ impl Default for Scene {
 
 /// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回 (立方体, 相机) 实体。
 /// 立方体供每帧设朝向,相机供尺寸变化时改 RenderTarget。
-fn spawn_scene(app: &mut App, target: &Handle<Image>) -> (Entity, Entity) {
+fn spawn_scene(
+    app: &mut App,
+    target: &Handle<Image>,
+) -> (Entity, Entity) {
     let world = app.world_mut();
 
     let mesh = world
@@ -280,7 +321,8 @@ fn spawn_scene(app: &mut App, target: &Handle<Image>) -> (Entity, Entity) {
     // 平行光。
     world.spawn((
         DirectionalLight::default(),
-        Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(4.0, 8.0, 4.0)
+            .looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     // 相机:渲染进离屏目标图,而非屏幕。0.19 起 RenderTarget 是独立组件,不再是 Camera 的字段。
@@ -292,7 +334,8 @@ fn spawn_scene(app: &mut App, target: &Handle<Image>) -> (Entity, Entity) {
             // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
             // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
             Tonemapping::None,
-            Transform::from_xyz(0.0, 1.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Transform::from_xyz(0.0, 1.5, 5.0)
+                .looking_at(Vec3::ZERO, Vec3::Y),
         ))
         .id();
 
