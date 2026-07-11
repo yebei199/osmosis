@@ -46,27 +46,29 @@ pub fn run() {
 
 /// 同 [`run`],但额外每帧驱动一个外部渲染器,把它产出的画面推到 3D 面板。
 ///
-/// `on_frame` 由平台入口提供(见 `render3d`):每帧调用一次,内部驱动 bevy 前进
-/// 一帧,返回当前离屏纹理包装成的 [`slint::Image`]。ui 对 bevy / wgpu 一无所知,
-/// 只经这个 seam 收 `Image` —— 二者的依赖边界因此干净分离。
+/// `on_frame` 由平台入口提供(见 `render3d`):每帧以当前拖动角度 `(yaw, pitch)`
+/// 调用一次,内部驱动 bevy 前进一帧,返回离屏纹理包装成的 [`slint::Image`]。
+/// 角度是 UI 侧 TouchArea 拖动累加出来的弧度绝对角,ui 从 `rot-yaw`/`rot-pitch`
+/// 读出后原样传入 —— 仍只传 f32,不涉 bevy / wgpu 类型,依赖边界保持干净分离。
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
 pub fn run_with_renderer(
-    mut on_frame: impl FnMut() -> slint::Image + 'static,
+    mut on_frame: impl FnMut(f32, f32) -> slint::Image + 'static,
 ) {
     let ui = build_ui();
     #[cfg(feature = "debug-fps")]
     let _fps_timer = fps::start(&ui);
 
-    // 每帧:驱动渲染器一帧 → 拿到纹理图 → 推给 UI → 主动请求重绘。
+    // 每帧:读拖动角度 → 驱动渲染器一帧 → 拿到纹理图 → 推给 UI → 主动请求重绘。
     // 不请求重绘的话,UI 空闲时 Slint 不会重新采样那张纹理,3D 会定格。
     // Timer 与其捕获的 `on_frame` 必须活到事件循环结束,所以持有到 run() 返回。
     let weak = ui.as_weak();
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, FRAME_INTERVAL, move || {
         let Some(ui) = weak.upgrade() else { return };
-        ui.set_scene_3d(on_frame());
+        let frame = on_frame(ui.get_rot_yaw(), ui.get_rot_pitch());
+        ui.set_scene_3d(frame);
         ui.window().request_redraw();
     });
 

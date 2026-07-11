@@ -25,7 +25,9 @@ fn android_main(app: slint::android::AndroidApp) {
     #[cfg(feature = "bevy-3d")]
     {
         let mut scene = render3d::Scene::new();
-        ui::run_with_renderer(move || scene.render_frame());
+        ui::run_with_renderer(move |yaw, pitch| {
+            scene.render_frame(yaw, pitch)
+        });
     }
     #[cfg(not(feature = "bevy-3d"))]
     ui::run();

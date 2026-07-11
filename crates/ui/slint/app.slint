@@ -7,6 +7,9 @@
 // 由 slint 编译器把字节打进产物,再按 family 名引用。
 import "../fonts/cjk-subset.ttf";
 
+// 顶部标签页容器。三个 tab:主页 / 服务器 / 3D。
+import { TabWidget } from "std-widgets.slint";
+
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
 //
@@ -59,6 +62,10 @@ export component MainWindow inherits Window {
     // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
     // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> scene-3d;
+    // 3D 立方体的朝向(弧度),由「3D」tab 上的拖动累加得到,Rust 每帧读出后
+    // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
+    in-out property <float> rot-yaw: 0;
+    in-out property <float> rot-pitch: 0;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
     // 请求一次 GET /health。
@@ -67,81 +74,119 @@ export component MainWindow inherits Window {
     title: "Slint Study";
     background: #0f1117;
 
-    // 只有一个顶层布局,窗口才会自动撑满且保持可调整大小。
-    // (这里如果放一个兄弟元素,窗口就会变成固定大小。)
+    // safe-area 内边距包在最外层;单一顶层布局 → 窗口撑满且可调整大小。
+    // 三个 tab 各自的内容内边距在自己里面加。
     VerticalLayout {
-        // 基础内边距叠加安全区域,让内容在全面屏 Android 窗口上
-        // 不被状态栏和导航栏遮挡。
-        padding-top: 8px + root.safe-area-insets.top;
-        padding-bottom: 32px + root.safe-area-insets.bottom;
-        padding-left: 16px + root.safe-area-insets.left;
-        padding-right: 16px + root.safe-area-insets.right;
+        padding-top: root.safe-area-insets.top;
+        padding-bottom: root.safe-area-insets.bottom;
+        padding-left: root.safe-area-insets.left;
+        padding-right: root.safe-area-insets.right;
 
-        // 帧率读数,左上角显示。
-        if root.show-fps: Text {
-            text: "FPS " + round(root.fps);
-            color: #51cf66;
-            font-size: 14px;
-            font-weight: 700;
-        }
+        TabWidget {
+            // ── 主页:平台标题 + 计数器 ──
+            Tab {
+                title: "主页";
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: center;
+                    spacing: 24px;
 
-        // 主内容区,在帧率行下方的剩余空间中居中。
-        VerticalLayout {
-            vertical-stretch: 1;
-            alignment: center;
-            spacing: 24px;
+                    if root.show-fps: Text {
+                        text: "FPS " + round(root.fps);
+                        color: #51cf66;
+                        font-size: 14px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                    }
 
-            Text {
-                text: "Slint on " + root.platform;
-                color: #e6e8ef;
-                font-size: 22px;
-                horizontal-alignment: center;
-            }
+                    Text {
+                        text: "Slint on " + root.platform;
+                        color: #e6e8ef;
+                        font-size: 22px;
+                        horizontal-alignment: center;
+                    }
 
-            // 3D 面板:受控占位,固定尺寸,由 render3d 把 bevy 的离屏纹理推到 scene-3d。
-            // width == 0 表示未设值(web / ios,或桌面尚未产出首帧),此时整块不渲染。
-            if root.scene-3d.width > 0: Image {
-                source: root.scene-3d;
-                width: 320px;
-                height: 240px;
-            }
+                    Text {
+                        text: root.count;
+                        color: #7aa2f7;
+                        font-size: 72px;
+                        horizontal-alignment: center;
+                    }
 
-            Text {
-                text: root.count;
-                color: #7aa2f7;
-                font-size: 72px;
-                horizontal-alignment: center;
-            }
-
-            // 把固定宽度的按钮包在一个可伸缩的行里;否则它的 220px
-            // 宽度会限制整列,进而把窗口宽度锁死。
-            HorizontalLayout {
-                alignment: center;
-                HoverButton {
-                    text: "Tap me";
-                    clicked => { root.bump(); }
+                    HorizontalLayout {
+                        alignment: center;
+                        HoverButton {
+                            text: "Tap me";
+                            clicked => { root.bump(); }
+                        }
+                    }
                 }
             }
 
-            // 穿透式示例:一次真实的网络往返,验证 contract → api →
-            // app-core → ui 整条链路在各端都通。
-            HorizontalLayout {
-                alignment: center;
-                HoverButton {
-                    text: "Check server";
-                    clicked => { root.check-health(); }
+            // ── 服务器:一次真实网络往返,验证 contract → api → app-core → ui 全链路 ──
+            Tab {
+                title: "服务器";
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: center;
+                    spacing: 24px;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        HoverButton {
+                            text: "Check server";
+                            clicked => { root.check-health(); }
+                        }
+                    }
+
+                    // 固定高度:文案变长变短不再改变本行占位,居中列不回流 → 点击不抖。
+                    // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
+                    Text {
+                        text: root.health-text;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 13px;
+                        height: 56px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
                 }
             }
 
-            // 全 UI 唯一一处中文。子集字体连 ASCII 一起裁了,所以这行中英混排
-            // 的文案整体落在同一个字体上,不依赖 slint 的逐字形回退。
-            Text {
-                text: root.health-text;
-                font-family: "Maple Mono NF CN";
-                color: #9aa0b4;
-                font-size: 13px;
-                horizontal-alignment: center;
-                wrap: word-wrap;
+            // ── 3D:bevy 离屏画面正中心,拖动控制立方体朝向 ──
+            Tab {
+                title: "3D";
+                VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        alignment: center;
+                        // 空图(未就绪 / web·ios)时不渲染这块。
+                        if root.scene-3d.width > 0: Image {
+                            source: root.scene-3d;
+                            width: 320px;
+                            height: 240px;
+
+                            // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
+                            drag := TouchArea {
+                                property <length> last-x;
+                                property <length> last-y;
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.down) {
+                                        drag.last-x = drag.mouse-x;
+                                        drag.last-y = drag.mouse-y;
+                                    }
+                                }
+                                moved => {
+                                    root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
+                                    root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
+                                    drag.last-x = drag.mouse-x;
+                                    drag.last-y = drag.mouse-y;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
