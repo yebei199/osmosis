@@ -15,8 +15,13 @@ env_logger.workspace = true
 # 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
 # 否则 android 构建会被 feature 统一拉进 winit。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg", "renderer-software"] }
+# 仅 bevy-3d feature 下启用;平时不编 bevy,桌面构建保持轻量、无需 vulkan。
+render3d = { workspace = true, optional = true }
 
 [features]
 default = []
 # 透传给 ui:显示帧率读数(会让渲染循环满转)。
 debug-fps = ["ui/debug-fps"]
+# 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
+# 需要 vulkan 运行期库,用仓库根的 render3d.nix。
+bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "slint/renderer-femtovg-wgpu"]
