@@ -21,10 +21,11 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         return Err("用法: cargo xtask boundaries".to_owned());
     }
 
-    let checks: [(&str, Check); 3] = [
+    let checks: [(&str, Check); 4] = [
         ("contract 只依赖 serde", contract_has_no_io_crates),
         ("api 在 wasm 上不依赖 tokio", api_is_tokio_free_on_wasm),
         ("app-core 能编到 wasm", app_core_compiles_for_wasm),
+        ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
     ];
 
     let mut failures = Vec::new();
@@ -98,6 +99,32 @@ fn app_core_compiles_for_wasm() -> Result<(), String> {
             "wasm32-unknown-unknown",
         ],
     )
+}
+
+/// 3D 桥(render3d/bevy/wgpu)只该出现在桌面与 android 入口。
+///
+/// web / ios 一旦拉进 bevy 或 wgpu,产物体积爆炸,且违反「余端 graceful 缺省」的
+/// 约定(见计划 `bevy-serialized-dove`):这两端应隐藏 3D 面板,而非把整套渲染器
+/// 打包进去。`bevy-3d` 是 apps/desktop 独有的 feature,默认不开,这里守住它不外溢。
+fn web_ios_free_of_3d() -> Result<(), String> {
+    const FORBIDDEN: &[&str] = &["render3d", "bevy", "wgpu"];
+
+    for pkg in ["app-web", "app-ios"] {
+        let tree =
+            capture("cargo", &["tree", "-p", pkg, "--edges", "normal"])?;
+        let found: Vec<&str> = FORBIDDEN
+            .iter()
+            .copied()
+            .filter(|forbidden| depends_on(&tree, forbidden))
+            .collect();
+        if !found.is_empty() {
+            return Err(format!(
+                "{pkg} 依赖了 {},3D 桥不该进 web/ios",
+                found.join("、")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `cargo tree` 的输出里是否出现了名为 `name` 的 crate。
