@@ -37,17 +37,15 @@ pub type SharedTexture = wgpu::Texture;
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 
-/// 标记要自转的实体。
-#[derive(Component)]
-struct Spin;
-
 /// 一个自持的 bevy 离屏渲染场景。
 ///
-/// 持有 bevy `App`、离屏目标图的句柄,以及一次性包装好的 [`slint::Image`]。
-/// 整个对象只在 Slint 的主线程上被 [`render_frame`](Scene::render_frame) 驱动。
+/// 持有 bevy `App`、离屏目标图的句柄、被拖动的立方体实体,以及一次性包装好的
+/// [`slint::Image`]。整个对象只在 Slint 的主线程上被 [`render_frame`](Scene::render_frame) 驱动。
 pub struct Scene {
     app: App,
     target: Handle<Image>,
+    /// 被 UI 拖动控制角度的立方体。每帧按传入的 yaw/pitch 设其绝对朝向。
+    cube: Entity,
     /// 首帧渲染出纹理后才 `Some`。之前返回空图,UI 的 `scene-3d.width > 0` 守卫会让面板暂不显示。
     image: Option<slint::Image>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
@@ -136,29 +134,38 @@ impl Scene {
         );
         let target = app.world_mut().resource_mut::<Assets<Image>>().add(image);
 
-        // 5) 造网格/材质并摆好相机、光、会转的立方体。相机渲染进离屏目标图。
-        spawn_scene(&mut app, &target);
+        // 5) 造网格/材质并摆好相机、光、立方体。相机渲染进离屏目标图。
+        //    立方体的朝向不再由系统自转,而是每帧按 UI 传入的角度设定(见 render_frame)。
+        let cube = spawn_scene(&mut app, &target);
 
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
         app.cleanup();
 
-        // 转动系统。
-        app.add_systems(Update, spin);
-
         Self {
             app,
             target,
+            cube,
             image: None,
             frames: 0,
         }
     }
 
-    /// 驱动 bevy 前进一帧,返回当前离屏纹理包装成的 [`slint::Image`]。
+    /// 按 UI 传入的角度设定立方体朝向,驱动 bevy 前进一帧,返回离屏纹理包装成的 [`slint::Image`]。
+    ///
+    /// `yaw` / `pitch` 为弧度绝对角(由 Slint 侧的拖动累加得到)。先设朝向再 update,
+    /// 这样本帧渲染就反映最新角度。
     ///
     /// 首帧纹理还没就绪时返回空图(UI 面板据此暂不显示)。纹理一旦建出就身份稳定,
     /// 只包装一次、之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
-    pub fn render_frame(&mut self) -> slint::Image {
+    pub fn render_frame(&mut self, yaw: f32, pitch: f32) -> slint::Image {
+        if let Some(mut transform) =
+            self.app.world_mut().get_mut::<Transform>(self.cube)
+        {
+            transform.rotation =
+                Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        }
+
         self.app.update();
         self.frames += 1;
 
@@ -202,11 +209,11 @@ impl Default for Scene {
     }
 }
 
-/// 摆放相机(渲染进离屏目标图)、平行光、会自转的立方体。
-fn spawn_scene(app: &mut App, target: &Handle<Image>) {
+/// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回立方体实体供每帧设朝向。
+fn spawn_scene(app: &mut App, target: &Handle<Image>) -> Entity {
     let world = app.world_mut();
 
-    let cube = world
+    let mesh = world
         .resource_mut::<Assets<Mesh>>()
         .add(Cuboid::default());
     let material = world
@@ -216,13 +223,14 @@ fn spawn_scene(app: &mut App, target: &Handle<Image>) {
             ..default()
         });
 
-    // 会自转的立方体。
-    world.spawn((
-        Mesh3d(cube),
-        MeshMaterial3d(material),
-        Transform::default(),
-        Spin,
-    ));
+    // 立方体。朝向由 render_frame 每帧按 UI 传入的角度设定,初始为默认朝向。
+    let cube = world
+        .spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            Transform::default(),
+        ))
+        .id();
 
     // 平行光。
     world.spawn((
@@ -240,11 +248,6 @@ fn spawn_scene(app: &mut App, target: &Handle<Image>) {
         Tonemapping::None,
         Transform::from_xyz(0.0, 1.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-}
 
-/// 让带 [`Spin`] 的实体绕 Y 轴匀速自转。
-fn spin(time: Res<Time>, mut q: Query<&mut Transform, With<Spin>>) {
-    for mut t in &mut q {
-        t.rotate_y(time.delta_secs());
-    }
+    cube
 }
