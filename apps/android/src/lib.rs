@@ -27,6 +27,9 @@ fn android_main(app: slint::android::AndroidApp) {
     slint::android::init(app)
         .expect("slint android init failed");
 
+    // 下面这段 3D 分派与 apps/desktop/src/main.rs 里的一份**逐字相同**,故意不抽:
+    // 只两处、且签名漂移编译器会两边一起报错。若给某一端的 bevy 分支加初始化步骤,
+    // 记得同步另一端。
     #[cfg(feature = "bevy-3d")]
     {
         let mut scene = render3d::Scene::new();
