@@ -21,6 +21,16 @@ fn android_main(app: slint::android::AndroidApp) {
     );
     log::info!("slint_study starting");
 
+    // APK 由系统启动,拿不到运行时环境变量(桌面那边是 `SLINT_MCP_PORT=8090 cargo run`)。
+    // 故把构建期的端口烧进二进制,再在这里塞回进程环境 —— 必须赶在下面 android::init
+    // 之前,后端初始化时才会读到它并起 MCP server。端口真源见 justfile 的 mcp_port。
+    // unsafe:set_var 要求调用时无其他线程在读写环境;此处是 android_main 头部,
+    // slint 与 bevy 都还没起线程,契约成立。
+    #[cfg(feature = "mcp")]
+    if let Some(port) = option_env!("SLINT_MCP_PORT") {
+        unsafe { std::env::set_var("SLINT_MCP_PORT", port) };
+    }
+
     // 必须先 init 设好 android 平台;render3d::Scene::new 里的
     // require_wgpu_29(Manual).select() 是把共享 device 转发给这个已设好的平台,
     // 顺序反了就没平台可转发。见 i-slint-backend-selector 的 android 分支。
