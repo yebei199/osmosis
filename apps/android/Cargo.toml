@@ -18,14 +18,22 @@ android_logger.workspace = true
 slint = { workspace = true, features = ["backend-android-activity-06"] }
 # 仅 bevy-3d feature 下启用;平时不编 bevy,android 构建保持轻量。
 render3d = { workspace = true, optional = true }
+# 仅 mcp feature 下启用。直依赖 slint 的内部 crate,理由见 src/lib.rs 里 mcp_server::init()
+# 那段注释(上游在 android 上漏接了这个钩子,只能自己补)。
+#
+# 版本必须与 slint 解析出的那份**完全一致**,否则 cargo 会拉进两份 i-slint-backend-testing,
+# 各持一套 thread_local,自己调的 init() 挂在另一个 platform 上 —— 编译照过,server 照样
+# 不监听。slint 现解析到 1.17.0;将来 slint 大版本一动,这里必须跟着动。
+i-slint-backend-testing = { version = "1.17", optional = true }
 
 [features]
 default = []
 debug-fps = ["ui/debug-fps"]
-# 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 SLINT_MCP_PORT 在这边是
-# **构建期**的:APK 由系统启动,进程拿不到运行时环境变量,只能在编译时烧进二进制。
-# 见 src/lib.rs 里的 option_env! 与 justfile 的 mcp-android。
-mcp = ["slint/mcp"]
+# 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 android 这边有两处不同,
+# 都由 src/lib.rs 里那段代码兜住:
+#   - SLINT_MCP_PORT 是**构建期**的(APK 由系统启动,进程拿不到运行时环境变量);
+#   - 得手动调 mcp_server::init()(上游在 android 上漏接了),故拉进 i-slint-backend-testing。
+mcp = ["slint/mcp", "dep:i-slint-backend-testing"]
 # 嵌入 bevy 3D:拉进 render3d,并让 Slint 的 android 后端走 wgpu(skia-wgpu)。
 # android 上渲染器强制是 skia(见 i-slint-backend-selector),unstable-wgpu-29
 # 会把它切到 wgpu 路径。native-activity 特性由 backend-android-activity-06 启用,

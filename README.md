@@ -69,6 +69,10 @@ just android-run             # 装 APK + adb reverse + 看日志
 另外 Android 9 起默认禁止明文 HTTP,`usesCleartextTraffic` 只在 debug 变体的
 manifest 里打开。
 
+manifest 还必须声明 `INTERNET` 权限。Android 内核把 `AF_INET` socket 的**创建**权限
+绑在 `AID_INET`(gid 3003)上,而该组由这条权限授予 —— 没有它,`socket()` 直接 EACCES,
+连 `bind` 到 `127.0.0.1` 都不行,不只是访问外网。
+
 ## 为什么有 Java 代码?
 
 UI 是 100% Slint,逻辑是 100% Rust。`apps/android/gradle/` 目录下唯一的 Java 文件
@@ -104,6 +108,11 @@ ABIS="arm64-v8a armeabi-v7a x86_64" just android-build
 
 - Docker 路径细节见 [`docker/README.md`](docker/README.md);
 - 完整编译流程见 [`docs/build-apk.md`](docs/build-apk.md)。
+
+`settings.gradle` 把阿里云的 maven 镜像排在 `google()` / `mavenCentral()` 之前:直连
+Google Maven 时 gradle 会挑到国内被黑洞的 IP,每次构建白等几分钟 TCP 超时(实测同一个
+AGP pom,阿里云 0.05s,直连 3.9s;整体构建 6min → 2min46s)。清华和 USTC 没有 Maven
+镜像,故不可用。原仓库保留在后面作兜底。
 
 ## 桌面开发构建
 
@@ -148,6 +157,11 @@ just mcp-android      # 烧入端口重编 APK + 装机 + adb forward + 启动
 
 这里用的是 `adb forward` 而非 `adb reverse`:MCP server 跑在**手机**里,是开发机要连
 进去,方向与前面转发 `server-dev` 的那次相反。
+
+Slint 1.17 本身在 android 上**没接** MCP:桌面走 `i-slint-backend-selector`,它设完
+platform 会顺手调 `mcp_server::init()`;而 `slint::android::init()` 直接调
+`set_platform`,把 selector 整个绕过去,那个钩子永远不触发。`apps/android/src/lib.rs`
+里手动补了这一刀(代价是直依赖 `i-slint-backend-testing`)。上游哪天接上了就能删掉。
 
 ### 三个开关,少一个都白搭
 
