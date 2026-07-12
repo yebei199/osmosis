@@ -6,6 +6,9 @@
 
 slint::include_modules!();
 
+mod scene_params;
+pub use scene_params::SceneControls;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
