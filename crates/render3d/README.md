@@ -22,9 +22,24 @@
 3. **wgpu 版本对齐**:bevy 与 slint 必须共享同一 wgpu 大版本(现为 29,Cargo.lock
    里实为单份 `wgpu 29.0.4`)。升级任一方前先核对,否则 `wgpu::Texture` 类型不兼容。
 
+## 场景内容
+
+两个可切换场景,均由 `bsn!`(BSN,next-gen 场景系统)声明式构造,挂在一个转盘根
+`root` 下:
+
+- **形状画廊**(`scene_id==0`):`count` 个内置图元(Cuboid/Sphere/Torus/Capsule/
+  Cylinder/Cone 调色板循环)沿 XZ 环形均布。
+- **实体阵列**(`scene_id==1`):`count` 个 Cuboid 排成近正方网格。
+
+由 `SceneParams`(POD,镜像 `ui::SceneControls`,由 apps/* 在 seam 处翻译)驱动。
+其中 `scene_id`/`count`/`color`/`spacing` 变化时脏检查 → despawn 子树 → bsn! 重建;
+`yaw`/`pitch`/自转每帧只写 `root.Transform`(转盘)。参数来自 3D 页的 LineEdit 热调。
+
 ## 依赖版本
 
-bevy 用 0.19 稳定版(crates.io)。`bsn!` 宏只在未发布的 main,权衡后选稳定、不追它。
+bevy 用 0.19 稳定版(crates.io)。BSN(`bsn!` 宏 + 场景系统)已随 0.19 发布,本 crate
+采用之;它藏在 `bevy_scene` feature 后(见根 `Cargo.toml`),只拖纯 Rust 序列化 crate、
+无系统库。
 
 ## 运行
 
