@@ -125,6 +125,48 @@ just desktop-dev debug-fps   # 外加左上角帧率读数
 帧率计藏在 `debug-fps` feature 后面,默认关闭:它每帧都主动请求重绘,会让
 渲染循环一直满转,移动端上白耗电。
 
+## 让 AI 助手看见运行中的界面(MCP)
+
+Slint 1.17 起,MCP server 可以**编译进应用自身**(`slint/mcp` feature)。开启后 AI 助手
+不再靠猜或截图,而是直接读运行中窗口的元素树、模拟点击和键盘输入。
+背景见 [`docs/slint/slint-and-ai-mcp.md`](docs/slint/slint-and-ai-mcp.md)。
+
+```sh
+just mcp-desktop      # 桌面端 + MCP,监听 127.0.0.1:8090
+just mcp-desktop-3d   # 同上,外加 bevy 3D 页(那页的热调面板最值得给 AI 看)
+```
+
+客户端那一侧由仓库根的 [`.mcp.json`](.mcp.json) 声明(名为 `slint-app`),
+Claude Code 等助手会自动挂接。**必须先把 app 跑起来** —— MCP server 活在应用进程里,
+app 没跑就连不上。
+
+Android 真机:
+
+```sh
+just mcp-android      # 烧入端口重编 APK + 装机 + adb forward + 启动
+```
+
+这里用的是 `adb forward` 而非 `adb reverse`:MCP server 跑在**手机**里,是开发机要连
+进去,方向与前面转发 `server-dev` 的那次相反。
+
+### 三个开关,少一个都白搭
+
+| 开关 | 时机 | 不设的后果 |
+|------|------|-----------|
+| `--features mcp` | 构建期 | 根本没有 server |
+| `SLINT_EMIT_DEBUG_INFO=1` | 构建期 | **静默地瞎**:server 正常起、工具正常列,但 `get_element_tree` 只回一个没有类型名、没有子节点的空壳根 |
+| `SLINT_MCP_PORT` | 运行期(android 为构建期) | 不监听,零开销 |
+
+中间那条是最容易踩的坑:它不报错、不警告,只是让 AI 看到一片空白。`just mcp-*` 已经
+把三个全备齐了,手敲命令时才需要留意。
+
+android 侧 `SLINT_MCP_PORT` 是构建期的 —— APK 由系统启动,进程拿不到运行时环境变量,
+只能靠 `apps/android/src/lib.rs` 里的 `option_env!` 编进二进制。端口在 `justfile` 的
+`mcp_port` 里定义一次,改了要同步 `.mcp.json`。
+
+`mcp` feature 默认关闭:它会把测试后端和软件渲染器编进二进制。别跑 `--all-features`,
+那会把它拖进来。
+
 ## License
 
 GPL-3.0,外加一条附加限制:OpenAI 及其关联公司不获得本许可证的任何授权

@@ -1,4 +1,7 @@
 apk := "dist/slint-study-debug.apk"
+# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。8080 被 web-dev 占、3000 被
+# server-dev 占,故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
+mcp_port := "8090"
 
 # 无参数时列出全部配方(按 group 分组),而非直接跑第一条
 _default:
@@ -129,3 +132,35 @@ android-run: android-install android-reverse
 [group('安卓')]
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
+
+# 桌面 app + 内嵌 MCP server,供 AI 助手挂接(.mcp.json 里的 slint-app)。
+# AI 由此能读运行中界面的元素树、截图、模拟点击,而不是靠猜。
+#
+# SLINT_EMIT_DEBUG_INFO=1 不能省:它让 slint 编译器把元素类型名/id 嵌进产物。少了它
+# 一切照常启动,只是 get_element_tree 永远只回一个空壳根节点 —— 静默地瞎。
+# 加 3D 页:just mcp-desktop-3d
+[group('mcp')]
+mcp-desktop:
+    SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp
+
+# 同上但带 bevy 3D 页(热调面板那页才是最值得让 AI 看的)。需要 vulkan,故走 render3d.nix
+[group('mcp')]
+mcp-desktop-3d:
+    nix-shell render3d.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,bevy-3d'
+
+# 把开发机的 {{mcp_port}} 转发到手机上的同一端口。
+# 方向与 android-reverse 相反:MCP server 跑在**手机**里,是开发机要连进去,故用 forward。
+# adb 重连后需要重新执行
+[group('mcp')]
+mcp-forward:
+    adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
+
+# 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。
+# 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
+# 端口只能靠 apps/android/src/lib.rs 里的 option_env! 编进二进制。
+# 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s slint_study`
+[group('mcp')]
+mcp-android: mcp-forward
+    nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
+    adb install -r {{apk}}
+    adb shell am start -n io.github.slintstudy/.MainActivity

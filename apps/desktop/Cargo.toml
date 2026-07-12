@@ -22,6 +22,20 @@ render3d = { workspace = true, optional = true }
 default = []
 # 透传给 ui:左上角显示诚实的即时帧率(数真实发生的帧,不主动重绘、不额外耗电)。
 debug-fps = ["ui/debug-fps"]
+# 应用内嵌 MCP server,供 AI 助手读元素树、截图、模拟点击。
+# 无需改一行应用代码:slint 的后端初始化会自己调 mcp_server::init()。
+# 默认关 —— 它会把测试后端(i-slint-backend-testing)和 renderer-software 编进二进制。
+#
+# 光开 feature 还不够,另有两个环境变量,缺一不可(justfile 的 mcp-desktop 已备齐):
+#   SLINT_EMIT_DEBUG_INFO=1  构建期。让 slint 编译器把元素类型名/id 嵌进产物。
+#                            不设照样编过、server 照样起,但 get_element_tree 只回一个
+#                            没有类型名、没有子节点的空壳根 —— 静默的瞎,极难察觉。
+#   SLINT_MCP_PORT           运行期。不设则根本不监听,零开销。
+#
+# 上游 README 说别把 mcp 写进 [features]、直接 `--features slint/mcp` 就行。这里仍然
+# 声明,因为 apps/android 要用 `#[cfg(feature = "mcp")]` 门控端口注入,而 cfg 引用不了
+# 依赖的 feature;两端保持同名。注意别开 --all-features,那会把它拖进来。
+mcp = ["slint/mcp"]
 # 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
 # 需要 vulkan 运行期库,用仓库根的 render3d.nix。
 # ui/debug-fps:3D 页本就每帧重绘,顺带在左上角显示诚实即时帧率(已去强制重绘,不额外耗电)。
