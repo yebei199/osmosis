@@ -43,7 +43,9 @@ android_logger = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
-# 用 0.19 稳定版(crates.io):bsn! 只在未发布的 main,权衡后不追新特性、要稳定。
+# 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
+# 场景用 bsn! 宏声明式构造(见 render3d)。bsn! 藏在 bevy_scene feature 后面(bevy::scene),
+# 它只拖 ron/serde/erased-serde/chrono 等纯 Rust crate,不碰系统库,故纳入。
 # 0.19 依赖 wgpu 29,与 slint 的 wgpu-29 由 cargo 统一为同一份(纹理共享的硬前提)。
 # default-features=false + 手挑最小 feature:不要 bevy_winit(它会抢窗口)、
 # 不要 audio/gilrs(会拉 alsa/udev 系统库)。features 是最小起步值,缺什么编译器会报。
@@ -53,6 +55,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_render",
     "bevy_core_pipeline",
     "bevy_pbr",
+    "bevy_scene",
     "bevy_window",
     "multi_threaded",
 ] }
