@@ -26,28 +26,33 @@ export component AuroraBackground inherits Rectangle {
     // 玻璃感直接没了。这是"玻璃背后得有东西"最具体的一次教训。
     //
     // 每团都在自身矩形的 60% 处淡到全透 → 矩形的直边落在全透区里,看不见硬边。
+    // **前提是矩形本身足够大**:原先按容器宽高各取百分比,窗口一窄(手机竖屏、桌面拖窄),
+    // 矩形的竖直边就落进可视区,画面上出现两道笔直的亮暗分界。所以边长统一取
+    // `max(宽, 高) × 1.1` 的正方形 —— 圆形渐变配正方形,边永远被推到屏幕之外。
+    property <length> spot: max(root.width, root.height) * 1.1;
+
     // 紫,中心略偏左上
     Rectangle {
-        x: 0;
-        y: 0;
-        width: 80%;
-        height: 90%;
+        x: root.width * 0.40 - root.spot / 2;
+        y: root.height * 0.45 - root.spot / 2;
+        width: root.spot;
+        height: root.spot;
         background: @radial-gradient(circle, #7c3aed8f 0%, #7c3aed00 60%);
     }
     // 蓝,中心略偏右下 —— 与紫在正中央交叠,那儿正是卡片所在
     Rectangle {
-        x: root.width * 0.20;
-        y: root.height * 0.13;
-        width: 84%;
-        height: 90%;
+        x: root.width * 0.62 - root.spot / 2;
+        y: root.height * 0.58 - root.spot / 2;
+        width: root.spot;
+        height: root.spot;
         background: @radial-gradient(circle, #2563eb85 0%, #2563eb00 60%);
     }
     // 青,顶部偏右,压一点冷调进来
     Rectangle {
-        x: root.width * 0.20;
-        y: root.height * -0.27;
-        width: 70%;
-        height: 70%;
+        x: root.width * 0.55 - root.spot / 2;
+        y: root.height * 0.08 - root.spot / 2;
+        width: root.spot;
+        height: root.spot;
         background: @radial-gradient(circle, #06b6d45c 0%, #06b6d400 60%);
     }
 
