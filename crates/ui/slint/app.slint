@@ -142,6 +142,14 @@ export component MainWindow inherits Window {
     // 3D 内容区的逻辑尺寸。Rust 每帧乘窗口缩放系数得物理像素,让 bevy 按该分辨率渲染。
     out property <length> scene-w: content.width;
     out property <length> scene-h: content.height;
+    // 热调工具条的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
+    // Rust 每帧乘缩放系数交给 render3d 的玻璃 shader,让它精确模糊这块区域背后的画面
+    // (见 crates/render3d/src/glass.rs)。别在 Rust 里重抄这几个常量,改了留白会静默错位。
+    out property <length> glass-x: 16px;
+    out property <length> glass-y: 16px;
+    out property <length> glass-w: content.width - 2 * root.glass-x;
+    out property <length> glass-h: 64px;
+    out property <length> glass-r: 18px;
     // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
     out property <bool> render-active: root.current-tab == 2;
     // 用户点击触发,在 Rust 侧处理。
@@ -311,12 +319,19 @@ export component MainWindow inherits Window {
             // 顺带修掉一个旧行为:原来是一个不吃事件的 Rectangle,在顶栏空白处拖动会**穿透**
             // 下去转动 3D 模型。GlassCard 自带 TouchArea(读指针位置用),现在拖工具条不会
             // 再误转场景了。
+            // 几何量取自上面的 glass-* 属性 —— 同一组值也交给了 render3d 的玻璃 shader,
+            // 两边必须严丝合缝对齐,否则模糊区和边框会错位。
+            //
+            // backdrop: true —— 背后那层模糊 + 折射 + 淡染由 shader 在 GPU 上做完了
+            // (bevy 的画面是我们自己画的,所以采样得到),这里只负责边框、厚度、阴影
+            // 和指针高光,自身的淡白底必须让开,否则白色叠两遍。
             if root.current-tab == 2: GlassCard {
-                x: 16px;
-                y: 16px;
-                width: content.width - 32px;
-                height: 64px;
-                radius: 18px;
+                x: root.glass-x;
+                y: root.glass-y;
+                width: root.glass-w;
+                height: root.glass-h;
+                radius: root.glass-r;
+                backdrop: true;
                 HorizontalLayout {
                     padding: 8px;
                     padding-left: 12px;
