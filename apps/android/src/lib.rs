@@ -43,7 +43,15 @@ fn android_main(app: slint::android::AndroidApp) {
     // 调 init_testing_backends() -> mcp_server::init();而 slint::android::init 直接调
     // platform::set_platform,把 selector 整个绕过去了,那个钩子永远不触发。故自己补一刀 ——
     // 必须在 set_platform 之后,init 内部要拿 SlintContext 去 spawn_local 起 HTTP server。
-    // 代价是直依赖 slint 的内部 crate(版本对齐的坑见 Cargo.toml)。上游哪天接上了,删掉这段。
+    // 代价是直依赖 slint 的内部 crate(版本对齐的坑见 Cargo.toml)。
+    //
+    // 上游 PR slint-ui/slint#11520 要加公开的 `slint::mcp::register()`(在 set_platform 前
+    // 注册 hook,由 set_platform 排空)。它合并后这里换成下面两行,并删掉 Cargo.toml 里的
+    // i-slint-backend-testing 依赖:
+    //     #[cfg(feature = "mcp")] slint::mcp::register();
+    //     slint::android::init(app)...
+    // 但那个 PR 的立意是"custom platform 用户",而 android 是 slint 自家的一等后端 ——
+    // 真正该修的是让它开箱即用。截至 2026-07,PR 仍卡在设计讨论里,别指望短期落地。
     //
     // 只警告不 panic:MCP 是调试设施,起不来不该把整个 app 拖垮。
     // 注意 init() 返回 Ok 不代表 server 真的起来了 —— 它只是把 run_server 挂上事件循环,
@@ -51,7 +59,9 @@ fn android_main(app: slint::android::AndroidApp) {
     // 的 stderr 丢进 /dev/null。所以「装上了却连不上」时别看 logcat,直接 curl 那个端口。
     // (踩过一次:manifest 缺 INTERNET 权限导致 bind EACCES,全程零日志。)
     #[cfg(feature = "mcp")]
-    if let Err(e) = i_slint_backend_testing::mcp_server::init() {
+    if let Err(e) =
+        i_slint_backend_testing::mcp_server::init()
+    {
         log::warn!("MCP server init failed: {e:?}");
     }
 
