@@ -86,6 +86,13 @@ fn android_main(app: slint::android::AndroidApp) {
                     color_rgb: c.color_rgb,
                     spin_speed: c.spin_speed,
                     spacing: c.spacing,
+                    glass: render3d::GlassRect {
+                        x: c.glass.x,
+                        y: c.glass.y,
+                        w: c.glass.w,
+                        h: c.glass.h,
+                        radius: c.glass.radius,
+                    },
                 },
                 w,
                 h,

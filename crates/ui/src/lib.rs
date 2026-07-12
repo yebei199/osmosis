@@ -86,6 +86,8 @@ pub fn run_with_renderer(
         color_rgb: 0x4a6bff,
         spin_speed: 0.0,
         spacing: 1.5,
+        // 每帧从 .slint 量出来重算,初值无所谓。
+        glass: scene_params::GlassRect::default(),
     };
     timer.start(
         TimerMode::Repeated,
@@ -120,6 +122,15 @@ pub fn run_with_renderer(
                 ui.get_spacing_text().as_str(),
                 controls.spacing,
             );
+            // 工具条几何量:逻辑像素 × 缩放系数 → 物理像素,与离屏纹理同一坐标系。
+            // 唯一真相在 app.slint 的 glass-* 属性,这里只做单位换算。
+            controls.glass = scene_params::GlassRect {
+                x: ui.get_glass_x() * scale,
+                y: ui.get_glass_y() * scale,
+                w: ui.get_glass_w() * scale,
+                h: ui.get_glass_h() * scale,
+                radius: ui.get_glass_r() * scale,
+            };
 
             let frame = on_frame(&controls, w, h);
             ui.set_scene_3d(frame);

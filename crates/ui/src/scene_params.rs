@@ -20,6 +20,20 @@ pub struct SceneControls {
     pub spin_speed: f32,
     /// 间距/缩放,已 clamp 到 [`SPACING_RANGE`]。
     pub spacing: f32,
+    /// 热调工具条的矩形,**物理像素**,相对 3D 面板左上角:(x, y, 宽, 高, 圆角)。
+    /// 渲染器据此把这块区域背后的画面模糊+折射掉,做出真正的液态玻璃。
+    /// 值取自 app.slint 的 glass-* 属性(唯一真相)乘窗口缩放系数,这里不重抄那些常量。
+    pub glass: GlassRect,
+}
+
+/// 一个圆角矩形,物理像素。字段与 `render3d::GlassRect` 镜像(理由同 [`SceneControls`])。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GlassRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub radius: f32,
 }
 
 /// 实体数合法区间(含端点)。下限 1 保证场景非空,上限防阵列爆量卡死。

@@ -33,6 +33,9 @@ use bevy::render::texture::GpuImage;
 use bevy::window::{ExitCondition, WindowPlugin};
 use slint::wgpu_29::wgpu;
 
+mod glass;
+pub use glass::GlassRect;
+
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
 
@@ -61,6 +64,9 @@ pub struct SceneParams {
     pub spin_speed: f32,
     /// 间距/缩放因子。
     pub spacing: f32,
+    /// 要做成液态玻璃的那块区域(热调工具条),物理像素。宽高为 0 表示这一帧不做玻璃。
+    /// 几何量由 UI 侧给出,不在这里重复 .slint 里的留白常量(见 [`GlassRect`])。
+    pub glass: GlassRect,
 }
 
 impl SceneParams {
@@ -92,8 +98,16 @@ pub struct Scene {
     size: (u32, u32),
     /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `scene-3d.width > 0` 守卫据此不显示。
     image: Option<slint::Image>,
+    /// `image` 里那张对应的 (宽, 高, 是否走了玻璃 pass)。三者任一变化都得重新导入 ——
+    /// 玻璃开关一翻,交给 Slint 的就换成了另一张纹理。
+    image_key: Option<(u32, u32, bool)>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
+    /// 液态玻璃后处理。持有它自己的管线与输出纹理。
+    glass: glass::GlassPass,
+    /// 共享的 device / queue,玻璃 pass 每帧要用。与 Slint、bevy 是同一套。
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 }
 
 impl Scene {
@@ -206,7 +220,11 @@ impl Scene {
             spin_angle: 0.0,
             size: (WIDTH, HEIGHT),
             image: None,
+            image_key: None,
             frames: 0,
+            glass: glass::GlassPass::new(&device),
+            device,
+            queue,
         }
     }
 
@@ -254,26 +272,44 @@ impl Scene {
         self.app.update();
         self.frames += 1;
 
-        if self.image.is_none() {
-            if let Some(tex) = self.extract_texture() {
-                let (w, h) = (tex.width(), tex.height());
-                match slint::Image::try_from(tex) {
-                    Ok(img) => {
-                        log::info!(
-                            "render3d: 首帧就绪(第 {} 帧),wgpu 纹理 {w}x{h} 已导入 Slint",
-                            self.frames
-                        );
-                        self.image = Some(img);
-                    }
-                    Err(e) => log::error!(
-                        "wgpu 纹理导入 Slint 失败: {e:?}"
-                    ),
-                }
-            } else if self.frames == 120 {
+        let Some(tex) = self.extract_texture() else {
+            if self.frames == 120 {
                 // 两秒还没就绪,多半是渲染子世界里没准备出 GpuImage —— 值得告警排查。
                 log::warn!(
                     "render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示"
                 );
+            }
+            return self.image.clone().unwrap_or_default();
+        };
+
+        // 玻璃 pass:在 bevy 那张画面上,把工具条那块区域模糊+折射掉,产出另一张纹理。
+        // 这一步是 Slint 自己做不到的(它没有 backdrop blur),见 glass.rs 的模块注释。
+        let glass_on = !params.glass.is_empty();
+        let composed = self.glass.run(
+            &self.device,
+            &self.queue,
+            &tex,
+            params.glass,
+        );
+
+        // 尺寸稳定、玻璃开关不变时,纹理身份稳定 → 只包装一次 Image,之后每帧由
+        // bevy + 玻璃 pass 重画内容,Slint 重绘时实时采样同一张。
+        let key = (composed.width(), composed.height(), glass_on);
+        if self.image_key != Some(key) {
+            let (w, h) = (composed.width(), composed.height());
+            match slint::Image::try_from(composed) {
+                Ok(img) => {
+                    log::info!(
+                        "render3d: 纹理就绪(第 {} 帧),{w}x{h} 已导入 Slint(玻璃 {})",
+                        self.frames,
+                        if glass_on { "开" } else { "关" }
+                    );
+                    self.image = Some(img);
+                    self.image_key = Some(key);
+                }
+                Err(e) => log::error!(
+                    "wgpu 纹理导入 Slint 失败: {e:?}"
+                ),
             }
         }
         self.image.clone().unwrap_or_default()
@@ -314,6 +350,7 @@ impl Scene {
 
         self.size = (width, height);
         self.image = None;
+        self.image_key = None;
     }
 
     /// 按新参数重建转盘内容:despawn 旧根子树,用 bsn! 声明式生成 root + 子形状。

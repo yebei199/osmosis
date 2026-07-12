@@ -57,11 +57,18 @@ export component AuroraBackground inherits Rectangle {
 // 玻璃卡片。半透明底 + 边缘亮线 + 内侧厚度 + 悬浮阴影 + 跟随指针的表面高光。
 export component GlassCard inherits Rectangle {
     in property <length> radius: 20px;
+    // 背后那层模糊/折射/淡染是否已经由 GPU 做掉了(3D 页的工具条就是这种情况:
+    // 背景是我们自己用 wgpu 画的,shader 能采样它 —— 见 crates/render3d/src/glass.rs)。
+    // 为真时自身的淡白底让开,只留边框、厚度、阴影和指针高光,否则白色会叠两遍。
+    //
+    // 为假时(Home / Server 页)只能靠半透明"透出"背后的极光 —— Slint 没有 backdrop blur,
+    // 那两页的玻璃是不会真的模糊背景的。这不是偷懒,是上游没有这个 API。
+    in property <bool> backdrop: false;
 
     border-radius: root.radius;
     // 淡白:靠的是"透出背后的极光",不是自己有颜色。调太高会糊成一块白板,
     // 调太低则在暗处彻底看不出是玻璃 —— 12% 是两头之间试出来的值。
-    background: #ffffff1f;
+    background: root.backdrop ? transparent : #ffffff1f;
     border-width: 1px;
     border-color: #ffffff3d;
     // 高光光斑不许溢出圆角之外。裁的是子元素,root 自己的两个 shadow 画在外面,不受影响。

@@ -35,6 +35,20 @@
 其中 `scene_id`/`count`/`color`/`spacing` 变化时脏检查 → despawn 子树 → bsn! 重建;
 `yaw`/`pitch`/自转每帧只写 `root.Transform`(转盘)。参数来自 3D 页的 LineEdit 热调。
 
+## 液态玻璃后处理(`glass.rs` + `glass.wgsl`)
+
+bevy 画完那一帧后,再跑一个全屏 fragment shader:把热调工具条那块圆角矩形区域内的画面
+**模糊 + 边缘折射 + 淡染**,区域之外原样透传,结果写进另一张同尺寸纹理再交给 Slint。
+
+存在的理由:**Slint 没有 backdrop blur,也拿不到自己渲染的像素**(`GraphicsAPI::WGPU29`
+只给 instance/device/queue,没有 surface texture)。但玻璃背后这块背景是我们自己在 GPU 上
+画的,所以我们能采样它 —— 详见 `docs/slint/visual-effects-and-shaders.md` 第五节。
+
+- 玻璃矩形的几何量由 UI 侧给出(`app.slint` 的 `glass-*` 属性 × 窗口缩放系数),
+  **是唯一真相**;这里不重抄那些留白常量,否则 .slint 改了留白 shader 会静默错位。
+- 分工:模糊/折射/淡染在 shader;边框、厚度、阴影、指针高光仍由 Slint 的 `GlassCard` 画在上面。
+- 代价:**玻璃背后不能有 Slint 控件** —— 能模糊的只有 bevy 的画面。
+
 ## 依赖版本
 
 bevy 用 0.19 稳定版(crates.io)。BSN(`bsn!` 宏 + 场景系统)已随 0.19 发布,本 crate
