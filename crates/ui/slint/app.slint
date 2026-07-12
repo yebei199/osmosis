@@ -302,14 +302,24 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // 3D 热调面板:顶栏叠在画面上,边调边看。场景切换用一个循环按钮(两个场景),
+            // 3D 热调面板:玻璃工具条浮在画面上,边调边看。场景切换用一个循环按钮(两个场景),
             // 四个参数用原生 LineEdit。始终随 3D 页显示(不等首帧),故独立于上面的 Image 块。
-            if root.current-tab == 2: Rectangle {
-                y: 0;
+            //
+            // 这里是玻璃最有说服力的落点 —— 背后是真实的、会动的 bevy 画面,不像 Home/Server
+            // 那样得先铺一层极光出来给它透。四周留白 16px,让它"浮"在画面上而不是贴着顶边。
+            //
+            // 顺带修掉一个旧行为:原来是一个不吃事件的 Rectangle,在顶栏空白处拖动会**穿透**
+            // 下去转动 3D 模型。GlassCard 自带 TouchArea(读指针位置用),现在拖工具条不会
+            // 再误转场景了。
+            if root.current-tab == 2: GlassCard {
+                x: 16px;
+                y: 16px;
+                width: content.width - 32px;
                 height: 64px;
-                background: #0b0d13cc;
+                radius: 18px;
                 HorizontalLayout {
                     padding: 8px;
+                    padding-left: 12px;
                     spacing: 12px;
                     alignment: start;
 
