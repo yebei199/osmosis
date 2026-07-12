@@ -50,15 +50,40 @@ component HoverButton inherits Rectangle {
     }
 }
 
-// 左侧导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
+// 导航的三项。**唯一真相** —— 侧栏(宽版式)和底栏(紧凑版式)都 `for` 它,
+// 免得两处各抄一份图标 path,改了一处忘另一处。
+struct NavEntry {
+    label: string,
+    icon: string, // SVG path 数据,viewbox 24×24
+}
+
+global Nav {
+    out property <[NavEntry]> items: [
+        {
+            label: "Home",
+            icon: "M3 12 L12 4 L21 12 M5.5 10 L5.5 20 L18.5 20 L18.5 10",
+        },
+        {
+            label: "Server",
+            icon: "M4 5 L20 5 L20 10 L4 10 Z M4 13 L20 13 L20 18 L4 18 Z",
+        },
+        {
+            label: "3D",
+            icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5",
+        },
+    ];
+}
+
+// 导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
 // 图标用 Path 内嵌(不引外部资源);标签用英文,免得中文落到无 CJK 的默认字体上变豆腐。
+//
+// 不写死高度:竖排侧栏里由使用处给 68px,横排底栏里由布局撑满栏高。
 component NavItem inherits Rectangle {
     in property <string> label;
-    in property <string> icon; // SVG path 数据,viewbox 24×24
+    in property <string> icon;
     in property <bool> active;
     callback clicked;
 
-    height: 68px;
     border-radius: 12px;
     background: active ? #1c2233 : (touch.has-hover ? #141824 : transparent);
     animate background { duration: 120ms; easing: ease-out; }
@@ -95,19 +120,64 @@ component NavItem inherits Rectangle {
     }
 }
 
-// 一个带标签的窄文本输入,3D 热调面板复用。text 双向绑定到外部属性。
+// 一个带标签的文本输入,3D 热调面板复用。text 双向绑定到外部属性。
+//
+// 宽度**不写死**,由所在行分配 —— 原先固定 72px:窗口宽在 600~900px 之间时,
+// 「220px 按钮 + 4×72px」的固定内容比工具条还宽,后面的框直接被 GlassCard 裁掉。
+// 给个 56px 下限保证还认得出内容,其余交给 horizontal-stretch。
 component ParamField inherits VerticalLayout {
     in property <string> label;
     in-out property <string> text;
+    horizontal-stretch: 1;
     spacing: 2px;
     Text {
         text: root.label;
         color: #9aa0b4;
         font-size: 11px;
     }
+    // 高度也得钉:LineEdit 在 fluent 风格下默认 56px 高,label 一叠就 72px —— 比整条
+    // 64px 的工具条还高,下边框和清除按钮会被 GlassCard 的 clip 悄悄切掉(旧代码就这样,
+    // 一直没人发现)。40px 是个正常的输入框高度,工具条也才收得住。
     LineEdit {
-        width: 72px;
+        min-width: 56px;
+        height: 40px;
         text <=> root.text;
+    }
+}
+
+// 四个参数框。宽版式一排四个;紧凑版式(stacked)排成 2×2 —— 手机上四个并排每个只剩
+// ~76px,「#4a6bff」被 LineEdit 的清除按钮挤得只看得见一个「#」,读都读不出来。
+//
+// 两个分支的绑定都关在本组件里:外面两处使用点只需拨 stacked,不会改了一处漏了另一处。
+component ParamRow inherits Rectangle {
+    in property <bool> stacked;
+    in-out property <string> count-text;
+    in-out property <string> color-text;
+    in-out property <string> speed-text;
+    in-out property <string> spacing-text;
+
+    if !root.stacked: HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 12px;
+        ParamField { label: "实体数"; text <=> root.count-text; }
+        ParamField { label: "基础色"; text <=> root.color-text; }
+        ParamField { label: "自转速度"; text <=> root.speed-text; }
+        ParamField { label: "间距"; text <=> root.spacing-text; }
+    }
+
+    if root.stacked: GridLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 8px;
+        Row {
+            ParamField { label: "实体数"; text <=> root.count-text; }
+            ParamField { label: "基础色"; text <=> root.color-text; }
+        }
+        Row {
+            ParamField { label: "自转速度"; text <=> root.speed-text; }
+            ParamField { label: "间距"; text <=> root.spacing-text; }
+        }
     }
 }
 
@@ -142,13 +212,24 @@ export component MainWindow inherits Window {
     // 3D 内容区的逻辑尺寸。Rust 每帧乘窗口缩放系数得物理像素,让 bevy 按该分辨率渲染。
     out property <length> scene-w: content.width;
     out property <length> scene-h: content.height;
+    // 版式(Layout Mode):窄→紧凑(底部导航),宽→侧栏。**由运行时窗口宽度决定,不由端决定**
+    // —— 桌面把窗口拖窄一样变成紧凑版式,这既是要的体验,也是唯一能在桌面验证移动版式的办法。
+    // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
+    // 手机横屏(~850dp)回到侧栏 —— 横屏本来就矮,底栏再吃 64px 太亏。
+    property <bool> compact: root.width < 600px;
+
     // 热调工具条的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
     // Rust 每帧乘缩放系数交给 render3d 的玻璃 shader,让它精确模糊这块区域背后的画面
     // (见 crates/render3d/src/glass.rs)。别在 Rust 里重抄这几个常量,改了留白会静默错位。
+    //
+    // 紧凑版式换行成两行(按钮一行、四个参数框一行),故高度跟着版式变。shader 全从
+    // uniform 读几何量,这里改完 Rust 和 WGSL 一行都不用动。
     out property <length> glass-x: 16px;
     out property <length> glass-y: 16px;
     out property <length> glass-w: content.width - 2 * root.glass-x;
-    out property <length> glass-h: 64px;
+    // 高度按内容算出来的。一个参数框 = 15(标签) + 2 + 40(LineEdit) = 57px。
+    // 宽版:8 + 57 + 8 ≈ 76px。紧凑版 = 8 + 56(按钮) + 8 + (57×2 + 8) + 8 = 202 → 取 204px。
+    out property <length> glass-h: root.compact ? 204px : 76px;
     out property <length> glass-r: 18px;
     // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
     out property <bool> render-active: root.current-tab == 2;
@@ -159,205 +240,261 @@ export component MainWindow inherits Window {
 
     title: "Slint Study";
     background: #0f1117;
+    // 开窗即宽版式;最小尺寸故意放到手机竖屏那么窄 —— 桌面上把窗口拖窄就能直接看到
+    // 紧凑版式,不必开模拟器。
+    preferred-width: 1000px;
+    preferred-height: 700px;
+    min-width: 360px;
+    min-height: 520px;
 
-    // safe-area 内边距包在最外层;单一顶层布局 → 窗口撑满且可调整大小。
-    HorizontalLayout {
-        padding-top: root.safe-area-insets.top;
-        padding-bottom: root.safe-area-insets.bottom;
-        padding-left: root.safe-area-insets.left;
-        padding-right: root.safe-area-insets.right;
+    // 顶层恒为一个 VerticalLayout(主体行 + 可选底栏)→ 窗口撑满且可调整大小。
+    VerticalLayout {
 
-        // ── 左侧导航栏 ──
-        Rectangle {
-            width: 96px;
-            background: #0b0d13;
-            VerticalLayout {
-                padding: 8px;
-                spacing: 6px;
-                alignment: start;
+        // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
+        HorizontalLayout {
+            vertical-stretch: 1;
+            padding-top: root.safe-area-insets.top;
+            padding-left: root.safe-area-insets.left;
+            padding-right: root.safe-area-insets.right;
+            // 紧凑版式的底部 inset 归底栏管 —— 它的背景要铺到手势条底下,不能在这里先留白,
+            // 否则手势条那一条会露出窗口底色,全面屏观感碎掉。
+            padding-bottom: root.compact ? 0 : root.safe-area-insets.bottom;
 
-                NavItem {
-                    label: "Home";
-                    icon: "M3 12 L12 4 L21 12 M5.5 10 L5.5 20 L18.5 20 L18.5 10";
-                    active: root.current-tab == 0;
-                    clicked => { root.current-tab = 0; }
-                }
-                NavItem {
-                    label: "Server";
-                    icon: "M4 5 L20 5 L20 10 L4 10 Z M4 13 L20 13 L20 18 L4 18 Z";
-                    active: root.current-tab == 1;
-                    clicked => { root.current-tab = 1; }
-                }
-                NavItem {
-                    label: "3D";
-                    icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5";
-                    active: root.current-tab == 2;
-                    clicked => { root.current-tab = 2; }
+            // ── 侧栏(宽版式)──
+            // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
+            // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
+            // 把侧栏也拆成「背景铺满 + 内部 padding」。
+            if !root.compact: Rectangle {
+                width: 96px;
+                background: #0b0d13;
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    for item[i] in Nav.items: NavItem {
+                        height: 68px;
+                        label: item.label;
+                        icon: item.icon;
+                        active: root.current-tab == i;
+                        clicked => { root.current-tab = i; }
+                    }
                 }
             }
-        }
 
-        // ── 右侧内容区。三页共用这块矩形(尺寸恒定,故 scene-w/h 始终有效),
-        //    按 current-tab 切换子内容 ──
-        content := Rectangle {
-            horizontal-stretch: 1;
+            // ── 内容区。三页共用这块矩形(scene-w/h 由它量出),按 current-tab 切换子内容 ──
+            content := Rectangle {
+                horizontal-stretch: 1;
 
-            // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
-            // bevy 画面,本来就有内容可透。
-            if root.current-tab != 2: AuroraBackground {
-                width: 100%;
-                height: 100%;
-            }
+                // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
+                // bevy 画面,本来就有内容可透。
+                if root.current-tab != 2: AuroraBackground {
+                    width: 100%;
+                    height: 100%;
+                }
 
-            // Home:平台标题 + 计数器,装进玻璃卡片
-            if root.current-tab == 0: VerticalLayout {
-                alignment: center;
-                HorizontalLayout {
+                // Home:平台标题 + 计数器,装进玻璃卡片。
+                //
+                // 宽度封顶 340px、高度由内容撑开。原先写死 340×320:手机上内容区只有 ~300px 宽,
+                // 卡片比它还宽,而内容区画在侧栏之后 → 卡片直接盖住导航按钮。宽度改用 root.width
+                // (而非 content.width)算,是为了绕开「子元素宽度依赖父元素宽度、父元素首选尺寸
+                // 又依赖子元素」的求值环。
+                if root.current-tab == 0: VerticalLayout {
                     alignment: center;
-                    GlassCard {
-                        width: 340px;
-                        height: 320px;
-                        VerticalLayout {
-                            padding: 28px;
-                            alignment: center;
-                            spacing: 20px;
-
-                            Text {
-                                text: "Slint on " + root.platform;
-                                color: #e6e8ef;
-                                font-size: 22px;
-                                horizontal-alignment: center;
-                            }
-                            Text {
-                                text: root.count;
-                                color: #7aa2f7;
-                                font-size: 72px;
-                                horizontal-alignment: center;
-                            }
-                            HorizontalLayout {
+                    HorizontalLayout {
+                        alignment: center;
+                        GlassCard {
+                            width: min(340px, root.width - (root.compact ? 32px : 128px));
+                            VerticalLayout {
+                                padding: 28px;
                                 alignment: center;
-                                HoverButton {
-                                    text: "Tap me";
-                                    clicked => { root.bump(); }
+                                spacing: 20px;
+
+                                Text {
+                                    text: "Slint on " + root.platform;
+                                    color: #e6e8ef;
+                                    font-size: 22px;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: root.count;
+                                    color: #7aa2f7;
+                                    font-size: 72px;
+                                    horizontal-alignment: center;
+                                }
+                                HorizontalLayout {
+                                    alignment: center;
+                                    HoverButton {
+                                        text: "Tap me";
+                                        clicked => { root.bump(); }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Server:一次真实网络往返,验证 contract → api → app-core → ui 全链路
-            if root.current-tab == 1: VerticalLayout {
-                alignment: center;
-                HorizontalLayout {
+                // Server:一次真实网络往返,验证 contract → api → app-core → ui 全链路
+                if root.current-tab == 1: VerticalLayout {
                     alignment: center;
-                    GlassCard {
-                        width: 340px;
-                        height: 220px;
-                        VerticalLayout {
-                            padding: 24px;
-                            alignment: center;
-                            spacing: 20px;
-
-                            HorizontalLayout {
+                    HorizontalLayout {
+                        alignment: center;
+                        GlassCard {
+                            width: min(340px, root.width - (root.compact ? 32px : 128px));
+                            VerticalLayout {
+                                padding: 24px;
                                 alignment: center;
-                                HoverButton {
-                                    text: "Check server";
-                                    clicked => { root.check-health(); }
+                                spacing: 20px;
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    HoverButton {
+                                        text: "Check server";
+                                        clicked => { root.check-health(); }
+                                    }
                                 }
-                            }
-                            // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
-                            // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
-                            Text {
-                                text: root.health-text;
-                                font-family: "Maple Mono NF CN";
-                                color: #9aa0b4;
-                                font-size: 13px;
-                                height: 56px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                wrap: word-wrap;
+                                // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
+                                // 卡片高度由内容撑开,这一行是那个「内容」里唯一会变长的东西,
+                                // 钉死它,卡片就不会跟着文案抖。
+                                // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
+                                Text {
+                                    text: root.health-text;
+                                    font-family: "Maple Mono NF CN";
+                                    color: #9aa0b4;
+                                    font-size: 13px;
+                                    height: 56px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // 3D:bevy 离屏画面铺满内容区,分辨率随 content 尺寸动态变化,拖动控制朝向。
-            // 空图(未就绪 / web·ios,或刚切进来还没渲染出首帧)时不渲染这块。
-            if root.current-tab == 2 && root.scene-3d.width > 0: Image {
-                width: 100%;
-                height: 100%;
-                image-fit: fill;
-                source: root.scene-3d;
+                // 3D:bevy 离屏画面铺满内容区,分辨率随 content 尺寸动态变化,拖动控制朝向。
+                // 空图(未就绪 / web·ios,或刚切进来还没渲染出首帧)时不渲染这块。
+                if root.current-tab == 2 && root.scene-3d.width > 0: Image {
+                    width: 100%;
+                    height: 100%;
+                    image-fit: fill;
+                    source: root.scene-3d;
 
-                // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
-                drag := TouchArea {
-                    property <length> last-x;
-                    property <length> last-y;
-                    pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down) {
+                    // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
+                    drag := TouchArea {
+                        property <length> last-x;
+                        property <length> last-y;
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) {
+                                drag.last-x = drag.mouse-x;
+                                drag.last-y = drag.mouse-y;
+                            }
+                        }
+                        moved => {
+                            root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
+                            root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
                             drag.last-x = drag.mouse-x;
                             drag.last-y = drag.mouse-y;
                         }
                     }
-                    moved => {
-                        root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
-                        root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
-                        drag.last-x = drag.mouse-x;
-                        drag.last-y = drag.mouse-y;
+                }
+
+                // 3D 热调面板:玻璃工具条浮在画面上,边调边看。场景切换用一个循环按钮(两个场景),
+                // 四个参数用原生 LineEdit。始终随 3D 页显示(不等首帧),故独立于上面的 Image 块。
+                //
+                // 这里是玻璃最有说服力的落点 —— 背后是真实的、会动的 bevy 画面,不像 Home/Server
+                // 那样得先铺一层极光出来给它透。四周留白 16px,让它"浮"在画面上而不是贴着顶边。
+                //
+                // 顺带修掉一个旧行为:原来是一个不吃事件的 Rectangle,在顶栏空白处拖动会**穿透**
+                // 下去转动 3D 模型。GlassCard 自带 TouchArea(读指针位置用),现在拖工具条不会
+                // 再误转场景了。
+                // 几何量取自上面的 glass-* 属性 —— 同一组值也交给了 render3d 的玻璃 shader,
+                // 两边必须严丝合缝对齐,否则模糊区和边框会错位。
+                //
+                // backdrop: true —— 背后那层模糊 + 折射 + 淡染由 shader 在 GPU 上做完了
+                // (bevy 的画面是我们自己画的,所以采样得到),这里只负责边框、厚度、阴影
+                // 和指针高光,自身的淡白底必须让开,否则白色叠两遍。
+                //
+                // 两个版式:宽版一行(按钮 + 四个参数框,参数框吃掉剩余宽度),紧凑版两行
+                // (按钮撑满一行,四个参数框一行)。参数框都会伸缩,所以任何宽度下都不被裁。
+                if root.current-tab == 2: GlassCard {
+                    x: root.glass-x;
+                    y: root.glass-y;
+                    width: root.glass-w;
+                    height: root.glass-h;
+                    radius: root.glass-r;
+                    backdrop: true;
+
+                    if !root.compact: HorizontalLayout {
+                        padding: 8px;
+                        padding-left: 12px;
+                        spacing: 12px;
+
+                        HoverButton {
+                            width: 160px;
+                            text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
+                            clicked => { root.scene-index = 1 - root.scene-index; }
+                        }
+                        ParamRow {
+                            count-text <=> root.count-text;
+                            color-text <=> root.color-text;
+                            speed-text <=> root.speed-text;
+                            spacing-text <=> root.spacing-text;
+                        }
+                    }
+
+                    if root.compact: VerticalLayout {
+                        padding: 8px;
+                        padding-left: 12px;
+                        spacing: 8px;
+
+                        HoverButton {
+                            width: root.glass-w - 20px;
+                            text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
+                            clicked => { root.scene-index = 1 - root.scene-index; }
+                        }
+                        ParamRow {
+                            stacked: true;
+                            count-text <=> root.count-text;
+                            color-text <=> root.color-text;
+                            speed-text <=> root.speed-text;
+                            spacing-text <=> root.spacing-text;
+                        }
                     }
                 }
-            }
 
-            // 3D 热调面板:玻璃工具条浮在画面上,边调边看。场景切换用一个循环按钮(两个场景),
-            // 四个参数用原生 LineEdit。始终随 3D 页显示(不等首帧),故独立于上面的 Image 块。
-            //
-            // 这里是玻璃最有说服力的落点 —— 背后是真实的、会动的 bevy 画面,不像 Home/Server
-            // 那样得先铺一层极光出来给它透。四周留白 16px,让它"浮"在画面上而不是贴着顶边。
-            //
-            // 顺带修掉一个旧行为:原来是一个不吃事件的 Rectangle,在顶栏空白处拖动会**穿透**
-            // 下去转动 3D 模型。GlassCard 自带 TouchArea(读指针位置用),现在拖工具条不会
-            // 再误转场景了。
-            // 几何量取自上面的 glass-* 属性 —— 同一组值也交给了 render3d 的玻璃 shader,
-            // 两边必须严丝合缝对齐,否则模糊区和边框会错位。
-            //
-            // backdrop: true —— 背后那层模糊 + 折射 + 淡染由 shader 在 GPU 上做完了
-            // (bevy 的画面是我们自己画的,所以采样得到),这里只负责边框、厚度、阴影
-            // 和指针高光,自身的淡白底必须让开,否则白色叠两遍。
-            if root.current-tab == 2: GlassCard {
-                x: root.glass-x;
-                y: root.glass-y;
-                width: root.glass-w;
-                height: root.glass-h;
-                radius: root.glass-r;
-                backdrop: true;
-                HorizontalLayout {
-                    padding: 8px;
-                    padding-left: 12px;
-                    spacing: 12px;
-                    alignment: start;
-
-                    HoverButton {
-                        text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
-                        clicked => { root.scene-index = 1 - root.scene-index; }
-                    }
-                    ParamField { label: "实体数"; text <=> root.count-text; }
-                    ParamField { label: "基础色"; text <=> root.color-text; }
-                    ParamField { label: "自转速度"; text <=> root.speed-text; }
-                    ParamField { label: "间距"; text <=> root.spacing-text; }
+                // fps 浮层:content 的最后一个子元素 → 画在最上层,覆盖 3D 铺满的 Image。
+                // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
+                if root.show-fps: Text {
+                    x: 8px;
+                    y: 8px;
+                    text: "FPS " + round(root.fps);
+                    color: #51cf66;
+                    font-size: 14px;
+                    font-weight: 700;
                 }
             }
+        }
 
-            // fps 浮层:content 的最后一个子元素 → 画在最上层,覆盖 3D 铺满的 Image。
-            // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
-            if root.show-fps: Text {
-                x: 8px;
-                y: 8px;
-                text: "FPS " + round(root.fps);
-                color: #51cf66;
-                font-size: 14px;
-                font-weight: 700;
+        // ── 底栏(紧凑版式)──
+        // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
+        // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
+        if root.compact: Rectangle {
+            height: 64px + root.safe-area-insets.bottom;
+            background: #0b0d13;
+            HorizontalLayout {
+                padding-left: root.safe-area-insets.left + 8px;
+                padding-right: root.safe-area-insets.right + 8px;
+                padding-bottom: root.safe-area-insets.bottom;
+                spacing: 4px;
+
+                for item[i] in Nav.items: NavItem {
+                    horizontal-stretch: 1;
+                    label: item.label;
+                    icon: item.icon;
+                    active: root.current-tab == i;
+                    clicked => { root.current-tab = i; }
+                }
             }
         }
     }
