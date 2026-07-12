@@ -329,16 +329,25 @@ impl Scene {
 
     /// 按新尺寸重建离屏目标纹理,把相机的 RenderTarget 指过去,释放旧纹理。
     ///
-    /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理。
+    /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理;但**距离**要:
+    /// 透视投影固定的是垂直视野,视口一竖水平视野就跟着收窄,横排的内容会出画 ——
+    /// 故按长宽比整体后撤相机(见 [`pullback`])。
     /// 重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
     fn resize(&mut self, width: u32, height: u32) {
         let new_target =
             make_target(&mut self.app, width, height);
+        let aspect = width as f32 / height as f32;
         self.app
             .world_mut()
             .entity_mut(self.camera)
-            .insert(RenderTarget::Image(
-                new_target.clone().into(),
+            .insert((
+                RenderTarget::Image(
+                    new_target.clone().into(),
+                ),
+                Transform::from_translation(camera_pos(
+                    aspect,
+                ))
+                .looking_at(Vec3::ZERO, Vec3::Y),
             ));
 
         let old =
@@ -452,11 +461,45 @@ fn spawn_camera_and_light(
             // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
             // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
             Tonemapping::None,
-            Transform::from_xyz(0.0, 1.5, 8.0)
-                .looking_at(Vec3::ZERO, Vec3::Y),
+            // 首帧的目标是 WIDTH×HEIGHT;真实面板尺寸一到,resize 会按其长宽比重设位置与投影。
+            Transform::from_translation(camera_pos(
+                WIDTH as f32 / HEIGHT as f32,
+            ))
+            .looking_at(Vec3::ZERO, Vec3::Y),
         ))
         .id()
 }
+
+/// 相机在参考长宽比下的位置。宽视口恒用这个位置 —— 改动前的观感基线。
+const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 1.5, 8.0);
+/// 参考长宽比。视口比它更"竖",相机就得后撤。
+const REFERENCE_ASPECT: f32 = 1.0;
+/// 后撤倍数上限。窗口被拖成 1px 宽时长宽比趋近 0,不封顶相机会飞到无穷远。
+/// 4 倍够手机竖屏(长宽比 ~0.26,需要 3.8 倍)完整入画。
+const MAX_PULLBACK: f32 = 4.0;
+
+/// 相机后撤倍数,随视口长宽比反比放大。
+///
+/// 透视投影固定的是**垂直**视野,水平视野 = 垂直视野 × 长宽比 —— 视口一竖,横向排开的
+/// 形状画廊就出画。距离与长宽比成反比放大即可把它拉回来。宽视口(≥ 参考比)返回 1,
+/// 桌面观感与改动前逐像素一致。
+///
+/// 用**倍数**而不是直接给 z:相机位置整体乘这个倍数,视线方向不变,俯视角就保住了。
+/// 只退 z 的话相机会越退越水平,转盘被看成侧视的一条扁线 —— 试过,很难看。
+///
+/// 退化输入(0 / 负 / NaN,来自 1px 窗口或尚未测量的首帧)返回 1,不放大。
+fn pullback(aspect: f32) -> f32 {
+    if !aspect.is_finite() || aspect <= 0.0 {
+        return 1.0;
+    }
+    (REFERENCE_ASPECT / aspect).clamp(1.0, MAX_PULLBACK)
+}
+
+/// 给定视口长宽比,相机该待的位置。
+fn camera_pos(aspect: f32) -> Vec3 {
+    BASE_CAMERA_POS * pullback(aspect)
+}
+
 
 /// 建六种内置图元的网格句柄,建一次复用。索引 0 是 Cuboid,兼作阵列场景的方块。
 fn build_mesh_palette(app: &mut App) -> Vec<Handle<Mesh>> {
@@ -508,5 +551,64 @@ fn compute_placements(
                 (palette[0].clone(), pos)
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 宽视口(长宽比 ≥ 参考比)不后撤 —— 桌面上的观感必须与改动前逐像素一致。
+    #[test]
+    fn wide_viewport_keeps_base_distance() {
+        assert_eq!(pullback(REFERENCE_ASPECT), 1.0);
+        assert_eq!(pullback(16.0 / 9.0), 1.0);
+        assert_eq!(pullback(100.0), 1.0);
+        assert_eq!(camera_pos(16.0 / 9.0), BASE_CAMERA_POS);
+    }
+
+    /// 竖视口按长宽比等比后撤 —— 水平视野随长宽比线性收窄,故距离须反比放大,
+    /// 横向排开的形状画廊才不会出画。整体缩放位置向量,俯视角不变。
+    #[test]
+    fn portrait_viewport_pulls_camera_back_proportionally() {
+        // 长宽比减半 → 后撤一倍。
+        assert_eq!(pullback(0.5), 2.0);
+        assert_eq!(camera_pos(0.5), BASE_CAMERA_POS * 2.0);
+        // 手机竖屏的 3D 面板约 0.8:轻微后撤。
+        assert!(
+            (pullback(0.8) - 1.0 / 0.8).abs() < 1e-4,
+            "0.8 处应精确等于 参考比 / aspect"
+        );
+        // 视线方向(俯视角)必须与基线一致 —— 只退 z 会把转盘看成侧视的一条扁线。
+        let far = camera_pos(0.3).normalize();
+        let base = BASE_CAMERA_POS.normalize();
+        assert!(
+            (far - base).length() < 1e-5,
+            "后撤后视线方向变了:{far:?} vs {base:?}"
+        );
+    }
+
+    /// 参考比处连续 —— 断点两侧不能跳变,否则拖动窗口过临界点时 3D 画面会"咔"一下。
+    #[test]
+    fn distance_is_continuous_at_reference_aspect() {
+        let below = pullback(REFERENCE_ASPECT - 1e-3);
+        let above = pullback(REFERENCE_ASPECT + 1e-3);
+        assert!(
+            (below - above).abs() < 1e-2,
+            "参考比两侧应连续,实测 {below} vs {above}"
+        );
+    }
+
+    /// 退化输入不产生疯狂结果:长宽比为 0 / 负数 / NaN(窗口被拖到 1px、首帧未测量)时
+    /// 后撤倍数必须仍是有限正值,且封顶 —— 相机不能飞到无穷远。
+    #[test]
+    fn degenerate_aspect_is_clamped_to_finite_distance() {
+        for aspect in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-9] {
+            let k = pullback(aspect);
+            assert!(
+                k.is_finite() && k >= 1.0 && k <= MAX_PULLBACK,
+                "aspect {aspect} 得到不合理的后撤倍数 {k}"
+            );
+        }
     }
 }
