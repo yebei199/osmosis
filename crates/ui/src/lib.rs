@@ -52,29 +52,41 @@ pub fn run() {
 
 /// 同 [`run`],但额外每帧驱动一个外部渲染器,把它产出的画面推到 3D 面板。
 ///
-/// `on_frame` 由平台入口提供(见 `render3d`):每帧以当前拖动角度 `(yaw, pitch)`
-/// 和面板**物理像素**尺寸 `(w, h)` 调用一次,内部驱动 bevy 前进一帧,返回离屏
-/// 纹理包装成的 [`slint::Image`]。角度来自 `rot-yaw`/`rot-pitch`;尺寸取 3D 面板的
-/// 逻辑尺寸 `scene-w`/`scene-h` 乘窗口缩放系数,让 bevy 按物理分辨率渲染、HiDPI 上清晰。
-/// 仍只传 f32/u32,不涉 bevy / wgpu 类型,依赖边界保持干净分离。
+/// `on_frame` 由平台入口提供(见 `render3d`):每帧以当前 [`SceneControls`] 和面板
+/// **物理像素**尺寸 `(w, h)` 调用一次,内部驱动 bevy 前进一帧,返回离屏纹理包装成的
+/// [`slint::Image`]。控制量在这里组装:朝向来自 `rot-yaw`/`rot-pitch`,场景与热调参数
+/// 来自 `scene-index` 与四个 LineEdit 文本——原始文本在**信任边界**用 [`scene_params`]
+/// 解析+clamp,非法/越界退回上一个好值(持久保存在 `controls` 里)。尺寸取 3D 面板逻辑
+/// 尺寸乘窗口缩放系数,让 bevy 按物理分辨率渲染、HiDPI 上清晰。
 ///
+/// 只传 POD 的 `SceneControls`,不涉 bevy / wgpu 类型,依赖边界保持干净分离。
 /// 仅当 3D 页激活(`render-active`)时才驱动渲染器,其余页跳过 —— 移动端省电。
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
 pub fn run_with_renderer(
-    mut on_frame: impl FnMut(f32, f32, u32, u32) -> slint::Image
+    mut on_frame: impl FnMut(&SceneControls, u32, u32) -> slint::Image
     + 'static,
 ) {
     let ui = build_ui();
     #[cfg(feature = "debug-fps")]
     let _fps_timer = fps::start(&ui);
 
-    // 每帧:仅 3D 页激活时 → 读角度与面板物理尺寸 → 驱动渲染器一帧 → 推给 UI → 请求重绘。
-    // 不请求重绘的话,UI 空闲时 Slint 不会重新采样那张纹理,3D 会定格。
+    // 每帧:仅 3D 页激活时 → 组装 SceneControls 与面板物理尺寸 → 驱动渲染器一帧 → 推给
+    // UI → 请求重绘。不请求重绘的话,UI 空闲时 Slint 不会重新采样那张纹理,3D 会定格。
     // Timer 与其捕获的 `on_frame` 必须活到事件循环结束,所以持有到 run() 返回。
+    // controls 跨帧持久:解析失败时各字段退回上一个好值。初值须与 app.slint 的默认属性一致。
     let weak = ui.as_weak();
     let timer = Timer::default();
+    let mut controls = SceneControls {
+        scene_id: 0,
+        yaw: 0.0,
+        pitch: 0.0,
+        count: 8,
+        color_rgb: 0x4a6bff,
+        spin_speed: 0.0,
+        spacing: 1.5,
+    };
     timer.start(
         TimerMode::Repeated,
         FRAME_INTERVAL,
@@ -88,12 +100,28 @@ pub fn run_with_renderer(
                 (ui.get_scene_w() * scale).max(1.0) as u32;
             let h =
                 (ui.get_scene_h() * scale).max(1.0) as u32;
-            let frame = on_frame(
-                ui.get_rot_yaw(),
-                ui.get_rot_pitch(),
-                w,
-                h,
+
+            controls.scene_id = ui.get_scene_index();
+            controls.yaw = ui.get_rot_yaw();
+            controls.pitch = ui.get_rot_pitch();
+            controls.count = scene_params::parse_count(
+                ui.get_count_text().as_str(),
+                controls.count,
             );
+            controls.color_rgb = scene_params::parse_hex_rgb(
+                ui.get_color_text().as_str(),
+                controls.color_rgb,
+            );
+            controls.spin_speed = scene_params::parse_speed(
+                ui.get_speed_text().as_str(),
+                controls.spin_speed,
+            );
+            controls.spacing = scene_params::parse_spacing(
+                ui.get_spacing_text().as_str(),
+                controls.spacing,
+            );
+
+            let frame = on_frame(&controls, w, h);
             ui.set_scene_3d(frame);
             ui.window().request_redraw();
         },
