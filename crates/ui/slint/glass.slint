@@ -1,0 +1,113 @@
+// 玻璃拟态基元:一层极光背景 + 一张玻璃卡片。
+//
+// 为什么是这两个凑一对:玻璃是半透明的,**背后没东西就等于没有玻璃**。原本全局
+// 是纯色 #0f1117,半透明卡片盖上去只是"深灰盖深灰",肉眼看不出任何玻璃感。
+// AuroraBackground 就是专门用来"被透过"的那层内容。
+//
+// 边界:Slint 至今没有 backdrop blur(见 docs/slint/visual-effects-and-shaders.md),
+// 所以玻璃**不会真的模糊背后的像素** —— 这里做的是"半透明 + 厚度 + 高光"这条路,
+// 视觉上足以成立,但别指望磨砂。真模糊得把背景层整个交给 wgpu 自己画。
+
+// 极光背景:深色底上叠几团彩色光斑,供玻璃透出颜色。
+//
+// 光斑用 radial-gradient 到 transparent 的 Rectangle 叠出来 —— 渐变在矩形内部就
+// 淡到全透,所以看不见矩形的硬边。尺寸给得比容器大、中心故意推到边缘之外,只露一段弧。
+//
+// 静态不动:玻璃的动感由 GlassCard 的指针高光提供;背景再飘就是待机也在重绘,
+// 与本仓库既有的省电取向(render-active 门控、不主动请求重绘)相左。
+export component AuroraBackground inherits Rectangle {
+    background: #0f1117;
+    clip: true;
+
+    // x/y 不接受百分比(只有 width/height 接受),所以位置写成父尺寸的表达式。
+    //
+    // 三团光斑**必须罩住画面中心** —— 玻璃卡片就住在那儿,而卡片背后是暗的话,
+    // 半透明就等于没有:读起来只是一张深色卡片。第一版把光斑摆在四角,正中最暗,
+    // 玻璃感直接没了。这是"玻璃背后得有东西"最具体的一次教训。
+    //
+    // 每团都在自身矩形的 60% 处淡到全透 → 矩形的直边落在全透区里,看不见硬边。
+    // 紫,中心略偏左上
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 80%;
+        height: 90%;
+        background: @radial-gradient(circle, #7c3aed8f 0%, #7c3aed00 60%);
+    }
+    // 蓝,中心略偏右下 —— 与紫在正中央交叠,那儿正是卡片所在
+    Rectangle {
+        x: root.width * 0.20;
+        y: root.height * 0.13;
+        width: 84%;
+        height: 90%;
+        background: @radial-gradient(circle, #2563eb85 0%, #2563eb00 60%);
+    }
+    // 青,顶部偏右,压一点冷调进来
+    Rectangle {
+        x: root.width * 0.20;
+        y: root.height * -0.27;
+        width: 70%;
+        height: 70%;
+        background: @radial-gradient(circle, #06b6d45c 0%, #06b6d400 60%);
+    }
+
+    @children
+}
+
+// 玻璃卡片。半透明底 + 边缘亮线 + 内侧厚度 + 悬浮阴影 + 跟随指针的表面高光。
+export component GlassCard inherits Rectangle {
+    in property <length> radius: 20px;
+
+    border-radius: root.radius;
+    // 淡白:靠的是"透出背后的极光",不是自己有颜色。调太高会糊成一块白板,
+    // 调太低则在暗处彻底看不出是玻璃 —— 12% 是两头之间试出来的值。
+    background: #ffffff1f;
+    border-width: 1px;
+    border-color: #ffffff3d;
+    // 高光光斑不许溢出圆角之外。裁的是子元素,root 自己的两个 shadow 画在外面,不受影响。
+    clip: true;
+
+    // 玻璃厚度:沿边框内侧一圈的亮环。offset-y 取负 → 光从上方来,于是**底部内侧**
+    // 留下一道反光 —— 这就是液态玻璃最抓眼的那道边,渐变叠层在圆角处凑不出来。
+    //
+    // 仅 Skia 生效(见 ADR-0006)。web 走 femtovg,这四行静默失效,卡片只是少一层
+    // 厚度感,不报错、不塌布局 —— 渐进增强,与仓库既有的"余端 graceful 缺省"同一套。
+    inner-shadow-color: #ffffff40;
+    inner-shadow-blur: 10px;
+    inner-shadow-offset-y: -3px;
+
+    // 悬浮:spread 取负先把阴影收缩,再大范围模糊 → 阴影不贴边,卡片像浮着而不是贴着。
+    //
+    // 阴影是画在元素**之下**的一整块模糊形状 —— 底色不透明时看不见,而玻璃是透的,
+    // 于是阴影会从卡片内部透上来,把玻璃压暗、且下半比上半更暗。所以这里 spread 收到
+    // -16px、offset 推到 20px:阴影的主体落到卡片轮廓之外,只在下缘露出来。
+    // 这是"半透明元素 + drop-shadow"绕不开的一个坑,别把 alpha 往上调来找回悬浮感。
+    drop-shadow-color: #00000073;
+    drop-shadow-blur: 40px;
+    drop-shadow-offset-y: 20px;
+    drop-shadow-spread: -16px;
+
+    // 表面高光:一团跟着指针走的白色光晕,像一盏光源悬在玻璃上方。
+    // 声明在 @children 之前 → 画在内容之下,不会把文字冲淡。
+    //
+    // 触摸设备没有"悬停"这个状态,has-hover 恒假 → opacity 恒 0,自动退化成静态玻璃。
+    // 这是刻意的优雅降级,和 HoverButton 里那套是同一个判断。
+    Rectangle {
+        x: touch.mouse-x - self.width / 2;
+        y: touch.mouse-y - self.height / 2;
+        width: 280px;
+        height: 280px;
+        background: @radial-gradient(circle, #ffffff2b 0%, #ffffff00 70%);
+        opacity: touch.has-hover ? 1 : 0;
+        animate opacity {
+            duration: 240ms;
+            easing: ease-out;
+        }
+    }
+
+    // 只用来读指针位置,不吃点击:上层的 HoverButton / LineEdit 各有自己的 TouchArea,
+    // 声明在后 → 位于其上 → 点击优先给它们。
+    touch := TouchArea { }
+
+    @children
+}

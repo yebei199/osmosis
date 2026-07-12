@@ -10,6 +10,9 @@ import "../fonts/cjk-subset.ttf";
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
 import { LineEdit } from "std-widgets.slint";
 
+// 玻璃拟态:供 Home / Server 页透出颜色的极光背景,以及装内容的玻璃卡片。
+import { AuroraBackground, GlassCard } from "glass.slint";
+
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
 //
@@ -191,57 +194,84 @@ export component MainWindow inherits Window {
         content := Rectangle {
             horizontal-stretch: 1;
 
-            // Home:平台标题 + 计数器
-            if root.current-tab == 0: VerticalLayout {
-                padding: 16px;
-                alignment: center;
-                spacing: 24px;
+            // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
+            // bevy 画面,本来就有内容可透。
+            if root.current-tab != 2: AuroraBackground {
+                width: 100%;
+                height: 100%;
+            }
 
-                Text {
-                    text: "Slint on " + root.platform;
-                    color: #e6e8ef;
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.count;
-                    color: #7aa2f7;
-                    font-size: 72px;
-                    horizontal-alignment: center;
-                }
+            // Home:平台标题 + 计数器,装进玻璃卡片
+            if root.current-tab == 0: VerticalLayout {
+                alignment: center;
                 HorizontalLayout {
                     alignment: center;
-                    HoverButton {
-                        text: "Tap me";
-                        clicked => { root.bump(); }
+                    GlassCard {
+                        width: 340px;
+                        height: 320px;
+                        VerticalLayout {
+                            padding: 28px;
+                            alignment: center;
+                            spacing: 20px;
+
+                            Text {
+                                text: "Slint on " + root.platform;
+                                color: #e6e8ef;
+                                font-size: 22px;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: root.count;
+                                color: #7aa2f7;
+                                font-size: 72px;
+                                horizontal-alignment: center;
+                            }
+                            HorizontalLayout {
+                                alignment: center;
+                                HoverButton {
+                                    text: "Tap me";
+                                    clicked => { root.bump(); }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             // Server:一次真实网络往返,验证 contract → api → app-core → ui 全链路
             if root.current-tab == 1: VerticalLayout {
-                padding: 16px;
                 alignment: center;
-                spacing: 24px;
-
                 HorizontalLayout {
                     alignment: center;
-                    HoverButton {
-                        text: "Check server";
-                        clicked => { root.check-health(); }
+                    GlassCard {
+                        width: 340px;
+                        height: 220px;
+                        VerticalLayout {
+                            padding: 24px;
+                            alignment: center;
+                            spacing: 20px;
+
+                            HorizontalLayout {
+                                alignment: center;
+                                HoverButton {
+                                    text: "Check server";
+                                    clicked => { root.check-health(); }
+                                }
+                            }
+                            // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
+                            // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
+                            Text {
+                                text: root.health-text;
+                                font-family: "Maple Mono NF CN";
+                                color: #9aa0b4;
+                                font-size: 13px;
+                                height: 56px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+                        }
                     }
-                }
-                // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
-                // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
-                Text {
-                    text: root.health-text;
-                    font-family: "Maple Mono NF CN";
-                    color: #9aa0b4;
-                    font-size: 13px;
-                    height: 56px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
                 }
             }
 

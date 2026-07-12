@@ -14,7 +14,11 @@ ui.workspace = true
 env_logger.workspace = true
 # 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
 # 否则 android 构建会被 feature 统一拉进 winit。
-slint = { workspace = true, features = ["backend-winit", "renderer-femtovg", "renderer-software"] }
+#
+# renderer-skia(而非 femtovg):inner-shadow 只在 Skia 上实现,而它是玻璃卡片
+# 厚度感的来源(见 crates/ui/slint/glass.slint)。顺带让桌面与 android 用上同一个
+# 渲染器 —— android 的后端本就强制 skia。理由与代价见 docs/adr/0006-*。
+slint = { workspace = true, features = ["backend-winit", "renderer-skia", "renderer-software"] }
 # 仅 bevy-3d feature 下启用;平时不编 bevy,桌面构建保持轻量、无需 vulkan。
 render3d = { workspace = true, optional = true }
 
@@ -43,5 +47,7 @@ debug-fps = ["ui/debug-fps"]
 mcp = ["slint/mcp"]
 # 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
 # 需要 vulkan 运行期库,用仓库根的 render3d.nix。
+# 没有 renderer-skia-wgpu 这种 feature —— skia 的 wgpu 路径就是 renderer-skia +
+# unstable-wgpu-29,与 android 那边的组合一字不差。
 # ui/debug-fps:3D 页本就每帧重绘,顺带在左上角显示诚实即时帧率(已去强制重绘,不额外耗电)。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "slint/renderer-femtovg-wgpu", "ui/debug-fps"]
+bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "ui/debug-fps"]
