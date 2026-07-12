@@ -36,34 +36,19 @@ fn android_main(app: slint::android::AndroidApp) {
     // 必须先 init 设好 android 平台;render3d::Scene::new 里的
     // require_wgpu_29(Manual).select() 是把共享 device 转发给这个已设好的平台,
     // 顺序反了就没平台可转发。见 i-slint-backend-selector 的 android 分支。
+    //
+    // MCP server 由 init 内部的 set_platform() 顺带起来 —— 这是我们自己 fork
+    // (见根 Cargo.toml 的 [patch])里补的:上游只在 backend-selector 路径挂了这个钩子,
+    // 而 android::init 直接调 set_platform 把 selector 绕过去了,于是 MCP 永远不启动。
+    // 已上报 slint#12446。曾经在这里手动调 i_slint_backend_testing::mcp_server::init()
+    // 补刀,fork 之后不再需要,那份内部依赖也一并删了。
+    //
+    // 注意:MCP 起没起来看不到日志 —— bind 发生在事件循环的异步任务里,失败只 eprintln!
+    // 到 stderr,而 Android 把 native 的 stderr 丢进 /dev/null。「装上了却连不上」时
+    // 别翻 logcat,直接 curl 那个端口。(踩过一次:manifest 缺 INTERNET 权限导致 bind
+    // EACCES,全程零日志。)
     slint::android::init(app)
         .expect("slint android init failed");
-
-    // 上游在 android 上没接 MCP:桌面走 i-slint-backend-selector,后者设完 platform 会顺手
-    // 调 init_testing_backends() -> mcp_server::init();而 slint::android::init 直接调
-    // platform::set_platform,把 selector 整个绕过去了,那个钩子永远不触发。故自己补一刀 ——
-    // 必须在 set_platform 之后,init 内部要拿 SlintContext 去 spawn_local 起 HTTP server。
-    // 代价是直依赖 slint 的内部 crate(版本对齐的坑见 Cargo.toml)。
-    //
-    // 上游 PR slint-ui/slint#11520 要加公开的 `slint::mcp::register()`(在 set_platform 前
-    // 注册 hook,由 set_platform 排空)。它合并后这里换成下面两行,并删掉 Cargo.toml 里的
-    // i-slint-backend-testing 依赖:
-    //     #[cfg(feature = "mcp")] slint::mcp::register();
-    //     slint::android::init(app)...
-    // 但那个 PR 的立意是"custom platform 用户",而 android 是 slint 自家的一等后端 ——
-    // 真正该修的是让它开箱即用。截至 2026-07,PR 仍卡在设计讨论里,别指望短期落地。
-    //
-    // 只警告不 panic:MCP 是调试设施,起不来不该把整个 app 拖垮。
-    // 注意 init() 返回 Ok 不代表 server 真的起来了 —— 它只是把 run_server 挂上事件循环,
-    // 真正的 bind 发生在之后的异步任务里,失败只会 eprintln! 到 stderr,而 Android 把 native
-    // 的 stderr 丢进 /dev/null。所以「装上了却连不上」时别看 logcat,直接 curl 那个端口。
-    // (踩过一次:manifest 缺 INTERNET 权限导致 bind EACCES,全程零日志。)
-    #[cfg(feature = "mcp")]
-    if let Err(e) =
-        i_slint_backend_testing::mcp_server::init()
-    {
-        log::warn!("MCP server init failed: {e:?}");
-    }
 
     // 下面这段 3D 分派与 apps/desktop/src/main.rs 里的一份**逐字相同**,故意不抽:
     // 只两处、且签名漂移编译器会两边一起报错。若给某一端的 bevy 分支加初始化步骤,
