@@ -35,9 +35,9 @@ render3d = { path = "crates/render3d" }
 # 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
 # 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
 # 由各平台入口 crate 各自追加 —— 否则 feature 会被统一,android 会拉进 winit。
-slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2"] }
-slint-build = "1.16"
-# 实际解析到下面 [patch.crates-io] 指定的 fork(见文件末尾),不是 crates.io 的 1.16/1.17。
+# 版本号跟着 fork 走(见文件末尾的 [patch.crates-io]),不是 crates.io 上的版本。
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2"] }
+slint-build = "1.18"
 serde = { version = "1", features = ["derive"] }
 log = "0.4"
 android_logger = "0.15"
@@ -76,11 +76,13 @@ panic = "abort"
 [profile.dev.package."*"]
 opt-level = 3
 
-# Slint 走自己的 fork(yebei199/slint 的 dev 分支),而不是 crates.io。
-# 原因:上游 1.17 在 android 上不会启动内嵌的 MCP server(set_platform() 路径没挂钩子),
-# fork 里把这个修好了(已上报 slint#12446)。fork 版本号 1.18.0,semver 兼容上面声明的 ^1.16。
+# Slint 走自己的 fork(yebei199/slint 的 dev 分支,当前 1.18.0),而不是 crates.io。
+# 原因:上游在 android 上不会启动内嵌的 MCP server(set_platform() 路径没挂钩子),
+# fork 里把这个修好了(已上报 slint#12446)。
 # 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
-# 改完 fork 要 `git push` 再 `cargo update -p slint`,本地目录不参与解析。
+# 改完 fork 要 `git push`,再对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
+# —— cargo 不会自动放弃锁里已有的 registry 版本,少一个就静默变成 patch.unused。
+# 本地的 ~/RustroverProjects/slint-fork 目录不参与解析。
 [patch.crates-io]
 slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
 slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }
