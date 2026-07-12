@@ -10,7 +10,17 @@
 | web / iOS | 能编译(CI 保证),尚未打包 |
 | windows / macOS | 复用 `apps/desktop`,只差一个 target |
 
-术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/)。
+术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/),AI 助手在本仓库
+干活前先读 [`AGENTS.md`](AGENTS.md)。
+
+界面有两种**版式**,由运行时窗口宽度切换(< 600px 为紧凑版式,导航在底部;否则导航在左侧
+竖栏)—— 桌面上把窗口拖窄就能看到移动端的样子,见
+[`docs/adr/0007`](docs/adr/0007-layout-mode-by-width-not-by-platform.md)。截真实像素:
+
+```sh
+just shot        # 宽版式
+just shot 420    # 紧凑版式;第二个参数指定开局页,如 `just shot 420 2` 直接进 3D 页
+```
 
 **提交前跑 `just ci`** —— 它逐字复述 `.github/workflows/ci.yml` 的命令序列。
 `dev` 分支上的 push 不触发 CI,这是唯一的防线。

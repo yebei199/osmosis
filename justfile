@@ -187,3 +187,62 @@ mcp-android: mcp-forward
     nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     adb install -r {{apk}}
     adb shell am start -n io.github.slintstudy/.MainActivity
+
+# 杀掉所有跑着的桌面实例。这条命令踩过三层坑,每一层都**静默失败**:
+#
+# 1. 进程名是 `slint-study-desktop`([[bin]] name),不是包名 `app-desktop`;
+# 2. 它有 19 个字符,而 Linux 的 comm 只存 15 个 —— `pkill -x slint-study-desktop`
+#    **永远匹配不到**,只吐一句 warning 就返回 0,看起来像"杀干净了";
+# 3. 于是只能用 `-f`(匹配整条命令行),但 `-f` 会连**本命令自己的命令行**一起命中,
+#    把调用它的 shell 杀掉,留下退出码 144。方括号 `[s]` 让正则匹配不到字面量本身,
+#    这一刀才只落在真正的 app 上。
+[group('桌面')]
+desktop-kill:
+    -pkill -f 'target/debug/[s]lint-study-desktop'
+
+# 起一个干净的桌面实例(带 3D),截下**真实窗口像素**,存到 dist/shot.png。
+#
+# width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
+# tab 指定开局页(0=Home、1=Server、2=3D):`just shot 420 2` 直接截紧凑版的 3D 页 ——
+# 不必再靠 MCP 模拟点击切页。
+#
+# 为什么必须有这条 recipe:
+# 1. 不先杀干净,旧实例的窗口还在,AI 截到的是**上一版**的界面,浑然不觉;
+# 2. MCP 的 take_screenshot 走软件渲染器,**采不到 wgpu 纹理** —— 3D 页在它眼里恒为纯黑,
+#    据此判断「3D 没渲染出来」是错的。真实像素只能靠合成器抓(niri screenshot-window)。
+[group('桌面')]
+shot width="" tab="0":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just desktop-kill
+    # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
+    nix-shell render3d.nix --run 'cargo build -p app-desktop --features bevy-3d'
+    SLINT_STUDY_TAB={{tab}} nix-shell render3d.nix --run 'setsid target/debug/slint-study-desktop' > /tmp/slint-shot.log 2>&1 &
+    for _ in $(seq 30); do
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        [ -n "$id" ] && break
+        sleep 1
+    done
+    [ -n "${id:-}" ] || { echo "窗口没起来,见 /tmp/slint-shot.log" >&2; exit 1; }
+    if [ -n "{{width}}" ]; then
+        niri msg action set-window-width --id "$id" {{width}}
+        sleep 1
+    fi
+    # **必须先把窗口摆到眼前**:合成器不给不可见窗口发 frame callback,Slint 就不重绘
+    # (fps 读数会是 0),而 screenshot-window 抓的是它最后一次提交的缓冲 —— 于是你看到的
+    # 是几次 resize 之前的旧画面,改了相机/布局却"纹丝不动",查半天。
+    niri msg action focus-window --id "$id"
+    sleep 2
+    mkdir -p dist
+    # niri 是**异步**落盘的:紧跟着 `ls -t` 会挑到上一张旧图,于是你以为改动没生效,
+    # 实际是在看历史。用一个 marker 文件卡住时间,只接受比它新的 png。
+    touch /tmp/slint-shot.marker
+    niri msg action screenshot-window --id "$id"
+    for _ in $(seq 20); do
+        shot=$(find ~/Pictures/Screenshots -name '*.png' -newer /tmp/slint-shot.marker | head -1)
+        [ -n "$shot" ] && break
+        sleep 0.5
+    done
+    [ -n "${shot:-}" ] || { echo "截图没落盘" >&2; exit 1; }
+    mv "$shot" dist/shot.png
+    echo "dist/shot.png  ← 窗口 $id,$(niri msg --json windows | jq -r --arg i "$id" '.[]|select(.id==($i|tonumber))|.layout.window_size|join("x")') 逻辑像素"

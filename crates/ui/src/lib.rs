@@ -34,6 +34,13 @@ fn build_ui() -> MainWindow {
 
     ui.set_show_fps(cfg!(feature = "debug-fps"));
     ui.set_platform(platform_name().into());
+    // 开局停在哪一页。只为验证:`just shot 420 2` 能直接截到 3D 页,不必再靠 MCP 模拟点击
+    // (那条路上有一串静默失败的坑,见 AGENTS.md)。没设或设歪了就走默认的 Home。
+    if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
+        && let Ok(tab) = tab.parse::<i32>()
+    {
+        ui.set_current_tab(tab.clamp(0, 2));
+    }
     ui
 }
 
