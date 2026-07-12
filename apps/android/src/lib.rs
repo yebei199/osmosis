@@ -28,7 +28,9 @@ fn android_main(app: slint::android::AndroidApp) {
     // slint 与 bevy 都还没起线程,契约成立。
     #[cfg(feature = "mcp")]
     if let Some(port) = option_env!("SLINT_MCP_PORT") {
-        unsafe { std::env::set_var("SLINT_MCP_PORT", port) };
+        unsafe {
+            std::env::set_var("SLINT_MCP_PORT", port)
+        };
     }
 
     // 必须先 init 设好 android 平台;render3d::Scene::new 里的
@@ -36,6 +38,22 @@ fn android_main(app: slint::android::AndroidApp) {
     // 顺序反了就没平台可转发。见 i-slint-backend-selector 的 android 分支。
     slint::android::init(app)
         .expect("slint android init failed");
+
+    // 上游在 android 上没接 MCP:桌面走 i-slint-backend-selector,后者设完 platform 会顺手
+    // 调 init_testing_backends() -> mcp_server::init();而 slint::android::init 直接调
+    // platform::set_platform,把 selector 整个绕过去了,那个钩子永远不触发。故自己补一刀 ——
+    // 必须在 set_platform 之后,init 内部要拿 SlintContext 去 spawn_local 起 HTTP server。
+    // 代价是直依赖 slint 的内部 crate(版本对齐的坑见 Cargo.toml)。上游哪天接上了,删掉这段。
+    //
+    // 只警告不 panic:MCP 是调试设施,起不来不该把整个 app 拖垮。
+    // 注意 init() 返回 Ok 不代表 server 真的起来了 —— 它只是把 run_server 挂上事件循环,
+    // 真正的 bind 发生在之后的异步任务里,失败只会 eprintln! 到 stderr,而 Android 把 native
+    // 的 stderr 丢进 /dev/null。所以「装上了却连不上」时别看 logcat,直接 curl 那个端口。
+    // (踩过一次:manifest 缺 INTERNET 权限导致 bind EACCES,全程零日志。)
+    #[cfg(feature = "mcp")]
+    if let Err(e) = i_slint_backend_testing::mcp_server::init() {
+        log::warn!("MCP server init failed: {e:?}");
+    }
 
     // 下面这段 3D 分派与 apps/desktop/src/main.rs 里的一份**逐字相同**,故意不抽:
     // 只两处、且签名漂移编译器会两边一起报错。若给某一端的 bevy 分支加初始化步骤,
