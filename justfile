@@ -133,6 +133,29 @@ android-run: android-install android-reverse
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
 
+# {{mcp_port}} 被占就**立刻失败**,别让 app 起来。
+#
+# 这是在补一个静默失败:slint 绑不上端口时只在日志里留一行 "failed to bind ...
+# Address already in use" 就继续跑,app 一切正常。而 .mcp.json 里 AI 客户端的地址是
+# 写死的 127.0.0.1:{{mcp_port}} —— 它会连上**占用者**,并把对方的界面当成你的。
+#
+# 最容易中招的占用者就是 mcp-forward 留下的 adb forward:AI 于是读到手机里那个旧 APK
+# 的元素树和截图,浑然不觉。踩过一次,查了半天。
+[private]
+mcp-port-free:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! ss -ltn "sport = :{{mcp_port}}" | grep -q LISTEN; then exit 0; fi
+    echo "端口 {{mcp_port}} 已被占用,拒绝启动 —— 否则 app 会静默跑在没有 MCP 的状态," >&2
+    echo "而 AI 客户端会连到下面这个占用者身上,把它的界面当成你的:" >&2
+    ss -ltnp "sport = :{{mcp_port}}" >&2 || true
+    if adb forward --list 2>/dev/null | grep -q "tcp:{{mcp_port}}"; then
+        echo "" >&2
+        echo "是 adb forward 占着(mcp-forward / mcp-android 留下的),连过去看到的是**手机**。" >&2
+        echo "解法:adb forward --remove tcp:{{mcp_port}}" >&2
+    fi
+    exit 1
+
 # 桌面 app + 内嵌 MCP server,供 AI 助手挂接(.mcp.json 里的 slint-app)。
 # AI 由此能读运行中界面的元素树、截图、模拟点击,而不是靠猜。
 #
@@ -140,12 +163,12 @@ android-serve:
 # 一切照常启动,只是 get_element_tree 永远只回一个空壳根节点 —— 静默地瞎。
 # 加 3D 页:just mcp-desktop-3d
 [group('mcp')]
-mcp-desktop:
+mcp-desktop: mcp-port-free
     SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp
 
 # 同上但带 bevy 3D 页(热调面板那页才是最值得让 AI 看的)。需要 vulkan,故走 render3d.nix
 [group('mcp')]
-mcp-desktop-3d:
+mcp-desktop-3d: mcp-port-free
     nix-shell render3d.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,bevy-3d'
 
 # 把开发机的 {{mcp_port}} 转发到手机上的同一端口。

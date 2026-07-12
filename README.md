@@ -158,6 +158,14 @@ just mcp-android      # 烧入端口重编 APK + 装机 + adb forward + 启动
 这里用的是 `adb forward` 而非 `adb reverse`:MCP server 跑在**手机**里,是开发机要连
 进去,方向与前面转发 `server-dev` 的那次相反。
 
+> **玩完手机记得撤转发**:`adb forward` 会一直占着 8090。之后再跑 `just mcp-desktop*`,
+> slint 绑不上端口时**只在日志里留一行 `Address already in use` 就继续跑**,app 一切正常
+> —— 而 AI 客户端按 `.mcp.json` 连 127.0.0.1:8090,连上的是**手机里的旧 APK**,读到的
+> 元素树和截图全是手机的,浑然不觉。踩过一次,查了半天。
+>
+> 现在 `mcp-desktop*` 前置了一道端口守卫,占用时直接失败并点名占用者,不会再静默降级。
+> 撤转发:`adb forward --remove tcp:8090`。
+
 Slint 1.17 本身在 android 上**没接** MCP:桌面走 `i-slint-backend-selector`,它设完
 platform 会顺手调 `mcp_server::init()`;而 `slint::android::init()` 直接调
 `set_platform`,把 selector 整个绕过去,那个钩子永远不触发。`apps/android/src/lib.rs`
