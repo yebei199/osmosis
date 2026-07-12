@@ -15,6 +15,8 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
+// BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
+// World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -38,6 +40,36 @@ pub type SharedTexture = wgpu::Texture;
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 
+/// 一帧的场景控制量:由 UI 侧组装,跨进程内边界传给渲染器。
+///
+/// ponytail: 本结构与 `ui::SceneControls` 字段镜像。ui 与 render3d 刻意互不依赖
+/// (见 apps/android 注释:app 才是接 seam 的组合根),没有二者都依赖的下层 crate 可放它,
+/// 故各留一份、由 apps/* 在 seam 处平凡字段拷贝。若两者开始漂移或出现第三个消费者,
+/// 再抽一个共享叶子 crate。全 POD,不含 bevy 类型,`color_rgb` 在 render3d 内转 `Color`。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneParams {
+    /// 0 = 形状画廊(环形),1 = 实体阵列(网格)。
+    pub scene_id: i32,
+    /// 转盘朝向(弧度)。
+    pub yaw: f32,
+    pub pitch: f32,
+    /// 实体数。
+    pub count: u32,
+    /// 基础色 0xRRGGBB。
+    pub color_rgb: u32,
+    /// 自转角速度(弧度/帧),叠加到 yaw 上。
+    pub spin_speed: f32,
+    /// 间距/缩放因子。
+    pub spacing: f32,
+}
+
+impl SceneParams {
+    /// 决定是否需要重建场景内容的关键字段(yaw/pitch/自转不触发重建)。
+    fn content_key(&self) -> (i32, u32, u32, u32) {
+        (self.scene_id, self.count, self.color_rgb, self.spacing.to_bits())
+    }
+}
+
 /// 一个自持的 bevy 离屏渲染场景。
 ///
 /// 持有 bevy `App`、离屏目标图的句柄、被拖动的立方体实体,以及一次性包装好的
@@ -45,10 +77,17 @@ const HEIGHT: u32 = 240;
 pub struct Scene {
     app: App,
     target: Handle<Image>,
-    /// 被 UI 拖动控制角度的立方体。每帧按传入的 yaw/pitch 设其绝对朝向。
-    cube: Entity,
+    /// 转盘根实体:所有可见形状挂它下面,每帧按 yaw/pitch(+自转)设其朝向。
+    /// 场景/数量/颜色/间距变化时,despawn 它的子树并按新参数用 bsn! 重建。
+    root: Entity,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
+    /// 六种内置图元的网格句柄,建一次复用。索引 0(Cuboid)兼作阵列场景的方块。
+    mesh_palette: Vec<Handle<Mesh>>,
+    /// 上一帧的场景参数;`content_key` 变化才重建内容。首帧为 `None`,必重建。
+    last_key: Option<(i32, u32, u32, u32)>,
+    /// 累积自转角(弧度),每帧加 `spin_speed`,叠加到 yaw。
+    spin_angle: f32,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
     size: (u32, u32),
     /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `scene-3d.width > 0` 守卫据此不显示。
@@ -147,9 +186,11 @@ impl Scene {
         // 4) 造初始离屏目标图。UI 传来的面板尺寸会触发按需重建(动态分辨率,见 render_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);
 
-        // 5) 造网格/材质并摆好相机、光、立方体。相机渲染进离屏目标图。
-        //    立方体的朝向不再由系统自转,而是每帧按 UI 传入的角度设定(见 render_frame)。
-        let (cube, camera) = spawn_scene(&mut app, &target);
+        // 5) 摆相机(渲染进离屏目标图)、平行光,建图元网格调色板,建一个空的转盘根。
+        //    场景内容(形状)首帧按 UI 传入的 SceneParams 用 bsn! 构建(见 render_frame)。
+        let camera = spawn_camera_and_light(&mut app, &target);
+        let mesh_palette = build_mesh_palette(&mut app);
+        let root = app.world_mut().spawn(Transform::default()).id();
 
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
@@ -158,26 +199,28 @@ impl Scene {
         Self {
             app,
             target,
-            cube,
+            root,
             camera,
+            mesh_palette,
+            last_key: None,
+            spin_angle: 0.0,
             size: (WIDTH, HEIGHT),
             image: None,
             frames: 0,
         }
     }
 
-    /// 按 UI 传入的角度和面板尺寸渲染一帧,返回离屏纹理包装成的 [`slint::Image`]。
+    /// 按 UI 传入的 [`SceneParams`] 和面板尺寸渲染一帧,返回离屏纹理包装成的 [`slint::Image`]。
     ///
-    /// `yaw` / `pitch` 为弧度绝对角(Slint 侧拖动累加)。`width` / `height` 为面板的
-    /// 物理像素尺寸;与当前纹理尺寸不同就按需重建纹理(动态分辨率),0 尺寸忽略。
-    /// 先设尺寸/朝向再 update,这样本帧渲染就反映最新状态。
+    /// 内容相关字段(场景/数量/颜色/间距)变化时先用 bsn! 重建场景内容;朝向字段
+    /// (yaw/pitch/自转)只更新转盘根的 Transform。`width` / `height` 为面板物理像素尺寸,
+    /// 与当前纹理不同就按需重建纹理(动态分辨率),0 尺寸忽略。先设好状态再 update。
     ///
     /// 纹理未就绪(首帧或刚重建)时返回空图。尺寸不变时纹理身份稳定,只包装一次、
     /// 之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
     pub fn render_frame(
         &mut self,
-        yaw: f32,
-        pitch: f32,
+        params: &SceneParams,
         width: u32,
         height: u32,
     ) -> slint::Image {
@@ -188,15 +231,22 @@ impl Scene {
             self.resize(width, height);
         }
 
+        // 场景/数量/颜色/间距变了才重建内容(despawn 子树 + bsn! 重造);朝向类参数不触发。
+        let key = params.content_key();
+        if self.last_key != Some(key) {
+            self.rebuild_content(params);
+            self.last_key = Some(key);
+        }
+
+        // 自转累积,叠加到拖动的 yaw 上,整群当转盘转。
+        self.spin_angle += params.spin_speed;
         if let Some(mut transform) =
-            self.app
-                .world_mut()
-                .get_mut::<Transform>(self.cube)
+            self.app.world_mut().get_mut::<Transform>(self.root)
         {
             transform.rotation = Quat::from_euler(
                 EulerRot::YXZ,
-                yaw,
-                pitch,
+                params.yaw + self.spin_angle,
+                params.pitch,
                 0.0,
             );
         }
@@ -265,6 +315,57 @@ impl Scene {
         self.size = (width, height);
         self.image = None;
     }
+
+    /// 按新参数重建转盘内容:despawn 旧根子树,用 bsn! 声明式生成 root + 子形状。
+    ///
+    /// 子实体同构(都 `Mesh3d/MeshMaterial3d/Transform`,仅注入不同网格/位置),
+    /// 故能收进一个 `Vec<impl Scene>` 当 `Children`。材质(基础色)与摆位随参数每次重算。
+    fn rebuild_content(&mut self, params: &SceneParams) {
+        // 旧转盘连同子树整体销毁(despawn 递归清子实体),换上全新的根。
+        self.app.world_mut().entity_mut(self.root).despawn();
+
+        let color = Color::srgb_u8(
+            (params.color_rgb >> 16) as u8,
+            (params.color_rgb >> 8) as u8,
+            params.color_rgb as u8,
+        );
+        let material = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                base_color: color,
+                ..default()
+            });
+
+        // 每个形状的 (网格句柄, 位置)。画廊环形铺开、阵列网格铺开(见 compute_placements)。
+        let placements =
+            compute_placements(params, &self.mesh_palette);
+        let kids: Vec<_> = placements
+            .into_iter()
+            .map(|(mesh, translation)| {
+                let mat = material.clone();
+                bsn! {
+                    Mesh3d({mesh})
+                    MeshMaterial3d::<StandardMaterial>({mat})
+                    Transform { translation: {translation} }
+                }
+            })
+            .collect();
+
+        self.root = self
+            .app
+            .world_mut()
+            .spawn_scene(bsn! {
+                // Visibility 必配:Mesh 子实体带 Visibility(必需组件),根缺它则可见性
+                // 传播每帧告警 B0004。Transform 的传播则靠 0.19 的必需组件自动补 GlobalTransform。
+                Transform
+                Visibility::Visible
+                Children [ {kids} ]
+            })
+            .expect("spawn_scene 无 asset 依赖,不应失败")
+            .id();
+    }
 }
 
 /// 造一张 bevy 离屏渲染目标图(Rgba8Unorm,满足 Slint 导入要求:格式 +
@@ -291,32 +392,12 @@ impl Default for Scene {
     }
 }
 
-/// 摆放相机(渲染进离屏目标图)、平行光、立方体;返回 (立方体, 相机) 实体。
-/// 立方体供每帧设朝向,相机供尺寸变化时改 RenderTarget。
-fn spawn_scene(
+/// 摆放相机(渲染进离屏目标图)与平行光,二者全程不变;返回相机实体供尺寸变化时改 RenderTarget。
+fn spawn_camera_and_light(
     app: &mut App,
     target: &Handle<Image>,
-) -> (Entity, Entity) {
+) -> Entity {
     let world = app.world_mut();
-
-    let mesh = world
-        .resource_mut::<Assets<Mesh>>()
-        .add(Cuboid::default());
-    let material = world
-        .resource_mut::<Assets<StandardMaterial>>()
-        .add(StandardMaterial {
-            base_color: Color::srgb(0.4, 0.6, 0.9),
-            ..default()
-        });
-
-    // 立方体。朝向由 render_frame 每帧按 UI 传入的角度设定,初始为默认朝向。
-    let cube = world
-        .spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::default(),
-        ))
-        .id();
 
     // 平行光。
     world.spawn((
@@ -326,7 +407,7 @@ fn spawn_scene(
     ));
 
     // 相机:渲染进离屏目标图,而非屏幕。0.19 起 RenderTarget 是独立组件,不再是 Camera 的字段。
-    let camera = world
+    world
         .spawn((
             Camera3d::default(),
             Camera::default(),
@@ -334,10 +415,61 @@ fn spawn_scene(
             // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
             // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
             Tonemapping::None,
-            Transform::from_xyz(0.0, 1.5, 5.0)
+            Transform::from_xyz(0.0, 1.5, 8.0)
                 .looking_at(Vec3::ZERO, Vec3::Y),
         ))
-        .id();
+        .id()
+}
 
-    (cube, camera)
+/// 建六种内置图元的网格句柄,建一次复用。索引 0 是 Cuboid,兼作阵列场景的方块。
+fn build_mesh_palette(app: &mut App) -> Vec<Handle<Mesh>> {
+    let mut meshes =
+        app.world_mut().resource_mut::<Assets<Mesh>>();
+    vec![
+        meshes.add(Cuboid::default()),
+        meshes.add(Sphere::default()),
+        meshes.add(Torus::default()),
+        meshes.add(Capsule3d::default()),
+        meshes.add(Cylinder::default()),
+        meshes.add(Cone::default()),
+    ]
+}
+
+/// 按场景种类算出每个形状的 (网格句柄, 位置)。
+///
+/// - 画廊(scene_id==0):`count` 个形状沿 XZ 平面环形均布,网格在调色板里循环取,
+///   环半径随 `spacing` 放大 —— 逛一圈能看到不同图元。
+/// - 阵列(其它):`count` 个 Cuboid 排成近正方网格(边长 = ⌈√count⌉),`spacing` 是格距,
+///   整体居中于原点。
+fn compute_placements(
+    params: &SceneParams,
+    palette: &[Handle<Mesh>],
+) -> Vec<(Handle<Mesh>, Vec3)> {
+    let count = params.count.max(1) as usize;
+    if params.scene_id == 0 {
+        let radius = params.spacing * 1.5;
+        (0..count)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32
+                    / count as f32;
+                let mesh =
+                    palette[i % palette.len()].clone();
+                (mesh, Vec3::new(radius * a.cos(), 0.0, radius * a.sin()))
+            })
+            .collect()
+    } else {
+        let dim = (count as f32).sqrt().ceil() as usize;
+        let offset = (dim as f32 - 1.0) * params.spacing / 2.0;
+        (0..count)
+            .map(|i| {
+                let (col, row) = (i % dim, i / dim);
+                let pos = Vec3::new(
+                    col as f32 * params.spacing - offset,
+                    0.0,
+                    row as f32 * params.spacing - offset,
+                );
+                (palette[0].clone(), pos)
+            })
+            .collect()
+    }
 }
