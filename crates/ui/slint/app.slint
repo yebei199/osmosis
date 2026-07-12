@@ -7,6 +7,9 @@
 // 由 slint 编译器把字节打进产物,再按 family 名引用。
 import "../fonts/cjk-subset.ttf";
 
+// 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
+import { LineEdit } from "std-widgets.slint";
+
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
 //
@@ -89,6 +92,22 @@ component NavItem inherits Rectangle {
     }
 }
 
+// 一个带标签的窄文本输入,3D 热调面板复用。text 双向绑定到外部属性。
+component ParamField inherits VerticalLayout {
+    in property <string> label;
+    in-out property <string> text;
+    spacing: 2px;
+    Text {
+        text: root.label;
+        color: #9aa0b4;
+        font-size: 11px;
+    }
+    LineEdit {
+        width: 72px;
+        text <=> root.text;
+    }
+}
+
 export component MainWindow inherits Window {
     // 由 Rust 推送。
     in property <int> count: 0;
@@ -110,6 +129,13 @@ export component MainWindow inherits Window {
     in-out property <float> rot-pitch: 0;
     // 当前选中的导航页:0=Home、1=Server、2=3D。由左侧导航栏点击设置。
     in-out property <int> current-tab: 0;
+    // 3D 场景热调参数。Rust 每帧读这些原始文本,在信任边界解析+clamp(见 scene_params),
+    // 非法/越界退回上一个好值。scene-index:0=形状画廊、1=实体阵列。
+    in-out property <int> scene-index: 0;
+    in-out property <string> count-text: "8";
+    in-out property <string> color-text: "#4a6bff";
+    in-out property <string> speed-text: "0.0";
+    in-out property <string> spacing-text: "1.5";
     // 3D 内容区的逻辑尺寸。Rust 每帧乘窗口缩放系数得物理像素,让 bevy 按该分辨率渲染。
     out property <length> scene-w: content.width;
     out property <length> scene-h: content.height;
@@ -243,6 +269,28 @@ export component MainWindow inherits Window {
                         drag.last-x = drag.mouse-x;
                         drag.last-y = drag.mouse-y;
                     }
+                }
+            }
+
+            // 3D 热调面板:顶栏叠在画面上,边调边看。场景切换用一个循环按钮(两个场景),
+            // 四个参数用原生 LineEdit。始终随 3D 页显示(不等首帧),故独立于上面的 Image 块。
+            if root.current-tab == 2: Rectangle {
+                y: 0;
+                height: 64px;
+                background: #0b0d13cc;
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 12px;
+                    alignment: start;
+
+                    HoverButton {
+                        text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
+                        clicked => { root.scene-index = 1 - root.scene-index; }
+                    }
+                    ParamField { label: "实体数"; text <=> root.count-text; }
+                    ParamField { label: "基础色"; text <=> root.color-text; }
+                    ParamField { label: "自转速度"; text <=> root.speed-text; }
+                    ParamField { label: "间距"; text <=> root.spacing-text; }
                 }
             }
 
