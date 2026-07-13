@@ -12,6 +12,12 @@
 /// 供 android-activity 的 C 胶水按约定名字 + 签名调用。Rust 2024 要求这类属性
 /// 显式标 `unsafe` —— 裸符号可能与其他库撞名,且调用方签名编译器无法校验,契约
 /// 由本函数保证。
+///
+/// `cfg(target_os = "android")`:`slint::android` 只在 android target 下存在,
+/// 少了这行,host 上解析 `slint::android::AndroidApp` 就是 E0433。cargo 那边靠
+/// default-members 排除本 crate 绕开了,但 IDE 照样按 host cfg 解析这个文件,于是
+/// 常年一片红。cfg 让整段在 host 上直接不存在,两边一起治。见 ADR 0003。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(

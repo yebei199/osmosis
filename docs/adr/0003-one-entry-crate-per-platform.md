@@ -25,6 +25,10 @@
   `use core::...` 变成歧义。客户端领域 crate 因此叫 `app-core`。`std`、`alloc`、
   `test` 同理。
 - **`default-members` 只含桌面链路**(`crates/*` + `apps/desktop`)。裸 `cargo build`
-  会尝试构建全部成员,而 `apps/android` 的 `android_main` 在 host target 上编不过。
-  android / web / ios / server 一律靠 `-p` 显式构建。少了这一条,IDE 的
-  `cargo check` 会直接全红。
+  会尝试构建全部成员,而每个端的 cdylib / staticlib 在桌面构建里都是白造。
+  android / web / ios / server 一律靠 `-p` 显式构建。
+- **平台入口函数自己也要挂 `cfg(target_os = ...)`。** 平台专属 API(如
+  `slint::android`)在 host target 上根本不存在,不挂 cfg 就是 E0433。`default-members`
+  只管 cargo 编谁,IDE 照样按 host cfg 解析这些文件 —— 那条约束是"编不过"的应对,不是
+  修复;cfg 才是,rustc 与 IDE 共用同一套 cfg 求值,一行治两边。挂上 cfg 后本 crate 在
+  host 上编译为空壳,但仍留在 `default-members` 之外(理由见上一条)。
