@@ -111,13 +111,14 @@ impl GlassPass {
             },
         );
 
-        let pipeline_layout = device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("glass-pl"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            },
-        );
+        let pipeline_layout = device
+            .create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("glass-pl"),
+                    bind_group_layouts: &[Some(&layout)],
+                    immediate_size: 0,
+                },
+            );
 
         let pipeline = device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
@@ -135,13 +136,15 @@ impl GlassPass {
                     // 与源纹理同格式:采样与写回都走非 sRGB 视图,原样进原样出,
                     // 玻璃之外的像素与 bevy 直出的那张一模一样(见 run 的注释)。
                     targets: &[Some(
-                        wgpu::TextureFormat::Rgba8Unorm.into(),
+                        wgpu::TextureFormat::Rgba8Unorm
+                            .into(),
                     )],
                     compilation_options: Default::default(),
                 }),
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
+                multisample:
+                    wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
             },
@@ -151,23 +154,24 @@ impl GlassPass {
             &wgpu::SamplerDescriptor {
                 label: Some("glass-sampler"),
                 // 边缘钳制:模糊核在贴边处会采到纹理外,钳制比环绕安全(不会把对侧像素卷进来)。
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_u:
+                    wgpu::AddressMode::ClampToEdge,
+                address_mode_v:
+                    wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             },
         );
 
-        let uniform = device.create_buffer(
-            &wgpu::BufferDescriptor {
+        let uniform =
+            device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("glass-uniform"),
                 size: (UNIFORM_FLOATS * 4) as u64,
                 usage: wgpu::BufferUsages::UNIFORM
                     | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            },
-        );
+            });
 
         Self {
             pipeline,
