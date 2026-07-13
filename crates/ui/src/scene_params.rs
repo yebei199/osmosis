@@ -82,38 +82,44 @@ fn parse_f32_clamped(text: &str, prev: f32, range: (f32, f32)) -> f32 {
 mod tests {
     use super::*;
 
+    /// 实体数:合法值原样返回。
     #[test]
-    fn 实体数_正常值原样返回() {
+    fn count_valid_value_passes_through() {
         assert_eq!(parse_count("64", 8), 64);
         assert_eq!(parse_count("  100 ", 8), 100); // 容忍首尾空白
     }
 
+    /// 实体数:空串或非数字退回上一个好值。
     #[test]
-    fn 实体数_空串或非数字退回上一个好值() {
+    fn count_empty_or_non_numeric_falls_back() {
         assert_eq!(parse_count("", 8), 8);
         assert_eq!(parse_count("abc", 8), 8);
         assert_eq!(parse_count("-3", 8), 8); // 负号非 u32,退回
     }
 
+    /// 实体数:越界被 clamp 到区间端点。
     #[test]
-    fn 实体数_越界被clamp到区间端点() {
+    fn count_out_of_range_is_clamped() {
         assert_eq!(parse_count("0", 8), COUNT_RANGE.0); // 下限
         assert_eq!(parse_count("99999", 8), COUNT_RANGE.1); // 上限
     }
 
+    /// 十六进制色:带井号与不带井号都能解析。
     #[test]
-    fn 十六进制色_带井号与不带井号都能解析() {
+    fn hex_color_parses_with_or_without_hash() {
         assert_eq!(parse_hex_rgb("#4a6bff", 0), 0x4a6bff);
         assert_eq!(parse_hex_rgb("4a6bff", 0), 0x4a6bff);
     }
 
+    /// 十六进制色:大小写不敏感。
     #[test]
-    fn 十六进制色_大小写不敏感() {
+    fn hex_color_is_case_insensitive() {
         assert_eq!(parse_hex_rgb("#ABCDEF", 0), 0xABCDEF);
     }
 
+    /// 十六进制色:长度错或含非法字符时退回上一个好值。
     #[test]
-    fn 十六进制色_长度错或含非法字符退回上一个好值() {
+    fn hex_color_bad_length_or_chars_falls_back() {
         let prev = 0x112233;
         assert_eq!(parse_hex_rgb("#fff", prev), prev); // 3 位短式不支持
         assert_eq!(parse_hex_rgb("#12345", prev), prev); // 长度错
@@ -121,21 +127,24 @@ mod tests {
         assert_eq!(parse_hex_rgb("", prev), prev);
     }
 
+    /// 自转速度:负数与超上限都被 clamp。
     #[test]
-    fn 自转速度_负数与超上限都被clamp() {
+    fn speed_negative_and_over_max_are_clamped() {
         assert_eq!(parse_speed("-1", 0.1), SPEED_RANGE.0);
         assert_eq!(parse_speed("9.0", 0.1), SPEED_RANGE.1);
         assert_eq!(parse_speed("0.2", 0.1), 0.2);
     }
 
+    /// 自转速度:非数字退回上一个好值。
     #[test]
-    fn 自转速度_非数字退回上一个好值() {
+    fn speed_non_numeric_falls_back() {
         assert_eq!(parse_speed("fast", 0.1), 0.1);
         assert_eq!(parse_speed("", 0.1), 0.1);
     }
 
+    /// 间距:越界被 clamp,非数字退回上一个好值。
     #[test]
-    fn 间距_越界被clamp且非数字退回() {
+    fn spacing_clamped_and_non_numeric_falls_back() {
         assert_eq!(parse_spacing("0.05", 1.0), SPACING_RANGE.0);
         assert_eq!(parse_spacing("99", 1.0), SPACING_RANGE.1);
         assert_eq!(parse_spacing("2.5", 1.0), 2.5);

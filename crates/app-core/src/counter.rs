@@ -26,13 +26,13 @@ mod tests {
 
     /// 新建的计数器从 0 开始。
     #[test]
-    fn 新建计数器为零() {
+    fn new_counter_starts_at_zero() {
         assert_eq!(Counter::default().value(), 0);
     }
 
     /// 每次 bump 让计数值加一。
     #[test]
-    fn bump_使计数值加一() {
+    fn bump_increments_by_one() {
         let mut counter = Counter::default();
         counter.bump();
         assert_eq!(counter.value(), 1);
@@ -42,7 +42,7 @@ mod tests {
 
     /// 边界:计数值到达 i32::MAX 后继续 bump 应当饱和,而不是 panic 或回绕。
     #[test]
-    fn bump_在最大值处饱和() {
+    fn bump_saturates_at_max() {
         let mut counter = Counter(i32::MAX);
         counter.bump();
         assert_eq!(counter.value(), i32::MAX);

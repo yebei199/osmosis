@@ -151,7 +151,7 @@ api v0.1.0 (/repo/crates/api)
 
     /// 直接出现在树里的 crate 会被认出来。
     #[test]
-    fn depends_on_认出直接依赖() {
+    fn depends_on_detects_direct_dependency() {
         assert!(depends_on(TREE, "reqwest"));
         assert!(depends_on(TREE, "serde"));
     }
@@ -159,14 +159,14 @@ api v0.1.0 (/repo/crates/api)
     /// 边界:名字是另一个 crate 的前缀时不能误报。
     /// `tokio-util` 不是 `tokio`,`hyper-util` 不是 `hyper`。
     #[test]
-    fn depends_on_不把前缀当作匹配() {
+    fn depends_on_rejects_prefix_match() {
         assert!(!depends_on(TREE, "tokio"));
         assert!(!depends_on(TREE, "hyper"));
     }
 
     /// 边界:空树、不存在的名字。
     #[test]
-    fn depends_on_处理空输入() {
+    fn depends_on_handles_empty_input() {
         assert!(!depends_on("", "tokio"));
         assert!(!depends_on(TREE, "sqlx"));
     }

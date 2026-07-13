@@ -260,7 +260,7 @@ mod tests {
 
     /// 三个受支持的 ABI 都能解析,且映射到正确的 target triple。
     #[test]
-    fn abi_解析并映射到_triple() {
+    fn abi_parses_and_maps_to_triple() {
         assert_eq!(
             Abi::parse("arm64-v8a").unwrap().triple(),
             "aarch64-linux-android"
@@ -277,13 +277,13 @@ mod tests {
 
     /// 不认识的 ABI 必须报错,而不是静默产出一个装不上的 APK。
     #[test]
-    fn 未知_abi_报错() {
+    fn unknown_abi_errors() {
         assert!(Abi::parse("mips").is_err());
     }
 
     /// 边界:`--abis` 缺参数、多参数都应当报错而不是被当成 ABI 名。
     #[test]
-    fn abis_参数格式错误时报错() {
+    fn abis_flag_rejects_malformed_args() {
         assert!(
             parse_abis(&["--abis".to_owned()]).is_err()
         );
@@ -294,7 +294,7 @@ mod tests {
 
     /// platform jar 按 API level 的**数值**排序:android-9 不该赢过 android-34。
     #[test]
-    fn 选出_api_level_最大的_platform_jar() {
+    fn picks_platform_jar_with_highest_api_level() {
         let temp = std::env::temp_dir()
             .join("xtask-newest-android-jar");
         let _ = fs::remove_dir_all(&temp);

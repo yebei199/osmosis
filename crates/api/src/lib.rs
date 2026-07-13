@@ -148,7 +148,9 @@ mod platform {
     ) -> Result<T, ApiError> {
         let response = reqwest::get(url)
             .await
-            .map_err(|e| ApiError::Transport(e.to_string()))?
+            .map_err(|e| {
+                ApiError::Transport(e.to_string())
+            })?
             .error_for_status()
             .map_err(|e| {
                 ApiError::Transport(e.to_string())
@@ -173,7 +175,7 @@ mod tests {
 
     /// 版本一致时原样放行,且不吞掉 dto 的其他字段。
     #[test]
-    fn 版本一致时原样返回_dto() {
+    fn matching_version_returns_dto() {
         let ok = check_version(dto(PROTOCOL_VERSION))
             .expect("版本一致时不应报错");
         assert_eq!(ok.protocol_version, PROTOCOL_VERSION);
@@ -182,7 +184,7 @@ mod tests {
 
     /// 客户端旧、服务端新:必须报错而不是接受。
     #[test]
-    fn 服务端版本更高时报_版本不匹配() {
+    fn newer_server_version_is_mismatch() {
         let err = check_version(dto(PROTOCOL_VERSION + 1))
             .expect_err("版本更高时应报错");
         assert!(matches!(
@@ -195,7 +197,7 @@ mod tests {
 
     /// 客户端新、服务端旧:不匹配是对称的,不存在"向后兼容就放行"。
     #[test]
-    fn 服务端版本更低时报_版本不匹配() {
+    fn older_server_version_is_mismatch() {
         let older = PROTOCOL_VERSION - 1;
         let err = check_version(dto(older))
             .expect_err("版本更低时应报错");
@@ -213,9 +215,9 @@ mod tests {
     /// 留着它是为了钉住意图:将来若有人把校验改成"仅当 actual > expected 才报错",
     /// 这里会红。
     #[test]
-    fn 服务端版本为零时报_版本不匹配() {
-        let err =
-            check_version(dto(0)).expect_err("版本为 0 时应报错");
+    fn zero_server_version_is_mismatch() {
+        let err = check_version(dto(0))
+            .expect_err("版本为 0 时应报错");
         assert!(matches!(
             err,
             ApiError::VersionMismatch { actual: 0, .. }
@@ -226,7 +228,7 @@ mod tests {
     /// 文案里的每个汉字都必须在 `crates/ui/fonts/cjk-subset.ttf` 里,
     /// 改了措辞就得重跑 `just font-subset`,否则 web 端显示成豆腐块。
     #[test]
-    fn 版本不匹配的文案含双方版本号() {
+    fn mismatch_message_contains_both_versions() {
         let err = ApiError::VersionMismatch {
             expected: 1,
             actual: 2,
