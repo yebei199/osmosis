@@ -216,7 +216,14 @@ export component MainWindow inherits Window {
     // —— 桌面把窗口拖窄一样变成紧凑版式,这既是要的体验,也是唯一能在桌面验证移动版式的办法。
     // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
     // 手机横屏(~850dp)回到侧栏 —— 横屏本来就矮,底栏再吃 64px 太亏。
-    property <bool> compact: root.width < 600px;
+    //
+    // 用 changed 回调赋值、而不是写成 `compact: root.width < 600px` 的绑定:版式一变,子元素的
+    // 约束(侧栏在不在、底栏在不在)就变,窗口的 layoutinfo 跟着变,宽度又回头喂给 compact ——
+    // 那是一个真的求值环,Slint 1.18 起会警告并可能在运行时 panic。命令式赋值把环剪断:
+    // 宽度先定下来,再单向推出版式。
+    property <bool> compact;
+    init => { root.compact = root.width < 600px; }
+    changed width => { root.compact = root.width < 600px; }
 
     // 热调工具条的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
     // Rust 每帧乘缩放系数交给 render3d 的玻璃 shader,让它精确模糊这块区域背后的画面
