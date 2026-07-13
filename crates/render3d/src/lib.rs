@@ -72,7 +72,12 @@ pub struct SceneParams {
 impl SceneParams {
     /// 决定是否需要重建场景内容的关键字段(yaw/pitch/自转不触发重建)。
     fn content_key(&self) -> (i32, u32, u32, u32) {
-        (self.scene_id, self.count, self.color_rgb, self.spacing.to_bits())
+        (
+            self.scene_id,
+            self.count,
+            self.color_rgb,
+            self.spacing.to_bits(),
+        )
     }
 }
 
@@ -202,9 +207,13 @@ impl Scene {
 
         // 5) 摆相机(渲染进离屏目标图)、平行光,建图元网格调色板,建一个空的转盘根。
         //    场景内容(形状)首帧按 UI 传入的 SceneParams 用 bsn! 构建(见 render_frame)。
-        let camera = spawn_camera_and_light(&mut app, &target);
+        let camera =
+            spawn_camera_and_light(&mut app, &target);
         let mesh_palette = build_mesh_palette(&mut app);
-        let root = app.world_mut().spawn(Transform::default()).id();
+        let root = app
+            .world_mut()
+            .spawn(Transform::default())
+            .id();
 
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
@@ -259,7 +268,9 @@ impl Scene {
         // 自转累积,叠加到拖动的 yaw 上,整群当转盘转。
         self.spin_angle += params.spin_speed;
         if let Some(mut transform) =
-            self.app.world_mut().get_mut::<Transform>(self.root)
+            self.app
+                .world_mut()
+                .get_mut::<Transform>(self.root)
         {
             transform.rotation = Quat::from_euler(
                 EulerRot::YXZ,
@@ -294,15 +305,21 @@ impl Scene {
 
         // 尺寸稳定、玻璃开关不变时,纹理身份稳定 → 只包装一次 Image,之后每帧由
         // bevy + 玻璃 pass 重画内容,Slint 重绘时实时采样同一张。
-        let key = (composed.width(), composed.height(), glass_on);
+        let key =
+            (composed.width(), composed.height(), glass_on);
         if self.image_key != Some(key) {
-            let (w, h) = (composed.width(), composed.height());
+            let (w, h) =
+                (composed.width(), composed.height());
             match slint::Image::try_from(composed) {
                 Ok(img) => {
                     log::info!(
                         "render3d: 纹理就绪(第 {} 帧),{w}x{h} 已导入 Slint(玻璃 {})",
                         self.frames,
-                        if glass_on { "开" } else { "关" }
+                        if glass_on {
+                            "开"
+                        } else {
+                            "关"
+                        }
                     );
                     self.image = Some(img);
                     self.image_key = Some(key);
@@ -368,7 +385,10 @@ impl Scene {
     /// 故能收进一个 `Vec<impl Scene>` 当 `Children`。材质(基础色)与摆位随参数每次重算。
     fn rebuild_content(&mut self, params: &SceneParams) {
         // 旧转盘连同子树整体销毁(despawn 递归清子实体),换上全新的根。
-        self.app.world_mut().entity_mut(self.root).despawn();
+        self.app
+            .world_mut()
+            .entity_mut(self.root)
+            .despawn();
 
         let color = Color::srgb_u8(
             (params.color_rgb >> 16) as u8,
@@ -500,7 +520,6 @@ fn camera_pos(aspect: f32) -> Vec3 {
     BASE_CAMERA_POS * pullback(aspect)
 }
 
-
 /// 建六种内置图元的网格句柄,建一次复用。索引 0 是 Cuboid,兼作阵列场景的方块。
 fn build_mesh_palette(app: &mut App) -> Vec<Handle<Mesh>> {
     let mut meshes =
@@ -534,12 +553,20 @@ fn compute_placements(
                     / count as f32;
                 let mesh =
                     palette[i % palette.len()].clone();
-                (mesh, Vec3::new(radius * a.cos(), 0.0, radius * a.sin()))
+                (
+                    mesh,
+                    Vec3::new(
+                        radius * a.cos(),
+                        0.0,
+                        radius * a.sin(),
+                    ),
+                )
             })
             .collect()
     } else {
         let dim = (count as f32).sqrt().ceil() as usize;
-        let offset = (dim as f32 - 1.0) * params.spacing / 2.0;
+        let offset =
+            (dim as f32 - 1.0) * params.spacing / 2.0;
         (0..count)
             .map(|i| {
                 let (col, row) = (i % dim, i / dim);
@@ -570,7 +597,8 @@ mod tests {
     /// 竖视口按长宽比等比后撤 —— 水平视野随长宽比线性收窄,故距离须反比放大,
     /// 横向排开的形状画廊才不会出画。整体缩放位置向量,俯视角不变。
     #[test]
-    fn portrait_viewport_pulls_camera_back_proportionally() {
+    fn portrait_viewport_pulls_camera_back_proportionally()
+    {
         // 长宽比减半 → 后撤一倍。
         assert_eq!(pullback(0.5), 2.0);
         assert_eq!(camera_pos(0.5), BASE_CAMERA_POS * 2.0);
@@ -603,10 +631,13 @@ mod tests {
     /// 后撤倍数必须仍是有限正值,且封顶 —— 相机不能飞到无穷远。
     #[test]
     fn degenerate_aspect_is_clamped_to_finite_distance() {
-        for aspect in [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-9] {
+        for aspect in
+            [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-9]
+        {
             let k = pullback(aspect);
             assert!(
-                k.is_finite() && k >= 1.0 && k <= MAX_PULLBACK,
+                k.is_finite()
+                    && (1.0..=MAX_PULLBACK).contains(&k),
                 "aspect {aspect} 得到不合理的后撤倍数 {k}"
             );
         }
