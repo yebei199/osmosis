@@ -9,7 +9,7 @@
 /// 打一次真实的 GET /health,校验响应能被解析且协议版本匹配。
 #[tokio::test]
 #[ignore = "需要 `just dev-server` 正在运行"]
-async fn health_能拿到服务端的健康状态() {
+async fn health_fetches_server_status() {
     let dto =
         api::health().await.expect("GET /health 应当成功");
     assert_eq!(dto.status, "ok");

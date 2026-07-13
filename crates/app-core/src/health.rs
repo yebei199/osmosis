@@ -31,7 +31,7 @@ pub enum HealthState {
 pub struct Health {
     /// 每发起一次请求便加一。
     ///
-    /// 网络响应可以乱序返回:用户连点两次,先发的请求可能后到。带上代号,
+    /// 网络响应可以乱序返回:用户连点两次,first_request的请求可能后到。带上代号,
     /// 就能在结果回来时判断它是否已被更晚的请求取代。
     generation: u64,
     state: HealthState,
@@ -124,7 +124,7 @@ mod tests {
 
     /// 没查过时是 Idle。
     #[test]
-    fn 初始状态为_idle() {
+    fn initial_state_is_idle() {
         assert_eq!(
             *Health::default().state(),
             HealthState::Idle
@@ -133,7 +133,7 @@ mod tests {
 
     /// 成功路径:请求返回 DTO,状态变成 Loaded。
     #[test]
-    fn refresh_成功后进入_loaded() {
+    fn refresh_success_enters_loaded() {
         let health = RefCell::new(Health::default());
         block_on(refresh(&health, || async {
             Ok::<_, String>(dto())
@@ -146,7 +146,7 @@ mod tests {
 
     /// 失败路径:请求返回错误,状态变成 Failed 并带上原因。
     #[test]
-    fn refresh_失败后进入_failed() {
+    fn refresh_failure_enters_failed() {
         let health = RefCell::new(Health::default());
         block_on(refresh(&health, || async {
             Err::<HealthDto, _>("connection refused")
@@ -161,28 +161,28 @@ mod tests {
 
     /// 请求期间状态是 Loading。
     #[test]
-    fn begin_后状态为_loading() {
+    fn begin_sets_state_loading() {
         let mut health = Health::default();
         health.begin();
         assert_eq!(*health.state(), HealthState::Loading);
     }
 
-    /// 边界:先发的请求后到时,其结果必须被丢弃 —— 否则会覆盖更新的数据。
+    /// 边界:first_request的请求后到时,其结果必须被丢弃 —— 否则会覆盖更新的数据。
     #[test]
-    fn 迟到的旧响应被丢弃() {
+    fn stale_response_is_discarded() {
         let mut health = Health::default();
-        let 先发 = health.begin();
-        let 后发 = health.begin();
+        let first_request = health.begin();
+        let second_request = health.begin();
 
-        // 先发的请求最后才返回。
+        // first_request的请求最后才返回。
         assert!(!health.finish(
-            先发,
+            first_request,
             Err("timed out".to_owned())
         ));
         assert_eq!(*health.state(), HealthState::Loading);
 
-        // 后发的请求才是唯一算数的那个。
-        assert!(health.finish(后发, Ok(dto())));
+        // second_request的请求才是唯一算数的那个。
+        assert!(health.finish(second_request, Ok(dto())));
         assert_eq!(
             *health.state(),
             HealthState::Loaded(dto())
