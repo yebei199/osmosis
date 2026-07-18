@@ -1,7 +1,10 @@
 apk := "dist/slint-study-debug.apk"
-# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。8080 被 web-dev 占、3000 被
-# server-dev 占,故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
+# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
+# 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
 mcp_port := "8090"
+# web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
+# 的 dev server 占着,撞上了只会得到一句 Address already in use。
+web_port := "8073"
 
 # 无参数时列出全部配方(按 group 分组),而非直接跑第一条
 _default:
@@ -46,7 +49,7 @@ desktop-dev extra="":
 desktop-dev-3d:
     nix-shell render3d.nix --run 'cargo run -p app-desktop --features bevy-3d'
 
-# 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8080
+# 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
@@ -59,13 +62,13 @@ web-dev extra="":
     # server 不在 default-members 里,裸 cargo build 从不编它。先编完再起,否则页面
     # 已经能开、按钮却要再等半分钟才通,报的还是「网络错误」,徒增困惑。
     nix-shell slint.nix --run 'cargo build -p server'
-    # 上次 Ctrl-C 没杀干净的 server 还占着 8080,先收尸。只匹配本命令起的进程,不误伤别人的 8080。
+    # 上次 Ctrl-C 没杀干净的 server 还占着端口,先收尸。只匹配本命令起的进程,不误伤别人的。
     # [.] 是为了让这行自己的命令行不被这个正则匹配上 —— 否则 pkill 会连本 recipe 一起杀。
-    pkill -f 'http[.]server 8080 -d dist/web' || true
+    pkill -f 'http[.]server {{ web_port }} -d dist/web' || true
     # server 放后台、http.server 占前台,Ctrl-C 走 trap 把 server 一起带走。
     # 3000 被占说明已有一个 server 在跑(比如 android 调试用的那个),这个会 panic
     # 退出、不影响前端,那边的链路也毫发无伤。不为此发明端口探测。
-    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 -m http.server 8080 -d dist/web'
+    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 -m http.server {{ web_port }} -d dist/web'
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
