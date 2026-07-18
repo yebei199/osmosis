@@ -76,13 +76,13 @@ panic = "abort"
 [profile.dev.package."*"]
 opt-level = 3
 
-# Slint 走自己的 fork(yebei199/slint 的 dev 分支,当前 1.18.0),而不是 crates.io。
-# 原因:上游在 android 上不会启动内嵌的 MCP server(set_platform() 路径没挂钩子),
-# fork 里把这个修好了(已上报 slint#12446)。
+# Slint 走上游官方仓库 master(1.18.0 开发版),而不是 crates.io。
+# 原因:要用尚未发布的两个修复/特性 —— android MCP server 启动(#12447)与
+# wasm 上的 femtovg-wgpu 渲染器(#11580,web 端 bevy 纹理共享的前提)。
+# 之前用 yebei199/slint fork 只为 #12447,上游合并后 fork 已退役。
 # 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
-# 改完 fork 要 `git push`,再对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
+# 跟进上游要对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
 # —— cargo 不会自动放弃锁里已有的 registry 版本,少一个就静默变成 patch.unused。
-# 本地的 ~/RustroverProjects/slint-fork 目录不参与解析。
 [patch.crates-io]
-slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
-slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }
+slint = { git = "https://github.com/slint-ui/slint", branch = "master" }
+slint-build = { git = "https://github.com/slint-ui/slint", branch = "master" }
