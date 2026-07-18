@@ -12,6 +12,10 @@
 //!
 //! 注意:slint 的 winit 后端在 wasm 上会寻找页面里 id 为 `canvas` 的
 //! `<canvas>` 元素。宿主页面必须提供它。
+//!
+//! panic 钩子:wasm 默认把 panic 报成一句没有信息量的 `RuntimeError: unreachable`,
+//! 挂上 `console_error_panic_hook` 才能在控制台看到 panic 消息本身
+//! (「找不到可用的 wgpu adapter」这类)。
 
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -19,6 +23,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 #[cfg(not(feature = "bevy-3d"))]
 #[wasm_bindgen(start)]
 pub fn start() {
+    console_error_panic_hook::set_once();
     ui::run();
 }
 
@@ -26,6 +31,7 @@ pub fn start() {
 #[cfg(feature = "bevy-3d")]
 #[wasm_bindgen(start)]
 pub async fn start() {
+    console_error_panic_hook::set_once();
     // Scene 配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前完成 —— 故先 await 它。
     // 下面这段 3D 分派与 apps/desktop、apps/android 的两份**逐字相同**(仅构造是
     // async),故意不抽,理由见 apps/android/src/lib.rs。改动时记得同步另两端。
