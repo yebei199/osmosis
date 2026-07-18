@@ -68,7 +68,11 @@ web-dev extra="":
     # server 放后台、http.server 占前台,Ctrl-C 走 trap 把 server 一起带走。
     # 3000 被占说明已有一个 server 在跑(比如 android 调试用的那个),这个会 panic
     # 退出、不影响前端,那边的链路也毫发无伤。不为此发明端口探测。
-    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 -m http.server {{ web_port }} -d dist/web'
+    # --bind 127.0.0.1 不只是收窄监听面:http.server 默认绑 0.0.0.0,启动横幅就打印
+    # `http://0.0.0.0:8073/`,而浏览器的安全上下文白名单只认 localhost / 127.0.0.1 ——
+    # 从 0.0.0.0 打开页面拿不到 WebGPU(wgpu 只剩 GL 可用,bevy-3d 直接 panic)。
+    # 绑死回环,横幅印出来的就是唯一能用的那个地址。手机联调走 `just apk-share`。
+    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 -m http.server {{ web_port }} -d dist/web --bind 127.0.0.1'
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
