@@ -11,26 +11,9 @@ pub use scene_params::SceneControls;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use app_core::{Counter, Health, HealthState};
-use slint::{ComponentHandle, Timer, TimerMode};
-
-/// 3D 面板的驱动间隔。原生平台取 1ms 以**不人为设帧率上限**:实际帧率由 present(vsync)
-/// 与渲染耗时决定,能跑到显示器/Slint 原生刷新率(之前固定 16ms 把 3D 压在 ~62fps,
-/// 而同机 Slint 页能到更高)。只在 3D 页激活时驱动(render-active),不在其余页空耗。
-/// Slint 的 Timer 与事件循环单线程,回调超时也不会叠加,故等价于「有多快跑多快」。
-#[cfg(not(target_arch = "wasm32"))]
-const FRAME_INTERVAL: Duration = Duration::from_millis(1);
-
-/// wasm 上必须限速。浏览器主线程是**唯一**的线程,合成画面、派发输入、跑 wasm 全挤在
-/// 上面;1ms 定时器会让每秒 350~470 轮 `app.update()` 把它占死,浏览器抢不到时间合成,
-/// 实测 requestAnimationFrame 掉到 2~8 次/秒 —— 表现为整个界面(不只是 3D 页)闪一下
-/// 就卡住不再重绘,切页也没反应。16ms 让出 ~85% 的主线程时间,足够 60fps。
-///
-/// 别把这里改回「有多快跑多快」:原生平台那套前提(事件循环能与渲染交错)在浏览器不成立。
-#[cfg(target_arch = "wasm32")]
-const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+use slint::{ComponentHandle, RenderingState};
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
@@ -62,7 +45,21 @@ pub fn run() {
     let ui = build_ui();
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     #[cfg(feature = "debug-fps")]
-    let _fps_timer = fps::start(&ui);
+    let _fps_timer = {
+        let (frames, timer) = fps::start(&ui);
+        // 无 3D 的路径上没人装渲染通知,帧计数在这里自己接。
+        ui.window()
+            .set_rendering_notifier(move |state, _| {
+                if matches!(
+                    state,
+                    RenderingState::BeforeRendering
+                ) {
+                    frames.set(frames.get() + 1);
+                }
+            })
+            .ok();
+        timer
+    };
 
     ui.run().expect("event loop failed");
 }
@@ -82,19 +79,21 @@ pub fn run() {
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
 pub fn run_with_renderer(
-    mut on_frame: impl FnMut(&SceneControls, u32, u32) -> slint::Image
+    mut on_frame: impl FnMut(
+        &SceneControls,
+        u32,
+        u32,
+    ) -> slint::Image
     + 'static,
 ) {
     let ui = build_ui();
     #[cfg(feature = "debug-fps")]
-    let _fps_timer = fps::start(&ui);
+    let (fps_frames, _fps_timer) = fps::start(&ui);
 
     // 每帧:仅 3D 页激活时 → 组装 SceneControls 与面板物理尺寸 → 驱动渲染器一帧 → 推给
-    // UI → 请求重绘。不请求重绘的话,UI 空闲时 Slint 不会重新采样那张纹理,3D 会定格。
-    // Timer 与其捕获的 `on_frame` 必须活到事件循环结束,所以持有到 run() 返回。
+    // UI → 请求重绘。不请求重绘的话,Slint 惰性渲染,下一帧通知不会来,3D 会定格。
     // controls 跨帧持久:解析失败时各字段退回上一个好值。初值须与 app.slint 的默认属性一致。
     let weak = ui.as_weak();
-    let timer = Timer::default();
     let mut controls = SceneControls {
         scene_id: 0,
         yaw: 0.0,
@@ -106,10 +105,27 @@ pub fn run_with_renderer(
         // 每帧从 .slint 量出来重算,初值无所谓。
         glass: scene_params::GlassRect::default(),
     };
-    timer.start(
-        TimerMode::Repeated,
-        FRAME_INTERVAL,
-        move || {
+    // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
+    // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
+    // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
+    // 上限(16ms 压在 ~62fps,实测只有 40)。渲染通知由 Slint 真正的重绘周期派发:
+    // wasm 上是 requestAnimationFrame(合成完才给下一次,天然不会饿死主线程,且按显示器
+    // 刷新率走),原生上是 vsync。两端都不再有人为的帧率上限,也不再有定时器与合成的错拍。
+    //
+    // 回调里改 `scene-3d` 属性会标脏,画面在**下一帧**生效,故恒差一帧 —— 这是 3D 面板,
+    // 一帧延迟看不出来,不为此发明双缓冲。
+    // 回调与其捕获的 `on_frame` 由窗口持有,活到事件循环结束。
+    ui.window()
+        .set_rendering_notifier(move |state, _| {
+            if !matches!(
+                state,
+                RenderingState::BeforeRendering
+            ) {
+                return;
+            }
+            #[cfg(feature = "debug-fps")]
+            fps_frames.set(fps_frames.get() + 1);
+
             let Some(ui) = weak.upgrade() else { return };
             if !ui.get_render_active() {
                 return;
@@ -127,10 +143,11 @@ pub fn run_with_renderer(
                 ui.get_count_text().as_str(),
                 controls.count,
             );
-            controls.color_rgb = scene_params::parse_hex_rgb(
-                ui.get_color_text().as_str(),
-                controls.color_rgb,
-            );
+            controls.color_rgb =
+                scene_params::parse_hex_rgb(
+                    ui.get_color_text().as_str(),
+                    controls.color_rgb,
+                );
             controls.spin_speed = scene_params::parse_speed(
                 ui.get_speed_text().as_str(),
                 controls.spin_speed,
@@ -152,11 +169,10 @@ pub fn run_with_renderer(
             let frame = on_frame(&controls, w, h);
             ui.set_scene_3d(frame);
             ui.window().request_redraw();
-        },
-    );
+        })
+        .expect("渲染后端必须支持渲染通知");
 
     ui.run().expect("event loop failed");
-    drop(timer);
 }
 
 /// 当前编译目标的平台名,显示在标题里。
@@ -238,19 +254,21 @@ fn describe(state: &HealthState) -> String {
 
 /// 帧率计。仅在 `debug-fps` feature 下编译。
 ///
-/// 在渲染通知回调里累计**真实发生的**帧数,每个采样周期算出帧率推给 UI。
+/// 帧数由调用方在渲染通知回调里累加**真实发生的**帧,每个采样周期算出帧率推给 UI。
+/// 计数器不在这里接进渲染通知:一个窗口只能装一个通知回调,而 3D 路径要拿它当帧驱动
+/// (见 [`run_with_renderer`](crate::run_with_renderer))—— 两边都装的话后者会顶掉前者,
+/// 读数静默归零。故本模块只出计数器和采样定时器,由谁装通知、在哪儿 `bump` 交给调用方。
+///
 /// 刻意不主动请求重绘 —— Slint 是惰性渲染,空闲时本就不重绘,读数会自动趴到
-/// ~1(交互/动画时才飙高),这正是诚实的即时帧率,也不会白耗电。3D 页由
-/// `run_with_renderer` 的 Timer 每帧驱动重绘,这里自然就读到满帧。
+/// ~1(交互/动画时才飙高),这正是诚实的即时帧率,也不会白耗电。3D 页每帧自请求重绘,
+/// 这里自然就读到满帧。
 #[cfg(feature = "debug-fps")]
 mod fps {
     use std::cell::Cell;
     use std::rc::Rc;
     use std::time::Duration;
 
-    use slint::{
-        ComponentHandle, RenderingState, Timer, TimerMode,
-    };
+    use slint::{ComponentHandle, Timer, TimerMode};
 
     use crate::MainWindow;
 
@@ -258,30 +276,22 @@ mod fps {
     const SAMPLE_PERIOD: Duration =
         Duration::from_millis(500);
 
-    /// 启动帧率计。返回的 [`Timer`] 必须由调用方持有到事件循环结束。
-    pub(crate) fn start(ui: &MainWindow) -> Timer {
+    /// 启动帧率计,返回(待调用方每帧累加的计数器, 采样定时器)。
+    ///
+    /// [`Timer`] 必须由调用方持有到事件循环结束,否则会被立即析构、不再触发。
+    pub(crate) fn start(
+        ui: &MainWindow,
+    ) -> (Rc<Cell<u32>>, Timer) {
         let frames = Rc::new(Cell::new(0u32));
-
-        let frames_render = frames.clone();
-        ui.window()
-            .set_rendering_notifier(move |state, _| {
-                if matches!(
-                    state,
-                    RenderingState::BeforeRendering
-                ) {
-                    frames_render
-                        .set(frames_render.get() + 1);
-                }
-            })
-            .ok();
 
         let weak_fps = ui.as_weak();
         let timer = Timer::default();
+        let frames_sample = frames.clone();
         timer.start(
             TimerMode::Repeated,
             SAMPLE_PERIOD,
             move || {
-                let counted = frames.replace(0);
+                let counted = frames_sample.replace(0);
                 if let Some(ui) = weak_fps.upgrade() {
                     ui.set_fps(
                         counted as f32
@@ -290,7 +300,7 @@ mod fps {
                 }
             },
         );
-        timer
+        (frames, timer)
     }
 }
 
