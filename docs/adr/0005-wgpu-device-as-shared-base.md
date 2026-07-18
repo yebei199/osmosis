@@ -4,8 +4,11 @@
 renderer 引擎 —— mobile 是 skia-on-wgpu,desktop / web 是 femtovg-on-wgpu。3D 桥(bevy)
 在同一个 device 上离屏渲染,产出的纹理才能被 Slint 采样(见 `crates/render3d`)。
 
-**现状(2026-07-11)**:web 端已证实被上游硬阻塞,见下方「web 阻塞」。desktop / android 走
-原生 wgpu(非 wasm),不受此限制。
+**现状(2026-07-18)**:web 阻塞已解除 —— slint#11580 于 2026-07-17 合并进上游 master,
+本仓库已把 slint 依赖从 fork 切到官方 master(commit `94641de3`,fork 的 android MCP 修复
+也已随 #12447 进上游)。web 端 `bevy-3d` feature 已接通:`Scene::new_async().await` 拿共享
+device、仅 WebGPU 不做 WebGL 降级(bevy 管线在 WebGL 下受限)。下方「web 阻塞」一节保留
+作历史记录,其结论已随 1.18-dev 失效。
 
 ## 为什么
 
@@ -142,19 +145,20 @@ here, but the returned future is ready on first poll on all platforms **except W
   降级到 GL femtovg**,画面会永久空白而不是报错终止。真要接这条路径,仍需自己在
   应用层加超时/失败提示,不能假设「能建出 wgpu device」是必然成立的。
 
-### 对本 ADR 的影响
+### 对本 ADR 的影响(2026-07-18 更新)
 
-- 「分端迁移」清单里原「1. web:… ← 本 ADR 落地时已做」**不成立**,已撤销相关代码
-  (`apps/web` 的异步 3D 接线、`bevy-3d` feature 在 web 上的开启)。web 暂时退回纯 2D
-  femtovg-wgpu 也一样跑不了 —— 见上,只能等上游或换回其他 renderer。
-- `xtask boundaries.rs` 对 app-web 的 wgpu/bevy 禁令需要保留(不能像本 ADR 原计划那样放开),
-  直到 #11580 合并且发布到 stable。
-- 复查时机:关注 slint milestone `1.18` 发布,或 #11580 合并状态变化。
+- #11580 已合并进 master,本仓库改跟官方 master(Cargo.lock 锁 commit),web 接线重新落地:
+  `apps/web` 的 `wgpu` feature(纯 2D femtovg-wgpu,WebGPU 探测失败自动回退 wgpu-WebGL,
+  已实测)与 `bevy-3d` feature(异步 3D 接线,仅 WebGPU)。
+- `xtask boundaries.rs` 对 app-web 的检查语义改为「默认 feature 集不拉 3D」——
+  `cargo tree` 本就只查默认 features,opt-in 的 `bevy-3d` 不触发它;app-ios 仍全禁。
+- 上方「仍未解的风险」(wgpu init 失败只留一行 debug 日志、画面永久空白)依旧成立,
+  web 端 3D 属 dev 链路,接受 panic/白屏 + 控制台报错,不做应用层超时提示。
 
 ## 分端迁移(每端一个原子提交)
 
-1. **web**:❌ **阻塞**,见上「web 阻塞」。不做 `renderer-femtovg-wgpu` + `bevy-3d`,
-   待上游 slint#11580 合并发布后重新评估。
+1. **web**:✅ 已落地(2026-07-18,slint 切官方 master 后):`wgpu` 与 `bevy-3d` 两个
+   opt-in feature,默认构建仍是 femtovg-GL 纯 2D。
 2. **desktop**:base 换 `renderer-femtovg-wgpu`、去 `renderer-software`,vulkan 并入 slint.nix
 3. **android**:base 加 `unstable-wgpu-29`(skia 切 wgpu 路径)
 4. **ios**:skia-on-wgpu —— **需先实测** backend-winit+Metal 是否支持;boundaries 里 app-ios

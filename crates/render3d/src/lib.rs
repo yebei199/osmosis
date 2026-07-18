@@ -1,6 +1,6 @@
 //! 3D 桥:用 **bevy** 在**共享的** wgpu-29 device 上离屏渲染,产出一张 [`slint::Image`]
-//! 交给 UI 层合成。只有桌面 / android 入口依赖本 crate,web / ios 永不碰它 ——
-//! 由 `xtask boundaries` 守住这条边界。
+//! 交给 UI 层合成。桌面 / android / web 入口按 `bevy-3d` feature 依赖本 crate,
+//! ios 永不碰它;web / ios 的**默认**构建不拉它 —— 由 `xtask boundaries` 守住这条边界。
 //!
 //! 架构约束(见计划 `bevy-serialized-dove`):
 //! - device 由本 crate 自建(Manual),同一套 instance/adapter/device/queue
@@ -11,6 +11,7 @@
 //!
 //! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
 //! 必须在建窗口**之前**调 —— 再把 `move || scene.render_frame()` 交给 `ui::run_with_renderer`。
+//! web 入口(`apps/web`)用异步版 [`Scene::new_async`],其余接线相同。
 
 use std::sync::Arc;
 
@@ -120,22 +121,32 @@ impl Scene {
     ///
     /// **必须在创建任何 Slint 窗口之前调用** —— `require_wgpu_29(...).select()` 是全局的,
     /// 一旦窗口建出来就晚了。
+    /// 原生平台专用:wasm 主线程不许阻塞,web 入口用 [`Scene::new_async`]。
     pub fn new() -> Self {
+        bevy::tasks::block_on(Self::new_async())
+    }
+
+    /// [`Scene::new`] 的异步版:adapter/device 的 future 在原生平台首次 poll 即就绪,
+    /// 只有浏览器的 WebGPU Promise 是真异步 —— 这是本方法存在的唯一原因(与 slint#11580 同思路)。
+    /// wasm 上 `Backends::PRIMARY` 只含 BrowserWebGpu:浏览器没有 WebGPU 就在
+    /// `request_adapter` 处 panic,不做 WebGL 降级(bevy 的渲染管线在 WebGL 下受限,不接)。
+    pub async fn new_async() -> Self {
         // 1) 自建一套 wgpu。经 slint 的 wgpu_29 再导出拿到 wgpu,保证和 bevy 是同一份 crate。
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let adapter = bevy::tasks::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference:
+                    wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
-            },
-        ))
-        .expect("找不到可用的 wgpu adapter");
+            })
+            .await
+            .expect("找不到可用的 wgpu adapter");
         // 用 adapter 支持的全部 features/limits 建 device,确保 bevy 想要什么都有。
-        let (device, queue) = bevy::tasks::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: Some("render3d-shared"),
                 // 请求 adapter 支持的特性,但**摘掉 MAPPABLE_PRIMARY_BUFFERS** ——
                 // wgpu 自己警告它在独显上是「massive performance footgun」:强制缓冲区
@@ -150,9 +161,9 @@ impl Scene {
                     wgpu::ExperimentalFeatures::enabled()
                 },
                 ..Default::default()
-            },
-        ))
-        .expect("创建 wgpu device 失败");
+            })
+            .await
+            .expect("创建 wgpu device 失败");
 
         // 2) 把同一套 wgpu 交给 Slint —— 它的渲染器就用这个 device,才能采样 bevy 产的纹理。
         slint::BackendSelector::new()
@@ -185,22 +196,25 @@ impl Scene {
         );
 
         let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .set(RenderPlugin {
-                    render_creation,
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    // 无头:不建主窗口,Slint 才是那个有窗口的。
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                })
-                // 关掉管线化渲染:它会把渲染子 app 移到另一个线程,`get_sub_app(RenderApp)`
-                // 就取不到离屏纹理了。手动驱动 + 同步取纹理,必须让渲染子 app 留在本线程。
-                .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
-        );
+        let plugins = DefaultPlugins
+            .set(RenderPlugin {
+                render_creation,
+                ..default()
+            })
+            .set(WindowPlugin {
+                // 无头:不建主窗口,Slint 才是那个有窗口的。
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            });
+        // 关掉管线化渲染:它会把渲染子 app 移到另一个线程,`get_sub_app(RenderApp)`
+        // 就取不到离屏纹理了。手动驱动 + 同步取纹理,必须让渲染子 app 留在本线程。
+        // wasm 上该模块整个被 bevy cfg 掉(天然单线程,无此插件),不禁而自禁。
+        #[cfg(not(target_arch = "wasm32"))]
+        let plugins = plugins.disable::<
+            bevy::render::pipelined_rendering::PipelinedRenderingPlugin,
+        >();
+        app.add_plugins(plugins);
 
         // 4) 造初始离屏目标图。UI 传来的面板尺寸会触发按需重建(动态分辨率,见 render_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);

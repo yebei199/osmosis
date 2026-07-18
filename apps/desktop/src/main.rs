@@ -17,8 +17,8 @@ fn main() {
     .init();
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
-    // 下面这段与 apps/android/src/lib.rs 里的一份**逐字相同**,故意不抽(理由见那边)。
-    // 改动 bevy 分支时记得同步另一端。
+    // 下面这段与 apps/android、apps/web 里的两份**逐字相同**,故意不抽(理由见
+    // android 那边)。改动 bevy 分支时记得同步另两端。
     #[cfg(feature = "bevy-3d")]
     {
         let mut scene = render3d::Scene::new();
