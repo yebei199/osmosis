@@ -122,7 +122,8 @@ fn build_native_libs(
 
     // Slint 的 android 后端在构建时会编译一个小的 Java helper 并以 dex 形式
     // 内嵌;让它针对已安装的最新 platform jar 编译(类似 gradle 的 compileSdk)。
-    if let Some(jar) = newest_android_jar(Path::new(android_home))
+    if let Some(jar) =
+        newest_android_jar(Path::new(android_home))
     {
         println!("    using ANDROID_JAR={}", jar.display());
         // SAFETY: 单线程,尚未 spawn 任何子进程。
@@ -161,7 +162,9 @@ fn build_native_libs(
 /// 找出 `platforms/android-<N>/android.jar` 里 N 最大的那个。
 ///
 /// 按数值比较,而不是字典序 —— `android-9` 不该排在 `android-34` 后面。
-fn newest_android_jar(android_home: &Path) -> Option<PathBuf> {
+fn newest_android_jar(
+    android_home: &Path,
+) -> Option<PathBuf> {
     let platforms = android_home.join("platforms");
     let entries = fs::read_dir(platforms).ok()?;
 
@@ -194,8 +197,9 @@ fn copy_cxx_shared(
         .join("toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib");
 
     for abi in abis {
-        let source =
-            sysroot.join(abi.triple()).join("libc++_shared.so");
+        let source = sysroot
+            .join(abi.triple())
+            .join("libc++_shared.so");
         if !source.is_file() {
             continue;
         }
@@ -238,13 +242,17 @@ fn assemble_debug(
 }
 
 /// 把 gradle 的产物拷到 `dist/`。
-fn collect_artifact(root: &Path) -> Result<PathBuf, String> {
+fn collect_artifact(
+    root: &Path,
+) -> Result<PathBuf, String> {
     let source = root
         .join(GRADLE_PROJECT)
         .join("app/build/outputs/apk/debug/app-debug.apk");
     let destination = root.join(OUTPUT_APK);
 
-    let dist = destination.parent().expect("OUTPUT_APK 必须有父目录");
+    let dist = destination
+        .parent()
+        .expect("OUTPUT_APK 必须有父目录");
     fs::create_dir_all(dist).map_err(|e| {
         format!("无法创建 {}: {e}", dist.display())
     })?;
@@ -303,7 +311,8 @@ mod tests {
                 .join("platforms")
                 .join(format!("android-{level}"));
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join("android.jar"), b"").unwrap();
+            fs::write(dir.join("android.jar"), b"")
+                .unwrap();
         }
 
         let jar = newest_android_jar(&temp).unwrap();
