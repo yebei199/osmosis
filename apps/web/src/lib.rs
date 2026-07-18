@@ -1,6 +1,7 @@
 //! Web 平台入口:整个应用编译为 wasm,由浏览器加载。
 //!
-//! 职责与其他平台入口相同:初始化日志、初始化渲染后端、把控制权交给 UI 层。
+//! 职责与其他平台入口相同:初始化日志(`console_log`,对应 desktop 的 env_logger、
+//! android 的 android_logger)、初始化渲染后端、把控制权交给 UI 层。
 //! 渲染后端由 slint 的 `backend-winit` + `renderer-femtovg` 静态选定 ——
 //! 在 wasm 上它们分别落到 canvas 与 WebGL 上。开启 `wgpu` feature 时改走
 //! femtovg-wgpu 渲染器(WebGPU,不支持则回退 wgpu 的 WebGL 后端)。
@@ -24,6 +25,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
+    let _ = console_log::init();
     ui::run();
 }
 
@@ -32,6 +34,7 @@ pub fn start() {
 #[wasm_bindgen(start)]
 pub async fn start() {
     console_error_panic_hook::set_once();
+    let _ = console_log::init();
     // Scene 配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前完成 —— 故先 await 它。
     // 下面这段 3D 分派与 apps/desktop、apps/android 的两份**逐字相同**(仅构造是
     // async),故意不抽,理由见 apps/android/src/lib.rs。改动时记得同步另两端。
