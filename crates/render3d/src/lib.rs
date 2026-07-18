@@ -449,6 +449,18 @@ impl Scene {
             })
             .expect("spawn_scene 无 asset 依赖,不应失败")
             .id();
+
+        // 场景重建后点一次实体数。空场景与「渲染没画出来」在画面上无法区分,
+        // 这行日志把两者分开:计数为 0 说明是构建侧的问题,不必去查渲染管线。
+        let meshes = self
+            .app
+            .world_mut()
+            .query::<&Mesh3d>()
+            .iter(self.app.world())
+            .count();
+        log::info!(
+            "render3d: 场景重建完成,可渲染实体 {meshes} 个"
+        );
     }
 }
 
