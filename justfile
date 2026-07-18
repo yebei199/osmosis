@@ -64,15 +64,16 @@ web-dev extra="":
     nix-shell slint.nix --run 'cargo build -p server'
     # 上次 Ctrl-C 没杀干净的 server 还占着端口,先收尸。只匹配本命令起的进程,不误伤别人的。
     # [.] 是为了让这行自己的命令行不被这个正则匹配上 —— 否则 pkill 会连本 recipe 一起杀。
-    pkill -f 'http[.]server {{ web_port }} -d dist/web' || true
-    # server 放后台、http.server 占前台,Ctrl-C 走 trap 把 server 一起带走。
+    # 模式必须跟下面那行的命令**逐字对应**:对不上就杀不掉,新服务器绑不上端口静默退出,
+    # 而浏览器还连着那个喂旧产物的老进程 —— 排查时会以为是代码的问题。
+    pkill -f 'dev-server[.]py {{ web_port }}' || true
+    # server 放后台、静态服务器占前台,Ctrl-C 走 trap 把 server 一起带走。
     # 3000 被占说明已有一个 server 在跑(比如 android 调试用的那个),这个会 panic
     # 退出、不影响前端,那边的链路也毫发无伤。不为此发明端口探测。
-    # --bind 127.0.0.1 不只是收窄监听面:http.server 默认绑 0.0.0.0,启动横幅就打印
-    # `http://0.0.0.0:8073/`,而浏览器的安全上下文白名单只认 localhost / 127.0.0.1 ——
-    # 从 0.0.0.0 打开页面拿不到 WebGPU(wgpu 只剩 GL 可用,bevy-3d 直接 panic)。
-    # 绑死回环,横幅印出来的就是唯一能用的那个地址。手机联调走 `just apk-share`。
-    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 -m http.server {{ web_port }} -d dist/web --bind 127.0.0.1'
+    # 不用 `python -m http.server`:它不发 Cache-Control,浏览器会按启发式新鲜度缓存
+    # 那个 36MB 的 wasm,重新构建后页面还在跑旧产物,症状与代码 bug 无法区分。
+    # dev-server.py 只是在它基础上加了 no-store,其余行为一致(含绑回环的理由)。
+    nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 apps/web/dev-server.py {{ web_port }} dist/web'
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
