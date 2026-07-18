@@ -199,6 +199,10 @@ impl Scene {
         let plugins = DefaultPlugins
             .set(RenderPlugin {
                 render_creation,
+                // 管线编译走同步。默认的异步编译把任务丢进 bevy 的任务池,而 wasm
+                // 是单线程 —— 任务迟迟不完成,渲染就一直画不出东西(纹理有、内容空)。
+                // 原生上同步编译只是把首帧的卡顿提前,代价可接受,故不分平台。
+                synchronous_pipeline_compilation: true,
                 ..default()
             })
             .set(WindowPlugin {
