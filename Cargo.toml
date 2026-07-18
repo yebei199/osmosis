@@ -59,6 +59,10 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_scene",
     "bevy_window",
     "multi_threaded",
+    # bevy 内部的着色器编译失败、管线创建失败、资源缺失全靠 LogPlugin 报出来。
+    # 不开它,这些错误在任何平台都是哑的 —— web 上尤其致命:WebGPU 对 WGSL 的
+    # 校验比原生 Vulkan 严,失败了只表现为「纹理是空的」,毫无线索。
+    "bevy_log",
 ] }
 
 # APK 里打包的 native 库一律用 release profile:debug profile 的 Slint+Skia
