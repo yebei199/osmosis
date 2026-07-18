@@ -2,7 +2,8 @@
 //!
 //! 职责与其他平台入口相同:初始化日志、初始化渲染后端、把控制权交给 UI 层。
 //! 渲染后端由 slint 的 `backend-winit` + `renderer-femtovg` 静态选定 ——
-//! 在 wasm 上它们分别落到 canvas 与 WebGL 上。
+//! 在 wasm 上它们分别落到 canvas 与 WebGL 上。开启 `wgpu` feature 时改走
+//! femtovg-wgpu 渲染器(WebGPU,不支持则回退 wgpu 的 WebGL 后端)。
 //!
 //! 注意:slint 的 winit 后端在 wasm 上会寻找页面里 id 为 `canvas` 的
 //! `<canvas>` 元素。宿主页面必须提供它。
