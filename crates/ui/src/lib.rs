@@ -16,11 +16,21 @@ use std::time::Duration;
 use app_core::{Counter, Health, HealthState};
 use slint::{ComponentHandle, Timer, TimerMode};
 
-/// 3D 面板的驱动间隔。取 1ms 以**不人为设帧率上限**:实际帧率由 present(vsync)
+/// 3D 面板的驱动间隔。原生平台取 1ms 以**不人为设帧率上限**:实际帧率由 present(vsync)
 /// 与渲染耗时决定,能跑到显示器/Slint 原生刷新率(之前固定 16ms 把 3D 压在 ~62fps,
 /// 而同机 Slint 页能到更高)。只在 3D 页激活时驱动(render-active),不在其余页空耗。
 /// Slint 的 Timer 与事件循环单线程,回调超时也不会叠加,故等价于「有多快跑多快」。
+#[cfg(not(target_arch = "wasm32"))]
 const FRAME_INTERVAL: Duration = Duration::from_millis(1);
+
+/// wasm 上必须限速。浏览器主线程是**唯一**的线程,合成画面、派发输入、跑 wasm 全挤在
+/// 上面;1ms 定时器会让每秒 350~470 轮 `app.update()` 把它占死,浏览器抢不到时间合成,
+/// 实测 requestAnimationFrame 掉到 2~8 次/秒 —— 表现为整个界面(不只是 3D 页)闪一下
+/// 就卡住不再重绘,切页也没反应。16ms 让出 ~85% 的主线程时间,足够 60fps。
+///
+/// 别把这里改回「有多快跑多快」:原生平台那套前提(事件循环能与渲染交错)在浏览器不成立。
+#[cfg(target_arch = "wasm32")]
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
