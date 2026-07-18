@@ -87,8 +87,10 @@ Slint 的 device,也无法把 Slint 刚渲染出的那一帧当作 shader 的输
   **必须在建窗口之前**,让 Slint 与自己的渲染共用同一个 `wgpu::Device`(Slint 只能采样自己 device 上的纹理);
 - `render3d/src/lib.rs:257-279` —— `Image::try_from(tex)`,纹理需 `Rgba8Unorm` +
   `Rgba8UnormSrgb` view,usage 含 `RENDER_ATTACHMENT | TEXTURE_BINDING`;
-- `crates/ui/src/lib.rs:67-132` —— `run_with_renderer()` 的 seam:`Timer` 每帧回调 →
-  `set_scene_3d(frame)` → `window().request_redraw()`(不请求重绘,Slint 的惰性渲染会冻住这块)。
+- `crates/ui/src/lib.rs` 的 `run_with_renderer()` —— seam 在这里:`set_rendering_notifier`
+  的 `BeforeRendering` 回调 → `set_scene_3d(frame)` → `window().request_redraw()`
+  (不请求重绘,Slint 的惰性渲染会冻住这块)。挂渲染通知而不是定时器,是为了让帧率跟着
+  真实重绘周期走(wasm 上即 rAF),理由见该函数上方的注释。
 
 **局限:这块内容对 Slint 是一张不透明位图** —— 它拿不到背后 Slint 画的按钮和文字,
 反过来 Slint 也不参与它的内部合成。
