@@ -53,7 +53,10 @@ pub fn parse_count(text: &str, prev: u32) -> u32 {
 
 /// 解析 `#rrggbb` / `rrggbb` 十六进制色为 0xRRGGBB,非法退回 `prev`。
 pub fn parse_hex_rgb(text: &str, prev: u32) -> u32 {
-    let hex = text.trim().strip_prefix('#').unwrap_or(text.trim());
+    let hex = text
+        .trim()
+        .strip_prefix('#')
+        .unwrap_or(text.trim());
     if hex.len() != 6 {
         return prev;
     }
@@ -71,7 +74,11 @@ pub fn parse_spacing(text: &str, prev: f32) -> f32 {
 }
 
 /// f32 解析 + clamp 的共用实现:非有限值(NaN/inf)也当非法退回 `prev`。
-fn parse_f32_clamped(text: &str, prev: f32, range: (f32, f32)) -> f32 {
+fn parse_f32_clamped(
+    text: &str,
+    prev: f32,
+    range: (f32, f32),
+) -> f32 {
     match text.trim().parse::<f32>() {
         Ok(v) if v.is_finite() => v.clamp(range.0, range.1),
         _ => prev,
@@ -145,8 +152,14 @@ mod tests {
     /// 间距:越界被 clamp,非数字退回上一个好值。
     #[test]
     fn spacing_clamped_and_non_numeric_falls_back() {
-        assert_eq!(parse_spacing("0.05", 1.0), SPACING_RANGE.0);
-        assert_eq!(parse_spacing("99", 1.0), SPACING_RANGE.1);
+        assert_eq!(
+            parse_spacing("0.05", 1.0),
+            SPACING_RANGE.0
+        );
+        assert_eq!(
+            parse_spacing("99", 1.0),
+            SPACING_RANGE.1
+        );
         assert_eq!(parse_spacing("2.5", 1.0), 2.5);
         assert_eq!(parse_spacing("wide", 1.0), 1.0);
     }
