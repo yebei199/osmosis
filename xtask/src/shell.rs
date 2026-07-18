@@ -36,9 +36,10 @@ pub fn run_in(
     if !status.success() {
         return Err(format!(
             "{program} 失败,退出码 {}",
-            status
-                .code()
-                .map_or_else(|| "unknown".to_owned(), |c| c.to_string())
+            status.code().map_or_else(
+                || "unknown".to_owned(),
+                |c| c.to_string()
+            )
         ));
     }
     Ok(())
@@ -61,8 +62,9 @@ pub fn capture(
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|e| format!("{program} 的输出不是 UTF-8: {e}"))
+    String::from_utf8(output.stdout).map_err(|e| {
+        format!("{program} 的输出不是 UTF-8: {e}")
+    })
 }
 
 /// 读取必需的环境变量。
@@ -78,12 +80,14 @@ pub fn require_env(name: &str) -> Result<String, String> {
 ///
 /// 只在 Docker 路径上有意义:bind mount 的构建以 root 身份运行。
 /// ponytail: 直接调 `chown`,不为此引入 libc/nix 依赖。
-pub fn chown_to_host(paths: &[PathBuf]) -> Result<(), String> {
+pub fn chown_to_host(
+    paths: &[PathBuf],
+) -> Result<(), String> {
     let Ok(uid) = std::env::var("CHOWN_UID") else {
         return Ok(());
     };
-    let gid =
-        std::env::var("CHOWN_GID").unwrap_or_else(|_| uid.clone());
+    let gid = std::env::var("CHOWN_GID")
+        .unwrap_or_else(|_| uid.clone());
     let owner = format!("{uid}:{gid}");
 
     for path in paths {

@@ -32,7 +32,8 @@ const USAGE: &str = "\
 ";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> =
+        std::env::args().skip(1).collect();
     let Some(command) = args.first() else {
         eprint!("{USAGE}");
         return ExitCode::FAILURE;
@@ -41,7 +42,9 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "android" => android::build_apk(&args[1..]),
         "boundaries" => boundaries::verify(&args[1..]),
-        other => Err(format!("未知命令: {other}\n\n{USAGE}")),
+        other => {
+            Err(format!("未知命令: {other}\n\n{USAGE}"))
+        }
     };
 
     if let Err(message) = result {
