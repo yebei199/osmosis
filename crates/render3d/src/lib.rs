@@ -21,6 +21,7 @@ use bevy::prelude::*;
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::platform::time::Instant;
 use bevy::render::RenderApp;
 use bevy::render::RenderPlugin;
 use bevy::render::render_asset::RenderAssets;
@@ -43,6 +44,9 @@ pub type SharedTexture = wgpu::Texture;
 /// 离屏画面尺寸。固定分辨率,Slint 侧按面板大小缩放(见计划:先不做动态 resize)。
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
+
+/// 每帧耗时日志的采样窗口(帧)。约两秒一行,够看趋势又不刷屏。
+const PERF_WINDOW: u32 = 120;
 
 /// 一帧的场景控制量:由 UI 侧组装,跨进程内边界传给渲染器。
 ///
@@ -109,6 +113,10 @@ pub struct Scene {
     image_key: Option<(u32, u32, bool)>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
+    /// 每帧耗时的累加器(毫秒):(bevy `app.update()`, 玻璃 pass)。
+    /// 每 [`PERF_WINDOW`] 帧算一次均值打日志再清零 —— web 上帧率卡在 50 时,
+    /// 要先知道那 20ms 花在哪一边,才谈得上优化。
+    perf: (f64, f64),
     /// 液态玻璃后处理。持有它自己的管线与输出纹理。
     glass: glass::GlassPass,
     /// 共享的 device / queue,玻璃 pass 每帧要用。与 Slint、bevy 是同一套。
@@ -248,6 +256,7 @@ impl Scene {
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
+            perf: (0.0, 0.0),
             frames: 0,
             glass: glass::GlassPass::new(&device),
             device,
@@ -298,7 +307,10 @@ impl Scene {
             );
         }
 
+        let t_update = Instant::now();
         self.app.update();
+        self.perf.0 +=
+            t_update.elapsed().as_secs_f64() * 1000.0;
         self.frames += 1;
 
         let Some(tex) = self.extract_texture() else {
@@ -314,12 +326,28 @@ impl Scene {
         // 玻璃 pass:在 bevy 那张画面上,把工具条那块区域模糊+折射掉,产出另一张纹理。
         // 这一步是 Slint 自己做不到的(它没有 backdrop blur),见 glass.rs 的模块注释。
         let glass_on = !params.glass.is_empty();
+        let t_glass = Instant::now();
         let composed = self.glass.run(
             &self.device,
             &self.queue,
             &tex,
             params.glass,
         );
+        self.perf.1 +=
+            t_glass.elapsed().as_secs_f64() * 1000.0;
+
+        if self.frames.is_multiple_of(PERF_WINDOW) {
+            let n = f64::from(PERF_WINDOW);
+            log::info!(
+                "render3d: 近 {PERF_WINDOW} 帧均耗时 —— app.update() {:.2}ms,玻璃 pass {:.2}ms,合计 {:.2}ms({}x{})",
+                self.perf.0 / n,
+                self.perf.1 / n,
+                (self.perf.0 + self.perf.1) / n,
+                self.size.0,
+                self.size.1,
+            );
+            self.perf = (0.0, 0.0);
+        }
 
         // 尺寸稳定、玻璃开关不变时,纹理身份稳定 → 只包装一次 Image,之后每帧由
         // bevy + 玻璃 pass 重画内容,Slint 重绘时实时采样同一张。
