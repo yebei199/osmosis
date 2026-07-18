@@ -13,3 +13,9 @@ ui.workspace = true
 wasm-bindgen = "0.2"
 # wasm 上 winit 走 canvas,femtovg 走 WebGL。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
+
+[features]
+# 换用 femtovg-wgpu 渲染器(slint#11580):先探测 WebGPU,浏览器不支持则自动回退
+# wgpu 的 WebGL 后端。编入即生效 —— winit 后端选默认渲染器时 wgpu 版优先级高于 GL 版。
+# 用法:`just web-dev wgpu`。这是 web 端 bevy 纹理共享的前置(见 docs/adr/0005)。
+wgpu = ["slint/renderer-femtovg-wgpu"]
