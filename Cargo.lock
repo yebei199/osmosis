@@ -277,9 +277,11 @@ dependencies = [
 name = "app-web"
 version = "0.1.0"
 dependencies = [
+ "render3d",
  "slint",
  "ui",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

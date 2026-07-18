@@ -10,7 +10,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ui.workspace = true
+render3d = { workspace = true, optional = true }
 wasm-bindgen = "0.2"
+# async 版 #[wasm_bindgen(start)] 的展开代码要它把 future 挂到 JS 微任务队列。
+wasm-bindgen-futures = { version = "0.4", optional = true }
 # wasm 上 winit 走 canvas,femtovg 走 WebGL。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
 
@@ -19,3 +22,13 @@ slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
 # wgpu 的 WebGL 后端。编入即生效 —— winit 后端选默认渲染器时 wgpu 版优先级高于 GL 版。
 # 用法:`just web-dev wgpu`。这是 web 端 bevy 纹理共享的前置(见 docs/adr/0005)。
 wgpu = ["slint/renderer-femtovg-wgpu"]
+# 嵌入 bevy 3D:拉进 render3d,共享 wgpu device 走纹理共享(同 desktop/android 的
+# 同名 feature)。仅 WebGPU —— render3d 的 Manual 路径不做 WebGL 降级。
+# 用法:`just web-dev bevy-3d`。
+bevy-3d = [
+    "dep:render3d",
+    "dep:wasm-bindgen-futures",
+    "wgpu",
+    "slint/unstable-wgpu-29",
+    "ui/debug-fps",
+]

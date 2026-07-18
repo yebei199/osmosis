@@ -7,8 +7,10 @@
 
 主体是 Slint 应用,本 crate 只负责「Slint 做不来的 3D 效果 / 小游戏」那一块。
 
-- **只有桌面 / android 入口依赖它**,web / ios 永不碰 —— 由 `xtask boundaries` 守住。
-  bevy/wgpu 因此不会污染到不该有它的端。
+- **桌面 / android / web 入口按 `bevy-3d` feature 依赖它**,ios 永不碰;web / ios 的
+  **默认**构建不拉它 —— 由 `xtask boundaries` 守住(默认 feature 集里无 3D)。
+- **web 入口用 `Scene::new_async().await`**:浏览器的 WebGPU 初始化是真 Promise,
+  wasm 主线程不能 `block_on`;原生端仍用同步 `Scene::new()`(同一 future 首次 poll 即就绪)。
 - `ui` 对 bevy / wgpu 一无所知:本 crate 把渲染结果作为 `slint::Image` 经
   `ui::run_with_renderer` 的 seam 交过去(见 `crates/ui`)。
 

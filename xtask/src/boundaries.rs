@@ -18,13 +18,24 @@ type Check = fn() -> Result<(), String>;
 /// 逐条执行,把所有失败一次性报出来,而不是遇到第一个就退出。
 pub fn verify(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
-        return Err("用法: cargo xtask boundaries".to_owned());
+        return Err(
+            "用法: cargo xtask boundaries".to_owned()
+        );
     }
 
     let checks: [(&str, Check); 4] = [
-        ("contract 只依赖 serde", contract_has_no_io_crates),
-        ("api 在 wasm 上不依赖 tokio", api_is_tokio_free_on_wasm),
-        ("app-core 能编到 wasm", app_core_compiles_for_wasm),
+        (
+            "contract 只依赖 serde",
+            contract_has_no_io_crates,
+        ),
+        (
+            "api 在 wasm 上不依赖 tokio",
+            api_is_tokio_free_on_wasm,
+        ),
+        (
+            "app-core 能编到 wasm",
+            app_core_compiles_for_wasm,
+        ),
         ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
     ];
 
@@ -42,13 +53,18 @@ pub fn verify(args: &[String]) -> Result<(), String> {
     if failures.is_empty() {
         return Ok(());
     }
-    Err(format!("架构边界被破坏:\n  {}", failures.join("\n  ")))
+    Err(format!(
+        "架构边界被破坏:\n  {}",
+        failures.join("\n  ")
+    ))
 }
 
 /// ADR-0001:契约只共享线上格式,不共享 IO。
 fn contract_has_no_io_crates() -> Result<(), String> {
-    let tree =
-        capture("cargo", &["tree", "-p", "contract", "--edges", "normal"])?;
+    let tree = capture(
+        "cargo",
+        &["tree", "-p", "contract", "--edges", "normal"],
+    )?;
 
     let found: Vec<&str> = FORBIDDEN_IN_CONTRACT
         .iter()
@@ -83,7 +99,8 @@ fn api_is_tokio_free_on_wasm() -> Result<(), String> {
     if !depends_on(&tree, "tokio") {
         return Ok(());
     }
-    Err("api 在 wasm 上依赖了 tokio,违反 docs/adr/0002".to_owned())
+    Err("api 在 wasm 上依赖了 tokio,违反 docs/adr/0002"
+        .to_owned())
 }
 
 /// ADR-0002:app-core 的 future 不要求 `Send`,因此能原样编到 wasm。
@@ -101,21 +118,28 @@ fn app_core_compiles_for_wasm() -> Result<(), String> {
     )
 }
 
-/// 3D 桥(render3d/bevy/wgpu)只该出现在桌面与 android 入口。
+/// 3D 桥(render3d/bevy/wgpu)不进 web / ios 的**默认**构建。
 ///
-/// web / ios 一旦拉进 bevy 或 wgpu,产物体积爆炸,且违反「余端 graceful 缺省」的
-/// 约定(见计划 `bevy-serialized-dove`):这两端应隐藏 3D 面板,而非把整套渲染器
-/// 打包进去。`bevy-3d` 是 apps/desktop 独有的 feature,默认不开,这里守住它不外溢。
+/// web / ios 的默认产物一旦拉进 bevy 或 wgpu,体积爆炸,且违反「余端 graceful 缺省」
+/// 的约定(见计划 `bevy-serialized-dove`):默认应隐藏 3D 面板,而非把整套渲染器
+/// 打包进去。web 自 slint#11580 起有了 opt-in 的 `bevy-3d` feature(desktop/android
+/// 同名),但 `cargo tree` 查的是默认 feature 集,这里守住的正是「默认不外溢」;
+/// ios 则仍然完全禁入。
 fn web_ios_free_of_3d() -> Result<(), String> {
-    const FORBIDDEN: &[&str] = &["render3d", "bevy", "wgpu"];
+    const FORBIDDEN: &[&str] =
+        &["render3d", "bevy", "wgpu"];
 
     for pkg in ["app-web", "app-ios"] {
-        let tree =
-            capture("cargo", &["tree", "-p", pkg, "--edges", "normal"])?;
+        let tree = capture(
+            "cargo",
+            &["tree", "-p", pkg, "--edges", "normal"],
+        )?;
         let found: Vec<&str> = FORBIDDEN
             .iter()
             .copied()
-            .filter(|forbidden| depends_on(&tree, forbidden))
+            .filter(|forbidden| {
+                depends_on(&tree, forbidden)
+            })
             .collect();
         if !found.is_empty() {
             return Err(format!(
