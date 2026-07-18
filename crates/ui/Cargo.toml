@@ -10,6 +10,11 @@ description = "界面的声明,以及界面与客户端领域之间的双向绑�
 app-core.workspace = true
 api.workspace = true
 slint.workspace = true
+# 帧耗时记账的输出口。各平台入口已各自装好 logger(env_logger / android_logger / console_log)。
+log.workspace = true
+# std::time::Instant 在 wasm32-unknown-unknown 上会 panic;web-time 同 API,
+# wasm 下走 performance.now(),原生下就是 std 的再导出。已在依赖树里(bevy 用它)。
+web-time = "1"
 
 # 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。
 [build-dependencies]

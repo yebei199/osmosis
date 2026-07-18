@@ -90,6 +90,11 @@ pub fn run_with_renderer(
     #[cfg(feature = "debug-fps")]
     let (fps_frames, _fps_timer) = fps::start(&ui);
 
+    // 一帧的account:回调里(我们:组装参数 + 驱动渲染器)与回调外(Slint 重绘整个
+    // 界面 + 浏览器合成/呈现)各占多少。web 上帧率被砍半时,只有这个比值能说明该往
+    // 哪边使劲 —— render3d 自己的计时只覆盖回调内那一段,回调外从没被量过。
+    let mut frame_acct = FrameAccounting::default();
+
     // 每帧:仅 3D 页激活时 → 组装 SceneControls 与面板物理尺寸 → 驱动渲染器一帧 → 推给
     // UI → 请求重绘。不请求重绘的话,Slint 惰性渲染,下一帧通知不会来,3D 会定格。
     // controls 跨帧持久:解析失败时各字段退回上一个好值。初值须与 app.slint 的默认属性一致。
@@ -117,6 +122,14 @@ pub fn run_with_renderer(
     // 回调与其捕获的 `on_frame` 由窗口持有,活到事件循环结束。
     ui.window()
         .set_rendering_notifier(move |state, _| {
+            // AfterRendering 落在 Slint 画完的那一刻,是「在画」与「空等」的分界。
+            if matches!(
+                state,
+                RenderingState::AfterRendering
+            ) {
+                frame_acct.end_rendering();
+                return;
+            }
             if !matches!(
                 state,
                 RenderingState::BeforeRendering
@@ -125,6 +138,7 @@ pub fn run_with_renderer(
             }
             #[cfg(feature = "debug-fps")]
             fps_frames.set(fps_frames.get() + 1);
+            frame_acct.begin_frame();
 
             let Some(ui) = weak.upgrade() else { return };
             if !ui.get_render_active() {
@@ -169,10 +183,80 @@ pub fn run_with_renderer(
             let frame = on_frame(&controls, w, h);
             ui.set_scene_3d(frame);
             ui.window().request_redraw();
+            frame_acct.end_callback();
         })
         .expect("渲染后端必须支持渲染通知");
 
     ui.run().expect("event loop failed");
+}
+
+/// 每帧耗时的记账窗口(帧)。约两秒一行,与 render3d 的采样窗口对齐,便于两边日志对读。
+const FRAME_ACCT_WINDOW: u32 = 120;
+
+/// 把一帧切成三段:我们的回调、Slint 的渲染、以及空等。
+///
+/// 时间轴:`BeforeRendering` → 回调(组装参数 + 驱动渲染器)→ Slint 画整个界面 →
+/// `AfterRendering` → 空等下一次 vsync → 下一个 `BeforeRendering`。
+///
+/// 只量到「回调外」是不够的:那一段里「在画」和「干等」混在一起,而两者的优化方向
+/// 相反 —— 前者要减工作量,后者说明我们没超预算、该去看浏览器的呈现策略。
+/// `AfterRendering` 正好落在二者的分界上。
+#[derive(Default)]
+struct FrameAccounting {
+    /// 本帧进入回调的时刻,兼作 `AfterRendering` 的计时基准。
+    start: Option<web_time::Instant>,
+    /// 上一帧进入回调的时刻。首帧为 `None`,不计周期。
+    last_start: Option<web_time::Instant>,
+    /// 窗口内累计:(回调内, 回调进入→画完, 整帧周期),毫秒。
+    totals: (f64, f64, f64),
+    frames: u32,
+}
+
+impl FrameAccounting {
+    /// 记录本帧起点,顺带累加与上一帧的间隔(即整帧周期)。
+    fn begin_frame(&mut self) {
+        let now = web_time::Instant::now();
+        if let Some(prev) = self.last_start {
+            self.totals.2 +=
+                (now - prev).as_secs_f64() * 1000.0;
+            self.frames += 1;
+        }
+        self.last_start = Some(now);
+        self.start = Some(now);
+    }
+
+    /// 回调返回时调用,累加回调自身的耗时。
+    fn end_callback(&mut self) {
+        if let Some(start) = self.start {
+            self.totals.0 +=
+                start.elapsed().as_secs_f64() * 1000.0;
+        }
+    }
+
+    /// Slint 画完时调用(`AfterRendering`);满一个窗口就打一行均值并清零。
+    fn end_rendering(&mut self) {
+        let Some(start) = self.start else { return };
+        self.totals.1 +=
+            start.elapsed().as_secs_f64() * 1000.0;
+        if self.frames < FRAME_ACCT_WINDOW {
+            return;
+        }
+        let n = f64::from(self.frames);
+        let (callback, drawn, period) = (
+            self.totals.0 / n,
+            self.totals.1 / n,
+            self.totals.2 / n,
+        );
+        log::info!(
+            "ui: 近 {} 帧 —— 整帧 {period:.2}ms({:.0}fps)= 回调 {callback:.2}ms + Slint 渲染 {:.2}ms + 空等 {:.2}ms",
+            self.frames,
+            1000.0 / period,
+            drawn - callback,
+            period - drawn,
+        );
+        self.totals = (0.0, 0.0, 0.0);
+        self.frames = 0;
+    }
 }
 
 /// 当前编译目标的平台名,显示在标题里。

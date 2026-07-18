@@ -7225,9 +7225,11 @@ version = "0.1.0"
 dependencies = [
  "api",
  "app-core",
+ "log",
  "slint",
  "slint-build",
  "ttf-parser",
+ "web-time",
 ]
 
 [[package]]
