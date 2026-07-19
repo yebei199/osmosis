@@ -171,17 +171,42 @@ g = [e['dur'] / 1000 for e in ev
 同一份 trace 被解析了三次,三次结论互相矛盾——这不是 trace 的问题,是每次都换了一个
 没有验证过的口径。改口径之后先重算旧结论,再往下推。
 
-## 五、下一步
+## 五、那 15.5ms 拆开是什么
 
-方向已从"rAF 请求发少了"转到"**一帧占用太久,且 CPU 与 GPU 完全串行**"。
+带上 `disabled-by-default-gpu.dawn` 分类重录,并按**独占时间**(减掉子区间,否则最外层
+的壳会排在最前面)聚合 GPU 进程里落在我们帧区间内的事件:
 
-1. ~~先防第四次口径错误~~ —— 已做,见上面第三条。指标能区分快慢(对照组 20%,应用 91%)。
-2. 拆开那 15.5ms:录一份带 `disabled-by-default-gpu.service` / viz 分类的 trace,看每帧
-   那几个 `GPUTask` 具体在干什么(纹理导入、拷贝、present)。
-3. `?scale=`、MSAA、GPU 负载这批"无效"结论是在 16ms 天花板下测的(错误一),拆掉节流后
+| 事件 | 独占 | 每帧 |
+| --- | --- | --- |
+| `WebGPUDecoderImpl::HandleDawnCommands` | 2438ms(53%) | 8.2ms |
+| `Queue::Submit` | 1686ms(37%) | 5.7ms |
+| `vkQueueSubmit`(真正下到驱动) | 61ms | **0.2ms** |
+
+**真实的 GPU 驱动工作只有 0.2ms/帧,其余全是 Dawn 在 CPU 侧解命令、做校验。** 命令流为什么
+这么大,调用次数给了答案:
+
+```
+DeviceBase::APICreateRenderPipeline    9.7 次/帧
+CommandEncoder::Finish                 9.7 次/帧
+ShaderModuleVk::GetHandleAndSpirv      整个窗口只有 4 次
+```
+
+**每帧新建约 10 条渲染管线,而着色器一共只编译了 4 次。** 不是在重新编译着色器,是反复用
+同样的着色器重新创建管线对象 —— 每条都要把一个巨大的 pipeline descriptor 序列化过线、
+再由 Dawn 解出来并校验。这就是那 8.2ms。
+
+管线创建随帧数走:同样 5 秒,不重绘的 tab 0 建了 77 条,3D 页建了 2860 条。
+
+## 六、下一步
+
+方向已从"rAF 请求发少了"转到"**每帧重建管线,把 GPU 进程的命令解码撑爆**"。
+
+1. **定位是谁每帧建管线。**候选:femtovg 的 wgpu 后端、Slint 的 femtovg-wgpu 胶水、
+   render3d 自己的玻璃 pass。判据是有没有按 descriptor 做缓存。
+2. `?scale=`、MSAA、GPU 负载这批"无效"结论是在 16ms 天花板下测的(错误一),拆掉节流后
    **从未复测**。要用它们之前先重做 —— 现在有了 `just web-test`,复测的成本低多了。
 
-## 六、附:排查用的开关与工具
+## 七、附:排查用的开关与工具
 
 `test/rafprobe.html` 保留在仓库里(`just web-dev` 会复制进 `dist/web/`),用法见
 `test/README.md`。
