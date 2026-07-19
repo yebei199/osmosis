@@ -14,6 +14,8 @@ render3d = { workspace = true, optional = true }
 wasm-bindgen = "0.2"
 # 没有它,wasm 里的 panic 在控制台只是一句 `RuntimeError: unreachable`,消息全丢。
 console_error_panic_hook = "0.1"
+# repro 入口用 log::info! 打一行启动标记,好让探针确认自己连的是复现页(见 lib.rs)。
+log = "0.4"
 # 把 log:: 宏接到浏览器控制台。desktop 用 env_logger、android 用 android_logger,
 # web 缺了这一环,render3d 的纹理诊断就成了哑的(见 Scene::render_frame)。
 console_log = "1"

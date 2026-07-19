@@ -89,6 +89,10 @@ pub fn start() {
         }
     }
 
+    // 探针据此确认自己连的是复现页而不是别的产物。少了这道确认,拿旧产物量出来的数
+    // 与"改动无效"长得一模一样(见 AGENTS.md 的后台构建一节)。
+    log::info!("PROBE repro build ready");
+
     let ui = Repro::new().expect("建窗口失败");
     ui.set_rects(
         query_value("rects")
