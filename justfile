@@ -77,6 +77,12 @@ web-dev extra="":
     # dev-server.py 只是在它基础上加了 no-store,其余行为一致(含绑回环的理由)。
     nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 apps/web/dev-server.py {{ web_port }} dist/web'
 
+# 模式与 web-dev 里那行 pkill 逐字一致,理由见上面的注释。
+# 收掉 web-dev 留下的后台进程。终端被关掉、trap 没跑成时用它
+[group('三端')]
+web-stop:
+    pkill -f 'dev-server[.]py {{ web_port }}' || true
+
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
 # 改了界面上的中文文案后跑一遍,把新字符补进 --text —— 注意 api::ApiError 的
