@@ -225,13 +225,33 @@ CPU 侧的 `Vec`(补齐到对齐槽距),录完一次性上传。上传发生在�
 GL 后端成熟、wgpu 后端年轻。所以这不是"WebGPU 比 WebGL 慢",是这条路径上的实现差距。
 WebGPU 的价值在别处 —— 本项目要的 bevy 纹理共享,只有它做得到。
 
-**还剩两个同类杠杆**(都还没做):
+### 第四轮:顶点缓冲常驻 + 跳过冗余状态
 
-- `set_pipeline` / `set_bind_group` / `set_stencil_reference` 每个 draw 都无条件调一次,
-  而 GL 的 `select_main_program` 只在真的换了程序时才重绑(`opengl.rs:686`)。同一个
-  单槽比较惯用法还能再用一次。
-- 顶点缓冲每帧走一次 `create_buffer_init`(`wgpu.rs:388`),而 GL 是往常驻 buffer 里
-  `buffer_data_u8_slice`。这多半是那 2.6ms 固定开销的一部分。
+先测了空载(`?rects=0`)的构成:每帧 **2.11ms**,其中 `HandleDawnCommands` 独占 0.71ms、
+`Queue::Submit` 独占 0.61ms、`PutChanged` 0.51ms,而 `vkQueueSubmit` 只有 **0.06ms**。
+每帧只有 2 次提交、画一个矩形,开销却全在 Dawn 的 CPU 侧。
+
+两处照搬 GL:
+
+- **顶点缓冲常驻**。原先每帧一次 `create_buffer_init`(整帧顶点数据走 alloc→map→copy→
+  unmap),改成持久 buffer + `write_buffer` + 按 2 的幂增长,即 `opengl.rs` 的
+  `buffer_data_u8_slice` 的做法。
+- **跳过冗余的状态设置**。`set_pipeline` / `set_stencil_reference` / `set_bind_group`
+  原先每个 draw 无条件调,而 GL 的 `select_main_program` 只在程序真的换了才重绑。
+
+**这一步有个必须堵的正确性隐患**:渲染通道在切换渲染目标时会重建,新通道的状态是重置的。
+所以 builder 给通道编了号,换号就把状态缓存全部作废 —— 否则会跳掉必要的 `set_*`,
+而且只在用到离屏层的界面上才暴露。
+
+| 矩形数 | 第三轮 | **第四轮** | WebGL |
+| --- | --- | --- | --- |
+| 0 | ~2.9ms | **2.11ms** | ~0.28ms |
+| 100 | 3.07ms | **2.45ms** | 0.35ms |
+| 300 | 3.43ms | **2.12ms** | 0.41ms |
+| 600 | 4.92ms | **3.01ms** | 0.71ms |
+
+每元素 3.7µs → **约 1.2µs**,与 GL 的 0.72µs 基本同一量级;相对最初的 ~500µs,约 **400 倍**。
+剩下的差距主要在**空载**:2.11ms 对 GL 的 0.28ms,而它既不是光栅化也不是命令记录。
 
 **量这个基准的注意事项**:复现页的格子从 y=240 起、30px 一行、每行 40 个,视口
 1280×720 只装得下约 **640** 个,再多的会被裁掉不画。900 与 1500 因此给出相同的数 ——

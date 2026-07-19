@@ -8,7 +8,7 @@ import { test } from '@playwright/test';
 import { WEB_PORT } from '../config';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
-const TAB = process.env.PROBE_TAB ?? '2';
+const QUERY = process.env.PROBE_QUERY ?? `tab=${process.env.PROBE_TAB ?? '2'}`;
 
 type Ev = {
   pid: number;
@@ -40,8 +40,8 @@ const CATEGORIES = [
 ].join(',');
 
 test('拆开 GPU 进程里的每帧开销', async ({ page }) => {
-  await page.goto(`${BASE}/?tab=${TAB}`);
-  console.log(`=== tab=${TAB} ===`);
+  await page.goto(`${BASE}/?${QUERY}`);
+  console.log(`=== ?${QUERY} ===`);
   // wasm 34MB,还要建 device、编管线,等它进稳态再采。
   await page.waitForTimeout(12_000);
 
