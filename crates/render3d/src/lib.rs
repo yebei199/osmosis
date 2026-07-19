@@ -118,7 +118,6 @@ pub struct Scene {
     /// 要先知道那 20ms 花在哪一边,才谈得上优化。
     perf: (f64, f64),
     /// 液态玻璃后处理。持有它自己的管线与输出纹理。
-    glass: glass::GlassPass,
     /// 共享的 device / queue,玻璃 pass 每帧要用。与 Slint、bevy 是同一套。
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -227,6 +226,8 @@ impl Scene {
             bevy::render::pipelined_rendering::PipelinedRenderingPlugin,
         >();
         app.add_plugins(plugins);
+        // 玻璃后处理长在 bevy 的管线里,不再自己起 pass 自己提交(理由见 glass.rs)。
+        app.add_plugins(glass::GlassPlugin);
 
         // 4) 造初始离屏目标图。UI 传来的面板尺寸会触发按需重建(动态分辨率,见 render_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);
@@ -258,7 +259,6 @@ impl Scene {
             image_key: None,
             perf: (0.0, 0.0),
             frames: 0,
-            glass: glass::GlassPass::new(&device),
             device,
             queue,
         }
@@ -307,6 +307,27 @@ impl Scene {
             );
         }
 
+        // 玻璃参数挂在相机上,由 bevy 的 FullscreenMaterial 在管线里消费。空矩形时摘掉
+        // 组件,那一帧连全屏 pass 都不跑。必须在 update 之前设好。
+        let t_glass = Instant::now();
+        let glass_on = !params.glass.is_empty();
+        {
+            let mut cam = self
+                .app
+                .world_mut()
+                .entity_mut(self.camera);
+            if glass_on {
+                cam.insert(glass::GlassMaterial::new(
+                    params.glass,
+                    self.size,
+                ));
+            } else {
+                cam.remove::<glass::GlassMaterial>();
+            }
+        }
+        self.perf.1 +=
+            t_glass.elapsed().as_secs_f64() * 1000.0;
+
         let t_update = Instant::now();
         self.app.update();
         self.perf.0 +=
@@ -323,19 +344,6 @@ impl Scene {
             return self.image.clone().unwrap_or_default();
         };
 
-        // 玻璃 pass:在 bevy 那张画面上,把工具条那块区域模糊+折射掉,产出另一张纹理。
-        // 这一步是 Slint 自己做不到的(它没有 backdrop blur),见 glass.rs 的模块注释。
-        let glass_on = !params.glass.is_empty();
-        let t_glass = Instant::now();
-        let composed = self.glass.run(
-            &self.device,
-            &self.queue,
-            &tex,
-            params.glass,
-        );
-        self.perf.1 +=
-            t_glass.elapsed().as_secs_f64() * 1000.0;
-
         if self.frames.is_multiple_of(PERF_WINDOW) {
             let n = f64::from(PERF_WINDOW);
             log::info!(
@@ -351,12 +359,10 @@ impl Scene {
 
         // 尺寸稳定、玻璃开关不变时,纹理身份稳定 → 只包装一次 Image,之后每帧由
         // bevy + 玻璃 pass 重画内容,Slint 重绘时实时采样同一张。
-        let key =
-            (composed.width(), composed.height(), glass_on);
+        let key = (tex.width(), tex.height(), glass_on);
         if self.image_key != Some(key) {
-            let (w, h) =
-                (composed.width(), composed.height());
-            match slint::Image::try_from(composed) {
+            let (w, h) = (tex.width(), tex.height());
+            match slint::Image::try_from(tex) {
                 Ok(img) => {
                     log::info!(
                         "render3d: 纹理就绪(第 {} 帧),{w}x{h} 已导入 Slint(玻璃 {})",
