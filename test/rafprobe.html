@@ -60,15 +60,25 @@ async function initGpu() {
   // (2026-07-19,wgpu 29 过滤后 Chrome 实际接受的形态)。canvas 的 getConfiguration()
   // 看不到 device 级差异,这是配置排平后仅剩的嫌疑。
   // Chrome 拒收时不抛异常,而是返回「出生即丢失」的 device,故用 device.lost 竞速检测。
+  // 先把本页拿到的 adapter 和 descriptor 的差集亮出来:多显卡机器上 Chrome 可能
+  // 给不同页面不同 adapter,descriptor 在真实页面能过、在这里被拒,多半就是这个。
+  log(`adapter: ${adapter.info?.vendor ?? '?'} ${adapter.info?.architecture ?? ''} ${adapter.info?.description ?? ''}`);
+  const missingF = RENDER3D_DESC.requiredFeatures.filter(f => !adapter.features.has(f));
+  if (missingF.length) log('本页 adapter 缺的 feature: ' + missingF.join(', '));
+  const overL = Object.entries(RENDER3D_DESC.requiredLimits)
+    .filter(([k, v]) => typeof adapter.limits[k] === 'number'
+      && (k.startsWith('min') ? v < adapter.limits[k] : v > adapter.limits[k]))
+    .map(([k, v]) => `${k}(要 ${v},有 ${adapter.limits[k]})`);
+  if (overL.length) log('超出本页 adapter 的 limit: ' + overL.join(', '));
   try {
     const d = await adapter.requestDevice(RENDER3D_DESC);
+    d.lost.then(info => log(`render3d device 丢失: reason=${info.reason} ${info.message}`));
     const lost = await Promise.race([
       d.lost.then(() => true),
       new Promise(r => setTimeout(() => r(false), 120)),
     ]);
-    if (lost) log('render3d device 出生即丢失');
-    else { maxedDevice = d; log('render3d device 建成'); }
-  } catch (e) { log('render3d device 被拒: ' + e.message); }
+    if (!lost) { maxedDevice = d; log('render3d device 建成'); }
+  } catch (e) { log('render3d device 被拒(异常): ' + e.message); }
   return true;
 }
 
