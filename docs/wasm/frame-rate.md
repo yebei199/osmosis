@@ -361,6 +361,11 @@ rAF 没有被取消过(14 秒 2 次,都在启动)。
 取图像 → clear flush → `BeforeRendering` 通知 → 画界面 → flush → `AfterRendering` → present。
 `SurfaceTexture` 不跨帧持有。
 
+wgpu 29.0.4 在 wasm 上也什么都不持有:`SurfaceTexture::present()` 与 `Drop` 都是空操作
+(`wgpu-29.0.4/src/backend/webgpu.rs:3948`),`WebTexture::drop` 同样是空的 —— `GPUTexture
+.destroy()` 根本不会被调用,与实测的"每帧 0 次 destroy"一致。渲染路径上没有任何
+`poll` / `map_async` / `on_submitted_work_done`。
+
 `lib.rs:300` 每帧调 `texture_cache.drain()`,一度是最大嫌疑 —— 在 WebGPU 上销毁纹理要保证
 它不再被使用中的提交引用,Dawn 可能因此等到提交完成。**实测否掉了**:线上每帧
 `createTexture` 与 `destroy` 都是 **0 次**,而裸循环里每帧建毁 4 张纹理仍是 141.3/s。
@@ -376,7 +381,12 @@ amd gcn-5),但只有 `powerPreference: 'low-power'` 才会拿到它,我们没走
 把这些性质逐项复刻到裸循环上,**每一项都跑满 141/s**。而线上那一页只拿到隔一拍,
 GPU 进程里每帧有一次 `Queue::Submit` 阻塞 16~32ms。
 
-**JS 层能观测的东西已经查干净,复刻路线走到头了。** 剩下的只能是 Chrome 内部:
+有一处复刻得还不够狠:`getCurrentTexture()` 在**帧的最开头**就调了(`lib.rs:153`),
+然后一直持有,跨过整个 `BeforeRendering` 回调(bevy 帧 + 玻璃 pass + 它们自己的提交),
+到帧尾才 present。复刻件里"提前取图像"这一档,取完到提交之间几乎没有工作 —— 带 bevy 时
+这中间是 13.7ms 的主线程时间。这一条值得单独重做。
+
+**JS 层能观测的东西基本查干净,复刻路线走到头了。** 剩下的只能是 Chrome 内部:
 Dawn 的 `Queue::Submit` 到底在等什么。可走的路:
 
 1. 找更细的 Dawn 追踪类别,或用带符号的 Chrome,把 `Queue::Submit` 里那段没有子跨度的
