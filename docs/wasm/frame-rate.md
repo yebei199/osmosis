@@ -197,14 +197,73 @@ ShaderModuleVk::GetHandleAndSpirv      整个窗口只有 4 次
 
 管线创建随帧数走:同样 5 秒,不重绘的 tab 0 建了 77 条,3D 页建了 2860 条。
 
+### 每帧重建管线是真的,但它不是瓶颈
+
+给 femtovg 打桩(`[patch.crates-io]` 指向本地副本,在管线缓存的命中/失配处打日志)之后,
+机制清清楚楚 —— 稳态每帧重复:
+
+```
+PROBE miss: FillColorUnclipped …
+PROBE render 结束: 缓存 10 条,本次用到 1 条     ← 这次 render 只用了 1 条,retain 丢掉另外 9 条
+PROBE miss × 9  (FillColor / FillImage / TextureCopy…)
+PROBE render 结束: 缓存 10 条,本次用到 9 条     ← 又把那 1 条丢掉
+```
+
+**一帧里有两次 femtovg `render()`,用的管线集合不相交,而 femtovg 的淘汰策略是"本次
+`render()` 没用到就丢"**(`femtovg-0.25.1/src/renderer/wgpu.rs:538`)。两次互相清空对方。
+
+第一次 `render()` 只有一条命令,那是 Slint 在**装了 rendering notifier 时**提前 flush 的
+窗口背景 `clear_rect`(`internal/renderers/femtovg/lib.rs:223`)。两个前提我们都占:3D 帧
+驱动装了 notifier,窗口背景是纯色。
+
+把那句 `retain` 改成只在缓存超过阈值时才扫,重建现象消失了 —— **而帧率一点没动**:
+
+| | 修前 | 修后 |
+| --- | --- | --- |
+| `APICreateRenderPipeline` | 9.9 次/帧 | 榜上无名 |
+| `HandleDawnCommands` 独占 | 9.50ms/帧 | 9.32ms/帧 |
+| `Queue::Submit` 独占 | 7.18ms/帧 | 7.10ms/帧 |
+| 帧率 | 59.0fps | 59.6fps |
+
+每帧重建 10 条管线只值 **0.19ms/帧**。这是个真实的上游缺陷,但不是我们要找的东西。
+
+### 那 20ms 不随像素量变化,所以它多半是在等
+
+`viewport-sweep` 把视口从 1280×900 扫到 200×150(像素少 40 倍):
+
+| 视口 | 帧率 | GPU 进程占用 | GPU 每帧 |
+| --- | --- | --- | --- |
+| 1280×900 | 41.9fps | 90% | 21.80ms |
+| 640×480 | 48.2fps | 88% | 20.63ms |
+| 320×240 | 46.9fps | 91% | 20.97ms |
+| 200×150 | 49.1fps | 91% | 20.37ms |
+
+**完全不动。**加上 `vkQueueSubmit` 只有 0.2ms/帧、`CommandBufferVk::RecordCommands` 只有
+0.2ms/帧,结论只能到这一步:**每帧有约 20ms 卡在 GPU 进程里,而它既不是光栅化,也不是
+命令记录。** 剩下的可能是同步等待(等上一帧的栅栏、等 wire 缓冲、等共享 device),
+这一步还没证。
+
+注意"GPU 进程占用 91%"这个指标本身包含**阻塞时间**。前面据它说"GPU 是瓶颈"是过度解读:
+成立的只有"每帧 20ms 花在 GPU 进程里",至于是干活还是等,占用率区分不了。
+
 ## 六、下一步
 
-方向已从"rAF 请求发少了"转到"**每帧重建管线,把 GPU 进程的命令解码撑爆**"。
+已经被排除的(**都有实测,且都在天花板拆掉之后**):
 
-1. **定位是谁每帧建管线。**候选:femtovg 的 wgpu 后端、Slint 的 femtovg-wgpu 胶水、
-   render3d 自己的玻璃 pass。判据是有没有按 descriptor 做缓存。
-2. `?scale=`、MSAA、GPU 负载这批"无效"结论是在 16ms 天花板下测的(错误一),拆掉节流后
-   **从未复测**。要用它们之前先重做 —— 现在有了 `just web-test`,复测的成本低多了。
+| 假说 | 怎么排除的 |
+| --- | --- |
+| rAF 请求发少了 / 错过当拍 | 请求延迟中位 0.49ms;winit 在回调里同步排下一帧 |
+| 每帧重建 10 条渲染管线 | 打桩证实了机制,修掉之后帧率不动(只值 0.19ms/帧) |
+| 模糊阴影(`drop-shadow-blur: 40px` 等) | 全部置 0 重编,57.4fps / GPU 90%,不动 |
+| 光栅化像素量 | 视口缩 40 倍,GPU 占用 90% → 91%,不动 |
+
+剩下的方向:**那 20ms/帧到底在等什么。**
+
+1. 查 Dawn 的同步点:`HandleDawnCommands` 独占 9.3ms 而其子区间只有零点几毫秒,像是在
+   阻塞。找 wire 缓冲、栅栏、`PerformPollingWork` 这条线。
+2. 查共享 device:bevy 与 Slint 共用一个 wgpu device(纹理共享的前提)。两边的提交是否
+   在 Dawn 里被串行化,值得单独验。
+3. 复测 MSAA —— 这批"无效"结论同样是在 16ms 天花板下得出的(错误一),尚未重做。
 
 ## 七、附:排查用的开关与工具
 
