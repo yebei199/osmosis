@@ -19,6 +19,9 @@ console_error_panic_hook = "0.1"
 console_log = "1"
 # async 版 #[wasm_bindgen(start)] 的展开代码要它把 future 挂到 JS 微任务队列。
 wasm-bindgen-futures = { version = "0.4", optional = true }
+# 只用来读 window.location.search(见 initial_tab)。slint 本来就把它编进来了,
+# 显式列出不额外增加构建成本。
+web-sys = { version = "0.3", features = ["Location"], optional = true }
 # wasm 上 winit 走 canvas,femtovg 走 WebGL。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
 
@@ -33,6 +36,7 @@ wgpu = ["slint/renderer-femtovg-wgpu"]
 bevy-3d = [
     "dep:render3d",
     "dep:wasm-bindgen-futures",
+    "dep:web-sys",
     "wgpu",
     "slint/unstable-wgpu-29",
     "ui/debug-fps",

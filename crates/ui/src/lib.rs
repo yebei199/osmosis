@@ -78,7 +78,12 @@ pub fn run() {
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
+///
+/// `initial_tab` 是启动时展示的页签下标,与 `app.slint` 的 `current-tab` 同义。平台入口
+/// 传 0 即可;web 端从 URL 读它,好让自动化测试直接落在 3D 页上 —— 界面画在 canvas 里,
+/// 没有 DOM 元素可供点击,靠坐标点导航栏会在界面一改就静默量错页面。
 pub fn run_with_renderer(
+    initial_tab: i32,
     mut on_frame: impl FnMut(
         &SceneControls,
         u32,
@@ -87,6 +92,7 @@ pub fn run_with_renderer(
     + 'static,
 ) {
     let ui = build_ui();
+    ui.set_current_tab(initial_tab);
     #[cfg(feature = "debug-fps")]
     let (fps_frames, _fps_timer) = fps::start(&ui);
 

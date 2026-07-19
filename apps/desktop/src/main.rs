@@ -23,7 +23,7 @@ fn main() {
     {
         let mut scene = render3d::Scene::new();
         // seam:把 ui 的 SceneControls 平凡拷成 render3d 的 SceneParams(见 SceneParams 注释)。
-        ui::run_with_renderer(move |c, w, h| {
+        ui::run_with_renderer(0, move |c, w, h| {
             scene.render_frame(
                 &render3d::SceneParams {
                     scene_id: c.scene_id,
