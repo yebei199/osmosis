@@ -98,3 +98,7 @@ opt-level = 3
 [patch.crates-io]
 slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
 slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }
+# femtovg 的 wgpu 后端在 wasm 上每个 draw 都新建采样器与空纹理 view,每个界面元素因此要花
+# 约 0.5ms 的 GPU 进程时间(见 docs/wasm/femtovg-wgpu-per-element-cost.md)。
+# 分支从上游 v0.25.1 开,好让它满足 slint 对 ^0.25 的依赖。
+femtovg = { git = "https://github.com/yebei199/femtovg", branch = "fix/wgpu-cache-static-bindings" }

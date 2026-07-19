@@ -2631,8 +2631,7 @@ dependencies = [
 [[package]]
 name = "femtovg"
 version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f43d05da42e81724c16d34a150fb7fda53d3f786e5a94673ee526ff8602f0f6a"
+source = "git+https://github.com/yebei199/femtovg?branch=fix%2Fwgpu-cache-static-bindings#3527526a1e3d5e656de9ac431873613e6a2a4794"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",

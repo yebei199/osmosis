@@ -105,6 +105,32 @@ wgpu 版每个矩形的开销是它的约 2000 倍。
 3. **结构性修法**:整帧一个大 uniform buffer + `has_dynamic_offset: true`,每帧只一个
    bind group,6→0。要改绑定布局与着色器绑定点,并把 uniform 按 256 对齐攒起来。
 
+## 已验证:小修不够,必须做结构性那一步
+
+`yebei199/femtovg` 的 `fix/wgpu-cache-static-bindings` 分支(从上游 v0.25.1 开,好让它满足
+slint 对 `^0.25` 的依赖)实现了上面第 2 条:空纹理的 view 存到 `WGPURenderer` 上,
+采样器按那三个真正影响 descriptor 的标志做缓存。本项目用 `[patch.crates-io]` 接进来复测:
+
+| 每帧创建 | 修前(每矩形) | 修后(每矩形) |
+| --- | --- | --- |
+| sampler | 2.0 | **0.0** |
+| texture view | 2.0 | **0.0**(恒定 3 个/帧) |
+| buffer | 1.0 | 1.0 |
+| bindGroup | 1.0 | 1.0 |
+
+| | 修前 | 修后 |
+| --- | --- | --- |
+| 200 矩形 | 8.1fps / GPU 103.06ms | 9.9fps / GPU 97.12ms |
+| 1000 矩形 | 2.0fps / GPU 434.46ms | 2.3fps / GPU 378.47ms |
+
+**去掉 6 个对象里的 4 个,只换来约 10%。** 剩下的 `create_buffer_init` 与
+`create_bind_group` 占了几乎全部开销 —— 前者是 alloc→map→copy→unmap 四次跨进程操作,
+后者要校验 5 个绑定项。
+
+所以第 3 条不是"更好的做法",是**必需**:整帧一个大 uniform buffer(按 256 对齐攒起来)
++ `has_dynamic_offset: true` + 每帧一个 bind group。这个分支是它的基础,自身也值得留着
+(每个元素少 4 次跨进程分配)。
+
 ## 复现与测量工具
 
 - `test/e2e/probes/minimal-repro.spec.ts` —— 跑最小复现并出数
