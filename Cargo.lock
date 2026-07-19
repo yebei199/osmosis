@@ -1918,7 +1918,7 @@ checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -1929,7 +1929,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -2632,7 +2632,7 @@ dependencies = [
 [[package]]
 name = "femtovg"
 version = "0.25.1"
-source = "git+https://github.com/yebei199/femtovg?branch=perf%2Fwgpu-resident-buffers#ea7614808f9e40ba1ef1ac04a034ab22b83828d6"
+source = "git+https://github.com/yebei199/femtovg?branch=perf%2Fwgpu-resident-buffers#e2e321c036cbd8688d8f28f322f6516554844fd0"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
@@ -7879,7 +7879,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
