@@ -5,9 +5,12 @@ import { defineConfig } from '@playwright/test';
 // 从 PATH 里找,找不到再让 PLAYWRIGHT_CHROME 兜底。
 const chromePath =
   process.env.PLAYWRIGHT_CHROME ??
-  execSync('command -v google-chrome-stable || command -v google-chrome', {
-    shell: '/bin/sh',
-  })
+  execSync(
+    'command -v google-chrome-stable || command -v google-chrome',
+    {
+      shell: '/bin/sh',
+    },
+  )
     .toString()
     .trim();
 
