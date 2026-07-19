@@ -38,6 +38,49 @@ MCP 依然有用 —— 读元素树、量元素的真实尺寸/位置、模拟�
 渲染结果**。量尺寸尤其值得用:`get_element_properties` 会告诉你 LineEdit 其实有 56px 高,
 而不是你以为的 32px。
 
+## 后台构建:同一时刻只留一个,并且验证产物真的更新了
+
+wasm 构建要 5~8 分钟,期间很容易再起一个。**起新的之前先把旧的停掉**,并确认没有残留进程:
+
+```sh
+ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"
+```
+
+不这么做时,失败是**静默的**,四种都真实发生过:
+
+**1. 两个构建抢同一个 `target/`。**后完成的那个会用它自己的产物覆盖 `dist/`。如果它编的是旧
+代码,你就在旧产物上验证新改动,而时间戳、日志全都看不出异常。
+
+**2. 用 `;` 或 `&&` 把构建和 `just web-dev` 串成一个后台任务,停任务时会连坐。**
+停掉"只是在读日志"的那个任务,SIGTERM 把整条 recipe 一起带走,日志里只留一行
+`recipe web-dev was terminated by signal 15`。更阴的是旧 server 还在往同一个日志文件写访问
+记录,日志看着一切正常。**构建和分发要拆成两个独立任务。**
+
+**3. `| tail -10` 会让你误判编译范围。**只保留 10 行的话,"某个 crate 有没有重编"根本看不到。
+把完整日志重定向到文件,要看多少自己 grep。
+
+**4. 结论会被上一层的瓶颈掩盖。**排查性能时尤其致命:Slint 在 wasm 上曾有个 16ms 定时器把
+帧率压在 60,在它被拆掉之前,所有"减少工作量"的实验(降分辨率、关 MSAA、空转)都必然
+"无效",而那些否定结论全是假的。**天花板存在时,不要从否定结果推出排除结论。**
+
+分发 wasm 时,`just web-dev` 的 recipe 容易被信号打断,手动跑更稳:
+
+```sh
+nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm \
+    --target web --no-typescript --out-dir dist/web'
+cp apps/web/index.html test/*.html dist/web/
+```
+
+**叫人去浏览器验证之前,必须确认 `dist/web/app_web_bg.wasm` 比
+`target/wasm32-unknown-unknown/release/app_web.wasm` 新**:
+
+```sh
+[ dist/web/app_web_bg.wasm -nt target/wasm32-unknown-unknown/release/app_web.wasm ] \
+    && echo 新 || echo 旧
+```
+
+跳过这一步,对方测的就是上一版产物 —— URL 参数被无视、开关"不生效",而你会去怀疑代码。
+
 ## 端口 8090 被占
 
 `just mcp-desktop*` 前置了端口守卫,占用时直接失败并点名占用者。最常见的占用者是上次
