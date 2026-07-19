@@ -71,7 +71,10 @@ async function initGpu() {
     .map(([k, v]) => `${k}(要 ${v},有 ${adapter.limits[k]})`);
   if (overL.length) log('超出本页 adapter 的 limit: ' + overL.join(', '));
   try {
-    const d = await adapter.requestDevice(RENDER3D_DESC);
+    // 规范:一个 adapter 只能 requestDevice 一次(consumed)。默认 device 已把上面
+    // 那个耗掉了,这里必须再要一个新 adapter。
+    const adapter2 = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+    const d = await adapter2.requestDevice(RENDER3D_DESC);
     d.lost.then(info => log(`render3d device 丢失: reason=${info.reason} ${info.message}`));
     const lost = await Promise.race([
       d.lost.then(() => true),
