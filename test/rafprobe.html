@@ -29,23 +29,37 @@ async function initGpu() {
   device = await adapter.requestDevice();
   // 复刻 render3d 的 device 建法:要 adapter 的全部 features + 全部 limits。
   // canvas 的 getConfiguration() 看不到 device 级差异,这是配置排平后仅剩的嫌疑之一。
-  // 全量可能被浏览器拒(个别 limit/feature 名不收),阶梯回退,哪档成了记哪档。
-  const limits = {};
-  for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(adapter.limits))) {
-    if (typeof adapter.limits[k] === 'number') limits[k] = adapter.limits[k];
-  }
-  const attempts = [
-    ['features+limits', { requiredFeatures: [...adapter.features], requiredLimits: limits }],
-    ['仅 features',     { requiredFeatures: [...adapter.features] }],
-    ['仅 limits',       { requiredLimits: limits }],
-  ];
-  for (const [label, desc] of attempts) {
+  //
+  // Chrome 对不收的请求**不抛异常**,而是返回一个「出生即丢失」的 device
+  // (控制台只留一行 Device failed at creation),所以 try/catch 捕不到,必须
+  // 用 device.lost 竞速检测。逐项试出 Chrome 实际接受的 feature/limit 集合再拼。
+  const tryDevice = async (desc) => {
     try {
-      maxedDevice = await adapter.requestDevice(desc);
-      log(`maxed device 建成:${label}`);
-      break;
-    } catch (e) { log(`maxed device(${label})被拒: ${e.message}`); }
+      const d = await adapter.requestDevice(desc);
+      const lost = await Promise.race([
+        d.lost.then(() => true),
+        new Promise(r => setTimeout(() => r(false), 80)),
+      ]);
+      return lost ? null : d;
+    } catch { return null; }
+  };
+  const okFeatures = [], badFeatures = [];
+  for (const f of adapter.features) {
+    const d = await tryDevice({ requiredFeatures: [f] });
+    if (d) { okFeatures.push(f); d.destroy(); } else badFeatures.push(f);
   }
+  const okLimits = {}, badLimits = [];
+  for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(adapter.limits))) {
+    if (typeof adapter.limits[k] !== 'number') continue;
+    const d = await tryDevice({ requiredLimits: { [k]: adapter.limits[k] } });
+    if (d) { okLimits[k] = adapter.limits[k]; d.destroy(); } else badLimits.push(k);
+  }
+  if (badFeatures.length) log('Chrome 拒收的 feature: ' + badFeatures.join(', '));
+  if (badLimits.length) log('Chrome 拒收的 limit: ' + badLimits.join(', '));
+  maxedDevice = await tryDevice({ requiredFeatures: okFeatures, requiredLimits: okLimits });
+  log(maxedDevice
+    ? `maxed device 建成:${okFeatures.length} features + ${Object.keys(okLimits).length} limits`
+    : 'maxed device 仍建不成(逐项都过但合并被拒)');
   return true;
 }
 
