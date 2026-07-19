@@ -9,7 +9,7 @@
 // 前台(后台标签页的 rAF 会被压到 1Hz —— 实测过,一开始就栽在这)、真 GPU。任何一条不满足,
 // 对照组自己就跑不到刷新率,此时应当 skip 而不是报一个假的红。
 import { expect, test } from '@playwright/test';
-import { WEB_PORT } from './playwright.config';
+import { WEB_PORT } from './config';
 import { format, recordFrames } from './trace';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;

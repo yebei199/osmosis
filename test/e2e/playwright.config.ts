@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process';
 import { defineConfig } from '@playwright/test';
+import { WEB_PORT } from './config';
 
 // Playwright 的 channel: 'chrome' 写死了 /opt/google/chrome/chrome,NixOS 上不存在。
 // 从 PATH 里找,找不到再让 PLAYWRIGHT_CHROME 兜底。
@@ -14,8 +15,6 @@ const chromePath =
     .toString()
     .trim();
 
-// 端口与 justfile 的 web_port 一致。改一处就得改另一处 —— 两边都写了理由。
-export const WEB_PORT = 8073;
 
 export default defineConfig({
   testDir: '.',

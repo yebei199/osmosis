@@ -1,7 +1,7 @@
 // 探查:应用页的拍子是 60/s,对照页是 144/s。这是 Chrome 给的拍子本身不同,
 // 还是我们跟不上被降频的结果?看两页各自的 BeginFrame 来源与频率。
 import { test } from '@playwright/test';
-import { WEB_PORT } from '../playwright.config';
+import { WEB_PORT } from '../config';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
 

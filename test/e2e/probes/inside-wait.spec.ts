@@ -1,7 +1,7 @@
 // 探查:GPU 进程里最长的那几个跨度,内部到底套着什么。
 // 已知每帧只有 13 条 femtovg 命令、626 个顶点,却要花 17.9ms —— 找出等在哪一行。
 import { test } from '@playwright/test';
-import { WEB_PORT } from '../playwright.config';
+import { WEB_PORT } from '../config';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
 const QUERY = process.env.PROBE_QUERY ?? 'tab=2&bevy=off';
