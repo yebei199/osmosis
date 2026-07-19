@@ -65,6 +65,9 @@ cd test/e2e && bunx playwright test probes/inside-wait
 | `same-task` | 取图像与提交在不在 rAF 回调那个任务里 |
 | `raf-cancel` | rAF 有没有被取消重排 |
 | `format-swap` / `path-shape` / `device-shape` / `busy-main` / `host-page` / `two-passes` | 逐项复刻线上那一页的性质,按呈现帧数比 |
+| `minimal-repro` | 跑最小复现(`just web-dev repro`)并出数,`?rects=N` 调元素规模 |
+| `gpu-alloc` | 数每帧创建了多少 GPU 对象(buffer / bind group / sampler / view) |
+| `screenshot` | 截一张真实画面 —— 渲染写错会画出垃圾而帧率照样好看,只看数字发现不了 |
 | `texture-destroy` | 每帧建/毁多少纹理,以及销毁会不会让提交阻塞 |
 | `hold-texture` | 取到 swapchain 图像后持有一段时间再提交,会不会掉帧 |
 | `adapter-id` | 两页拿到的是不是同一块 GPU |
