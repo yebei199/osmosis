@@ -64,11 +64,9 @@ web-dev extra="":
     # server 不在 default-members 里,裸 cargo build 从不编它。先编完再起,否则页面
     # 已经能开、按钮却要再等半分钟才通,报的还是「网络错误」,徒增困惑。
     nix-shell slint.nix --run 'cargo build -p server'
-    # 上次 Ctrl-C 没杀干净的 server 还占着端口,先收尸。只匹配本命令起的进程,不误伤别人的。
-    # [.] 是为了让这行自己的命令行不被这个正则匹配上 —— 否则 pkill 会连本 recipe 一起杀。
-    # 模式必须跟下面那行的命令**逐字对应**:对不上就杀不掉,新服务器绑不上端口静默退出,
-    # 而浏览器还连着那个喂旧产物的老进程 —— 排查时会以为是代码的问题。
-    pkill -f 'dev-server[.]py {{ web_port }}' || true
+    # 上次 Ctrl-C 没杀干净的 server 还占着端口,先收尸。不自己 pkill:web-stop 带 curl 复核,
+    # 端口没让出来就直接失败,免得新服务器绑不上静默退出、浏览器却还连着喂旧产物的老进程。
+    just web-stop
     # server 放后台、静态服务器占前台,Ctrl-C 走 trap 把 server 一起带走。
     # 3000 被占说明已有一个 server 在跑(比如 android 调试用的那个),这个会 panic
     # 退出、不影响前端,那边的链路也毫发无伤。不为此发明端口探测。
@@ -77,11 +75,16 @@ web-dev extra="":
     # dev-server.py 只是在它基础上加了 no-store,其余行为一致(含绑回环的理由)。
     nix-shell slint.nix --run 'cargo run -p server & trap "kill %1 2>/dev/null" EXIT; python3 apps/web/dev-server.py {{ web_port }} dist/web'
 
-# 模式与 web-dev 里那行 pkill 逐字一致,理由见上面的注释。
-# 收掉 web-dev 留下的后台进程。终端被关掉、trap 没跑成时用它
+# 只杀本项目这个端口上的 dev server,不误伤别人的 python。[.] 是为了让这行自己的命令行
+# 不被这个正则匹配上 —— 否则 pkill 会连本 recipe 一起杀(见 pkill -f 打到自己那次)。
+# 模式必须跟 web-dev 起服务那行**逐字对应**,对不上就杀不掉。
+# 收掉 web-dev 留下的后台进程,并确认端口真的没人应答了
 [group('三端')]
 web-stop:
     pkill -f 'dev-server[.]py {{ web_port }}' || true
+    # pkill 只发信号,不等进程退出,退出码也只说"匹配到了几个",不说端口有没有让出来。
+    # 只有 curl 连不上才算真关掉:模式写错、还有第二个实例、进程赖着不死,都在这里现原形。
+    for i in 1 2 3 4 5 6; do curl -sf -o /dev/null --max-time 1 http://127.0.0.1:{{ web_port }}/ || exit 0; sleep 0.5; done; echo "端口 {{ web_port }} 仍在应答,没关掉" >&2; exit 1
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
