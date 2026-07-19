@@ -86,6 +86,16 @@ web-stop:
     # 只有 curl 连不上才算真关掉:模式写错、还有第二个实例、进程赖着不死,都在这里现原形。
     for i in 1 2 3 4 5 6; do curl -sf -o /dev/null --max-time 1 http://127.0.0.1:{{ web_port }}/ || exit 0; sleep 0.5; done; echo "端口 {{ web_port }} 仍在应答,没关掉" >&2; exit 1
 
+# 浏览器端到端测试(bun + Playwright,驱系统 Chrome)。静态服务器由 playwright 自己拉起。
+# 会弹出一个真实的浏览器窗口并且**必须让它留在前台** —— 被遮住的标签页 rAF 会掉到 1Hz,
+# headless 的 Chrome 更是连 WebGPU 都没有。测试自带哨兵,环境不成立时 skip 而非报红。
+# 不进 CI,理由同上。详见 test/e2e/README.md。
+[group('三端')]
+web-test:
+    # 测的是产物不是源码:忘了重新 web-dev 就会在旧 wasm 上验新改动,而且看不出异常。
+    test -f dist/web/app_web_bg.wasm || { echo "dist/web 里没有产物,先跑 just web-dev bevy-3d" >&2; exit 1; }
+    cd test/e2e && bun install --frozen-lockfile && bunx playwright test
+
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
 # 改了界面上的中文文案后跑一遍,把新字符补进 --text —— 注意 api::ApiError 的
