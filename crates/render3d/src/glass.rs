@@ -270,8 +270,17 @@ impl GlassPass {
                             depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                // 整屏都会被全屏三角形覆盖,不必清屏。
-                                load: wgpu::LoadOp::Load,
+                                // 整屏都会被全屏三角形覆盖,清屏不改变画面,而且省掉一次读:
+                                // Load 要把附件旧内容读进 tile 内存,而 Slint 正用它自己的
+                                // Vulkan 命令采样同一张纹理 —— 那些读取在 wgpu 的资源追踪之外,
+                                // 不会有屏障。分块 GPU 上这一读更贵。
+                                //
+                                // 安卓拖动时的闪黑,换成 Clear 后从 10/243 帧降到 3~6/250 帧,
+                                // **没有消除**。所以这一行是改进,不是那个缺陷的修复;真正的
+                                // 根因见 docs/wasm/native-regression-2026-07-19.md。
+                                load: wgpu::LoadOp::Clear(
+                                    wgpu::Color::BLACK,
+                                ),
                                 store: wgpu::StoreOp::Store,
                             },
                         },
