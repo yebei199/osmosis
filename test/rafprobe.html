@@ -1,0 +1,83 @@
+<meta charset="utf-8">
+<title>rAF vs WebGPU canvas</title>
+<style>
+  body { font: 14px/1.6 monospace; background: #111; color: #eee; padding: 24px; }
+  canvas { border: 1px solid #444; display: block; margin: 12px 0; }
+  button { font: inherit; padding: 6px 14px; margin-right: 8px; }
+  #out { white-space: pre; margin-top: 16px; }
+</style>
+
+<h3>rAF 速率:空转 vs 持续呈现 WebGPU 画布</h3>
+<p>同一页面、同一画布。先测空转(只跑 rAF,不画),再测持续呈现(每帧 clear 一次并提交)。</p>
+
+<button id="idle">1. 测空转</button>
+<button id="draw">2. 测持续呈现</button>
+<canvas id="c" width="1485" height="984"></canvas>
+<div id="out">等待…</div>
+
+<script type="module">
+const out = document.getElementById('out');
+const canvas = document.getElementById('c');
+const log = (s) => { out.textContent += s + '\n'; };
+
+// 画布尺寸取和 3D 面板同量级(1485x984),排除「画布太小所以不掉帧」的干扰。
+let device = null, ctx = null, format = null;
+
+async function initGpu() {
+  if (device) return true;
+  if (!navigator.gpu) { log('这个浏览器没有 WebGPU'); return false; }
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) { log('requestAdapter 返回 null'); return false; }
+  device = await adapter.requestDevice();
+  format = navigator.gpu.getPreferredCanvasFormat();
+  ctx = canvas.getContext('webgpu');
+  ctx.configure({ device, format, alphaMode: 'premultiplied' });
+  log('WebGPU 就绪,画布 ' + canvas.width + 'x' + canvas.height);
+  return true;
+}
+
+// 测 SECONDS 秒内 rAF 触发多少次。onFrame 每帧执行,用来加不同的负载。
+function measure(label, seconds, onFrame) {
+  return new Promise((resolve) => {
+    let n = 0;
+    const t0 = performance.now();
+    (function loop() {
+      n++;
+      if (onFrame) onFrame();
+      if (performance.now() - t0 < seconds * 1000) requestAnimationFrame(loop);
+      else {
+        const hz = n / ((performance.now() - t0) / 1000);
+        log(label + ': ' + hz.toFixed(0) + ' Hz');
+        resolve(hz);
+      }
+    })();
+  });
+}
+
+// 一帧最轻的「呈现」:清屏并提交。没有几何、没有纹理、没有着色器 ——
+// 若这样都掉到 60,那就与工作量无关,是呈现路径本身的节拍。
+function present() {
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({
+    colorAttachments: [{
+      view: ctx.getCurrentTexture().createView(),
+      clearValue: { r: 0.1, g: 0.15, b: 0.3, a: 1 },
+      loadOp: 'clear',
+      storeOp: 'store',
+    }],
+  });
+  pass.end();
+  device.queue.submit([encoder.finish()]);
+}
+
+document.getElementById('idle').onclick = async () => {
+  log('--- 空转(不画)');
+  await measure('空转 rAF', 2, null);
+};
+
+document.getElementById('draw').onclick = async () => {
+  if (!await initGpu()) return;
+  log('--- 持续呈现 WebGPU 画布(每帧仅 clear)');
+  await measure('呈现中 rAF', 2, present);
+};
+</script>
