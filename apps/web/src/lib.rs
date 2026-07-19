@@ -61,6 +61,20 @@ pub fn start() {
         export component Repro inherits Window {
             background: #0f1117;
             in-out property <bool> flip: false;
+            // `?rects=N` 铺 N 个静止的圆角矩形,用来看开销到底跟元素个数还是跟别的成正比。
+            // 静止是刻意的:动的只有下面那一个,重绘节奏不随 N 变。
+            in-out property <int> rects: 0;
+            // `?radius=off` 去掉圆角:圆角矩形在 femtovg 里走路径,可能因此无法与相邻的
+            // 矩形合批。用来分辨"每个元素都贵"还是"圆角让它没法合批"。
+            in-out property <bool> rounded: true;
+            for i in root.rects: Rectangle {
+                x: 8px + mod(i, 40) * 30px;
+                y: 240px + floor(i / 40) * 30px;
+                width: 26px;
+                height: 26px;
+                border-radius: root.rounded ? 6px : 0px;
+                background: #2f45c5;
+            }
             Rectangle {
                 y: 100px;
                 width: 120px;
@@ -76,6 +90,14 @@ pub fn start() {
     }
 
     let ui = Repro::new().expect("建窗口失败");
+    ui.set_rects(
+        query_value("rects")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+    );
+    ui.set_rounded(
+        query_value("radius").as_deref() != Some("off"),
+    );
     // `?notifier=on` 只装一个空的渲染通知,别的都不变。装了它 Slint 就会在每帧开头
     // 多 flush 一次窗口背景 clear(internal/renderers/femtovg/lib.rs:223),
     // 这是 3D 页与最小复现之间仅剩的两处差异之一(另一处是 render3d 建的共享 device)。
@@ -115,7 +137,9 @@ pub fn start() {
     console_error_panic_hook::set_once();
     let _ = console_log::init();
     if query_value("notifier").as_deref() == Some("on") {
-        ui::run_with_renderer(initial_tab(), |_, _, _| slint::Image::default());
+        ui::run_with_renderer(initial_tab(), |_, _, _| {
+            slint::Image::default()
+        });
     } else {
         ui::run();
     }
@@ -134,7 +158,8 @@ pub async fn start() {
     // `?bevy=off` 跳过驱动渲染器,但**照常请求重绘** —— 于是界面仍以同样的节奏画,只是
     // 不含 bevy 那一份工作。用来把 bevy 的开销与 Slint 自己的分开。直接不装渲染通知是
     // 不行的:那样界面会停在原地,量到的就不是同一件事了。
-    let drive_renderer = query_value("bevy").as_deref() != Some("off");
+    let drive_renderer =
+        query_value("bevy").as_deref() != Some("off");
     // seam:把 ui 的 SceneControls 平凡拷成 render3d 的 SceneParams(见 SceneParams 注释)。
     ui::run_with_renderer(initial_tab(), move |c, w, h| {
         if !drive_renderer {
