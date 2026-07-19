@@ -12,6 +12,7 @@
 CSS 1284×1587(dpr 1.25 缩放)、每帧 ~1ms JS、回调间隔中位 13.9ms(72Hz,144 的分频)。</p>
 
 <button id="sweep">自动扫描全部档位</button>
+<button id="devonly">只测 device 档(6 秒)</button>
 <div id="stage"></div>
 <div id="out">等待…</div>
 
@@ -20,6 +21,34 @@ const out = document.getElementById('out');
 const stage = document.getElementById('stage');
 const log = (s) => { out.textContent += s + '\n'; };
 
+// 真实页面拦截到的 requestDevice descriptor,逐字。
+const RENDER3D_DESC = {
+  label: 'render3d-shared',
+  requiredFeatures: [
+    'depth-clip-control', 'depth32float-stencil8', 'texture-compression-bc',
+    'texture-compression-bc-sliced-3d', 'timestamp-query', 'indirect-first-instance',
+    'rg11b10ufloat-renderable', 'bgra8unorm-storage', 'float32-filterable',
+    'float32-blendable', 'dual-source-blending', 'clip-distances',
+  ],
+  requiredLimits: {
+    maxTextureDimension1D: 16384, maxTextureDimension2D: 16384,
+    maxTextureDimension3D: 2048, maxTextureArrayLayers: 2048,
+    maxBindGroups: 4, maxBindingsPerBindGroup: 1000,
+    maxDynamicUniformBuffersPerPipelineLayout: 10, maxDynamicStorageBuffersPerPipelineLayout: 8,
+    maxSampledTexturesPerShaderStage: 48, maxSamplersPerShaderStage: 16,
+    maxStorageBuffersPerShaderStage: 16, maxStorageTexturesPerShaderStage: 8,
+    maxUniformBuffersPerShaderStage: 12, maxUniformBufferBindingSize: 65536,
+    maxStorageBufferBindingSize: 2147483644,
+    minUniformBufferOffsetAlignment: 256, minStorageBufferOffsetAlignment: 256,
+    maxVertexBuffers: 8, maxBufferSize: 4294967292, maxVertexAttributes: 30,
+    maxVertexBufferArrayStride: 2048, maxInterStageShaderVariables: 28,
+    maxColorAttachments: 8, maxColorAttachmentBytesPerSample: 128,
+    maxComputeWorkgroupStorageSize: 49152, maxComputeInvocationsPerWorkgroup: 1024,
+    maxComputeWorkgroupSizeX: 1024, maxComputeWorkgroupSizeY: 1024,
+    maxComputeWorkgroupSizeZ: 64, maxComputeWorkgroupsPerDimension: 65535,
+  },
+};
+
 let device = null, maxedDevice = null;
 async function initGpu() {
   if (device) return true;
@@ -27,39 +56,19 @@ async function initGpu() {
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) { log('requestAdapter null'); return false; }
   device = await adapter.requestDevice();
-  // 复刻 render3d 的 device 建法:要 adapter 的全部 features + 全部 limits。
-  // canvas 的 getConfiguration() 看不到 device 级差异,这是配置排平后仅剩的嫌疑之一。
-  //
-  // Chrome 对不收的请求**不抛异常**,而是返回一个「出生即丢失」的 device
-  // (控制台只留一行 Device failed at creation),所以 try/catch 捕不到,必须
-  // 用 device.lost 竞速检测。逐项试出 Chrome 实际接受的 feature/limit 集合再拼。
-  const tryDevice = async (desc) => {
-    try {
-      const d = await adapter.requestDevice(desc);
-      const lost = await Promise.race([
-        d.lost.then(() => true),
-        new Promise(r => setTimeout(() => r(false), 80)),
-      ]);
-      return lost ? null : d;
-    } catch { return null; }
-  };
-  const okFeatures = [], badFeatures = [];
-  for (const f of adapter.features) {
-    const d = await tryDevice({ requiredFeatures: [f] });
-    if (d) { okFeatures.push(f); d.destroy(); } else badFeatures.push(f);
-  }
-  const okLimits = {}, badLimits = [];
-  for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(adapter.limits))) {
-    if (typeof adapter.limits[k] !== 'number') continue;
-    const d = await tryDevice({ requiredLimits: { [k]: adapter.limits[k] } });
-    if (d) { okLimits[k] = adapter.limits[k]; d.destroy(); } else badLimits.push(k);
-  }
-  if (badFeatures.length) log('Chrome 拒收的 feature: ' + badFeatures.join(', '));
-  if (badLimits.length) log('Chrome 拒收的 limit: ' + badLimits.join(', '));
-  maxedDevice = await tryDevice({ requiredFeatures: okFeatures, requiredLimits: okLimits });
-  log(maxedDevice
-    ? `maxed device 建成:${okFeatures.length} features + ${Object.keys(okLimits).length} limits`
-    : 'maxed device 仍建不成(逐项都过但合并被拒)');
+  // 复刻 render3d 的 device:descriptor 逐字来自真实页面的 requestDevice 拦截
+  // (2026-07-19,wgpu 29 过滤后 Chrome 实际接受的形态)。canvas 的 getConfiguration()
+  // 看不到 device 级差异,这是配置排平后仅剩的嫌疑。
+  // Chrome 拒收时不抛异常,而是返回「出生即丢失」的 device,故用 device.lost 竞速检测。
+  try {
+    const d = await adapter.requestDevice(RENDER3D_DESC);
+    const lost = await Promise.race([
+      d.lost.then(() => true),
+      new Promise(r => setTimeout(() => r(false), 120)),
+    ]);
+    if (lost) log('render3d device 出生即丢失');
+    else { maxedDevice = d; log('render3d device 建成'); }
+  } catch (e) { log('render3d device 被拒: ' + e.message); }
   return true;
 }
 
@@ -126,14 +135,26 @@ const CASES = [
   { name: 'format=rgba8unorm(=slint)', w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
   // 运行环境档位:canvas 配置全排平之后剩下的两个差异。
   { name: '每帧 2 次 submit(=slint)',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', submits: 2 },
-  { name: 'maxed device(=render3d)',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true },
-  { name: 'maxed + 2 submit(全复刻)',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true, submits: 2 },
+];
+
+// device 档单独跑:上面那些已多轮验证为 145Hz,重扫只会增加切后台污染的机会。
+const DEVICE_CASES = [
+  { name: 'render3d device',          w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true },
+  { name: 'render3d device+2submit',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true, submits: 2 },
+  { name: '默认 device(对照)',          w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
 ];
 
 document.getElementById('sweep').onclick = async () => {
   if (!await initGpu()) return;
   out.textContent = '';
-  for (const cfg of CASES) await runCase(cfg);
+  for (const cfg of [...CASES, ...DEVICE_CASES]) await runCase(cfg);
   log('--- 扫描完成');
+};
+
+document.getElementById('devonly').onclick = async () => {
+  if (!await initGpu()) return;
+  out.textContent = '';
+  for (const cfg of DEVICE_CASES) await runCase(cfg);
+  log('--- device 档完成');
 };
 </script>
