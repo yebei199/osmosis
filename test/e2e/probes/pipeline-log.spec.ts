@@ -1,7 +1,7 @@
 // 读打了桩的 femtovg 从浏览器控制台吐出来的日志(需要 Cargo.toml 里挂上本地副本,
 // 办法见 docs/wasm/frame-rate.md 第七节)。
 import { test } from '@playwright/test';
-import { WEB_PORT } from '../playwright.config';
+import { WEB_PORT } from '../config';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
 const QUERY = process.env.PROBE_QUERY ?? 'tab=2';

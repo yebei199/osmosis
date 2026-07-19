@@ -58,7 +58,17 @@ cd test/e2e && bunx playwright test probes/inside-wait
 | `inside-wait` | 最长的那个跨度内部套着什么,空档落在哪一行 |
 | `bevy-split` | bevy 的开销与 Slint 自己的各占多少(`?bevy=off`) |
 | `beat-source` | 两个页面各自拿到多少拍子 |
+| `same-page` | 同一页里再挂一条裸循环,看它是否同样被卡 |
+| `canvas-size` | 视口缩小时画布跟不跟着缩(复核 viewport-sweep 的前提) |
+| `canvas-config` | 线上那张画布的真实配置,用来核对复刻件 |
+| `context-calls` | 每帧调了几次 configure / getCurrentTexture / submit |
+| `same-task` | 取图像与提交在不在 rAF 回调那个任务里 |
+| `raf-cancel` | rAF 有没有被取消重排 |
+| `format-swap` / `path-shape` / `device-shape` / `busy-main` / `host-page` / `two-passes` | 逐项复刻线上那一页的性质,按呈现帧数比 |
 | `pipeline-log` | 读打了桩的 femtovg 吐到控制台的日志(需要先挂本地副本,办法见 `docs/wasm/frame-rate.md` 第七节) |
+
+量"画面出去了几帧"要看 `Display::DrawAndSwap`,**不要拿 rAF 频率代替** —— 实测过应用页
+rAF 106/s 而呈现只有 53/s,两者不是一回事。
 
 ## trace.ts
 
