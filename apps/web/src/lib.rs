@@ -20,6 +20,26 @@
 
 use wasm_bindgen::prelude::wasm_bindgen;
 
+/// 从 `?tab=` 读启动页签,缺省或非法时回 0。
+///
+/// 存在的理由是自动化测试:界面整个画在一张 canvas 上,Playwright 没有 DOM 元素可以点,
+/// 而按坐标点导航栏在界面一改之后会静默地量错页面。给 3D 页一个可寻址的入口比事后
+/// 校对坐标可靠。见 `test/e2e/frame-rate.spec.ts`。
+#[cfg(feature = "bevy-3d")]
+fn initial_tab() -> i32 {
+    let Some(search) = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+    else {
+        return 0;
+    };
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("tab="))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
 /// 浏览器加载 wasm 模块后自动调用。
 #[cfg(not(feature = "bevy-3d"))]
 #[wasm_bindgen(start)]
@@ -40,7 +60,7 @@ pub async fn start() {
     // async),故意不抽,理由见 apps/android/src/lib.rs。改动时记得同步另两端。
     let mut scene = render3d::Scene::new_async().await;
     // seam:把 ui 的 SceneControls 平凡拷成 render3d 的 SceneParams(见 SceneParams 注释)。
-    ui::run_with_renderer(move |c, w, h| {
+    ui::run_with_renderer(initial_tab(), move |c, w, h| {
         scene.render_frame(
             &render3d::SceneParams {
                 scene_id: c.scene_id,
