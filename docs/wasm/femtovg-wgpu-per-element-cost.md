@@ -19,7 +19,7 @@ nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknow
 ```
 
 页面是纯 Slint:一个矩形、一个永不停的动画驱动重绘,没有 3D、没有 bevy、没有本项目界面
-(代码见 `apps/web/src/lib.rs` 的 `repro` 入口)。`?rects=N` 再铺 N 个**静止**的小矩形 ——
+(代码见 `apps/web/src/lib.rs` 的 `repro` 入口)。`?rects=N` 再铺 N 个**静止**的小矩形。
 动的仍只有原来那一个,重绘节奏不随 N 变。
 
 同一份代码,只换渲染器:
@@ -39,7 +39,7 @@ WebGL 画 5000 个矩形每帧 1.25ms 且满帧;WebGPU 画 200 个就掉到 8fps
 与元素类型无关(矩形、文字、SVG 路径都一样)。
 
 测量环境:Chrome(系统装的)、144Hz 屏、NVIDIA lovelace,窗口在前台。量的是
-`Display::DrawAndSwap`(真正呈现出去的帧),**不是 rAF 频率** —— 两者不是一回事。
+`Display::DrawAndSwap`(真正呈现出去的帧),**不是 rAF 频率**。两者不是一回事。
 
 ## 根因:每个 draw 新建 6 个 GPU 对象
 
@@ -96,9 +96,18 @@ wgpu 版每个矩形的开销是它的约 2000 倍。
 - 顺带解释了为什么"减少工作量"的实验全都无效:降分辨率、关阴影、关 MSAA 都不改变
   **元素个数**。
 
+## 上游
+
+已提 draft PR:[femtovg/femtovg#302](https://github.com/femtovg/femtovg/pull/302),
+分支 `pr/wgpu-per-draw-allocations`,基于上游 master(0.26),五个提交与本项目在用的
+那条一致,只是基底不同。本项目走的是 0.25.1 那条,因为 slint 1.18 依赖 `^0.25`。
+
+接线不用 `[patch.crates-io]`:slint fork 的 `internal/renderers/femtovg/Cargo.toml`
+直接指向 `yebei199/femtovg` 的 `perf/wgpu-resident-buffers`,本仓库只留 slint 一条 patch。
+
 ## 解法
 
-1. **退回 WebGL 渲染器**(马上可用)。代价是失去 3D —— 纹理共享必须要 WebGPU,
+1. **退回 WebGL 渲染器**(马上可用)。代价是失去 3D:纹理共享必须要 WebGPU,
    目前只能二选一。
 2. **缓存不变的对象**:2 个 sampler 与 2 个空纹理 view 挂成 `WGPURenderer` 的字段,
    6→2。改动小、不碰绑定布局、无 API 变化。
@@ -109,7 +118,7 @@ wgpu 版每个矩形的开销是它的约 2000 倍。
 
 `yebei199/femtovg` 的 `fix/wgpu-cache-static-bindings` 分支(从上游 v0.25.1 开,好让它满足
 slint 对 `^0.25` 的依赖)实现了上面第 2 条:空纹理的 view 存到 `WGPURenderer` 上,
-采样器按那三个真正影响 descriptor 的标志做缓存。本项目用 `[patch.crates-io]` 接进来复测:
+采样器按那三个真正影响 descriptor 的标志做缓存。本项目接进来复测:
 
 | 每帧创建 | 修前(每矩形) | 修后(每矩形) |
 | --- | --- | --- |
@@ -124,7 +133,7 @@ slint 对 `^0.25` 的依赖)实现了上面第 2 条:空纹理的 view 存到 `W
 | 1000 矩形 | 2.0fps / GPU 434.46ms | 2.3fps / GPU 378.47ms |
 
 **去掉 6 个对象里的 4 个,只换来约 10%。** 剩下的 `create_buffer_init` 与
-`create_bind_group` 占了几乎全部开销 —— 前者是 alloc→map→copy→unmap 四次跨进程操作,
+`create_bind_group` 占了几乎全部开销。前者是 alloc→map→copy→unmap 四次跨进程操作,
 后者要校验 5 个绑定项。
 
 所以第 3 条不是"更好的做法",是**必需**:整帧一个大 uniform buffer(按 256 对齐攒起来)
@@ -134,7 +143,7 @@ slint 对 `^0.25` 的依赖)实现了上面第 2 条:空纹理的 view 存到 `W
 ## 结构性修法:线性消失了
 
 同一分支的第二个提交:整帧一个 uniform buffer(槽距取
-`min_uniform_buffer_offset_alignment`,容量在录制前按 drawable 数的上界备好 —— 中途扩容会
+`min_uniform_buffer_offset_alignment`,容量在录制前按 drawable 数的上界备好,因为中途扩容会
 让已录进渲染通道的绑定失效),每个 draw 用 `queue.write_buffer` 写自己那一槽、按动态偏移
 绑定;`BindGroupState` 去掉 uniform,只描述纹理绑定,于是连续的 draw 能复用同一个
 bind group。
@@ -163,7 +172,7 @@ bind group。
 
 **第二轮结束时是 108.7fps**(帧率达到同机 WebGPU 天花板的 75%,`frame-rate.spec`
 的帧率断言因此转绿;GPU 每帧仍是天花板的 4.9 倍,超出 3 倍的上限,那是剩下的功课)。
-画面经截图核对无误 —— 动态偏移写错会渲染出垃圾而帧率照样好看,只看数字发现不了。
+画面经截图核对无误。动态偏移写错会渲染出垃圾而帧率照样好看,只看数字发现不了。
 
 ### 剩下的 144 → 110 是 bevy,不是缺陷
 
@@ -181,7 +190,7 @@ bevy 每帧真的在画一个 3D 场景:约 2.9ms 的 GPU 进程时间,主线程
 
 GL 后端的 `set_uniforms` 调在 drawable 循环**外面**(`opengl.rs:275`),每个 command 一次;
 wgpu 版的 `update_renderpass` 在循环**里面**,于是每个 drawable 都上传一次,尽管那里的
-`params` 是循环不变量。照搬 GL 的结构即可 —— 用这个文件里已有的单槽比较惯用法
+`params` 是循环不变量。照搬 GL 的结构即可,用这个文件里已有的单槽比较惯用法
 (bind group 本来就是这么做的),不必动任何调用点,五处调用一并覆盖。
 
 | 矩形数 | 每 draw 上传 | 每 command 上传 |
@@ -200,7 +209,7 @@ wgpu 版的 `update_renderpass` 在循环**里面**,于是每个 drawable 都上
 
 每个 command 仍要一条 `write_buffer`(wire 命令 + 224 字节载荷)。改成录制时把各槽攒进
 CPU 侧的 `Vec`(补齐到对齐槽距),录完一次性上传。上传发生在录制之后、调用方提交之前,
-`write_buffer` 在队列上排在那次提交前面,所以数据到位。GL 那边没有对应物 —— 它压根
+`write_buffer` 在队列上排在那次提交前面,所以数据到位。GL 那边没有对应物,它压根
 没有 buffer,所以这一步是新机制,不是照搬。
 
 三轮下来,每元素成本(取全在屏内的点算斜率):
@@ -214,7 +223,7 @@ CPU 侧的 `Vec`(补齐到对齐槽距),录完一次性上传。上传发生在�
 600 个元素现在跑满 144fps(最初这一档是 135.9)。
 
 **与 GL 的对比要按同样口径重测。** 此前"GL 每元素 0.25µs"是拿 5000 个矩形的数除出来的,
-而其中只有约 640 个真的画了 —— 与 900/1500 是同一个错。用 100/300/600 重测 GL:
+而其中只有约 640 个真的画了,与 900/1500 是同一个错。用 100/300/600 重测 GL:
 
 | | 100 | 300 | 600 | 斜率 | 空载(每帧固定) |
 | --- | --- | --- | --- | --- | --- |
@@ -227,7 +236,7 @@ CPU 侧的 `Vec`(补齐到对齐槽距),录完一次性上传。上传发生在�
 注意这个指标量的是**浏览器里提交命令的 CPU 开销**,不是 GPU 的渲染能力。Chrome 的 WebGL
 命令缓冲是多年打磨过的实现,而 WebGPU 每次调用要过 Dawn 的校验;femtovg 这边同样是
 GL 后端成熟、wgpu 后端年轻。所以这不是"WebGPU 比 WebGL 慢",是这条路径上的实现差距。
-WebGPU 的价值在别处 —— 本项目要的 bevy 纹理共享,只有它做得到。
+WebGPU 的价值在别处:本项目要的 bevy 纹理共享,只有它做得到。
 
 ### 第四轮:顶点缓冲常驻 + 跳过冗余状态
 
@@ -244,7 +253,7 @@ WebGPU 的价值在别处 —— 本项目要的 bevy 纹理共享,只有它做�
   原先每个 draw 无条件调,而 GL 的 `select_main_program` 只在程序真的换了才重绑。
 
 **这一步有个必须堵的正确性隐患**:渲染通道在切换渲染目标时会重建,新通道的状态是重置的。
-所以 builder 给通道编了号,换号就把状态缓存全部作废 —— 否则会跳掉必要的 `set_*`,
+所以 builder 给通道编了号,换号就把状态缓存全部作废。否则会跳掉必要的 `set_*`,
 而且只在用到离屏层的界面上才暴露。
 
 | 矩形数 | 第三轮 | **第四轮** | WebGL |
@@ -258,18 +267,18 @@ WebGPU 的价值在别处 —— 本项目要的 bevy 纹理共享,只有它做�
 剩下的差距主要在**空载**:2.11ms 对 GL 的 0.28ms,而它既不是光栅化也不是命令记录。
 
 **量这个基准的注意事项**:复现页的格子从 y=240 起、30px 一行、每行 40 个,视口
-1280×720 只装得下约 **640** 个,再多的会被裁掉不画。900 与 1500 因此给出相同的数 ——
+1280×720 只装得下约 **640** 个,再多的会被裁掉不画。900 与 1500 因此给出相同的数,
 算斜率只能用 ≤600 的点。
 
-另外此前"1000 与 5000 个矩形都卡在 8ms 说明存在每 draw 的固定开销"是**错的** —— 那是复现页
+另外此前"1000 与 5000 个矩形都卡在 8ms 说明存在每 draw 的固定开销"是**错的**。那是复现页
 的裁剪假象:视口 1280×720,格子从 y=240 起、30px 一行,只有约 640 个在屏内。换成
 100/300/600/900 之后线性一直都在。
 
 另外每帧重建 10 条渲染管线的老问题仍在(`wgpu.rs` 的 `retain` 每次 `render()` 都扫,
-见 `frame-rate.md`),现在值 0.11ms/帧 —— 记着,但不值得为它单开一轮。
+见 `frame-rate.md`),现在值 0.11ms/帧。记着,但不值得为它单开一轮。
 
 ## 复现与测量工具
 
-- `test/e2e/probes/minimal-repro.spec.ts` —— 跑最小复现并出数
-- `test/e2e/probes/gpu-alloc.spec.ts` —— 数每帧创建了多少 GPU 对象
+- `test/e2e/probes/minimal-repro.spec.ts`:跑最小复现并出数
+- `test/e2e/probes/gpu-alloc.spec.ts`:数每帧创建了多少 GPU 对象
 - 口径与三条环境约束见 [`test/e2e/README.md`](../../test/e2e/README.md)
