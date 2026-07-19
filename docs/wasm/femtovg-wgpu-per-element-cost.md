@@ -98,9 +98,20 @@ wgpu 版每个矩形的开销是它的约 2000 倍。
 
 ## 上游
 
-已提 draft PR:[femtovg/femtovg#302](https://github.com/femtovg/femtovg/pull/302),
-分支 `pr/wgpu-per-draw-allocations`,基于上游 master(0.26),五个提交与本项目在用的
-那条一致,只是基底不同。本项目走的是 0.25.1 那条,因为 slint 1.18 依赖 `^0.25`。
+上游按从小到大排成了四件:
+
+| | 内容 |
+| --- | --- |
+| [issue #305](https://github.com/femtovg/femtovg/issues/305) | 只讲事实:测量方法、数据、根因、浏览器里数出来的每帧对象数。不带方案,先问维护者想怎么修 |
+| [PR #304](https://github.com/femtovg/femtovg/pull/304) | `examples/many_rects.rs`,不改行为,给两种后端一把共同的量尺 |
+| [PR #303](https://github.com/femtovg/femtovg/pull/303) | 缓存静态 sampler/view(+74/-27),draft |
+| [PR #302](https://github.com/femtovg/femtovg/pull/302) | uniform buffer 那四个提交,叠在 #303 上,draft |
+
+都基于上游 master(0.26),合入即随下个版本发布。本项目走的是 0.25.1 那条分支,因为
+slint 1.18 依赖 `^0.25`;等 slint 抬到带修复的版本,fork 与 patch 一并删掉。
+
+这么排的理由:维护者反感的通常不是行数,是一个 PR 里塞了多个独立决策、事先没打招呼、
+以及出问题时回滚粒度太粗。所以先开 issue 摆事实,example 单独先行,改动按依赖顺序叠。
 
 接线不用 `[patch.crates-io]`:slint fork 的 `internal/renderers/femtovg/Cargo.toml`
 直接指向 `yebei199/femtovg` 的 `perf/wgpu-resident-buffers`,本仓库只留 slint 一条 patch。
