@@ -40,7 +40,7 @@ function runCase(cfg) {
     const ctx = c.getContext('webgpu');
     ctx.configure({
       device,
-      format: navigator.gpu.getPreferredCanvasFormat(),
+      format: cfg.format ?? navigator.gpu.getPreferredCanvasFormat(),
       alphaMode: cfg.alpha,
     });
     const ds = [];
@@ -80,6 +80,9 @@ const CASES = [
   { name: '+每帧 1ms JS',               w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, busyMs: 1 },
   { name: 'opaque 单独(base 尺寸)',     w: 1485, h: 984,  alpha: 'opaque', present: true },
   { name: '不呈现只 rAF(对照)',         w: 1605, h: 1984, alpha: 'opaque', present: false },
+  // Slint 页 getConfiguration() 实测的完整形态:rgba8unorm(非 Chrome 首选的 bgra8unorm)。
+  // 非首选格式可能让合成器走不了零拷贝路径 —— 这是与 145Hz 档位间唯一剩下的差异。
+  { name: 'format=rgba8unorm(=slint)', w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
 ];
 
 document.getElementById('sweep').onclick = async () => {
