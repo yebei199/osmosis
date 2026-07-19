@@ -1,4 +1,15 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from '@playwright/test';
+
+// Playwright 的 channel: 'chrome' 写死了 /opt/google/chrome/chrome,NixOS 上不存在。
+// 从 PATH 里找,找不到再让 PLAYWRIGHT_CHROME 兜底。
+const chromePath =
+  process.env.PLAYWRIGHT_CHROME ??
+  execSync('command -v google-chrome-stable || command -v google-chrome', {
+    shell: '/bin/sh',
+  })
+    .toString()
+    .trim();
 
 // 端口与 justfile 的 web_port 一致。改一处就得改另一处 —— 两边都写了理由。
 export const WEB_PORT = 8073;
@@ -18,7 +29,7 @@ export default defineConfig({
     headless: false,
     // 用系统装的 Chrome,不用 Playwright 自带的 Chromium:NixOS 上那些预编译二进制
     // 跑不起来,而且 dist/ 里的历史 trace 都出自系统 Chrome,同源才好对齐。
-    channel: 'chrome',
+    launchOptions: { executablePath: chromePath },
   },
   webServer: {
     command: `python3 apps/web/dev-server.py ${WEB_PORT} dist/web`,
