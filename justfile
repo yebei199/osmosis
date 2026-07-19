@@ -94,7 +94,7 @@ web-stop:
 web-test:
     # 测的是产物不是源码:忘了重新 web-dev 就会在旧 wasm 上验新改动,而且看不出异常。
     test -f dist/web/app_web_bg.wasm || { echo "dist/web 里没有产物,先跑 just web-dev bevy-3d" >&2; exit 1; }
-    cd test/e2e && bun install --frozen-lockfile && bunx playwright test
+    cd test/e2e && bun install --frozen-lockfile && bunx playwright test frame-rate.spec.ts
 
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。

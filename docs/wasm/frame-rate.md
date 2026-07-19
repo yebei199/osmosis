@@ -246,6 +246,58 @@ PROBE render 结束: 缓存 10 条,本次用到 9 条     ← 又把那 1 条丢
 注意"GPU 进程占用 91%"这个指标本身包含**阻塞时间**。前面据它说"GPU 是瓶颈"是过度解读:
 成立的只有"每帧 20ms 花在 GPU 进程里",至于是干活还是等,占用率区分不了。
 
+### 大头不是 bevy,是 Slint 自己
+
+`?bevy=off` 跳过驱动渲染器但照常请求重绘,界面以同样的节奏画,只是不含 bevy 那份工作:
+
+| | 帧率 | GPU 进程占用 | GPU 每帧 |
+| --- | --- | --- | --- |
+| `?tab=2` | 39.4fps | 86% | 22.41ms |
+| `?tab=2&bevy=off` | 58.0fps | **89%** | **17.91ms** |
+| `?tab=0`(不重绘) | 1.0fps | 3% | — |
+
+bevy 只值 4.5ms/帧。**bevy 全关、只画一个静态 Slint 界面,GPU 进程仍占 89%、每帧 17.9ms。**
+
+### 工作量本身是微不足道的
+
+给 femtovg 打桩数每次 `render()` 的命令量,稳态每帧只有:
+
+```
+PROBE render: 2 条命令, 0 个 drawable, 6 个顶点      ← 提前 flush 的窗口背景 clear
+PROBE render: 13 条命令, 12 个 drawable, 626 个顶点  ← 整个界面
+```
+
+**13 条命令、626 个顶点。** 解这么点命令不可能花 9.3ms。到此"在等"已无可辩驳。
+
+### 等在 `Queue::Submit` 里
+
+把最长的 `GPUTask` 整个展开(`probes/inside-wait.spec.ts`):
+
+```
+GPUTask (32.86ms)
+  └ … └ WebGPUDecoderImpl::HandleDawnCommands (32.51ms)
+        ├ CommandEncoder::Finish (0.01ms)
+        └ Queue::Submit (32.18ms)          ← 时间全在这里
+            ├ Queue::ValidateSubmit        (0.00ms)
+            ├ CommandBufferVk::RecordCommands (0.05ms)
+            ├ vkQueueSubmit               (0.02ms)   ← 真正下到驱动的
+            └ DawnServiceSerializer::Flush (0.02ms)
+```
+
+**32.18ms 花在 Dawn 的 `Queue::Submit` 内部、任何子跨度之外**,而子项加起来只有 0.1ms。
+32ms ≈ 2×16.7ms,16.7ms 正是 60Hz 一拍。这是在等呈现。
+
+### 应用页的拍子只有对照页的一半
+
+| | 对照页 rafprobe | 应用页 `?tab=2&bevy=off` |
+| --- | --- | --- |
+| `DelayBasedBeginFrameSource::OnTimerTick` | 125.3/s | **57.0/s** |
+| `Display::DrawAndSwap` | 123.8/s | 48.5/s |
+| `FireAnimationFrame` | 218.8/s | 48.5/s |
+
+两页走的是同一种 BeginFrame 来源,但给应用页的拍子只有一半多一点。**因果方向还没定**:
+是拍子先降到 60、于是提交被迫等一拍;还是我们提交得慢、Chrome 据此降了频。
+
 ## 六、下一步
 
 已经被排除的(**都有实测,且都在天花板拆掉之后**):
@@ -256,22 +308,50 @@ PROBE render 结束: 缓存 10 条,本次用到 9 条     ← 又把那 1 条丢
 | 每帧重建 10 条渲染管线 | 打桩证实了机制,修掉之后帧率不动(只值 0.19ms/帧) |
 | 模糊阴影(`drop-shadow-blur: 40px` 等) | 全部置 0 重编,57.4fps / GPU 90%,不动 |
 | 光栅化像素量 | 视口缩 40 倍,GPU 占用 90% → 91%,不动 |
+| bevy 的开销 | `?bevy=off` 后 GPU 仍占 89%、每帧 17.9ms;bevy 只值 4.5ms/帧 |
+| 命令量大 | femtovg 每帧只发 13 条命令、626 个顶点 |
 
-剩下的方向:**那 20ms/帧到底在等什么。**
+**问题已经收敛成一句话:同一个浏览器里,一张裸 WebGPU 画布能拿到 125/s 的拍子并且提交
+不阻塞,而 Slint 的画布只拿到 57/s 并且每次提交要等一到两拍。差别在哪。**
 
-1. 查 Dawn 的同步点:`HandleDawnCommands` 独占 9.3ms 而其子区间只有零点几毫秒,像是在
-   阻塞。找 wire 缓冲、栅栏、`PerformPollingWork` 这条线。
-2. 查共享 device:bevy 与 Slint 共用一个 wgpu device(纹理共享的前提)。两边的提交是否
-   在 Dawn 里被串行化,值得单独验。
+1. **定因果方向。**拍子先降,还是提交先慢?可做的实验:让 Slint 隔帧才请求重绘(把负载
+   减半),看拍子回不回到 125/s。回去了说明是 Chrome 因为跟不上而降频,是结果;不回
+   说明拍子本来就只给这么多,是原因。
+2. **比对两张画布的差别。**文档第二节记过一轮"逐项复刻 canvas 配置到对照页,全 145Hz",
+   但那轮复刻的是 **canvas 的配置**,没有复刻 **wgpu 建 surface 的方式**(swapchain 张数、
+   usage、是否走离屏再拷贝)。差别多半在这一层。
 3. 复测 MSAA —— 这批"无效"结论同样是在 16ms 天花板下得出的(错误一),尚未重做。
 
 ## 七、附:排查用的开关与工具
 
-`test/rafprobe.html` 保留在仓库里(`just web-dev` 会复制进 `dist/web/`),用法见
-`test/README.md`。
+`just web-test` 跑 `test/e2e/` 那一套(bun + Playwright + 系统 Chrome),用法与三条环境
+约束见 [`test/e2e/README.md`](../../test/e2e/README.md)。三个 spec 各司其职:
+`frame-rate` 断言相对天花板的成本,`gpu-breakdown` 按独占时间拆 GPU 进程开销,
+`viewport-sweep` 分辨"在干活"还是"在等"。
 
-排查期间用过的临时 URL 开关(`?scale=`、`?bevy=`、`?redraw=`、`?shadow=`)结论落定后
-均已撤除,不在代码里。要重做同类实验时照着 git 历史加回即可。
+`test/rafprobe.html` 保留在仓库里(`just web-dev` 会复制进 `dist/web/`),现在是
+`frame-rate` 对照组的宿主页。
+
+`?tab=` 是长期保留的测试接缝:界面整个画在一张 canvas 上,没有 DOM 元素可点,按坐标点
+导航栏会在界面一改之后静默量错页面。`?bevy=off` 让 web 入口跳过驱动渲染器但照常请求
+重绘,用来把 bevy 的开销和 Slint 自己的分开。其余临时开关(`?scale=`、`?redraw=`、
+`?shadow=`)结论落定后已撤除,照着 git 历史加回即可。
+
+### 给 femtovg 打桩的办法
+
+`[patch.crates-io]` 里加一行指向本地副本即可,slint 会跟着用上:
+
+```toml
+femtovg = { path = "../femtovg-debug" }
+```
+
+副本从 `~/.cargo/registry/src/*/femtovg-0.25.1` 拷出来,`chmod -R u+w`。femtovg 自己依赖
+`log`,所以直接 `log::info!` 就能经 `console_log` 打到浏览器控制台,Playwright 那侧用
+`page.on('console')` 收。
+
+顺带记一个上游缺陷:`femtovg-0.25.1/src/renderer/wgpu.rs:538` 每次 `render()` 结束都把
+"本次没用到"的管线丢掉。只要一帧里有两次用不同管线集合的 `render()`,两次就互相清空。
+对我们只值 0.19ms/帧,没提上游。
 
 后台构建与产物验证的坑另见 [`AGENTS.md`](../../AGENTS.md) 的「后台构建」一节——
 本次排查有四轮因为验证的是旧产物而作废。

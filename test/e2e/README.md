@@ -43,6 +43,23 @@ CSS 1.25x、`rgba8unorm`、`opaque`、每帧 2 次 submit)。它给出"这台机
 占到了 91%。排查过程见 [`docs/wasm/frame-rate.md`](../../docs/wasm/frame-rate.md)。修好之后
 它自己会变绿。
 
+## probes/
+
+只出数、不断言的定位工具。`just web-test` 不跑它们,要用就点名:
+
+```sh
+cd test/e2e && bunx playwright test probes/inside-wait
+```
+
+| | 回答什么 |
+| --- | --- |
+| `gpu-breakdown` | 一帧的 GPU 时间按事件名怎么分(算**独占时间**:区间是嵌套的,按总耗时排只会把最外层的壳排在最前) |
+| `viewport-sweep` | 那些时间是在光栅化还是在等(像素量扫两个数量级,不动就是在等) |
+| `inside-wait` | 最长的那个跨度内部套着什么,空档落在哪一行 |
+| `bevy-split` | bevy 的开销与 Slint 自己的各占多少(`?bevy=off`) |
+| `beat-source` | 两个页面各自拿到多少拍子 |
+| `pipeline-log` | 读打了桩的 femtovg 吐到控制台的日志(需要先挂本地副本,办法见 `docs/wasm/frame-rate.md` 第七节) |
+
 ## trace.ts
 
 录一段 Chrome trace 并算出帧的成本结构(帧率、主线程占用、GPU 进程占用、每帧 GPU 时间)。

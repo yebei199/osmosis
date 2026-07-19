@@ -5,7 +5,7 @@
 //
 // PROBE_TAB=0 换成不驱动 bevy 的页面做对照。
 import { test } from '@playwright/test';
-import { WEB_PORT } from './playwright.config';
+import { WEB_PORT } from '../playwright.config';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
 const TAB = process.env.PROBE_TAB ?? '2';
