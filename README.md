@@ -10,8 +10,9 @@
 | web / iOS | 能编译(CI 保证),尚未打包 |
 | windows / macOS | 复用 `apps/desktop`,只差一个 target |
 
-术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/),AI 助手在本仓库
-干活前先读 [`AGENTS.md`](AGENTS.md)。
+术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/),这套选型的能力
+上限推演见 [`docs/vision.md`](docs/vision.md),AI 助手在本仓库干活前先读
+[`AGENTS.md`](AGENTS.md)。
 
 界面有两种**版式**,由运行时窗口宽度切换(< 600px 为紧凑版式,导航在底部;否则导航在左侧
 竖栏)—— 桌面上把窗口拖窄就能看到移动端的样子,见
