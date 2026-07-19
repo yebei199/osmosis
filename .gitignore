@@ -11,6 +11,10 @@
 /apps/android/gradle/app/build
 /apps/android/gradle/build
 
+# e2e(test/e2e 那套 bun/playwright)
+node_modules/
+/test/e2e/test-results
+
 # IDE / misc
 *.iml
 .idea/
