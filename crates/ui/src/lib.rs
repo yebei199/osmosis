@@ -18,7 +18,7 @@ use slint::{ComponentHandle, RenderingState};
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui() -> MainWindow {
+fn build_ui(initial_tab: i32) -> MainWindow {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
@@ -27,8 +27,10 @@ fn build_ui() -> MainWindow {
 
     ui.set_show_fps(cfg!(feature = "debug-fps"));
     ui.set_platform(platform_name().into());
-    // 开局停在哪一页。只为验证:`just shot 420 2` 能直接截到 3D 页,不必再靠 MCP 模拟点击
-    // (那条路上有一串静默失败的坑,见 AGENTS.md)。没设或设歪了就走默认的 Home。
+    // 开局停在哪一页。平台入口给默认值,`SLINT_STUDY_TAB` 覆盖它 —— 后者是调试开关,
+    // `just shot 420 2` 靠它直接截到 3D 页,不必再靠 MCP 模拟点击(那条路上有一串静默
+    // 失败的坑,见 AGENTS.md)。没设或设歪了就用平台入口给的那个。
+    ui.set_current_tab(initial_tab.clamp(0, 2));
     if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
@@ -42,7 +44,7 @@ fn build_ui() -> MainWindow {
 /// 各平台入口在初始化好渲染后端后调用。不带 3D 的普通路径(web / ios,以及
 /// 未启用 3D 的桌面)走这里。
 pub fn run() {
-    let ui = build_ui();
+    let ui = build_ui(0);
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     #[cfg(feature = "debug-fps")]
     let _fps_timer = {
@@ -79,9 +81,10 @@ pub fn run() {
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
 /// 产出的纹理不属于 Slint 的 device,采样不出来。
 ///
-/// `initial_tab` 是启动时展示的页签下标,与 `app.slint` 的 `current-tab` 同义。平台入口
-/// 传 0 即可;web 端从 URL 读它,好让自动化测试直接落在 3D 页上 —— 界面画在 canvas 里,
+/// `initial_tab` 是启动时展示的页签下标,与 `app.slint` 的 `current-tab` 同义。桌面与
+/// 安卓传 0;web 端从 URL 读它,好让自动化测试直接落在 3D 页上:界面画在 canvas 里,
 /// 没有 DOM 元素可供点击,靠坐标点导航栏会在界面一改就静默量错页面。
+/// `SLINT_STUDY_TAB` 覆盖它,见 [`build_ui`]。
 pub fn run_with_renderer(
     initial_tab: i32,
     mut on_frame: impl FnMut(
@@ -91,8 +94,7 @@ pub fn run_with_renderer(
     ) -> slint::Image
     + 'static,
 ) {
-    let ui = build_ui();
-    ui.set_current_tab(initial_tab);
+    let ui = build_ui(initial_tab);
     #[cfg(feature = "debug-fps")]
     let (fps_frames, _fps_timer) = fps::start(&ui);
 
