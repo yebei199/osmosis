@@ -66,6 +66,7 @@ cd test/e2e && bunx playwright test probes/inside-wait
 | `raf-cancel` | rAF 有没有被取消重排 |
 | `format-swap` / `path-shape` / `device-shape` / `busy-main` / `host-page` / `two-passes` | 逐项复刻线上那一页的性质,按呈现帧数比 |
 | `texture-destroy` | 每帧建/毁多少纹理,以及销毁会不会让提交阻塞 |
+| `hold-texture` | 取到 swapchain 图像后持有一段时间再提交,会不会掉帧 |
 | `adapter-id` | 两页拿到的是不是同一块 GPU |
 | `raf-phase` | rAF 回调在一拍里的相位 |
 | `pipeline-log` | 读打了桩的 femtovg 吐到控制台的日志(需要先挂本地副本,办法见 `docs/wasm/frame-rate.md` 第七节) |
