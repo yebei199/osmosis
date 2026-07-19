@@ -355,12 +355,34 @@ rAF 没有被取消过(14 秒 2 次,都在启动)。
 的 WebGPU 调用比复刻件还少、回调只花 1.5ms,却只拿到隔一拍(13.9ms = 2×6.94ms),
 并且每帧有一次 `Queue::Submit` 阻塞 16~32ms。**
 
-下一步只能往 Rust 那侧走 —— JS 层已经查干净了:
+### Rust 那侧也查过了
 
-1. **wgpu 在 wasm 上怎么持有 surface texture。**若 `SurfaceTexture` 跨帧不释放,下一帧的
-   取图像就会等。这是 JS 复刻件结构上做不出来的差异,也是当前最大的嫌疑。
-2. **rAF 回调返回之后到合成截止之间发生了什么。**回调 1.5ms 就结束,却赶不上当拍,
-   说明有工作落在回调之外。给 winit 的事件循环打桩量这一段。
+读 slint fork 的 `internal/renderers/femtovg/wgpu.rs` 与 `lib.rs`,一帧的顺序是干净的:
+取图像 → clear flush → `BeforeRendering` 通知 → 画界面 → flush → `AfterRendering` → present。
+`SurfaceTexture` 不跨帧持有。
+
+`lib.rs:300` 每帧调 `texture_cache.drain()`,一度是最大嫌疑 —— 在 WebGPU 上销毁纹理要保证
+它不再被使用中的提交引用,Dawn 可能因此等到提交完成。**实测否掉了**:线上每帧
+`createTexture` 与 `destroy` 都是 **0 次**,而裸循环里每帧建毁 4 张纹理仍是 141.3/s。
+
+两页拿到的 adapter 也是同一块(nvidia lovelace)。这台机器确实有两块卡(另一块是
+amd gcn-5),但只有 `powerPreference: 'low-power'` 才会拿到它,我们没走那条路,
+不存在跨卡拷贝。
+
+### 这就是目前的墙
+
+线上那一页每帧只做:1 次 `getCurrentTexture`、2 次 `submit`、0 次 `configure`、
+0 次 `createTexture`、0 次 `destroy`,全在 rAF 回调那个任务里,回调 1.5ms。
+把这些性质逐项复刻到裸循环上,**每一项都跑满 141/s**。而线上那一页只拿到隔一拍,
+GPU 进程里每帧有一次 `Queue::Submit` 阻塞 16~32ms。
+
+**JS 层能观测的东西已经查干净,复刻路线走到头了。** 剩下的只能是 Chrome 内部:
+Dawn 的 `Queue::Submit` 到底在等什么。可走的路:
+
+1. 找更细的 Dawn 追踪类别,或用带符号的 Chrome,把 `Queue::Submit` 里那段没有子跨度的
+   时间拆开。当前的类别集合到 `Queue::Submit` 就没有更深的了。
+2. 做一个不含 bevy、不含 3D 的最小 Slint web 复现(需要让界面持续重绘),
+   若同样是 60Hz,就是可以提给上游的最小样例。
 3. 复测 MSAA —— 这批"无效"结论同样是在 16ms 天花板下得出的(错误一),尚未重做。
 
 ## 七、附:排查用的开关与工具
