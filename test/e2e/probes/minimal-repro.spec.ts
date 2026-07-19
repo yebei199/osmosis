@@ -17,10 +17,19 @@ test('最小复现的帧率', async ({ page }) => {
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
   });
+  const marks: string[] = [];
+  page.on('console', (m) => {
+    if (m.text().includes('PROBE repro build ready')) marks.push(m.text());
+  });
   await page.goto(`${BASE}/?${QUERY}`);
   console.log(`?${QUERY}`);
   await page.waitForTimeout(12_000);
   if (errors.length > 0) console.log(`控制台错误:\n${errors.slice(0, 5).join('\n')}`);
+  // dist/web 里是别的 feature 编出来的产物时,?rects= 不存在、页面也不是复现页,
+  // 量出来的数看着像结论,其实什么都不是。
+  if (marks.length === 0) {
+    throw new Error('页面没报 repro 标记 —— dist/web 里不是 repro 产物,先重新构建');
+  }
 
   // 焦点被别的窗口抢走时 rAF 会被压到 1Hz,而探针没有 frame-rate.spec 那样的哨兵 ——
   // 不检查的话只会安静地给出一个偏低的数字,据此下的结论就是错的。
