@@ -65,6 +65,9 @@ cd test/e2e && bunx playwright test probes/inside-wait
 | `same-task` | 取图像与提交在不在 rAF 回调那个任务里 |
 | `raf-cancel` | rAF 有没有被取消重排 |
 | `format-swap` / `path-shape` / `device-shape` / `busy-main` / `host-page` / `two-passes` | 逐项复刻线上那一页的性质,按呈现帧数比 |
+| `texture-destroy` | 每帧建/毁多少纹理,以及销毁会不会让提交阻塞 |
+| `adapter-id` | 两页拿到的是不是同一块 GPU |
+| `raf-phase` | rAF 回调在一拍里的相位 |
 | `pipeline-log` | 读打了桩的 femtovg 吐到控制台的日志(需要先挂本地副本,办法见 `docs/wasm/frame-rate.md` 第七节) |
 
 量"画面出去了几帧"要看 `Display::DrawAndSwap`,**不要拿 rAF 频率代替** —— 实测过应用页
