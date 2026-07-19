@@ -22,7 +22,19 @@ test('最小复现的帧率', async ({ page }) => {
   await page.waitForTimeout(12_000);
   if (errors.length > 0) console.log(`控制台错误:\n${errors.slice(0, 5).join('\n')}`);
 
-  // 先确认画面真的在动 —— 静止的页面不重绘,量到的会是"1fps"的假象。
+  // 焦点被别的窗口抢走时 rAF 会被压到 1Hz,而探针没有 frame-rate.spec 那样的哨兵 ——
+  // 不检查的话只会安静地给出一个偏低的数字,据此下的结论就是错的。
+  const focused = await page.evaluate(() => ({
+    hasFocus: document.hasFocus(),
+    visibility: document.visibilityState,
+  }));
+  if (!focused.hasFocus || focused.visibility !== 'visible') {
+    throw new Error(
+      `窗口不在前台(hasFocus=${focused.hasFocus} visibility=${focused.visibility}),量到的数不能用`,
+    );
+  }
+
+  // 再确认画面真的在动 —— 静止的页面不重绘,量到的会是"1fps"的假象。
   const moving = await page.evaluate(
     () =>
       new Promise<number>((resolve) => {
