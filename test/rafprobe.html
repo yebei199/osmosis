@@ -154,16 +154,17 @@ const DEVICE_CASES = [
   { name: '默认 device(对照)',          w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
 ];
 
+// 清屏必须在 initGpu **之前**:它在里面打 adapter/差集/丢失原因的诊断,后清会全部抹掉。
 document.getElementById('sweep').onclick = async () => {
-  if (!await initGpu()) return;
   out.textContent = '';
+  if (!await initGpu()) return;
   for (const cfg of [...CASES, ...DEVICE_CASES]) await runCase(cfg);
   log('--- 扫描完成');
 };
 
 document.getElementById('devonly').onclick = async () => {
-  if (!await initGpu()) return;
   out.textContent = '';
+  if (!await initGpu()) return;
   for (const cfg of DEVICE_CASES) await runCase(cfg);
   log('--- device 档完成');
 };
