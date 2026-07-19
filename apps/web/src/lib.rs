@@ -27,17 +27,21 @@ use wasm_bindgen::prelude::wasm_bindgen;
 /// 校对坐标可靠。见 `test/e2e/frame-rate.spec.ts`。
 #[cfg(feature = "bevy-3d")]
 fn initial_tab() -> i32 {
-    let Some(search) = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-    else {
-        return 0;
-    };
-    search
-        .trim_start_matches('?')
-        .split('&')
-        .find_map(|pair| pair.strip_prefix("tab="))
+    query_value("tab")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0)
+}
+
+/// 取 URL 查询串里某个键的值。
+#[cfg(feature = "bevy-3d")]
+fn query_value(key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    web_sys::window()
+        .and_then(|w| w.location().search().ok())?
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(&prefix))
+        .map(str::to_owned)
 }
 
 /// 浏览器加载 wasm 模块后自动调用。
@@ -59,8 +63,15 @@ pub async fn start() {
     // 下面这段 3D 分派与 apps/desktop、apps/android 的两份**逐字相同**(仅构造是
     // async),故意不抽,理由见 apps/android/src/lib.rs。改动时记得同步另两端。
     let mut scene = render3d::Scene::new_async().await;
+    // `?bevy=off` 跳过驱动渲染器,但**照常请求重绘** —— 于是界面仍以同样的节奏画,只是
+    // 不含 bevy 那一份工作。用来把 bevy 的开销与 Slint 自己的分开。直接不装渲染通知是
+    // 不行的:那样界面会停在原地,量到的就不是同一件事了。
+    let drive_renderer = query_value("bevy").as_deref() != Some("off");
     // seam:把 ui 的 SceneControls 平凡拷成 render3d 的 SceneParams(见 SceneParams 注释)。
     ui::run_with_renderer(initial_tab(), move |c, w, h| {
+        if !drive_renderer {
+            return slint::Image::default();
+        }
         scene.render_frame(
             &render3d::SceneParams {
                 scene_id: c.scene_id,

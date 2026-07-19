@@ -1,8 +1,8 @@
 // 探查:GPU 进程那 90% 占用是在干活,还是在等?
 // 把视口从大扫到极小,像素量掉两个数量级。占用率跟着掉 = 真在光栅化;不动 = 在等。
 import { test } from '@playwright/test';
-import { WEB_PORT } from './playwright.config';
-import { format, recordFrames } from './trace';
+import { WEB_PORT } from '../playwright.config';
+import { format, recordFrames } from '../trace';
 
 const BASE = `http://127.0.0.1:${WEB_PORT}`;
 const SIZES: { width: number; height: number }[] = [
