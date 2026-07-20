@@ -1,8 +1,11 @@
-// 液态玻璃后处理:把 bevy 画好的那张离屏纹理当输入,在指定的圆角矩形区域里做
-// 模糊 + 边缘折射 + 淡染,其余区域原样透传。输出另一张同尺寸纹理交给 Slint。
+// 液态玻璃后处理:在 bevy 的画面上,对指定的圆角矩形区域做模糊 + 边缘折射 + 淡染,
+// 其余区域原样透传。作为 bevy 的 FullscreenMaterial 跑在它自己的 ping-pong 纹理上。
 //
 // 这是 Slint **做不到**的那一步(它没有 backdrop blur,也拿不到自己渲染的像素),
 // 而我们能做,因为这块背景是我们自己在 GPU 上画的 —— 见 docs/slint/visual-effects-and-shaders.md。
+//
+// 顶点阶段由 bevy 的 FullscreenShader 提供,所以这里只有片元入口;模块里必须只有这一个
+// @fragment,管线不指定入口名。
 //
 // 分工:模糊/折射/淡染在这里;边框亮线、内侧厚度、悬浮阴影、指针高光仍由 Slint 的
 // GlassCard 画在上面(background 置空,避免淡染叠两遍)。
@@ -21,17 +24,6 @@ struct Params {
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> u: Params;
-
-// 全屏三角形:一个超出屏幕的大三角形盖住整个裁剪空间,不需要顶点缓冲。
-// 三个顶点是 (-1,-1)、(3,-1)、(-1,3) —— 两个掩码不能写反,写反了会得到重合顶点、
-// 退化成一条线,于是什么都不画,输出留着未初始化的内容(踩过:整块画面变一片灰)。
-@vertex
-fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
-    let i = i32(idx);
-    let x = f32((i << 1u) & 2) * 2.0 - 1.0;
-    let y = f32(i & 2) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}
 
 // 圆角矩形的有符号距离场:内部为负,外部为正,单位是像素。
 fn sd_round_rect(p: vec2<f32>, hs: vec2<f32>, r: f32) -> f32 {
