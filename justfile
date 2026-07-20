@@ -155,6 +155,53 @@ android-run: android-install android-reverse
     adb shell am start -n io.github.slintstudy/.MainActivity
     adb logcat -s slint_study
 
+# 量 3D 页的半截帧比率(闪黑,见 docs/wasm/native-regression-2026-07-19.md)
+#
+# 真实发生率是千分之一的量级,几百帧的样本量测到 0 是常态,别拿短录像下结论。
+# 120 秒约一万帧,才够把 0.1% 和 0 分开。
+[group('安卓')]
+android-flicker label secs="120":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pkg=io.github.slintstudy
+    out=dist/flick-{{label}}.mp4
+    alive() { adb shell pidof $pkg | tr -d '\r'; }
+
+    # 应用中途被杀会把 MIUI 桌面录进去,亮度分布整个变样,量出来的比率毫无意义。
+    # 踩过一次,报出 33.93% 的假数字。
+    before=$(alive)
+    [ -n "$before" ] || { echo "应用没在跑,先 just android-run" >&2; exit 1; }
+
+    # 3D 页在底部导航第三项。必须持续拖动:画面静止时 MIUI 把刷新压到几 Hz,
+    # 量到的是省电策略而不是渲染。
+    adb shell input tap 895 2196
+    sleep 2
+    adb shell screenrecord --time-limit {{secs}} --bit-rate 16000000 /sdcard/flick.mp4 &
+    rec=$!
+    sleep 1
+    end=$((SECONDS + {{secs}} - 2))
+    while [ $SECONDS -lt $end ]; do adb shell input swipe 540 1200 700 1000 200; done
+    wait $rec
+    sleep 1
+    [ "$(alive)" = "$before" ] || { echo "应用在录制期间重启或被杀,这次作废" >&2; exit 1; }
+
+    adb pull -a /sdcard/flick.mp4 "$out" >/dev/null
+    adb shell rm /sdcard/flick.mp4
+
+    # 逐帧算内容区平均亮度,低于中位亮度 80% 的记为半截帧。正常帧约 68,半截帧约 37,
+    # 两档之间没有中间值,判据不敏感。逐帧起 magick 进程要跑十几分钟,这条几秒。
+    ffprobe -v error -f lavfi -i "movie=$out,crop=1080:1100:0:800,signalstats" \
+      -show_entries frame_tags=lavfi.signalstats.YAVG -of csv=p=0 |
+      awk -v label={{label}} '
+        { v[NR] = $1 }
+        END {
+          if (NR == 0) { print label ": 没抓到帧"; exit 1 }
+          asort(v); med = v[int((NR + 1) / 2)]; thr = med * 0.8
+          for (i = 1; i <= NR; i++) if (v[i] < thr) bad++
+          printf "%s: 帧数 %d, 半截帧 %d, 比率 %.2f%%, 中位亮度 %.1f, 最暗 %.1f\n",
+            label, NR, bad, bad * 100.0 / NR, med, v[1]
+        }'
+
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
 # 连的是别人的移动热点/公司 WiFi 多半被隔离,手机连不上,请改用 android-install
