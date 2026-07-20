@@ -7,15 +7,16 @@
 //!
 //! 代价同样写在那篇文档里:**玻璃背后不能有 Slint 控件** —— 这里模糊的只是 bevy 的画面。
 //!
-//! ## 为什么长在 bevy 的渲染管线里,而不是自己起一个 pass
+//! ## 为什么长在 bevy 的渲染管线里
 //!
 //! 早先的实现自己建一张输出纹理、自己 `queue.submit`,再把那张纹理交给 Slint 采样。
-//! 安卓上拖动时会闪黑:那张纹理由 bevy 之外的通道写,又被 Slint 用 wgpu 看不见的命令读,
-//! 两侧没有屏障。实测把这个 pass 关掉就是 0 次闪黑,而缩小撞车窗口的办法(改 `LoadOp`)
-//! 只能把频率压到三分之一。整个排查见 `docs/wasm/native-regression-2026-07-19.md`。
-//!
 //! 现在它是 bevy 的一个 [`FullscreenMaterial`],在 bevy 自己的 ping-pong 纹理上做,
-//! 最终结果由 bevy 写进那张共享纹理。链上只剩一张纹理、只有一个写入方。
+//! 结果由 bevy 写进那张共享纹理。链上只剩一张纹理、一个写入方,净删 239 行,也不再
+//! 每帧重建 view 与 bind group。
+//!
+//! 这次重构一度被当成安卓闪黑的修复,那个说法不成立:把玻璃整个关掉,闪黑照旧出现,
+//! 比率还略高(9/1256 对 6/1534)。排查全过程见
+//! `docs/wasm/native-regression-2026-07-19.md`。
 
 use bevy::asset::embedded_asset;
 use bevy::core_pipeline::fullscreen_material::{
