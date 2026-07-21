@@ -23,6 +23,10 @@ ci-test:
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p xtask'
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets'
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p server -p xtask'
+    # render3d 不在 default-members 里(它拖整个 bevy),裸 `cargo test` 从不碰它 ——
+    # 不点名的话,相机后撤与遮挡门槛那几个单测一次都不会跑。GitHub 的 workflow 同样
+    # 不编 bevy,所以这条是它们唯一的防线。
+    nix-shell render3d.nix --run 'RUSTFLAGS="-D warnings" cargo test -p render3d'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
 [group('ci')]
