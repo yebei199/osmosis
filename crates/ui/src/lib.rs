@@ -69,8 +69,10 @@ pub fn run() {
 /// 同 [`run`],但额外每帧驱动一个外部渲染器,把它产出的画面推到 3D 面板。
 ///
 /// `on_frame` 由平台入口提供(见 `render3d`):每帧以当前 [`SceneControls`] 和面板
-/// **物理像素**尺寸 `(w, h)` 调用一次,内部驱动 bevy 前进一帧,返回离屏纹理包装成的
-/// [`slint::Image`]。控制量在这里组装:朝向来自 `rot-yaw`/`rot-pitch`,场景与热调参数
+/// **物理像素**尺寸 `(w, h)` 调用一次,内部驱动 bevy 前进一帧,返回 **(场景, 遮挡层)**
+/// 两张离屏纹理包装成的 [`slint::Image`] —— 后者只含比注释卡片更近的那部分场景,
+/// `app.slint` 把它盖在卡片上做出深度正确的遮挡。控制量在这里组装:
+/// 朝向来自 `rot-yaw`/`rot-pitch`,场景与热调参数
 /// 来自 `scene-index` 与四个 LineEdit 文本——原始文本在**信任边界**用 [`scene_params`]
 /// 解析+clamp,非法/越界退回上一个好值(持久保存在 `controls` 里)。尺寸取 3D 面板逻辑
 /// 尺寸乘窗口缩放系数,让 bevy 按物理分辨率渲染、HiDPI 上清晰。
@@ -91,7 +93,8 @@ pub fn run_with_renderer(
         &SceneControls,
         u32,
         u32,
-    ) -> slint::Image
+    )
+        -> (slint::Image, slint::Image)
     + 'static,
 ) {
     let ui = build_ui(initial_tab);
@@ -188,8 +191,10 @@ pub fn run_with_renderer(
                 radius: ui.get_glass_r() * scale,
             };
 
-            let frame = on_frame(&controls, w, h);
-            ui.set_scene_3d(frame);
+            let (scene, occluder) =
+                on_frame(&controls, w, h);
+            ui.set_scene_3d(scene);
+            ui.set_occluder_3d(occluder);
             ui.window().request_redraw();
             frame_acct.end_callback();
         })

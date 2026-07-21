@@ -141,8 +141,13 @@ pub fn start() {
     console_error_panic_hook::set_once();
     let _ = console_log::init();
     if query_value("notifier").as_deref() == Some("on") {
+        // 两张空图:场景与遮挡层。空图让 .slint 里的 width > 0 守卫把 3D 面板与
+        // 注释卡片一起隐藏,这条路径本来就只为量重绘节奏,不画任何 3D。
         ui::run_with_renderer(initial_tab(), |_, _, _| {
-            slint::Image::default()
+            (
+                slint::Image::default(),
+                slint::Image::default(),
+            )
         });
     } else {
         ui::run();
@@ -167,7 +172,10 @@ pub async fn start() {
     // seam:把 ui 的 SceneControls 平凡拷成 render3d 的 SceneParams(见 SceneParams 注释)。
     ui::run_with_renderer(initial_tab(), move |c, w, h| {
         if !drive_renderer {
-            return slint::Image::default();
+            return (
+                slint::Image::default(),
+                slint::Image::default(),
+            );
         }
         scene.render_frame(
             &render3d::SceneParams {

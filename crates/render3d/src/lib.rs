@@ -9,6 +9,10 @@
 //!   绝不调 `App::run()` —— 事件循环永远归 Slint。
 //! - bevy 与 Slint 共享同一 wgpu 大版本(现为 29),纹理类型才是同一个,才能被 Slint 采样。
 //!
+//! 每帧产出**两张**图:场景本身,以及一张只含「比注释卡片更近」的片元的遮挡层
+//! (见 [`spawn_occluder_camera`])。UI 侧把二者夹着卡片叠三层,卡片就被 3D 物体
+//! 逐像素挡住 —— 深度正确的 UI。
+//!
 //! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
 //! 必须在建窗口**之前**调 —— 再把 `move || scene.render_frame()` 交给 `ui::run_with_renderer`。
 //! web 入口(`apps/web`)用异步版 [`Scene::new_async`],其余接线相同。
@@ -19,7 +23,9 @@ use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
-use bevy::camera::RenderTarget;
+use bevy::camera::{
+    Camera3dDepthLoadOp, ClearColorConfig, RenderTarget,
+};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::platform::time::Instant;
 use bevy::render::RenderApp;
@@ -47,6 +53,13 @@ const HEIGHT: u32 = 240;
 
 /// 每帧耗时日志的采样窗口(帧)。约两秒一行,够看趋势又不刷屏。
 const PERF_WINDOW: u32 = 120;
+
+/// 注释卡片挂在场景里的哪个世界点。转盘中心 —— 环上的形状半圈在它前面、半圈在后面,
+/// 转一圈就能看到同一个物体先挡住卡片、再转到卡片背后。
+const CARD_ANCHOR: Vec3 = Vec3::ZERO;
+
+/// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
+const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
 
 /// 一帧的场景控制量:由 UI 侧组装,跨进程内边界传给渲染器。
 ///
@@ -98,6 +111,10 @@ pub struct Scene {
     root: Entity,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
+    /// 遮挡层的离屏目标图:同一个场景,但只留比 [`CARD_ANCHOR`] 更近的片元,其余透明。
+    occluder_target: Handle<Image>,
+    /// 画遮挡层的第二台相机(见 [`spawn_occluder_camera`])。
+    occluder_camera: Entity,
     /// 六种内置图元的网格句柄,建一次复用。索引 0(Cuboid)兼作阵列场景的方块。
     mesh_palette: Vec<Handle<Mesh>>,
     /// 上一帧的场景参数;`content_key` 变化才重建内容。首帧为 `None`,必重建。
@@ -111,16 +128,16 @@ pub struct Scene {
     /// `image` 里那张对应的 (宽, 高, 是否走了玻璃 pass)。三者任一变化都得重新导入 ——
     /// 玻璃开关一翻,交给 Slint 的就换成了另一张纹理。
     image_key: Option<(u32, u32, bool)>,
+    /// 遮挡层纹理包装成的 Image 及其 (宽, 高)。缓存理由同 `image`:纹理身份稳定就只包一次。
+    /// 这一层不过玻璃 pass,故 key 里没有那个开关。
+    occluder_image: Option<slint::Image>,
+    occluder_key: Option<(u32, u32)>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
     /// 每帧耗时的累加器(毫秒):(bevy `app.update()`, 玻璃 pass)。
     /// 每 [`PERF_WINDOW`] 帧算一次均值打日志再清零 —— web 上帧率卡在 50 时,
     /// 要先知道那 20ms 花在哪一边,才谈得上优化。
     perf: (f64, f64),
-    /// 液态玻璃后处理。持有它自己的管线与输出纹理。
-    /// 共享的 device / queue,玻璃 pass 每帧要用。与 Slint、bevy 是同一套。
-    device: wgpu::Device,
-    queue: wgpu::Queue,
 }
 
 impl Scene {
@@ -236,6 +253,15 @@ impl Scene {
         //    场景内容(形状)首帧按 UI 传入的 SceneParams 用 bsn! 构建(见 render_frame)。
         let camera =
             spawn_camera_and_light(&mut app, &target);
+        // 6) 遮挡层:第二张目标图 + 第二台相机,合成顺序上排在卡片之后(见其文档)。
+        let aspect = WIDTH as f32 / HEIGHT as f32;
+        let occluder_target =
+            make_target(&mut app, WIDTH, HEIGHT);
+        let occluder_camera = spawn_occluder_camera(
+            &mut app,
+            &occluder_target,
+            aspect,
+        );
         let mesh_palette = build_mesh_palette(&mut app);
         let root = app
             .world_mut()
@@ -251,20 +277,28 @@ impl Scene {
             target,
             root,
             camera,
+            occluder_target,
+            occluder_camera,
             mesh_palette,
             last_key: None,
             spin_angle: 0.0,
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
+            occluder_image: None,
+            occluder_key: None,
             perf: (0.0, 0.0),
             frames: 0,
-            device,
-            queue,
         }
     }
 
-    /// 按 UI 传入的 [`SceneParams`] 和面板尺寸渲染一帧,返回离屏纹理包装成的 [`slint::Image`]。
+    /// 按 UI 传入的 [`SceneParams`] 和面板尺寸渲染一帧,返回 **(场景, 遮挡层)** 两张
+    /// 离屏纹理包装成的 [`slint::Image`]。
+    ///
+    /// 两张图的用法见 [`spawn_occluder_camera`]:UI 侧把它们夹着注释卡片叠三层,
+    /// 卡片就被场景里更近的物体逐像素挡住。返回裸元组而不是自定义结构体 ——
+    /// `slint::Image` 是 ui 与 render3d 本就共有的类型,新造一个镜像结构体只是多一份
+    /// 要同步的字段(镜像的代价见 [`SceneParams`] 的注释)。
     ///
     /// 内容相关字段(场景/数量/颜色/间距)变化时先用 bsn! 重建场景内容;朝向字段
     /// (yaw/pitch/自转)只更新转盘根的 Transform。`width` / `height` 为面板物理像素尺寸,
@@ -277,7 +311,7 @@ impl Scene {
         params: &SceneParams,
         width: u32,
         height: u32,
-    ) -> slint::Image {
+    ) -> (slint::Image, slint::Image) {
         if width > 0
             && height > 0
             && (width, height) != self.size
@@ -328,31 +362,45 @@ impl Scene {
         self.perf.1 +=
             t_glass.elapsed().as_secs_f64() * 1000.0;
 
+        // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机只在 resize
+        // 时移动,那一帧的门槛会差一帧,肉眼不可见,不值得为它多跑一次 transform 传播。
+        let depth = self.anchor_depth();
+        if let Some(mut cam3d) =
+            self.app
+                .world_mut()
+                .get_mut::<Camera3d>(self.occluder_camera)
+        {
+            cam3d.depth_load_op =
+                Camera3dDepthLoadOp::Clear(depth);
+        }
+
         let t_update = Instant::now();
         self.app.update();
         self.perf.0 +=
             t_update.elapsed().as_secs_f64() * 1000.0;
         self.frames += 1;
 
-        let Some(tex) = self.extract_texture() else {
+        let Some(tex) = self.extract_texture(&self.target)
+        else {
             if self.frames == 120 {
                 // 两秒还没就绪,多半是渲染子世界里没准备出 GpuImage —— 值得告警排查。
                 log::warn!(
                     "render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示"
                 );
             }
-            return self.image.clone().unwrap_or_default();
+            return self.frame_images();
         };
 
         if self.frames.is_multiple_of(PERF_WINDOW) {
             let n = f64::from(PERF_WINDOW);
             log::info!(
-                "render3d: 近 {PERF_WINDOW} 帧均耗时 —— app.update() {:.2}ms,玻璃 pass {:.2}ms,合计 {:.2}ms({}x{})",
+                "render3d: 近 {PERF_WINDOW} 帧均耗时 —— app.update() {:.2}ms,玻璃 pass {:.2}ms,合计 {:.2}ms({}x{},遮挡门槛 {:.5})",
                 self.perf.0 / n,
                 self.perf.1 / n,
                 (self.perf.0 + self.perf.1) / n,
                 self.size.0,
                 self.size.1,
+                depth,
             );
             self.perf = (0.0, 0.0);
         }
@@ -381,17 +429,69 @@ impl Scene {
                 ),
             }
         }
-        self.image.clone().unwrap_or_default()
+
+        // 遮挡层同理:身份稳定就只包一次。它比场景图晚一帧就绪也无妨 —— UI 侧的
+        // `occluder-3d.width > 0` 守卫会让卡片先以不被遮挡的样子出现。
+        if let Some(tex) =
+            self.extract_texture(&self.occluder_target)
+        {
+            let key = (tex.width(), tex.height());
+            if self.occluder_key != Some(key) {
+                match slint::Image::try_from(tex) {
+                    Ok(img) => {
+                        log::info!(
+                            "render3d: 遮挡层就绪(第 {} 帧),{}x{} 已导入 Slint",
+                            self.frames,
+                            key.0,
+                            key.1
+                        );
+                        self.occluder_image = Some(img);
+                        self.occluder_key = Some(key);
+                    }
+                    Err(e) => log::error!(
+                        "遮挡层纹理导入 Slint 失败: {e:?}"
+                    ),
+                }
+            }
+        }
+
+        self.frame_images()
     }
 
-    /// 从 bevy 的渲染子世界里取出离屏目标图对应的 `wgpu::Texture`。
-    fn extract_texture(&self) -> Option<SharedTexture> {
+    /// 当前这一帧交给 UI 的两张图:(场景, 遮挡层)。任一未就绪时给空图。
+    fn frame_images(&self) -> (slint::Image, slint::Image) {
+        (
+            self.image.clone().unwrap_or_default(),
+            self.occluder_image.clone().unwrap_or_default(),
+        )
+    }
+
+    /// [`CARD_ANCHOR`] 在主相机里的 NDC 深度,供遮挡层清除深度缓冲用(见 [`occluder_depth`])。
+    fn anchor_depth(&self) -> f32 {
+        let camera_entity =
+            self.app.world().entity(self.camera);
+        let (Some(camera), Some(transform)) = (
+            camera_entity.get::<Camera>(),
+            camera_entity.get::<GlobalTransform>(),
+        ) else {
+            return EMPTY_OCCLUDER_DEPTH;
+        };
+        occluder_depth(
+            camera.world_to_ndc(transform, CARD_ANCHOR),
+        )
+    }
+
+    /// 从 bevy 的渲染子世界里取出某张离屏目标图对应的 `wgpu::Texture`。
+    fn extract_texture(
+        &self,
+        handle: &Handle<Image>,
+    ) -> Option<SharedTexture> {
         let gpu_images = self
             .app
             .get_sub_app(RenderApp)?
             .world()
             .get_resource::<RenderAssets<GpuImage>>()?;
-        let gpu_image = gpu_images.get(&self.target)?;
+        let gpu_image = gpu_images.get(handle)?;
         // GpuImage.texture: render_resource::Texture, Deref 到 wgpu::Texture。
         Some((*gpu_image.texture).clone())
     }
@@ -419,16 +519,40 @@ impl Scene {
                 .looking_at(Vec3::ZERO, Vec3::Y),
             ));
 
-        let old =
-            std::mem::replace(&mut self.target, new_target);
+        // 遮挡层必须与场景图同尺寸同视角,否则两层对不上,遮挡会整体错位。
+        let new_occluder =
+            make_target(&mut self.app, width, height);
         self.app
             .world_mut()
-            .resource_mut::<Assets<Image>>()
-            .remove(&old);
+            .entity_mut(self.occluder_camera)
+            .insert((
+                RenderTarget::Image(
+                    new_occluder.clone().into(),
+                ),
+                Transform::from_translation(camera_pos(
+                    aspect,
+                ))
+                .looking_at(Vec3::ZERO, Vec3::Y),
+            ));
+
+        let old =
+            std::mem::replace(&mut self.target, new_target);
+        let old_occluder = std::mem::replace(
+            &mut self.occluder_target,
+            new_occluder,
+        );
+        let mut images = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<Image>>();
+        images.remove(&old);
+        images.remove(&old_occluder);
 
         self.size = (width, height);
         self.image = None;
         self.image_key = None;
+        self.occluder_image = None;
+        self.occluder_key = None;
     }
 
     /// 按新参数重建转盘内容:despawn 旧根子树,用 bsn! 声明式生成 root + 子形状。
@@ -552,6 +676,77 @@ fn spawn_camera_and_light(
             .looking_at(Vec3::ZERO, Vec3::Y),
         ))
         .id()
+}
+
+/// 第二台相机:与主相机同位、同投影、同色调映射,渲染进**遮挡层**目标图。
+///
+/// 这一台是「深度正确的 UI」的全部机关。UI 侧把画面叠成三层 —— 场景、Slint 卡片、
+/// 遮挡层 —— 于是卡片被场景里更近的物体逐像素挡住,而 Slint 只做了寻常的 alpha 合成:
+/// 它不需要知道深度,UI 也不需要先渲进纹理。
+///
+/// 与主相机只差两处,合起来就是那个效果:
+/// - 清除色透明:没画到的地方 alpha 为 0,合成时露出下面的卡片;
+/// - 深度缓冲不清到远平面,而是清到卡片锚点的深度(每帧由 `render_frame` 填,
+///   见 [`occluder_depth`]),于是只有**比卡片更近**的片元能过 `GreaterEqual`。
+///
+/// 逐片元是关键:一个横跨锚点平面的立方体会被平面切开,而不是整体跳到卡片前面或后面。
+/// 这是 CPU 侧按物体排序做不到的,也正是「合成器把 UI 整层贴在 canvas 上」的方案
+/// 在原理上做不到的那件事。
+///
+/// ponytail: 代价是几何被提交两遍。8~64 个形状时可忽略;真要省,可在卡片隐藏时
+/// 把这台相机 `is_active` 关掉,或改成采样深度纹理的一个全屏 pass(那需要自建
+/// 渲染图节点与 WGSL,现在不值)。
+///
+/// `order` 排在主相机之后,只为让两次渲染先后确定;二者目标不同,并无依赖。
+fn spawn_occluder_camera(
+    app: &mut App,
+    target: &Handle<Image>,
+    aspect: f32,
+) -> Entity {
+    app.world_mut()
+        .spawn((
+            Camera3d {
+                // 首帧的占位值,真值每帧由 render_frame 填。
+                depth_load_op: Camera3dDepthLoadOp::Clear(
+                    EMPTY_OCCLUDER_DEPTH,
+                ),
+                ..default()
+            },
+            Camera {
+                order: 1,
+                clear_color: ClearColorConfig::Custom(
+                    Color::NONE,
+                ),
+                ..default()
+            },
+            RenderTarget::Image(target.clone().into()),
+            // 必须与主相机一致:同一个物体在两层里出现时颜色要逐像素相同,
+            // 否则被切开的那半会显出另一种色调,穿帮。
+            Tonemapping::None,
+            Transform::from_translation(camera_pos(aspect))
+                .looking_at(Vec3::ZERO, Vec3::Y),
+        ))
+        .id()
+}
+
+/// 遮挡层的深度清除值:锚点的 NDC 深度。
+///
+/// bevy 用反向 Z(1 是近平面,0 是远平面),深度测试是 `GreaterEqual`。把深度缓冲
+/// 预先清到这个值,只有比锚点更近的片元能通过测试画进遮挡层。
+///
+/// 锚点跑到相机背后、或投影退化出非有限值时退回 [`EMPTY_OCCLUDER_DEPTH`]:遮挡层为空,
+/// 卡片完整可见。宁可少一个效果,也不能把整幅场景糊在卡片上 —— 后者是刺眼的错画面。
+/// wgpu 另有硬性要求:深度清除值必须落在 [0, 1],越界会被校验层拒掉。
+fn occluder_depth(anchor_ndc: Option<Vec3>) -> f32 {
+    match anchor_ndc {
+        Some(ndc)
+            if ndc.z.is_finite()
+                && (0.0..=1.0).contains(&ndc.z) =>
+        {
+            ndc.z
+        }
+        _ => EMPTY_OCCLUDER_DEPTH,
+    }
 }
 
 /// 相机在参考长宽比下的位置。宽视口恒用这个位置 —— 改动前的观感基线。
@@ -689,6 +884,42 @@ mod tests {
             (below - above).abs() < 1e-2,
             "参考比两侧应连续,实测 {below} vs {above}"
         );
+    }
+
+    /// 锚点在视锥内:深度门槛就是它自己的 NDC z,遮挡层据此只留更近的片元。
+    #[test]
+    fn anchor_in_frustum_becomes_the_depth_threshold() {
+        assert_eq!(
+            occluder_depth(Some(Vec3::new(0.0, 0.0, 0.42))),
+            0.42
+        );
+        // 两个端点也是合法值:近平面(全空)与远平面(全遮挡)。
+        assert_eq!(occluder_depth(Some(Vec3::ZERO)), 0.0);
+        assert_eq!(
+            occluder_depth(Some(Vec3::new(0.0, 0.0, 1.0))),
+            1.0
+        );
+    }
+
+    /// 边界:锚点投影不出来(在相机背后)或落在 [0,1] 之外时,遮挡层必须为空。
+    ///
+    /// 这条是防错画面的,不是防崩溃:清除值越界会被 wgpu 校验层拒掉,而"退回整幅场景
+    /// 糊住卡片"比"少一个遮挡效果"难看得多。
+    #[test]
+    fn anchor_outside_the_frustum_empties_the_occluder() {
+        assert_eq!(
+            occluder_depth(None),
+            EMPTY_OCCLUDER_DEPTH
+        );
+        for z in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                occluder_depth(Some(Vec3::new(
+                    0.0, 0.0, z
+                ))),
+                EMPTY_OCCLUDER_DEPTH,
+                "NDC z = {z} 应该退回空遮挡层"
+            );
+        }
     }
 
     /// 退化输入不产生疯狂结果:长宽比为 0 / 负数 / NaN(窗口被拖到 1px、首帧未测量)时

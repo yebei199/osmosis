@@ -196,6 +196,9 @@ export component MainWindow inherits Window {
     // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
     // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> scene-3d;
+    // 遮挡层:同一个场景,但只含**比注释卡片更近**的片元,其余透明(由 render3d 的
+    // 第二台相机画出)。盖在卡片之上,卡片就被 3D 物体逐像素挡住。
+    in property <image> occluder-3d;
     // 3D 立方体的朝向(弧度),由「3D」页上的拖动累加得到,Rust 每帧读出后
     // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
     in-out property <float> rot-yaw: 0;
@@ -238,6 +241,14 @@ export component MainWindow inherits Window {
     // 宽版:8 + 57 + 8 ≈ 76px。紧凑版 = 8 + 56(按钮) + 8 + (57×2 + 8) + 8 = 202 → 取 204px。
     out property <length> glass-h: root.compact ? 204px : 76px;
     out property <length> glass-r: 18px;
+
+    // 注释卡片的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
+    // 盖在卡片上的遮挡层要靠这几个值反推负偏移,才能和场景那张图逐像素对齐。
+    // 居中摆:转盘中心投影在画面正中,卡片钉在那儿,环上的形状转到近侧就压过来。
+    out property <length> card-w: 300px;
+    out property <length> card-h: 92px;
+    out property <length> card-x: (content.width - root.card-w) / 2;
+    out property <length> card-y: (content.height - root.card-h) / 2;
     // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
     out property <bool> render-active: root.current-tab == 2;
     // 用户点击触发,在 Rust 侧处理。
@@ -403,6 +414,59 @@ export component MainWindow inherits Window {
                             drag.last-x = drag.mouse-x;
                             drag.last-y = drag.mouse-y;
                         }
+                    }
+                }
+
+                // 深度正确的 UI:一张真正的 Slint 卡片,被 bevy 场景里的物体逐像素挡住。
+                //
+                // 合成拆成三层 —— 场景(上面那张 Image)→ 卡片 → 遮挡层。遮挡层是 bevy
+                // 用第二台相机画的同一场景,深度缓冲预先清到卡片所在的深度,于是只剩
+                // "比卡片更近"的片元,其余透明(见 crates/render3d 的 spawn_occluder_camera)。
+                // Slint 这边只做寻常的 alpha 合成:它不需要懂深度,UI 也不必先渲进纹理。
+                //
+                // 外层 Rectangle 只干一件事:clip。遮挡层那张 Image 是**整块内容区**大小的
+                // ——它必须和场景那张逐像素对齐,才谈得上是同一个场景——所以用负偏移把它
+                // 推回内容区原点,再由这里裁到卡片范围。不裁的话,近处的物体会连工具条
+                // 一起盖住,那是错的:工具条是界面外壳,不在场景里。
+                if root.current-tab == 2 && root.occluder-3d.width > 0: Rectangle {
+                    x: root.card-x;
+                    y: root.card-y;
+                    width: root.card-w;
+                    height: root.card-h;
+                    clip: true;
+
+                    // passive:这是一张标签,不是控件。让开指针事件,拖动才能穿过它
+                    // 转动场景 —— 它正压在画面中心,吃掉事件的话那一块就转不动了。
+                    GlassCard {
+                        width: 100%;
+                        height: 100%;
+                        passive: true;
+                        VerticalLayout {
+                            padding: 14px;
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: "转盘中心";
+                                color: #e6e8ef;
+                                font-size: 15px;
+                            }
+                            Text {
+                                text: "近侧的物体会逐像素挡住它";
+                                color: #9aa0b4;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    Image {
+                        x: -root.card-x;
+                        y: -root.card-y;
+                        width: content.width;
+                        height: content.height;
+                        image-fit: fill;
+                        source: root.occluder-3d;
                     }
                 }
 

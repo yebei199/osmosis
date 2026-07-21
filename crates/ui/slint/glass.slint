@@ -69,6 +69,10 @@ export component GlassCard inherits Rectangle {
     // 为假时(Home / Server 页)只能靠半透明"透出"背后的极光 —— Slint 没有 backdrop blur,
     // 那两页的玻璃是不会真的模糊背景的。这不是偷懒,是上游没有这个 API。
     in property <bool> backdrop: false;
+    // 纯装饰卡片:让开指针事件,下层元素照常收到点击与拖动。用在"标签"而非"控件"上
+    // ——3D 页那张注释卡片压在画面正中,吃掉事件的话那一块就拖不动了。
+    // 代价是没有指针高光(触摸设备本来也没有)。
+    in property <bool> passive: false;
 
     border-radius: root.radius;
     // 淡白:靠的是"透出背后的极光",不是自己有颜色。调太高会糊成一块白板,
@@ -119,7 +123,9 @@ export component GlassCard inherits Rectangle {
 
     // 只用来读指针位置,不吃点击:上层的 HoverButton / LineEdit 各有自己的 TouchArea,
     // 声明在后 → 位于其上 → 点击优先给它们。
-    touch := TouchArea { }
+    touch := TouchArea {
+        enabled: !root.passive;
+    }
 
     @children
 }
