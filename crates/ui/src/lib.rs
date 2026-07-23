@@ -9,6 +9,9 @@ slint::include_modules!();
 mod scene_params;
 pub use scene_params::SceneControls;
 
+mod nav_glass;
+pub use nav_glass::NavGlassControls;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -89,12 +92,37 @@ pub fn run() {
 /// `SLINT_STUDY_TAB` 覆盖它,见 [`build_ui`]。
 pub fn run_with_renderer(
     initial_tab: i32,
+    on_frame: impl FnMut(
+        &SceneControls,
+        u32,
+        u32,
+    ) -> (slint::Image, slint::Image)
+    + 'static,
+) {
+    // 不要导航选中器的调用方(web、无 nav 的构建)走这里:交给一个恒不产图的空 nav 闭包,
+    // 复用同一套通知回调,避免把回调逻辑抄两份。
+    run_with_renderers(initial_tab, on_frame, |_| None);
+}
+
+/// 同 [`run_with_renderer`],但额外驱动导航侧栏的液态玻璃选中器。
+///
+/// `nav_frame` 由平台入口提供(见 `render3d::NavGlassPass`):切 tab 的转场期间,以物理像素
+/// 的 [`NavGlassControls`] 调用,内部用独立 wgpu pass 画出侧栏背景纹理,返回其 `slint::Image`。
+/// 与 3D 的 `render-active` 门**相互独立** —— 导航栏常驻,选中器只在 metaball 还在走时重渲,
+/// 静止后 Slint 复用上一帧纹理(省电门 [`nav_glass::nav_transition_active`],再叠一道尺寸变化判定
+/// 兜住窗口缩放)。返回 `None`(如空 nav 闭包)则这一帧不更新 `nav-bg`。
+pub fn run_with_renderers(
+    initial_tab: i32,
     mut on_frame: impl FnMut(
         &SceneControls,
         u32,
         u32,
     )
         -> (slint::Image, slint::Image)
+    + 'static,
+    mut nav_frame: impl FnMut(
+        &NavGlassControls,
+    ) -> Option<slint::Image>
     + 'static,
 ) {
     let ui = build_ui(initial_tab);
@@ -121,6 +149,10 @@ pub fn run_with_renderer(
         // 每帧从 .slint 量出来重算,初值无所谓。
         glass: scene_params::GlassRect::default(),
     };
+    // 导航选中器的跨帧状态:上一帧的 (lead, lag) 逻辑位置与 (栏宽, 栏高) 物理尺寸,
+    // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
+    let mut nav_last_ll: Option<(f32, f32)> = None;
+    let mut nav_last_size: Option<(f32, f32)> = None;
     // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
     // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
     // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
@@ -152,10 +184,48 @@ pub fn run_with_renderer(
             frame_acct.begin_frame();
 
             let Some(ui) = weak.upgrade() else { return };
+            let scale = ui.window().scale_factor();
+
+            // ── 导航侧栏液态玻璃选中器 ──
+            // 常驻侧栏,与下面 3D 的 render-active 门相互独立:只在切 tab 的 metaball 还在走
+            // (lead/lag 相对上一帧变化)或栏尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
+            // 紧凑版式(手机底栏)没有这条侧栏,nav-visible 为假,整段跳过。
+            if ui.get_nav_visible() {
+                let lead = ui.get_nav_lead_y();
+                let lag = ui.get_nav_lag_y();
+                let strip_w =
+                    (ui.get_nav_w() * scale).max(1.0);
+                let strip_h =
+                    (ui.get_nav_h() * scale).max(1.0);
+                let size_changed = nav_last_size
+                    != Some((strip_w, strip_h));
+                if nav_glass::nav_transition_active(
+                    lead,
+                    lag,
+                    nav_last_ll,
+                ) || size_changed
+                {
+                    if let Some(img) =
+                        nav_frame(&NavGlassControls {
+                            strip_w,
+                            strip_h,
+                            lead_y: lead * scale,
+                            lag_y: lag * scale,
+                            slot_h: ui.get_nav_slot_h()
+                                * scale,
+                        })
+                    {
+                        ui.set_nav_bg(img);
+                    }
+                    nav_last_ll = Some((lead, lag));
+                    nav_last_size =
+                        Some((strip_w, strip_h));
+                }
+            }
+
             if !ui.get_render_active() {
                 return;
             }
-            let scale = ui.window().scale_factor();
             let w =
                 (ui.get_scene_w() * scale).max(1.0) as u32;
             let h =
