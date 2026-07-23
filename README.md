@@ -11,7 +11,7 @@
 | windows / macOS | 复用 `apps/desktop`,只差一个 target |
 
 术语见 [`CONTEXT.md`](CONTEXT.md),架构决策见 [`docs/adr/`](docs/adr/),这套选型的能力
-上限推演见 [`docs/vision.md`](docs/vision.md),AI 助手在本仓库干活前先读
+上限推演见 [`docs/note/vision.md`](docs/note/vision.md),AI 助手在本仓库干活前先读
 [`AGENTS.md`](AGENTS.md)。
 
 界面有两种**版式**,由运行时窗口宽度切换(< 600px 为紧凑版式,导航在底部;否则导航在左侧
@@ -48,7 +48,7 @@ server/            开发用 axum 服务端,与客户端共享 contract
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
 xtask/             构建逻辑(`cargo xtask android`),容器/本机通用
-docs/build-apk.md  APK 构建全流程与编译逻辑详解
+docs/note/build-apk.md  APK 构建全流程与编译逻辑详解
 ```
 
 `app-core` 不知道 `api` 的存在:网络由 `ui` 注入。这既让领域逻辑能脱离网络单测,
@@ -118,7 +118,7 @@ ABIS="arm64-v8a armeabi-v7a x86_64" just android-build
 ```
 
 - Docker 路径细节见 [`docker/README.md`](docker/README.md);
-- 完整编译流程见 [`docs/build-apk.md`](docs/build-apk.md)。
+- 完整编译流程见 [`docs/note/build-apk.md`](docs/note/build-apk.md)。
 
 `settings.gradle` 把阿里云的 maven 镜像排在 `google()` / `mavenCentral()` 之前:直连
 Google Maven 时 gradle 会挑到国内被黑洞的 IP,每次构建白等几分钟 TCP 超时(实测同一个

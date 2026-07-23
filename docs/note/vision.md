@@ -188,7 +188,7 @@ Slint 生态里基本没有,用梯队二的办法都能造,但对手那边是设
 做法不是把 UI 渲进纹理(Slint 没有那个 API),而是把合成拆成三层:场景 → 卡片 → 遮挡层。
 遮挡层由第二台相机画,它的深度缓冲预先清到卡片所在的深度,于是只剩比卡片更近的片元,
 其余透明;Slint 只做寻常的 alpha 合成。没写一行 WGSL,没动 slint fork,代价是几何提交
-两遍。实现与取舍见 [`crates/render3d/README.md`](../crates/render3d/README.md)。
+两遍。实现与取舍见 [`crates/render3d/README.md`](../../crates/render3d/README.md)。
 
 这条立住之后,前文「合成效果」一节里其余几条不再是推演:它们都是同一条管线上的延伸,
 区别只在还没做。

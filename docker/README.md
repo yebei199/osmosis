@@ -34,4 +34,4 @@ ABIS="arm64-v8a armeabi-v7a x86_64" ./docker/build.sh # 多 ABI
 代理:检测到 `HTTPS_PROXY`/`http_proxy` 会自动用 `--network=host` 透传进构建
 (国内访问 dl.google.com / crates.io / gradle 时是刚需)。
 
-完整的编译流程说明见 `../docs/build-apk.md`。
+完整的编译流程说明见 `../docs/note/build-apk.md`。
