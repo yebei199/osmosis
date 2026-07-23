@@ -51,6 +51,23 @@ bevy 画完那一帧后,再跑一个全屏 fragment shader:把热调工具条那
 - 分工:模糊/折射/淡染在 shader;边框、厚度、阴影、指针高光仍由 Slint 的 `GlassCard` 画在上面。
 - 代价:**玻璃背后不能有 Slint 控件** —— 能模糊的只有 bevy 的画面。
 
+## 导航侧栏液态玻璃选中器(`navglass.rs` + `navglass.wgsl`)
+
+宽版式左侧导航栏的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:暗底 + 一层微极光,
+外加一块会在 tab 之间「流动」的圆角矩形 metaball —— 头(快)尾(慢)两个位置都朝当前选中槽
+中心移动,行走时 smooth-union 拉出胶着的颈,静止时重合成单块,颈那一档折射自绘的极光背景。
+
+为什么不长在 bevy 里:选中器是纯 2D 玻璃,没有 3D 场景/ECS。而 texture→`slint::Image` 的桥
+(`Image::try_from(wgpu::Texture)`)本就与 bevy 无关,故在 `Scene` 暴露的**同一块共享 device**
+上自起一个 pass 即可。思路见 `docs/note/slint-bevy-architecture-and-direction.md` 第八节。
+
+- 几何(槽位、栏尺寸、lead/lag 动画位置)由 `app.slint` 的 `nav-*` 属性给出,**是唯一真相**;
+  由 apps/* 在 seam 处翻译成 `NavParams`(POD,镜像 `ui::NavGlassControls`)。
+- **只在切 tab 的转场期间重渲**(省电门在 `ui::nav_glass::nav_transition_active`),静止时 Slint
+  复用上一帧纹理 —— 与 3D 的 `render-active` 门相互独立,同守仓库不主动重绘的省电取向。
+- 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
+  为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
+
 ## 深度正确的 UI(遮挡层)
 
 Slint 的合成没有深度:3D 画面对它只是一张 `Image`,任何 Slint 控件都恒在其上。要让场景
