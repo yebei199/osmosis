@@ -82,10 +82,15 @@ component NavItem inherits Rectangle {
     in property <string> label;
     in property <string> icon;
     in property <bool> active;
+    // 选中高亮是否已由背后的 GPU 液态玻璃提供。为真时(GPU 构建)自己让开 active 底,
+    // 免得和玻璃叠两遍;为假时(非 GPU 兜底)照旧自己画 active 高亮。hover 两种情况都只留极淡一层。
+    in property <bool> gpu-selected;
     callback clicked;
 
     border-radius: 12px;
-    background: active ? #1c2233 : (touch.has-hover ? #141824 : transparent);
+    background: root.gpu-selected
+        ? (touch.has-hover ? #ffffff14 : transparent)
+        : (active ? #1c2233 : (touch.has-hover ? #141824 : transparent));
     animate background { duration: 120ms; easing: ease-out; }
 
     VerticalLayout {
@@ -251,6 +256,31 @@ export component MainWindow inherits Window {
     out property <length> card-y: (content.height - root.card-h) / 2;
     // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
     out property <bool> render-active: root.current-tab == 2;
+
+    // ── 宽版式侧栏「液态玻璃 metaball 选中器」──
+    // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
+    // 几何与交互。侧栏槽位常量是**唯一真相**:布局与选中块位置都从这里算,不各写各的。
+    property <length> nav-pad: 8px;
+    property <length> nav-gap: 6px;
+    // 单个导航项高,也是选中块的参考高。out:Rust 读它定块尺寸。
+    out property <length> nav-slot-h: 68px;
+    // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
+    out property <length> nav-w: 96px;
+    out property <length> nav-h: content.height;
+    // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
+    out property <bool> nav-visible: !root.compact;
+    // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
+    property <length> nav-target-y: root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
+    // metaball 的头(快)/尾(慢):都朝 nav-target-y 动,快慢不同 → 行走时一前一后被 shader
+    // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这两个动画值喂 shader。
+    // 用两个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
+    out property <length> nav-lead-y: root.nav-target-y;
+    out property <length> nav-lag-y: root.nav-target-y;
+    animate nav-lead-y { duration: 240ms; easing: ease-out; }
+    animate nav-lag-y { duration: 440ms; easing: ease-out; }
+    // render3d 每帧(转场期间)渲出的侧栏背景纹理。非 GPU 构建恒为空图(width 0),
+    // 侧栏退回 Slint 平底 + NavItem 自带高亮(见侧栏与 NavItem)。
+    in-out property <image> nav-bg;
     // 用户点击触发,在 Rust 侧处理。
     callback bump();
     // 请求一次 GET /health。
@@ -283,18 +313,31 @@ export component MainWindow inherits Window {
             // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
             // 把侧栏也拆成「背景铺满 + 内部 padding」。
             if !root.compact: Rectangle {
-                width: 96px;
+                width: root.nav-w;
+                // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
                 background: #0b0d13;
+
+                // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
+                // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+                Image {
+                    source: root.nav-bg;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: fill;
+                }
+
                 VerticalLayout {
-                    padding: 8px;
-                    spacing: 6px;
+                    padding: root.nav-pad;
+                    spacing: root.nav-gap;
                     alignment: start;
 
                     for item[i] in Nav.items: NavItem {
-                        height: 68px;
+                        height: root.nav-slot-h;
                         label: item.label;
                         icon: item.icon;
                         active: root.current-tab == i;
+                        // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
+                        gpu-selected: root.nav-bg.width > 0;
                         clicked => { root.current-tab = i; }
                     }
                 }

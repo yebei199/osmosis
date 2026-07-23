@@ -1,0 +1,108 @@
+// 导航侧栏的液态玻璃选中器。整条侧栏背景由本 shader procedural 画(暗底 + 微极光),
+// 选中块是两个圆角矩形按 smooth-union 融成的 metaball —— 切 tab 时 lead(快)在前、lag(慢)
+// 在后,中间被 smin 拉出一道胶着的颈,像一滴液体从旧槽流到新槽;到位后两者重合成单块。
+//
+// 与 glass.wgsl 的关键区别:那边折射的是 bevy 画的真实 3D 画面(有源纹理可采样);这里侧栏
+// 背后是 Slint 画的(采样不到),所以背景**由本 shader 自己画**,metaball 折射的是这层自绘极光。
+// 见 docs/note/slint-bevy-architecture-and-direction.md 第八节的落点讨论。
+//
+// 独立 wgpu pass:顶点阶段是自带的全屏三角形(不依赖 bevy 的 FullscreenShader),片元里
+// 把整条侧栏一次画完。
+
+struct Params {
+    // 目标纹理尺寸,物理像素。
+    tex_size: vec2<f32>,
+    // metaball 头(快)与尾(慢)的中心,物理像素。
+    lead: vec2<f32>,
+    lag: vec2<f32>,
+    // 选中块半尺寸与圆角,物理像素。
+    half: vec2<f32>,
+    radius: f32,
+    // smin 的融合半径,物理像素:越大颈越粗、融得越"胶"。
+    smooth_k: f32,
+    // 尾部填充:把结构体凑成 16 字节的整数倍,满足 uniform 布局对齐(Rust 侧缓冲同为 48 字节)。
+    _pad: vec2<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u: Params;
+
+// 全屏三角形:三个顶点覆盖整个裁剪空间,片元阶段拿到的 @builtin(position) 即物理像素坐标。
+@vertex
+fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    // (-1,-1) (3,-1) (-1,3) —— 一个比屏幕大的三角形,省掉第二个三角形。
+    let x = f32((vi << 1u) & 2u) * 2.0 - 1.0;
+    let y = f32(vi & 2u) * 2.0 - 1.0;
+    return vec4<f32>(x, y, 0.0, 1.0);
+}
+
+// 圆角矩形有符号距离场:内部为负,外部为正,单位像素。
+fn sd_round_rect(p: vec2<f32>, hs: vec2<f32>, r: f32) -> f32 {
+    let q = abs(p) - hs + vec2<f32>(r);
+    return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// 平滑并集:把两个 SDF 融成带圆润过渡的一个,k 控过渡宽度。metaball 的"胶着颈"就来自这里。
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+    let h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// 一团软光斑:中心 c、半径 rad(都在 uv 0..1),平方衰减到边缘全暗。
+fn glow(uv: vec2<f32>, c: vec2<f32>, rad: f32) -> f32 {
+    let d = length((uv - c) / rad);
+    let t = clamp(1.0 - d, 0.0, 1.0);
+    return t * t;
+}
+
+// 侧栏自绘背景:深色底 + 三团极光(与应用 aurora 同调:紫/蓝/青),整体压暗,供玻璃折射透色。
+// 竖长条里光斑沿高度分布,x 方向都居中偏移一点,免得死板。
+fn base_color(uv: vec2<f32>) -> vec3<f32> {
+    let dark = vec3<f32>(0.043, 0.051, 0.075); // #0b0d13
+    var c = dark;
+    c += vec3<f32>(0.486, 0.227, 0.929) * glow(uv, vec2<f32>(0.35, 0.22), 0.55) * 0.22; // 紫
+    c += vec3<f32>(0.145, 0.388, 0.922) * glow(uv, vec2<f32>(0.62, 0.55), 0.55) * 0.20; // 蓝
+    c += vec3<f32>(0.024, 0.714, 0.831) * glow(uv, vec2<f32>(0.45, 0.85), 0.50) * 0.16; // 青
+    return c;
+}
+
+@fragment
+fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    let pix = frag.xy;
+    let uv = pix / u.tex_size;
+
+    // metaball:头尾两个圆角矩形取 smooth-union。行走时两者分离 → 颈;静止时重合 → 单块。
+    let d_lead = sd_round_rect(pix - u.lead, u.half, u.radius);
+    let d_lag = sd_round_rect(pix - u.lag, u.half, u.radius);
+    let d = smin(d_lead, d_lag, u.smooth_k);
+
+    // 玻璃之外:侧栏自绘背景原样。这一支覆盖大多数像素。
+    if (d > 0.0) {
+        return vec4<f32>(base_color(uv), 1.0);
+    }
+
+    // ── 玻璃之内 ──
+    // 边缘折射:用 SDF 梯度当法线,离边越近位移越大(平方衰减),把边缘背后的自绘背景"吸"进来。
+    let e = 1.0;
+    let nx = smin(sd_round_rect(pix - u.lead + vec2<f32>(e, 0.0), u.half, u.radius),
+                  sd_round_rect(pix - u.lag + vec2<f32>(e, 0.0), u.half, u.radius), u.smooth_k)
+           - smin(sd_round_rect(pix - u.lead - vec2<f32>(e, 0.0), u.half, u.radius),
+                  sd_round_rect(pix - u.lag - vec2<f32>(e, 0.0), u.half, u.radius), u.smooth_k);
+    let ny = smin(sd_round_rect(pix - u.lead + vec2<f32>(0.0, e), u.half, u.radius),
+                  sd_round_rect(pix - u.lag + vec2<f32>(0.0, e), u.half, u.radius), u.smooth_k)
+           - smin(sd_round_rect(pix - u.lead - vec2<f32>(0.0, e), u.half, u.radius),
+                  sd_round_rect(pix - u.lag - vec2<f32>(0.0, e), u.half, u.radius), u.smooth_k);
+    let n = normalize(vec2<f32>(nx, ny) + vec2<f32>(1e-6));
+
+    let EDGE_PX = 16.0;
+    let edge = clamp(1.0 + d / EDGE_PX, 0.0, 1.0); // d ∈ [-EDGE_PX, 0] → 0..1
+    let disp = n * (edge * edge) * 14.0 / u.tex_size;
+
+    var col = base_color(uv + disp);
+    // 玻璃本体淡染:一层薄白,让选中块从背景里浮起来。
+    col = mix(col, vec3<f32>(1.0), 0.12);
+    // 顶部内侧高光:光从上方来,越靠上缘越亮 —— 液态玻璃最抓眼的那道厚度光边。
+    let top = clamp(1.0 + d / 6.0, 0.0, 1.0) * clamp(-n.y, 0.0, 1.0);
+    col += vec3<f32>(1.0) * top * 0.25;
+
+    return vec4<f32>(col, 1.0);
+}

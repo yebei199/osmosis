@@ -44,6 +44,9 @@ use slint::wgpu_29::wgpu;
 mod glass;
 pub use glass::GlassRect;
 
+mod navglass;
+pub use navglass::{NavGlassPass, NavParams};
+
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
 
@@ -105,6 +108,10 @@ impl SceneParams {
 /// [`slint::Image`]。整个对象只在 Slint 的主线程上被 [`render_frame`](Scene::render_frame) 驱动。
 pub struct Scene {
     app: App,
+    /// 共享 wgpu 的 device/queue 句柄(clone,廉价 Arc)。留着好让导航选中器的
+    /// 独立 pass([`NavGlassPass`])在同一块 device 上起管线 —— 见 apps/* 的 seam。
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     target: Handle<Image>,
     /// 转盘根实体:所有可见形状挂它下面,每帧按 yaw/pitch(+自转)设其朝向。
     /// 场景/数量/颜色/间距变化时,despawn 它的子树并按新参数用 bsn! 重建。
@@ -274,6 +281,8 @@ impl Scene {
 
         Self {
             app,
+            device: device.clone(),
+            queue: queue.clone(),
             target,
             root,
             camera,
@@ -290,6 +299,17 @@ impl Scene {
             perf: (0.0, 0.0),
             frames: 0,
         }
+    }
+
+    /// 共享 wgpu 的 device 句柄(clone,廉价 Arc)。供导航选中器的 [`NavGlassPass`]
+    /// 在同一块 device 上起管线 —— 纹理才和 Slint 是同一份,采样得出来。
+    pub fn device(&self) -> wgpu::Device {
+        self.device.clone()
+    }
+
+    /// 共享 wgpu 的 queue 句柄(clone)。理由同 [`device`](Scene::device)。
+    pub fn queue(&self) -> wgpu::Queue {
+        self.queue.clone()
     }
 
     /// 按 UI 传入的 [`SceneParams`] 和面板尺寸渲染一帧,返回 **(场景, 遮挡层)** 两张
