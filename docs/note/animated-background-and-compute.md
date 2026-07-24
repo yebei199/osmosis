@@ -4,7 +4,8 @@
 二者是同一道选择题的两面 —— 判据都是「这段计算的输出形状是不是每像素一个值」。
 
 `vision.md` 记的是这套选型能长成什么(推演);这份记的是具体需求落到哪种 shader 上
-(实做边界)。
+(实做边界)。持续动画该落在哪个**表面**上才划算,见
+[`visualization-surface-and-audio.md`](visualization-surface-and-audio.md)。
 
 ## 一、动画背景用 fragment,不用 compute
 
