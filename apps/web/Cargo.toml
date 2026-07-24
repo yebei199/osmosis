@@ -21,9 +21,10 @@ log = "0.4"
 console_log = "1"
 # async 版 #[wasm_bindgen(start)] 的展开代码要它把 future 挂到 JS 微任务队列。
 wasm-bindgen-futures = { version = "0.4", optional = true }
-# 只用来读 window.location.search(见 query_value)。slint 本来就把它编进来了,
-# 显式列出不额外增加构建成本。
-web-sys = { version = "0.3", features = ["Location"] }
+# 只用来读 window.location.search(见 query_value)。slint 也会开这两个 feature,但它对
+# web-sys 的依赖按 wasm32 target 门控 —— IDE 按宿主 target 分析时那份不生效,自己列全才
+# 不会报 `window` 找不到。列出来不额外增加构建成本。
+web-sys = { version = "0.3", features = ["Window", "Location"] }
 # wasm 上 winit 走 canvas,femtovg 走 WebGL。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
 
