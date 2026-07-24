@@ -13,6 +13,9 @@
   wasm 主线程不能 `block_on`;原生端仍用同步 `Scene::new()`(同一 future 首次 poll 即就绪)。
 - `ui` 对 bevy / wgpu 一无所知:本 crate 把渲染结果作为**两张** `slint::Image`
   (场景 + 遮挡层)经 `ui::run_with_renderer` 的 seam 交过去(见 `crates/ui`)。
+- 要加新 shader 前先看
+  [`docs/note/animated-background-and-compute.md`](../../docs/note/animated-background-and-compute.md):
+  fragment 与 compute 的分界(判据是 scatter),以及持续动画与本 crate 两道省电门的冲突。
 
 ## 关键架构约束(见计划 `bevy-serialized-dove`)
 
