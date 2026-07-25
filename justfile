@@ -48,10 +48,13 @@ desktop-dev extra="":
     SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}
 
 # 桌面 + 嵌入的 bevy 3D 面板(见 crates/render3d)。走 render3d.nix 拿 vulkan 运行期库。
-# 无热重载:bevy 场景在 Rust 里,改完重跑。首帧就绪后窗口中间会出现一个自转的立方体。
+# 带 .slint 热重载,同 desktop-dev —— 导航玻璃、工具条 backdrop 这些要对着调版式的东西
+# 全在这条链路上,没有热重载就得为挪一个 padding 重编一遍 bevy。
+# 只覆盖 .slint:bevy 场景与 wgsl 在 Rust 侧,改那些仍需重跑。
+# 首帧就绪后窗口中间会出现一个自转的立方体。
 [group('桌面')]
 desktop-dev-3d:
-    nix-shell render3d.nix --run 'cargo run -p app-desktop --features bevy-3d'
+    SLINT_LIVE_PREVIEW=1 nix-shell render3d.nix --run 'cargo run -p app-desktop --features bevy-3d,slint/live-preview'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
