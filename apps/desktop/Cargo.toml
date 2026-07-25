@@ -24,8 +24,6 @@ render3d = { workspace = true, optional = true }
 
 [features]
 default = []
-# 透传给 ui:左上角显示诚实的即时帧率(数真实发生的帧,不主动重绘、不额外耗电)。
-debug-fps = ["ui/debug-fps"]
 # 应用内嵌 MCP server,供 AI 助手读元素树、截图、模拟点击。
 # 无需改一行应用代码:slint 的后端初始化会自己调 mcp_server::init()。
 # 默认关 —— 它会把测试后端(i-slint-backend-testing)和 renderer-software 编进二进制。
@@ -49,5 +47,4 @@ mcp = ["slint/mcp"]
 # 需要 vulkan 运行期库,用仓库根的 render3d.nix。
 # 没有 renderer-skia-wgpu 这种 feature —— skia 的 wgpu 路径就是 renderer-skia +
 # unstable-wgpu-29,与 android 那边的组合一字不差。
-# ui/debug-fps:3D 页本就每帧重绘,顺带在左上角显示诚实即时帧率(已去强制重绘,不额外耗电)。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "ui/debug-fps"]
+bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29"]

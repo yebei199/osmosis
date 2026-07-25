@@ -41,7 +41,7 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
-# 可透传额外 feature,如左上角帧率读数:just desktop-dev debug-fps
+# 左上角帧率读数:`SLINT_STUDY_FPS=1 just desktop-dev`(运行期开关,不必重编)
 [group('三端')]
 [group('桌面')]
 desktop-dev extra="":
@@ -57,7 +57,8 @@ desktop-dev-3d:
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
-# 可透传额外 feature,如左上角帧率读数:just web-dev ui/debug-fps
+# 可透传额外 feature,如 `just web-dev bevy-3d`。左上角帧率读数:`SLINT_STUDY_FPS=1 just web-dev`
+# —— wasm 读不到运行期环境变量,这个开关在**构建期**生效,故必须重跑本命令。
 [group('三端')]
 web-dev extra="":
     nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release{{ if extra != "" { " --features " + extra } else { "" } }}'

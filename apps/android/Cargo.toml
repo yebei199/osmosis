@@ -21,7 +21,6 @@ render3d = { workspace = true, optional = true }
 
 [features]
 default = []
-debug-fps = ["ui/debug-fps"]
 # 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 android 这边有一处不同,
 # 由 src/lib.rs 兜住:SLINT_MCP_PORT 是**构建期**的(APK 由系统启动,进程拿不到运行时环境变量)。
 mcp = ["slint/mcp"]
@@ -29,4 +28,4 @@ mcp = ["slint/mcp"]
 # android 上渲染器强制是 skia(见 i-slint-backend-selector),unstable-wgpu-29
 # 会把它切到 wgpu 路径。native-activity 特性由 backend-android-activity-06 启用,
 # 与 bevy_android 共享同一个 android-activity 0.6,故其 wgpu device 可跨库共享。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29", "ui/debug-fps"]
+bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29"]

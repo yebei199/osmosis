@@ -138,12 +138,16 @@ cargo run -p app-desktop
 重启(Rust 逻辑会保留;修改 Rust 代码仍需重启)。
 
 ```sh
-just desktop-dev             # 热重载
-just desktop-dev debug-fps   # 外加左上角帧率读数
+just desktop-dev                        # 热重载
+SLINT_STUDY_FPS=1 just desktop-dev      # 外加左上角帧率读数
 ```
 
-帧率计藏在 `debug-fps` feature 后面,默认关闭:它每帧都主动请求重绘,会让
-渲染循环一直满转,移动端上白耗电。
+`SLINT_STUDY_FPS` 是运行期开关,拨动它不必重新编译。读数是**诚实的即时帧率**:
+只数渲染通知里真实发生的帧,刻意不主动请求重绘,所以空闲时会自己趴到 ~1,
+交互和动画时才飙上去。关掉时连采样定时器都不建。
+
+wasm 与 APK 读不到运行期环境变量(页面由浏览器拉起、APK 由系统拉起),那两端
+这个开关在构建期生效,得带着它重新构建:`SLINT_STUDY_FPS=1 just web-dev`。
 
 ## 让 AI 助手看见运行中的界面(MCP)
 

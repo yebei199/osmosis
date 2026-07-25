@@ -18,6 +18,20 @@ use std::rc::Rc;
 use app_core::{Counter, Health, HealthState};
 use slint::{ComponentHandle, RenderingState};
 
+/// 帧率读数开不开。`SLINT_STUDY_FPS` 设成任意值即开,与 `SLINT_STUDY_TAB` 同属调试开关。
+///
+/// 曾经是个 feature,但它不门控任何依赖 —— 关掉省下的只有一个 2Hz 定时器和每帧一次自增,
+/// 却要在四个 manifest 里各声明一遍、还被三个 `bevy-3d` 隐含。开发时想不想看,本就不是
+/// 编译期该管的事。
+///
+/// 两条路都要:桌面读运行期环境变量,拨开关不必重编;wasm 与 APK 读不到运行期环境变量
+/// (页面由浏览器拉起、APK 由系统拉起),只能构建期烧进去 —— 同 `apps/android` 待
+/// `SLINT_MCP_PORT` 的办法。
+fn fps_enabled() -> bool {
+    std::env::var("SLINT_STUDY_FPS").is_ok()
+        || option_env!("SLINT_STUDY_FPS").is_some()
+}
+
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
@@ -28,7 +42,7 @@ fn build_ui(initial_tab: i32) -> MainWindow {
     bind_counter(&ui);
     bind_health(&ui);
 
-    ui.set_show_fps(cfg!(feature = "debug-fps"));
+    ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
     // 开局停在哪一页。平台入口给默认值,`SLINT_STUDY_TAB` 覆盖它 —— 后者是调试开关,
     // `just shot 420 2` 靠它直接截到 3D 页,不必再靠 MCP 模拟点击(那条路上有一串静默
@@ -49,8 +63,8 @@ fn build_ui(initial_tab: i32) -> MainWindow {
 pub fn run() {
     let ui = build_ui(0);
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
-    #[cfg(feature = "debug-fps")]
-    let _fps_timer = {
+    // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
+    let _fps_timer = fps_enabled().then(|| {
         let (frames, timer) = fps::start(&ui);
         // 无 3D 的路径上没人装渲染通知,帧计数在这里自己接。
         ui.window()
@@ -64,7 +78,7 @@ pub fn run() {
             })
             .ok();
         timer
-    };
+    });
 
     ui.run().expect("event loop failed");
 }
@@ -126,8 +140,9 @@ pub fn run_with_renderers(
     + 'static,
 ) {
     let ui = build_ui(initial_tab);
-    #[cfg(feature = "debug-fps")]
-    let (fps_frames, _fps_timer) = fps::start(&ui);
+    // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
+    // 活到事件循环结束。
+    let fps = fps_enabled().then(|| fps::start(&ui));
 
     // 一帧的account:回调里(我们:组装参数 + 驱动渲染器)与回调外(Slint 重绘整个
     // 界面 + 浏览器合成/呈现)各占多少。web 上帧率被砍半时,只有这个比值能说明该往
@@ -179,8 +194,9 @@ pub fn run_with_renderers(
             ) {
                 return;
             }
-            #[cfg(feature = "debug-fps")]
-            fps_frames.set(fps_frames.get() + 1);
+            if let Some((frames, _)) = &fps {
+                frames.set(frames.get() + 1);
+            }
             frame_acct.begin_frame();
 
             let Some(ui) = weak.upgrade() else { return };
@@ -419,7 +435,7 @@ fn describe(state: &HealthState) -> String {
     }
 }
 
-/// 帧率计。仅在 `debug-fps` feature 下编译。
+/// 帧率计。恒编译,开关在运行期([`fps_enabled`])—— 关掉时调用方不建定时器,这里零成本。
 ///
 /// 帧数由调用方在渲染通知回调里累加**真实发生的**帧,每个采样周期算出帧率推给 UI。
 /// 计数器不在这里接进渲染通知:一个窗口只能装一个通知回调,而 3D 路径要拿它当帧驱动
@@ -429,7 +445,6 @@ fn describe(state: &HealthState) -> String {
 /// 刻意不主动请求重绘 —— Slint 是惰性渲染,空闲时本就不重绘,读数会自动趴到
 /// ~1(交互/动画时才飙高),这正是诚实的即时帧率,也不会白耗电。3D 页每帧自请求重绘,
 /// 这里自然就读到满帧。
-#[cfg(feature = "debug-fps")]
 mod fps {
     use std::cell::Cell;
     use std::rc::Rc;
