@@ -53,6 +53,39 @@ magick dist/shot.png -format "%[pixel:p{851,1070}]" info:   # 与背景同色 �
 按观感判过一次,判反了,又倒回去查了三轮管线 —— 相机、alpha 合成、深度清除值 —— 才发现
 管线从第一帧起就是对的,近处物体只是没落进卡片矩形。**看不出效果时先确认取景,再怀疑管线。**
 
+## `.slint` 热重载:`desktop-dev` 有,`desktop-dev-3d` 没有
+
+`just desktop-dev` 的热重载是真的,实测确认过。但**这个能力加不到 `just desktop-dev-3d` 上**
+—— 试过、回滚了,别再试第二遍。
+
+三组实测。判据是把侧栏底色 `#0b0d13` 改成 `#ff0000`,数窗口左侧 90px 里的红色像素:
+
+| 构建 | 日志有 `Reloaded component` | 画面上屏 |
+| --- | --- | --- |
+| 纯 Slint(skia) | 有 | 是,0 → 172664 |
+| `slint/unstable-wgpu-29`,不带 bevy、不驱动帧 | 有 | 是,0 → 172664 |
+| `bevy-3d`(wgpu + 每帧驱动) | 有 | **否**,0 → 0;强制 resize 重绘后仍是 0 |
+
+第二行是隔离实验,结论明确:**wgpu 后端本身与 live-preview 兼容**,问题不在渲染器,差别只剩
+`bevy-3d` 那条链路的帧驱动。往下没查了,留个未验证的推测:live-preview 重载时会换掉组件实例,
+而 `ui::run_with_renderers` 装的渲染通知、以及它持有的 `Weak<MainWindow>`,都还绑在旧实例上,
+新实例没人喂。真要修就从这儿查——注意上面只测到现象,这一层没有证据。
+
+验热重载本身有两个静默陷阱,都会让人误判成「功能不可用」(为此返工了四轮):
+
+**1. `SLINT_LIVE_PREVIEW` 是构建期变量,不是运行期开关。**
+`internal/compiler/generator/rust.rs` 在 slint 编译器里读它,决定生成哪套代码。只在跑二进制时
+带上 → 产物里压根没有热重载机制 → 界面照常启动、改 `.slint` 毫无反应、**不报任何错**。
+justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的:一条命令同时覆盖
+构建和运行。分开 build 再 run 就两步都得带。nix-shell 会正常透传它。
+
+**2. 用 `sed -i` 改 `.slint`,文件监听器收不到。**
+`sed -i` 是「写临时文件 + rename」,inode 变了。必须**原地截断写**:
+`sed ... "$bak" > /tmp/new && cat /tmp/new > 目标文件`,再用 `stat -c %i` 前后对比确认 inode 没变。
+
+唯一可靠的判据是应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面变没变会
+被惰性渲染骗到 —— 没有输入就不重绘,重载了也可能停在旧画面上。
+
 ## 后台构建:同一时刻只留一个,并且验证产物真的更新了
 
 wasm 构建要 5~8 分钟,期间很容易再起一个。**起新的之前先把旧的停掉**,并确认没有残留进程:
