@@ -45,5 +45,4 @@ bevy-3d = [
     "dep:wasm-bindgen-futures",
     "wgpu",
     "slint/unstable-wgpu-29",
-    "ui/debug-fps",
 ]
