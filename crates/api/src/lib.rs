@@ -4,7 +4,9 @@
 //! 不再向上传播。对外暴露的 `async fn` 在 native 与 wasm 上**签名完全相同**;
 //! `Send` 约束只存在于本 crate 内部的 `platform` 模块里。见 `docs/adr/0002`。
 
-use contract::{HealthDto, PROTOCOL_VERSION};
+use contract::{
+    HealthDto, PROTOCOL_VERSION, PlaySourceDto, SearchDto,
+};
 
 /// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
 ///
@@ -82,6 +84,67 @@ fn check_version(
         });
     }
     Ok(dto)
+}
+
+/// `GET /search?q=…`。
+pub async fn search(
+    keyword: &str,
+) -> Result<SearchDto, ApiError> {
+    platform::get_json(search_url(keyword)).await
+}
+
+/// `GET /play/{track_id}`。
+///
+/// 拿到的是一条**临时**直链,带签名会过期。别缓存 —— 过期后服务端返回的
+/// 是一个 HTML 错误页,解码那头会报"这不是音频",症状离病因很远。
+pub async fn play_source(
+    track_id: &str,
+) -> Result<PlaySourceDto, ApiError> {
+    platform::get_json(play_url(track_id)).await
+}
+
+/// 拼搜索地址,关键词按 URL 查询串规则转义。
+///
+/// 抽出来单独可测:关键词直接插进 `format!` 的话,一个 `&` 就会把查询串截成
+/// 两个参数,服务端只看到半截关键词 —— 而这既不会报错,也不会有测试失败。
+fn search_url(keyword: &str) -> String {
+    format!(
+        "{}/search?q={}",
+        base_url(),
+        encode_component(keyword)
+    )
+}
+
+/// 拼播放地址。id 是路径的一段,同样要转义。
+fn play_url(track_id: &str) -> String {
+    format!(
+        "{}/play/{}",
+        base_url(),
+        encode_component(track_id)
+    )
+}
+
+/// 百分号编码一个 URL 组件。
+///
+/// 手写而不是引 `percent-encoding`:规则就是"非 unreserved 字符逐字节转义",
+/// 一个 crate 换不来更少的代码。unreserved 集合见 RFC 3986 §2.3。
+fn encode_component(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.as_bytes() {
+        match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'~' => out.push(*byte as char),
+            other => {
+                out.push_str(&format!("%{other:02X}"));
+            }
+        }
+    }
+    out
 }
 
 /// 唯一按 target 分叉的地方。两个实现的**签名相同**,差异不外泄。
@@ -222,6 +285,32 @@ mod tests {
             err,
             ApiError::VersionMismatch { actual: 0, .. }
         ));
+    }
+
+    /// 关键词里的 `&`、空格、中文都必须转义。
+    ///
+    /// 不转义的话 `q=a&b` 会被服务端解析成两个参数,关键词静默变成半截 ——
+    /// 不报错、不失败,只是搜出来的东西不对。
+    #[test]
+    fn search_url_percent_encodes_keyword() {
+        let url = search_url("紅蓮華 & LiSA");
+
+        assert!(
+            url.ends_with(
+                "/search?q=%E7%B4%85%E8%93%AE%E8%8F%AF%20%26%20LiSA"
+            ),
+            "关键词没被完整转义: {url}"
+        );
+    }
+
+    /// 路径拼接:id 原样落在 `/play/` 之后。
+    #[test]
+    fn play_url_contains_track_id() {
+        assert!(
+            play_url("1375305989")
+                .ends_with("/play/1375305989"),
+            "id 没落在路径末尾"
+        );
     }
 
     /// 钉住会显示给用户的那句文案。措辞一改这里就红 —— 这是特性:

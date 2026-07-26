@@ -31,6 +31,8 @@ app-core = { path = "crates/app-core" }
 ui = { path = "crates/ui" }
 # 3D 桥。只有桌面/android 入口依赖它,web/ios 永不碰 —— 由 xtask boundaries 守住。
 render3d = { path = "crates/render3d" }
+# 音频能力层。与 api / render3d 平行:app-core 不认识它,由 ui 注入。
+audio = { path = "crates/audio" }
 
 # 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
 # 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
@@ -52,6 +54,19 @@ prost = "0.14"
 
 # 测试断言。similar-asserts 在值不等时打行级 diff,比 assert_eq! 的一坨 Debug 好读。
 similar-asserts = "2"
+
+# 音频。rodio 解码 + 出声(内部走 cpal,linux 上链接 alsa,见 slint.nix)。
+# stream-download 给 rodio 喂一个边下边读的 Read+Seek —— 不整曲下载:
+# 同播的主控要边解码边推流,等整首下完再开始推是不能接受的。
+# 不开 default-features:那会拉进 reqwest 的 native-tls(openssl),
+# 而播放直链是明文 http。要 HTTPS 时改开 "reqwest-rustls"。
+# 用 rodio 自己的组合 feature 名("wav" = 格式读取器 + PCM 编解码器),
+# 不要手挑 symphonia-* —— 只开格式不开编解码器时,解码器不会报缺 feature,
+# 而是回一句"格式无法识别",指向完全错误的方向。
+# 不开 recording(要 rtrb)、不开 dither(要 rand),播放用不上。
+# 缺 m4a/aac:网易云个别档位会给,到时候加 "mp4"。
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
+stream-download = { version = "0.24", default-features = false, features = ["reqwest", "temp-storage"] }
 
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
 # 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
