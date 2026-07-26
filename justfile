@@ -132,6 +132,24 @@ server-dev:
 server-test:
     cargo test -p api -- --ignored
 
+# 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
+# 源码是 third_party/bang-dream 这个 submodule,但那里只当契约来源用 ——
+# 开发时跑的是 BANG_DREAM_REPO 指向的工作副本,默认为 submodule 自身。
+[group('服务端')]
+bang-dream repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
+    cd {{repo}} && go run ./cmd/bang-dream
+
+# 网易云扫码登录,凭据写进 bang-dream 的 data/credentials.json。
+# 登录态是全服务一份的,登一次就够,过期了再来
+[group('服务端')]
+bang-dream-login repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
+    cd {{repo}} && go run ./cmd/qrlogin
+
+# 对着真实 bang-dream 跑联机测试(需要 just bang-dream 正在另一个终端里跑)
+[group('服务端')]
+bang-dream-test:
+    cargo test -p server -- --ignored
+
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just android-build
 [group('三端')]

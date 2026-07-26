@@ -1,0 +1,4 @@
+[submodule "third_party/bang-dream"]
+	path = third_party/bang-dream
+	url = git@github.com:yebei199/bang-dream.git
+	branch = dev
