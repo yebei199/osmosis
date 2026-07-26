@@ -23,7 +23,7 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 4] = [
+    let checks: [(&str, Check); 5] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
@@ -37,6 +37,7 @@ pub fn verify(args: &[String]) -> Result<(), String> {
             app_core_compiles_for_wasm,
         ),
         ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
+        ("web 不依赖 audio/cpal", web_free_of_native_audio),
     ];
 
     let mut failures = Vec::new();
@@ -147,6 +148,35 @@ fn web_ios_free_of_3d() -> Result<(), String> {
                 found.join("、")
             ));
         }
+    }
+    Ok(())
+}
+
+/// 原生音频栈(audio/rodio/cpal)不进 web。
+///
+/// cpal 在 linux 上链接 alsa、在 android 上链接 AAudio —— 两者在 wasm 上都不存在。
+/// 混进去的话 web 端直接编不过,而那个错误只会在别人下次构建 wasm 时炸出来,
+/// 离引入它的那次改动已经很远。web 将来要出声得走 WebAudio,是另一套实现,
+/// 差异吸收在 `audio` crate 内部,与 `docs/adr/0002` 同一个模式。
+///
+/// ios 不在此列:它有 CoreAudio,cpal 支持它,只是本项目还没实现那个端。
+fn web_free_of_native_audio() -> Result<(), String> {
+    const FORBIDDEN: &[&str] = &["audio", "rodio", "cpal"];
+
+    let tree = capture(
+        "cargo",
+        &["tree", "-p", "app-web", "--edges", "normal"],
+    )?;
+    let found: Vec<&str> = FORBIDDEN
+        .iter()
+        .copied()
+        .filter(|forbidden| depends_on(&tree, forbidden))
+        .collect();
+    if !found.is_empty() {
+        return Err(format!(
+            "app-web 依赖了 {},原生音频栈编不到 wasm",
+            found.join("、")
+        ));
     }
     Ok(())
 }

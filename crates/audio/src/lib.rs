@@ -1,0 +1,246 @@
+//! 音频播放能力层:把一条直链变成声音。
+//!
+//! 与 `api`、`render3d` 平行 —— `app-core` 不认识本 crate,由 `ui` 注入。
+//! 各端音频后端的差异(linux 走 alsa、android 走 AAudio、web 将来走 WebAudio)
+//! 到此为止,不向上传播。
+//!
+//! **边下边播,不整曲下载。** [`open`] 返回一个实现了 `Read + Seek` 的流句柄,
+//! rodio 读多少就下多少。这不只是为了首播延迟:同播的主控必须边解码边推给听众,
+//! 等整首下完再开始推是不能接受的(见 `docs/adr/0008`)。
+//!
+//! 解码与出声刻意分开:出声需要真实声卡,断言不了;而解码才是真会出故障的地方 ——
+//! 直链过期时上游返回的是一个 HTML 页面,不是音频。
+
+use std::io::{Read, Seek};
+
+use rodio::decoder::DecoderError;
+use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
+use stream_download::storage::temp::TempStorageProvider;
+use stream_download::{Settings, StreamDownload};
+
+/// 播放链路可能的失败方式。
+#[derive(Debug)]
+pub enum AudioError {
+    /// 打不开音频设备 —— 没声卡,或者被独占了。
+    Device(String),
+    /// 拉不动这条流:地址不对、连不上、或者服务端拒绝。
+    Stream(String),
+    /// 拿到了字节,但它不是能放的音频。
+    ///
+    /// 最常见的真实成因不是"格式冷门",而是直链过期后上游返回了一个 HTML 错误页。
+    Decode(String),
+}
+
+impl core::fmt::Display for AudioError {
+    fn fmt(
+        &self,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        match self {
+            Self::Device(message) => {
+                write!(f, "音频设备错误: {message}")
+            }
+            Self::Stream(message) => {
+                write!(f, "音频流错误: {message}")
+            }
+            Self::Decode(message) => {
+                write!(f, "音频解码错误: {message}")
+            }
+        }
+    }
+}
+
+impl core::error::Error for AudioError {}
+
+impl From<DecoderError> for AudioError {
+    fn from(error: DecoderError) -> Self {
+        Self::Decode(error.to_string())
+    }
+}
+
+/// 音频源:一个能读、能跳的字节流。
+///
+/// 生产环境喂的是 [`open`] 返回的流句柄,测试喂的是 `Cursor<Vec<u8>>` ——
+/// 两者走**同一条**解码路径,所以测试证明的东西对真实播放也成立。
+pub trait Source:
+    Read + Seek + Send + Sync + 'static
+{
+}
+
+impl<T: Read + Seek + Send + Sync + 'static> Source for T {}
+
+/// 把一条直链变成边下边读的音频源。
+///
+/// 落盘到临时文件而不是常驻内存:seek 回已下过的位置(拖进度条、解码器回读
+/// 帧头)不必重新请求,而一首无损动辄几十兆,内存里堆着毫无必要。
+pub async fn open(
+    url: &str,
+) -> Result<StreamDownload<TempStorageProvider>, AudioError>
+{
+    let url = url.parse().map_err(|e| {
+        AudioError::Stream(format!("{e}: {url}"))
+    })?;
+
+    StreamDownload::new_http(
+        url,
+        TempStorageProvider::default(),
+        Settings::default(),
+    )
+    .await
+    .map_err(|e| AudioError::Stream(e.to_string()))
+}
+
+/// 解码一个音频源。失败时不 panic —— 直链过期是常态,不是程序错误。
+pub fn decode<R: Source>(
+    source: R,
+) -> Result<rodio::Decoder<R>, AudioError> {
+    Ok(rodio::Decoder::new(source)?)
+}
+
+/// 出声的那一头。持有音频设备,活多久声音就能放多久。
+pub struct Player {
+    /// 设备句柄。drop 掉声音就断了,所以必须留着。
+    _device: MixerDeviceSink,
+    player: rodio::Player,
+}
+
+impl Player {
+    /// 打开默认音频设备。
+    pub fn new() -> Result<Self, AudioError> {
+        let device = DeviceSinkBuilder::open_default_sink()
+            .map_err(|e| {
+                AudioError::Device(e.to_string())
+            })?;
+        let player =
+            rodio::Player::connect_new(device.mixer());
+
+        Ok(Self {
+            _device: device,
+            player,
+        })
+    }
+
+    /// 放一个已解码的源,替换掉当前正在放的。
+    ///
+    /// 先清空:队列语义在这里是错的 —— 用户点第二首歌是"改放这首",
+    /// 不是"放完上一首再放这首"。
+    pub fn play<R: Source>(
+        &self,
+        source: rodio::Decoder<R>,
+    ) {
+        self.player.clear();
+        self.player.append(source);
+        self.player.play();
+    }
+
+    /// 停止并清空队列。
+    pub fn stop(&self) {
+        self.player.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use rodio::Source as _;
+    use similar_asserts::assert_eq;
+
+    use super::*;
+
+    /// 合成一段单声道 44.1kHz 的 WAV,`samples` 个采样点。
+    ///
+    /// 手搓而不是引 hound:44 字节的头就能让测试独立于任何编码库,
+    /// 也让"截断"这种边界能被精确构造。
+    fn wav(samples: u32) -> Vec<u8> {
+        const SAMPLE_RATE: u32 = 44_100;
+        const CHANNELS: u16 = 1;
+        const BITS: u16 = 16;
+
+        let data_len = samples * u32::from(BITS / 8);
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(
+            &(36 + data_len).to_le_bytes(),
+        );
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes()); // fmt 块长度
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&CHANNELS.to_le_bytes());
+        out.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
+        let byte_rate = SAMPLE_RATE
+            * u32::from(CHANNELS)
+            * u32::from(BITS / 8);
+        out.extend_from_slice(&byte_rate.to_le_bytes());
+        out.extend_from_slice(
+            &(CHANNELS * BITS / 8).to_le_bytes(),
+        );
+        out.extend_from_slice(&BITS.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..samples {
+            // 一段随便什么波形,只要不是恒零,免得被解码器当成空块跳过。
+            let sample = (i % 1000) as i16;
+            out.extend_from_slice(&sample.to_le_bytes());
+        }
+        out
+    }
+
+    /// 内存里的 `Cursor` 与真实流句柄走同一条解码路径,
+    /// 因此这里读对了采样率和声道数,真实播放的格式协商也就是对的。
+    #[test]
+    fn decodes_wav_from_seekable_source() {
+        let decoder = decode(Cursor::new(wav(4_410)))
+            .expect("合法 WAV 应能解码");
+
+        assert_eq!(decoder.sample_rate().get(), 44_100);
+        assert_eq!(decoder.channels().get(), 1);
+    }
+
+    /// 直链过期时上游返回的是一个 HTML 错误页。必须报解码错误,
+    /// 让上层能提示「重新获取播放地址」,而不是 panic 掉整个 UI 线程。
+    #[test]
+    fn rejects_non_audio_source() {
+        let html =
+            b"<html><body>403 Forbidden</body></html>";
+
+        // 用 matches! 而非 expect_err:rodio 的 Decoder 没有 Debug,
+        // expect_err 要求 Ok 侧可 Debug,编不过。
+        assert!(matches!(
+            decode(Cursor::new(html.to_vec())),
+            Err(AudioError::Decode(_))
+        ));
+    }
+
+    /// 零字节边界:服务端返回了 200 但正文是空的。
+    #[test]
+    fn rejects_empty_source() {
+        assert!(matches!(
+            decode(Cursor::new(Vec::new())),
+            Err(AudioError::Decode(_))
+        ));
+    }
+
+    /// 流式独有的故障:头是完整的、数据只下来一半。
+    ///
+    /// 关键不是"能否解码"(头齐全就能),而是**取样必须终止**。
+    /// 断流时若解码器一直等下去,UI 会停在「播放中」再也不动 ——
+    /// 那是最难排查的一类症状,所以在这里钉死。
+    #[test]
+    fn truncated_source_terminates_instead_of_hanging() {
+        let full = wav(44_100);
+        let truncated = full[..1_000].to_vec();
+
+        let decoder = decode(Cursor::new(truncated))
+            .expect("头完整时应能建出解码器");
+
+        // 头里声称有 44100 个采样点,实到不足 500 个。
+        // 上界取声称值的两倍:真挂住的话这里会先耗尽而不是永远转下去。
+        let produced = decoder.take(88_200).count();
+
+        assert!(
+            produced < 44_100,
+            "截断的流不该产出完整时长的采样: 实得 {produced}"
+        );
+    }
+}

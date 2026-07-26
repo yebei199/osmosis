@@ -9,9 +9,11 @@
 
 mod counter;
 mod health;
+mod playback;
 
 pub use counter::Counter;
 pub use health::{Health, HealthState, refresh};
+pub use playback::{Playback, PlaybackState, play};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
-pub use contract::HealthDto;
+pub use contract::{HealthDto, TrackDto};

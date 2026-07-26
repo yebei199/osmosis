@@ -24,6 +24,8 @@ let
     libxrandr
     libxi
     libxcb
+    # rodio 走 cpal,linux 上构建期要 pkg-config 找到 alsa,运行期还要 dlopen 它。
+    alsa-lib
   ];
 in
 pkgs.mkShell {

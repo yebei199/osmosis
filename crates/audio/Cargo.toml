@@ -1,0 +1,15 @@
+[package]
+name = "audio"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "音频播放能力层:把一条直链变成声音,并吸收各端音频后端的差异"
+
+[dependencies]
+rodio.workspace = true
+stream-download.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+similar-asserts.workspace = true
+tokio = { version = "1", features = ["rt", "macros"] }
