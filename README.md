@@ -44,7 +44,8 @@ apps/desktop/      桌面平台入口(linux / windows / macOS)
 apps/android/      Android 平台入口(cdylib)+ gradle/ 打包工程
 apps/ios/          iOS 平台入口(staticlib)。只验证编译,打包需 macOS
 apps/web/          Web 平台入口(cdylib + wasm-bindgen)。只验证编译
-server/            开发用 axum 服务端,与客户端共享 contract
+server/            axum 后端:共享 contract,并把 bang-dream 的 gRPC 翻成 HTTP/JSON
+third_party/bang-dream/  音乐聚合层(Go, gRPC)。submodule,契约的唯一来源
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
 xtask/             构建逻辑(`cargo xtask android`),容器/本机通用
@@ -73,6 +74,7 @@ Android 真机:
 just server-dev              # 终端 1
 just android-build           # 终端 2
 just android-run             # 装 APK + adb reverse + 看日志
+
 ```
 
 手机上的 `127.0.0.1` 指的是**手机自己**,所以必须 `adb reverse tcp:3000 tcp:3000`
@@ -83,6 +85,32 @@ manifest 里打开。
 manifest 还必须声明 `INTERNET` 权限。Android 内核把 `AF_INET` socket 的**创建**权限
 绑在 `AID_INET`(gid 3003)上,而该组由这条权限授予 —— 没有它,`socket()` 直接 EACCES,
 连 `bind` 到 `127.0.0.1` 都不行,不只是访问外网。
+
+## 音乐链路
+
+歌来自 [bang-dream](https://github.com/yebei199/bang-dream) —— 一层把网易云等平台的
+加密与异构响应收敛成统一 gRPC 接口的聚合层。它以 submodule 的形式在
+`third_party/bang-dream`,那份 `.proto` 是 Go 与 Rust 两侧生成代码的唯一来源。
+
+```sh
+just bang-dream-login        # 首次:扫码登录网易云,凭据全服务只有一份
+just bang-dream              # 终端 1:gRPC,监听 127.0.0.1:50051
+just server-dev              # 终端 2:axum,监听 127.0.0.1:3000
+just bang-dream-test         # 终端 3:对着真实上游跑联机测试
+```
+
+开发时跑的通常不是 submodule 里那份副本,而是自己的工作树:
+
+```sh
+BANG_DREAM_REPO=~/projects/bang_dream just bang-dream
+```
+
+axum 侧的上游地址由 `BANG_DREAM_ADDR` 覆盖。连接是惰性的 —— bang-dream 没起来时
+后端照常启动,请求到来才失败并映射成 502,两个进程因此没有启动顺序约束。
+
+对客户端而言 gRPC 不存在:它只见到 `/search`、`/play/{id}` 这样的 HTTP/JSON,
+形状由 `contract` crate 定义。gRPC 的价值在 axum↔bang-dream 那一段 ——
+Go 与 Rust 两侧从同一份 `.proto` 生成,改了一边忘了另一边,构建直接失败。
 
 ## 为什么有 Java 代码?
 

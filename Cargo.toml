@@ -43,6 +43,16 @@ log = "0.4"
 android_logger = "0.15"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
+# gRPC 链路。只有 server 用 —— 客户端不认识 gRPC,它只跟 axum 说 HTTP/JSON。
+# tonic 0.14 起把 prost 编解码拆成了独立 crate,故 tonic / tonic-prost / tonic-prost-build 三件套。
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+prost = "0.14"
+
+# 测试断言。similar-asserts 在值不等时打行级 diff,比 assert_eq! 的一坨 Debug 好读。
+similar-asserts = "2"
+
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
 # 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
 # 场景用 bsn! 宏声明式构造(见 render3d)。bsn! 藏在 bevy_scene feature 后面(bevy::scene),

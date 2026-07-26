@@ -3,10 +3,21 @@ name = "server"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "开发用服务端:与客户端共享 contract,编译器保证契约一致"
+description = "后端:与客户端共享 contract,并把 bang-dream 的 gRPC 翻译成 HTTP/JSON"
 
 [dependencies]
 contract.workspace = true
+serde.workspace = true
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 tower-http = { version = "0.6", features = ["cors"] }
+# gRPC 客户端一侧。生成代码由 build.rs 从 third_party/bang-dream 的 .proto 产出。
+tonic.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+similar-asserts.workspace = true
