@@ -57,6 +57,15 @@ struct NavEntry {
     icon: string, // SVG path 数据,viewbox 24×24
 }
 
+// 搜索结果里的一行。字段都是**已经格式化好的字符串** —— 歌手怎么拼、时长怎么写
+// 由 Rust 侧决定并测过,`.slint` 里不做任何计算。
+struct TrackRow {
+    id: string,
+    title: string,
+    artists: string,
+    duration: string,
+}
+
 global Nav {
     out property <[NavEntry]> items: [
         {
@@ -70,6 +79,10 @@ global Nav {
         {
             label: "3D",
             icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5",
+        },
+        {
+            label: "Music",
+            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
         },
     ];
 }
@@ -197,6 +210,10 @@ export component MainWindow inherits Window {
     in property <string> platform;
     // 服务端健康状态的一行文案,由 Rust 根据领域状态渲染后推送。
     in property <string> health-text;
+    // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
+    in property <[TrackRow]> tracks: [];
+    // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
+    in property <string> playback-text;
     // bevy 离屏渲染的 3D 画面,由 render3d 每帧推送(见 crates/render3d)。
     // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
     // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -208,7 +225,7 @@ export component MainWindow inherits Window {
     // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
     in-out property <float> rot-yaw: 0;
     in-out property <float> rot-pitch: 0;
-    // 当前选中的导航页:0=Home、1=Server、2=3D。由左侧导航栏点击设置。
+    // 当前选中的导航页:0=Home、1=Server、2=3D、3=Music。由左侧导航栏点击设置。
     in-out property <int> current-tab: 0;
     // 3D 场景热调参数。Rust 每帧读这些原始文本,在信任边界解析+clamp(见 scene_params),
     // 非法/越界退回上一个好值。scene-index:0=形状画廊、1=实体阵列。
@@ -285,6 +302,10 @@ export component MainWindow inherits Window {
     callback bump();
     // 请求一次 GET /health。
     callback check-health();
+    // 用关键词搜歌。
+    callback search(string);
+    // 放某首歌。参数是 TrackRow 的 id。
+    callback play(string);
 
     title: "Slint Study";
     background: #0f1117;
@@ -427,6 +448,96 @@ export component MainWindow inherits Window {
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
                                     wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
+                // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                if root.current-tab == 3: VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        // 搜索框。歌名是任意 CJK,不能指定子集字体,
+                        // 否则输入的字大多不在子集里,直接是豆腐块。
+                        keyword := LineEdit {
+                            horizontal-stretch: 1;
+                            placeholder-text: "Search";
+                            accepted => { root.search(self.text); }
+                        }
+                        HoverButton {
+                            text: "Go";
+                            clicked => { root.search(keyword.text); }
+                        }
+                    }
+
+                    // 播放状态行。文案是硬编码中文,走子集字体;
+                    // 高度钉死,免得文案变长把下面的列表顶来顶去。
+                    Text {
+                        text: root.playback-text;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 13px;
+                        height: 20px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Flickable {
+                        vertical-stretch: 1;
+                        viewport-height: results.preferred-height;
+
+                        results := VerticalLayout {
+                            spacing: 4px;
+                            alignment: start;
+
+                            for row[i] in root.tracks: Rectangle {
+                                height: 52px;
+                                background: touch.has-hover ? #ffffff14 : #ffffff08;
+                                border-radius: 8px;
+
+                                touch := TouchArea {
+                                    clicked => { root.play(row.id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 12px;
+
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        // 歌名与歌手来自平台,是任意 CJK/日文 ——
+                                        // 不指定 font-family,落到系统字体。
+                                        // web 端 wasm 里没有系统字体,那边会是豆腐块,
+                                        // 已知缺口,见 README「音乐链路」。
+                                        Text {
+                                            text: row.title;
+                                            color: #e6e8ef;
+                                            font-size: 14px;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.artists;
+                                            color: #9aa0b4;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    Text {
+                                        text: row.duration;
+                                        color: #9aa0b4;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
                                 }
                             }
                         }

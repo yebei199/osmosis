@@ -163,9 +163,20 @@ fn web_ios_free_of_3d() -> Result<(), String> {
 fn web_free_of_native_audio() -> Result<(), String> {
     const FORBIDDEN: &[&str] = &["audio", "rodio", "cpal"];
 
+    // 必须带 `--target`:`audio` 是 ui 的 `cfg(not(wasm32))` 条件依赖,
+    // 不指定目标时 cargo tree 按宿主算,这条规则会对着**正确的**代码报红。
+    // 3D 那条不带 --target 是因为它守的是「默认 feature 集不外溢」,不是同一件事。
     let tree = capture(
         "cargo",
-        &["tree", "-p", "app-web", "--edges", "normal"],
+        &[
+            "tree",
+            "-p",
+            "app-web",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--edges",
+            "normal",
+        ],
     )?;
     let found: Vec<&str> = FORBIDDEN
         .iter()

@@ -12,6 +12,8 @@ pub use scene_params::SceneControls;
 mod nav_glass;
 pub use nav_glass::NavGlassControls;
 
+mod music;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -32,6 +34,12 @@ fn fps_enabled() -> bool {
         || option_env!("SLINT_STUDY_FPS").is_some()
 }
 
+/// 最大页签下标:0=Home、1=Server、2=3D、3=Music。
+///
+/// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
+/// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=3` 静默停在 3D 页」。
+const MAX_TAB: i32 = 3;
+
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
@@ -41,17 +49,18 @@ fn build_ui(initial_tab: i32) -> MainWindow {
 
     bind_counter(&ui);
     bind_health(&ui);
+    music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
     // 开局停在哪一页。平台入口给默认值,`SLINT_STUDY_TAB` 覆盖它 —— 后者是调试开关,
     // `just shot 420 2` 靠它直接截到 3D 页,不必再靠 MCP 模拟点击(那条路上有一串静默
     // 失败的坑,见 AGENTS.md)。没设或设歪了就用平台入口给的那个。
-    ui.set_current_tab(initial_tab.clamp(0, 2));
+    ui.set_current_tab(initial_tab.clamp(0, MAX_TAB));
     if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
-        ui.set_current_tab(tab.clamp(0, 2));
+        ui.set_current_tab(tab.clamp(0, MAX_TAB));
     }
     ui
 }

@@ -580,7 +580,9 @@ dependencies = [
 name = "audio"
 version = "0.1.0"
 dependencies = [
+ "reqwest 0.12.28",
  "rodio",
+ "serde_json",
  "similar-asserts",
  "stream-download",
  "tokio",
@@ -7783,7 +7785,9 @@ version = "0.1.0"
 dependencies = [
  "api",
  "app-core",
+ "audio",
  "log",
+ "similar-asserts",
  "slint",
  "slint-build",
  "ttf-parser",

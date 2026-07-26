@@ -96,7 +96,8 @@ manifest 还必须声明 `INTERNET` 权限。Android 内核把 `AF_INET` socket 
 just bang-dream-login        # 首次:扫码登录网易云,凭据全服务只有一份
 just bang-dream              # 终端 1:gRPC,监听 127.0.0.1:50051
 just server-dev              # 终端 2:axum,监听 127.0.0.1:3000
-just bang-dream-test         # 终端 3:对着真实上游跑联机测试
+just desktop-dev             # 终端 3:桌面端,切到「Music」页搜歌、点一首出声
+just bang-dream-test         # 或者:对着真实上游跑联机测试
 ```
 
 开发时跑的通常不是 submodule 里那份副本,而是自己的工作树:
@@ -111,6 +112,15 @@ axum 侧的上游地址由 `BANG_DREAM_ADDR` 覆盖。连接是惰性的 —— 
 对客户端而言 gRPC 不存在:它只见到 `/search`、`/play/{id}` 这样的 HTTP/JSON,
 形状由 `contract` crate 定义。gRPC 的价值在 axum↔bang-dream 那一段 ——
 Go 与 Rust 两侧从同一份 `.proto` 生成,改了一边忘了另一边,构建直接失败。
+
+客户端拿到直链后**边下边播**(`crates/audio`,rodio + stream-download),不整曲下载 ——
+同播的主控要边解码边推给听众,等整首下完再开始推是不能接受的
+(见 [`docs/adr/0008`](docs/adr/0008-syncplay-is-webrtc-media-p2p.md))。
+
+搜索结果里的歌名是任意中日文,不可能预裁进内嵌的子集字体(`just font-subset`
+只裁硬编码文案里出现过的字),所以那两列**不指定字体**,落到系统字体。
+linux 与安卓都有系统 CJK;**web 端 wasm 里没有系统字体,歌名会是豆腐块** ——
+已知缺口,等 web 端真正落地时一并解决。
 
 ## 为什么有 Java 代码?
 
