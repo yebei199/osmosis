@@ -4,7 +4,7 @@
 //! 各端音频后端的差异(linux 走 alsa、android 走 AAudio、web 将来走 WebAudio)
 //! 到此为止,不向上传播。
 //!
-//! **边下边播,不整曲下载。** [`open`] 返回一个实现了 `Read + Seek` 的流句柄,
+//! **边下边播,不整曲下载。** [`load`] 给出的流句柄实现 `Read + Seek`,
 //! rodio 读多少就下多少。这不只是为了首播延迟:同播的主控必须边解码边推给听众,
 //! 等整首下完再开始推是不能接受的(见 `docs/adr/0008`)。
 //!
@@ -12,11 +12,13 @@
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
 use std::io::{Read, Seek};
+use std::sync::OnceLock;
 
 use rodio::decoder::DecoderError;
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use stream_download::storage::temp::TempStorageProvider;
 use stream_download::{Settings, StreamDownload};
+use tokio::runtime::Runtime;
 
 /// 播放链路可能的失败方式。
 #[derive(Debug)]
@@ -60,7 +62,7 @@ impl From<DecoderError> for AudioError {
 
 /// 音频源:一个能读、能跳的字节流。
 ///
-/// 生产环境喂的是 [`open`] 返回的流句柄,测试喂的是 `Cursor<Vec<u8>>` ——
+/// 生产环境喂的是 [`load`] 内部开出的流句柄,测试喂的是 `Cursor<Vec<u8>>` ——
 /// 两者走**同一条**解码路径,所以测试证明的东西对真实播放也成立。
 pub trait Source:
     Read + Seek + Send + Sync + 'static
@@ -69,25 +71,63 @@ pub trait Source:
 
 impl<T: Read + Seek + Send + Sync + 'static> Source for T {}
 
-/// 把一条直链变成边下边读的音频源。
+/// 一条已经可以直接送进 [`Player`] 的流式音频。
+pub type Loaded =
+    rodio::Decoder<StreamDownload<TempStorageProvider>>;
+
+/// 后台多线程 tokio runtime,专门跑下载。
+///
+/// 与 `api` 里那个同构、同理由(`docs/adr/0002`),但**必须是另一个** ——
+/// 两个 crate 谁也不依赖谁。
+///
+/// 多线程是硬要求,不是性能选择:[`load`] 里解码器要**阻塞读**这条流,
+/// 而喂它的下载任务跑在同一个 runtime 上。单线程 runtime 里两者互等,
+/// 症状是整个调用永久挂起、没有任何报错。
+fn runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Runtime::new()
+            .expect("failed to start tokio runtime")
+    })
+}
+
+/// 把一条直链变成可播放的流式音频:开流 + 解码,全在后台 runtime 上完成。
+///
+/// 开流与解码不拆成两个公开函数,是因为它们**必须在同一个 runtime 上**跑。
+/// 拆开的话调用方很容易在 Slint 的 UI 线程上解码 —— 那里没有 tokio 反应堆,
+/// 下载推不动,解码器就一直等,界面停在「加载中」再也不动。
 ///
 /// 落盘到临时文件而不是常驻内存:seek 回已下过的位置(拖进度条、解码器回读
 /// 帧头)不必重新请求,而一首无损动辄几十兆,内存里堆着毫无必要。
-pub async fn open(
-    url: &str,
-) -> Result<StreamDownload<TempStorageProvider>, AudioError>
-{
-    let url = url.parse().map_err(|e| {
-        AudioError::Stream(format!("{e}: {url}"))
-    })?;
+pub async fn load(url: &str) -> Result<Loaded, AudioError> {
+    let url = url.to_owned();
 
-    StreamDownload::new_http(
-        url,
-        TempStorageProvider::default(),
-        Settings::default(),
-    )
-    .await
-    .map_err(|e| AudioError::Stream(e.to_string()))
+    runtime()
+        .spawn(async move {
+            let parsed = url.parse().map_err(|e| {
+                AudioError::Stream(format!("{e}: {url}"))
+            })?;
+            let stream = StreamDownload::new_http(
+                parsed,
+                TempStorageProvider::default(),
+                Settings::default(),
+            )
+            .await
+            .map_err(|e| {
+                AudioError::Stream(e.to_string())
+            })?;
+
+            // 解码要阻塞读若干秒(等够探测格式的字节),不能占着 async 线程。
+            tokio::task::spawn_blocking(move || {
+                decode(stream)
+            })
+            .await
+            .map_err(|e| {
+                AudioError::Stream(e.to_string())
+            })?
+        })
+        .await
+        .map_err(|e| AudioError::Stream(e.to_string()))?
 }
 
 /// 解码一个音频源。失败时不 panic —— 直链过期是常态,不是程序错误。

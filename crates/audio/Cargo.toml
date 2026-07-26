@@ -13,3 +13,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 [dev-dependencies]
 similar-asserts.workspace = true
 tokio = { version = "1", features = ["rt", "macros"] }
+# 联机测试用:自己打 axum 后端拿一条真实直链。不走 api crate ——
+# 那会让 audio 依赖 api,把两个平行的能力层串成一条链。
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"
