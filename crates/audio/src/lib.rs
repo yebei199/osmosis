@@ -186,6 +186,25 @@ impl Player {
         self.player.clear();
     }
 
+    /// 暂停。当前源留在原地,[`Self::resume`] 从暂停处接着放。
+    pub fn pause(&self) {
+        self.player.pause();
+    }
+
+    /// 从暂停处继续。
+    ///
+    /// 不叫 `play`:那个名字已经被"放一路新源"占了,两个语义挤一个名字,
+    /// 调用错了编译器还拦不住。
+    pub fn resume(&self) {
+        self.player.play();
+    }
+
+    /// 当前源放空了没有。控制条靠它区分"暂停中"(false)与"放完了"(true),
+    /// 自动续播靠它知道该切下一首了。
+    pub fn empty(&self) -> bool {
+        self.player.empty()
+    }
+
     /// 已经放到第几秒。
     ///
     /// 这是唯一能从外面看出"真的在出声"的东西:rodio 的输出线程若挂了,
