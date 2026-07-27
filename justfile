@@ -17,18 +17,25 @@ ci: ci-test ci-cross ci-boundaries
     @echo "==> CI 全部通过"
 
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致)
+#
+# **一条命令都不设 RUSTFLAGS**。它进 cargo 的构建指纹,而且是整棵依赖树的 ——
+# 设了它,`just ci` 与 `just desktop-dev` 各自维护一套 500 多个 crate 的产物,
+# 来回切就是来回冷编。warning 的拦截改由 clippy 的 `-- -D warnings` 承担:
+# 那是传给最终 crate 的参数,不进依赖指纹,且 clippy 本就涵盖全部 rustc lint。
 [group('ci')]
 ci-test:
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test'
+    nix-shell slint.nix --run 'cargo test'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p audio -p syncplay -p server -p xtask'
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets'
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p audio -p syncplay -p server -p xtask'
+    nix-shell slint.nix --run 'cargo test -p audio -p syncplay -p server -p xtask'
+    nix-shell slint.nix --run 'cargo clippy --all-targets -- -D warnings'
+    nix-shell slint.nix --run 'cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
     # render3d 不在 default-members 里(它拖整个 bevy),裸 `cargo test` 从不碰它 ——
     # 不点名的话,相机后撤与遮挡门槛那几个单测一次都不会跑。GitHub 的 workflow 同样
-    # 不编 bevy,所以这条是它们唯一的防线。
-    nix-shell render3d.nix --run 'RUSTFLAGS="-D warnings" cargo test -p render3d'
+    # 不编 bevy,所以这两条是它们唯一的防线;clippy 那条单独列出来,是因为 RUSTFLAGS
+    # 撤掉之后,只跑 test 就再没有东西拦 render3d 的 warning 了。
+    nix-shell render3d.nix --run 'cargo test -p render3d'
+    nix-shell render3d.nix --run 'cargo clippy --all-targets -p render3d -- -D warnings'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
 [group('ci')]
