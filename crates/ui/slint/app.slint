@@ -29,8 +29,8 @@ component HoverButton inherits Rectangle {
     height: 56px;
     width: 220px;
     border-radius: 14px;
-    background: down ? #2f45c5 : hovered ? #5c7cfa : #4263eb;
-    drop-shadow-color: #4263eb80;
+    background: down ? #6b4520 : hovered ? #a9713c : #8a5a2b;
+    drop-shadow-color: #8a5a2b80;
     drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
     drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
     animate background, drop-shadow-blur, drop-shadow-offset-y {
@@ -103,7 +103,7 @@ component NavItem inherits Rectangle {
     border-radius: 12px;
     background: root.gpu-selected
         ? (touch.has-hover ? #ffffff14 : transparent)
-        : (active ? #1c2233 : (touch.has-hover ? #141824 : transparent));
+        : (active ? #2a1e14 : (touch.has-hover ? #1d150f : transparent));
     animate background { duration: 120ms; easing: ease-out; }
 
     VerticalLayout {
@@ -118,7 +118,7 @@ component NavItem inherits Rectangle {
                 viewbox-width: 24;
                 viewbox-height: 24;
                 commands: root.icon;
-                stroke: active ? #7aa2f7 : #8b91a5;
+                stroke: active ? #d9a86c : #8b91a5;
                 stroke-width: 1.8px;
                 fill: transparent;
             }
@@ -336,7 +336,7 @@ export component MainWindow inherits Window {
             if !root.compact: Rectangle {
                 width: root.nav-w;
                 // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
-                background: #0b0d13;
+                background: #140f0b;
 
                 // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
                 // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
@@ -400,7 +400,7 @@ export component MainWindow inherits Window {
                                 }
                                 Text {
                                     text: root.count;
-                                    color: #7aa2f7;
+                                    color: #d9a86c;
                                     font-size: 72px;
                                     horizontal-alignment: center;
                                 }
@@ -706,7 +706,7 @@ export component MainWindow inherits Window {
         // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
         if root.compact: Rectangle {
             height: 64px + root.safe-area-insets.bottom;
-            background: #0b0d13;
+            background: #140f0b;
             HorizontalLayout {
                 padding-left: root.safe-area-insets.left + 8px;
                 padding-right: root.safe-area-insets.right + 8px;
