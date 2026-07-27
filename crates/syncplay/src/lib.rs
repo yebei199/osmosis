@@ -11,10 +11,12 @@
 
 mod envelope;
 mod peer;
+mod session;
 mod signalling;
 
 pub use envelope::Envelope;
 pub use peer::{Peer, PeerRole};
+pub use session::{Role, Roster, Session};
 pub use signalling::Signalling;
 
 /// 同播链路可能的失败方式。

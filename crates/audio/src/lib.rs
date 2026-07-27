@@ -12,6 +12,9 @@
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
 pub mod codec;
+mod stream_source;
+
+pub use stream_source::ChannelSource;
 
 use std::io::{Read, Seek};
 use std::sync::OnceLock;
