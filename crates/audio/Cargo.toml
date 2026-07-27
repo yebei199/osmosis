@@ -8,6 +8,9 @@ description = "音频播放能力层:把一条直链变成声音,并吸收各端
 [dependencies]
 rodio.workspace = true
 stream-download.workspace = true
+# 同播要把 PCM 重编码成 Opus。没有成熟的纯 Rust 编码器,这是 libopus 的绑定 ——
+# devshell 里的 libopus 由 slint.nix 提供。
+opus = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [dev-dependencies]

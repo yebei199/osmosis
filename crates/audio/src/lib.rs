@@ -11,6 +11,8 @@
 //! 解码与出声刻意分开:出声需要真实声卡,断言不了;而解码才是真会出故障的地方 ——
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
+pub mod codec;
+
 use std::io::{Read, Seek};
 use std::sync::OnceLock;
 
