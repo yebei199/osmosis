@@ -112,6 +112,16 @@ impl Sync {
         self.client.leave();
         *lock(&self.role) = Role::Alone;
         show_role(&self.weak, describe_role(&Role::Alone));
+        // 播放行从「收听中…」退回空闲文案。退出后紧接着播自己的歌时,
+        // Loading 会立刻盖掉它,这里只兜"退出后什么都不放"的那条路。
+        let _ = self.weak.upgrade_in_event_loop(|ui| {
+            ui.set_playback_text(
+                crate::music::describe_playback(
+                    &app_core::PlaybackState::Idle,
+                )
+                .into(),
+            );
+        });
     }
 }
 
@@ -185,8 +195,12 @@ fn handle(
             };
             show_role(weak, describe_role(&lock(role)));
             // 有声音在出,控制键该画 ⏸ —— 此刻按它的语义是「退出收听」。
+            // 播放状态行一并接管:上面可能还挂着本机上一首的「正在播放 X」,
+            // 而扬声器里已经是推来的流,那行等于在撒谎。曲名主控没发过来,
+            // 写"收听中"是诚实的全部。
             let _ = weak.upgrade_in_event_loop(|ui| {
                 ui.set_is_playing(true);
+                ui.set_playback_text("收听中…".into());
             });
         }
         Event::Failed(message) => {
