@@ -127,6 +127,9 @@ fn handle(
                 roster.others().to_vec()
             };
             show_devices(weak, others);
+            // 名册到了就说明信令是通的,顺手把上一次的报错洗掉 ——
+            // 断线重连之后那一行本该恢复,否则它会一直停在一个已经不成立的错误上。
+            show_role(weak, describe_role(&lock(role)));
         }
         Event::Listening { host, source } => {
             // 直接出声,不切 UI 线程:切过去反而会让音频的起播等在
@@ -134,13 +137,36 @@ fn handle(
             if let Ok(player) = player.as_ref() {
                 player.play(source);
             }
-            *lock(role) = Role::Listener { host };
+            // 存的是名字而非 id:这一份 Role 只服务于状态行,
+            // 而状态行上的写法必须和用户点过的那一行一致。
+            *lock(role) = Role::Listener {
+                host: display_name(roster, &host),
+            };
             show_role(weak, describe_role(&lock(role)));
         }
         Event::Failed(message) => {
             show_role(weak, format!("同播: {message}"));
         }
     }
+}
+
+/// 一台设备在界面上该怎么称呼。
+///
+/// 信令只带 id,而 id 是给机器认的(`主机名-进程号`)。名册里有对端自报的名字,
+/// 就用它 —— 用户在列表上点的是那个名字,状态行里出现另一个写法只会让人以为
+/// 推给了别的设备。名册还没到就退回 id,总比一行空白强。
+fn display_name(
+    roster: &Arc<Mutex<Roster>>,
+    id: &str,
+) -> String {
+    lock(roster)
+        .others()
+        .iter()
+        .find(|device| device.id == id)
+        .map_or_else(
+            || id.to_owned(),
+            |device| device.name.clone(),
+        )
 }
 
 /// 点一台设备就把当前这首推过去。
@@ -253,6 +279,43 @@ mod tests {
         assert_ne!(
             first.name, second.name,
             "名字也得能区分,否则界面上两行长得一样"
+        );
+    }
+
+    fn roster_of(
+        devices: Vec<DeviceDto>,
+    ) -> Arc<Mutex<Roster>> {
+        let roster = Arc::new(Mutex::new(Roster::new(
+            "me".to_owned(),
+        )));
+        lock(&roster).update(devices);
+        roster
+    }
+
+    /// 状态行上写的是设备名,不是信令里那个 id。
+    ///
+    /// 用户在列表上点的是名字,状态行换个写法就会让人以为推给了别的设备。
+    #[test]
+    fn listening_line_uses_the_device_name() {
+        let roster = roster_of(vec![DeviceDto {
+            id: "pc1-42".to_owned(),
+            name: "pc1 #42".to_owned(),
+        }]);
+
+        assert_eq!(
+            display_name(&roster, "pc1-42"),
+            "pc1 #42"
+        );
+    }
+
+    /// 边界:名册还没到就退回 id —— 一行 id 也好过一行空白。
+    #[test]
+    fn listening_line_falls_back_to_the_id() {
+        let roster = roster_of(Vec::new());
+
+        assert_eq!(
+            display_name(&roster, "pc1-42"),
+            "pc1-42"
         );
     }
 
