@@ -8185,6 +8185,7 @@ dependencies = [
  "contract",
  "futures-executor",
  "futures-util",
+ "log",
  "rodio",
  "serde",
  "serde_json",

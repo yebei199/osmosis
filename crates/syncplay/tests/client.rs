@@ -281,3 +281,57 @@ fn listen(
     );
     heard
 }
+
+/// **有听众退出过之后,推给下一个还能出声。**
+///
+/// 真机上抓到的回归:听众退出会关连接,死绑定留在共享轨上;
+/// `write_sample` 对它报错,主控的泵一碰就自杀 —— 此后推给谁都是无声,
+/// 而 ICE 一路显示 connected,现象离病因极远。
+#[tokio::test(flavor = "multi_thread")]
+async fn push_survives_a_listener_that_left() {
+    let addr = start_signalling_server().await;
+
+    let (host, host_events) = start_client(addr, "host");
+    let (first, first_events) = start_client(addr, "first");
+    let (_second, second_events) =
+        start_client(addr, "second");
+
+    wait_for(
+        &host_events,
+        "两台听众都入册",
+        roster_has(&["first", "second"]),
+    );
+
+    host.feed(tone());
+    host.push("first");
+    wait_for(
+        &first_events,
+        "第一台收到音频",
+        |event| match event {
+            Event::Listening { .. } => Some(()),
+            _ => None,
+        },
+    );
+
+    // 第一台退出 —— 它的连接被关掉,死绑定就是这么来的。
+    first.leave();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    host.push("second");
+    let source = wait_for(
+        &second_events,
+        "第二台收到音频",
+        |event| match event {
+            Event::Listening { source, .. } => Some(source),
+            _ => None,
+        },
+    );
+
+    let heard = listen(source);
+    let energy = heard.iter().map(|s| s * s).sum::<f32>()
+        / heard.len() as f32;
+    assert!(
+        energy > 0.01,
+        "前任听众退出后,推给下一个必须仍有声音(能量 {energy})"
+    );
+}

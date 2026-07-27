@@ -20,7 +20,7 @@ use webrtc::track::track_remote::TrackRemote;
 /// `samples` 来自 [`audio::codec::Tee`],它在支路满时**丢采样**而不是阻塞,
 /// 所以这条泵慢下来只会让听众少听几帧,不会拖累本机播放。
 ///
-/// 一直跑到通道关闭(本机停止播放)或写轨失败(连接没了)为止。
+/// 一直跑到通道关闭(本机停止播放)为止 —— 写轨失败只记一笔,不停。
 pub fn spawn_host(
     samples: mpsc::Receiver<Sample>,
     track: Arc<TrackLocalStaticSample>,
@@ -52,12 +52,19 @@ pub fn spawn_host(
                 };
                 // write_sample 是 async 的,而这里是普通线程 —— 用一个
                 // 当场建起来的单线程 runtime 阻塞等它,别把 async 传染上去。
-                if futures_executor::block_on(
-                    track.write_sample(&sample),
-                )
-                .is_err()
+                //
+                // 写失败**不退出**:webrtc 是先写完所有健康绑定、最后才汇总报错,
+                // 一条死绑定的错误不代表活着的听众没收到。泵在这里自杀的话,
+                // 某个听众断得不干净就会让后来的所有人永远无声,而 ICE 全程
+                // 显示 connected —— 真机上抓到过一次,现象离病因极远。
+                if let Err(error) =
+                    futures_executor::block_on(
+                        track.write_sample(&sample),
+                    )
                 {
-                    return;
+                    log::warn!(
+                        "同播写轨失败(继续推): {error}"
+                    );
                 }
             }
         }
