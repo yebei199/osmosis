@@ -9,6 +9,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use rodio::source::UniformSourceIterator;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
 use crate::AudioError;
@@ -35,6 +36,30 @@ pub const FRAME_SAMPLES_PER_CHANNEL: usize =
 /// 一帧总共有多少个采样(交错存放)。
 pub const FRAME_SAMPLES: usize =
     FRAME_SAMPLES_PER_CHANNEL * SYNC_CHANNELS as usize;
+
+/// 支路的容量,以采样计。约 200ms(48kHz 立体声),与听众侧的缓冲同一个量级。
+pub const BRANCH_CAPACITY: usize =
+    SYNC_SAMPLE_RATE as usize * SYNC_CHANNELS as usize / 5;
+
+/// 把任意来源统一成同播链路的采样率与声道数。
+///
+/// **必须在 [`Tee`] 之前套上。** 歌基本都是 44.1kHz,也有单声道的,而 [`Encoder`]
+/// 硬性假设 48kHz 立体声 —— 不转的话支路流出的采样与它错位,听众听到的是变调、
+/// 变速或只剩半边声道的声音,而这一路上每一环单看都"没报错"。
+///
+/// 顺带让本机播放也走同一份采样:主控听到的和推出去的因此逐采样相同,
+/// 出问题时不必再问"是不是转换那一步的锅"。
+pub fn normalize<S: Source>(
+    source: S,
+) -> UniformSourceIterator<S> {
+    UniformSourceIterator::new(
+        source,
+        ChannelCount::new(SYNC_CHANNELS)
+            .expect("声道数是编译期常量,非零"),
+        SampleRate::new(SYNC_SAMPLE_RATE)
+            .expect("采样率是编译期常量,非零"),
+    )
+}
 
 /// 把一路音频原样传下去,同时复制一份到支路。
 ///
@@ -221,6 +246,42 @@ mod tests {
                 .expect("采样率是编译期常量,非零"),
             samples,
         )
+    }
+
+    /// **归一必须真的换算,不能只是改个标称值。**
+    ///
+    /// 44.1kHz 单声道是最常见的那一类不匹配。只报格式不换算的话,
+    /// [`Encoder`] 会把 44100 个采样当成 48000 个来切帧 —— 听众听到的是
+    /// 快了 9% 的变调音,而链路上没有任何一环报错。
+    #[test]
+    fn normalize_forces_the_sync_format() {
+        // 100ms 的单声道 44.1kHz。
+        let odd = rodio::buffer::SamplesBuffer::new(
+            ChannelCount::new(1).expect("非零"),
+            SampleRate::new(44_100).expect("非零"),
+            vec![0.5f32; 4_410],
+        );
+
+        let normalized = normalize(odd);
+        assert_eq!(
+            normalized.sample_rate().get(),
+            SYNC_SAMPLE_RATE
+        );
+        assert_eq!(
+            normalized.channels().get(),
+            SYNC_CHANNELS
+        );
+
+        // 同样是 100ms,换算后该是 48000×0.1×2 个采样。重采样的边界处理
+        // 各实现差几个采样,所以给 1% 的余量而不是钉死。
+        let produced = normalized.count();
+        let expected = SYNC_SAMPLE_RATE as usize
+            * SYNC_CHANNELS as usize
+            / 10;
+        assert!(
+            produced.abs_diff(expected) < expected / 100,
+            "100ms 换算后应有约 {expected} 个采样,实得 {produced}"
+        );
     }
 
     /// tee 不能吃掉任何采样 —— 主路少一个采样,本机放出来的声音就缺一块。
