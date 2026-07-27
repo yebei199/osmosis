@@ -9,3 +9,6 @@ description = "客户端领域:应用持有的状态,以及改变状态的规则
 # 且不知道 slint、不知道 HTTP。网络由调用方注入。见 docs/adr/0002。
 [dependencies]
 contract.workspace = true
+
+[dev-dependencies]
+similar-asserts.workspace = true
