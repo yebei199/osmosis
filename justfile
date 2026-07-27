@@ -42,10 +42,15 @@ ci-boundaries:
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
 # 左上角帧率读数:`SLINT_STUDY_FPS=1 just desktop-dev`(运行期开关,不必重编)
+#
+# **MCP 默认开着**。调试与验证一律走它 —— 读元素树、模拟点击、量真实尺寸,
+# 都比对着截图猜可靠。三个开关缺一不可,所以焊在这条配方里而不是让人记:
+# feature `mcp`、构建期 SLINT_EMIT_DEBUG_INFO、运行期 SLINT_MCP_PORT。
+# 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
 [group('三端')]
 [group('桌面')]
-desktop-dev extra="":
-    SLINT_LIVE_PREVIEW=1 cargo run -p app-desktop --features slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}
+desktop-dev extra="": mcp-port-free
+    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 桌面 + 嵌入的 bevy 3D 面板(见 crates/render3d)。走 render3d.nix 拿 vulkan 运行期库。
 # 带 .slint 热重载,同 desktop-dev —— 导航玻璃、工具条 backdrop 这些要对着调版式的东西
@@ -53,8 +58,8 @@ desktop-dev extra="":
 # 只覆盖 .slint:bevy 场景与 wgsl 在 Rust 侧,改那些仍需重跑。
 # 首帧就绪后窗口中间会出现一个自转的立方体。
 [group('桌面')]
-desktop-dev-3d:
-    SLINT_LIVE_PREVIEW=1 nix-shell render3d.nix --run 'cargo run -p app-desktop --features bevy-3d,slint/live-preview'
+desktop-dev-3d: mcp-port-free
+    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell render3d.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,bevy-3d,slint/live-preview'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
@@ -257,21 +262,6 @@ mcp-port-free:
         echo "解法:adb forward --remove tcp:{{mcp_port}}" >&2
     fi
     exit 1
-
-# 桌面 app + 内嵌 MCP server,供 AI 助手挂接(.mcp.json 里的 slint-app)。
-# AI 由此能读运行中界面的元素树、截图、模拟点击,而不是靠猜。
-#
-# SLINT_EMIT_DEBUG_INFO=1 不能省:它让 slint 编译器把元素类型名/id 嵌进产物。少了它
-# 一切照常启动,只是 get_element_tree 永远只回一个空壳根节点 —— 静默地瞎。
-# 加 3D 页:just mcp-desktop-3d
-[group('mcp')]
-mcp-desktop: mcp-port-free
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp
-
-# 同上但带 bevy 3D 页(热调面板那页才是最值得让 AI 看的)。需要 vulkan,故走 render3d.nix
-[group('mcp')]
-mcp-desktop-3d: mcp-port-free
-    nix-shell render3d.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,bevy-3d'
 
 # 把开发机的 {{mcp_port}} 转发到手机上的同一端口。
 # 方向与 android-reverse 相反:MCP server 跑在**手机**里,是开发机要连进去,故用 forward。

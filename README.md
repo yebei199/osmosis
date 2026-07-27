@@ -193,9 +193,14 @@ Slint 1.17 起,MCP server 可以**编译进应用自身**(`slint/mcp` feature)�
 不再靠猜或截图,而是直接读运行中窗口的元素树、模拟点击和键盘输入。
 背景见 [`docs/slint/slint-and-ai-mcp.md`](docs/slint/slint-and-ai-mcp.md)。
 
+**开发链路默认开着**:`desktop-dev` 与 `desktop-dev-3d` 已经带上 feature 与两个环境变量。
+发布产物不带 —— `mcp` 不在 `apps/desktop` 的 `default` feature 里,`cargo build --release`
+与 APK 都是干净的。这个区分是有意的:MCP 等于把「读完整 UI 树 + 截图 + 合成点击」
+开给 localhost 上的任何进程,开发时值,发出去不值。
+
 ```sh
-just mcp-desktop      # 桌面端 + MCP,监听 127.0.0.1:8090
-just mcp-desktop-3d   # 同上,外加 bevy 3D 页(那页的热调面板最值得给 AI 看)
+just desktop-dev      # 桌面端,MCP 默认开在 127.0.0.1:8090
+just desktop-dev-3d   # 同上,外加 bevy 3D 页(那页的热调面板最值得给 AI 看)
 ```
 
 客户端那一侧由仓库根的 [`.mcp.json`](.mcp.json) 声明(名为 `slint-app`),
@@ -211,12 +216,12 @@ just mcp-android      # 烧入端口重编 APK + 装机 + adb forward + 启动
 这里用的是 `adb forward` 而非 `adb reverse`:MCP server 跑在**手机**里,是开发机要连
 进去,方向与前面转发 `server-dev` 的那次相反。
 
-> **玩完手机记得撤转发**:`adb forward` 会一直占着 8090。之后再跑 `just mcp-desktop*`,
+> **玩完手机记得撤转发**:`adb forward` 会一直占着 8090。之后再跑 `just desktop-dev*`,
 > slint 绑不上端口时**只在日志里留一行 `Address already in use` 就继续跑**,app 一切正常
 > —— 而 AI 客户端按 `.mcp.json` 连 127.0.0.1:8090,连上的是**手机里的旧 APK**,读到的
 > 元素树和截图全是手机的,浑然不觉。踩过一次,查了半天。
 >
-> 现在 `mcp-desktop*` 前置了一道端口守卫,占用时直接失败并点名占用者,不会再静默降级。
+> 现在 `desktop-dev*` 前置了一道端口守卫,占用时直接失败并点名占用者,不会再静默降级。
 > 撤转发:`adb forward --remove tcp:8090`。
 
 Slint 1.17 本身在 android 上**没接** MCP:桌面走 `i-slint-backend-selector`,它设完
@@ -232,8 +237,8 @@ platform 会顺手调 `mcp_server::init()`;而 `slint::android::init()` 直接�
 | `SLINT_EMIT_DEBUG_INFO=1` | 构建期 | **静默地瞎**:server 正常起、工具正常列,但 `get_element_tree` 只回一个没有类型名、没有子节点的空壳根 |
 | `SLINT_MCP_PORT` | 运行期(android 为构建期) | 不监听,零开销 |
 
-中间那条是最容易踩的坑:它不报错、不警告,只是让 AI 看到一片空白。`just mcp-*` 已经
-把三个全备齐了,手敲命令时才需要留意。
+中间那条是最容易踩的坑:它不报错、不警告,只是让 AI 看到一片空白。`just desktop-dev*`
+与 `just mcp-android` 已经把三个全备齐了,手敲命令时才需要留意。
 
 android 侧 `SLINT_MCP_PORT` 是构建期的 —— APK 由系统启动,进程拿不到运行时环境变量,
 只能靠 `apps/android/src/lib.rs` 里的 `option_env!` 编进二进制。端口在 `justfile` 的
