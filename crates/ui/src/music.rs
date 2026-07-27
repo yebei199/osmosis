@@ -731,6 +731,8 @@ mod tests {
         copy.push(QUEUE_DONE.to_owned());
         copy.push(WASM_NOTICE.to_owned());
         copy.push("同播: 没有其他设备".to_owned());
+        // 听众收听时的播放行(见 `syncplay.rs` 的 Listening 分支)。
+        copy.push("收听中…".to_owned());
         // 开机自检的两种坏消息。
         copy.extend(
             [
