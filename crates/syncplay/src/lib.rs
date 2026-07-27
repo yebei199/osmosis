@@ -9,16 +9,24 @@
 //! 服务端把信令载荷当作不透明文本,所以载荷内部的结构由本层定义 —— 见 [`Envelope`]。
 //! 这个分工是刻意的:改动 offer/answer/candidate 的编码方式不必动服务端一行。
 
+mod client;
 mod envelope;
 mod peer;
 pub mod pump;
 mod session;
 mod signalling;
 
+pub use client::{Client, Event};
 pub use envelope::Envelope;
-pub use peer::{Peer, PeerRole};
-pub use session::{Role, Roster, Session};
-pub use signalling::Signalling;
+pub use peer::{Peer, PeerRole, audio_track};
+pub use session::{Role, Roster};
+pub use signalling::{SignalSender, Signalling};
+
+/// 设备的线上表示。
+///
+/// 从 `contract` 转出:界面层按分层不直接依赖契约 crate,而 [`Client::start`]
+/// 又必须收一个设备身份 —— 由本层转达,调用方不必多引一个依赖。
+pub use contract::DeviceDto;
 
 /// 同播链路可能的失败方式。
 #[derive(Debug)]

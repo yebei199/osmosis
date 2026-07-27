@@ -57,6 +57,28 @@ impl Peer {
     pub async fn new(
         role: PeerRole,
     ) -> Result<Self, SyncError> {
+        let track = match role {
+            PeerRole::Host => Some(audio_track()),
+            PeerRole::Listener => None,
+        };
+        Self::build(track).await
+    }
+
+    /// 建一条主控连接,**复用**一条已有的轨。
+    ///
+    /// 星型拓扑里所有听众听的是同一路声音([`crate::Role::Host`])。
+    /// 一条 [`TrackLocalStaticSample`] 可以同时绑到多条连接上,写一次就发给所有人 ——
+    /// 于是编码只做一遍。每条连接各自建轨的话,同一首歌要编 N 遍,
+    /// 而 Opus 编码是这条链路上最贵的一步。
+    pub async fn host_on(
+        track: Arc<TrackLocalStaticSample>,
+    ) -> Result<Self, SyncError> {
+        Self::build(Some(track)).await
+    }
+
+    async fn build(
+        track: Option<Arc<TrackLocalStaticSample>>,
+    ) -> Result<Self, SyncError> {
         let api = build_api()?;
         let connection = Arc::new(
             api.new_peer_connection(configuration())
@@ -67,21 +89,17 @@ impl Peer {
         );
 
         // 轨要在 offer 之前加进去,否则协商出的 SDP 里没有媒体行。
-        let track = match role {
-            PeerRole::Host => {
-                let track = audio_track();
-                connection
-                    .add_track(track.clone())
-                    .await
-                    .map_err(|e| {
+        //
+        // 听众侧是 `None`:它只收不发。加一条空轨会让它也出现在 SDP 里,
+        // 对端于是以为可以往回推 —— 而这个方向上没人在听。
+        if let Some(track) = &track {
+            connection
+                .add_track(track.clone())
+                .await
+                .map_err(|e| {
                     SyncError::Peer(e.to_string())
                 })?;
-                Some(track)
-            }
-            // 听众只收不发。加一条空轨会让它也出现在 SDP 里,
-            // 对端于是以为可以往回推 —— 而这个方向上没人在听。
-            PeerRole::Listener => None,
-        };
+        }
 
         let (candidates, outgoing) =
             mpsc::channel(CANDIDATE_CAPACITY);
@@ -282,7 +300,9 @@ fn configuration() -> RTCConfiguration {
 }
 
 /// 主控推流用的那条轨。
-fn audio_track() -> Arc<TrackLocalStaticSample> {
+///
+/// 公开出来是给 [`crate::Client`] 用的:整个会话共用一条,见 [`Peer::host_on`]。
+pub fn audio_track() -> Arc<TrackLocalStaticSample> {
     Arc::new(TrackLocalStaticSample::new(
         RTCRtpCodecCapability {
             mime_type: MIME_TYPE_OPUS.to_owned(),

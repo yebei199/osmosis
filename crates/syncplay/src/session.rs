@@ -1,8 +1,11 @@
-//! 一次同播会话:把信令、名册与若干条 WebRTC 连接串起来。
+//! 一次同播会话看得见的两样东西:名册,和本机在里面扮演的角色。
 //!
 //! 星型拓扑(`docs/adr/0008`):本机若是主控,就与**每个**听众各建一条连接;
 //! 若是听众,就只有与主控的那一条。角色不是配置出来的,是**行为**决定的 ——
 //! 谁发起邀请谁就是主控。
+//!
+//! 连接本身不在这里,在 [`crate::Client`] 的编排循环里 —— 界面读的是状态,
+//! 不该顺着状态摸到一条 `RTCPeerConnection`。
 
 use contract::DeviceDto;
 
@@ -53,36 +56,6 @@ pub enum Role {
     Listener { host: String },
 }
 
-/// 会话状态:名册 + 本机当前的角色。
-///
-/// 还不持有连接 —— 编排(谁邀请谁、断线时关掉哪些)尚未落地,
-/// 提前放一个没人读的 `peers` 只会让人以为它已经在管了。
-pub struct Session {
-    roster: Roster,
-    role: Role,
-}
-
-impl Session {
-    pub fn new(own_id: String) -> Self {
-        Self {
-            roster: Roster::new(own_id),
-            role: Role::default(),
-        }
-    }
-
-    pub fn roster(&self) -> &Roster {
-        &self.roster
-    }
-
-    pub fn roster_mut(&mut self) -> &mut Roster {
-        &mut self.roster
-    }
-
-    pub fn role(&self) -> &Role {
-        &self.role
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
@@ -96,9 +69,9 @@ mod tests {
         }
     }
 
-    /// 名册更新反映到会话上。
+    /// 服务端推来的名册原样反映到会话上。
     #[test]
-    fn session_tracks_the_roster() {
+    fn roster_tracks_the_devices_that_are_online() {
         let mut roster = Roster::new("me".to_owned());
 
         roster.update(vec![device("me"), device("other")]);
@@ -111,7 +84,7 @@ mod tests {
     /// 推给自己没有意义,而界面若把它列出来,点下去会得到一条自己连自己的
     /// PeerConnection —— 它甚至能建成功,只是声音绕了一圈回到同一个扬声器。
     #[test]
-    fn session_ignores_its_own_device() {
+    fn roster_ignores_its_own_device() {
         let mut roster = Roster::new("me".to_owned());
 
         roster.update(vec![device("me")]);
