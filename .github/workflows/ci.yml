@@ -24,16 +24,17 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      # femtovg 后端在构建期通过 pkg-config 链接 fontconfig。
+      # femtovg 后端在构建期通过 pkg-config 链接 fontconfig;
+      # audio 走 cpal→alsa,syncplay 走 libopus 的 C 绑定。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev
 
-      # xtask 不在 default-members 里,单独点名。
+      # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
       - run: cargo test
-      - run: cargo test -p xtask
+      - run: cargo test -p audio -p syncplay -p server -p xtask
 
       - run: cargo clippy --all-targets
-      - run: cargo clippy --all-targets -p server -p xtask
+      - run: cargo clippy --all-targets -p audio -p syncplay -p server -p xtask
 
   # 本地跑不动的端,至少保证它们**能编译** —— 否则 app-core/api 会悄悄长出
   # 这些 target 编不过的假设,等真要做 iOS 时才发现。见 issue #1。

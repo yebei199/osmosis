@@ -20,9 +20,11 @@ ci: ci-test ci-cross ci-boundaries
 [group('ci')]
 ci-test:
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test'
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p xtask'
+    # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
+    # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo test -p audio -p syncplay -p server -p xtask'
     nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets'
-    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p server -p xtask'
+    nix-shell slint.nix --run 'RUSTFLAGS="-D warnings" cargo clippy --all-targets -p audio -p syncplay -p server -p xtask'
     # render3d 不在 default-members 里(它拖整个 bevy),裸 `cargo test` 从不碰它 ——
     # 不点名的话,相机后撤与遮挡门槛那几个单测一次都不会跑。GitHub 的 workflow 同样
     # 不编 bevy,所以这条是它们唯一的防线。
