@@ -1,11 +1,14 @@
-//! 音乐页:搜歌、点一首出声。
+//! 音乐页:搜歌、点一首出声、控制条(播放/暂停、上一首/下一首、随机)。
 //!
-//! 本模块是**组装点**的一部分:它把 `api` 的请求函数和 `audio` 的播放器接到
-//! `app_core::Playback` 上,三者互不相识。`app-core` 只知道"正在准备一首歌",
-//! 不知道准备是靠 HTTP 还是靠 alsa。
+//! 本模块是**组装点**的一部分:它把 `api` 的请求函数、`audio` 的播放器和
+//! `app_core::Queue` 接到 `app_core::Playback` 上,几者互不相识。
 //!
 //! 显示层面的决定都落在这里,而不是服务端:歌手用什么符号拼、时长写成什么样,
 //! 换个界面就该换个写法,不该固化进线上格式。
+//!
+//! 收听同播时本机是「听众」:在这台机器上做任何播放动作都视为退出收听
+//! (`CONTEXT.md`「听众」)。自动续播在收听时也必须闭嘴 —— 它要是切了歌,
+//! 会把对面推来的声音捣掉。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,6 +19,8 @@ use app_core::{Playback, PlaybackState, TrackDto};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{MainWindow, TrackRow};
+#[cfg(not(target_arch = "wasm32"))]
+use app_core::Queue;
 
 /// 多歌手之间的分隔符。
 const ARTIST_SEPARATOR: &str = " / ";
@@ -25,6 +30,14 @@ const MILLIS_PER_SECOND: i64 = 1_000;
 
 /// 一分钟有多少秒。
 const SECONDS_PER_MINUTE: i64 = 60;
+
+/// 队列放完时状态行上的话。常量而非字面量:子集字体测试要遍历到它。
+const QUEUE_DONE: &str = "队列放完了";
+
+/// 自动续播的轮询间隔。rodio 没有"放完了"的回调,只能定期看一眼。
+#[cfg(not(target_arch = "wasm32"))]
+const ADVANCE_POLL: core::time::Duration =
+    core::time::Duration::from_secs(1);
 
 /// 歌手列表拼成一行。
 ///
@@ -61,6 +74,34 @@ pub fn describe_playback(state: &PlaybackState) -> String {
     }
 }
 
+/// 开机静默自检的结论:健康就闭嘴,坏了才开口。
+///
+/// Server 页删掉之后,这是版本协商唯一的运行时入口 —— 客户端与服务端的
+/// `PROTOCOL_VERSION` 对不上时,这里的一行话是用户能得到的全部解释。
+pub fn describe_startup(
+    result: &Result<(), api::ApiError>,
+) -> Option<String> {
+    match result {
+        Ok(()) => None,
+        Err(error) => Some(format!("失败: {error}")),
+    }
+}
+
+/// 自动续播的判据:**只有**「本机在放 && 声源放空了 && 不是听众」才推进队列。
+///
+/// 听众那一条是硬约束:听众放的 `ChannelSource` 在没数据时给静音而非结束,
+/// 正常情况下 `drained` 不会为真;但万一将来有人改了那个行为,这里也不许
+/// 在收听时切歌 —— 那会把对面推来的声音捣掉。
+pub fn should_advance(
+    state: &PlaybackState,
+    drained: bool,
+    listening: bool,
+) -> bool {
+    matches!(state, PlaybackState::Playing(_))
+        && drained
+        && !listening
+}
+
 /// 把一首歌翻成列表里的一行。所有格式化都在这里做完,`.slint` 只负责摆。
 fn to_row(track: &TrackDto) -> TrackRow {
     TrackRow {
@@ -69,6 +110,29 @@ fn to_row(track: &TrackDto) -> TrackRow {
         artists: join_artists(&track.artists).into(),
         duration: format_duration(track.duration_ms).into(),
     }
+}
+
+/// 洗牌的种子。`app-core` 不引 `rand`(要编到 wasm),种子由这里造 ——
+/// `RandomState` 每次实例化都带进程级随机,当种子够用。
+#[cfg(not(target_arch = "wasm32"))]
+fn shuffle_seed() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish()
+}
+
+/// 播放侧所有回调共享的一组把手。
+///
+/// 五个绑定函数各 clone 各的这几样东西,签名会长到看不出谁在用什么 ——
+/// 打包起来,clone 一次传一份。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+struct Deck {
+    playback: Rc<RefCell<Playback>>,
+    queue: Rc<RefCell<Queue>>,
+    player: Arc<Result<audio::Player, audio::AudioError>>,
+    sync: crate::syncplay::Sync,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -81,18 +145,27 @@ fn to_row(track: &TrackDto) -> TrackRow {
 /// **那里**直接出声(见 `syncplay::handle`),绕回 UI 线程只会让起播多等一帧。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(ui: &MainWindow) {
-    let playback =
-        Rc::new(RefCell::new(Playback::default()));
     // 搜索结果的权威副本。Slint 的 model 只存格式化后的字符串,
     // 点击时要靠它把 id 换回完整的 TrackDto。
     let tracks: Rc<RefCell<Vec<TrackDto>>> =
         Rc::new(RefCell::new(Vec::new()));
     let player = Arc::new(audio::Player::new());
-    let client = crate::syncplay::bind(ui, &player);
+
+    let deck = Deck {
+        playback: Rc::new(
+            RefCell::new(Playback::default()),
+        ),
+        queue: Rc::new(RefCell::new(Queue::default())),
+        sync: crate::syncplay::bind(ui, &player),
+        player,
+    };
 
     bind_search(ui, &tracks);
     bind_list(ui, &tracks);
-    bind_play(ui, &playback, &tracks, &player, &client);
+    bind_play(ui, &tracks, &deck);
+    bind_controls(ui, &deck);
+    start_auto_advance(ui, &deck);
+    startup_check(ui);
 
     ui.set_playback_text(
         describe_playback(&PlaybackState::Idle).into(),
@@ -215,63 +288,221 @@ fn show(
     ui.set_tracks(ModelRc::new(VecModel::from(rows)));
 }
 
-/// 播放:id → 取直链 → 开流 → 解码 → 出声。
+/// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_play(
     ui: &MainWindow,
-    playback: &Rc<RefCell<Playback>>,
     tracks: &Rc<RefCell<Vec<TrackDto>>>,
-    player: &Arc<Result<audio::Player, audio::AudioError>>,
-    client: &Arc<syncplay::Client>,
+    deck: &Deck,
 ) {
-    let playback = playback.clone();
     let tracks = tracks.clone();
-    let player = player.clone();
-    let client = client.clone();
+    let deck = deck.clone();
     let weak = ui.as_weak();
 
     ui.on_play(move |id| {
         let Some(ui) = weak.upgrade() else { return };
+        // 点歌是播放动作:正在收听的话,先退出(CONTEXT.md「听众」)。
+        if deck.sync.is_listening() {
+            deck.sync.leave();
+        }
+
         let id = id.to_string();
-        let Some(track) = tracks
-            .borrow()
-            .iter()
-            .find(|track| track.id == id)
-            .cloned()
+        let batch = tracks.borrow().clone();
+        let Some(index) =
+            batch.iter().position(|track| track.id == id)
         else {
             return;
         };
 
-        // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
-        // 同 `bind_health`:直接推一次文案,不为此发明订阅机制。
-        ui.set_playback_text(
-            describe_playback(&PlaybackState::Loading(
-                track.clone(),
-            ))
-            .into(),
-        );
-
-        let playback = playback.clone();
-        let player = player.clone();
-        let client = client.clone();
-        let weak = ui.as_weak();
-        slint::spawn_local(async move {
-            app_core::play(&playback, track, |track| {
-                start(player.clone(), client.clone(), track)
-            })
-            .await;
-
-            if let Some(ui) = weak.upgrade() {
-                ui.set_playback_text(
-                    describe_playback(
-                        playback.borrow().state(),
-                    )
-                    .into(),
-                );
-            }
-        })
-        .expect("event loop must be running");
+        deck.queue.borrow_mut().replace(batch, index);
+        if ui.get_shuffle_on() {
+            deck.queue.borrow_mut().shuffle(shuffle_seed());
+        }
+        play_current(&ui, &deck);
     });
+}
+
+/// 控制条:播放/暂停、上一首/下一首、随机开关。
+///
+/// 收听中的任何一键都先退出收听;⏯ 到此为止(退出即静音,再按才操作自己的
+/// 队列),切歌键退出后紧接着作用于本机队列 —— 点了"下一首"的人想听的是
+/// 自己的下一首,不是单纯安静下来。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_controls(ui: &MainWindow, deck: &Deck) {
+    let toggle = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_toggle_play(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if toggle.sync.is_listening() {
+            toggle.sync.leave();
+            if let Ok(player) = toggle.player.as_ref() {
+                player.stop();
+            }
+            ui.set_is_playing(false);
+            return;
+        }
+
+        let Ok(player) = toggle.player.as_ref() else {
+            return;
+        };
+        if ui.get_is_playing() {
+            player.pause();
+            ui.set_is_playing(false);
+        } else if !player.empty() {
+            // 暂停中,接着放。
+            player.resume();
+            ui.set_is_playing(true);
+        } else {
+            // 放空了(队列结束后又按了播放):重放当前这首。
+            play_current(&ui, &toggle);
+        }
+    });
+
+    let next = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_next_track(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if next.sync.is_listening() {
+            next.sync.leave();
+        }
+        advance(&ui, &next);
+    });
+
+    let previous = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_prev_track(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if previous.sync.is_listening() {
+            previous.sync.leave();
+        }
+        if previous.queue.borrow_mut().previous().is_some()
+        {
+            play_current(&ui, &previous);
+        }
+    });
+
+    let shuffle = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_shuffle_toggled(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if ui.get_shuffle_on() {
+            shuffle
+                .queue
+                .borrow_mut()
+                .shuffle(shuffle_seed());
+        } else {
+            shuffle.queue.borrow_mut().unshuffle();
+        }
+    });
+}
+
+/// 队列前进一首;到底了就停下并说明(放完即停,见 `CONTEXT.md`「队列」)。
+#[cfg(not(target_arch = "wasm32"))]
+fn advance(ui: &MainWindow, deck: &Deck) {
+    let has_next = deck.queue.borrow_mut().next().is_some();
+    if has_next {
+        play_current(ui, deck);
+    } else {
+        // 状态机也要停:不停的话它仍是 Playing,自动续播每秒都会再撞进来。
+        deck.playback.borrow_mut().stop();
+        ui.set_playback_text(QUEUE_DONE.into());
+        ui.set_is_playing(false);
+    }
+}
+
+/// 放队列的当前曲目:取直链 → 开流 → 解码 → 出声,经 `app_core::play` 记账。
+#[cfg(not(target_arch = "wasm32"))]
+fn play_current(ui: &MainWindow, deck: &Deck) {
+    let Some(track) =
+        deck.queue.borrow().current().cloned()
+    else {
+        return;
+    };
+
+    // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
+    ui.set_playback_text(
+        describe_playback(&PlaybackState::Loading(
+            track.clone(),
+        ))
+        .into(),
+    );
+
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    slint::spawn_local(async move {
+        app_core::play(&deck.playback, track, |track| {
+            start(
+                deck.player.clone(),
+                deck.sync.clone(),
+                track,
+            )
+        })
+        .await;
+
+        if let Some(ui) = weak.upgrade() {
+            let state = deck.playback.borrow();
+            ui.set_is_playing(matches!(
+                state.state(),
+                PlaybackState::Playing(_)
+            ));
+            ui.set_playback_text(
+                describe_playback(state.state()).into(),
+            );
+        }
+    })
+    .expect("event loop must be running");
+}
+
+/// 自动续播:每秒看一眼,放空了就推进队列。
+///
+/// rodio 没有"放完了"的回调,轮询是唯一的办法;判据抽在 [`should_advance`],
+/// 收听同播时它恒为假 —— 那时切歌会把对面推来的声音捣掉。
+#[cfg(not(target_arch = "wasm32"))]
+fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    let timer = slint::Timer::default();
+
+    timer.start(
+        slint::TimerMode::Repeated,
+        ADVANCE_POLL,
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let drained = match deck.player.as_ref() {
+                Ok(player) => player.empty(),
+                Err(_) => true,
+            };
+            if should_advance(
+                deck.playback.borrow().state(),
+                drained,
+                deck.sync.is_listening(),
+            ) {
+                advance(&ui, &deck);
+            }
+        },
+    );
+
+    // ponytail: 定时器与进程同寿,leak 掉省一条把 Timer 递回平台入口的通道;
+    // 真要按页开关时再把它挂到 Deck 上管理。
+    Box::leak(Box::new(timer));
+}
+
+/// 开机静默自检:`GET /health` 一次,健康就一声不吭。
+///
+/// Server 页删掉之后,这是协议版本协商唯一的运行时入口(`api::health` 内部
+/// 比对 `PROTOCOL_VERSION`)。坏消息写进音乐页状态行 —— 那是用户最先看的地方。
+#[cfg(not(target_arch = "wasm32"))]
+fn startup_check(ui: &MainWindow) {
+    let weak = ui.as_weak();
+    slint::spawn_local(async move {
+        let result = api::health().await.map(|_dto| ());
+        if let Some(message) = describe_startup(&result)
+            && let Some(ui) = weak.upgrade()
+        {
+            ui.set_playback_text(message.into());
+        }
+    })
+    .expect("event loop must be running");
 }
 
 /// 真正把一首歌变成声音:取直链 → 开流 → 解码 → 归一 → 分出一支给同播 → 出声。
@@ -284,7 +515,7 @@ fn bind_play(
 #[cfg(not(target_arch = "wasm32"))]
 async fn start(
     player: Arc<Result<audio::Player, audio::AudioError>>,
-    client: Arc<syncplay::Client>,
+    sync: crate::syncplay::Sync,
     track: TrackDto,
 ) -> Result<(), String> {
     use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
@@ -309,7 +540,7 @@ async fn start(
             // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
             // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
             player.play(tee);
-            client.feed(branch);
+            sync.feed(branch);
             Ok(())
         }
         Err(error) => Err(error.to_string()),
@@ -382,9 +613,64 @@ mod tests {
         assert_eq!(format_duration(0), "0:00");
     }
 
-    /// 子集字体必须覆盖 [`describe_playback`] 会吐出的每一个非 ASCII 字符。
+    /// 自动续播只在「本机在放 && 放空了 && 不是听众」时才动手。
     ///
-    /// 与 `lib.rs` 的 `describe_only_uses_subset_glyphs` 同一个守卫,只是管另一段文案:
+    /// 第二行是本条真正要守的:**收听同播时绝不切歌**,即使声源看起来空了 ——
+    /// 切了就是把对面推来的声音捣掉。
+    #[test]
+    fn advances_only_when_playing_and_drained_and_not_listening()
+     {
+        let playing = PlaybackState::Playing(track());
+
+        assert!(should_advance(&playing, true, false));
+        assert!(
+            !should_advance(&playing, true, true),
+            "收听中不许自动切歌"
+        );
+        assert!(!should_advance(&playing, false, false));
+        assert!(!should_advance(
+            &PlaybackState::Idle,
+            true,
+            false
+        ));
+        assert!(!should_advance(
+            &PlaybackState::Loading(track()),
+            true,
+            false
+        ));
+    }
+
+    /// 开机自检只在坏消息时开口:健康 → None,失败 → 一行能显示的话。
+    #[test]
+    fn startup_check_speaks_only_on_failure() {
+        assert_eq!(describe_startup(&Ok(())), None);
+
+        let mismatch = describe_startup(&Err(
+            api::ApiError::VersionMismatch {
+                expected: 1,
+                actual: 2,
+            },
+        ))
+        .expect("版本不匹配必须开口");
+        assert!(
+            mismatch.contains("协议版本不匹配"),
+            "文案要点名版本问题,实得 {mismatch}"
+        );
+
+        let transport = describe_startup(&Err(
+            api::ApiError::Transport(
+                "connection refused".to_owned(),
+            ),
+        ))
+        .expect("连不上必须开口");
+        assert!(
+            transport.contains("网络错误"),
+            "文案要点名网络问题,实得 {transport}"
+        );
+    }
+
+    /// 子集字体必须覆盖本模块会吐出的每一个非 ASCII 字符。
+    ///
     /// 新增中文而忘了重跑 `just font-subset`,这里就红。
     ///
     /// **歌名本身不在此列** —— 它是平台给的任意 CJK,不可能预裁,
@@ -439,21 +725,38 @@ mod tests {
             failures.into_iter().map(PlaybackState::Failed),
         );
 
-        for state in states {
-            for ch in describe_playback(&state).chars() {
+        let mut copy: Vec<String> =
+            states.iter().map(describe_playback).collect();
+        // 不经过 describe_playback 的固定文案,单独列上。
+        copy.push(QUEUE_DONE.to_owned());
+        copy.push(WASM_NOTICE.to_owned());
+        copy.push("同播: 没有其他设备".to_owned());
+        // 开机自检的两种坏消息。
+        copy.extend(
+            [
+                describe_startup(&Err(
+                    api::ApiError::VersionMismatch {
+                        expected: 1,
+                        actual: 2,
+                    },
+                )),
+                describe_startup(&Err(
+                    api::ApiError::Transport(
+                        "refused".to_owned(),
+                    ),
+                )),
+            ]
+            .into_iter()
+            .flatten(),
+        );
+
+        for line in copy {
+            for ch in line.chars() {
                 assert!(
                     face.glyph_index(ch).is_some(),
-                    "子集字体缺字 {ch:?}(状态 {state:?})—— 重跑 `just font-subset`"
+                    "子集字体缺字 {ch:?}(文案 {line:?})—— 重跑 `just font-subset`"
                 );
             }
-        }
-
-        // wasm 分支的那句提示不经过 describe_playback,单独查一遍。
-        for ch in WASM_NOTICE.chars() {
-            assert!(
-                face.glyph_index(ch).is_some(),
-                "子集字体缺字 {ch:?}(wasm 提示)—— 重跑 `just font-subset`"
-            );
         }
     }
 }

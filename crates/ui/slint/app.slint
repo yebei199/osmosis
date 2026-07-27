@@ -80,16 +80,12 @@ global Nav {
             icon: "M3 12 L12 4 L21 12 M5.5 10 L5.5 20 L18.5 20 L18.5 10",
         },
         {
-            label: "Server",
-            icon: "M4 5 L20 5 L20 10 L4 10 Z M4 13 L20 13 L20 18 L4 18 Z",
+            label: "Music",
+            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
         },
         {
             label: "3D",
             icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5",
-        },
-        {
-            label: "Music",
-            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
         },
     ];
 }
@@ -206,21 +202,252 @@ component ParamRow inherits Rectangle {
     }
 }
 
+// 圆形播放控制键:玻璃底 + Path 图标。悬停浮亮,按下微缩。
+// 图标画法同 NavItem:SVG path 内嵌,viewbox 24×24,不引外部资源。
+component RoundControl inherits Rectangle {
+    in property <string> icon;
+    in property <length> diameter: 44px;
+    callback clicked;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: self.width / 2;
+    background: touch.pressed ? #b9885c50 : (touch.has-hover ? #ffffff1e : #ffffff10);
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c66 : #ffffff14;
+    animate background, border-color { duration: 120ms; easing: ease-out; }
+
+    Path {
+        width: root.diameter * 0.5;
+        height: root.diameter * 0.5;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.icon;
+        stroke: touch.has-hover ? #f0e6d8 : #d9cdbd;
+        stroke-width: 1.6px;
+        // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
+        // 图标本身都画成闭合形)。
+        fill: touch.has-hover ? #f0e6d8 : #d9cdbd;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 日月开关:白昼(顺序播放)⇄ 夜晚(随机播放)。
+// 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
+// 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
+// 圆角矩形 clip 裁掉出界的云星,不需要 bevy。
+component DayNightSwitch inherits Rectangle {
+    in-out property <bool> night: false;
+    callback toggled;
+
+    // QML 原作 180×70,这里等比压到控制条尺寸。
+    width: 92px;
+    height: 36px;
+    border-radius: self.height / 2;
+    clip: true;
+    background: root.night ? #191e32 : #4685c0;
+    animate background { duration: 700ms; easing: ease-in-out; }
+
+    // 光晕:三层同心白圈跟着滑块走,昼夜都在,给按钮一点"发光体"的存在感。
+    for halo[i] in [66px, 88px, 110px]: Rectangle {
+        width: halo;
+        height: halo;
+        border-radius: self.width / 2;
+        background: white;
+        opacity: 0.20 - i * 0.07;
+        x: knob.x + knob.width / 2 - self.width / 2;
+        y: knob.y + knob.height / 2 - self.height / 2;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+    }
+
+    // 云:三团白圆压在下缘,白天在场,入夜整体沉出画面。
+    // 悬停(白天)时被太阳"推"远一点 —— 原作的斥力,只取其形。
+    clouds := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? root.height : 0;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for cloud[i] in [
+            { cx: 52px, cy: 26px, d: 26px },
+            { cx: 68px, cy: 20px, d: 30px },
+            { cx: 84px, cy: 26px, d: 34px },
+        ]: Rectangle {
+            width: cloud.d;
+            height: cloud.d;
+            border-radius: self.width / 2;
+            background: white;
+            opacity: 0.9;
+            x: cloud.cx - self.width / 2 + (touch.has-hover && !root.night ? 5px : 0px);
+            y: cloud.cy - self.height / 2 + 6px;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 星:小菱形散在上半,入夜降下来,白天升出画面。
+    // 悬停(夜里)时被月亮推开一点。
+    stars := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? 0 : -root.height;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for star[i] in [
+            { sx: 14px, sy: 8px, d: 7px },
+            { sx: 30px, sy: 18px, d: 5px },
+            { sx: 22px, sy: 27px, d: 4px },
+            { sx: 42px, sy: 9px, d: 4px },
+        ]: Path {
+            width: star.d;
+            height: star.d;
+            x: star.sx + (touch.has-hover && root.night ? -4px : 0px);
+            y: star.sy;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            // 四角星:四段二次曲线,腰收向圆心 —— 原作 Shape 的形状。
+            commands: "M 5 0 Q 5 5 10 5 Q 5 5 5 10 Q 5 5 0 5 Q 5 5 5 0 Z";
+            fill: white;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 滑块:白天是太阳(暖黄 + 高光),入夜滑到右侧变月亮(冷灰 + 陨石坑)。
+    // 悬停时向对侧探 4px,像在提示"按我会滑过去"。
+    knob := Rectangle {
+        property <length> margin: 4px;
+        property <length> start-x: self.margin;
+        property <length> end-x: root.width - self.width - self.margin;
+
+        width: root.height - 8px;
+        height: root.height - 8px;
+        y: 4px;
+        x: root.night
+            ? (touch.has-hover ? knob.end-x - 4px : knob.end-x)
+            : (touch.has-hover ? knob.start-x + 4px : knob.start-x);
+        border-radius: self.width / 2;
+        background: root.night ? #c3c8d2 : #ffc323;
+        drop-shadow-blur: 6px;
+        drop-shadow-offset-x: 1px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-color: #00000080;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate background { duration: 500ms; easing: ease-in-out; }
+
+        // 太阳高光:偏心一点的亮斑,夜里淡出。
+        Rectangle {
+            width: parent.width * 0.8;
+            height: parent.height * 0.8;
+            x: parent.width * 0.06;
+            y: parent.height * 0.06;
+            border-radius: self.width / 2;
+            background: #ffe650;
+            opacity: root.night ? 0 : 0.6;
+            animate opacity { duration: 500ms; }
+        }
+
+        // 陨石坑:三个灰圆,白天淡出。原作还带 -90° 旋转入场,
+        // 这版 Slint 的 Rectangle 没有 rotation-angle,淡入已足够。
+        craters := Rectangle {
+            width: 100%;
+            height: 100%;
+            opacity: root.night ? 1 : 0;
+            animate opacity { duration: 300ms; }
+
+            for crater[i] in [
+                { cx: 13px, cy: 5px, d: 7px },
+                { cx: 5px, cy: 12px, d: 10px },
+                { cx: 17px, cy: 17px, d: 6px },
+            ]: Rectangle {
+                width: crater.d;
+                height: crater.d;
+                border-radius: self.width / 2;
+                background: #96a0b4;
+                x: crater.cx - self.width / 2;
+                y: crater.cy - self.height / 2;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.night = !root.night;
+            root.toggled();
+        }
+    }
+}
+
+// Home 的入口卡片:大图标 + 名字,点了切页。悬停时上浮、描边亮起 ——
+// 让"这是个门"一眼可见,不用靠猜。
+component EntryCard inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    callback clicked;
+
+    width: 148px;
+    height: 168px;
+    border-radius: 18px;
+    background: touch.has-hover ? #2a1e1466 : #17110d66;
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c88 : #ffffff14;
+    drop-shadow-blur: touch.has-hover ? 24px : 12px;
+    drop-shadow-color: #00000055;
+    drop-shadow-offset-y: touch.has-hover ? 8px : 4px;
+    animate background, border-color, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 44px;
+                height: 44px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: touch.has-hover ? #d9a86c : #9aa0b4;
+                stroke-width: 1.6px;
+                fill: transparent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: touch.has-hover ? #e6e8ef : #9aa0b4;
+            font-size: 15px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component MainWindow inherits Window {
-    // 由 Rust 推送。
-    in property <int> count: 0;
     // 帧率,由 Rust 测量并推送。仅在 `show-fps` 为真时被推送。
     in property <float> fps: 0;
     // 是否显示帧率读数。由 Rust 按 `SLINT_STUDY_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
     in property <bool> show-fps: false;
     // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
     in property <string> platform;
-    // 服务端健康状态的一行文案,由 Rust 根据领域状态渲染后推送。
-    in property <string> health-text;
     // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
     in property <[TrackRow]> tracks: [];
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     in property <string> playback-text;
+    // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
+    in property <bool> is-playing: false;
+    // 随机播放开关(日月开关的状态)。Rust 读它决定队列洗不洗牌。
+    in-out property <bool> shuffle-on: false;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
@@ -236,7 +463,7 @@ export component MainWindow inherits Window {
     // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
     in-out property <float> rot-yaw: 0;
     in-out property <float> rot-pitch: 0;
-    // 当前选中的导航页:0=Home、1=Server、2=3D、3=Music。由左侧导航栏点击设置。
+    // 当前选中的导航页:0=Home、1=Music、2=3D。由左侧导航栏点击设置。
     in-out property <int> current-tab: 0;
     // 3D 场景热调参数。Rust 每帧读这些原始文本,在信任边界解析+clamp(见 scene_params),
     // 非法/越界退回上一个好值。scene-index:0=形状画廊、1=实体阵列。
@@ -309,10 +536,6 @@ export component MainWindow inherits Window {
     // render3d 每帧(转场期间)渲出的侧栏背景纹理。非 GPU 构建恒为空图(width 0),
     // 侧栏退回 Slint 平底 + NavItem 自带高亮(见侧栏与 NavItem)。
     in-out property <image> nav-bg;
-    // 用户点击触发,在 Rust 侧处理。
-    callback bump();
-    // 请求一次 GET /health。
-    callback check-health();
     // 用关键词搜歌。
     callback search(string);
     // 取今日推荐,结果落进同一个 tracks 列表。
@@ -321,6 +544,13 @@ export component MainWindow inherits Window {
     callback liked();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
+    // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
+    callback toggle-play();
+    // 队列内切歌。
+    callback next-track();
+    callback prev-track();
+    // 随机开关拨动之后。新状态在 shuffle-on 里。
+    callback shuffle-toggled();
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
 
@@ -392,88 +622,39 @@ export component MainWindow inherits Window {
                     height: 100%;
                 }
 
-                // Home:平台标题 + 计数器,装进玻璃卡片。
-                //
-                // 宽度封顶 340px、高度由内容撑开。原先写死 340×320:手机上内容区只有 ~300px 宽,
-                // 卡片比它还宽,而内容区画在侧栏之后 → 卡片直接盖住导航按钮。宽度改用 root.width
-                // (而非 content.width)算,是为了绕开「子元素宽度依赖父元素宽度、父元素首选尺寸
-                // 又依赖子元素」的求值环。
+                // Home:入口卡片页。标题 + 两扇门(Music / 3D)。
+                // 与左侧导航栏功能重复,是刻意的:这里是"落地页",导航栏是"随时切"。
                 if root.current-tab == 0: VerticalLayout {
                     alignment: center;
-                    HorizontalLayout {
-                        alignment: center;
-                        GlassCard {
-                            width: min(340px, root.width - (root.compact ? 32px : 128px));
-                            VerticalLayout {
-                                padding: 28px;
-                                alignment: center;
-                                spacing: 20px;
+                    spacing: 28px;
 
-                                Text {
-                                    text: "Slint on " + root.platform;
-                                    color: #e6e8ef;
-                                    font-size: 22px;
-                                    horizontal-alignment: center;
-                                }
-                                Text {
-                                    text: root.count;
-                                    color: #d9a86c;
-                                    font-size: 72px;
-                                    horizontal-alignment: center;
-                                }
-                                HorizontalLayout {
-                                    alignment: center;
-                                    HoverButton {
-                                        text: "Tap me";
-                                        clicked => { root.bump(); }
-                                    }
-                                }
-                            }
-                        }
+                    Text {
+                        text: "Slint on " + root.platform;
+                        color: #e6e8ef;
+                        font-size: 22px;
+                        horizontal-alignment: center;
                     }
-                }
 
-                // Server:一次真实网络往返,验证 contract → api → app-core → ui 全链路
-                if root.current-tab == 1: VerticalLayout {
-                    alignment: center;
                     HorizontalLayout {
                         alignment: center;
-                        GlassCard {
-                            width: min(340px, root.width - (root.compact ? 32px : 128px));
-                            VerticalLayout {
-                                padding: 24px;
-                                alignment: center;
-                                spacing: 20px;
+                        spacing: 20px;
 
-                                HorizontalLayout {
-                                    alignment: center;
-                                    HoverButton {
-                                        text: "Check server";
-                                        clicked => { root.check-health(); }
-                                    }
-                                }
-                                // 固定高度:文案变长变短不改变本行占位,居中列不回流 → 点击不抖。
-                                // 卡片高度由内容撑开,这一行是那个「内容」里唯一会变长的东西,
-                                // 钉死它,卡片就不会跟着文案抖。
-                                // 子集字体连 ASCII 一起裁,中英混排整体落在同一字体,不依赖逐字形回退。
-                                Text {
-                                    text: root.health-text;
-                                    font-family: "Maple Mono NF CN";
-                                    color: #9aa0b4;
-                                    font-size: 13px;
-                                    height: 56px;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                    wrap: word-wrap;
-                                }
-                            }
+                        EntryCard {
+                            label: "Music";
+                            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16";
+                            clicked => { root.current-tab = 1; }
+                        }
+                        EntryCard {
+                            label: "3D";
+                            icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5";
+                            clicked => { root.current-tab = 2; }
                         }
                     }
                 }
 
                 // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                if root.current-tab == 3: VerticalLayout {
+                if root.current-tab == 1: VerticalLayout {
                     padding: 16px;
                     spacing: 12px;
 
@@ -517,10 +698,7 @@ export component MainWindow inherits Window {
                         overflow: elide;
                     }
 
-                    // 同播:状态一行,底下是可推送的设备。点一台就把正在放的这首推过去。
-                    //
-                    // 名册为空时整块消失,而不是留一行「没有设备」—— 单机用的时候
-                    // 那一行永远在,却永远没用。
+                    // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
                     Text {
                         text: root.sync-text;
                         font-family: "Maple Mono NF CN";
@@ -529,31 +707,6 @@ export component MainWindow inherits Window {
                         height: 20px;
                         vertical-alignment: center;
                         overflow: elide;
-                    }
-
-                    if root.devices.length > 0: HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-
-                        for device in root.devices: Rectangle {
-                            width: label.preferred-width + 24px;
-                            height: 30px;
-                            background: chip.has-hover ? #b9885c66 : #ffffff0f;
-                            border-radius: 15px;
-
-                            chip := TouchArea {
-                                clicked => { root.push-to(device.id); }
-                            }
-
-                            // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
-                            // 不指定 font-family,落到系统字体。
-                            label := Text {
-                                text: device.name;
-                                color: #e6e8ef;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                            }
-                        }
                     }
 
                     Flickable {
@@ -605,6 +758,105 @@ export component MainWindow inherits Window {
                                         color: #9aa0b4;
                                         font-size: 12px;
                                         vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 控制条:上一首 / 播放暂停 / 下一首 / 日月随机开关 │ 同播设备。
+                    //
+                    // **常驻**,不随名册隐藏 —— 上一版设备区在单实例时整块消失,
+                    // 同播功能等于不存在。空时给一句话占位,功能永远看得见。
+                    controls := Rectangle {
+                        height: 60px;
+                        border-radius: 16px;
+                        background: #17110daa;
+                        border-width: 1px;
+                        border-color: #ffffff10;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 10px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    RoundControl {
+                                        // ⏮:竖杠 + 左向三角。
+                                        icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+                                        clicked => { root.prev-track(); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    RoundControl {
+                                        diameter: 50px;
+                                        // ▶ 或 ⏸,随播放状态换。
+                                        icon: root.is-playing
+                                            ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                                            : "M8 5 L19 12 L8 19 Z";
+                                        clicked => { root.toggle-play(); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    RoundControl {
+                                        // ⏭:右向三角 + 竖杠。
+                                        icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+                                        clicked => { root.next-track(); }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    DayNightSwitch {
+                                        night <=> root.shuffle-on;
+                                        toggled => { root.shuffle-toggled(); }
+                                    }
+                                }
+                            }
+
+                            // 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因。
+                            HorizontalLayout {
+                                alignment: end;
+                                spacing: 8px;
+
+                                if root.devices.length == 0: VerticalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: "同播: 没有其他设备";
+                                        font-family: "Maple Mono NF CN";
+                                        color: #6b7080;
+                                        font-size: 12px;
+                                    }
+                                }
+
+                                for device in root.devices: VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: chip-label.preferred-width + 24px;
+                                        height: 30px;
+                                        background: chip.has-hover ? #b9885c66 : #ffffff0f;
+                                        border-radius: 15px;
+
+                                        chip := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.push-to(device.id); }
+                                        }
+
+                                        // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
+                                        // 不指定 font-family,落到系统字体。
+                                        chip-label := Text {
+                                            text: device.name;
+                                            color: #e6e8ef;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                        }
                                     }
                                 }
                             }
