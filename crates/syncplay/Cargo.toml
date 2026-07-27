@@ -1,0 +1,24 @@
+[package]
+name = "syncplay"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "同播能力层:信令客户端与设备之间的 WebRTC 连接"
+
+[dependencies]
+contract.workspace = true
+serde.workspace = true
+serde_json = "1"
+webrtc.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+tokio-tungstenite = "0.28"
+futures-util = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+similar-asserts.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+# 测试要在进程里起一个真的信令服务端,才能让两端真的握上手。
+server = { path = "../../server" }
+axum = { version = "0.8", features = ["ws"] }
+# webrtc 的 Sample.data 是 bytes::Bytes,构造它得直接引这个 crate。
+bytes = "1"

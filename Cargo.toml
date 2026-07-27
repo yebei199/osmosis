@@ -33,6 +33,8 @@ ui = { path = "crates/ui" }
 render3d = { path = "crates/render3d" }
 # 音频能力层。与 api / render3d 平行:app-core 不认识它,由 ui 注入。
 audio = { path = "crates/audio" }
+# 同播能力层。信令客户端 + WebRTC 连接,同样由 ui 注入。
+syncplay = { path = "crates/syncplay" }
 
 # 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
 # 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
@@ -67,6 +69,11 @@ similar-asserts = "2"
 # 缺 m4a/aac:网易云个别档位会给,到时候加 "mp4"。
 rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
 stream-download = { version = "0.24", default-features = false, features = ["reqwest", "temp-storage"] }
+
+# WebRTC。webrtc-rs 是 Pion 的 Rust 移植,纯 Rust、不拖 C 库 —— 这正是选它
+# 而非 libwebrtc 绑定的原因(见 docs/adr/0008),android 交叉编译不必额外备料。
+# 0.17 是最新稳定版;0.20 还停在 rc。
+webrtc = "0.17"
 
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
 # 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
