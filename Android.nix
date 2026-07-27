@@ -51,6 +51,12 @@ pkgs.mkShell {
   ANDROID_NDK_ROOT = "${sdk}/ndk/${ndkVersion}";
   JAVA_HOME = "${pkgs.jdk17}";
 
+  # audiopus_sys 内嵌的 libopus 写着 cmake_minimum_required(VERSION <3.5),而本 shell
+  # 里的 cmake 是 4.x,它已经删掉了对 3.5 以下的兼容,配置阶段直接报错退出。桌面端不
+  # 受影响 —— 那边链的是系统 opus,只有交叉编译才会走内嵌的 cmake 构建。
+  # 这个变量是 cmake 4.0 起官方给的过渡开关,等 audiopus_sys 上游修好就能删。
+  CMAKE_POLICY_VERSION_MINIMUM = "3.5";
+
   shellHook = ''
     # AGP 会从 Maven 拉取预编译的 aapt2,但那个二进制在 NixOS 上跑不了;
     # 这里指向 androidenv build-tools 里的 aapt2,它已被 patchelf 过,可以运行。
