@@ -304,6 +304,10 @@ export component MainWindow inherits Window {
     callback check-health();
     // 用关键词搜歌。
     callback search(string);
+    // 取今日推荐,结果落进同一个 tracks 列表。
+    callback daily();
+    // 取我喜欢的音乐,同上。
+    callback liked();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
 
@@ -470,9 +474,21 @@ export component MainWindow inherits Window {
                             placeholder-text: "Search";
                             accepted => { root.search(self.text); }
                         }
+                        // 三个按钮压窄:默认 220px 一排放不下,手机上更是直接溢出。
                         HoverButton {
+                            width: 84px;
                             text: "Go";
                             clicked => { root.search(keyword.text); }
+                        }
+                        HoverButton {
+                            width: 92px;
+                            text: "Daily";
+                            clicked => { root.daily(); }
+                        }
+                        HoverButton {
+                            width: 92px;
+                            text: "Liked";
+                            clicked => { root.liked(); }
                         }
                     }
 

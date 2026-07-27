@@ -60,6 +60,17 @@ pub struct SearchDto {
     pub has_more: bool,
 }
 
+/// 一批曲目。`GET /daily` 与 `GET /liked` 的响应体。
+///
+/// 不复用 [`SearchDto`]:它带 `has_more`,而每日推荐本来就只有固定一批,
+/// 硬塞一个恒为 false 的字段等于让客户端去解读一个没有意义的信号。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct TracksDto {
+    pub tracks: Vec<TrackDto>,
+}
+
 /// `GET /play/{track_id}` 的响应体:一次取到的可播放源。
 ///
 /// 这些字段属于"这次取到的源"而非歌曲本身 —— 换个音质档位再取会得到不同的值。

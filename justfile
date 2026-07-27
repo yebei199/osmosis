@@ -115,7 +115,7 @@ web-test:
 font-subset:
     nix-shell -p python3Packages.fonttools --run "pyftsubset \
       $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
-      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始' \
+      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持' \
       --unicodes=U+0020-007E \
       --layout-features= --no-hinting --desubroutinize \
       --notdef-outline --name-IDs+=13,14 \

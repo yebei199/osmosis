@@ -6,6 +6,7 @@
 
 use contract::{
     HealthDto, PROTOCOL_VERSION, PlaySourceDto, SearchDto,
+    TracksDto,
 };
 
 /// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
@@ -101,6 +102,20 @@ pub async fn play_source(
     track_id: &str,
 ) -> Result<PlaySourceDto, ApiError> {
     platform::get_json(play_url(track_id)).await
+}
+
+/// `GET /daily` —— 今日推荐。
+pub async fn daily() -> Result<TracksDto, ApiError> {
+    platform::get_json(format!("{}/daily", base_url()))
+        .await
+}
+
+/// `GET /liked` —— 我喜欢的音乐,取第一页。
+///
+/// 服务端不带 limit 时用它自己的默认页大小,客户端不必知道那个数字。
+pub async fn liked() -> Result<TracksDto, ApiError> {
+    platform::get_json(format!("{}/liked", base_url()))
+        .await
 }
 
 /// 拼搜索地址,关键词按 URL 查询串规则转义。
