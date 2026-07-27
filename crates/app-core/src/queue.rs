@@ -27,7 +27,10 @@ impl Queue {
     ///
     /// `start` 越界时压到最后一首:它来自界面上的一次点击,越界只可能是
     /// 列表刚被替换的竞态,放最后一首总比 panic 强。
-    pub fn new(tracks: Vec<TrackDto>, start: usize) -> Self {
+    pub fn new(
+        tracks: Vec<TrackDto>,
+        start: usize,
+    ) -> Self {
         let order: Vec<usize> = (0..tracks.len()).collect();
         let cursor =
             start.min(tracks.len().saturating_sub(1));
@@ -56,6 +59,13 @@ impl Queue {
     }
 
     /// 推进到下一首。**放完即停**:队尾之后是 `None`,位置不动。
+    ///
+    /// 名字就叫 `next`:它是控制条上那个「下一首」,领域词优先。
+    /// 不实现 `Iterator` —— 队列可以 `previous` 回头,迭代器语义反而是误导。
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "领域动作「下一首」,非迭代器;可回头的队列不该长得像 Iterator"
+    )]
     pub fn next(&mut self) -> Option<&TrackDto> {
         if self.cursor + 1 >= self.order.len() {
             return None;
@@ -109,10 +119,8 @@ impl Queue {
 fn splitmix(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
-    z = (z ^ (z >> 30))
-        .wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27))
-        .wrapping_mul(0x94D0_49BB_1331_11EB);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
 
@@ -156,10 +164,11 @@ mod tests {
     fn next_walks_the_batch_in_order() {
         let mut queue = Queue::new(batch(4), 0);
 
-        let walked: Vec<String> = core::iter::from_fn(
-            || queue.next().map(|t| t.id.clone()),
-        )
-        .collect();
+        let walked: Vec<String> =
+            core::iter::from_fn(|| {
+                queue.next().map(|t| t.id.clone())
+            })
+            .collect();
 
         assert_eq!(walked, ["1", "2", "3"]);
     }
@@ -272,8 +281,7 @@ mod tests {
         queue.shuffle(42);
         queue.next(); // 随机走到某一首
 
-        let current =
-            id_of(&queue).expect("有当前曲目");
+        let current = id_of(&queue).expect("有当前曲目");
         queue.unshuffle();
 
         assert_eq!(
