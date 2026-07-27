@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::sync::mpsc as blocking;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use audio::ChannelSource;
 use contract::{DeviceDto, ServerSignal};
@@ -111,41 +112,82 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-/// 编排循环:一边收服务端来信,一边收界面指令,直到任何一边断掉。
+/// 断线后隔多久重连一次。
+///
+/// 服务端多半只是在重启。退避算法在这里是过度设计:同播的服务端就在自家网络里,
+/// 重试的代价是一次本地 TCP 连接。
+const RETRY_DELAY: Duration = Duration::from_secs(3);
+
+/// 编排循环:连上、干活、断了就重连,直到 [`Client`] 被丢掉。
+///
+/// **断线必须能自愈。** 服务端重启一次就让同播永久失效,是开发时每天都会撞上的事,
+/// 而症状只是状态行上一句不再变化的错误 —— 谁都看不出它其实还能救。
 async fn run(
     base_url: String,
     device: DeviceDto,
     events: Arc<dyn Fn(Event) + Send + Sync>,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) {
-    let mut signalling = match Signalling::connect(
-        &base_url, device,
-    )
-    .await
-    {
-        Ok(signalling) => signalling,
-        Err(error) => {
-            events(Event::Failed(error.to_string()));
+    // 轨在重连之间**保持不变**:WebRTC 是点对点的,信令断了不影响已经建好的连接,
+    // 而重建一条轨会让还在推的那条泵写进一个没人订阅的地方。
+    let track = audio_track();
+
+    loop {
+        let signalling = match Signalling::connect(
+            &base_url,
+            device.clone(),
+        )
+        .await
+        {
+            Ok(signalling) => signalling,
+            Err(error) => {
+                events(Event::Failed(error.to_string()));
+                tokio::time::sleep(RETRY_DELAY).await;
+                continue;
+            }
+        };
+
+        if !serve(
+            signalling,
+            &track,
+            &events,
+            &mut commands,
+        )
+        .await
+        {
             return;
         }
-    };
+    }
+}
 
-    // 整个会话共用一条轨:所有听众听的是同一路声音,编码因此只做一遍。
-    let track = audio_track();
+/// 在一条已连上的信令上干活。返回是否还该重连。
+///
+/// `false` 意味着指令通道断了 —— [`Client`] 被丢掉了,整个客户端该收工。
+async fn serve(
+    mut signalling: Signalling,
+    track: &Arc<TrackLocalStaticSample>,
+    events: &Arc<dyn Fn(Event) + Send + Sync>,
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+) -> bool {
     let sender = signalling.sender();
+    // 连接是每条信令各自的,不跨重连保留:重连之后对端会重新邀请。
     let mut peers: HashMap<String, Peer> = HashMap::new();
 
     loop {
         let step = tokio::select! {
             incoming = signalling.next() => {
-                let Some(message) = incoming else { return };
-                accept(message, &mut peers, &sender, &events)
+                let Some(message) = incoming else {
+                    return true;
+                };
+                accept(message, &mut peers, &sender, events)
                     .await
             }
             command = commands.recv() => {
-                let Some(command) = command else { return };
+                let Some(command) = command else {
+                    return false;
+                };
                 dispatch(
-                    command, &track, &mut peers, &sender,
+                    command, track, &mut peers, &sender,
                 )
                 .await
             }
