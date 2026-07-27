@@ -40,6 +40,7 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
+use server::signaling::{self, SharedRoster};
 use server::{error, paging};
 
 /// 默认监听地址。
@@ -98,6 +99,13 @@ async fn main() {
         auth: AuthServiceClient::new(channel),
     };
 
+    // 同播信令。与音乐那几条路由**共用不了** state(一个是 gRPC 客户端、一个是
+    // 在线名册),故各自 with_state 后再 merge —— 这也如实反映了两者毫无关系:
+    // 信令不碰 bang-dream,音乐不碰 WebRTC。
+    let signal = Router::new()
+        .route("/signal", get(signaling::handler))
+        .with_state(SharedRoster::default());
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/search", get(search))
@@ -105,6 +113,7 @@ async fn main() {
         .route("/liked", get(liked))
         .route("/play/{track_id}", get(play))
         .with_state(clients)
+        .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // permissive 只适用于开发:它允许任意来源。
         .layer(CorsLayer::permissive());
