@@ -75,6 +75,36 @@ async fn loads_and_decodes_real_stream() {
     assert!(produced > 0, "解码器一个采样都没产出");
 }
 
+/// 真的过一遍音频设备出声,并且**位置在前进**。
+///
+/// 这条测的是前面两条都测不到的那一段:播放中读这条流的人是 rodio 自己的输出线程,
+/// 它不在任何 tokio 运行时里。若流的读取需要反应堆,那个线程会 panic ——
+/// 而子线程 panic **不会**让测试失败,队列也可能仍然非空。所以判据是播放位置:
+/// 线程死了它就不再前进。
+///
+/// 这正是"点一下直接崩溃"那个 bug 的回归测试。
+#[tokio::test]
+#[ignore = "需要 bang-dream + server-dev 都在跑,且本机有可用声卡"]
+async fn plays_through_the_device_and_position_advances() {
+    let url = play_url().await;
+    let decoded =
+        audio::load(&url).await.expect("开流或解码失败");
+
+    let player =
+        audio::Player::new().expect("打不开音频设备");
+    player.play(decoded);
+
+    // 给输出线程两秒真读数据。缓冲预热要几百毫秒,一秒的门槛留足余量。
+    tokio::time::sleep(std::time::Duration::from_secs(2))
+        .await;
+
+    let position = player.position();
+    assert!(
+        position >= std::time::Duration::from_secs(1),
+        "两秒后只放到 {position:?} —— 输出线程大概死了"
+    );
+}
+
 /// 地址不是音频时报解码错误,而不是挂住或 panic。
 ///
 /// 直链过期后网易云返回的正是一个 HTML 页面,这条走的是同一条路径。
