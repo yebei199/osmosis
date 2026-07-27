@@ -25,6 +25,35 @@ pub struct Signalling {
     outbox: mpsc::Sender<ClientSignal>,
 }
 
+/// 只能发、不能收的那一半,可以随手 clone。
+///
+/// 收信要 `&mut self`(独占那个收件箱),发信只要 `&self` —— 两者绑在同一个
+/// 结构上时,谁都不能一边等来信一边发信。而 ICE 候选恰恰是在等对端应答的
+/// **同时**源源不断产生的:每条连接都要有一个能独立发信的把手。
+#[derive(Clone)]
+pub struct SignalSender(mpsc::Sender<ClientSignal>);
+
+impl SignalSender {
+    /// 把一条端到端信令发给某台设备。
+    pub async fn send(
+        &self,
+        to: &str,
+        envelope: &Envelope,
+    ) -> Result<(), SyncError> {
+        self.0
+            .send(ClientSignal::Signal {
+                to: to.to_owned(),
+                payload: envelope.encode(),
+            })
+            .await
+            .map_err(|_| {
+                SyncError::Signalling(
+                    "连接已关闭".to_owned(),
+                )
+            })
+    }
+}
+
 impl Signalling {
     /// 连上并自报家门。
     ///
@@ -106,22 +135,17 @@ impl Signalling {
         self.inbox.recv().await
     }
 
+    /// 拿一个能独立发信的把手。
+    pub fn sender(&self) -> SignalSender {
+        SignalSender(self.outbox.clone())
+    }
+
     /// 把一条端到端信令发给某台设备。
     pub async fn send(
         &self,
         to: &str,
         envelope: &Envelope,
     ) -> Result<(), SyncError> {
-        self.outbox
-            .send(ClientSignal::Signal {
-                to: to.to_owned(),
-                payload: envelope.encode(),
-            })
-            .await
-            .map_err(|_| {
-                SyncError::Signalling(
-                    "连接已关闭".to_owned(),
-                )
-            })
+        self.sender().send(to, envelope).await
     }
 }

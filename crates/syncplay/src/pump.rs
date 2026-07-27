@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use audio::codec::{Decoder, Encoder, FRAME_DURATION};
 use bytes::Bytes;
@@ -108,6 +107,3 @@ pub fn spawn_listener(
 ///
 /// 约 200ms 的量:小于它则轻微抖动就断音,大于它则延迟肉眼可见地增加。
 pub const LISTENER_BUFFER: usize = 48_000 * 2 / 5;
-
-/// 主控每隔多久检查一次是否还该继续推。
-pub const HOST_TICK: Duration = FRAME_DURATION;
