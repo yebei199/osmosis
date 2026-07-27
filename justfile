@@ -129,7 +129,7 @@ web-test:
 font-subset:
     nix-shell -p python3Packages.fonttools --run "pyftsubset \
       $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
-      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息' \
+      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他' \
       --unicodes=U+0020-007E \
       --layout-features= --no-hinting --desubroutinize \
       --notdef-outline --name-IDs+=13,14 \
@@ -304,7 +304,7 @@ desktop-kill:
 # 起一个干净的桌面实例(带 3D),截下**真实窗口像素**,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
-# tab 指定开局页(0=Home、1=Server、2=3D):`just shot 420 2` 直接截紧凑版的 3D 页 ——
+# tab 指定开局页(0=Home、1=Music、2=3D):`just shot 420 2` 直接截紧凑版的 3D 页 ——
 # 不必再靠 MCP 模拟点击切页。
 #
 # 为什么必须有这条 recipe:

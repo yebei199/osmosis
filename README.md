@@ -96,7 +96,8 @@ manifest 还必须声明 `INTERNET` 权限。Android 内核把 `AF_INET` socket 
 just bang-dream-login        # 首次:扫码登录网易云,凭据全服务只有一份
 just bang-dream              # 终端 1:gRPC,监听 127.0.0.1:50051
 just server-dev              # 终端 2:axum,监听 127.0.0.1:3000
-just desktop-dev             # 终端 3:桌面端,切到「Music」页搜歌、点一首出声
+just desktop-dev             # 终端 3:桌面端,「Music」页搜歌、点一首出声;
+                             #        控制条管播放/暂停、上下首、随机(日月开关)
 just bang-dream-test         # 或者:对着真实上游跑联机测试
 ```
 
@@ -128,7 +129,8 @@ linux 与安卓都有系统 CJK;**web 端 wasm 里没有系统字体,歌名会�
 axum 只做信令中转,不碰音频(见
 [`docs/adr/0008`](docs/adr/0008-syncplay-is-webrtc-media-p2p.md))。
 
-界面上只有两个动作:音乐页放一首歌,底下会列出在线的其他设备,点一台就推过去。
+界面上只有两个动作:音乐页放一首歌,控制条右侧常驻同播区 —— 在线设备列成小胶囊,
+点一台就推过去;一台都没有时写「同播: 没有其他设备」,功能始终可见。
 角色是行为决定的 —— 点的那一端成为主控,被点的成为听众,没有「设为主控」的开关。
 
 在一台机器上验证需要两个实例。设备身份是主机名加进程号,所以同机的两个实例

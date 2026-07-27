@@ -78,11 +78,48 @@ pub fn describe_role(role: &Role) -> String {
     }
 }
 
-/// 把同播接到音乐页上。返回客户端句柄,播放那一侧要用它交出当前的采样。
+/// 音乐页拿在手里的同播把手:交采样、推设备、查角色、退出。
+///
+/// [`Client`] 管连接,这里多出来的是**界面侧的角色状态** —— 自动续播要靠
+/// `is_listening` 决定要不要闭嘴(收听时切歌会捣掉对面推来的声音),
+/// 播放键要靠 [`Sync::leave`] 实现「按一下就退出收听」。
+#[derive(Clone)]
+pub struct Sync {
+    client: Arc<Client>,
+    role: Arc<Mutex<Role>>,
+    weak: slint::Weak<MainWindow>,
+}
+
+impl Sync {
+    /// 把本机正在放的采样交给同播。
+    ///
+    /// 采样就是 `f32`(rodio 的 `Sample` 别名)—— 写成 `f32` 免得 `ui`
+    /// 为一个类型别名直接依赖 rodio。
+    pub fn feed(
+        &self,
+        samples: std::sync::mpsc::Receiver<f32>,
+    ) {
+        self.client.feed(samples);
+    }
+
+    /// 本机此刻是不是听众。
+    pub fn is_listening(&self) -> bool {
+        matches!(&*lock(&self.role), Role::Listener { .. })
+    }
+
+    /// 退出同播,回到单机。角色与状态行同步复位。
+    pub fn leave(&self) {
+        self.client.leave();
+        *lock(&self.role) = Role::Alone;
+        show_role(&self.weak, describe_role(&Role::Alone));
+    }
+}
+
+/// 把同播接到音乐页上。返回音乐页要用的把手。
 pub fn bind(
     ui: &MainWindow,
     player: &SharedPlayer,
-) -> Arc<Client> {
+) -> Sync {
     let me = identity();
     // 名册与角色都由后台线程改、UI 线程读,所以是 `Mutex` 而不是 `RefCell`。
     let roster =
@@ -108,7 +145,11 @@ pub fn bind(
     bind_push(ui, &client, &role);
     ui.set_sync_text(describe_role(&Role::Alone).into());
 
-    client
+    Sync {
+        client,
+        role,
+        weak: ui.as_weak(),
+    }
 }
 
 /// 处理一条同播事件。**在后台线程上**跑。
@@ -143,6 +184,10 @@ fn handle(
                 host: display_name(roster, &host),
             };
             show_role(weak, describe_role(&lock(role)));
+            // 有声音在出,控制键该画 ⏸ —— 此刻按它的语义是「退出收听」。
+            let _ = weak.upgrade_in_event_loop(|ui| {
+                ui.set_is_playing(true);
+            });
         }
         Event::Failed(message) => {
             show_role(weak, format!("同播: {message}"));

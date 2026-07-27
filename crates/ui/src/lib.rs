@@ -17,10 +17,6 @@ mod music;
 #[cfg(not(target_arch = "wasm32"))]
 mod syncplay;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use app_core::{Counter, Health, HealthState};
 use slint::{ComponentHandle, RenderingState};
 
 /// 帧率读数开不开。`SLINT_STUDY_FPS` 设成任意值即开,与 `SLINT_STUDY_TAB` 同属调试开关。
@@ -37,11 +33,11 @@ fn fps_enabled() -> bool {
         || option_env!("SLINT_STUDY_FPS").is_some()
 }
 
-/// 最大页签下标:0=Home、1=Server、2=3D、3=Music。
+/// 最大页签下标:0=Home、1=Music、2=3D。
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
-/// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=3` 静默停在 3D 页」。
-const MAX_TAB: i32 = 3;
+/// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=2` 静默停在 Music 页」。
+const MAX_TAB: i32 = 2;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
@@ -50,8 +46,6 @@ fn build_ui(initial_tab: i32) -> MainWindow {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    bind_counter(&ui);
-    bind_health(&ui);
     music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
@@ -383,70 +377,6 @@ fn platform_name() -> &'static str {
     }
 }
 
-/// 计数值由 app-core 持有;按钮只是请求把它加一,然后把新值推给 UI。
-fn bind_counter(ui: &MainWindow) {
-    let counter = Rc::new(RefCell::new(Counter::default()));
-    let weak = ui.as_weak();
-    ui.on_bump(move || {
-        let mut counter = counter.borrow_mut();
-        counter.bump();
-        if let Some(ui) = weak.upgrade() {
-            ui.set_count(counter.value());
-        }
-    });
-}
-
-/// 把 `GET /health` 接到"查询服务端"按钮上。
-///
-/// `slint::spawn_local` 在 slint 自己的事件循环上驱动 future,native 与 wasm
-/// 通用 —— 所以这里没有 `#[cfg]`。native 上真正的 IO 在 `api` 内部的后台
-/// tokio runtime 里跑,回到这里时已经是 UI 线程。见 `docs/adr/0002`。
-fn bind_health(ui: &MainWindow) {
-    let health = Rc::new(RefCell::new(Health::default()));
-    let weak = ui.as_weak();
-
-    ui.on_check_health(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        // spawn_local 的 future 要到下一轮事件循环才开始跑,而 Loading 需要
-        // 立刻显示出来。ponytail: 直接在这里推一次文案,不为此发明一套订阅机制。
-        ui.set_health_text(
-            describe(&HealthState::Loading).into(),
-        );
-
-        let health = health.clone();
-        let weak = ui.as_weak();
-        slint::spawn_local(async move {
-            app_core::refresh(&health, api::health).await;
-            if let Some(ui) = weak.upgrade() {
-                ui.set_health_text(
-                    describe(health.borrow().state())
-                        .into(),
-                );
-            }
-        })
-        .expect("event loop must be running");
-    });
-
-    ui.set_health_text(describe(&HealthState::Idle).into());
-}
-
-/// 把领域状态翻译成一行人类可读的文案。
-fn describe(state: &HealthState) -> String {
-    match state {
-        HealthState::Idle => {
-            format!("未查询 · {}", api::base_url())
-        }
-        HealthState::Loading => "查询中…".to_owned(),
-        HealthState::Loaded(dto) => format!(
-            "服务端 {} · 协议 v{}",
-            dto.status, dto.protocol_version
-        ),
-        HealthState::Failed(message) => {
-            format!("失败: {message}")
-        }
-    }
-}
-
 /// 帧率计。恒编译,开关在运行期([`fps_enabled`])—— 关掉时调用方不建定时器,这里零成本。
 ///
 /// 帧数由调用方在渲染通知回调里累加**真实发生的**帧,每个采样周期算出帧率推给 UI。
@@ -495,67 +425,5 @@ mod fps {
             },
         );
         (frames, timer)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use api::ApiError;
-    use app_core::HealthDto;
-
-    use super::*;
-
-    /// 生产侧由 `app.slint` 的 `import` 内嵌;测试自己再读一份来查字形覆盖。
-    const CJK_SUBSET: &[u8] =
-        include_bytes!("../fonts/cjk-subset.ttf");
-
-    /// 子集字体必须覆盖 [`describe`] 可能吐出的每一个非 ASCII 字符。
-    ///
-    /// 字符集不是手抄的:直接遍历 `describe` 在各状态下的真实输出。新增中文
-    /// 文案而忘了重新裁字体时,这里就会红。
-    #[test]
-    fn describe_only_uses_subset_glyphs() {
-        let face = ttf_parser::Face::parse(CJK_SUBSET, 0)
-            .expect("子集字体应能被解析");
-
-        // Failed 里的 message 是 `ApiError` 的 Display,自带中文 —— 这三个变体
-        // 必须逐一走到,否则漏字要等到线上点出错误才看得见。
-        let failures = [
-            ApiError::Transport(
-                "error sending request".to_owned(),
-            ),
-            ApiError::Decode("expected value".to_owned()),
-            ApiError::VersionMismatch {
-                expected: 1,
-                actual: 2,
-            },
-        ];
-
-        let states = [
-            HealthState::Idle,
-            HealthState::Loading,
-            // status 由服务端给,恒为 ASCII 的 "ok"。
-            HealthState::Loaded(HealthDto {
-                status: "ok".to_owned(),
-                protocol_version: 1,
-            }),
-        ]
-        .into_iter()
-        .chain(failures.into_iter().map(|err| {
-            HealthState::Failed(err.to_string())
-        }))
-        .collect::<Vec<_>>();
-
-        for state in &states {
-            for ch in describe(state)
-                .chars()
-                .filter(|c| !c.is_ascii())
-            {
-                assert!(
-                    face.glyph_index(ch).is_some(),
-                    "子集字体缺字形 {ch:?} —— 重跑 `just font-subset` 并把它加进字符集",
-                );
-            }
-        }
     }
 }
