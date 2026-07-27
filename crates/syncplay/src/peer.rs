@@ -18,6 +18,7 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc::track::track_remote::TrackRemote;
 
 use crate::{Envelope, SyncError};
 
@@ -209,17 +210,23 @@ impl Peer {
         }
     }
 
-    /// 对端的音频轨到达时调用 `on_track`。
+    /// 对端的音频轨到达时,把它交给 `handler`。
     ///
     /// 必须在协商**之前**挂上:轨是在 `set_remote_description` 期间到达的,
     /// 之后再挂就永远等不到那一次回调。
+    ///
+    /// 交出 `TrackRemote` 而不只是通知一声:调用方要从它上面读 RTP,
+    /// 而那是唯一的入口 —— 拿不到它就只知道"有轨来了",听不到任何声音。
     pub fn on_track(
         &self,
-        mut handler: impl FnMut() + Send + Sync + 'static,
+        mut handler: impl FnMut(Arc<TrackRemote>)
+        + Send
+        + Sync
+        + 'static,
     ) {
         self.connection.on_track(Box::new(
-            move |_track, _receiver, _transceiver| {
-                handler();
+            move |track, _receiver, _transceiver| {
+                handler(track);
                 Box::pin(async {})
             },
         ));

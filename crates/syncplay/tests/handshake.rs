@@ -4,9 +4,9 @@
 //! 也不需要第二台机器:ICE 走回环上的 host candidate,这正是同播的目标场景
 //! (自家局域网,不打洞)。
 //!
-//! 这里**不做编解码**。要证明的是链路:SDP 一来一回、ICE 真的连通、RTP 包过得去。
-//! 写进轨里的是任意字节而非合法 Opus 帧 —— 传输层不看载荷内容,而真的编码器
-//! (以及它带来的 libopus)是下一段的事。三者成立,推流就只差把字节换成真音频。
+//! 分两层验证。前几条只管链路:SDP 一来一回、ICE 真的连通、RTP 包过得去 ——
+//! 写进轨里的是任意字节,因为传输层不看载荷内容。最后一条则跑**整条同播链路**:
+//! PCM → Opus → RTP → 解码 → PCM,任何一环的采样率或声道数错位都会让它红。
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -137,8 +137,8 @@ async fn media_flows_from_host_to_listener() {
     let got_track = Arc::new(AtomicBool::new(false));
     let flag = got_track.clone();
     // on_track 必须在协商之前挂:回调是在轨到达那一刻查的,之后再挂就错过了。
-    listener.on_track(move || {
-        flag.store(true, Ordering::SeqCst)
+    listener.on_track(move |_track| {
+        flag.store(true, Ordering::SeqCst);
     });
 
     negotiate(&host, &listener).await;
@@ -307,4 +307,85 @@ async fn wait_until(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     false
+}
+
+/// **整条同播链路**:主控的 PCM 经 Opus + RTP 到达听众,解回来仍是有能量的信号。
+///
+/// 前面那条 `media_flows_from_host_to_listener` 只证明字节过得去;这条证明
+/// 过去的是**能放的声音** —— 编码器、RTP 打包、解码器三者的参数必须全部对上,
+/// 任何一处采样率或声道数错位,解出来的都是噪声或静音。
+#[tokio::test]
+async fn pcm_survives_the_whole_syncplay_path() {
+    use std::sync::mpsc;
+
+    use audio::codec::{
+        FRAME_SAMPLES_PER_CHANNEL, SYNC_CHANNELS,
+        SYNC_SAMPLE_RATE,
+    };
+    use syncplay::pump;
+
+    let host = Peer::new(PeerRole::Host)
+        .await
+        .expect("建不了主控连接");
+    let listener = Peer::new(PeerRole::Listener)
+        .await
+        .expect("建不了听众连接");
+
+    // 听众:收到轨就开一条解码泵,把 PCM 送进通道。
+    let (pcm_tx, pcm_rx) = mpsc::sync_channel(48_000);
+    listener.on_track(move |track| {
+        pump::spawn_listener(track, pcm_tx.clone());
+    });
+
+    negotiate(&host, &listener).await;
+
+    // 主控:一路 440Hz 正弦当作"正在播放的音乐"。
+    let (samples_tx, samples_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for i in 0.. {
+            let t = (i / SYNC_CHANNELS as usize) as f32
+                / SYNC_SAMPLE_RATE as f32;
+            let sample =
+                (t * 440.0 * core::f32::consts::TAU).sin()
+                    * 0.5;
+            if samples_tx.send(sample).is_err() {
+                return;
+            }
+            // 每凑一帧歇一下,免得瞬间灌爆编码器 —— 真实播放也是这个节奏。
+            if i % (FRAME_SAMPLES_PER_CHANNEL
+                * SYNC_CHANNELS as usize)
+                == 0
+            {
+                std::thread::sleep(Duration::from_millis(
+                    5,
+                ));
+            }
+        }
+    });
+    pump::spawn_host(
+        samples_rx,
+        host.track().expect("主控该有一条轨").clone(),
+    );
+
+    // 收够一帧的量就够判断:再多只是等得久。
+    let mut received = Vec::new();
+    let got_audio =
+        wait_until(Duration::from_secs(20), || {
+            received.extend(pcm_rx.try_iter());
+            received.len() >= FRAME_SAMPLES_PER_CHANNEL
+        })
+        .await;
+    assert!(
+        got_audio,
+        "听众只收到 {} 个采样",
+        received.len()
+    );
+
+    let energy: f32 =
+        received.iter().map(|s| s * s).sum::<f32>()
+            / received.len() as f32;
+    assert!(
+        energy > 0.001,
+        "解出来的信号能量塌了({energy}):多半是采样率或声道数在某一环对不上"
+    );
 }

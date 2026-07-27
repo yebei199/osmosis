@@ -8178,10 +8178,13 @@ dependencies = [
 name = "syncplay"
 version = "0.1.0"
 dependencies = [
+ "audio",
  "axum",
  "bytes",
  "contract",
+ "futures-executor",
  "futures-util",
+ "rodio",
  "serde",
  "serde_json",
  "server",
