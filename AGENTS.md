@@ -4,6 +4,33 @@
 [`CONTEXT.md`](CONTEXT.md),架构决策在 [`docs/adr/`](docs/adr/) —— 这里只记**别人踩过、
 不写下来就会再踩一遍**的操作陷阱。
 
+## 两条总则:调试走 MCP,像素走 niri
+
+**调试与交互一律走 MCP。** `just desktop-dev` 与 `just desktop-dev-3d` 已经把 MCP 焊在里面
+(feature `mcp` + 构建期 `SLINT_EMIT_DEBUG_INFO` + 运行期 `SLINT_MCP_PORT`,缺一不可),
+不必记参数、也不必另起一条配方。要验证一个改动有没有生效,先想的应该是「读元素树 /
+模拟点击 / 量尺寸」,而不是「截张图看看」。它能:
+
+- `get_element_tree`、`query_element_descendants` —— 界面里到底有什么,而不是你以为有什么
+- `click_element`、`set_element_value`、`dispatch_key_event` —— 真的走一遍用户路径
+- `get_element_properties` —— 元素的真实尺寸与位置(LineEdit 实际 56px 高,不是你以为的 32px)
+
+会话启动时 app 没跑的话,`.mcp.json` 里的 `slint-app` 不会连上,工具列表里也就没有它。
+**别因此放弃**——那是个普通的 HTTP 端点,直接打 JSON-RPC 即可:
+
+```sh
+curl -s -X POST http://127.0.0.1:8090/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+参数名用 camelCase(`elementHandle`、`matchElementTypeName`),写错会原地告诉你有哪些字段。
+
+**桌面端的真实像素只能靠 niri 抓窗口**,即 `just shot`。原因见下一节:MCP 的
+`take_screenshot` 走软件渲染器,采不到 GPU 纹理。两个工具分工明确 —— MCP 回答「有什么、
+是多大、点了会怎样」,niri 回答「画出来长什么样」。
+
 ## 验证 UI 改动:只用 `just shot`
 
 ```sh
@@ -138,7 +165,7 @@ cp apps/web/index.html test/*.html dist/web/
 
 ## 端口 8090 被占
 
-`just mcp-desktop*` 前置了端口守卫,占用时直接失败并点名占用者。最常见的占用者是上次
+`just desktop-dev*` 前置了端口守卫,占用时直接失败并点名占用者。最常见的占用者是上次
 `just mcp-android` 留下的 `adb forward` —— 撤掉它:
 
 ```sh
