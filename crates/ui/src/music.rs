@@ -85,6 +85,7 @@ pub fn bind(ui: &MainWindow) {
     let player = Rc::new(audio::Player::new());
 
     bind_search(ui, &tracks);
+    bind_list(ui, &tracks);
     bind_play(ui, &playback, &tracks, &player);
 
     ui.set_playback_text(
@@ -98,6 +99,12 @@ pub fn bind(ui: &MainWindow) {
 pub fn bind(ui: &MainWindow) {
     ui.set_playback_text("Web 端暂不支持播放".into());
 }
+
+/// 「Web 端暂不支持播放」里的中文也得在子集字体里 —— 但它只在 wasm 上出现,
+/// [`playback_copy_only_uses_subset_glyphs`] 那条守不到。这个常量把它摆到
+/// 原生也能看见的地方,好让同一个测试覆盖。
+#[cfg(test)]
+const WASM_NOTICE: &str = "Web 端暂不支持播放";
 
 /// 搜索:关键词 → `GET /search` → 结果列表。
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,17 +127,7 @@ fn bind_search(
             let found = api::search(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
             match found {
-                Ok(dto) => {
-                    let rows: Vec<TrackRow> = dto
-                        .tracks
-                        .iter()
-                        .map(to_row)
-                        .collect();
-                    *tracks.borrow_mut() = dto.tracks;
-                    ui.set_tracks(ModelRc::new(
-                        VecModel::from(rows),
-                    ));
-                }
+                Ok(dto) => show(&ui, &tracks, dto.tracks),
                 Err(error) => {
                     // 搜索失败复用播放状态那一行 —— 音乐页只有一处报错位,
                     // 再加一行"搜索状态"会让两行里总有一行是空的。
@@ -142,6 +139,74 @@ fn bind_search(
         })
         .expect("event loop must be running");
     });
+}
+
+/// 今日推荐与我喜欢的音乐。两者只差调哪个请求函数,其余完全相同。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_list(
+    ui: &MainWindow,
+    tracks: &Rc<RefCell<Vec<TrackDto>>>,
+) {
+    let daily = tracks.clone();
+    let weak = ui.as_weak();
+    ui.on_daily(move || {
+        fetch_into(&weak, &daily, async {
+            api::daily().await.map(|dto| dto.tracks)
+        });
+    });
+
+    let liked = tracks.clone();
+    let weak = ui.as_weak();
+    ui.on_liked(move || {
+        fetch_into(&weak, &liked, async {
+            api::liked().await.map(|dto| dto.tracks)
+        });
+    });
+}
+
+/// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
+///
+/// 收的是 `Vec<TrackDto>` 而非线上的信封类型:`ui` 按分层不直接依赖 `contract`,
+/// 剥壳在调用处一句 `.map(|dto| dto.tracks)` 完成。
+///
+/// 三个入口(搜索/推荐/红心)填的是**同一个** `tracks` 列表 ——
+/// 换一个来源就整批换掉,不合并:合并了就说不清列表里这首是哪来的。
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_into<Fut>(
+    weak: &slint::Weak<MainWindow>,
+    tracks: &Rc<RefCell<Vec<TrackDto>>>,
+    request: Fut,
+) where
+    Fut: core::future::Future<
+            Output = Result<Vec<TrackDto>, api::ApiError>,
+        > + 'static,
+{
+    let tracks = tracks.clone();
+    let weak = weak.clone();
+    slint::spawn_local(async move {
+        let found = request.await;
+        let Some(ui) = weak.upgrade() else { return };
+        match found {
+            Ok(found) => show(&ui, &tracks, found),
+            Err(error) => ui.set_playback_text(
+                format!("失败: {error}").into(),
+            ),
+        }
+    })
+    .expect("event loop must be running");
+}
+
+/// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
+#[cfg(not(target_arch = "wasm32"))]
+fn show(
+    ui: &MainWindow,
+    tracks: &Rc<RefCell<Vec<TrackDto>>>,
+    found: Vec<TrackDto>,
+) {
+    let rows: Vec<TrackRow> =
+        found.iter().map(to_row).collect();
+    *tracks.borrow_mut() = found;
+    ui.set_tracks(ModelRc::new(VecModel::from(rows)));
 }
 
 /// 播放:id → 取直链 → 开流 → 解码 → 出声。
@@ -357,6 +422,14 @@ mod tests {
                     "子集字体缺字 {ch:?}(状态 {state:?})—— 重跑 `just font-subset`"
                 );
             }
+        }
+
+        // wasm 分支的那句提示不经过 describe_playback,单独查一遍。
+        for ch in WASM_NOTICE.chars() {
+            assert!(
+                face.glyph_index(ch).is_some(),
+                "子集字体缺字 {ch:?}(wasm 提示)—— 重跑 `just font-subset`"
+            );
         }
     }
 }

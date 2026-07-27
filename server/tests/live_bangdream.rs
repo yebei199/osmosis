@@ -18,11 +18,18 @@ use tonic::transport::Channel;
 use server::bangdream::{
     self,
     proto::{
-        GetPlaySourceRequest, Platform, QualityLevel,
+        GetAccountStatusRequest,
+        GetDailyRecommendationsRequest,
+        GetPlaySourceRequest, GetTracksRequest,
+        ListLikedTracksRequest, Platform, QualityLevel,
         SearchTracksRequest,
+        auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
+        discover_service_client::DiscoverServiceClient,
+        library_service_client::LibraryServiceClient,
     },
 };
+use server::paging;
 
 /// 与 `main.rs` 的默认上游地址一致。那个常量属于进程装配,不在 lib 里,
 /// 这里重复一次 —— 它写错了下面两条测试立刻连不上,不会静默漂移。
@@ -109,4 +116,98 @@ async fn play_source_returns_playable_url() {
         "直链不像个地址: {}",
         dto.url
     );
+}
+
+/// 每日推荐能取到真实曲目。
+///
+/// 上游一次给完整 `Track`,所以这条只证明寻址与登录态对 —— 不涉及补全。
+#[tokio::test]
+#[ignore = "需要 bang-dream 在 127.0.0.1:50051 上运行且网易云已登录"]
+async fn daily_returns_tracks_from_live_upstream() {
+    let channel = Channel::from_static(UPSTREAM)
+        .connect()
+        .await
+        .expect("bang-dream 没起来?先跑 `just bang-dream`");
+
+    let response = DiscoverServiceClient::new(channel)
+        .get_daily_recommendations(
+            GetDailyRecommendationsRequest {
+                platform: Platform::Netease as i32,
+            },
+        )
+        .await
+        .expect("取每日推荐失败(未登录?)")
+        .into_inner();
+
+    assert!(!response.tracks.is_empty(), "每日推荐是空的");
+
+    let dto = bangdream::track_to_dto(
+        response
+            .tracks
+            .into_iter()
+            .next()
+            .expect("已断言非空"),
+    );
+    assert!(!dto.title.is_empty(), "推荐里的歌没有标题");
+}
+
+/// 红心列表走完三步:问账号 → 取标识 → 切一页 → 补全成曲目。
+///
+/// 这条独有的价值在**补全**那一步:前两步各自成功、拼起来却对不上(比如
+/// 标识列表给的 id 与 `GetTracks` 认的不是同一种),只有跑完整条链才看得见。
+#[tokio::test]
+#[ignore = "需要 bang-dream 在 127.0.0.1:50051 上运行且网易云已登录"]
+async fn liked_returns_hydrated_tracks() {
+    let channel = Channel::from_static(UPSTREAM)
+        .connect()
+        .await
+        .expect("bang-dream 没起来?先跑 `just bang-dream`");
+
+    let account = AuthServiceClient::new(channel.clone())
+        .get_account_status(GetAccountStatusRequest {
+            platform: Platform::Netease as i32,
+        })
+        .await
+        .expect("查账号状态失败")
+        .into_inner();
+    assert!(
+        account.logged_in,
+        "没登录,先跑 `just bang-dream-login`"
+    );
+
+    let liked = LibraryServiceClient::new(channel.clone())
+        .list_liked_tracks(ListLikedTracksRequest {
+            platform: Platform::Netease as i32,
+            user_id: account.user_id,
+        })
+        .await
+        .expect("取红心列表失败")
+        .into_inner();
+    assert!(!liked.track_ids.is_empty(), "一首红心都没有?");
+
+    let ids = paging::page(&liked.track_ids, 0, 5);
+    let response = CatalogServiceClient::new(channel)
+        .get_tracks(GetTracksRequest {
+            platform: Platform::Netease as i32,
+            track_ids: ids.to_vec(),
+        })
+        .await
+        .expect("补全曲目失败")
+        .into_inner();
+
+    assert_eq!(
+        response.tracks.len(),
+        ids.len(),
+        "给了 {} 个标识却只补全出 {} 首",
+        ids.len(),
+        response.tracks.len()
+    );
+    let dto = bangdream::track_to_dto(
+        response
+            .tracks
+            .into_iter()
+            .next()
+            .expect("已断言非空"),
+    );
+    assert!(!dto.title.is_empty(), "补全出来的歌没有标题");
 }

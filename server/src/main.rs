@@ -20,7 +20,7 @@ use axum::{
 };
 use contract::{
     ErrorDto, HealthDto, PROTOCOL_VERSION, PlaySourceDto,
-    SearchDto,
+    SearchDto, TracksDto,
 };
 use serde::Deserialize;
 use tonic::transport::Channel;
@@ -29,12 +29,18 @@ use tower_http::cors::CorsLayer;
 use server::bangdream::{
     self,
     proto::{
-        GetPlaySourceRequest, Platform, QualityLevel,
+        GetAccountStatusRequest,
+        GetDailyRecommendationsRequest,
+        GetPlaySourceRequest, GetTracksRequest,
+        ListLikedTracksRequest, Platform, QualityLevel,
         SearchTracksRequest,
+        auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
+        discover_service_client::DiscoverServiceClient,
+        library_service_client::LibraryServiceClient,
     },
 };
-use server::error;
+use server::{error, paging};
 
 /// 默认监听地址。
 ///
@@ -56,6 +62,18 @@ const PLAY_QUALITY: QualityLevel = QualityLevel::High;
 /// 失败响应:状态码 + [`ErrorDto`]。
 type Failure = (StatusCode, Json<ErrorDto>);
 
+/// 四个 gRPC 客户端。共享同一条惰性连接,clone 只是加一份引用。
+///
+/// 拆成四个是 proto 的分服务结构决定的,不是本服务的设计 ——
+/// 一次请求可能横跨其中几个(见 [`liked`])。
+#[derive(Clone)]
+struct Upstream {
+    catalog: CatalogServiceClient<Channel>,
+    library: LibraryServiceClient<Channel>,
+    discover: DiscoverServiceClient<Channel>,
+    auth: AuthServiceClient<Channel>,
+}
+
 /// 把 gRPC 失败翻成 HTTP 失败。
 fn fail(status: &tonic::Status) -> Failure {
     let (code, body) = error::map_status(status);
@@ -71,13 +89,22 @@ async fn main() {
     let channel = Channel::from_shared(upstream.clone())
         .expect("BANG_DREAM_ADDR 不是合法 URI")
         .connect_lazy();
-    let catalog = CatalogServiceClient::new(channel);
+    let clients = Upstream {
+        catalog: CatalogServiceClient::new(channel.clone()),
+        library: LibraryServiceClient::new(channel.clone()),
+        discover: DiscoverServiceClient::new(
+            channel.clone(),
+        ),
+        auth: AuthServiceClient::new(channel),
+    };
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/search", get(search))
+        .route("/daily", get(daily))
+        .route("/liked", get(liked))
         .route("/play/{track_id}", get(play))
-        .with_state(catalog)
+        .with_state(clients)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // permissive 只适用于开发:它允许任意来源。
         .layer(CorsLayer::permissive());
@@ -122,11 +149,10 @@ struct SearchQuery {
 
 /// `GET /search?q=紅蓮華` —— 搜歌。
 async fn search(
-    State(mut catalog): State<
-        CatalogServiceClient<Channel>,
-    >,
+    State(upstream): State<Upstream>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchDto>, Failure> {
+    let mut catalog = upstream.catalog;
     let response = catalog
         .search_tracks(SearchTracksRequest {
             platform: Platform::Netease as i32,
@@ -150,15 +176,116 @@ async fn search(
     }))
 }
 
+/// `GET /daily` —— 今日推荐。
+///
+/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。
+async fn daily(
+    State(upstream): State<Upstream>,
+) -> Result<Json<TracksDto>, Failure> {
+    let mut discover = upstream.discover;
+    let response = discover
+        .get_daily_recommendations(
+            GetDailyRecommendationsRequest {
+                platform: Platform::Netease as i32,
+            },
+        )
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
+    }))
+}
+
+/// `GET /liked` 的查询参数。
+#[derive(Deserialize)]
+struct PageQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+/// `GET /liked?limit=&offset=` —— 我喜欢的音乐。
+///
+/// 三步:先问上游当前账号是谁,再拿它**全量**的红心标识列表,切一页出来补全成曲目。
+/// 上游只给标识是刻意的(它的 `docs/adr/0003`):平台返回的曲目列表会被截断,
+/// 标识列表不会,翻页因此由调用方持有列表自行完成,聚合层不必缓存。
+///
+/// user_id 不做缓存:重新扫码登录会换一个账号,缓存住的话红心列表会静默停在旧账号上。
+/// 这是一次同机 gRPC,便宜得没必要省。
+async fn liked(
+    State(upstream): State<Upstream>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<TracksDto>, Failure> {
+    let mut auth = upstream.auth;
+    let mut library = upstream.library;
+    let mut catalog = upstream.catalog;
+
+    let account = auth
+        .get_account_status(GetAccountStatusRequest {
+            platform: Platform::Netease as i32,
+        })
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    // 未登录是**状态**不是错误,所以上游用 logged_in 而非错误码回答(它的 `docs/adr/0005`)。
+    // 但对这个请求而言目的没达成 —— 返回空列表会被读成"一首喜欢的都没有",
+    // 那是另一件事,必须区分开。
+    if !account.logged_in {
+        return Err(fail(&tonic::Status::unauthenticated(
+            "netease: 未登录",
+        )));
+    }
+
+    let liked = library
+        .list_liked_tracks(ListLikedTracksRequest {
+            platform: Platform::Netease as i32,
+            user_id: account.user_id,
+        })
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    let ids = paging::page(
+        &liked.track_ids,
+        query.offset.unwrap_or_default(),
+        query.limit.unwrap_or_default(),
+    );
+    if ids.is_empty() {
+        return Ok(Json(TracksDto { tracks: Vec::new() }));
+    }
+
+    let response = catalog
+        .get_tracks(GetTracksRequest {
+            platform: Platform::Netease as i32,
+            track_ids: ids.to_vec(),
+        })
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
+    }))
+}
+
 /// `GET /play/{track_id}` —— 取一条临时直链。
 ///
 /// 每次都向上游重新要:直链带签名会过期,缓存它只会让客户端拿到放不出声的地址。
 async fn play(
-    State(mut catalog): State<
-        CatalogServiceClient<Channel>,
-    >,
+    State(upstream): State<Upstream>,
     Path(track_id): Path<String>,
 ) -> Result<Json<PlaySourceDto>, Failure> {
+    let mut catalog = upstream.catalog;
     let response = catalog
         .get_play_source(GetPlaySourceRequest {
             platform: Platform::Netease as i32,
