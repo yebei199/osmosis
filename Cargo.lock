@@ -310,6 +310,7 @@ name = "app-core"
 version = "0.1.0"
 dependencies = [
  "contract",
+ "similar-asserts",
 ]
 
 [[package]]
