@@ -11,6 +11,7 @@
 
 mod envelope;
 mod peer;
+pub mod pump;
 mod session;
 mod signalling;
 

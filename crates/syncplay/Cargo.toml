@@ -10,6 +10,13 @@ contract.workspace = true
 serde.workspace = true
 serde_json = "1"
 webrtc.workspace = true
+# 编解码与采样的定义都在 audio —— 传输层不自己造一套。
+audio.workspace = true
+rodio.workspace = true
+bytes = "1"
+# 主控那条泵跑在普通线程上,要在其中阻塞等一个 async 的 write_sample。
+# 不用 tokio 的 block_on:那要求当前线程属于某个 runtime,而它不属于。
+futures-executor = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 tokio-tungstenite = "0.28"
 futures-util = { version = "0.3", default-features = false }

@@ -165,14 +165,17 @@ impl Player {
         })
     }
 
-    /// 放一个已解码的源,替换掉当前正在放的。
+    /// 放一路音频,替换掉当前正在放的。
+    ///
+    /// 收任意 `rodio::Source` 而不只收解码器:听众放的是 [`ChannelSource`] ——
+    /// 网络推来的 PCM,从没经过本机的解码器。
     ///
     /// 先清空:队列语义在这里是错的 —— 用户点第二首歌是"改放这首",
     /// 不是"放完上一首再放这首"。
-    pub fn play<R: Source>(
-        &self,
-        source: rodio::Decoder<R>,
-    ) {
+    pub fn play<S>(&self, source: S)
+    where
+        S: rodio::Source + Send + 'static,
+    {
         self.player.clear();
         self.player.append(source);
         self.player.play();
