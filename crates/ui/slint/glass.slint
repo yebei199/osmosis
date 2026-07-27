@@ -16,7 +16,7 @@
 // 静态不动:玻璃的动感由 GlassCard 的指针高光提供;背景再飘就是待机也在重绘,
 // 与本仓库既有的省电取向(render-active 门控、不主动请求重绘)相左。
 export component AuroraBackground inherits Rectangle {
-    background: #0f1117;
+    background: #17110d;
     clip: true;
 
     // x/y 不接受百分比(只有 width/height 接受),所以位置写成父尺寸的表达式。
@@ -31,29 +31,29 @@ export component AuroraBackground inherits Rectangle {
     // `max(宽, 高) × 1.1` 的正方形 —— 圆形渐变配正方形,边永远被推到屏幕之外。
     property <length> spot: max(root.width, root.height) * 1.1;
 
-    // 紫,中心略偏左上
+    // 焦糖,中心略偏左上
     Rectangle {
         x: root.width * 0.40 - root.spot / 2;
         y: root.height * 0.45 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #7c3aed8f 0%, #7c3aed00 60%);
+        background: @radial-gradient(circle, #8a5a2b9c 0%, #8a5a2b00 60%);
     }
-    // 蓝,中心略偏右下 —— 与紫在正中央交叠,那儿正是卡片所在
+    // 深咖,中心略偏右下 —— 与焦糖在正中央交叠,那儿正是卡片所在
     Rectangle {
         x: root.width * 0.62 - root.spot / 2;
         y: root.height * 0.58 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #2563eb85 0%, #2563eb00 60%);
+        background: @radial-gradient(circle, #5c3a1e95 0%, #5c3a1e00 60%);
     }
-    // 青,顶部偏右,压一点冷调进来
+    // 奶咖,顶部偏右,压一点暖光进来免得整片发闷
     Rectangle {
         x: root.width * 0.55 - root.spot / 2;
         y: root.height * 0.08 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #06b6d45c 0%, #06b6d400 60%);
+        background: @radial-gradient(circle, #b9885c66 0%, #b9885c00 60%);
     }
 
     @children
