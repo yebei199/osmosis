@@ -66,6 +66,13 @@ struct TrackRow {
     duration: string,
 }
 
+// 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,
+// 这里不指定子集字体。
+struct DeviceRow {
+    id: string,
+    name: string,
+}
+
 global Nav {
     out property <[NavEntry]> items: [
         {
@@ -214,6 +221,10 @@ export component MainWindow inherits Window {
     in property <[TrackRow]> tracks: [];
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     in property <string> playback-text;
+    // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
+    in property <[DeviceRow]> devices: [];
+    // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
+    in property <string> sync-text;
     // bevy 离屏渲染的 3D 画面,由 render3d 每帧推送(见 crates/render3d)。
     // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
     // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -310,6 +321,8 @@ export component MainWindow inherits Window {
     callback liked();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
+    // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
+    callback push-to(string);
 
     title: "Slint Study";
     background: #0f1117;
@@ -502,6 +515,45 @@ export component MainWindow inherits Window {
                         height: 20px;
                         vertical-alignment: center;
                         overflow: elide;
+                    }
+
+                    // 同播:状态一行,底下是可推送的设备。点一台就把正在放的这首推过去。
+                    //
+                    // 名册为空时整块消失,而不是留一行「没有设备」—— 单机用的时候
+                    // 那一行永远在,却永远没用。
+                    Text {
+                        text: root.sync-text;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 13px;
+                        height: 20px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    if root.devices.length > 0: HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        for device in root.devices: Rectangle {
+                            width: label.preferred-width + 24px;
+                            height: 30px;
+                            background: chip.has-hover ? #b9885c66 : #ffffff0f;
+                            border-radius: 15px;
+
+                            chip := TouchArea {
+                                clicked => { root.push-to(device.id); }
+                            }
+
+                            // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
+                            // 不指定 font-family,落到系统字体。
+                            label := Text {
+                                text: device.name;
+                                color: #e6e8ef;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
 
                     Flickable {

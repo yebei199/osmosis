@@ -21,6 +21,7 @@ web-time = "1"
 # web 将来出声要走 WebAudio,是另一套实现。由 `cargo xtask boundaries` 守着。
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 audio.workspace = true
+syncplay.workspace = true
 
 # 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。
 [build-dependencies]
