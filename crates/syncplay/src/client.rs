@@ -49,6 +49,8 @@ enum Command {
     Feed(blocking::Receiver<Sample>),
     /// 把当前这路采样推给这台设备。
     Push(String),
+    /// 关掉所有连接,回到单机。
+    Leave,
 }
 
 /// 一个连着信令服务器、随时可以推流的同播客户端。
@@ -96,6 +98,14 @@ impl Client {
         let _ = self
             .commands
             .send(Command::Push(to.to_owned()));
+    }
+
+    /// 退出同播:关掉本机的所有连接,回到单机。
+    ///
+    /// 听众按下任何播放键都会走到这里(`CONTEXT.md`「听众」):
+    /// 连接一关,对端的泵在下一次写轨时收到错误,自己收工。
+    pub fn leave(&self) {
+        let _ = self.commands.send(Command::Leave);
     }
 }
 
@@ -285,6 +295,14 @@ async fn dispatch(
             sender.send(&to, &offer).await?;
             relay_candidates(&peer, &to, sender);
             peers.insert(to, peer);
+            Ok(())
+        }
+        // 逐个关而不是只 clear:drop 一个 Peer 不会关连接(它是 Arc 的一份克隆),
+        // 不显式 close 的话对端还以为本机在听,一直白推。
+        Command::Leave => {
+            for (_, peer) in peers.drain() {
+                let _ = peer.close().await;
+            }
             Ok(())
         }
     }
