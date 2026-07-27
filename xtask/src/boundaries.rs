@@ -37,7 +37,10 @@ pub fn verify(args: &[String]) -> Result<(), String> {
             app_core_compiles_for_wasm,
         ),
         ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
-        ("web 不依赖 audio/cpal", web_free_of_native_audio),
+        (
+            "web 不依赖 audio/syncplay 的原生栈",
+            web_free_of_native_audio,
+        ),
     ];
 
     let mut failures = Vec::new();
@@ -152,7 +155,7 @@ fn web_ios_free_of_3d() -> Result<(), String> {
     Ok(())
 }
 
-/// 原生音频栈(audio/rodio/cpal)不进 web。
+/// 原生音频与 WebRTC 栈(audio/rodio/cpal、syncplay/webrtc)不进 web。
 ///
 /// cpal 在 linux 上链接 alsa、在 android 上链接 AAudio —— 两者在 wasm 上都不存在。
 /// 混进去的话 web 端直接编不过,而那个错误只会在别人下次构建 wasm 时炸出来,
@@ -161,7 +164,8 @@ fn web_ios_free_of_3d() -> Result<(), String> {
 ///
 /// ios 不在此列:它有 CoreAudio,cpal 支持它,只是本项目还没实现那个端。
 fn web_free_of_native_audio() -> Result<(), String> {
-    const FORBIDDEN: &[&str] = &["audio", "rodio", "cpal"];
+    const FORBIDDEN: &[&str] =
+        &["audio", "rodio", "cpal", "syncplay", "webrtc"];
 
     // 必须带 `--target`:`audio` 是 ui 的 `cfg(not(wasm32))` 条件依赖,
     // 不指定目标时 cargo tree 按宿主算,这条规则会对着**正确的**代码报红。
@@ -185,7 +189,7 @@ fn web_free_of_native_audio() -> Result<(), String> {
         .collect();
     if !found.is_empty() {
         return Err(format!(
-            "app-web 依赖了 {},原生音频栈编不到 wasm",
+            "app-web 依赖了 {},这些原生栈编不到 wasm",
             found.join("、")
         ));
     }
