@@ -8,16 +8,24 @@ description = "后端:与客户端共享 contract,并把 bang-dream 的 gRPC 翻
 [dependencies]
 contract.workspace = true
 serde.workspace = true
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tower-http = { version = "0.6", features = ["cors"] }
 # gRPC 客户端一侧。生成代码由 build.rs 从 third_party/bang-dream 的 .proto 产出。
 tonic.workspace = true
 tonic-prost.workspace = true
 prost.workspace = true
+# WebSocket 的收发两端要拆开跑(见 signaling::serve),故需要 StreamExt/SinkExt。
+futures-util = { version = "0.3", default-features = false }
+# 信令走 JSON 文本帧。HTTP 那侧由 axum 的 Json 提取器负责,不必自己序列化;
+# WebSocket 没有对应的提取器,消息体只能自己转。
+serde_json = "1"
 
 [build-dependencies]
 tonic-prost-build.workspace = true
 
 [dev-dependencies]
 similar-asserts.workspace = true
+# 信令测试要当**客户端**连自己的 WebSocket。axum 只提供服务端那一半,
+# 客户端另找一个 —— tungstenite 是 axum 自己底下用的那套,协议实现一致。
+tokio-tungstenite = "0.28"
