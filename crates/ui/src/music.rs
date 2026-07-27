@@ -9,6 +9,8 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 use app_core::{Playback, PlaybackState, TrackDto};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -74,6 +76,9 @@ fn to_row(track: &TrackDto) -> TrackRow {
 /// 音频设备只开一次并常驻:每次播放都重开设备的话,alsa 上会听到明显的咔哒声,
 /// 而且第二次开可能因设备被自己占着而失败。开不出来(无声卡)不是致命错误 ——
 /// 界面照常能搜歌,点播放时才报错。
+///
+/// 播放器是 `Arc` 而非 `Rc`:同播的事件在后台线程上到达,听众收到的声音要在
+/// **那里**直接出声(见 `syncplay::handle`),绕回 UI 线程只会让起播多等一帧。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(ui: &MainWindow) {
     let playback =
@@ -82,11 +87,12 @@ pub fn bind(ui: &MainWindow) {
     // 点击时要靠它把 id 换回完整的 TrackDto。
     let tracks: Rc<RefCell<Vec<TrackDto>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let player = Rc::new(audio::Player::new());
+    let player = Arc::new(audio::Player::new());
+    let client = crate::syncplay::bind(ui, &player);
 
     bind_search(ui, &tracks);
     bind_list(ui, &tracks);
-    bind_play(ui, &playback, &tracks, &player);
+    bind_play(ui, &playback, &tracks, &player, &client);
 
     ui.set_playback_text(
         describe_playback(&PlaybackState::Idle).into(),
@@ -215,11 +221,13 @@ fn bind_play(
     ui: &MainWindow,
     playback: &Rc<RefCell<Playback>>,
     tracks: &Rc<RefCell<Vec<TrackDto>>>,
-    player: &Rc<Result<audio::Player, audio::AudioError>>,
+    player: &Arc<Result<audio::Player, audio::AudioError>>,
+    client: &Arc<syncplay::Client>,
 ) {
     let playback = playback.clone();
     let tracks = tracks.clone();
     let player = player.clone();
+    let client = client.clone();
     let weak = ui.as_weak();
 
     ui.on_play(move |id| {
@@ -245,10 +253,11 @@ fn bind_play(
 
         let playback = playback.clone();
         let player = player.clone();
+        let client = client.clone();
         let weak = ui.as_weak();
         slint::spawn_local(async move {
             app_core::play(&playback, track, |track| {
-                start(player.clone(), track)
+                start(player.clone(), client.clone(), track)
             })
             .await;
 
@@ -265,15 +274,21 @@ fn bind_play(
     });
 }
 
-/// 真正把一首歌变成声音:取直链 → 开流 → 解码 → 送进播放器。
+/// 真正把一首歌变成声音:取直链 → 开流 → 解码 → 归一 → 分出一支给同播 → 出声。
 ///
 /// 这就是注入给 `app_core::play` 的那个闭包体。`app-core` 只看到
-/// "一个返回 Result 的 future",看不到 HTTP 也看不到 alsa。
+/// "一个返回 Result 的 future",看不到 HTTP、alsa,也看不到 WebRTC。
+///
+/// 每首歌都分一支给同播,不管当下有没有人在听:支路满了会自己丢采样
+/// (见 `audio::codec::Tee`),而等"确认有人听"再接的话,换歌时听众会掉音。
 #[cfg(not(target_arch = "wasm32"))]
 async fn start(
-    player: Rc<Result<audio::Player, audio::AudioError>>,
+    player: Arc<Result<audio::Player, audio::AudioError>>,
+    client: Arc<syncplay::Client>,
     track: TrackDto,
 ) -> Result<(), String> {
+    use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
+
     let source = api::play_source(&track.id)
         .await
         .map_err(|error| error.to_string())?;
@@ -285,7 +300,16 @@ async fn start(
 
     match player.as_ref() {
         Ok(player) => {
-            player.play(decoded);
+            // 先归一再分支:本机听到的和推出去的因此是同一批采样,
+            // 而 Opus 只在 48kHz 立体声上工作(见 `audio::codec::normalize`)。
+            let (tee, branch) = Tee::new(
+                normalize(decoded),
+                BRANCH_CAPACITY,
+            );
+            // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
+            // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
+            player.play(tee);
+            client.feed(branch);
             Ok(())
         }
         Err(error) => Err(error.to_string()),
