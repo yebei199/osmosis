@@ -177,6 +177,14 @@ impl Player {
     pub fn stop(&self) {
         self.player.clear();
     }
+
+    /// 已经放到第几秒。
+    ///
+    /// 这是唯一能从外面看出"真的在出声"的东西:rodio 的输出线程若挂了,
+    /// 队列可能仍然非空、`empty()` 仍然为假,但这个位置**不再前进**。
+    pub fn position(&self) -> core::time::Duration {
+        self.player.get_pos()
+    }
 }
 
 #[cfg(test)]
