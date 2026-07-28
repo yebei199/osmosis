@@ -47,6 +47,9 @@ pub use glass::GlassRect;
 mod navglass;
 pub use navglass::{NavGlassPass, NavParams};
 
+mod warp;
+pub use warp::{AUDIO_BYTES, WarpPass};
+
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
 

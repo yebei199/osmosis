@@ -71,6 +71,21 @@ bevy 画完那一帧后,再跑一个全屏 fragment shader:把热调工具条那
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 
+## 播放页反馈 warp 视觉(`warp.rs` + `warp.wgsl`)
+
+播放页(见 `CONTEXT.md`「播放页」与 `docs/adr/0010`)的全屏视觉,同样是**不经 bevy** 的
+独立 fragment pass,但比 navglass 多两样:**两张目标纹理 ping-pong**(反馈机制每帧要采样
+上一帧:朝中心缩、随低频转、按 decay 压暗,再叠新内容 —— 拖影与隧道感全来自这一步),
+以及一张 512×2 的**音频纹理**(照 Shadertoy 约定:第一行频谱、第二行波形,由
+`audio::spectrum` 在 CPU 上算好、apps 在 seam 处每帧送来,shader 侧采样代码与
+Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
+
+- 新内容是两圈极坐标可视化:外圈频谱环、内圈波形环,余弦调色板取紫/蓝/青一段与
+  应用 aurora 同调;反馈能量用软限幅压住,不然高亮区几帧就烧成纯白。
+- 省电门在 ui 侧(展开 ∧ 播放 ∧ 可见):门关着没人调 `render_frame`,Slint 复用
+  上一帧纹理,GPU 归零;`time` 由 ui 的播放页时钟给,门关时钟停,重开从定格处继续。
+- 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
+
 ## 深度正确的 UI(遮挡层)
 
 Slint 的合成没有深度:3D 画面对它只是一张 `Image`,任何 Slint 控件都恒在其上。要让场景
