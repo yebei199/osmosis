@@ -12,6 +12,7 @@
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
 pub mod codec;
+pub mod spectrum;
 mod stream_source;
 
 pub use stream_source::ChannelSource;
@@ -147,6 +148,8 @@ pub struct Player {
     /// 设备句柄。drop 掉声音就断了,所以必须留着。
     _device: MixerDeviceSink,
     player: rodio::Player,
+    /// 可视化的频谱分析器,每次换源在 [`Self::play`] 里接上新支路。
+    viz: spectrum::Analyzer,
 }
 
 impl Player {
@@ -162,6 +165,7 @@ impl Player {
         Ok(Self {
             _device: device,
             player,
+            viz: spectrum::Analyzer::new(),
         })
     }
 
@@ -172,13 +176,26 @@ impl Player {
     ///
     /// 先清空:队列语义在这里是错的 —— 用户点第二首歌是"改放这首",
     /// 不是"放完上一首再放这首"。
+    ///
+    /// 这里也是可视化的**统一挖点**:任何要出声的源都从本方法进,分一支采样
+    /// 给 [`spectrum::Analyzer`],单机、主控、听众的可视化因此天然一致,
+    /// 频谱不进网络(见 `CONTEXT.md`「可视化」)。
     pub fn play<S>(&self, source: S)
     where
         S: rodio::Source + Send + 'static,
     {
+        let channels = source.channels().get();
+        let (tap, rx) =
+            codec::Tee::new(source, spectrum::TAP_CAPACITY);
+        self.viz.attach(rx, channels);
         self.player.clear();
-        self.player.append(source);
+        self.player.append(tap);
         self.player.play();
+    }
+
+    /// 可视化分析器的共享句柄,UI 侧每帧取频谱/波形用。
+    pub fn visualizer(&self) -> spectrum::Analyzer {
+        self.viz.clone()
     }
 
     /// 停止并清空队列。
