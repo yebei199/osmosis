@@ -348,25 +348,30 @@ component DayNightSwitch inherits Rectangle {
             animate opacity { duration: 500ms; }
         }
 
-        // 陨石坑:三个灰圆,白天淡出。原作还带 -90° 旋转入场,
-        // 这版 Slint 的 Rectangle 没有 rotation-angle,淡入已足够。
+        // 陨石坑:三个灰圆,白天淡出,并跟着原作绕月心转 -90° 入场。
+        // Rectangle 没有 rotation-angle,所以坑的位置直接用极坐标写:
+        // 动 spin 一个角度,三个坑各自沿圆弧走 —— 与 transform: rotate 等价。
         craters := Rectangle {
+            // 坑相对月心(14px, 14px)的极坐标,由原作的直角坐标换算而来。
+            property <angle> spin: root.night ? 0deg : -90deg;
+
             width: 100%;
             height: 100%;
             opacity: root.night ? 1 : 0;
             animate opacity { duration: 300ms; }
+            animate spin { duration: 300ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
 
             for crater[i] in [
-                { cx: 13px, cy: 5px, d: 7px },
-                { cx: 5px, cy: 12px, d: 10px },
-                { cx: 17px, cy: 17px, d: 6px },
+                { r: 9.06px, a: 263.66deg, d: 7px },
+                { r: 9.22px, a: 192.53deg, d: 10px },
+                { r: 4.24px, a: 45deg, d: 6px },
             ]: Rectangle {
                 width: crater.d;
                 height: crater.d;
                 border-radius: self.width / 2;
                 background: #96a0b4;
-                x: crater.cx - self.width / 2;
-                y: crater.cy - self.height / 2;
+                x: 14px + crater.r * Math.cos(crater.a + craters.spin) - self.width / 2;
+                y: 14px + crater.r * Math.sin(crater.a + craters.spin) - self.height / 2;
             }
         }
     }
