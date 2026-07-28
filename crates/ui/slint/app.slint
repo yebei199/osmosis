@@ -606,8 +606,24 @@ export component MainWindow inherits Window {
     out property <length> card-h: 92px;
     out property <length> card-x: (content.width - root.card-w) / 2;
     out property <length> card-y: (content.height - root.card-h) / 2;
-    // 仅当 3D 页激活时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
-    out property <bool> render-active: root.current-tab == 2;
+    // 仅当 3D 页激活**且没被播放页盖住**时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
+    out property <bool> render-active: root.current-tab == 2 && !root.play-page-open;
+
+    // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
+    // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
+    // 回调 —— docs/adr/0010 的「功能等价路径」。
+    in-out property <bool> play-page-open: false;
+    // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
+    // 无 GPU 构建恒空图(width 0),覆层退回纯色底 —— 与 scene-3d 同一个缺省模式。
+    in property <image> viz-bg;
+    // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
+    in property <image> cover-art;
+    // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
+    in property <string> now-title;
+    in property <string> now-artists;
+    // 省电门的 .slint 半边:展开 ∧ 播放。第三条「窗口可见」在 Rust 侧
+    // (lib.rs 渲染通知回调)判,三条齐了才渲 warp,暂停定格在最后一帧。
+    out property <bool> viz-active: root.play-page-open && root.is-playing;
 
     // ── 宽版式侧栏「液态玻璃 metaball 选中器」──
     // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
@@ -887,6 +903,11 @@ export component MainWindow inherits Window {
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
                             }
+                            // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
+                            RoundControl {
+                                icon: "M12 7 L19 16 L5 16 Z";
+                                clicked => { root.play-page-open = true; }
+                            }
                             SyncStrip {
                                 alignment: end;
                                 devices: root.devices;
@@ -900,6 +921,7 @@ export component MainWindow inherits Window {
 
                             HorizontalLayout {
                                 alignment: center;
+                                spacing: 10px;
                                 ControlCluster {
                                     is-playing: root.is-playing;
                                     shuffle-on <=> root.shuffle-on;
@@ -907,6 +929,11 @@ export component MainWindow inherits Window {
                                     toggle => { root.toggle-play(); }
                                     next => { root.next-track(); }
                                     shuffle-toggled => { root.shuffle-toggled(); }
+                                }
+                                // 展开播放页,同宽版那颗。
+                                RoundControl {
+                                    icon: "M12 7 L19 16 L5 16 Z";
+                                    clicked => { root.play-page-open = true; }
                                 }
                             }
                             HorizontalLayout {
@@ -1095,6 +1122,104 @@ export component MainWindow inherits Window {
                     icon: item.icon;
                     active: root.current-tab == i;
                     clicked => { root.current-tab = i; }
+                }
+            }
+        }
+    }
+
+    // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
+    // 装饰(warp 视觉、封面卡)与功能(底部 ControlCluster)分层:装饰将来入 3D
+    // 可被粒子遮挡,功能永远在最上层 2D、点得到 —— docs/adr/0010。
+    if root.play-page-open: Rectangle {
+        // 兜底纯色底:无 GPU 构建(viz-bg 恒空)也得是完整的深色沉浸层。
+        background: #0b0d13;
+
+        if root.viz-bg.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            image-fit: fill;
+            source: root.viz-bg;
+        }
+
+        // 点视觉区任意处收起。压在视觉之上、内容之下 —— 控制键各有 TouchArea,
+        // 不会误触到这层;封面与文字是纯展示,点它们也算「点空白」。
+        TouchArea {
+            clicked => { root.play-page-open = false; }
+        }
+
+        VerticalLayout {
+            padding-top: root.safe-area-insets.top + 24px;
+            padding-left: root.safe-area-insets.left + 24px;
+            padding-right: root.safe-area-insets.right + 24px;
+            padding-bottom: root.safe-area-insets.bottom + 24px;
+            spacing: 20px;
+
+            // 封面卡 + 歌名:居中浮在视觉之上。第二步这块整体搬进 3D 当深度卡片。
+            Rectangle {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 18px;
+
+                    if root.cover-art.width > 0: HorizontalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 220px;
+                            height: 220px;
+                            border-radius: 20px;
+                            clip: true;
+                            // 描一圈细边,封面亮色时不至于和视觉糊在一起。
+                            border-width: 1px;
+                            border-color: #ffffff22;
+                            Image {
+                                width: 100%;
+                                height: 100%;
+                                image-fit: cover;
+                                source: root.cover-art;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.now-title;
+                        color: #e6e8ef;
+                        font-size: 22px;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.now-artists;
+                        color: #9aa0b4;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            // 功能层:同一组回调,与音乐页的控制条完全等价。
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 340px;
+                    height: 60px;
+                    border-radius: 16px;
+                    background: #17110daa;
+                    border-width: 1px;
+                    border-color: #ffffff10;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        ControlCluster {
+                            is-playing: root.is-playing;
+                            shuffle-on <=> root.shuffle-on;
+                            prev => { root.prev-track(); }
+                            toggle => { root.toggle-play(); }
+                            next => { root.next-track(); }
+                            shuffle-toggled => { root.shuffle-toggled(); }
+                        }
+                    }
                 }
             }
         }
