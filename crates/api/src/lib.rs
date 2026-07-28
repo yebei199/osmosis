@@ -224,12 +224,26 @@ mod platform {
     }
 
     /// 同 [`get_json`],但不解码,原样给字节。
+    ///
+    /// 带显式超时:这类 URL 指向外部 CDN(封面图),可能整段不可达 ——
+    /// 实测网易 CDN 从部分网络直连会**无响应挂死**而不是拒绝。`reqwest::get`
+    /// 默认没有超时,不设的话这个 future 永远悬着。
     pub(super) async fn get_bytes(
         url: String,
     ) -> Result<Vec<u8>, ApiError> {
         runtime()
             .spawn(async move {
-                let response = reqwest::get(url)
+                let client = reqwest::Client::builder()
+                    .timeout(
+                        std::time::Duration::from_secs(10),
+                    )
+                    .build()
+                    .map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })?;
+                let response = client
+                    .get(url)
+                    .send()
                     .await
                     .map_err(|e| {
                         ApiError::Transport(e.to_string())
