@@ -66,13 +66,18 @@ fn android_main(app: slint::android::AndroidApp) {
     #[cfg(feature = "bevy-3d")]
     {
         let mut scene = render3d::Scene::new();
-        // 导航选中器的独立 wgpu pass,复用 scene 的共享 device/queue(必须在 scene 被移进闭包前取)。
+        // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue
+        // (必须在 scene 被移进闭包前取)。
         let mut nav = render3d::NavGlassPass::new(
             scene.device(),
             scene.queue(),
         );
-        // seam:把 ui 的 SceneControls / NavGlassControls 平凡拷成 render3d 的镜像结构体
-        // (见 SceneParams 注释)。两个闭包分别驱动 3D 面板与导航选中器。
+        let mut warp = render3d::WarpPass::new(
+            scene.device(),
+            scene.queue(),
+        );
+        // seam:把 ui 的 SceneControls / NavGlassControls / VizControls 平凡拷成 render3d
+        // 的镜像参数(见 SceneParams 注释)。三个闭包分别驱动 3D 面板、导航选中器、播放页视觉。
         ui::run_with_renderers(
             0,
             move |c, w, h| {
@@ -107,6 +112,13 @@ fn android_main(app: slint::android::AndroidApp) {
                         slot_h: n.slot_h,
                     },
                 ))
+            },
+            move |v, w, h| {
+                Some(
+                    warp.render_frame(
+                        v.time, &v.audio, w, h,
+                    ),
+                )
             },
         );
     }

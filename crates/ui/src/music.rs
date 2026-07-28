@@ -144,7 +144,7 @@ struct Deck {
 /// 播放器是 `Arc` 而非 `Rc`:同播的事件在后台线程上到达,听众收到的声音要在
 /// **那里**直接出声(见 `syncplay::handle`),绕回 UI 线程只会让起播多等一帧。
 #[cfg(not(target_arch = "wasm32"))]
-pub fn bind(ui: &MainWindow) {
+pub fn bind(ui: &MainWindow) -> crate::viz::Source {
     // 搜索结果的权威副本。Slint 的 model 只存格式化后的字符串,
     // 点击时要靠它把 id 换回完整的 TrackDto。
     let tracks: Rc<RefCell<Vec<TrackDto>>> =
@@ -170,13 +170,21 @@ pub fn bind(ui: &MainWindow) {
     ui.set_playback_text(
         describe_playback(&PlaybackState::Idle).into(),
     );
+
+    // 播放页可视化的数据源。无声卡时没有播放器,自然也没有频谱可看。
+    deck.player
+        .as_ref()
+        .as_ref()
+        .ok()
+        .map(audio::Player::visualizer)
 }
 
 /// wasm 上没有原生音频栈(见 `Cargo.toml` 的条件依赖)。界面照常在,
 /// 只是这一页不接任何行为 —— 「余端 graceful 缺省」,不写平台判断到 `.slint` 里。
 #[cfg(target_arch = "wasm32")]
-pub fn bind(ui: &MainWindow) {
+pub fn bind(ui: &MainWindow) -> crate::viz::Source {
     ui.set_playback_text("Web 端暂不支持播放".into());
+    None
 }
 
 /// 「Web 端暂不支持播放」里的中文也得在子集字体里 —— 但它只在 wasm 上出现,
@@ -426,6 +434,25 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
         ))
         .into(),
     );
+
+    // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
+    ui.set_now_title(track.title.clone().into());
+    ui.set_now_artists(join_artists(&track.artists).into());
+    ui.set_cover_art(slint::Image::default());
+    if let Some(url) = track.cover.clone() {
+        let weak = ui.as_weak();
+        slint::spawn_local(async move {
+            // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
+            if let Ok(bytes) = api::fetch_bytes(&url).await
+                && let Some(img) =
+                    crate::cover::decode(&bytes)
+                && let Some(ui) = weak.upgrade()
+            {
+                ui.set_cover_art(img);
+            }
+        })
+        .expect("event loop must be running");
+    }
 
     let deck = deck.clone();
     let weak = ui.as_weak();

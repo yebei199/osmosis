@@ -162,6 +162,16 @@ fn encode_component(raw: &str) -> String {
     out
 }
 
+/// 拉取任意 URL 的原始字节(封面图这类二进制资源)。
+///
+/// 与 `play_source` 的直链同一注意事项:封面 URL 指向平台 CDN,可能过期或
+/// 返回 HTML 错误页 —— 调用方必须把「字节不是图」当常态处理,不能 panic。
+pub async fn fetch_bytes(
+    url: &str,
+) -> Result<Vec<u8>, ApiError> {
+    platform::get_bytes(url.to_owned()).await
+}
+
 /// 唯一按 target 分叉的地方。两个实现的**签名相同**,差异不外泄。
 #[cfg(not(target_arch = "wasm32"))]
 mod platform {
@@ -212,6 +222,35 @@ mod platform {
                 ApiError::Transport(join_error.to_string())
             })?
     }
+
+    /// 同 [`get_json`],但不解码,原样给字节。
+    pub(super) async fn get_bytes(
+        url: String,
+    ) -> Result<Vec<u8>, ApiError> {
+        runtime()
+            .spawn(async move {
+                let response = reqwest::get(url)
+                    .await
+                    .map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })?
+                    .error_for_status()
+                    .map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })?;
+                response
+                    .bytes()
+                    .await
+                    .map(|b| b.to_vec())
+                    .map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })
+            })
+            .await
+            .map_err(|join_error| {
+                ApiError::Transport(join_error.to_string())
+            })?
+    }
 }
 
 /// wasm 上没有线程,请求由浏览器的 fetch 驱动;future 不是 `Send`,无所谓。
@@ -237,6 +276,26 @@ mod platform {
             .json::<T>()
             .await
             .map_err(|e| ApiError::Decode(e.to_string()))
+    }
+
+    /// 同 [`get_json`],但不解码,原样给字节。
+    pub(super) async fn get_bytes(
+        url: String,
+    ) -> Result<Vec<u8>, ApiError> {
+        let response = reqwest::get(url)
+            .await
+            .map_err(|e| {
+                ApiError::Transport(e.to_string())
+            })?
+            .error_for_status()
+            .map_err(|e| {
+                ApiError::Transport(e.to_string())
+            })?;
+        response
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| ApiError::Transport(e.to_string()))
     }
 }
 

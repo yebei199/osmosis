@@ -12,6 +12,13 @@ pub use scene_params::SceneControls;
 mod nav_glass;
 pub use nav_glass::NavGlassControls;
 
+mod viz;
+pub use viz::{VIZ_AUDIO_BYTES, VizControls};
+
+// 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
+#[cfg(not(target_arch = "wasm32"))]
+mod cover;
+
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,12 +48,15 @@ const MAX_TAB: i32 = 2;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
 ///
+/// 顺带交出可视化的数据源(频谱分析器句柄):它由 music 的播放器产出,
+/// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
+///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui(initial_tab: i32) -> MainWindow {
+fn build_ui(initial_tab: i32) -> (MainWindow, viz::Source) {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    music::bind(&ui);
+    let viz_source = music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
@@ -59,7 +69,7 @@ fn build_ui(initial_tab: i32) -> MainWindow {
     {
         ui.set_current_tab(tab.clamp(0, MAX_TAB));
     }
-    ui
+    (ui, viz_source)
 }
 
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
@@ -67,7 +77,7 @@ fn build_ui(initial_tab: i32) -> MainWindow {
 /// 各平台入口在初始化好渲染后端后调用。不带 3D 的普通路径(web / ios,以及
 /// 未启用 3D 的桌面)走这里。
 pub fn run() {
-    let ui = build_ui(0);
+    let (ui, _viz_source) = build_ui(0);
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
@@ -119,18 +129,28 @@ pub fn run_with_renderer(
     ) -> (slint::Image, slint::Image)
     + 'static,
 ) {
-    // 不要导航选中器的调用方(web、无 nav 的构建)走这里:交给一个恒不产图的空 nav 闭包,
-    // 复用同一套通知回调,避免把回调逻辑抄两份。
-    run_with_renderers(initial_tab, on_frame, |_| None);
+    // 不要导航选中器/播放页视觉的调用方(web、无 nav 的构建)走这里:交给恒不产图的
+    // 空闭包,复用同一套通知回调,避免把回调逻辑抄两份。
+    run_with_renderers(
+        initial_tab,
+        on_frame,
+        |_| None,
+        |_, _, _| None,
+    );
 }
 
-/// 同 [`run_with_renderer`],但额外驱动导航侧栏的液态玻璃选中器。
+/// 同 [`run_with_renderer`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。
 ///
 /// `nav_frame` 由平台入口提供(见 `render3d::NavGlassPass`):切 tab 的转场期间,以物理像素
 /// 的 [`NavGlassControls`] 调用,内部用独立 wgpu pass 画出侧栏背景纹理,返回其 `slint::Image`。
 /// 与 3D 的 `render-active` 门**相互独立** —— 导航栏常驻,选中器只在 metaball 还在走时重渲,
 /// 静止后 Slint 复用上一帧纹理(省电门 [`nav_glass::nav_transition_active`],再叠一道尺寸变化判定
 /// 兜住窗口缩放)。返回 `None`(如空 nav 闭包)则这一帧不更新 `nav-bg`。
+///
+/// `viz_frame` 驱动播放页的 warp 视觉(见 `render3d::WarpPass`):门(展开 ∧ 播放 ∧
+/// 窗口可见)开着的每一帧,以 [`VizControls`](播放页时钟 + 音频纹理字节)和窗口
+/// **物理像素**尺寸调用,返回视觉纹理的 `slint::Image` 推到 `viz-bg`。门关上就不再
+/// 调用:暂停定格在最后一帧,时钟一并冻结,收起/失焦零重绘。
 pub fn run_with_renderers(
     initial_tab: i32,
     mut on_frame: impl FnMut(
@@ -144,8 +164,14 @@ pub fn run_with_renderers(
         &NavGlassControls,
     ) -> Option<slint::Image>
     + 'static,
+    mut viz_frame: impl FnMut(
+        &VizControls,
+        u32,
+        u32,
+    ) -> Option<slint::Image>
+    + 'static,
 ) {
-    let ui = build_ui(initial_tab);
+    let (ui, viz_source) = build_ui(initial_tab);
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -174,6 +200,10 @@ pub fn run_with_renderers(
     // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
     let mut nav_last_ll: Option<(f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
+    // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
+    // 都从定格处继续,不跳变。
+    let mut viz_time = 0.0f32;
+    let mut viz_last: Option<web_time::Instant> = None;
     // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
     // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
     // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
@@ -243,6 +273,41 @@ pub fn run_with_renderers(
                     nav_last_size =
                         Some((strip_w, strip_h));
                 }
+            }
+
+            // ── 播放页 warp 视觉 ──
+            // 门三条:展开 ∧ 播放(.slint 的 viz-active)∧ 窗口可见。任一不满足即
+            // 完全停手,Slint 复用上一帧 viz-bg:暂停定格,收起零重绘。
+            // ponytail: 第三条「聚焦」先用 is_visible 近似 —— slint 公开 API 没有
+            // 窗口激活读取;给 fork 加上 is_active 后收紧(失焦不停是已知天花板)。
+            if ui.get_viz_active()
+                && ui.window().is_visible()
+            {
+                if let Some(audio) =
+                    viz::payload(&viz_source)
+                {
+                    let now = web_time::Instant::now();
+                    if let Some(last) = viz_last {
+                        viz_time += now
+                            .duration_since(last)
+                            .as_secs_f32();
+                    }
+                    viz_last = Some(now);
+                    let size = ui.window().size();
+                    if let Some(img) = viz_frame(
+                        &VizControls {
+                            time: viz_time,
+                            audio,
+                        },
+                        size.width,
+                        size.height,
+                    ) {
+                        ui.set_viz_bg(img);
+                    }
+                    ui.window().request_redraw();
+                }
+            } else {
+                viz_last = None;
             }
 
             if !ui.get_render_active() {
