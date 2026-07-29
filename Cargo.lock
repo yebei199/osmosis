@@ -396,7 +396,7 @@ checksum = "0ae92a5119aa49cdbcf6b9f893fe4e1d98b04ccbf82ee0584ad948a44a734dea"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -459,7 +459,7 @@ checksum = "965c2d33e53cb6b267e148a4cb0760bc01f4904c1cd4bb4002a085bb016d1490"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "synstructure",
 ]
 
@@ -471,7 +471,7 @@ checksum = "7b18050c2cd6fe86c3a76584ef5e0baf286d038cda203eb6223df2cc413565f7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -482,7 +482,7 @@ checksum = "f548ad2c4031f2902e3edc1f29c29e835829437de49562d8eb5dc5584d3a1043"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -600,7 +600,7 @@ checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -638,7 +638,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -694,7 +694,7 @@ dependencies = [
  "derive_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -936,7 +936,7 @@ dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -962,7 +962,7 @@ dependencies = [
  "serde",
  "smallvec",
  "thiserror 2.0.18",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -978,7 +978,7 @@ dependencies = [
  "encase",
  "serde",
  "thiserror 2.0.18",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1018,7 +1018,7 @@ checksum = "293df2b2f7ed65ef2ce02b2e7359faac1a9a92a8cc96c182c9de77eb06049ae0"
 dependencies = [
  "bevy_macro_utils",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1075,7 +1075,7 @@ dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1088,7 +1088,7 @@ dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1132,7 +1132,7 @@ checksum = "9903f2614f53bacacb92bef1e407afe3a27a4abddb500bfd479909c5d7b254df"
 dependencies = [
  "bevy_macro_utils",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1187,7 +1187,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1286,7 +1286,7 @@ dependencies = [
  "half",
  "smallvec",
  "tracing",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1315,7 +1315,7 @@ checksum = "746a19912c6dc1bbe79188778573e8a253d5832c696b2fcb95578c17b29ff7ba"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "toml_edit",
 ]
 
@@ -1339,7 +1339,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "variadics_please",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1350,7 +1350,7 @@ checksum = "e6928e167592472f6ee900f80de199cc2dafd31d4f082a86e8d594b81b973e3d"
 dependencies = [
  "bevy_macro_utils",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1398,7 +1398,7 @@ dependencies = [
  "hexasphere",
  "thiserror 2.0.18",
  "tracing",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1446,7 +1446,7 @@ dependencies = [
  "static_assertions",
  "thiserror 2.0.18",
  "tracing",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1502,7 +1502,7 @@ dependencies = [
  "thiserror 2.0.18",
  "uuid",
  "variadics_please",
- "wgpu-types",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1515,7 +1515,7 @@ dependencies = [
  "indexmap",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "uuid",
 ]
 
@@ -1559,7 +1559,7 @@ dependencies = [
  "indexmap",
  "itertools 0.14.0",
  "js-sys",
- "naga",
+ "naga 29.0.4",
  "nonmax",
  "offset-allocator",
  "send_wrapper",
@@ -1569,8 +1569,8 @@ dependencies = [
  "wasm-bindgen",
  "weak-table",
  "web-sys",
- "wgpu",
- "wgpu-types",
+ "wgpu 29.0.4",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1582,7 +1582,7 @@ dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1616,7 +1616,7 @@ dependencies = [
  "bevy_macro_utils",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1629,13 +1629,13 @@ dependencies = [
  "bevy_platform",
  "bevy_reflect",
  "bevy_utils",
- "naga",
+ "naga 29.0.4",
  "naga_oil",
  "serde",
  "thiserror 2.0.18",
  "tracing",
- "wgpu-naga-bridge",
- "wgpu-types",
+ "wgpu-naga-bridge 29.0.4",
+ "wgpu-types 29.0.4",
 ]
 
 [[package]]
@@ -1662,7 +1662,7 @@ checksum = "835f45091fa0df1ff3cb10f4ca5a397d4e9249b550f1be6893b08a2a06d6eed7"
 dependencies = [
  "bevy_macro_utils",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1773,7 +1773,7 @@ dependencies = [
  "regex",
  "rustc-hash 2.1.3",
  "shlex 1.3.0",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1781,6 +1781,15 @@ name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-set"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ec2f926cc3060f09db9ebc5b52823d85268d24bb917e472c0c4bea35780a7d"
 dependencies = [
  "bit-vec",
 ]
@@ -1944,7 +1953,7 @@ checksum = "89385e82b5d1821d2219e0b095efa2cc1f246cbf99080f3be46a1a85c0d392d9"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1964,7 +1973,7 @@ checksum = "f9abbd1bc6865053c427f7198e6af43bfdedc55ab791faed4fbd361d789575ff"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2267,7 +2276,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset"
 version = "0.2.1"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "const-field-offset-macro",
  "field-offset",
@@ -2276,11 +2285,11 @@ dependencies = [
 [[package]]
 name = "const-field-offset-macro"
 version = "0.2.1"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -2628,7 +2637,7 @@ checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2668,7 +2677,7 @@ dependencies = [
  "defmt-parser",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2730,7 +2739,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn",
+ "syn 2.0.118",
  "unicode-xid",
 ]
 
@@ -2742,7 +2751,7 @@ checksum = "362f47930db19fe7735f527e6595e4900316b893ebf6d48ad3d31be928d57dd6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2783,7 +2792,7 @@ checksum = "1ac70aa55017e108007fbaf5aa0f54b021c98f92ff8af59d42eda9da96e3dd4f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2840,6 +2849,21 @@ dependencies = [
  "drm-fourcc",
  "libc",
  "rustix 0.38.44",
+]
+
+[[package]]
+name = "drm"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a41816e58f47f49acfd956651055ddcf137c4882c2098c30c448817af21183a"
+dependencies = [
+ "bitflags 2.13.0",
+ "bytemuck",
+ "bytemuck_derive",
+ "drm-ffi",
+ "drm-fourcc",
+ "libc",
+ "rustix 1.1.4",
 ]
 
 [[package]]
@@ -2933,7 +2957,7 @@ dependencies = [
  "enum-ordinalize",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -2991,7 +3015,7 @@ checksum = "c8bad72d8308f7a382de2391ec978ddd736e0103846b965d7e2a63a75768af30"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3032,7 +3056,7 @@ checksum = "42e528e2d34ba8a67a1a650b86beae8ef69fc5fdb638016f386b973226590432"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3053,7 +3077,7 @@ checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3106,7 +3130,7 @@ checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3216,22 +3240,22 @@ dependencies = [
 
 [[package]]
 name = "femtovg"
-version = "0.25.1"
-source = "git+https://github.com/yebei199/femtovg?branch=perf%2Fwgpu-resident-buffers#e2e321c036cbd8688d8f28f322f6516554844fd0"
+version = "0.26.0"
+source = "git+https://github.com/yebei199/femtovg?branch=pin%2Ffemtovg-0.26-wgpu-perf#0a27671995d62486f67f19ed2068b3d7000aa105"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
  "fnv",
- "glow",
+ "glow 0.18.0",
  "imgref",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "log",
  "rgb",
  "slotmap",
  "swash",
  "wasm-bindgen",
  "web-sys",
- "wgpu",
+ "wgpu 30.0.0",
 ]
 
 [[package]]
@@ -3397,7 +3421,7 @@ checksum = "1a5c6c585bc94aaf2c7b51dd4c2ba22680844aba4c687be581871a6f518c5742"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3484,7 +3508,7 @@ checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -3523,7 +3547,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce852e998d3ca5e4a97014fb31c940dc5ef344ec7d364984525fd11e8a547e6a"
 dependencies = [
  "bitflags 2.13.0",
- "drm",
+ "drm 0.14.1",
  "drm-fourcc",
  "gbm-sys",
  "libc",
@@ -3657,6 +3681,18 @@ name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29038e1c483364cc6bb3cf78feee1816002e127c331a1eec55a4d202b9e1adb5"
+dependencies = [
+ "js-sys",
+ "slotmap",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "glow"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "263218b0ba2b0715c3370fb04674f5f8aa331594b521c94ff0a8e4a8472d1386"
 dependencies = [
  "js-sys",
  "slotmap",
@@ -4063,7 +4099,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-android-activity"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "android-activity 0.5.2",
  "android-activity 0.6.1",
@@ -4079,12 +4115,12 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-linuxkms"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "bytemuck",
  "calloop 0.14.4",
  "cfg_aliases",
- "drm",
+ "drm 0.14.1",
  "gbm",
  "glutin",
  "i-slint-common",
@@ -4096,13 +4132,14 @@ dependencies = [
  "memmap2",
  "nix 0.31.3",
  "raw-window-handle",
+ "wgpu 30.0.0",
  "xkbcommon",
 ]
 
 [[package]]
 name = "i-slint-backend-selector"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "cfg-if",
  "cfg_aliases",
@@ -4120,7 +4157,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-testing"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "async-net",
  "base64",
@@ -4147,7 +4184,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-winit"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -4191,7 +4228,7 @@ dependencies = [
 [[package]]
 name = "i-slint-common"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "derive_more",
  "fontique",
@@ -4207,7 +4244,7 @@ dependencies = [
 [[package]]
 name = "i-slint-compiler"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "annotate-snippets",
  "by_address",
@@ -4216,7 +4253,7 @@ dependencies = [
  "i-slint-common",
  "icu_normalizer",
  "image",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "linked_hash_set",
  "lyon_extra",
  "lyon_path",
@@ -4239,7 +4276,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "auto_enums",
  "bitflags 2.13.0",
@@ -4284,30 +4321,31 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "web-time",
- "wgpu",
+ "wgpu 29.0.4",
+ "wgpu 30.0.0",
  "windows",
 ]
 
 [[package]]
 name = "i-slint-core-macros"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "quote",
  "serde_json",
- "syn",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "i-slint-renderer-femtovg"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "cfg-if",
  "const-field-offset",
  "derive_more",
  "femtovg",
- "glow",
+ "glow 0.18.0",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
@@ -4317,13 +4355,13 @@ dependencies = [
  "rgb",
  "wasm-bindgen",
  "web-sys",
- "wgpu",
+ "wgpu 30.0.0",
 ]
 
 [[package]]
 name = "i-slint-renderer-skia"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "ash",
  "bytemuck",
@@ -4332,7 +4370,7 @@ dependencies = [
  "clru",
  "const-field-offset",
  "derive_more",
- "glow",
+ "glow 0.18.0",
  "glutin",
  "i-slint-common",
  "i-slint-core",
@@ -4354,8 +4392,10 @@ dependencies = [
  "spin_on",
  "unicode-segmentation",
  "vtable",
- "wgpu",
- "wgpu-hal",
+ "wgpu 29.0.4",
+ "wgpu 30.0.0",
+ "wgpu-hal 29.0.4",
+ "wgpu-hal 30.0.0",
  "windows",
  "windows-core",
  "write-fonts",
@@ -4364,7 +4404,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-software"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "bytemuck",
  "clru",
@@ -4717,7 +4757,7 @@ checksum = "c34819042dc3d3971c46c2190835914dfbe0c3c13f61449b2997f4e9722dfa60"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4771,6 +4811,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4798,7 +4847,7 @@ checksum = "e165e897f662d428f3cd3828a919dbe067c2d42bb1031eede74ef9d27ecdedd2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4844,7 +4893,7 @@ dependencies = [
  "quote",
  "rustc_version",
  "simd_cesu8",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -4872,7 +4921,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
 dependencies = [
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5099,7 +5148,7 @@ dependencies = [
  "quote",
  "regex-syntax",
  "rustc_version",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5113,7 +5162,7 @@ dependencies = [
  "quote",
  "regex-automata",
  "regex-syntax",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5286,7 +5335,7 @@ checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5374,7 +5423,7 @@ checksum = "4568f25ccbd45ab5d5603dc34318c1ec56b117531781260002151b8530a9f931"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5384,7 +5433,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df"
 dependencies = [
  "arrayvec",
- "bit-set",
+ "bit-set 0.9.1",
  "bitflags 2.13.0",
  "cfg-if",
  "cfg_aliases",
@@ -5405,6 +5454,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "naga"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23bf0a141a9ab6f07dbb492db53245e464bc9db42f407772d9ae03d83a2c1033"
+dependencies = [
+ "arrayvec",
+ "bit-set 0.10.0",
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases",
+ "codespan-reporting 0.13.1",
+ "half",
+ "hashbrown 0.17.1",
+ "indexmap",
+ "libm",
+ "log",
+ "naga-types",
+ "num-traits 0.2.19 (registry+https://github.com/rust-lang/crates.io-index)",
+ "once_cell",
+ "rustc-hash 1.1.0",
+ "spirv",
+ "thiserror 2.0.18",
+ "unicode-ident",
+]
+
+[[package]]
+name = "naga-types"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658200ddc25c6c7b860747516d132d1b284c0fafb7a380233acee9a72fb30e11"
+dependencies = [
+ "hashbrown 0.17.1",
+ "indexmap",
+ "rustc-hash 1.1.0",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "naga_oil"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5413,7 +5500,7 @@ dependencies = [
  "codespan-reporting 0.12.0",
  "data-encoding",
  "indexmap",
- "naga",
+ "naga 29.0.4",
  "regex",
  "rustc-hash 1.1.0",
  "thiserror 2.0.18",
@@ -5593,7 +5680,7 @@ checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5663,7 +5750,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -5966,6 +6053,7 @@ dependencies = [
  "bitflags 2.13.0",
  "objc2 0.6.4",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
 ]
@@ -6316,7 +6404,7 @@ checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -6495,7 +6583,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -6550,7 +6638,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
 dependencies = [
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -6580,7 +6668,7 @@ dependencies = [
  "pulldown-cmark",
  "pulldown-cmark-to-cmark",
  "regex",
- "syn",
+ "syn 2.0.118",
  "tempfile",
 ]
 
@@ -6594,7 +6682,7 @@ dependencies = [
  "itertools 0.14.0",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -6662,7 +6750,7 @@ checksum = "7347867d0a7e1208d93b46767be83e2b8f978c3dad35f775ac8d8847551d6fe1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -7180,7 +7268,7 @@ checksum = "c0ed1a78a1b19d184b0daa629dd9a024573173ec7d485b287cb369fb3607cc1c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -7509,7 +7597,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -7544,7 +7632,7 @@ checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -7773,7 +7861,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slint"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "const-field-offset",
  "i-slint-backend-android-activity",
@@ -7790,13 +7878,13 @@ dependencies = [
  "slint-macros",
  "unicode-segmentation",
  "vtable",
- "wgpu",
+ "wgpu 29.0.4",
 ]
 
 [[package]]
 name = "slint-build"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "derive_more",
  "fontique",
@@ -7808,7 +7896,7 @@ dependencies = [
 [[package]]
 name = "slint-macros"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "i-slint-compiler",
  "proc-macro2",
@@ -7893,7 +7981,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -7924,7 +8012,7 @@ checksum = "aac18da81ebbf05109ab275b157c22a653bb3c12cf884450179942f81bcbf6c3"
 dependencies = [
  "as-raw-xcb-connection",
  "bytemuck",
- "drm",
+ "drm 0.14.1",
  "fastrand",
  "js-sys",
  "memmap2",
@@ -8059,7 +8147,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8231,6 +8319,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8268,7 +8367,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8360,7 +8459,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8371,7 +8470,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8542,7 +8641,7 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8684,7 +8783,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -8709,7 +8808,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "quote",
- "syn",
+ "syn 2.0.118",
  "tempfile",
  "tonic-build",
 ]
@@ -8783,7 +8882,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -9201,7 +9300,7 @@ checksum = "41b6d82be61465f97d42bd1d15bf20f3b0a3a0905018f38f9d6f6962055b0b5c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -9213,7 +9312,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vtable"
 version = "0.5.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "const-field-offset",
  "portable-atomic",
@@ -9224,11 +9323,11 @@ dependencies = [
 [[package]]
 name = "vtable-macro"
 version = "0.5.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#2347f1616d06c2cea9793d2ab8df0f0c9442a8ce"
+source = "git+https://github.com/yebei199/slint?branch=dev#0067dea4b87750e46dd60f2e4567908476bb4f40"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -9316,7 +9415,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "wasm-bindgen-shared",
 ]
 
@@ -9693,9 +9792,34 @@ dependencies = [
  "cfg_aliases",
  "document-features",
  "hashbrown 0.16.1",
+ "log",
+ "naga 29.0.4",
+ "portable-atomic",
+ "profiling",
+ "raw-window-handle",
+ "smallvec",
+ "static_assertions",
+ "wgpu-core 29.0.4",
+ "wgpu-hal 29.0.4",
+ "wgpu-types 29.0.4",
+]
+
+[[package]]
+name = "wgpu"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d8f4bd44d92da5270f03409dba9f952dab24f128e05d6a554926101d1bf9114"
+dependencies = [
+ "arrayvec",
+ "bitflags 2.13.0",
+ "bytemuck",
+ "cfg-if",
+ "cfg_aliases",
+ "document-features",
+ "hashbrown 0.17.1",
  "js-sys",
  "log",
- "naga",
+ "naga 30.0.0",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -9705,9 +9829,9 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "wgpu-core",
- "wgpu-hal",
- "wgpu-types",
+ "wgpu-core 30.0.0",
+ "wgpu-hal 30.0.0",
+ "wgpu-types 30.0.0",
 ]
 
 [[package]]
@@ -9717,7 +9841,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7"
 dependencies = [
  "arrayvec",
- "bit-set",
+ "bit-set 0.9.1",
  "bit-vec",
  "bitflags 2.13.0",
  "bytemuck",
@@ -9726,7 +9850,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "log",
- "naga",
+ "naga 29.0.4",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -9735,13 +9859,46 @@ dependencies = [
  "rustc-hash 1.1.0",
  "smallvec",
  "thiserror 2.0.18",
- "wgpu-core-deps-apple",
+ "wgpu-core-deps-apple 29.0.4",
+ "wgpu-core-deps-windows-linux-android 29.0.4",
+ "wgpu-hal 29.0.4",
+ "wgpu-naga-bridge 29.0.4",
+ "wgpu-types 29.0.4",
+]
+
+[[package]]
+name = "wgpu-core"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08763620e76fc980bca7bf84de82568614487a53172dd968d89187282eb87fa2"
+dependencies = [
+ "arrayvec",
+ "bit-set 0.10.0",
+ "bit-vec",
+ "bitflags 2.13.0",
+ "bytemuck",
+ "cfg_aliases",
+ "document-features",
+ "hashbrown 0.17.1",
+ "indexmap",
+ "log",
+ "naga 30.0.0",
+ "naga-types",
+ "once_cell",
+ "parking_lot",
+ "portable-atomic",
+ "profiling",
+ "raw-window-handle",
+ "rustc-hash 1.1.0",
+ "smallvec",
+ "thiserror 2.0.18",
+ "wgpu-core-deps-apple 30.0.0",
  "wgpu-core-deps-emscripten",
  "wgpu-core-deps-wasm",
- "wgpu-core-deps-windows-linux-android",
- "wgpu-hal",
- "wgpu-naga-bridge",
- "wgpu-types",
+ "wgpu-core-deps-windows-linux-android 30.0.0",
+ "wgpu-hal 30.0.0",
+ "wgpu-naga-bridge 30.0.0",
+ "wgpu-types 30.0.0",
 ]
 
 [[package]]
@@ -9750,25 +9907,34 @@ version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5e39e26c4c0e07589e67d18546cf79ff45383659fc72fca4dd293358a0347f3"
 dependencies = [
- "wgpu-hal",
+ "wgpu-hal 29.0.4",
+]
+
+[[package]]
+name = "wgpu-core-deps-apple"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3283b6da70d7fc892de95840215aa36381b5d0cbc479e88ee2b173c7b992b225"
+dependencies = [
+ "wgpu-hal 30.0.0",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "29.0.4"
+version = "30.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
+checksum = "85dcf2b2e5c2afb9eda64c570a87a4e570304bf39e52eddbaaf222d655b656ad"
 dependencies = [
- "wgpu-hal",
+ "wgpu-hal 30.0.0",
 ]
 
 [[package]]
 name = "wgpu-core-deps-wasm"
-version = "29.0.4"
+version = "30.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1fb1798be2a912497d4c224f72d39bb0cb34af50e8bcc29865bc339c943059"
+checksum = "2b6c13228950f36a56023976a6c4ee6714b27fb40e3d52a33f7d3bb6d109c0b1"
 dependencies = [
- "wgpu-hal",
+ "wgpu-hal 30.0.0",
 ]
 
 [[package]]
@@ -9777,7 +9943,16 @@ version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e592c1bbef6ad047647ae6e666ebd8cee7a32bb4544d9700ec96cbf73230257"
 dependencies = [
- "wgpu-hal",
+ "wgpu-hal 29.0.4",
+]
+
+[[package]]
+name = "wgpu-core-deps-windows-linux-android"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f76bc9c1c186ff3d9054e0d224c93c8c1c79d6653907c5249a5c1ea1a2cb1e43"
+dependencies = [
+ "wgpu-hal 30.0.0",
 ]
 
 [[package]]
@@ -9789,24 +9964,19 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
- "bit-set",
+ "bit-set 0.9.1",
  "bitflags 2.13.0",
  "block2 0.6.2",
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
- "glow",
- "glutin_wgl_sys",
  "gpu-allocator",
  "gpu-descriptor",
  "hashbrown 0.16.1",
- "js-sys",
- "khronos-egl",
  "libc",
  "libloading",
  "log",
- "naga",
- "ndk-sys 0.6.0+11769913",
+ "naga 29.0.4",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
@@ -9824,11 +9994,64 @@ dependencies = [
  "renderdoc-sys",
  "smallvec",
  "thiserror 2.0.18",
+ "wgpu-naga-bridge 29.0.4",
+ "wgpu-types 29.0.4",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
+name = "wgpu-hal"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf765132d8d5f50e192e7880464890c13f4e7457aafe8e5466e8174586e9f101"
+dependencies = [
+ "android_system_properties",
+ "arrayvec",
+ "ash",
+ "bit-set 0.10.0",
+ "bitflags 2.13.0",
+ "block2 0.6.2",
+ "bytemuck",
+ "cfg-if",
+ "cfg_aliases",
+ "drm 0.15.0",
+ "glow 0.17.0",
+ "glutin_wgl_sys",
+ "gpu-allocator",
+ "hashbrown 0.17.1",
+ "js-sys",
+ "khronos-egl",
+ "libc",
+ "libloading",
+ "log",
+ "naga 30.0.0",
+ "naga-types",
+ "ndk-sys 0.6.0+11769913",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-metal 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "once_cell",
+ "ordered-float",
+ "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
+ "profiling",
+ "range-alloc",
+ "raw-window-handle",
+ "raw-window-metal",
+ "renderdoc-sys",
+ "smallvec",
+ "static_assertions",
+ "thiserror 2.0.18",
  "wasm-bindgen",
  "wayland-sys",
  "web-sys",
- "wgpu-naga-bridge",
- "wgpu-types",
+ "wgpu-naga-bridge 30.0.0",
+ "wgpu-types 30.0.0",
  "windows",
  "windows-core",
  "windows-result",
@@ -9840,8 +10063,18 @@ version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95226013f547544b223281cd16a4fb549aa9dcb562adbda0faae4c73ffbbc161"
 dependencies = [
- "naga",
- "wgpu-types",
+ "naga 29.0.4",
+ "wgpu-types 29.0.4",
+]
+
+[[package]]
+name = "wgpu-naga-bridge"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9eaac644e5008925c78567d272b9d66ef83da55a53cc17fc7daade7bb6e66e5"
+dependencies = [
+ "naga 30.0.0",
+ "wgpu-types 30.0.0",
 ]
 
 [[package]]
@@ -9856,6 +10089,22 @@ dependencies = [
  "log",
  "raw-window-handle",
  "serde",
+ "web-sys",
+]
+
+[[package]]
+name = "wgpu-types"
+version = "30.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a9c93c2b35edde326df60ffdee4c0f5864eac3011d6768b70d43f028ad93565"
+dependencies = [
+ "bitflags 2.13.0",
+ "bytemuck",
+ "js-sys",
+ "log",
+ "naga-types",
+ "raw-window-handle",
+ "static_assertions",
  "web-sys",
 ]
 
@@ -9943,7 +10192,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -9954,7 +10203,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -10502,7 +10751,7 @@ checksum = "de844c262c8848816172cef550288e7dc6c7b7814b4ee56b3e1553f275f1858e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "synstructure",
 ]
 
@@ -10550,7 +10799,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "zbus_names",
  "zvariant",
  "zvariant_utils",
@@ -10590,7 +10839,7 @@ checksum = "4714fd92cf900833d49538023a9b3915155210801d1c1169eba513b2addefd71"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -10610,7 +10859,7 @@ checksum = "11532158c46691caf0f2593ea8358fed6bbf68a0315e80aae9bd41fbade684a1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "synstructure",
 ]
 
@@ -10631,7 +10880,7 @@ checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -10666,7 +10915,7 @@ checksum = "625dc425cab0dca6dc3c3319506e6593dcb08a9f387ea3b284dbd52a92c40555"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -10722,7 +10971,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.118",
  "zvariant_utils",
 ]
 
@@ -10735,6 +10984,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "syn",
+ "syn 2.0.118",
  "winnow",
 ]

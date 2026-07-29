@@ -112,21 +112,24 @@ panic = "abort"
 [profile.dev.package."*"]
 opt-level = 3
 
-# Slint 走 yebei199/slint 的 dev 分支(上游 master + 一个本地补丁),而不是 crates.io。
-# 上游 master 提供的:android MCP server 启动(#12447)、wasm 上的 femtovg-wgpu
-# 渲染器(#11580)。dev 在其上多带一个补丁,web 端 3D 缺它就是黑屏:
+# Slint 走 yebei199/slint 的 dev 分支(上游 master + 四条本地补丁),而不是 crates.io。
+# 四条各自的去向不同,合并进上游后要逐条撤:
 #
-#   internal/renderers/femtovg/images.rs 里把 wgpu 纹理交给 femtovg 的那个 match
-#   分支带着 `not(target_arch = "wasm32")`,wasm 上被编掉,ImageInner::WGPUTexture
-#   落进兜底分支走 render_to_buffer(),而它对该 variant 返回 None —— 整张图被静默
-#   丢弃。全链路无报错:Image::try_from 成功、日志照打「纹理已导入」,失败发生在
-#   之后的绘制期。放宽成 `#[cfg(feature = "unstable-wgpu-29")]` 即可。
+#   1. fix(winit): wasm 上让浏览器自己定帧。上游的 TimerBasedFrameThrottle 在 web 端
+#      拿不到刷新率,回退到 60Hz 硬定时,144Hz 屏上被钉死在 16.14ms/帧。未提 PR。
+#   2. feat(api): Window::is_active()。播放页的可视化要「失焦即停」,上游没有等价物。
+#      可提 PR,尚未提。
+#   3. Android: pending redraw 参与 poll 超时计算。上游 request_redraw 只置标记不唤醒
+#      事件循环,自维持帧泵被压到 1fps。已提 slint#12687 / slint#12688,等维护者选修法。
+#   4. build(femtovg): 把 femtovg 指到 yebei199/femtovg 的 pin/femtovg-0.26-wgpu-perf。
+#      上游 femtovg 的 wgpu 后端每个 draw 新建六个 GPU 对象,wasm 上每元素约 0.5ms
+#      GPU 进程时间。分支 = femtovg master + femtovg#302 的十个 commit,版本仍 0.26.0。
+#      #302 合并后此条撤销。
 #
-# 未向上游提 PR:那道门是历史遗留还是维护者有意为之尚不确定(见 slint#12484,它修的
-# 是另一道门)。上游哪天自己修好,把这里指回 master、删掉 fork 分支即可。
 # 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
 # 跟进上游要对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
 # —— cargo 不会自动放弃锁里已有的 registry 版本,少一个就静默变成 patch.unused。
+# fork 的 master 分支保持从上游纯快进,dev 靠 rebase 跟进,步骤见 docs/note/fork-sync.md。
 [patch.crates-io]
 slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
 slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }
