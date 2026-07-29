@@ -4,16 +4,19 @@
 //! Transform 的事留在 lib.rs 的 viz 模式里。纯函数才测得动 —— 视觉观感与穿卡效果
 //! 走真实像素验收,数值行为(频段、呼吸、有界)在这里钉死。
 //!
-//! 轨道设计:粒子按金角序列铺在绕 [`crate::CARD_ANCHOR`] 的三层轨道壳上,轨道面
-//! 大致水平(XZ 平面附近),相机从 +Z 侧看向原点 —— 每个粒子转一圈就从封面卡
-//! 前面掠到后面再回来,这正是深度遮挡要的运动。低频撑轨道半径(呼吸),各壳
-//! 绑定各自频段的电平撑缩放脉动,时间只推方位角与纵向浮动。
+//! 轨道设计:每个粒子有一条**自己的**轨道 —— 半径、高度、基准大小、角速度都由
+//! 下标的确定性散列给出,连续分布把整个视野铺满(对照参考图
+//! `docs/reference/play-page/mineradio-particles.png`:彩纸屑一样满屏、大小不一)。
+//! 轨道面大致水平(XZ 平面附近),相机从 +Z 侧看向原点 —— 粒子转一圈就从封面卡
+//! 前面掠到后面再回来,这正是深度遮挡要的运动;近处的粒子被透视放大,大小差异
+//! 一半来自这里、一半来自散列的基准值。低频撑轨道半径(呼吸),粒子按下标轮流
+//! 绑定低/中/高频段的电平撑缩放脉动,时间只推方位角与纵向浮动。
 
 use bevy::math::Vec3;
 
-/// 粒子总数。三层壳均分;数值取「桌面满帧无压力、android 真机可承受」的量级,
+/// 粒子总数。取「桌面满帧无压力、android 真机可承受」的量级,
 /// 真机发热读数出来后再调。
-pub(crate) const PARTICLE_COUNT: usize = 219;
+pub(crate) const PARTICLE_COUNT: usize = 480;
 
 /// 频谱行按低/中/高拆出的三段电平,各自归一到 0..=1。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,38 +67,50 @@ pub(crate) fn band_levels(spectrum: &[u8]) -> Levels {
 /// 第 `i` 个粒子在 `time` 时刻的 (位置, 缩放)。
 ///
 /// 电平在入口消毒(非有限按 0、越界 clamp);半径/纵向/缩放各有硬上限,
-/// 坏一帧数据也不许把场景炸飞。壳的角速度内快外慢,借开普勒的观感。
+/// 坏一帧数据也不许把场景炸飞。角速度随半径衰减,内快外慢,借开普勒的观感。
 pub(crate) fn particle_pose(
     i: usize,
     time: f32,
     levels: &Levels,
 ) -> (Vec3, f32) {
-    let shell = i % 3;
     let bass = sanitize(levels.bass);
-    let level = sanitize(match shell {
+    let level = sanitize(match i % 3 {
         0 => levels.bass,
         1 => levels.mid,
         _ => levels.treble,
     });
 
-    // 每壳的基准半径 / 角速度 / 基准缩放。
-    let base_r = [1.7f32, 2.4, 3.1][shell];
-    let omega = [0.55f32, 0.38, 0.26][shell];
-    let base_s = [0.055f32, 0.045, 0.035][shell];
+    // 每粒子的轨道参数,全部由下标散列确定。半径取 sqrt 插值:圆盘上按面积均匀,
+    // 不然外圈稀内圈挤。
+    let base_r = 1.2 + (4.6f32 - 1.2) * hash01(i, 1).sqrt();
+    let lane = (hash01(i, 2) - 0.5) * 4.8;
+    let base_s = 0.025 + 0.075 * hash01(i, 3);
+    let omega = 0.16 + 0.85 / base_r;
 
     // 低频呼吸:半径最多外扩 30%。
     let r = base_r * (1.0 + 0.30 * bass);
     // 金角铺开的初始方位角,时间只往前推角度。
     let az = i as f32 * GOLDEN_ANGLE + time * omega;
-    // 纵向:每粒子一条确定性的基准高度(伪随机自下标),叠慢速浮动。
-    let lane = ((i * 53 % 100) as f32 / 100.0 - 0.5) * 1.4;
-    let bob = 0.18 * (time * 0.7 + i as f32 * 0.61).sin();
+    // 纵向慢速浮动。
+    let bob = 0.15 * (time * 0.7 + i as f32 * 0.61).sin();
 
     let pos =
         Vec3::new(r * az.cos(), lane + bob, r * az.sin());
     // 分段脉动:静音停在基准值,电平顶满时放大约 2.2 倍。
     let scale = base_s * (1.0 + 1.2 * level);
     (pos, scale)
+}
+
+/// 下标 → [0,1) 的确定性散列(乘法混淆 + 移位),`salt` 区分不同用途的通道。
+/// 不引 rand:同一下标每帧必须得到同一条轨道,粒子才是「在运动」而不是「在闪烁」。
+fn hash01(i: usize, salt: u32) -> f32 {
+    let mut x = (i as u32)
+        .wrapping_add(salt.wrapping_mul(0x9E37_79B9));
+    x = x.wrapping_mul(0xA076_1D65);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x8EBC_6AF1);
+    x ^= x >> 13;
+    (x & 0x00FF_FFFF) as f32 / 16_777_216.0
 }
 
 /// 电平消毒:非有限值按 0,越界 clamp 进 0..=1 —— 输入是跨 crate 的外部数据,
@@ -221,8 +236,10 @@ mod tests {
                         p.is_finite() && s.is_finite(),
                         "粒子 {i} 出了 NaN/Inf"
                     );
+                    // 上限跟随轨道包络:半径 ≤ 4.6×1.3,纵向 ≤ 2.4+0.15,
+                    // 合成对角 ≈ 6.5,留些余量取 7.5。
                     assert!(
-                        p.length() < 6.0,
+                        p.length() < 7.5,
                         "粒子 {i} 飞出场景: {p}"
                     );
                     assert!(
