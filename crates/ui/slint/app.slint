@@ -627,7 +627,8 @@ export component MainWindow inherits Window {
     out property <length> viz-card-y: (root.height - root.viz-card-size) / 2 - 60px;
     // 歌词块的几何量,同样是唯一真相:它与封面卡**同处一个 z 平面**,因此可以
     // 复用同一张遮挡图,只是裁剪矩形不同 —— 粒子于是也从字的前后穿过。
-    out property <length> viz-lyric-h: 108px;
+    // 两行(原文可能折行)+ 行距。紧凑版式字号更小但更容易折行,高度取一样够用。
+    out property <length> viz-lyric-h: 132px;
     out property <length> viz-lyric-y: root.viz-card-y + root.viz-card-size + 96px;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
     in property <image> cover-art;
@@ -1224,21 +1225,25 @@ export component MainWindow inherits Window {
             alignment: start;
             spacing: 10px;
 
+            // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),
+            // 故紧凑版式收一档;换行而不是省略号 —— 歌词截半句没有意义。
             Text {
-                width: root.width;
+                width: root.width - 32px;
+                x: 16px;
                 text: root.lyric-line;
                 color: #f2f5ff;
-                font-size: 30px;
+                font-size: root.compact ? 21px : 30px;
                 horizontal-alignment: center;
-                overflow: elide;
+                wrap: word-wrap;
             }
             Text {
-                width: root.width;
+                width: root.width - 32px;
+                x: 16px;
                 text: root.lyric-translation;
                 color: #aab2c8;
-                font-size: 16px;
+                font-size: root.compact ? 14px : 16px;
                 horizontal-alignment: center;
-                overflow: elide;
+                wrap: word-wrap;
             }
         }
 
