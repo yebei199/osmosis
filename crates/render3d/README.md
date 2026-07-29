@@ -58,20 +58,34 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
   上一帧纹理,GPU 归零;`time` 由 ui 的播放页时钟给,门关时钟停,重开从定格处继续。
 - 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
 
-## 播放页粒子场(`particles.rs` + `Scene`)
+## 播放页封面点云(`cloud.rs` + `cloud.wgsl` + `Scene`)
 
-播放页第二步(issue #11):数百个半透明小球绕封面卡锚点([`CARD_ANCHOR`])运动,
-每颗的半径/高度/大小/角速度由下标散列连续分布,铺满整个视野(密度基准见
-`docs/reference/play-page/`);轨道面穿过卡片平面,粒子转一圈就从封面前面掠到
-后面 —— 深度遮挡的运动形态。`render_viz_frame` 是本 crate 里 bevy 侧唯一的驱动入口;
-主相机清屏透明,场景图叠在 warp 背景之上。
+播放页的可视化主体(issue #22):**当前曲目的封面被采样成 183×183 ≈ 3.35 万颗粒子**,
+每颗取封面上对应像素的颜色,整片随声音起伏。行为照抄参照物 Mineradio 的
+`02-visual/00-pointer-cover-particles.js` 的 **preset 0(SILK,它的默认档)**。
+`render_viz_frame` 是本 crate 里 bevy 侧唯一的驱动入口;主相机清屏透明,场景图叠在
+warp 背景之上。
 
-- `particles.rs` 是纯计算:`band_levels` 把频谱行拆低/中/高三段,`particle_pose`
-  给出金角轨道壳上第 i 个粒子的位姿 —— 低频撑轨道呼吸、各壳绑各自频段撑缩放脉动、
-  时间只推方位角与纵向浮动。纯函数带单元测试(有界性、呼吸单调、静音可见);
-  每帧由 `render_viz_frame` 把结果直写 Transform,不走 bevy system。
-- 粒子上色是 aurora 同调五色的 unlit **不透明**材质,发光观感来自暗底叠色,
-  不引 HDR/bloom。曾用 Blend + alpha 0.85,桌面正常但小米13(Adreno)上整片粒子不显示。
+关键结构决策在 [`docs/adr/0012`](../../docs/adr/0012-cover-point-cloud-is-one-mesh-in-the-bevy-scene.md):
+点云是 bevy 场景里的**一个 mesh**,不是三万多个实体,也不是又一个独立 wgpu pass。
+
+- `cloud.rs` 是纯计算加胶水:`band_levels` 把频谱行拆低/中/高三段;`cloud_vertices`
+  烘出那份建一次就不动的顶点缓冲(每颗粒子四个顶点拼一个方片,带格点 uv、角偏移、
+  逐粒子随机数);`CloudMaterial` 是自定义材质,顶点布局把角偏移借在法线属性位上。
+  单元测试盯的是网格本身(四角齐全、uv 不贴边、索引不越界),位移与观感走真实像素验收。
+- `cloud.wgsl` 里是全部运动学:中频驱动的两层 simplex 噪声起伏、高频抖动、低频呼吸,
+  全部只推 z —— 正面看是一张随音乐抖动的封面,侧面才看得出它有厚度。方片在**视图
+  空间**摊开,粒子因此永远是正圆而不是随相机变斜的菱形。
+- CPU 每帧只改材质的一块 uniform(时间 + 三段电平),几何一动不动。
+- 透明度分平台:桌面 `AlphaMode::Blend` 画软边发光圆点,安卓 `AlphaMode::Mask` 画硬边。
+  小米13(Adreno)上半透明小元素整片不显示是本仓踩过的坑。
+- 材质关掉 prepass 与阴影:两者都会拿**默认**顶点着色器再跑一遍这份 mesh,而我们的
+  顶点布局只有 `cloud.wgsl` 读得懂。着色器随二进制内嵌(`embedded_asset!`)——
+  应用无头运行,没有 `assets/` 目录。
+
+早先这里是一层与封面无关的**浮空尘埃**(1300 颗五色小球绕卡片飘),照抄的是参照物
+同一目录下的 `01-float-skull-backcover.js` —— 那只是它封面粒子系统背后的配菜。
+主体做出来之后配菜删掉,`band_levels` 是唯一留下的部分。
 
 ## 深度正确的 UI(遮挡层)
 
