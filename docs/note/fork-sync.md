@@ -26,6 +26,19 @@
 
 四条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 
+## 已删除的分支
+
+2026-07-29 清掉三条,内容都已另有归宿:
+
+| 分支 | 内容去了哪 |
+|---|---|
+| `fix/femtovg-wgpu-texture-import-wasm` | slint#12539 合进上游,代码已在上游 master 里 |
+| `fix/femtovg-wgpu-svg-upscale-wasm` | slint#12541 已关。真正的修复是 femtovg#301,随 femtovg 0.26 进上游(slint#12553);诊断过程留在那两个 PR 的正文里 |
+| `probe/wgpu-present-sync` | 结论与统计在 `../ready_issue/slint-wgpu-present-order.md`,补丁正文也内联在那份文档里 |
+
+删分支前先确认它的内容在别处能找回。探针那条差点漏掉:结论早就写下了,但复现步骤当时
+指向分支本身,补丁正文只存在于那条分支上。
+
 ## 二、同步步骤
 
 ### 1. master 快进
