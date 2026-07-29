@@ -7,12 +7,11 @@
 
 主体是 Slint 应用,本 crate 只负责「Slint 做不来的 3D 效果 / 小游戏」那一块。
 
-- **桌面 / android / web 入口按 `bevy-3d` feature 依赖它**,ios 永不碰;web / ios 的
-  **默认**构建不拉它 —— 由 `xtask boundaries` 守住(默认 feature 集里无 3D)。
-- **web 入口用 `Scene::new_async().await`**:浏览器的 WebGPU 初始化是真 Promise,
-  wasm 主线程不能 `block_on`;原生端仍用同步 `Scene::new()`(同一 future 首次 poll 即就绪)。
-- `ui` 对 bevy / wgpu 一无所知:本 crate 把渲染结果作为**两张** `slint::Image`
-  (场景 + 遮挡层)经 `ui::run_with_renderer` 的 seam 交过去(见 `crates/ui`)。
+- **桌面 / android 入口硬依赖它**,web / ios 永不碰 —— 由 `xtask boundaries` 守住。
+  曾经它是个 `bevy-3d` feature,那时有个 3D 演示页可关;演示页删掉之后播放页的粒子、
+  warp 与导航选中器全长在这里,关掉就只剩静态版式,开关遂取消(见 `docs/adr/0011`)。
+- `ui` 对 bevy / wgpu 一无所知:本 crate 把渲染结果作为 `slint::Image`
+  经 `ui::run_with_renderers` 的 seam 交过去(见 `crates/ui`)。
 - 要加新 shader 前先看
   [`docs/note/animated-background-and-compute.md`](../../docs/note/animated-background-and-compute.md):
   fragment 与 compute 的分界(判据是 scatter),以及持续动画与本 crate 两道省电门的冲突。
@@ -27,33 +26,6 @@
 3. **wgpu 版本对齐**:bevy 与 slint 必须共享同一 wgpu 大版本(现为 29,Cargo.lock
    里实为单份 `wgpu 29.0.4`)。升级任一方前先核对,否则 `wgpu::Texture` 类型不兼容。
 
-## 场景内容
-
-两个可切换场景,均由 `bsn!`(BSN,next-gen 场景系统)声明式构造,挂在一个转盘根
-`root` 下:
-
-- **形状画廊**(`scene_id==0`):`count` 个内置图元(Cuboid/Sphere/Torus/Capsule/
-  Cylinder/Cone 调色板循环)沿 XZ 环形均布。
-- **实体阵列**(`scene_id==1`):`count` 个 Cuboid 排成近正方网格。
-
-由 `SceneParams`(POD,镜像 `ui::SceneControls`,由 apps/* 在 seam 处翻译)驱动。
-其中 `scene_id`/`count`/`color`/`spacing` 变化时脏检查 → despawn 子树 → bsn! 重建;
-`yaw`/`pitch`/自转每帧只写 `root.Transform`(转盘)。参数来自 3D 页的 LineEdit 热调。
-
-## 液态玻璃后处理(`glass.rs` + `glass.wgsl`)
-
-bevy 画完那一帧后,再跑一个全屏 fragment shader:把热调工具条那块圆角矩形区域内的画面
-**模糊 + 边缘折射 + 淡染**,区域之外原样透传,结果写进另一张同尺寸纹理再交给 Slint。
-
-存在的理由:**Slint 没有 backdrop blur,也拿不到自己渲染的像素**(`GraphicsAPI::WGPU29`
-只给 instance/device/queue,没有 surface texture)。但玻璃背后这块背景是我们自己在 GPU 上
-画的,所以我们能采样它 —— 详见 `docs/slint/visual-effects-and-shaders.md` 第五节。
-
-- 玻璃矩形的几何量由 UI 侧给出(`app.slint` 的 `glass-*` 属性 × 窗口缩放系数),
-  **是唯一真相**;这里不重抄那些留白常量,否则 .slint 改了留白 shader 会静默错位。
-- 分工:模糊/折射/淡染在 shader;边框、厚度、阴影、指针高光仍由 Slint 的 `GlassCard` 画在上面。
-- 代价:**玻璃背后不能有 Slint 控件** —— 能模糊的只有 bevy 的画面。
-
 ## 导航侧栏液态玻璃选中器(`navglass.rs` + `navglass.wgsl`)
 
 宽版式左侧导航栏的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:暗底 + 一层微极光,
@@ -67,7 +39,7 @@ bevy 画完那一帧后,再跑一个全屏 fragment shader:把热调工具条那
 - 几何(槽位、栏尺寸、lead/lag 动画位置)由 `app.slint` 的 `nav-*` 属性给出,**是唯一真相**;
   由 apps/* 在 seam 处翻译成 `NavParams`(POD,镜像 `ui::NavGlassControls`)。
 - **只在切 tab 的转场期间重渲**(省电门在 `ui::nav_glass::nav_transition_active`),静止时 Slint
-  复用上一帧纹理 —— 与 3D 的 `render-active` 门相互独立,同守仓库不主动重绘的省电取向。
+  复用上一帧纹理 —— 与播放页视觉的门相互独立,同守仓库不主动重绘的省电取向。
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 
@@ -86,21 +58,20 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
   上一帧纹理,GPU 归零;`time` 由 ui 的播放页时钟给,门关时钟停,重开从定格处继续。
 - 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
 
-## 播放页粒子场(`particles.rs` + `Scene` 的 viz 模式)
+## 播放页粒子场(`particles.rs` + `Scene`)
 
 播放页第二步(issue #11):数百个半透明小球绕封面卡锚点([`CARD_ANCHOR`])运动,
 每颗的半径/高度/大小/角速度由下标散列连续分布,铺满整个视野(密度基准见
 `docs/reference/play-page/`);轨道面穿过卡片平面,粒子转一圈就从封面前面掠到
-后面 —— 深度遮挡的运动形态。与 3D 演示页共用同一个 bevy App 与双目标纹理,`Content` 枚举记录当前
-装的是哪种内容,切换即重建(演示页驱动入口 `render_frame`、播放页 `render_viz_frame`,
-二者由 ui 的门保证互斥);粒子模式下主相机清屏透明,场景图叠在 warp 背景之上。
+后面 —— 深度遮挡的运动形态。`render_viz_frame` 是本 crate 里 bevy 侧唯一的驱动入口;
+主相机清屏透明,场景图叠在 warp 背景之上。
 
 - `particles.rs` 是纯计算:`band_levels` 把频谱行拆低/中/高三段,`particle_pose`
   给出金角轨道壳上第 i 个粒子的位姿 —— 低频撑轨道呼吸、各壳绑各自频段撑缩放脉动、
   时间只推方位角与纵向浮动。纯函数带单元测试(有界性、呼吸单调、静音可见);
   每帧由 `render_viz_frame` 把结果直写 Transform,不走 bevy system。
-- 粒子上色是 aurora 同调五色的 unlit + Blend 半透明,发光观感来自暗底叠色,
-  不引 HDR/bloom。
+- 粒子上色是 aurora 同调五色的 unlit **不透明**材质,发光观感来自暗底叠色,
+  不引 HDR/bloom。曾用 Blend + alpha 0.85,桌面正常但小米13(Adreno)上整片粒子不显示。
 
 ## 深度正确的 UI(遮挡层)
 
@@ -110,17 +81,18 @@ Slint 的合成没有深度:3D 画面对它只是一张 `Image`,任何 Slint 控
 不清到远平面而是清到卡片所在的深度。于是它只剩「比卡片更近」的片元,其余透明,Slint 那边
 只做寻常的 alpha 合成。UI 不必先渲进纹理,Slint 也不必懂深度。
 
-- **门槛值**是锚点(转盘中心)的 NDC 深度,每帧由 `Camera::world_to_ndc` 算出。bevy 用
+- **门槛值**是锚点(粒子场中心,即封面卡所在的深度)的 NDC 深度,每帧由 `Camera::world_to_ndc` 算出。bevy 用
   反向 Z(1 是近平面、0 是远平面),深度测试是 `GreaterEqual`,「清到锚点深度」正好筛掉
   更远的片元。锚点跑出视锥时退回近平面 → 遮挡层为空、卡片完整可见:宁可少一个效果,也
   不能把整幅场景糊在卡片上。
 - **逐片元,不是逐物体**:横跨锚点平面的物体会被平面切开。CPU 侧按物体排序做不到,而
   「UI 整层贴在 canvas 上」的方案在原理上就做不到 —— 这正是这条路线买到的东西。
-- **代价是几何提交两遍**。8~64 个形状可忽略。要省的话:卡片隐藏时关掉这台相机的
-  `is_active`,或改成采样深度纹理的一个全屏 pass(那需要自建渲染图节点与 WGSL,现在不值)。
-- 遮挡层那张 Image 在 `app.slint` 里是**整块内容区**大小的(必须和场景那张逐像素对齐),
-  用负偏移推回内容区原点,再由卡片那层 `clip` 裁到卡片范围。不裁的话,近处的物体会连
-  热调工具条一起盖住 —— 工具条是界面外壳,不在场景里。
+- **代价是几何提交两遍**。粒子用 12 段的圆片而非球体,正是为了让这一遍付得起。要省的话:
+  卡片隐藏时关掉这台相机的 `is_active`,或改成采样深度纹理的一个全屏 pass(那需要自建
+  渲染图节点与 WGSL,现在不值)。
+- 遮挡层那张 Image 在 `app.slint` 里是**整窗**大小的(必须和场景那张逐像素对齐),
+  用负偏移推回窗口原点,再由封面卡那层 `clip` 裁到卡片范围。不裁的话,近处的粒子会连
+  控制簇一起盖住 —— 控制簇是界面外壳,不在场景里。
 
 判断它有没有生效见 [`AGENTS.md`](../../AGENTS.md):**量卡片边框的像素,别看整幅图的观感**。
 
@@ -132,18 +104,18 @@ bevy 用 0.19 稳定版(crates.io)。BSN(`bsn!` 宏 + 场景系统)已随 0.19 �
 
 ## 运行
 
-需要 vulkan 运行期库,用仓库根的 `render3d.nix`(在 `slint.nix` 基础上加 `vulkan-loader`):
+需要 vulkan 运行期库,仓库根的 `slint.nix` 已经带上:
 
 ```
-nix-shell render3d.nix --run "cargo run -p app-desktop --features bevy-3d"
+nix-shell slint.nix --run "cargo run -p app-desktop"
 ```
 
-## 相机随视口长宽比后撤
+## 相机不随视口长宽比后撤
 
-透视投影固定的是**垂直**视野,水平视野 = 垂直视野 × 长宽比。视口一竖(手机竖屏、桌面拖窄的
-紧凑版式,长宽比可低到 0.26),横向排开的形状画廊就出画。
+透视投影固定的是**垂直**视野,水平视野 = 垂直视野 × 长宽比,所以视口一竖(手机竖屏、
+桌面拖窄的紧凑版式,长宽比可低到 0.26)横向排开的内容就会出画。这里**刻意不**为此后撤相机:
+粒子场是铺满视野的环境效果,后撤只会把粒子缩成看不见的点 —— 小米13 竖屏 aspect 0.45 要后撤
+2.2 倍,真机上实测粒子直接消失。相机恒在 `BASE_CAMERA_POS`,让粒子自然溢出画面上下。
 
-`pullback(aspect)` 给出后撤倍数(参考长宽比 / 当前长宽比,封顶 4 倍),相机的**位置向量整体
-乘这个倍数** —— 而不是只退 z。只退 z 的话视线会越来越水平,转盘被看成侧视的一条扁线;整体缩放
-则保住了俯视角。宽视口(长宽比 ≥ 1)返回 1,观感与改动前逐像素一致。见
-[`docs/adr/0007`](../../docs/adr/0007-layout-mode-by-width-not-by-platform.md)。
+早先为 3D 演示页写过一个 `pullback(aspect)`(参考长宽比 / 当前长宽比,封顶 4 倍,整体缩放
+位置向量以保住俯视角),演示页删掉后它没有消费者了,一并删除。

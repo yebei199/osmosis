@@ -10,39 +10,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ui.workspace = true
-render3d = { workspace = true, optional = true }
 wasm-bindgen = "0.2"
 # 没有它,wasm 里的 panic 在控制台只是一句 `RuntimeError: unreachable`,消息全丢。
 console_error_panic_hook = "0.1"
-# repro 入口用 log::info! 打一行启动标记,好让探针确认自己连的是复现页(见 lib.rs)。
-log = "0.4"
-# 把 log:: 宏接到浏览器控制台。desktop 用 env_logger、android 用 android_logger,
-# web 缺了这一环,render3d 的纹理诊断就成了哑的(见 Scene::render_frame)。
+# 把 log:: 宏接到浏览器控制台。desktop 用 env_logger、android 用 android_logger。
 console_log = "1"
-# async 版 #[wasm_bindgen(start)] 的展开代码要它把 future 挂到 JS 微任务队列。
-wasm-bindgen-futures = { version = "0.4", optional = true }
-# 只用来读 window.location.search(见 query_value)。slint 也会开这两个 feature,但它对
-# web-sys 的依赖按 wasm32 target 门控 —— IDE 按宿主 target 分析时那份不生效,自己列全才
-# 不会报 `window` 找不到。列出来不额外增加构建成本。
-web-sys = { version = "0.3", features = ["Window", "Location"] }
 # wasm 上 winit 走 canvas,femtovg 走 WebGL。
 slint = { workspace = true, features = ["backend-winit", "renderer-femtovg"] }
-
-[features]
-# 换用 femtovg-wgpu 渲染器(slint#11580):先探测 WebGPU,浏览器不支持则自动回退
-# wgpu 的 WebGL 后端。编入即生效 —— winit 后端选默认渲染器时 wgpu 版优先级高于 GL 版。
-# 用法:`just web-dev wgpu`。这是 web 端 bevy 纹理共享的前置(见 docs/adr/0005)。
-wgpu = ["slint/renderer-femtovg-wgpu"]
-# 帧率问题的最小复现:纯 Slint,不含 3D 与本项目界面(见 lib.rs 的 repro 入口)。
-# 默认关闭 —— 打开时它会顶掉正常入口。刻意**不**蕴含 wgpu:两种渲染器都要能单独测,
-# `repro` 走 WebGL,`repro,wgpu` 走 WebGPU。
-repro = []
-# 嵌入 bevy 3D:拉进 render3d,共享 wgpu device 走纹理共享(同 desktop/android 的
-# 同名 feature)。仅 WebGPU —— render3d 的 Manual 路径不做 WebGL 降级。
-# 用法:`just web-dev bevy-3d`。
-bevy-3d = [
-    "dep:render3d",
-    "dep:wasm-bindgen-futures",
-    "wgpu",
-    "slint/unstable-wgpu-29",
-]

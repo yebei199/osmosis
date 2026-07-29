@@ -6,9 +6,6 @@
 
 slint::include_modules!();
 
-mod scene_params;
-pub use scene_params::SceneControls;
-
 mod nav_glass;
 pub use nav_glass::NavGlassControls;
 
@@ -40,21 +37,20 @@ fn fps_enabled() -> bool {
         || option_env!("SLINT_STUDY_FPS").is_some()
 }
 
-/// 最大页签下标:0=Home、1=Music、2=3D。
+/// 最大页签下标:0=Home、1=Music。
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
 /// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=2` 静默停在 Music 页」。
-const MAX_TAB: i32 = 2;
+const MAX_TAB: i32 = 1;
 
-/// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderer`] 的公共前半段。
+/// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
 ///
 /// 顺带交出可视化的数据源(频谱分析器句柄):它由 music 的播放器产出,
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui(
-    initial_tab: i32,
-) -> (MainWindow, viz::Source, music::LyricFeed) {
+fn build_ui() -> (MainWindow, viz::Source, music::LyricFeed)
+{
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
@@ -62,10 +58,9 @@ fn build_ui(
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
-    // 开局停在哪一页。平台入口给默认值,`SLINT_STUDY_TAB` 覆盖它 —— 后者是调试开关,
-    // `just shot 420 2` 靠它直接截到 3D 页,不必再靠 MCP 模拟点击(那条路上有一串静默
-    // 失败的坑,见 AGENTS.md)。没设或设歪了就用平台入口给的那个。
-    ui.set_current_tab(initial_tab.clamp(0, MAX_TAB));
+    // 开局停在哪一页。默认 Home,`SLINT_STUDY_TAB` 覆盖它 —— 那是调试开关,
+    // `just shot 420 1` 靠它直接截到 Music 页,不必再靠 MCP 模拟点击(那条路上有一串
+    // 静默失败的坑,见 AGENTS.md)。没设或设歪了就留在 Home。
     if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
@@ -76,15 +71,15 @@ fn build_ui(
 
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
 ///
-/// 各平台入口在初始化好渲染后端后调用。不带 3D 的普通路径(web / ios,以及
-/// 未启用 3D 的桌面)走这里。
+/// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
+/// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
-    let (ui, _viz_source, _lyrics) = build_ui(0);
+    let (ui, _viz_source, _lyrics) = build_ui();
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
         let (frames, timer) = fps::start(&ui);
-        // 无 3D 的路径上没人装渲染通知,帧计数在这里自己接。
+        // 无 bevy 的路径上没人装渲染通知,帧计数在这里自己接。
         ui.window()
             .set_rendering_notifier(move |state, _| {
                 if matches!(
@@ -101,67 +96,23 @@ pub fn run() {
     ui.run().expect("event loop failed");
 }
 
-/// 同 [`run`],但额外每帧驱动一个外部渲染器,把它产出的画面推到 3D 面板。
-///
-/// `on_frame` 由平台入口提供(见 `render3d`):每帧以当前 [`SceneControls`] 和面板
-/// **物理像素**尺寸 `(w, h)` 调用一次,内部驱动 bevy 前进一帧,返回 **(场景, 遮挡层)**
-/// 两张离屏纹理包装成的 [`slint::Image`] —— 后者只含比注释卡片更近的那部分场景,
-/// `app.slint` 把它盖在卡片上做出深度正确的遮挡。控制量在这里组装:
-/// 朝向来自 `rot-yaw`/`rot-pitch`,场景与热调参数
-/// 来自 `scene-index` 与四个 LineEdit 文本——原始文本在**信任边界**用 [`scene_params`]
-/// 解析+clamp,非法/越界退回上一个好值(持久保存在 `controls` 里)。尺寸取 3D 面板逻辑
-/// 尺寸乘窗口缩放系数,让 bevy 按物理分辨率渲染、HiDPI 上清晰。
-///
-/// 只传 POD 的 `SceneControls`,不涉 bevy / wgpu 类型,依赖边界保持干净分离。
-/// 仅当 3D 页激活(`render-active`)时才驱动渲染器,其余页跳过 —— 移动端省电。
-///
-/// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则 `on_frame`
-/// 产出的纹理不属于 Slint 的 device,采样不出来。
-///
-/// `initial_tab` 是启动时展示的页签下标,与 `app.slint` 的 `current-tab` 同义。桌面与
-/// 安卓传 0;web 端从 URL 读它,好让自动化测试直接落在 3D 页上:界面画在 canvas 里,
-/// 没有 DOM 元素可供点击,靠坐标点导航栏会在界面一改就静默量错页面。
-/// `SLINT_STUDY_TAB` 覆盖它,见 [`build_ui`]。
-pub fn run_with_renderer(
-    initial_tab: i32,
-    on_frame: impl FnMut(
-        &SceneControls,
-        u32,
-        u32,
-    ) -> (slint::Image, slint::Image)
-    + 'static,
-) {
-    // 不要导航选中器/播放页视觉的调用方(web、无 nav 的构建)走这里:交给恒不产图的
-    // 空闭包,复用同一套通知回调,避免把回调逻辑抄两份。
-    run_with_renderers(
-        initial_tab,
-        on_frame,
-        |_| None,
-        |_, _, _| None::<VizImages>,
-    );
-}
-
-/// 同 [`run_with_renderer`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。
+/// 同 [`run`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。带 bevy 的端
+/// (桌面 / android)走这里。
 ///
 /// `nav_frame` 由平台入口提供(见 `render3d::NavGlassPass`):切 tab 的转场期间,以物理像素
 /// 的 [`NavGlassControls`] 调用,内部用独立 wgpu pass 画出侧栏背景纹理,返回其 `slint::Image`。
-/// 与 3D 的 `render-active` 门**相互独立** —— 导航栏常驻,选中器只在 metaball 还在走时重渲,
-/// 静止后 Slint 复用上一帧纹理(省电门 [`nav_glass::nav_transition_active`],再叠一道尺寸变化判定
-/// 兜住窗口缩放)。返回 `None`(如空 nav 闭包)则这一帧不更新 `nav-bg`。
+/// 导航栏常驻,选中器只在 metaball 还在走时重渲,静止后 Slint 复用上一帧纹理
+/// (省电门 [`nav_glass::nav_transition_active`],再叠一道尺寸变化判定兜住窗口缩放)。
+/// 返回 `None` 则这一帧不更新 `nav-bg`。
 ///
-/// `viz_frame` 驱动播放页的 warp 视觉(见 `render3d::WarpPass`):门(展开 ∧ 播放 ∧
-/// 窗口可见)开着的每一帧,以 [`VizControls`](播放页时钟 + 音频纹理字节)和窗口
-/// **物理像素**尺寸调用,返回视觉纹理的 `slint::Image` 推到 `viz-bg`。门关上就不再
-/// 调用:暂停定格在最后一帧,时钟一并冻结,收起/失焦零重绘。
+/// `viz_frame` 驱动播放页视觉(见 `render3d::WarpPass` 与 `Scene::render_viz_frame`):
+/// 门(展开 ∧ 播放 ∧ 窗口可见)开着的每一帧,以 [`VizControls`](播放页时钟 + 音频
+/// 纹理字节)和窗口**物理像素**尺寸调用,返回的三张图分别推到 `viz-bg` / `viz-scene` /
+/// `viz-occluder`。门关上就不再调用:暂停定格在最后一帧,时钟一并冻结,收起/失焦零重绘。
+///
+/// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则闭包产出的纹理
+/// 不属于 Slint 的 device,采样不出来。
 pub fn run_with_renderers(
-    initial_tab: i32,
-    mut on_frame: impl FnMut(
-        &SceneControls,
-        u32,
-        u32,
-    )
-        -> (slint::Image, slint::Image)
-    + 'static,
     mut nav_frame: impl FnMut(
         &NavGlassControls,
     ) -> Option<slint::Image>
@@ -173,7 +124,7 @@ pub fn run_with_renderers(
     ) -> Option<VizImages>
     + 'static,
 ) {
-    let (ui, viz_source, lyrics) = build_ui(initial_tab);
+    let (ui, viz_source, lyrics) = build_ui();
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -183,21 +134,7 @@ pub fn run_with_renderers(
     // 哪边使劲 —— render3d 自己的计时只覆盖回调内那一段,回调外从没被量过。
     let mut frame_acct = FrameAccounting::default();
 
-    // 每帧:仅 3D 页激活时 → 组装 SceneControls 与面板物理尺寸 → 驱动渲染器一帧 → 推给
-    // UI → 请求重绘。不请求重绘的话,Slint 惰性渲染,下一帧通知不会来,3D 会定格。
-    // controls 跨帧持久:解析失败时各字段退回上一个好值。初值须与 app.slint 的默认属性一致。
     let weak = ui.as_weak();
-    let mut controls = SceneControls {
-        scene_id: 0,
-        yaw: 0.0,
-        pitch: 0.0,
-        count: 8,
-        color_rgb: 0x4a6bff,
-        spin_speed: 0.0,
-        spacing: 1.5,
-        // 每帧从 .slint 量出来重算,初值无所谓。
-        glass: scene_params::GlassRect::default(),
-    };
     // 导航选中器的跨帧状态:上一帧的 (lead, lag) 逻辑位置与 (栏宽, 栏高) 物理尺寸,
     // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
     let mut nav_last_ll: Option<(f32, f32)> = None;
@@ -216,9 +153,9 @@ pub fn run_with_renderers(
     // wasm 上是 requestAnimationFrame(合成完才给下一次,天然不会饿死主线程,且按显示器
     // 刷新率走),原生上是 vsync。两端都不再有人为的帧率上限,也不再有定时器与合成的错拍。
     //
-    // 回调里改 `scene-3d` 属性会标脏,画面在**下一帧**生效,故恒差一帧 —— 这是 3D 面板,
-    // 一帧延迟看不出来,不为此发明双缓冲。
-    // 回调与其捕获的 `on_frame` 由窗口持有,活到事件循环结束。
+    // 回调里改 `viz-*` 属性会标脏,画面在**下一帧**生效,故恒差一帧 —— 一帧延迟在
+    // 环境视觉上看不出来,不为此发明双缓冲。
+    // 回调与其捕获的闭包由窗口持有,活到事件循环结束。
     ui.window()
         .set_rendering_notifier(move |state, _| {
             // AfterRendering 落在 Slint 画完的那一刻,是「在画」与「空等」的分界。
@@ -244,7 +181,7 @@ pub fn run_with_renderers(
             let scale = ui.window().scale_factor();
 
             // ── 导航侧栏液态玻璃选中器 ──
-            // 常驻侧栏,与下面 3D 的 render-active 门相互独立:只在切 tab 的 metaball 还在走
+            // 常驻侧栏,与下面播放页视觉的门相互独立:只在切 tab 的 metaball 还在走
             // (lead/lag 相对上一帧变化)或栏尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
             // 紧凑版式(手机底栏)没有这条侧栏,nav-visible 为假,整段跳过。
             if ui.get_nav_visible() {
@@ -347,49 +284,6 @@ pub fn run_with_renderers(
                 viz_last = None;
             }
 
-            if !ui.get_render_active() {
-                return;
-            }
-            let w =
-                (ui.get_scene_w() * scale).max(1.0) as u32;
-            let h =
-                (ui.get_scene_h() * scale).max(1.0) as u32;
-
-            controls.scene_id = ui.get_scene_index();
-            controls.yaw = ui.get_rot_yaw();
-            controls.pitch = ui.get_rot_pitch();
-            controls.count = scene_params::parse_count(
-                ui.get_count_text().as_str(),
-                controls.count,
-            );
-            controls.color_rgb =
-                scene_params::parse_hex_rgb(
-                    ui.get_color_text().as_str(),
-                    controls.color_rgb,
-                );
-            controls.spin_speed = scene_params::parse_speed(
-                ui.get_speed_text().as_str(),
-                controls.spin_speed,
-            );
-            controls.spacing = scene_params::parse_spacing(
-                ui.get_spacing_text().as_str(),
-                controls.spacing,
-            );
-            // 工具条几何量:逻辑像素 × 缩放系数 → 物理像素,与离屏纹理同一坐标系。
-            // 唯一真相在 app.slint 的 glass-* 属性,这里只做单位换算。
-            controls.glass = scene_params::GlassRect {
-                x: ui.get_glass_x() * scale,
-                y: ui.get_glass_y() * scale,
-                w: ui.get_glass_w() * scale,
-                h: ui.get_glass_h() * scale,
-                radius: ui.get_glass_r() * scale,
-            };
-
-            let (scene, occluder) =
-                on_frame(&controls, w, h);
-            ui.set_scene_3d(scene);
-            ui.set_occluder_3d(occluder);
-            ui.window().request_redraw();
             frame_acct.end_callback();
         })
         .expect("渲染后端必须支持渲染通知");
