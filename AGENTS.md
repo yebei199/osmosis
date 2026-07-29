@@ -106,13 +106,24 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 判据只认应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面会被两头骗:
 惰性渲染下没有输入就不重绘,而画面变了也可能是别的东西在动。
 
-## 后台构建:同一时刻只留一个,并且验证产物真的更新了
+## 后台任务:起新的之前先停旧的
 
-wasm 构建要 5~8 分钟,期间很容易再起一个。**起新的之前先把旧的停掉**,并确认没有残留进程:
+**每次要起后台任务(`just desktop-dev*`、`just web-dev`、`cargo build`、`cargo run -p server`)
+之前,先看一眼自己已有的后台任务,把同类的停掉再起**,否则一轮对话下来会攒出一串重复实例:
+端口被占、`target/` 互相覆盖、截图截到老窗口,而这些失败全是静默的。
+
+停任务只结束你启动的那条命令,不一定收走它的子进程 —— 再确认一次:
 
 ```sh
-ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"
+just desktop-kill                                       # 桌面实例(pkill -f 'target/debug/[s]lint-study-desktop')
+ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"   # 构建残留
 ```
+
+`pkill -f app-desktop` 会连你自己的 shell 一起杀,原因见上文第 1 条。
+
+## 后台构建:同一时刻只留一个,并且验证产物真的更新了
+
+wasm 构建要 5~8 分钟,期间很容易再起一个。
 
 不这么做时,失败是**静默的**,四种都真实发生过:
 
