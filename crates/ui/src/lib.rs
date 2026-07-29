@@ -276,12 +276,12 @@ pub fn run_with_renderers(
             }
 
             // ── 播放页 warp 视觉 ──
-            // 门三条:展开 ∧ 播放(.slint 的 viz-active)∧ 窗口可见。任一不满足即
-            // 完全停手,Slint 复用上一帧 viz-bg:暂停定格,收起零重绘。
-            // ponytail: 第三条「聚焦」先用 is_visible 近似 —— slint 公开 API 没有
-            // 窗口激活读取;给 fork 加上 is_active 后收紧(失焦不停是已知天花板)。
+            // 门三条:展开 ∧ 播放(.slint 的 viz-active)∧ 窗口聚焦。任一不满足即
+            // 完全停手,Slint 复用上一帧 viz-bg:暂停定格,收起/失焦零重绘。
+            // is_active 是 fork 加的公开 getter(yebei199/slint 11642f2),
+            // 读的是最近一次 WindowActiveChanged 报告的激活状态。
             if ui.get_viz_active()
-                && ui.window().is_visible()
+                && ui.window().is_active()
             {
                 if let Some(audio) =
                     viz::payload(&viz_source)
