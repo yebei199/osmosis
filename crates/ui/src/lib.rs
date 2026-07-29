@@ -13,7 +13,7 @@ mod nav_glass;
 pub use nav_glass::NavGlassControls;
 
 mod viz;
-pub use viz::{VIZ_AUDIO_BYTES, VizControls};
+pub use viz::{VIZ_AUDIO_BYTES, VizControls, VizImages};
 
 // 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -135,7 +135,7 @@ pub fn run_with_renderer(
         initial_tab,
         on_frame,
         |_| None,
-        |_, _, _| None,
+        |_, _, _| None::<VizImages>,
     );
 }
 
@@ -168,7 +168,7 @@ pub fn run_with_renderers(
         &VizControls,
         u32,
         u32,
-    ) -> Option<slint::Image>
+    ) -> Option<VizImages>
     + 'static,
 ) {
     let (ui, viz_source) = build_ui(initial_tab);
@@ -294,7 +294,7 @@ pub fn run_with_renderers(
                     }
                     viz_last = Some(now);
                     let size = ui.window().size();
-                    if let Some(img) = viz_frame(
+                    if let Some(imgs) = viz_frame(
                         &VizControls {
                             time: viz_time,
                             audio,
@@ -302,7 +302,9 @@ pub fn run_with_renderers(
                         size.width,
                         size.height,
                     ) {
-                        ui.set_viz_bg(img);
+                        ui.set_viz_bg(imgs.warp);
+                        ui.set_viz_scene(imgs.scene);
+                        ui.set_viz_occluder(imgs.occluder);
                     }
                     ui.window().request_redraw();
                 }

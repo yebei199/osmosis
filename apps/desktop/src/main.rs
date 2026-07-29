@@ -22,23 +22,27 @@ fn main() {
     // desktop/android 走 run_with_renderers 多驱动一个 NavGlassPass。改 bevy 分支时同步三端。
     #[cfg(feature = "bevy-3d")]
     {
-        let mut scene = render3d::Scene::new();
-        // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue
-        // (必须在 scene 被移进闭包前取)。
+        // Scene 由 3D 页闭包与播放页 viz 闭包共享(二者互斥:覆层开着时
+        // render-active 为假),Rc<RefCell> 在单线程事件循环里零开销。
+        let scene = std::rc::Rc::new(
+            std::cell::RefCell::new(render3d::Scene::new()),
+        );
+        // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue。
         let mut nav = render3d::NavGlassPass::new(
-            scene.device(),
-            scene.queue(),
+            scene.borrow().device(),
+            scene.borrow().queue(),
         );
         let mut warp = render3d::WarpPass::new(
-            scene.device(),
-            scene.queue(),
+            scene.borrow().device(),
+            scene.borrow().queue(),
         );
         // seam:把 ui 的 SceneControls / NavGlassControls / VizControls 平凡拷成 render3d
         // 的镜像参数(见 SceneParams 注释)。三个闭包分别驱动 3D 面板、导航选中器、播放页视觉。
+        let demo_scene = scene.clone();
         ui::run_with_renderers(
             0,
             move |c, w, h| {
-                scene.render_frame(
+                demo_scene.borrow_mut().render_frame(
                     &render3d::SceneParams {
                         scene_id: c.scene_id,
                         yaw: c.yaw,
@@ -71,11 +75,17 @@ fn main() {
                 ))
             },
             move |v, w, h| {
-                Some(
-                    warp.render_frame(
+                let (viz_scene, occluder) =
+                    scene.borrow_mut().render_viz_frame(
+                        v.time, &v.audio, w, h,
+                    );
+                Some(ui::VizImages {
+                    warp: warp.render_frame(
                         v.time, &v.audio, w, h,
                     ),
-                )
+                    scene: viz_scene,
+                    occluder,
+                })
             },
         );
     }
