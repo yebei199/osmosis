@@ -19,16 +19,22 @@
 
 `yebei199/femtovg`:
 
-| 分支 | 内容 |
-|---|---|
-| `pin/femtovg-0.26-wgpu-perf` | femtovg master + femtovg#302 的十个 commit,本项目实际依赖 |
-| `pr/wgpu-per-draw-allocations` | femtovg#302 的 PR 分支,不要 rebase(会打乱评审视图) |
+| 分支 | 内容 | 维护方式 |
+|---|---|---|
+| `master` | 上游 master 的镜像,零本地改动 | 纯快进 |
+| `pin/femtovg-0.26-wgpu-perf` | femtovg master + femtovg#302 的十个 commit,本项目实际依赖 | 重建,强推 |
+| `pr/wgpu-per-draw-allocations` | femtovg#302 的 PR 分支,不要 rebase(会打乱评审视图) | 只在 PR 需要时动 |
+
+两个 fork 的分支都只保留这几种角色:上游镜像、带补丁的消费分支、开着的 PR 分支、
+回滚点。PR 一旦合并或关闭,对应分支就该删,内容自然留在上游代码或 PR 正文里。
 
 四条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 
 ## 已删除的分支
 
-2026-07-29 清掉三条,内容都已另有归宿:
+2026-07-29 两个 fork 各清了一批,内容都已另有归宿。
+
+`yebei199/slint`:
 
 | 分支 | 内容去了哪 |
 |---|---|
@@ -36,8 +42,24 @@
 | `fix/femtovg-wgpu-svg-upscale-wasm` | slint#12541 已关。真正的修复是 femtovg#301,随 femtovg 0.26 进上游(slint#12553);诊断过程留在那两个 PR 的正文里 |
 | `probe/wgpu-present-sync` | 结论与统计在 `../ready_issue/slint-wgpu-present-order.md`,补丁正文也内联在那份文档里 |
 
-删分支前先确认它的内容在别处能找回。探针那条差点漏掉:结论早就写下了,但复现步骤当时
-指向分支本身,补丁正文只存在于那条分支上。
+`yebei199/femtovg`:
+
+| 分支 | 内容去了哪 | 核对方式 |
+|---|---|---|
+| `examples/many-rects` | femtovg#304 已合 | 上游有 `examples/many_rects.rs` |
+| `feat/image-source-html-canvas` | femtovg#300 已合 | 上游 `src/image.rs` 有 `HtmlCanvasElement` |
+| `fix/wgpu-html-image-natural-size` | femtovg#301 已合 | 上游 `src/renderer/wgpu.rs` 有 `rasterize_to_canvas` |
+| `fix/wgpu-cache-static-bindings`、`pr/wgpu-cache-static-bindings` | femtovg#303 已关,内容并进 #302 | #302 分支里 sampler 缓存在位 |
+| `perf/wgpu-resident-buffers` | 5 commit 的旧版,被 #302 的 10 commit 版覆盖 | pin 分支已改指新版 |
+
+删分支前先确认它的内容在别处能找回。两处经验:
+
+探针那条差点漏掉。结论早就写下了,但复现步骤当时指向分支本身,那 11 行补丁只存在于
+那条分支上。
+
+判断「上游是否已经收下」不能用 `git rev-list --count upstream/master..branch`。squash
+合并会换掉哈希,分支看上去永远领先。要按内容查:去上游代码里找那个函数、那个文件、
+那个符号在不在。
 
 ## 二、同步步骤
 
