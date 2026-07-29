@@ -120,12 +120,20 @@ fork(`yebei199/slint` 的 dev 分支)里改一行:计算超时时,若 `pending_r
 
 ## 六、上游
 
-先提 issue 带这组读数(同一份代码桌面 11ms 整帧、安卓 960ms,而 GPU 只占 55ms,
-两个页面读数一致因而排除了应用侧),再问维护者要哪种修法 —— 他们多半想要
-Choreographer 那种,而不是我们这一行。补丁不直接甩过去。
+已提 issue [slint#12687](https://github.com/slint-ui/slint/issues/12687) 与 PR
+[slint#12688](https://github.com/slint-ui/slint/pull/12688)。
+
+issue 带这组读数(同一份代码桌面 11ms 整帧、安卓 960ms,而 GPU 只占 55ms,两个页面
+读数一致因而排除了应用侧),并把三种修法并列摆出来让维护者挑;PR 只带归零那一条,
+正文写明愿意按他们的选择改成 Choreographer。
+
+PR 的分支从上游 master 新拉,只 cherry-pick `2347f16` 一条。我们 fork 的 `dev` 落后
+上游 194 个 commit(上游已走到 femtovg 0.26 + wgpu-30,本项目仍钉 wgpu-29),不参与
+这次提交。核对过:上游 master 的那段事件循环与我们诊断时逐字相同,结论仍成立。
 
 ## 更新记录
 
 - 2026-07-29 首版:定位到 `request_redraw` 只置标记而不参与超时计算;选定归零方案。
 - 2026-07-29 补实测:fork 侧 `2347f16` 落地,1fps → 77fps、空等 928ms → 0.79ms;
   顺带发现帧泵坏着时单帧开销虚高三倍。
+- 2026-07-29 提上游:issue #12687、PR #12688。
