@@ -47,7 +47,7 @@ pub use navglass::{NavGlassPass, NavParams};
 mod warp;
 pub use warp::{AUDIO_BYTES, WarpPass};
 
-mod particles;
+mod cloud;
 
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
@@ -78,19 +78,18 @@ pub struct Scene {
     device: wgpu::Device,
     queue: wgpu::Queue,
     target: Handle<Image>,
-    /// 粒子场根实体:所有粒子挂它下面。首帧 despawn 占位根后按粒子数重建。
+    /// 点云实体。首帧 despawn 占位实体后重建。
     root: Entity,
+    /// 点云材质的句柄:每帧改它的 uniform(时间、三段电平),几何一动不动。
+    cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
     /// 遮挡层的离屏目标图:同一个场景,但只留比 [`CARD_ANCHOR`] 更近的片元,其余透明。
     occluder_target: Handle<Image>,
     /// 画遮挡层的第二台相机(见 [`spawn_occluder_camera`])。
     occluder_camera: Entity,
-    /// 粒子场是否已经建好。首帧为假,建一次之后内容固定,位置每帧由
-    /// [`particles::particle_pose`] 直写。
-    particles_built: bool,
-    /// 粒子场的子实体,下标即 `particles::particle_pose` 的 `i`。
-    particle_entities: Vec<Entity>,
+    /// 点云是否已经建好。首帧为假,建一次之后几何固定,只有 uniform 每帧在换。
+    cloud_built: bool,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
     size: (u32, u32),
     /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `viz-scene.width > 0` 守卫据此不显示。
@@ -211,14 +210,19 @@ impl Scene {
             bevy::render::pipelined_rendering::PipelinedRenderingPlugin,
         >();
         app.add_plugins(plugins);
+        // 点云的自定义材质,以及随二进制内嵌的着色器 —— 应用无头运行,
+        // 没有 `assets/` 目录可以从磁盘加载。
+        bevy::asset::embedded_asset!(app, "cloud.wgsl");
+        app.add_plugins(MaterialPlugin::<
+            cloud::CloudMaterial,
+        >::default());
 
         // 4) 造初始离屏目标图。UI 传来的窗口尺寸会触发按需重建(动态分辨率,见 render_viz_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);
 
-        // 5) 摆相机(渲染进离屏目标图)、平行光,建一个空的占位根。
-        //    粒子场首帧由 rebuild_viz_content 建出来。
-        let camera =
-            spawn_camera_and_light(&mut app, &target);
+        // 5) 摆相机(渲染进离屏目标图),建一个空的占位实体。
+        //    点云首帧由 rebuild_viz_content 建出来。
+        let camera = spawn_camera(&mut app, &target);
         // 6) 遮挡层:第二张目标图 + 第二台相机,合成顺序上排在卡片之后(见其文档)。
         let occluder_target =
             make_target(&mut app, WIDTH, HEIGHT);
@@ -241,11 +245,11 @@ impl Scene {
             queue: queue.clone(),
             target,
             root,
+            cloud_material: None,
             camera,
             occluder_target,
             occluder_camera,
-            particles_built: false,
-            particle_entities: Vec::new(),
+            cloud_built: false,
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
@@ -295,27 +299,27 @@ impl Scene {
             self.resize(width, height);
         }
 
-        if !self.particles_built {
+        if !self.cloud_built {
             self.rebuild_viz_content();
-            self.particles_built = true;
+            self.cloud_built = true;
         }
 
-        let levels = particles::band_levels(
+        // 几何一动不动,一帧只换这一块 uniform:三万多颗粒子的位移在顶点
+        // 着色器里算(见 docs/adr/0012)。
+        let levels = cloud::band_levels(
             audio.get(..512).unwrap_or(&[]),
         );
-        for (i, entity) in
-            self.particle_entities.iter().enumerate()
-        {
-            let (pos, scale) =
-                particles::particle_pose(i, time, &levels);
-            if let Some(mut transform) = self
+        if let Some(handle) = self.cloud_material.clone()
+            && let Some(mut material) = self
                 .app
                 .world_mut()
-                .get_mut::<Transform>(*entity)
-            {
-                transform.translation = pos;
-                transform.scale = Vec3::splat(scale);
-            }
+                .resource_mut::<Assets<cloud::CloudMaterial>>()
+                .get_mut(&handle)
+        {
+            material.params.time = time;
+            material.params.bass = levels.bass;
+            material.params.mid = levels.mid;
+            material.params.treble = levels.treble;
         }
 
         // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
@@ -497,81 +501,55 @@ impl Scene {
         self.occluder_key = None;
     }
 
-    /// 重建播放页粒子场:despawn 旧内容,生成 [`particles::PARTICLE_COUNT`] 个
-    /// 半透明小球,子实体句柄按下标存进 `particle_entities`,供每帧直写位姿。
+    /// 重建播放页封面点云:despawn 旧内容,把 [`cloud::CLOUD_GRID`]² 颗粒子烘成
+    /// **一份** mesh,配一份自定义材质,spawn 成单个实体。
     ///
-    /// 位姿不在这里定 —— 首帧就会被 [`particles::particle_pose`] 覆盖,初始缩放
-    /// 给 0(不可见),避免重建那一帧在原点闪一坨。
+    /// 位移不在这里 —— 几何建好就不动,每帧只有材质的 uniform 在换
+    /// (见 `docs/adr/0012`)。
     fn rebuild_viz_content(&mut self) {
         self.app
             .world_mut()
             .entity_mut(self.root)
             .despawn();
-        self.particle_entities.clear();
 
-        // aurora 同调的五种 unlit 颜色轮流上;「发光感」来自纯色叠在暗背景上,
-        // 不引 HDR/bloom 一整套。
-        //
-        // **不透明**:曾用 `AlphaMode::Blend` + alpha 0.85,桌面正常,但小米13
-        // (Adreno)上整片粒子不显示 —— 同一帧里演示页的不透明物体渲染正常,
-        // 差别只在这一处。粒子在屏幕上只有十几像素,0.85 与 1.0 肉眼无别,
-        // 不为半透明去赌某块 GPU 的透明相位。
-        let colors = [
-            Color::srgb(0.486, 0.227, 0.929), // 紫
-            Color::srgb(0.145, 0.388, 0.922), // 蓝
-            Color::srgb(0.024, 0.714, 0.831), // 青
-            Color::srgb(0.925, 0.282, 0.600), // 粉
-            Color::srgb(0.780, 0.860, 1.000), // 冷白
-        ];
-        let materials: Vec<_> = {
-            let mut assets = self
-                .app
-                .world_mut()
-                .resource_mut::<Assets<StandardMaterial>>();
-            colors
-                .iter()
-                .map(|color| {
-                    assets.add(StandardMaterial {
-                        base_color: *color,
-                        unlit: true,
-                        ..default()
-                    })
-                })
-                .collect()
-        };
-        let mesh = build_particle_mesh(&mut self.app);
+        let mesh = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(cloud::build_cloud_mesh(
+                cloud::cloud_vertices(),
+            ));
+        // 封面像素还没接进来(issue #24),先给一张占位图:`has_cover` 为 0,
+        // 着色器走默认渐变色 —— 点云在没有封面时不该消失。
+        let cover = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let material = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<cloud::CloudMaterial>>()
+            .add(cloud::CloudMaterial {
+                params: cloud::CloudParams::default(),
+                cover,
+            });
 
-        let root = self
+        self.root = self
             .app
             .world_mut()
             .spawn((
-                Transform::default(),
-                Visibility::Visible,
+                Mesh3d(mesh),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(CARD_ANCHOR),
             ))
             .id();
-        for i in 0..particles::PARTICLE_COUNT {
-            let material =
-                materials[i % materials.len()].clone();
-            let child = self
-                .app
-                .world_mut()
-                .spawn((
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material),
-                    Transform::from_scale(Vec3::ZERO),
-                ))
-                .id();
-            self.app
-                .world_mut()
-                .entity_mut(root)
-                .add_child(child);
-            self.particle_entities.push(child);
-        }
-        self.root = root;
+        self.cloud_material = Some(material);
 
         log::info!(
-            "render3d: 粒子场重建完成,粒子 {} 个",
-            self.particle_entities.len()
+            "render3d: 封面点云重建完成,{0}x{0} = {1} 颗",
+            cloud::CLOUD_GRID,
+            cloud::CLOUD_GRID * cloud::CLOUD_GRID,
         );
     }
 }
@@ -600,22 +578,15 @@ impl Default for Scene {
     }
 }
 
-/// 摆放相机(渲染进离屏目标图)与平行光,二者全程不变;返回相机实体供尺寸变化时改 RenderTarget。
-fn spawn_camera_and_light(
+/// 摆放相机(渲染进离屏目标图),全程不变;返回相机实体供尺寸变化时改 RenderTarget。
+///
+/// 场景里没有光:点云的颜色直接取自封面纹理,不过光照(见 `cloud.wgsl`)。
+fn spawn_camera(
     app: &mut App,
     target: &Handle<Image>,
 ) -> Entity {
-    let world = app.world_mut();
-
-    // 平行光。
-    world.spawn((
-        DirectionalLight::default(),
-        Transform::from_xyz(4.0, 8.0, 4.0)
-            .looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
     // 相机:渲染进离屏目标图,而非屏幕。0.19 起 RenderTarget 是独立组件,不再是 Camera 的字段。
-    world
+    app.world_mut()
         .spawn((
             Camera3d::default(),
             Camera {
@@ -709,21 +680,13 @@ fn occluder_depth(anchor_ndc: Option<Vec3>) -> f32 {
 
 /// 相机位置,全程不变。
 ///
-/// 刻意**不**随视口长宽比后撤:粒子场是铺满视野的环境效果,后撤只会把粒子缩成看不见的
-/// 点(小米13 竖屏 aspect 0.45 会后撤 2.2 倍,真机上实测粒子直接消失)。恒用这个距离,
-/// 让粒子自然溢出画面上下。
-const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 1.5, 8.0);
-
-/// 粒子用的圆片:12 段的扁平圆,躺在 XY 平面上正对相机(相机恒在 +Z 看向原点)。
+/// **正对**点云平面(y=0):偏一点就把那张平面看成俯视的梯形,封面就歪了。早先那层
+/// 浮空尘埃是绕卡片飘的球,俯角只是给它一点立体感;点云是一张图,正对才是对的。
 ///
-/// 不用球体:一颗默认 `Sphere` 是几百个三角形,1300 颗 × 两台相机(场景 + 遮挡层)
-/// 就是百万级三角形 —— 小米13 上实测 `app.update()` 36.75ms/帧,直接把帧率压到十几。
-/// 粒子在屏幕上只有几个像素宽,12 段的圆已经看不出棱角。
-fn build_particle_mesh(app: &mut App) -> Handle<Mesh> {
-    app.world_mut().resource_mut::<Assets<Mesh>>().add(
-        Circle::default().mesh().resolution(12).build(),
-    )
-}
+/// 刻意**不**随视口长宽比后撤:点云是铺满视野的环境效果,后撤只会把粒子缩成看不见的
+/// 点(小米13 竖屏 aspect 0.45 会后撤 2.2 倍,真机上实测粒子直接消失)。恒用这个距离,
+/// 让点云自然溢出画面四边。
+const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 0.0, 8.0);
 
 #[cfg(test)]
 mod tests {
