@@ -1,6 +1,6 @@
 //! 3D 桥:用 **bevy** 在**共享的** wgpu-29 device 上离屏渲染,产出一张 [`slint::Image`]
-//! 交给 UI 层合成。桌面 / android / web 入口按 `bevy-3d` feature 依赖本 crate,
-//! ios 永不碰它;web / ios 的**默认**构建不拉它 —— 由 `xtask boundaries` 守住这条边界。
+//! 交给 UI 层合成。桌面 / android 入口硬依赖本 crate;web / ios 永不碰它 ——
+//! 由 `xtask boundaries` 守住这条边界。
 //!
 //! 架构约束(见计划 `bevy-serialized-dove`):
 //! - device 由本 crate 自建(Manual),同一套 instance/adapter/device/queue
@@ -9,13 +9,13 @@
 //!   绝不调 `App::run()` —— 事件循环永远归 Slint。
 //! - bevy 与 Slint 共享同一 wgpu 大版本(现为 29),纹理类型才是同一个,才能被 Slint 采样。
 //!
-//! 每帧产出**两张**图:场景本身,以及一张只含「比注释卡片更近」的片元的遮挡层
-//! (见 [`spawn_occluder_camera`])。UI 侧把二者夹着卡片叠三层,卡片就被 3D 物体
+//! 每帧产出**两张**图:粒子场本身,以及一张只含「比封面卡更近」的片元的遮挡层
+//! (见 [`spawn_occluder_camera`])。UI 侧把二者夹着卡片叠三层,卡片就被粒子
 //! 逐像素挡住 —— 深度正确的 UI。
 //!
 //! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
-//! 必须在建窗口**之前**调 —— 再把 `move || scene.render_frame()` 交给 `ui::run_with_renderer`。
-//! web 入口(`apps/web`)用异步版 [`Scene::new_async`],其余接线相同。
+//! 必须在建窗口**之前**调 —— 再把 `move || scene.render_viz_frame()` 交给
+//! `ui::run_with_renderers`。
 
 use std::sync::Arc;
 
@@ -41,9 +41,6 @@ use bevy::render::texture::GpuImage;
 use bevy::window::{ExitCondition, WindowPlugin};
 use slint::wgpu_29::wgpu;
 
-mod glass;
-pub use glass::GlassRect;
-
 mod navglass;
 pub use navglass::{NavGlassPass, NavParams};
 
@@ -62,67 +59,18 @@ const HEIGHT: u32 = 240;
 /// 每帧耗时日志的采样窗口(帧)。约两秒一行,够看趋势又不刷屏。
 const PERF_WINDOW: u32 = 120;
 
-/// 注释卡片挂在场景里的哪个世界点。转盘中心 —— 环上的形状半圈在它前面、半圈在后面,
-/// 转一圈就能看到同一个物体先挡住卡片、再转到卡片背后。
+/// 封面卡挂在场景里的哪个世界点。粒子场中心 —— 粒子半数在它前面、半数在后面,
+/// 于是同一颗粒子飘过时会先挡住卡片、再转到卡片背后。
 const CARD_ANCHOR: Vec3 = Vec3::ZERO;
 
 /// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
 const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
 
-/// 一帧的场景控制量:由 UI 侧组装,跨进程内边界传给渲染器。
-///
-/// ponytail: 本结构与 `ui::SceneControls` 字段镜像。ui 与 render3d 刻意互不依赖
-/// (见 apps/android 注释:app 才是接 seam 的组合根),没有二者都依赖的下层 crate 可放它,
-/// 故各留一份、由 apps/* 在 seam 处平凡字段拷贝。若两者开始漂移或出现第三个消费者,
-/// 再抽一个共享叶子 crate。全 POD,不含 bevy 类型,`color_rgb` 在 render3d 内转 `Color`。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SceneParams {
-    /// 0 = 形状画廊(环形),1 = 实体阵列(网格)。
-    pub scene_id: i32,
-    /// 转盘朝向(弧度)。
-    pub yaw: f32,
-    pub pitch: f32,
-    /// 实体数。
-    pub count: u32,
-    /// 基础色 0xRRGGBB。
-    pub color_rgb: u32,
-    /// 自转角速度(弧度/帧),叠加到 yaw 上。
-    pub spin_speed: f32,
-    /// 间距/缩放因子。
-    pub spacing: f32,
-    /// 要做成液态玻璃的那块区域(热调工具条),物理像素。宽高为 0 表示这一帧不做玻璃。
-    /// 几何量由 UI 侧给出,不在这里重复 .slint 里的留白常量(见 [`GlassRect`])。
-    pub glass: GlassRect,
-}
-
-impl SceneParams {
-    /// 决定是否需要重建场景内容的关键字段(yaw/pitch/自转不触发重建)。
-    fn content_key(&self) -> (i32, u32, u32, u32) {
-        (
-            self.scene_id,
-            self.count,
-            self.color_rgb,
-            self.spacing.to_bits(),
-        )
-    }
-}
-
-/// 场景当前装的是哪种内容:3D 演示页的参数化转盘,或播放页的粒子场。
-///
-/// 两种内容共用同一个 bevy App 与双目标纹理,靠各自的驱动入口互斥
-/// (播放页盖住 3D 页时 `render-active` 为假,见 crates/ui)。切换即重建。
-#[derive(Clone, Copy, PartialEq)]
-enum Content {
-    /// 演示转盘,按 [`SceneParams::content_key`] 判断参数是否变了。
-    Demo((i32, u32, u32, u32)),
-    /// 播放页粒子场,内容固定,位置每帧由 [`particles::particle_pose`] 直写。
-    Viz,
-}
-
 /// 一个自持的 bevy 离屏渲染场景。
 ///
-/// 持有 bevy `App`、离屏目标图的句柄、被拖动的立方体实体,以及一次性包装好的
-/// [`slint::Image`]。整个对象只在 Slint 的主线程上被 [`render_frame`](Scene::render_frame) 驱动。
+/// 持有 bevy `App`、离屏目标图的句柄、粒子实体,以及一次性包装好的
+/// [`slint::Image`]。整个对象只在 Slint 的主线程上被
+/// [`render_viz_frame`](Scene::render_viz_frame) 驱动。
 pub struct Scene {
     app: App,
     /// 共享 wgpu 的 device/queue 句柄(clone,廉价 Arc)。留着好让导航选中器的
@@ -130,8 +78,7 @@ pub struct Scene {
     device: wgpu::Device,
     queue: wgpu::Queue,
     target: Handle<Image>,
-    /// 转盘根实体:所有可见形状挂它下面,每帧按 yaw/pitch(+自转)设其朝向。
-    /// 场景/数量/颜色/间距变化时,despawn 它的子树并按新参数用 bsn! 重建。
+    /// 粒子场根实体:所有粒子挂它下面。首帧 despawn 占位根后按粒子数重建。
     root: Entity,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
@@ -139,31 +86,26 @@ pub struct Scene {
     occluder_target: Handle<Image>,
     /// 画遮挡层的第二台相机(见 [`spawn_occluder_camera`])。
     occluder_camera: Entity,
-    /// 六种内置图元的网格句柄,建一次复用。索引 0(Cuboid)兼作阵列场景的方块。
-    mesh_palette: Vec<Handle<Mesh>>,
-    /// 上一帧装的内容(演示参数 key 或粒子场);变化才重建。首帧为 `None`,必重建。
-    last_content: Option<Content>,
-    /// 粒子场的子实体,下标即 `particles::particle_pose` 的 `i`。仅粒子内容存在时非空。
+    /// 粒子场是否已经建好。首帧为假,建一次之后内容固定,位置每帧由
+    /// [`particles::particle_pose`] 直写。
+    particles_built: bool,
+    /// 粒子场的子实体,下标即 `particles::particle_pose` 的 `i`。
     particle_entities: Vec<Entity>,
-    /// 累积自转角(弧度),每帧加 `spin_speed`,叠加到 yaw。
-    spin_angle: f32,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
     size: (u32, u32),
-    /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `scene-3d.width > 0` 守卫据此不显示。
+    /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `viz-scene.width > 0` 守卫据此不显示。
     image: Option<slint::Image>,
-    /// `image` 里那张对应的 (宽, 高, 是否走了玻璃 pass)。三者任一变化都得重新导入 ——
-    /// 玻璃开关一翻,交给 Slint 的就换成了另一张纹理。
-    image_key: Option<(u32, u32, bool)>,
+    /// `image` 里那张对应的 (宽, 高)。尺寸一变纹理就换了身份,得重新导入。
+    image_key: Option<(u32, u32)>,
     /// 遮挡层纹理包装成的 Image 及其 (宽, 高)。缓存理由同 `image`:纹理身份稳定就只包一次。
     /// 这一层不过玻璃 pass,故 key 里没有那个开关。
     occluder_image: Option<slint::Image>,
     occluder_key: Option<(u32, u32)>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
-    /// 每帧耗时的累加器(毫秒):(bevy `app.update()`, 玻璃 pass)。
-    /// 每 [`PERF_WINDOW`] 帧算一次均值打日志再清零 —— web 上帧率卡在 50 时,
-    /// 要先知道那 20ms 花在哪一边,才谈得上优化。
-    perf: (f64, f64),
+    /// bevy `app.update()` 的耗时累加器(毫秒)。每 [`PERF_WINDOW`] 帧算一次均值打日志
+    /// 再清零 —— 帧率掉下来时,要先知道是不是 bevy 这一段吃掉的。
+    perf: f64,
 }
 
 impl Scene {
@@ -269,26 +211,21 @@ impl Scene {
             bevy::render::pipelined_rendering::PipelinedRenderingPlugin,
         >();
         app.add_plugins(plugins);
-        // 玻璃后处理长在 bevy 的管线里,不再自己起 pass 自己提交(理由见 glass.rs)。
-        app.add_plugins(glass::GlassPlugin);
 
-        // 4) 造初始离屏目标图。UI 传来的面板尺寸会触发按需重建(动态分辨率,见 render_frame)。
+        // 4) 造初始离屏目标图。UI 传来的窗口尺寸会触发按需重建(动态分辨率,见 render_viz_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);
 
-        // 5) 摆相机(渲染进离屏目标图)、平行光,建图元网格调色板,建一个空的转盘根。
-        //    场景内容(形状)首帧按 UI 传入的 SceneParams 用 bsn! 构建(见 render_frame)。
+        // 5) 摆相机(渲染进离屏目标图)、平行光,建一个空的占位根。
+        //    粒子场首帧由 rebuild_viz_content 建出来。
         let camera =
             spawn_camera_and_light(&mut app, &target);
         // 6) 遮挡层:第二张目标图 + 第二台相机,合成顺序上排在卡片之后(见其文档)。
-        let aspect = WIDTH as f32 / HEIGHT as f32;
         let occluder_target =
             make_target(&mut app, WIDTH, HEIGHT);
         let occluder_camera = spawn_occluder_camera(
             &mut app,
             &occluder_target,
-            aspect,
         );
-        let mesh_palette = build_mesh_palette(&mut app);
         let root = app
             .world_mut()
             .spawn(Transform::default())
@@ -307,16 +244,14 @@ impl Scene {
             camera,
             occluder_target,
             occluder_camera,
-            mesh_palette,
-            last_content: None,
+            particles_built: false,
             particle_entities: Vec::new(),
-            spin_angle: 0.0,
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
             occluder_image: None,
             occluder_key: None,
-            perf: (0.0, 0.0),
+            perf: 0.0,
             frames: 0,
         }
     }
@@ -332,102 +267,20 @@ impl Scene {
         self.queue.clone()
     }
 
-    /// 按 UI 传入的 [`SceneParams`] 和面板尺寸渲染一帧,返回 **(场景, 遮挡层)** 两张
-    /// 离屏纹理包装成的 [`slint::Image`]。
-    ///
-    /// 两张图的用法见 [`spawn_occluder_camera`]:UI 侧把它们夹着注释卡片叠三层,
-    /// 卡片就被场景里更近的物体逐像素挡住。返回裸元组而不是自定义结构体 ——
-    /// `slint::Image` 是 ui 与 render3d 本就共有的类型,新造一个镜像结构体只是多一份
-    /// 要同步的字段(镜像的代价见 [`SceneParams`] 的注释)。
-    ///
-    /// 内容相关字段(场景/数量/颜色/间距)变化时先用 bsn! 重建场景内容;朝向字段
-    /// (yaw/pitch/自转)只更新转盘根的 Transform。`width` / `height` 为面板物理像素尺寸,
-    /// 与当前纹理不同就按需重建纹理(动态分辨率),0 尺寸忽略。先设好状态再 update。
-    ///
-    /// 纹理未就绪(首帧或刚重建)时返回空图。尺寸不变时纹理身份稳定,只包装一次、
-    /// 之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
-    pub fn render_frame(
-        &mut self,
-        params: &SceneParams,
-        width: u32,
-        height: u32,
-    ) -> (slint::Image, slint::Image) {
-        if width > 0
-            && height > 0
-            && (width, height) != self.size
-        {
-            self.resize(width, height);
-        }
-
-        // 场景/数量/颜色/间距变了才重建内容(despawn 子树 + bsn! 重造);朝向类参数不触发。
-        // 从粒子场切回来也走这里 —— Content 不同即重建,顺带把清屏色还原成默认。
-        let key = Content::Demo(params.content_key());
-        if self.last_content != Some(key) {
-            self.rebuild_content(params);
-            self.set_camera_clear(
-                ClearColorConfig::Default,
-            );
-            self.apply_cameras(false);
-            self.last_content = Some(key);
-        }
-
-        // 自转累积,叠加到拖动的 yaw 上,整群当转盘转。
-        self.spin_angle += params.spin_speed;
-        if let Some(mut transform) =
-            self.app
-                .world_mut()
-                .get_mut::<Transform>(self.root)
-        {
-            transform.rotation = Quat::from_euler(
-                EulerRot::YXZ,
-                params.yaw + self.spin_angle,
-                params.pitch,
-                0.0,
-            );
-        }
-
-        // 玻璃参数挂在相机上,由 bevy 的 FullscreenMaterial 在管线里消费。空矩形时摘掉
-        // 组件,那一帧连全屏 pass 都不跑。必须在 update 之前设好。
-        let t_glass = Instant::now();
-        let glass_on = !params.glass.is_empty();
-        {
-            let mut cam = self
-                .app
-                .world_mut()
-                .entity_mut(self.camera);
-            if glass_on {
-                cam.insert(glass::GlassMaterial::new(
-                    params.glass,
-                    self.size,
-                ));
-            } else {
-                cam.remove::<glass::GlassMaterial>();
-            }
-        }
-        self.perf.1 +=
-            t_glass.elapsed().as_secs_f64() * 1000.0;
-
-        // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机只在 resize
-        // 时移动,那一帧的门槛会差一帧,肉眼不可见,不值得为它多跑一次 transform 传播。
-        let depth = self.anchor_depth();
-        if let Some(mut cam3d) =
-            self.app
-                .world_mut()
-                .get_mut::<Camera3d>(self.occluder_camera)
-        {
-            cam3d.depth_load_op =
-                Camera3dDepthLoadOp::Clear(depth);
-        }
-
-        self.drive_and_finish(glass_on, depth)
-    }
-
-    /// 播放页粒子场的一帧:与 [`Scene::render_frame`] 平行的驱动入口。
+    /// 播放页粒子场的一帧:本 crate 唯一的驱动入口。
     ///
     /// `time` 是播放页时钟(秒,门关即冻结,见 crates/ui);`audio` 是
     /// `spectrum` 布局的载荷(频谱行在前),只用前 512 字节拆频段;
     /// 粒子位置与缩放每帧由 [`particles::particle_pose`] 算好直写 Transform。
-    /// 返回 (场景, 遮挡层) 两张图,遮挡合成语义与演示页完全一致。
+    ///
+    /// 返回 **(场景, 遮挡层)** 两张离屏纹理包装成的 [`slint::Image`]。两张图的用法见
+    /// [`spawn_occluder_camera`]:UI 侧把它们夹着封面卡叠三层,卡片就被更近的粒子
+    /// 逐像素挡住。返回裸元组而不是自定义结构体 —— `slint::Image` 是 ui 与 render3d
+    /// 本就共有的类型,新造一个镜像结构体只是多一份要同步的字段。
+    ///
+    /// `width` / `height` 为窗口物理像素尺寸,与当前纹理不同就按需重建纹理
+    /// (动态分辨率),0 尺寸忽略。纹理未就绪(首帧或刚重建)时返回空图;尺寸不变时
+    /// 纹理身份稳定,只包装一次、之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
     pub fn render_viz_frame(
         &mut self,
         time: f32,
@@ -442,14 +295,9 @@ impl Scene {
             self.resize(width, height);
         }
 
-        if self.last_content != Some(Content::Viz) {
+        if !self.particles_built {
             self.rebuild_viz_content();
-            // 粒子图要叠在 warp 背景上,没画到的像素必须透明。
-            self.set_camera_clear(
-                ClearColorConfig::Custom(Color::NONE),
-            );
-            self.apply_cameras(true);
-            self.last_content = Some(Content::Viz);
+            self.particles_built = true;
         }
 
         let levels = particles::band_levels(
@@ -470,14 +318,8 @@ impl Scene {
             }
         }
 
-        // 粒子场不做玻璃工具条;遮挡门槛与演示页同一套锚点机制。
-        {
-            let mut cam = self
-                .app
-                .world_mut()
-                .entity_mut(self.camera);
-            cam.remove::<glass::GlassMaterial>();
-        }
+        // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
+        // 这一帧的门槛与当帧一致,不必为它多跑一次 transform 传播。
         let depth = self.anchor_depth();
         if let Some(mut cam3d) =
             self.app
@@ -488,58 +330,17 @@ impl Scene {
                 Camera3dDepthLoadOp::Clear(depth);
         }
 
-        self.drive_and_finish(false, depth)
-    }
-
-    /// 改主相机的清屏配置。演示页用默认底色,粒子场用透明(叠在 warp 上)。
-    fn set_camera_clear(
-        &mut self,
-        clear: ClearColorConfig,
-    ) {
-        if let Some(mut cam) = self
-            .app
-            .world_mut()
-            .get_mut::<Camera>(self.camera)
-        {
-            cam.clear_color = clear;
-        }
-    }
-
-    /// 按当前内容摆两台相机。
-    ///
-    /// 演示页要把整个转盘装进画面,竖视口就得后撤([`pullback`]);粒子场相反 ——
-    /// 它是铺满视野的环境效果,后撤只会把粒子缩成看不见的点(小米13 竖屏
-    /// aspect 0.45 会后撤 2.2 倍,真机上实测粒子直接消失),故恒用基准距离,
-    /// 让粒子自然溢出画面上下。两台相机必须同视角,否则遮挡层整体错位。
-    fn apply_cameras(&mut self, viz: bool) {
-        let aspect =
-            self.size.0 as f32 / self.size.1.max(1) as f32;
-        let position = if viz {
-            BASE_CAMERA_POS
-        } else {
-            camera_pos(aspect)
-        };
-        let transform =
-            Transform::from_translation(position)
-                .looking_at(Vec3::ZERO, Vec3::Y);
-        for entity in [self.camera, self.occluder_camera] {
-            self.app
-                .world_mut()
-                .entity_mut(entity)
-                .insert(transform);
-        }
+        self.drive_and_finish(depth)
     }
 
     /// update 一帧并把两张离屏纹理(按身份缓存)包装成 Image 交回。
-    /// [`Scene::render_frame`] 与 [`Scene::render_viz_frame`] 的公共后半段。
     fn drive_and_finish(
         &mut self,
-        glass_on: bool,
         depth: f32,
     ) -> (slint::Image, slint::Image) {
         let t_update = Instant::now();
         self.app.update();
-        self.perf.0 +=
+        self.perf +=
             t_update.elapsed().as_secs_f64() * 1000.0;
         self.frames += 1;
 
@@ -555,34 +356,26 @@ impl Scene {
         };
 
         if self.frames.is_multiple_of(PERF_WINDOW) {
-            let n = f64::from(PERF_WINDOW);
             log::info!(
-                "render3d: 近 {PERF_WINDOW} 帧均耗时 —— app.update() {:.2}ms,玻璃 pass {:.2}ms,合计 {:.2}ms({}x{},遮挡门槛 {:.5})",
-                self.perf.0 / n,
-                self.perf.1 / n,
-                (self.perf.0 + self.perf.1) / n,
+                "render3d: 近 {PERF_WINDOW} 帧均耗时 —— app.update() {:.2}ms({}x{},遮挡门槛 {:.5})",
+                self.perf / f64::from(PERF_WINDOW),
                 self.size.0,
                 self.size.1,
                 depth,
             );
-            self.perf = (0.0, 0.0);
+            self.perf = 0.0;
         }
 
-        // 尺寸稳定、玻璃开关不变时,纹理身份稳定 → 只包装一次 Image,之后每帧由
-        // bevy + 玻璃 pass 重画内容,Slint 重绘时实时采样同一张。
-        let key = (tex.width(), tex.height(), glass_on);
+        // 尺寸稳定时纹理身份稳定 → 只包装一次 Image,之后每帧由 bevy 重画内容,
+        // Slint 重绘时实时采样同一张。
+        let key = (tex.width(), tex.height());
         if self.image_key != Some(key) {
-            let (w, h) = (tex.width(), tex.height());
+            let (w, h) = key;
             match slint::Image::try_from(tex) {
                 Ok(img) => {
                     log::info!(
-                        "render3d: 纹理就绪(第 {} 帧),{w}x{h} 已导入 Slint(玻璃 {})",
+                        "render3d: 纹理就绪(第 {} 帧),{w}x{h} 已导入 Slint",
                         self.frames,
-                        if glass_on {
-                            "开"
-                        } else {
-                            "关"
-                        }
                     );
                     self.image = Some(img);
                     self.image_key = Some(key);
@@ -661,10 +454,9 @@ impl Scene {
 
     /// 按新尺寸重建离屏目标纹理,把相机的 RenderTarget 指过去,释放旧纹理。
     ///
-    /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理;但**距离**要:
-    /// 透视投影固定的是垂直视野,视口一竖水平视野就跟着收窄,横排的内容会出画 ——
-    /// 故按长宽比整体后撤相机(见 [`pullback`])。
-    /// 重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
+    /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理;**距离**也不必动 ——
+    /// 粒子场是铺满视野的环境效果,竖视口不后撤,让粒子自然溢出画面上下(见
+    /// [`BASE_CAMERA_POS`])。重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
     fn resize(&mut self, width: u32, height: u32) {
         let new_target =
             make_target(&mut self.app, width, height);
@@ -699,80 +491,10 @@ impl Scene {
         images.remove(&old_occluder);
 
         self.size = (width, height);
-        // 相机位置随长宽比变(演示页要后撤),故必须在 size 更新之后重摆;
-        // 粒子场那一支不后撤,见 [`Scene::apply_cameras`]。
-        let viz = self.last_content == Some(Content::Viz);
-        self.apply_cameras(viz);
         self.image = None;
         self.image_key = None;
         self.occluder_image = None;
         self.occluder_key = None;
-    }
-
-    /// 按新参数重建转盘内容:despawn 旧根子树,用 bsn! 声明式生成 root + 子形状。
-    ///
-    /// 子实体同构(都 `Mesh3d/MeshMaterial3d/Transform`,仅注入不同网格/位置),
-    /// 故能收进一个 `Vec<impl Scene>` 当 `Children`。材质(基础色)与摆位随参数每次重算。
-    fn rebuild_content(&mut self, params: &SceneParams) {
-        // 旧转盘连同子树整体销毁(despawn 递归清子实体),换上全新的根。
-        self.app
-            .world_mut()
-            .entity_mut(self.root)
-            .despawn();
-
-        let color = Color::srgb_u8(
-            (params.color_rgb >> 16) as u8,
-            (params.color_rgb >> 8) as u8,
-            params.color_rgb as u8,
-        );
-        let material = self
-            .app
-            .world_mut()
-            .resource_mut::<Assets<StandardMaterial>>()
-            .add(StandardMaterial {
-                base_color: color,
-                ..default()
-            });
-
-        // 每个形状的 (网格句柄, 位置)。画廊环形铺开、阵列网格铺开(见 compute_placements)。
-        let placements =
-            compute_placements(params, &self.mesh_palette);
-        let kids: Vec<_> = placements
-            .into_iter()
-            .map(|(mesh, translation)| {
-                let mat = material.clone();
-                bsn! {
-                    Mesh3d({mesh})
-                    MeshMaterial3d::<StandardMaterial>({mat})
-                    Transform { translation: {translation} }
-                }
-            })
-            .collect();
-
-        self.root = self
-            .app
-            .world_mut()
-            .spawn_scene(bsn! {
-                // Visibility 必配:Mesh 子实体带 Visibility(必需组件),根缺它则可见性
-                // 传播每帧告警 B0004。Transform 的传播则靠 0.19 的必需组件自动补 GlobalTransform。
-                Transform
-                Visibility::Visible
-                Children [ {kids} ]
-            })
-            .expect("spawn_scene 无 asset 依赖,不应失败")
-            .id();
-
-        // 场景重建后点一次实体数。空场景与「渲染没画出来」在画面上无法区分,
-        // 这行日志把两者分开:计数为 0 说明是构建侧的问题,不必去查渲染管线。
-        let meshes = self
-            .app
-            .world_mut()
-            .query::<&Mesh3d>()
-            .iter(self.app.world())
-            .count();
-        log::info!(
-            "render3d: 场景重建完成,可渲染实体 {meshes} 个"
-        );
     }
 
     /// 重建播放页粒子场:despawn 旧内容,生成 [`particles::PARTICLE_COUNT`] 个
@@ -896,16 +618,20 @@ fn spawn_camera_and_light(
     world
         .spawn((
             Camera3d::default(),
-            Camera::default(),
+            Camera {
+                // 粒子图要叠在 warp 背景上,没画到的像素必须透明。
+                clear_color: ClearColorConfig::Custom(
+                    Color::NONE,
+                ),
+                ..default()
+            },
             RenderTarget::Image(target.clone().into()),
             // 默认的 TonyMcMapFace 需要 tonemapping_luts feature(会拉 LUT 资源)。
             // PoC 不启那个 feature,改用无需 LUT 的 None。要更好观感时再开该 feature。
             Tonemapping::None,
-            // 首帧的目标是 WIDTH×HEIGHT;真实面板尺寸一到,resize 会按其长宽比重设位置与投影。
-            Transform::from_translation(camera_pos(
-                WIDTH as f32 / HEIGHT as f32,
-            ))
-            .looking_at(Vec3::ZERO, Vec3::Y),
+            // 位置全程不变,resize 也不动它(见 [`BASE_CAMERA_POS`])。
+            Transform::from_translation(BASE_CAMERA_POS)
+                .looking_at(Vec3::ZERO, Vec3::Y),
         ))
         .id()
 }
@@ -933,7 +659,6 @@ fn spawn_camera_and_light(
 fn spawn_occluder_camera(
     app: &mut App,
     target: &Handle<Image>,
-    aspect: f32,
 ) -> Entity {
     app.world_mut()
         .spawn((
@@ -955,7 +680,8 @@ fn spawn_occluder_camera(
             // 必须与主相机一致:同一个物体在两层里出现时颜色要逐像素相同,
             // 否则被切开的那半会显出另一种色调,穿帮。
             Tonemapping::None,
-            Transform::from_translation(camera_pos(aspect))
+            // 必须与主相机同位同视角,否则两层对不上,遮挡会整体错位。
+            Transform::from_translation(BASE_CAMERA_POS)
                 .looking_at(Vec3::ZERO, Vec3::Y),
         ))
         .id()
@@ -981,49 +707,12 @@ fn occluder_depth(anchor_ndc: Option<Vec3>) -> f32 {
     }
 }
 
-/// 相机在参考长宽比下的位置。宽视口恒用这个位置 —— 改动前的观感基线。
+/// 相机位置,全程不变。
+///
+/// 刻意**不**随视口长宽比后撤:粒子场是铺满视野的环境效果,后撤只会把粒子缩成看不见的
+/// 点(小米13 竖屏 aspect 0.45 会后撤 2.2 倍,真机上实测粒子直接消失)。恒用这个距离,
+/// 让粒子自然溢出画面上下。
 const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 1.5, 8.0);
-/// 参考长宽比。视口比它更"竖",相机就得后撤。
-const REFERENCE_ASPECT: f32 = 1.0;
-/// 后撤倍数上限。窗口被拖成 1px 宽时长宽比趋近 0,不封顶相机会飞到无穷远。
-/// 4 倍够手机竖屏(长宽比 ~0.26,需要 3.8 倍)完整入画。
-const MAX_PULLBACK: f32 = 4.0;
-
-/// 相机后撤倍数,随视口长宽比反比放大。
-///
-/// 透视投影固定的是**垂直**视野,水平视野 = 垂直视野 × 长宽比 —— 视口一竖,横向排开的
-/// 形状画廊就出画。距离与长宽比成反比放大即可把它拉回来。宽视口(≥ 参考比)返回 1,
-/// 桌面观感与改动前逐像素一致。
-///
-/// 用**倍数**而不是直接给 z:相机位置整体乘这个倍数,视线方向不变,俯视角就保住了。
-/// 只退 z 的话相机会越退越水平,转盘被看成侧视的一条扁线 —— 试过,很难看。
-///
-/// 退化输入(0 / 负 / NaN,来自 1px 窗口或尚未测量的首帧)返回 1,不放大。
-fn pullback(aspect: f32) -> f32 {
-    if !aspect.is_finite() || aspect <= 0.0 {
-        return 1.0;
-    }
-    (REFERENCE_ASPECT / aspect).clamp(1.0, MAX_PULLBACK)
-}
-
-/// 给定视口长宽比,相机该待的位置。
-fn camera_pos(aspect: f32) -> Vec3 {
-    BASE_CAMERA_POS * pullback(aspect)
-}
-
-/// 建六种内置图元的网格句柄,建一次复用。索引 0 是 Cuboid,兼作阵列场景的方块。
-fn build_mesh_palette(app: &mut App) -> Vec<Handle<Mesh>> {
-    let mut meshes =
-        app.world_mut().resource_mut::<Assets<Mesh>>();
-    vec![
-        meshes.add(Cuboid::default()),
-        meshes.add(Sphere::default()),
-        meshes.add(Torus::default()),
-        meshes.add(Capsule3d::default()),
-        meshes.add(Cylinder::default()),
-        meshes.add(Cone::default()),
-    ]
-}
 
 /// 粒子用的圆片:12 段的扁平圆,躺在 XY 平面上正对相机(相机恒在 +Z 看向原点)。
 ///
@@ -1036,98 +725,9 @@ fn build_particle_mesh(app: &mut App) -> Handle<Mesh> {
     )
 }
 
-/// 按场景种类算出每个形状的 (网格句柄, 位置)。
-///
-/// - 画廊(scene_id==0):`count` 个形状沿 XZ 平面环形均布,网格在调色板里循环取,
-///   环半径随 `spacing` 放大 —— 逛一圈能看到不同图元。
-/// - 阵列(其它):`count` 个 Cuboid 排成近正方网格(边长 = ⌈√count⌉),`spacing` 是格距,
-///   整体居中于原点。
-fn compute_placements(
-    params: &SceneParams,
-    palette: &[Handle<Mesh>],
-) -> Vec<(Handle<Mesh>, Vec3)> {
-    let count = params.count.max(1) as usize;
-    if params.scene_id == 0 {
-        let radius = params.spacing * 1.5;
-        (0..count)
-            .map(|i| {
-                let a = std::f32::consts::TAU * i as f32
-                    / count as f32;
-                let mesh =
-                    palette[i % palette.len()].clone();
-                (
-                    mesh,
-                    Vec3::new(
-                        radius * a.cos(),
-                        0.0,
-                        radius * a.sin(),
-                    ),
-                )
-            })
-            .collect()
-    } else {
-        let dim = (count as f32).sqrt().ceil() as usize;
-        let offset =
-            (dim as f32 - 1.0) * params.spacing / 2.0;
-        (0..count)
-            .map(|i| {
-                let (col, row) = (i % dim, i / dim);
-                let pos = Vec3::new(
-                    col as f32 * params.spacing - offset,
-                    0.0,
-                    row as f32 * params.spacing - offset,
-                );
-                (palette[0].clone(), pos)
-            })
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 宽视口(长宽比 ≥ 参考比)不后撤 —— 桌面上的观感必须与改动前逐像素一致。
-    #[test]
-    fn wide_viewport_keeps_base_distance() {
-        assert_eq!(pullback(REFERENCE_ASPECT), 1.0);
-        assert_eq!(pullback(16.0 / 9.0), 1.0);
-        assert_eq!(pullback(100.0), 1.0);
-        assert_eq!(camera_pos(16.0 / 9.0), BASE_CAMERA_POS);
-    }
-
-    /// 竖视口按长宽比等比后撤 —— 水平视野随长宽比线性收窄,故距离须反比放大,
-    /// 横向排开的形状画廊才不会出画。整体缩放位置向量,俯视角不变。
-    #[test]
-    fn portrait_viewport_pulls_camera_back_proportionally()
-    {
-        // 长宽比减半 → 后撤一倍。
-        assert_eq!(pullback(0.5), 2.0);
-        assert_eq!(camera_pos(0.5), BASE_CAMERA_POS * 2.0);
-        // 手机竖屏的 3D 面板约 0.8:轻微后撤。
-        assert!(
-            (pullback(0.8) - 1.0 / 0.8).abs() < 1e-4,
-            "0.8 处应精确等于 参考比 / aspect"
-        );
-        // 视线方向(俯视角)必须与基线一致 —— 只退 z 会把转盘看成侧视的一条扁线。
-        let far = camera_pos(0.3).normalize();
-        let base = BASE_CAMERA_POS.normalize();
-        assert!(
-            (far - base).length() < 1e-5,
-            "后撤后视线方向变了:{far:?} vs {base:?}"
-        );
-    }
-
-    /// 参考比处连续 —— 断点两侧不能跳变,否则拖动窗口过临界点时 3D 画面会"咔"一下。
-    #[test]
-    fn distance_is_continuous_at_reference_aspect() {
-        let below = pullback(REFERENCE_ASPECT - 1e-3);
-        let above = pullback(REFERENCE_ASPECT + 1e-3);
-        assert!(
-            (below - above).abs() < 1e-2,
-            "参考比两侧应连续,实测 {below} vs {above}"
-        );
-    }
 
     /// 锚点在视锥内:深度门槛就是它自己的 NDC z,遮挡层据此只留更近的片元。
     #[test]
@@ -1161,22 +761,6 @@ mod tests {
                 ))),
                 EMPTY_OCCLUDER_DEPTH,
                 "NDC z = {z} 应该退回空遮挡层"
-            );
-        }
-    }
-
-    /// 退化输入不产生疯狂结果:长宽比为 0 / 负数 / NaN(窗口被拖到 1px、首帧未测量)时
-    /// 后撤倍数必须仍是有限正值,且封顶 —— 相机不能飞到无穷远。
-    #[test]
-    fn degenerate_aspect_is_clamped_to_finite_distance() {
-        for aspect in
-            [0.0, -1.0, f32::NAN, f32::INFINITY, 1e-9]
-        {
-            let k = pullback(aspect);
-            assert!(
-                k.is_finite()
-                    && (1.0..=MAX_PULLBACK).contains(&k),
-                "aspect {aspect} 得到不合理的后撤倍数 {k}"
             );
         }
     }

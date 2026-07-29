@@ -15,17 +15,19 @@ crate-type = ["cdylib"]
 ui.workspace = true
 log.workspace = true
 android_logger.workspace = true
-slint = { workspace = true, features = ["backend-android-activity-06"] }
-# 仅 bevy-3d feature 下启用;平时不编 bevy,android 构建保持轻量。
-render3d = { workspace = true, optional = true }
+# android 上渲染器强制是 skia(见 i-slint-backend-selector),unstable-wgpu-29
+# 会把它切到 wgpu 路径 —— 纹理共享的前提。native-activity 特性由
+# backend-android-activity-06 启用,与 bevy_android 共享同一个 android-activity 0.6,
+# 故其 wgpu device 可跨库共享。
+slint = { workspace = true, features = [
+    "backend-android-activity-06",
+    "unstable-wgpu-29",
+] }
+# 硬依赖,理由同 apps/desktop。
+render3d.workspace = true
 
 [features]
 default = []
 # 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 android 这边有一处不同,
 # 由 src/lib.rs 兜住:SLINT_MCP_PORT 是**构建期**的(APK 由系统启动,进程拿不到运行时环境变量)。
 mcp = ["slint/mcp"]
-# 嵌入 bevy 3D:拉进 render3d,并让 Slint 的 android 后端走 wgpu(skia-wgpu)。
-# android 上渲染器强制是 skia(见 i-slint-backend-selector),unstable-wgpu-29
-# 会把它切到 wgpu 路径。native-activity 特性由 backend-android-activity-06 启用,
-# 与 bevy_android 共享同一个 android-activity 0.6,故其 wgpu device 可跨库共享。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29"]

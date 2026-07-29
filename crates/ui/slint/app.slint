@@ -83,10 +83,6 @@ global Nav {
             label: "Music",
             icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
         },
-        {
-            label: "3D",
-            icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5",
-        },
     ];
 }
 
@@ -138,67 +134,6 @@ component NavItem inherits Rectangle {
 
     touch := TouchArea {
         clicked => { root.clicked(); }
-    }
-}
-
-// 一个带标签的文本输入,3D 热调面板复用。text 双向绑定到外部属性。
-//
-// 宽度**不写死**,由所在行分配 —— 原先固定 72px:窗口宽在 600~900px 之间时,
-// 「220px 按钮 + 4×72px」的固定内容比工具条还宽,后面的框直接被 GlassCard 裁掉。
-// 给个 56px 下限保证还认得出内容,其余交给 horizontal-stretch。
-component ParamField inherits VerticalLayout {
-    in property <string> label;
-    in-out property <string> text;
-    horizontal-stretch: 1;
-    spacing: 2px;
-    Text {
-        text: root.label;
-        color: #9aa0b4;
-        font-size: 11px;
-    }
-    // 高度也得钉:LineEdit 在 fluent 风格下默认 56px 高,label 一叠就 72px —— 比整条
-    // 64px 的工具条还高,下边框和清除按钮会被 GlassCard 的 clip 悄悄切掉(旧代码就这样,
-    // 一直没人发现)。40px 是个正常的输入框高度,工具条也才收得住。
-    LineEdit {
-        min-width: 56px;
-        height: 40px;
-        text <=> root.text;
-    }
-}
-
-// 四个参数框。宽版式一排四个;紧凑版式(stacked)排成 2×2 —— 手机上四个并排每个只剩
-// ~76px,「#4a6bff」被 LineEdit 的清除按钮挤得只看得见一个「#」,读都读不出来。
-//
-// 两个分支的绑定都关在本组件里:外面两处使用点只需拨 stacked,不会改了一处漏了另一处。
-component ParamRow inherits Rectangle {
-    in property <bool> stacked;
-    in-out property <string> count-text;
-    in-out property <string> color-text;
-    in-out property <string> speed-text;
-    in-out property <string> spacing-text;
-
-    if !root.stacked: HorizontalLayout {
-        width: 100%;
-        height: 100%;
-        spacing: 12px;
-        ParamField { label: "实体数"; text <=> root.count-text; }
-        ParamField { label: "基础色"; text <=> root.color-text; }
-        ParamField { label: "自转速度"; text <=> root.speed-text; }
-        ParamField { label: "间距"; text <=> root.spacing-text; }
-    }
-
-    if root.stacked: GridLayout {
-        width: 100%;
-        height: 100%;
-        spacing: 8px;
-        Row {
-            ParamField { label: "实体数"; text <=> root.count-text; }
-            ParamField { label: "基础色"; text <=> root.color-text; }
-        }
-        Row {
-            ParamField { label: "自转速度"; text <=> root.speed-text; }
-            ParamField { label: "间距"; text <=> root.spacing-text; }
-        }
     }
 }
 
@@ -549,29 +484,8 @@ export component MainWindow inherits Window {
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
     in property <string> sync-text;
-    // bevy 离屏渲染的 3D 画面,由 render3d 每帧推送(见 crates/render3d)。
-    // 桌面 / android 才会被设值;web / ios 上恒为空图(width == 0),下方面板据此隐藏,
-    // 无需在此写任何平台判断 —— 这就是「余端 graceful 缺省」的落点。
-    in property <image> scene-3d;
-    // 遮挡层:同一个场景,但只含**比注释卡片更近**的片元,其余透明(由 render3d 的
-    // 第二台相机画出)。盖在卡片之上,卡片就被 3D 物体逐像素挡住。
-    in property <image> occluder-3d;
-    // 3D 立方体的朝向(弧度),由「3D」页上的拖动累加得到,Rust 每帧读出后
-    // 传给 render3d 设为立方体的绝对朝向。水平拖动改 yaw,垂直拖动改 pitch。
-    in-out property <float> rot-yaw: 0;
-    in-out property <float> rot-pitch: 0;
-    // 当前选中的导航页:0=Home、1=Music、2=3D。由左侧导航栏点击设置。
+    // 当前选中的导航页:0=Home、1=Music。由左侧导航栏点击设置。
     in-out property <int> current-tab: 0;
-    // 3D 场景热调参数。Rust 每帧读这些原始文本,在信任边界解析+clamp(见 scene_params),
-    // 非法/越界退回上一个好值。scene-index:0=形状画廊、1=实体阵列。
-    in-out property <int> scene-index: 0;
-    in-out property <string> count-text: "8";
-    in-out property <string> color-text: "#4a6bff";
-    in-out property <string> speed-text: "0.0";
-    in-out property <string> spacing-text: "1.5";
-    // 3D 内容区的逻辑尺寸。Rust 每帧乘窗口缩放系数得物理像素,让 bevy 按该分辨率渲染。
-    out property <length> scene-w: content.width;
-    out property <length> scene-h: content.height;
     // 版式(Layout Mode):窄→紧凑(底部导航),宽→侧栏。**由运行时窗口宽度决定,不由端决定**
     // —— 桌面把窗口拖窄一样变成紧凑版式,这既是要的体验,也是唯一能在桌面验证移动版式的办法。
     // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
@@ -585,36 +499,14 @@ export component MainWindow inherits Window {
     init => { root.compact = root.width < 600px; }
     changed width => { root.compact = root.width < 600px; }
 
-    // 热调工具条的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
-    // Rust 每帧乘缩放系数交给 render3d 的玻璃 shader,让它精确模糊这块区域背后的画面
-    // (见 crates/render3d/src/glass.rs)。别在 Rust 里重抄这几个常量,改了留白会静默错位。
-    //
-    // 紧凑版式换行成两行(按钮一行、四个参数框一行),故高度跟着版式变。shader 全从
-    // uniform 读几何量,这里改完 Rust 和 WGSL 一行都不用动。
-    out property <length> glass-x: 16px;
-    out property <length> glass-y: 16px;
-    out property <length> glass-w: content.width - 2 * root.glass-x;
-    // 高度按内容算出来的。一个参数框 = 15(标签) + 2 + 40(LineEdit) = 57px。
-    // 宽版:8 + 57 + 8 ≈ 76px。紧凑版 = 8 + 56(按钮) + 8 + (57×2 + 8) + 8 = 202 → 取 204px。
-    out property <length> glass-h: root.compact ? 204px : 76px;
-    out property <length> glass-r: 18px;
-
-    // 注释卡片的几何量,逻辑像素,相对 3D 内容区左上角。**这里是唯一真相** ——
-    // 盖在卡片上的遮挡层要靠这几个值反推负偏移,才能和场景那张图逐像素对齐。
-    // 居中摆:转盘中心投影在画面正中,卡片钉在那儿,环上的形状转到近侧就压过来。
-    out property <length> card-w: 300px;
-    out property <length> card-h: 92px;
-    out property <length> card-x: (content.width - root.card-w) / 2;
-    out property <length> card-y: (content.height - root.card-h) / 2;
-    // 仅当 3D 页激活**且没被播放页盖住**时才驱动 bevy(省电)。Rust 每帧读它决定是否渲染。
-    out property <bool> render-active: root.current-tab == 2 && !root.play-page-open;
 
     // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
     // 回调 —— docs/adr/0010 的「功能等价路径」。
     in-out property <bool> play-page-open: false;
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
-    // 无 GPU 构建恒空图(width 0),覆层退回纯色底 —— 与 scene-3d 同一个缺省模式。
+    // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
+    // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> viz-bg;
     // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
     // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
@@ -746,13 +638,13 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // ── 内容区。三页共用这块矩形(scene-w/h 由它量出),按 current-tab 切换子内容 ──
+            // ── 内容区。两页共用这块矩形,按 current-tab 切换子内容 ──
             content := Rectangle {
                 horizontal-stretch: 1;
 
                 // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
                 // bevy 画面,本来就有内容可透。
-                if root.current-tab != 2: AuroraBackground {
+                AuroraBackground {
                     width: 100%;
                     height: 100%;
                 }
@@ -778,11 +670,6 @@ export component MainWindow inherits Window {
                             label: "Music";
                             icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16";
                             clicked => { root.current-tab = 1; }
-                        }
-                        EntryCard {
-                            label: "3D";
-                            icon: "M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z M12 3 L12 12 M12 12 L20 7.5 M12 12 L4 7.5";
-                            clicked => { root.current-tab = 2; }
                         }
                     }
                 }
@@ -969,151 +856,7 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // 3D:bevy 离屏画面铺满内容区,分辨率随 content 尺寸动态变化,拖动控制朝向。
-                // 空图(未就绪 / web·ios,或刚切进来还没渲染出首帧)时不渲染这块。
-                if root.current-tab == 2 && root.scene-3d.width > 0: Image {
-                    width: 100%;
-                    height: 100%;
-                    image-fit: fill;
-                    source: root.scene-3d;
-
-                    // 拖动累加朝向:按下记起点,拖动时把像素增量乘灵敏度加到 yaw/pitch。
-                    drag := TouchArea {
-                        property <length> last-x;
-                        property <length> last-y;
-                        pointer-event(e) => {
-                            if (e.kind == PointerEventKind.down) {
-                                drag.last-x = drag.mouse-x;
-                                drag.last-y = drag.mouse-y;
-                            }
-                        }
-                        moved => {
-                            root.rot-yaw += (drag.mouse-x - drag.last-x) / 1px * 0.01;
-                            root.rot-pitch += (drag.mouse-y - drag.last-y) / 1px * 0.01;
-                            drag.last-x = drag.mouse-x;
-                            drag.last-y = drag.mouse-y;
-                        }
-                    }
-                }
-
-                // 深度正确的 UI:一张真正的 Slint 卡片,被 bevy 场景里的物体逐像素挡住。
-                //
-                // 合成拆成三层 —— 场景(上面那张 Image)→ 卡片 → 遮挡层。遮挡层是 bevy
-                // 用第二台相机画的同一场景,深度缓冲预先清到卡片所在的深度,于是只剩
-                // "比卡片更近"的片元,其余透明(见 crates/render3d 的 spawn_occluder_camera)。
-                // Slint 这边只做寻常的 alpha 合成:它不需要懂深度,UI 也不必先渲进纹理。
-                //
-                // 外层 Rectangle 只干一件事:clip。遮挡层那张 Image 是**整块内容区**大小的
-                // ——它必须和场景那张逐像素对齐,才谈得上是同一个场景——所以用负偏移把它
-                // 推回内容区原点,再由这里裁到卡片范围。不裁的话,近处的物体会连工具条
-                // 一起盖住,那是错的:工具条是界面外壳,不在场景里。
-                if root.current-tab == 2 && root.occluder-3d.width > 0: Rectangle {
-                    x: root.card-x;
-                    y: root.card-y;
-                    width: root.card-w;
-                    height: root.card-h;
-                    clip: true;
-
-                    // passive:这是一张标签,不是控件。让开指针事件,拖动才能穿过它
-                    // 转动场景 —— 它正压在画面中心,吃掉事件的话那一块就转不动了。
-                    GlassCard {
-                        width: 100%;
-                        height: 100%;
-                        passive: true;
-                        VerticalLayout {
-                            padding: 14px;
-                            alignment: center;
-                            spacing: 4px;
-
-                            Text {
-                                text: "转盘中心";
-                                color: #e6e8ef;
-                                font-size: 15px;
-                            }
-                            Text {
-                                text: "近侧的物体会逐像素挡住它";
-                                color: #9aa0b4;
-                                font-size: 11px;
-                                wrap: word-wrap;
-                            }
-                        }
-                    }
-
-                    Image {
-                        x: -root.card-x;
-                        y: -root.card-y;
-                        width: content.width;
-                        height: content.height;
-                        image-fit: fill;
-                        source: root.occluder-3d;
-                    }
-                }
-
-                // 3D 热调面板:玻璃工具条浮在画面上,边调边看。场景切换用一个循环按钮(两个场景),
-                // 四个参数用原生 LineEdit。始终随 3D 页显示(不等首帧),故独立于上面的 Image 块。
-                //
-                // 这里是玻璃最有说服力的落点 —— 背后是真实的、会动的 bevy 画面,不像 Home/Server
-                // 那样得先铺一层极光出来给它透。四周留白 16px,让它"浮"在画面上而不是贴着顶边。
-                //
-                // 顺带修掉一个旧行为:原来是一个不吃事件的 Rectangle,在顶栏空白处拖动会**穿透**
-                // 下去转动 3D 模型。GlassCard 自带 TouchArea(读指针位置用),现在拖工具条不会
-                // 再误转场景了。
-                // 几何量取自上面的 glass-* 属性 —— 同一组值也交给了 render3d 的玻璃 shader,
-                // 两边必须严丝合缝对齐,否则模糊区和边框会错位。
-                //
-                // backdrop: true —— 背后那层模糊 + 折射 + 淡染由 shader 在 GPU 上做完了
-                // (bevy 的画面是我们自己画的,所以采样得到),这里只负责边框、厚度、阴影
-                // 和指针高光,自身的淡白底必须让开,否则白色叠两遍。
-                //
-                // 两个版式:宽版一行(按钮 + 四个参数框,参数框吃掉剩余宽度),紧凑版两行
-                // (按钮撑满一行,四个参数框一行)。参数框都会伸缩,所以任何宽度下都不被裁。
-                if root.current-tab == 2: GlassCard {
-                    x: root.glass-x;
-                    y: root.glass-y;
-                    width: root.glass-w;
-                    height: root.glass-h;
-                    radius: root.glass-r;
-                    backdrop: true;
-
-                    if !root.compact: HorizontalLayout {
-                        padding: 8px;
-                        padding-left: 12px;
-                        spacing: 12px;
-
-                        HoverButton {
-                            width: 160px;
-                            text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
-                            clicked => { root.scene-index = 1 - root.scene-index; }
-                        }
-                        ParamRow {
-                            count-text <=> root.count-text;
-                            color-text <=> root.color-text;
-                            speed-text <=> root.speed-text;
-                            spacing-text <=> root.spacing-text;
-                        }
-                    }
-
-                    if root.compact: VerticalLayout {
-                        padding: 8px;
-                        padding-left: 12px;
-                        spacing: 8px;
-
-                        HoverButton {
-                            width: root.glass-w - 20px;
-                            text: root.scene-index == 0 ? "形状画廊" : "实体阵列";
-                            clicked => { root.scene-index = 1 - root.scene-index; }
-                        }
-                        ParamRow {
-                            stacked: true;
-                            count-text <=> root.count-text;
-                            color-text <=> root.color-text;
-                            speed-text <=> root.speed-text;
-                            spacing-text <=> root.spacing-text;
-                        }
-                    }
-                }
-
-                // fps 浮层:content 的最后一个子元素 → 画在最上层,覆盖 3D 铺满的 Image。
+                // fps 浮层:content 的最后一个子元素 → 画在最上层。
                 // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
                 if root.show-fps: Text {
                     x: 8px;

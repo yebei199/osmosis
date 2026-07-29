@@ -18,9 +18,18 @@ env_logger.workspace = true
 # renderer-skia(而非 femtovg):inner-shadow 只在 Skia 上实现,而它是玻璃卡片
 # 厚度感的来源(见 crates/ui/slint/glass.slint)。顺带让桌面与 android 用上同一个
 # 渲染器 —— android 的后端本就强制 skia。理由与代价见 docs/adr/0006-*。
-slint = { workspace = true, features = ["backend-winit", "renderer-skia", "renderer-software"] }
-# 仅 bevy-3d feature 下启用;平时不编 bevy,桌面构建保持轻量、无需 vulkan。
-render3d = { workspace = true, optional = true }
+# unstable-wgpu-29 是纹理共享的前提:render3d 自建的 device 要能转发给 Slint。
+# 没有 renderer-skia-wgpu 这种 feature —— skia 的 wgpu 路径就是 renderer-skia +
+# unstable-wgpu-29,与 android 那边的组合一字不差。
+slint = { workspace = true, features = [
+    "backend-winit",
+    "renderer-skia",
+    "renderer-software",
+    "unstable-wgpu-29",
+] }
+# 硬依赖:播放页的粒子场、warp 与导航选中器全在它里面,没有它界面就只剩静态版式。
+# 运行期要 vulkan(见仓库根的 slint.nix)。
+render3d.workspace = true
 
 [features]
 default = []
@@ -43,8 +52,3 @@ default = []
 # 来手动补上游漏接的钩子,而 optional 依赖只能靠本地 feature 门控。两端同名以免记两套。
 # 代价照单收下:**别对本 workspace 跑 --all-features**(just ci 用的是 --all-targets)。
 mcp = ["slint/mcp"]
-# 嵌入 bevy 3D:拉进 render3d,并让 Slint 走 wgpu 渲染器(纹理共享的前提)。
-# 需要 vulkan 运行期库,用仓库根的 render3d.nix。
-# 没有 renderer-skia-wgpu 这种 feature —— skia 的 wgpu 路径就是 renderer-skia +
-# unstable-wgpu-29,与 android 那边的组合一字不差。
-bevy-3d = ["dep:render3d", "slint/unstable-wgpu-29"]
