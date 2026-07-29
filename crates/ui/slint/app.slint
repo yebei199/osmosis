@@ -627,8 +627,12 @@ export component MainWindow inherits Window {
     out property <length> viz-card-y: (root.height - root.viz-card-size) / 2 - 60px;
     // 歌词块的几何量,同样是唯一真相:它与封面卡**同处一个 z 平面**,因此可以
     // 复用同一张遮挡图,只是裁剪矩形不同 —— 粒子于是也从字的前后穿过。
-    // 两行(原文可能折行)+ 行距。紧凑版式字号更小但更容易折行,高度取一样够用。
-    out property <length> viz-lyric-h: 132px;
+    // 歌词块的高度**钉死**,不随文本长度变。平台会把整段词压成「一行」(实测见过
+    // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
+    // 原文最多三行、译文最多两行,按各自字号的行高估。
+    out property <length> viz-lyric-line-h: root.compact ? 84px : 120px;
+    out property <length> viz-lyric-tr-h: root.compact ? 40px : 46px;
+    out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
     out property <length> viz-lyric-y: root.viz-card-y + root.viz-card-size + 96px;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
     in property <image> cover-art;
@@ -1225,25 +1229,31 @@ export component MainWindow inherits Window {
             alignment: start;
             spacing: 10px;
 
-            // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),
-            // 故紧凑版式收一档;换行而不是省略号 —— 歌词截半句没有意义。
+            // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
+            // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
             Text {
                 width: root.width - 32px;
                 x: 16px;
+                height: root.viz-lyric-line-h;
                 text: root.lyric-line;
                 color: #f2f5ff;
                 font-size: root.compact ? 21px : 30px;
                 horizontal-alignment: center;
+                vertical-alignment: center;
                 wrap: word-wrap;
+                overflow: elide;
             }
             Text {
                 width: root.width - 32px;
                 x: 16px;
+                height: root.viz-lyric-tr-h;
                 text: root.lyric-translation;
                 color: #aab2c8;
                 font-size: root.compact ? 14px : 16px;
                 horizontal-alignment: center;
+                vertical-alignment: center;
                 wrap: word-wrap;
+                overflow: elide;
             }
         }
 
