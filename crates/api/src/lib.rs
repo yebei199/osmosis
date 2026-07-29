@@ -5,8 +5,8 @@
 //! `Send` 约束只存在于本 crate 内部的 `platform` 模块里。见 `docs/adr/0002`。
 
 use contract::{
-    HealthDto, PROTOCOL_VERSION, PlaySourceDto, SearchDto,
-    TracksDto,
+    HealthDto, LyricDto, PROTOCOL_VERSION, PlaySourceDto,
+    SearchDto, TracksDto,
 };
 
 /// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
@@ -139,6 +139,15 @@ fn play_url(track_id: &str) -> String {
     )
 }
 
+/// `/lyric/{track_id}` 的完整地址。id 同样要转义(理由见 [`play_url`])。
+fn lyric_url(track_id: &str) -> String {
+    format!(
+        "{}/lyric/{}",
+        base_url(),
+        encode_component(track_id)
+    )
+}
+
 /// 百分号编码一个 URL 组件。
 ///
 /// 手写而不是引 `percent-encoding`:规则就是"非 unreserved 字符逐字节转义",
@@ -160,6 +169,16 @@ fn encode_component(raw: &str) -> String {
         }
     }
     out
+}
+
+/// `GET /lyric/{track_id}`。
+///
+/// 没有歌词(纯音乐、上游未收录)时给**空行表**而不是错误 —— 这条语义从
+/// 服务端一路保持到这里,客户端据此隐藏歌词区,不必把它当故障处理。
+pub async fn lyric(
+    track_id: &str,
+) -> Result<LyricDto, ApiError> {
+    platform::get_json(lyric_url(track_id)).await
 }
 
 /// 拉取任意 URL 的原始字节(封面图这类二进制资源)。
@@ -397,6 +416,16 @@ mod tests {
         assert!(
             play_url("1375305989")
                 .ends_with("/play/1375305989"),
+            "id 没落在路径末尾"
+        );
+    }
+
+    /// 歌词地址与播放地址同构,id 一样要落在路径末尾。
+    #[test]
+    fn lyric_url_contains_track_id() {
+        assert!(
+            lyric_url("1375305989")
+                .ends_with("/lyric/1375305989"),
             "id 没落在路径末尾"
         );
     }
