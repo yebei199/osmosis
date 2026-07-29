@@ -155,10 +155,19 @@ pub struct Player {
 impl Player {
     /// 打开默认音频设备。
     pub fn new() -> Result<Self, AudioError> {
-        let device = DeviceSinkBuilder::open_default_sink()
-            .map_err(|e| {
-                AudioError::Device(e.to_string())
-            })?;
+        let mut device =
+            DeviceSinkBuilder::open_default_sink()
+                .map_err(|e| {
+                    AudioError::Device(e.to_string())
+                })?;
+        // 关掉 rodio 的 drop 提示,不是为了清静,是为了不 abort。
+        //
+        // 它的 Drop 体是 `self.log_on_drop && !std::thread::panicking()`
+        // (rodio-0.22.2 src/stream.rs:85),而 `std::thread::panicking()` 读的是
+        // TLS。本设备的最后一个 Arc 句柄可能在线程收尾、TLS 已析构之后才释放 ——
+        // 那时读它会 panic,drop 里 panic 直接 `fatal runtime error`,exit 134。
+        // `&&` 短路:置假之后整个 Drop 体不碰 TLS。见 issue #15。
+        device.log_on_drop(false);
         let player =
             rodio::Player::connect_new(device.mixer());
 
