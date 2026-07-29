@@ -15,6 +15,20 @@ pub struct VizControls {
     pub audio: [u8; VIZ_AUDIO_BYTES],
 }
 
+/// 一帧播放页视觉的三张图:warp 背景、粒子场景、遮挡层。
+///
+/// 覆层按「warp → 粒子 → 封面卡 → 遮挡层(裁到卡片)→ 控制簇」五层合成
+/// (docs/adr/0010)。无 bevy 的端把场景与遮挡给成空图(width 0),
+/// 覆层自动退回第一步的 warp 形态,.slint 里零平台判断。
+pub struct VizImages {
+    /// 反馈 warp 背景,铺满整窗。
+    pub warp: slint::Image,
+    /// 粒子场景,透明底,叠在 warp 之上。
+    pub scene: slint::Image,
+    /// 遮挡层:只含比封面卡锚点更近的片元,由 .slint 裁到卡片矩形。
+    pub occluder: slint::Image,
+}
+
 /// 可视化的数据来源。原生是频谱分析器的句柄;wasm 没有原生音频栈,
 /// 用 `Infallible` 占位 —— 恒为 `None`,取帧代码不必写平台判断。
 #[cfg(not(target_arch = "wasm32"))]

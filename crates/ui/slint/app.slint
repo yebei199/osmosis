@@ -616,6 +616,15 @@ export component MainWindow inherits Window {
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 构建恒空图(width 0),覆层退回纯色底 —— 与 scene-3d 同一个缺省模式。
     in property <image> viz-bg;
+    // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
+    // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
+    in property <image> viz-scene;
+    in property <image> viz-occluder;
+    // 封面深度卡的几何,逻辑像素。**这里是唯一真相**:卡片摆位与遮挡层的裁剪
+    // 负偏移都从这几个值算,别在别处重抄(与 3D 页 card-* 同一个模式)。
+    out property <length> viz-card-size: 220px;
+    out property <length> viz-card-x: (root.width - root.viz-card-size) / 2;
+    out property <length> viz-card-y: (root.height - root.viz-card-size) / 2 - 60px;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
     in property <image> cover-art;
     // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
@@ -1128,8 +1137,9 @@ export component MainWindow inherits Window {
     }
 
     // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
-    // 装饰(warp 视觉、封面卡)与功能(底部 ControlCluster)分层:装饰将来入 3D
-    // 可被粒子遮挡,功能永远在最上层 2D、点得到 —— docs/adr/0010。
+    // 五层合成:warp 背景 → 粒子场景 → 封面深度卡 → 遮挡层(裁到卡片)→ 控制簇。
+    // 封面是第一张深度卡片:遮挡层只含比卡片锚点更近的粒子,盖上来就是「粒子从
+    // 封面前面掠过」;功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
     if root.play-page-open: Rectangle {
         // 兜底纯色底:无 GPU 构建(viz-bg 恒空)也得是完整的深色沉浸层。
         background: #0b0d13;
@@ -1141,84 +1151,104 @@ export component MainWindow inherits Window {
             source: root.viz-bg;
         }
 
+        // 粒子场景:透明底,叠在 warp 上。远侧粒子在这层被封面卡盖住,
+        // 近侧粒子由下面的遮挡层重新盖回卡片之上 —— 深度由此闭环。
+        if root.viz-scene.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            image-fit: fill;
+            source: root.viz-scene;
+        }
+
         // 点视觉区任意处收起。压在视觉之上、内容之下 —— 控制键各有 TouchArea,
         // 不会误触到这层;封面与文字是纯展示,点它们也算「点空白」。
         TouchArea {
             clicked => { root.play-page-open = false; }
         }
 
-        VerticalLayout {
-            padding-top: root.safe-area-insets.top + 24px;
-            padding-left: root.safe-area-insets.left + 24px;
-            padding-right: root.safe-area-insets.right + 24px;
-            padding-bottom: root.safe-area-insets.bottom + 24px;
-            spacing: 20px;
+        // 封面深度卡。几何取 viz-card-*(唯一真相);无封面时留半透明玻璃底,
+        // 深度遮挡的观感不依赖封面是否取到。
+        Rectangle {
+            x: root.viz-card-x;
+            y: root.viz-card-y;
+            width: root.viz-card-size;
+            height: root.viz-card-size;
+            border-radius: 20px;
+            clip: true;
+            background: #17110daa;
+            // 描一圈细边,封面亮色时不至于和视觉糊在一起。
+            border-width: 1px;
+            border-color: #ffffff22;
 
-            // 封面卡 + 歌名:居中浮在视觉之上。第二步这块整体搬进 3D 当深度卡片。
-            Rectangle {
-                vertical-stretch: 1;
-
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 18px;
-
-                    if root.cover-art.width > 0: HorizontalLayout {
-                        alignment: center;
-                        Rectangle {
-                            width: 220px;
-                            height: 220px;
-                            border-radius: 20px;
-                            clip: true;
-                            // 描一圈细边,封面亮色时不至于和视觉糊在一起。
-                            border-width: 1px;
-                            border-color: #ffffff22;
-                            Image {
-                                width: 100%;
-                                height: 100%;
-                                image-fit: cover;
-                                source: root.cover-art;
-                            }
-                        }
-                    }
-
-                    Text {
-                        text: root.now-title;
-                        color: #e6e8ef;
-                        font-size: 22px;
-                        horizontal-alignment: center;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: root.now-artists;
-                        color: #9aa0b4;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        overflow: elide;
-                    }
-                }
+            if root.cover-art.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: root.cover-art;
             }
+        }
 
-            // 功能层:同一组回调,与音乐页的控制条完全等价。
-            HorizontalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 340px;
-                    height: 60px;
-                    border-radius: 16px;
-                    background: #17110daa;
-                    border-width: 1px;
-                    border-color: #ffffff10;
+        // 歌名与歌手:卡片正下方。平台数据任意 CJK,不指定子集字体。
+        Text {
+            y: root.viz-card-y + root.viz-card-size + 24px;
+            width: 100%;
+            text: root.now-title;
+            color: #e6e8ef;
+            font-size: 22px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            y: root.viz-card-y + root.viz-card-size + 58px;
+            width: 100%;
+            text: root.now-artists;
+            color: #9aa0b4;
+            font-size: 14px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
 
-                    HorizontalLayout {
-                        alignment: center;
-                        ControlCluster {
-                            is-playing: root.is-playing;
-                            shuffle-on <=> root.shuffle-on;
-                            prev => { root.prev-track(); }
-                            toggle => { root.toggle-play(); }
-                            next => { root.next-track(); }
-                            shuffle-toggled => { root.shuffle-toggled(); }
-                        }
+        // 遮挡层:整窗大小的图必须与场景那张逐像素对齐,故用负偏移推回窗口原点,
+        // 再裁到卡片矩形 —— 与 3D 演示页「转盘中心」卡同一套机关。
+        if root.viz-occluder.width > 0: Rectangle {
+            x: root.viz-card-x;
+            y: root.viz-card-y;
+            width: root.viz-card-size;
+            height: root.viz-card-size;
+            clip: true;
+
+            Image {
+                x: -root.viz-card-x;
+                y: -root.viz-card-y;
+                width: root.width;
+                height: root.height;
+                image-fit: fill;
+                source: root.viz-occluder;
+            }
+        }
+
+        // 功能层:同一组回调,与音乐页的控制条完全等价。
+        HorizontalLayout {
+            y: root.height - 60px - root.safe-area-insets.bottom - 24px;
+            height: 60px;
+            alignment: center;
+            Rectangle {
+                width: 340px;
+                height: 60px;
+                border-radius: 16px;
+                background: #17110daa;
+                border-width: 1px;
+                border-color: #ffffff10;
+
+                HorizontalLayout {
+                    alignment: center;
+                    ControlCluster {
+                        is-playing: root.is-playing;
+                        shuffle-on <=> root.shuffle-on;
+                        prev => { root.prev-track(); }
+                        toggle => { root.toggle-play(); }
+                        next => { root.next-track(); }
+                        shuffle-toggled => { root.shuffle-toggled(); }
                     }
                 }
             }
