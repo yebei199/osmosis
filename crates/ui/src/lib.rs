@@ -52,11 +52,13 @@ const MAX_TAB: i32 = 2;
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui(initial_tab: i32) -> (MainWindow, viz::Source) {
+fn build_ui(
+    initial_tab: i32,
+) -> (MainWindow, viz::Source, music::LyricFeed) {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    let viz_source = music::bind(&ui);
+    let (viz_source, lyrics) = music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
@@ -69,7 +71,7 @@ fn build_ui(initial_tab: i32) -> (MainWindow, viz::Source) {
     {
         ui.set_current_tab(tab.clamp(0, MAX_TAB));
     }
-    (ui, viz_source)
+    (ui, viz_source, lyrics)
 }
 
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
@@ -77,7 +79,7 @@ fn build_ui(initial_tab: i32) -> (MainWindow, viz::Source) {
 /// 各平台入口在初始化好渲染后端后调用。不带 3D 的普通路径(web / ios,以及
 /// 未启用 3D 的桌面)走这里。
 pub fn run() {
-    let (ui, _viz_source) = build_ui(0);
+    let (ui, _viz_source, _lyrics) = build_ui(0);
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
@@ -171,7 +173,7 @@ pub fn run_with_renderers(
     ) -> Option<VizImages>
     + 'static,
 ) {
-    let (ui, viz_source) = build_ui(initial_tab);
+    let (ui, viz_source, lyrics) = build_ui(initial_tab);
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -204,6 +206,9 @@ pub fn run_with_renderers(
     // 都从定格处继续,不跳变。
     let mut viz_time = 0.0f32;
     let mut viz_last: Option<web_time::Instant> = None;
+    // 上一次推给界面的歌词 (代际, 行号)。只在换行/换歌时推 —— 每帧无脑 set
+    // 会把属性标脏,暂停定格与失焦零重绘就都白设了。
+    let mut lyric_shown: Option<(u64, usize)> = None;
     // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
     // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
     // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
@@ -272,6 +277,36 @@ pub fn run_with_renderers(
                     nav_last_ll = Some((lead, lag));
                     nav_last_size =
                         Some((strip_w, strip_h));
+                }
+            }
+
+            // ── 播放页歌词 ──
+            // 只在覆层展开时跟随:收起时歌词不可见,读位置纯属白耗。
+            // 暂停时位置不前进,行自然定格,与省电门天然一致。
+            if ui.get_play_page_open() {
+                match lyrics.current() {
+                    Some((generation, index, text, tr))
+                        if lyric_shown
+                            != Some((
+                                generation, index,
+                            )) =>
+                    {
+                        ui.set_lyric_line(text.into());
+                        ui.set_lyric_translation(tr.into());
+                        lyric_shown =
+                            Some((generation, index));
+                    }
+                    None if lyric_shown.is_some() => {
+                        // 换歌后的前奏:清空,不留上一首的最后一行。
+                        ui.set_lyric_line(
+                            slint::SharedString::new(),
+                        );
+                        ui.set_lyric_translation(
+                            slint::SharedString::new(),
+                        );
+                        lyric_shown = None;
+                    }
+                    _ => {}
                 }
             }
 
