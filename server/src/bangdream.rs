@@ -70,19 +70,161 @@ pub fn play_source_to_dto(
 ///
 /// 只取行级时间轴:逐字档位下上游已把整行 `text` 拼好(见 proto 的 `LyricLine`
 /// 注释),行级消费方因此不必关心上游给的是哪一档。罗马音暂无消费者,不带。
+///
+/// 翻完过一道 [`split_long_lines`]:平台给的行粒度不可控,超长行要在这里切开。
 pub fn lyric_to_dto(lyric: proto::Lyric) -> LyricDto {
     LyricDto {
-        lines: lyric
-            .lines
-            .into_iter()
-            .map(|line| LyricLineDto {
-                start_ms: line.start_ms,
-                end_ms: line.end_ms,
-                text: line.text,
-                translation: non_empty(line.translation),
-            })
-            .collect(),
+        lines: split_long_lines(
+            lyric
+                .lines
+                .into_iter()
+                .map(|line| LyricLineDto {
+                    start_ms: line.start_ms,
+                    end_ms: line.end_ms,
+                    text: line.text,
+                    translation: non_empty(line.translation),
+                })
+                .collect(),
+        ),
     }
+}
+
+/// 超过多少个字符才算「超长」,需要二次切分。
+///
+/// 这是个粗糙代理量:真正决定折几行的是渲染宽度与字号,而本层不知道客户端是
+/// 宽版式还是 compact,更不知道中文字符比拉丁字符宽。取 100 是照实测卡的 ——
+/// issue #21 里 109 字符折三行、控制条干净,198 字符折六行才撑破布局。
+/// ponytail: 字符数够用就先用字符数;真要精确得让客户端把可用宽度报上来。
+const MAX_LINE_CHARS: usize = 100;
+
+/// 可以断行的标点。断在它**之后**,标点跟着上一段走。
+///
+/// 只收句读级的,不收引号与括号 —— 在 `(` 之后断开会留下一个孤儿括号。
+const BREAKS: [char; 12] = [
+    ',', '.', ';', '!', '?', '，', '。', '；', '！', '？',
+    '、', '…',
+];
+
+/// 超长行按标点二次切分,时刻线性摊到切出的各段上。
+///
+/// 为什么在这一层做:平台给的行粒度不可控,一行 198 字符的整段词推到播放页
+/// 会撑破布局(见 issue #21)。切分是对上游脏数据的归一,和 `non_empty` 同类,
+/// 不是画法 —— 所有客户端都该拿到同样粒度的行。
+///
+/// 取整表而非逐行:上游的 `end_ms` 常常缺席,那时唯一的终点线索是**下一行**的
+/// 起点,单看一行插不出时间。
+fn split_long_lines(
+    lines: Vec<LyricLineDto>,
+) -> Vec<LyricLineDto> {
+    let ends: Vec<Option<i64>> = (0..lines.len())
+        .map(|index| effective_end(&lines, index))
+        .collect();
+
+    lines
+        .into_iter()
+        .zip(ends)
+        .flat_map(|(line, end)| split_one(line, end))
+        .collect()
+}
+
+/// 某一行的有效终点。`None` 表示无从插值,该行不切。
+///
+/// `end_ms` 缺席时上游给的是 `start_ms` 本身(见契约里 `LyricLineDto` 的注释),
+/// 故判据是"严格大于"而不是"非零"。
+fn effective_end(
+    lines: &[LyricLineDto],
+    index: usize,
+) -> Option<i64> {
+    let start = lines[index].start_ms;
+    if lines[index].end_ms > start {
+        return Some(lines[index].end_ms);
+    }
+    lines
+        .get(index + 1)
+        .map(|next| next.start_ms)
+        .filter(|next| *next > start)
+}
+
+/// 切一行。三种情况原样返回:无从插值、本就不长、没有标点可断。
+///
+/// 没有标点时**不**硬切:按字数切会把单词劈成两半,比省略号更难读。
+fn split_one(
+    line: LyricLineDto,
+    end: Option<i64>,
+) -> Vec<LyricLineDto> {
+    let Some(end) = end else { return vec![line] };
+    if line.text.chars().count() <= MAX_LINE_CHARS {
+        return vec![line];
+    }
+
+    let chunks = pack(break_at_punctuation(&line.text));
+    if chunks.len() < 2 {
+        return vec![line];
+    }
+
+    // 按字数线性摊时间。总数取切分后的字数之和 —— 断点处被 trim 掉的空格
+    // 不占时长,用它做分母才让各段的起点落在原文的比例位置上。
+    let total: usize =
+        chunks.iter().map(|c| c.chars().count()).sum();
+    let span = end - line.start_ms;
+    let mut consumed = 0usize;
+
+    chunks
+        .into_iter()
+        .map(|text| {
+            let start = line.start_ms
+                + span * consumed as i64 / total as i64;
+            consumed += text.chars().count();
+            LyricLineDto {
+                start_ms: start,
+                end_ms: line.start_ms
+                    + span * consumed as i64 / total as i64,
+                text,
+                translation: line.translation.clone(),
+            }
+        })
+        .collect()
+}
+
+/// 在标点之后断开。段内**保留原样**(含前导空格),拼起来必须等于原文 ——
+/// 中文没有词间空格,靠拼接时补空格会凭空塞出分隔符。
+fn break_at_punctuation(text: &str) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if BREAKS.contains(&ch) {
+            pieces.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        pieces.push(current);
+    }
+    pieces
+}
+
+/// 贪心合并相邻片段,直到再加一片就超阈值。
+///
+/// 贪心而非等分:等分会把"就差两个字"的一片单独甩成一段,读起来更碎。
+fn pack(pieces: Vec<String>) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    for piece in pieces {
+        match chunks.last_mut() {
+            Some(last)
+                if last.chars().count()
+                    + piece.chars().count()
+                    <= MAX_LINE_CHARS =>
+            {
+                last.push_str(&piece);
+            }
+            _ => chunks.push(piece),
+        }
+    }
+    chunks
+        .into_iter()
+        .map(|chunk| chunk.trim().to_owned())
+        .filter(|chunk| !chunk.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -90,6 +232,153 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 造一行契约歌词。切分只看时刻与文本,译文单独在对应用例里给。
+    fn dto_line(
+        start_ms: i64,
+        end_ms: i64,
+        text: &str,
+    ) -> LyricLineDto {
+        LyricLineDto {
+            start_ms,
+            end_ms,
+            text: text.to_owned(),
+            translation: None,
+        }
+    }
+
+    /// 一行 108 字符的英文,带足够多的逗号可切。
+    const LONG: &str = "So I do, I still feel the same, guess I play this guitar, hoping that tomorrow I can say, I'm doing fine";
+
+    /// 短行原样通过,一个字段都不动。
+    #[test]
+    fn short_lines_pass_through_unchanged() {
+        let lines = vec![
+            dto_line(0, 1_000, "短短一行"),
+            dto_line(1_000, 2_000, "another short one"),
+        ];
+        assert_eq!(split_long_lines(lines.clone()), lines);
+    }
+
+    /// 超长行在标点处断开,切出的每段都不再超阈值。
+    #[test]
+    fn long_line_splits_at_punctuation() {
+        let out =
+            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
+        assert!(
+            out.len() > 1,
+            "108 字符的行应当被切开,实际 {} 段",
+            out.len()
+        );
+        for line in &out {
+            assert!(
+                line.text.chars().count() <= MAX_LINE_CHARS,
+                "切出的段仍超阈值:{:?}",
+                line.text
+            );
+        }
+        // 切分只断开,不吞字:各段接起来还是原文(容许断点处的空格被吃掉)。
+        let rejoined: String = out
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(rejoined, LONG);
+    }
+
+    /// 切出的段按字数线性分配时刻:首段起点等于原行起点,末段不越过原行终点。
+    #[test]
+    fn split_lines_share_the_original_time_span() {
+        let out = split_long_lines(vec![dto_line(
+            10_000, 14_000, LONG,
+        )]);
+        assert_eq!(out[0].start_ms, 10_000);
+        assert!(
+            out.last().unwrap().end_ms <= 14_000,
+            "末段越过了原行终点"
+        );
+        // 时刻必须单调递增,否则 current_line 会选错行。
+        for pair in out.windows(2) {
+            assert!(
+                pair[0].start_ms < pair[1].start_ms,
+                "切出的段时刻没有递增:{:?}",
+                out
+            );
+        }
+    }
+
+    /// 上游没给 end_ms(与 start_ms 相同)时,拿下一行的起点当终点插值。
+    #[test]
+    fn missing_end_ms_falls_back_to_next_line_start() {
+        let out = split_long_lines(vec![
+            dto_line(10_000, 10_000, LONG),
+            dto_line(14_000, 14_000, "下一句"),
+        ]);
+        let split: Vec<_> = out
+            .iter()
+            .filter(|line| line.start_ms < 14_000)
+            .collect();
+        assert!(split.len() > 1, "有下一行兜底时应当切开");
+        for line in &split {
+            assert!(
+                line.start_ms < 14_000,
+                "切出的段越过了下一行的起点"
+            );
+        }
+    }
+
+    /// 末行且没有 end_ms:无从插值,不切,原样留给 UI 省略号。
+    #[test]
+    fn last_line_without_end_ms_is_left_alone() {
+        let lines = vec![dto_line(10_000, 10_000, LONG)];
+        assert_eq!(split_long_lines(lines.clone()), lines);
+    }
+
+    /// 超长但一个标点都没有:不硬切,原样保留 —— 硬切会把单词劈成两半。
+    #[test]
+    fn long_line_without_punctuation_is_left_alone() {
+        let text = "a".repeat(MAX_LINE_CHARS + 50);
+        let lines = vec![dto_line(0, 4_000, &text)];
+        assert_eq!(split_long_lines(lines.clone()), lines);
+    }
+
+    /// 译文跟着切出的每一段走:三段期间译文行不闪不变。
+    #[test]
+    fn split_carries_the_translation() {
+        let mut line = dto_line(0, 4_000, LONG);
+        line.translation = Some("我还是老样子".to_owned());
+        let out = split_long_lines(vec![line]);
+        assert!(out.len() > 1);
+        for segment in &out {
+            assert_eq!(
+                segment.translation.as_deref(),
+                Some("我还是老样子")
+            );
+        }
+    }
+
+    /// 切点落在 UTF-8 字符边界上,整行中文不 panic。
+    #[test]
+    fn split_does_not_break_multibyte_chars() {
+        let text = "我弹着吉他,盼着明天,能说一句我很好,"
+            .repeat(6);
+        let out =
+            split_long_lines(vec![dto_line(0, 4_000, &text)]);
+        assert!(out.len() > 1);
+        for segment in &out {
+            assert!(!segment.text.is_empty());
+        }
+    }
+
+    /// 空行与纯空白:不 panic,也不产生空段。
+    #[test]
+    fn empty_lines_are_safe() {
+        let lines = vec![
+            dto_line(0, 1_000, ""),
+            dto_line(1_000, 2_000, "   "),
+        ];
+        assert_eq!(split_long_lines(lines.clone()), lines);
+    }
 
     /// 造一行上游歌词。
     fn proto_line(
