@@ -86,6 +86,21 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
   上一帧纹理,GPU 归零;`time` 由 ui 的播放页时钟给,门关时钟停,重开从定格处继续。
 - 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
 
+## 播放页粒子场(`particles.rs` + `Scene` 的 viz 模式)
+
+播放页第二步(issue #11):数百个半透明小球绕封面卡锚点([`CARD_ANCHOR`])的三层
+轨道壳运动,轨道面穿过卡片平面,粒子转一圈就从封面前面掠到后面 —— 深度遮挡的
+运动形态。与 3D 演示页共用同一个 bevy App 与双目标纹理,`Content` 枚举记录当前
+装的是哪种内容,切换即重建(演示页驱动入口 `render_frame`、播放页 `render_viz_frame`,
+二者由 ui 的门保证互斥);粒子模式下主相机清屏透明,场景图叠在 warp 背景之上。
+
+- `particles.rs` 是纯计算:`band_levels` 把频谱行拆低/中/高三段,`particle_pose`
+  给出金角轨道壳上第 i 个粒子的位姿 —— 低频撑轨道呼吸、各壳绑各自频段撑缩放脉动、
+  时间只推方位角与纵向浮动。纯函数带单元测试(有界性、呼吸单调、静音可见);
+  每帧由 `render_viz_frame` 把结果直写 Transform,不走 bevy system。
+- 粒子上色是 aurora 同调五色的 unlit + Blend 半透明,发光观感来自暗底叠色,
+  不引 HDR/bloom。
+
 ## 深度正确的 UI(遮挡层)
 
 Slint 的合成没有深度:3D 画面对它只是一张 `Image`,任何 Slint 控件都恒在其上。要让场景

@@ -50,6 +50,8 @@ pub use navglass::{NavGlassPass, NavParams};
 mod warp;
 pub use warp::{AUDIO_BYTES, WarpPass};
 
+mod particles;
+
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
 
@@ -105,6 +107,18 @@ impl SceneParams {
     }
 }
 
+/// 场景当前装的是哪种内容:3D 演示页的参数化转盘,或播放页的粒子场。
+///
+/// 两种内容共用同一个 bevy App 与双目标纹理,靠各自的驱动入口互斥
+/// (播放页盖住 3D 页时 `render-active` 为假,见 crates/ui)。切换即重建。
+#[derive(Clone, Copy, PartialEq)]
+enum Content {
+    /// 演示转盘,按 [`SceneParams::content_key`] 判断参数是否变了。
+    Demo((i32, u32, u32, u32)),
+    /// 播放页粒子场,内容固定,位置每帧由 [`particles::particle_pose`] 直写。
+    Viz,
+}
+
 /// 一个自持的 bevy 离屏渲染场景。
 ///
 /// 持有 bevy `App`、离屏目标图的句柄、被拖动的立方体实体,以及一次性包装好的
@@ -127,8 +141,10 @@ pub struct Scene {
     occluder_camera: Entity,
     /// 六种内置图元的网格句柄,建一次复用。索引 0(Cuboid)兼作阵列场景的方块。
     mesh_palette: Vec<Handle<Mesh>>,
-    /// 上一帧的场景参数;`content_key` 变化才重建内容。首帧为 `None`,必重建。
-    last_key: Option<(i32, u32, u32, u32)>,
+    /// 上一帧装的内容(演示参数 key 或粒子场);变化才重建。首帧为 `None`,必重建。
+    last_content: Option<Content>,
+    /// 粒子场的子实体,下标即 `particles::particle_pose` 的 `i`。仅粒子内容存在时非空。
+    particle_entities: Vec<Entity>,
     /// 累积自转角(弧度),每帧加 `spin_speed`,叠加到 yaw。
     spin_angle: f32,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
@@ -292,7 +308,8 @@ impl Scene {
             occluder_target,
             occluder_camera,
             mesh_palette,
-            last_key: None,
+            last_content: None,
+            particle_entities: Vec::new(),
             spin_angle: 0.0,
             size: (WIDTH, HEIGHT),
             image: None,
@@ -343,10 +360,14 @@ impl Scene {
         }
 
         // 场景/数量/颜色/间距变了才重建内容(despawn 子树 + bsn! 重造);朝向类参数不触发。
-        let key = params.content_key();
-        if self.last_key != Some(key) {
+        // 从粒子场切回来也走这里 —— Content 不同即重建,顺带把清屏色还原成默认。
+        let key = Content::Demo(params.content_key());
+        if self.last_content != Some(key) {
             self.rebuild_content(params);
-            self.last_key = Some(key);
+            self.set_camera_clear(
+                ClearColorConfig::Default,
+            );
+            self.last_content = Some(key);
         }
 
         // 自转累积,叠加到拖动的 yaw 上,整群当转盘转。
@@ -397,6 +418,98 @@ impl Scene {
                 Camera3dDepthLoadOp::Clear(depth);
         }
 
+        self.drive_and_finish(glass_on, depth)
+    }
+
+    /// 播放页粒子场的一帧:与 [`Scene::render_frame`] 平行的驱动入口。
+    ///
+    /// `time` 是播放页时钟(秒,门关即冻结,见 crates/ui);`audio` 是
+    /// `spectrum` 布局的载荷(频谱行在前),只用前 512 字节拆频段;
+    /// 粒子位置与缩放每帧由 [`particles::particle_pose`] 算好直写 Transform。
+    /// 返回 (场景, 遮挡层) 两张图,遮挡合成语义与演示页完全一致。
+    pub fn render_viz_frame(
+        &mut self,
+        time: f32,
+        audio: &[u8],
+        width: u32,
+        height: u32,
+    ) -> (slint::Image, slint::Image) {
+        if width > 0
+            && height > 0
+            && (width, height) != self.size
+        {
+            self.resize(width, height);
+        }
+
+        if self.last_content != Some(Content::Viz) {
+            self.rebuild_viz_content();
+            // 粒子图要叠在 warp 背景上,没画到的像素必须透明。
+            self.set_camera_clear(
+                ClearColorConfig::Custom(Color::NONE),
+            );
+            self.last_content = Some(Content::Viz);
+        }
+
+        let levels = particles::band_levels(
+            audio.get(..512).unwrap_or(&[]),
+        );
+        for (i, entity) in
+            self.particle_entities.iter().enumerate()
+        {
+            let (pos, scale) =
+                particles::particle_pose(i, time, &levels);
+            if let Some(mut transform) = self
+                .app
+                .world_mut()
+                .get_mut::<Transform>(*entity)
+            {
+                transform.translation = pos;
+                transform.scale = Vec3::splat(scale);
+            }
+        }
+
+        // 粒子场不做玻璃工具条;遮挡门槛与演示页同一套锚点机制。
+        {
+            let mut cam = self
+                .app
+                .world_mut()
+                .entity_mut(self.camera);
+            cam.remove::<glass::GlassMaterial>();
+        }
+        let depth = self.anchor_depth();
+        if let Some(mut cam3d) =
+            self.app
+                .world_mut()
+                .get_mut::<Camera3d>(self.occluder_camera)
+        {
+            cam3d.depth_load_op =
+                Camera3dDepthLoadOp::Clear(depth);
+        }
+
+        self.drive_and_finish(false, depth)
+    }
+
+    /// 改主相机的清屏配置。演示页用默认底色,粒子场用透明(叠在 warp 上)。
+    fn set_camera_clear(
+        &mut self,
+        clear: ClearColorConfig,
+    ) {
+        if let Some(mut cam) = self
+            .app
+            .world_mut()
+            .get_mut::<Camera>(self.camera)
+        {
+            cam.clear_color = clear;
+        }
+    }
+
+    /// update 一帧并把两张离屏纹理(按身份缓存)包装成 Image 交回。
+    /// [`Scene::render_frame`] 与 [`Scene::render_viz_frame`] 的公共后半段。
+    fn drive_and_finish(
+        &mut self,
+        glass_on: bool,
+        depth: f32,
+    ) -> (slint::Image, slint::Image) {
         let t_update = Instant::now();
         self.app.update();
         self.perf.0 +=
@@ -641,6 +754,81 @@ impl Scene {
             .count();
         log::info!(
             "render3d: 场景重建完成,可渲染实体 {meshes} 个"
+        );
+    }
+
+    /// 重建播放页粒子场:despawn 旧内容,生成 [`particles::PARTICLE_COUNT`] 个
+    /// 半透明小球,子实体句柄按下标存进 `particle_entities`,供每帧直写位姿。
+    ///
+    /// 位姿不在这里定 —— 首帧就会被 [`particles::particle_pose`] 覆盖,初始缩放
+    /// 给 0(不可见),避免重建那一帧在原点闪一坨。
+    fn rebuild_viz_content(&mut self) {
+        self.app
+            .world_mut()
+            .entity_mut(self.root)
+            .despawn();
+        self.particle_entities.clear();
+
+        // aurora 同调的五种 unlit 颜色轮流上;「发光感」来自纯色 + Blend 半透明
+        // 叠在暗背景上,不引 HDR/bloom 一整套。
+        let colors = [
+            Color::srgba(0.486, 0.227, 0.929, 0.85), // 紫
+            Color::srgba(0.145, 0.388, 0.922, 0.85), // 蓝
+            Color::srgba(0.024, 0.714, 0.831, 0.85), // 青
+            Color::srgba(0.925, 0.282, 0.600, 0.85), // 粉
+            Color::srgba(0.780, 0.860, 1.000, 0.85), // 冷白
+        ];
+        let materials: Vec<_> = {
+            let mut assets = self
+                .app
+                .world_mut()
+                .resource_mut::<Assets<StandardMaterial>>();
+            colors
+                .iter()
+                .map(|color| {
+                    assets.add(StandardMaterial {
+                        base_color: *color,
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    })
+                })
+                .collect()
+        };
+        // 球体网格:palette 下标 1(见 build_mesh_palette 的顺序注释)。
+        let mesh = self.mesh_palette[1].clone();
+
+        let root = self
+            .app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                Visibility::Visible,
+            ))
+            .id();
+        for i in 0..particles::PARTICLE_COUNT {
+            let material =
+                materials[i % materials.len()].clone();
+            let child = self
+                .app
+                .world_mut()
+                .spawn((
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material),
+                    Transform::from_scale(Vec3::ZERO),
+                ))
+                .id();
+            self.app
+                .world_mut()
+                .entity_mut(root)
+                .add_child(child);
+            self.particle_entities.push(child);
+        }
+        self.root = root;
+
+        log::info!(
+            "render3d: 粒子场重建完成,粒子 {} 个",
+            self.particle_entities.len()
         );
     }
 }
