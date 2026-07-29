@@ -4,19 +4,23 @@
 //! Transform 的事留在 lib.rs 的 viz 模式里。纯函数才测得动 —— 视觉观感与穿卡效果
 //! 走真实像素验收,数值行为(频段、呼吸、有界)在这里钉死。
 //!
-//! 轨道设计:每个粒子有一条**自己的**轨道 —— 半径、高度、基准大小、角速度都由
-//! 下标的确定性散列给出,连续分布把整个视野铺满(对照参考图
-//! `docs/reference/play-page/mineradio-particles.png`:彩纸屑一样满屏、大小不一)。
-//! 轨道面大致水平(XZ 平面附近),相机从 +Z 侧看向原点 —— 粒子转一圈就从封面卡
-//! 前面掠到后面再回来,这正是深度遮挡要的运动;近处的粒子被透视放大,大小差异
-//! 一半来自这里、一半来自散列的基准值。低频撑轨道半径(呼吸),粒子按下标轮流
-//! 绑定低/中/高频段的电平撑缩放脉动,时间只推方位角与纵向浮动。
+//! 行为模型照抄 Mineradio 的浮空粒子层(源码
+//! `public/js/modules/02-visual/01-float-skull-backcover.js` 的 `createFloatLayer`,
+//! 观感对照 `docs/reference/play-page/mineradio-particles.png`),不是轨道系统:
+//!
+//! - **分布**:76% 铺在绕封面的压扁椭圆晕圈(r = 0.62 + u^0.72·2.75,y 压 0.54,
+//!   带 lane 抖动),其余 24% 散射在大盒子里填满边角;z 纵深横跨卡片平面,
+//!   近侧/远侧粒子由遮挡层分拣 —— 深度效果的来源。
+//! - **运动**:极慢的屏面整体旋转(0.030+rand·0.034 rad/s)+ 呼吸缩放 ±4.5% +
+//!   每粒子三轴正弦漂移(幅度 0.15~0.45)。是悬浮的尘埃,不是绕圈的星球。
+//! - **音频**:克制 —— 低频只轻推纵深(bass·0.10·sin(rand·12)),外加一点
+//!   频段缩放脉动;主要的「活」来自闪烁。
+//! - **闪烁**:原版是 alpha 正弦振荡;逐帧改上千份材质不划算,这里折进缩放。
 
 use bevy::math::Vec3;
 
-/// 粒子总数。取「桌面满帧无压力、android 真机可承受」的量级,
-/// 真机发热读数出来后再调。
-pub(crate) const PARTICLE_COUNT: usize = 480;
+/// 粒子总数,同原版浮空层。真机发热读数出来后再调。
+pub(crate) const PARTICLE_COUNT: usize = 1300;
 
 /// 频谱行按低/中/高拆出的三段电平,各自归一到 0..=1。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,10 +40,6 @@ impl Default for Levels {
         }
     }
 }
-
-/// 金角(弧度)。相邻下标的方位角差取它,序列自然铺满圆周不聚团 ——
-/// 向日葵种子的那套排布。
-const GOLDEN_ANGLE: f32 = 2.399_963;
 
 /// 把 512 字节的频谱行拆成三段电平(各段取均值 / 255)。
 ///
@@ -66,13 +66,14 @@ pub(crate) fn band_levels(spectrum: &[u8]) -> Levels {
 
 /// 第 `i` 个粒子在 `time` 时刻的 (位置, 缩放)。
 ///
-/// 电平在入口消毒(非有限按 0、越界 clamp);半径/纵向/缩放各有硬上限,
-/// 坏一帧数据也不许把场景炸飞。角速度随半径衰减,内快外慢,借开普勒的观感。
+/// 电平在入口消毒(非有限按 0、越界 clamp);分布/漂移/缩放各有硬上限,
+/// 坏一帧数据也不许把场景炸飞。运动学常数照抄原版浮空层(见模块注释)。
 pub(crate) fn particle_pose(
     i: usize,
     time: f32,
     levels: &Levels,
 ) -> (Vec3, f32) {
+    const TAU: f32 = core::f32::consts::TAU;
     let bass = sanitize(levels.bass);
     let level = sanitize(match i % 3 {
         0 => levels.bass,
@@ -80,24 +81,58 @@ pub(crate) fn particle_pose(
         _ => levels.treble,
     });
 
-    // 每粒子的轨道参数,全部由下标散列确定。半径取 sqrt 插值:圆盘上按面积均匀,
-    // 不然外圈稀内圈挤。
-    let base_r = 1.2 + (4.6f32 - 1.2) * hash01(i, 1).sqrt();
-    let lane = (hash01(i, 2) - 0.5) * 4.8;
-    let base_s = 0.025 + 0.075 * hash01(i, 3);
-    let omega = 0.16 + 0.85 / base_r;
+    // 基准位:晕圈或散射,两段分布的数值 1:1 照抄原版。
+    let halo = i < PARTICLE_COUNT * 76 / 100;
+    let (bx, by, bz) = if halo {
+        let a = hash01(i, 1) * TAU;
+        let r = 0.62 + hash01(i, 2).powf(0.72) * 2.75;
+        let lane = (hash01(i, 3) - 0.5) * 0.62;
+        (
+            a.cos() * r,
+            a.sin() * r * 0.54 + lane,
+            (hash01(i, 4) - 0.5) * 2.4 - 0.25,
+        )
+    } else {
+        (
+            (hash01(i, 5) - 0.5) * 8.4,
+            (hash01(i, 6) - 0.5) * 5.8,
+            (hash01(i, 7) - 0.5) * 5.6,
+        )
+    };
 
-    // 低频呼吸:半径最多外扩 30%。
-    let r = base_r * (1.0 + 0.30 * bass);
-    // 金角铺开的初始方位角,时间只往前推角度。
-    let az = i as f32 * GOLDEN_ANGLE + time * omega;
-    // 纵向慢速浮动。
-    let bob = 0.15 * (time * 0.7 + i as f32 * 0.61).sin();
+    // 每粒子的相位、漂移幅度与「个性」随机数。
+    let px = hash01(i, 8) * TAU;
+    let py = hash01(i, 9) * TAU;
+    let pz = hash01(i, 10) * TAU;
+    let amp = 0.15 + hash01(i, 11) * 0.35;
+    let rand = hash01(i, 12);
 
-    let pos =
-        Vec3::new(r * az.cos(), lane + bob, r * az.sin());
-    // 分段脉动:静音停在基准值,电平顶满时放大约 2.2 倍。
-    let scale = base_s * (1.0 + 1.2 * level);
+    // 极慢的屏面整体旋转 + 呼吸缩放。
+    let orbit = time * (0.030 + rand * 0.034);
+    let (sn, cs) = orbit.sin_cos();
+    let breathe = 1.0 + (time * 0.34 + px).sin() * 0.045;
+    let rx = (bx * cs - by * sn) * breathe;
+    let ry = (bx * sn + by * cs) * breathe;
+
+    // 三轴正弦漂移;低频只轻推纵深,方向按粒子个性有正有负。
+    let pos = Vec3::new(
+        rx + (time * (0.18 + rand * 0.05) + px).sin()
+            * amp
+            * 0.34,
+        ry + (time * (0.15 + rand * 0.06) + py).cos()
+            * amp
+            * 0.30,
+        bz + (time * (0.11 + rand * 0.04) + pz).sin()
+            * amp
+            * 0.68
+            + bass * 0.10 * (rand * 12.0).sin(),
+    );
+
+    // 闪烁折进缩放(原版是 alpha 振荡),叠一点克制的频段脉动。
+    let twinkle = 0.725
+        + 0.275 * (time * (0.42 + rand * 0.34) + pz).sin();
+    let base_s = 0.025 + 0.05 * hash01(i, 13);
+    let scale = base_s * twinkle * (1.0 + 0.4 * level);
     (pos, scale)
 }
 
@@ -161,58 +196,119 @@ mod tests {
         );
     }
 
-    /// 恒定电平下,横向轨道半径不随时间变:时间只推方位角与纵向浮动。
+    /// 晕圈/散射两段分布各就各位(对照 Mineradio 浮空层):前 76% 在绕封面的
+    /// 压扁椭圆晕圈里(t=0 时旋转为恒等、漂移有界,留松量断言),其余在大盒子里。
     #[test]
-    fn time_moves_azimuth_not_radius() {
+    fn halo_and_scatter_bases_land_in_their_regions() {
+        let silence = Levels::default();
+        let halo_count = PARTICLE_COUNT * 76 / 100;
+        for i in 0..PARTICLE_COUNT {
+            let (p, _) = particle_pose(i, 0.0, &silence);
+            if i < halo_count {
+                // 只设上界:y 压扁 + lane 抖动允许内圈粒子落到封面中心附近,
+                // 原版就是这样(参考图里卡上有点)。
+                let r = p.xy().length();
+                assert!(
+                    r <= 3.9,
+                    "晕圈粒子 {i} 半径越界: {r}"
+                );
+                // 包络:基准 ±1.2,漂移 ≤ 0.5×0.68 ≈ 0.34。
+                assert!(
+                    (p.z + 0.25).abs() <= 1.6,
+                    "晕圈粒子 {i} 纵深越界: {}",
+                    p.z
+                );
+            } else {
+                assert!(
+                    p.x.abs() <= 4.8
+                        && p.y.abs() <= 3.4
+                        && p.z.abs() <= 3.3,
+                    "散射粒子 {i} 出盒: {p}"
+                );
+            }
+        }
+    }
+
+    /// 漂移有界(旋转不改到原点的距离):任意时刻的 |p| 相对 t=0 只允许
+    /// 漂移/呼吸量级的偏移,不许越漂越远。
+    #[test]
+    fn drift_stays_near_the_base() {
         let levels = Levels {
             bass: 0.6,
             mid: 0.3,
             treble: 0.9,
         };
-        for i in [0usize, 7, 100, PARTICLE_COUNT - 1] {
+        for i in [0usize, 7, 500, PARTICLE_COUNT - 1] {
             let (p0, _) = particle_pose(i, 0.0, &levels);
-            let (p1, _) = particle_pose(i, 5.0, &levels);
-            let r0 = p0.xz().length();
-            let r1 = p1.xz().length();
-            assert!(
-                (r0 - r1).abs() < 1e-3,
-                "粒子 {i} 半径漂了: {r0} -> {r1}"
-            );
-            assert!(
-                p0.xz() != p1.xz(),
-                "粒子 {i} 的方位角没在走"
-            );
+            for t in [5.0f32, 60.0, 3600.0] {
+                let (p, _) = particle_pose(i, t, &levels);
+                assert!(
+                    (p.length() - p0.length()).abs() <= 1.3,
+                    "粒子 {i} 在 t={t} 漂离基准: {} -> {}",
+                    p0.length(),
+                    p.length()
+                );
+            }
         }
     }
 
-    /// 低频 0→1,轨道半径单调外扩 ——「呼吸」的最小断言。
+    /// 低频推的是纵深 z(原版:`bass * 0.10 * sin(rand*12)`),不改屏面半径。
     #[test]
-    fn bass_expands_the_orbit() {
+    fn bass_pushes_depth_not_radius() {
         let quiet = Levels::default();
         let loud = Levels {
             bass: 1.0,
             ..Levels::default()
         };
-        for i in [0usize, 42, PARTICLE_COUNT - 1] {
+        let mut any_depth_moved = false;
+        for i in 0..PARTICLE_COUNT {
             let (pq, _) = particle_pose(i, 1.0, &quiet);
             let (pl, _) = particle_pose(i, 1.0, &loud);
             assert!(
-                pl.xz().length() > pq.xz().length(),
-                "粒子 {i} 没随低频外扩"
+                (pq.xy().length() - pl.xy().length()).abs()
+                    < 1e-3,
+                "粒子 {i} 的屏面半径被低频改了"
             );
+            if (pq.z - pl.z).abs() > 0.01 {
+                any_depth_moved = true;
+            }
         }
+        assert!(
+            any_depth_moved,
+            "没有任何粒子的纵深随低频动"
+        );
     }
 
-    /// 静音时缩放停在基准值,粒子不消失。
+    /// 闪烁:缩放随时间振荡(取两个相位对比),且始终在可见有界区间里。
+    #[test]
+    fn twinkle_varies_scale_over_time() {
+        let silence = Levels::default();
+        let mut varied = 0usize;
+        for i in 0..PARTICLE_COUNT {
+            let (_, s0) = particle_pose(i, 0.0, &silence);
+            let (_, s1) = particle_pose(i, 1.3, &silence);
+            if (s0 - s1).abs() / s0.max(1e-6) > 0.05 {
+                varied += 1;
+            }
+        }
+        assert!(
+            varied > PARTICLE_COUNT / 2,
+            "闪烁的粒子太少: {varied}/{PARTICLE_COUNT}"
+        );
+    }
+
+    /// 静音时缩放停在可见下限之上,粒子不消失。
     #[test]
     fn silence_keeps_particles_visible() {
         for i in 0..PARTICLE_COUNT {
-            let (_, s) =
-                particle_pose(i, 3.0, &Levels::default());
-            assert!(
-                s > 0.01,
-                "粒子 {i} 静音时缩放 {s} 近乎消失"
-            );
+            for t in [0.0f32, 1.0, 2.7] {
+                let (_, s) =
+                    particle_pose(i, t, &Levels::default());
+                assert!(
+                    s > 0.01,
+                    "粒子 {i} 在 t={t} 静音时缩放 {s} 近乎消失"
+                );
+            }
         }
     }
 
@@ -236,10 +332,9 @@ mod tests {
                         p.is_finite() && s.is_finite(),
                         "粒子 {i} 出了 NaN/Inf"
                     );
-                    // 上限跟随轨道包络:半径 ≤ 4.6×1.3,纵向 ≤ 2.4+0.15,
-                    // 合成对角 ≈ 6.5,留些余量取 7.5。
+                    // 上限跟随分布包络:散射盒对角 ≈ 5.9,加漂移/呼吸余量取 8。
                     assert!(
-                        p.length() < 7.5,
+                        p.length() < 8.0,
                         "粒子 {i} 飞出场景: {p}"
                     );
                     assert!(
