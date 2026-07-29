@@ -367,6 +367,7 @@ impl Scene {
             self.set_camera_clear(
                 ClearColorConfig::Default,
             );
+            self.apply_cameras(false);
             self.last_content = Some(key);
         }
 
@@ -447,6 +448,7 @@ impl Scene {
             self.set_camera_clear(
                 ClearColorConfig::Custom(Color::NONE),
             );
+            self.apply_cameras(true);
             self.last_content = Some(Content::Viz);
         }
 
@@ -500,6 +502,31 @@ impl Scene {
             .get_mut::<Camera>(self.camera)
         {
             cam.clear_color = clear;
+        }
+    }
+
+    /// 按当前内容摆两台相机。
+    ///
+    /// 演示页要把整个转盘装进画面,竖视口就得后撤([`pullback`]);粒子场相反 ——
+    /// 它是铺满视野的环境效果,后撤只会把粒子缩成看不见的点(小米13 竖屏
+    /// aspect 0.45 会后撤 2.2 倍,真机上实测粒子直接消失),故恒用基准距离,
+    /// 让粒子自然溢出画面上下。两台相机必须同视角,否则遮挡层整体错位。
+    fn apply_cameras(&mut self, viz: bool) {
+        let aspect =
+            self.size.0 as f32 / self.size.1.max(1) as f32;
+        let position = if viz {
+            BASE_CAMERA_POS
+        } else {
+            camera_pos(aspect)
+        };
+        let transform =
+            Transform::from_translation(position)
+                .looking_at(Vec3::ZERO, Vec3::Y);
+        for entity in [self.camera, self.occluder_camera] {
+            self.app
+                .world_mut()
+                .entity_mut(entity)
+                .insert(transform);
         }
     }
 
@@ -641,18 +668,11 @@ impl Scene {
     fn resize(&mut self, width: u32, height: u32) {
         let new_target =
             make_target(&mut self.app, width, height);
-        let aspect = width as f32 / height as f32;
         self.app
             .world_mut()
             .entity_mut(self.camera)
-            .insert((
-                RenderTarget::Image(
-                    new_target.clone().into(),
-                ),
-                Transform::from_translation(camera_pos(
-                    aspect,
-                ))
-                .looking_at(Vec3::ZERO, Vec3::Y),
+            .insert(RenderTarget::Image(
+                new_target.clone().into(),
             ));
 
         // 遮挡层必须与场景图同尺寸同视角,否则两层对不上,遮挡会整体错位。
@@ -661,14 +681,8 @@ impl Scene {
         self.app
             .world_mut()
             .entity_mut(self.occluder_camera)
-            .insert((
-                RenderTarget::Image(
-                    new_occluder.clone().into(),
-                ),
-                Transform::from_translation(camera_pos(
-                    aspect,
-                ))
-                .looking_at(Vec3::ZERO, Vec3::Y),
+            .insert(RenderTarget::Image(
+                new_occluder.clone().into(),
             ));
 
         let old =
@@ -685,6 +699,10 @@ impl Scene {
         images.remove(&old_occluder);
 
         self.size = (width, height);
+        // 相机位置随长宽比变(演示页要后撤),故必须在 size 更新之后重摆;
+        // 粒子场那一支不后撤,见 [`Scene::apply_cameras`]。
+        let viz = self.last_content == Some(Content::Viz);
+        self.apply_cameras(viz);
         self.image = None;
         self.image_key = None;
         self.occluder_image = None;
@@ -769,14 +787,19 @@ impl Scene {
             .despawn();
         self.particle_entities.clear();
 
-        // aurora 同调的五种 unlit 颜色轮流上;「发光感」来自纯色 + Blend 半透明
-        // 叠在暗背景上,不引 HDR/bloom 一整套。
+        // aurora 同调的五种 unlit 颜色轮流上;「发光感」来自纯色叠在暗背景上,
+        // 不引 HDR/bloom 一整套。
+        //
+        // **不透明**:曾用 `AlphaMode::Blend` + alpha 0.85,桌面正常,但小米13
+        // (Adreno)上整片粒子不显示 —— 同一帧里演示页的不透明物体渲染正常,
+        // 差别只在这一处。粒子在屏幕上只有十几像素,0.85 与 1.0 肉眼无别,
+        // 不为半透明去赌某块 GPU 的透明相位。
         let colors = [
-            Color::srgba(0.486, 0.227, 0.929, 0.85), // 紫
-            Color::srgba(0.145, 0.388, 0.922, 0.85), // 蓝
-            Color::srgba(0.024, 0.714, 0.831, 0.85), // 青
-            Color::srgba(0.925, 0.282, 0.600, 0.85), // 粉
-            Color::srgba(0.780, 0.860, 1.000, 0.85), // 冷白
+            Color::srgb(0.486, 0.227, 0.929), // 紫
+            Color::srgb(0.145, 0.388, 0.922), // 蓝
+            Color::srgb(0.024, 0.714, 0.831), // 青
+            Color::srgb(0.925, 0.282, 0.600), // 粉
+            Color::srgb(0.780, 0.860, 1.000), // 冷白
         ];
         let materials: Vec<_> = {
             let mut assets = self
@@ -789,14 +812,12 @@ impl Scene {
                     assets.add(StandardMaterial {
                         base_color: *color,
                         unlit: true,
-                        alpha_mode: AlphaMode::Blend,
                         ..default()
                     })
                 })
                 .collect()
         };
-        // 球体网格:palette 下标 1(见 build_mesh_palette 的顺序注释)。
-        let mesh = self.mesh_palette[1].clone();
+        let mesh = build_particle_mesh(&mut self.app);
 
         let root = self
             .app
@@ -1002,6 +1023,17 @@ fn build_mesh_palette(app: &mut App) -> Vec<Handle<Mesh>> {
         meshes.add(Cylinder::default()),
         meshes.add(Cone::default()),
     ]
+}
+
+/// 粒子用的圆片:12 段的扁平圆,躺在 XY 平面上正对相机(相机恒在 +Z 看向原点)。
+///
+/// 不用球体:一颗默认 `Sphere` 是几百个三角形,1300 颗 × 两台相机(场景 + 遮挡层)
+/// 就是百万级三角形 —— 小米13 上实测 `app.update()` 36.75ms/帧,直接把帧率压到十几。
+/// 粒子在屏幕上只有几个像素宽,12 段的圆已经看不出棱角。
+fn build_particle_mesh(app: &mut App) -> Handle<Mesh> {
+    app.world_mut().resource_mut::<Assets<Mesh>>().add(
+        Circle::default().mesh().resolution(12).build(),
+    )
 }
 
 /// 按场景种类算出每个形状的 (网格句柄, 位置)。
