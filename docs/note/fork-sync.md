@@ -22,11 +22,15 @@
 | 分支 | 内容 | 维护方式 |
 |---|---|---|
 | `master` | 上游 master 的镜像,零本地改动 | 纯快进 |
-| `pin/femtovg-0.26-wgpu-perf` | femtovg master + femtovg#302 的十个 commit,本项目实际依赖 | 重建,强推 |
+| `dev` | 上游 master + femtovg#302 的十个 commit,slint fork 实际依赖 | 重建,强推 |
 | `pr/wgpu-per-draw-allocations` | femtovg#302 的 PR 分支,不要 rebase(会打乱评审视图) | 只在 PR 需要时动 |
 
-两个 fork 的分支都只保留这几种角色:上游镜像、带补丁的消费分支、开着的 PR 分支、
-回滚点。PR 一旦合并或关闭,对应分支就该删,内容自然留在上游代码或 PR 正文里。
+两个 fork 用同一套角色:`master` 镜像上游,`dev` 承载全部本地改动,PR 从 `dev` 拆出去
+单独开分支,上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容
+自然留在上游代码或 PR 正文里。
+
+`dev` 这个名字是刻意的。曾经叫 `pin/femtovg-0.26-wgpu-perf`,版本号写进分支名意味着
+femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`。固定名字一次到位。
 
 四条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 
@@ -73,23 +77,20 @@ git push origin upstream/master:refs/heads/master
 
 `push-guard` 会拦主分支,这是设计如此。确认要更新后重跑同一条命令。
 
-### 2. femtovg 的 pin 分支重建
+### 2. femtovg 的 dev 重建
 
 只在上游 femtovg 有新版本、或 #302 有新 commit 时需要。
 
 ```bash
 cd ~/RustroverProjects/femtovg-fork
-git fetch upstream origin
-git checkout -B pin/femtovg-0.26-wgpu-perf upstream/master
+git fetch upstream
+git checkout -B dev upstream/master
 git cherry-pick <#302 分支的第一个 commit>^..<最后一个 commit>
-git push --force-with-lease origin pin/femtovg-0.26-wgpu-perf
+git push --force-with-lease origin dev
 ```
 
-分支名里的版本号要跟着 femtovg 的实际版本改。改名之后,slint fork 里
-`internal/renderers/femtovg/Cargo.toml` 的 `branch =` 也要跟着改。
-
 不要直接 rebase `pr/wgpu-per-draw-allocations`:那是开着的 PR 分支,强推会打乱
-评审视图和行内评论。pin 分支是它的消费副本,两者分开。
+评审视图和行内评论。`dev` 是它的消费副本,两者分开。
 
 ### 3. dev 重建
 
