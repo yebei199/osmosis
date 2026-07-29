@@ -90,6 +90,35 @@ pub struct PlaySourceDto {
     pub trial: bool,
 }
 
+/// 歌词的一行。
+///
+/// 时间轴取**行级**:上游同时提供逐字(`LyricWord`),但那一档要等行级链路
+/// 跑通后另议(见 issue #16)。届时加一个可空的 `words` 字段即可,是兼容变更。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct LyricLineDto {
+    /// 本行开始的时刻,毫秒,相对歌曲开头。与上游同单位,不做换算。
+    pub start_ms: i64,
+    /// 本行结束的时刻,毫秒。上游没给时与 `start_ms` 相同 ——
+    /// 「当前是第几行」由下一行的开始时刻决定,不依赖这个字段。
+    pub end_ms: i64,
+    pub text: String,
+    /// 译文。没有翻译的歌就是 `None`,不用空串冒充。
+    pub translation: Option<String>,
+}
+
+/// `GET /lyric/{track_id}` 的响应体。
+///
+/// **空行表不是失败**:纯音乐、上游未收录都会给出空表,客户端据此隐藏歌词区,
+/// 而不是弹一个错误 —— 「这首歌没有歌词」是正常状态,不是故障。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct LyricDto {
+    pub lines: Vec<LyricLineDto>,
+}
+
 /// 一台在线设备。
 ///
 /// 「在线」没有别的含义:它**等于**此刻与服务端之间存在活跃连接。

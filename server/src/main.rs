@@ -19,8 +19,8 @@ use axum::{
     routing::get,
 };
 use contract::{
-    ErrorDto, HealthDto, PROTOCOL_VERSION, PlaySourceDto,
-    SearchDto, TracksDto,
+    ErrorDto, HealthDto, LyricDto, PROTOCOL_VERSION,
+    PlaySourceDto, SearchDto, TracksDto,
 };
 use serde::Deserialize;
 use tonic::transport::Channel;
@@ -30,7 +30,7 @@ use server::bangdream::{
     self,
     proto::{
         GetAccountStatusRequest,
-        GetDailyRecommendationsRequest,
+        GetDailyRecommendationsRequest, GetLyricRequest,
         GetPlaySourceRequest, GetTracksRequest,
         ListLikedTracksRequest, Platform, QualityLevel,
         SearchTracksRequest,
@@ -112,6 +112,7 @@ async fn main() {
         .route("/daily", get(daily))
         .route("/liked", get(liked))
         .route("/play/{track_id}", get(play))
+        .route("/lyric/{track_id}", get(lyric))
         .with_state(clients)
         .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
@@ -311,4 +312,28 @@ async fn play(
     })?;
 
     Ok(Json(bangdream::play_source_to_dto(source)))
+}
+
+/// `GET /lyric/{track_id}`:取一首歌的行级歌词。
+///
+/// 与 [`play`] 的一处刻意不同:`lyric` 缺席**不算失败**,给空行表。
+/// 纯音乐与上游未收录都会走到这里,而「这首歌没有歌词」是正常状态 ——
+/// 报成错误的话,客户端会把它显示成一次故障。
+async fn lyric(
+    State(upstream): State<Upstream>,
+    Path(track_id): Path<String>,
+) -> Result<Json<LyricDto>, Failure> {
+    let mut catalog = upstream.catalog;
+    let response = catalog
+        .get_lyric(GetLyricRequest {
+            platform: Platform::Netease as i32,
+            track_id,
+        })
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(bangdream::lyric_to_dto(
+        response.lyric.unwrap_or_default(),
+    )))
 }
