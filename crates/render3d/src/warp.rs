@@ -63,31 +63,30 @@ impl WarpPass {
             },
         );
 
-        let texture_entry = |binding| {
-            wgpu::BindGroupLayoutEntry {
+        let texture_entry =
+            |binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float {
-                        filterable: true,
-                    },
+                    sample_type:
+                        wgpu::TextureSampleType::Float {
+                            filterable: true,
+                        },
                     view_dimension:
                         wgpu::TextureViewDimension::D2,
                     multisampled: false,
                 },
                 count: None,
-            }
-        };
-        let sampler_entry = |binding| {
-            wgpu::BindGroupLayoutEntry {
+            };
+        let sampler_entry =
+            |binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(
                     wgpu::SamplerBindingType::Filtering,
                 ),
                 count: None,
-            }
-        };
+            };
         let bind_layout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("warp-bgl"),
@@ -121,8 +120,8 @@ impl WarpPass {
             });
 
         // 音频纹理:512×2 单通道。每帧 write_texture 整张重写,1KB 的量级。
-        let audio_tex =
-            device.create_texture(&wgpu::TextureDescriptor {
+        let audio_tex = device.create_texture(
+            &wgpu::TextureDescriptor {
                 label: Some("warp-audio"),
                 size: wgpu::Extent3d {
                     width: AUDIO_BINS,
@@ -136,16 +135,18 @@ impl WarpPass {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
-            });
+            },
+        );
 
         // 线性过滤 + 边缘钳制:反馈采样越界(旋转后的角落)取边缘色,不回卷。
-        let sampler =
-            device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(
+            &wgpu::SamplerDescriptor {
                 label: Some("warp-sampler"),
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
-            });
+            },
+        );
 
         let pipeline_layout = device
             .create_pipeline_layout(
@@ -250,7 +251,9 @@ impl WarpPass {
         let bass = audio
             .get(..BASS_BINS)
             .map(|head| {
-                head.iter().map(|v| f32::from(*v)).sum::<f32>()
+                head.iter()
+                    .map(|v| f32::from(*v))
+                    .sum::<f32>()
                     / (BASS_BINS as f32 * 255.0)
             })
             .unwrap_or(0.0);

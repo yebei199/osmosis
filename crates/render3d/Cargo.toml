@@ -11,3 +11,6 @@ bevy.workspace = true
 # 实际渲染后端(backend-winit / renderer-femtovg-wgpu)由平台入口 crate 追加,这里不选。
 slint = { workspace = true, features = ["unstable-wgpu-29"] }
 log.workspace = true
+
+[dev-dependencies]
+similar-asserts.workspace = true
