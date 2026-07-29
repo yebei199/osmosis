@@ -79,17 +79,40 @@ p 约 5e-6。两组 dev 的最暗帧都是 37.2,与半截帧同一档;探针一�
 
 ## 复现
 
+探针原本在 fork 的 `probe/wgpu-present-sync` 分支上,该分支已删除,补丁正文见下,
+重跑时手工打回 fork 的 dev 即可。`internal/renderers/skia/wgpu_29_surface.rs` 的
+`render()` 里,`pre_present_callback` 那段之前插入:
+
+```rust
+// PROBE: block until Skia's GPU work has finished before presenting.
+//
+// Skia renders through the raw VkQueue pulled out of wgpu with `as_hal`, so wgpu never
+// sees that submission and the present it issues waits on a semaphore that Skia never
+// signalled. Nothing orders scanout after the drawing. On android that shows up as
+// frames whose lower part is blank, cut at a row that moves between frames.
+//
+// Syncing the CPU is the wrong fix, it costs a full GPU round trip per frame. It is here
+// to establish whether that missing order is what produces the blank frames.
+gr_context.flush_submit_and_sync_cpu();
+```
+
+另有一行启动时打 `PROBE ACTIVE` 的日志,用来确认补丁真的编进了产物。不打这行就只能
+靠帧率反推,而帧率减半这个特征只在这个探针上成立,换个探针就不适用了。
+
 ```sh
 # 基线
 just android-build-3d && just android-install
 adb shell am start -n io.github.slintstudy/.MainActivity
 just android-flicker baseline 120
 
-# 探针:根 Cargo.toml 的 [patch.crates-io] 两行改到 branch = "probe/wgpu-present-sync"
+# 探针:把上面那段打进 fork 的 dev,推上去
 cargo update -p slint -p slint-build     # 每个被 patch 的包都要点名,少一个就静默变成 patch.unused
 just android-build-3d && just android-install
 just android-flicker probe 120
 ```
+
+补丁作用于 `wgpu_29_surface.rs`。fork 追平上游之后这个文件可能已经改名或重写,重跑前
+先确认 `as_hal` 那条路径还是同一个形状。
 
 两条教训。样本量必须到万帧量级,真实发生率是千分之一,几百帧测到 0 是常态,07-19 那批
 结论就是这么错的。录制期间必须校验应用还活着,它中途被杀会把桌面录进去,量出过一个
