@@ -20,7 +20,7 @@
 
 ```sh
 just shot        # 宽版式
-just shot 420    # 紧凑版式;第二个参数指定开局页,如 `just shot 420 2` 直接进 3D 页
+just shot 420    # 紧凑版式;第二个参数指定开局页,如 `just shot 420 1` 直接进 Music 页
 ```
 
 **提交前跑 `just ci`** —— 它逐字复述 `.github/workflows/ci.yml` 的命令序列。
@@ -65,7 +65,6 @@ target 上根本编不过。
 ```sh
 just server-dev              # 终端 1:axum,监听 127.0.0.1:3000
 just desktop-dev             # 终端 2:桌面端,点「Check server」
-just server-test             # 终端 2:或者直接打一次真实请求
 ```
 
 Android 真机:
@@ -98,7 +97,6 @@ just bang-dream              # 终端 1:gRPC,监听 127.0.0.1:50051
 just server-dev              # 终端 2:axum,监听 127.0.0.1:3000
 just desktop-dev             # 终端 3:桌面端,「Music」页搜歌、点一首出声;
                              #        控制条管播放/暂停、上下首、随机(日月开关)
-just bang-dream-test         # 或者:对着真实上游跑联机测试
 ```
 
 开发时跑的通常不是 submodule 里那份副本,而是自己的工作树:
@@ -217,14 +215,13 @@ Slint 1.17 起,MCP server 可以**编译进应用自身**(`slint/mcp` feature)�
 不再靠猜或截图,而是直接读运行中窗口的元素树、模拟点击和键盘输入。
 背景见 [`docs/slint/slint-and-ai-mcp.md`](docs/slint/slint-and-ai-mcp.md)。
 
-**开发链路默认开着**:`desktop-dev` 与 `desktop-dev-3d` 已经带上 feature 与两个环境变量。
+**开发链路默认开着**:`desktop-dev` 已经带上 feature 与两个环境变量。
 发布产物不带 —— `mcp` 不在 `apps/desktop` 的 `default` feature 里,`cargo build --release`
 与 APK 都是干净的。这个区分是有意的:MCP 等于把「读完整 UI 树 + 截图 + 合成点击」
 开给 localhost 上的任何进程,开发时值,发出去不值。
 
 ```sh
 just desktop-dev      # 桌面端,MCP 默认开在 127.0.0.1:8090
-just desktop-dev-3d   # 同上,外加 bevy 3D 页(那页的热调面板最值得给 AI 看)
 ```
 
 客户端那一侧由仓库根的 [`.mcp.json`](.mcp.json) 声明(名为 `slint-app`),

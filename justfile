@@ -30,12 +30,6 @@ ci-test:
     nix-shell slint.nix --run 'cargo test -p audio -p syncplay -p server -p xtask'
     nix-shell slint.nix --run 'cargo clippy --all-targets -- -D warnings'
     nix-shell slint.nix --run 'cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
-    # render3d 不在 default-members 里(它拖整个 bevy),裸 `cargo test` 从不碰它 ——
-    # 不点名的话,相机后撤与遮挡门槛那几个单测一次都不会跑。GitHub 的 workflow 同样
-    # 不编 bevy,所以这两条是它们唯一的防线;clippy 那条单独列出来,是因为 RUSTFLAGS
-    # 撤掉之后,只跑 test 就再没有东西拦 render3d 的 warning 了。
-    nix-shell render3d.nix --run 'cargo test -p render3d'
-    nix-shell render3d.nix --run 'cargo clippy --all-targets -p render3d -- -D warnings'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
 [group('ci')]
@@ -61,24 +55,15 @@ ci-boundaries:
 desktop-dev extra="": mcp-port-free
     SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
-# 桌面 + 嵌入的 bevy 3D 面板(见 crates/render3d)。走 render3d.nix 拿 vulkan 运行期库。
-# 带 .slint 热重载,同 desktop-dev —— 导航玻璃、工具条 backdrop 这些要对着调版式的东西
-# 全在这条链路上,没有热重载就得为挪一个 padding 重编一遍 bevy。
-# 只覆盖 .slint:bevy 场景与 wgsl 在 Rust 侧,改那些仍需重跑。
-# 首帧就绪后窗口中间会出现一个自转的立方体。
-[group('桌面')]
-desktop-dev-3d: mcp-port-free
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell render3d.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,bevy-3d,slint/live-preview'
-
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
-# 可透传额外 feature,如 `just web-dev bevy-3d`。左上角帧率读数:`SLINT_STUDY_FPS=1 just web-dev`
-# —— wasm 读不到运行期环境变量,这个开关在**构建期**生效,故必须重跑本命令。
+# 左上角帧率读数:`SLINT_STUDY_FPS=1 just web-dev` —— wasm 读不到运行期环境变量,
+# 这个开关在**构建期**生效,故必须重跑本命令。
 [group('三端')]
-web-dev extra="":
-    nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release{{ if extra != "" { " --features " + extra } else { "" } }}'
+web-dev:
+    nix-shell slint.nix --run 'cargo build -p app-web --target wasm32-unknown-unknown --release'
     nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm --target web --no-typescript --out-dir dist/web'
     cp apps/web/index.html dist/web/
     # 手工排查用的静态页(见 test/README.md)。跟着一起发,省得每次另起服务器。
@@ -108,16 +93,6 @@ web-stop:
     # 只有 curl 连不上才算真关掉:模式写错、还有第二个实例、进程赖着不死,都在这里现原形。
     for i in 1 2 3 4 5 6; do curl -sf -o /dev/null --max-time 1 http://127.0.0.1:{{ web_port }}/ || exit 0; sleep 0.5; done; echo "端口 {{ web_port }} 仍在应答,没关掉" >&2; exit 1
 
-# 浏览器端到端测试(bun + Playwright,驱系统 Chrome)。静态服务器由 playwright 自己拉起。
-# 会弹出一个真实的浏览器窗口并且**必须让它留在前台** —— 被遮住的标签页 rAF 会掉到 1Hz,
-# headless 的 Chrome 更是连 WebGPU 都没有。测试自带哨兵,环境不成立时 skip 而非报红。
-# 不进 CI,理由同上。详见 test/e2e/README.md。
-[group('三端')]
-web-test:
-    # 测的是产物不是源码:忘了重新 web-dev 就会在旧 wasm 上验新改动,而且看不出异常。
-    test -f dist/web/app_web_bg.wasm || { echo "dist/web 里没有产物,先跑 just web-dev bevy-3d" >&2; exit 1; }
-    cd test/e2e && bun install --frozen-lockfile && bunx playwright test frame-rate.spec.ts
-
 # 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
 # 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
 # 改了界面上的中文文案后跑一遍,把新字符补进 --text —— 注意 api::ApiError 的
@@ -141,11 +116,6 @@ font-subset:
 server-dev:
     cargo run -p server
 
-# 打一次真实的 GET /health(需要 server-dev 正在另一个终端里跑)
-[group('服务端')]
-server-test:
-    cargo test -p api -- --ignored
-
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
 # 源码是 third_party/bang-dream 这个 submodule,但那里只当契约来源用 ——
 # 开发时跑的是 BANG_DREAM_REPO 指向的工作副本,默认为 submodule 自身。
@@ -159,23 +129,12 @@ bang-dream repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
 bang-dream-login repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
     cd {{repo}} && go run ./cmd/qrlogin
 
-# 对着真实 bang-dream 跑联机测试(需要 just bang-dream 正在另一个终端里跑)
-[group('服务端')]
-bang-dream-test:
-    cargo test -p server -- --ignored
-
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just android-build
 [group('三端')]
 [group('安卓')]
 android-build:
     nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
-
-# 同上,但把 bevy 3D 面板(见 crates/render3d)编进 APK。native 库仍是 release
-# profile(bevy debug 产物几百 MB)。装机后窗口中间会出现自转立方体。
-[group('安卓')]
-android-build-3d:
-    nix-shell Android.nix --run 'FEATURES=bevy-3d CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
@@ -194,53 +153,6 @@ android-reverse:
 android-run: android-install android-reverse
     adb shell am start -n io.github.slintstudy/.MainActivity
     adb logcat -s slint_study
-
-# 量 3D 页的半截帧比率(闪黑,见 docs/wasm/native-regression-2026-07-19.md)
-#
-# 真实发生率是千分之一的量级,几百帧的样本量测到 0 是常态,别拿短录像下结论。
-# 120 秒约一万帧,才够把 0.1% 和 0 分开。
-[group('安卓')]
-android-flicker label secs="120":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    pkg=io.github.slintstudy
-    out=dist/flick-{{label}}.mp4
-    alive() { adb shell pidof $pkg | tr -d '\r'; }
-
-    # 应用中途被杀会把 MIUI 桌面录进去,亮度分布整个变样,量出来的比率毫无意义。
-    # 踩过一次,报出 33.93% 的假数字。
-    before=$(alive)
-    [ -n "$before" ] || { echo "应用没在跑,先 just android-run" >&2; exit 1; }
-
-    # 3D 页在底部导航第三项。必须持续拖动:画面静止时 MIUI 把刷新压到几 Hz,
-    # 量到的是省电策略而不是渲染。
-    adb shell input tap 895 2196
-    sleep 2
-    adb shell screenrecord --time-limit {{secs}} --bit-rate 16000000 /sdcard/flick.mp4 &
-    rec=$!
-    sleep 1
-    end=$((SECONDS + {{secs}} - 2))
-    while [ $SECONDS -lt $end ]; do adb shell input swipe 540 1200 700 1000 200; done
-    wait $rec
-    sleep 1
-    [ "$(alive)" = "$before" ] || { echo "应用在录制期间重启或被杀,这次作废" >&2; exit 1; }
-
-    adb pull -a /sdcard/flick.mp4 "$out" >/dev/null
-    adb shell rm /sdcard/flick.mp4
-
-    # 逐帧算内容区平均亮度,低于中位亮度 80% 的记为半截帧。正常帧约 68,半截帧约 37,
-    # 两档之间没有中间值,判据不敏感。逐帧起 magick 进程要跑十几分钟,这条几秒。
-    ffprobe -v error -f lavfi -i "movie=$out,crop=1080:1100:0:800,signalstats" \
-      -show_entries frame_tags=lavfi.signalstats.YAVG -of csv=p=0 |
-      awk -v label={{label}} '
-        { v[NR] = $1 }
-        END {
-          if (NR == 0) { print label ": 没抓到帧"; exit 1 }
-          asort(v); med = v[int((NR + 1) / 2)]; thr = med * 0.8
-          for (i = 1; i <= NR; i++) if (v[i] < thr) bad++
-          printf "%s: 帧数 %d, 半截帧 %d, 比率 %.2f%%, 中位亮度 %.1f, 最暗 %.1f\n",
-            label, NR, bad, bad * 100.0 / NR, med, v[1]
-        }'
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
@@ -301,24 +213,25 @@ mcp-android: mcp-forward
 desktop-kill:
     -pkill -f 'target/debug/[s]lint-study-desktop'
 
-# 起一个干净的桌面实例(带 3D),截下**真实窗口像素**,存到 dist/shot.png。
+# 起一个干净的桌面实例,截下**真实窗口像素**,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
-# tab 指定开局页(0=Home、1=Music、2=3D):`just shot 420 2` 直接截紧凑版的 3D 页 ——
+# tab 指定开局页(0=Home、1=Music):`just shot 420 1` 直接截紧凑版的 Music 页 ——
 # 不必再靠 MCP 模拟点击切页。
 #
 # 为什么必须有这条 recipe:
 # 1. 不先杀干净,旧实例的窗口还在,AI 截到的是**上一版**的界面,浑然不觉;
-# 2. MCP 的 take_screenshot 走软件渲染器,**采不到 wgpu 纹理** —— 3D 页在它眼里恒为纯黑,
-#    据此判断「3D 没渲染出来」是错的。真实像素只能靠合成器抓(niri screenshot-window)。
+# 2. MCP 的 take_screenshot 走软件渲染器,**采不到 wgpu 纹理** —— 播放页的粒子与 warp
+#    在它眼里恒为纯黑,据此判断「没渲染出来」是错的。真实像素只能靠合成器抓
+#    (niri screenshot-window)。
 [group('桌面')]
 shot width="" tab="0":
     #!/usr/bin/env bash
     set -euo pipefail
     just desktop-kill
     # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
-    nix-shell render3d.nix --run 'cargo build -p app-desktop --features bevy-3d'
-    SLINT_STUDY_TAB={{tab}} nix-shell render3d.nix --run 'setsid target/debug/slint-study-desktop' > /tmp/slint-shot.log 2>&1 &
+    nix-shell slint.nix --run 'cargo build -p app-desktop'
+    SLINT_STUDY_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/slint-study-desktop' > /tmp/slint-shot.log 2>&1 &
     for _ in $(seq 30); do
         id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
         [ -n "$id" ] && break

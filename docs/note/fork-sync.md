@@ -121,11 +121,11 @@ slint-build = { path = "../slint-fork/api/rs/build" }
 用相对路径,绝对路径会把本机用户名和目录结构写进仓库。
 
 ```bash
-nix-shell slint.nix --run 'nix-shell render3d.nix --run "cargo check --workspace && cargo check -p app-desktop --features bevy-3d && cargo test -p ui -p app-desktop -p render3d -p app-core -p audio"'
+nix-shell slint.nix --run 'cargo check --workspace && cargo test -p ui -p app-desktop -p render3d -p app-core -p audio'
 ```
 
-`cargo check --workspace --all-features` 不能用:`app-web` 的 `repro` 与 `bevy-3d`
-两个 feature 互斥,各自定义一个 `start`,全开必然撞名。
+`cargo check --workspace --all-features` 不能用:那会把 `mcp` 也一起开进来,而它是个
+调试后门(理由见 `apps/desktop/Cargo.toml` 的 feature 注释)。
 
 通过之后还原 `Cargo.toml`,推 dev:
 
