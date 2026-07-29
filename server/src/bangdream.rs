@@ -6,7 +6,9 @@
 //! 翻译刻意**裁剪**:上游的 `Track` 有音质规格、付费等级等等,这里只留客户端
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
-use contract::{PlaySourceDto, TrackDto};
+use contract::{
+    LyricDto, LyricLineDto, PlaySourceDto, TrackDto,
+};
 
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {
@@ -64,11 +66,117 @@ pub fn play_source_to_dto(
     }
 }
 
+/// 把上游的歌词翻成契约里的 [`LyricDto`]。
+///
+/// 只取行级时间轴:逐字档位下上游已把整行 `text` 拼好(见 proto 的 `LyricLine`
+/// 注释),行级消费方因此不必关心上游给的是哪一档。罗马音暂无消费者,不带。
+pub fn lyric_to_dto(lyric: proto::Lyric) -> LyricDto {
+    LyricDto {
+        lines: lyric
+            .lines
+            .into_iter()
+            .map(|line| LyricLineDto {
+                start_ms: line.start_ms,
+                end_ms: line.end_ms,
+                text: line.text,
+                translation: non_empty(line.translation),
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 造一行上游歌词。
+    fn proto_line(
+        start_ms: i64,
+        text: &str,
+        translation: &str,
+    ) -> proto::LyricLine {
+        proto::LyricLine {
+            start_ms,
+            end_ms: start_ms + 200,
+            text: text.to_owned(),
+            words: Vec::new(),
+            translation: translation.to_owned(),
+            romaji: String::new(),
+        }
+    }
+
+    /// 逐行歌词:时刻与文本原样过来,顺序不变。
+    #[test]
+    fn lyric_maps_lines_in_order() {
+        let dto = lyric_to_dto(proto::Lyric {
+            timing: proto::LyricTiming::Line as i32,
+            lines: vec![
+                proto_line(1_000, "第一句", "first"),
+                proto_line(5_000, "第二句", "second"),
+            ],
+        });
+
+        assert_eq!(dto.lines.len(), 2);
+        assert_eq!(dto.lines[0].start_ms, 1_000);
+        assert_eq!(dto.lines[0].end_ms, 1_200);
+        assert_eq!(dto.lines[0].text, "第一句");
+        assert_eq!(
+            dto.lines[0].translation.as_deref(),
+            Some("first")
+        );
+        assert_eq!(dto.lines[1].text, "第二句");
+    }
+
+    /// 纯音乐/未收录:上游给空歌词,这里必须是**空行表**而不是失败 ——
+    /// 「这首歌没有歌词」是正常状态。
+    #[test]
+    fn empty_lyric_yields_empty_lines() {
+        let dto = lyric_to_dto(proto::Lyric {
+            timing: proto::LyricTiming::Line as i32,
+            lines: Vec::new(),
+        });
+        assert!(dto.lines.is_empty());
+    }
+
+    /// 没有译文的行:空串翻成 None,不用空串冒充「有一句空翻译」。
+    #[test]
+    fn line_without_translation_omits_it() {
+        let dto = lyric_to_dto(proto::Lyric {
+            timing: proto::LyricTiming::Line as i32,
+            lines: vec![proto_line(0, "只有原文", "")],
+        });
+        assert_eq!(dto.lines[0].translation, None);
+    }
+
+    /// 逐字档位:上游已拼好整行文本,行级消费方拿到的东西与逐行档位一致。
+    #[test]
+    fn word_timed_lyric_still_yields_line_text() {
+        let mut line =
+            proto_line(2_000, "拼好的整行", "");
+        line.words = vec![
+            proto::LyricWord {
+                start_ms: 2_000,
+                end_ms: 2_300,
+                text: "拼好的".to_owned(),
+            },
+            proto::LyricWord {
+                start_ms: 2_300,
+                end_ms: 2_600,
+                text: "整行".to_owned(),
+            },
+        ];
+
+        let dto = lyric_to_dto(proto::Lyric {
+            timing: proto::LyricTiming::Word as i32,
+            lines: vec![line],
+        });
+
+        assert_eq!(dto.lines.len(), 1);
+        assert_eq!(dto.lines[0].text, "拼好的整行");
+        assert_eq!(dto.lines[0].start_ms, 2_000);
+    }
 
     /// 构造一首字段齐全的上游歌曲,各测试再按需改动其中一两个字段。
     fn full_track() -> proto::Track {
