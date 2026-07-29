@@ -625,11 +625,19 @@ export component MainWindow inherits Window {
     out property <length> viz-card-size: 220px;
     out property <length> viz-card-x: (root.width - root.viz-card-size) / 2;
     out property <length> viz-card-y: (root.height - root.viz-card-size) / 2 - 60px;
+    // 歌词块的几何量,同样是唯一真相:它与封面卡**同处一个 z 平面**,因此可以
+    // 复用同一张遮挡图,只是裁剪矩形不同 —— 粒子于是也从字的前后穿过。
+    out property <length> viz-lyric-h: 108px;
+    out property <length> viz-lyric-y: root.viz-card-y + root.viz-card-size + 96px;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
     in property <image> cover-art;
     // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
     in property <string> now-title;
     in property <string> now-artists;
+    // 当前歌词行与其译文,Rust 每帧按播放位置选出后推送(见 app_core::current_line)。
+    // 没有歌词、或还在前奏时为空串,歌词区整块让位。
+    in property <string> lyric-line;
+    in property <string> lyric-translation;
     // 省电门的 .slint 半边:展开 ∧ 播放。第三条「窗口可见」在 Rust 侧
     // (lib.rs 渲染通知回调)判,三条齐了才渲 warp,暂停定格在最后一帧。
     out property <bool> viz-active: root.play-page-open && root.is-playing;
@@ -1208,8 +1216,35 @@ export component MainWindow inherits Window {
             overflow: elide;
         }
 
+        // 歌词:深度卡片的首个真载荷(issue #16)。当前行 + 译文,居中排在
+        // 封面下方;取不到歌词或还在前奏时为空串,这块自然让位。
+        if root.lyric-line != "": VerticalLayout {
+            y: root.viz-lyric-y;
+            height: root.viz-lyric-h;
+            alignment: start;
+            spacing: 10px;
+
+            Text {
+                width: root.width;
+                text: root.lyric-line;
+                color: #f2f5ff;
+                font-size: 30px;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                width: root.width;
+                text: root.lyric-translation;
+                color: #aab2c8;
+                font-size: 16px;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
         // 遮挡层:整窗大小的图必须与场景那张逐像素对齐,故用负偏移推回窗口原点,
-        // 再裁到卡片矩形 —— 与 3D 演示页「转盘中心」卡同一套机关。
+        // 再裁到各自的矩形 —— 与 3D 演示页「转盘中心」卡同一套机关。封面与歌词
+        // 同处一个 z 平面,故**同一张遮挡图**盖两处,各裁各的。
         if root.viz-occluder.width > 0: Rectangle {
             x: root.viz-card-x;
             y: root.viz-card-y;
@@ -1220,6 +1255,20 @@ export component MainWindow inherits Window {
             Image {
                 x: -root.viz-card-x;
                 y: -root.viz-card-y;
+                width: root.width;
+                height: root.height;
+                image-fit: fill;
+                source: root.viz-occluder;
+            }
+        }
+        if root.viz-occluder.width > 0 && root.lyric-line != "": Rectangle {
+            y: root.viz-lyric-y;
+            width: root.width;
+            height: root.viz-lyric-h;
+            clip: true;
+
+            Image {
+                y: -root.viz-lyric-y;
                 width: root.width;
                 height: root.height;
                 image-fit: fill;

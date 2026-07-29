@@ -133,6 +133,60 @@ struct Deck {
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
     sync: crate::syncplay::Sync,
+    lyrics: LyricFeed,
+}
+
+/// 歌词的取用口:播放页每帧问它「现在该显示哪一行」。
+///
+/// 行表随换歌整批替换,`generation` 随之自增 —— 调用方靠 `(generation, 行号)`
+/// 判断该不该推新值:每帧无脑推会把属性标脏,播放页的省电门就白设了。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+pub(crate) struct LyricFeed {
+    lines: Rc<RefCell<Vec<app_core::LyricLineDto>>>,
+    generation: Rc<std::cell::Cell<u64>>,
+    player: Arc<Result<audio::Player, audio::AudioError>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl LyricFeed {
+    /// 当前该显示的 (代际, 行号, 原文, 译文)。没歌词、还在前奏、或没播放器时给 `None`。
+    pub(crate) fn current(
+        &self,
+    ) -> Option<(u64, usize, String, String)> {
+        let player = self.player.as_ref().as_ref().ok()?;
+        let position = player.position().as_millis() as i64;
+        let lines = self.lines.borrow();
+        let index =
+            app_core::current_line(&lines, position)?;
+        let line = lines.get(index)?;
+        Some((
+            self.generation.get(),
+            index,
+            line.text.clone(),
+            line.translation.clone().unwrap_or_default(),
+        ))
+    }
+
+    /// 换歌:先清空(旧歌词配新歌比空着更误导),取到再整批换上并递增代际。
+    fn replace(&self, lines: Vec<app_core::LyricLineDto>) {
+        *self.lines.borrow_mut() = lines;
+        self.generation.set(self.generation.get() + 1);
+    }
+}
+
+/// wasm 上没有播放器,也就没有位置可读。恒给 `None`,调用方无需平台判断。
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Default)]
+pub(crate) struct LyricFeed;
+
+#[cfg(target_arch = "wasm32")]
+impl LyricFeed {
+    pub(crate) fn current(
+        &self,
+    ) -> Option<(u64, usize, String, String)> {
+        None
+    }
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -144,12 +198,20 @@ struct Deck {
 /// 播放器是 `Arc` 而非 `Rc`:同播的事件在后台线程上到达,听众收到的声音要在
 /// **那里**直接出声(见 `syncplay::handle`),绕回 UI 线程只会让起播多等一帧。
 #[cfg(not(target_arch = "wasm32"))]
-pub fn bind(ui: &MainWindow) -> crate::viz::Source {
+pub fn bind(
+    ui: &MainWindow,
+) -> (crate::viz::Source, LyricFeed) {
     // 搜索结果的权威副本。Slint 的 model 只存格式化后的字符串,
     // 点击时要靠它把 id 换回完整的 TrackDto。
     let tracks: Rc<RefCell<Vec<TrackDto>>> =
         Rc::new(RefCell::new(Vec::new()));
     let player = Arc::new(audio::Player::new());
+
+    let lyrics = LyricFeed {
+        lines: Rc::new(RefCell::new(Vec::new())),
+        generation: Rc::new(std::cell::Cell::new(0)),
+        player: player.clone(),
+    };
 
     let deck = Deck {
         playback: Rc::new(
@@ -158,6 +220,7 @@ pub fn bind(ui: &MainWindow) -> crate::viz::Source {
         queue: Rc::new(RefCell::new(Queue::default())),
         sync: crate::syncplay::bind(ui, &player),
         player,
+        lyrics: lyrics.clone(),
     };
 
     bind_search(ui, &tracks);
@@ -172,19 +235,23 @@ pub fn bind(ui: &MainWindow) -> crate::viz::Source {
     );
 
     // 播放页可视化的数据源。无声卡时没有播放器,自然也没有频谱可看。
-    deck.player
+    let viz = deck
+        .player
         .as_ref()
         .as_ref()
         .ok()
-        .map(audio::Player::visualizer)
+        .map(audio::Player::visualizer);
+    (viz, lyrics)
 }
 
 /// wasm 上没有原生音频栈(见 `Cargo.toml` 的条件依赖)。界面照常在,
 /// 只是这一页不接任何行为 —— 「余端 graceful 缺省」,不写平台判断到 `.slint` 里。
 #[cfg(target_arch = "wasm32")]
-pub fn bind(ui: &MainWindow) -> crate::viz::Source {
+pub fn bind(
+    ui: &MainWindow,
+) -> (crate::viz::Source, LyricFeed) {
     ui.set_playback_text("Web 端暂不支持播放".into());
-    None
+    (None, LyricFeed)
 }
 
 /// 「Web 端暂不支持播放」里的中文也得在子集字体里 —— 但它只在 wasm 上出现,
@@ -439,6 +506,23 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     ui.set_now_title(track.title.clone().into());
     ui.set_now_artists(join_artists(&track.artists).into());
     ui.set_cover_art(slint::Image::default());
+
+    // 歌词也随歌换:先清空(旧歌词配新歌比空着更误导),取到再整批换上。
+    // 取不到不影响播放 —— 没歌词是正常状态,不是故障(见 crates/contract)。
+    deck.lyrics.replace(Vec::new());
+    ui.set_lyric_line(slint::SharedString::new());
+    ui.set_lyric_translation(slint::SharedString::new());
+    {
+        let lyrics = deck.lyrics.clone();
+        let id = track.id.clone();
+        slint::spawn_local(async move {
+            if let Ok(dto) = api::lyric(&id).await {
+                lyrics.replace(dto.lines);
+            }
+        })
+        .expect("event loop must be running");
+    }
+
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
         slint::spawn_local(async move {
