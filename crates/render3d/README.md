@@ -88,9 +88,10 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
 
 ## 播放页粒子场(`particles.rs` + `Scene` 的 viz 模式)
 
-播放页第二步(issue #11):数百个半透明小球绕封面卡锚点([`CARD_ANCHOR`])的三层
-轨道壳运动,轨道面穿过卡片平面,粒子转一圈就从封面前面掠到后面 —— 深度遮挡的
-运动形态。与 3D 演示页共用同一个 bevy App 与双目标纹理,`Content` 枚举记录当前
+播放页第二步(issue #11):数百个半透明小球绕封面卡锚点([`CARD_ANCHOR`])运动,
+每颗的半径/高度/大小/角速度由下标散列连续分布,铺满整个视野(密度基准见
+`docs/reference/play-page/`);轨道面穿过卡片平面,粒子转一圈就从封面前面掠到
+后面 —— 深度遮挡的运动形态。与 3D 演示页共用同一个 bevy App 与双目标纹理,`Content` 枚举记录当前
 装的是哪种内容,切换即重建(演示页驱动入口 `render_frame`、播放页 `render_viz_frame`,
 二者由 ui 的门保证互斥);粒子模式下主相机清屏透明,场景图叠在 warp 背景之上。
 
