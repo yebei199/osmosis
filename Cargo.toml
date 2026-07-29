@@ -2,18 +2,20 @@
 resolver = "3"
 members = ["crates/*", "apps/*", "server", "xtask"]
 # 裸 `cargo build` / `cargo test` / IDE 的 cargo check 只走桌面链路。
-# apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 将来拉的
+# apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 拉的
 # wasm-bindgen 在 linux 上也是白搭 —— 它们一律靠 `-p` 显式构建。
 # 见 docs/adr/0003。
 #
-# render3d 也显式排除:它拉整个 bevy(debug 产物数百 MB),只有 apps/desktop 的
-# `bevy-3d` feature 才需要。留在默认成员里会让 IDE 的 cargo check 每次都编 bevy。
+# render3d 曾被显式排除,好让 IDE 的 cargo check 不编 bevy。bevy 成为 apps/desktop 的
+# 硬依赖之后那道排除再也拦不住什么(裸 check 照编不误),于是把它列了回来 ——
+# 裸 `cargo test` 顺带跑它的遮挡门槛单测,不必在 CI 里为它单开一条命令。
 # 不能用 `crates/*` glob 再排除单个,cargo 不支持,只能逐一列出。
 default-members = [
     "crates/contract",
     "crates/api",
     "crates/app-core",
     "crates/ui",
+    "crates/render3d",
     "apps/desktop",
 ]
 
