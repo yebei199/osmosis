@@ -164,14 +164,18 @@ fn split_one(
 
     // 按字数线性摊时间。总数取切分后的字数之和 —— 断点处被 trim 掉的空格
     // 不占时长,用它做分母才让各段的起点落在原文的比例位置上。
-    let total: usize =
-        chunks.iter().map(|c| c.chars().count()).sum();
+    let weights: Vec<usize> =
+        chunks.iter().map(|c| c.chars().count()).collect();
+    let total: usize = weights.iter().sum();
     let span = end - line.start_ms;
     let mut consumed = 0usize;
+    let translations =
+        split_translation(line.translation, &weights);
 
     chunks
         .into_iter()
-        .map(|text| {
+        .zip(translations)
+        .map(|(text, translation)| {
             let start = line.start_ms
                 + span * consumed as i64 / total as i64;
             consumed += text.chars().count();
@@ -180,9 +184,65 @@ fn split_one(
                 end_ms: line.start_ms
                     + span * consumed as i64 / total as i64,
                 text,
-                translation: line.translation.clone(),
+                translation,
             }
         })
+        .collect()
+}
+
+/// 把整行的译文摊到正文切出的各段上,`weights` 是各段的字数。
+///
+/// 为什么不让各段共用整份译文:译文槽是定高的(`viz-lyric-tr-h`)且垂直居中,
+/// 放不下时 Slint 裁的是中间那一截 —— 开头没了、结尾省略号,读起来是断头话。
+/// 实拍见 issue #21。摊开之后每段只剩自己那一截,自然放得下。
+///
+/// 对不齐是必然的:中英的分句数不一样,没有逐句对应关系可用。所以按**正文的字数
+/// 比例**分配 —— 正文走到三分之一处,译文也切在三分之一附近。这是近似,不是对译。
+fn split_translation(
+    translation: Option<String>,
+    weights: &[usize],
+) -> Vec<Option<String>> {
+    let Some(translation) = translation else {
+        return vec![None; weights.len()];
+    };
+
+    let pieces = break_at_punctuation(&translation);
+    // 没有标点可断:整份给第一段。与其在每段里重复同一句读不全的话,
+    // 不如让它只在它对应的那一段出现。
+    if pieces.len() < 2 {
+        return std::iter::once(Some(translation))
+            .chain(std::iter::repeat_n(None, weights.len() - 1))
+            .collect();
+    }
+
+    let total_weight: usize = weights.iter().sum();
+    let total_chars = translation.chars().count();
+    // 各段在译文里的终点(字符数)。用累计权重换算,避免逐段取整累积误差。
+    let bounds: Vec<usize> = weights
+        .iter()
+        .scan(0usize, |cumulative, weight| {
+            *cumulative += weight;
+            Some(total_chars * *cumulative / total_weight)
+        })
+        .collect();
+
+    let mut groups = vec![String::new(); weights.len()];
+    let mut consumed = 0usize;
+    for piece in pieces {
+        let length = piece.chars().count();
+        // 按片的**中点**归属,而不是起点或终点 —— 跨界的片归给它落得更多的那一段。
+        let midpoint = consumed + length / 2;
+        let index = bounds
+            .iter()
+            .position(|bound| midpoint < *bound)
+            .unwrap_or(weights.len() - 1);
+        groups[index].push_str(&piece);
+        consumed += length;
+    }
+
+    groups
+        .into_iter()
+        .map(|group| non_empty(group.trim().to_owned()))
         .collect()
 }
 
@@ -342,18 +402,123 @@ mod tests {
         assert_eq!(split_long_lines(lines.clone()), lines);
     }
 
-    /// 译文跟着切出的每一段走:三段期间译文行不闪不变。
-    #[test]
-    fn split_carries_the_translation() {
+    /// [`LONG`] 的译文,标点够多、切得开。
+    const LONG_TRANSLATION: &str = "所以我确实如此,我仍然感觉一样的感受,我猜我弹这把吉他,希望明天我能说我很好,好吧,好吧,太阳每天都升起";
+
+    /// 造一行带译文的超长行。
+    fn long_line_with(translation: &str) -> LyricLineDto {
         let mut line = dto_line(0, 4_000, LONG);
-        line.translation = Some("我还是老样子".to_owned());
+        line.translation = Some(translation.to_owned());
+        line
+    }
+
+    /// 各段的译文按顺序拼起来。
+    fn joined_translation(lines: &[LyricLineDto]) -> String {
+        lines
+            .iter()
+            .filter_map(|line| line.translation.as_deref())
+            .collect()
+    }
+
+    /// 译文按自己的标点切片后分给各段,拼起来等于原译文,一个字不丢。
+    #[test]
+    fn the_segments_together_hold_the_whole_translation() {
+        let out = split_long_lines(vec![long_line_with(
+            LONG_TRANSLATION,
+        )]);
+        assert!(out.len() > 1);
+        assert_eq!(joined_translation(&out), LONG_TRANSLATION);
+    }
+
+    /// 分配比例跟着正文走:正文最长的那一段,拿到的译文也最长。
+    #[test]
+    fn translation_shares_follow_the_text_proportions() {
+        let out = split_long_lines(vec![long_line_with(
+            LONG_TRANSLATION,
+        )]);
+        let widest = out
+            .iter()
+            .max_by_key(|line| line.text.chars().count())
+            .expect("切分至少给出一段");
+        let richest = out
+            .iter()
+            .max_by_key(|line| {
+                line.translation
+                    .as_deref()
+                    .map_or(0, |t| t.chars().count())
+            })
+            .expect("切分至少给出一段");
+        assert_eq!(widest.start_ms, richest.start_ms);
+    }
+
+    /// 译文片数少于正文段数时,多出来的段不带译文,而不是回头重复整段。
+    ///
+    /// 用加长版正文:[`LONG`] 只切得出两段,凑不出「片数少于段数」。
+    #[test]
+    fn fewer_translation_pieces_than_segments_leaves_the_rest_empty(
+    ) {
+        let mut line =
+            dto_line(0, 4_000, &format!("{LONG}, {LONG}"));
+        line.translation = Some("甲,乙".to_owned());
         let out = split_long_lines(vec![line]);
+        assert!(out.len() > 2);
+        let carried = out
+            .iter()
+            .filter(|line| line.translation.is_some())
+            .count();
+        assert_eq!(carried, 2);
+    }
+
+    /// 没有标点可断的译文整份给第一段,其余段留空 —— 与其在三段里重复一句
+    /// 读不全的话,不如只在它对应的那一段出现。
+    #[test]
+    fn an_unsplittable_translation_goes_to_the_first_segment_only(
+    ) {
+        let out =
+            split_long_lines(vec![long_line_with("我还是老样子")]);
+        assert!(out.len() > 1);
+        assert_eq!(
+            out[0].translation.as_deref(),
+            Some("我还是老样子")
+        );
+        for segment in &out[1..] {
+            assert_eq!(segment.translation, None);
+        }
+    }
+
+    /// 没有译文的行,切出来的每一段也都没有译文。
+    #[test]
+    fn a_missing_translation_stays_missing_across_segments() {
+        let out =
+            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
         assert!(out.len() > 1);
         for segment in &out {
-            assert_eq!(
-                segment.translation.as_deref(),
-                Some("我还是老样子")
-            );
+            assert_eq!(segment.translation, None);
+        }
+    }
+
+    /// 不需要切的行,译文原样保留。
+    #[test]
+    fn unsplit_lines_keep_their_translation() {
+        let mut line = dto_line(0, 1_000, "短短一行");
+        line.translation = Some(LONG_TRANSLATION.to_owned());
+        assert_eq!(
+            split_long_lines(vec![line.clone()]),
+            vec![line]
+        );
+    }
+
+    /// 中文译文的切点落在 UTF-8 字符边界上,不 panic、不产生半个字。
+    #[test]
+    fn translation_split_does_not_break_multibyte_chars() {
+        let translation =
+            "我弹着吉他,盼着明天,能说一句我很好,".repeat(4);
+        let out =
+            split_long_lines(vec![long_line_with(&translation)]);
+        assert!(out.len() > 1);
+        assert_eq!(joined_translation(&out), translation);
+        for segment in &out {
+            assert_ne!(segment.translation.as_deref(), Some(""));
         }
     }
 
