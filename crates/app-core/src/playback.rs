@@ -64,6 +64,11 @@ impl Playback {
         true
     }
 
+    /// 这个代号是不是还是当前的。
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation == generation
+    }
+
     /// 停止播放,回到 [`PlaybackState::Idle`]。
     ///
     /// 同时作废当前代际:停止之后,正在路上的那次准备回来了也不该出声。
@@ -75,30 +80,53 @@ impl Playback {
 
 /// 播放一首歌,把结果写回 `playback`。
 ///
-/// `start` 由调用方注入 —— 生产环境传一个"取直链 + 开流 + 送进 audio::Player"
-/// 的闭包,测试里传一个返回预置结果的闭包。本 crate 因此既不依赖 `api`
-/// 也不依赖 `audio`。
-pub async fn play<Start, Fut, Error>(
+/// 分两步注入,而不是一个"从取直链一路做到出声"的闭包:
+///
+/// - `prepare` 是**慢**的那一半(取直链、开流、解码),可以 await;
+/// - `commit` 是**不可撤销**的那一半(把源塞进播放器),同步、立刻生效。
+///
+/// 拆开是为了在两者之间验一次代际。合成一步的话,一次过期的准备回来时
+/// 照样会 `player.play()`,把后点的那首顶掉 —— 状态文字写着 B,耳朵听到的
+/// 是 A,而且不会有任何报错。
+///
+/// 生产环境的 `prepare` 走 `api` + `audio`,`commit` 交给 `audio::Player`;
+/// 测试里两个都传预置闭包。本 crate 因此既不依赖 `api` 也不依赖 `audio`。
+pub async fn play<Prepare, Fut, Commit, Ready, Error>(
     playback: &RefCell<Playback>,
     track: TrackDto,
-    start: Start,
+    prepare: Prepare,
+    commit: Commit,
 ) where
-    Start: FnOnce(TrackDto) -> Fut,
-    Fut: Future<Output = Result<(), Error>>,
+    Prepare: FnOnce(TrackDto) -> Fut,
+    Fut: Future<Output = Result<Ready, Error>>,
+    Commit: FnOnce(Ready),
     Error: fmt::Display,
 {
     // 借用必须在 await 之前归还,否则同一时刻的第二次 play 会 panic。
     let generation =
         playback.borrow_mut().begin(track.clone());
-    let result = start(track.clone())
+    let prepared = prepare(track.clone())
         .await
-        .map(|()| track)
         .map_err(|error| error.to_string());
+
+    // 准备期间用户可能又点了别的歌。过期的这次连播放器都不许碰,
+    // 备好的源就地丢掉。
+    let still_current =
+        playback.borrow().is_current(generation);
+    if !still_current {
+        return;
+    }
+
+    let result = prepared.map(|ready| {
+        commit(ready);
+        track
+    });
     playback.borrow_mut().finish(generation, result);
 }
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
     use core::pin::pin;
     use core::task::{Context, Poll, Waker};
 
@@ -191,15 +219,70 @@ mod tests {
         );
     }
 
-    /// 失败要留下原因。走完整的 `play` 路径,顺带验证错误被 `Display` 成了字符串。
+    /// 过期的加载不提交给播放器。
+    ///
+    /// 代际此前只挡住状态文字,声音照出 —— 先点 A 后点 B,A 慢一步回来
+    /// 仍会把 B 从播放器里顶掉,耳朵听到的是 A 而界面写着 B。
     #[test]
-    fn failed_playback_keeps_reason() {
+    fn a_superseded_load_is_not_committed() {
         let playback = RefCell::new(Playback::default());
+        let committed = Cell::new(0);
 
-        block_on(play(&playback, track("1"), |_| async {
-            Err::<(), _>("直链已过期")
-        }));
+        // 准备期间用户又点了另一首 —— 本次就此过期。借用在 await 前已归还,
+        // 所以这里能再 borrow_mut(这正是 `play` 那句注释守着的性质)。
+        block_on(play(
+            &playback,
+            track("1"),
+            |_| async {
+                playback.borrow_mut().begin(track("2"));
+                Ok::<_, &str>(())
+            },
+            |()| committed.set(committed.get() + 1),
+        ));
 
+        assert_eq!(committed.get(), 0, "过期的那次不该出声");
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Loading(track("2")),
+            "状态也不该被过期结果改动"
+        );
+    }
+
+    /// 没被顶掉的那次照常提交,状态进 Playing。
+    #[test]
+    fn the_current_load_is_committed() {
+        let playback = RefCell::new(Playback::default());
+        let committed = Cell::new(0);
+
+        block_on(play(
+            &playback,
+            track("1"),
+            |_| async { Ok::<_, &str>(()) },
+            |()| committed.set(committed.get() + 1),
+        ));
+
+        assert_eq!(committed.get(), 1);
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Playing(track("1"))
+        );
+    }
+
+    /// 准备阶段就失败:不提交,状态进 Failed 并留下原因。
+    #[test]
+    fn a_failed_preparation_reports_failure_without_committing()
+    {
+        let playback = RefCell::new(Playback::default());
+        let committed = Cell::new(0);
+
+        block_on(play(
+            &playback,
+            track("1"),
+            |_| async { Err::<(), _>("直链已过期") },
+            |()| committed.set(committed.get() + 1),
+        ));
+
+        assert_eq!(committed.get(), 0);
         assert_eq!(
             playback.borrow().state(),
             &PlaybackState::Failed("直链已过期".to_owned())

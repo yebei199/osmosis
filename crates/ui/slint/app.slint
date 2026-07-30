@@ -64,6 +64,9 @@ struct TrackRow {
     title: string,
     artists: string,
     duration: string,
+    // 这一首正在加载。网络慢时点了看不出反应,用户就会连点 —— 状态行那句
+    // 「加载中…」在列表上方、13px 灰字,离手指太远(见 crates/ui/src/music.rs)。
+    loading: bool,
 }
 
 // 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,
@@ -588,6 +591,9 @@ export component MainWindow inherits Window {
     callback daily();
     // 取我喜欢的音乐,同上。
     callback liked();
+    // 进了 Music 页。当天还没拉过推荐时由 Rust 侧补一次 daily —— 判断在那边,
+    // 因为「今天」和「上次拉的日期」都不是界面该记的东西。
+    callback music-shown();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
     // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
@@ -699,6 +705,11 @@ export component MainWindow inherits Window {
                     padding: 16px;
                     spacing: 12px;
 
+                    // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
+                    // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
+                    // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
+                    init => { root.music-shown(); }
+
                     HorizontalLayout {
                         spacing: 8px;
 
@@ -759,10 +770,16 @@ export component MainWindow inherits Window {
                             spacing: 4px;
                             alignment: start;
 
+                            // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
+                            // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
                             for row[i] in root.tracks: Rectangle {
                                 height: 52px;
-                                background: touch.has-hover ? #ffffff14 : #ffffff08;
+                                background: row.loading ? #d9a86c26
+                                    : (touch.has-hover ? #ffffff14 : #ffffff08);
                                 border-radius: 8px;
+                                border-width: row.loading ? 1px : 0;
+                                border-color: #d9a86c66;
+                                animate background { duration: 160ms; easing: ease-out; }
 
                                 touch := TouchArea {
                                     clicked => { root.play(row.id); }
@@ -795,9 +812,12 @@ export component MainWindow inherits Window {
                                             overflow: elide;
                                         }
                                     }
+                                    // 时长让位给「加载中」:两个都摆会把歌名挤窄,
+                                    // 而正在加载时时长不是用户在等的信息。
                                     Text {
-                                        text: row.duration;
-                                        color: #9aa0b4;
+                                        text: row.loading ? "加载中…" : row.duration;
+                                        font-family: row.loading ? "Maple Mono NF CN" : "";
+                                        color: row.loading ? #d9cdbd : #9aa0b4;
                                         font-size: 12px;
                                         vertical-alignment: center;
                                     }
@@ -915,7 +935,26 @@ export component MainWindow inherits Window {
     // 五层合成:warp 背景 → 封面点云 → 歌名与歌词 → 遮挡层(裁到歌词)→ 控制簇。
     // 歌词是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从字前面掠过」;
     // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
-    if root.play-page-open: Rectangle {
+    if root.play-page-open: FocusScope {
+        // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
+        // key-pressed 一次都不会触发。
+        init => { self.focus(); }
+
+        // 安卓的返回键、桌面的 Esc:都先收起播放页。
+        //
+        // 安卓那条不是锦上添花 —— 上游把 Back 派成 Key.Back,**只有我们不接**
+        // 才去 finish_activity()(见 slint 的 android-activity 后端
+        // callback_on_back_invoked)。不接就是「按返回直接退应用」,而播放页是
+        // 全屏沉浸层,那不是任何人对返回的预期。
+        key-pressed(event) => {
+            if (event.text == Key.Back || event.text == Key.Escape) {
+                root.play-page-open = false;
+                return accept;
+            }
+            return reject;
+        }
+
+      Rectangle {
         // 兜底纯色底:无 GPU 构建(viz-bg 恒空)也得是完整的深色沉浸层。
         background: #0b0d13;
 
@@ -1091,5 +1130,6 @@ export component MainWindow inherits Window {
                 }
             }
         }
+      }
     }
 }

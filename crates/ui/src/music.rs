@@ -102,13 +102,59 @@ pub fn should_advance(
         && !listening
 }
 
-/// 把一首歌翻成列表里的一行。所有格式化都在这里做完,`.slint` 只负责摆。
-fn to_row(track: &TrackDto) -> TrackRow {
-    TrackRow {
-        id: track.id.clone().into(),
-        title: track.title.clone().into(),
-        artists: join_artists(&track.artists).into(),
-        duration: format_duration(track.duration_ms).into(),
+/// 这一下点击是不是多余的。
+///
+/// 判据只认 `Loading`,而且只认**同一首**:网络慢时点了看不出反应,用户就会
+/// 连点,每一下都发一次下载、每条回来都从头出声。已经在放的那一首再点是
+/// 「从头听」,不是多余(见 `CONTEXT.md`「队列」)。
+pub fn is_redundant_tap(
+    state: &PlaybackState,
+    id: &str,
+) -> bool {
+    matches!(state, PlaybackState::Loading(track) if track.id == id)
+}
+
+/// 当日推荐该不该拉。`last` 是上次拉取的日期,`today` 是今天。
+///
+/// 相等就不拉,于是搜完歌切出去再回来,搜索结果不会被推荐冲掉 —— 三个入口
+/// (搜索/推荐/红心)填的是同一个列表,拉一次就整批换掉。
+/// 不相等一律拉,包括 `last` 比 `today` 还晚的情况:时钟被拨过就重拉一次,
+/// 比推理"是不是该信这个日期"便宜。
+pub fn daily_is_due<D: PartialEq>(
+    last: Option<&D>,
+    today: &D,
+) -> bool {
+    last != Some(today)
+}
+
+/// 把一批歌翻成列表的行,顺带标出正在加载的那一首。
+///
+/// 所有格式化都在这里做完,`.slint` 只负责摆。`loading` 给的是那一首的 id ——
+/// 它不在这批里(点完歌又搜了别的)就一行都不标。
+fn to_rows(
+    batch: &[TrackDto],
+    loading: Option<&str>,
+) -> Vec<TrackRow> {
+    batch
+        .iter()
+        .map(|track| TrackRow {
+            id: track.id.clone().into(),
+            title: track.title.clone().into(),
+            artists: join_artists(&track.artists).into(),
+            duration: format_duration(track.duration_ms)
+                .into(),
+            loading: loading == Some(track.id.as_str()),
+        })
+        .collect()
+}
+
+/// 正在加载的那一首的 id,没有就给 `None`。
+fn loading_id(state: &PlaybackState) -> Option<&str> {
+    match state {
+        PlaybackState::Loading(track) => {
+            Some(track.id.as_str())
+        }
+        _ => None,
     }
 }
 
@@ -135,6 +181,12 @@ struct Deck {
     sync: crate::syncplay::Sync,
     lyrics: LyricFeed,
     cover: CoverFeed,
+    /// 列表里那一批歌的权威副本。Slint 的 model 只存格式化后的字符串,
+    /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
+    tracks: Rc<RefCell<Vec<TrackDto>>>,
+    /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
+    /// 只活在进程里 —— 重启重拉一次,不落盘。
+    last_daily: Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
 }
 
 /// 封面像素的取用口:播放页每帧问它「有没有新封面要送进点云」。
@@ -226,10 +278,6 @@ impl LyricFeed {
 pub fn bind(
     ui: &MainWindow,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
-    // 搜索结果的权威副本。Slint 的 model 只存格式化后的字符串,
-    // 点击时要靠它把 id 换回完整的 TrackDto。
-    let tracks: Rc<RefCell<Vec<TrackDto>>> =
-        Rc::new(RefCell::new(Vec::new()));
     let player = Arc::new(audio::Player::new());
 
     let lyrics = LyricFeed {
@@ -248,11 +296,13 @@ pub fn bind(
         player,
         lyrics: lyrics.clone(),
         cover: cover.clone(),
+        tracks: Rc::new(RefCell::new(Vec::new())),
+        last_daily: Rc::new(std::cell::Cell::new(None)),
     };
 
-    bind_search(ui, &tracks);
-    bind_list(ui, &tracks);
-    bind_play(ui, &tracks, &deck);
+    bind_search(ui, &deck);
+    bind_list(ui, &deck);
+    bind_play(ui, &deck);
     bind_controls(ui, &deck);
     start_auto_advance(ui, &deck);
     startup_check(ui);
@@ -289,11 +339,8 @@ const WASM_NOTICE: &str = "Web 端暂不支持播放";
 
 /// 搜索:关键词 → `GET /search` → 结果列表。
 #[cfg(not(target_arch = "wasm32"))]
-fn bind_search(
-    ui: &MainWindow,
-    tracks: &Rc<RefCell<Vec<TrackDto>>>,
-) {
-    let tracks = tracks.clone();
+fn bind_search(ui: &MainWindow, deck: &Deck) {
+    let deck = deck.clone();
     let weak = ui.as_weak();
 
     ui.on_search(move |keyword| {
@@ -302,13 +349,13 @@ fn bind_search(
             return;
         }
 
-        let tracks = tracks.clone();
+        let deck = deck.clone();
         let weak = weak.clone();
         slint::spawn_local(async move {
             let found = api::search(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
             match found {
-                Ok(dto) => show(&ui, &tracks, dto.tracks),
+                Ok(dto) => show(&ui, &deck, dto.tracks),
                 Err(error) => {
                     // 搜索失败复用播放状态那一行 —— 音乐页只有一处报错位,
                     // 再加一行"搜索状态"会让两行里总有一行是空的。
@@ -323,25 +370,46 @@ fn bind_search(
 }
 
 /// 今日推荐与我喜欢的音乐。两者只差调哪个请求函数,其余完全相同。
+///
+/// 外加一个「进了 Music 页」的钩子:那时若当天还没拉过推荐,就替用户拉一次 ——
+/// 空着一页只有一行「点一首歌开始」不是个好开局。
 #[cfg(not(target_arch = "wasm32"))]
-fn bind_list(
-    ui: &MainWindow,
-    tracks: &Rc<RefCell<Vec<TrackDto>>>,
-) {
-    let daily = tracks.clone();
+fn bind_list(ui: &MainWindow, deck: &Deck) {
+    let daily = deck.clone();
     let weak = ui.as_weak();
-    ui.on_daily(move || {
-        fetch_into(&weak, &daily, async {
-            api::daily().await.map(|dto| dto.tracks)
-        });
-    });
+    ui.on_daily(move || fetch_daily(&weak, &daily));
 
-    let liked = tracks.clone();
+    let liked = deck.clone();
     let weak = ui.as_weak();
     ui.on_liked(move || {
         fetch_into(&weak, &liked, async {
             api::liked().await.map(|dto| dto.tracks)
         });
+    });
+
+    let shown = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_music_shown(move || {
+        // 当天拉过就什么都不做 —— 搜完歌切出去再回来,搜索结果因此保得住。
+        if daily_is_due(
+            shown.last_daily.get().as_ref(),
+            &chrono::Local::now().date_naive(),
+        ) {
+            fetch_daily(&weak, &shown);
+        }
+    });
+}
+
+/// 拉当日推荐,并记下拉取的日期。
+///
+/// 日期在**发出**请求时就戳上,而不是等结果回来:失败了也算今天试过,
+/// 否则请求一失败,此后每次进 Music 页都会再打一次。手动按 Daily 仍能重试。
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_daily(weak: &slint::Weak<MainWindow>, deck: &Deck) {
+    deck.last_daily
+        .set(Some(chrono::Local::now().date_naive()));
+    fetch_into(weak, deck, async {
+        api::daily().await.map(|dto| dto.tracks)
     });
 }
 
@@ -350,25 +418,25 @@ fn bind_list(
 /// 收的是 `Vec<TrackDto>` 而非线上的信封类型:`ui` 按分层不直接依赖 `contract`,
 /// 剥壳在调用处一句 `.map(|dto| dto.tracks)` 完成。
 ///
-/// 三个入口(搜索/推荐/红心)填的是**同一个** `tracks` 列表 ——
+/// 三个入口(搜索/推荐/红心)填的是**同一个**列表 ——
 /// 换一个来源就整批换掉,不合并:合并了就说不清列表里这首是哪来的。
 #[cfg(not(target_arch = "wasm32"))]
 fn fetch_into<Fut>(
     weak: &slint::Weak<MainWindow>,
-    tracks: &Rc<RefCell<Vec<TrackDto>>>,
+    deck: &Deck,
     request: Fut,
 ) where
     Fut: core::future::Future<
             Output = Result<Vec<TrackDto>, api::ApiError>,
         > + 'static,
 {
-    let tracks = tracks.clone();
+    let deck = deck.clone();
     let weak = weak.clone();
     slint::spawn_local(async move {
         let found = request.await;
         let Some(ui) = weak.upgrade() else { return };
         match found {
-            Ok(found) => show(&ui, &tracks, found),
+            Ok(found) => show(&ui, &deck, found),
             Err(error) => ui.set_playback_text(
                 format!("失败: {error}").into(),
             ),
@@ -379,37 +447,53 @@ fn fetch_into<Fut>(
 
 /// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
 #[cfg(not(target_arch = "wasm32"))]
-fn show(
+fn show(ui: &MainWindow, deck: &Deck, found: Vec<TrackDto>) {
+    *deck.tracks.borrow_mut() = found;
+    let loading =
+        loading_id(deck.playback.borrow().state()).map(str::to_owned);
+    push_rows(ui, deck, loading.as_deref());
+}
+
+/// 重推一遍列表,把 `loading` 那一行标成加载中。
+///
+/// 加载中的 id 由调用方给,而不是就地读 `playback`:点下去的那一刻状态还没
+/// 写进去(`app_core::play` 在 spawn 出去的协程里才 `begin`),读它会标错行。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_rows(
     ui: &MainWindow,
-    tracks: &Rc<RefCell<Vec<TrackDto>>>,
-    found: Vec<TrackDto>,
+    deck: &Deck,
+    loading: Option<&str>,
 ) {
-    let rows: Vec<TrackRow> =
-        found.iter().map(to_row).collect();
-    *tracks.borrow_mut() = found;
+    let rows = to_rows(&deck.tracks.borrow(), loading);
     ui.set_tracks(ModelRc::new(VecModel::from(rows)));
 }
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]
-fn bind_play(
-    ui: &MainWindow,
-    tracks: &Rc<RefCell<Vec<TrackDto>>>,
-    deck: &Deck,
-) {
-    let tracks = tracks.clone();
+fn bind_play(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
 
     ui.on_play(move |id| {
         let Some(ui) = weak.upgrade() else { return };
+
+        // 这一首已经在加载了:这一下是多余的,直接丢掉。不挡的话,连点五下
+        // 就是五条在途下载,每条回来都往播放器里塞一次源,声音从头响五遍。
+        let redundant = is_redundant_tap(
+            deck.playback.borrow().state(),
+            &id,
+        );
+        if redundant {
+            return;
+        }
+
         // 点歌是播放动作:正在收听的话,先退出(CONTEXT.md「听众」)。
         if deck.sync.is_listening() {
             deck.sync.leave();
         }
 
         let id = id.to_string();
-        let batch = tracks.borrow().clone();
+        let batch = deck.tracks.borrow().clone();
         let Some(index) =
             batch.iter().position(|track| track.id == id)
         else {
@@ -522,12 +606,16 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     };
 
     // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
+    //
+    // 状态先写进 `playback`,再让状态行与列表都从它读:列表那一行的加载态
+    // 是用户手指底下唯一看得见的反馈,晚一帧就等于没有。
     ui.set_playback_text(
         describe_playback(&PlaybackState::Loading(
             track.clone(),
         ))
         .into(),
     );
+    push_rows(ui, deck, Some(&track.id));
 
     // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
     ui.set_now_title(track.title.clone().into());
@@ -571,24 +659,34 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
     slint::spawn_local(async move {
-        app_core::play(&deck.playback, track, |track| {
-            start(
-                deck.player.clone(),
-                deck.sync.clone(),
-                track,
-            )
-        })
+        let commit = deck.clone();
+        let player = deck.player.clone();
+        app_core::play(
+            &deck.playback,
+            track,
+            move |track| prepare(player, track),
+            move |decoded| {
+                emit(&commit.player, &commit.sync, decoded);
+            },
+        )
         .await;
 
         if let Some(ui) = weak.upgrade() {
-            let state = deck.playback.borrow();
-            ui.set_is_playing(matches!(
-                state.state(),
-                PlaybackState::Playing(_)
-            ));
-            ui.set_playback_text(
-                describe_playback(state.state()).into(),
-            );
+            let (playing, text) = {
+                let state = deck.playback.borrow();
+                (
+                    matches!(
+                        state.state(),
+                        PlaybackState::Playing(_)
+                    ),
+                    describe_playback(state.state()),
+                )
+            };
+            ui.set_is_playing(playing);
+            ui.set_playback_text(text.into());
+            // 这一首要么放起来了、要么失败了,行上的加载态该收了。
+            // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
+            push_rows(&ui, &deck, None);
         }
     })
     .expect("event loop must be running");
@@ -646,46 +744,56 @@ fn startup_check(ui: &MainWindow) {
     .expect("event loop must be running");
 }
 
-/// 真正把一首歌变成声音:取直链 → 开流 → 解码 → 归一 → 分出一支给同播 → 出声。
+/// 把一首歌准备到「随时能出声」为止:取直链 → 开流 → 解码。**慢**的那一半。
 ///
-/// 这就是注入给 `app_core::play` 的那个闭包体。`app-core` 只看到
-/// "一个返回 Result 的 future",看不到 HTTP、alsa,也看不到 WebRTC。
+/// 这是注入给 `app_core::play` 的 `prepare`。`app-core` 只看到"一个返回 Result
+/// 的 future",看不到 HTTP、alsa,也看不到 WebRTC。
 ///
-/// 每首歌都分一支给同播,不管当下有没有人在听:支路满了会自己丢采样
-/// (见 `audio::codec::Tee`),而等"确认有人听"再接的话,换歌时听众会掉音。
+/// 停在解码,不往下走:再往下就是把源塞进播放器,那一步不可撤销。中间隔着
+/// 一次代际校验 —— 准备期间被顶掉的这一份就地丢掉(见 `app_core::play`)。
 #[cfg(not(target_arch = "wasm32"))]
-async fn start(
+async fn prepare(
     player: Arc<Result<audio::Player, audio::AudioError>>,
-    sync: crate::syncplay::Sync,
     track: TrackDto,
-) -> Result<(), String> {
-    use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
+) -> Result<audio::Loaded, String> {
+    // 没声卡就在这里认输,别等下载完才发现放不了。
+    if let Err(error) = player.as_ref() {
+        return Err(error.to_string());
+    }
 
     let source = api::play_source(&track.id)
         .await
         .map_err(|error| error.to_string())?;
     // 开流与解码都在 `audio` 自己的后台 runtime 上跑 —— 这里是 Slint 的 UI 线程,
     // 没有 tokio 反应堆,也不能被阻塞读占住。
-    let decoded = audio::load(&source.url)
+    audio::load(&source.url)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())
+}
 
-    match player.as_ref() {
-        Ok(player) => {
-            // 先归一再分支:本机听到的和推出去的因此是同一批采样,
-            // 而 Opus 只在 48kHz 立体声上工作(见 `audio::codec::normalize`)。
-            let (tee, branch) = Tee::new(
-                normalize(decoded),
-                BRANCH_CAPACITY,
-            );
-            // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
-            // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
-            player.play(tee);
-            sync.feed(branch);
-            Ok(())
-        }
-        Err(error) => Err(error.to_string()),
-    }
+/// 把备好的源交给播放器与同播。**不可撤销**的那一半,同步、立刻生效。
+///
+/// 每首歌都分一支给同播,不管当下有没有人在听:支路满了会自己丢采样
+/// (见 `audio::codec::Tee`),而等"确认有人听"再接的话,换歌时听众会掉音。
+///
+/// 无声卡时这里什么都不做 —— 那种情况 [`prepare`] 已经先报了错,走不到这里。
+#[cfg(not(target_arch = "wasm32"))]
+fn emit(
+    player: &Arc<Result<audio::Player, audio::AudioError>>,
+    sync: &crate::syncplay::Sync,
+    decoded: audio::Loaded,
+) {
+    use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
+
+    let Ok(player) = player.as_ref() else { return };
+    // 先归一再分支:本机听到的和推出去的因此是同一批采样,
+    // 而 Opus 只在 48kHz 立体声上工作(见 `audio::codec::normalize`)。
+    let (tee, branch) =
+        Tee::new(normalize(decoded), BRANCH_CAPACITY);
+    // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
+    // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
+    player.play(tee);
+    sync.feed(branch);
 }
 
 #[cfg(test)]
@@ -740,6 +848,112 @@ mod tests {
             cover: None,
             duration_ms: 234_000,
         }
+    }
+
+    /// 指定 id 的一首歌,用来分辨列表里的行。
+    fn track_with_id(id: &str) -> TrackDto {
+        TrackDto {
+            id: id.to_owned(),
+            title: format!("歌 {id}"),
+            ..track()
+        }
+    }
+
+    /// 正在加载的就是这一首:再点它是多余的。
+    ///
+    /// 用户会连点,正是因为网络慢时点了看不出反应 —— 每一下都发一次
+    /// 下载、每条回来都从头出声,这是 bug 不是"手快"。
+    #[test]
+    fn tapping_the_track_that_is_already_loading_is_redundant()
+    {
+        assert!(is_redundant_tap(
+            &PlaybackState::Loading(track_with_id("1")),
+            "1"
+        ));
+    }
+
+    /// 正在加载别的歌:这一下该换歌,不算多余。
+    #[test]
+    fn tapping_a_different_track_while_loading_is_not_redundant()
+    {
+        assert!(!is_redundant_tap(
+            &PlaybackState::Loading(track_with_id("1")),
+            "2"
+        ));
+    }
+
+    /// 已经在放这一首:再点是「从头听」,照旧生效。
+    #[test]
+    fn tapping_the_playing_track_is_not_redundant() {
+        assert!(!is_redundant_tap(
+            &PlaybackState::Playing(track_with_id("1")),
+            "1"
+        ));
+    }
+
+    /// 空闲与失败态下的点击一律照常 —— 失败之后重试是常见动作。
+    #[test]
+    fn tapping_while_idle_or_failed_is_not_redundant() {
+        assert!(!is_redundant_tap(&PlaybackState::Idle, "1"));
+        assert!(!is_redundant_tap(
+            &PlaybackState::Failed("直链已过期".to_owned()),
+            "1"
+        ));
+    }
+
+    /// 从没拉过:该拉。
+    #[test]
+    fn daily_has_never_been_fetched_so_it_is_due() {
+        assert!(daily_is_due(None, &20_260_730));
+    }
+
+    /// 今天拉过了:不动 —— 搜索结果因此保得住。
+    #[test]
+    fn daily_fetched_today_is_not_due() {
+        assert!(!daily_is_due(
+            Some(&20_260_730),
+            &20_260_730
+        ));
+    }
+
+    /// 拉的是昨天的:跨天失效,该重拉。
+    #[test]
+    fn daily_fetched_on_an_earlier_day_is_due() {
+        assert!(daily_is_due(Some(&20_260_729), &20_260_730));
+    }
+
+    /// 只标出加载中的那一行,其余行不受影响。
+    #[test]
+    fn only_the_loading_track_row_is_marked() {
+        let batch = [
+            track_with_id("1"),
+            track_with_id("2"),
+            track_with_id("3"),
+        ];
+        let rows = to_rows(&batch, Some("2"));
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.loading)
+                .collect::<Vec<_>>(),
+            vec![false, true, false]
+        );
+    }
+
+    /// 没有歌在加载时,一行都不标。
+    #[test]
+    fn no_row_is_marked_when_nothing_is_loading() {
+        let batch = [track_with_id("1"), track_with_id("2")];
+        let rows = to_rows(&batch, None);
+        assert!(rows.iter().all(|row| !row.loading));
+    }
+
+    /// 加载中的歌不在当前列表里(点完歌又搜了别的):一行不标,也不出错。
+    #[test]
+    fn a_loading_track_outside_the_list_marks_nothing() {
+        let batch = [track_with_id("1"), track_with_id("2")];
+        let rows = to_rows(&batch, Some("99"));
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| !row.loading));
     }
 
     /// 四个状态都要有人能读的文案。少一个,用户就会遇到一行空白 ——
