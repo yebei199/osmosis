@@ -1002,7 +1002,10 @@ export component MainWindow inherits Window {
                 color: #aab2c8;
                 font-size: root.compact ? 14px : 16px;
                 horizontal-alignment: center;
-                vertical-alignment: center;
+                // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
+                // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
+                // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
+                vertical-alignment: top;
                 wrap: word-wrap;
                 overflow: elide;
             }
