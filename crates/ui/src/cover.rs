@@ -6,19 +6,11 @@
 
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
-/// 送进可视化的封面像素:RGBA8,长边已收进 [`COVER_TEXTURE_SIZE`]。
-///
-/// 与给 `cover-art` 的那张图是同一次解码的两个出口:界面要 `slint::Image`,
-/// 点云要能上传成 GPU 纹理的裸像素(见 `render3d::cloud`)。
-pub struct CoverPixels {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
+pub use crate::viz::CoverPixels;
 
 /// 点云采样用的封面纹理边长上限,同原版默认档的 512。
 ///
-/// 点云是 183×183,再高的纹理一个格点也采不到;原图动辄上千像素,原样传上去
+/// 点云是 96×96,再高的纹理一个格点也采不到;原图动辄上千像素,原样传上去
 /// 只是白搬内存。
 pub const COVER_TEXTURE_SIZE: u32 = 512;
 

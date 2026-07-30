@@ -278,13 +278,9 @@ pub fn run_with_renderers(
                             time: viz_time,
                             audio,
                             // 换歌解出新封面的那一帧才有值,取走即清空。
-                            cover: cover.take().map(|c| {
-                                VizCover {
-                                    width: c.width,
-                                    height: c.height,
-                                    rgba: c.rgba,
-                                }
-                            }),
+                            // `CoverPixels` 就是 `VizCover`(见 viz.rs),
+                            // 直接交出去,不逐字段再抄一遍兆级的像素。
+                            cover: cover.take(),
                             pointer: VizPointer {
                                 x: ui.get_viz_pointer_x(),
                                 y: ui.get_viz_pointer_y(),

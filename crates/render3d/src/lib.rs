@@ -48,7 +48,7 @@ mod navglass;
 pub use navglass::{NavGlassPass, NavParams};
 
 mod warp;
-pub use warp::{AUDIO_BYTES, WarpPass};
+pub use warp::{AUDIO_BYTES, WARP_SIDE, WarpPass};
 
 mod cloud;
 
