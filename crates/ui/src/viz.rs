@@ -20,6 +20,8 @@ pub struct VizControls {
     pub cover: Option<VizCover>,
     /// 视觉区里的指针,驱动涟漪与拖动旋转。
     pub pointer: VizPointer,
+    /// 当前视觉预设的编号,见 `.slint` 的 `viz-preset`。越界由消费方兜底。
+    pub preset: i32,
 }
 
 /// 视觉区指针的一帧状态,位置归一到 0..1(左上原点)。

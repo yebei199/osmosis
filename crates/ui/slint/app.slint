@@ -528,6 +528,16 @@ export component MainWindow inherits Window {
     out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
     out property <length> viz-title-y: root.viz-lyric-y - 96px;
+    // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
+    // 手工对齐 —— 那边按下标分支,加档时两处都要动。
+    out property <int> viz-preset: 0;
+    // 预设名,只用于切换时在屏幕上闪一下。第 6 档「安魂」要一份骷髅点云资产,
+    // 不是算法,没做(见 issue #26)。
+    out property <[string]> viz-preset-names: [
+        "封面", "滚筒", "星球", "虚空", "唱片", "星河",
+    ];
+    // 刚切完预设的那几秒:名字浮在画面上,之后自己淡掉。
+    in-out property <bool> viz-preset-hint: false;
     // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
     // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
     // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
@@ -1016,6 +1026,25 @@ export component MainWindow inherits Window {
             }
         }
 
+        // 切换预设后名字浮一下再淡掉。只在 hint 为真时存在 —— 常驻一个不透明度
+        // 动画会让播放页每帧都标脏,省电门就白设了。
+        if root.viz-preset-hint: Text {
+            y: root.height - 160px;
+            width: 100%;
+            text: root.viz-preset-names[root.viz-preset];
+            color: #e6e8ef;
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
+        preset-hint-timer := Timer {
+            interval: 1400ms;
+            running: false;
+            triggered => {
+                root.viz-preset-hint = false;
+                self.running = false;
+            }
+        }
+
         // 功能层:同一组回调,与音乐页的控制条完全等价。
         HorizontalLayout {
             y: root.height - 60px - root.safe-area-insets.bottom - 24px;
@@ -1039,6 +1068,16 @@ export component MainWindow inherits Window {
                         toggle => { root.toggle-play(); }
                         next => { root.next-track(); }
                         shuffle-toggled => { root.shuffle-toggled(); }
+                    }
+                    // 换视觉预设:循环走一遍六档。参照物那整个「视觉控制台」是另一件事,
+                    // 这里只要一个能挨个看过去的入口。
+                    RoundControl {
+                        icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
+                        clicked => {
+                            root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
+                            root.viz-preset-hint = true;
+                            preset-hint-timer.running = true;
+                        }
                     }
                     // 收起播放页:向下的小三角,与展开用的向上三角对称。收起是操作,
                     // 所以它在最上层 2D、永远点得到(docs/adr/0010)。
