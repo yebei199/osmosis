@@ -213,6 +213,35 @@ mcp-android: mcp-forward
 desktop-kill:
     -pkill -f 'target/debug/[s]lint-study-desktop'
 
+# 关窗后进程是不是干净地走了(issue #15)。开一个实例、关掉、看退出码,要 0 不要 134。
+#
+# 这条不进 `just ci`:它要合成器给窗口、要显卡给 wgpu adapter,CI 里两样都没有。
+# 但凡动过 apps/desktop 的收尾路径、或者升过 wgpu / slint,就在本机跑一次。
+[group('桌面')]
+desktop-exit-check:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    just desktop-kill
+    nix-shell slint.nix --run 'cargo build -p app-desktop'
+    nix-shell slint.nix --run 'target/debug/slint-study-desktop' > /tmp/slint-exit-check.log 2>&1 &
+    app=$!
+    for _ in $(seq 60); do
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        [ -n "$id" ] && break
+        sleep 1
+    done
+    [ -n "${id:-}" ] || { echo "窗口没起来,见 /tmp/slint-exit-check.log" >&2; exit 1; }
+    sleep 3
+    niri msg action close-window --id "$id"
+    wait $app
+    code=$?
+    if [ $code -eq 0 ]; then
+        echo "==> 退出码 0,收尾干净"
+    else
+        echo "==> 退出码 $code(134 = abort),见 /tmp/slint-exit-check.log" >&2
+        exit 1
+    fi
+
 # 起一个干净的桌面实例,截下**真实窗口像素**,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。

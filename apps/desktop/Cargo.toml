@@ -31,6 +31,11 @@ slint = { workspace = true, features = [
 # 运行期要 vulkan(见仓库根的 slint.nix)。
 render3d.workspace = true
 
+# 只为收尾时那一个 `_exit`(见 src/main.rs 末尾与 issue #15)。std 没有对应的口子:
+# `process::exit` 走的是 libc `exit()`,退出处理器与 TLS 析构器照跑,正是要绕开的那段。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 default = []
 # 应用内嵌 MCP server,供 AI 助手读元素树、截图、模拟点击。

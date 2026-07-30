@@ -318,6 +318,7 @@ name = "app-desktop"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "libc",
  "render3d",
  "slint",
  "ui",
