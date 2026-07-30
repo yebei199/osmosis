@@ -109,6 +109,12 @@ const PERF_WINDOW: u32 = 120;
 /// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),所以正的 z 就是「更靠近相机」。
 const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 0.9);
 
+// 锚点必须站在点云中心与相机**之间**。落回中心就是「半数粒子在字前面」;
+// 推过相机就再没有粒子能穿过字,`docs/adr/0010` 那套深度合成也就白建了。
+// 编译期钉死而不是写成单测:两边都是常量,运行期断言 clippy 会直接拒绝。
+const _: () = assert!(CARD_ANCHOR.z > 0.0);
+const _: () = assert!(CARD_ANCHOR.z < BASE_CAMERA_POS.z);
+
 /// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
 const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
 
@@ -922,23 +928,6 @@ const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 0.0, 8.0);
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 卡片锚点站在点云中心与相机之间,而不是正中心。
-    ///
-    /// 取正中心就是「半数粒子在字前面」,一整句词随时会被埋掉;推到相机上
-    /// 又等于没有遮挡,`docs/adr/0010` 那套深度合成就白建了。这条钉的是
-    /// 「在两者之间」,不钉具体数值 —— 那一档是看出来的,会调。
-    #[test]
-    fn the_card_sits_between_the_cloud_centre_and_the_camera() {
-        assert!(
-            CARD_ANCHOR.z > 0.0,
-            "锚点在点云中心或更远,半数粒子会盖住字"
-        );
-        assert!(
-            CARD_ANCHOR.z < BASE_CAMERA_POS.z,
-            "锚点跑到相机前面去了,不会再有粒子穿过"
-        );
-    }
 
     /// 锚点在视锥内:深度门槛就是它自己的 NDC z,遮挡层据此只留更近的片元。
     #[test]
