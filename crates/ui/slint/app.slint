@@ -551,6 +551,13 @@ export component MainWindow inherits Window {
     // 歌词块的高度**钉死**,不随文本长度变。平台会把整段词压成「一行」(实测见过
     // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
     // 原文最多三行、译文最多两行,按各自字号的行高估。
+    // 播放页控制条的高度。紧凑版拆两行(见那一段的注释),故高一档。
+    out property <length> viz-controls-h: root.compact ? 128px : 84px;
+    // 两颗只在播放页出现的键,图形在宽/紧凑两处版式里各用一次 —— 常量化,
+    // 免得改一处漏一处。
+    out property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
+    out property <string> collapse-icon: "M5 8 L19 8 L12 17 Z";
+
     out property <length> viz-lyric-line-h: root.compact ? 84px : 120px;
     out property <length> viz-lyric-tr-h: root.compact ? 40px : 46px;
     out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
@@ -1108,47 +1115,72 @@ export component MainWindow inherits Window {
         }
 
         // 功能层:同一组回调,与音乐页的控制条完全等价。
+        //
+        // 宽版一排放下;紧凑版(手机)拆两行 —— 与音乐页同一个理由,只是这里的
+        // 一排更宽:播放键接了 warp 之后是 68px,比别的键大一圈。挤在一排的话
+        // 最右边的 ▼ 会被推出屏幕(小米13 真机实测),而那是收起播放页唯一的按键。
         HorizontalLayout {
-            y: root.height - 60px - root.safe-area-insets.bottom - 24px;
-            height: 60px;
+            y: root.height - root.viz-controls-h
+                - root.safe-area-insets.bottom - 24px;
+            height: root.viz-controls-h;
             alignment: center;
             Rectangle {
-                width: 340px;
-                height: 60px;
+                height: root.viz-controls-h;
                 border-radius: 16px;
                 background: #17110daa;
                 border-width: 1px;
                 border-color: #ffffff10;
 
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 8px;
-                    ControlCluster {
-                        is-playing: root.is-playing;
-                        shuffle-on <=> root.shuffle-on;
-                        // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
-                        // 小圆点养一条 wgpu pass。
-                        pulse: root.viz-bg;
-                        prev => { root.prev-track(); }
-                        toggle => { root.toggle-play(); }
-                        next => { root.next-track(); }
-                        shuffle-toggled => { root.shuffle-toggled(); }
-                    }
-                    // 换视觉预设:循环走一遍六档。参照物那整个「视觉控制台」是另一件事,
-                    // 这里只要一个能挨个看过去的入口。
-                    RoundControl {
-                        icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
-                        clicked => {
-                            root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
-                            root.viz-preset-hint = true;
-                            preset-hint-timer.running = true;
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 4px;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        ControlCluster {
+                            is-playing: root.is-playing;
+                            shuffle-on <=> root.shuffle-on;
+                            // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
+                            // 小圆点养一条 wgpu pass。
+                            pulse: root.viz-bg;
+                            prev => { root.prev-track(); }
+                            toggle => { root.toggle-play(); }
+                            next => { root.next-track(); }
+                            shuffle-toggled => { root.shuffle-toggled(); }
+                        }
+                        if !root.compact: RoundControl {
+                            icon: root.preset-icon;
+                            clicked => {
+                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
+                                root.viz-preset-hint = true;
+                                preset-hint-timer.running = true;
+                            }
+                        }
+                        if !root.compact: RoundControl {
+                            icon: root.collapse-icon;
+                            clicked => { root.play-page-open = false; }
                         }
                     }
-                    // 收起播放页:向下的小三角,与展开用的向上三角对称。收起是操作,
-                    // 所以它在最上层 2D、永远点得到(docs/adr/0010)。
-                    RoundControl {
-                        icon: "M5 8 L19 8 L12 17 Z";
-                        clicked => { root.play-page-open = false; }
+                    if root.compact: HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        // 换视觉预设:循环走一遍六档。参照物那整个「视觉控制台」
+                        // 是另一件事,这里只要一个能挨个看过去的入口。
+                        RoundControl {
+                            icon: root.preset-icon;
+                            clicked => {
+                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
+                                root.viz-preset-hint = true;
+                                preset-hint-timer.running = true;
+                            }
+                        }
+                        // 收起播放页:向下的小三角,与展开用的向上三角对称。
+                        // 收起是操作,所以它在最上层 2D、永远点得到(docs/adr/0010)。
+                        RoundControl {
+                            icon: root.collapse-icon;
+                            clicked => { root.play-page-open = false; }
+                        }
                     }
                 }
             }
