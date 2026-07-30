@@ -57,19 +57,19 @@ struct Vertex {
     @builtin(instance_index) instance_index: u32,
     // 格点在点云平面上的基准位。
     @location(0) position: vec3<f32>,
-    // (方片角偏移 x, 角偏移 y, 逐粒子随机数)。
+    // 立方体的角偏移,三分量各 ±1。借的是法线属性位(见 build_cloud_mesh)。
     @location(1) corner: vec3<f32>,
     // 封面纹理的采样坐标。
     @location(2) uv: vec2<f32>,
+    // (面法线 xyz, 逐粒子随机数)。借的是切线属性位。
+    @location(3) tangent: vec4<f32>,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
-    // 方片内的局部坐标,画圆点用。
-    @location(1) corner: vec2<f32>,
     // 整颗粒子的透明度倍数。虚空档靠它整层隐身,星河档靠它分出明暗。
-    @location(2) alpha: f32,
+    @location(1) alpha: f32,
 }
 
 // 一颗粒子被预设摆到哪、用哪块封面上色、亮多少、透多少。
@@ -96,6 +96,10 @@ const PI: f32 = 3.14159265359;
 
 // 涟漪表的路数,与 cloud.rs 的 RIPPLE_SLOTS 手工对齐。
 const RIPPLE_SLOTS: u32 = 12u;
+
+// 给立方体分面用的固定光向(世界空间,已归一)。偏上偏右前方 —— 顶面最亮、
+// 正面居中、背面与底面压暗,方块的体积就出来了。不是物理光照,只是分面。
+const CUBE_LIGHT: vec3<f32> = vec3<f32>(0.4045, 0.8090, 0.4264);
 
 // ── simplex 噪声(照搬原版顶点着色器里那一份)────────────────────────────
 
@@ -462,7 +466,7 @@ fn place_wallpaper(uv: vec2<f32>, rand: f32, t: f32) -> Placement {
 fn vertex(vertex: Vertex) -> VertexOutput {
     let t = params.time;
     let base = vertex.position;
-    let rand = vertex.corner.z;
+    let rand = vertex.tangent.w;
     // 律动强度的真实倍数,同原版:滑块 0.85 → K = 1.36。
     let k = params.intensity * 1.6;
     let s = params.plane_scale;
@@ -510,21 +514,27 @@ fn vertex(vertex: Vertex) -> VertexOutput {
         + params.burst * 0.40
         + place.glow;
 
-    // 方片正对相机:位移后的点先进视图空间,再在那里摊开四个角,最后才投影。
-    // 在视图空间摊开而不是在模型空间,粒子才永远是正圆而不是随相机变斜的菱形;
-    // 摊开量用世界单位而不是像素,点与格距就同比投影,窗口怎么变比例都不动。
+    // 立方体在**模型空间**展开,不做 billboard。方片时代是反过来的:在视图空间
+    // 摊开四个角,粒子才永远正对镜头、永远是正圆。立方体要的恰恰相反 —— 有朝向、
+    // 转起来看得见侧面,才叫方块。摊开量仍用世界单位而不是像素:方块与格距同比
+    // 投影,窗口怎么变比例都不动。
+    let cube_local = local + vertex.corner * params.point_radius;
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let world_position = mesh_functions::mesh_position_local_to_world(
-        world_from_local, vec4<f32>(local, 1.0));
-    var view_position = view.view_from_world * world_position;
-    view_position = vec4<f32>(
-        view_position.xy + vertex.corner.xy * params.point_radius,
-        view_position.zw);
+        world_from_local, vec4<f32>(cube_local, 1.0));
+
+    // 面法线跟着实体的变换走(拖动旋转会转整片点云),否则一转起来明暗就跟
+    // 方块的实际朝向脱节,看着像贴在表面的花纹而不是立体。
+    let world_normal = normalize(
+        (world_from_local * vec4<f32>(vertex.tangent.xyz, 0.0)).xyz);
+    // 固定方向的一盏「太阳」:顶面最亮、正面居中、底面最暗。不接 bevy 的光照
+    // 管线 —— 那要 prepass 与完整的 PBR 绑定,而这里只要六个面分得开。
+    let lambert = 0.55 + 0.45 * max(dot(world_normal, CUBE_LIGHT), 0.0);
+    color *= lambert;
 
     var out: VertexOutput;
-    out.clip_position = view.clip_from_view * view_position;
+    out.clip_position = view.clip_from_view * (view.view_from_world * world_position);
     out.color = color;
-    out.corner = vertex.corner.xy;
     out.alpha = place.alpha;
     return out;
 }
@@ -533,10 +543,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    // 软边圆点:原版是采一张 64×64 的径向渐变贴图,这里直接算出同样的衰减,
-    // 省一张纹理和一次采样。
-    let dist = length(in.corner);
-    let alpha = 0.96 * (1.0 - smoothstep(0.30, 1.0, dist)) * in.alpha;
+    // 方块是实的:没有圆点时代那圈径向衰减了 —— 那圈软边正是「网点」观感的来源,
+    // 而像素画要的是硬边色块。透明度只剩预设给的那一层(虚空整层隐身、星河分明暗)。
+    let alpha = in.alpha;
     if alpha < params.alpha_cutoff {
         discard;
     }

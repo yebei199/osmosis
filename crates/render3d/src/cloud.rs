@@ -52,13 +52,13 @@ pub(crate) fn band_levels(spectrum: &[u8]) -> Levels {
 
 /// 点云网格边长:每行每列各 384 颗,共 147 456 颗。
 ///
-/// 原版默认档是 183(`round(118 × 1.55)`),铺在 1080p 上一格约 5 像素 —— 点云
-/// 读得成一张图,全靠格距小到眼睛自己会拼。我们这块屏是它两倍高(2085 物理像素),
-/// 同样 183 格摊开后一格十来像素,点大缝也大,只看得见一层网点。格数提到 384,
-/// 格距才回到「一格几像素」那个量级。
+/// 曾经一路提到 384,追的是「格距小到眼睛自己会拼」—— 结果拼得太好了:那不是
+/// 像素画,是一张打了网点的照片。像素画的重点恰恰在**格子看得见**,一格就是一个
+/// 色块,而不是一个采样点。96 格是专辑封面做像素化处理时常用的量级,人脸还认得
+/// 出轮廓,但一眼就知道它是由方块砌的。
 ///
-/// 代价是粒子数四倍。桌面实测见 `docs/adr/0012`;真机发热读数出来后可能整体下调。
-pub(crate) const CLOUD_GRID: usize = 384;
+/// 顺带把粒子数砍到 1/16(14.7 万 → 9216),这才养得起把每颗从方片换成立方体。
+pub(crate) const CLOUD_GRID: usize = 96;
 
 /// 点云平面在世界里的边长,同原版。
 ///
@@ -124,39 +124,101 @@ pub(crate) fn preset_index(requested: i32) -> u32 {
     }
 }
 
-/// 一份点云 mesh 的顶点数据:每颗粒子一个朝向相机的小四边形。
+/// 一份点云 mesh 的顶点数据:每颗粒子一个**立方体**。
 ///
-/// 四个数组等长(`positions` / `uvs` / `corners` 逐顶点),`indices` 每颗六个。
-/// 分成裸数组而不是「顶点结构体的数组」,是因为 bevy 的 `Mesh` 本就按属性分别收。
+/// 立方体而不是朝向相机的方片:方片没有朝向,永远是一个正对镜头的色块,起伏
+/// 再大也只是一张会动的图。立方体有六个面,面与面明暗不同,点云高低错落时能
+/// 看出体积与阶梯 —— 这才是「像素画」而不是「打了网点的照片」。
+///
+/// 每颗 24 个顶点(六面各四个,面不共享顶点,好让每个面有自己的平法线)、
+/// 36 个索引。四个数组逐顶点等长;分成裸数组而不是「顶点结构体的数组」,
+/// 是因为 bevy 的 `Mesh` 本就按属性分别收。
 pub(crate) struct CloudVertices {
     /// 格点在点云平面上的基准位,z 恒为 0 —— 位移在顶点着色器里加。
     pub positions: Vec<[f32; 3]>,
-    /// 封面纹理的采样坐标,同一颗粒子的四个角相同。
+    /// 封面纹理的采样坐标,同一颗粒子的 24 个顶点相同。
     pub uvs: Vec<[f32; 2]>,
-    /// (四边形角偏移 x, 角偏移 y, 逐粒子随机数)。前两个分量把点扩成方片,
-    /// 第三个给每颗粒子一份「个性」(相位、闪烁、散射方向都从它派生)。
+    /// 立方体的角偏移,三个分量各取 ±1。乘上半边长就是这个角相对格心的位置。
     pub corners: Vec<[f32; 3]>,
-    /// 三角形索引,每颗粒子两个三角形。
+    /// (面法线 x, y, z, 逐粒子随机数)。法线用来给面分明暗;随机数给每颗粒子
+    /// 一份「个性」(相位、闪烁、散射方向都从它派生),同一颗的 24 个顶点相同。
+    pub tangents: Vec<[f32; 4]>,
+    /// 三角形索引,每颗粒子十二个三角形。
     pub indices: Vec<u32>,
 }
+
+/// 每颗粒子的顶点数:六个面各四个,面之间不共享 —— 共享了法线就得插值,
+/// 立方体的棱会被抹圆,看着像颗骰子而不是方块。
+pub(crate) const CUBE_VERTICES: usize = 24;
+
+/// 每颗粒子的索引数:十二个三角形。
+pub(crate) const CUBE_INDICES: usize = 36;
+
+/// 立方体的六个面:(朝外的面法线, 该面四个角的偏移)。
+///
+/// 角按面内逆时针排(从立方体外面看),索引取 0-1-2 / 0-2-3。背面剔除在
+/// [`CloudMaterial::specialize`] 里关掉了,所以绕序错了也不会整面消失 ——
+/// 但排对了才不用靠那个兜底。
+const CUBE_FACES: [([f32; 3], [[f32; 3]; 4]); 6] = [
+    // +X
+    ([1.0, 0.0, 0.0], [
+        [1.0, -1.0, 1.0],
+        [1.0, -1.0, -1.0],
+        [1.0, 1.0, -1.0],
+        [1.0, 1.0, 1.0],
+    ]),
+    // -X
+    ([-1.0, 0.0, 0.0], [
+        [-1.0, -1.0, -1.0],
+        [-1.0, -1.0, 1.0],
+        [-1.0, 1.0, 1.0],
+        [-1.0, 1.0, -1.0],
+    ]),
+    // +Y(顶面,最亮的那一面)
+    ([0.0, 1.0, 0.0], [
+        [-1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 1.0, -1.0],
+        [-1.0, 1.0, -1.0],
+    ]),
+    // -Y
+    ([0.0, -1.0, 0.0], [
+        [-1.0, -1.0, -1.0],
+        [1.0, -1.0, -1.0],
+        [1.0, -1.0, 1.0],
+        [-1.0, -1.0, 1.0],
+    ]),
+    // +Z(正对镜头的那一面)
+    ([0.0, 0.0, 1.0], [
+        [-1.0, -1.0, 1.0],
+        [1.0, -1.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [-1.0, 1.0, 1.0],
+    ]),
+    // -Z
+    ([0.0, 0.0, -1.0], [
+        [1.0, -1.0, -1.0],
+        [-1.0, -1.0, -1.0],
+        [-1.0, 1.0, -1.0],
+        [1.0, 1.0, -1.0],
+    ]),
+];
 
 /// 烘出点云 mesh 的顶点数据。建一次就不动,之后每帧只更新 uniform。
 pub(crate) fn cloud_vertices() -> CloudVertices {
     let particles = CLOUD_GRID * CLOUD_GRID;
-    let mut positions = Vec::with_capacity(particles * 4);
-    let mut uvs = Vec::with_capacity(particles * 4);
-    let mut corners = Vec::with_capacity(particles * 4);
-    let mut indices = Vec::with_capacity(particles * 6);
+    let mut positions =
+        Vec::with_capacity(particles * CUBE_VERTICES);
+    let mut uvs = Vec::with_capacity(particles * CUBE_VERTICES);
+    let mut corners =
+        Vec::with_capacity(particles * CUBE_VERTICES);
+    let mut tangents =
+        Vec::with_capacity(particles * CUBE_VERTICES);
+    let mut indices =
+        Vec::with_capacity(particles * CUBE_INDICES);
 
     let grid = CLOUD_GRID as f32;
     let texel = 1.0 / grid;
-    // 四边形的四个角,顺序与下面的索引对应(左下、右下、左上、右上)。
-    const QUAD: [[f32; 2]; 4] = [
-        [-1.0, -1.0],
-        [1.0, -1.0],
-        [-1.0, 1.0],
-        [1.0, 1.0],
-    ];
 
     for i in 0..particles {
         let gx = (i % CLOUD_GRID) as f32;
@@ -176,27 +238,33 @@ pub(crate) fn cloud_vertices() -> CloudVertices {
         ];
         let rand = hash01(i);
 
-        let first = u32::try_from(positions.len())
-            .expect("点云顶点数远小于 u32 上限");
-        for corner in QUAD {
-            positions.push(base);
-            uvs.push(uv);
-            corners.push([corner[0], corner[1], rand]);
+        for (normal, face) in CUBE_FACES {
+            let first = u32::try_from(positions.len())
+                .expect("点云顶点数远小于 u32 上限");
+            for corner in face {
+                positions.push(base);
+                uvs.push(uv);
+                corners.push(corner);
+                tangents.push([
+                    normal[0], normal[1], normal[2], rand,
+                ]);
+            }
+            indices.extend_from_slice(&[
+                first,
+                first + 1,
+                first + 2,
+                first,
+                first + 2,
+                first + 3,
+            ]);
         }
-        indices.extend_from_slice(&[
-            first,
-            first + 1,
-            first + 2,
-            first + 2,
-            first + 1,
-            first + 3,
-        ]);
     }
 
     CloudVertices {
         positions,
         uvs,
         corners,
+        tangents,
         indices,
     }
 }
@@ -230,11 +298,11 @@ const ALPHA_CUTOFF: f32 = 0.01;
 const CELL_WORLD: f32 =
     PLANE_SIZE / (CLOUD_GRID as f32 - 1.0);
 
-/// 圆点直径占一格的比例。
+/// 立方体边长占一格的比例。
 ///
-/// 略大于 1,让相邻的点微微交叠 —— 点云要能读成一张图,缝就不能比点宽。原版的点
-/// 也是几乎贴在一起的;缝一宽,眼睛拼不出封面,只看得见一层网点。
-const POINT_FILL: f32 = 1.15;
+/// 小于 1,方块之间留出缝 —— 缝是像素画的一部分:没有缝就砌成一整块,又变回
+/// 「一张会动的图」。0.82 留下约两成的缝,方块看得清、图也还连得起来。
+const POINT_FILL: f32 = 0.82;
 
 /// 点云材质的 uniform 块,逐字段镜像 `cloud.wgsl` 的 `CloudParams`。
 #[derive(Clone, Copy, ShaderType)]
@@ -319,11 +387,13 @@ impl Material for CloudMaterial {
         SHADER_PATH.into()
     }
 
+    /// 两端都走 alpha 测试,而不是桌面用混合。
+    ///
+    /// 混合模式下 bevy 不写深度,而立方体是**有体积**的:不写深度就没有前后
+    /// 之分,起伏大的时候后排的方块会盖到前排上。alpha 测试写深度,遮挡才对。
+    /// 代价是半透明档(星河)从半透变成实心 —— 立方体本就不该是半透的。
     fn alpha_mode(&self) -> AlphaMode {
-        #[cfg(target_os = "android")]
-        return AlphaMode::Mask(ALPHA_CUTOFF);
-        #[cfg(not(target_os = "android"))]
-        return AlphaMode::Blend;
+        AlphaMode::Mask(ALPHA_CUTOFF)
     }
 
     /// 关掉 prepass 与阴影:两者都会用**默认**的顶点着色器再跑一遍这份 mesh,
@@ -352,8 +422,14 @@ impl Material for CloudMaterial {
                 Mesh::ATTRIBUTE_NORMAL
                     .at_shader_location(1),
                 Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
+                Mesh::ATTRIBUTE_TANGENT
+                    .at_shader_location(3),
             ])?,
         ];
+        // 不剔背面。立方体小到几乎不占片元,省下的那点填充率抵不上「绕序排错
+        // 就整面消失」这种排查代价;而且散开的那几档预设里,从背后看见立方体
+        // 的内壁反而是对的。
+        descriptor.primitive.cull_mode = None;
         Ok(())
     }
 }
@@ -362,8 +438,11 @@ impl Material for CloudMaterial {
 /// 应用无头运行、没有 `assets/` 目录。
 const SHADER_PATH: &str = "embedded://render3d/cloud.wgsl";
 
-/// 把顶点数据烘成一份 bevy `Mesh`。角偏移借用法线属性位 —— 点云不做光照,
-/// 法线本来就空着,借它比自定义顶点属性少一整套注册。
+/// 把顶点数据烘成一份 bevy `Mesh`。
+///
+/// 角偏移借法线位、面法线借切线位 —— 这两个属性槽本来就空着(点云不吃 bevy
+/// 的光照,也不做法线贴图),借它们比注册两套自定义顶点属性少一整摊代码。
+/// 代价是名字对不上语义,故 `cloud.wgsl` 的 `Vertex` 里逐字段注明了实际含义。
 pub(crate) fn build_cloud_mesh(
     vertices: CloudVertices,
 ) -> Mesh {
@@ -382,6 +461,10 @@ pub(crate) fn build_cloud_mesh(
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_UV_0,
         vertices.uvs,
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_TANGENT,
+        vertices.tangents,
     );
     mesh.insert_indices(Indices::U32(vertices.indices));
     mesh
@@ -668,15 +751,72 @@ mod tests {
 
     // ── 点云网格 ──────────────────────────────────────────────────────
 
-    /// 每颗粒子出 4 个顶点、6 个索引(两个三角形拼一个四边形),总数对得上网格。
+    /// 每颗粒子出 24 个顶点、36 个索引(六面各四顶点两三角),总数对得上网格。
     #[test]
-    fn every_particle_gets_one_quad() {
+    fn every_particle_gets_one_cube() {
         let v = cloud_vertices();
         let particles = CLOUD_GRID * CLOUD_GRID;
-        assert_eq!(v.positions.len(), particles * 4);
-        assert_eq!(v.uvs.len(), particles * 4);
-        assert_eq!(v.corners.len(), particles * 4);
-        assert_eq!(v.indices.len(), particles * 6);
+        assert_eq!(
+            v.positions.len(),
+            particles * CUBE_VERTICES
+        );
+        assert_eq!(v.uvs.len(), particles * CUBE_VERTICES);
+        assert_eq!(
+            v.corners.len(),
+            particles * CUBE_VERTICES
+        );
+        assert_eq!(
+            v.tangents.len(),
+            particles * CUBE_VERTICES
+        );
+        assert_eq!(
+            v.indices.len(),
+            particles * CUBE_INDICES
+        );
+    }
+
+    /// 六个面各自带一个朝外的轴向法线,同一个面的四个顶点法线相同 ——
+    /// 面内不一致就得插值,立方体的棱会被抹圆,看着像颗骰子而不是方块。
+    #[test]
+    fn each_cube_face_carries_one_outward_normal() {
+        let v = cloud_vertices();
+        let mut seen = Vec::new();
+        for face in 0..6 {
+            let base = face * 4;
+            let normal = v.tangents[base];
+            for offset in 1..4 {
+                assert_eq!(
+                    normal[..3],
+                    v.tangents[base + offset][..3],
+                    "面 {face} 的法线不一致"
+                );
+            }
+            // 轴向单位向量:三个分量里恰好一个是 ±1,其余为 0。
+            let magnitude: f32 =
+                normal[..3].iter().map(|c| c.abs()).sum();
+            assert_eq!(
+                magnitude, 1.0,
+                "面 {face} 的法线不是轴向单位向量: {normal:?}"
+            );
+            seen.push([
+                normal[0] as i32,
+                normal[1] as i32,
+                normal[2] as i32,
+            ]);
+        }
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            vec![
+                [-1, 0, 0],
+                [0, -1, 0],
+                [0, 0, -1],
+                [0, 0, 1],
+                [0, 1, 0],
+                [1, 0, 0],
+            ],
+            "六个面没有覆盖全部朝向"
+        );
     }
 
     /// 采样 uv 落在纹理内部(取格心 (g+0.5)/grid,不贴边)—— 贴边会采到
@@ -709,7 +849,8 @@ mod tests {
             v.uvs[0]
         );
         // 最后一行格点在画面最上方,该采到封面的上边(v 接近 0)。
-        let top = (CLOUD_GRID * CLOUD_GRID - 1) * 4;
+        let top =
+            (CLOUD_GRID * CLOUD_GRID - 1) * CUBE_VERTICES;
         assert!(
             v.uvs[top][1] < 0.01,
             "最上面一行采到了封面底部: {:?}",
@@ -717,49 +858,72 @@ mod tests {
         );
     }
 
-    /// 同一颗粒子的 4 个顶点共享同一个采样 uv 与同一个随机数 —— 否则一颗粒子的
-    /// 四个角会被算到不同位置,四边形会被撕开。
+    /// 同一颗粒子的 24 个顶点共享同一个采样 uv、同一个随机数、同一个基准位 ——
+    /// 否则一颗粒子的各个角会被算到不同位置,立方体会被撕开。
     #[test]
     fn one_particle_shares_its_uv_and_random() {
         let v = cloud_vertices();
-        for quad in 0..CLOUD_GRID * CLOUD_GRID {
-            let base = quad * 4;
-            for offset in 1..4 {
+        for cube in 0..CLOUD_GRID * CLOUD_GRID {
+            let base = cube * CUBE_VERTICES;
+            for offset in 1..CUBE_VERTICES {
                 assert_eq!(
                     v.uvs[base],
                     v.uvs[base + offset],
-                    "粒子 {quad} 的角 {offset} uv 不一致"
+                    "粒子 {cube} 的顶点 {offset} uv 不一致"
                 );
                 assert_eq!(
-                    v.corners[base][2],
-                    v.corners[base + offset][2],
-                    "粒子 {quad} 的角 {offset} 随机数不一致"
+                    v.tangents[base][3],
+                    v.tangents[base + offset][3],
+                    "粒子 {cube} 的顶点 {offset} 随机数不一致"
                 );
                 assert_eq!(
                     v.positions[base],
                     v.positions[base + offset],
-                    "粒子 {quad} 的角 {offset} 基准位不一致"
+                    "粒子 {cube} 的顶点 {offset} 基准位不一致"
                 );
             }
         }
     }
 
-    /// 四个角偏移正好覆盖四边形的四角(±1, ±1),缺一个角就画不出方片。
+    /// 角偏移覆盖立方体的八个角(±1, ±1, ±1),缺一个就少一块。
+    ///
+    /// 顶点是 24 个而不是 8 个(面不共享),所以每个角出现三次 —— 去重之后
+    /// 才是八个。
     #[test]
-    fn corner_offsets_cover_the_quad() {
+    fn corner_offsets_cover_the_cube() {
         let v = cloud_vertices();
-        for quad in 0..CLOUD_GRID * CLOUD_GRID {
+        for cube in 0..CLOUD_GRID * CLOUD_GRID {
+            let base = cube * CUBE_VERTICES;
             let mut seen: Vec<_> = v.corners
-                [quad * 4..quad * 4 + 4]
+                [base..base + CUBE_VERTICES]
                 .iter()
-                .map(|c| (c[0] as i32, c[1] as i32))
+                .map(|c| {
+                    (c[0] as i32, c[1] as i32, c[2] as i32)
+                })
                 .collect();
             seen.sort_unstable();
+            let corners_per_cube = seen.len();
+            seen.dedup();
             assert_eq!(
-                seen,
-                vec![(-1, -1), (-1, 1), (1, -1), (1, 1)],
-                "粒子 {quad} 的四角不全"
+                seen.len(),
+                8,
+                "粒子 {cube} 的八角不全"
             );
+            assert_eq!(
+                corners_per_cube, CUBE_VERTICES,
+                "粒子 {cube} 的顶点数不对"
+            );
+            for corner in seen {
+                assert_eq!(
+                    (
+                        corner.0.abs(),
+                        corner.1.abs(),
+                        corner.2.abs()
+                    ),
+                    (1, 1, 1),
+                    "粒子 {cube} 有个角不在 ±1 上: {corner:?}"
+                );
+            }
         }
     }
 

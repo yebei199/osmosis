@@ -145,12 +145,17 @@ component NavItem inherits Rectangle {
 component RoundControl inherits Rectangle {
     in property <string> icon;
     in property <length> diameter: 44px;
+    // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
+    // 只留按下/悬停那一点点提示,不糊住下面。
+    in property <bool> transparent-base: false;
     callback clicked;
 
     width: root.diameter;
     height: root.diameter;
     border-radius: self.width / 2;
-    background: touch.pressed ? #b9885c50 : (touch.has-hover ? #ffffff1e : #ffffff10);
+    background: touch.pressed ? #b9885c50
+        : (touch.has-hover ? #ffffff1e
+            : (root.transparent-base ? #00000000 : #ffffff10));
     border-width: 1px;
     border-color: touch.has-hover ? #d9a86c66 : #ffffff14;
     animate background, border-color { duration: 120ms; easing: ease-out; }
@@ -328,6 +333,9 @@ component DayNightSwitch inherits Rectangle {
 component ControlCluster inherits HorizontalLayout {
     in property <bool> is-playing;
     in-out property <bool> shuffle-on;
+    // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
+    // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
+    in property <image> pulse;
     callback prev();
     callback toggle();
     callback next();
@@ -345,13 +353,31 @@ component ControlCluster inherits HorizontalLayout {
     }
     VerticalLayout {
         alignment: center;
-        RoundControl {
-            diameter: 50px;
-            // ▶ 或 ⏸,随播放状态换。
-            icon: root.is-playing
-                ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
-                : "M8 5 L19 12 L8 19 Z";
-            clicked => { root.toggle(); }
+        // 播放键。接了 pulse 就把那圈 warp 画进按钮里,比旁边两颗大一圈 ——
+        // 它是这一排里唯一会动的东西,该占更多视觉分量。
+        Rectangle {
+            width: root.pulse.width > 0 ? 68px : 50px;
+            height: self.width;
+            border-radius: self.width / 2;
+            clip: true;
+
+            if root.pulse.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: root.pulse;
+            }
+
+            RoundControl {
+                diameter: parent.width;
+                // 有 warp 垫底时不再自带底色,免得把画面糊住。
+                transparent-base: root.pulse.width > 0;
+                // ▶ 或 ⏸,随播放状态换。
+                icon: root.is-playing
+                    ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                    : "M8 5 L19 12 L8 19 Z";
+                clicked => { root.toggle(); }
+            }
         }
     }
     VerticalLayout {
@@ -955,15 +981,9 @@ export component MainWindow inherits Window {
         }
 
       Rectangle {
-        // 兜底纯色底:无 GPU 构建(viz-bg 恒空)也得是完整的深色沉浸层。
+        // 纯深色底。反馈 warp 曾铺在这里当全屏背景,现在收进了播放键 ——
+        // 封面点云自己就有颜色,再叠两圈青紫只是把主体糊掉。
         background: #0b0d13;
-
-        if root.viz-bg.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            image-fit: fill;
-            source: root.viz-bg;
-        }
 
         // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
         // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
@@ -1106,6 +1126,9 @@ export component MainWindow inherits Window {
                     ControlCluster {
                         is-playing: root.is-playing;
                         shuffle-on <=> root.shuffle-on;
+                        // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
+                        // 小圆点养一条 wgpu pass。
+                        pulse: root.viz-bg;
                         prev => { root.prev-track(); }
                         toggle => { root.toggle-play(); }
                         next => { root.next-track(); }

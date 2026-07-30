@@ -131,6 +131,7 @@ pub fn daily_is_due<D: PartialEq>(
 ///
 /// 所有格式化都在这里做完,`.slint` 只负责摆。`loading` 给的是那一首的 id ——
 /// 它不在这批里(点完歌又搜了别的)就一行都不标。
+#[cfg(not(target_arch = "wasm32"))]
 fn to_rows(
     batch: &[TrackDto],
     loading: Option<&str>,
@@ -149,6 +150,7 @@ fn to_rows(
 }
 
 /// 正在加载的那一首的 id,没有就给 `None`。
+#[cfg(not(target_arch = "wasm32"))]
 fn loading_id(state: &PlaybackState) -> Option<&str> {
     match state {
         PlaybackState::Loading(track) => {
@@ -195,20 +197,20 @@ struct Deck {
 /// 每帧搬一次过 seam 纯属白耗(见 `crates/render3d::cloud`)。
 #[derive(Clone, Default)]
 pub(crate) struct CoverFeed {
-    pending: Rc<RefCell<Option<crate::cover::CoverPixels>>>,
+    pending: Rc<RefCell<Option<crate::viz::CoverPixels>>>,
 }
 
 impl CoverFeed {
     /// 取走待送的封面像素,没有新的就给 `None`。
     pub(crate) fn take(
         &self,
-    ) -> Option<crate::cover::CoverPixels> {
+    ) -> Option<crate::viz::CoverPixels> {
         self.pending.borrow_mut().take()
     }
 
     /// 换歌解出了新封面:排上队等下一帧取走。上一张还没被取走就直接顶掉 ——
     /// 点云只显示当前这一首,过期的封面排队也没人要。
-    fn replace(&self, pixels: crate::cover::CoverPixels) {
+    fn replace(&self, pixels: crate::viz::CoverPixels) {
         *self.pending.borrow_mut() = Some(pixels);
     }
 }
@@ -830,8 +832,8 @@ mod tests {
     }
 
     /// 边长 `side` 的纯色封面像素,只用来分辨是哪一张。
-    fn pixels(side: u32) -> crate::cover::CoverPixels {
-        crate::cover::CoverPixels {
+    fn pixels(side: u32) -> crate::viz::CoverPixels {
+        crate::viz::CoverPixels {
             width: side,
             height: side,
             rgba: vec![0; (side * side * 4) as usize],

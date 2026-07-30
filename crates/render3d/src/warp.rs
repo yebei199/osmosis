@@ -11,6 +11,14 @@
 
 use slint::wgpu_29::wgpu;
 
+/// warp 目标纹理的边长,物理像素。
+///
+/// 它曾经按视口尺寸铺满整个播放页当背景;现在收进播放键那颗圆里(见
+/// `crates/ui/slint/app.slint` 的 `ControlCluster`),只要够那颗按钮清楚就行。
+/// 192 在 2 倍缩放下也还有富余,而全屏时它是这个面积的一百多倍 —— 反馈 pass
+/// 每帧都要采上一帧,面积就是它的全部开销。
+pub const WARP_SIDE: u32 = 192;
+
 /// 音频纹理宽(点数),与 `audio::spectrum::BINS` 手工对齐 —— 两个 crate 互不依赖,
 /// 由 apps 在 seam 处传字节,长度错了 [`WarpPass::render_frame`] 直接跳过上传。
 pub const AUDIO_BINS: u32 = 512;

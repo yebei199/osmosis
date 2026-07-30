@@ -101,8 +101,12 @@ fn android_main(app: slint::android::AndroidApp) {
                     height: h,
                 });
             Some(ui::VizImages {
-                warp: warp
-                    .render_frame(v.time, &v.audio, w, h),
+                warp: warp.render_frame(
+                    v.time,
+                    &v.audio,
+                    render3d::WARP_SIDE,
+                    render3d::WARP_SIDE,
+                ),
                 scene: viz_scene,
                 occluder,
             })
