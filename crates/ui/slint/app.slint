@@ -178,6 +178,57 @@ component RoundControl inherits Rectangle {
     }
 }
 
+// 描边文字。播放页专用 —— 那里的字压在**封面**上,而封面是任意亮度的照片:
+// 近白色的字遇上一张接近全白的封面就整个消失(本兮《未成年》实测)。
+//
+// Slint 的 Text 没有 stroke,drop-shadow 又只有 Rectangle 才有,所以只能把同一句话
+// 先用深色朝八个方向各画一遍,再把亮色那层压上去。八向而不是四向:四向在字的
+// 对角缺口上漏底,CJK 笔画交叉多,漏得明显。
+//
+// 尺寸由调用方给死,不让它自己算 —— 九层必须逐像素对齐,任何一层的换行或省略
+// 判断跟别人不一样,描边就会错位成重影。
+component OutlinedText inherits Rectangle {
+    in property <string> text;
+    // 不叫 color:Rectangle 那一族已经占了这个名字,重名会被 slint 编译器拒绝。
+    in property <color> text-color;
+    in property <length> font-size;
+    // 描边宽度。1.5px 在 22px 的歌名与 14px 的歌手上都够,再粗会把小字糊住。
+    in property <length> outline: 1.5px;
+    in property <color> outline-color: #05070ce0;
+    in property <TextVerticalAlignment> vertical-alignment: center;
+    in property <TextWrap> wrap: no-wrap;
+
+    for offset in [
+        { x: -1.0, y: -1.0 }, { x: 0.0, y: -1.0 }, { x: 1.0, y: -1.0 },
+        { x: -1.0, y: 0.0 },                       { x: 1.0, y: 0.0 },
+        { x: -1.0, y: 1.0 },  { x: 0.0, y: 1.0 },  { x: 1.0, y: 1.0 },
+    ]: Text {
+        x: offset.x * root.outline;
+        y: offset.y * root.outline;
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.outline-color;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+
+    Text {
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.text-color;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+}
+
 // 日月开关:白昼(顺序播放)⇄ 夜晚(随机播放)。
 // 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
 // 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
@@ -1019,23 +1070,21 @@ export component MainWindow inherits Window {
         }
 
         // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
-        Text {
+        OutlinedText {
             y: root.viz-title-y;
             width: 100%;
+            height: 30px;
             text: root.now-title;
-            color: #e6e8ef;
+            text-color: #e6e8ef;
             font-size: 22px;
-            horizontal-alignment: center;
-            overflow: elide;
         }
-        Text {
+        OutlinedText {
             y: root.viz-title-y + 34px;
             width: 100%;
+            height: 20px;
             text: root.now-artists;
-            color: #9aa0b4;
+            text-color: #9aa0b4;
             font-size: 14px;
-            horizontal-alignment: center;
-            overflow: elide;
         }
 
         // 歌词:播放页现在唯一的深度卡片。当前行 + 译文,居中排在歌名下方;
@@ -1048,32 +1097,30 @@ export component MainWindow inherits Window {
 
             // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
             // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
-            Text {
+            OutlinedText {
                 width: root.width - 32px;
                 x: 16px;
                 height: root.viz-lyric-line-h;
                 text: root.lyric-line;
-                color: #f2f5ff;
+                text-color: #f2f5ff;
                 font-size: root.compact ? 21px : 30px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+                // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
+                // 只是一圈灰边,拉不开对比。
+                outline: 2px;
                 wrap: word-wrap;
-                overflow: elide;
             }
-            Text {
+            OutlinedText {
                 width: root.width - 32px;
                 x: 16px;
                 height: root.viz-lyric-tr-h;
                 text: root.lyric-translation;
-                color: #aab2c8;
+                text-color: #aab2c8;
                 font-size: root.compact ? 14px : 16px;
-                horizontal-alignment: center;
                 // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
                 // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
                 // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
                 vertical-alignment: top;
                 wrap: word-wrap;
-                overflow: elide;
             }
         }
 
