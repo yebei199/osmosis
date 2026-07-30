@@ -384,6 +384,8 @@ impl Scene {
         let burst = self.transition.burst();
         let ripple_count = self.ripples.active();
         let ripple_slots = self.ripples.pack();
+        let object_scale =
+            cloud::object_scale(self.size.0, self.size.1);
         if let Some(handle) = self.cloud_material.clone()
             && let Some(mut material) = self
                 .app
@@ -401,6 +403,8 @@ impl Scene {
             material.params.ripple_slots = ripple_slots;
             material.params.preset =
                 cloud::preset_index(preset);
+            // 物体类预设在竖屏会左右出画,按长宽比再收一档(见 cloud.rs)。
+            material.params.object_scale = object_scale;
         }
 
         // 拖动转的是点云自己,不是相机 —— 相机一动遮挡层那台就得跟着动,

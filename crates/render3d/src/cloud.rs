@@ -87,6 +87,20 @@ const ORIGINAL_CAMERA_RADIUS: f32 = 6.6;
 /// 封面档自己就在放大后的格点上,星河档的坐标本来就有二三十个单位,两者都不用它。
 const OBJECT_SCALE: f32 = 8.0 / ORIGINAL_CAMERA_RADIUS;
 
+/// 物体类预设这一帧的尺度倍数:基准倍数 × 窄视口的收缩。
+///
+/// 透视投影固定的是**垂直**视野,横向可视 = 纵向 × 长宽比。竖屏(小米13 是 0.45)
+/// 横向只剩不到一半,球体与唱片就左右出画 —— 真机上实测星球被切掉两边。
+/// 相机**不后撤**(那会把铺满视野的两档缩成看不见的点,见 `BASE_CAMERA_POS`),
+/// 改成只把物体类那三档按长宽比收一档:横屏不动,竖屏跟着窄下去。
+pub(crate) fn object_scale(width: u32, height: u32) -> f32 {
+    if width == 0 || height == 0 {
+        return OBJECT_SCALE;
+    }
+    let aspect = width as f32 / height as f32;
+    OBJECT_SCALE * aspect.min(1.0)
+}
+
 /// 律动强度,同原版的 `uIntensity` 滑块。
 ///
 /// 原版默认 0.85,这里调到 1.36 —— 这一层是播放页的主视觉,起伏跟着节奏走得明显
@@ -232,7 +246,7 @@ pub(crate) struct CloudParams {
     pub intensity: f32,
     /// 位移幅度的整体倍数,见 [`PLANE_SCALE`]。
     pub plane_scale: f32,
-    /// 物体类预设的尺度倍数,见 [`OBJECT_SCALE`]。
+    /// 物体类预设的尺度倍数,见 [`OBJECT_SCALE`] 与 [`narrow_viewport_scale`]。
     pub object_scale: f32,
     /// 当前视觉预设的下标,见 [`preset_index`]。
     pub preset: u32,
@@ -812,6 +826,41 @@ mod tests {
                 0,
                 "编号 {i} 该回默认档"
             );
+        }
+    }
+
+    // ── 窄视口 ────────────────────────────────────────────────────────
+
+    /// 横屏与方屏不收:物体类预设按相机距离取景,横向够宽就不必动。
+    #[test]
+    fn wide_viewports_keep_the_base_object_scale() {
+        for (w, h) in [(1920u32, 1080u32), (1080, 1080)] {
+            assert!(
+                (object_scale(w, h) - OBJECT_SCALE).abs()
+                    < 1e-6,
+                "{w}x{h} 不该收缩"
+            );
+        }
+    }
+
+    /// 竖屏按长宽比收:小米13 竖屏 aspect 0.45,球体不收就左右出画(真机实测)。
+    #[test]
+    fn portrait_viewports_shrink_by_the_aspect_ratio() {
+        let scale = object_scale(1080, 2400);
+        let aspect = 1080.0 / 2400.0;
+        assert!(
+            (scale - OBJECT_SCALE * aspect).abs() < 1e-6,
+            "竖屏收缩量不对: {scale}"
+        );
+        assert!(scale < OBJECT_SCALE, "竖屏没收");
+    }
+
+    /// 0 尺寸(首帧/刚重建)退回基准倍数,不除零、不把物体缩没。
+    #[test]
+    fn a_zero_sized_viewport_falls_back_to_the_base_scale()
+    {
+        for (w, h) in [(0u32, 1080u32), (1080, 0), (0, 0)] {
+            assert_eq!(object_scale(w, h), OBJECT_SCALE);
         }
     }
 
