@@ -55,6 +55,18 @@ mod cloud;
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
 
+/// 一帧里视觉区的指针状态,POD。镜像 `ui::VizPointer`,apps/* 在 seam 处平凡拷过来。
+///
+/// 位置归一到 0..1(左上原点)。`active` 为假表示指针不在视觉区里,这一帧既不起
+/// 涟漪也不拖动。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Pointer {
+    pub x: f32,
+    pub y: f32,
+    pub down: bool,
+    pub active: bool,
+}
+
 /// 离屏画面尺寸。固定分辨率,Slint 侧按面板大小缩放(见计划:先不做动态 resize)。
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
@@ -87,6 +99,12 @@ pub struct Scene {
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
     transition: cloud::TrackTransition,
+    /// 指针涟漪表。
+    ripples: cloud::Ripples,
+    /// 拖动带来的点云自转与松手后的惯性。
+    spin: cloud::Spin,
+    /// 上一帧的指针状态,用来算这一帧拖了多少、该不该起一路涟漪。
+    last_pointer: Option<(f32, f32)>,
     /// 上一帧的播放页时钟,用来算过渡要推进多少。门关着时钟不走,过渡跟着定格。
     last_time: Option<f32>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
@@ -254,6 +272,9 @@ impl Scene {
             root,
             cloud_material: None,
             transition: cloud::TrackTransition::default(),
+            ripples: cloud::Ripples::default(),
+            spin: cloud::Spin::default(),
+            last_pointer: None,
             last_time: None,
             camera,
             occluder_target,
@@ -299,6 +320,7 @@ impl Scene {
         time: f32,
         audio: &[u8],
         cover: Option<(u32, u32, &[u8])>,
+        pointer: Pointer,
         width: u32,
         height: u32,
     ) -> (slint::Image, slint::Image) {
@@ -325,6 +347,9 @@ impl Scene {
             self.apply_cover(w, h, rgba);
         }
 
+        self.apply_pointer(&pointer, delta);
+        self.ripples.advance(delta);
+
         // 几何一动不动,一帧只换这一块 uniform:三万多颗粒子的位移在顶点
         // 着色器里算(见 docs/adr/0012)。
         let levels = cloud::band_levels(
@@ -332,6 +357,8 @@ impl Scene {
         );
         let color_mix = self.transition.color_mix();
         let burst = self.transition.burst();
+        let ripple_count = self.ripples.active();
+        let ripple_slots = self.ripples.pack();
         if let Some(handle) = self.cloud_material.clone()
             && let Some(mut material) = self
                 .app
@@ -345,6 +372,24 @@ impl Scene {
             material.params.treble = levels.treble;
             material.params.color_mix = color_mix;
             material.params.burst = burst;
+            material.params.ripple_count = ripple_count;
+            material.params.ripple_slots = ripple_slots;
+        }
+
+        // 拖动转的是点云自己,不是相机 —— 相机一动遮挡层那台就得跟着动,
+        // 两层还要逐像素对齐(见 cloud::Spin)。
+        let (pitch, yaw) = self.spin.angles();
+        if let Some(mut transform) =
+            self.app
+                .world_mut()
+                .get_mut::<Transform>(self.root)
+        {
+            transform.rotation = Quat::from_euler(
+                EulerRot::YXZ,
+                yaw,
+                pitch,
+                0.0,
+            );
         }
 
         // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
@@ -524,6 +569,47 @@ impl Scene {
         self.image_key = None;
         self.occluder_image = None;
         self.occluder_key = None;
+    }
+
+    /// 把这一帧的指针状态变成涟漪与拖动。
+    ///
+    /// 指针**按住**时是拖动(转点云),没按住时划过就起涟漪 —— 与原版一致:
+    /// `orbit.rotating` 那一支只转,不转的时候才 `queueParticlePointerFrame`。
+    fn apply_pointer(
+        &mut self,
+        pointer: &Pointer,
+        delta: f32,
+    ) {
+        if !pointer.active {
+            self.last_pointer = None;
+            self.spin.coast(delta);
+            return;
+        }
+        let previous = self.last_pointer;
+        self.last_pointer = Some((pointer.x, pointer.y));
+
+        if pointer.down {
+            // 拖动量按**物理像素**算,不然同一段手势在不同窗口大小下转得不一样多。
+            if let Some((px, py)) = previous {
+                let dx =
+                    (pointer.x - px) * self.size.0 as f32;
+                let dy =
+                    (pointer.y - py) * self.size.1 as f32;
+                self.spin.drag(dx, dy, delta);
+            }
+            return;
+        }
+
+        self.spin.coast(delta);
+        // 指针没动就不再起新的一路 —— 停在那儿不动会把整张表刷成同一个点。
+        if previous == Some((pointer.x, pointer.y)) {
+            return;
+        }
+        if let Some((x, y)) =
+            cloud::pointer_to_plane(pointer.x, pointer.y)
+        {
+            self.ripples.spawn(x, y);
+        }
     }
 
     /// 换歌:把新封面的像素传成纹理挂上点云,旧的那张退成「上一首」,

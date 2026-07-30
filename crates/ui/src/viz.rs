@@ -18,6 +18,19 @@ pub struct VizControls {
     /// 平帧恒为 `None` —— 一张封面是兆级的字节,每帧搬一次纯属白耗。
     /// 收到值的那一端据此换纹理并起一次切歌过渡。
     pub cover: Option<VizCover>,
+    /// 视觉区里的指针,驱动涟漪与拖动旋转。
+    pub pointer: VizPointer,
+}
+
+/// 视觉区指针的一帧状态,位置归一到 0..1(左上原点)。
+///
+/// `active` 为假表示指针不在视觉区里 —— 这一帧既不起涟漪也不拖动。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VizPointer {
+    pub x: f32,
+    pub y: f32,
+    pub down: bool,
+    pub active: bool,
 }
 
 /// 送给点云的封面像素:RGBA8,行优先,长度恒为 `width × height × 4`。

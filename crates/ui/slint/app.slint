@@ -528,6 +528,13 @@ export component MainWindow inherits Window {
     out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
     out property <length> viz-title-y: root.viz-lyric-y - 96px;
+    // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
+    // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
+    // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
+    out property <float> viz-pointer-x: 0.5;
+    out property <float> viz-pointer-y: 0.5;
+    out property <bool> viz-pointer-down: false;
+    out property <bool> viz-pointer-active: false;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图 —— 控制条上的小图用它。
     in property <image> cover-art;
     // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
@@ -918,10 +925,21 @@ export component MainWindow inherits Window {
             source: root.viz-scene;
         }
 
-        // 点视觉区任意处收起。压在视觉之上、内容之下 —— 控制键各有 TouchArea,
-        // 不会误触到这层;封面与文字是纯展示,点它们也算「点空白」。
+        // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
+        // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
+        // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
         TouchArea {
-            clicked => { root.play-page-open = false; }
+            moved => {
+                root.viz-pointer-x = self.mouse-x / root.width;
+                root.viz-pointer-y = self.mouse-y / root.height;
+                root.viz-pointer-down = self.pressed;
+            }
+            pointer-event(event) => {
+                root.viz-pointer-x = self.mouse-x / root.width;
+                root.viz-pointer-y = self.mouse-y / root.height;
+                root.viz-pointer-down = self.pressed;
+                root.viz-pointer-active = event.kind != PointerEventKind.up;
+            }
         }
 
         // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
@@ -1013,6 +1031,7 @@ export component MainWindow inherits Window {
 
                 HorizontalLayout {
                     alignment: center;
+                    spacing: 8px;
                     ControlCluster {
                         is-playing: root.is-playing;
                         shuffle-on <=> root.shuffle-on;
@@ -1020,6 +1039,12 @@ export component MainWindow inherits Window {
                         toggle => { root.toggle-play(); }
                         next => { root.next-track(); }
                         shuffle-toggled => { root.shuffle-toggled(); }
+                    }
+                    // 收起播放页:向下的小三角,与展开用的向上三角对称。收起是操作,
+                    // 所以它在最上层 2D、永远点得到(docs/adr/0010)。
+                    RoundControl {
+                        icon: "M5 8 L19 8 L12 17 Z";
+                        clicked => { root.play-page-open = false; }
                     }
                 }
             }

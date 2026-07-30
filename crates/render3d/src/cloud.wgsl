@@ -29,6 +29,12 @@ struct CloudParams {
     color_mix: f32,
     // 换歌脉冲强度:1 = 刚换,0 = 已归位。
     burst: f32,
+    // 还活着的涟漪路数。着色器靠它提前跳出循环,不必每帧空转十二遍。
+    ripple_count: u32,
+    // 涟漪的半径与幅度按平面放大的倍数同比放大,理由同 motion_scale。
+    ripple_scale: f32,
+    // 涟漪表:每路 (x, y, 年龄, 强度)。
+    ripple_slots: array<vec4<f32>, 12>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CloudParams;
@@ -53,6 +59,9 @@ struct VertexOutput {
     // 方片内的局部坐标,画圆点用。
     @location(1) corner: vec2<f32>,
 }
+
+// 涟漪表的路数,与 cloud.rs 的 RIPPLE_SLOTS 手工对齐。
+const RIPPLE_SLOTS: u32 = 12u;
 
 // ── simplex 噪声(照搬原版顶点着色器里那一份)────────────────────────────
 
@@ -117,6 +126,38 @@ fn snoise(v: vec3<f32>) -> f32 {
         dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
 
+
+// 某点上所有涟漪叠加出的纵深位移。照抄原版的 `rippleSumAt`:一个中心隆起的
+// 高斯包(bulge)加一圈往外走的环(ring),各自随年龄展宽并淡出。
+fn ripple_sum_at(p: vec2<f32>) -> f32 {
+    var total = 0.0;
+    let scale = params.ripple_scale;
+    for (var i = 0u; i < RIPPLE_SLOTS; i = i + 1u) {
+        if i >= params.ripple_count {
+            break;
+        }
+        let data = params.ripple_slots[i];
+        let age = data.z;
+        let strength = data.w;
+        if strength < 0.005 || age < 0.0 || age > 2.0 {
+            continue;
+        }
+        let dist = length(p - data.xy);
+        let life = age / 2.0;
+        let fade_in = smoothstep(0.0, 0.06, age);
+        let fade_out = 1.0 - smoothstep(0.7, 1.0, life);
+        let env = fade_in * fade_out;
+        let bulge_w = (0.55 + age * 0.80) * scale;
+        let bulge = exp(-dist * dist / (2.0 * bulge_w * bulge_w))
+            * (1.0 - smoothstep(0.0, 0.55, life));
+        let wave_r = age * 2.10 * scale;
+        let ring_w = (0.40 + age * 0.22) * scale;
+        let ring = exp(-pow((dist - wave_r) / ring_w, 2.0));
+        total = total + (bulge * 2.4 + ring * 1.30) * env * strength * scale;
+    }
+    return total;
+}
+
 // ── 顶点 ──────────────────────────────────────────────────────────────
 
 @vertex
@@ -140,7 +181,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let bass_breath = snoise(vec3<f32>(
         base.x * 0.35, base.y * 0.35, t * 0.4)) * params.bass * 0.42 * K;
 
-    var local = vec3<f32>(base.x, base.y, mid_disp + treble_jitter + bass_breath);
+    // 涟漪走 z,与频谱起伏叠加(原版 `pos.z = rippleZ * 1.30 + ...`)。
+    let ripple_z = ripple_sum_at(base.xy) * 1.30;
+    var local = vec3<f32>(
+        base.x, base.y, ripple_z + mid_disp + treble_jitter + bass_breath);
 
     // 换歌脉冲:整片朝外炸开一点再归位,外加一点纵深上的散开。
     // 幅度按原版 uBurstAmt 那一段的比例,只是这里不掺 loading 形态。
@@ -167,7 +211,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // 节拍提亮,同原版 vBright 的低频/能量项;换歌那一下再亮一档。
     color *= 0.82 + params.bass * 0.10
         + (params.mid + params.treble) * 0.05
-        + params.burst * 0.40;
+        + params.burst * 0.40
+        + clamp(abs(ripple_z), 0.0, 1.0) * 0.55;
 
     // 方片正对相机:位移后的点先进视图空间,再在那里摊开四个角,最后才投影。
     // 在视图空间摊开而不是在模型空间,粒子才永远是正圆而不是随相机变斜的菱形;
