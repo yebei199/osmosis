@@ -46,6 +46,12 @@ fn main() {
                     v.cover.as_ref().map(|c| {
                         (c.width, c.height, c.rgba.as_slice())
                     }),
+                    render3d::Pointer {
+                        x: v.pointer.x,
+                        y: v.pointer.y,
+                        down: v.pointer.down,
+                        active: v.pointer.active,
+                    },
                     w,
                     h,
                 );

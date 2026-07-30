@@ -12,6 +12,7 @@ pub use nav_glass::NavGlassControls;
 mod viz;
 pub use viz::{
     VIZ_AUDIO_BYTES, VizControls, VizCover, VizImages,
+    VizPointer,
 };
 
 // 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
@@ -284,6 +285,15 @@ pub fn run_with_renderers(
                                     rgba: c.rgba,
                                 }
                             }),
+                            pointer: VizPointer {
+                                x: ui.get_viz_pointer_x(),
+                                y: ui.get_viz_pointer_y(),
+                                down: ui
+                                    .get_viz_pointer_down(),
+                                active: ui
+                                    .get_viz_pointer_active(
+                                    ),
+                            },
                         },
                         size.width,
                         size.height,
