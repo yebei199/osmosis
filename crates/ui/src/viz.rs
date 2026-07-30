@@ -7,12 +7,27 @@
 /// 与 render3d 的 `AUDIO_BYTES` 手工对齐 —— 三个 crate 互不依赖)。
 pub const VIZ_AUDIO_BYTES: usize = 1024;
 
-/// 一帧 warp 视觉的控制量。
+/// 一帧播放页视觉的控制量。
 pub struct VizControls {
     /// 播放页时钟,秒。门关着时不走,重开门画面从定格处继续。
     pub time: f32,
     /// 频谱行在前、波形行在后,共 [`VIZ_AUDIO_BYTES`] 字节。
     pub audio: [u8; VIZ_AUDIO_BYTES],
+    /// **换歌解出新封面的那一帧**才有值:点云要采的封面像素。
+    ///
+    /// 平帧恒为 `None` —— 一张封面是兆级的字节,每帧搬一次纯属白耗。
+    /// 收到值的那一端据此换纹理并起一次切歌过渡。
+    pub cover: Option<VizCover>,
+}
+
+/// 送给点云的封面像素:RGBA8,行优先,长度恒为 `width × height × 4`。
+///
+/// 与 [`crate::SceneControls`] 同一个镜像分离模式:POD,不涉 wgpu 与 bevy 类型,
+/// apps/* 在 seam 处平凡拷给 render3d。
+pub struct VizCover {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 /// 一帧播放页视觉的三张图:warp 背景、粒子场景、遮挡层。

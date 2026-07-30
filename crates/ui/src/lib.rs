@@ -10,7 +10,9 @@ mod nav_glass;
 pub use nav_glass::NavGlassControls;
 
 mod viz;
-pub use viz::{VIZ_AUDIO_BYTES, VizControls, VizImages};
+pub use viz::{
+    VIZ_AUDIO_BYTES, VizControls, VizCover, VizImages,
+};
 
 // 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,12 +51,16 @@ const MAX_TAB: i32 = 1;
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui() -> (MainWindow, viz::Source, music::LyricFeed)
-{
+fn build_ui() -> (
+    MainWindow,
+    viz::Source,
+    music::LyricFeed,
+    music::CoverFeed,
+) {
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    let (viz_source, lyrics) = music::bind(&ui);
+    let (viz_source, lyrics, cover) = music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
@@ -66,7 +72,7 @@ fn build_ui() -> (MainWindow, viz::Source, music::LyricFeed)
     {
         ui.set_current_tab(tab.clamp(0, MAX_TAB));
     }
-    (ui, viz_source, lyrics)
+    (ui, viz_source, lyrics, cover)
 }
 
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
@@ -74,7 +80,7 @@ fn build_ui() -> (MainWindow, viz::Source, music::LyricFeed)
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
 /// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
-    let (ui, _viz_source, _lyrics) = build_ui();
+    let (ui, _viz_source, _lyrics, _cover) = build_ui();
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
@@ -124,7 +130,7 @@ pub fn run_with_renderers(
     ) -> Option<VizImages>
     + 'static,
 ) {
-    let (ui, viz_source, lyrics) = build_ui();
+    let (ui, viz_source, lyrics, cover) = build_ui();
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -270,6 +276,14 @@ pub fn run_with_renderers(
                         &VizControls {
                             time: viz_time,
                             audio,
+                            // 换歌解出新封面的那一帧才有值,取走即清空。
+                            cover: cover.take().map(|c| {
+                                VizCover {
+                                    width: c.width,
+                                    height: c.height,
+                                    rgba: c.rgba,
+                                }
+                            }),
                         },
                         size.width,
                         size.height,

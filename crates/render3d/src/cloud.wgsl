@@ -16,18 +16,26 @@ struct CloudParams {
     treble: f32,
     // 律动强度,同原版 uIntensity(默认 0.85)。
     intensity: f32,
+    // 位移幅度的整体倍数:平面比原版放大了多少,起伏就得放大多少。
+    motion_scale: f32,
     // 封面纹理有没有内容。0 时走默认渐变色,点云在没有封面时不消失。
     has_cover: f32,
     // 片元 alpha 的丢弃门槛。桌面走软边(近 0),安卓走硬边(0.5),
     // 理由见 docs/adr/0012:Adreno 上半透明小元素整片不显示。
     alpha_cutoff: f32,
-    // 圆点半径,单位是渲染目标的像素。
-    point_size: f32,
+    // 圆点半径,世界单位。按格距定而不是按像素定,视口一变点与缝的比例才不跑。
+    point_radius: f32,
+    // 新旧封面的混合进度:0 = 全旧,1 = 全新。
+    color_mix: f32,
+    // 换歌脉冲强度:1 = 刚换,0 = 已归位。
+    burst: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CloudParams;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var cover_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var cover_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var prev_cover_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var prev_cover_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -117,8 +125,9 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let base = vertex.position;
     let rand = vertex.corner.z;
 
-    // 律动强度的真实倍数,同原版:滑块 0.85 → K = 1.36。
-    let K = params.intensity * 1.6;
+    // 律动强度的真实倍数,同原版:滑块 0.85 → K = 1.36。再乘上平面放大的补偿,
+    // 位移相对整片点云的比例才与原版一致(见 cloud.rs 的 MOTION_SCALE)。
+    let K = params.intensity * 1.6 * params.motion_scale;
 
     // SILK:xy 停在格点上,起伏全走 z —— 从正面看是一张随音乐抖动的封面,
     // 侧面看才知道它是有厚度的一层。
@@ -131,33 +140,48 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let bass_breath = snoise(vec3<f32>(
         base.x * 0.35, base.y * 0.35, t * 0.4)) * params.bass * 0.42 * K;
 
-    let local = vec3<f32>(base.x, base.y, mid_disp + treble_jitter + bass_breath);
+    var local = vec3<f32>(base.x, base.y, mid_disp + treble_jitter + bass_breath);
+
+    // 换歌脉冲:整片朝外炸开一点再归位,外加一点纵深上的散开。
+    // 幅度按原版 uBurstAmt 那一段的比例,只是这里不掺 loading 形态。
+    if params.burst > 0.001 {
+        let dir = normalize(vec2<f32>(base.x, base.y) + vec2<f32>(0.0001, 0.0001));
+        local = vec3<f32>(
+            local.xy + dir * params.burst * 0.42,
+            local.z + (rand - 0.5) * params.burst * 0.9);
+    }
 
     // 颜色:有封面就采封面,没有就走原版的默认渐变(紫 → 粉/青)。
-    let cover_color = textureSampleLevel(
-        cover_texture, cover_sampler, clamp(vertex.uv, vec2(0.0012), vec2(0.9988)), 0.0).rgb;
+    // 换歌时在新旧两张封面之间 mix —— 颜色平滑过渡,不是硬切。
+    let sample_uv = clamp(vertex.uv, vec2(0.0012), vec2(0.9988));
+    let new_color = textureSampleLevel(
+        cover_texture, cover_sampler, sample_uv, 0.0).rgb;
+    let prev_color = textureSampleLevel(
+        prev_cover_texture, prev_cover_sampler, sample_uv, 0.0).rgb;
+    let cover_color = mix(prev_color, new_color, clamp(params.color_mix, 0.0, 1.0));
     let fallback = mix(
         vec3<f32>(0.36, 0.28, 0.72),
         mix(vec3<f32>(0.85, 0.55, 0.95), vec3<f32>(0.45, 0.78, 0.95), vertex.uv.x),
         vertex.uv.y);
     var color = mix(fallback, cover_color, params.has_cover);
-    // 节拍提亮,同原版 vBright 的低频/能量项。
-    color *= 0.82 + params.bass * 0.10 + (params.mid + params.treble) * 0.05;
+    // 节拍提亮,同原版 vBright 的低频/能量项;换歌那一下再亮一档。
+    color *= 0.82 + params.bass * 0.10
+        + (params.mid + params.treble) * 0.05
+        + params.burst * 0.40;
 
-    // 方片正对相机:位移后的点先进视图空间,再在那里按像素尺寸摊开四个角。
-    // 在视图空间摊开而不是在模型空间,粒子才永远是正圆而不是随相机变斜的菱形。
+    // 方片正对相机:位移后的点先进视图空间,再在那里摊开四个角,最后才投影。
+    // 在视图空间摊开而不是在模型空间,粒子才永远是正圆而不是随相机变斜的菱形;
+    // 摊开量用世界单位而不是像素,点与格距就同比投影,窗口怎么变比例都不动。
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let world_position = mesh_functions::mesh_position_local_to_world(
         world_from_local, vec4<f32>(local, 1.0));
-    var clip_position = view.clip_from_view * (view.view_from_world * world_position);
-    // NDC 一格 = 视口的一半,故像素尺寸要先除以半个视口再乘 w。
-    clip_position = vec4<f32>(
-        clip_position.xy + vertex.corner.xy * params.point_size
-            / (view.viewport.zw * 0.5) * clip_position.w,
-        clip_position.zw);
+    var view_position = view.view_from_world * world_position;
+    view_position = vec4<f32>(
+        view_position.xy + vertex.corner.xy * params.point_radius,
+        view_position.zw);
 
     var out: VertexOutput;
-    out.clip_position = clip_position;
+    out.clip_position = view.clip_from_view * view_position;
     out.color = color;
     out.corner = vertex.corner.xy;
     return out;

@@ -84,7 +84,15 @@ fn android_main(app: slint::android::AndroidApp) {
         },
         move |v, w, h| {
             let (viz_scene, occluder) = scene
-                .render_viz_frame(v.time, &v.audio, w, h);
+                .render_viz_frame(
+                    v.time,
+                    &v.audio,
+                    v.cover.as_ref().map(|c| {
+                        (c.width, c.height, c.rgba.as_slice())
+                    }),
+                    w,
+                    h,
+                );
             Some(ui::VizImages {
                 warp: warp
                     .render_frame(v.time, &v.audio, w, h),

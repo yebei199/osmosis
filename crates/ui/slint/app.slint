@@ -512,21 +512,23 @@ export component MainWindow inherits Window {
     // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
     in property <image> viz-scene;
     in property <image> viz-occluder;
-    // 封面深度卡的几何,逻辑像素。**这里是唯一真相**:卡片摆位与遮挡层的裁剪
-    // 负偏移都从这几个值算,别在别处重抄(与 3D 页 card-* 同一个模式)。
-    out property <length> viz-card-size: 220px;
-    out property <length> viz-card-x: (root.width - root.viz-card-size) / 2;
-    out property <length> viz-card-y: (root.height - root.viz-card-size) / 2 - 60px;
-    // 歌词块的几何量,同样是唯一真相:它与封面卡**同处一个 z 平面**,因此可以
-    // 复用同一张遮挡图,只是裁剪矩形不同 —— 粒子于是也从字的前后穿过。
+    // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
+    // 负偏移都从这几个值算,别在别处重抄。歌词是播放页现在唯一的深度卡片 ——
+    // 粒子从字的前后穿过。
+    //
+    // 曾经这里还有一张 220px 的封面卡,它是第一张深度卡片。封面点云上线之后它成了
+    // 同一张图的第二份拷贝,还正压在点云中央,遂删除(见 `docs/adr/0010` 的记录)。
+    //
     // 歌词块的高度**钉死**,不随文本长度变。平台会把整段词压成「一行」(实测见过
     // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
     // 原文最多三行、译文最多两行,按各自字号的行高估。
     out property <length> viz-lyric-line-h: root.compact ? 84px : 120px;
     out property <length> viz-lyric-tr-h: root.compact ? 40px : 46px;
     out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
-    out property <length> viz-lyric-y: root.viz-card-y + root.viz-card-size + 96px;
-    // 正在播的封面(已解码)。取不到 / 解不出时为空图,封面卡整块隐藏。
+    out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
+    // 歌名与歌手在歌词块上方,与它一起居中成一组。
+    out property <length> viz-title-y: root.viz-lyric-y - 96px;
+    // 正在播的封面(已解码)。取不到 / 解不出时为空图 —— 控制条上的小图用它。
     in property <image> cover-art;
     // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
     in property <string> now-title;
@@ -893,9 +895,9 @@ export component MainWindow inherits Window {
     }
 
     // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
-    // 五层合成:warp 背景 → 粒子场景 → 封面深度卡 → 遮挡层(裁到卡片)→ 控制簇。
-    // 封面是第一张深度卡片:遮挡层只含比卡片锚点更近的粒子,盖上来就是「粒子从
-    // 封面前面掠过」;功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
+    // 五层合成:warp 背景 → 封面点云 → 歌名与歌词 → 遮挡层(裁到歌词)→ 控制簇。
+    // 歌词是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从字前面掠过」;
+    // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
     if root.play-page-open: Rectangle {
         // 兜底纯色底:无 GPU 构建(viz-bg 恒空)也得是完整的深色沉浸层。
         background: #0b0d13;
@@ -907,8 +909,8 @@ export component MainWindow inherits Window {
             source: root.viz-bg;
         }
 
-        // 粒子场景:透明底,叠在 warp 上。远侧粒子在这层被封面卡盖住,
-        // 近侧粒子由下面的遮挡层重新盖回卡片之上 —— 深度由此闭环。
+        // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
+        // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
         if root.viz-scene.width > 0: Image {
             width: 100%;
             height: 100%;
@@ -922,31 +924,9 @@ export component MainWindow inherits Window {
             clicked => { root.play-page-open = false; }
         }
 
-        // 封面深度卡。几何取 viz-card-*(唯一真相);无封面时留半透明玻璃底,
-        // 深度遮挡的观感不依赖封面是否取到。
-        Rectangle {
-            x: root.viz-card-x;
-            y: root.viz-card-y;
-            width: root.viz-card-size;
-            height: root.viz-card-size;
-            border-radius: 20px;
-            clip: true;
-            background: #17110daa;
-            // 描一圈细边,封面亮色时不至于和视觉糊在一起。
-            border-width: 1px;
-            border-color: #ffffff22;
-
-            if root.cover-art.width > 0: Image {
-                width: 100%;
-                height: 100%;
-                image-fit: cover;
-                source: root.cover-art;
-            }
-        }
-
-        // 歌名与歌手:卡片正下方。平台数据任意 CJK,不指定子集字体。
+        // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
         Text {
-            y: root.viz-card-y + root.viz-card-size + 24px;
+            y: root.viz-title-y;
             width: 100%;
             text: root.now-title;
             color: #e6e8ef;
@@ -955,7 +935,7 @@ export component MainWindow inherits Window {
             overflow: elide;
         }
         Text {
-            y: root.viz-card-y + root.viz-card-size + 58px;
+            y: root.viz-title-y + 34px;
             width: 100%;
             text: root.now-artists;
             color: #9aa0b4;
@@ -964,8 +944,8 @@ export component MainWindow inherits Window {
             overflow: elide;
         }
 
-        // 歌词:深度卡片的首个真载荷(issue #16)。当前行 + 译文,居中排在
-        // 封面下方;取不到歌词或还在前奏时为空串,这块自然让位。
+        // 歌词:播放页现在唯一的深度卡片。当前行 + 译文,居中排在歌名下方;
+        // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
         if root.lyric-line != "": VerticalLayout {
             y: root.viz-lyric-y;
             height: root.viz-lyric-h;
@@ -1001,24 +981,8 @@ export component MainWindow inherits Window {
         }
 
         // 遮挡层:整窗大小的图必须与场景那张逐像素对齐,故用负偏移推回窗口原点,
-        // 再裁到各自的矩形 —— 与 3D 演示页「转盘中心」卡同一套机关。封面与歌词
-        // 同处一个 z 平面,故**同一张遮挡图**盖两处,各裁各的。
-        if root.viz-occluder.width > 0: Rectangle {
-            x: root.viz-card-x;
-            y: root.viz-card-y;
-            width: root.viz-card-size;
-            height: root.viz-card-size;
-            clip: true;
-
-            Image {
-                x: -root.viz-card-x;
-                y: -root.viz-card-y;
-                width: root.width;
-                height: root.height;
-                image-fit: fill;
-                source: root.viz-occluder;
-            }
-        }
+        // 再裁到歌词矩形 —— 不裁的话近处的粒子会连控制簇一起盖住,而控制簇是
+        // 界面外壳、不在场景里。
         if root.viz-occluder.width > 0 && root.lyric-line != "": Rectangle {
             y: root.viz-lyric-y;
             width: root.width;
