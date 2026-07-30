@@ -134,6 +134,31 @@ struct Deck {
     player: Arc<Result<audio::Player, audio::AudioError>>,
     sync: crate::syncplay::Sync,
     lyrics: LyricFeed,
+    cover: CoverFeed,
+}
+
+/// 封面像素的取用口:播放页每帧问它「有没有新封面要送进点云」。
+///
+/// 只在换歌解出新封面的那一帧交出像素,取走即清空 —— 一张封面是兆级的字节,
+/// 每帧搬一次过 seam 纯属白耗(见 `crates/render3d::cloud`)。
+#[derive(Clone, Default)]
+pub(crate) struct CoverFeed {
+    pending: Rc<RefCell<Option<crate::cover::CoverPixels>>>,
+}
+
+impl CoverFeed {
+    /// 取走待送的封面像素,没有新的就给 `None`。
+    pub(crate) fn take(
+        &self,
+    ) -> Option<crate::cover::CoverPixels> {
+        self.pending.borrow_mut().take()
+    }
+
+    /// 换歌解出了新封面:排上队等下一帧取走。上一张还没被取走就直接顶掉 ——
+    /// 点云只显示当前这一首,过期的封面排队也没人要。
+    fn replace(&self, pixels: crate::cover::CoverPixels) {
+        *self.pending.borrow_mut() = Some(pixels);
+    }
 }
 
 /// 歌词的取用口:播放页每帧问它「现在该显示哪一行」。
@@ -200,7 +225,7 @@ impl LyricFeed {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(
     ui: &MainWindow,
-) -> (crate::viz::Source, LyricFeed) {
+) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     // 搜索结果的权威副本。Slint 的 model 只存格式化后的字符串,
     // 点击时要靠它把 id 换回完整的 TrackDto。
     let tracks: Rc<RefCell<Vec<TrackDto>>> =
@@ -212,6 +237,7 @@ pub fn bind(
         generation: Rc::new(std::cell::Cell::new(0)),
         player: player.clone(),
     };
+    let cover = CoverFeed::default();
 
     let deck = Deck {
         playback: Rc::new(
@@ -221,6 +247,7 @@ pub fn bind(
         sync: crate::syncplay::bind(ui, &player),
         player,
         lyrics: lyrics.clone(),
+        cover: cover.clone(),
     };
 
     bind_search(ui, &tracks);
@@ -241,7 +268,7 @@ pub fn bind(
         .as_ref()
         .ok()
         .map(audio::Player::visualizer);
-    (viz, lyrics)
+    (viz, lyrics, cover)
 }
 
 /// wasm 上没有原生音频栈(见 `Cargo.toml` 的条件依赖)。界面照常在,
@@ -249,9 +276,9 @@ pub fn bind(
 #[cfg(target_arch = "wasm32")]
 pub fn bind(
     ui: &MainWindow,
-) -> (crate::viz::Source, LyricFeed) {
+) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     ui.set_playback_text("Web 端暂不支持播放".into());
-    (None, LyricFeed)
+    (None, LyricFeed, CoverFeed::default())
 }
 
 /// 「Web 端暂不支持播放」里的中文也得在子集字体里 —— 但它只在 wasm 上出现,
@@ -525,14 +552,17 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
 
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
+        let cover = deck.cover.clone();
         slint::spawn_local(async move {
             // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
+            // 同一次解码喂两处:界面的封面卡,以及点云的采样纹理。
             if let Ok(bytes) = api::fetch_bytes(&url).await
-                && let Some(img) =
+                && let Some((img, pixels)) =
                     crate::cover::decode(&bytes)
                 && let Some(ui) = weak.upgrade()
             {
                 ui.set_cover_art(img);
+                cover.replace(pixels);
             }
         })
         .expect("event loop must be running");
@@ -663,6 +693,42 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 封面像素只交出一次:换歌那一帧给 `Some`,之后一直给 `None`。
+    /// 一张封面是兆级的字节,每帧搬一次过 seam 纯属白耗。
+    #[test]
+    fn cover_feed_hands_pixels_over_once_per_track() {
+        let feed = CoverFeed::default();
+        assert!(feed.take().is_none(), "没换歌不该有封面");
+
+        feed.replace(pixels(2));
+        assert_eq!(feed.take().map(|p| p.width), Some(2));
+        assert!(
+            feed.take().is_none(),
+            "同一张被交出了两次"
+        );
+    }
+
+    /// 上一张还没被取走就又换歌:取到的是新的那张。点云只显示当前这一首,
+    /// 过期的封面排队也没人要 —— 播放页收起时门是关的,没人来取,连着换几首
+    /// 就会攒下一串。
+    #[test]
+    fn cover_feed_replaces_a_pending_cover() {
+        let feed = CoverFeed::default();
+        feed.replace(pixels(2));
+        feed.replace(pixels(4));
+        assert_eq!(feed.take().map(|p| p.width), Some(4));
+        assert!(feed.take().is_none());
+    }
+
+    /// 边长 `side` 的纯色封面像素,只用来分辨是哪一张。
+    fn pixels(side: u32) -> crate::cover::CoverPixels {
+        crate::cover::CoverPixels {
+            width: side,
+            height: side,
+            rgba: vec![0; (side * side * 4) as usize],
+        }
+    }
 
     fn track() -> TrackDto {
         TrackDto {

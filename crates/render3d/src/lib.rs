@@ -23,6 +23,7 @@ use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
+use bevy::asset::RenderAssetUsages;
 use bevy::camera::{
     Camera3dDepthLoadOp, ClearColorConfig, RenderTarget,
 };
@@ -31,7 +32,9 @@ use bevy::platform::time::Instant;
 use bevy::render::RenderApp;
 use bevy::render::RenderPlugin;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::TextureFormat;
+use bevy::render::render_resource::{
+    Extent3d, TextureDimension, TextureFormat,
+};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderDevice,
     RenderInstance, RenderQueue, WgpuWrapper,
@@ -82,6 +85,10 @@ pub struct Scene {
     root: Entity,
     /// 点云材质的句柄:每帧改它的 uniform(时间、三段电平),几何一动不动。
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
+    /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
+    transition: cloud::TrackTransition,
+    /// 上一帧的播放页时钟,用来算过渡要推进多少。门关着时钟不走,过渡跟着定格。
+    last_time: Option<f32>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
     /// 遮挡层的离屏目标图:同一个场景,但只留比 [`CARD_ANCHOR`] 更近的片元,其余透明。
@@ -246,6 +253,8 @@ impl Scene {
             target,
             root,
             cloud_material: None,
+            transition: cloud::TrackTransition::default(),
+            last_time: None,
             camera,
             occluder_target,
             occluder_camera,
@@ -289,6 +298,7 @@ impl Scene {
         &mut self,
         time: f32,
         audio: &[u8],
+        cover: Option<(u32, u32, &[u8])>,
         width: u32,
         height: u32,
     ) -> (slint::Image, slint::Image) {
@@ -304,11 +314,24 @@ impl Scene {
             self.cloud_built = true;
         }
 
+        // 过渡按播放页时钟推进 —— 门关着时钟不走,换歌渐变跟着定格,
+        // 重开门从定格处继续。首帧没有上一帧可减,当作没走。
+        let delta =
+            self.last_time.map_or(0.0, |last| time - last);
+        self.last_time = Some(time);
+        self.transition.advance(delta);
+
+        if let Some((w, h, rgba)) = cover {
+            self.apply_cover(w, h, rgba);
+        }
+
         // 几何一动不动,一帧只换这一块 uniform:三万多颗粒子的位移在顶点
         // 着色器里算(见 docs/adr/0012)。
         let levels = cloud::band_levels(
             audio.get(..512).unwrap_or(&[]),
         );
+        let color_mix = self.transition.color_mix();
+        let burst = self.transition.burst();
         if let Some(handle) = self.cloud_material.clone()
             && let Some(mut material) = self
                 .app
@@ -320,6 +343,8 @@ impl Scene {
             material.params.bass = levels.bass;
             material.params.mid = levels.mid;
             material.params.treble = levels.treble;
+            material.params.color_mix = color_mix;
+            material.params.burst = burst;
         }
 
         // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
@@ -501,6 +526,84 @@ impl Scene {
         self.occluder_key = None;
     }
 
+    /// 换歌:把新封面的像素传成纹理挂上点云,旧的那张退成「上一首」,
+    /// 并起一次过渡(颜色渐变 + burst)。
+    ///
+    /// 尺寸不合法(0 边、字节数与宽高对不上)就整帧忽略 —— 像素来自跨 crate 的
+    /// seam,坏载荷不该让点云黑掉,更不该 panic。
+    fn apply_cover(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) {
+        let expected =
+            (width as usize) * (height as usize) * 4;
+        if width == 0
+            || height == 0
+            || rgba.len() != expected
+        {
+            log::warn!(
+                "render3d: 封面像素不合法({width}x{height},{} 字节),这一次不换",
+                rgba.len()
+            );
+            return;
+        }
+        let Some(handle) = self.cloud_material.clone()
+        else {
+            return;
+        };
+
+        let image = Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            rgba.to_vec(),
+            // 封面是 sRGB 编码的;按线性读会整体发暗,点云的颜色就不是封面的颜色了。
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        let next = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(image);
+
+        // 旧的那张退成「上一首」,渐变期间还看得见;再旧的那张这时才没人要。
+        let rotated = {
+            let mut materials = self
+                .app
+                .world_mut()
+                .resource_mut::<Assets<cloud::CloudMaterial>>();
+            let Some(mut material) =
+                materials.get_mut(&handle)
+            else {
+                return;
+            };
+            let previous = material.cover.clone();
+            let stale = material.prev_cover.clone();
+            material.prev_cover = previous.clone();
+            material.cover = next;
+            material.params.has_cover = 1.0;
+            (previous, stale)
+        };
+
+        // `stale == previous` 只在首曲成立:两者都还是那张占位图。此时既没有
+        // 可渐变的旧封面(否则第一首歌会从一片纯白淡入),占位图也还挂在
+        // `prev_cover` 上,不能释放。
+        let (previous, stale) = rotated;
+        if stale != previous {
+            self.transition.start();
+            self.app
+                .world_mut()
+                .resource_mut::<Assets<Image>>()
+                .remove(&stale);
+        }
+    }
+
     /// 重建播放页封面点云:despawn 旧内容,把 [`cloud::CLOUD_GRID`]² 颗粒子烘成
     /// **一份** mesh,配一份自定义材质,spawn 成单个实体。
     ///
@@ -519,8 +622,8 @@ impl Scene {
             .add(cloud::build_cloud_mesh(
                 cloud::cloud_vertices(),
             ));
-        // 封面像素还没接进来(issue #24),先给一张占位图:`has_cover` 为 0,
-        // 着色器走默认渐变色 —— 点云在没有封面时不该消失。
+        // 还没有封面时的占位图:`has_cover` 为 0,着色器走默认渐变色 ——
+        // 点云在没有封面时不该消失。取到封面后由 `apply_cover` 换掉。
         let cover = self
             .app
             .world_mut()
@@ -532,6 +635,7 @@ impl Scene {
             .resource_mut::<Assets<cloud::CloudMaterial>>()
             .add(cloud::CloudMaterial {
                 params: cloud::CloudParams::default(),
+                prev_cover: cover.clone(),
                 cover,
             });
 

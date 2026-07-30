@@ -50,19 +50,35 @@ pub(crate) fn band_levels(spectrum: &[u8]) -> Levels {
     }
 }
 
-/// 点云网格边长:每行每列各 183 颗,共 33 489 颗。
+/// 点云网格边长:每行每列各 384 颗,共 147 456 颗。
 ///
-/// 原版 `coverParticleGridForResolution` 在默认档 `coverResolution = 1.55` 下的
-/// 结果(`round(118 × 1.55) = 183`,钳进 88..=183 后取奇数)。没有设置面板,
-/// 先钉成常数;真机发热读数出来后可能整体下调(见 `docs/adr/0012`)。
-pub(crate) const CLOUD_GRID: usize = 183;
+/// 原版默认档是 183(`round(118 × 1.55)`),但它把那 183 格铺在一块只占画面一角的
+/// 小平面上,格距因此只有几个像素 —— 点云读得成一张图,全靠格距小到眼睛自己会拼。
+/// 我们的平面铺满整个视口(见 [`PLANE_SIZE`]),同样 183 格摊开后一格二十来像素,
+/// 点大缝也大,只看得见一层网点。格数按平面放大的倍数同比提上来,格距才回到
+/// 原版那个量级。
+///
+/// 代价是粒子数四倍。桌面实测见 `docs/adr/0012`;真机发热读数出来后可能整体下调。
+pub(crate) const CLOUD_GRID: usize = 384;
 
 /// 点云平面在世界里的边长。
 ///
 /// 原版是 4.8,在我们的相机下那正好是一块看得见四条边的方板。这里放大到溢出视口,
 /// 边界跑到画外去 —— 观感上是「封面炸成一片」而不是「一块点阵牌子」。
-/// 放大后格点间距同比变大,故 [`POINT_SIZE`] 也按同一倍数放大,点与缝的比例不变。
+/// 圆点大小按格距走(见 [`CELL_WORLD`]),放大平面不会让点云散开。
 const PLANE_SIZE: f32 = 12.0;
+
+/// 原版的平面边长。位移的绝对幅度都是照它调的,平面放大后要同比放大位移
+/// (见 [`MOTION_SCALE`]),否则起伏相对整片点云就缩水了。
+const ORIGINAL_PLANE_SIZE: f32 = 4.8;
+
+/// 位移幅度相对原版的倍数 = 平面放大的倍数 × 一档额外的夸张。
+///
+/// 前一半是几何补偿:位移是世界单位,平面放大了它就得跟着放大,不然起伏相对
+/// 整片点云会小掉同样的倍数。后一半是刻意的:这一层是播放页的主视觉,起伏跟着
+/// 节奏走得明显才有意思 —— 原版那档是给「UI 后面一块矩形」调的。
+const MOTION_SCALE: f32 =
+    PLANE_SIZE / ORIGINAL_PLANE_SIZE * 1.6;
 
 /// 一份点云 mesh 的顶点数据:每颗粒子一个朝向相机的小四边形。
 ///
@@ -103,7 +119,12 @@ pub(crate) fn cloud_vertices() -> CloudVertices {
         let gy = (i / CLOUD_GRID) as f32;
         // 取格心而不是格点边缘:贴边会采到相邻像素的插值,点云边缘会糊出
         // 一圈不属于封面的颜色。
-        let uv = [(gx + 0.5) * texel, (gy + 0.5) * texel];
+        //
+        // v 要翻:格点的 y 越大越靠画面**上**方,而纹理的 v 越大越靠图的**下**边。
+        // 不翻的话封面在点云里是倒的 —— 桌面上一眼看不出(很多封面上下差别不大),
+        // 但天空在下、地面在上的那些一翻就穿帮。
+        let uv =
+            [(gx + 0.5) * texel, 1.0 - (gy + 0.5) * texel];
         let base = [
             (gx / (grid - 1.0) - 0.5) * PLANE_SIZE,
             (gy / (grid - 1.0) - 0.5) * PLANE_SIZE,
@@ -158,12 +179,18 @@ const ALPHA_CUTOFF: f32 = 0.5;
 #[cfg(not(target_os = "android"))]
 const ALPHA_CUTOFF: f32 = 0.01;
 
-/// 圆点半径,单位是渲染目标的像素。
+/// 相邻两个格点在世界里的间距。圆点大小按它定,不按像素定。
 ///
-/// 原版按纵深缩放并钳进 1.05..4.95,这里取定值 —— 少一个每帧要算的量,
-/// 观感差别肉眼看不出。数值是原版那一段的中位数 2.4 乘上 [`PLANE_SIZE`] 的放大倍数,
-/// 于是点与缝的比例与原版一致。
-const POINT_SIZE: f32 = 6.0;
+/// 钉像素尺寸的话,视口一变点与缝的比例就跑掉了(窗口拉大 → 格距变大 → 点相对变小,
+/// 点云散成一片看不出图)。格距与点径同在世界单位里,投影之后比例恒定。
+const CELL_WORLD: f32 =
+    PLANE_SIZE / (CLOUD_GRID as f32 - 1.0);
+
+/// 圆点直径占一格的比例。
+///
+/// 略大于 1,让相邻的点微微交叠 —— 点云要能读成一张图,缝就不能比点宽。原版的点
+/// 也是几乎贴在一起的;缝一宽,眼睛拼不出封面,只看得见一层网点。
+const POINT_FILL: f32 = 1.15;
 
 /// 点云材质的 uniform 块,逐字段镜像 `cloud.wgsl` 的 `CloudParams`。
 #[derive(Clone, Copy, ShaderType)]
@@ -173,9 +200,16 @@ pub(crate) struct CloudParams {
     pub mid: f32,
     pub treble: f32,
     pub intensity: f32,
+    /// 位移幅度的整体倍数,见 [`MOTION_SCALE`]。
+    pub motion_scale: f32,
     pub has_cover: f32,
     pub alpha_cutoff: f32,
-    pub point_size: f32,
+    /// 圆点半径,世界单位。见 [`CELL_WORLD`] / [`POINT_FILL`]。
+    pub point_radius: f32,
+    /// 新旧封面的混合进度:0 = 全旧,1 = 全新。见 [`TrackTransition`]。
+    pub color_mix: f32,
+    /// 换歌脉冲强度:粒子外扩再归位。同上。
+    pub burst: f32,
 }
 
 /// 静止、无封面的一帧参数:常量项按原版默认档,音频项全零。
@@ -188,9 +222,13 @@ impl Default for CloudParams {
             treble: 0.0,
             // 原版 uIntensity 的默认值。
             intensity: 0.85,
+            motion_scale: MOTION_SCALE,
             has_cover: 0.0,
             alpha_cutoff: ALPHA_CUTOFF,
-            point_size: POINT_SIZE,
+            point_radius: CELL_WORLD * POINT_FILL * 0.5,
+            // 没有「上一首」可渐变,直接全新。
+            color_mix: 1.0,
+            burst: 0.0,
         }
     }
 }
@@ -207,6 +245,10 @@ pub(crate) struct CloudMaterial {
     #[texture(1)]
     #[sampler(2)]
     pub cover: Handle<Image>,
+    /// 上一首的封面,只在换歌渐变期间还看得见。首曲与它自己同一张。
+    #[texture(3)]
+    #[sampler(4)]
+    pub prev_cover: Handle<Image>,
 }
 
 impl Material for CloudMaterial {
@@ -286,6 +328,63 @@ pub(crate) fn build_cloud_mesh(
     mesh
 }
 
+/// 颜色从旧封面走到新封面要多久,秒。
+const COLOR_FADE_SECS: f32 = 0.9;
+
+/// 换歌脉冲从满到零要多久,秒。比颜色渐变短:脉冲是「一下」,渐变是「一段」。
+const BURST_SECS: f32 = 0.55;
+
+/// 换歌后的过渡:同一个计时器派生出「颜色渐变」与「burst 脉冲」两条曲线。
+///
+/// 原版是两个各自衰减的 uniform(`uColorMixT` / `uBurstAmt`),这里合成一个 ——
+/// 它们永远同时开始,分开存只是多一个会走散的状态。
+pub(crate) struct TrackTransition {
+    /// 距上次换歌的秒数。初值取一个已经跑完的值:首曲没有「上一首」可渐变。
+    elapsed: f32,
+}
+
+/// 初始状态 = 过渡早已结束:`color_mix` 为 1、`burst` 为 0。
+impl Default for TrackTransition {
+    fn default() -> Self {
+        Self {
+            elapsed: COLOR_FADE_SECS,
+        }
+    }
+}
+
+impl TrackTransition {
+    /// 换歌:计时归零,旧封面开始向新封面过渡,同时起一发 burst。
+    pub(crate) fn start(&mut self) {
+        self.elapsed = 0.0;
+    }
+
+    /// 按播放页时钟推进 `dt` 秒。
+    ///
+    /// `dt` 是两帧时间戳相减来的,非有限或为负时当作没走 —— 时钟可以被门冻结、
+    /// 可以被系统改,但过渡不能因此倒着走。计满即停,不让计数器一直涨。
+    pub(crate) fn advance(&mut self, dt: f32) {
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
+        self.elapsed =
+            (self.elapsed + dt).min(COLOR_FADE_SECS);
+    }
+
+    /// 新旧封面的混合进度:0 = 全旧,1 = 全新。
+    pub(crate) fn color_mix(&self) -> f32 {
+        (self.elapsed / COLOR_FADE_SECS).clamp(0.0, 1.0)
+    }
+
+    /// burst 脉冲强度:换歌瞬间 1,随后衰减到 0。
+    ///
+    /// 平方衰减而不是线性 —— 线性的尾巴拖着不走,观感上像粒子回不到位。
+    pub(crate) fn burst(&self) -> f32 {
+        let left = (1.0 - self.elapsed / BURST_SECS)
+            .clamp(0.0, 1.0);
+        left * left
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
@@ -342,7 +441,9 @@ mod tests {
     #[test]
     fn cover_uvs_stay_inside_the_texture() {
         let v = cloud_vertices();
-        let margin = 0.5 / CLOUD_GRID as f32;
+        // 边界那一格恰好落在 margin 上,而 v 是 `1 - g·texel` 减出来的 ——
+        // 减法丢掉几位精度,断言得留容差,否则测的是浮点而不是行为。
+        let margin = 0.5 / CLOUD_GRID as f32 - f32::EPSILON;
         for uv in &v.uvs {
             for c in uv {
                 assert!(
@@ -351,6 +452,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 封面在点云里不能是倒的:格点 y 越大越靠画面上方,纹理 v 越大越靠图的下边,
+    /// 两者反向,所以 v 必须翻。这条钉的是那一次翻转。
+    #[test]
+    fn the_cover_is_not_upside_down() {
+        let v = cloud_vertices();
+        // 第一行格点(gy=0)在画面最下方,该采到封面的**下**边(v 接近 1)。
+        assert!(
+            v.uvs[0][1] > 0.99,
+            "最下面一行采到了封面顶部: {:?}",
+            v.uvs[0]
+        );
+        // 最后一行格点在画面最上方,该采到封面的上边(v 接近 0)。
+        let top = (CLOUD_GRID * CLOUD_GRID - 1) * 4;
+        assert!(
+            v.uvs[top][1] < 0.01,
+            "最上面一行采到了封面底部: {:?}",
+            v.uvs[top]
+        );
     }
 
     /// 同一颗粒子的 4 个顶点共享同一个采样 uv 与同一个随机数 —— 否则一颗粒子的
@@ -435,6 +556,82 @@ mod tests {
             (max_y - half).abs() < 1e-4,
             "上边没铺到: {max_y}"
         );
+    }
+
+    // ── 换歌过渡 ──────────────────────────────────────────────────────
+
+    /// 从未换过歌:颜色全给新封面、没有脉冲 —— 首曲没有「上一首」可渐变,
+    /// 起手就渐变会让第一首歌从一片占位色淡入。
+    #[test]
+    fn fresh_transition_shows_only_the_new_cover() {
+        let t = TrackTransition::default();
+        assert_eq!(t.color_mix(), 1.0);
+        assert_eq!(t.burst(), 0.0);
+    }
+
+    /// 颜色渐变:换歌归零后单调走向 1,到头钳死不越界。
+    #[test]
+    fn color_mix_walks_from_old_to_new_and_stops_at_one() {
+        let mut t = TrackTransition::default();
+        t.start();
+        assert_eq!(t.color_mix(), 0.0);
+
+        let mut last = 0.0;
+        for _ in 0..30 {
+            t.advance(0.05);
+            let now = t.color_mix();
+            assert!(
+                now >= last,
+                "颜色混合倒退: {last} -> {now}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&now),
+                "颜色混合越界: {now}"
+            );
+            last = now;
+        }
+        assert_eq!(last, 1.0, "推够时间后该完全是新封面");
+    }
+
+    /// burst:换歌瞬间满,单调衰减到 0 之后不反弹。
+    #[test]
+    fn burst_decays_to_zero_and_stays_there() {
+        let mut t = TrackTransition::default();
+        t.start();
+        assert_eq!(t.burst(), 1.0);
+
+        let mut last = 1.0;
+        for _ in 0..30 {
+            t.advance(0.05);
+            let now = t.burst();
+            assert!(
+                now <= last,
+                "脉冲反弹: {last} -> {now}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&now),
+                "脉冲越界: {now}"
+            );
+            last = now;
+        }
+        assert_eq!(last, 0.0, "推够时间后脉冲该归零");
+    }
+
+    /// 坏的 `dt`(NaN / 负数 / 无穷)不推进也不 panic,两条曲线仍然有界 ——
+    /// `dt` 来自两帧时间戳相减,时钟会被门冻结、也会被系统改。
+    #[test]
+    fn bad_delta_time_keeps_the_transition_bounded() {
+        let mut t = TrackTransition::default();
+        t.start();
+        for dt in [f32::NAN, -1.0, f32::INFINITY, -0.0] {
+            t.advance(dt);
+            assert_eq!(
+                t.color_mix(),
+                0.0,
+                "坏 dt {dt} 推进了过渡"
+            );
+            assert_eq!(t.burst(), 1.0);
+        }
     }
 
     /// 索引全部指向存在的顶点 —— 越界索引在 GPU 上是未定义行为,不是报错。
