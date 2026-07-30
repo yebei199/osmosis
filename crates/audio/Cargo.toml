@@ -12,7 +12,7 @@ stream-download.workspace = true
 # devshell 里的 libopus 由 slint.nix 提供。
 opus = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
-rustfft = { version = "6", registry = "tuna" }
+rustfft = "6"
 
 [dev-dependencies]
 similar-asserts.workspace = true
