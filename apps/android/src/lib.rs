@@ -84,21 +84,22 @@ fn android_main(app: slint::android::AndroidApp) {
         },
         move |v, w, h| {
             let (viz_scene, occluder) = scene
-                .render_viz_frame(
-                    v.time,
-                    &v.audio,
-                    v.cover.as_ref().map(|c| {
+                .render_viz_frame(&render3d::VizFrame {
+                    time: v.time,
+                    audio: &v.audio,
+                    cover: v.cover.as_ref().map(|c| {
                         (c.width, c.height, c.rgba.as_slice())
                     }),
-                    render3d::Pointer {
+                    pointer: render3d::Pointer {
                         x: v.pointer.x,
                         y: v.pointer.y,
                         down: v.pointer.down,
                         active: v.pointer.active,
                     },
-                    w,
-                    h,
-                );
+                    preset: v.preset,
+                    width: w,
+                    height: h,
+                });
             Some(ui::VizImages {
                 warp: warp
                     .render_frame(v.time, &v.audio, w, h),

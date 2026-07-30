@@ -52,33 +52,63 @@ pub(crate) fn band_levels(spectrum: &[u8]) -> Levels {
 
 /// 点云网格边长:每行每列各 384 颗,共 147 456 颗。
 ///
-/// 原版默认档是 183(`round(118 × 1.55)`),但它把那 183 格铺在一块只占画面一角的
-/// 小平面上,格距因此只有几个像素 —— 点云读得成一张图,全靠格距小到眼睛自己会拼。
-/// 我们的平面铺满整个视口(见 [`PLANE_SIZE`]),同样 183 格摊开后一格二十来像素,
-/// 点大缝也大,只看得见一层网点。格数按平面放大的倍数同比提上来,格距才回到
-/// 原版那个量级。
+/// 原版默认档是 183(`round(118 × 1.55)`),铺在 1080p 上一格约 5 像素 —— 点云
+/// 读得成一张图,全靠格距小到眼睛自己会拼。我们这块屏是它两倍高(2085 物理像素),
+/// 同样 183 格摊开后一格十来像素,点大缝也大,只看得见一层网点。格数提到 384,
+/// 格距才回到「一格几像素」那个量级。
 ///
 /// 代价是粒子数四倍。桌面实测见 `docs/adr/0012`;真机发热读数出来后可能整体下调。
 pub(crate) const CLOUD_GRID: usize = 384;
 
-/// 点云平面在世界里的边长。
+/// 点云平面在世界里的边长,同原版。
 ///
-/// 原版是 4.8,在我们的相机下那正好是一块看得见四条边的方板。这里放大到溢出视口,
-/// 边界跑到画外去 —— 观感上是「封面炸成一片」而不是「一块点阵牌子」。
-/// 圆点大小按格距走(见 [`CELL_WORLD`]),放大平面不会让点云散开。
-const PLANE_SIZE: f32 = 12.0;
+/// 曾经放大到 12 让它溢出视口,但铺满四边之后点云不再像「一张图」,只像一层贴在
+/// 屏幕上的网点。收回原版这一档:画面中间一块有边界的封面,四周留给背景。
+/// 圆点大小按格距走(见 [`CELL_WORLD`]),平面缩回来点也跟着变细。
+const PLANE_SIZE: f32 = 4.8;
 
 /// 原版的平面边长。位移的绝对幅度都是照它调的,平面放大后要同比放大位移
 /// (见 [`MOTION_SCALE`]),否则起伏相对整片点云就缩水了。
 const ORIGINAL_PLANE_SIZE: f32 = 4.8;
 
-/// 位移幅度相对原版的倍数 = 平面放大的倍数 × 一档额外的夸张。
+/// 平面相对原版放大了多少倍。
 ///
-/// 前一半是几何补偿:位移是世界单位,平面放大了它就得跟着放大,不然起伏相对
-/// 整片点云会小掉同样的倍数。后一半是刻意的:这一层是播放页的主视觉,起伏跟着
-/// 节奏走得明显才有意思 —— 原版那档是给「UI 后面一块矩形」调的。
-const MOTION_SCALE: f32 =
-    PLANE_SIZE / ORIGINAL_PLANE_SIZE * 1.6;
+/// 所有预设的几何都是照原版那块 4.8 的平面调的,整体乘上这个倍数就搬到我们的尺度上。
+/// 位移也一样 —— 位移是世界单位,平面放大了它不跟着放大,起伏相对整片点云就缩水。
+const PLANE_SCALE: f32 = PLANE_SIZE / ORIGINAL_PLANE_SIZE;
+
+/// 原版的相机环绕半径(`orbit.userRadius`)。
+const ORIGINAL_CAMERA_RADIUS: f32 = 6.6;
+
+/// 「物体」类预设(滚筒/星球/唱片)的尺度倍数。
+///
+/// 这几档是被相机取景的**一个物体**,不是铺满视野的一层 —— 该按相机距离对齐,
+/// 不是按平面大小。乘上平面倍数的话球体会大到糊在镜头上(实测)。
+/// 封面档自己就在放大后的格点上,星河档的坐标本来就有二三十个单位,两者都不用它。
+const OBJECT_SCALE: f32 = 8.0 / ORIGINAL_CAMERA_RADIUS;
+
+/// 律动强度,同原版的 `uIntensity` 滑块。
+///
+/// 原版默认 0.85,这里调到 1.36 —— 这一层是播放页的主视觉,起伏跟着节奏走得明显
+/// 才有意思;原版那档是给「UI 后面一块矩形」调的。面板上限是 1.6。
+const INTENSITY: f32 = 1.36;
+
+/// 视觉预设的个数。与 `cloud.wgsl` 里的分支手工对齐。
+///
+/// 0 封面(SILK)、1 滚筒、2 星球、3 虚空、4 唱片、5 星河 —— 名字取自参照物的
+/// 视觉控制台。它的第 6 档「安魂」要一份骷髅点云资产,不是算法,不在这里(见 issue)。
+pub(crate) const PRESET_COUNT: i32 = 6;
+
+/// 界面给的预设编号 → 着色器认得的下标。越界回默认档。
+///
+/// 编号来自 `.slint`,是跨层的外部输入;给个不存在的档不该画出一片空白。
+pub(crate) fn preset_index(requested: i32) -> u32 {
+    if (0..PRESET_COUNT).contains(&requested) {
+        requested as u32
+    } else {
+        0
+    }
+}
 
 /// 一份点云 mesh 的顶点数据:每颗粒子一个朝向相机的小四边形。
 ///
@@ -200,8 +230,12 @@ pub(crate) struct CloudParams {
     pub mid: f32,
     pub treble: f32,
     pub intensity: f32,
-    /// 位移幅度的整体倍数,见 [`MOTION_SCALE`]。
-    pub motion_scale: f32,
+    /// 位移幅度的整体倍数,见 [`PLANE_SCALE`]。
+    pub plane_scale: f32,
+    /// 物体类预设的尺度倍数,见 [`OBJECT_SCALE`]。
+    pub object_scale: f32,
+    /// 当前视觉预设的下标,见 [`preset_index`]。
+    pub preset: u32,
     pub has_cover: f32,
     pub alpha_cutoff: f32,
     /// 圆点半径,世界单位。见 [`CELL_WORLD`] / [`POINT_FILL`]。
@@ -227,9 +261,10 @@ impl Default for CloudParams {
             bass: 0.0,
             mid: 0.0,
             treble: 0.0,
-            // 原版 uIntensity 的默认值。
-            intensity: 0.85,
-            motion_scale: MOTION_SCALE,
+            intensity: INTENSITY,
+            plane_scale: PLANE_SCALE,
+            object_scale: OBJECT_SCALE,
+            preset: 0,
             has_cover: 0.0,
             alpha_cutoff: ALPHA_CUTOFF,
             point_radius: CELL_WORLD * POINT_FILL * 0.5,
@@ -238,7 +273,7 @@ impl Default for CloudParams {
             burst: 0.0,
             ripple_count: 0,
             ripple_slots: [Vec4::ZERO; RIPPLE_SLOTS],
-            ripple_scale: PLANE_SIZE / ORIGINAL_PLANE_SIZE,
+            ripple_scale: PLANE_SCALE,
         }
     }
 }
@@ -750,6 +785,34 @@ mod tests {
             (max_y - half).abs() < 1e-4,
             "上边没铺到: {max_y}"
         );
+    }
+
+    // ── 视觉预设 ──────────────────────────────────────────────────────
+
+    /// 每一档都保住自己的下标 —— 着色器按下标分支,错一位就画成另一个预设。
+    #[test]
+    fn every_preset_keeps_its_index() {
+        for i in 0..PRESET_COUNT {
+            assert_eq!(
+                preset_index(i),
+                i as u32,
+                "第 {i} 档下标被改了"
+            );
+        }
+    }
+
+    /// 越界的编号回默认档 —— 编号来自 `.slint`,是跨层的外部输入,
+    /// 给个不存在的档不该画出一片空白。
+    #[test]
+    fn an_out_of_range_preset_falls_back_to_the_default() {
+        for i in [-1, -100, PRESET_COUNT, PRESET_COUNT + 7]
+        {
+            assert_eq!(
+                preset_index(i),
+                0,
+                "编号 {i} 该回默认档"
+            );
+        }
     }
 
     // ── 涟漪 ──────────────────────────────────────────────────────────

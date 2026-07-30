@@ -294,6 +294,7 @@ pub fn run_with_renderers(
                                     .get_viz_pointer_active(
                                     ),
                             },
+                            preset: ui.get_viz_preset(),
                         },
                         size.width,
                         size.height,

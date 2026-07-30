@@ -67,6 +67,27 @@ pub struct Pointer {
     pub active: bool,
 }
 
+/// 驱动一帧播放页视觉要的全部输入,POD。镜像 `ui::VizControls` 加上视口尺寸。
+///
+/// 打包而不是摊成一串参数:这几样每加一件,`render_viz_frame` 的签名就长一截,
+/// 调用处也看不出哪个位置是谁。apps/* 在 seam 处把 ui 那份平凡拷成这一份。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VizFrame<'a> {
+    /// 播放页时钟,秒。门关即冻结。
+    pub time: f32,
+    /// `spectrum` 布局的载荷,频谱行在前。只用前 512 字节拆频段。
+    pub audio: &'a [u8],
+    /// **换歌解出新封面的那一帧**才有值:(宽, 高, RGBA8)。
+    pub cover: Option<(u32, u32, &'a [u8])>,
+    /// 视觉区里的指针。
+    pub pointer: Pointer,
+    /// 视觉预设的编号,越界回默认档。
+    pub preset: i32,
+    /// 窗口的物理像素尺寸。与当前纹理不同就按需重建(动态分辨率),0 尺寸忽略。
+    pub width: u32,
+    pub height: u32,
+}
+
 /// 离屏画面尺寸。固定分辨率,Slint 侧按面板大小缩放(见计划:先不做动态 resize)。
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
@@ -317,13 +338,17 @@ impl Scene {
     /// 纹理身份稳定,只包装一次、之后复用 —— 内容每帧由 bevy 重画,Slint 重绘时实时采样。
     pub fn render_viz_frame(
         &mut self,
-        time: f32,
-        audio: &[u8],
-        cover: Option<(u32, u32, &[u8])>,
-        pointer: Pointer,
-        width: u32,
-        height: u32,
+        frame: &VizFrame<'_>,
     ) -> (slint::Image, slint::Image) {
+        let VizFrame {
+            time,
+            audio,
+            cover,
+            pointer,
+            preset,
+            width,
+            height,
+        } = *frame;
         if width > 0
             && height > 0
             && (width, height) != self.size
@@ -374,6 +399,8 @@ impl Scene {
             material.params.burst = burst;
             material.params.ripple_count = ripple_count;
             material.params.ripple_slots = ripple_slots;
+            material.params.preset =
+                cloud::preset_index(preset);
         }
 
         // 拖动转的是点云自己,不是相机 —— 相机一动遮挡层那台就得跟着动,
