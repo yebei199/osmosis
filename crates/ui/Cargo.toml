@@ -25,6 +25,9 @@ syncplay.workspace = true
 # 封面解码:平台 CDN 给的是 jpeg/png 字节,slint 公开 API 只吃像素缓冲,
 # 中间这一步由 image 补上。web 端的封面等播放链路通了一起做(那边另有 <img> 可用)。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 只为「今天是哪天」:当日推荐跨过零点就该重拉。std 给不出本地日期(没有时区),
+# 而 chrono 已经在依赖树里(bevy 拖的),不新增下载与编译负担。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。
 [build-dependencies]
