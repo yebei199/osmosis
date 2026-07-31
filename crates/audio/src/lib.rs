@@ -12,6 +12,7 @@
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
 pub mod codec;
+mod range_stream;
 pub mod spectrum;
 mod stream_source;
 
@@ -206,18 +207,14 @@ async fn load_with(
                     );
                 })
                 // 参数类型得写全:闭包里调 `header` 要求这时就知道流的具体类型,
-                // 而它本来要等 `new_http` 那一行才定下来。reqwest 由
-                // stream-download 自己再导出,不必为这一行多加一条依赖。
-                .on_reconnect(move |stream: &stream_download::http::HttpStream<
-                    stream_download::http::reqwest::Client,
-                >, token| {
+                // 而它本来要等下面那行 `new::<RangeStream>` 才定下来。
+                .on_reconnect(move |stream: &range_stream::RangeStream, token| {
                     let missed = misses
                         .fetch_add(1, Ordering::Relaxed)
                         + 1;
-                    // `Accept-Ranges` 决定重连的**后果**,所以记进日志:支持 range
-                    // 就从断点续;不支持的话 stream-download 会从第 0 字节重新拉
-                    // 整首歌(`http/mod.rs:343`),而那些字节接着写在当前写位置上 ——
-                    // 听感是歌放到一半又从头来一遍。这一行是那个猜想的判别式。
+                    // `Accept-Ranges` 记进日志:它缺席过(真机日志里连续四次),
+                    // 而那正是 `range_stream` 存在的理由。留着这一行是为了下次
+                    // 还能一眼看出流经过了什么 —— 比如中间有没有代理。
                     log::warn!(
                         "音频流失联第 {missed} 次,已到 {} 字节,Accept-Ranges: {:?}",
                         reached.load(Ordering::Relaxed),
@@ -231,7 +228,9 @@ async fn load_with(
                     }
                 });
 
-            let stream = StreamDownload::new_http(
+            let stream = StreamDownload::new::<
+                range_stream::RangeStream,
+            >(
                 parsed,
                 TempStorageProvider::default(),
                 settings,
@@ -827,6 +826,111 @@ mod tests {
         });
 
         format!("http://{addr}/song.wav")
+    }
+
+    /// 一个**不声明 `Accept-Ranges`**、给几十 KB 就装死的服务,并把收到的每条
+    /// 请求头原样记下来。
+    ///
+    /// 这是网易云 CDN 在真机日志里的样子(`Accept-Ranges: None`,约 62KB 后断供)。
+    /// 记请求是本 fixture 存在的理由:要断言的正是**重连那一条请求长什么样**。
+    fn range_watching_server(
+        body: Vec<u8>,
+        prefix: usize,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>)
+    {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .expect("绑不上本地端口");
+        let addr =
+            listener.local_addr().expect("取不到本地地址");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = seen.clone();
+
+        std::thread::spawn(move || {
+            let mut first = true;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let body = body.clone();
+                let recorder = recorder.clone();
+                let serve_body = first;
+                first = false;
+
+                std::thread::spawn(move || {
+                    let peek = stream
+                        .try_clone()
+                        .expect("连接复制不了");
+                    let mut reader = BufReader::new(peek);
+                    let mut request = String::new();
+                    let mut line = String::new();
+                    while reader
+                        .read_line(&mut line)
+                        .is_ok_and(|n| n > 2)
+                    {
+                        request.push_str(&line);
+                        line.clear();
+                    }
+                    recorder
+                        .lock()
+                        .expect("记录锁不该中毒")
+                        .push(request);
+
+                    // **不给 Accept-Ranges** —— 真实 CDN 就是这样,而
+                    // stream-download 看不见它就不敢用 range。
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\n\
+                         Content-Length: {}\r\n\
+                         Content-Type: audio/wav\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    if serve_body {
+                        let _ = stream.write_all(
+                            &body[..prefix.min(body.len())],
+                        );
+                    }
+                    let _ = stream.flush();
+                    std::thread::park();
+                });
+            }
+        });
+
+        (format!("http://{addr}/song.wav"), seen)
+    }
+
+    /// **重连必须只要还缺的那一段,哪怕服务端没声明支持 range。**
+    ///
+    /// 不带 Range 的重连拿回来的是**整首歌的开头**,而那些字节会被写在当前写
+    /// 位置上 —— 于是歌放到一半又从头来一遍,一段接一段。这不是推演:真机日志里
+    /// 连续四次 `Accept-Ranges: None`,位置停在 63223 / 63219 / 63214 / 126429,
+    /// 几乎是同一个数和它的两倍,正是"每次重连都重新给开头那 62KB"。
+    #[test]
+    fn a_reconnect_asks_only_for_the_bytes_it_still_needs() {
+        let (url, requests) =
+            range_watching_server(wav(200_000), 32 * 1024);
+
+        let (decoder, _health) = runtime()
+            .block_on(load_with(&url, FAST))
+            .expect("头 32KB 是完整的 WAV,起播该成功");
+        // 取到停摆之后:逼它撞上超时并重连。
+        let _ = decoder.take(200_000).count();
+
+        let seen = requests
+            .lock()
+            .expect("记录锁不该中毒")
+            .clone();
+        assert!(
+            seen.len() >= 2,
+            "服务端装死了,该发生过重连,实际只收到 {} 条请求",
+            seen.len()
+        );
+        assert!(
+            seen[1].contains("Range: bytes="),
+            "重连没带 Range,拿回来的会是整首歌的开头:\n{}",
+            seen[1]
+        );
     }
 
     /// **服务端装死时,流必须放弃,而且要留下放弃的证据。**

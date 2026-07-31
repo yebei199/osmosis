@@ -661,6 +661,8 @@ dependencies = [
 name = "audio"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "futures-util",
  "log",
  "opus",
  "reqwest 0.12.28",

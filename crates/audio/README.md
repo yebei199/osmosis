@@ -14,6 +14,10 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
   `PREFETCH_BYTES` 攒一段,让开头那几秒不必指望网络准时(它同时是**切歌的
   等待时间**,不能往大了调);曲中掉速由 `stream_source::buffered` 兜住,
   彻底不来数据则由重连计数放弃并置 `StreamHealth`(见 `docs/adr/0013`)。
+- `src/range_stream.rs`:一条永远用 range 续传的 HTTP 流。stream-download 的
+  重连在服务端没声明 `Accept-Ranges` 时会**从第 0 字节重拉整首歌**,而那些字节
+  接着写在当前写位置上 —— 歌放到中段就又是一遍开头。这里把那个选择去掉:
+  重连一律带 Range(真机日志证据见模块头)。
 - `src/codec.rs`:同播用的 Opus 编解码与 `Tee`。`normalize` 把任意源统一成
   48kHz 立体声,`Tee` 把播放中的采样原样传下去、复制一份进有界支路,
   攒帧逻辑吸收「Opus 只收固定帧长而 rodio 一次给一个采样」的错位。
