@@ -214,6 +214,14 @@ mod platform {
         })
     }
 
+    /// 一次请求最多等多久。与 [`get_bytes`] 取同一个值。
+    ///
+    /// **没有超时等于没有失败**:`reqwest::get` 默认不设超时,断网时那个 future
+    /// 会永远悬着 —— 点一首歌永远停在「加载中」,断流后的探测永远问不出结果,
+    /// 而横幅在等那个结果(见 `docs/adr/0013`)。宁可在十秒处认输。
+    const REQUEST_TIMEOUT: std::time::Duration =
+        std::time::Duration::from_secs(10);
+
     pub(super) async fn get_json<
         T: DeserializeOwned + Send + 'static,
     >(
@@ -223,7 +231,15 @@ mod platform {
         // 线程上被 poll —— 包括 slint 的 UI 线程。
         runtime()
             .spawn(async move {
-                let response = reqwest::get(url)
+                let client = reqwest::Client::builder()
+                    .timeout(REQUEST_TIMEOUT)
+                    .build()
+                    .map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })?;
+                let response = client
+                    .get(url)
+                    .send()
                     .await
                     .map_err(|e| {
                         ApiError::Transport(e.to_string())
@@ -287,6 +303,10 @@ mod platform {
 }
 
 /// wasm 上没有线程,请求由浏览器的 fetch 驱动;future 不是 `Send`,无所谓。
+///
+/// 这一侧不设超时,与原生那边不对称是有意的:reqwest 的 wasm 客户端不支持
+/// `timeout`(fetch 的时限归浏览器管),而 wasm 上根本没有音频栈,
+/// 断流那条路走不到这里。
 #[cfg(target_arch = "wasm32")]
 mod platform {
     use serde::de::DeserializeOwned;
