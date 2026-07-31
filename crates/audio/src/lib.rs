@@ -171,7 +171,9 @@ impl Player {
     /// 打开默认音频设备。
     pub fn new() -> Result<Self, AudioError> {
         let device = DeviceSinkBuilder::open_default_sink()
-            .map_err(|e| AudioError::Device(e.to_string()))?;
+            .map_err(|e| {
+                AudioError::Device(e.to_string())
+            })?;
         let player =
             rodio::Player::connect_new(device.mixer());
 
@@ -247,6 +249,7 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::time::Duration;
 
     use rodio::Source as _;
     use similar_asserts::assert_eq;
@@ -289,6 +292,133 @@ mod tests {
             out.extend_from_slice(&sample.to_le_bytes());
         }
         out
+    }
+
+    /// 一次声卡回调的预算。cpal 在 48kHz 立体声上常见的一块缓冲是 1024 帧,
+    /// 约 21ms —— 回调拖过这个数还没填完,设备就欠载。
+    const CALLBACK_BUDGET: Duration =
+        Duration::from_millis(21);
+
+    /// 假流停摆多久。取得远大于 [`CALLBACK_BUDGET`],
+    /// 好让判据不受调度抖动左右。
+    const STALL: Duration = Duration::from_millis(300);
+
+    /// 卡点的字节位置。必须大于探测格式时的预读量,否则开头那几次读就把卡点
+    /// 吞了,"卡点之前"这个对照组根本不存在。
+    const STALL_AFTER: u64 = 400_000;
+
+    /// 取到多少个采样才算真的跨过了卡点。
+    ///
+    /// 不能按 `STALL_AFTER ÷ 2 字节` 直接算:解码器是按 32KB 成块读的,
+    /// 刚好够喂到卡点的那次读**发生在卡点之前**,停摆要到再下一次读才触发。
+    /// 多留两块的余量,这条测试才不会因为块大小变了就假绿。
+    const PAST_STALL: usize = 300_000;
+
+    /// 对照组取多少个采样:约合 10 万字节,远在卡点之内。
+    const BEFORE_STALL: usize = 50_000;
+
+    /// 一条读到 [`STALL_AFTER`] 之后就停摆的字节流:模拟 CDN 掉速或连接卡死。
+    ///
+    /// 卡点之前照常给字节,之后每次 `read` 先睡一觉再给 —— 这正是
+    /// `StreamDownload` 读到没下完的位置时的行为(它是**阻塞**的)。
+    ///
+    /// 只让 `read` 停摆,`seek` 照常:解码器探测格式时会来回跳,
+    /// 那几下不该被算进"网络卡住"里。
+    struct StallingSource {
+        inner: Cursor<Vec<u8>>,
+        /// 只停摆**一次**。一次抖动就足以证明因果,每次读都睡只是让测试变慢。
+        stalled: bool,
+    }
+
+    impl Read for StallingSource {
+        fn read(
+            &mut self,
+            buf: &mut [u8],
+        ) -> std::io::Result<usize> {
+            if !self.stalled
+                && self.inner.position() >= STALL_AFTER
+            {
+                self.stalled = true;
+                std::thread::sleep(STALL);
+            }
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for StallingSource {
+        fn seek(
+            &mut self,
+            pos: std::io::SeekFrom,
+        ) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    /// 取 `count` 个采样,返回**单次**取样最久的那一次花了多长。
+    ///
+    /// 看单次而不是总时长:声卡回调是一次一次被叫醒的,拖垮它的是某一次
+    /// 交不出数据,平均值反而会把这件事摊平到看不见。
+    fn longest_pull(count: usize) -> Duration {
+        // 10 秒的 WAV,足够让卡点落在中间而不是开头。
+        let source = StallingSource {
+            inner: Cursor::new(wav(441_000)),
+            stalled: false,
+        };
+        let mut decoder =
+            decode(source).expect("合法 WAV 应能解码");
+
+        let mut worst = Duration::ZERO;
+        for _ in 0..count {
+            let started = std::time::Instant::now();
+            if decoder.next().is_none() {
+                break;
+            }
+            worst = worst.max(started.elapsed());
+        }
+        worst
+    }
+
+    /// **字节流一卡,取样就跟着卡。**
+    ///
+    /// 生产环境里调 `next()` 的是 cpal 的声卡回调(rodio-0.22 `stream.rs:527`
+    /// 那句 `samples.next()`),所以这里量到的阻塞时长,就是回调交不出数据的
+    /// 时长。这条钉死的是欠载的**成因**,不是欠载本身 —— 后者要真声卡。
+    #[test]
+    fn a_stalled_byte_stream_blocks_the_sample_pull() {
+        let worst = longest_pull(PAST_STALL);
+
+        assert!(
+            worst >= STALL,
+            "跨过卡点的那次取样只花了 {worst:?},没被流阻塞住"
+        );
+    }
+
+    /// 阻塞多久算出事,得有个数,免得日后靠感觉争论。
+    ///
+    /// 与上一条量的是同一件事,判据不同:上一条问"是不是被阻塞了",
+    /// 这一条问"阻塞得够不够让声卡欠载"。前者是机制,后者是后果。
+    #[test]
+    fn the_stall_outlasts_one_callback_budget() {
+        let worst = longest_pull(PAST_STALL);
+
+        assert!(
+            worst > CALLBACK_BUDGET,
+            "最久的一次取样 {worst:?} 没超过回调预算 {CALLBACK_BUDGET:?},欠载的推论不成立"
+        );
+    }
+
+    /// 对照组:卡点之前的取样必须很快回来。
+    ///
+    /// 没有这条,上面两条也可能只是"这条流从头到尾都慢"造成的,
+    /// 证不出"卡在特定位置"与"取样阻塞"之间的因果。
+    #[test]
+    fn samples_before_the_stall_point_come_back_promptly() {
+        let worst = longest_pull(BEFORE_STALL);
+
+        assert!(
+            worst < CALLBACK_BUDGET,
+            "卡点之前就已经有一次取样花了 {worst:?},这条流本身就慢,对照组不成立"
+        );
     }
 
     /// 内存里的 `Cursor` 与真实流句柄走同一条解码路径,
