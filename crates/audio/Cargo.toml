@@ -13,6 +13,8 @@ stream-download.workspace = true
 opus = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rustfft = "6"
+# 只用来记流的失联与重连。各平台入口已各自装好 logger。
+log.workspace = true
 
 [dev-dependencies]
 similar-asserts.workspace = true

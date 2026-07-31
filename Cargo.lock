@@ -661,6 +661,7 @@ dependencies = [
 name = "audio"
 version = "0.1.0"
 dependencies = [
+ "log",
  "opus",
  "reqwest 0.12.28",
  "rodio",

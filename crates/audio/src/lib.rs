@@ -140,15 +140,14 @@ impl StreamHealth {
 
 /// 起播前先攒够多少字节。
 ///
-/// rodio 是在 cpal 的音频回调里直接向解码器要采样的,而本 crate 交给它的流
-/// **读到没下完的位置就阻塞**。攒够了再起播,开头那一段就不必指望网络准时。
+/// 它保的只有**开头那几秒**:那时 [`buffered`] 的解码缓冲还是空的,来不及垫。
+/// 曲中掉速归缓冲管,不归这里。
 ///
-/// 默认的 256KB 对无损只有两秒左右,正是"开头卡住"的量级。4MB 约合无损半分钟,
-/// 代价只是起播多等一会儿(下载器一直在后台跑,不是等满才出声)。
-///
-/// 曲中掉速由 [`buffered`] 兜住 —— 那才是"回调不碰网络"的正解,这里只是
-/// 让起播那一段不必立刻用到它。
-const PREFETCH_BYTES: u64 = 4 << 20;
+/// **这个数同时是切歌的等待时间。** 它曾被提到 4MB(约合无损半分钟),结果是
+/// 点下一首之后歌名、封面立刻换了,声音却要好几秒才跟上 —— 界面那半在
+/// `play_current` 一进来就推,而声音要等这一段下完。两倍于库默认值够垫开头,
+/// 再往上加就是拿切歌的手感换一份缓冲已经提供的保险。
+const PREFETCH_BYTES: u64 = 512 << 10;
 
 /// 把一条直链变成可播放的流式音频:开流 + 解码,全在后台 runtime 上完成。
 ///
@@ -173,7 +172,9 @@ async fn load_with(
     tuning: Tuning,
 ) -> Result<(Loaded, StreamHealth), AudioError> {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{
+        AtomicU64, AtomicUsize, Ordering,
+    };
 
     let url = url.to_owned();
 
@@ -189,18 +190,39 @@ async fn load_with(
             // 几分钟、各自都缓过来了的短抖动会被算成一次断流,把歌掐掉。
             let misses = Arc::new(AtomicUsize::new(0));
             let recovered = misses.clone();
+            // 最近一次收到数据的位置,只为出事时的那行日志。
+            let reached = Arc::new(AtomicU64::new(0));
+            let advanced = reached.clone();
             let give_up_after = tuning.give_up_after;
 
             let settings = Settings::default()
                 .prefetch_bytes(tuning.prefetch_bytes)
                 .retry_timeout(tuning.retry_timeout)
-                .on_progress(move |_, _, _| {
+                .on_progress(move |_, state, _| {
                     recovered.store(0, Ordering::Relaxed);
+                    advanced.store(
+                        state.current_chunk.end,
+                        Ordering::Relaxed,
+                    );
                 })
-                .on_reconnect(move |_, token| {
+                // 参数类型得写全:闭包里调 `header` 要求这时就知道流的具体类型,
+                // 而它本来要等 `new_http` 那一行才定下来。reqwest 由
+                // stream-download 自己再导出,不必为这一行多加一条依赖。
+                .on_reconnect(move |stream: &stream_download::http::HttpStream<
+                    stream_download::http::reqwest::Client,
+                >, token| {
                     let missed = misses
                         .fetch_add(1, Ordering::Relaxed)
                         + 1;
+                    // `Accept-Ranges` 决定重连的**后果**,所以记进日志:支持 range
+                    // 就从断点续;不支持的话 stream-download 会从第 0 字节重新拉
+                    // 整首歌(`http/mod.rs:343`),而那些字节接着写在当前写位置上 ——
+                    // 听感是歌放到一半又从头来一遍。这一行是那个猜想的判别式。
+                    log::warn!(
+                        "音频流失联第 {missed} 次,已到 {} 字节,Accept-Ranges: {:?}",
+                        reached.load(Ordering::Relaxed),
+                        stream.header("Accept-Ranges"),
+                    );
                     if missed >= give_up_after {
                         flag.store(true, Ordering::Relaxed);
                         // 取消让下载任务收尾并置为失败,此后所有 read 立刻报错 ——

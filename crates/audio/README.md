@@ -11,8 +11,9 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
   tokio runtime,解码的阻塞读与下载必须同 runtime 不同线程);`decode` 是
   纯解码入口,测试与生产走同一条路径;`Player` 持有音频设备并承担播出,
   它的 `play` 同时是同播 tee 与可视化分析器的统一挖点。起播前按
-  `PREFETCH_BYTES` 攒一段,让开头那几秒不必指望网络准时;曲中掉速则由
-  `stream_source::buffered` 兜住。
+  `PREFETCH_BYTES` 攒一段,让开头那几秒不必指望网络准时(它同时是**切歌的
+  等待时间**,不能往大了调);曲中掉速由 `stream_source::buffered` 兜住,
+  彻底不来数据则由重连计数放弃并置 `StreamHealth`(见 `docs/adr/0013`)。
 - `src/codec.rs`:同播用的 Opus 编解码与 `Tee`。`normalize` 把任意源统一成
   48kHz 立体声,`Tee` 把播放中的采样原样传下去、复制一份进有界支路,
   攒帧逻辑吸收「Opus 只收固定帧长而 rodio 一次给一个采样」的错位。
