@@ -39,6 +39,14 @@ const QUEUE_DONE: &str = "队列放完了";
 const ADVANCE_POLL: core::time::Duration =
     core::time::Duration::from_secs(1);
 
+/// 当前这首放过多久之后才去备下一首。
+///
+/// 早了会和正在放的那首抢带宽,晚了等于没预取。十秒:那时起播的那阵下载高峰
+/// 已经过去,而离用户可能按「下一首」还早(见 [`should_prefetch`])。
+#[cfg(not(target_arch = "wasm32"))]
+const PREFETCH_AFTER: core::time::Duration =
+    core::time::Duration::from_secs(10);
+
 /// 歌手列表拼成一行。
 ///
 /// 服务端保持列表形态是对的 —— 用「/」还是「&」是显示问题,只有界面知道。
@@ -85,6 +93,29 @@ pub fn describe_startup(
         Ok(()) => None,
         Err(error) => Some(format!("失败: {error}")),
     }
+}
+
+/// 该不该起预取:本机在放、已经放过一阵、手里没有备着的、队列还有下一首。
+///
+/// **不能一起播就预取**:那样两条下载会抢同一条链路,而正在放的那首经不起抢
+/// (取直链的 CDN 本来就爱停摆,见 `docs/adr/0013`)。等当前这首站稳了再备,
+/// 反正备的是"还有一整首歌的时间"之后才用得上的东西。
+///
+/// 听众那一条与 [`should_advance`] 同理:收听时切歌的决定权不在本机,
+/// 备了也用不上,白占一条下载。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn should_prefetch(
+    state: &PlaybackState,
+    position: core::time::Duration,
+    listening: bool,
+    already_have: bool,
+    has_next: bool,
+) -> bool {
+    matches!(state, PlaybackState::Playing(_))
+        && position >= PREFETCH_AFTER
+        && !listening
+        && !already_have
+        && has_next
 }
 
 /// 该不该报断流:本机在放、声源空了、而且这条流留下了放弃的证据。
@@ -222,6 +253,16 @@ fn shuffle_seed() -> u64 {
         .finish()
 }
 
+/// 备好的下一首:它是哪一首,以及备好的那一份(解码器 + 那条流的健康句柄)。
+///
+/// 抽成别名是 clippy 的要求 —— 三层嵌套写在字段上确实读不出是什么。
+#[cfg(not(target_arch = "wasm32"))]
+type Prefetched = Rc<
+    RefCell<
+        Option<(String, (audio::Loaded, audio::StreamHealth))>,
+    >,
+>;
+
 /// 播放侧所有回调共享的一组把手。
 ///
 /// 五个绑定函数各 clone 各的这几样东西,签名会长到看不出谁在用什么 ——
@@ -245,6 +286,13 @@ struct Deck {
     /// 当前这一路流的死亡证明。源结束时问它:放弃过就是断流,没放弃就是放完了。
     /// 两者在播放器那头长得一模一样(见 `docs/adr/0013`)。
     stream: Rc<RefCell<Option<audio::StreamHealth>>>,
+    /// 已经备好的下一首:(它是哪一首, 解码器, 健康句柄)。
+    ///
+    /// 带着 id 是必须的:用户中途点了别的歌、或洗了牌,备的就不是要放的那一首了。
+    /// 认错了会放出一首根本没点过的歌([`take_prefetched`] 负责这道校验)。
+    prefetched: Prefetched,
+    /// 预取是不是正在路上。少了它,轮询每秒都会再起一条下载。
+    prefetching: Rc<std::cell::Cell<bool>>,
 }
 
 /// 点云封面的取用口:播放页每帧问它「这一帧封面该怎么办」。
@@ -366,6 +414,8 @@ pub fn bind(
         tracks: Rc::new(RefCell::new(Vec::new())),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
+        prefetched: Rc::new(RefCell::new(None)),
+        prefetching: Rc::new(std::cell::Cell::new(false)),
     };
 
     bind_search(ui, &deck);
@@ -658,6 +708,53 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
     });
 }
 
+/// 取走备好的那一份 —— **只在它确实是这一首时**。
+///
+/// 不是这一首就地丢掉:用户中途点了列表里别的歌、或洗了牌,备的那一份再也用不上,
+/// 留着只是占一个临时文件和一条还在跑的下载。认错了则更糟 —— 会放出一首
+/// 根本没点过的歌。
+///
+/// 泛型是为了能单独测这道校验:备好的那一份是解码器,测试里造不出来,
+/// 而这里唯一的逻辑是"id 对不对得上",与备的是什么东西无关。
+fn take_prefetched<T>(
+    slot: &RefCell<Option<(String, T)>>,
+    wanted: &str,
+) -> Option<T> {
+    let (id, ready) = slot.borrow_mut().take()?;
+    (id == wanted).then_some(ready)
+}
+
+/// 备下一首:与正常播放走**同一个** [`prepare`],只是备好了先搁着。
+///
+/// 失败不声张:预取只是提速,它没成的话照常走原路,用户什么都不会察觉。
+#[cfg(not(target_arch = "wasm32"))]
+fn start_prefetch(deck: &Deck) {
+    let Some(track) =
+        deck.queue.borrow().peek_next().cloned()
+    else {
+        return;
+    };
+
+    deck.prefetching.set(true);
+    let deck = deck.clone();
+    slint::spawn_local(async move {
+        let ready =
+            prepare(deck.player.clone(), track.clone()).await;
+        deck.prefetching.set(false);
+        match ready {
+            Ok((decoded, health)) => {
+                log::debug!("预取就绪: {}", track.title);
+                *deck.prefetched.borrow_mut() =
+                    Some((track.id, (decoded, health)));
+            }
+            Err(error) => {
+                log::debug!("预取没成,照常走: {error}");
+            }
+        }
+    })
+    .expect("event loop must be running");
+}
+
 /// 队列前进一首;到底了就停下并说明(放完即停,见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]
 fn advance(ui: &MainWindow, deck: &Deck) {
@@ -680,6 +777,20 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     else {
         return;
     };
+
+    // 备好的那一份先取走 —— 取不到就是走原路。这一步要在停旧歌之前:
+    // 备着的话下面那段等待根本不存在,声音接上就换。
+    let ready =
+        take_prefetched(&deck.prefetched, &track.id);
+    let instant = ready.is_some();
+
+    // **旧歌立刻停。** 界面下面几行就要换成新歌了,让耳朵继续听上一首是自相矛盾
+    // ——「封面换了但还在放上一首」正是这么来的。备好了的话这一停是零长度的。
+    if let Ok(player) = deck.player.as_ref() {
+        player.stop();
+    }
+    ui.set_is_playing(false);
+    ui.set_now_loading(!instant);
 
     // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
     //
@@ -755,7 +866,14 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
         app_core::play(
             &deck.playback,
             track,
-            move |track| prepare(player, track),
+            move |track| async move {
+                // 备好了就直接交出去 —— 与现取的那份走同一个类型、同一段提交路径,
+                // 差别只有"等不等"。
+                match ready {
+                    Some(ready) => Ok(ready),
+                    None => prepare(player, track).await,
+                }
+            },
             move |(decoded, health)| {
                 emit(
                     &commit.player,
@@ -781,6 +899,7 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             };
             ui.set_is_playing(playing);
             ui.set_playback_text(text.into());
+            ui.set_now_loading(false);
             // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
             if playing {
                 ui.set_banner_text(
@@ -843,6 +962,21 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             } else if should_advance(&state, drained, listening)
             {
                 advance(&ui, &deck);
+            }
+
+            // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
+            let already_have = deck.prefetching.get()
+                || deck.prefetched.borrow().is_some();
+            let has_next =
+                deck.queue.borrow().peek_next().is_some();
+            if should_prefetch(
+                &state,
+                position,
+                listening,
+                already_have,
+                has_next,
+            ) {
+                start_prefetch(&deck);
             }
         },
     );
@@ -1290,6 +1424,92 @@ mod tests {
                 true
             ),
             "正在加载下一首时不许被上一首的证据打断"
+        );
+    }
+
+    /// **预取要等当前这首站稳了再起。**
+    ///
+    /// 一起播就备的话,两条下载抢同一条链路,而正在放的那首经不起抢 ——
+    /// 这个 CDN 本来就爱停摆(真机日志里连续四次失联,见 `docs/adr/0013`)。
+    #[test]
+    fn prefetch_starts_once_the_current_track_is_under_way() {
+        let playing = PlaybackState::Playing(track());
+        let under_way = PREFETCH_AFTER;
+        let just_started = core::time::Duration::ZERO;
+
+        assert!(should_prefetch(
+            &playing, under_way, false, false, true
+        ));
+        assert!(
+            !should_prefetch(
+                &playing,
+                just_started,
+                false,
+                false,
+                true
+            ),
+            "刚起播就备下一首会和它自己抢带宽"
+        );
+        assert!(
+            !should_prefetch(
+                &playing, under_way, false, true, true
+            ),
+            "手里已经有备好的了,别再起一条"
+        );
+        assert!(
+            !should_prefetch(
+                &playing, under_way, false, false, false
+            ),
+            "队尾之后没有下一首可备"
+        );
+        assert!(
+            !should_prefetch(
+                &PlaybackState::Loading(track()),
+                under_way,
+                false,
+                false,
+                true
+            ),
+            "这一首自己还没放起来,轮不到备下一首"
+        );
+    }
+
+    /// 收听同播时不预取:切歌的决定权不在本机,备了也用不上,白占一条下载。
+    #[test]
+    fn a_listener_never_prefetches() {
+        assert!(!should_prefetch(
+            &PlaybackState::Playing(track()),
+            PREFETCH_AFTER,
+            true,
+            false,
+            true
+        ));
+    }
+
+    /// **备好的那一份只认它自己那一首。**
+    ///
+    /// 备下一首的时候用户可能改主意:点了列表里别的歌,或者洗了牌。认错了会放出
+    /// 一首根本没点过的歌 —— 而且界面显示的还是对的那一首,查起来极其别扭。
+    #[test]
+    fn a_prefetched_track_is_only_used_for_its_own_track() {
+        let slot =
+            RefCell::new(Some(("2".to_owned(), "备好的源")));
+
+        assert!(
+            take_prefetched(&slot, "7").is_none(),
+            "id 对不上,不许拿来用"
+        );
+        assert!(
+            slot.borrow().is_none(),
+            "对不上的那一份要就地丢掉,不能留着占一条下载"
+        );
+
+        let slot =
+            RefCell::new(Some(("2".to_owned(), "备好的源")));
+        assert_eq!(take_prefetched(&slot, "2"), Some("备好的源"));
+        assert!(
+            take_prefetched(&slot, "2").is_none(),
+            "同一份不该被交出两次"
         );
     }
 

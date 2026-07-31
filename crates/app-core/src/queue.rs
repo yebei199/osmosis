@@ -74,6 +74,16 @@ impl Queue {
         self.current()
     }
 
+    /// 下一首是谁,但**不推进**队列。
+    ///
+    /// 预取要用:备下一首的时候当前这首还在放,游标一动 `current()` 就跟着变,
+    /// 界面和播放器都会以为已经换歌了。判据与 [`Self::next`] 一致 ——
+    /// 队尾之后同样是 `None`,那时没有可预取的东西。
+    pub fn peek_next(&self) -> Option<&TrackDto> {
+        let index = self.order.get(self.cursor + 1)?;
+        self.tracks.get(*index)
+    }
+
     /// 回到刚才放过的那首。随机模式下也成立 —— 走的是 `order`,
     /// 不是批序减一。队首之前是 `None`,位置不动。
     pub fn previous(&mut self) -> Option<&TrackDto> {
@@ -171,6 +181,38 @@ mod tests {
             .collect();
 
         assert_eq!(walked, ["1", "2", "3"]);
+    }
+
+    /// **看一眼下一首,队列不能动。**
+    ///
+    /// 预取正是在当前这首还在放的时候备下一首 —— 游标要是跟着动了,
+    /// `current()` 立刻变成下一首,界面和播放器都会以为已经换歌了。
+    #[test]
+    fn peek_next_names_the_next_track_without_moving() {
+        let queue = Queue::new(batch(4), 1);
+
+        assert_eq!(
+            queue.peek_next().map(|t| t.id.as_str()),
+            Some("2")
+        );
+        assert_eq!(
+            queue.current().map(|t| t.id.as_str()),
+            Some("1"),
+            "看一眼不该把当前这首也换掉"
+        );
+        assert_eq!(
+            queue.peek_next().map(|t| t.id.as_str()),
+            Some("2"),
+            "看两眼结果该一样"
+        );
+    }
+
+    /// 队尾之后没有下一首 —— 那时不该预取任何东西,判据与 `next` 一致。
+    #[test]
+    fn peek_next_at_the_end_of_the_queue_is_none() {
+        let queue = Queue::new(batch(2), 1);
+
+        assert!(queue.peek_next().is_none());
     }
 
     /// 上一首回到**刚才放过的那首**。

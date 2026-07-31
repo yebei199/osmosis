@@ -189,6 +189,9 @@ component RoundControl inherits Rectangle {
 // 判断跟别人不一样,描边就会错位成重影。
 component OutlinedText inherits Rectangle {
     in property <string> text;
+    // 字体族。默认空 = 走系统字体,平台数据(歌名、歌手)就该如此;
+    // **硬编码中文必须显式指定子集字体**,否则 wasm 上没有 CJK 可回退,是豆腐块。
+    in property <string> font-family;
     // 不叫 color:Rectangle 那一族已经占了这个名字,重名会被 slint 编译器拒绝。
     in property <color> text-color;
     in property <length> font-size;
@@ -209,6 +212,7 @@ component OutlinedText inherits Rectangle {
         height: root.height;
         text: root.text;
         color: root.outline-color;
+        font-family: root.font-family;
         font-size: root.font-size;
         horizontal-alignment: center;
         vertical-alignment: root.vertical-alignment;
@@ -221,6 +225,7 @@ component OutlinedText inherits Rectangle {
         height: root.height;
         text: root.text;
         color: root.text-color;
+        font-family: root.font-family;
         font-size: root.font-size;
         horizontal-alignment: center;
         vertical-alignment: root.vertical-alignment;
@@ -556,6 +561,9 @@ export component MainWindow inherits Window {
     in property <[TrackRow]> tracks: [];
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     in property <string> playback-text;
+    // 正在为播放页那首歌取直链/开流。播放页只有歌名、歌手、封面,没有别的位置
+    // 能表达"按下去了、正在办",而状态行长在音乐页上、被播放页盖住。
+    in property <bool> now-loading: false;
     // 断流横幅的文案。空字符串 = 不显示(见 docs/adr/0013)。
     // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
     in-out property <string> banner-text;
@@ -1086,6 +1094,19 @@ export component MainWindow inherits Window {
             text: root.now-artists;
             text-color: #9aa0b4;
             font-size: 14px;
+        }
+
+        // 取直链/开流的那几秒:点下去了、正在办。
+        // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
+        // 而这一层还压在点云上。文案硬编码中文,走子集字体。
+        if root.now-loading: OutlinedText {
+            y: root.viz-title-y + 58px;
+            width: 100%;
+            height: 18px;
+            text: "加载中…";
+            font-family: "Maple Mono NF CN";
+            text-color: #d9a86c;
+            font-size: 13px;
         }
 
         // 歌词:播放页现在唯一的深度卡片。当前行 + 译文,居中排在歌名下方;
