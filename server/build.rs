@@ -1,7 +1,10 @@
-//! 从 bang-dream 的 `.proto` 生成 gRPC 客户端。
+//! 从本仓库存的 `.proto` 生成 gRPC 客户端。
 //!
-//! `.proto` 来自 `third_party/bang-dream` 这个 submodule —— 与 Go 侧是同一份文件,
-//! 两端都由 protoc 生成,没有任何一边手写(bang-dream 的 `docs/adr/0001`)。
+//! 契约的上游是 bang-dream —— 与 Go 侧同一份文件,两端都由 protoc 生成,没有任何一边
+//! 手写(bang-dream 的 `docs/adr/0001`)。这里存的是它的副本,而不是直接读
+//! `third_party/bang-dream` 那个 submodule:上游是私有仓库,为一个 11KB 的自包含文件
+//! 要求 CI 持有跨仓库凭据,不成比例。漂移由 `cargo xtask boundaries` 在 submodule
+//! 在场时挡住。
 //!
 //! 只生成 client:本服务是 bang-dream 的调用方,不实现它的 service。
 
@@ -9,18 +12,14 @@ use std::path::PathBuf;
 
 fn main() {
     // 相对 CARGO_MANIFEST_DIR 定位,不写死绝对路径。
-    let repo_root =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("server/ 必然有父目录")
-            .to_path_buf();
     let proto_dir =
-        repo_root.join("third_party/bang-dream/proto");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("proto");
     let proto = proto_dir.join("music/v1/music.proto");
 
     assert!(
         proto.exists(),
-        "找不到 {} —— submodule 没拉?试 `git submodule update --init`",
+        "找不到 {} —— 它是仓库内容,不是 submodule,不该缺失",
         proto.display()
     );
 

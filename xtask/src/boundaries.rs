@@ -3,7 +3,17 @@
 //! ADR 里写的约束靠记忆是守不住的。这些检查在 CI 与本地(`just ci`)跑的是
 //! **同一份代码**,不是两份互相漂移的 shell 片段。
 
-use crate::shell::{capture, run};
+use std::fs;
+use std::path::Path;
+
+use crate::shell::{capture, repo_root, run};
+
+/// codegen 实际读的那一份(`server/build.rs`)。
+const VENDORED_PROTO: &str =
+    "server/proto/music/v1/music.proto";
+/// 契约的上游。只在 submodule 检出时存在。
+const UPSTREAM_PROTO: &str =
+    "third_party/bang-dream/proto/music/v1/music.proto";
 
 /// `contract` 的依赖白名单之外的东西。
 ///
@@ -23,7 +33,7 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 5] = [
+    let checks: [(&str, Check); 6] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
@@ -40,6 +50,10 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         (
             "web 不依赖 audio/syncplay 的原生栈",
             web_free_of_native_audio,
+        ),
+        (
+            "vendored .proto 与上游一致",
+            vendored_proto_matches_upstream,
         ),
     ];
 
@@ -196,6 +210,55 @@ fn web_free_of_native_audio() -> Result<(), String> {
     Ok(())
 }
 
+/// 契约的上游是 bang-dream,但那是私有仓库。`server/proto` 存的是它的副本,
+/// codegen 只读副本,CI 因此不需要跨仓库凭据。代价是两份可能漂移,这条检查就是
+/// 兜住漂移的地方 —— submodule 在场时(本地开发)比对,不在场时(CI)跳过。
+fn vendored_proto_matches_upstream() -> Result<(), String> {
+    let upstream = repo_root().join(UPSTREAM_PROTO);
+    // submodule 没检出。CI 上是常态,不是错误 —— 副本本身已经在仓库里了。
+    if !upstream.exists() {
+        println!(
+            "        (跳过:{UPSTREAM_PROTO} 不在,submodule 未检出)"
+        );
+        return Ok(());
+    }
+
+    let vendored = repo_root().join(VENDORED_PROTO);
+    let read = |path: &Path| {
+        fs::read_to_string(path).map_err(|error| {
+            format!("读不到 {}:{error}", path.display())
+        })
+    };
+
+    match first_difference(&read(&vendored)?, &read(&upstream)?)
+    {
+        None => Ok(()),
+        Some(line) => Err(format!(
+            "{VENDORED_PROTO} 与 {UPSTREAM_PROTO} 在第 {line} 行起分歧 —— \
+             上游改了契约就把副本同步过去:cp {UPSTREAM_PROTO} {VENDORED_PROTO}"
+        )),
+    }
+}
+
+/// 两份文本第一处分歧的 1-based 行号,完全一致时为 `None`。
+///
+/// 逐行比,不做 proto 的语义解析:副本是 codegen 的唯一输入,连注释差异都值得看一眼。
+/// 一侧是另一侧前缀时,分歧记在长的那侧多出来的第一行。
+fn first_difference(left: &str, right: &str) -> Option<usize> {
+    let common = left
+        .lines()
+        .zip(right.lines())
+        .position(|(a, b)| a != b);
+    if let Some(index) = common {
+        return Some(index + 1);
+    }
+
+    let (left_lines, right_lines) =
+        (left.lines().count(), right.lines().count());
+    (left_lines != right_lines)
+        .then(|| left_lines.min(right_lines) + 1)
+}
+
 /// `cargo tree` 的输出里是否出现了名为 `name` 的 crate。
 ///
 /// 按**词**比较,不是子串:`tokio-util` 不算 `tokio`,`hyper-util` 不算 `hyper`。
@@ -238,5 +301,43 @@ api v0.1.0 (/repo/crates/api)
     fn depends_on_handles_empty_input() {
         assert!(!depends_on("", "tokio"));
         assert!(!depends_on(TREE, "sqlx"));
+    }
+
+    const PROTO: &str = "\
+syntax = \"proto3\";
+package bangdream.music.v1;
+message Track { string id = 1; }";
+
+    /// 两份完全一致时没有分歧行。
+    #[test]
+    fn first_difference_accepts_identical_input() {
+        assert_eq!(first_difference(PROTO, PROTO), None);
+        assert_eq!(first_difference("", ""), None);
+    }
+
+    /// 中间某行改了,报的是那一行的 1-based 行号。
+    #[test]
+    fn first_difference_reports_changed_line() {
+        let changed =
+            PROTO.replace("string id = 1;", "int64 id = 1;");
+        assert_eq!(
+            first_difference(PROTO, &changed),
+            Some(3)
+        );
+    }
+
+    /// 边界:一侧是另一侧的前缀。公共部分逐行相同,分歧在第一行多出来的地方。
+    #[test]
+    fn first_difference_reports_appended_line() {
+        let longer = format!("{PROTO}\nmessage Album {{}}");
+        assert_eq!(first_difference(PROTO, &longer), Some(4));
+        assert_eq!(first_difference(&longer, PROTO), Some(4));
+    }
+
+    /// 边界:一侧为空。
+    #[test]
+    fn first_difference_reports_empty_side() {
+        assert_eq!(first_difference("", PROTO), Some(1));
+        assert_eq!(first_difference(PROTO, ""), Some(1));
     }
 }
