@@ -10,7 +10,10 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
 - `src/lib.rs`:crate 门面。`load` 把直链变成边下边播的流(内部自带多线程
   tokio runtime,解码的阻塞读与下载必须同 runtime 不同线程);`decode` 是
   纯解码入口,测试与生产走同一条路径;`Player` 持有音频设备并承担播出,
-  它的 `play` 同时是同播 tee 与可视化分析器的统一挖点。
+  它的 `play` 同时是同播 tee 与可视化分析器的统一挖点。起播前按
+  `PREFETCH_BYTES` 攒一段:rodio 在声卡回调里直接向解码器要采样,而流读到
+  没下完的位置会阻塞,垫不够厚就会在回调里欠载 —— 听感是卡在原地反复放
+  同一小段,而上层的 `empty()` 仍为假,自己恢复不了。
 - `src/codec.rs`:同播用的 Opus 编解码与 `Tee`。`normalize` 把任意源统一成
   48kHz 立体声,`Tee` 把播放中的采样原样传下去、复制一份进有界支路,
   攒帧逻辑吸收「Opus 只收固定帧长而 rodio 一次给一个采样」的错位。
