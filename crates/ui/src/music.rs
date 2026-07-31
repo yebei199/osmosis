@@ -87,6 +87,43 @@ pub fn describe_startup(
     }
 }
 
+/// 该不该报断流:本机在放、声源空了、而且这条流留下了放弃的证据。
+///
+/// 与 [`should_advance`] 是同一刻的两个出口,互斥:声源空下来时,要么是放完了
+/// 该切下一首,要么是断了该停下说话。四个输入一模一样,只多问一句"放弃过没有" ——
+/// 那正是两者唯一的分野(见 `docs/adr/0013`)。
+///
+/// 听众那一条与 [`should_advance`] 同理:收听时本机没有自己的流,`gave_up`
+/// 反映的是上一次本机播放留下的旧证据,不能拿它去掐别人推来的声音。
+pub fn should_report_loss(
+    state: &PlaybackState,
+    drained: bool,
+    listening: bool,
+    gave_up: bool,
+) -> bool {
+    matches!(state, PlaybackState::Playing(_))
+        && drained
+        && !listening
+        && gave_up
+}
+
+/// 断流横幅该说哪句话。
+///
+/// `server_reachable` 是那次 `/health` 探测的结论:`None` = 还没回来。
+/// 先弹粗文案再改精确文案,是为了不让沉默时长受探测连累(见 `docs/adr/0013`)。
+///
+/// 探得通只说明**我们自己的**服务端还在,上游 CDN 挂了也会落到这一支 ——
+/// 所以那句话指向用户能做的动作,不去断言是谁的锅。
+pub fn describe_stream_loss(
+    server_reachable: Option<bool>,
+) -> &'static str {
+    match server_reachable {
+        None => "播放中断了",
+        Some(false) => "没网了,检查一下网络再试",
+        Some(true) => "播放地址失效了,重新点一下这首歌",
+    }
+}
+
 /// 自动续播的判据:**只有**「本机在放 && 声源放空了 && 不是听众」才推进队列。
 ///
 /// 听众那一条是硬约束:听众放的 `ChannelSource` 在没数据时给静音而非结束,
@@ -189,6 +226,9 @@ struct Deck {
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily: Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
+    /// 当前这一路流的死亡证明。源结束时问它:放弃过就是断流,没放弃就是放完了。
+    /// 两者在播放器那头长得一模一样(见 `docs/adr/0013`)。
+    stream: Rc<RefCell<Option<audio::StreamHealth>>>,
 }
 
 /// 封面像素的取用口:播放页每帧问它「有没有新封面要送进点云」。
@@ -300,6 +340,7 @@ pub fn bind(
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
         last_daily: Rc::new(std::cell::Cell::new(None)),
+        stream: Rc::new(RefCell::new(None)),
     };
 
     bind_search(ui, &deck);
@@ -667,8 +708,14 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             &deck.playback,
             track,
             move |track| prepare(player, track),
-            move |decoded| {
-                emit(&commit.player, &commit.sync, decoded);
+            move |(decoded, health)| {
+                emit(
+                    &commit.player,
+                    &commit.sync,
+                    &commit.stream,
+                    decoded,
+                    health,
+                );
             },
         )
         .await;
@@ -686,6 +733,10 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             };
             ui.set_is_playing(playing);
             ui.set_playback_text(text.into());
+            // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
+            if playing {
+                ui.set_banner_text(slint::SharedString::new());
+            }
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             push_rows(&ui, &deck, None);
@@ -724,11 +775,23 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             log::debug!(
                 "自动续播轮询: 位置 {position:?}, 放空 {drained}"
             );
-            if should_advance(
-                deck.playback.borrow().state(),
-                drained,
-                deck.sync.is_listening(),
+
+            let gave_up = deck
+                .stream
+                .borrow()
+                .as_ref()
+                .is_some_and(audio::StreamHealth::gave_up);
+            let state = deck.playback.borrow().state().clone();
+            let listening = deck.sync.is_listening();
+
+            // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
+            // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
+            if should_report_loss(
+                &state, drained, listening, gave_up,
             ) {
+                report_stream_loss(&ui, &deck);
+            } else if should_advance(&state, drained, listening)
+            {
                 advance(&ui, &deck);
             }
         },
@@ -737,6 +800,41 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
     // ponytail: 定时器与进程同寿,leak 掉省一条把 Timer 递回平台入口的通道;
     // 真要按页开关时再把它挂到 Deck 上管理。
     Box::leak(Box::new(timer));
+}
+
+/// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
+///
+/// 先弹粗文案,不等探测 —— 等的话最坏要让用户对着没声音的界面干等二十多秒,
+/// 那个区间里他已经在想"是不是卡死了"(见 `docs/adr/0013`)。
+#[cfg(not(target_arch = "wasm32"))]
+fn report_stream_loss(ui: &MainWindow, deck: &Deck) {
+    // 证据取走即清空。这个条件会一直成立到下次换歌,不清的话横幅每秒重弹一次。
+    deck.stream.borrow_mut().take();
+
+    let opening = describe_stream_loss(None);
+    deck.playback.borrow_mut().fail(opening.to_owned());
+    ui.set_is_playing(false);
+    ui.set_playback_text(
+        describe_playback(deck.playback.borrow().state())
+            .into(),
+    );
+    ui.set_banner_text(opening.into());
+
+    // 探测结果回来了再把话说准。探不通=本机没网,探得通=这条播放地址不行了。
+    let weak = ui.as_weak();
+    slint::spawn_local(async move {
+        let reachable = api::health().await.is_ok();
+        if let Some(ui) = weak.upgrade() {
+            // 期间用户可能已经把横幅关了,或者又放起了别的歌 —— 那就不打扰他。
+            if !ui.get_banner_text().is_empty() {
+                ui.set_banner_text(
+                    describe_stream_loss(Some(reachable))
+                        .into(),
+                );
+            }
+        }
+    })
+    .expect("event loop must be running");
 }
 
 /// 开机静默自检:`GET /health` 一次,健康就一声不吭。
@@ -768,7 +866,7 @@ fn startup_check(ui: &MainWindow) {
 async fn prepare(
     player: Arc<Result<audio::Player, audio::AudioError>>,
     track: TrackDto,
-) -> Result<audio::Loaded, String> {
+) -> Result<(audio::Loaded, audio::StreamHealth), String> {
     // 没声卡就在这里认输,别等下载完才发现放不了。
     if let Err(error) = player.as_ref() {
         return Err(error.to_string());
@@ -794,12 +892,16 @@ async fn prepare(
 fn emit(
     player: &Arc<Result<audio::Player, audio::AudioError>>,
     sync: &crate::syncplay::Sync,
+    stream: &Rc<RefCell<Option<audio::StreamHealth>>>,
     decoded: audio::Loaded,
+    health: audio::StreamHealth,
 ) {
     use audio::buffered;
     use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
 
     let Ok(player) = player.as_ref() else { return };
+    // 换歌即换证据。上一首的死亡证明留着的话,新歌一放空就会被误报成断流。
+    stream.borrow_mut().replace(health);
     // 先归一再缓冲再分支,三步的顺序都是硬的:
     //
     // - 归一在最前:`buffered` 交出的源对外声称 48kHz 立体声,格式得先对上;
@@ -1049,6 +1151,65 @@ mod tests {
             true,
             false
         ));
+    }
+
+    /// **断流与放完了要走向相反的出口。**
+    ///
+    /// 两者在播放器那头是同一个现象(声源空了),区别只有那条流留没留下放弃的
+    /// 证据。分不清的话,断网时会一首接一首地切下去,每首再熬一轮超时,
+    /// 一分钟就把整个队列烧光,而用户得到的解释是零(见 `docs/adr/0013`)。
+    #[test]
+    fn a_drained_source_reports_a_loss_only_when_it_gave_up() {
+        let playing = PlaybackState::Playing(track());
+
+        assert!(
+            should_report_loss(&playing, true, false, true),
+            "放空了且流放弃过,这就是断流"
+        );
+        assert!(
+            !should_report_loss(&playing, true, false, false),
+            "放空了但流没放弃,那是正常放完,该切下一首"
+        );
+        // 两个出口必须互斥,否则同一刻既报错又切歌。
+        assert!(
+            !should_advance(&playing, true, false)
+                || !should_report_loss(
+                    &playing, true, false, false
+                )
+        );
+        assert!(
+            !should_report_loss(&playing, false, false, true),
+            "还没放空就报断流,声音还在放呢"
+        );
+        assert!(
+            !should_report_loss(&playing, true, true, true),
+            "收听同播时本机没有自己的流,那是上一次留下的旧证据"
+        );
+        assert!(
+            !should_report_loss(
+                &PlaybackState::Loading(track()),
+                true,
+                false,
+                true
+            ),
+            "正在加载下一首时不许被上一首的证据打断"
+        );
+    }
+
+    /// 横幅先说发生了什么,探明之后再说是哪一种。
+    ///
+    /// 三句话必须互不相同:探测没回来时说"中断了"是诚实的,而一旦探明,
+    /// 用户该做的事完全不同 —— 一个是等网络,一个是重新点这首歌。
+    #[test]
+    fn the_banner_says_what_the_user_can_do_about_it() {
+        let pending = describe_stream_loss(None);
+        let offline = describe_stream_loss(Some(false));
+        let stale = describe_stream_loss(Some(true));
+
+        assert!(!pending.is_empty());
+        assert_ne!(pending, offline);
+        assert_ne!(offline, stale);
+        assert_ne!(pending, stale);
     }
 
     /// 开机自检只在坏消息时开口:健康 → None,失败 → 一行能显示的话。

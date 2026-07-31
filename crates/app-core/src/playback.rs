@@ -76,6 +76,17 @@ impl Playback {
         self.generation += 1;
         self.state = PlaybackState::Idle;
     }
+
+    /// 出事了:停下,并把原因留在状态里。
+    ///
+    /// 与 [`Self::stop`] 的区别只在说不说话 —— 回 `Idle` 等于什么都没发生过,
+    /// 而声音放到一半没了必须有个交代(见 `docs/adr/0013`)。
+    ///
+    /// 同样作废当前代际,理由同 [`Self::stop`]。
+    pub fn fail(&mut self, message: String) {
+        self.generation += 1;
+        self.state = PlaybackState::Failed(message);
+    }
 }
 
 /// 播放一首歌,把结果写回 `playback`。

@@ -556,6 +556,9 @@ export component MainWindow inherits Window {
     in property <[TrackRow]> tracks: [];
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     in property <string> playback-text;
+    // 断流横幅的文案。空字符串 = 不显示(见 docs/adr/0013)。
+    // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
+    in-out property <string> banner-text;
     // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
     in property <bool> is-playing: false;
     // 随机播放开关(日月开关的状态)。Rust 读它决定队列洗不洗牌。
@@ -1233,5 +1236,45 @@ export component MainWindow inherits Window {
             }
         }
       }
+    }
+
+    // ── 断流横幅:压在所有页之上 ──
+    // 状态行长在音乐页上,而播放页是覆层、盖住它 —— 断流恰恰发生在听歌时,
+    // 写在状态行等于说给没人在的房间(docs/adr/0013)。
+    // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
+    if root.banner-text != "": Rectangle {
+        y: root.safe-area-insets.top + 10px;
+        x: (parent.width - self.width) / 2;
+        width: min(parent.width - 32px, 420px);
+        height: 44px;
+        background: #33201fee;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: #7a4f4a;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 6px;
+            spacing: 6px;
+
+            Text {
+                text: root.banner-text;
+                // 文案是硬编码中文,与状态行同一套子集字体。
+                font-family: "Maple Mono NF CN";
+                font-size: 13px;
+                color: #f2dcd8;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            // 关掉。清空文案就等于收起,不必回 Rust 绕一圈。
+            RoundControl {
+                diameter: 32px;
+                transparent-base: true;
+                icon: "M7 7 L17 17 M17 7 L7 17";
+                clicked => { root.banner-text = ""; }
+            }
+        }
     }
 }
