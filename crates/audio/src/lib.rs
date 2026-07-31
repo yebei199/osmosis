@@ -99,6 +99,45 @@ fn runtime() -> &'static Runtime {
     })
 }
 
+/// 流的三个旋钮:攒多少才起播、多久没数据算一次失联、失联几次就放弃。
+///
+/// 做成参数而不是常量,是为了让测试能把它们调到毫秒级 —— 生产值意味着一条
+/// 测试要枯等十几秒,那种测试不会有人跑。
+#[derive(Clone, Copy, Debug)]
+pub struct Tuning {
+    pub prefetch_bytes: u64,
+    pub retry_timeout: core::time::Duration,
+    pub give_up_after: usize,
+}
+
+impl Tuning {
+    /// 生产值。取值理由见 [`PREFETCH_BYTES`] 与 `docs/adr/0013`。
+    pub const PRODUCTION: Self = Self {
+        prefetch_bytes: PREFETCH_BYTES,
+        // 库默认值。调低会在正常网络下误触发重连,库文档明说了。
+        retry_timeout: core::time::Duration::from_secs(5),
+        // 两次 ≈ 10 秒。缓冲里有 5 秒存货,所以用户约听到 5 秒沉默。
+        give_up_after: 2,
+    };
+}
+
+/// 一条流有没有已经放弃。
+///
+/// 断流与放完了在下游长得一模一样 —— 都是采样不再来、源结束。这个句柄是**唯一**
+/// 能把两者分开的东西:它由放弃那一刻的同一段代码置位,不是事后猜的
+/// (见 `docs/adr/0013`)。
+#[derive(Clone, Debug, Default)]
+pub struct StreamHealth(
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+
+impl StreamHealth {
+    /// 这条流是不是已经放弃了。源结束时问它:为真是断流,为假是放完了。
+    pub fn gave_up(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// 起播前先攒够多少字节。
 ///
 /// rodio 是在 cpal 的音频回调里直接向解码器要采样的,而本 crate 交给它的流
@@ -119,7 +158,23 @@ const PREFETCH_BYTES: u64 = 4 << 20;
 ///
 /// 落盘到临时文件而不是常驻内存:seek 回已下过的位置(拖进度条、解码器回读
 /// 帧头)不必重新请求,而一首无损动辄几十兆,内存里堆着毫无必要。
-pub async fn load(url: &str) -> Result<Loaded, AudioError> {
+pub async fn load(
+    url: &str,
+) -> Result<(Loaded, StreamHealth), AudioError> {
+    load_with(url, Tuning::PRODUCTION).await
+}
+
+/// [`load`] 的可调版本,给测试用。
+///
+/// 交回的 [`StreamHealth`] 是这条流的死亡证明:放弃时由 `on_reconnect` 里那段
+/// 代码置位。没有它的话,下游只知道"源结束了",分不出是放完还是断了。
+async fn load_with(
+    url: &str,
+    tuning: Tuning,
+) -> Result<(Loaded, StreamHealth), AudioError> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let url = url.to_owned();
 
     runtime()
@@ -127,11 +182,37 @@ pub async fn load(url: &str) -> Result<Loaded, AudioError> {
             let parsed = url.parse().map_err(|e| {
                 AudioError::Stream(format!("{e}: {url}"))
             })?;
+
+            let health = StreamHealth::default();
+            let flag = health.0.clone();
+            // 连续失联的次数。**来了数据就清零** —— 不清的话,一首歌里两次相隔
+            // 几分钟、各自都缓过来了的短抖动会被算成一次断流,把歌掐掉。
+            let misses = Arc::new(AtomicUsize::new(0));
+            let recovered = misses.clone();
+            let give_up_after = tuning.give_up_after;
+
+            let settings = Settings::default()
+                .prefetch_bytes(tuning.prefetch_bytes)
+                .retry_timeout(tuning.retry_timeout)
+                .on_progress(move |_, _, _| {
+                    recovered.store(0, Ordering::Relaxed);
+                })
+                .on_reconnect(move |_, token| {
+                    let missed = misses
+                        .fetch_add(1, Ordering::Relaxed)
+                        + 1;
+                    if missed >= give_up_after {
+                        flag.store(true, Ordering::Relaxed);
+                        // 取消让下载任务收尾并置为失败,此后所有 read 立刻报错 ——
+                        // 不取消的话它会永远重连下去,读的那一头永远挂着。
+                        token.cancel();
+                    }
+                });
+
             let stream = StreamDownload::new_http(
                 parsed,
                 TempStorageProvider::default(),
-                Settings::default()
-                    .prefetch_bytes(PREFETCH_BYTES),
+                settings,
             )
             .await
             .map_err(|e| {
@@ -139,13 +220,13 @@ pub async fn load(url: &str) -> Result<Loaded, AudioError> {
             })?;
 
             // 解码要阻塞读若干秒(等够探测格式的字节),不能占着 async 线程。
-            tokio::task::spawn_blocking(move || {
-                decode(stream)
-            })
+            let decoder = tokio::task::spawn_blocking(
+                move || decode(stream),
+            )
             .await
-            .map_err(|e| {
-                AudioError::Stream(e.to_string())
-            })?
+            .map_err(|e| AudioError::Stream(e.to_string()))??;
+
+            Ok((decoder, health))
         })
         .await
         .map_err(|e| AudioError::Stream(e.to_string()))?
@@ -640,6 +721,139 @@ mod tests {
         assert!(
             played >= 9_600,
             "只放出 {played} 个采样,短了一截 —— 缓冲把尾巴吃掉了"
+        );
+    }
+
+    /// 测试用的旋钮:毫秒级的失联判定,以及小到几十 KB 的起播门槛。
+    ///
+    /// 生产值意味着一条测试要枯等十几秒 —— 那种测试没人会跑,也就等于没有。
+    const FAST: Tuning = Tuning {
+        prefetch_bytes: 16 * 1024,
+        retry_timeout: Duration::from_millis(200),
+        give_up_after: 2,
+    };
+
+    /// 起一个 HTTP 服务:先老实给 `prefix` 个字节,之后**装死** ——
+    /// 连接不关,也不再给任何数据。
+    ///
+    /// 这才是"没网"真实的样子:wifi 连着、路由器亮着,但出口是个黑洞。拔网线
+    /// 是另一回事,那会立刻 ECONNRESET,走的是别的错误路径。
+    ///
+    /// 裸 `TcpListener` 而不是 axum:要的行为恰恰是"不把响应收尾",
+    /// 任何框架都会替我们收尾,反而做不出这个场景。
+    ///
+    /// **重连拿到的是空响应**:第二个连接起只给响应头。让它重发一遍数据的话,
+    /// `on_progress` 会把失联计数清零,于是永远走不到放弃那一步。
+    fn stalling_server(body: Vec<u8>, prefix: usize) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .expect("绑不上本地端口");
+        let addr =
+            listener.local_addr().expect("取不到本地地址");
+        let served = Arc::new(AtomicUsize::new(0));
+
+        // 线程与进程同寿:测试进程退出即回收,不值得为它造一套关停。
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let body = body.clone();
+                let served = served.clone();
+
+                std::thread::spawn(move || {
+                    // 请求头读到空行为止。内容不看 —— 对任何请求都给同一个回答。
+                    let peek = stream
+                        .try_clone()
+                        .expect("连接复制不了");
+                    let mut reader = BufReader::new(peek);
+                    let mut line = String::new();
+                    while reader
+                        .read_line(&mut line)
+                        .is_ok_and(|n| n > 2)
+                    {
+                        line.clear();
+                    }
+
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\n\
+                         Content-Length: {}\r\n\
+                         Content-Type: audio/wav\r\n\
+                         Accept-Ranges: bytes\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+
+                    let first = served
+                        .fetch_add(1, Ordering::Relaxed)
+                        == 0;
+                    if first {
+                        let _ = stream.write_all(
+                            &body[..prefix.min(body.len())],
+                        );
+                    }
+                    let _ = stream.flush();
+
+                    if !first || prefix < body.len() {
+                        // 装死。连接留着,字节不再来。
+                        std::thread::park();
+                    }
+                });
+            }
+        });
+
+        format!("http://{addr}/song.wav")
+    }
+
+    /// **服务端装死时,流必须放弃,而且要留下放弃的证据。**
+    ///
+    /// 不放弃的话下游会永远挂着 —— 那正是改这一版之前的样子:界面停在正在播放,
+    /// 声音没有,`empty()` 仍为假,谁也不知道出了什么事(见 `docs/adr/0013`)。
+    #[test]
+    fn a_silent_server_makes_the_stream_give_up() {
+        // 起播门槛 16KB,先给 32KB 再装死:load 能成,读到 32KB 之后才断。
+        let url = stalling_server(wav(200_000), 32 * 1024);
+
+        let started = std::time::Instant::now();
+        let (decoder, health) =
+            runtime().block_on(load_with(&url, FAST)).expect(
+                "头几十 KB 是完整的 WAV,起播这一步该成功",
+            );
+        // 取到源结束为止。放弃机制不成立的话,这一行永远回不来。
+        let _ = decoder.count();
+        let waited = started.elapsed();
+
+        assert!(
+            health.gave_up(),
+            "源结束了却没留下放弃的证据,下游会把断流当成放完了"
+        );
+        assert!(
+            waited < Duration::from_secs(3),
+            "等了 {waited:?} 才放弃,远超两次 200ms 失联该有的时间"
+        );
+    }
+
+    /// 对照组:整段都送到的流,结束时**不能**留下放弃的证据。
+    ///
+    /// 没有这条,上一条也可能是"这个句柄永远为真"造成的 —— 那样自动续播会
+    /// 再也不切歌,而两条测试都还是绿的。
+    #[test]
+    fn a_complete_stream_never_reports_a_give_up() {
+        let body = wav(200_000);
+        let complete = body.len();
+        let url = stalling_server(body, complete);
+
+        let (decoder, health) = runtime()
+            .block_on(load_with(&url, FAST))
+            .expect("完整的 WAV 该能起播");
+        let played = decoder.count();
+
+        assert!(played > 0, "一个采样都没放出来");
+        assert!(
+            !health.gave_up(),
+            "整段都送到了,却报告成断流"
         );
     }
 
