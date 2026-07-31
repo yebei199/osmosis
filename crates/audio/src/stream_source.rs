@@ -36,7 +36,21 @@ pub fn buffered<S>(source: S) -> ChannelSource
 where
     S: Iterator<Item = Sample> + Send + 'static,
 {
-    let (tx, rx) = mpsc::sync_channel(BUFFER_SAMPLES);
+    buffered_with(source, BUFFER_SAMPLES)
+}
+
+/// [`buffered`] 的可调版本。
+///
+/// 容量做成参数只为测试:按 [`BUFFER_SAMPLES`] 那 5 秒,一条测试要真等 5 秒,
+/// 而它要验的恰恰是"存货撑住了多久"这件与时长成正比的事。
+pub fn buffered_with<S>(
+    source: S,
+    capacity: usize,
+) -> ChannelSource
+where
+    S: Iterator<Item = Sample> + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(capacity);
 
     std::thread::spawn(move || {
         for sample in source {

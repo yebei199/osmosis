@@ -16,7 +16,7 @@ pub mod spectrum;
 mod stream_source;
 
 pub use stream_source::{
-    BUFFER_SAMPLES, ChannelSource, buffered,
+    BUFFER_SAMPLES, ChannelSource, buffered, buffered_with,
 };
 
 use std::io::{Read, Seek};
@@ -832,6 +832,68 @@ mod tests {
         assert!(
             waited < Duration::from_secs(3),
             "等了 {waited:?} 才放弃,远超两次 200ms 失联该有的时间"
+        );
+    }
+
+    /// **断流不是立刻没声,缓冲会把它藏一会儿。**
+    ///
+    /// 这条钉的是那句"用户先听到约 5 秒沉默才看到横幅"里的前半段:流已经放弃了,
+    /// 而存货还在放,用户此刻毫无察觉。判据是**放弃之后仍有多少块出了声** ——
+    /// 缓冲要是没起作用,那个数会是零,断流当场就是死寂。
+    ///
+    /// 测试里缓冲调到 1 秒、失联调到 200ms;生产是 5 秒与 5 秒,同一个形状放大。
+    #[test]
+    fn the_buffer_keeps_playing_after_the_stream_is_gone() {
+        // 约 2 秒的音频后装死。放弃只要 0.4 秒,所以断流发生时存货还厚着。
+        let url = stalling_server(wav(200_000), 176 * 1024);
+        let (decoder, health) = runtime()
+            .block_on(load_with(&url, FAST))
+            .expect("头一段是完整的 WAV,起播该成功");
+
+        // 1 秒的缓冲:比放弃所需的 0.4 秒厚,不然"藏住了"这件事无从观察。
+        let mut source = buffered_with(
+            codec::normalize(decoder),
+            codec::SYNC_SAMPLE_RATE as usize
+                * codec::SYNC_CHANNELS as usize,
+        );
+
+        let mut audible_after_give_up = 0;
+        let mut gave_up = false;
+        let mut blocks = 0;
+        'playing: loop {
+            let mut audible = false;
+            for _ in 0..CALLBACK_FRAMES
+                * codec::SYNC_CHANNELS as usize
+            {
+                match source.next() {
+                    Some(sample) => {
+                        audible |= sample != 0.0;
+                    }
+                    // 发送端走了且通道排空 —— 这一路真的完了。
+                    None => break 'playing,
+                }
+            }
+
+            blocks += 1;
+            gave_up |= health.gave_up();
+            if gave_up && audible {
+                audible_after_give_up += 1;
+            }
+
+            assert!(
+                blocks < 400,
+                "源迟迟不结束,缓冲那条线程没收工"
+            );
+            // 按实时节奏取,否则消费端无限快,缓冲永远是空的。
+            std::thread::sleep(CALLBACK_BUDGET);
+        }
+
+        assert!(gave_up, "服务端装死了,这条流该放弃");
+        assert!(
+            audible_after_give_up >= 15,
+            "放弃之后只出了 {audible_after_give_up} 块声音(约 {}ms),\
+             缓冲没把断流藏住,用户当场就听到死寂",
+            audible_after_give_up * 21
         );
     }
 
