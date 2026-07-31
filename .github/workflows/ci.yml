@@ -1,11 +1,14 @@
 name: CI
 
 on:
-  # dev 上的日常 push 不触发 —— 那里的验证靠本地 `just ci`。
-  push:
-    branches: [master]
+  # 只在 PR 上跑。dev 的日常 push 不触发 —— 那里的验证靠本地 `just ci`。
+  #
+  # master 的 push 也不触发,尽管进主干正是最该验证的时刻:GitHub 给 `pull_request`
+  # 跑的本来就是**合并后**的结果(base 与 head 的临时 merge ref),PR 绿了就等于合进去
+  # 绿了。合并后再跑一遍是同一件事算第二次,而这个 workflow 一轮三十多分钟。
+  # 代价是直接推 master(热修、网页端改文件)完全没有 CI —— 那种改动请走 PR。
   pull_request:
-  # 想在 dev 上手动跑一次时用。
+  # 想在某个分支上手动跑一次时用。
   workflow_dispatch:
 
 # 这里刻意不设 RUSTFLAGS。它进 cargo 的构建指纹,本地 `just ci` 与 `just desktop-dev`
@@ -16,15 +19,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # test 与 clippy 是**两个** job,不是一个 job 里的四条命令。clippy 用的是另一个
+  # rustc driver,产物与 cargo test 不共享指纹,串起来等于把整棵依赖树编两遍并把两次
+  # 时间相加(实测 22m36s + 8m40s)。拆开之后墙钟取两者的较大值。上游 Slint 也是这么
+  # 分的:`build_and_test` 与 `clippy` 各自独立(它们的 `.github/workflows/ci.yaml`)。
+  #
+  # 两个 job 的准备步骤因此重复一遍 —— GitHub Actions 没有 YAML 锚点,复制是唯一选择。
+  # 缓存不必共用:两者产物本来就不同,`Swatinem/rust-cache` 默认按 job 名分键,正合适。
+
   # 桌面链路:workspace 的 default-members,外加 server 与 xtask。
   test:
-    name: test + clippy
+    name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
       - uses: Swatinem/rust-cache@v2
 
       # femtovg 后端在构建期通过 pkg-config 链接 fontconfig;
@@ -43,6 +52,20 @@ jobs:
       # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
       - run: cargo test --config 'profile.dev.package."*".opt-level=0'
       - run: cargo test --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # clippy 同样要编译整棵树,native 依赖与 test job 一致。
+      - name: 安装 native 依赖
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
 
       - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -- -D warnings
       - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
