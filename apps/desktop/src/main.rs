@@ -7,12 +7,24 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod single_instance;
+
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info"),
     )
     .init();
+
+    // 启动锁在**一切之前**:两个实例会抢同一块声卡各放各的歌,而 MCP 那个固定
+    // 端口只有先起来的抢得到 —— 调试时连上的可能是上次忘了关的那个实例。
+    // `_lock` 要活到 main 结束,丢掉它就等于开门。
+    let Ok(_lock) = single_instance::claim() else {
+        eprintln!(
+            "已经有一个 slint-study-desktop 在跑了。先关掉它,或者 just desktop-kill。"
+        );
+        std::process::exit(1);
+    };
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
     // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
