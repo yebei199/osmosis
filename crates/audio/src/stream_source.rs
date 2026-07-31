@@ -15,6 +15,42 @@ use crate::codec::{SYNC_CHANNELS, SYNC_SAMPLE_RATE};
 /// 太小则空转频繁,太大则真的结束后要多等一会儿。一帧的量是个自然的刻度。
 const SILENCE_BURST: usize = 64;
 
+/// 缓冲多少个采样。48kHz 立体声下约 5 秒。
+///
+/// 够盖住常见的网络抖动,而 48 万个 `f32` 不到 2MB —— 比起一首无损几十兆,
+/// 这点内存不值得省。
+pub const BUFFER_SAMPLES: usize =
+    SYNC_SAMPLE_RATE as usize * SYNC_CHANNELS as usize * 5;
+
+/// 把解码挪到自己的线程上,声卡回调那头只管从内存里取。
+///
+/// **这是「卡住时反复放同一小段」的正解。** rodio 是在 cpal 的回调里直接向
+/// 解码器要采样的,而流式解码器读到没下完的位置会阻塞 —— 于是一次网络抖动
+/// 就卡在回调里,设备欠载。中间垫一层线程 + 有界通道之后,抖动落在解码线程
+/// 上(它等就是了),回调那头照常有存货;真等空了拿到的是静音,声音有个缺口
+/// 但节奏没断,数据回来接着放。
+///
+/// **必须在 [`crate::codec::normalize`] 之后调用**:[`ChannelSource`] 对外
+/// 声称的是 48kHz 立体声,喂进来的采样格式不对,放出来就是变调变速的。
+pub fn buffered<S>(source: S) -> ChannelSource
+where
+    S: Iterator<Item = Sample> + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(BUFFER_SAMPLES);
+
+    std::thread::spawn(move || {
+        for sample in source {
+            // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
+            // 送不进去说明接收端已经走了(换歌、停止),就此收工,别让线程漏着。
+            if tx.send(sample).is_err() {
+                return;
+            }
+        }
+    });
+
+    ChannelSource::new(rx)
+}
+
 /// 把一条采样通道当作音频源。
 pub struct ChannelSource {
     samples: mpsc::Receiver<Sample>,

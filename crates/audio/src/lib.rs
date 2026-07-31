@@ -15,7 +15,9 @@ pub mod codec;
 pub mod spectrum;
 mod stream_source;
 
-pub use stream_source::ChannelSource;
+pub use stream_source::{
+    BUFFER_SAMPLES, ChannelSource, buffered,
+};
 
 use std::io::{Read, Seek};
 use std::sync::OnceLock;
@@ -100,15 +102,13 @@ fn runtime() -> &'static Runtime {
 /// 起播前先攒够多少字节。
 ///
 /// rodio 是在 cpal 的音频回调里直接向解码器要采样的,而本 crate 交给它的流
-/// **读到没下完的位置就阻塞**。两者叠起来:网络一旦跟不上实时码率,阻塞就发生在
-/// 声卡回调里,设备欠载,听感是"卡在原地反复放同一小段",而 `Player::empty()`
-/// 仍为假、`position()` 冻住 —— 上层看不出任何异常,也就永远不会自己恢复。
+/// **读到没下完的位置就阻塞**。攒够了再起播,开头那一段就不必指望网络准时。
 ///
 /// 默认的 256KB 对无损只有两秒左右,正是"开头卡住"的量级。4MB 约合无损半分钟,
 /// 代价只是起播多等一会儿(下载器一直在后台跑,不是等满才出声)。
 ///
-/// ponytail: 这只把起播那一段垫厚,治不了曲中掉速 —— 真要治得把解码挪出音频
-/// 回调(解码线程 + 有界通道 + `ChannelSource`),等量到确实是曲中欠载再做。
+/// 曲中掉速由 [`buffered`] 兜住 —— 那才是"回调不碰网络"的正解,这里只是
+/// 让起播那一段不必立刻用到它。
 const PREFETCH_BYTES: u64 = 4 << 20;
 
 /// 把一条直链变成可播放的流式音频:开流 + 解码,全在后台 runtime 上完成。
@@ -337,6 +337,9 @@ mod tests {
     /// 那几下不该被算进"网络卡住"里。
     struct StallingSource {
         inner: Cursor<Vec<u8>>,
+        /// 卡点的字节位置。按流传而不是取全局常量:两组测试要的卡点深浅不同 ——
+        /// 一组要它深到能留出对照区,一组要它浅到实时播放一两秒就能撞上。
+        stall_after: u64,
         /// 只停摆**一次**。一次抖动就足以证明因果,每次读都睡只是让测试变慢。
         stalled: bool,
     }
@@ -347,7 +350,7 @@ mod tests {
             buf: &mut [u8],
         ) -> std::io::Result<usize> {
             if !self.stalled
-                && self.inner.position() >= STALL_AFTER
+                && self.inner.position() >= self.stall_after
             {
                 self.stalled = true;
                 std::thread::sleep(STALL);
@@ -373,6 +376,7 @@ mod tests {
         // 10 秒的 WAV,足够让卡点落在中间而不是开头。
         let source = StallingSource {
             inner: Cursor::new(wav(441_000)),
+            stall_after: STALL_AFTER,
             stalled: false,
         };
         let mut decoder =
@@ -472,6 +476,7 @@ mod tests {
         let bytes = wav(441_000);
         let source = StallingSource {
             inner: Cursor::new(bytes),
+            stall_after: STALL_AFTER,
             // 老实流:一上来就当作"已经停摆过了",于是永不睡。
             stalled: !stalling,
         };
@@ -491,6 +496,70 @@ mod tests {
             worst = worst.max(started.elapsed());
         }
         worst
+    }
+
+    /// 一次驱动的结果:最慢的一块花了多久,以及这一路取到的非静音采样数。
+    ///
+    /// 两个数缺一不可。只看时长的话,一个**什么都不放**的实现也能满分 ——
+    /// 静音取得飞快。非静音计数是防止这条测试变成空断言的那一半。
+    struct Driven {
+        worst: Duration,
+        audible: usize,
+    }
+
+    /// 扮演 cpal 的回调,并且**按实时节奏**取:每块之间补足到 21ms 再取下一块。
+    ///
+    /// [`longest_callback_block`] 那种不停地取,消费端等于无限快,任何缓冲都
+    /// 来不及填 —— 拿它测缓冲只会得到"缓冲没用"的假结论。真声卡是按节奏来的,
+    /// 缓冲能起作用正是因为这个节奏留出了填的时间。
+    fn drive_paced<S>(source: S, blocks: usize) -> Driven
+    where
+        S: rodio::Source + Send + 'static,
+    {
+        let (_player, mut out) = callback_end(source);
+
+        let mut worst = Duration::ZERO;
+        let mut audible = 0;
+        for _ in 0..blocks {
+            let started = std::time::Instant::now();
+            for _ in 0..CALLBACK_FRAMES
+                * codec::SYNC_CHANNELS as usize
+            {
+                if out.next().is_some_and(|s| s != 0.0) {
+                    audible += 1;
+                }
+            }
+            let spent = started.elapsed();
+            worst = worst.max(spent);
+            // 补足这一块的实时时长。真设备就是这样:填完就等下一次被叫醒。
+            if let Some(rest) = CALLBACK_BUDGET.checked_sub(spent)
+            {
+                std::thread::sleep(rest);
+            }
+        }
+
+        Driven { worst, audible }
+    }
+
+    /// 按实时节奏播时的卡点。比 [`STALL_AFTER`] 浅得多:44.1kHz 单声道下
+    /// 15 万字节约合第 1.7 秒,**不带缓冲**那一路也能在两秒内老老实实播到。
+    ///
+    /// 深浅在这里是判据的一部分:卡点若深到实时播不到,不带缓冲的那一路会
+    /// 因为"根本没撞上"而通过,测试就成了空的(第一版正是这么假绿的)。
+    const PACED_STALL_AFTER: u64 = 150_000;
+
+    /// 按实时节奏跑多少块。100 块约合 2.1 秒,足够越过
+    /// [`PACED_STALL_AFTER`],又不至于让测试变成秒级的枯等。
+    const PACED_BLOCKS: usize = 100;
+
+    /// 一条会在 [`PACED_STALL_AFTER`] 处停摆一次的解码器。
+    fn stalling_decoder() -> rodio::Decoder<StallingSource> {
+        decode(StallingSource {
+            inner: Cursor::new(wav(441_000)),
+            stall_after: PACED_STALL_AFTER,
+            stalled: false,
+        })
+        .expect("合法 WAV 应能解码")
     }
 
     /// **阻塞会一路传到声卡回调,中间没有任何一层挡得住。**
@@ -521,6 +590,56 @@ mod tests {
         assert!(
             worst < CALLBACK_BUDGET,
             "流没卡,却有一块花了 {worst:?}(预算 {CALLBACK_BUDGET:?}) —— 慢的是链路本身,不是网络"
+        );
+    }
+
+    /// **解码搬出回调之后,流卡住不再拖慢回调。**
+    ///
+    /// 这是把解码挪到自己线程上的验收判据,两个断言各挡一半:时长挡"回调被
+    /// 拖住",非静音计数挡"什么都不放也算过" —— 静音取得飞快,只看时长的话
+    /// 一个把声音全丢掉的实现能拿满分。
+    #[test]
+    fn buffering_carries_the_callback_through_a_stall() {
+        let driven = drive_paced(
+            buffered(codec::normalize(stalling_decoder())),
+            PACED_BLOCKS,
+        );
+
+        assert!(
+            driven.worst < CALLBACK_BUDGET,
+            "有一块花了 {:?},超过回调预算 {CALLBACK_BUDGET:?} —— 停摆仍然穿到了回调这头",
+            driven.worst
+        );
+        assert!(
+            driven.audible
+                > PACED_BLOCKS
+                    * CALLBACK_FRAMES
+                    * codec::SYNC_CHANNELS as usize
+                    / 2,
+            "只取到 {} 个非静音采样,缓冲扛住了卡顿却没把声音送出来",
+            driven.audible
+        );
+    }
+
+    /// **缓冲不能把"放完了"吃掉。**
+    ///
+    /// 自动续播靠 `Player::empty()` 知道该切下一首,而它为真的前提是源返回
+    /// `None`。缓冲线程跑完要丢掉发送端,通道排空后 [`ChannelSource`] 才会结束 ——
+    /// 漏了这一步,每首歌放完都会停在原地,再也不切下一首。
+    ///
+    /// 真正的判据是**这个测试能跑完**:结束不了的话它会挂死,而不是断言失败。
+    #[test]
+    fn a_buffered_song_still_ends() {
+        // 100ms 的音,归一到 48kHz 立体声约合 9600 个采样。
+        let decoder = decode(Cursor::new(wav(4_410)))
+            .expect("合法 WAV 应能解码");
+
+        let played =
+            buffered(codec::normalize(decoder)).count();
+
+        assert!(
+            played >= 9_600,
+            "只放出 {played} 个采样,短了一截 —— 缓冲把尾巴吃掉了"
         );
     }
 
