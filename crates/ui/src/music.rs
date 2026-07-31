@@ -197,6 +197,21 @@ fn loading_id(state: &PlaybackState) -> Option<&str> {
     }
 }
 
+/// 当前这一首的 id —— 正在加载的和已经在放的都算,没有就给 `None`。
+///
+/// 与 [`loading_id`] 的差别正是"算不算已经放起来的那一首":那一个用来在列表上
+/// 标加载态,这一个用来判断异步回来的东西**还是不是给当前这首的**。
+#[cfg(not(target_arch = "wasm32"))]
+fn current_id(state: &PlaybackState) -> Option<&str> {
+    match state {
+        PlaybackState::Loading(track)
+        | PlaybackState::Playing(track) => {
+            Some(track.id.as_str())
+        }
+        _ => None,
+    }
+}
+
 /// 洗牌的种子。`app-core` 不引 `rand`(要编到 wasm),种子由这里造 ——
 /// `RandomState` 每次实例化都带进程级随机,当种子够用。
 #[cfg(not(target_arch = "wasm32"))]
@@ -225,33 +240,43 @@ struct Deck {
     tracks: Rc<RefCell<Vec<TrackDto>>>,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
-    last_daily: Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
+    last_daily:
+        Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
     /// 当前这一路流的死亡证明。源结束时问它:放弃过就是断流,没放弃就是放完了。
     /// 两者在播放器那头长得一模一样(见 `docs/adr/0013`)。
     stream: Rc<RefCell<Option<audio::StreamHealth>>>,
 }
 
-/// 封面像素的取用口:播放页每帧问它「有没有新封面要送进点云」。
+/// 点云封面的取用口:播放页每帧问它「这一帧封面该怎么办」。
 ///
-/// 只在换歌解出新封面的那一帧交出像素,取走即清空 —— 一张封面是兆级的字节,
+/// 只在换歌那一帧交出动作,取走即回到"没消息" —— 一张封面是兆级的字节,
 /// 每帧搬一次过 seam 纯属白耗(见 `crates/render3d::cloud`)。
+///
+/// 三态而不是"有没有新图":换歌与拿到新图之间隔着几百毫秒的网络,而封面
+/// 常常根本拿不到(CDN 会过期)。只有"有没有新图"的话,这两种情况长得一样,
+/// 点云就会一直挂着上一首(见 `crate::viz::CoverUpdate`)。
 #[derive(Clone, Default)]
 pub(crate) struct CoverFeed {
-    pending: Rc<RefCell<Option<crate::viz::CoverPixels>>>,
+    pending: Rc<RefCell<crate::viz::CoverUpdate>>,
 }
 
 impl CoverFeed {
-    /// 取走待送的封面像素,没有新的就给 `None`。
-    pub(crate) fn take(
-        &self,
-    ) -> Option<crate::viz::CoverPixels> {
-        self.pending.borrow_mut().take()
+    /// 取走这一帧的动作,取完回到 [`crate::viz::CoverUpdate::Unchanged`]。
+    pub(crate) fn take(&self) -> crate::viz::CoverUpdate {
+        core::mem::take(&mut *self.pending.borrow_mut())
     }
 
-    /// 换歌解出了新封面:排上队等下一帧取走。上一张还没被取走就直接顶掉 ——
+    /// 换歌了:先让点云退回渐变,别挂着上一首的图等新图。
+    fn clear(&self) {
+        *self.pending.borrow_mut() =
+            crate::viz::CoverUpdate::Clear;
+    }
+
+    /// 新封面解出来了:排上队等下一帧取走。上一个动作还没被取走就直接顶掉 ——
     /// 点云只显示当前这一首,过期的封面排队也没人要。
     fn replace(&self, pixels: crate::viz::CoverPixels) {
-        *self.pending.borrow_mut() = Some(pixels);
+        *self.pending.borrow_mut() =
+            crate::viz::CoverUpdate::Show(pixels);
     }
 }
 
@@ -448,7 +473,10 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
 /// 日期在**发出**请求时就戳上,而不是等结果回来:失败了也算今天试过,
 /// 否则请求一失败,此后每次进 Music 页都会再打一次。手动按 Daily 仍能重试。
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch_daily(weak: &slint::Weak<MainWindow>, deck: &Deck) {
+fn fetch_daily(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+) {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
     fetch_into(weak, deck, async {
@@ -490,10 +518,15 @@ fn fetch_into<Fut>(
 
 /// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
 #[cfg(not(target_arch = "wasm32"))]
-fn show(ui: &MainWindow, deck: &Deck, found: Vec<TrackDto>) {
+fn show(
+    ui: &MainWindow,
+    deck: &Deck,
+    found: Vec<TrackDto>,
+) {
     *deck.tracks.borrow_mut() = found;
     let loading =
-        loading_id(deck.playback.borrow().state()).map(str::to_owned);
+        loading_id(deck.playback.borrow().state())
+            .map(str::to_owned);
     push_rows(ui, deck, loading.as_deref());
 }
 
@@ -681,9 +714,16 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
         .expect("event loop must be running");
     }
 
+    // 点云也跟着清:与上面那两样同一条原则。少了这一步,取封面的那几百毫秒里
+    // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
+    // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
+    deck.cover.clear();
+
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
         let cover = deck.cover.clone();
+        let playback = deck.playback.clone();
+        let id = track.id.clone();
         slint::spawn_local(async move {
             // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
             // 同一次解码喂两处:界面的封面卡,以及点云的采样纹理。
@@ -692,6 +732,14 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     crate::cover::decode(&bytes)
                 && let Some(ui) = weak.upgrade()
             {
+                // 连按下一首时,先发的请求可能后回来。到这时它已经不是当前这首,
+                // 换上去就是「A 的封面配 B 的歌」—— 与 `app_core::play` 的代际
+                // 校验同一个道理,只是这里对得上 id 就够了。
+                if current_id(playback.borrow().state())
+                    != Some(id.as_str())
+                {
+                    return;
+                }
                 ui.set_cover_art(img);
                 cover.replace(pixels);
             }
@@ -735,7 +783,9 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             ui.set_playback_text(text.into());
             // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
             if playing {
-                ui.set_banner_text(slint::SharedString::new());
+                ui.set_banner_text(
+                    slint::SharedString::new(),
+                );
             }
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
@@ -923,18 +973,24 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+    use crate::viz::CoverUpdate;
 
-    /// 封面像素只交出一次:换歌那一帧给 `Some`,之后一直给 `None`。
+    /// 封面像素只交出一次:换歌那一帧给一个动作,之后一直是"没消息"。
     /// 一张封面是兆级的字节,每帧搬一次过 seam 纯属白耗。
     #[test]
     fn cover_feed_hands_pixels_over_once_per_track() {
         let feed = CoverFeed::default();
-        assert!(feed.take().is_none(), "没换歌不该有封面");
+        assert!(
+            matches!(feed.take(), CoverUpdate::Unchanged),
+            "没换歌不该有动作"
+        );
 
         feed.replace(pixels(2));
-        assert_eq!(feed.take().map(|p| p.width), Some(2));
         assert!(
-            feed.take().is_none(),
+            matches!(feed.take(), CoverUpdate::Show(p) if p.width == 2)
+        );
+        assert!(
+            matches!(feed.take(), CoverUpdate::Unchanged),
             "同一张被交出了两次"
         );
     }
@@ -947,8 +1003,36 @@ mod tests {
         let feed = CoverFeed::default();
         feed.replace(pixels(2));
         feed.replace(pixels(4));
-        assert_eq!(feed.take().map(|p| p.width), Some(4));
-        assert!(feed.take().is_none());
+        assert!(
+            matches!(feed.take(), CoverUpdate::Show(p) if p.width == 4)
+        );
+        assert!(matches!(
+            feed.take(),
+            CoverUpdate::Unchanged
+        ));
+    }
+
+    /// **换歌当场就要清,不等新封面。**
+    ///
+    /// 这是那个 bug 的回归测试:取封面要几百毫秒,而且常常根本取不到
+    /// (CDN 会过期、有的歌压根没有封面)。只在成功时换图的话,点云会挂着
+    /// 上一首的封面 —— 少则几百毫秒,多则一直到下次换歌
+    /// (见 `CONTEXT.md`「封面点云」)。
+    #[test]
+    fn cover_feed_clears_before_the_new_art_arrives() {
+        let feed = CoverFeed::default();
+        feed.replace(pixels(2));
+        // 上一首的图还排在队里没人取,这时候用户按了下一首。
+        feed.clear();
+
+        assert!(
+            matches!(feed.take(), CoverUpdate::Clear),
+            "换歌那一帧该是清空,而不是把上一首的图交出去"
+        );
+        assert!(matches!(
+            feed.take(),
+            CoverUpdate::Unchanged
+        ));
     }
 
     /// 边长 `side` 的纯色封面像素,只用来分辨是哪一张。
@@ -987,7 +1071,7 @@ mod tests {
     /// 下载、每条回来都从头出声,这是 bug 不是"手快"。
     #[test]
     fn tapping_the_track_that_is_already_loading_is_redundant()
-    {
+     {
         assert!(is_redundant_tap(
             &PlaybackState::Loading(track_with_id("1")),
             "1"
@@ -997,7 +1081,7 @@ mod tests {
     /// 正在加载别的歌:这一下该换歌,不算多余。
     #[test]
     fn tapping_a_different_track_while_loading_is_not_redundant()
-    {
+     {
         assert!(!is_redundant_tap(
             &PlaybackState::Loading(track_with_id("1")),
             "2"
@@ -1016,7 +1100,10 @@ mod tests {
     /// 空闲与失败态下的点击一律照常 —— 失败之后重试是常见动作。
     #[test]
     fn tapping_while_idle_or_failed_is_not_redundant() {
-        assert!(!is_redundant_tap(&PlaybackState::Idle, "1"));
+        assert!(!is_redundant_tap(
+            &PlaybackState::Idle,
+            "1"
+        ));
         assert!(!is_redundant_tap(
             &PlaybackState::Failed("直链已过期".to_owned()),
             "1"
@@ -1041,7 +1128,10 @@ mod tests {
     /// 拉的是昨天的:跨天失效,该重拉。
     #[test]
     fn daily_fetched_on_an_earlier_day_is_due() {
-        assert!(daily_is_due(Some(&20_260_729), &20_260_730));
+        assert!(daily_is_due(
+            Some(&20_260_729),
+            &20_260_730
+        ));
     }
 
     /// 只标出加载中的那一行,其余行不受影响。
@@ -1064,7 +1154,8 @@ mod tests {
     /// 没有歌在加载时,一行都不标。
     #[test]
     fn no_row_is_marked_when_nothing_is_loading() {
-        let batch = [track_with_id("1"), track_with_id("2")];
+        let batch =
+            [track_with_id("1"), track_with_id("2")];
         let rows = to_rows(&batch, None);
         assert!(rows.iter().all(|row| !row.loading));
     }
@@ -1072,7 +1163,8 @@ mod tests {
     /// 加载中的歌不在当前列表里(点完歌又搜了别的):一行不标,也不出错。
     #[test]
     fn a_loading_track_outside_the_list_marks_nothing() {
-        let batch = [track_with_id("1"), track_with_id("2")];
+        let batch =
+            [track_with_id("1"), track_with_id("2")];
         let rows = to_rows(&batch, Some("99"));
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| !row.loading));
@@ -1159,7 +1251,8 @@ mod tests {
     /// 证据。分不清的话,断网时会一首接一首地切下去,每首再熬一轮超时,
     /// 一分钟就把整个队列烧光,而用户得到的解释是零(见 `docs/adr/0013`)。
     #[test]
-    fn a_drained_source_reports_a_loss_only_when_it_gave_up() {
+    fn a_drained_source_reports_a_loss_only_when_it_gave_up()
+     {
         let playing = PlaybackState::Playing(track());
 
         assert!(
@@ -1167,7 +1260,9 @@ mod tests {
             "放空了且流放弃过,这就是断流"
         );
         assert!(
-            !should_report_loss(&playing, true, false, false),
+            !should_report_loss(
+                &playing, true, false, false
+            ),
             "放空了但流没放弃,那是正常放完,该切下一首"
         );
         // 两个出口必须互斥,否则同一刻既报错又切歌。
@@ -1178,7 +1273,9 @@ mod tests {
                 )
         );
         assert!(
-            !should_report_loss(&playing, false, false, true),
+            !should_report_loss(
+                &playing, false, false, true
+            ),
             "还没放空就报断流,声音还在放呢"
         );
         assert!(

@@ -11,8 +11,8 @@ pub use nav_glass::NavGlassControls;
 
 mod viz;
 pub use viz::{
-    VIZ_AUDIO_BYTES, VizControls, VizCover, VizImages,
-    VizPointer,
+    CoverUpdate, VIZ_AUDIO_BYTES, VizControls, VizCover,
+    VizImages, VizPointer,
 };
 
 // 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
@@ -277,7 +277,7 @@ pub fn run_with_renderers(
                         &VizControls {
                             time: viz_time,
                             audio,
-                            // 换歌解出新封面的那一帧才有值,取走即清空。
+                            // 换歌那一帧才有动作(清空/换图),取走即回到"没消息"。
                             // `CoverPixels` 就是 `VizCover`(见 viz.rs),
                             // 直接交出去,不逐字段再抄一遍兆级的像素。
                             cover: cover.take(),

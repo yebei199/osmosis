@@ -43,9 +43,21 @@ fn main() {
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
-                    cover: v.cover.as_ref().map(|c| {
-                        (c.width, c.height, c.rgba.as_slice())
-                    }),
+                    cover: match &v.cover {
+                        ui::CoverUpdate::Unchanged => {
+                            render3d::CoverUpdate::Unchanged
+                        }
+                        ui::CoverUpdate::Clear => {
+                            render3d::CoverUpdate::Clear
+                        }
+                        ui::CoverUpdate::Show(c) => {
+                            render3d::CoverUpdate::Show(
+                                c.width,
+                                c.height,
+                                c.rgba.as_slice(),
+                            )
+                        }
+                    },
                     pointer: render3d::Pointer {
                         x: v.pointer.x,
                         y: v.pointer.y,

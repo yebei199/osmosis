@@ -13,15 +13,30 @@ pub struct VizControls {
     pub time: f32,
     /// 频谱行在前、波形行在后,共 [`VIZ_AUDIO_BYTES`] 字节。
     pub audio: [u8; VIZ_AUDIO_BYTES],
-    /// **换歌解出新封面的那一帧**才有值:点云要采的封面像素。
-    ///
-    /// 平帧恒为 `None` —— 一张封面是兆级的字节,每帧搬一次纯属白耗。
-    /// 收到值的那一端据此换纹理并起一次切歌过渡。
-    pub cover: Option<VizCover>,
+    /// 这一帧点云的封面该怎么办。平帧恒为 [`CoverUpdate::Unchanged`] ——
+    /// 一张封面是兆级的字节,每帧搬一次纯属白耗。
+    pub cover: CoverUpdate,
     /// 视觉区里的指针,驱动涟漪与拖动旋转。
     pub pointer: VizPointer,
     /// 当前视觉预设的编号,见 `.slint` 的 `viz-preset`。越界由消费方兜底。
     pub preset: i32,
+}
+
+/// 点云封面这一帧的去向。
+///
+/// 三态而不是 `Option`:换歌与拿到新封面**是两件事**,中间隔着几百毫秒的网络。
+/// 两者挤进一个 `Option` 的话,「还没有新的」与「这一首没有」长得一样,
+/// 于是点云会一直挂着上一首的封面(见 `docs/adr/0013` 之后的那个 bug、
+/// 以及 `CONTEXT.md`「封面点云」)。
+#[derive(Default)]
+pub enum CoverUpdate {
+    /// 没有新消息,保持现状。绝大多数帧都是这个。
+    #[default]
+    Unchanged,
+    /// 换歌了,先退回渐变 —— 旧封面配新歌比空着更误导。
+    Clear,
+    /// 新封面到了,换上并起一次切歌过渡。
+    Show(VizCover),
 }
 
 /// 视觉区指针的一帧状态,位置归一到 0..1(左上原点)。

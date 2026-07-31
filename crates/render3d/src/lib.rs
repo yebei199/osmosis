@@ -67,6 +67,22 @@ pub struct Pointer {
     pub active: bool,
 }
 
+/// 点云封面这一帧的去向。镜像 `ui::viz::CoverUpdate`。
+///
+/// 三态而不是 `Option`:换歌与拿到新封面是两件事,中间隔着几百毫秒的网络,
+/// 而封面常常根本拿不到。两者挤进一个 `Option`,点云就会一直挂着上一首
+/// (见 `docs/adr/0014`)。
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CoverUpdate<'a> {
+    /// 没有新消息,保持现状。绝大多数帧都是这个。
+    #[default]
+    Unchanged,
+    /// 换歌了,退回渐变。
+    Clear,
+    /// 新封面到了:(宽, 高, RGBA8)。
+    Show(u32, u32, &'a [u8]),
+}
+
 /// 驱动一帧播放页视觉要的全部输入,POD。镜像 `ui::VizControls` 加上视口尺寸。
 ///
 /// 打包而不是摊成一串参数:这几样每加一件,`render_viz_frame` 的签名就长一截,
@@ -77,8 +93,8 @@ pub struct VizFrame<'a> {
     pub time: f32,
     /// `spectrum` 布局的载荷,频谱行在前。只用前 512 字节拆频段。
     pub audio: &'a [u8],
-    /// **换歌解出新封面的那一帧**才有值:(宽, 高, RGBA8)。
-    pub cover: Option<(u32, u32, &'a [u8])>,
+    /// 这一帧点云的封面该怎么办。平帧恒为 [`CoverUpdate::Unchanged`]。
+    pub cover: CoverUpdate<'a>,
     /// 视觉区里的指针。
     pub pointer: Pointer,
     /// 视觉预设的编号,越界回默认档。
@@ -384,8 +400,12 @@ impl Scene {
         self.last_time = Some(time);
         self.transition.advance(delta);
 
-        if let Some((w, h, rgba)) = cover {
-            self.apply_cover(w, h, rgba);
+        match cover {
+            CoverUpdate::Unchanged => {}
+            CoverUpdate::Clear => self.clear_cover(),
+            CoverUpdate::Show(w, h, rgba) => {
+                self.apply_cover(w, h, rgba);
+            }
         }
 
         self.apply_pointer(&pointer, delta);
@@ -656,6 +676,28 @@ impl Scene {
             cloud::pointer_to_plane(pointer.x, pointer.y)
         {
             self.ripples.spawn(x, y);
+        }
+    }
+
+    /// 换歌那一刻:点云退回渐变,不挂着上一首的封面等新图。
+    ///
+    /// 只把 `has_cover` 落回 0 —— 着色器据此走默认渐变色,纹理本身留着不动:
+    /// 换下一首时 [`Self::apply_cover`] 会把它轮成「上一首」,渐变过渡还要用。
+    ///
+    /// 不起过渡:这不是"换到另一张封面",而是"暂时没有封面",没有可渐变的两端。
+    fn clear_cover(&mut self) {
+        let Some(handle) = self.cloud_material.clone()
+        else {
+            return;
+        };
+        let mut materials = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<cloud::CloudMaterial>>();
+        if let Some(mut material) =
+            materials.get_mut(&handle)
+        {
+            material.params.has_cover = 0.0;
         }
     }
 
