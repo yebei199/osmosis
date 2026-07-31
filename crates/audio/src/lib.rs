@@ -97,6 +97,20 @@ fn runtime() -> &'static Runtime {
     })
 }
 
+/// 起播前先攒够多少字节。
+///
+/// rodio 是在 cpal 的音频回调里直接向解码器要采样的,而本 crate 交给它的流
+/// **读到没下完的位置就阻塞**。两者叠起来:网络一旦跟不上实时码率,阻塞就发生在
+/// 声卡回调里,设备欠载,听感是"卡在原地反复放同一小段",而 `Player::empty()`
+/// 仍为假、`position()` 冻住 —— 上层看不出任何异常,也就永远不会自己恢复。
+///
+/// 默认的 256KB 对无损只有两秒左右,正是"开头卡住"的量级。4MB 约合无损半分钟,
+/// 代价只是起播多等一会儿(下载器一直在后台跑,不是等满才出声)。
+///
+/// ponytail: 这只把起播那一段垫厚,治不了曲中掉速 —— 真要治得把解码挪出音频
+/// 回调(解码线程 + 有界通道 + `ChannelSource`),等量到确实是曲中欠载再做。
+const PREFETCH_BYTES: u64 = 4 << 20;
+
 /// 把一条直链变成可播放的流式音频:开流 + 解码,全在后台 runtime 上完成。
 ///
 /// 开流与解码不拆成两个公开函数,是因为它们**必须在同一个 runtime 上**跑。
@@ -116,7 +130,8 @@ pub async fn load(url: &str) -> Result<Loaded, AudioError> {
             let stream = StreamDownload::new_http(
                 parsed,
                 TempStorageProvider::default(),
-                Settings::default(),
+                Settings::default()
+                    .prefetch_bytes(PREFETCH_BYTES),
             )
             .await
             .map_err(|e| {
