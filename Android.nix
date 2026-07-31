@@ -34,6 +34,9 @@ let
   };
 
   sdk = "${android.androidsdk}/libexec/android-sdk";
+  ndkBin = "${sdk}/ndk/${ndkVersion}/toolchains/llvm/prebuilt/linux-x86_64/bin";
+  # 与 xtask 的 MIN_SDK、gradle 的 minSdk 是同一个数。
+  minSdk = "26";
 in
 pkgs.mkShell {
   buildInputs = [
@@ -50,6 +53,29 @@ pkgs.mkShell {
   ANDROID_NDK_HOME = "${sdk}/ndk/${ndkVersion}";
   ANDROID_NDK_ROOT = "${sdk}/ndk/${ndkVersion}";
   JAVA_HOME = "${pkgs.jdk17}";
+
+  # 依赖树里 blake3、audiopus_sys 这类带 C 代码的 crate 由 cc-rs 驱动编译,而 cc-rs 找
+  # 交叉编译器的顺序是 CC_<target> → CC → 按三元组猜 `<triple>-clang`。前两条都不设就
+  # 落到第三条,可 NDK r23 起不带 API level 的 `aarch64-linux-android-clang` 已经不存在
+  # (这里只有 `…android26-clang` 这种)。而外层 devshell 通常导出 CC=gcc,那更糟:cc-rs
+  # 拿宿主 gcc 去编 ARM NEON 代码,报的是 `arm_neon.h: No such file or directory`。
+  # 目标专用变量优先级最高,设了两头都治。
+  #
+  # `cargo xtask android` 从不受影响 —— 它走 cargo-ndk,那个工具自己会设这些。踩坑的是
+  # 直接 `cargo check --target …` 的路径,也就是 justfile 的 ci-cross。CI 里对应的是
+  # .github/workflows/ci.yml 那个「确认 Android SDK 与 NDK 就位」step,本文件补齐的正是它。
+  CC_aarch64_linux_android = "${ndkBin}/aarch64-linux-android${minSdk}-clang";
+  AR_aarch64_linux_android = "${ndkBin}/llvm-ar";
+  CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "${ndkBin}/aarch64-linux-android${minSdk}-clang";
+
+  # armv7 的 rust 三元组是 armv7-,NDK 的包装脚本却叫 armv7a-,两边对不上是常见的翻车点。
+  CC_armv7_linux_androideabi = "${ndkBin}/armv7a-linux-androideabi${minSdk}-clang";
+  AR_armv7_linux_androideabi = "${ndkBin}/llvm-ar";
+  CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = "${ndkBin}/armv7a-linux-androideabi${minSdk}-clang";
+
+  CC_x86_64_linux_android = "${ndkBin}/x86_64-linux-android${minSdk}-clang";
+  AR_x86_64_linux_android = "${ndkBin}/llvm-ar";
+  CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${ndkBin}/x86_64-linux-android${minSdk}-clang";
 
   # audiopus_sys 内嵌的 libopus 写着 cmake_minimum_required(VERSION <3.5),而本 shell
   # 里的 cmake 是 4.x,它已经删掉了对 3.5 以下的兼容,配置阶段直接报错退出。桌面端不
