@@ -29,8 +29,10 @@ jobs:
 
       # femtovg 后端在构建期通过 pkg-config 链接 fontconfig;
       # audio 走 cpal→alsa,syncplay 走 libopus 的 C 绑定。
+      # protoc 是 server/build.rs 的 codegen 用的 —— tonic-prost-build 不自带,
+      # 要的是系统里那一个。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
 
       # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
       - run: cargo test
@@ -43,19 +45,23 @@ jobs:
   # 这些 target 编不过的假设,等真要做 iOS 时才发现。见 issue #1。
   cross-check:
     name: check ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: aarch64-linux-android
             package: app-android
+            runner: ubuntu-latest
           - target: wasm32-unknown-unknown
             package: app-web
-          # iOS 只验证编译。真实打包需要 macOS runner 上的 Xcode 与 codesign,
-          # 那不在本 workflow 的范围内。
+            runner: ubuntu-latest
+          # iOS 只验证编译,但仍然得在 macOS 上跑:依赖树里带 C 代码的 crate
+          # (ring、blake3 等)的 build.rs 走 cc-rs,对 Apple target 会去找 xcrun,
+          # Linux runner 上没有。真实打包还需要 codesign,那不在本 workflow 范围内。
           - target: aarch64-apple-ios
             package: app-ios
+            runner: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -65,9 +71,22 @@ jobs:
 
       # Slint 的 android 后端在 build.rs 里编译一个 Java helper,因此连
       # `cargo check` 都需要 platform jar。ubuntu-latest 镜像自带 Android SDK。
-      - name: 确认 Android SDK 就位
+      #
+      # NDK 的 clang 还得显式指出来:依赖树里 blake3 这类带 C 代码的 crate 由
+      # cc-rs 驱动编译,而 cc-rs 找的是 `aarch64-linux-android-clang` —— 那个不带
+      # API level 的名字在 r23 之后的 NDK 里根本不存在,得指到 `…android26-clang`。
+      # 26 与 xtask 的 MIN_SDK、gradle 的 minSdk 是同一个数。
+      - name: 确认 Android SDK 与 NDK 就位
         if: matrix.target == 'aarch64-linux-android'
-        run: test -n "$ANDROID_HOME" && ls "$ANDROID_HOME/platforms"
+        run: |
+          test -n "$ANDROID_HOME" && ls "$ANDROID_HOME/platforms"
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/aarch64-linux-android26-clang"
+          {
+            echo "CC_aarch64_linux_android=$bin/aarch64-linux-android26-clang"
+            echo "AR_aarch64_linux_android=$bin/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android26-clang"
+          } >> "$GITHUB_ENV"
 
       - run: cargo check -p ${{ matrix.package }} --target ${{ matrix.target }}
 
