@@ -34,12 +34,18 @@ jobs:
       - name: 安装 native 依赖
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
 
+      # 每条 cargo 都带 `--config profile.dev.package."*".opt-level=0`,把根 Cargo.toml
+      # 里那条依赖优化按掉。那条存在的理由是本地 3D 的帧率(见 Cargo.toml 的注释),
+      # 而 CI 一帧都不画 —— 实测把依赖树按 -O3 编掉了三十多分钟,买到的东西这里用不上。
+      # 用命令行 `--config` 而不是往 .cargo/config.toml 里写:它的优先级高于 manifest,
+      # 语义明确,不依赖 config 与 manifest 谁覆盖谁。
+      #
       # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
-      - run: cargo test
-      - run: cargo test -p audio -p syncplay -p server -p xtask
+      - run: cargo test --config 'profile.dev.package."*".opt-level=0'
+      - run: cargo test --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
 
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
+      - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -- -D warnings
+      - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
 
   # 本地跑不动的端,至少保证它们**能编译** —— 否则 app-core/api 会悄悄长出
   # 这些 target 编不过的假设,等真要做 iOS 时才发现。见 issue #1。
@@ -86,7 +92,8 @@ jobs:
             echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android26-clang"
           } >> "$GITHUB_ENV"
 
-      - run: cargo check -p ${{ matrix.package }} --target ${{ matrix.target }}
+      # 同样按掉依赖优化,理由见 test job。
+      - run: cargo check --config 'profile.dev.package."*".opt-level=0' -p ${{ matrix.package }} --target ${{ matrix.target }}
 
   # 架构约束的可执行形式。这些断言一旦失守,重构就白做了。
   #
