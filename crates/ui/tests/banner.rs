@@ -12,7 +12,9 @@ use i_slint_backend_testing as testing;
 use ui::MainWindow;
 
 /// 当前树里的横幅。`None` = 它压根不在,不是"在但空着"。
-fn banner(ui: &MainWindow) -> Option<testing::ElementHandle> {
+fn banner(
+    ui: &MainWindow,
+) -> Option<testing::ElementHandle> {
     testing::ElementHandle::find_by_element_id(
         ui,
         "MainWindow::banner",
@@ -25,7 +27,8 @@ fn banner(ui: &MainWindow) -> Option<testing::ElementHandle> {
 /// 两个方向都要钉:只钉"出现"的话,一个永远显示的横幅照样通过,
 /// 而那意味着用户放好一首歌之后还挂着"没网了"。
 #[test]
-fn the_banner_shows_up_only_when_there_is_something_to_say() {
+fn the_banner_shows_up_only_when_there_is_something_to_say()
+{
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
 
