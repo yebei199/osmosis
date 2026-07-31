@@ -1,13 +1,19 @@
 # Rust
 /target
 /.docker-target
+/target-android
 
 # Build artifacts
 /dist
-/android/app/src/main/jniLibs
-/android/app/build
-/android/build
-/android/.gradle
+# gradle 的产物目录会随工程位置变动,用 pattern 而非绝对路径
+**/.gradle/
+**/jniLibs/
+/apps/android/gradle/app/build
+/apps/android/gradle/build
+
+# e2e(test/e2e 那套 bun/playwright)
+node_modules/
+/test/e2e/test-results
 
 # IDE / misc
 *.iml

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  宿主页面。slint 的 winit 后端在 wasm 上会去找 id 为 `canvas` 的元素,
+  名字不能改。
+-->
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>slint_study (web)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1e1e1e; overflow: hidden; }
+
+      /* slint 会给 canvas 写 inline style,把它钉在内容的 preferred size 上
+         (一个贴在左上角的 252×379 小画布)。这里用样式表里的 !important 压过去,
+         让它铺满视口 —— winit 的 ResizeObserver 会把新尺寸回灌给 slint,触发一次
+         真正的重排,而不是拉伸像素。
+
+         !important 必须写在样式表里。它只能压过 inline 声明;若写进 inline,
+         winit 的 style.setProperty 改的是同一条声明,会把它连同优先级一起覆盖掉。
+
+         ── 已知缺陷:devicePixelRatio ≠ 1(HiDPI / 系统缩放)────────────────────
+
+         症状有三个,是同一个根因:布局放大 dpr 倍并被裁切;渲染模糊(绘制缓冲区
+         只有 CSS 尺寸大小,没乘 dpr);指针坐标偏移 dpr 倍 —— 点击要落在视觉位置的
+         1/dpr 处才命中。
+
+         根因是一个几何收缩的反馈回路,在 i-slint-backend-winit 的
+         winitwindowadapter.rs 里:
+           1. winit 的 ResizeObserver 把 canvas 的 CSS 像素当作物理像素报给 slint;
+           2. slint 取 devicePixelRatio 作 scale factor,算出逻辑尺寸 = 物理 ÷ dpr;
+           3. slint 按逻辑尺寸重写 canvas 的 CSS 宽高(见该文件里标着
+              "Workaround for winit not sync'ing CSS size" 的那段);
+           4. CSS 尺寸变了 → ResizeObserver 再次触发 → 回到 1,每轮再除一次 dpr。
+         一直缩到撞上布局的 min-width 才停。所以 dpr=2 下无论初始尺寸如何,canvas
+         最终都精确停在 252×415 —— 那正是本项目布局的最小尺寸。dpr=1 时"除以 1"
+         是恒等变换,回路不收缩,一切正常;只在 dpr=1 下测试会全绿,什么都发现不了。
+
+         这条 CSS 不引入该缺陷,也不加重它:去掉它,HiDPI 上同样是裁切、模糊、
+         指针偏移(已分别实测基线与本方案,症状同类)。
+
+         试过并失败的三条路,别再走一遍:
+           · Rust 侧 window().set_size(PhysicalSize 或 LogicalSize):同样掉进回路,
+             塌缩到 252×415。两种尺寸类型结果完全一致。
+           · canvas CSS 尺寸设为 视口×dpr,再 transform: scale(1/dpr) 缩回:渲染与
+             布局全对、清晰,但 slint 不理会 CSS transform,指针映射彻底失效,点不动。
+           · SLINT_SCALE_FACTOR 环境变量存在,但走 std::env::var,
+             wasm32-unknown-unknown 上读不到,浏览器也无法注入。
+
+         注意:以上结论全部来自 Chromium 的 deviceScaleFactor 模拟(dpr = 1 / 1.5 / 2),
+         未在真实 HiDPI 硬件上验证过。根因在 slint 的 wasm 后端而非本文件;
+         上游修好后,删掉这里的 !important 与本段注释即可。 */
+      canvas {
+        display: block;
+        width: 100vw !important;
+        height: 100vh !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+      // wasm-bindgen 以 crate 名(下划线形式)命名产物。
+      import init from "./app_web.js";
+      init();
+    </script>
+  </body>
+</html>

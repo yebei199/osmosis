@@ -1,0 +1,20 @@
+[package]
+name = "api"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "把领域意图翻译成一次网络往返,并吸收各端运行时能力的差异"
+
+[dependencies]
+contract.workspace = true
+serde.workspace = true
+# 不开 default-features:那会拉进 native-tls(openssl)。开发服务端走明文 HTTP,
+# 等真正需要 HTTPS 时再加 "rustls-tls"。
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+# wasm 上没有线程,也没有 tokio runtime;fetch 由浏览器驱动。
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

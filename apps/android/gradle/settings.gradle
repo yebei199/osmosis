@@ -1,0 +1,32 @@
+// 镜像放在 google()/mavenCentral() 之前:gradle 按声明顺序挨个试,命中即止。
+//
+// 直连 Google Maven 会让每次 APK 构建白白多花几分钟:dl.google.com 的部分 IP
+// 在国内被黑洞(抓到过 SYN-SENT 到 74.125.68.136:443 一直挂着),gradle 只能干等
+// TCP 超时。实测同一个 AGP pom,阿里云 0.05s,直连 3.9s。
+//
+// 用阿里云而不是清华/USTC:那两家没有 Maven 镜像(只镜像发行版、PyPI、CRAN、Cargo
+// 等),所有路径都是 404。
+//
+// 保留 google()/mavenCentral() 作兜底:阿里云偶尔缺件时自动回落,不会把构建卡死。
+// CI 不跑 gradle(只 cargo check -p app-android),故此改动不影响 CI。
+pluginManagement {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "slint_study"
+include ':app'

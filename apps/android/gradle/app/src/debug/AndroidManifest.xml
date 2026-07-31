@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 变体的 manifest,由 AGP 与 main/AndroidManifest.xml 合并。
+
+  Android 9(API 28)起默认禁止明文 HTTP:对 http:// 的请求会被
+  NetworkSecurityPolicy 直接掐断。开发服务端走的正是明文 HTTP,并且通过
+  `adb reverse tcp:3000 tcp:3000` 暴露在手机的 127.0.0.1 上。
+
+  这个开关只存在于 debug 变体里,release APK 不受影响。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:usesCleartextTraffic="true"
+        tools:targetApi="28" />
+</manifest>

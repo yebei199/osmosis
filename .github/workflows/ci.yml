@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  # dev 上的日常 push 不触发 —— 那里的验证靠本地 `just ci`。
+  push:
+    branches: [master]
+  pull_request:
+  # 想在 dev 上手动跑一次时用。
+  workflow_dispatch:
+
+# 这里刻意不设 RUSTFLAGS。它进 cargo 的构建指纹,本地 `just ci` 与 `just desktop-dev`
+# 因此会各自维护一套完整的依赖树产物。CI 是干净 checkout 感觉不到,但 justfile 里那几条
+# 命令要求与本文件逐字相同,所以两边一起撤。warning 由下面 clippy 的 `-- -D warnings`
+# 拦截 —— 那是传给最终 crate 的参数,不进依赖指纹。
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 桌面链路:workspace 的 default-members,外加 server 与 xtask。
+  test:
+    name: test + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # femtovg 后端在构建期通过 pkg-config 链接 fontconfig;
+      # audio 走 cpal→alsa,syncplay 走 libopus 的 C 绑定。
+      # protoc 是 server/build.rs 的 codegen 用的 —— tonic-prost-build 不自带,
+      # 要的是系统里那一个。
+      - name: 安装 native 依赖
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
+
+      # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
+      - run: cargo test
+      - run: cargo test -p audio -p syncplay -p server -p xtask
+
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
+
+  # 本地跑不动的端,至少保证它们**能编译** —— 否则 app-core/api 会悄悄长出
+  # 这些 target 编不过的假设,等真要做 iOS 时才发现。见 issue #1。
+  #
+  # aarch64-apple-ios 暂时不在此列。它得在 macOS runner 上跑 —— 依赖树里带 C 代码的
+  # crate(ring、blake3 等)的 build.rs 走 cc-rs,对 Apple target 会去找 xcrun,
+  # Linux runner 给不了 —— 而换上 macos-latest 之后仍有别的问题没查。iOS 这个端本来
+  # 也还没有人在真机上跑过,先摘掉,等有 Mac 了再连同工具链一起补。
+  # `架构边界` 里的 web_ios_free_of_3d 仍然覆盖 app-ios 的依赖形状。
+  cross-check:
+    name: check ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            package: app-android
+          - target: wasm32-unknown-unknown
+            package: app-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      # Slint 的 android 后端在 build.rs 里编译一个 Java helper,因此连
+      # `cargo check` 都需要 platform jar。ubuntu-latest 镜像自带 Android SDK。
+      #
+      # NDK 的 clang 还得显式指出来:依赖树里 blake3 这类带 C 代码的 crate 由
+      # cc-rs 驱动编译,而 cc-rs 找的是 `aarch64-linux-android-clang` —— 那个不带
+      # API level 的名字在 r23 之后的 NDK 里根本不存在,得指到 `…android26-clang`。
+      # 26 与 xtask 的 MIN_SDK、gradle 的 minSdk 是同一个数。
+      - name: 确认 Android SDK 与 NDK 就位
+        if: matrix.target == 'aarch64-linux-android'
+        run: |
+          test -n "$ANDROID_HOME" && ls "$ANDROID_HOME/platforms"
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/aarch64-linux-android26-clang"
+          {
+            echo "CC_aarch64_linux_android=$bin/aarch64-linux-android26-clang"
+            echo "AR_aarch64_linux_android=$bin/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android26-clang"
+          } >> "$GITHUB_ENV"
+
+      - run: cargo check -p ${{ matrix.package }} --target ${{ matrix.target }}
+
+  # 架构约束的可执行形式。这些断言一旦失守,重构就白做了。
+  #
+  # 检查逻辑住在 xtask 里,不是这个 yaml 里的 bash —— 否则本地永远没法在推送前
+  # 跑到同一份代码。`just ci` 调的是同一个命令。见 docs/adr/0004。
+  boundaries:
+    name: 架构边界
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask boundaries

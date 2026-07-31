@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 内核(ANDROID_PARANOID_NETWORK)把 AF_INET socket 的创建权限绑在
+         AID_INET(gid 3003)上,而这个组由 INTERNET 权限授予。没有它,socket() 直接
+         EACCES —— 连 bind 127.0.0.1 都不行,不只是访问外网。
+         本 app 两处都要:api crate 的「Check server」(HTTP 打开发机),以及 mcp
+         feature 下内嵌的 MCP server(监听 127.0.0.1,见 apps/android/src/lib.rs)。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="@string/app_name"
+        android:theme="@style/Theme.SlintStudy"
+        android:allowBackup="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize">
+            <!-- NativeActivity 加载这个库,并调用 android-activity 胶水代码,
+                 后者会运行我们的 android_main。 -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="slint_study" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

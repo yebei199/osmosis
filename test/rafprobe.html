@@ -1,0 +1,174 @@
+<meta charset="utf-8">
+<title>rAF vs WebGPU canvas</title>
+<style>
+  body { font: 14px/1.6 monospace; background: #111; color: #eee; padding: 24px; }
+  canvas { border: 1px solid #444; display: block; margin: 12px 0; }
+  button { font: inherit; padding: 6px 14px; margin-right: 8px; }
+  #out { white-space: pre; margin-top: 16px; }
+</style>
+
+<h3>rAF 速率:定位是哪项配置触发 Chrome 降频</h3>
+<p>把 Slint 页与本页的差异逐项开进来,每档测 2 秒。Slint 页实测:backing 1605×1984、
+CSS 1284×1587(dpr 1.25 缩放)、每帧 ~1ms JS、回调间隔中位 13.9ms(72Hz,144 的分频)。</p>
+
+<button id="sweep">自动扫描全部档位</button>
+<button id="devonly">只测 device 档(6 秒)</button>
+<div id="stage"></div>
+<div id="out">等待…</div>
+
+<script type="module">
+const out = document.getElementById('out');
+const stage = document.getElementById('stage');
+const log = (s) => { out.textContent += s + '\n'; };
+
+// 真实页面拦截到的 requestDevice descriptor,逐字。
+const RENDER3D_DESC = {
+  label: 'render3d-shared',
+  requiredFeatures: [
+    'depth-clip-control', 'depth32float-stencil8', 'texture-compression-bc',
+    'texture-compression-bc-sliced-3d', 'timestamp-query', 'indirect-first-instance',
+    'rg11b10ufloat-renderable', 'bgra8unorm-storage', 'float32-filterable',
+    'float32-blendable', 'dual-source-blending', 'clip-distances',
+  ],
+  requiredLimits: {
+    maxTextureDimension1D: 16384, maxTextureDimension2D: 16384,
+    maxTextureDimension3D: 2048, maxTextureArrayLayers: 2048,
+    maxBindGroups: 4, maxBindingsPerBindGroup: 1000,
+    maxDynamicUniformBuffersPerPipelineLayout: 10, maxDynamicStorageBuffersPerPipelineLayout: 8,
+    maxSampledTexturesPerShaderStage: 48, maxSamplersPerShaderStage: 16,
+    maxStorageBuffersPerShaderStage: 16, maxStorageTexturesPerShaderStage: 8,
+    maxUniformBuffersPerShaderStage: 12, maxUniformBufferBindingSize: 65536,
+    maxStorageBufferBindingSize: 2147483644,
+    minUniformBufferOffsetAlignment: 256, minStorageBufferOffsetAlignment: 256,
+    maxVertexBuffers: 8, maxBufferSize: 4294967292, maxVertexAttributes: 30,
+    maxVertexBufferArrayStride: 2048, maxInterStageShaderVariables: 28,
+    maxColorAttachments: 8, maxColorAttachmentBytesPerSample: 128,
+    maxComputeWorkgroupStorageSize: 49152, maxComputeInvocationsPerWorkgroup: 1024,
+    maxComputeWorkgroupSizeX: 1024, maxComputeWorkgroupSizeY: 1024,
+    maxComputeWorkgroupSizeZ: 64, maxComputeWorkgroupsPerDimension: 65535,
+  },
+};
+
+let device = null, maxedDevice = null;
+async function initGpu() {
+  if (device) return true;
+  if (!navigator.gpu) { log('没有 WebGPU'); return false; }
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) { log('requestAdapter null'); return false; }
+  device = await adapter.requestDevice();
+  // 复刻 render3d 的 device:descriptor 逐字来自真实页面的 requestDevice 拦截
+  // (2026-07-19,wgpu 29 过滤后 Chrome 实际接受的形态)。canvas 的 getConfiguration()
+  // 看不到 device 级差异,这是配置排平后仅剩的嫌疑。
+  // Chrome 拒收时不抛异常,而是返回「出生即丢失」的 device,故用 device.lost 竞速检测。
+  // 先把本页拿到的 adapter 和 descriptor 的差集亮出来:多显卡机器上 Chrome 可能
+  // 给不同页面不同 adapter,descriptor 在真实页面能过、在这里被拒,多半就是这个。
+  log(`adapter: ${adapter.info?.vendor ?? '?'} ${adapter.info?.architecture ?? ''} ${adapter.info?.description ?? ''}`);
+  const missingF = RENDER3D_DESC.requiredFeatures.filter(f => !adapter.features.has(f));
+  if (missingF.length) log('本页 adapter 缺的 feature: ' + missingF.join(', '));
+  const overL = Object.entries(RENDER3D_DESC.requiredLimits)
+    .filter(([k, v]) => typeof adapter.limits[k] === 'number'
+      && (k.startsWith('min') ? v < adapter.limits[k] : v > adapter.limits[k]))
+    .map(([k, v]) => `${k}(要 ${v},有 ${adapter.limits[k]})`);
+  if (overL.length) log('超出本页 adapter 的 limit: ' + overL.join(', '));
+  try {
+    // 规范:一个 adapter 只能 requestDevice 一次(consumed)。默认 device 已把上面
+    // 那个耗掉了,这里必须再要一个新 adapter。
+    const adapter2 = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+    const d = await adapter2.requestDevice(RENDER3D_DESC);
+    d.lost.then(info => log(`render3d device 丢失: reason=${info.reason} ${info.message}`));
+    const lost = await Promise.race([
+      d.lost.then(() => true),
+      new Promise(r => setTimeout(() => r(false), 120)),
+    ]);
+    if (!lost) { maxedDevice = d; log('render3d device 建成'); }
+  } catch (e) { log('render3d device 被拒(异常): ' + e.message); }
+  return true;
+}
+
+// 一档:按配置建 canvas,rAF 循环 2 秒,每帧 clear+submit(可选),量回调间隔。
+function runCase(cfg) {
+  return new Promise((resolve) => {
+    const dev = cfg.maxed ? maxedDevice : device;
+    if (!dev) { log(`${cfg.name.padEnd(30)} 跳过(device 不可用)`); resolve(); return; }
+    const c = document.createElement('canvas');
+    c.width = cfg.w; c.height = cfg.h;
+    if (cfg.cssW) { c.style.width = cfg.cssW + 'px'; c.style.height = cfg.cssH + 'px'; }
+    stage.replaceChildren(c);
+    const ctx = c.getContext('webgpu');
+    ctx.configure({
+      device: dev,
+      format: cfg.format ?? navigator.gpu.getPreferredCanvasFormat(),
+      alphaMode: cfg.alpha,
+    });
+    const ds = [];
+    let last = 0;
+    const t0 = performance.now();
+    (function loop(t) {
+      if (last) ds.push(t - last);
+      last = t;
+      if (cfg.busyMs) { const e = performance.now() + cfg.busyMs; while (performance.now() < e); }
+      if (cfg.present) {
+        // submits > 1 时,后续的 submit 是空命令缓冲 —— 复刻「每帧多次 queue.submit」
+        // 的形态(Slint 页实测每帧 2 次)。
+        for (let i = 0; i < (cfg.submits ?? 1); i++) {
+          const enc = dev.createCommandEncoder();
+          if (i === 0) {
+            const pass = enc.beginRenderPass({ colorAttachments: [{
+              view: ctx.getCurrentTexture().createView(),
+              clearValue: { r: 0.1, g: 0.15, b: 0.3, a: 1 }, loadOp: 'clear', storeOp: 'store',
+            }]});
+            pass.end();
+          }
+          dev.queue.submit([enc.finish()]);
+        }
+      }
+      if (performance.now() - t0 < 2000) requestAnimationFrame(loop);
+      else {
+        ds.sort((a, b) => a - b);
+        const med = ds[ds.length >> 1], p90 = ds[Math.floor(ds.length * 0.9)];
+        log(`${cfg.name.padEnd(30)} 中位 ${med.toFixed(1)}ms(${(1000 / med).toFixed(0)}Hz) p90 ${p90.toFixed(1)}`);
+        ctx.unconfigure();
+        resolve();
+      }
+    })(performance.now());
+  });
+}
+
+// 差异逐项开进来。base 是上次实测 142Hz 的配置;slint-* 逐步逼近 Slint 页的真实形态。
+const CASES = [
+  { name: 'base(1485x984 premul)',      w: 1485, h: 984,  alpha: 'premultiplied', present: true },
+  { name: 'slint 尺寸(1605x1984)',      w: 1605, h: 1984, alpha: 'premultiplied', present: true },
+  { name: '+CSS 1.25x 缩放',            w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'premultiplied', present: true },
+  { name: '+alpha=opaque',              w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true },
+  { name: '+每帧 1ms JS',               w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, busyMs: 1 },
+  { name: 'opaque 单独(base 尺寸)',     w: 1485, h: 984,  alpha: 'opaque', present: true },
+  { name: '不呈现只 rAF(对照)',         w: 1605, h: 1984, alpha: 'opaque', present: false },
+  // Slint 页 getConfiguration() 实测的完整形态:rgba8unorm(非 Chrome 首选的 bgra8unorm)。
+  // 非首选格式可能让合成器走不了零拷贝路径 —— 已验:不触发,145Hz。
+  { name: 'format=rgba8unorm(=slint)', w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
+  // 运行环境档位:canvas 配置全排平之后剩下的两个差异。
+  { name: '每帧 2 次 submit(=slint)',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', submits: 2 },
+];
+
+// device 档单独跑:上面那些已多轮验证为 145Hz,重扫只会增加切后台污染的机会。
+const DEVICE_CASES = [
+  { name: 'render3d device',          w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true },
+  { name: 'render3d device+2submit',  w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm', maxed: true, submits: 2 },
+  { name: '默认 device(对照)',          w: 1605, h: 1984, cssW: 1284, cssH: 1587, alpha: 'opaque', present: true, format: 'rgba8unorm' },
+];
+
+// 清屏必须在 initGpu **之前**:它在里面打 adapter/差集/丢失原因的诊断,后清会全部抹掉。
+document.getElementById('sweep').onclick = async () => {
+  out.textContent = '';
+  if (!await initGpu()) return;
+  for (const cfg of [...CASES, ...DEVICE_CASES]) await runCase(cfg);
+  log('--- 扫描完成');
+};
+
+document.getElementById('devonly').onclick = async () => {
+  out.textContent = '';
+  if (!await initGpu()) return;
+  for (const cfg of DEVICE_CASES) await runCase(cfg);
+  log('--- device 档完成');
+};
+</script>

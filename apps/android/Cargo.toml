@@ -1,0 +1,33 @@
+[package]
+name = "app-android"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Android 平台入口:被 NativeActivity 加载的 cdylib"
+
+[lib]
+# 名字必须与 AndroidManifest.xml 里的 `android.app.lib_name` 一致。
+name = "slint_study"
+# NativeActivity 只能加载动态库。这里不需要 rlib —— 桌面链路走 apps/desktop。
+crate-type = ["cdylib"]
+
+[dependencies]
+ui.workspace = true
+log.workspace = true
+android_logger.workspace = true
+# android 上渲染器强制是 skia(见 i-slint-backend-selector),unstable-wgpu-29
+# 会把它切到 wgpu 路径 —— 纹理共享的前提。native-activity 特性由
+# backend-android-activity-06 启用,与 bevy_android 共享同一个 android-activity 0.6,
+# 故其 wgpu device 可跨库共享。
+slint = { workspace = true, features = [
+    "backend-android-activity-06",
+    "unstable-wgpu-29",
+] }
+# 硬依赖,理由同 apps/desktop。
+render3d.workspace = true
+
+[features]
+default = []
+# 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 android 这边有一处不同,
+# 由 src/lib.rs 兜住:SLINT_MCP_PORT 是**构建期**的(APK 由系统启动,进程拿不到运行时环境变量)。
+mcp = ["slint/mcp"]

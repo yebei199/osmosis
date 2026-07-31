@@ -1,0 +1,457 @@
+syntax = "proto3";
+
+// bang-dream 音乐聚合层的对外契约。
+//
+// 这里只有领域模型,没有任何平台专有字段 —— 各平台的原始结构在 Provider 内部翻译完毕,
+// 见 docs/adr/0002。Track 由 (platform, id) 联合标识,不做跨平台匹配,见 docs/adr/0003。
+package bangdream.music.v1;
+
+option go_package = "github.com/yebei199/bang-dream/gen/music/v1;musicv1";
+
+// ============ 领域模型 ============
+
+// Platform 一个外部音乐服务
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_NETEASE = 1;
+}
+
+// Fee 收听一首歌所需的权限
+enum Fee {
+  FEE_FREE = 0;
+  FEE_VIP = 1;
+  FEE_PURCHASE = 2;
+}
+
+// QualityLevel 请求播放地址时指定的音质档位。
+// 与 Quality 是两回事:档位是请求时的诉求,Quality 是这首歌实际是什么。
+enum QualityLevel {
+  QUALITY_LEVEL_UNSPECIFIED = 0;
+  QUALITY_LEVEL_LOW = 1;
+  QUALITY_LEVEL_STANDARD = 2;
+  QUALITY_LEVEL_HIGH = 3;
+  QUALITY_LEVEL_LOSSLESS = 4;
+  QUALITY_LEVEL_HI_RES = 5;
+}
+
+// LyricTiming 歌词时间轴的精度
+enum LyricTiming {
+  LYRIC_TIMING_LINE = 0;
+  LYRIC_TIMING_WORD = 1;
+}
+
+message Artist {
+  string id = 1;
+  string name = 2;
+  // 以下字段仅在取歌手详情时有值
+  string avatar = 3;
+  string description = 4;
+  int32 album_count = 5;
+}
+
+message Album {
+  string id = 1;
+  string name = 2;
+  string cover = 3;
+  // 以下字段仅在取专辑详情时有值
+  string artist = 4;
+  int32 year = 5;
+  int32 track_count = 6;
+  string description = 7;
+}
+
+// Quality 一首歌实际的编码规格。平台没给就整个字段缺席,不填 0 冒充。
+message Quality {
+  string codec = 1;
+  int32 sample_rate = 2;
+  int32 bits_per_sample = 3;
+  int32 bit_rate = 4;
+  int32 channels = 5;
+}
+
+// Track 一首可播放的歌曲,由 (platform, id) 唯一标识
+message Track {
+  Platform platform = 1;
+  string id = 2;
+  string title = 3;
+  // alias 别名或副标题,常见于日文原名
+  string alias = 4;
+  repeated Artist artists = 5;
+  Album album = 6;
+  int64 duration_ms = 7;
+  string cover = 8;
+  Quality quality = 9;
+  Fee fee = 10;
+}
+
+// PlaySource 一次取到的可播放源。
+// 这些字段属于"这次取到的源"而非歌曲本身 —— 换个档位请求会得到不同的格式与体积。
+message PlaySource {
+  // url 平台签发的临时直链,带签名会过期,不要缓存
+  string url = 1;
+  string format = 2;
+  int64 size = 3;
+  int32 bit_rate = 4;
+  // level 实际拿到的档位,可能低于请求的档位(账号权限不够)
+  QualityLevel level = 5;
+  // trial 仅试听片段,通常 30 秒
+  bool trial = 6;
+}
+
+message Playlist {
+  Platform platform = 1;
+  string id = 2;
+  string name = 3;
+  string cover = 4;
+  string description = 5;
+  int32 track_count = 6;
+  string owner = 7;
+  string owner_id = 8;
+}
+
+message LyricWord {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  string text = 3;
+}
+
+message LyricLine {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  // text 整行文本。逐字格式下已由各字拼好,调用方不必自己拼。
+  string text = 3;
+  // words 字级时间轴。逐行格式下为空。
+  repeated LyricWord words = 4;
+  string translation = 5;
+  string romaji = 6;
+}
+
+message Lyric {
+  LyricTiming timing = 1;
+  repeated LyricLine lines = 2;
+}
+
+// ============ 登录与账号 ============
+
+service AuthService {
+  // CreateQRLogin 生成一个二维码登录会话
+  rpc CreateQRLogin(CreateQRLoginRequest) returns (CreateQRLoginResponse);
+
+  // WatchQRLogin 持续推送扫码进展,直到确认、过期或上下文取消。
+  // 用流而不是让调用方轮询 —— 轮询放在这里比放在调用方少一层往返。
+  rpc WatchQRLogin(WatchQRLoginRequest) returns (stream QRLoginEvent);
+
+  // GetAccountStatus 查询凭据是否仍然有效。未登录是状态而非错误,见 docs/adr/0005。
+  rpc GetAccountStatus(GetAccountStatusRequest) returns (GetAccountStatusResponse);
+
+  // RefreshSession 延长登录态有效期
+  rpc RefreshSession(RefreshSessionRequest) returns (RefreshSessionResponse);
+
+  // SendLoginCaptcha 向手机号发送登录验证码
+  rpc SendLoginCaptcha(SendLoginCaptchaRequest) returns (SendLoginCaptchaResponse);
+
+  // LoginByCaptcha 用短信验证码登录。只提供这一条手机号登录路径 ——
+  // 密码不经手本服务。
+  rpc LoginByCaptcha(LoginByCaptchaRequest) returns (LoginByCaptchaResponse);
+
+  // Logout 退出登录并清空本地凭据。设备标识保留。
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+message SendLoginCaptchaRequest {
+  Platform platform = 1;
+  string phone = 2;
+  // country_code 不填按中国大陆(86)处理
+  string country_code = 3;
+}
+
+message SendLoginCaptchaResponse {}
+
+message LoginByCaptchaRequest {
+  Platform platform = 1;
+  string phone = 2;
+  string country_code = 3;
+  string captcha = 4;
+}
+
+message LoginByCaptchaResponse {}
+
+// QRLoginState 二维码登录的进展
+enum QRLoginState {
+  QR_LOGIN_STATE_UNSPECIFIED = 0;
+  QR_LOGIN_STATE_WAITING = 1;
+  QR_LOGIN_STATE_SCANNED = 2;
+  QR_LOGIN_STATE_CONFIRMED = 3;
+  QR_LOGIN_STATE_EXPIRED = 4;
+}
+
+message CreateQRLoginRequest {
+  Platform platform = 1;
+}
+
+message CreateQRLoginResponse {
+  string key = 1;
+  // url 二维码要承载的内容,由调用方渲染成图像
+  string url = 2;
+}
+
+message WatchQRLoginRequest {
+  Platform platform = 1;
+  string key = 2;
+}
+
+message QRLoginEvent {
+  QRLoginState state = 1;
+}
+
+message GetAccountStatusRequest {
+  Platform platform = 1;
+}
+
+message GetAccountStatusResponse {
+  bool logged_in = 1;
+  string user_id = 2;
+  string nickname = 3;
+}
+
+message RefreshSessionRequest {
+  Platform platform = 1;
+}
+
+message RefreshSessionResponse {}
+
+message LogoutRequest {
+  Platform platform = 1;
+}
+
+message LogoutResponse {}
+
+// ============ 曲目 ============
+
+service CatalogService {
+  rpc SearchTracks(SearchTracksRequest) returns (SearchTracksResponse);
+
+  // GetTracks 按标识批量取详情,结果按请求顺序排列。查不到的标识跳过。
+  rpc GetTracks(GetTracksRequest) returns (GetTracksResponse);
+
+  // GetPlaySource 取可播放源。无版权或权限不足时返回 NOT_FOUND。
+  rpc GetPlaySource(GetPlaySourceRequest) returns (GetPlaySourceResponse);
+
+  // GetLyric 取歌词。纯音乐或未收录时返回空歌词,不是错误。
+  rpc GetLyric(GetLyricRequest) returns (GetLyricResponse);
+
+  // GetAlbum 取专辑元信息与其全部曲目
+  rpc GetAlbum(GetAlbumRequest) returns (GetAlbumResponse);
+
+  // GetArtist 取歌手元信息与其热门歌曲
+  rpc GetArtist(GetArtistRequest) returns (GetArtistResponse);
+
+  // ListArtistTracks 分页取歌手全部歌曲
+  rpc ListArtistTracks(ListArtistTracksRequest) returns (ListArtistTracksResponse);
+}
+
+// ArtistTrackOrder 歌手歌曲的排序方式
+enum ArtistTrackOrder {
+  ARTIST_TRACK_ORDER_UNSPECIFIED = 0;
+  ARTIST_TRACK_ORDER_HOT = 1;
+  ARTIST_TRACK_ORDER_TIME = 2;
+}
+
+message GetAlbumRequest {
+  Platform platform = 1;
+  string album_id = 2;
+}
+
+message GetAlbumResponse {
+  Album album = 1;
+  repeated Track tracks = 2;
+}
+
+message GetArtistRequest {
+  Platform platform = 1;
+  string artist_id = 2;
+}
+
+message GetArtistResponse {
+  Artist artist = 1;
+  repeated Track hot_tracks = 2;
+}
+
+message ListArtistTracksRequest {
+  Platform platform = 1;
+  string artist_id = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+  ArtistTrackOrder order = 5;
+}
+
+message ListArtistTracksResponse {
+  repeated Track tracks = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+message SearchTracksRequest {
+  Platform platform = 1;
+  string keyword = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message SearchTracksResponse {
+  repeated Track tracks = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+message GetTracksRequest {
+  Platform platform = 1;
+  repeated string track_ids = 2;
+}
+
+message GetTracksResponse {
+  repeated Track tracks = 1;
+}
+
+message GetPlaySourceRequest {
+  Platform platform = 1;
+  string track_id = 2;
+  QualityLevel level = 3;
+}
+
+message GetPlaySourceResponse {
+  PlaySource source = 1;
+}
+
+message GetLyricRequest {
+  Platform platform = 1;
+  string track_id = 2;
+}
+
+message GetLyricResponse {
+  Lyric lyric = 1;
+}
+
+// ============ 曲库 ============
+
+service LibraryService {
+  rpc ListUserPlaylists(ListUserPlaylistsRequest) returns (ListUserPlaylistsResponse);
+
+  // GetPlaylist 取歌单元信息与全量曲目标识。
+  // 只给标识不给曲目:平台返回的曲目列表会被截断,而标识列表是全量的。
+  // 调用方持有标识,按需切片后走 GetTracks —— 聚合层因此不必缓存任何东西。
+  rpc GetPlaylist(GetPlaylistRequest) returns (GetPlaylistResponse);
+
+  rpc ListLikedTracks(ListLikedTracksRequest) returns (ListLikedTracksResponse);
+
+  rpc SetTrackLiked(SetTrackLikedRequest) returns (SetTrackLikedResponse);
+  rpc SetPlaylistSubscribed(SetPlaylistSubscribedRequest) returns (SetPlaylistSubscribedResponse);
+  rpc SetAlbumSubscribed(SetAlbumSubscribedRequest) returns (SetAlbumSubscribedResponse);
+  rpc SetArtistSubscribed(SetArtistSubscribedRequest) returns (SetArtistSubscribedResponse);
+
+  // AddPlaylistTracks 往歌单加曲目。曲目已在其中时返回 ALREADY_EXISTS。
+  rpc AddPlaylistTracks(AddPlaylistTracksRequest) returns (AddPlaylistTracksResponse);
+  rpc RemovePlaylistTracks(RemovePlaylistTracksRequest) returns (RemovePlaylistTracksResponse);
+}
+
+message ListUserPlaylistsRequest {
+  Platform platform = 1;
+  string user_id = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message ListUserPlaylistsResponse {
+  repeated Playlist playlists = 1;
+}
+
+message GetPlaylistRequest {
+  Platform platform = 1;
+  string playlist_id = 2;
+}
+
+message GetPlaylistResponse {
+  Playlist playlist = 1;
+  repeated string track_ids = 2;
+}
+
+message ListLikedTracksRequest {
+  Platform platform = 1;
+  string user_id = 2;
+}
+
+message ListLikedTracksResponse {
+  repeated string track_ids = 1;
+}
+
+message SetTrackLikedRequest {
+  Platform platform = 1;
+  string track_id = 2;
+  bool liked = 3;
+}
+
+message SetTrackLikedResponse {}
+
+message SetPlaylistSubscribedRequest {
+  Platform platform = 1;
+  string playlist_id = 2;
+  bool subscribed = 3;
+}
+
+message SetPlaylistSubscribedResponse {}
+
+message SetAlbumSubscribedRequest {
+  Platform platform = 1;
+  string album_id = 2;
+  bool subscribed = 3;
+}
+
+message SetAlbumSubscribedResponse {}
+
+message SetArtistSubscribedRequest {
+  Platform platform = 1;
+  string artist_id = 2;
+  bool subscribed = 3;
+}
+
+message SetArtistSubscribedResponse {}
+
+message AddPlaylistTracksRequest {
+  Platform platform = 1;
+  string playlist_id = 2;
+  repeated string track_ids = 3;
+}
+
+message AddPlaylistTracksResponse {}
+
+message RemovePlaylistTracksRequest {
+  Platform platform = 1;
+  string playlist_id = 2;
+  repeated string track_ids = 3;
+}
+
+message RemovePlaylistTracksResponse {}
+
+// ============ 发现 ============
+
+service DiscoverService {
+  rpc GetDailyRecommendations(GetDailyRecommendationsRequest) returns (GetDailyRecommendationsResponse);
+  rpc GetRecommendedPlaylists(GetRecommendedPlaylistsRequest) returns (GetRecommendedPlaylistsResponse);
+}
+
+message GetDailyRecommendationsRequest {
+  Platform platform = 1;
+}
+
+message GetDailyRecommendationsResponse {
+  repeated Track tracks = 1;
+}
+
+message GetRecommendedPlaylistsRequest {
+  Platform platform = 1;
+  int32 limit = 2;
+}
+
+message GetRecommendedPlaylistsResponse {
+  repeated Playlist playlists = 1;
+}

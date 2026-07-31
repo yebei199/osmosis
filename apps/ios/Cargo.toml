@@ -1,0 +1,13 @@
+[package]
+name = "app-ios"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "iOS 平台入口:被 Xcode 工程链接的 staticlib"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+ui.workspace = true
+slint = { workspace = true, features = ["backend-winit", "renderer-skia"] }

@@ -1,0 +1,42 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "界面的声明,以及界面与客户端领域之间的双向绑定"
+
+[dependencies]
+# ui 是组装点:它把 api 的请求函数注入 app-core,二者互不相识。
+app-core.workspace = true
+api.workspace = true
+slint.workspace = true
+# 帧耗时记账的输出口。各平台入口已各自装好 logger(env_logger / android_logger / console_log)。
+log.workspace = true
+# std::time::Instant 在 wasm32-unknown-unknown 上会 panic;web-time 同 API,
+# wasm 下走 performance.now(),原生下就是 std 的再导出。已在依赖树里(bevy 用它)。
+web-time = "1"
+
+# 原生音频栈。cpal 在 linux 链 alsa、在 android 链 AAudio,wasm 上两者都不存在 ——
+# 无条件依赖会让 app-web 编不过,而那个错误要等下次构建 wasm 才炸出来。
+# web 将来出声要走 WebAudio,是另一套实现。由 `cargo xtask boundaries` 守着。
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+audio.workspace = true
+syncplay.workspace = true
+# 封面解码:平台 CDN 给的是 jpeg/png 字节,slint 公开 API 只吃像素缓冲,
+# 中间这一步由 image 补上。web 端的封面等播放链路通了一起做(那边另有 <img> 可用)。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 只为「今天是哪天」:当日推荐跨过零点就该重拉。std 给不出本地日期(没有时区),
+# 而 chrono 已经在依赖树里(bevy 拖的),不新增下载与编译负担。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。
+[build-dependencies]
+slint-build.workspace = true
+
+# 只用来在测试里查子集字体的 cmap。slint 自己也依赖它,不引入新的下载。
+[dev-dependencies]
+ttf-parser = "0.25"
+similar-asserts.workspace = true
+
+# 本 crate 刻意没有 [features]:界面层不该被编译期开关参数化。帧率读数曾是个
+# `debug-fps` feature,现改为运行期的 `SLINT_STUDY_FPS`(见 src/lib.rs 的 fps_enabled)。

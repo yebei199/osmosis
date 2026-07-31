@@ -1,0 +1,59 @@
+[package]
+name = "app-desktop"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "桌面平台入口(linux / windows / macOS)"
+
+[[bin]]
+name = "slint-study-desktop"
+path = "src/main.rs"
+
+[dependencies]
+ui.workspace = true
+env_logger.workspace = true
+# 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
+# 否则 android 构建会被 feature 统一拉进 winit。
+#
+# renderer-skia(而非 femtovg):inner-shadow 只在 Skia 上实现,而它是玻璃卡片
+# 厚度感的来源(见 crates/ui/slint/glass.slint)。顺带让桌面与 android 用上同一个
+# 渲染器 —— android 的后端本就强制 skia。理由与代价见 docs/adr/0006-*。
+# unstable-wgpu-29 是纹理共享的前提:render3d 自建的 device 要能转发给 Slint。
+# 没有 renderer-skia-wgpu 这种 feature —— skia 的 wgpu 路径就是 renderer-skia +
+# unstable-wgpu-29,与 android 那边的组合一字不差。
+slint = { workspace = true, features = [
+    "backend-winit",
+    "renderer-skia",
+    "renderer-software",
+    "unstable-wgpu-29",
+] }
+# 硬依赖:播放页的粒子场、warp 与导航选中器全在它里面,没有它界面就只剩静态版式。
+# 运行期要 vulkan(见仓库根的 slint.nix)。
+render3d.workspace = true
+
+# 只为收尾时那一个 `_exit`(见 src/main.rs 末尾与 issue #15)。std 没有对应的口子:
+# `process::exit` 走的是 libc `exit()`,退出处理器与 TLS 析构器照跑,正是要绕开的那段。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+default = []
+# 应用内嵌 MCP server,供 AI 助手读元素树、截图、模拟点击。
+# 无需改一行应用代码:slint 的后端初始化会自己调 mcp_server::init()。
+# 默认关 —— 它会把测试后端(i-slint-backend-testing)和 renderer-software 编进二进制。
+#
+# 光开 feature 还不够,另有两个环境变量,缺一不可(justfile 的 mcp-desktop 已备齐):
+#   SLINT_EMIT_DEBUG_INFO=1  构建期。让 slint 编译器把元素类型名/id 嵌进产物。
+#                            不设照样编过、server 照样起,但 get_element_tree 只回一个
+#                            没有类型名、没有子节点的空壳根 —— 静默的瞎,极难察觉。
+#   SLINT_MCP_PORT           运行期。不设则根本不监听,零开销。
+#
+# 上游 README 说别把 mcp 写进 [features]、直接 `--features slint/mcp` 就行。它防的是
+# 「顺手打开一个调试后门」:声明成 feature 后就进了 --all-features 的展开面(cargo
+# build --all-features、cargo hack、docs.rs、rust-analyzer 的 cargo.features=all),
+# 而这个后门等于把「读完整 UI 树 + 截图 + 合成点击」开给 localhost 上的任何人。
+#
+# 这里仍然声明,因为 apps/android 绕不开:它得用 optional 依赖拉 i-slint-backend-testing
+# 来手动补上游漏接的钩子,而 optional 依赖只能靠本地 feature 门控。两端同名以免记两套。
+# 代价照单收下:**别对本 workspace 跑 --all-features**(just ci 用的是 --all-targets)。
+mcp = ["slint/mcp"]

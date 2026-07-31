@@ -1,0 +1,1237 @@
+// 最小化单窗口手机 UI:一个点击计数器。
+// 计数值保存在 Rust 一侧(crates/app-core),以 property 形式推送到这里;
+// 按钮点击通过 `bump` 回调传回去。
+
+// slint 自带的 Inter 没有汉字,wasm 上又没有系统字体可回退,健康状态那行中文
+// 会渲染成豆腐块。这里内嵌一份裁到只剩所需字符的子集(见 `just font-subset`),
+// 由 slint 编译器把字节打进产物,再按 family 名引用。
+import "../fonts/cjk-subset.ttf";
+
+// 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
+import { LineEdit } from "std-widgets.slint";
+
+// 玻璃拟态:供 Home / Server 页透出颜色的极光背景,以及装内容的玻璃卡片。
+import { AuroraBackground, GlassCard } from "glass.slint";
+
+// 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
+// 观感;按下时变暗下沉。全部带动画过渡。
+//
+// 触摸设备上没有"悬停但未按下"这个状态,因此只会看到按下时的下沉效果。
+// 这是刻意的优雅降级,不是缺陷:slint 在触摸按下时同样会置 has-hover,
+// 但优先级更高的 `down` 分支盖住了它。
+component HoverButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+
+    property <bool> hovered: touch.has-hover;
+    property <bool> down: touch.pressed;
+
+    height: 56px;
+    width: 220px;
+    border-radius: 14px;
+    background: down ? #6b4520 : hovered ? #a9713c : #8a5a2b;
+    drop-shadow-color: #8a5a2b80;
+    drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
+    drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
+    animate background, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    Text {
+        text: root.text;
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 导航的三项。**唯一真相** —— 侧栏(宽版式)和底栏(紧凑版式)都 `for` 它,
+// 免得两处各抄一份图标 path,改了一处忘另一处。
+struct NavEntry {
+    label: string,
+    icon: string, // SVG path 数据,viewbox 24×24
+}
+
+// 搜索结果里的一行。字段都是**已经格式化好的字符串** —— 歌手怎么拼、时长怎么写
+// 由 Rust 侧决定并测过,`.slint` 里不做任何计算。
+struct TrackRow {
+    id: string,
+    title: string,
+    artists: string,
+    duration: string,
+    // 这一首正在加载。网络慢时点了看不出反应,用户就会连点 —— 状态行那句
+    // 「加载中…」在列表上方、13px 灰字,离手指太远(见 crates/ui/src/music.rs)。
+    loading: bool,
+}
+
+// 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,
+// 这里不指定子集字体。
+struct DeviceRow {
+    id: string,
+    name: string,
+}
+
+global Nav {
+    out property <[NavEntry]> items: [
+        {
+            label: "Home",
+            icon: "M3 12 L12 4 L21 12 M5.5 10 L5.5 20 L18.5 20 L18.5 10",
+        },
+        {
+            label: "Music",
+            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
+        },
+    ];
+}
+
+// 导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
+// 图标用 Path 内嵌(不引外部资源);标签用英文,免得中文落到无 CJK 的默认字体上变豆腐。
+//
+// 不写死高度:竖排侧栏里由使用处给 68px,横排底栏里由布局撑满栏高。
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active;
+    // 选中高亮是否已由背后的 GPU 液态玻璃提供。为真时(GPU 构建)自己让开 active 底,
+    // 免得和玻璃叠两遍;为假时(非 GPU 兜底)照旧自己画 active 高亮。hover 两种情况都只留极淡一层。
+    in property <bool> gpu-selected;
+    callback clicked;
+
+    border-radius: 12px;
+    background: root.gpu-selected
+        ? (touch.has-hover ? #ffffff14 : transparent)
+        : (active ? #2a1e14 : (touch.has-hover ? #1d150f : transparent));
+    animate background { duration: 120ms; easing: ease-out; }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 26px;
+                height: 26px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: active ? #d9a86c : #8b91a5;
+                stroke-width: 1.8px;
+                fill: transparent;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: active ? #e6e8ef : #8b91a5;
+            font-size: 12px;
+            font-weight: active ? 700 : 500;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 圆形播放控制键:玻璃底 + Path 图标。悬停浮亮,按下微缩。
+// 图标画法同 NavItem:SVG path 内嵌,viewbox 24×24,不引外部资源。
+component RoundControl inherits Rectangle {
+    in property <string> icon;
+    in property <length> diameter: 44px;
+    // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
+    // 只留按下/悬停那一点点提示,不糊住下面。
+    in property <bool> transparent-base: false;
+    callback clicked;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: self.width / 2;
+    background: touch.pressed ? #b9885c50
+        : (touch.has-hover ? #ffffff1e
+            : (root.transparent-base ? #00000000 : #ffffff10));
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c66 : #ffffff14;
+    animate background, border-color { duration: 120ms; easing: ease-out; }
+
+    Path {
+        width: root.diameter * 0.5;
+        height: root.diameter * 0.5;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.icon;
+        stroke: touch.has-hover ? #f0e6d8 : #d9cdbd;
+        stroke-width: 1.6px;
+        // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
+        // 图标本身都画成闭合形)。
+        fill: touch.has-hover ? #f0e6d8 : #d9cdbd;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 描边文字。播放页专用 —— 那里的字压在**封面**上,而封面是任意亮度的照片:
+// 近白色的字遇上一张接近全白的封面就整个消失(本兮《未成年》实测)。
+//
+// Slint 的 Text 没有 stroke,drop-shadow 又只有 Rectangle 才有,所以只能把同一句话
+// 先用深色朝八个方向各画一遍,再把亮色那层压上去。八向而不是四向:四向在字的
+// 对角缺口上漏底,CJK 笔画交叉多,漏得明显。
+//
+// 尺寸由调用方给死,不让它自己算 —— 九层必须逐像素对齐,任何一层的换行或省略
+// 判断跟别人不一样,描边就会错位成重影。
+component OutlinedText inherits Rectangle {
+    in property <string> text;
+    // 不叫 color:Rectangle 那一族已经占了这个名字,重名会被 slint 编译器拒绝。
+    in property <color> text-color;
+    in property <length> font-size;
+    // 描边宽度。1.5px 在 22px 的歌名与 14px 的歌手上都够,再粗会把小字糊住。
+    in property <length> outline: 1.5px;
+    in property <color> outline-color: #05070ce0;
+    in property <TextVerticalAlignment> vertical-alignment: center;
+    in property <TextWrap> wrap: no-wrap;
+
+    for offset in [
+        { x: -1.0, y: -1.0 }, { x: 0.0, y: -1.0 }, { x: 1.0, y: -1.0 },
+        { x: -1.0, y: 0.0 },                       { x: 1.0, y: 0.0 },
+        { x: -1.0, y: 1.0 },  { x: 0.0, y: 1.0 },  { x: 1.0, y: 1.0 },
+    ]: Text {
+        x: offset.x * root.outline;
+        y: offset.y * root.outline;
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.outline-color;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+
+    Text {
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.text-color;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+}
+
+// 日月开关:白昼(顺序播放)⇄ 夜晚(随机播放)。
+// 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
+// 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
+// 圆角矩形 clip 裁掉出界的云星,不需要 bevy。
+component DayNightSwitch inherits Rectangle {
+    in-out property <bool> night: false;
+    callback toggled;
+
+    // QML 原作 180×70,这里等比压到控制条尺寸。
+    width: 92px;
+    height: 36px;
+    border-radius: self.height / 2;
+    clip: true;
+    background: root.night ? #191e32 : #4685c0;
+    animate background { duration: 700ms; easing: ease-in-out; }
+
+    // 光晕:三层同心白圈跟着滑块走,昼夜都在,给按钮一点"发光体"的存在感。
+    for halo[i] in [66px, 88px, 110px]: Rectangle {
+        width: halo;
+        height: halo;
+        border-radius: self.width / 2;
+        background: white;
+        opacity: 0.20 - i * 0.07;
+        x: knob.x + knob.width / 2 - self.width / 2;
+        y: knob.y + knob.height / 2 - self.height / 2;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+    }
+
+    // 云:三团白圆压在下缘,白天在场,入夜整体沉出画面。
+    // 悬停(白天)时被太阳"推"远一点 —— 原作的斥力,只取其形。
+    clouds := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? root.height : 0;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for cloud[i] in [
+            { cx: 52px, cy: 26px, d: 26px },
+            { cx: 68px, cy: 20px, d: 30px },
+            { cx: 84px, cy: 26px, d: 34px },
+        ]: Rectangle {
+            width: cloud.d;
+            height: cloud.d;
+            border-radius: self.width / 2;
+            background: white;
+            opacity: 0.9;
+            x: cloud.cx - self.width / 2 + (touch.has-hover && !root.night ? 5px : 0px);
+            y: cloud.cy - self.height / 2 + 6px;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 星:小菱形散在上半,入夜降下来,白天升出画面。
+    // 悬停(夜里)时被月亮推开一点。
+    stars := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? 0 : -root.height;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for star[i] in [
+            { sx: 14px, sy: 8px, d: 7px },
+            { sx: 30px, sy: 18px, d: 5px },
+            { sx: 22px, sy: 27px, d: 4px },
+            { sx: 42px, sy: 9px, d: 4px },
+        ]: Path {
+            width: star.d;
+            height: star.d;
+            x: star.sx + (touch.has-hover && root.night ? -4px : 0px);
+            y: star.sy;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            // 四角星:四段二次曲线,腰收向圆心 —— 原作 Shape 的形状。
+            commands: "M 5 0 Q 5 5 10 5 Q 5 5 5 10 Q 5 5 0 5 Q 5 5 5 0 Z";
+            fill: white;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 滑块:白天是太阳(暖黄 + 高光),入夜滑到右侧变月亮(冷灰 + 陨石坑)。
+    // 悬停时向对侧探 4px,像在提示"按我会滑过去"。
+    knob := Rectangle {
+        property <length> margin: 4px;
+        property <length> start-x: self.margin;
+        property <length> end-x: root.width - self.width - self.margin;
+
+        width: root.height - 8px;
+        height: root.height - 8px;
+        y: 4px;
+        x: root.night
+            ? (touch.has-hover ? knob.end-x - 4px : knob.end-x)
+            : (touch.has-hover ? knob.start-x + 4px : knob.start-x);
+        border-radius: self.width / 2;
+        background: root.night ? #c3c8d2 : #ffc323;
+        drop-shadow-blur: 6px;
+        drop-shadow-offset-x: 1px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-color: #00000080;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate background { duration: 500ms; easing: ease-in-out; }
+
+        // 太阳高光:偏心一点的亮斑,夜里淡出。
+        Rectangle {
+            width: parent.width * 0.8;
+            height: parent.height * 0.8;
+            x: parent.width * 0.06;
+            y: parent.height * 0.06;
+            border-radius: self.width / 2;
+            background: #ffe650;
+            opacity: root.night ? 0 : 0.6;
+            animate opacity { duration: 500ms; }
+        }
+
+        // 陨石坑:三个灰圆,白天淡出,并跟着原作绕月心转 -90° 入场。
+        // Rectangle 没有 rotation-angle,所以坑的位置直接用极坐标写:
+        // 动 spin 一个角度,三个坑各自沿圆弧走 —— 与 transform: rotate 等价。
+        craters := Rectangle {
+            // 坑相对月心(14px, 14px)的极坐标,由原作的直角坐标换算而来。
+            property <angle> spin: root.night ? 0deg : -90deg;
+
+            width: 100%;
+            height: 100%;
+            opacity: root.night ? 1 : 0;
+            animate opacity { duration: 300ms; }
+            animate spin { duration: 300ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+            for crater[i] in [
+                { r: 9.06px, a: 263.66deg, d: 7px },
+                { r: 9.22px, a: 192.53deg, d: 10px },
+                { r: 4.24px, a: 45deg, d: 6px },
+            ]: Rectangle {
+                width: crater.d;
+                height: crater.d;
+                border-radius: self.width / 2;
+                background: #96a0b4;
+                x: 14px + crater.r * Math.cos(crater.a + craters.spin) - self.width / 2;
+                y: 14px + crater.r * Math.sin(crater.a + craters.spin) - self.height / 2;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.night = !root.night;
+            root.toggled();
+        }
+    }
+}
+
+// 控制键簇:上一首 / 播放暂停 / 下一首 + 日月随机开关。
+// 抽成组件是因为宽窄两种版式各摆一次 —— 摆法不同,键是同一套。
+component ControlCluster inherits HorizontalLayout {
+    in property <bool> is-playing;
+    in-out property <bool> shuffle-on;
+    // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
+    // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
+    in property <image> pulse;
+    callback prev();
+    callback toggle();
+    callback next();
+    callback shuffle-toggled();
+
+    spacing: 10px;
+
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏮:竖杠 + 左向三角。
+            icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+            clicked => { root.prev(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 播放键。接了 pulse 就把那圈 warp 画进按钮里,比旁边两颗大一圈 ——
+        // 它是这一排里唯一会动的东西,该占更多视觉分量。
+        Rectangle {
+            width: root.pulse.width > 0 ? 68px : 50px;
+            height: self.width;
+            border-radius: self.width / 2;
+            clip: true;
+
+            if root.pulse.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: root.pulse;
+            }
+
+            RoundControl {
+                diameter: parent.width;
+                // 有 warp 垫底时不再自带底色,免得把画面糊住。
+                transparent-base: root.pulse.width > 0;
+                // ▶ 或 ⏸,随播放状态换。
+                icon: root.is-playing
+                    ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                    : "M8 5 L19 12 L8 19 Z";
+                clicked => { root.toggle(); }
+            }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏭:右向三角 + 竖杠。
+            icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+            clicked => { root.next(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        DayNightSwitch {
+            night <=> root.shuffle-on;
+            toggled => { root.shuffle-toggled(); }
+        }
+    }
+}
+
+// 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——
+// **常驻**,不随名册隐藏。上一版设备区在单实例时整块消失,同播功能等于不存在。
+component SyncStrip inherits HorizontalLayout {
+    in property <[DeviceRow]> devices;
+    callback push-to(string);
+
+    spacing: 8px;
+
+    if root.devices.length == 0: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "同播: 没有其他设备";
+            font-family: "Maple Mono NF CN";
+            color: #6b7080;
+            font-size: 12px;
+        }
+    }
+
+    for device in root.devices: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: chip-label.preferred-width + 24px;
+            height: 30px;
+            background: chip.has-hover ? #b9885c66 : #ffffff0f;
+            border-radius: 15px;
+
+            chip := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.push-to(device.id); }
+            }
+
+            // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
+            // 不指定 font-family,落到系统字体。
+            chip-label := Text {
+                text: device.name;
+                color: #e6e8ef;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// Home 的入口卡片:大图标 + 名字,点了切页。悬停时上浮、描边亮起 ——
+// 让"这是个门"一眼可见,不用靠猜。
+component EntryCard inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    callback clicked;
+
+    width: 148px;
+    height: 168px;
+    border-radius: 18px;
+    background: touch.has-hover ? #2a1e1466 : #17110d66;
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c88 : #ffffff14;
+    drop-shadow-blur: touch.has-hover ? 24px : 12px;
+    drop-shadow-color: #00000055;
+    drop-shadow-offset-y: touch.has-hover ? 8px : 4px;
+    animate background, border-color, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 44px;
+                height: 44px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: touch.has-hover ? #d9a86c : #9aa0b4;
+                stroke-width: 1.6px;
+                fill: transparent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: touch.has-hover ? #e6e8ef : #9aa0b4;
+            font-size: 15px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component MainWindow inherits Window {
+    // 帧率,由 Rust 测量并推送。仅在 `show-fps` 为真时被推送。
+    in property <float> fps: 0;
+    // 是否显示帧率读数。由 Rust 按 `SLINT_STUDY_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
+    in property <bool> show-fps: false;
+    // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
+    in property <string> platform;
+    // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
+    in property <[TrackRow]> tracks: [];
+    // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
+    in property <string> playback-text;
+    // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
+    in property <bool> is-playing: false;
+    // 随机播放开关(日月开关的状态)。Rust 读它决定队列洗不洗牌。
+    in-out property <bool> shuffle-on: false;
+    // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
+    in property <[DeviceRow]> devices: [];
+    // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
+    in property <string> sync-text;
+    // 当前选中的导航页:0=Home、1=Music。由左侧导航栏点击设置。
+    in-out property <int> current-tab: 0;
+    // 版式(Layout Mode):窄→紧凑(底部导航),宽→侧栏。**由运行时窗口宽度决定,不由端决定**
+    // —— 桌面把窗口拖窄一样变成紧凑版式,这既是要的体验,也是唯一能在桌面验证移动版式的办法。
+    // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
+    // 手机横屏(~850dp)回到侧栏 —— 横屏本来就矮,底栏再吃 64px 太亏。
+    //
+    // 用 changed 回调赋值、而不是写成 `compact: root.width < 600px` 的绑定:版式一变,子元素的
+    // 约束(侧栏在不在、底栏在不在)就变,窗口的 layoutinfo 跟着变,宽度又回头喂给 compact ——
+    // 那是一个真的求值环,Slint 1.18 起会警告并可能在运行时 panic。命令式赋值把环剪断:
+    // 宽度先定下来,再单向推出版式。
+    property <bool> compact;
+    init => { root.compact = root.width < 600px; }
+    changed width => { root.compact = root.width < 600px; }
+
+
+    // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
+    // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
+    // 回调 —— docs/adr/0010 的「功能等价路径」。
+    in-out property <bool> play-page-open: false;
+    // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
+    // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
+    // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
+    in property <image> viz-bg;
+    // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
+    // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
+    in property <image> viz-scene;
+    in property <image> viz-occluder;
+    // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
+    // 负偏移都从这几个值算,别在别处重抄。歌词是播放页现在唯一的深度卡片 ——
+    // 粒子从字的前后穿过。
+    //
+    // 曾经这里还有一张 220px 的封面卡,它是第一张深度卡片。封面点云上线之后它成了
+    // 同一张图的第二份拷贝,还正压在点云中央,遂删除(见 `docs/adr/0010` 的记录)。
+    //
+    // 歌词块的高度**钉死**,不随文本长度变。平台会把整段词压成「一行」(实测见过
+    // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
+    // 原文最多三行、译文最多两行,按各自字号的行高估。
+    // 播放页控制条的高度。紧凑版拆两行(见那一段的注释),故高一档。
+    out property <length> viz-controls-h: root.compact ? 128px : 84px;
+    // 两颗只在播放页出现的键,图形在宽/紧凑两处版式里各用一次 —— 常量化,
+    // 免得改一处漏一处。
+    out property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
+    out property <string> collapse-icon: "M5 8 L19 8 L12 17 Z";
+
+    out property <length> viz-lyric-line-h: root.compact ? 84px : 120px;
+    out property <length> viz-lyric-tr-h: root.compact ? 40px : 46px;
+    out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
+    out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
+    // 歌名与歌手在歌词块上方,与它一起居中成一组。
+    out property <length> viz-title-y: root.viz-lyric-y - 96px;
+    // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
+    // 手工对齐 —— 那边按下标分支,加档时两处都要动。
+    out property <int> viz-preset: 0;
+    // 预设名,只用于切换时在屏幕上闪一下。第 6 档「安魂」要一份骷髅点云资产,
+    // 不是算法,没做(见 issue #26)。
+    out property <[string]> viz-preset-names: [
+        "封面", "滚筒", "星球", "虚空", "唱片", "星河",
+    ];
+    // 刚切完预设的那几秒:名字浮在画面上,之后自己淡掉。
+    in-out property <bool> viz-preset-hint: false;
+    // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
+    // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
+    // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
+    out property <float> viz-pointer-x: 0.5;
+    out property <float> viz-pointer-y: 0.5;
+    out property <bool> viz-pointer-down: false;
+    out property <bool> viz-pointer-active: false;
+    // 正在播的封面(已解码)。取不到 / 解不出时为空图 —— 控制条上的小图用它。
+    in property <image> cover-art;
+    // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
+    in property <string> now-title;
+    in property <string> now-artists;
+    // 当前歌词行与其译文,Rust 每帧按播放位置选出后推送(见 app_core::current_line)。
+    // 没有歌词、或还在前奏时为空串,歌词区整块让位。
+    in property <string> lyric-line;
+    in property <string> lyric-translation;
+    // 省电门的 .slint 半边:展开 ∧ 播放。第三条「窗口可见」在 Rust 侧
+    // (lib.rs 渲染通知回调)判,三条齐了才渲 warp,暂停定格在最后一帧。
+    out property <bool> viz-active: root.play-page-open && root.is-playing;
+
+    // ── 宽版式侧栏「液态玻璃 metaball 选中器」──
+    // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
+    // 几何与交互。侧栏槽位常量是**唯一真相**:布局与选中块位置都从这里算,不各写各的。
+    property <length> nav-pad: 8px;
+    property <length> nav-gap: 6px;
+    // 单个导航项高,也是选中块的参考高。out:Rust 读它定块尺寸。
+    out property <length> nav-slot-h: 68px;
+    // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
+    out property <length> nav-w: 96px;
+    out property <length> nav-h: content.height;
+    // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
+    out property <bool> nav-visible: !root.compact;
+    // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
+    property <length> nav-target-y: root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
+    // metaball 的头(快)/尾(慢):都朝 nav-target-y 动,快慢不同 → 行走时一前一后被 shader
+    // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这两个动画值喂 shader。
+    // 用两个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
+    out property <length> nav-lead-y: root.nav-target-y;
+    out property <length> nav-lag-y: root.nav-target-y;
+    animate nav-lead-y { duration: 240ms; easing: ease-out; }
+    animate nav-lag-y { duration: 440ms; easing: ease-out; }
+    // render3d 每帧(转场期间)渲出的侧栏背景纹理。非 GPU 构建恒为空图(width 0),
+    // 侧栏退回 Slint 平底 + NavItem 自带高亮(见侧栏与 NavItem)。
+    in-out property <image> nav-bg;
+    // 用关键词搜歌。
+    callback search(string);
+    // 取今日推荐,结果落进同一个 tracks 列表。
+    callback daily();
+    // 取我喜欢的音乐,同上。
+    callback liked();
+    // 进了 Music 页。当天还没拉过推荐时由 Rust 侧补一次 daily —— 判断在那边,
+    // 因为「今天」和「上次拉的日期」都不是界面该记的东西。
+    callback music-shown();
+    // 放某首歌。参数是 TrackRow 的 id。
+    callback play(string);
+    // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
+    callback toggle-play();
+    // 队列内切歌。
+    callback next-track();
+    callback prev-track();
+    // 随机开关拨动之后。新状态在 shuffle-on 里。
+    callback shuffle-toggled();
+    // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
+    callback push-to(string);
+
+    title: "Slint Study";
+    background: #0f1117;
+    // 开窗即宽版式;最小尺寸故意放到手机竖屏那么窄 —— 桌面上把窗口拖窄就能直接看到
+    // 紧凑版式,不必开模拟器。
+    preferred-width: 1000px;
+    preferred-height: 700px;
+    min-width: 360px;
+    min-height: 520px;
+
+    // 顶层恒为一个 VerticalLayout(主体行 + 可选底栏)→ 窗口撑满且可调整大小。
+    VerticalLayout {
+
+        // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
+        HorizontalLayout {
+            vertical-stretch: 1;
+            padding-top: root.safe-area-insets.top;
+            padding-left: root.safe-area-insets.left;
+            padding-right: root.safe-area-insets.right;
+            // 紧凑版式的底部 inset 归底栏管 —— 它的背景要铺到手势条底下,不能在这里先留白,
+            // 否则手势条那一条会露出窗口底色,全面屏观感碎掉。
+            padding-bottom: root.compact ? 0 : root.safe-area-insets.bottom;
+
+            // ── 侧栏(宽版式)──
+            // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
+            // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
+            // 把侧栏也拆成「背景铺满 + 内部 padding」。
+            if !root.compact: Rectangle {
+                width: root.nav-w;
+                // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
+                background: #140f0b;
+
+                // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
+                // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+                Image {
+                    source: root.nav-bg;
+                    width: 100%;
+                    height: 100%;
+                    image-fit: fill;
+                }
+
+                VerticalLayout {
+                    padding: root.nav-pad;
+                    spacing: root.nav-gap;
+                    alignment: start;
+
+                    for item[i] in Nav.items: NavItem {
+                        height: root.nav-slot-h;
+                        label: item.label;
+                        icon: item.icon;
+                        active: root.current-tab == i;
+                        // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
+                        gpu-selected: root.nav-bg.width > 0;
+                        clicked => { root.current-tab = i; }
+                    }
+                }
+            }
+
+            // ── 内容区。两页共用这块矩形,按 current-tab 切换子内容 ──
+            content := Rectangle {
+                horizontal-stretch: 1;
+
+                // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
+                // bevy 画面,本来就有内容可透。
+                AuroraBackground {
+                    width: 100%;
+                    height: 100%;
+                }
+
+                // Home:入口卡片页。标题 + 两扇门(Music / 3D)。
+                // 与左侧导航栏功能重复,是刻意的:这里是"落地页",导航栏是"随时切"。
+                if root.current-tab == 0: VerticalLayout {
+                    alignment: center;
+                    spacing: 28px;
+
+                    Text {
+                        text: "Slint on " + root.platform;
+                        color: #e6e8ef;
+                        font-size: 22px;
+                        horizontal-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 20px;
+
+                        EntryCard {
+                            label: "Music";
+                            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16";
+                            clicked => { root.current-tab = 1; }
+                        }
+                    }
+                }
+
+                // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
+                // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                if root.current-tab == 1: VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
+                    // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
+                    // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
+                    // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
+                    init => { root.music-shown(); }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        // 搜索框。歌名是任意 CJK,不能指定子集字体,
+                        // 否则输入的字大多不在子集里,直接是豆腐块。
+                        keyword := LineEdit {
+                            horizontal-stretch: 1;
+                            placeholder-text: "Search";
+                            accepted => { root.search(self.text); }
+                        }
+                        // 三个按钮压窄:默认 220px 一排放不下,手机上更是直接溢出。
+                        // 紧凑版再收一档,给搜索框留出还能打字的宽度。
+                        HoverButton {
+                            width: root.compact ? 60px : 84px;
+                            text: "Go";
+                            clicked => { root.search(keyword.text); }
+                        }
+                        HoverButton {
+                            width: root.compact ? 68px : 92px;
+                            text: "Daily";
+                            clicked => { root.daily(); }
+                        }
+                        HoverButton {
+                            width: root.compact ? 68px : 92px;
+                            text: "Liked";
+                            clicked => { root.liked(); }
+                        }
+                    }
+
+                    // 播放状态行。文案是硬编码中文,走子集字体;
+                    // 高度钉死,免得文案变长把下面的列表顶来顶去。
+                    Text {
+                        text: root.playback-text;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 13px;
+                        height: 20px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
+                    Text {
+                        text: root.sync-text;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 13px;
+                        height: 20px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Flickable {
+                        vertical-stretch: 1;
+                        content-height: results.preferred-height;
+
+                        results := VerticalLayout {
+                            spacing: 4px;
+                            alignment: start;
+
+                            // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
+                            // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
+                            for row[i] in root.tracks: Rectangle {
+                                height: 52px;
+                                background: row.loading ? #d9a86c26
+                                    : (touch.has-hover ? #ffffff14 : #ffffff08);
+                                border-radius: 8px;
+                                border-width: row.loading ? 1px : 0;
+                                border-color: #d9a86c66;
+                                animate background { duration: 160ms; easing: ease-out; }
+
+                                touch := TouchArea {
+                                    clicked => { root.play(row.id); }
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 12px;
+
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        // 歌名与歌手来自平台,是任意 CJK/日文 ——
+                                        // 不指定 font-family,落到系统字体。
+                                        // web 端 wasm 里没有系统字体,那边会是豆腐块,
+                                        // 已知缺口,见 README「音乐链路」。
+                                        Text {
+                                            text: row.title;
+                                            color: #e6e8ef;
+                                            font-size: 14px;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.artists;
+                                            color: #9aa0b4;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    // 时长让位给「加载中」:两个都摆会把歌名挤窄,
+                                    // 而正在加载时时长不是用户在等的信息。
+                                    Text {
+                                        text: row.loading ? "加载中…" : row.duration;
+                                        font-family: row.loading ? "Maple Mono NF CN" : "";
+                                        color: row.loading ? #d9cdbd : #9aa0b4;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 控制条:上一首 / 播放暂停 / 下一首 / 日月随机开关 │ 同播设备。
+                    //
+                    // 宽版一排放下;紧凑版(手机)拆两行 —— 一排的最小宽度约 470px,
+                    // 而手机内容区只有 ~360px,硬挤会把按钮画出屏幕右缘。
+                    controls := Rectangle {
+                        height: root.compact ? 116px : 60px;
+                        border-radius: 16px;
+                        background: #17110daa;
+                        border-width: 1px;
+                        border-color: #ffffff10;
+
+                        if !root.compact: HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+
+                            ControlCluster {
+                                alignment: start;
+                                is-playing: root.is-playing;
+                                shuffle-on <=> root.shuffle-on;
+                                prev => { root.prev-track(); }
+                                toggle => { root.toggle-play(); }
+                                next => { root.next-track(); }
+                                shuffle-toggled => { root.shuffle-toggled(); }
+                            }
+                            // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
+                            RoundControl {
+                                icon: "M12 7 L19 16 L5 16 Z";
+                                clicked => { root.play-page-open = true; }
+                            }
+                            SyncStrip {
+                                alignment: end;
+                                devices: root.devices;
+                                push-to(id) => { root.push-to(id); }
+                            }
+                        }
+
+                        if root.compact: VerticalLayout {
+                            padding: 8px;
+                            spacing: 4px;
+
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 10px;
+                                ControlCluster {
+                                    is-playing: root.is-playing;
+                                    shuffle-on <=> root.shuffle-on;
+                                    prev => { root.prev-track(); }
+                                    toggle => { root.toggle-play(); }
+                                    next => { root.next-track(); }
+                                    shuffle-toggled => { root.shuffle-toggled(); }
+                                }
+                                // 展开播放页,同宽版那颗。
+                                RoundControl {
+                                    icon: "M12 7 L19 16 L5 16 Z";
+                                    clicked => { root.play-page-open = true; }
+                                }
+                            }
+                            HorizontalLayout {
+                                alignment: center;
+                                SyncStrip {
+                                    devices: root.devices;
+                                    push-to(id) => { root.push-to(id); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // fps 浮层:content 的最后一个子元素 → 画在最上层。
+                // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
+                if root.show-fps: Text {
+                    x: 8px;
+                    y: 8px;
+                    text: "FPS " + round(root.fps);
+                    color: #51cf66;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+            }
+        }
+
+        // ── 底栏(紧凑版式)──
+        // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
+        // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
+        if root.compact: Rectangle {
+            height: 64px + root.safe-area-insets.bottom;
+            background: #140f0b;
+            HorizontalLayout {
+                padding-left: root.safe-area-insets.left + 8px;
+                padding-right: root.safe-area-insets.right + 8px;
+                padding-bottom: root.safe-area-insets.bottom;
+                spacing: 4px;
+
+                for item[i] in Nav.items: NavItem {
+                    horizontal-stretch: 1;
+                    label: item.label;
+                    icon: item.icon;
+                    active: root.current-tab == i;
+                    clicked => { root.current-tab = i; }
+                }
+            }
+        }
+    }
+
+    // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
+    // 五层合成:warp 背景 → 封面点云 → 歌名与歌词 → 遮挡层(裁到歌词)→ 控制簇。
+    // 歌词是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从字前面掠过」;
+    // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
+    if root.play-page-open: FocusScope {
+        // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
+        // key-pressed 一次都不会触发。
+        init => { self.focus(); }
+
+        // 安卓的返回键、桌面的 Esc:都先收起播放页。
+        //
+        // 安卓那条不是锦上添花 —— 上游把 Back 派成 Key.Back,**只有我们不接**
+        // 才去 finish_activity()(见 slint 的 android-activity 后端
+        // callback_on_back_invoked)。不接就是「按返回直接退应用」,而播放页是
+        // 全屏沉浸层,那不是任何人对返回的预期。
+        key-pressed(event) => {
+            if (event.text == Key.Back || event.text == Key.Escape) {
+                root.play-page-open = false;
+                return accept;
+            }
+            return reject;
+        }
+
+      Rectangle {
+        // 纯深色底。反馈 warp 曾铺在这里当全屏背景,现在收进了播放键 ——
+        // 封面点云自己就有颜色,再叠两圈青紫只是把主体糊掉。
+        background: #0b0d13;
+
+        // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
+        // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
+        if root.viz-scene.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            image-fit: fill;
+            source: root.viz-scene;
+        }
+
+        // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
+        // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
+        // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
+        TouchArea {
+            moved => {
+                root.viz-pointer-x = self.mouse-x / root.width;
+                root.viz-pointer-y = self.mouse-y / root.height;
+                root.viz-pointer-down = self.pressed;
+            }
+            pointer-event(event) => {
+                root.viz-pointer-x = self.mouse-x / root.width;
+                root.viz-pointer-y = self.mouse-y / root.height;
+                root.viz-pointer-down = self.pressed;
+                root.viz-pointer-active = event.kind != PointerEventKind.up;
+            }
+        }
+
+        // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
+        OutlinedText {
+            y: root.viz-title-y;
+            width: 100%;
+            height: 30px;
+            text: root.now-title;
+            text-color: #e6e8ef;
+            font-size: 22px;
+        }
+        OutlinedText {
+            y: root.viz-title-y + 34px;
+            width: 100%;
+            height: 20px;
+            text: root.now-artists;
+            text-color: #9aa0b4;
+            font-size: 14px;
+        }
+
+        // 歌词:播放页现在唯一的深度卡片。当前行 + 译文,居中排在歌名下方;
+        // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
+        if root.lyric-line != "": VerticalLayout {
+            y: root.viz-lyric-y;
+            height: root.viz-lyric-h;
+            alignment: start;
+            spacing: 10px;
+
+            // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
+            // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
+            OutlinedText {
+                width: root.width - 32px;
+                x: 16px;
+                height: root.viz-lyric-line-h;
+                text: root.lyric-line;
+                text-color: #f2f5ff;
+                font-size: root.compact ? 21px : 30px;
+                // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
+                // 只是一圈灰边,拉不开对比。
+                outline: 2px;
+                wrap: word-wrap;
+            }
+            OutlinedText {
+                width: root.width - 32px;
+                x: 16px;
+                height: root.viz-lyric-tr-h;
+                text: root.lyric-translation;
+                text-color: #aab2c8;
+                font-size: root.compact ? 14px : 16px;
+                // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
+                // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
+                // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
+                vertical-alignment: top;
+                wrap: word-wrap;
+            }
+        }
+
+        // 遮挡层:整窗大小的图必须与场景那张逐像素对齐,故用负偏移推回窗口原点,
+        // 再裁到歌词矩形 —— 不裁的话近处的粒子会连控制簇一起盖住,而控制簇是
+        // 界面外壳、不在场景里。
+        if root.viz-occluder.width > 0 && root.lyric-line != "": Rectangle {
+            y: root.viz-lyric-y;
+            width: root.width;
+            height: root.viz-lyric-h;
+            clip: true;
+
+            Image {
+                y: -root.viz-lyric-y;
+                width: root.width;
+                height: root.height;
+                image-fit: fill;
+                source: root.viz-occluder;
+            }
+        }
+
+        // 切换预设后名字浮一下再淡掉。只在 hint 为真时存在 —— 常驻一个不透明度
+        // 动画会让播放页每帧都标脏,省电门就白设了。
+        if root.viz-preset-hint: Text {
+            y: root.height - 160px;
+            width: 100%;
+            text: root.viz-preset-names[root.viz-preset];
+            color: #e6e8ef;
+            font-size: 18px;
+            horizontal-alignment: center;
+        }
+        preset-hint-timer := Timer {
+            interval: 1400ms;
+            running: false;
+            triggered => {
+                root.viz-preset-hint = false;
+                self.running = false;
+            }
+        }
+
+        // 功能层:同一组回调,与音乐页的控制条完全等价。
+        //
+        // 宽版一排放下;紧凑版(手机)拆两行 —— 与音乐页同一个理由,只是这里的
+        // 一排更宽:播放键接了 warp 之后是 68px,比别的键大一圈。挤在一排的话
+        // 最右边的 ▼ 会被推出屏幕(小米13 真机实测),而那是收起播放页唯一的按键。
+        HorizontalLayout {
+            y: root.height - root.viz-controls-h
+                - root.safe-area-insets.bottom - 24px;
+            height: root.viz-controls-h;
+            alignment: center;
+            Rectangle {
+                height: root.viz-controls-h;
+                border-radius: 16px;
+                background: #17110daa;
+                border-width: 1px;
+                border-color: #ffffff10;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 4px;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        ControlCluster {
+                            is-playing: root.is-playing;
+                            shuffle-on <=> root.shuffle-on;
+                            // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
+                            // 小圆点养一条 wgpu pass。
+                            pulse: root.viz-bg;
+                            prev => { root.prev-track(); }
+                            toggle => { root.toggle-play(); }
+                            next => { root.next-track(); }
+                            shuffle-toggled => { root.shuffle-toggled(); }
+                        }
+                        if !root.compact: RoundControl {
+                            icon: root.preset-icon;
+                            clicked => {
+                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
+                                root.viz-preset-hint = true;
+                                preset-hint-timer.running = true;
+                            }
+                        }
+                        if !root.compact: RoundControl {
+                            icon: root.collapse-icon;
+                            clicked => { root.play-page-open = false; }
+                        }
+                    }
+                    if root.compact: HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        // 换视觉预设:循环走一遍六档。参照物那整个「视觉控制台」
+                        // 是另一件事,这里只要一个能挨个看过去的入口。
+                        RoundControl {
+                            icon: root.preset-icon;
+                            clicked => {
+                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
+                                root.viz-preset-hint = true;
+                                preset-hint-timer.running = true;
+                            }
+                        }
+                        // 收起播放页:向下的小三角,与展开用的向上三角对称。
+                        // 收起是操作,所以它在最上层 2D、永远点得到(docs/adr/0010)。
+                        RoundControl {
+                            icon: root.collapse-icon;
+                            clicked => { root.play-page-open = false; }
+                        }
+                    }
+                }
+            }
+        }
+      }
+    }
+}

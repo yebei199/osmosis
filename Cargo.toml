@@ -1,44 +1,137 @@
-[package]
-name = "slint-study"
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "server", "xtask"]
+# 裸 `cargo build` / `cargo test` / IDE 的 cargo check 只走桌面链路。
+# apps/android 的 `android_main` 在宿主机 target 上编不过,apps/web 拉的
+# wasm-bindgen 在 linux 上也是白搭 —— 它们一律靠 `-p` 显式构建。
+# 见 docs/adr/0003。
+#
+# render3d 曾被显式排除,好让 IDE 的 cargo check 不编 bevy。bevy 成为 apps/desktop 的
+# 硬依赖之后那道排除再也拦不住什么(裸 check 照编不误),于是把它列了回来 ——
+# 裸 `cargo test` 顺带跑它的遮挡门槛单测,不必在 CI 里为它单开一条命令。
+# 不能用 `crates/*` glob 再排除单个,cargo 不支持,只能逐一列出。
+default-members = [
+    "crates/contract",
+    "crates/api",
+    "crates/app-core",
+    "crates/ui",
+    "crates/render3d",
+    "apps/desktop",
+]
+
+[workspace.package]
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
-description = "A minimal Slint Android app (counter), modelled on ntrack's build shape"
+edition = "2024"
+# GPL-3.0 + 附加的 No-OpenAI 限制,不是标准 SPDX 组合,只能用 license-file。
+license-file = "LICENSE"
 
-[lib]
-name = "slint_study"
-# cdylib: the .so loaded by NativeActivity on Android. rlib: lets the desktop
-# binary link the same code.
-crate-type = ["cdylib", "rlib"]
+[workspace.dependencies]
+# 内部 crate。依赖方向严格单向:apps/* → ui → app-core → api → contract
+contract = { path = "crates/contract" }
+api = { path = "crates/api" }
+app-core = { path = "crates/app-core" }
+ui = { path = "crates/ui" }
+# 3D 桥。只有桌面/android 入口依赖它,web/ios 永不碰 —— 由 xtask boundaries 守住。
+render3d = { path = "crates/render3d" }
+# 音频能力层。与 api / render3d 平行:app-core 不认识它,由 ui 注入。
+audio = { path = "crates/audio" }
+# 同播能力层。信令客户端 + WebRTC 连接,同样由 ui 注入。
+syncplay = { path = "crates/syncplay" }
 
-[[bin]]
-name = "slint-study-desktop"
-path = "src/main.rs"
-required-features = ["desktop"]
-
-[dependencies]
+# 外部依赖在此统一版本,各 crate 以 `xxx.workspace = true` 引用。
+# 渲染后端的 feature(backend-winit / backend-android-activity-06)不在这里开,
+# 由各平台入口 crate 各自追加 —— 否则 feature 会被统一,android 会拉进 winit。
+# 版本号跟着 fork 走(见文件末尾的 [patch.crates-io]),不是 crates.io 上的版本。
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2"] }
+slint-build = "1.18"
+serde = { version = "1", features = ["derive"] }
 log = "0.4"
-slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2"] }
-
-[target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
-[features]
-default = []
-# Desktop dev build: `cargo run --features desktop`
-desktop = ["slint/backend-winit", "slint/renderer-femtovg", "slint/renderer-software"]
-# Android build (via cargo-ndk): android-activity backend, Skia renderer.
-android = ["slint/backend-android-activity-06"]
+# gRPC 链路。只有 server 用 —— 客户端不认识 gRPC,它只跟 axum 说 HTTP/JSON。
+# tonic 0.14 起把 prost 编解码拆成了独立 crate,故 tonic / tonic-prost / tonic-prost-build 三件套。
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+prost = "0.14"
 
-[build-dependencies]
-slint-build = "1.16"
+# 测试断言。similar-asserts 在值不等时打行级 diff,比 assert_eq! 的一坨 Debug 好读。
+similar-asserts = "2"
 
-# Native libs shipped in the APK use the release profile (small, optimized .so).
+# 音频。rodio 解码 + 出声(内部走 cpal,linux 上链接 alsa,见 slint.nix)。
+# stream-download 给 rodio 喂一个边下边读的 Read+Seek —— 不整曲下载:
+# 同播的主控要边解码边推流,等整首下完再开始推是不能接受的。
+# 不开 default-features:那会拉进 reqwest 的 native-tls(openssl),
+# 而播放直链是明文 http。要 HTTPS 时改开 "reqwest-rustls"。
+# 用 rodio 自己的组合 feature 名("wav" = 格式读取器 + PCM 编解码器),
+# 不要手挑 symphonia-* —— 只开格式不开编解码器时,解码器不会报缺 feature,
+# 而是回一句"格式无法识别",指向完全错误的方向。
+# 不开 recording(要 rtrb)、不开 dither(要 rand),播放用不上。
+# 缺 m4a/aac:网易云个别档位会给,到时候加 "mp4"。
+rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
+stream-download = { version = "0.24", default-features = false, features = ["reqwest", "temp-storage"] }
+
+# WebRTC。webrtc-rs 是 Pion 的 Rust 移植,纯 Rust、不拖 C 库 —— 这正是选它
+# 而非 libwebrtc 绑定的原因(见 docs/adr/0008),android 交叉编译不必额外备料。
+# 0.17 是最新稳定版;0.20 还停在 rc。
+webrtc = "0.17"
+
+# bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
+# 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
+# 场景用 bsn! 宏声明式构造(见 render3d)。bsn! 藏在 bevy_scene feature 后面(bevy::scene),
+# 它只拖 ron/serde/erased-serde/chrono 等纯 Rust crate,不碰系统库,故纳入。
+# 0.19 依赖 wgpu 29,与 slint 的 wgpu-29 由 cargo 统一为同一份(纹理共享的硬前提)。
+# default-features=false + 手挑最小 feature:不要 bevy_winit(它会抢窗口)、
+# 不要 audio/gilrs(会拉 alsa/udev 系统库)。features 是最小起步值,缺什么编译器会报。
+bevy = { version = "0.19", default-features = false, features = [
+    "std",
+    "bevy_asset",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_scene",
+    "bevy_window",
+    "multi_threaded",
+    # bevy 内部的着色器编译失败、管线创建失败、资源缺失全靠 LogPlugin 报出来。
+    # 不开它,这些错误在任何平台都是哑的 —— web 上尤其致命:WebGPU 对 WGSL 的
+    # 校验比原生 Vulkan 严,失败了只表现为「纹理是空的」,毫无线索。
+    "bevy_log",
+] }
+
+# APK 里打包的 native 库一律用 release profile:debug profile 的 Slint+Skia
+# 构建体积巨大且很慢,即使是 "debug" APK 也装 release 的 .so。
 [profile.release]
 lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# dev 构建里把**依赖**(bevy / slint / wgpu 等)编成优化版,本地 crate 仍 opt-level=0
+# 保持可调试、增量快。这是 bevy 官方推荐的开发配置:debug 的 bevy/wgpu 慢到离谱
+# (app.update() 实测 ~20ms/帧,直接把 3D 压到十几帧),优化依赖后回到正常帧率,
+# 而改自己的代码依旧秒级增量。首次编译会重编依赖(慢一次),之后走缓存。
+[profile.dev.package."*"]
+opt-level = 3
+
+# Slint 走 yebei199/slint 的 dev 分支(上游 master + 四条本地补丁),而不是 crates.io。
+# 四条各自的去向不同,合并进上游后要逐条撤:
+#
+#   1. fix(winit): wasm 上让浏览器自己定帧。上游的 TimerBasedFrameThrottle 在 web 端
+#      拿不到刷新率,回退到 60Hz 硬定时,144Hz 屏上被钉死在 16.14ms/帧。未提 PR。
+#   2. feat(api): Window::is_active()。播放页的可视化要「失焦即停」,上游没有等价物。
+#      可提 PR,尚未提。
+#   3. Android: pending redraw 参与 poll 超时计算。上游 request_redraw 只置标记不唤醒
+#      事件循环,自维持帧泵被压到 1fps。已提 slint#12687 / slint#12688,等维护者选修法。
+#   4. build(femtovg): 把 femtovg 指到 yebei199/femtovg 的 dev 分支。
+#      上游 femtovg 的 wgpu 后端每个 draw 新建六个 GPU 对象,wasm 上每元素约 0.5ms
+#      GPU 进程时间。分支 = femtovg master + femtovg#302 的十个 commit,版本仍 0.26.0。
+#      #302 合并后此条撤销。
+#
+# 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
+# 跟进上游要对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
+# —— cargo 不会自动放弃锁里已有的 registry 版本,少一个就静默变成 patch.unused。
+# fork 的 master 分支保持从上游纯快进,dev 靠 rebase 跟进,步骤见 docs/note/fork-sync.md。
+[patch.crates-io]
+slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
+slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }

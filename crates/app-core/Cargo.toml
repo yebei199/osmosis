@@ -1,0 +1,14 @@
+[package]
+name = "app-core"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "客户端领域:应用持有的状态,以及改变状态的规则"
+
+# 只依赖 contract。这个 crate 必须能编到 wasm32-unknown-unknown,
+# 且不知道 slint、不知道 HTTP。网络由调用方注入。见 docs/adr/0002。
+[dependencies]
+contract.workspace = true
+
+[dev-dependencies]
+similar-asserts.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "构建逻辑。经 .cargo/config.toml 的 alias 暴露为 `cargo xtask`"
+publish = false
+
+# 依赖刻意为空:xtask 要在任何一台刚 clone 的机器上立刻能跑。
+[dependencies]

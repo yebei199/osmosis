@@ -1,0 +1,11 @@
+[package]
+name = "contract"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "客户端与服务端之间在网络上传输的数据的形状"
+
+# 依赖只允许 serde 及其生态里同样 no-IO 的 crate。
+# 永远不许出现 tokio / sqlx / reqwest / axum。见 docs/adr/0001。
+[dependencies]
+serde.workspace = true
