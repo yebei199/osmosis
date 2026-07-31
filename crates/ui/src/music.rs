@@ -796,13 +796,20 @@ fn emit(
     sync: &crate::syncplay::Sync,
     decoded: audio::Loaded,
 ) {
+    use audio::buffered;
     use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
 
     let Ok(player) = player.as_ref() else { return };
-    // 先归一再分支:本机听到的和推出去的因此是同一批采样,
-    // 而 Opus 只在 48kHz 立体声上工作(见 `audio::codec::normalize`)。
-    let (tee, branch) =
-        Tee::new(normalize(decoded), BRANCH_CAPACITY);
+    // 先归一再缓冲再分支,三步的顺序都是硬的:
+    //
+    // - 归一在最前:`buffered` 交出的源对外声称 48kHz 立体声,格式得先对上;
+    // - 缓冲在中间:它把解码挪到自己的线程,声卡回调从此不碰网络(见
+    //   `audio::buffered`)。少了这一层,网络抖一下就是设备欠载;
+    // - 分支在最后:本机听到的和推给听众的因此仍是同一批采样。
+    let (tee, branch) = Tee::new(
+        buffered(normalize(decoded)),
+        BRANCH_CAPACITY,
+    );
     // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
     // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
     player.play(tee);
