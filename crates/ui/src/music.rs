@@ -709,10 +709,21 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
         ADVANCE_POLL,
         move || {
             let Some(ui) = weak.upgrade() else { return };
-            let drained = match deck.player.as_ref() {
-                Ok(player) => player.empty(),
-                Err(_) => true,
-            };
+            let (drained, position) =
+                match deck.player.as_ref() {
+                    Ok(player) => {
+                        (player.empty(), player.position())
+                    }
+                    Err(_) => {
+                        (true, core::time::Duration::ZERO)
+                    }
+                };
+            // 卡住时这一行是唯一的判据:位置冻住而没放空 = 声卡回调被网络读堵住
+            // (见 `audio` 的 PREFETCH_BYTES);位置反复归零 = 这一首被重放了。
+            // 两种症状听起来一模一样,数出来才分得开。
+            log::debug!(
+                "自动续播轮询: 位置 {position:?}, 放空 {drained}"
+            );
             if should_advance(
                 deck.playback.borrow().state(),
                 drained,
