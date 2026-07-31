@@ -23,9 +23,12 @@ fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Info)
-            .with_tag("slint_study"),
+            // logcat 的过滤标签。取 crate 名(即 `[lib] name`,也就是
+            // `libslint_study.so` 里的那个名字),而不是另写一遍字面量 ——
+            // 改名时 `adb logcat -s <tag>` 才不会跟着失灵。
+            .with_tag(env!("CARGO_CRATE_NAME")),
     );
-    log::info!("slint_study starting");
+    log::info!("{} starting", env!("CARGO_CRATE_NAME"));
 
     // APK 由系统启动,拿不到运行时环境变量(桌面那边是 `SLINT_MCP_PORT=8090 cargo run`)。
     // 故把构建期的端口烧进二进制,再在这里塞回进程环境 —— 必须赶在下面 android::init
@@ -88,7 +91,11 @@ fn android_main(app: slint::android::AndroidApp) {
                     time: v.time,
                     audio: &v.audio,
                     cover: v.cover.as_ref().map(|c| {
-                        (c.width, c.height, c.rgba.as_slice())
+                        (
+                            c.width,
+                            c.height,
+                            c.rgba.as_slice(),
+                        )
                     }),
                     pointer: render3d::Pointer {
                         x: v.pointer.x,
