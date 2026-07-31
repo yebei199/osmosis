@@ -37,6 +37,10 @@ slint-build.workspace = true
 [dev-dependencies]
 ttf-parser = "0.25"
 similar-asserts.workspace = true
+# 无头跑界面:软件后端 + 模拟时钟,不要窗口也不要显卡。已经在依赖树里
+# (i-slint-backend-selector 拉着它),所以只是显式声明,不新增下载与编译。
+# 必须与 slint 同源同分支,否则两份 i-slint-core 会在运行期打架。
+i-slint-backend-testing = { git = "https://github.com/yebei199/slint", branch = "dev" }
 
 # 本 crate 刻意没有 [features]:界面层不该被编译期开关参数化。帧率读数曾是个
 # `debug-fps` feature,现改为运行期的 `SLINT_STUDY_FPS`(见 src/lib.rs 的 fps_enabled)。

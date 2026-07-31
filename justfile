@@ -49,6 +49,8 @@ ci-boundaries:
 # **MCP 默认开着**。调试与验证一律走它 —— 读元素树、模拟点击、量真实尺寸,
 # 都比对着截图猜可靠。三个开关缺一不可,所以焊在这条配方里而不是让人记:
 # feature `mcp`、构建期 SLINT_EMIT_DEBUG_INFO、运行期 SLINT_MCP_PORT。
+# 其中调试信息现在由 crates/ui/build.rs 在 debug 档一律打开(元素树少了它就是空的,
+# 且不报错),这里保留显式设置只为把三样凑齐、一眼看得全。
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
 [group('三端')]
 [group('桌面')]

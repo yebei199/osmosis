@@ -1242,7 +1242,7 @@ export component MainWindow inherits Window {
     // 状态行长在音乐页上,而播放页是覆层、盖住它 —— 断流恰恰发生在听歌时,
     // 写在状态行等于说给没人在的房间(docs/adr/0013)。
     // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
-    if root.banner-text != "": Rectangle {
+    if root.banner-text != "": banner := Rectangle {
         y: root.safe-area-insets.top + 10px;
         x: (parent.width - self.width) / 2;
         width: min(parent.width - 32px, 420px);

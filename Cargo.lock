@@ -8977,6 +8977,7 @@ dependencies = [
  "app-core",
  "audio",
  "chrono",
+ "i-slint-backend-testing",
  "image",
  "log",
  "similar-asserts",

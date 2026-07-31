@@ -32,4 +32,10 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 - `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `SLINT_STUDY_FPS` 开关。
 - `fonts/`:中文子集字体。硬编码中文必须落在子集里,`cargo test -p ui` 的
   glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
-- `build.rs`:slint-build 编译 `.slint`。
+- `tests/banner.rs`:断流横幅的界面行为,无头跑(`i-slint-backend-testing`
+  的软件后端 + 模拟时钟,不要窗口也不要显卡)。补的是纯函数够不着的那一半 ——
+  文案对不对是 `describe_stream_loss` 的事,看不看得见是 `.slint` 里那句
+  `if root.banner-text != ""` 的事。
+- `build.rs`:slint-build 编译 `.slint`。debug 档一律带元素调试信息 ——
+  `ElementHandle` 与 Slint MCP 的元素树都以它为前提,而少了它两者不报错、
+  只是查不到任何元素。release 不带。
