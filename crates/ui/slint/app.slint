@@ -621,13 +621,11 @@ export component MainWindow inherits Window {
     // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
     // 手工对齐 —— 那边按下标分支,加档时两处都要动。
     out property <int> viz-preset: 0;
-    // 预设名,只用于切换时在屏幕上闪一下。第 6 档「安魂」要一份骷髅点云资产,
-    // 不是算法,没做(见 issue #26)。
-    out property <[string]> viz-preset-names: [
-        "封面", "滚筒", "星球", "虚空", "唱片", "星河",
-    ];
-    // 刚切完预设的那几秒:名字浮在画面上,之后自己淡掉。
-    in-out property <bool> viz-preset-hint: false;
+    // 预设名,列表里逐项显示。只剩「封面」一档 —— 另外五档让粒子离开封面平面,
+    // 那张图就散了,而点云存在的理由正是封面本身(见 docs/adr/0014)。
+    out property <[string]> viz-preset-names: ["封面"];
+    // 预设列表是不是展开着。私有:只有这一层自己用,Rust 侧不认识它。
+    property <bool> viz-preset-list-open: false;
     // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
     // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
     // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
@@ -1145,25 +1143,6 @@ export component MainWindow inherits Window {
             }
         }
 
-        // 切换预设后名字浮一下再淡掉。只在 hint 为真时存在 —— 常驻一个不透明度
-        // 动画会让播放页每帧都标脏,省电门就白设了。
-        if root.viz-preset-hint: Text {
-            y: root.height - 160px;
-            width: 100%;
-            text: root.viz-preset-names[root.viz-preset];
-            color: #e6e8ef;
-            font-size: 18px;
-            horizontal-alignment: center;
-        }
-        preset-hint-timer := Timer {
-            interval: 1400ms;
-            running: false;
-            triggered => {
-                root.viz-preset-hint = false;
-                self.running = false;
-            }
-        }
-
         // 功能层:同一组回调,与音乐页的控制条完全等价。
         //
         // 宽版一排放下;紧凑版(手机)拆两行 —— 与音乐页同一个理由,只是这里的
@@ -1201,11 +1180,7 @@ export component MainWindow inherits Window {
                         }
                         if !root.compact: RoundControl {
                             icon: root.preset-icon;
-                            clicked => {
-                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
-                                root.viz-preset-hint = true;
-                                preset-hint-timer.running = true;
-                            }
+                            clicked => { root.viz-preset-list-open = !root.viz-preset-list-open; }
                         }
                         if !root.compact: RoundControl {
                             icon: root.collapse-icon;
@@ -1215,21 +1190,67 @@ export component MainWindow inherits Window {
                     if root.compact: HorizontalLayout {
                         alignment: center;
                         spacing: 8px;
-                        // 换视觉预设:循环走一遍六档。参照物那整个「视觉控制台」
-                        // 是另一件事,这里只要一个能挨个看过去的入口。
+                        // 换视觉预设:点开一列名字来选。参照物那整个「视觉控制台」
+                        // 是另一件事,这里只要一个选得动的入口。
                         RoundControl {
                             icon: root.preset-icon;
-                            clicked => {
-                                root.viz-preset = Math.mod(root.viz-preset + 1, root.viz-preset-names.length);
-                                root.viz-preset-hint = true;
-                                preset-hint-timer.running = true;
-                            }
+                            clicked => { root.viz-preset-list-open = !root.viz-preset-list-open; }
                         }
                         // 收起播放页:向下的小三角,与展开用的向上三角对称。
                         // 收起是操作,所以它在最上层 2D、永远点得到(docs/adr/0010)。
                         RoundControl {
                             icon: root.collapse-icon;
                             clicked => { root.play-page-open = false; }
+                        }
+                    }
+                }
+
+                // 视觉预设的选择列表。点控制簇里的预设键弹出,选完收起。
+                // 摆在控制簇**上方**:列表向上长,不会把控制键顶出屏幕,
+                // 也不遮住它们 —— 选的时候还看得见自己在放什么。
+                //
+                // 宽版与紧凑版共用这一个:两处的预设键开合的是同一个属性,
+                // 列表本身只有一份。
+                if root.viz-preset-list-open: Rectangle {
+                    width: 150px;
+                    height: root.viz-preset-names.length * 38px + 12px;
+                    x: (parent.width - self.width) / 2;
+                    y: parent.height - root.viz-controls-h
+                        - root.safe-area-insets.bottom
+                        - self.height - 34px;
+                    background: #12141cee;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: #ffffff1f;
+
+                    VerticalLayout {
+                        padding: 6px;
+
+                        for name[i] in root.viz-preset-names: Rectangle {
+                            height: 38px;
+                            border-radius: 8px;
+                            // 当前项高亮。只有一档时它恒亮 —— 那正是"你在这一档"。
+                            background: i == root.viz-preset
+                                ? #d9a86c33
+                                : (item-touch.has-hover ? #ffffff12 : #00000000);
+                            animate background { duration: 120ms; easing: ease-out; }
+
+                            Text {
+                                text: name;
+                                // 预设名是硬编码中文,走子集字体。
+                                font-family: "Maple Mono NF CN";
+                                font-size: 14px;
+                                color: i == root.viz-preset ? #f0e6d8 : #b9bdcc;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            item-touch := TouchArea {
+                                clicked => {
+                                    root.viz-preset = i;
+                                    root.viz-preset-list-open = false;
+                                }
+                            }
                         }
                     }
                 }
