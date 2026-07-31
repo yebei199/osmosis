@@ -317,6 +317,17 @@ mod tests {
     /// 对照组取多少个采样:约合 10 万字节,远在卡点之内。
     const BEFORE_STALL: usize = 50_000;
 
+    /// 一块回调要多少帧。cpal 在 48kHz 上的常见块大小,正是
+    /// [`CALLBACK_BUDGET`] 那 21ms 的由来。
+    const CALLBACK_FRAMES: usize = 1024;
+
+    /// 跨过卡点要取多少块回调。
+    ///
+    /// 输入是 44.1kHz 单声道,回调那头是 48kHz 立体声,一个输入采样约合
+    /// 2.18 个输出采样;[`PAST_STALL`] 个输入采样即约 65 万个输出采样,
+    /// 除以每块的 1024×2。取整后再多留几块。
+    const BLOCKS_PAST_STALL: usize = 330;
+
     /// 一条读到 [`STALL_AFTER`] 之后就停摆的字节流:模拟 CDN 掉速或连接卡死。
     ///
     /// 卡点之前照常给字节,之后每次 `read` 先睡一觉再给 —— 这正是
@@ -418,6 +429,98 @@ mod tests {
         assert!(
             worst < CALLBACK_BUDGET,
             "卡点之前就已经有一次取样花了 {worst:?},这条流本身就慢,对照组不成立"
+        );
+    }
+
+    /// 按生产的组装方式把一路源接到 Mixer 上,交回声卡回调那一端。
+    ///
+    /// 与 [`emit`](../../ui/src/music.rs) + [`Player::play`] 同形:
+    /// normalize → Tee → `rodio::Player` → `Mixer`。唯一缺的是 OS 设备,
+    /// 而它的职责恰好由调用方扮演 —— 按块来取,取不到就欠载。
+    ///
+    /// `Player` 必须一起交回去:drop 掉它会把播放停掉(rodio `player.rs:345`),
+    /// 留在函数里的话回调那头立刻就只剩静音。
+    fn callback_end<S>(
+        source: S,
+    ) -> (rodio::Player, rodio::mixer::MixerSource)
+    where
+        S: rodio::Source + Send + 'static,
+    {
+        let (mixer, out) = rodio::mixer::mixer(
+            rodio::ChannelCount::new(codec::SYNC_CHANNELS)
+                .expect("声道数是编译期常量,非零"),
+            rodio::SampleRate::new(codec::SYNC_SAMPLE_RATE)
+                .expect("采样率是编译期常量,非零"),
+        );
+        let player = rodio::Player::connect_new(&mixer);
+
+        let (tee, _branch) = codec::Tee::new(
+            codec::normalize(source),
+            codec::BRANCH_CAPACITY,
+        );
+        player.append(tee);
+        player.play();
+
+        (player, out)
+    }
+
+    /// 扮演 cpal 的回调:一块一块地取,返回**单块**取得最久的那一次。
+    ///
+    /// `stalling` 决定喂的是会停摆的流还是老实流 —— 两条测试的差别只有这一个,
+    /// 别的都得一模一样,否则对照组证不了东西。
+    fn longest_callback_block(stalling: bool) -> Duration {
+        let bytes = wav(441_000);
+        let source = StallingSource {
+            inner: Cursor::new(bytes),
+            // 老实流:一上来就当作"已经停摆过了",于是永不睡。
+            stalled: !stalling,
+        };
+        let decoder =
+            decode(source).expect("合法 WAV 应能解码");
+        let (_player, mut out) = callback_end(decoder);
+
+        let mut worst = Duration::ZERO;
+        for _ in 0..BLOCKS_PAST_STALL {
+            let started = std::time::Instant::now();
+            // Mixer 没源可放时给静音而不是结束,跟真设备一样,所以不必判 None。
+            for _ in 0..CALLBACK_FRAMES
+                * codec::SYNC_CHANNELS as usize
+            {
+                out.next();
+            }
+            worst = worst.max(started.elapsed());
+        }
+        worst
+    }
+
+    /// **阻塞会一路传到声卡回调,中间没有任何一层挡得住。**
+    ///
+    /// 补的是上面三条的空档:它们只到解码器为止,而生产里解码器与设备之间还
+    /// 隔着 `Player`、队列、`Mixer`。这三层里但凡有一层自带缓冲,阻塞就传不
+    /// 过去,"网络卡一下就欠载"的推论也就不成立 —— 那是从源码读出来的结论,
+    /// 得有东西钉住它。
+    #[test]
+    fn a_stalled_stream_starves_the_simulated_callback() {
+        let worst = longest_callback_block(true);
+
+        assert!(
+            worst > CALLBACK_BUDGET,
+            "最久的一块只花了 {worst:?},没超过回调预算 {CALLBACK_BUDGET:?} —— 阻塞没传到回调这头"
+        );
+    }
+
+    /// 对照组:流不卡时,每一块都在预算内取完。
+    ///
+    /// 排除"这条链路本身就跟不上实时"这个替代解释 —— 尤其是 normalize 那步的
+    /// 44.1k→48k 重采样,它是链上唯一有点算力开销的环节。
+    #[test]
+    fn an_unstalled_stream_keeps_the_simulated_callback_on_time()
+     {
+        let worst = longest_callback_block(false);
+
+        assert!(
+            worst < CALLBACK_BUDGET,
+            "流没卡,却有一块花了 {worst:?}(预算 {CALLBACK_BUDGET:?}) —— 慢的是链路本身,不是网络"
         );
     }
 
