@@ -230,8 +230,10 @@ fn vendored_proto_matches_upstream() -> Result<(), String> {
         })
     };
 
-    match first_difference(&read(&vendored)?, &read(&upstream)?)
-    {
+    match first_difference(
+        &read(&vendored)?,
+        &read(&upstream)?,
+    ) {
         None => Ok(()),
         Some(line) => Err(format!(
             "{VENDORED_PROTO} 与 {UPSTREAM_PROTO} 在第 {line} 行起分歧 —— \
@@ -244,7 +246,10 @@ fn vendored_proto_matches_upstream() -> Result<(), String> {
 ///
 /// 逐行比,不做 proto 的语义解析:副本是 codegen 的唯一输入,连注释差异都值得看一眼。
 /// 一侧是另一侧前缀时,分歧记在长的那侧多出来的第一行。
-fn first_difference(left: &str, right: &str) -> Option<usize> {
+fn first_difference(
+    left: &str,
+    right: &str,
+) -> Option<usize> {
     let common = left
         .lines()
         .zip(right.lines())
@@ -318,8 +323,8 @@ message Track { string id = 1; }";
     /// 中间某行改了,报的是那一行的 1-based 行号。
     #[test]
     fn first_difference_reports_changed_line() {
-        let changed =
-            PROTO.replace("string id = 1;", "int64 id = 1;");
+        let changed = PROTO
+            .replace("string id = 1;", "int64 id = 1;");
         assert_eq!(
             first_difference(PROTO, &changed),
             Some(3)
@@ -330,8 +335,14 @@ message Track { string id = 1; }";
     #[test]
     fn first_difference_reports_appended_line() {
         let longer = format!("{PROTO}\nmessage Album {{}}");
-        assert_eq!(first_difference(PROTO, &longer), Some(4));
-        assert_eq!(first_difference(&longer, PROTO), Some(4));
+        assert_eq!(
+            first_difference(PROTO, &longer),
+            Some(4)
+        );
+        assert_eq!(
+            first_difference(&longer, PROTO),
+            Some(4)
+        );
     }
 
     /// 边界:一侧为空。
