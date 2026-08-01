@@ -15,14 +15,18 @@ import { GlassCard } from "glass.slint";
 // 但优先级更高的 `down` 分支盖住了它。
 export component HoverButton inherits Rectangle {
     in property <string> text;
+    // 能不能按。灰掉**并且**不发回调 —— 只灰不挡的话,连点一个"正在提交"的
+    // 按钮照样会发出第二次请求,而那次请求的失败会盖掉第一次的成功。
+    in property <bool> enabled: true;
     callback clicked;
 
-    property <bool> hovered: touch.has-hover;
-    property <bool> down: touch.pressed;
+    property <bool> hovered: root.enabled && touch.has-hover;
+    property <bool> down: root.enabled && touch.pressed;
 
     height: 56px;
     width: 220px;
     border-radius: 14px;
+    opacity: root.enabled ? 1.0 : 0.5;
     background: down ? #6b4520 : hovered ? #a9713c : #8a5a2b;
     drop-shadow-color: #8a5a2b80;
     drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
@@ -40,7 +44,11 @@ export component HoverButton inherits Rectangle {
     }
 
     touch := TouchArea {
-        clicked => { root.clicked(); }
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
     }
 }
 

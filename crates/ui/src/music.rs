@@ -561,6 +561,12 @@ fn fetch_into<Fut>(
         let Some(ui) = weak.upgrade() else { return };
         match found {
             Ok(found) => show(&ui, &deck, found),
+            // 会话失效要把人送回登录页,而不是在音乐页上写一句"失败" ——
+            // 那句话解释不了为什么什么都拉不出来。已经送回去了就不再报错。
+            Err(error)
+                if crate::account::handle_session_expiry(
+                    &ui, &error,
+                ) => {}
             Err(error) => ui.set_playback_text(
                 format!("失败: {error}").into(),
             ),

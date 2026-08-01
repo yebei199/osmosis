@@ -18,6 +18,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 import { NavEntry, TrackRow, DeviceRow } from "types.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip } from "controls.slint";
+import { LoginPage } from "login.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -76,6 +77,17 @@ export component MainWindow inherits Window {
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
     // 回调 —— docs/adr/0010 的「功能等价路径」。
     in-out property <bool> play-page-open: false;
+
+    // ── 登录态 ──
+    // 有没有一个可用的会话。恢复出来的 token 可能已被吊销,那要等第一次请求
+    // 401 才知道 —— 所以这个值会从真变假,登录页因此不是只在开局出现一次。
+    in-out property <bool> logged-in: false;
+    // 正在等注册/登录的答复。
+    in property <bool> login-busy: false;
+    // 登录失败的说明,已由 Rust 按错误码渲染成人话。空串 = 没有失败。
+    in property <string> login-error;
+    callback login(string, string);
+    callback register(string, string, string);
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -144,7 +156,12 @@ export component MainWindow inherits Window {
     out property <length> nav-slot-h: 68px;
     // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
     out property <length> nav-w: 96px;
-    out property <length> nav-h: content.height;
+    // 侧栏只在宽版式出现,而宽版式没有底栏 —— 所以它的高度**就是**窗口高减去
+    // 上下安全区。此前写的是 `content.height`,那是同一个值绕了一圈拿到的;
+    // 内容区被登录页那层 `if` 包起来之后,外面也就引不到它了。
+    out property <length> nav-h: root.height
+        - root.safe-area-insets.top
+        - root.safe-area-insets.bottom;
     // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
     out property <bool> nav-visible: !root.compact;
     // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
@@ -190,7 +207,11 @@ export component MainWindow inherits Window {
     min-height: 520px;
 
     // 顶层恒为一个 VerticalLayout(主体行 + 可选底栏)→ 窗口撑满且可调整大小。
-    VerticalLayout {
+    //
+    // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
+    // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
+    // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
+    if root.logged-in: VerticalLayout {
 
         // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
         HorizontalLayout {
@@ -759,6 +780,22 @@ export component MainWindow inherits Window {
             }
         }
       }
+    }
+
+    // ── 登录页:未登录时盖住整个窗口 ──
+    // 排在横幅之前,所以横幅仍压在它之上 —— 登录页上也可能断网,
+    // 那句话必须看得见。
+    if !root.logged-in: login-page := LoginPage {
+        width: 100%;
+        height: 100%;
+        busy: root.login-busy;
+        error-text: root.login-error;
+        login(username, password) => {
+            root.login(username, password);
+        }
+        register(username, password, invite) => {
+            root.register(username, password, invite);
+        }
     }
 
     // ── 断流横幅:压在所有页之上 ──

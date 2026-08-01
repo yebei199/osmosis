@@ -1,0 +1,130 @@
+// 登录页。未登录时盖住整个窗口,不占导航位。
+//
+// 与播放页同一个模式(见 CONTEXT.md「播放页」):它是**状态的展开形态**,
+// 不是一个去处。给它一个 tab 反而要回答「没登录时点它去哪」。
+//
+// 注册与登录共用这一个页面,靠 `registering` 切换 —— 两者只差一个邀请码输入框,
+// 各写一遍布局与错误区,改一处必然漏另一处。
+
+import { LineEdit } from "std-widgets.slint";
+
+import { AuroraBackground, GlassCard } from "glass.slint";
+import { HoverButton } from "widgets.slint";
+
+export component LoginPage inherits Rectangle {
+    // 正在等服务端答复。按钮据此变灰,免得连点发出两次注册。
+    in property <bool> busy: false;
+    // 给人看的失败说明。空串 = 没有失败,那一行整块让位。
+    in property <string> error-text;
+
+    // 注册还是登录。私有:Rust 侧不关心用户此刻在填哪个表单。
+    property <bool> registering: false;
+    // 邀请码的当前值。用属性接住而不是提交时去读那个输入框:
+    // 输入框在 `if` 里面,不在注册模式时它压根不在树上,引不到。
+    property <string> invite-value;
+
+    callback login(string, string);
+    callback register(string, string, string);
+
+    AuroraBackground {
+        width: 100%;
+        height: 100%;
+    }
+
+    GlassCard {
+        width: min(root.width - 48px, 360px);
+        height: form.preferred-height + 48px;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+
+        form := VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+            alignment: start;
+
+            Text {
+                text: root.registering ? "注册" : "登录";
+                color: #e6e8ef;
+                font-size: 22px;
+                horizontal-alignment: center;
+            }
+
+            username := LineEdit {
+                placeholder-text: "用户名";
+                // 回车直接提交:表单只有两三个框,让人去够按钮是多余的一步
+                accepted => { root.submit(); }
+            }
+
+            password := LineEdit {
+                placeholder-text: "密码";
+                input-type: InputType.password;
+                accepted => { root.submit(); }
+            }
+
+            // 邀请码只在注册时出现。服务面向公网,没有它任何人都能开户
+            // (见 docs/adr/0017)。
+            if root.registering: LineEdit {
+                placeholder-text: "邀请码";
+                text: root.invite-value;
+                edited => { root.invite-value = self.text; }
+                accepted => { root.submit(); }
+            }
+
+            // 失败说明。有话说才占位置 —— 常驻一个空行会把布局撑得莫名其妙。
+            if root.error-text != "": error := Text {
+                text: root.error-text;
+                color: #ff9d9d;
+                font-size: 13px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+
+            HoverButton {
+                height: 40px;
+                // 等答复时不给按 —— 连点会发出两次注册,第二次注定撞用户名重复,
+                // 而那句报错会盖掉第一次的成功。
+                enabled: !root.busy;
+                clicked => { root.submit(); }
+
+                Text {
+                    text: root.busy
+                        ? "…"
+                        : (root.registering ? "注册并登录" : "登录");
+                    color: #e6e8ef;
+                    font-size: 15px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            switch-mode := TouchArea {
+                height: 24px;
+
+                Text {
+                    text: root.registering
+                        ? "已有账号?去登录"
+                        : "没有账号?去注册";
+                    color: #9aa3b8;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                clicked => { root.registering = !root.registering; }
+            }
+        }
+    }
+
+    // 提交。哪一个回调由当前表单决定 —— 让 Rust 侧再判一次的话,
+    // 两边对"现在是注册还是登录"的理解就有了两个来源。
+    function submit() {
+        if (root.busy) {
+            return;
+        }
+        if (root.registering) {
+            root.register(username.text, password.text, root.invite-value);
+        } else {
+            root.login(username.text, password.text);
+        }
+    }
+}

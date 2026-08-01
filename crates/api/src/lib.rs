@@ -5,8 +5,8 @@
 //! `Send` 约束只存在于本 crate 内部的 `platform` 模块里。见 `docs/adr/0002`。
 
 use contract::{
-    ArtistSearchDto, HealthDto, LoginDto, LyricDto,
-    PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
+    ArtistSearchDto, ErrorDto, HealthDto, LoginDto,
+    LyricDto, PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
     PlaylistDto, PlaylistSearchDto, PlaylistsDto,
     RegisterDto, SearchDto, SessionDto, TracksDto,
 };
@@ -33,6 +33,14 @@ pub enum ApiError {
     Decode(String),
     /// 双方说的不是同一个版本的协议。
     VersionMismatch { expected: u32, actual: u32 },
+    /// 服务端明确拒绝了,并说明了原因。
+    ///
+    /// 与 [`Self::Transport`] 的区别是**有没有得到答复**:这一个是服务端想清楚了
+    /// 才说的不,调用方可以按 `code` 分支;那一个是话没传到。
+    ///
+    /// 不带 HTTP 状态码:契约规定客户端按 `code` 分支而不是按状态码
+    /// (见 `contract::ErrorDto`),带上它只会诱使人去用错的那个。
+    Server { code: String, message: String },
 }
 
 impl core::fmt::Display for ApiError {
@@ -46,6 +54,9 @@ impl core::fmt::Display for ApiError {
             }
             Self::Decode(message) => {
                 write!(f, "响应格式错误: {message}")
+            }
+            Self::Server { message, .. } => {
+                write!(f, "{message}")
             }
             Self::VersionMismatch { expected, actual } => {
                 write!(
@@ -473,6 +484,24 @@ pub async fn fetch_bytes(
     platform::get_bytes(url.to_owned()).await
 }
 
+/// 把服务端的错误响应体翻成一个带 code 的错误。
+///
+/// 解不出 [`ErrorDto`] 就退回 [`ApiError::Transport`] —— 502 网关回的是 HTML,
+/// 反向代理回的可能是别的东西。编一个 code 出来会让上层按错误的分支走,
+/// 而那种错比"不知道为什么失败"更难查。
+fn server_error(status: u16, body: &str) -> ApiError {
+    match serde_json::from_str::<ErrorDto>(body) {
+        Ok(dto) => ApiError::Server {
+            code: dto.code,
+            message: dto.message,
+        },
+        Err(_) => ApiError::Transport(format!(
+            "HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        )),
+    }
+}
+
 /// 会话:登录之后拿到的 token,以及它的落盘。
 ///
 /// token 归本 crate 而不是 `app-core`:它是「怎么发请求」的一部分,
@@ -621,21 +650,35 @@ mod platform {
                     request = request.json(&body);
                 }
 
-                request
-                    .send()
-                    .await
-                    .map_err(|e| {
+                let response =
+                    request.send().await.map_err(|e| {
                         ApiError::Transport(e.to_string())
-                    })?
-                    .error_for_status()
-                    .map_err(|e| {
-                        ApiError::Transport(e.to_string())
-                    })
+                    })?;
+
+                check(response).await
             })
             .await
             .map_err(|join_error| {
                 ApiError::Transport(join_error.to_string())
             })?
+    }
+
+    /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。
+    ///
+    /// `error_for_status` 做不到这件事:它只看状态码,响应体连同里面的 code
+    /// 一起被丢掉,上层就只能拿到一句"HTTP 401"。
+    async fn check(
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, ApiError> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+
+        let body =
+            response.text().await.unwrap_or_default();
+
+        Err(super::server_error(status.as_u16(), &body))
     }
 
     /// 会话文件的位置。可用 `SLINT_STUDY_SESSION_FILE` 直接指定。
@@ -839,14 +882,30 @@ mod platform {
             request = request.json(&body);
         }
 
-        request
-            .send()
-            .await
-            .map_err(|e| {
+        let response =
+            request.send().await.map_err(|e| {
                 ApiError::Transport(e.to_string())
-            })?
-            .error_for_status()
-            .map_err(|e| ApiError::Transport(e.to_string()))
+            })?;
+
+        check(response).await
+    }
+
+    /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。
+    ///
+    /// `error_for_status` 做不到这件事:它只看状态码,响应体连同里面的 code
+    /// 一起被丢掉,上层就只能拿到一句"HTTP 401"。
+    async fn check(
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, ApiError> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+
+        let body =
+            response.text().await.unwrap_or_default();
+
+        Err(super::server_error(status.as_u16(), &body))
     }
 
     /// 浏览器的 localStorage。取不到(隐私模式、没有 window)就当没有会话 ——
@@ -1162,6 +1221,38 @@ mod tests {
         assert!(
             playlist_url("a/b")
                 .ends_with("/playlists/a%2Fb")
+        );
+    }
+
+    /// 服务端回的 code 保留进错误里,不被压成一句文本 ——
+    /// 契约里那些 code 存在的全部意义就是给客户端分支用的。
+    #[test]
+    fn server_error_body_keeps_its_code() {
+        let err = server_error(
+            401,
+            r#"{"code":"bad_credentials","message":"用户名或密码不对"}"#,
+        );
+
+        assert!(matches!(
+            &err,
+            ApiError::Server { code, message }
+                if code == "bad_credentials"
+                    && message == "用户名或密码不对"
+        ));
+    }
+
+    /// 解不出 ErrorDto 时退回 Transport,不编一个 code 出来。
+    /// 编了会让上层按错误的分支走,而那种错比"不知道为什么失败"更难查。
+    #[test]
+    fn unparseable_error_body_falls_back_to_transport() {
+        let err = server_error(
+            502,
+            "<html><body>Bad Gateway</body></html>",
+        );
+
+        assert!(
+            matches!(err, ApiError::Transport(_)),
+            "实际 {err:?}"
         );
     }
 }
