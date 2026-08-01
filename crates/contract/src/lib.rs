@@ -196,6 +196,18 @@ pub struct SessionDto {
     pub username: String,
 }
 
+/// `POST /played` 的请求体:报告一次起播。
+///
+/// 只说"放了什么、什么时候"(时刻由服务端记),不说"听了多久" ——
+/// 补记时长要靠客户端在退出或切歌时再发一次,而崩溃与断网时那一条就丢了。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlayedDto {
+    pub platform: String,
+    pub track_id: String,
+}
+
 /// 一台在线设备。
 ///
 /// 「在线」没有别的含义:它**等于**此刻与服务端之间存在活跃连接。

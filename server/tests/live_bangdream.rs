@@ -24,7 +24,7 @@ use server::bangdream::{
         GetPlaySourceRequest, GetTracksRequest,
         ListLikedTracksRequest, Platform, QualityLevel,
         SearchArtistsRequest, SearchPlaylistsRequest,
-        SearchTracksRequest,
+        SearchTracksRequest, SetTrackLikedRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -296,5 +296,114 @@ async fn search_playlists_returns_playlists_from_live_bangdream()
     assert_eq!(
         dto.source,
         contract::PlaylistSource::Platform
+    );
+}
+
+/// 点红心再取消,真实往返。**可逆**:先挑一首当前不在红心列表里的歌,
+/// 所以中途失败也只会留下一首多出来的红心,不会抹掉你真点过的。
+///
+/// 这条测试的价值在于寻址与字段号 —— 写操作的 handler 本身没有逻辑,
+/// 单元测试盖不到"服务名写错了"这一类错。
+#[tokio::test]
+#[ignore = "会向真实网易云账号写入(可逆),需已登录"]
+async fn liking_a_track_is_reversible() {
+    let channel = Channel::from_static(UPSTREAM)
+        .connect()
+        .await
+        .expect("bang-dream 没起来?先跑 `just bang-dream`");
+    let mut auth = AuthServiceClient::new(channel.clone());
+    let mut library = LibraryServiceClient::new(channel);
+    let mut catalog = catalog().await;
+
+    let account = auth
+        .get_account_status(req(GetAccountStatusRequest {
+            platform: Platform::Netease as i32,
+        }))
+        .await
+        .expect("查账号状态失败")
+        .into_inner();
+    assert!(account.logged_in, "需要已登录的网易云账号");
+
+    let already: std::collections::HashSet<String> =
+        library
+            .list_liked_tracks(req(
+                ListLikedTracksRequest {
+                    platform: Platform::Netease as i32,
+                    user_id: account.user_id.clone(),
+                },
+            ))
+            .await
+            .expect("取红心列表失败")
+            .into_inner()
+            .track_ids
+            .into_iter()
+            .collect();
+
+    // 挑一首还没被红心的歌 —— 否则最后那步取消会抹掉本来就点过的
+    let candidate = catalog
+        .search_tracks(req(SearchTracksRequest {
+            platform: Platform::Netease as i32,
+            keyword: "紅蓮華".to_owned(),
+            limit: 20,
+            offset: 0,
+        }))
+        .await
+        .expect("搜索失败")
+        .into_inner()
+        .tracks
+        .into_iter()
+        .map(|track| track.id)
+        .find(|id| !already.contains(id))
+        .expect("搜到的歌全都已经在红心里了,换个关键词");
+
+    library
+        .set_track_liked(req(SetTrackLikedRequest {
+            platform: Platform::Netease as i32,
+            track_id: candidate.clone(),
+            liked: true,
+        }))
+        .await
+        .expect("点红心失败");
+
+    let after_like: Vec<String> = library
+        .list_liked_tracks(req(ListLikedTracksRequest {
+            platform: Platform::Netease as i32,
+            user_id: account.user_id.clone(),
+        }))
+        .await
+        .expect("取红心列表失败")
+        .into_inner()
+        .track_ids;
+
+    // 先恢复原状再断言:断言失败会提前结束测试,放在后面就恢复不了了
+    library
+        .set_track_liked(req(SetTrackLikedRequest {
+            platform: Platform::Netease as i32,
+            track_id: candidate.clone(),
+            liked: false,
+        }))
+        .await
+        .expect(
+            "取消红心失败 —— 这首歌现在多留在了红心列表里",
+        );
+
+    assert!(
+        after_like.contains(&candidate),
+        "点了红心却没进红心列表"
+    );
+
+    let after_unlike: Vec<String> = library
+        .list_liked_tracks(req(ListLikedTracksRequest {
+            platform: Platform::Netease as i32,
+            user_id: account.user_id,
+        }))
+        .await
+        .expect("取红心列表失败")
+        .into_inner()
+        .track_ids;
+
+    assert!(
+        !after_unlike.contains(&candidate),
+        "取消了红心却还在列表里"
     );
 }

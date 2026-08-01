@@ -11,6 +11,7 @@ pub mod auth;
 pub mod bangdream;
 pub mod db;
 pub mod error;
+pub mod history;
 pub mod paging;
 pub mod playlist;
 pub mod roster;

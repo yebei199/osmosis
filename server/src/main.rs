@@ -20,9 +20,9 @@ use axum::{
 };
 use contract::{
     ArtistSearchDto, HealthDto, LoginDto, LyricDto,
-    PROTOCOL_VERSION, PlaySourceDto, PlaylistDto,
-    PlaylistSearchDto, PlaylistsDto, RegisterDto,
-    SearchDto, SessionDto, TracksDto,
+    PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
+    PlaylistDto, PlaylistSearchDto, PlaylistsDto,
+    RegisterDto, SearchDto, SessionDto, TracksDto,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -39,6 +39,7 @@ use server::bangdream::{
         ListLikedTracksRequest, ListUserPlaylistsRequest,
         Platform, QualityLevel, SearchArtistsRequest,
         SearchPlaylistsRequest, SearchTracksRequest,
+        SetPlaylistSubscribedRequest, SetTrackLikedRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -46,6 +47,7 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
+use server::history;
 use server::playlist::{self, TrackRef};
 use server::signaling::{self, SharedRoster};
 use server::{db, error, paging};
@@ -66,6 +68,11 @@ const DEFAULT_SEARCH_LIMIT: i32 = 30;
 ///
 // ponytail: 先写死。做到音质选择时再提成查询参数 —— 现在没有任何界面能选它。
 const PLAY_QUALITY: QualityLevel = QualityLevel::High;
+
+/// 「最近播放」默认给多少首。
+///
+// ponytail: 一屏够看就行,客户端要更多可以自己传 limit。
+const DEFAULT_RECENT_LIMIT: i64 = 50;
 
 /// 数据库连接串的默认值,与 `just pg` 起的容器一致。
 const DEFAULT_DATABASE_URL: &str =
@@ -183,6 +190,19 @@ async fn main() {
         .route("/search/playlists", get(search_playlists))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
+        // 红心与收藏各用自己的名词,不挂在 /playlists/{id} 下:
+        // 那条路径的 id 是本地歌单的整数主键,而收藏的是平台歌单的字符串 id ——
+        // 同一个 {id} 指两个 id 空间,迟早有人传错一个
+        .route(
+            "/liked/{track_id}",
+            axum::routing::put(like_track)
+                .delete(unlike_track),
+        )
+        .route(
+            "/subscriptions/playlists/{playlist_id}",
+            axum::routing::put(subscribe_playlist)
+                .delete(unsubscribe_playlist),
+        )
         .route(
             "/playlists",
             get(playlists).post(create_playlist),
@@ -200,6 +220,8 @@ async fn main() {
         )
         .route("/play/{track_id}", get(play))
         .route("/lyric/{track_id}", get(lyric))
+        .route("/played", post(record_play))
+        .route("/recent", get(recent))
         .with_state(state)
         .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
@@ -822,6 +844,98 @@ async fn remove_playlist_tracks(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `PUT /liked/{track_id}` —— 给一首歌点红心。
+async fn like_track(
+    State(state): State<AppState>,
+    account: Account,
+    Path(track_id): Path<String>,
+) -> Result<StatusCode, Failure> {
+    set_liked(&state, &account, track_id, true).await
+}
+
+/// `DELETE /liked/{track_id}` —— 取消红心。
+async fn unlike_track(
+    State(state): State<AppState>,
+    account: Account,
+    Path(track_id): Path<String>,
+) -> Result<StatusCode, Failure> {
+    set_liked(&state, &account, track_id, false).await
+}
+
+/// 红心的开与关只差一个布尔值,两条路由因此共用这一段。
+///
+/// 「我喜欢的」就是平台的红心列表,不建本地副本(见 `docs/adr/0016`),
+/// 所以这里只转发,自家库一个字都不写。
+async fn set_liked(
+    state: &AppState,
+    account: &Account,
+    track_id: String,
+    liked: bool,
+) -> Result<StatusCode, Failure> {
+    let mut library = state.upstream.library.clone();
+
+    library
+        .set_track_liked(bangdream::as_user(
+            account,
+            SetTrackLikedRequest {
+                platform: Platform::Netease as i32,
+                track_id,
+                liked,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /subscriptions/playlists/{playlist_id}` —— 收藏一个平台歌单。
+async fn subscribe_playlist(
+    State(state): State<AppState>,
+    account: Account,
+    Path(playlist_id): Path<String>,
+) -> Result<StatusCode, Failure> {
+    set_subscribed(&state, &account, playlist_id, true)
+        .await
+}
+
+/// `DELETE /subscriptions/playlists/{playlist_id}` —— 取消收藏。
+async fn unsubscribe_playlist(
+    State(state): State<AppState>,
+    account: Account,
+    Path(playlist_id): Path<String>,
+) -> Result<StatusCode, Failure> {
+    set_subscribed(&state, &account, playlist_id, false)
+        .await
+}
+
+/// 收藏的开与关同样只差一个布尔值。
+///
+/// 只对**平台**歌单有意义:本地歌单是自己建的,没有"收藏"这回事,
+/// 它的对应操作是删除。
+async fn set_subscribed(
+    state: &AppState,
+    account: &Account,
+    playlist_id: String,
+    subscribed: bool,
+) -> Result<StatusCode, Failure> {
+    let mut library = state.upstream.library.clone();
+
+    library
+        .set_playlist_subscribed(bangdream::as_user(
+            account,
+            SetPlaylistSubscribedRequest {
+                platform: Platform::Netease as i32,
+                playlist_id,
+                subscribed,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `GET /play/{track_id}` —— 取一条临时直链。
 ///
 /// 每次都向上游重新要:直链带签名会过期,缓存它只会让客户端拿到放不出声的地址。
@@ -850,6 +964,83 @@ async fn play(
     })?;
 
     Ok(Json(bangdream::play_source_to_dto(source)))
+}
+
+/// `POST /played` —— 报告一次起播。
+///
+/// 客户端在**声音真的出来之后**才发,不是按下播放键就发:取直链可能失败,
+/// 那时并没有发生一次播放。
+async fn record_play(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<PlayedDto>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    history::record(
+        &mut conn,
+        account.id,
+        &TrackRef {
+            platform: body.platform,
+            track_id: body.track_id,
+        },
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /recent` —— 最近播放,曲目详情由上游补全。
+///
+/// 与 [`liked`]、[`playlist_tracks`] 同一个套路:自家只存标识。
+async fn recent(
+    State(state): State<AppState>,
+    account: Account,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<TracksDto>, Failure> {
+    // 大得离谱的 limit 退回默认值,而不是报错:那是客户端的笔误,不是攻击
+    let limit = query
+        .limit
+        .and_then(|limit| i64::try_from(limit).ok())
+        .unwrap_or(DEFAULT_RECENT_LIMIT);
+
+    let mut conn = conn(&state.pool).await?;
+    let refs =
+        history::recent(&mut conn, account.id, limit)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    if refs.is_empty() {
+        return Ok(Json(TracksDto { tracks: Vec::new() }));
+    }
+
+    // 目前只有网易云一个平台,与 playlist_tracks 同一处待办
+    let ids: Vec<String> = refs
+        .into_iter()
+        .map(|track| track.track_id)
+        .collect();
+
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .get_tracks(bangdream::as_user(
+            &account,
+            GetTracksRequest {
+                platform: Platform::Netease as i32,
+                track_ids: ids,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
+    }))
 }
 
 /// `GET /lyric/{track_id}`:取一首歌的行级歌词。
