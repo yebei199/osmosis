@@ -10,9 +10,36 @@ use contract::{
     LyricDto, LyricLineDto, PlaySourceDto, TrackDto,
 };
 
+use crate::account::Account;
+
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {
     tonic::include_proto!("bangdream.music.v1");
+}
+
+/// bang-dream 认这个 metadata 键来选该用哪个账号的网易云凭据。
+///
+/// 键名与那侧的 `internal/rpc/userid.go` 手工对齐 —— proto 里没有它,
+/// 因为「以谁的身份问」不是领域请求的一部分(见那个仓库的 `docs/adr/0009`)。
+const USER_ID_KEY: &str = "x-user-id";
+
+/// 把一条请求包成带用户标识的 gRPC 请求。
+///
+/// 上游没有默认用户:不带这个头的调用一律 `INVALID_ARGUMENT`。所以每一次上游调用
+/// 都要经过这里 —— 漏一处的现象是那条路由整个不可用,不会静默串号。
+pub fn as_user<T>(
+    account: &Account,
+    message: T,
+) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(message);
+    // 用户标识是 accounts.id 的十进制串,永远是合法的 ASCII metadata 值
+    let value = account.upstream_user_id().parse().expect(
+        "用户标识是十进制数字,必然是合法的 metadata 值",
+    );
+
+    request.metadata_mut().insert(USER_ID_KEY, value);
+
+    request
 }
 
 /// 上游平台枚举翻成契约里的字符串。
@@ -82,7 +109,9 @@ pub fn lyric_to_dto(lyric: proto::Lyric) -> LyricDto {
                     start_ms: line.start_ms,
                     end_ms: line.end_ms,
                     text: line.text,
-                    translation: non_empty(line.translation),
+                    translation: non_empty(
+                        line.translation,
+                    ),
                 })
                 .collect(),
         ),
@@ -211,7 +240,10 @@ fn split_translation(
     // 不如让它只在它对应的那一段出现。
     if pieces.len() < 2 {
         return std::iter::once(Some(translation))
-            .chain(std::iter::repeat_n(None, weights.len() - 1))
+            .chain(std::iter::repeat_n(
+                None,
+                weights.len() - 1,
+            ))
             .collect();
     }
 
@@ -323,8 +355,9 @@ mod tests {
     /// 超长行在标点处断开,切出的每段都不再超阈值。
     #[test]
     fn long_line_splits_at_punctuation() {
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, LONG,
+        )]);
         assert!(
             out.len() > 1,
             "108 字符的行应当被切开,实际 {} 段",
@@ -413,7 +446,9 @@ mod tests {
     }
 
     /// 各段的译文按顺序拼起来。
-    fn joined_translation(lines: &[LyricLineDto]) -> String {
+    fn joined_translation(
+        lines: &[LyricLineDto],
+    ) -> String {
         lines
             .iter()
             .filter_map(|line| line.translation.as_deref())
@@ -427,7 +462,10 @@ mod tests {
             LONG_TRANSLATION,
         )]);
         assert!(out.len() > 1);
-        assert_eq!(joined_translation(&out), LONG_TRANSLATION);
+        assert_eq!(
+            joined_translation(&out),
+            LONG_TRANSLATION
+        );
     }
 
     /// 分配比例跟着正文走:正文最长的那一段,拿到的译文也最长。
@@ -455,8 +493,8 @@ mod tests {
     ///
     /// 用加长版正文:[`LONG`] 只切得出两段,凑不出「片数少于段数」。
     #[test]
-    fn fewer_translation_pieces_than_segments_leaves_the_rest_empty(
-    ) {
+    fn fewer_translation_pieces_than_segments_leaves_the_rest_empty()
+     {
         let mut line =
             dto_line(0, 4_000, &format!("{LONG}, {LONG}"));
         line.translation = Some("甲,乙".to_owned());
@@ -472,10 +510,11 @@ mod tests {
     /// 没有标点可断的译文整份给第一段,其余段留空 —— 与其在三段里重复一句
     /// 读不全的话,不如只在它对应的那一段出现。
     #[test]
-    fn an_unsplittable_translation_goes_to_the_first_segment_only(
-    ) {
-        let out =
-            split_long_lines(vec![long_line_with("我还是老样子")]);
+    fn an_unsplittable_translation_goes_to_the_first_segment_only()
+     {
+        let out = split_long_lines(vec![long_line_with(
+            "我还是老样子",
+        )]);
         assert!(out.len() > 1);
         assert_eq!(
             out[0].translation.as_deref(),
@@ -488,9 +527,11 @@ mod tests {
 
     /// 没有译文的行,切出来的每一段也都没有译文。
     #[test]
-    fn a_missing_translation_stays_missing_across_segments() {
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
+    fn a_missing_translation_stays_missing_across_segments()
+    {
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, LONG,
+        )]);
         assert!(out.len() > 1);
         for segment in &out {
             assert_eq!(segment.translation, None);
@@ -501,7 +542,8 @@ mod tests {
     #[test]
     fn unsplit_lines_keep_their_translation() {
         let mut line = dto_line(0, 1_000, "短短一行");
-        line.translation = Some(LONG_TRANSLATION.to_owned());
+        line.translation =
+            Some(LONG_TRANSLATION.to_owned());
         assert_eq!(
             split_long_lines(vec![line.clone()]),
             vec![line]
@@ -513,22 +555,27 @@ mod tests {
     fn translation_split_does_not_break_multibyte_chars() {
         let translation =
             "我弹着吉他,盼着明天,能说一句我很好,".repeat(4);
-        let out =
-            split_long_lines(vec![long_line_with(&translation)]);
+        let out = split_long_lines(vec![long_line_with(
+            &translation,
+        )]);
         assert!(out.len() > 1);
         assert_eq!(joined_translation(&out), translation);
         for segment in &out {
-            assert_ne!(segment.translation.as_deref(), Some(""));
+            assert_ne!(
+                segment.translation.as_deref(),
+                Some("")
+            );
         }
     }
 
     /// 切点落在 UTF-8 字符边界上,整行中文不 panic。
     #[test]
     fn split_does_not_break_multibyte_chars() {
-        let text = "我弹着吉他,盼着明天,能说一句我很好,"
-            .repeat(6);
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, &text)]);
+        let text =
+            "我弹着吉他,盼着明天,能说一句我很好,".repeat(6);
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, &text,
+        )]);
         assert!(out.len() > 1);
         for segment in &out {
             assert!(!segment.text.is_empty());
@@ -607,8 +654,7 @@ mod tests {
     /// 逐字档位:上游已拼好整行文本,行级消费方拿到的东西与逐行档位一致。
     #[test]
     fn word_timed_lyric_still_yields_line_text() {
-        let mut line =
-            proto_line(2_000, "拼好的整行", "");
+        let mut line = proto_line(2_000, "拼好的整行", "");
         line.words = vec![
             proto::LyricWord {
                 start_ms: 2_000,
@@ -755,5 +801,44 @@ mod tests {
         assert_eq!(dto.format, "mp3");
         assert_eq!(dto.bit_rate, 320_000);
         assert!(dto.trial);
+    }
+
+    /// 构造出的请求带上了 x-user-id —— 上游靠它选凭据,漏了那条路由整个不可用。
+    #[test]
+    fn request_carries_the_user_id_in_metadata() {
+        let account = Account {
+            id: 42,
+            username: "alice".to_owned(),
+        };
+
+        let request = as_user(
+            &account,
+            proto::GetTracksRequest::default(),
+        );
+
+        assert_eq!(
+            request
+                .metadata()
+                .get("x-user-id")
+                .map(|value| value.to_str().unwrap()),
+            Some("42"),
+        );
+    }
+
+    /// 加 metadata 不动消息体。
+    #[test]
+    fn request_body_is_untouched() {
+        let account = Account {
+            id: 1,
+            username: "alice".to_owned(),
+        };
+        let message = proto::GetTracksRequest {
+            platform: proto::Platform::Netease as i32,
+            track_ids: vec!["1".to_owned(), "2".to_owned()],
+        };
+
+        let request = as_user(&account, message.clone());
+
+        assert_eq!(request.into_inner(), message);
     }
 }

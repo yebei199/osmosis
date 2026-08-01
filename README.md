@@ -100,14 +100,21 @@ just desktop-dev
 收敛成统一 gRPC 接口的聚合层),以及一次扫码登录。
 
 ```sh
-just bang-dream-login        # 首次:扫码登录网易云,凭据全服务只有一份
+just pg                      # 终端 0:Postgres(账号、本地歌单、播放事件)
+just bang-dream-login        # 首次:扫码登录网易云,凭据按账号各存一份
 just bang-dream              # 终端 1:gRPC,监听 127.0.0.1:50051
-just server-dev              # 终端 2:axum,监听 127.0.0.1:3000
+INVITE_CODE=... just server-dev   # 终端 2:axum,监听 127.0.0.1:3000
 just desktop-dev             # 终端 3:「Music」页搜歌、点一首出声
 ```
 
-连接是惰性的 —— bang-dream 没起来时后端照常启动,请求到来才失败并映射成 502,
-两个进程因此没有启动顺序约束。
+到 bang-dream 的连接是惰性的 —— 它没起来时后端照常启动,请求到来才失败并映射成 502,
+两个进程因此没有启动顺序约束。**数据库不同**:连不上就不启动,因为没有它连登录都办不成,
+带着一个必然 500 的服务活着只会更难查。
+
+音乐相关的路由都要登录态(`Authorization: Bearer`),账号由 `/register` 与 `/login`
+取得,注册需要 `INVITE_CODE` —— 服务面向公网,没有这道门任何人都能开户
+(见 [`docs/adr/0017`](docs/adr/0017-accounts-with-per-user-platform-credentials.md))。
+账号同时是网易云凭据的分片键:每个账号绑自己的网易云登录。
 
 对客户端而言 gRPC 不存在:它只见到 `/search`、`/play/{id}` 这样的 HTTP/JSON,
 形状由 `contract` crate 定义。gRPC 的价值在 axum↔bang-dream 那一段 ——

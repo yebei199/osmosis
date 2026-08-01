@@ -113,6 +113,16 @@ font-subset:
       --output-file=crates/ui/fonts/cjk-subset.ttf"
     @ls -la crates/ui/fonts/cjk-subset.ttf
 
+# 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
+# 数据在命名卷里,容器删了也还在。
+pg:
+    docker start slint-study-pg 2>/dev/null || \
+      docker run -d --name slint-study-pg \
+        -e POSTGRES_PASSWORD=devonly -e POSTGRES_USER=slint -e POSTGRES_DB=slint_study \
+        -p 127.0.0.1:5432:5432 -v slint-study-pgdata:/var/lib/postgresql/data \
+        postgres:17-alpine
+    @docker exec slint-study-pg sh -c 'until pg_isready -U slint -d slint_study >/dev/null 2>&1; do sleep 0.2; done'
+
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
 [group('服务端')]
 server-dev:

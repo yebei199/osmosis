@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// 任何对本 crate 中类型的**不兼容**改动都必须让它加一:改字段名、删字段、
 /// 改字段语义。新增可选字段是兼容的,不必加一。
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// 2:音乐相关的路由开始要求登录态。新增路由本来是兼容的,但**既有路由多了一个
+/// 必需的请求头**,老客户端会整片 401 —— 那是不兼容。
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// `GET /health` 的响应体。
 #[derive(
@@ -117,6 +120,39 @@ pub struct LyricLineDto {
 )]
 pub struct LyricDto {
     pub lines: Vec<LyricLineDto>,
+}
+
+/// `POST /register` 的请求体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct RegisterDto {
+    pub username: String,
+    pub password: String,
+    /// 部署时配置的邀请码。服务面向公网,没有它任何人都能开户。
+    pub invite: String,
+}
+
+/// `POST /login` 的请求体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct LoginDto {
+    pub username: String,
+    pub password: String,
+}
+
+/// `POST /register` 与 `POST /login` 的响应体:一个可用的会话。
+///
+/// token 由客户端本地长期保存,之后每次请求放进 `Authorization: Bearer`。
+/// 服务端只存它的哈希,所以**这是它唯一一次出现**,丢了只能重新登录。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct SessionDto {
+    pub token: String,
+    /// 登录成功的账号名,回显给界面用,省客户端一次请求。
+    pub username: String,
 }
 
 /// 一台在线设备。

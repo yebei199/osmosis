@@ -14,18 +14,21 @@
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    http::StatusCode,
-    routing::get,
+    extract::{FromRef, Path, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    routing::{get, post},
 };
 use contract::{
-    ErrorDto, HealthDto, LyricDto, PROTOCOL_VERSION,
-    PlaySourceDto, SearchDto, TracksDto,
+    HealthDto, LoginDto, LyricDto, PROTOCOL_VERSION,
+    PlaySourceDto, RegisterDto, SearchDto, SessionDto,
+    TracksDto,
 };
 use serde::Deserialize;
+use sqlx::PgPool;
 use tonic::transport::Channel;
 use tower_http::cors::CorsLayer;
 
+use server::account::{self, Account};
 use server::bangdream::{
     self,
     proto::{
@@ -40,8 +43,9 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
+use server::error::Failure;
 use server::signaling::{self, SharedRoster};
-use server::{error, paging};
+use server::{db, error, paging};
 
 /// 默认监听地址。
 ///
@@ -60,8 +64,9 @@ const DEFAULT_SEARCH_LIMIT: i32 = 30;
 // ponytail: 先写死。做到音质选择时再提成查询参数 —— 现在没有任何界面能选它。
 const PLAY_QUALITY: QualityLevel = QualityLevel::High;
 
-/// 失败响应:状态码 + [`ErrorDto`]。
-type Failure = (StatusCode, Json<ErrorDto>);
+/// 数据库连接串的默认值,与 `just pg` 起的容器一致。
+const DEFAULT_DATABASE_URL: &str =
+    "postgres://slint:devonly@127.0.0.1:5432/slint_study";
 
 /// 四个 gRPC 客户端。共享同一条惰性连接,clone 只是加一份引用。
 ///
@@ -75,14 +80,52 @@ struct Upstream {
     auth: AuthServiceClient<Channel>,
 }
 
+/// 进程的全部共享状态。
+///
+/// 三样东西凑在一起只是因为 handler 需要它们,彼此之间没有关系:
+/// 上游连接、自家的库、以及注册用的邀请码。
+#[derive(Clone)]
+struct AppState {
+    upstream: Upstream,
+    pool: PgPool,
+    /// 注册时必须对上的邀请码,由环境变量 `INVITE_CODE` 给。
+    invite: String,
+}
+
+// 鉴权提取器只要池,不该认识别的东西 —— 见 server::auth。
+impl FromRef<AppState> for PgPool {
+    fn from_ref(state: &AppState) -> Self {
+        state.pool.clone()
+    }
+}
+
 /// 把 gRPC 失败翻成 HTTP 失败。
 fn fail(status: &tonic::Status) -> Failure {
     let (code, body) = error::map_status(status);
     (code, Json(body))
 }
 
+/// 从池里取一条连接,失败翻成 HTTP 失败。
+async fn conn(
+    pool: &PgPool,
+) -> Result<
+    sqlx::pool::PoolConnection<sqlx::Postgres>,
+    Failure,
+> {
+    pool.acquire().await.map_err(|err| {
+        error::map_account_error(&err.into())
+    })
+}
+
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
     let upstream = std::env::var("BANG_DREAM_ADDR")
         .unwrap_or_else(|_| DEFAULT_UPSTREAM.to_owned());
     // 惰性连接:bang-dream 没起来时本服务照样能启动,请求到来才失败并映射成 502。
@@ -99,6 +142,24 @@ async fn main() {
         auth: AuthServiceClient::new(channel),
     };
 
+    // 库连不上就不启动。惰性连上游是刻意的(见上),但数据库不同:
+    // 没有它连登录都办不成,带着一个必然 500 的服务活着只会更难查。
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| {
+            DEFAULT_DATABASE_URL.to_owned()
+        });
+    let pool = db::connect(&database_url)
+        .await
+        .expect("连接数据库或跑迁移失败");
+
+    let state = AppState {
+        upstream: clients,
+        pool,
+        invite: std::env::var("INVITE_CODE").expect(
+            "必须设置 INVITE_CODE —— 没有它任何人都能注册",
+        ),
+    };
+
     // 同播信令。与音乐那几条路由**共用不了** state(一个是 gRPC 客户端、一个是
     // 在线名册),故各自 with_state 后再 merge —— 这也如实反映了两者毫无关系:
     // 信令不碰 bang-dream,音乐不碰 WebRTC。
@@ -108,12 +169,17 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
+        // 账号三条不需要登录态 —— 它们正是用来取得登录态的
+        .route("/register", post(register))
+        .route("/login", post(login))
+        // 登出要 token:它删的就是那一条会话
+        .route("/logout", post(logout))
         .route("/search", get(search))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
         .route("/play/{track_id}", get(play))
         .route("/lyric/{track_id}", get(lyric))
-        .with_state(clients)
+        .with_state(state)
         .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // permissive 只适用于开发:它允许任意来源。
@@ -127,9 +193,7 @@ async fn main() {
             panic!("failed to bind {bind}: {e}")
         });
 
-    println!(
-        "listening on http://{bind}, upstream {upstream}"
-    );
+    tracing::info!(%bind, %upstream, "服务已启动");
     axum::serve(listener, app)
         .await
         .expect("server failed");
@@ -146,6 +210,91 @@ async fn health() -> Json<HealthDto> {
     })
 }
 
+/// `POST /register` —— 凭邀请码开一个账号,并直接给出可用的会话。
+///
+/// 注册完顺手登录:否则客户端要连发两次请求,而中间那个"注册成功但没登录"的
+/// 状态没有任何用处。
+async fn register(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterDto>,
+) -> Result<Json<SessionDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    let created = account::register(
+        &mut conn,
+        &body.username,
+        &body.password,
+        &body.invite,
+        &state.invite,
+    )
+    .await
+    .map_err(|err| error::map_account_error(&err))?;
+
+    let token = account::login(
+        &mut conn,
+        &body.username,
+        &body.password,
+    )
+    .await
+    .map_err(|err| error::map_account_error(&err))?;
+
+    Ok(Json(SessionDto {
+        token,
+        username: created.username,
+    }))
+}
+
+/// `POST /login` —— 用用户名密码换一个会话 token。
+async fn login(
+    State(state): State<AppState>,
+    Json(body): Json<LoginDto>,
+) -> Result<Json<SessionDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    let token = account::login(
+        &mut conn,
+        &body.username,
+        &body.password,
+    )
+    .await
+    .map_err(|err| error::map_account_error(&err))?;
+
+    // 回显规范化后的账号名(登录时大小写不敏感),界面据此显示
+    let account = account::authenticate(&mut conn, &token)
+        .await
+        .map_err(|err| error::map_account_error(&err))?;
+
+    Ok(Json(SessionDto {
+        token,
+        username: account.username,
+    }))
+}
+
+/// `POST /logout` —— 吊销**这一条**会话,别处登录的 token 不受影响。
+///
+/// 参数里的 `Account` 不是摆设:它保证了只有持有效 token 的人能走到这里。
+/// 要删的 token 从请求头再取一次 —— 提取器把它换成了账号,没有留下原文。
+async fn logout(
+    State(state): State<AppState>,
+    _account: Account,
+    headers: HeaderMap,
+) -> Result<StatusCode, Failure> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            error::unauthorized("缺少 Authorization 头")
+        })?;
+
+    let mut conn = conn(&state.pool).await?;
+    account::logout(&mut conn, token)
+        .await
+        .map_err(|err| error::map_account_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// `GET /search` 的查询参数。
 #[derive(Deserialize)]
 struct SearchQuery {
@@ -159,19 +308,23 @@ struct SearchQuery {
 
 /// `GET /search?q=紅蓮華` —— 搜歌。
 async fn search(
-    State(upstream): State<Upstream>,
+    State(state): State<AppState>,
+    account: Account,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchDto>, Failure> {
-    let mut catalog = upstream.catalog;
+    let mut catalog = state.upstream.catalog;
     let response = catalog
-        .search_tracks(SearchTracksRequest {
-            platform: Platform::Netease as i32,
-            keyword: query.q,
-            limit: query
-                .limit
-                .unwrap_or(DEFAULT_SEARCH_LIMIT),
-            offset: query.offset.unwrap_or_default(),
-        })
+        .search_tracks(bangdream::as_user(
+            &account,
+            SearchTracksRequest {
+                platform: Platform::Netease as i32,
+                keyword: query.q,
+                limit: query
+                    .limit
+                    .unwrap_or(DEFAULT_SEARCH_LIMIT),
+                offset: query.offset.unwrap_or_default(),
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -190,15 +343,17 @@ async fn search(
 ///
 /// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。
 async fn daily(
-    State(upstream): State<Upstream>,
+    State(state): State<AppState>,
+    account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut discover = upstream.discover;
+    let mut discover = state.upstream.discover;
     let response = discover
-        .get_daily_recommendations(
+        .get_daily_recommendations(bangdream::as_user(
+            &account,
             GetDailyRecommendationsRequest {
                 platform: Platform::Netease as i32,
             },
-        )
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -228,17 +383,21 @@ struct PageQuery {
 /// user_id 不做缓存:重新扫码登录会换一个账号,缓存住的话红心列表会静默停在旧账号上。
 /// 这是一次同机 gRPC,便宜得没必要省。
 async fn liked(
-    State(upstream): State<Upstream>,
+    State(state): State<AppState>,
+    account: Account,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut auth = upstream.auth;
-    let mut library = upstream.library;
-    let mut catalog = upstream.catalog;
+    let mut auth = state.upstream.auth;
+    let mut library = state.upstream.library;
+    let mut catalog = state.upstream.catalog;
 
-    let account = auth
-        .get_account_status(GetAccountStatusRequest {
-            platform: Platform::Netease as i32,
-        })
+    let netease_account = auth
+        .get_account_status(bangdream::as_user(
+            &account,
+            GetAccountStatusRequest {
+                platform: Platform::Netease as i32,
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -246,17 +405,20 @@ async fn liked(
     // 未登录是**状态**不是错误,所以上游用 logged_in 而非错误码回答(它的 `docs/adr/0005`)。
     // 但对这个请求而言目的没达成 —— 返回空列表会被读成"一首喜欢的都没有",
     // 那是另一件事,必须区分开。
-    if !account.logged_in {
+    if !netease_account.logged_in {
         return Err(fail(&tonic::Status::unauthenticated(
             "netease: 未登录",
         )));
     }
 
     let liked = library
-        .list_liked_tracks(ListLikedTracksRequest {
-            platform: Platform::Netease as i32,
-            user_id: account.user_id,
-        })
+        .list_liked_tracks(bangdream::as_user(
+            &account,
+            ListLikedTracksRequest {
+                platform: Platform::Netease as i32,
+                user_id: netease_account.user_id,
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -271,10 +433,13 @@ async fn liked(
     }
 
     let response = catalog
-        .get_tracks(GetTracksRequest {
-            platform: Platform::Netease as i32,
-            track_ids: ids.to_vec(),
-        })
+        .get_tracks(bangdream::as_user(
+            &account,
+            GetTracksRequest {
+                platform: Platform::Netease as i32,
+                track_ids: ids.to_vec(),
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -292,16 +457,20 @@ async fn liked(
 ///
 /// 每次都向上游重新要:直链带签名会过期,缓存它只会让客户端拿到放不出声的地址。
 async fn play(
-    State(upstream): State<Upstream>,
+    State(state): State<AppState>,
+    account: Account,
     Path(track_id): Path<String>,
 ) -> Result<Json<PlaySourceDto>, Failure> {
-    let mut catalog = upstream.catalog;
+    let mut catalog = state.upstream.catalog;
     let response = catalog
-        .get_play_source(GetPlaySourceRequest {
-            platform: Platform::Netease as i32,
-            track_id,
-            level: PLAY_QUALITY as i32,
-        })
+        .get_play_source(bangdream::as_user(
+            &account,
+            GetPlaySourceRequest {
+                platform: Platform::Netease as i32,
+                track_id,
+                level: PLAY_QUALITY as i32,
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
@@ -320,15 +489,19 @@ async fn play(
 /// 纯音乐与上游未收录都会走到这里,而「这首歌没有歌词」是正常状态 ——
 /// 报成错误的话,客户端会把它显示成一次故障。
 async fn lyric(
-    State(upstream): State<Upstream>,
+    State(state): State<AppState>,
+    account: Account,
     Path(track_id): Path<String>,
 ) -> Result<Json<LyricDto>, Failure> {
-    let mut catalog = upstream.catalog;
+    let mut catalog = state.upstream.catalog;
     let response = catalog
-        .get_lyric(GetLyricRequest {
-            platform: Platform::Netease as i32,
-            track_id,
-        })
+        .get_lyric(bangdream::as_user(
+            &account,
+            GetLyricRequest {
+                platform: Platform::Netease as i32,
+                track_id,
+            },
+        ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
