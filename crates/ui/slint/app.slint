@@ -19,6 +19,8 @@ import { NavEntry, TrackRow, DeviceRow } from "types.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip } from "controls.slint";
 import { LoginPage } from "login.slint";
+import { MusicRail, MusicBar } from "musicnav.slint";
+import { TrackList } from "tracklist.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -69,7 +71,11 @@ export component MainWindow inherits Window {
     // 约束(侧栏在不在、底栏在不在)就变,窗口的 layoutinfo 跟着变,宽度又回头喂给 compact ——
     // 那是一个真的求值环,Slint 1.18 起会警告并可能在运行时 panic。命令式赋值把环剪断:
     // 宽度先定下来,再单向推出版式。
-    property <bool> compact;
+    //
+    // in-out 而不是私有:无头测试里 `set_size` 不驱动 `width`,版式因此推不出来。
+    // 开放它之后测试能直接给定版式,验的是「这个版式该摆哪个导航」——
+    // 「宽度推出版式」那半由下面两行自己保证,不在测试覆盖内。
+    in-out property <bool> compact;
     init => { root.compact = root.width < 600px; }
     changed width => { root.compact = root.width < 600px; }
 
@@ -88,6 +94,15 @@ export component MainWindow inherits Window {
     in property <string> login-error;
     callback login(string, string);
     callback register(string, string, string);
+
+    // ── Music 页的二级导航 ──
+    // 当前分区:0=每日推荐、1=我的歌单、2=搜索、3=最近播放。
+    // 编号即 musicnav.slint 里 MusicSections.items 的下标,Rust 按它决定拉什么。
+    in-out property <int> music-section: 0;
+    // 宽版式竖栏收起没有。私有于界面 —— Rust 不关心用户把栏收没收。
+    in-out property <bool> rail-collapsed: false;
+    // 换了分区。Rust 据此去取对应的一批歌。
+    callback select-section(int);
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -296,6 +311,8 @@ export component MainWindow inherits Window {
 
                 // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                // Music:二级导航 + 四个分区。整页可滚,不裹玻璃卡片 ——
+                // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
                 if root.current-tab == 1: VerticalLayout {
                     padding: 16px;
                     spacing: 12px;
@@ -305,121 +322,90 @@ export component MainWindow inherits Window {
                     // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
                     init => { root.music-shown(); }
 
+                    // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
+                    if root.compact: music-bar := MusicBar {
+                        current: root.music-section;
+                        selected(section) => { root.select-section(section); }
+                    }
+
                     HorizontalLayout {
-                        spacing: 8px;
-
-                        // 搜索框。歌名是任意 CJK,不能指定子集字体,
-                        // 否则输入的字大多不在子集里,直接是豆腐块。
-                        keyword := LineEdit {
-                            horizontal-stretch: 1;
-                            placeholder-text: "Search";
-                            accepted => { root.search(self.text); }
-                        }
-                        // 三个按钮压窄:默认 220px 一排放不下,手机上更是直接溢出。
-                        // 紧凑版再收一档,给搜索框留出还能打字的宽度。
-                        HoverButton {
-                            width: root.compact ? 60px : 84px;
-                            text: "Go";
-                            clicked => { root.search(keyword.text); }
-                        }
-                        HoverButton {
-                            width: root.compact ? 68px : 92px;
-                            text: "Daily";
-                            clicked => { root.daily(); }
-                        }
-                        HoverButton {
-                            width: root.compact ? 68px : 92px;
-                            text: "Liked";
-                            clicked => { root.liked(); }
-                        }
-                    }
-
-                    // 播放状态行。文案是硬编码中文,走子集字体;
-                    // 高度钉死,免得文案变长把下面的列表顶来顶去。
-                    Text {
-                        text: root.playback-text;
-                        font-family: "Maple Mono NF CN";
-                        color: #9aa0b4;
-                        font-size: 13px;
-                        height: 20px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-
-                    // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
-                    Text {
-                        text: root.sync-text;
-                        font-family: "Maple Mono NF CN";
-                        color: #9aa0b4;
-                        font-size: 13px;
-                        height: 20px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-
-                    Flickable {
                         vertical-stretch: 1;
-                        content-height: results.preferred-height;
+                        spacing: 12px;
 
-                        results := VerticalLayout {
-                            spacing: 4px;
-                            alignment: start;
+                        // 宽版式:可收缩竖栏。
+                        if !root.compact: music-rail := MusicRail {
+                            current: root.music-section;
+                            collapsed <=> root.rail-collapsed;
+                            selected(section) => { root.select-section(section); }
+                        }
 
-                            // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
-                            // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
-                            for row[i] in root.tracks: Rectangle {
-                                height: 52px;
-                                background: row.loading ? #d9a86c26
-                                    : (touch.has-hover ? #ffffff14 : #ffffff08);
-                                border-radius: 8px;
-                                border-width: row.loading ? 1px : 0;
-                                border-color: #d9a86c66;
-                                animate background { duration: 160ms; easing: ease-out; }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 12px;
 
-                                touch := TouchArea {
-                                    clicked => { root.play(row.id); }
+                            // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
+                            // 常驻一个空框会让人以为那三页也要先搜一下。
+                            if root.music-section == 2: HorizontalLayout {
+                                spacing: 8px;
+
+                                // 歌名是任意 CJK,不能指定子集字体,
+                                // 否则输入的字大多不在子集里,直接是豆腐块。
+                                keyword := LineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "搜索";
+                                    accepted => { root.search(self.text); }
                                 }
-
-                                HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    spacing: 12px;
-
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        alignment: center;
-                                        spacing: 2px;
-
-                                        // 歌名与歌手来自平台,是任意 CJK/日文 ——
-                                        // 不指定 font-family,落到系统字体。
-                                        // web 端 wasm 里没有系统字体,那边会是豆腐块,
-                                        // 已知缺口,见 README「音乐链路」。
-                                        Text {
-                                            text: row.title;
-                                            color: #e6e8ef;
-                                            font-size: 14px;
-                                            overflow: elide;
-                                        }
-                                        Text {
-                                            text: row.artists;
-                                            color: #9aa0b4;
-                                            font-size: 12px;
-                                            overflow: elide;
-                                        }
-                                    }
-                                    // 时长让位给「加载中」:两个都摆会把歌名挤窄,
-                                    // 而正在加载时时长不是用户在等的信息。
-                                    Text {
-                                        text: row.loading ? "加载中…" : row.duration;
-                                        font-family: row.loading ? "Maple Mono NF CN" : "";
-                                        color: row.loading ? #d9cdbd : #9aa0b4;
-                                        font-size: 12px;
-                                        vertical-alignment: center;
-                                    }
+                                HoverButton {
+                                    width: root.compact ? 60px : 84px;
+                                    text: "Go";
+                                    clicked => { root.search(keyword.text); }
                                 }
+                            }
+
+                            // 播放状态行。文案是硬编码中文,走子集字体;
+                            // 高度钉死,免得文案变长把下面的列表顶来顶去。
+                            Text {
+                                text: root.playback-text;
+                                font-family: "Maple Mono NF CN";
+                                color: #9aa0b4;
+                                font-size: 13px;
+                                height: 20px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
+                            Text {
+                                text: root.sync-text;
+                                font-family: "Maple Mono NF CN";
+                                color: #9aa0b4;
+                                font-size: 13px;
+                                height: 20px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+
+                            // 「我的歌单」的内容下一轮做。这里明说,而不是给一张
+                            // 空列表 —— 空列表看起来像「一个歌单都没有」。
+                            if root.music-section == 1: playlists-placeholder := Text {
+                                text: "歌单还在做";
+                                font-family: "Maple Mono NF CN";
+                                color: #6f7688;
+                                font-size: 13px;
+                                vertical-stretch: 1;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            // 其余三个分区摆的是同一列曲目,差别只在这批歌哪来的。
+                            if root.music-section != 1: track-list := TrackList {
+                                vertical-stretch: 1;
+                                tracks: root.tracks;
+                                play(id) => { root.play(id); }
                             }
                         }
                     }
+
 
                     // 控制条:上一首 / 播放暂停 / 下一首 / 日月随机开关 │ 同播设备。
                     //

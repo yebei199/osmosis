@@ -1,0 +1,120 @@
+// Music 页内部的二级导航。
+//
+// 主导航仍然只有 Home 与 Music 两个 tab(见 CONTEXT.md「播放页」那条的同一个
+// 理由:导航位是稀缺的)。音乐那一页里的四个去处放在这一层,宽版式是可收缩的
+// 竖栏,紧凑版式是顶部的一条分段条 —— 同一组条目,两种摆法。
+//
+// 紧凑版式不做抽屉:抽屉要手势、遮罩、动画一整套,而一行分段条就能把四个词摆下。
+
+// 四个分区。**唯一真相** —— 竖栏与横条都 `for` 它,免得两处各抄一份标签,
+// 改了一处忘另一处。顺序即编号,Rust 侧按编号决定拉什么。
+export struct MusicSection {
+    label: string,
+    // 竖栏收起后显示的短标签。显式给而不是截 label 的首字:
+    // 截取是猜(Slint 的 string 也没有 substring),显式是决定。
+    short: string,
+}
+
+export global MusicSections {
+    out property <[MusicSection]> items: [
+        { label: "每日推荐", short: "荐" },
+        { label: "我的歌单", short: "单" },
+        { label: "搜索", short: "搜" },
+        { label: "最近播放", short: "近" },
+    ];
+}
+
+// 宽版式的竖栏。收起后只剩一列窄条,当前分区仍然选中 ——
+// 收起是「少占地方」,不是「回到默认页」。
+export component MusicRail inherits Rectangle {
+    in property <int> current;
+    in-out property <bool> collapsed: false;
+
+    callback selected(int);
+
+    width: root.collapsed ? 40px : 132px;
+    background: #ffffff08;
+    border-radius: 10px;
+    animate width { duration: 180ms; easing: ease-out; }
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 4px;
+        alignment: start;
+
+        // 收起/展开。图标用箭头方向表意,收起时不写字 —— 那一列只有 40px 宽。
+        toggle := TouchArea {
+            height: 28px;
+
+            Text {
+                text: root.collapsed ? "»" : "«";
+                color: #9aa0b4;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            clicked => { root.collapsed = !root.collapsed; }
+        }
+
+        for item[i] in MusicSections.items: Rectangle {
+            height: 34px;
+            border-radius: 8px;
+            background: root.current == i ? #d9a86c33
+                : (item-touch.has-hover ? #ffffff14 : transparent);
+            animate background { duration: 140ms; easing: ease-out; }
+
+            item-touch := TouchArea {
+                clicked => { root.selected(i); }
+            }
+
+            // 收起时只留一个字。画图标要四张 path,而它们此刻还不存在。
+            Text {
+                text: root.collapsed ? item.short : item.label;
+                font-family: "Maple Mono NF CN";
+                color: root.current == i ? #f0e2cf : #9aa0b4;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+// 紧凑版式的顶部分段条。四个词一行摆得下,不必抽屉。
+export component MusicBar inherits Rectangle {
+    in property <int> current;
+
+    callback selected(int);
+
+    height: 34px;
+    background: #ffffff08;
+    border-radius: 10px;
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 3px;
+
+        for item[i] in MusicSections.items: Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 7px;
+            background: root.current == i ? #d9a86c33 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            TouchArea {
+                clicked => { root.selected(i); }
+            }
+
+            Text {
+                text: item.label;
+                font-family: "Maple Mono NF CN";
+                color: root.current == i ? #f0e2cf : #9aa0b4;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}

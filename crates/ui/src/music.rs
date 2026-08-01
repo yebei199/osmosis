@@ -508,6 +508,17 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
         });
     });
 
+    // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
+    // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
+    let sectioned = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_select_section(move |section| {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_music_section(section);
+        }
+        load_section(&weak, &sectioned, section);
+    });
+
     let shown = deck.clone();
     let weak = ui.as_weak();
     ui.on_music_shown(move || {
@@ -519,6 +530,52 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
             fetch_daily(&weak, &shown);
         }
     });
+}
+
+/// Music 页的四个分区。编号即 `musicnav.slint` 里 `MusicSections.items` 的下标。
+///
+/// 两处手工对齐:那边加一项,这里就要多一个分支。做成枚举而不是散在各处的
+/// 魔数,是为了让「漏了一个分区」变成编译错误而不是运行时的一片空白。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Daily,
+    Playlists,
+    Search,
+    Recent,
+}
+
+impl Section {
+    /// 由界面给的编号认出分区。认不出的编号当每日推荐 ——
+    /// 那是开局那一页,总比留在原地什么都不发生强。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_index(index: i32) -> Self {
+        match index {
+            1 => Self::Playlists,
+            2 => Self::Search,
+            3 => Self::Recent,
+            _ => Self::Daily,
+        }
+    }
+}
+
+/// 换到某个分区时该取什么。
+#[cfg(not(target_arch = "wasm32"))]
+fn load_section(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    section: i32,
+) {
+    match Section::from_index(section) {
+        Section::Daily => fetch_daily(weak, deck),
+        Section::Recent => {
+            fetch_into(weak, deck, async {
+                api::recent().await.map(|dto| dto.tracks)
+            });
+        }
+        // 这两个分区不摆「一批歌」:搜索等关键词,歌单摆的是歌单。
+        Section::Search | Section::Playlists => {}
+    }
 }
 
 /// 拉当日推荐,并记下拉取的日期。
@@ -1667,5 +1724,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 四个编号各自认出自己的分区,认不出的落回每日推荐 ——
+    /// 那是开局那一页,总比留在原地什么都不发生强。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn each_section_knows_what_to_load() {
+        use super::Section;
+
+        assert_eq!(Section::from_index(0), Section::Daily);
+        assert_eq!(
+            Section::from_index(1),
+            Section::Playlists
+        );
+        assert_eq!(Section::from_index(2), Section::Search);
+        assert_eq!(Section::from_index(3), Section::Recent);
+        assert_eq!(Section::from_index(99), Section::Daily);
+        assert_eq!(Section::from_index(-1), Section::Daily);
     }
 }

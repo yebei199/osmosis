@@ -1,0 +1,77 @@
+// 一列可滚的曲目。
+//
+// 每日推荐、搜索结果、最近播放、歌单详情摆的都是这一个 —— 它们的差别在
+// 「这批歌是哪来的」,而那是 Rust 侧的事,不是列表的事。
+//
+// 行内的字段都是**已经格式化好的字符串**:歌手怎么拼、时长怎么写由 Rust 决定
+// 并测过(见 types.slint)。
+
+import { TrackRow } from "types.slint";
+
+export component TrackList inherits Flickable {
+    in property <[TrackRow]> tracks;
+
+    callback play(string);
+
+    vertical-stretch: 1;
+    content-height: results.preferred-height;
+
+    results := VerticalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
+        // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
+        for row[i] in root.tracks: Rectangle {
+            height: 52px;
+            background: row.loading ? #d9a86c26
+                : (touch.has-hover ? #ffffff14 : #ffffff08);
+            border-radius: 8px;
+            border-width: row.loading ? 1px : 0;
+            border-color: #d9a86c66;
+            animate background { duration: 160ms; easing: ease-out; }
+
+            touch := TouchArea {
+                clicked => { root.play(row.id); }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 12px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+
+                    // 歌名与歌手来自平台,是任意 CJK/日文 ——
+                    // 不指定 font-family,落到系统字体。
+                    // web 端 wasm 里没有系统字体,那边会是豆腐块,
+                    // 已知缺口,见 README「音乐链路」。
+                    Text {
+                        text: row.title;
+                        color: #e6e8ef;
+                        font-size: 14px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: row.artists;
+                        color: #9aa0b4;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+                // 时长让位给「加载中」:两个都摆会把歌名挤窄,
+                // 而正在加载时时长不是用户在等的信息。
+                Text {
+                    text: row.loading ? "加载中…" : row.duration;
+                    font-family: row.loading ? "Maple Mono NF CN" : "";
+                    color: row.loading ? #d9cdbd : #9aa0b4;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
