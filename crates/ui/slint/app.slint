@@ -923,23 +923,12 @@ export component MainWindow inherits Window {
             }
         }
 
-        // 遮挡层:整窗大小的图必须与场景那张逐像素对齐,故用负偏移推回窗口原点,
-        // 再裁到歌词矩形 —— 不裁的话近处的粒子会连控制簇一起盖住,而控制簇是
-        // 界面外壳、不在场景里。
-        if root.viz-occluder.width > 0 && root.lyric-line != "": Rectangle {
-            y: root.viz-lyric-y;
-            width: root.width;
-            height: root.viz-lyric-h;
-            clip: true;
-
-            Image {
-                y: -root.viz-lyric-y;
-                width: root.width;
-                height: root.height;
-                image-fit: fill;
-                source: root.viz-occluder;
-            }
-        }
+        // 这里曾有一层「遮挡图」:把比歌词更近的那些粒子重新画到歌词上面,
+        // 好让粒子看起来从字的前后穿过。删了 —— 歌词读不了,而它是播放页
+        // 唯一没有等价路径的信息(见 docs/adr/0010 的「歌词是例外」)。
+        //
+        // 现在歌词与**歌名同层**:都画在粒子之上,谁也盖不住它们。
+        // 歌名从来没有这层图,所以它一直是清楚的 —— 那就是要的样子。
 
         // 功能层:同一组回调,与音乐页的控制条完全等价。
         //
