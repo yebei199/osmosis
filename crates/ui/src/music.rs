@@ -290,6 +290,10 @@ struct Deck {
     /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
     /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::liked)。
     liked: crate::liked::LikedSet,
+    /// 正在编辑哪个歌单,以及打开它之前列表里摆的那一批歌。
+    /// 后者是「把刚才那批加进来」的唯一来源 —— 进歌单那一刻 `tracks`
+    /// 就被换掉了(见 crate::playlist::Editing)。
+    editing: crate::playlist::Editing,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
@@ -424,6 +428,7 @@ pub fn bind(
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
         liked: crate::liked::LikedSet::default(),
+        editing: crate::playlist::Editing::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
@@ -434,6 +439,15 @@ pub fn bind(
     // 真正生效的是之后每次 push_rows 里的那次重标。
     crate::liked::bind(ui, &deck.liked);
     crate::liked::refresh(&deck.liked, ui);
+
+    // 本地歌单的写操作。改完要把当前歌单的曲目重取一遍,而那要用播放队列 ——
+    // 队列归这里,所以重取那一步由这边交出去。
+    let reloading = deck.clone();
+    crate::playlist::bind_edit(
+        ui,
+        &deck.editing,
+        move |ui| reload_open_playlist(ui, &reloading),
+    );
 
     bind_search(ui, &deck);
     bind_list(ui, &deck);
@@ -471,6 +485,22 @@ pub fn bind(
 /// 原生也能看见的地方,好让同一个测试覆盖。
 #[cfg(test)]
 const WASM_NOTICE: &str = "Web 端暂不支持播放";
+
+/// 把当前打开的那个歌单的曲目重取一遍。
+///
+/// 加歌、删歌之后走这里:服务端已经变了,而界面上那一批还是改之前的。
+/// 乐观更新在这里不划算 —— 加进来的那批要重新格式化、还要标红心,
+/// 而这是一次本机往返。
+#[cfg(not(target_arch = "wasm32"))]
+fn reload_open_playlist(ui: &MainWindow, deck: &Deck) {
+    let Some((source, id)) = deck.editing.current() else {
+        return;
+    };
+    let weak = ui.as_weak();
+    fetch_into(&weak, deck, async move {
+        crate::playlist::tracks_of(source, &id).await
+    });
+}
 
 /// 某个歌单叫什么。先找「我的歌单」,再找搜索结果。
 ///
@@ -576,15 +606,38 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
         let source =
             crate::playlist::Source::from_index(source);
         let id = id.to_string();
+
+        // 存下**现在**列表里那一批 —— 下一行就要把它换成这个歌单自己的歌了,
+        // 而「把刚才那批加进来」要的正是它。
+        let previous = opened.tracks.borrow().clone();
+        let count = previous.len();
+        opened.editing.opened(source, &id, previous);
+
+        let editable = crate::playlist::is_editable(source);
+        ui.set_open_playlist_local(editable);
+        ui.set_add_batch_text(
+            if editable {
+                crate::playlist::add_batch_text(count)
+            } else {
+                String::new()
+            }
+            .into(),
+        );
         fetch_into(&weak, &opened, async move {
             crate::playlist::tracks_of(source, &id).await
         });
     });
 
+    let closing = deck.clone();
     let weak = ui.as_weak();
     ui.on_close_playlist(move || {
         if let Some(ui) = weak.upgrade() {
+            closing.editing.closed();
             ui.set_open_playlist_name(
+                slint::SharedString::new(),
+            );
+            ui.set_open_playlist_local(false);
+            ui.set_add_batch_text(
                 slint::SharedString::new(),
             );
         }

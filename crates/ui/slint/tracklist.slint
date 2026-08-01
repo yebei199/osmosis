@@ -10,11 +10,17 @@ import { TrackRow } from "types.slint";
 
 export component TrackList inherits Flickable {
     in property <[TrackRow]> tracks;
+    // 这一批歌是不是某个本地歌单的内容。是的话每行多一个「−」——
+    // 从每日推荐里「移除」一首没有意义,那不是一个能改的集合。
+    in property <bool> removable: false;
 
     callback play(string);
     // 点红心。参数是曲目 id 与**点完之后**的状态 —— 让 Rust 再去读一遍当前
     // 状态的话,两边对「现在是红还是没红」的理解就有了两个来源。
     callback toggle-liked(string, bool);
+    // 把这一首移出当前歌单。与红心是两件事:红心说的是「我喜欢这首歌」,
+    // 共用一个键的话,取消红心时会连带把歌从歌单里删掉。
+    callback remove(string);
 
     vertical-stretch: 1;
     content-height: results.preferred-height;
@@ -82,6 +88,22 @@ export component TrackList inherits Flickable {
                     clicked => {
                         root.toggle-liked(row.id, !row.liked);
                     }
+                }
+
+                // 移出歌单。只在本地歌单详情里出现。
+                if root.removable: remove-hit := TouchArea {
+                    width: 28px;
+
+                    Text {
+                        text: "−";
+                        color: #9aa0b4;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    // 同红心:不冒泡到整行,否则移除的同时会把这首放出来
+                    clicked => { root.remove(row.id); }
                 }
 
                 // 时长让位给「加载中」:两个都摆会把歌名挤窄,

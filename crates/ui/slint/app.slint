@@ -118,6 +118,38 @@ export component MainWindow inherits Window {
     // 从详情退回列表。
     callback close-playlist();
 
+    // ── 本地歌单的写操作 ──
+    // 当前打开的这个歌单是不是本地的。只有本地歌单能改名、删除、增删曲目 ——
+    // 平台歌单与「我喜欢的」的真相在平台,这边改不动,摆个按钮上去只会让人
+    // 点了才知道。由 Rust 在打开时按来源填,不由界面猜名字。
+    in property <bool> open-playlist-local: false;
+    // 「把刚才那批加进来」那行的文案,已在 Rust 侧带上条数。
+    // 空串 = 刚才没有可加的一批,整行不出现。
+    in property <string> add-batch-text;
+    // 新建 / 改名的文本由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
+    callback create-playlist(string);
+    callback rename-playlist(string);
+    callback delete-playlist();
+    // 把刚才那批歌收进当前打开的这个歌单。
+    callback add-batch();
+    // 把某一首从当前打开的这个歌单里移出去。
+    callback remove-track(string);
+    // 标题正在改名 / 删除键正在等第二下确认。两个都私有于界面 ——
+    // Rust 不关心用户点开了哪个输入框,只关心最后交出来的那个名字。
+    //
+    // 存的是**哪个歌单**处在那个状态,而不是一个布尔:换了歌单,比较自然就不
+    // 成立了,状态跟着作废。用布尔加一个 `changed` 回调复位也行,但那个回调
+    // 什么时候跑不由这里说了算 —— 而「上一个歌单点了删除没确认就退出去,下一个
+    // 歌单的删除键已经处在再点一下就没的状态」这件事,不能指望时机。
+    property <string> renaming-for: "";
+    property <string> confirming-for: "";
+    out property <bool> renaming:
+        root.open-playlist-name != ""
+        && root.renaming-for == root.open-playlist-name;
+    out property <bool> confirming-delete:
+        root.open-playlist-name != ""
+        && root.confirming-for == root.open-playlist-name;
+
     // ── 搜索的三个页签 ──
     // 0=歌曲、1=歌手、2=歌单,编号即 musicnav.slint 里 SearchTabs.items 的下标。
     in-out property <int> search-tab: 0;
@@ -452,13 +484,91 @@ export component MainWindow inherits Window {
                                     clicked => { root.close-playlist(); }
                                 }
 
-                                Text {
+                                // 改名时标题就地变成输入框。另开一层对话框的话,
+                                // 那一层要盖住的正是「原来叫什么」。
+                                if !renaming: Text {
                                     text: root.open-playlist-name;
                                     color: #e6e8ef;
                                     font-size: 15px;
                                     horizontal-stretch: 1;
                                     vertical-alignment: center;
                                     overflow: elide;
+                                }
+                                if renaming: rename-box := LineEdit {
+                                    horizontal-stretch: 1;
+                                    text: root.open-playlist-name;
+                                    accepted => {
+                                        root.rename-playlist(self.text);
+                                        root.renaming-for = "";
+                                    }
+                                }
+
+                                // 改名与删除只给本地歌单 —— 平台那两种的真相
+                                // 不在这边,摆上去只会让人点了才知道。
+                                if root.open-playlist-local:
+                                rename-button := HoverButton {
+                                    width: 56px;
+                                    text: renaming ? "取消" : "改名";
+                                    clicked => {
+                                        root.renaming-for =
+                                            renaming ? "" : root.open-playlist-name;
+                                        root.confirming-for = "";
+                                    }
+                                }
+                                if root.open-playlist-local:
+                                delete-button := HoverButton {
+                                    width: confirming-delete ? 96px : 56px;
+                                    // 点两下才真删:一下就删的话,手指滑一下
+                                    // 就没了一个歌单,而歌单没有回收站。
+                                    text: confirming-delete ? "确认删除?" : "删除";
+                                    clicked => {
+                                        if (confirming-delete) {
+                                            root.delete-playlist();
+                                            root.confirming-for = "";
+                                        } else {
+                                            root.confirming-for =
+                                                root.open-playlist-name;
+                                            root.renaming-for = "";
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 「把刚才那批加进来」。只在本地歌单详情、且刚才
+                            // 确实有一批歌时出现 —— 进歌单那一刻 tracks 就被
+                            // 换掉了,所以那一批由 Rust 在打开前存下来。
+                            if root.open-playlist-local
+                                && root.add-batch-text != "":
+                            add-batch-row := HoverButton {
+                                height: 30px;
+                                text: root.add-batch-text;
+                                clicked => { root.add-batch(); }
+                            }
+
+                            // 新建歌单。摆在列表那一层的顶上 ——
+                            // 名字由回调带出来,因为这个输入框在 `if` 里,
+                            // Rust 引用不到它。
+                            if root.music-section == 1
+                                && root.open-playlist-name == "":
+                            new-playlist-row := HorizontalLayout {
+                                spacing: 8px;
+                                height: 32px;
+
+                                new-name := LineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "新建歌单";
+                                    accepted => {
+                                        root.create-playlist(self.text);
+                                        self.text = "";
+                                    }
+                                }
+                                HoverButton {
+                                    width: 56px;
+                                    text: "新建";
+                                    clicked => {
+                                        root.create-playlist(new-name.text);
+                                        new-name.text = "";
+                                    }
                                 }
                             }
 
@@ -508,10 +618,13 @@ export component MainWindow inherits Window {
                             track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;
+                                // 只有本地歌单的内容能移出去
+                                removable: root.open-playlist-local;
                                 play(id) => { root.play(id); }
                                 toggle-liked(id, liked) => {
                                     root.toggle-liked(id, liked);
                                 }
+                                remove(id) => { root.remove-track(id); }
                             }
                         }
                     }

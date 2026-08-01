@@ -4,6 +4,9 @@
 //! 不同**:「我喜欢的」是平台的红心列表,本地歌单在自家库里,平台歌单要问上游。
 //! 走错的现象是点开一个歌单看到另一个歌单的歌 —— 而两边都不报错。
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use app_core::{PlaylistDto, PlaylistSource, TrackDto};
 use slint::ComponentHandle;
 
@@ -61,6 +64,26 @@ pub fn track_count_text(count: i32) -> String {
     }
 }
 
+/// 「把刚才那批加进来」那行的文案。
+///
+/// 带上条数,因为进歌单那一刻列表已经换掉了 —— 不说清是哪一批,用户点下去
+/// 才知道加了什么。空批返回空串,那一行整个不出现。
+pub fn add_batch_text(count: usize) -> String {
+    if count == 0 {
+        String::new()
+    } else {
+        format!("+ 把刚才那 {count} 首加进来")
+    }
+}
+
+/// 这个来源的歌单能不能改。
+///
+/// 判据是**来源**不是名字:用户完全可以把一个本地歌单起名叫「我喜欢的」,
+/// 而平台歌单与红心的真相不在这边,改名删歌都改不动。
+pub fn is_editable(source: Source) -> bool {
+    matches!(source, Source::Local)
+}
+
 /// 取某个歌单的曲目。三种来源各走各的路。
 pub async fn tracks_of(
     source: Source,
@@ -92,6 +115,276 @@ pub fn to_row(list: &PlaylistDto) -> PlaylistRow {
     }
 }
 
+/// 正在编辑什么。
+///
+/// 两样东西:当前打开的是哪个歌单,以及**打开之前**列表里摆的那一批歌。
+/// 后者是「把刚才那批加进来」的全部来源 —— 进歌单那一刻 `tracks` 就被换成
+/// 这个歌单自己的歌了,不先存一份就再也找不回来。
+#[derive(Clone, Default)]
+pub struct Editing {
+    open: Rc<RefCell<Option<(Source, String)>>>,
+    stash: Rc<RefCell<Vec<TrackDto>>>,
+}
+
+impl Editing {
+    /// 记下打开了哪个歌单,并把打开之前那一批歌存起来。
+    pub fn opened(
+        &self,
+        source: Source,
+        id: &str,
+        previous: Vec<TrackDto>,
+    ) {
+        *self.open.borrow_mut() =
+            Some((source, id.to_owned()));
+        *self.stash.borrow_mut() = previous;
+    }
+
+    /// 退出详情。存下的那一批一起丢掉 —— 它只在详情里有意义。
+    pub fn closed(&self) {
+        *self.open.borrow_mut() = None;
+        self.stash.borrow_mut().clear();
+    }
+
+    /// 当前打开的那个歌单。
+    pub fn current(&self) -> Option<(Source, String)> {
+        self.open.borrow().clone()
+    }
+
+    /// 当前打开的**本地**歌单。写操作一律先过这里 ——
+    /// 平台歌单与红心改不动,拿不到 id 就发不出请求。
+    pub fn current_local(&self) -> Option<String> {
+        match self.current() {
+            Some((source, id)) if is_editable(source) => {
+                Some(id)
+            }
+            _ => None,
+        }
+    }
+
+    /// 存下的那一批。
+    pub fn stashed(&self) -> Vec<TrackDto> {
+        self.stash.borrow().clone()
+    }
+
+    /// 丢掉存下的那一批。收进歌单之后调用 —— 那一行的活干完了。
+    pub fn clear_stash(&self) {
+        self.stash.borrow_mut().clear();
+    }
+}
+
+/// 写请求里的平台名。
+///
+/// 曲目的身份是 (平台, 平台内 id),而界面那一行只带 id —— 补上这一半。
+//
+// ponytail: 单平台写死。接第二个平台时 TrackRow 要多一个 platform 字段,
+// 这个常量随之作废;在那之前多一个字段只是每行多存一份同样的字符串。
+const ONLY_PLATFORM: &str = "netease";
+
+/// 曲目在写请求里的形态:(平台, 平台内 id)。
+///
+/// 身份是这两个合起来,缺一不可 —— 只传 id 的话,接第二个平台时两边的 id
+/// 会静默撞车(见 bang-dream 的 `docs/adr/0003`)。
+fn refs_of(tracks: &[TrackDto]) -> Vec<(String, String)> {
+    tracks
+        .iter()
+        .map(|track| {
+            (track.platform.clone(), track.id.clone())
+        })
+        .collect()
+}
+
+/// 接上本地歌单的写操作。
+///
+/// `reload` 由 `music` 传进来:改完之后要把当前歌单的曲目重取一遍,而那要用到
+/// 播放队列,队列归那边。
+pub fn bind_edit<R>(
+    ui: &MainWindow,
+    editing: &Editing,
+    reload: R,
+) where
+    R: Fn(&MainWindow) + Clone + 'static,
+{
+    bind_create(ui);
+    bind_rename(ui, editing);
+    bind_delete(ui, editing);
+    bind_add_batch(ui, editing, reload.clone());
+    bind_remove(ui, editing, reload);
+}
+
+/// 新建歌单。名字由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
+fn bind_create(ui: &MainWindow) {
+    let weak = ui.as_weak();
+
+    ui.on_create_playlist(move |name| {
+        let name = name.trim().to_owned();
+        let Some(ui) = weak.upgrade() else { return };
+        // 空名字服务端也会拒,但那要等一趟往返才说 ——
+        // 而「没打字就按了新建」这件事这边就看得见。
+        if name.is_empty() {
+            ui.set_playback_text("歌单要有名字".into());
+            return;
+        }
+
+        let weak = ui.as_weak();
+        let _ = slint::spawn_local(async move {
+            let done = api::create_playlist(&name).await;
+            let Some(ui) = weak.upgrade() else { return };
+            match done {
+                Ok(_) => refresh(&ui),
+                Err(err) => report(&ui, &err, "建歌单失败"),
+            }
+        });
+    });
+}
+
+/// 改名。
+fn bind_rename(ui: &MainWindow, editing: &Editing) {
+    let editing = editing.clone();
+    let weak = ui.as_weak();
+
+    ui.on_rename_playlist(move |name| {
+        let name = name.trim().to_owned();
+        let Some(ui) = weak.upgrade() else { return };
+        let Some(id) = editing.current_local() else {
+            return;
+        };
+        if name.is_empty() {
+            ui.set_playback_text("歌单要有名字".into());
+            return;
+        }
+
+        let weak = ui.as_weak();
+        let _ = slint::spawn_local(async move {
+            let done =
+                api::rename_playlist(&id, &name).await;
+            let Some(ui) = weak.upgrade() else { return };
+            match done {
+                Ok(()) => {
+                    // 标题就地改掉,不等列表刷新 —— 详情页正显示着它
+                    ui.set_open_playlist_name(
+                        name.as_str().into(),
+                    );
+                    refresh(&ui);
+                }
+                Err(err) => report(&ui, &err, "改名失败"),
+            }
+        });
+    });
+}
+
+/// 删除。二次确认由界面那一层管(见 app.slint),到这里已经是确定要删了。
+fn bind_delete(ui: &MainWindow, editing: &Editing) {
+    let editing = editing.clone();
+    let weak = ui.as_weak();
+
+    ui.on_delete_playlist(move || {
+        let Some(id) = editing.current_local() else {
+            return;
+        };
+        let editing = editing.clone();
+        let weak = weak.clone();
+
+        let _ = slint::spawn_local(async move {
+            let done = api::delete_playlist(&id).await;
+            let Some(ui) = weak.upgrade() else { return };
+            match done {
+                Ok(()) => {
+                    // 删掉的歌单不能再停在它的详情里
+                    editing.closed();
+                    ui.set_open_playlist_name(
+                        slint::SharedString::new(),
+                    );
+                    ui.set_open_playlist_local(false);
+                    ui.set_add_batch_text(
+                        slint::SharedString::new(),
+                    );
+                    refresh(&ui);
+                }
+                Err(err) => report(&ui, &err, "删歌单失败"),
+            }
+        });
+    });
+}
+
+/// 把打开之前那一批歌收进当前歌单。
+fn bind_add_batch<R>(
+    ui: &MainWindow,
+    editing: &Editing,
+    reload: R,
+) where
+    R: Fn(&MainWindow) + Clone + 'static,
+{
+    let editing = editing.clone();
+    let weak = ui.as_weak();
+
+    ui.on_add_batch(move || {
+        let Some(id) = editing.current_local() else {
+            return;
+        };
+        let refs = refs_of(&editing.stashed());
+        if refs.is_empty() {
+            return;
+        }
+
+        let weak = weak.clone();
+        let editing = editing.clone();
+        let reload = reload.clone();
+        let _ = slint::spawn_local(async move {
+            let done =
+                api::add_playlist_tracks(&id, &refs).await;
+            let Some(ui) = weak.upgrade() else { return };
+            match done {
+                Ok(()) => {
+                    // 收完就没有「刚才那批」了:那一行的活干完了。
+                    // 留着的话再点一次是把同一批又加一遍(服务端幂等,
+                    // 但界面上看着像什么都没发生)。
+                    editing.clear_stash();
+                    ui.set_add_batch_text(
+                        slint::SharedString::new(),
+                    );
+                    reload(&ui);
+                }
+                Err(err) => report(&ui, &err, "加歌失败"),
+            }
+        });
+    });
+}
+
+/// 把某一首移出当前歌单。
+fn bind_remove<R>(
+    ui: &MainWindow,
+    editing: &Editing,
+    reload: R,
+) where
+    R: Fn(&MainWindow) + Clone + 'static,
+{
+    let editing = editing.clone();
+    let weak = ui.as_weak();
+
+    ui.on_remove_track(move |track_id| {
+        let Some(id) = editing.current_local() else {
+            return;
+        };
+        let refs = vec![(
+            ONLY_PLATFORM.to_owned(),
+            track_id.to_string(),
+        )];
+
+        let weak = weak.clone();
+        let reload = reload.clone();
+        let _ = slint::spawn_local(async move {
+            let done =
+                api::remove_playlist_tracks(&id, &refs)
+                    .await;
+            let Some(ui) = weak.upgrade() else { return };
+            match done {
+                Ok(()) => reload(&ui),
+                Err(err) => report(&ui, &err, "移出失败"),
+            }
+        });
+    });
+}
+
 /// 拉一次歌单列表,填进界面。
 pub fn refresh(ui: &MainWindow) {
     let weak = ui.as_weak();
@@ -119,6 +412,20 @@ pub fn refresh(ui: &MainWindow) {
             ),
         }
     });
+}
+
+/// 报一次失败。
+///
+/// 复用播放状态那一行:音乐页只有一处报错位,再加一行会让两行里总有一行是空的。
+fn report(
+    ui: &MainWindow,
+    err: &api::ApiError,
+    what: &str,
+) {
+    if crate::account::handle_session_expiry(ui, err) {
+        return;
+    }
+    ui.set_playback_text(format!("{what}: {err}").into());
 }
 
 #[cfg(test)]
@@ -150,6 +457,37 @@ mod tests {
             Source::from_index(99),
             Source::Platform
         );
+    }
+
+    /// 「把刚才那批加进来」的文案带上条数;没有可加的就是空串,那一行不出现。
+    ///
+    /// 进歌单那一刻列表已经换掉了 —— 不说清是哪一批,用户点下去才知道加了什么。
+    #[test]
+    fn add_batch_label_says_how_many() {
+        assert_eq!(
+            add_batch_text(30),
+            "+ 把刚才那 30 首加进来"
+        );
+        assert_eq!(
+            add_batch_text(1),
+            "+ 把刚才那 1 首加进来"
+        );
+        assert_eq!(
+            add_batch_text(0),
+            "",
+            "没有可加的就不该有这一行"
+        );
+    }
+
+    /// 能改的只有本地歌单。
+    ///
+    /// 判据是来源不是名字:用户完全可以把一个本地歌单起名叫「我喜欢的」,
+    /// 而按名字判的话,那个歌单会突然变得不能改。
+    #[test]
+    fn only_local_playlists_are_editable() {
+        assert!(is_editable(Source::Local));
+        assert!(!is_editable(Source::Liked));
+        assert!(!is_editable(Source::Platform));
     }
 
     /// 副标题说的是有多少首歌;空歌单说「暂无曲目」而不是「0 首」——

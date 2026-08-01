@@ -50,6 +50,18 @@ export component HoverButton inherits Rectangle {
             }
         }
     }
+
+    // 屏幕阅读器要认得出这是个能按的东西,而不是一块画着字的矩形。
+    // 顺带让无头测试点得动它 —— 在此之前测试只能验「键在不在」,
+    // 验不了「按下去发生什么」,于是二次确认那类逻辑没有任何东西盖着。
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
 }
 
 // 导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
