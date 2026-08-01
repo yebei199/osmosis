@@ -289,9 +289,11 @@ name = "api"
 version = "0.1.0"
 dependencies = [
  "contract",
+ "log",
  "reqwest 0.12.28",
  "serde",
  "tokio",
+ "web-sys",
 ]
 
 [[package]]

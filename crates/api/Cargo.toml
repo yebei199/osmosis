@@ -8,6 +8,8 @@ description = "把领域意图翻译成一次网络往返,并吸收各端运行�
 [dependencies]
 contract.workspace = true
 serde.workspace = true
+# 会话落盘失败只记一笔日志:登录本身已经成功了,存不下来不该让它连带失败。
+log.workspace = true
 # 不开 default-features:那会拉进 native-tls(openssl)。开发服务端走明文 HTTP,
 # 等真正需要 HTTPS 时再加 "rustls-tls"。
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
@@ -15,6 +17,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # wasm 上没有线程,也没有 tokio runtime;fetch 由浏览器驱动。
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# 网页上的登录态存在 localStorage 里 —— 不存的话每次刷新都要重登。
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Storage", "Window"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

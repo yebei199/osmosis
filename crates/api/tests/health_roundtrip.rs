@@ -18,3 +18,51 @@ async fn health_fetches_server_status() {
         contract::PROTOCOL_VERSION
     );
 }
+
+/// 不带登录态打一条受保护的路由,必须失败。
+///
+/// 这条与下一条是**唯一**能证明 `Authorization` 头真的发出去了的测试:
+/// 头是在 reqwest 内部拼的,纯函数测不到它。
+#[tokio::test]
+#[ignore = "需要 `just dev-server` 正在运行"]
+async fn protected_route_without_token_is_rejected() {
+    api::session::clear();
+
+    assert!(
+        api::daily().await.is_err(),
+        "没有登录态却拿到了每日推荐"
+    );
+}
+
+/// 登录之后同一条路由能通。
+///
+/// 账号由 `TEST_ACCOUNT` / `TEST_PASSWORD` 给,邀请码由 `TEST_INVITE` 给;
+/// 账号不存在就现注册一个 —— 这条测试要能在一个空库上从头跑通。
+#[tokio::test]
+#[ignore = "需要 `just dev-server` 正在运行,且给定 TEST_INVITE"]
+async fn protected_route_with_token_succeeds() {
+    let username = std::env::var("TEST_ACCOUNT")
+        .unwrap_or_else(|_| "roundtrip".to_owned());
+    let password = std::env::var("TEST_PASSWORD")
+        .unwrap_or_else(|_| "correct horse".to_owned());
+    let invite = std::env::var("TEST_INVITE").expect(
+        "需要 TEST_INVITE,与服务端的 INVITE_CODE 一致",
+    );
+
+    api::session::clear();
+
+    // 已经注册过就直接登录。注册失败的原因不止"重名",所以登录那步的
+    // 错误才是真正该报出来的那个。
+    if api::register(&username, &password, &invite)
+        .await
+        .is_err()
+    {
+        api::login(&username, &password)
+            .await
+            .expect("登录失败");
+    }
+
+    api::daily().await.expect("登录后仍取不到每日推荐");
+
+    api::logout().await.expect("登出失败");
+}
