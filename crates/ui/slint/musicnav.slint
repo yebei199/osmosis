@@ -118,3 +118,56 @@ export component MusicBar inherits Rectangle {
         }
     }
 }
+
+// 搜索结果的三个页签:歌曲 / 歌手 / 歌单。
+//
+// 与上面那条分段条形状一样但不是同一个:那条选的是「音乐页的哪个分区」,
+// 这条选的是「搜索结果里看哪一类」。合成一个带参数的组件会让两个不相干的
+// 决定共用一份状态,而它们各自变各自的。
+export struct SearchTab {
+    label: string,
+}
+
+export global SearchTabs {
+    // 顺序即编号,与 ui/src/search.rs 的 Tab 一一对应。
+    out property <[SearchTab]> items: [
+        { label: "歌曲" },
+        { label: "歌手" },
+        { label: "歌单" },
+    ];
+}
+
+export component SearchTabBar inherits Rectangle {
+    in property <int> current;
+
+    callback selected(int);
+
+    height: 30px;
+    background: #ffffff08;
+    border-radius: 9px;
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 3px;
+
+        for item[i] in SearchTabs.items: Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 6px;
+            background: root.current == i ? #d9a86c33 : transparent;
+            animate background { duration: 140ms; easing: ease-out; }
+
+            TouchArea {
+                clicked => { root.selected(i); }
+            }
+
+            Text {
+                text: item.label;
+                font-family: "Maple Mono NF CN";
+                color: root.current == i ? #f0e2cf : #9aa0b4;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

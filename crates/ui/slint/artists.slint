@@ -1,0 +1,63 @@
+// 歌手列表。搜索结果的「歌手」页签摆它。
+//
+// 与 PlaylistList 长得像,但不是同一个:歌单行要标来源(同名的本地歌单与收藏
+// 来的能做的事不同),歌手只有平台一个来源,没有那一栏。硬合成一个的话,
+// 那个来源标记就得靠一个恒为假的值关掉,而那种字段迟早有人当真。
+//
+// 点一位歌手出的是他此刻的热门曲目,不是全部作品 —— 平台给的就是那几首。
+
+import { ArtistRow } from "types.slint";
+
+export component ArtistList inherits Flickable {
+    in property <[ArtistRow]> artists;
+
+    callback open(string, string);
+
+    vertical-stretch: 1;
+    content-height: rows.preferred-height;
+
+    rows := VerticalLayout {
+        spacing: 4px;
+        alignment: start;
+
+        for row[i] in root.artists: Rectangle {
+            height: 52px;
+            background: touch.has-hover ? #ffffff14 : #ffffff08;
+            border-radius: 8px;
+            animate background { duration: 160ms; easing: ease-out; }
+
+            touch := TouchArea {
+                // 名字一起传:详情页的标题要它,而那一层拿不到这一行。
+                clicked => { root.open(row.id, row.name); }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 12px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+
+                    // 歌手名来自平台,是任意 CJK/日文 —— 不指定 font-family,
+                    // 落到系统字体(与曲目行同一个理由)。
+                    Text {
+                        text: row.name;
+                        color: #e6e8ef;
+                        font-size: 14px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: row.subtitle;
+                        font-family: "Maple Mono NF CN";
+                        color: #9aa0b4;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}

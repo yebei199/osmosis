@@ -15,12 +15,13 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
-import { NavEntry, TrackRow, DeviceRow, PlaylistRow } from "types.slint";
+import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow } from "types.slint";
 import { PlaylistList } from "playlists.slint";
+import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip } from "controls.slint";
 import { LoginPage } from "login.slint";
-import { MusicRail, MusicBar } from "musicnav.slint";
+import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
 
 global Nav {
@@ -116,6 +117,18 @@ export component MainWindow inherits Window {
     callback open-playlist(string, int);
     // 从详情退回列表。
     callback close-playlist();
+
+    // ── 搜索的三个页签 ──
+    // 0=歌曲、1=歌手、2=歌单,编号即 musicnav.slint 里 SearchTabs.items 的下标。
+    in-out property <int> search-tab: 0;
+    callback select-search-tab(int);
+    // 歌手与歌单的结果各自成列,**不与「我的歌单」共用** `playlists` ——
+    // 共用的话,切回我的歌单会看见上一次的搜索结果。
+    // 曲目仍然共用 `tracks`:那个属性本来就是「当前这批歌」。
+    in property <[ArtistRow]> found-artists: [];
+    in property <[PlaylistRow]> found-playlists: [];
+    // 打开某位歌手的热门曲目。带上名字,详情页的标题要它。
+    callback open-artist(string, string);
 
     // 点某一行的红心。参数是曲目 id 与点完之后的状态。
     callback toggle-liked(string, bool);
@@ -361,7 +374,10 @@ export component MainWindow inherits Window {
 
                             // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
                             // 常驻一个空框会让人以为那三页也要先搜一下。
-                            if root.music-section == 2: HorizontalLayout {
+                            // 进了歌手详情也收起来:那一层有自己的标题行与返回键。
+                            if root.music-section == 2
+                                && root.open-playlist-name == "":
+                            HorizontalLayout {
                                 spacing: 8px;
 
                                 // 歌名是任意 CJK,不能指定子集字体,
@@ -375,6 +391,17 @@ export component MainWindow inherits Window {
                                     width: root.compact ? 60px : 84px;
                                     text: "Go";
                                     clicked => { root.search(keyword.text); }
+                                }
+                            }
+
+                            // 搜索结果的三个页签。与搜索框同进同出 ——
+                            // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
+                            if root.music-section == 2
+                                && root.open-playlist-name == "":
+                            search-tabs := SearchTabBar {
+                                current: root.search-tab;
+                                selected(tab) => {
+                                    root.select-search-tab(tab);
                                 }
                             }
 
@@ -401,11 +428,12 @@ export component MainWindow inherits Window {
                                 overflow: elide;
                             }
 
-                            // 歌单分区的详情那一层:标题行 + 返回。
-                            // 与列表**互斥** —— 两个都在的话,返回键该收哪一层
+                            // 详情那一层的标题行 + 返回。歌单与歌手共用 ——
+                            // 两者摊开之后都是「一批歌」,再造一套标题行只会
+                            // 让返回键有两种写法。
+                            // 与列表**互斥**:两个都在的话,返回键该收哪一层
                             // 就说不清了。
-                            if root.music-section == 1
-                                && root.open-playlist-name != "":
+                            if root.open-playlist-name != "":
                             playlist-header := HorizontalLayout {
                                 spacing: 8px;
                                 height: 28px;
@@ -445,10 +473,38 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // 曲目列表:三个非歌单分区直接摆它,歌单分区
-                            // 进了详情之后也摆它 —— 都是「一批歌」。
-                            if root.music-section != 1
-                                || root.open-playlist-name != "":
+                            // 搜索的歌手页签。
+                            if root.music-section == 2
+                                && root.open-playlist-name == ""
+                                && root.search-tab == 1:
+                            artist-list := ArtistList {
+                                artists: root.found-artists;
+                                open(id, name) => {
+                                    root.open-artist(id, name);
+                                }
+                            }
+
+                            // 搜索的歌单页签。与「我的歌单」同一个组件、
+                            // 不同的一份数据 —— 点开走的也是同一条路。
+                            if root.music-section == 2
+                                && root.open-playlist-name == ""
+                                && root.search-tab == 2:
+                            found-playlist-list := PlaylistList {
+                                vertical-stretch: 1;
+                                playlists: root.found-playlists;
+                                open(id, source) => {
+                                    root.open-playlist(id, source);
+                                }
+                            }
+
+                            // 曲目列表。四种情况摆它:每日推荐、最近播放、
+                            // 搜索的歌曲页签,以及任何一层详情(歌单或歌手)——
+                            // 它们都是「一批歌」。
+                            if root.open-playlist-name != ""
+                                || root.music-section == 0
+                                || root.music-section == 3
+                                || (root.music-section == 2
+                                    && root.search-tab == 0):
                             track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;

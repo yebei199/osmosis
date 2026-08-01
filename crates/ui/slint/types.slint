@@ -42,6 +42,16 @@ export struct PlaylistRow {
     source: int,
 }
 
+// 搜索结果里的一位歌手。
+//
+// 没有 source:歌手只有平台一个来源,自家不造歌手。副标题(专辑数)已在
+// Rust 侧格式化好,与 PlaylistRow 同理。
+export struct ArtistRow {
+    id: string,
+    name: string,
+    subtitle: string,
+}
+
 export struct DeviceRow {
     id: string,
     name: string,

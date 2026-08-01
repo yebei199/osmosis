@@ -472,20 +472,45 @@ pub fn bind(
 #[cfg(test)]
 const WASM_NOTICE: &str = "Web 端暂不支持播放";
 
-/// 搜索:关键词 → `GET /search` → 结果列表。
+/// 某个歌单叫什么。先找「我的歌单」,再找搜索结果。
+///
+/// 两张列表都要找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里 ——
+/// 只找一张的现象是从搜索结果点进去,标题写着「歌单」。
+#[cfg(not(target_arch = "wasm32"))]
+fn playlist_name(
+    ui: &MainWindow,
+    id: &slint::SharedString,
+    source: i32,
+) -> slint::SharedString {
+    let matches = |row: &crate::PlaylistRow| {
+        row.id == id && row.source == source
+    };
+
+    ui.get_playlists()
+        .iter()
+        .find(matches)
+        .or_else(|| {
+            ui.get_found_playlists().iter().find(matches)
+        })
+        .map_or_else(
+            || slint::SharedString::from("歌单"),
+            |row| row.name.clone(),
+        )
+}
+
+/// 搜索:关键词 → 三条路由之一 → 对应的一列结果。
+///
+/// 页签与关键词的记账在 [`crate::search`],这里只交出「搜歌」那一路 ——
+/// 它要往播放队列里塞东西,而队列归这个模块。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_search(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
-    let weak = ui.as_weak();
 
-    ui.on_search(move |keyword| {
-        let keyword = keyword.to_string();
-        if keyword.trim().is_empty() {
-            return;
-        }
-
+    crate::search::bind(ui, move |ui, keyword| {
         let deck = deck.clone();
-        let weak = weak.clone();
+        let weak = ui.as_weak();
+        let keyword = keyword.to_owned();
+
         slint::spawn_local(async move {
             let found = api::search_tracks(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
@@ -543,17 +568,9 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_open_playlist(move |id, source| {
         let Some(ui) = weak.upgrade() else { return };
-        // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了
-        let name = ui
-            .get_playlists()
-            .iter()
-            .find(|row| {
-                row.id == id && row.source == source
-            })
-            .map_or_else(
-                || slint::SharedString::from("歌单"),
-                |row| row.name.clone(),
-            );
+        // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了。
+        // 两张列表都找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里。
+        let name = playlist_name(&ui, &id, source);
         ui.set_open_playlist_name(name);
 
         let source =
@@ -571,6 +588,22 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
                 slint::SharedString::new(),
             );
         }
+    });
+
+    // 打开一位歌手:摆他此刻的热门曲目。走的是与歌单详情完全相同的那一层 ——
+    // 摊开之后两者都是「一批歌」,再造一套详情页只会让返回键有两种写法。
+    let artist = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_open_artist(move |id, name| {
+        let Some(ui) = weak.upgrade() else { return };
+        ui.set_open_playlist_name(name);
+
+        let id = id.to_string();
+        fetch_into(&weak, &artist, async move {
+            api::artist_tracks(&id)
+                .await
+                .map(|dto| dto.tracks)
+        });
     });
 
     let shown = deck.clone();

@@ -126,6 +126,16 @@ pub async fn search_playlists(
         .await
 }
 
+/// `GET /artists/{id}/tracks` —— 某个歌手的热门曲目。
+///
+/// 搜到的歌手点下去听什么。不是这个歌手的全部作品 —— 平台给的就是「此刻热门」
+/// 那几首,要全部得另开一条路。
+pub async fn artist_tracks(
+    artist_id: &str,
+) -> Result<TracksDto, ApiError> {
+    platform::get_json(artist_tracks_url(artist_id)).await
+}
+
 /// `GET /play/{track_id}`。
 ///
 /// 拿到的是一条**临时**直链,带签名会过期。别缓存 —— 过期后服务端返回的
@@ -487,6 +497,15 @@ fn playlist_tracks_url(id: &str) -> String {
 fn platform_playlist_tracks_url(id: &str) -> String {
     format!(
         "{}/playlists/platform/{}/tracks",
+        base_url(),
+        encode_component(id)
+    )
+}
+
+/// 歌手热门曲目的地址。
+fn artist_tracks_url(id: &str) -> String {
+    format!(
+        "{}/artists/{}/tracks",
         base_url(),
         encode_component(id)
     )
@@ -1250,6 +1269,10 @@ mod tests {
         ));
         assert!(
             liked_url("347230").ends_with("/liked/347230")
+        );
+        assert!(
+            artist_tracks_url("11972")
+                .ends_with("/artists/11972/tracks")
         );
     }
 

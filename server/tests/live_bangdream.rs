@@ -19,7 +19,7 @@ use server::account::Account;
 use server::bangdream::{
     self,
     proto::{
-        GetAccountStatusRequest,
+        GetAccountStatusRequest, GetArtistRequest,
         GetDailyRecommendationsRequest,
         GetPlaySourceRequest, GetTracksRequest,
         ListLikedTracksRequest, Platform, QualityLevel,
@@ -261,6 +261,56 @@ async fn search_artists_returns_artists_from_live_bangdream()
     );
     assert!(!dto.id.is_empty(), "歌手没有 id");
     assert!(!dto.name.is_empty(), "歌手没有名字");
+}
+
+/// 取歌手热门曲目真实往返一次。
+///
+/// 与搜歌手是两个不同的上游方法,单元测试发现不了服务名/字段号这一类错。
+/// 先搜再取:歌手 id 只有平台知道,写死一个迟早失效。
+#[tokio::test]
+#[ignore = "需要 bang-dream 在 127.0.0.1:50051 上运行"]
+async fn artist_hot_tracks_from_live_bangdream() {
+    let mut client = catalog().await;
+
+    let found = client
+        .search_artists(req(SearchArtistsRequest {
+            platform: Platform::Netease as i32,
+            keyword: "Beyond".to_owned(),
+            limit: 1,
+            offset: 0,
+        }))
+        .await
+        .expect("搜歌手请求失败")
+        .into_inner();
+    let artist_id = found
+        .artists
+        .into_iter()
+        .next()
+        .expect("搜不到任何歌手")
+        .id;
+
+    let response = client
+        .get_artist(req(GetArtistRequest {
+            platform: Platform::Netease as i32,
+            artist_id,
+        }))
+        .await
+        .expect("取歌手详情失败")
+        .into_inner();
+
+    assert!(
+        !response.hot_tracks.is_empty(),
+        "歌手一首热门都没有?"
+    );
+
+    let dto = bangdream::track_to_dto(
+        response
+            .hot_tracks
+            .into_iter()
+            .next()
+            .expect("已断言非空"),
+    );
+    assert!(!dto.title.is_empty(), "热门曲目没有标题");
 }
 
 /// 搜歌单真实往返一次,同上。

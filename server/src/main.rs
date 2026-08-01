@@ -35,7 +35,7 @@ use server::account::{self, Account};
 use server::bangdream::{
     self,
     proto::{
-        GetAccountStatusRequest,
+        GetAccountStatusRequest, GetArtistRequest,
         GetDailyRecommendationsRequest, GetLyricRequest,
         GetPlaySourceRequest, GetPlaylistRequest,
         GetTracksRequest, ListLikedTracksRequest,
@@ -198,6 +198,8 @@ async fn main() {
         .route("/search/tracks", get(search_tracks))
         .route("/search/artists", get(search_artists))
         .route("/search/playlists", get(search_playlists))
+        // 搜到的歌手点下去听什么 —— 平台此刻认为的热门那几首
+        .route("/artists/{id}/tracks", get(artist_tracks))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
         // 红心的**全量标识**,不分页。/liked 给的是一页曲目,回答不了
@@ -432,6 +434,39 @@ async fn search_artists(
             .map(bangdream::artist_to_dto)
             .collect(),
         has_more: response.has_more,
+    }))
+}
+
+/// `GET /artists/{id}/tracks` —— 某个歌手的热门曲目。
+///
+/// 搜索结果里的歌手点下去要能听到东西,否则那一页只是一串名字。
+///
+/// 上游一次给完整曲目,不像歌单那样只给标识 —— 因此不经过缓存:没有要补的详情,
+/// 而这批歌是**平台此刻认为的热门**,存下来只会让它停在过去某一天。
+async fn artist_tracks(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<String>,
+) -> Result<Json<TracksDto>, Failure> {
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .get_artist(bangdream::as_user(
+            &account,
+            GetArtistRequest {
+                platform: Platform::Netease as i32,
+                artist_id: id,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .hot_tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
     }))
 }
 

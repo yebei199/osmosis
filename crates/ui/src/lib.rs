@@ -25,6 +25,9 @@ mod account;
 mod playlist;
 // 红心:哪些歌在红心里,以及点一下之后发生什么。
 mod liked;
+// 搜索的三个页签。歌曲那一路借 music 的队列,歌手与歌单各自成列。
+#[cfg(not(target_arch = "wasm32"))]
+mod search;
 
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
