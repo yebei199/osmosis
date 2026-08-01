@@ -242,7 +242,7 @@ async fn search_artists_returns_artists_from_live_bangdream()
         .await
         .search_artists(req(SearchArtistsRequest {
             platform: Platform::Netease as i32,
-            keyword: "Beyond".to_owned(),
+            keyword: "本兮".to_owned(),
             limit: 5,
             offset: 0,
         }))
@@ -275,7 +275,7 @@ async fn artist_hot_tracks_from_live_bangdream() {
     let found = client
         .search_artists(req(SearchArtistsRequest {
             platform: Platform::Netease as i32,
-            keyword: "Beyond".to_owned(),
+            keyword: "本兮".to_owned(),
             limit: 1,
             offset: 0,
         }))

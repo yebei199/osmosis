@@ -89,7 +89,7 @@ fn searching_again_stays_on_the_current_tab() {
     ui.set_search_tab(1);
 
     // 搜索本身要网络,这里只发回调:它不该顺手把页签拨回去
-    ui.invoke_search("Beyond".into());
+    ui.invoke_search("本兮".into());
 
     assert_eq!(ui.get_search_tab(), 1, "重搜不该换页签");
     assert!(present(&ui, "MainWindow::artist-list"));
@@ -102,7 +102,7 @@ fn searching_again_stays_on_the_current_tab() {
 fn opening_an_artist_replaces_the_search_layer() {
     let ui = search_page();
     ui.set_search_tab(1);
-    ui.set_open_playlist_name("Beyond".into());
+    ui.set_open_playlist_name("本兮".into());
 
     assert!(present(&ui, "MainWindow::playlist-header"));
     assert!(present(&ui, "MainWindow::track-list"));

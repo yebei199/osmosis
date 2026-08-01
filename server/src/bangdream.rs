@@ -882,7 +882,7 @@ mod tests {
     fn artist_to_dto_maps_the_detail_fields() {
         let dto = artist_to_dto(proto::Artist {
             id: "11127".to_owned(),
-            name: "Beyond".to_owned(),
+            name: "本兮".to_owned(),
             avatar: "https://p1.music.126.net/a.jpg"
                 .to_owned(),
             description: String::new(),
@@ -890,7 +890,7 @@ mod tests {
         });
 
         assert_eq!(dto.id, "11127");
-        assert_eq!(dto.name, "Beyond");
+        assert_eq!(dto.name, "本兮");
         assert_eq!(
             dto.avatar.as_deref(),
             Some("https://p1.music.126.net/a.jpg")
