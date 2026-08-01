@@ -9,10 +9,9 @@ use axum::{
     extract::FromRequestParts, http::Request,
     http::StatusCode,
 };
-use server::account::{
-    self, Account, AccountError, register,
-};
+use server::account::{self, Account, register};
 use server::db;
+use server::error::AppError;
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// 与 `main.rs` 的默认值一致。那个常量属于进程装配,不在 lib 里,
@@ -46,7 +45,7 @@ async fn make_account(
     tx: &mut Transaction<'static, Postgres>,
     username: &str,
     password: &str,
-) -> Result<Account, AccountError> {
+) -> Result<Account, AppError> {
     register(tx, username, password, INVITE, INVITE).await
 }
 
@@ -88,13 +87,13 @@ async fn register_requires_the_invite_code() {
     )
     .await;
 
-    assert!(matches!(result, Err(AccountError::BadInvite)));
+    assert!(matches!(result, Err(AppError::BadInvite)));
 
     // 而且没有留下账号 —— 拒绝要发生在写库之前
     assert!(matches!(
         account::login(&mut tx, "mallory", "correct horse")
             .await,
-        Err(AccountError::BadCredentials)
+        Err(AppError::BadCredentials)
     ));
 }
 
@@ -112,10 +111,7 @@ async fn duplicate_username_is_rejected() {
         make_account(&mut tx, "BOB_1", "another password")
             .await;
 
-    assert!(matches!(
-        again,
-        Err(AccountError::UsernameTaken)
-    ));
+    assert!(matches!(again, Err(AppError::UsernameTaken)));
 }
 
 /// 密码错了拒绝登录,且回的错误与"用户不存在"不可区分 ——
@@ -144,20 +140,20 @@ async fn wrong_password_and_unknown_user_are_indistinguishable()
 
     assert!(matches!(
         wrong_password,
-        Err(AccountError::BadCredentials)
+        Err(AppError::BadCredentials)
     ));
     assert!(matches!(
         unknown_user,
-        Err(AccountError::BadCredentials)
+        Err(AppError::BadCredentials)
     ));
 
     // 连回给客户端的那句话也必须一样
     let (wrong_status, wrong_body) =
-        server::error::map_account_error(
+        server::error::map_error(
             &wrong_password.unwrap_err(),
         );
     let (unknown_status, unknown_body) =
-        server::error::map_account_error(
+        server::error::map_error(
             &unknown_user.unwrap_err(),
         );
 
@@ -176,7 +172,7 @@ async fn unknown_token_is_rejected() {
     )
     .await;
 
-    assert!(matches!(result, Err(AccountError::BadToken)));
+    assert!(matches!(result, Err(AppError::BadToken)));
 }
 
 /// 登出只吊销这一台设备的会话,同账号在别处的 token 仍然有效。
@@ -204,7 +200,7 @@ async fn logout_revokes_only_that_session() {
 
     assert!(matches!(
         account::authenticate(&mut tx, &phone).await,
-        Err(AccountError::BadToken)
+        Err(AppError::BadToken)
     ));
     assert!(
         account::authenticate(&mut tx, &desktop)

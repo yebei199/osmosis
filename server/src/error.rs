@@ -7,7 +7,36 @@
 use axum::{Json, http::StatusCode};
 use contract::ErrorDto;
 
-use crate::account::AccountError;
+/// 本服务自己这一侧的失败。
+///
+/// 与上游 gRPC 那侧同一个思路:类型只说**发生了什么**,状态码与错误码的映射
+/// 集中在 [`map_error`] 一处。
+#[derive(Debug)]
+pub enum AppError {
+    /// 邀请码不对。
+    BadInvite,
+    /// 用户名已被占用。
+    UsernameTaken,
+    /// 用户名或密码不对。
+    ///
+    /// **刻意不区分**这两种:分开回答等于把「这个用户名存在」白送给试探的人。
+    BadCredentials,
+    /// token 不认识,或已被登出。
+    BadToken,
+    /// 东西不在,或者不归这个账号 ——
+    /// **两者故意用同一个变体**:回 403 等于确认了这个 id 存在。
+    NotFound,
+    /// 输入不满足最低要求。
+    Invalid(&'static str),
+    /// 数据库出错。
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::Db(err)
+    }
+}
 
 /// 失败响应:状态码 + [`ErrorDto`]。
 pub type Failure = (StatusCode, Json<ErrorDto>);
@@ -23,40 +52,45 @@ pub fn unauthorized(message: &str) -> Failure {
     )
 }
 
-/// 把账号那侧的失败翻成一对 (HTTP 状态码, 响应体)。
+/// 把自家的失败翻成一对 (HTTP 状态码, 响应体)。
 ///
 /// 密码错与用户不存在映射到**同一个** code 和同一句话:分开会把
-/// 「这个用户名存在」白送给试探的人(见 [`AccountError::BadCredentials`])。
-pub fn map_account_error(err: &AccountError) -> Failure {
+/// 「这个用户名存在」白送给试探的人(见 [`AppError::BadCredentials`])。
+pub fn map_error(err: &AppError) -> Failure {
     let (http, code, message) = match err {
-        AccountError::BadInvite => (
+        AppError::BadInvite => (
             StatusCode::FORBIDDEN,
             "bad_invite",
             "邀请码不对".to_owned(),
         ),
-        AccountError::UsernameTaken => (
+        AppError::UsernameTaken => (
             StatusCode::CONFLICT,
             "username_taken",
             "用户名已被占用".to_owned(),
         ),
-        AccountError::BadCredentials => (
+        AppError::BadCredentials => (
             StatusCode::UNAUTHORIZED,
             "bad_credentials",
             "用户名或密码不对".to_owned(),
         ),
-        AccountError::BadToken => (
+        AppError::BadToken => (
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "登录状态已失效".to_owned(),
         ),
-        AccountError::Invalid(why) => (
+        AppError::NotFound => (
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "没有这个东西".to_owned(),
+        ),
+        AppError::Invalid(why) => (
             StatusCode::BAD_REQUEST,
             "invalid_argument",
             (*why).to_owned(),
         ),
         // 数据库出错是本服务这边的问题,细节只进日志 ——
         // 原样抛出去可能带上连接串,而客户端拿它也没办法。
-        AccountError::Db(err) => {
+        AppError::Db(err) => {
             tracing::error!(%err, "数据库操作失败");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

@@ -39,13 +39,13 @@ where
             })?;
 
         let pool = PgPool::from_ref(state);
-        let mut conn =
-            pool.acquire().await.map_err(|err| {
-                error::map_account_error(&err.into())
-            })?;
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|err| error::map_error(&err.into()))?;
 
         account::authenticate(&mut conn, token)
             .await
-            .map_err(|err| error::map_account_error(&err))
+            .map_err(|err| error::map_error(&err))
     }
 }

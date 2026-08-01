@@ -12,5 +12,6 @@ pub mod bangdream;
 pub mod db;
 pub mod error;
 pub mod paging;
+pub mod playlist;
 pub mod roster;
 pub mod signaling;

@@ -20,8 +20,8 @@ use axum::{
 };
 use contract::{
     HealthDto, LoginDto, LyricDto, PROTOCOL_VERSION,
-    PlaySourceDto, RegisterDto, SearchDto, SessionDto,
-    TracksDto,
+    PlaySourceDto, PlaylistDto, PlaylistsDto, RegisterDto,
+    SearchDto, SessionDto, TracksDto,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -35,8 +35,8 @@ use server::bangdream::{
         GetAccountStatusRequest,
         GetDailyRecommendationsRequest, GetLyricRequest,
         GetPlaySourceRequest, GetTracksRequest,
-        ListLikedTracksRequest, Platform, QualityLevel,
-        SearchTracksRequest,
+        ListLikedTracksRequest, ListUserPlaylistsRequest,
+        Platform, QualityLevel, SearchTracksRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -44,6 +44,7 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
+use server::playlist::{self, TrackRef};
 use server::signaling::{self, SharedRoster};
 use server::{db, error, paging};
 
@@ -112,9 +113,9 @@ async fn conn(
     sqlx::pool::PoolConnection<sqlx::Postgres>,
     Failure,
 > {
-    pool.acquire().await.map_err(|err| {
-        error::map_account_error(&err.into())
-    })
+    pool.acquire()
+        .await
+        .map_err(|err| error::map_error(&err.into()))
 }
 
 #[tokio::main]
@@ -177,6 +178,21 @@ async fn main() {
         .route("/search", get(search))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
+        .route(
+            "/playlists",
+            get(playlists).post(create_playlist),
+        )
+        .route(
+            "/playlists/{id}",
+            axum::routing::patch(rename_playlist)
+                .delete(delete_playlist),
+        )
+        .route(
+            "/playlists/{id}/tracks",
+            get(playlist_tracks)
+                .post(add_playlist_tracks)
+                .delete(remove_playlist_tracks),
+        )
         .route("/play/{track_id}", get(play))
         .route("/lyric/{track_id}", get(lyric))
         .with_state(state)
@@ -228,7 +244,7 @@ async fn register(
         &state.invite,
     )
     .await
-    .map_err(|err| error::map_account_error(&err))?;
+    .map_err(|err| error::map_error(&err))?;
 
     let token = account::login(
         &mut conn,
@@ -236,7 +252,7 @@ async fn register(
         &body.password,
     )
     .await
-    .map_err(|err| error::map_account_error(&err))?;
+    .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(SessionDto {
         token,
@@ -257,12 +273,12 @@ async fn login(
         &body.password,
     )
     .await
-    .map_err(|err| error::map_account_error(&err))?;
+    .map_err(|err| error::map_error(&err))?;
 
     // 回显规范化后的账号名(登录时大小写不敏感),界面据此显示
     let account = account::authenticate(&mut conn, &token)
         .await
-        .map_err(|err| error::map_account_error(&err))?;
+        .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(SessionDto {
         token,
@@ -290,7 +306,7 @@ async fn logout(
     let mut conn = conn(&state.pool).await?;
     account::logout(&mut conn, token)
         .await
-        .map_err(|err| error::map_account_error(&err))?;
+        .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -451,6 +467,285 @@ async fn liked(
             .map(bangdream::track_to_dto)
             .collect(),
     }))
+}
+
+/// `GET /playlists` —— 两个来源合成的一张歌单列表。
+///
+/// 平台歌单直读上游、不镜像;本地歌单读自家的库;「我喜欢的」置顶,它就是
+/// 平台的红心列表(见 `docs/adr/0016`)。
+///
+/// 上游要不到平台歌单时**不整个失败**:本地那半与红心仍然有用,把它们一起
+/// 扣下等于让网易云的一次抖动把用户自己的歌单也弄没了。
+async fn playlists(
+    State(state): State<AppState>,
+    account: Account,
+) -> Result<Json<PlaylistsDto>, Failure> {
+    let mut auth = state.upstream.auth;
+    let mut library = state.upstream.library;
+
+    let netease_account = auth
+        .get_account_status(bangdream::as_user(
+            &account,
+            GetAccountStatusRequest {
+                platform: Platform::Netease as i32,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    let (platform, liked_count) =
+        if netease_account.logged_in {
+            platform_playlists(
+                &mut library,
+                &account,
+                &netease_account.user_id,
+            )
+            .await
+        } else {
+            // 没绑网易云是**状态**不是错误:本地歌单照常给,列表里就是少了平台那部分
+            (Vec::new(), 0)
+        };
+
+    let mut conn = conn(&state.pool).await?;
+    let local = playlist::list(&mut conn, account.id)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+
+    Ok(Json(PlaylistsDto {
+        playlists: playlist::merged(
+            liked_count,
+            platform,
+            local,
+        ),
+    }))
+}
+
+/// 取平台那半:歌单列表与红心数。任一步失败都只记一笔日志、当作空 ——
+/// 见 [`playlists`] 顶上那条理由。
+async fn platform_playlists(
+    library: &mut LibraryServiceClient<Channel>,
+    account: &Account,
+    netease_user_id: &str,
+) -> (Vec<PlaylistDto>, i32) {
+    let lists = match library
+        .list_user_playlists(bangdream::as_user(
+            account,
+            ListUserPlaylistsRequest {
+                platform: Platform::Netease as i32,
+                user_id: netease_user_id.to_owned(),
+                limit: 0,
+                offset: 0,
+            },
+        ))
+        .await
+    {
+        Ok(response) => response
+            .into_inner()
+            .playlists
+            .into_iter()
+            .map(bangdream::playlist_to_dto)
+            .collect(),
+        Err(status) => {
+            tracing::warn!(%status, "取平台歌单失败,只给本地那半");
+            Vec::new()
+        }
+    };
+
+    let liked_count = match library
+        .list_liked_tracks(bangdream::as_user(
+            account,
+            ListLikedTracksRequest {
+                platform: Platform::Netease as i32,
+                user_id: netease_user_id.to_owned(),
+            },
+        ))
+        .await
+    {
+        Ok(response) => response
+            .into_inner()
+            .track_ids
+            .len()
+            .try_into()
+            .unwrap_or(i32::MAX),
+        Err(status) => {
+            tracing::warn!(%status, "取红心列表失败,数目按 0 显示");
+            0
+        }
+    };
+
+    (lists, liked_count)
+}
+
+/// `POST /playlists` 的请求体。
+#[derive(Deserialize)]
+struct NameBody {
+    name: String,
+}
+
+/// `POST /playlists` —— 建一个本地歌单。
+async fn create_playlist(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<NameBody>,
+) -> Result<Json<PlaylistDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    let created =
+        playlist::create(&mut conn, account.id, &body.name)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    Ok(Json(created.to_dto()))
+}
+
+/// `PATCH /playlists/{id}` —— 给本地歌单改名。
+async fn rename_playlist(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<i64>,
+    Json(body): Json<NameBody>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    playlist::rename(&mut conn, account.id, id, &body.name)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /playlists/{id}` —— 删掉本地歌单。
+async fn delete_playlist(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    playlist::delete(&mut conn, account.id, id)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /playlists/{id}/tracks` —— 本地歌单的曲目,详情由上游补全。
+///
+/// 与 [`liked`] 同一个套路:自家只存标识,曲目的真相在平台。
+async fn playlist_tracks(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<i64>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<TracksDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    let refs = playlist::tracks(&mut conn, account.id, id)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+
+    // 目前只有网易云一个平台。多平台之后这里要按 platform 分组各问各的,
+    // 那时 GetTracks 的一次调用装不下整页 —— 留到真有第二个平台时再改。
+    let ids: Vec<String> = refs
+        .iter()
+        .map(|track| track.track_id.clone())
+        .collect();
+    let page = paging::page(
+        &ids,
+        query.offset.unwrap_or_default(),
+        query.limit.unwrap_or_default(),
+    );
+    if page.is_empty() {
+        return Ok(Json(TracksDto { tracks: Vec::new() }));
+    }
+
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .get_tracks(bangdream::as_user(
+            &account,
+            GetTracksRequest {
+                platform: Platform::Netease as i32,
+                track_ids: page.to_vec(),
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
+    }))
+}
+
+/// 增删曲目的请求体。
+#[derive(Deserialize)]
+struct TracksBody {
+    /// 曲目标识。身份是 `(平台, 平台内 id)`,所以平台不能省。
+    tracks: Vec<TrackRefDto>,
+}
+
+#[derive(Deserialize)]
+struct TrackRefDto {
+    platform: String,
+    id: String,
+}
+
+impl TracksBody {
+    fn refs(&self) -> Vec<TrackRef> {
+        self.tracks
+            .iter()
+            .map(|track| TrackRef {
+                platform: track.platform.clone(),
+                track_id: track.id.clone(),
+            })
+            .collect()
+    }
+}
+
+/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。
+async fn add_playlist_tracks(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<i64>,
+    Json(body): Json<TracksBody>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    playlist::add_tracks(
+        &mut conn,
+        account.id,
+        id,
+        &body.refs(),
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /playlists/{id}/tracks` —— 从本地歌单移掉曲目。
+async fn remove_playlist_tracks(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<i64>,
+    Json(body): Json<TracksBody>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+
+    playlist::remove_tracks(
+        &mut conn,
+        account.id,
+        id,
+        &body.refs(),
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /play/{track_id}` —— 取一条临时直链。

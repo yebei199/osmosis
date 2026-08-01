@@ -7,7 +7,8 @@
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
 use contract::{
-    LyricDto, LyricLineDto, PlaySourceDto, TrackDto,
+    LyricDto, LyricLineDto, PlaySourceDto, PlaylistDto,
+    PlaylistSource, TrackDto,
 };
 
 use crate::account::Account;
@@ -59,6 +60,23 @@ fn platform_name(raw: i32) -> String {
 /// `None` 是"平台没给",`Some("")` 会被客户端当成一个真实存在的空值。
 fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
+}
+
+/// 把上游的一个歌单翻成契约里的 [`PlaylistDto`]。
+///
+/// `source` 一律是 `Platform`:能走到这个函数的都来自音乐平台。本地歌单
+/// 由 [`crate::playlist`] 那侧翻,两条路各自打标,不共用一个带参数的函数 ——
+/// 那样标错了不会有任何编译错误。
+pub fn playlist_to_dto(
+    list: proto::Playlist,
+) -> PlaylistDto {
+    PlaylistDto {
+        source: PlaylistSource::Platform,
+        id: list.id,
+        name: list.name,
+        cover: non_empty(list.cover),
+        track_count: list.track_count,
+    }
 }
 
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。

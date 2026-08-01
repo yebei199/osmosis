@@ -117,7 +117,9 @@ just desktop-dev             # 终端 3:「Music」页搜歌、点一首出声
 账号同时是网易云凭据的分片键:每个账号绑自己的网易云登录。
 
 对客户端而言 gRPC 不存在:它只见到 `/search`、`/play/{id}` 这样的 HTTP/JSON,
-形状由 `contract` crate 定义。gRPC 的价值在 axum↔bang-dream 那一段 ——
+形状由 `contract` crate 定义。歌单也一样归一:`/playlists` 给的是一张列表,
+平台歌单与本地歌单在里面靠 `source` 区分,客户端不必知道它们来自两个地方
+(见 [`docs/adr/0016`](docs/adr/0016-playlist-split-by-data-ownership.md))。gRPC 的价值在 axum↔bang-dream 那一段 ——
 Go 与 Rust 两侧从同一份 `.proto` 生成,改了一边忘了另一边,构建直接失败。
 
 客户端拿到直链后**边下边播**(`crates/audio`,rodio + stream-download),不整曲下载 ——

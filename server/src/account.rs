@@ -16,6 +16,8 @@ use argon2::{
 use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 
+use crate::error::AppError;
+
 /// 会话 token 的字节数。32 字节 = 256 位,穷举不现实。
 const TOKEN_BYTES: usize = 32;
 
@@ -39,34 +41,6 @@ impl Account {
     }
 }
 
-/// 账号相关的失败。
-///
-/// 与 [`crate::error`] 里 gRPC 那侧同一个思路:类型只说**发生了什么**,
-/// 状态码与错误码的映射集中在一处。
-#[derive(Debug)]
-pub enum AccountError {
-    /// 邀请码不对。
-    BadInvite,
-    /// 用户名已被占用。
-    UsernameTaken,
-    /// 用户名或密码不对。
-    ///
-    /// **刻意不区分**这两种:分开回答等于把「这个用户名存在」白送给试探的人。
-    BadCredentials,
-    /// token 不认识,或已被登出。
-    BadToken,
-    /// 用户名或密码不满足最低要求。
-    Invalid(&'static str),
-    /// 数据库出错。
-    Db(sqlx::Error),
-}
-
-impl From<sqlx::Error> for AccountError {
-    fn from(err: sqlx::Error) -> Self {
-        Self::Db(err)
-    }
-}
-
 /// 注册一个账号。
 ///
 /// `invite` 必须与部署时配置的邀请码一致 —— 服务面向公网,没有这道门任何人都能开户
@@ -77,22 +51,18 @@ pub async fn register(
     password: &str,
     invite: &str,
     expected_invite: &str,
-) -> Result<Account, AccountError> {
+) -> Result<Account, AppError> {
     if invite != expected_invite {
-        return Err(AccountError::BadInvite);
+        return Err(AppError::BadInvite);
     }
 
     let username = username.trim();
     if username.is_empty() {
-        return Err(AccountError::Invalid(
-            "用户名不能为空",
-        ));
+        return Err(AppError::Invalid("用户名不能为空"));
     }
 
     if password.len() < 8 {
-        return Err(AccountError::Invalid(
-            "密码至少 8 个字符",
-        ));
+        return Err(AppError::Invalid("密码至少 8 个字符"));
     }
 
     let hash = hash_password(password)?;
@@ -110,7 +80,7 @@ pub async fn register(
 
     // ON CONFLICT DO NOTHING 时没有返回行 —— 唯一索引是 lower(username),
     // 所以 Alice 与 alice 会撞在一起,这正是要的。
-    let (id,) = row.ok_or(AccountError::UsernameTaken)?;
+    let (id,) = row.ok_or(AppError::UsernameTaken)?;
 
     Ok(Account {
         id,
@@ -125,7 +95,7 @@ pub async fn login(
     conn: &mut PgConnection,
     username: &str,
     password: &str,
-) -> Result<String, AccountError> {
+) -> Result<String, AppError> {
     let row: Option<(i64, String)> = sqlx::query_as(
         "SELECT id, password_hash FROM accounts
          WHERE lower(username) = lower($1)",
@@ -135,11 +105,11 @@ pub async fn login(
     .await?;
 
     let Some((id, stored)) = row else {
-        return Err(AccountError::BadCredentials);
+        return Err(AppError::BadCredentials);
     };
 
     if !verify_password(password, &stored) {
-        return Err(AccountError::BadCredentials);
+        return Err(AppError::BadCredentials);
     }
 
     let token = new_token();
@@ -159,7 +129,7 @@ pub async fn login(
 pub async fn authenticate(
     conn: &mut PgConnection,
     token: &str,
-) -> Result<Account, AccountError> {
+) -> Result<Account, AppError> {
     let row: Option<(i64, String)> = sqlx::query_as(
         "SELECT accounts.id, accounts.username
          FROM sessions JOIN accounts ON accounts.id = sessions.account_id
@@ -169,8 +139,7 @@ pub async fn authenticate(
     .fetch_optional(conn)
     .await?;
 
-    let (id, username) =
-        row.ok_or(AccountError::BadToken)?;
+    let (id, username) = row.ok_or(AppError::BadToken)?;
 
     Ok(Account { id, username })
 }
@@ -182,7 +151,7 @@ pub async fn authenticate(
 pub async fn logout(
     conn: &mut PgConnection,
     token: &str,
-) -> Result<(), AccountError> {
+) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM sessions WHERE token_hash = $1",
     )
@@ -196,13 +165,13 @@ pub async fn logout(
 /// 把密码哈希成 argon2 的 PHC 串(自带随机盐与参数)。
 fn hash_password(
     password: &str,
-) -> Result<String, AccountError> {
+) -> Result<String, AppError> {
     let salt = SaltString::generate(&mut OsRng);
 
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
-        .map_err(|_| AccountError::Invalid("密码无法哈希"))
+        .map_err(|_| AppError::Invalid("密码无法哈希"))
 }
 
 /// 校验密码。哈希串解析不了时判为不匹配 —— 那是这一行数据坏了,
