@@ -321,11 +321,23 @@ pub async fn delete_playlist(
     .await
 }
 
-/// `GET /playlists/{id}/tracks` —— 本地歌单的曲目。
+/// `GET /playlists/local/{id}/tracks` —— 本地歌单的曲目。
 pub async fn playlist_tracks(
     id: &str,
 ) -> Result<TracksDto, ApiError> {
     platform::get_json(playlist_tracks_url(id)).await
+}
+
+/// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
+///
+/// 与本地那条是两个函数而不是一个带来源参数的:调用方在点开一个歌单时
+/// 就已经知道它是哪一种(列表里的 `source` 就是),合成一个只会让每个
+/// 调用点先去问一遍。
+pub async fn platform_playlist_tracks(
+    id: &str,
+) -> Result<TracksDto, ApiError> {
+    platform::get_json(platform_playlist_tracks_url(id))
+        .await
 }
 
 /// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。
@@ -446,9 +458,12 @@ fn toggle_method(on: bool) -> reqwest::Method {
     }
 }
 
+/// 本地歌单的地址。路径里带上 `local`,因为两种歌单的 id **不在同一个空间**:
+/// 本地是整数主键,平台是平台自己的字符串 id。混了的现象是「查无此歌单」,
+/// 看起来像数据没了。
 fn playlist_url(id: &str) -> String {
     format!(
-        "{}/playlists/{}",
+        "{}/playlists/local/{}",
         base_url(),
         encode_component(id)
     )
@@ -456,6 +471,15 @@ fn playlist_url(id: &str) -> String {
 
 fn playlist_tracks_url(id: &str) -> String {
     format!("{}/tracks", playlist_url(id))
+}
+
+/// 平台歌单曲目的地址。
+fn platform_playlist_tracks_url(id: &str) -> String {
+    format!(
+        "{}/playlists/platform/{}/tracks",
+        base_url(),
+        encode_component(id)
+    )
 }
 
 fn liked_url(track_id: &str) -> String {
@@ -1195,13 +1219,21 @@ mod tests {
     #[test]
     fn playlist_urls_are_built_per_kind() {
         assert!(
-            playlist_url("3").ends_with("/playlists/3"),
+            playlist_url("3")
+                .ends_with("/playlists/local/3"),
             "实际 {}",
             playlist_url("3")
         );
         assert!(
             playlist_tracks_url("3")
-                .ends_with("/playlists/3/tracks")
+                .ends_with("/playlists/local/3/tracks")
+        );
+        // 两种来源走两条路径 —— 混了的现象是「查无此歌单」,看着像数据没了
+        assert!(
+            platform_playlist_tracks_url("24381616")
+                .ends_with(
+                    "/playlists/platform/24381616/tracks"
+                )
         );
         assert!(subscription_url("24381616").ends_with(
             "/subscriptions/playlists/24381616"
@@ -1220,7 +1252,13 @@ mod tests {
         );
         assert!(
             playlist_url("a/b")
-                .ends_with("/playlists/a%2Fb")
+                .ends_with("/playlists/local/a%2Fb")
+        );
+        // 平台 id 来自平台,更该转义:它可能带任何字符
+        assert!(
+            platform_playlist_tracks_url("a/b").ends_with(
+                "/playlists/platform/a%2Fb/tracks"
+            )
         );
     }
 

@@ -35,11 +35,12 @@ use server::bangdream::{
     proto::{
         GetAccountStatusRequest,
         GetDailyRecommendationsRequest, GetLyricRequest,
-        GetPlaySourceRequest, GetTracksRequest,
-        ListLikedTracksRequest, ListUserPlaylistsRequest,
-        Platform, QualityLevel, SearchArtistsRequest,
-        SearchPlaylistsRequest, SearchTracksRequest,
-        SetPlaylistSubscribedRequest, SetTrackLikedRequest,
+        GetPlaySourceRequest, GetPlaylistRequest,
+        GetTracksRequest, ListLikedTracksRequest,
+        ListUserPlaylistsRequest, Platform, QualityLevel,
+        SearchArtistsRequest, SearchPlaylistsRequest,
+        SearchTracksRequest, SetPlaylistSubscribedRequest,
+        SetTrackLikedRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -207,16 +208,23 @@ async fn main() {
             "/playlists",
             get(playlists).post(create_playlist),
         )
+        // 路径里带上来源,因为两种歌单的 id **不在同一个空间**:本地是整数主键,
+        // 平台是平台自己的字符串 id。挤在同一个 `{id}` 下的话,迟早传错一个,
+        // 而那时的现象是「查无此歌单」——看起来像数据没了。
         .route(
-            "/playlists/{id}",
+            "/playlists/local/{id}",
             axum::routing::patch(rename_playlist)
                 .delete(delete_playlist),
         )
         .route(
-            "/playlists/{id}/tracks",
+            "/playlists/local/{id}/tracks",
             get(playlist_tracks)
                 .post(add_playlist_tracks)
                 .delete(remove_playlist_tracks),
+        )
+        .route(
+            "/playlists/platform/{id}/tracks",
+            get(platform_playlist_tracks),
         )
         .route("/play/{track_id}", get(play))
         .route("/lyric/{track_id}", get(lyric))
@@ -671,6 +679,60 @@ async fn platform_playlists(
     };
 
     (lists, liked_count)
+}
+
+/// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
+///
+/// 上游只给全量标识不给曲目:平台返回的曲目列表会被截断,标识列表不会
+/// (见 bang-dream 的 `docs/adr/0003`)。切页因此在这一层做,与 [`liked`] 同一个套路。
+async fn platform_playlist_tracks(
+    State(state): State<AppState>,
+    account: Account,
+    Path(id): Path<String>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<TracksDto>, Failure> {
+    let mut library = state.upstream.library;
+    let detail = library
+        .get_playlist(bangdream::as_user(
+            &account,
+            GetPlaylistRequest {
+                platform: Platform::Netease as i32,
+                playlist_id: id,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    let ids = paging::page(
+        &detail.track_ids,
+        query.offset.unwrap_or_default(),
+        query.limit.unwrap_or_default(),
+    );
+    if ids.is_empty() {
+        return Ok(Json(TracksDto { tracks: Vec::new() }));
+    }
+
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .get_tracks(bangdream::as_user(
+            &account,
+            GetTracksRequest {
+                platform: Platform::Netease as i32,
+                track_ids: ids.to_vec(),
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TracksDto {
+        tracks: response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect(),
+    }))
 }
 
 /// `POST /playlists` 的请求体。
