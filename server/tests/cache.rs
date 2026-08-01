@@ -291,6 +291,106 @@ async fn an_uncached_playlist_reads_empty() {
     assert!(got.is_empty());
 }
 
+/// 只报没缓存过的那些 id —— 已经有详情的不该再问平台要一遍。
+///
+/// 红心 973 首里点一个心,变的只有成员关系,详情一条都不必重取。
+/// 这条要是错了,每点一次心就是 973 首的一次全量拉取,缓存等于没有。
+#[tokio::test]
+async fn missing_details_reports_only_the_uncached_ids() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_missing").await;
+
+    cache::set_playlist(
+        &mut tx,
+        account.id,
+        "p1",
+        &[track("1", "已缓存"), track("2", "也缓存了")],
+    )
+    .await
+    .expect("写缓存应该成功");
+
+    let asked = [
+        "1".to_owned(),
+        "2".to_owned(),
+        "3".to_owned(),
+        "4".to_owned(),
+    ];
+    let mut missing =
+        cache::missing_details(&mut tx, "netease", &asked)
+            .await
+            .expect("问缺哪些应该成功");
+    missing.sort();
+
+    assert_eq!(missing, ["3", "4"]);
+}
+
+/// 一个歌单能直接用别处缓存下来的详情。
+///
+/// 这是「详情按 (平台, id) 存、与歌单无关」在读路径上的兑现:收藏的歌单里的歌
+/// 大半已经在红心里了,那些详情一条都不该重取。
+#[tokio::test]
+async fn a_playlist_can_reuse_details_cached_elsewhere() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_reuse").await;
+
+    // 详情从红心那边进的库
+    cache::set_playlist(
+        &mut tx,
+        account.id,
+        LIKED_PLAYLIST_ID,
+        &[track("1", "两处都有")],
+    )
+    .await
+    .expect("写我喜欢的应该成功");
+
+    // 另一个歌单只写成员关系,一条详情都不给
+    cache::set_membership(
+        &mut tx,
+        account.id,
+        "p1",
+        "netease",
+        &["1".to_owned()],
+    )
+    .await
+    .expect("写成员关系应该成功");
+
+    let got = cache::tracks_of(&mut tx, account.id, "p1")
+        .await
+        .expect("读缓存应该成功");
+
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        got[0].title, "两处都有",
+        "详情该是复用的那份"
+    );
+}
+
+/// 成员关系里出现没有详情的 id 会被拒绝。
+///
+/// 插得进去的话它会在 JOIN 时悄悄消失 —— 歌单少一首,而没有任何人报错。
+#[tokio::test]
+async fn membership_without_details_is_rejected() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_orphan").await;
+
+    let result = cache::set_membership(
+        &mut tx,
+        account.id,
+        "p1",
+        "netease",
+        &["从没存过详情".to_owned()],
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "没有详情的成员关系不该插得进去"
+    );
+}
+
 /// 「我喜欢的」用保留 id,走的是同一张表、同一套代码。
 #[tokio::test]
 async fn the_liked_list_is_an_ordinary_playlist() {

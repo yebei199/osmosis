@@ -46,7 +46,11 @@ pub fn as_user<T>(
 /// 上游平台枚举翻成契约里的字符串。
 ///
 /// 用字符串而非数字:契约要能被人读懂,也要在加平台时不依赖枚举序号的稳定性。
-fn platform_name(raw: i32) -> String {
+///
+/// 缓存也按这个值存(见 `cache.rs`)—— 另写一份的话,prost 生成的
+/// `as_str_name()` 给的是 `PLATFORM_NETEASE`,与这里的 `netease` 对不上,
+/// 而那是运行期才炸的外键错误,编译器一声不吭。
+pub fn platform_name(raw: i32) -> String {
     match proto::Platform::try_from(raw) {
         Ok(proto::Platform::Netease) => "netease",
         _ => "unknown",

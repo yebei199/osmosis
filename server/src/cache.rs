@@ -39,6 +39,42 @@ pub async fn set_playlist(
 ) -> Result<(), AppError> {
     put_details(conn, tracks).await?;
 
+    let platform = match tracks.first() {
+        Some(track) => track.platform.as_str(),
+        // 一首都没有,成员关系照样要清空 —— 平台把歌单清空了也是一次刷新。
+        // 平台名此时没有意义:没有行要插进去。
+        None => "",
+    };
+    let ids: Vec<String> = tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+
+    set_membership(
+        conn,
+        account_id,
+        playlist_id,
+        platform,
+        &ids,
+    )
+    .await
+}
+
+/// 写一个歌单的成员关系与次序,替换原先那份。
+///
+/// 与 [`set_playlist`] 的差别是它**不带详情**:读路径上常态是「973 个 id,
+/// 其中 972 个详情早就在库里」,把那 972 首重取一遍就等于没有缓存。
+///
+/// 传进来的 id 必须已经有详情(见 [`missing_details`]),否则外键会拒绝 ——
+/// 那是有意的:悄悄插进去的话它会在读回时的 JOIN 里消失,歌单少一首而没有
+/// 任何人报错。
+pub async fn set_membership(
+    conn: &mut PgConnection,
+    account_id: i64,
+    playlist_id: &str,
+    platform: &str,
+    ids: &[String],
+) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM platform_playlist_tracks
          WHERE account_id = $1 AND playlist_id = $2",
@@ -49,7 +85,7 @@ pub async fn set_playlist(
     .await?;
 
     for (offset, chunk) in
-        tracks.chunks(ROWS_PER_STATEMENT).enumerate()
+        ids.chunks(ROWS_PER_STATEMENT).enumerate()
     {
         let base = (offset * ROWS_PER_STATEMENT) as i64;
 
@@ -59,11 +95,11 @@ pub async fn set_playlist(
         );
         query.push_values(
             chunk.iter().enumerate(),
-            |mut row, (i, track)| {
+            |mut row, (i, id)| {
                 row.push_bind(account_id)
                     .push_bind(playlist_id)
-                    .push_bind(&track.platform)
-                    .push_bind(&track.id)
+                    .push_bind(platform)
+                    .push_bind(id)
                     .push_bind(base + i as i64);
             },
         );
@@ -74,6 +110,37 @@ pub async fn set_playlist(
     }
 
     Ok(())
+}
+
+/// 这些 id 里哪些还没有详情。
+///
+/// 读路径靠它只向平台要缺的那些。红心里点一个心,变的只有成员关系,
+/// 详情一条都不必重取 —— 这条错了,每点一次心就是一次全量拉取。
+pub async fn missing_details(
+    conn: &mut PgConnection,
+    platform: &str,
+    ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 反过来问「哪些有」再在内存里做差集也可以,但那要把已有的几百条 id
+    // 传回来一趟。让库做差集,回来的只有真正缺的那些。
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT asked.id
+         FROM UNNEST($1::text[]) AS asked (id)
+         WHERE NOT EXISTS (
+             SELECT 1 FROM platform_tracks d
+             WHERE d.platform = $2 AND d.track_id = asked.id
+         )",
+    )
+    .bind(ids)
+    .bind(platform)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 /// 读回一个歌单的曲目,按平台给的次序。
@@ -135,7 +202,7 @@ impl TrackRow {
 ///
 /// 详情按 (平台, id) 存,与歌单无关 —— 同一首歌在红心里、在三个歌单里,
 /// 存的都是这一条。覆盖是必须的:歌名会改、封面会换,刷新就该看到新的。
-async fn put_details(
+pub async fn put_details(
     conn: &mut PgConnection,
     tracks: &[TrackDto],
 ) -> Result<(), AppError> {

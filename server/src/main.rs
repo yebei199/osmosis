@@ -22,11 +22,12 @@ use contract::{
     ArtistSearchDto, HealthDto, LoginDto, LyricDto,
     PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
     PlaylistDto, PlaylistSearchDto, PlaylistsDto,
-    RegisterDto, SearchDto, SessionDto, TrackIdsDto,
-    TracksDto,
+    RegisterDto, SearchDto, SessionDto, TrackDto,
+    TrackIdsDto, TracksDto,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
+use std::collections::HashSet;
 use tonic::transport::Channel;
 use tower_http::cors::CorsLayer;
 
@@ -52,7 +53,7 @@ use server::error::Failure;
 use server::history;
 use server::playlist::{self, TrackRef};
 use server::signaling::{self, SharedRoster};
-use server::{db, error, paging};
+use server::{cache, db, error, paging};
 
 /// 默认监听地址。
 ///
@@ -65,6 +66,13 @@ const DEFAULT_UPSTREAM: &str = "http://127.0.0.1:50051";
 
 /// 搜索默认返回条数。
 const DEFAULT_SEARCH_LIMIT: i32 = 30;
+
+/// 一次向上游要多少首曲目详情。
+///
+/// 973 首的歌单一次要不完 —— 上游把这些 id 拼进一个请求体发给平台,而平台对
+/// 请求大小有自己的想法。分批只在**冷启动**发生:详情缓存下来之后,常态是
+/// 一批都不用要。
+const DETAIL_BATCH: usize = 200;
 
 /// 取播放地址时请求的音质档位。
 ///
@@ -549,14 +557,89 @@ async fn liked_ids(
     }))
 }
 
+/// 把一个平台歌单的曲目备齐,并按平台给的次序读出来。
+///
+/// 只向平台要**缺详情**的那些:歌单的成员关系天天变(点一次红心就变一次),
+/// 而曲目详情几乎不变,且跨歌单共用 —— 收藏的歌单里的歌大半已经在红心里了。
+/// 每次都全量重取的话,这个缓存等于没有(见 `docs/adr/0018`)。
+///
+/// 平台不肯给详情的 id(下架、无权限)会被剔出成员关系:留着它只会在读回时
+/// 的 JOIN 里消失,那时歌单少一首而没有任何人报错。
+async fn cached_tracks(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    ids: &[String],
+) -> Result<Vec<TrackDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    // 与 track_to_dto 存进缓存的那个值必须是同一个来源
+    let platform =
+        bangdream::platform_name(Platform::Netease as i32);
+
+    let missing =
+        cache::missing_details(&mut conn, &platform, ids)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    let mut catalog = state.upstream.catalog.clone();
+    for chunk in missing.chunks(DETAIL_BATCH) {
+        let response = catalog
+            .get_tracks(bangdream::as_user(
+                account,
+                GetTracksRequest {
+                    platform: Platform::Netease as i32,
+                    track_ids: chunk.to_vec(),
+                },
+            ))
+            .await
+            .map_err(|status| fail(&status))?
+            .into_inner();
+
+        let tracks: Vec<TrackDto> = response
+            .tracks
+            .into_iter()
+            .map(bangdream::track_to_dto)
+            .collect();
+
+        cache::put_details(&mut conn, &tracks)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+    }
+
+    // 再问一次谁还缺:上一轮里平台没给的那些就落在这里
+    let unavailable: HashSet<String> =
+        cache::missing_details(&mut conn, &platform, ids)
+            .await
+            .map_err(|err| error::map_error(&err))?
+            .into_iter()
+            .collect();
+    let known: Vec<String> = ids
+        .iter()
+        .filter(|id| !unavailable.contains(*id))
+        .cloned()
+        .collect();
+
+    cache::set_membership(
+        &mut conn,
+        account.id,
+        playlist_id,
+        &platform,
+        &known,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    cache::tracks_of(&mut conn, account.id, playlist_id)
+        .await
+        .map_err(|err| error::map_error(&err))
+}
+
 async fn liked(
     State(state): State<AppState>,
     account: Account,
-    Query(query): Query<PageQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut auth = state.upstream.auth;
-    let mut library = state.upstream.library;
-    let mut catalog = state.upstream.catalog;
+    let mut auth = state.upstream.auth.clone();
+    let mut library = state.upstream.library.clone();
 
     let netease_account = auth
         .get_account_status(bangdream::as_user(
@@ -590,34 +673,17 @@ async fn liked(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    let ids = paging::page(
+    // 不分页:红心是一整批,不是搜索结果。973 首里只看得到 50 首的话,
+    // 剩下的 923 首没有任何入口 —— 界面上没有翻页,也不该有。
+    let tracks = cached_tracks(
+        &state,
+        &account,
+        cache::LIKED_PLAYLIST_ID,
         &liked.track_ids,
-        query.offset.unwrap_or_default(),
-        query.limit.unwrap_or_default(),
-    );
-    if ids.is_empty() {
-        return Ok(Json(TracksDto { tracks: Vec::new() }));
-    }
+    )
+    .await?;
 
-    let response = catalog
-        .get_tracks(bangdream::as_user(
-            &account,
-            GetTracksRequest {
-                platform: Platform::Netease as i32,
-                track_ids: ids.to_vec(),
-            },
-        ))
-        .await
-        .map_err(|status| fail(&status))?
-        .into_inner();
-
-    Ok(Json(TracksDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
-    }))
+    Ok(Json(TracksDto { tracks }))
 }
 
 /// `GET /playlists` —— 两个来源合成的一张歌单列表。
@@ -731,55 +797,34 @@ async fn platform_playlists(
 /// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
 ///
 /// 上游只给全量标识不给曲目:平台返回的曲目列表会被截断,标识列表不会
-/// (见 bang-dream 的 `docs/adr/0003`)。切页因此在这一层做,与 [`liked`] 同一个套路。
+/// (见 bang-dream 的 `docs/adr/0003`)。详情因此在这一层备齐,与 [`liked`] 同一个套路。
 async fn platform_playlist_tracks(
     State(state): State<AppState>,
     account: Account,
     Path(id): Path<String>,
-    Query(query): Query<PageQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut library = state.upstream.library;
+    let mut library = state.upstream.library.clone();
     let detail = library
         .get_playlist(bangdream::as_user(
             &account,
             GetPlaylistRequest {
                 platform: Platform::Netease as i32,
-                playlist_id: id,
+                playlist_id: id.clone(),
             },
         ))
         .await
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    let ids = paging::page(
+    let tracks = cached_tracks(
+        &state,
+        &account,
+        &id,
         &detail.track_ids,
-        query.offset.unwrap_or_default(),
-        query.limit.unwrap_or_default(),
-    );
-    if ids.is_empty() {
-        return Ok(Json(TracksDto { tracks: Vec::new() }));
-    }
+    )
+    .await?;
 
-    let mut catalog = state.upstream.catalog;
-    let response = catalog
-        .get_tracks(bangdream::as_user(
-            &account,
-            GetTracksRequest {
-                platform: Platform::Netease as i32,
-                track_ids: ids.to_vec(),
-            },
-        ))
-        .await
-        .map_err(|status| fail(&status))?
-        .into_inner();
-
-    Ok(Json(TracksDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
-    }))
+    Ok(Json(TracksDto { tracks }))
 }
 
 /// `POST /playlists` 的请求体。
