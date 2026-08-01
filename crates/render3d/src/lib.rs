@@ -57,8 +57,7 @@ pub type SharedTexture = wgpu::Texture;
 
 /// 一帧里视觉区的指针状态,POD。镜像 `ui::VizPointer`,apps/* 在 seam 处平凡拷过来。
 ///
-/// 位置归一到 0..1(左上原点)。`active` 为假表示指针不在视觉区里,这一帧既不起
-/// 涟漪也不拖动。
+/// 位置归一到 0..1(左上原点)。`active` 为假表示指针不在视觉区里,这一帧不拖动。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pointer {
     pub x: f32,
@@ -117,13 +116,17 @@ const PERF_WINDOW: u32 = 120;
 /// 一整句词随时可能被埋掉。粒子从方片换成实心立方体、格数又从 384 降到 96
 /// 之后,盖住笔画的是整块色斑而不是细网点,读不成了。
 ///
-/// 往相机方向推到 0.9:封面档的 z 位移峰值约 1.2~1.5(见 `cloud.wgsl` 的
-/// `place_cover`),于是只有起伏最猛的那一小撮粒子还能从字前面掠过。「粒子
-/// 会穿过文字」这个观感留着 —— 那是 `docs/adr/0010` 的立身之本 —— 但不再
-/// 是一句词被整体埋掉。
+/// 曾经推到 0.9,想留住「粒子偶尔从字前掠过」那个观感。留不住:封面档的 z
+/// 位移峰值约 1.2~1.5(见 `cloud.wgsl` 的 `place_cover`),0.9 之上还有一大截,
+/// 而掠过字面的不是几个网点,是整块色斑 —— 一行词被压得读不成。
+///
+/// 现在抬到 1.8,**高过位移峰值**:粒子一颗不少、照旧起伏,只是全都从字后面走。
+///
+/// 抬高度而不是让粒子绕开歌词:绕开要按歌词块的包围盒推粒子,而那个盒是整行宽的,
+/// 结果是点云里横贯一条空带 —— 比被遮挡更难看(实测过)。
 ///
 /// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),所以正的 z 就是「更靠近相机」。
-const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 0.9);
+const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 1.8);
 
 // 锚点必须站在点云中心与相机**之间**。落回中心就是「半数粒子在字前面」;
 // 推过相机就再没有粒子能穿过字,`docs/adr/0010` 那套深度合成也就白建了。
@@ -152,11 +155,9 @@ pub struct Scene {
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
     transition: cloud::TrackTransition,
-    /// 指针涟漪表。
-    ripples: cloud::Ripples,
     /// 拖动带来的点云自转与松手后的惯性。
     spin: cloud::Spin,
-    /// 上一帧的指针状态,用来算这一帧拖了多少、该不该起一路涟漪。
+    /// 上一帧的指针状态,用来算这一帧拖了多少。
     last_pointer: Option<(f32, f32)>,
     /// 上一帧的播放页时钟,用来算过渡要推进多少。门关着时钟不走,过渡跟着定格。
     last_time: Option<f32>,
@@ -325,7 +326,6 @@ impl Scene {
             root,
             cloud_material: None,
             transition: cloud::TrackTransition::default(),
-            ripples: cloud::Ripples::default(),
             spin: cloud::Spin::default(),
             last_pointer: None,
             last_time: None,
@@ -409,7 +409,6 @@ impl Scene {
         }
 
         self.apply_pointer(&pointer, delta);
-        self.ripples.advance(delta);
 
         // 几何一动不动,一帧只换这一块 uniform:三万多颗粒子的位移在顶点
         // 着色器里算(见 docs/adr/0012)。
@@ -418,8 +417,6 @@ impl Scene {
         );
         let color_mix = self.transition.color_mix();
         let burst = self.transition.burst();
-        let ripple_count = self.ripples.active();
-        let ripple_slots = self.ripples.pack();
         let object_scale =
             cloud::object_scale(self.size.0, self.size.1);
         if let Some(handle) = self.cloud_material.clone()
@@ -435,8 +432,6 @@ impl Scene {
             material.params.treble = levels.treble;
             material.params.color_mix = color_mix;
             material.params.burst = burst;
-            material.params.ripple_count = ripple_count;
-            material.params.ripple_slots = ripple_slots;
             material.params.preset =
                 cloud::preset_index(preset);
             // 物体类预设在竖屏会左右出画,按长宽比再收一档(见 cloud.rs)。
@@ -668,15 +663,6 @@ impl Scene {
         }
 
         self.spin.coast(delta);
-        // 指针没动就不再起新的一路 —— 停在那儿不动会把整张表刷成同一个点。
-        if previous == Some((pointer.x, pointer.y)) {
-            return;
-        }
-        if let Some((x, y)) =
-            cloud::pointer_to_plane(pointer.x, pointer.y)
-        {
-            self.ripples.spawn(x, y);
-        }
     }
 
     /// 换歌那一刻:点云退回渐变,不挂着上一首的封面等新图。
