@@ -1,0 +1,393 @@
+// 界面的通用零件:按钮、导航项、圆键、描边字、日月开关、入口卡片。
+//
+// 这些组件不认识本应用的任何状态 —— 全靠 in 属性与回调说话,所以既能被主窗口
+// 用,也能被播放页覆层用。与页面分开,是为了让「页面在摆什么」与「零件长什么样」
+// 不必在同一屏里读。
+
+// 入口卡片用它透出背后的极光。
+import { GlassCard } from "glass.slint";
+
+// 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
+// 观感;按下时变暗下沉。全部带动画过渡。
+//
+// 触摸设备上没有"悬停但未按下"这个状态,因此只会看到按下时的下沉效果。
+// 这是刻意的优雅降级,不是缺陷:slint 在触摸按下时同样会置 has-hover,
+// 但优先级更高的 `down` 分支盖住了它。
+export component HoverButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+
+    property <bool> hovered: touch.has-hover;
+    property <bool> down: touch.pressed;
+
+    height: 56px;
+    width: 220px;
+    border-radius: 14px;
+    background: down ? #6b4520 : hovered ? #a9713c : #8a5a2b;
+    drop-shadow-color: #8a5a2b80;
+    drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
+    drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
+    animate background, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    Text {
+        text: root.text;
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
+// 图标用 Path 内嵌(不引外部资源);标签用英文,免得中文落到无 CJK 的默认字体上变豆腐。
+//
+// 不写死高度:竖排侧栏里由使用处给 68px,横排底栏里由布局撑满栏高。
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> active;
+    // 选中高亮是否已由背后的 GPU 液态玻璃提供。为真时(GPU 构建)自己让开 active 底,
+    // 免得和玻璃叠两遍;为假时(非 GPU 兜底)照旧自己画 active 高亮。hover 两种情况都只留极淡一层。
+    in property <bool> gpu-selected;
+    callback clicked;
+
+    border-radius: 12px;
+    background: root.gpu-selected
+        ? (touch.has-hover ? #ffffff14 : transparent)
+        : (active ? #2a1e14 : (touch.has-hover ? #1d150f : transparent));
+    animate background { duration: 120ms; easing: ease-out; }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 26px;
+                height: 26px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: active ? #d9a86c : #8b91a5;
+                stroke-width: 1.8px;
+                fill: transparent;
+            }
+        }
+
+        Text {
+            text: root.label;
+            color: active ? #e6e8ef : #8b91a5;
+            font-size: 12px;
+            font-weight: active ? 700 : 500;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 圆形播放控制键:玻璃底 + Path 图标。悬停浮亮,按下微缩。
+// 图标画法同 NavItem:SVG path 内嵌,viewbox 24×24,不引外部资源。
+export component RoundControl inherits Rectangle {
+    in property <string> icon;
+    in property <length> diameter: 44px;
+    // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
+    // 只留按下/悬停那一点点提示,不糊住下面。
+    in property <bool> transparent-base: false;
+    callback clicked;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: self.width / 2;
+    background: touch.pressed ? #b9885c50
+        : (touch.has-hover ? #ffffff1e
+            : (root.transparent-base ? #00000000 : #ffffff10));
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c66 : #ffffff14;
+    animate background, border-color { duration: 120ms; easing: ease-out; }
+
+    Path {
+        width: root.diameter * 0.5;
+        height: root.diameter * 0.5;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        commands: root.icon;
+        stroke: touch.has-hover ? #f0e6d8 : #d9cdbd;
+        stroke-width: 1.6px;
+        // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
+        // 图标本身都画成闭合形)。
+        fill: touch.has-hover ? #f0e6d8 : #d9cdbd;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// 描边文字。播放页专用 —— 那里的字压在**封面**上,而封面是任意亮度的照片:
+// 近白色的字遇上一张接近全白的封面就整个消失(本兮《未成年》实测)。
+//
+// Slint 的 Text 没有 stroke,drop-shadow 又只有 Rectangle 才有,所以只能把同一句话
+// 先用深色朝八个方向各画一遍,再把亮色那层压上去。八向而不是四向:四向在字的
+// 对角缺口上漏底,CJK 笔画交叉多,漏得明显。
+//
+// 尺寸由调用方给死,不让它自己算 —— 九层必须逐像素对齐,任何一层的换行或省略
+// 判断跟别人不一样,描边就会错位成重影。
+export component OutlinedText inherits Rectangle {
+    in property <string> text;
+    // 字体族。默认空 = 走系统字体,平台数据(歌名、歌手)就该如此;
+    // **硬编码中文必须显式指定子集字体**,否则 wasm 上没有 CJK 可回退,是豆腐块。
+    in property <string> font-family;
+    // 不叫 color:Rectangle 那一族已经占了这个名字,重名会被 slint 编译器拒绝。
+    in property <color> text-color;
+    in property <length> font-size;
+    // 描边宽度。1.5px 在 22px 的歌名与 14px 的歌手上都够,再粗会把小字糊住。
+    in property <length> outline: 1.5px;
+    in property <color> outline-color: #05070ce0;
+    in property <TextVerticalAlignment> vertical-alignment: center;
+    in property <TextWrap> wrap: no-wrap;
+
+    for offset in [
+        { x: -1.0, y: -1.0 }, { x: 0.0, y: -1.0 }, { x: 1.0, y: -1.0 },
+        { x: -1.0, y: 0.0 },                       { x: 1.0, y: 0.0 },
+        { x: -1.0, y: 1.0 },  { x: 0.0, y: 1.0 },  { x: 1.0, y: 1.0 },
+    ]: Text {
+        x: offset.x * root.outline;
+        y: offset.y * root.outline;
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.outline-color;
+        font-family: root.font-family;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+
+    Text {
+        width: root.width;
+        height: root.height;
+        text: root.text;
+        color: root.text-color;
+        font-family: root.font-family;
+        font-size: root.font-size;
+        horizontal-alignment: center;
+        vertical-alignment: root.vertical-alignment;
+        wrap: root.wrap;
+        overflow: elide;
+    }
+}
+
+// 日月开关:白昼(顺序播放)⇄ 夜晚(随机播放)。
+// 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
+// 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
+// 圆角矩形 clip 裁掉出界的云星,不需要 bevy。
+export component DayNightSwitch inherits Rectangle {
+    in-out property <bool> night: false;
+    callback toggled;
+
+    // QML 原作 180×70,这里等比压到控制条尺寸。
+    width: 92px;
+    height: 36px;
+    border-radius: self.height / 2;
+    clip: true;
+    background: root.night ? #191e32 : #4685c0;
+    animate background { duration: 700ms; easing: ease-in-out; }
+
+    // 光晕:三层同心白圈跟着滑块走,昼夜都在,给按钮一点"发光体"的存在感。
+    for halo[i] in [66px, 88px, 110px]: Rectangle {
+        width: halo;
+        height: halo;
+        border-radius: self.width / 2;
+        background: white;
+        opacity: 0.20 - i * 0.07;
+        x: knob.x + knob.width / 2 - self.width / 2;
+        y: knob.y + knob.height / 2 - self.height / 2;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+    }
+
+    // 云:三团白圆压在下缘,白天在场,入夜整体沉出画面。
+    // 悬停(白天)时被太阳"推"远一点 —— 原作的斥力,只取其形。
+    clouds := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? root.height : 0;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for cloud[i] in [
+            { cx: 52px, cy: 26px, d: 26px },
+            { cx: 68px, cy: 20px, d: 30px },
+            { cx: 84px, cy: 26px, d: 34px },
+        ]: Rectangle {
+            width: cloud.d;
+            height: cloud.d;
+            border-radius: self.width / 2;
+            background: white;
+            opacity: 0.9;
+            x: cloud.cx - self.width / 2 + (touch.has-hover && !root.night ? 5px : 0px);
+            y: cloud.cy - self.height / 2 + 6px;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 星:小菱形散在上半,入夜降下来,白天升出画面。
+    // 悬停(夜里)时被月亮推开一点。
+    stars := Rectangle {
+        width: 100%;
+        height: 100%;
+        y: root.night ? 0 : -root.height;
+        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+        for star[i] in [
+            { sx: 14px, sy: 8px, d: 7px },
+            { sx: 30px, sy: 18px, d: 5px },
+            { sx: 22px, sy: 27px, d: 4px },
+            { sx: 42px, sy: 9px, d: 4px },
+        ]: Path {
+            width: star.d;
+            height: star.d;
+            x: star.sx + (touch.has-hover && root.night ? -4px : 0px);
+            y: star.sy;
+            viewbox-width: 10;
+            viewbox-height: 10;
+            // 四角星:四段二次曲线,腰收向圆心 —— 原作 Shape 的形状。
+            commands: "M 5 0 Q 5 5 10 5 Q 5 5 5 10 Q 5 5 0 5 Q 5 5 5 0 Z";
+            fill: white;
+            animate x { duration: 400ms; easing: ease-out; }
+        }
+    }
+
+    // 滑块:白天是太阳(暖黄 + 高光),入夜滑到右侧变月亮(冷灰 + 陨石坑)。
+    // 悬停时向对侧探 4px,像在提示"按我会滑过去"。
+    knob := Rectangle {
+        property <length> margin: 4px;
+        property <length> start-x: self.margin;
+        property <length> end-x: root.width - self.width - self.margin;
+
+        width: root.height - 8px;
+        height: root.height - 8px;
+        y: 4px;
+        x: root.night
+            ? (touch.has-hover ? knob.end-x - 4px : knob.end-x)
+            : (touch.has-hover ? knob.start-x + 4px : knob.start-x);
+        border-radius: self.width / 2;
+        background: root.night ? #c3c8d2 : #ffc323;
+        drop-shadow-blur: 6px;
+        drop-shadow-offset-x: 1px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-color: #00000080;
+        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate background { duration: 500ms; easing: ease-in-out; }
+
+        // 太阳高光:偏心一点的亮斑,夜里淡出。
+        Rectangle {
+            width: parent.width * 0.8;
+            height: parent.height * 0.8;
+            x: parent.width * 0.06;
+            y: parent.height * 0.06;
+            border-radius: self.width / 2;
+            background: #ffe650;
+            opacity: root.night ? 0 : 0.6;
+            animate opacity { duration: 500ms; }
+        }
+
+        // 陨石坑:三个灰圆,白天淡出,并跟着原作绕月心转 -90° 入场。
+        // Rectangle 没有 rotation-angle,所以坑的位置直接用极坐标写:
+        // 动 spin 一个角度,三个坑各自沿圆弧走 —— 与 transform: rotate 等价。
+        craters := Rectangle {
+            // 坑相对月心(14px, 14px)的极坐标,由原作的直角坐标换算而来。
+            property <angle> spin: root.night ? 0deg : -90deg;
+
+            width: 100%;
+            height: 100%;
+            opacity: root.night ? 1 : 0;
+            animate opacity { duration: 300ms; }
+            animate spin { duration: 300ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+
+            for crater[i] in [
+                { r: 9.06px, a: 263.66deg, d: 7px },
+                { r: 9.22px, a: 192.53deg, d: 10px },
+                { r: 4.24px, a: 45deg, d: 6px },
+            ]: Rectangle {
+                width: crater.d;
+                height: crater.d;
+                border-radius: self.width / 2;
+                background: #96a0b4;
+                x: 14px + crater.r * Math.cos(crater.a + craters.spin) - self.width / 2;
+                y: 14px + crater.r * Math.sin(crater.a + craters.spin) - self.height / 2;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.night = !root.night;
+            root.toggled();
+        }
+    }
+}
+
+// Home 的入口卡片:大图标 + 名字,点了切页。悬停时上浮、描边亮起 ——
+// 让"这是个门"一眼可见,不用靠猜。
+export component EntryCard inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    callback clicked;
+
+    width: 148px;
+    height: 168px;
+    border-radius: 18px;
+    background: touch.has-hover ? #2a1e1466 : #17110d66;
+    border-width: 1px;
+    border-color: touch.has-hover ? #d9a86c88 : #ffffff14;
+    drop-shadow-blur: touch.has-hover ? 24px : 12px;
+    drop-shadow-color: #00000055;
+    drop-shadow-offset-y: touch.has-hover ? 8px : 4px;
+    animate background, border-color, drop-shadow-blur, drop-shadow-offset-y {
+        duration: 160ms;
+        easing: ease-out;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+
+        HorizontalLayout {
+            alignment: center;
+            Path {
+                width: 44px;
+                height: 44px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.icon;
+                stroke: touch.has-hover ? #d9a86c : #9aa0b4;
+                stroke-width: 1.6px;
+                fill: transparent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: touch.has-hover ? #e6e8ef : #9aa0b4;
+            font-size: 15px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

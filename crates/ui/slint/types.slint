@@ -1,0 +1,33 @@
+// 界面与 Rust 之间的数据形状。
+//
+// 单独成文件是因为它们被多处引用:主窗口摆列表要用,控制条里的同播条也要用 ——
+// 留在 app.slint 里的话,controls.slint 引它就会让两个文件互相 import 成环。
+//
+// 字段一律是**已经格式化好的字符串**:歌手怎么拼、时长怎么写由 Rust 侧决定
+// 并测过,`.slint` 里不做任何计算。
+
+// 导航的三项。**唯一真相** —— 侧栏(宽版式)和底栏(紧凑版式)都 `for` 它,
+// 免得两处各抄一份图标 path,改了一处忘另一处。
+export struct NavEntry {
+    label: string,
+    icon: string, // SVG path 数据,viewbox 24×24
+}
+
+// 搜索结果里的一行。字段都是**已经格式化好的字符串** —— 歌手怎么拼、时长怎么写
+// 由 Rust 侧决定并测过,`.slint` 里不做任何计算。
+export struct TrackRow {
+    id: string,
+    title: string,
+    artists: string,
+    duration: string,
+    // 这一首正在加载。网络慢时点了看不出反应,用户就会连点 —— 状态行那句
+    // 「加载中…」在列表上方、13px 灰字,离手指太远(见 crates/ui/src/music.rs)。
+    loading: bool,
+}
+
+// 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,
+// 这里不指定子集字体。
+export struct DeviceRow {
+    id: string,
+    name: string,
+}

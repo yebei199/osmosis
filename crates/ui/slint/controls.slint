@@ -1,0 +1,120 @@
+// 常驻控制条那一簇:播放控制与同播条。
+//
+// 它们是「正在播放」这个状态的操作面,与页面内容无关 —— 播放页展开时,
+// 覆层里的另一份实例走同一组回调(见 docs/adr/0010 的「功能等价路径」)。
+
+import { DeviceRow } from "types.slint";
+import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
+
+// 控制键簇:上一首 / 播放暂停 / 下一首 + 日月随机开关。
+// 抽成组件是因为宽窄两种版式各摆一次 —— 摆法不同,键是同一套。
+export component ControlCluster inherits HorizontalLayout {
+    in property <bool> is-playing;
+    in-out property <bool> shuffle-on;
+    // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
+    // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
+    in property <image> pulse;
+    callback prev();
+    callback toggle();
+    callback next();
+    callback shuffle-toggled();
+
+    spacing: 10px;
+
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏮:竖杠 + 左向三角。
+            icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+            clicked => { root.prev(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 播放键。接了 pulse 就把那圈 warp 画进按钮里,比旁边两颗大一圈 ——
+        // 它是这一排里唯一会动的东西,该占更多视觉分量。
+        Rectangle {
+            width: root.pulse.width > 0 ? 68px : 50px;
+            height: self.width;
+            border-radius: self.width / 2;
+            clip: true;
+
+            if root.pulse.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: root.pulse;
+            }
+
+            RoundControl {
+                diameter: parent.width;
+                // 有 warp 垫底时不再自带底色,免得把画面糊住。
+                transparent-base: root.pulse.width > 0;
+                // ▶ 或 ⏸,随播放状态换。
+                icon: root.is-playing
+                    ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                    : "M8 5 L19 12 L8 19 Z";
+                clicked => { root.toggle(); }
+            }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏭:右向三角 + 竖杠。
+            icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+            clicked => { root.next(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        DayNightSwitch {
+            night <=> root.shuffle-on;
+            toggled => { root.shuffle-toggled(); }
+        }
+    }
+}
+
+// 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——
+// **常驻**,不随名册隐藏。上一版设备区在单实例时整块消失,同播功能等于不存在。
+export component SyncStrip inherits HorizontalLayout {
+    in property <[DeviceRow]> devices;
+    callback push-to(string);
+
+    spacing: 8px;
+
+    if root.devices.length == 0: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "同播: 没有其他设备";
+            font-family: "Maple Mono NF CN";
+            color: #6b7080;
+            font-size: 12px;
+        }
+    }
+
+    for device in root.devices: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: chip-label.preferred-width + 24px;
+            height: 30px;
+            background: chip.has-hover ? #b9885c66 : #ffffff0f;
+            border-radius: 15px;
+
+            chip := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.push-to(device.id); }
+            }
+
+            // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
+            // 不指定 font-family,落到系统字体。
+            chip-label := Text {
+                text: device.name;
+                color: #e6e8ef;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
