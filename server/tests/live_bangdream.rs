@@ -15,6 +15,7 @@
 
 use tonic::transport::Channel;
 
+use server::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -22,6 +23,7 @@ use server::bangdream::{
         GetDailyRecommendationsRequest,
         GetPlaySourceRequest, GetTracksRequest,
         ListLikedTracksRequest, Platform, QualityLevel,
+        SearchArtistsRequest, SearchPlaylistsRequest,
         SearchTracksRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
@@ -34,6 +36,23 @@ use server::paging;
 /// 与 `main.rs` 的默认上游地址一致。那个常量属于进程装配,不在 lib 里,
 /// 这里重复一次 —— 它写错了下面两条测试立刻连不上,不会静默漂移。
 const UPSTREAM: &str = "http://127.0.0.1:50051";
+
+/// 上游按这个账号分片保存平台凭据。测试用哪个账号取决于本机
+/// `data/credentials/` 下扫过码的那份 —— 用 `LIVE_USER_ID` 指定。
+fn live_account() -> Account {
+    Account {
+        id: std::env::var("LIVE_USER_ID")
+            .ok()
+            .and_then(|raw| raw.parse().ok())
+            .unwrap_or(1),
+        username: "live".to_owned(),
+    }
+}
+
+/// 把消息包成带用户标识的请求。少了它上游一律 INVALID_ARGUMENT。
+fn req<T>(message: T) -> tonic::Request<T> {
+    bangdream::as_user(&live_account(), message)
+}
 
 async fn catalog() -> CatalogServiceClient<Channel> {
     let channel = Channel::from_static(UPSTREAM)
@@ -50,12 +69,12 @@ async fn catalog() -> CatalogServiceClient<Channel> {
 async fn search_returns_tracks_from_live_bangdream() {
     let response = catalog()
         .await
-        .search_tracks(SearchTracksRequest {
+        .search_tracks(req(SearchTracksRequest {
             platform: Platform::Netease as i32,
             keyword: "紅蓮華".to_owned(),
             limit: 5,
             offset: 0,
-        })
+        }))
         .await
         .expect("搜索请求失败")
         .into_inner();
@@ -82,12 +101,12 @@ async fn play_source_returns_playable_url() {
     let mut client = catalog().await;
 
     let found = client
-        .search_tracks(SearchTracksRequest {
+        .search_tracks(req(SearchTracksRequest {
             platform: Platform::Netease as i32,
             keyword: "紅蓮華".to_owned(),
             limit: 1,
             offset: 0,
-        })
+        }))
         .await
         .expect("搜索请求失败")
         .into_inner();
@@ -99,11 +118,11 @@ async fn play_source_returns_playable_url() {
         .id;
 
     let source = client
-        .get_play_source(GetPlaySourceRequest {
+        .get_play_source(req(GetPlaySourceRequest {
             platform: Platform::Netease as i32,
             track_id,
             level: QualityLevel::High as i32,
-        })
+        }))
         .await
         .expect("取播放地址失败(未登录?先跑 bang-dream 的 cmd/qrlogin)")
         .into_inner()
@@ -164,9 +183,9 @@ async fn liked_returns_hydrated_tracks() {
         .expect("bang-dream 没起来?先跑 `just bang-dream`");
 
     let account = AuthServiceClient::new(channel.clone())
-        .get_account_status(GetAccountStatusRequest {
+        .get_account_status(req(GetAccountStatusRequest {
             platform: Platform::Netease as i32,
-        })
+        }))
         .await
         .expect("查账号状态失败")
         .into_inner();
@@ -176,10 +195,10 @@ async fn liked_returns_hydrated_tracks() {
     );
 
     let liked = LibraryServiceClient::new(channel.clone())
-        .list_liked_tracks(ListLikedTracksRequest {
+        .list_liked_tracks(req(ListLikedTracksRequest {
             platform: Platform::Netease as i32,
             user_id: account.user_id,
-        })
+        }))
         .await
         .expect("取红心列表失败")
         .into_inner();
@@ -187,10 +206,10 @@ async fn liked_returns_hydrated_tracks() {
 
     let ids = paging::page(&liked.track_ids, 0, 5);
     let response = CatalogServiceClient::new(channel)
-        .get_tracks(GetTracksRequest {
+        .get_tracks(req(GetTracksRequest {
             platform: Platform::Netease as i32,
             track_ids: ids.to_vec(),
-        })
+        }))
         .await
         .expect("补全曲目失败")
         .into_inner();
@@ -210,4 +229,72 @@ async fn liked_returns_hydrated_tracks() {
             .expect("已断言非空"),
     );
     assert!(!dto.title.is_empty(), "补全出来的歌没有标题");
+}
+
+/// 搜歌手真实往返一次。与搜歌是同一个上游接口、不同的类型码,单元测试
+/// 发现不了服务名/方法名/字段号这一类错 —— 那正是这条测试存在的理由。
+#[tokio::test]
+#[ignore = "需要 bang-dream 在 127.0.0.1:50051 上运行"]
+async fn search_artists_returns_artists_from_live_bangdream()
+ {
+    let response = catalog()
+        .await
+        .search_artists(req(SearchArtistsRequest {
+            platform: Platform::Netease as i32,
+            keyword: "Beyond".to_owned(),
+            limit: 5,
+            offset: 0,
+        }))
+        .await
+        .expect("搜歌手请求失败")
+        .into_inner();
+
+    assert!(!response.artists.is_empty(), "搜不到任何歌手");
+
+    let dto = bangdream::artist_to_dto(
+        response
+            .artists
+            .into_iter()
+            .next()
+            .expect("已断言非空"),
+    );
+    assert!(!dto.id.is_empty(), "歌手没有 id");
+    assert!(!dto.name.is_empty(), "歌手没有名字");
+}
+
+/// 搜歌单真实往返一次,同上。
+#[tokio::test]
+#[ignore = "需要 bang-dream 在 127.0.0.1:50051 上运行"]
+async fn search_playlists_returns_playlists_from_live_bangdream()
+ {
+    let response = catalog()
+        .await
+        .search_playlists(req(SearchPlaylistsRequest {
+            platform: Platform::Netease as i32,
+            keyword: "华语".to_owned(),
+            limit: 5,
+            offset: 0,
+        }))
+        .await
+        .expect("搜歌单请求失败")
+        .into_inner();
+
+    assert!(
+        !response.playlists.is_empty(),
+        "搜不到任何歌单"
+    );
+
+    let dto = bangdream::playlist_to_dto(
+        response
+            .playlists
+            .into_iter()
+            .next()
+            .expect("已断言非空"),
+    );
+    assert!(!dto.id.is_empty(), "歌单没有 id");
+    assert!(!dto.name.is_empty(), "歌单没有名字");
+    assert_eq!(
+        dto.source,
+        contract::PlaylistSource::Platform
+    );
 }

@@ -231,6 +231,12 @@ message LogoutResponse {}
 service CatalogService {
   rpc SearchTracks(SearchTracksRequest) returns (SearchTracksResponse);
 
+  // SearchArtists 与 SearchPlaylists 按同一个关键词搜另外两类实体。
+  // 分成三个用例而不是一个带类型参数的:调用方在发起搜索时就已经知道自己要哪一类,
+  // 合成一个会让每个调用点先去问"这次返回的是哪一种"。
+  rpc SearchArtists(SearchArtistsRequest) returns (SearchArtistsResponse);
+  rpc SearchPlaylists(SearchPlaylistsRequest) returns (SearchPlaylistsResponse);
+
   // GetTracks 按标识批量取详情,结果按请求顺序排列。查不到的标识跳过。
   rpc GetTracks(GetTracksRequest) returns (GetTracksResponse);
 
@@ -300,6 +306,32 @@ message SearchTracksRequest {
 
 message SearchTracksResponse {
   repeated Track tracks = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+message SearchArtistsRequest {
+  Platform platform = 1;
+  string keyword = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message SearchArtistsResponse {
+  repeated Artist artists = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+message SearchPlaylistsRequest {
+  Platform platform = 1;
+  string keyword = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message SearchPlaylistsResponse {
+  repeated Playlist playlists = 1;
   int32 total = 2;
   bool has_more = 3;
 }

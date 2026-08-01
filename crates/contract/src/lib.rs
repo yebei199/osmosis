@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 /// 任何对本 crate 中类型的**不兼容**改动都必须让它加一:改字段名、删字段、
 /// 改字段语义。新增可选字段是兼容的,不必加一。
 ///
-/// 2:音乐相关的路由开始要求登录态。新增路由本来是兼容的,但**既有路由多了一个
-/// 必需的请求头**,老客户端会整片 401 —— 那是不兼容。
+/// 2:音乐相关的路由开始要求登录态(既有路由多了一个必需的请求头,老客户端会
+/// 整片 401),`/search` 拆成 `/search/tracks`、`/search/artists`、
+/// `/search/playlists` 三条。
 pub const PROTOCOL_VERSION: u32 = 2;
 
 /// `GET /health` 的响应体。
@@ -53,13 +54,53 @@ pub struct TrackDto {
     pub duration_ms: i64,
 }
 
-/// `GET /search` 的响应体。
+/// `GET /search/tracks` 的响应体。
+///
+/// 三类搜索各有一条路由、各有一个响应类型,而不是一条路由带 `?type=`:
+/// URL 与响应形状因此是**同一个决定**,不是两个必须彼此对上的决定。
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
 )]
 pub struct SearchDto {
     pub tracks: Vec<TrackDto>,
     /// 还有没有下一页。翻页由客户端持有 offset 自行推进。
+    pub has_more: bool,
+}
+
+/// 一个歌手。
+///
+/// 内嵌在 [`TrackDto`] 里的歌手只是个名字(那里 `artists` 是 `Vec<String>`) ——
+/// 那是显示用的;这里是搜索结果里的歌手**实体**,能点进去。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct ArtistDto {
+    pub id: String,
+    pub name: String,
+    /// 头像。平台没给就是 `None`,不用空串冒充。
+    pub avatar: Option<String>,
+    /// 专辑数,取自平台。
+    pub album_count: i32,
+}
+
+/// `GET /search/artists` 的响应体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct ArtistSearchDto {
+    pub artists: Vec<ArtistDto>,
+    pub has_more: bool,
+}
+
+/// `GET /search/playlists` 的响应体。
+///
+/// 不复用 [`PlaylistsDto`]:那是「我的歌单」那张合并列表,没有翻页;
+/// 搜索结果有。硬塞一个恒为 false 的字段等于让客户端解读一个没有意义的信号。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlaylistSearchDto {
+    pub playlists: Vec<PlaylistDto>,
     pub has_more: bool,
 }
 

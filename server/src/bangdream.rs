@@ -7,8 +7,8 @@
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
 use contract::{
-    LyricDto, LyricLineDto, PlaySourceDto, PlaylistDto,
-    PlaylistSource, TrackDto,
+    ArtistDto, LyricDto, LyricLineDto, PlaySourceDto,
+    PlaylistDto, PlaylistSource, TrackDto,
 };
 
 use crate::account::Account;
@@ -60,6 +60,19 @@ fn platform_name(raw: i32) -> String {
 /// `None` 是"平台没给",`Some("")` 会被客户端当成一个真实存在的空值。
 fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
+}
+
+/// 把上游的一个歌手翻成契约里的 [`ArtistDto`]。
+///
+/// 只在**搜歌手**这条路上用。内嵌在 `Track` 里的歌手走另一条路,翻成一串名字 ——
+/// 那里要的是显示,这里要的是能点进去的实体。
+pub fn artist_to_dto(artist: proto::Artist) -> ArtistDto {
+    ArtistDto {
+        id: artist.id,
+        name: artist.name,
+        avatar: non_empty(artist.avatar),
+        album_count: artist.album_count,
+    }
 }
 
 /// 把上游的一个歌单翻成契约里的 [`PlaylistDto`]。
@@ -858,5 +871,51 @@ mod tests {
         let request = as_user(&account, message.clone());
 
         assert_eq!(request.into_inner(), message);
+    }
+
+    /// 歌手的详情字段都过桥;头像空串翻成 None,不用空串冒充"有头像"。
+    #[test]
+    fn artist_to_dto_maps_the_detail_fields() {
+        let dto = artist_to_dto(proto::Artist {
+            id: "11127".to_owned(),
+            name: "Beyond".to_owned(),
+            avatar: "https://p1.music.126.net/a.jpg"
+                .to_owned(),
+            description: String::new(),
+            album_count: 24,
+        });
+
+        assert_eq!(dto.id, "11127");
+        assert_eq!(dto.name, "Beyond");
+        assert_eq!(
+            dto.avatar.as_deref(),
+            Some("https://p1.music.126.net/a.jpg")
+        );
+        assert_eq!(dto.album_count, 24);
+
+        let no_avatar = artist_to_dto(proto::Artist {
+            id: "1".to_owned(),
+            name: "甲".to_owned(),
+            ..Default::default()
+        });
+        assert_eq!(no_avatar.avatar, None);
+    }
+
+    /// 走这条路的歌单一律标成平台来源 —— 本地歌单从不经过这里。
+    /// 标错的现象是界面把删除键画在了平台歌单上。
+    #[test]
+    fn playlist_to_dto_tags_the_platform_source() {
+        let dto = playlist_to_dto(proto::Playlist {
+            id: "24381616".to_owned(),
+            name: "华语经典".to_owned(),
+            track_count: 120,
+            ..Default::default()
+        });
+
+        assert_eq!(dto.source, PlaylistSource::Platform);
+        assert_eq!(dto.id, "24381616");
+        assert_eq!(dto.track_count, 120);
+        // 封面缺席时是 None
+        assert_eq!(dto.cover, None);
     }
 }

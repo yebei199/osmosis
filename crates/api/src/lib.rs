@@ -5,8 +5,8 @@
 //! `Send` 约束只存在于本 crate 内部的 `platform` 模块里。见 `docs/adr/0002`。
 
 use contract::{
-    HealthDto, LyricDto, PROTOCOL_VERSION, PlaySourceDto,
-    SearchDto, TracksDto,
+    ArtistSearchDto, HealthDto, LyricDto, PROTOCOL_VERSION,
+    PlaySourceDto, PlaylistSearchDto, SearchDto, TracksDto,
 };
 
 /// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
@@ -87,11 +87,28 @@ fn check_version(
     Ok(dto)
 }
 
-/// `GET /search?q=…`。
-pub async fn search(
+/// `GET /search/tracks?q=…`。
+pub async fn search_tracks(
     keyword: &str,
 ) -> Result<SearchDto, ApiError> {
-    platform::get_json(search_url(keyword)).await
+    platform::get_json(search_url("tracks", keyword)).await
+}
+
+/// `GET /search/artists?q=…`。
+pub async fn search_artists(
+    keyword: &str,
+) -> Result<ArtistSearchDto, ApiError> {
+    platform::get_json(search_url("artists", keyword)).await
+}
+
+/// `GET /search/playlists?q=…`。
+///
+/// 只搜平台的歌单。本地歌单已经在手上,过滤是界面的事。
+pub async fn search_playlists(
+    keyword: &str,
+) -> Result<PlaylistSearchDto, ApiError> {
+    platform::get_json(search_url("playlists", keyword))
+        .await
 }
 
 /// `GET /play/{track_id}`。
@@ -122,9 +139,9 @@ pub async fn liked() -> Result<TracksDto, ApiError> {
 ///
 /// 抽出来单独可测:关键词直接插进 `format!` 的话,一个 `&` 就会把查询串截成
 /// 两个参数,服务端只看到半截关键词 —— 而这既不会报错,也不会有测试失败。
-fn search_url(keyword: &str) -> String {
+fn search_url(kind: &str, keyword: &str) -> String {
     format!(
-        "{}/search?q={}",
+        "{}/search/{kind}?q={}",
         base_url(),
         encode_component(keyword)
     )
@@ -420,11 +437,11 @@ mod tests {
     /// 不报错、不失败,只是搜出来的东西不对。
     #[test]
     fn search_url_percent_encodes_keyword() {
-        let url = search_url("紅蓮華 & LiSA");
+        let url = search_url("tracks", "紅蓮華 & LiSA");
 
         assert!(
             url.ends_with(
-                "/search?q=%E7%B4%85%E8%93%AE%E8%8F%AF%20%26%20LiSA"
+                "/search/tracks?q=%E7%B4%85%E8%93%AE%E8%8F%AF%20%26%20LiSA"
             ),
             "关键词没被完整转义: {url}"
         );

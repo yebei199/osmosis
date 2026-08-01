@@ -19,8 +19,9 @@ use axum::{
     routing::{get, post},
 };
 use contract::{
-    HealthDto, LoginDto, LyricDto, PROTOCOL_VERSION,
-    PlaySourceDto, PlaylistDto, PlaylistsDto, RegisterDto,
+    ArtistSearchDto, HealthDto, LoginDto, LyricDto,
+    PROTOCOL_VERSION, PlaySourceDto, PlaylistDto,
+    PlaylistSearchDto, PlaylistsDto, RegisterDto,
     SearchDto, SessionDto, TracksDto,
 };
 use serde::Deserialize;
@@ -36,7 +37,8 @@ use server::bangdream::{
         GetDailyRecommendationsRequest, GetLyricRequest,
         GetPlaySourceRequest, GetTracksRequest,
         ListLikedTracksRequest, ListUserPlaylistsRequest,
-        Platform, QualityLevel, SearchTracksRequest,
+        Platform, QualityLevel, SearchArtistsRequest,
+        SearchPlaylistsRequest, SearchTracksRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -175,7 +177,10 @@ async fn main() {
         .route("/login", post(login))
         // 登出要 token:它删的就是那一条会话
         .route("/logout", post(logout))
-        .route("/search", get(search))
+        // 三类搜索各一条路由:URL 与响应形状是同一个决定,不是两个要彼此对上的决定
+        .route("/search/tracks", get(search_tracks))
+        .route("/search/artists", get(search_artists))
+        .route("/search/playlists", get(search_playlists))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
         .route(
@@ -311,7 +316,7 @@ async fn logout(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /search` 的查询参数。
+/// 三条搜索路由共用的查询参数。
 #[derive(Deserialize)]
 struct SearchQuery {
     /// 关键词。
@@ -322,8 +327,8 @@ struct SearchQuery {
     offset: Option<i32>,
 }
 
-/// `GET /search?q=紅蓮華` —— 搜歌。
-async fn search(
+/// `GET /search/tracks?q=紅蓮華` —— 搜歌。
+async fn search_tracks(
     State(state): State<AppState>,
     account: Account,
     Query(query): Query<SearchQuery>,
@@ -350,6 +355,75 @@ async fn search(
             .tracks
             .into_iter()
             .map(bangdream::track_to_dto)
+            .collect(),
+        has_more: response.has_more,
+    }))
+}
+
+/// `GET /search/artists?q=beyond` —— 搜歌手。
+async fn search_artists(
+    State(state): State<AppState>,
+    account: Account,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<ArtistSearchDto>, Failure> {
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .search_artists(bangdream::as_user(
+            &account,
+            SearchArtistsRequest {
+                platform: Platform::Netease as i32,
+                keyword: query.q,
+                limit: query
+                    .limit
+                    .unwrap_or(DEFAULT_SEARCH_LIMIT),
+                offset: query.offset.unwrap_or_default(),
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(ArtistSearchDto {
+        artists: response
+            .artists
+            .into_iter()
+            .map(bangdream::artist_to_dto)
+            .collect(),
+        has_more: response.has_more,
+    }))
+}
+
+/// `GET /search/playlists?q=华语` —— 搜歌单。
+///
+/// 只搜平台的。本地歌单数量小、已经在客户端手上,过滤是界面的事,
+/// 为它多跑一趟服务端没有意义。
+async fn search_playlists(
+    State(state): State<AppState>,
+    account: Account,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<PlaylistSearchDto>, Failure> {
+    let mut catalog = state.upstream.catalog;
+    let response = catalog
+        .search_playlists(bangdream::as_user(
+            &account,
+            SearchPlaylistsRequest {
+                platform: Platform::Netease as i32,
+                keyword: query.q,
+                limit: query
+                    .limit
+                    .unwrap_or(DEFAULT_SEARCH_LIMIT),
+                offset: query.offset.unwrap_or_default(),
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(PlaylistSearchDto {
+        playlists: response
+            .playlists
+            .into_iter()
+            .map(bangdream::playlist_to_dto)
             .collect(),
         has_more: response.has_more,
     }))

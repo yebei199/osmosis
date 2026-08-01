@@ -259,7 +259,10 @@ fn shuffle_seed() -> u64 {
 #[cfg(not(target_arch = "wasm32"))]
 type Prefetched = Rc<
     RefCell<
-        Option<(String, (audio::Loaded, audio::StreamHealth))>,
+        Option<(
+            String,
+            (audio::Loaded, audio::StreamHealth),
+        )>,
     >,
 >;
 
@@ -470,7 +473,7 @@ fn bind_search(ui: &MainWindow, deck: &Deck) {
         let deck = deck.clone();
         let weak = weak.clone();
         slint::spawn_local(async move {
-            let found = api::search(&keyword).await;
+            let found = api::search_tracks(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
             match found {
                 Ok(dto) => show(&ui, &deck, dto.tracks),
@@ -739,7 +742,8 @@ fn start_prefetch(deck: &Deck) {
     let deck = deck.clone();
     slint::spawn_local(async move {
         let ready =
-            prepare(deck.player.clone(), track.clone()).await;
+            prepare(deck.player.clone(), track.clone())
+                .await;
         deck.prefetching.set(false);
         match ready {
             Ok((decoded, health)) => {
@@ -1432,7 +1436,8 @@ mod tests {
     /// 一起播就备的话,两条下载抢同一条链路,而正在放的那首经不起抢 ——
     /// 这个 CDN 本来就爱停摆(真机日志里连续四次失联,见 `docs/adr/0013`)。
     #[test]
-    fn prefetch_starts_once_the_current_track_is_under_way() {
+    fn prefetch_starts_once_the_current_track_is_under_way()
+    {
         let playing = PlaybackState::Playing(track());
         let under_way = PREFETCH_AFTER;
         let just_started = core::time::Duration::ZERO;
@@ -1492,8 +1497,10 @@ mod tests {
     /// 一首根本没点过的歌 —— 而且界面显示的还是对的那一首,查起来极其别扭。
     #[test]
     fn a_prefetched_track_is_only_used_for_its_own_track() {
-        let slot =
-            RefCell::new(Some(("2".to_owned(), "备好的源")));
+        let slot = RefCell::new(Some((
+            "2".to_owned(),
+            "备好的源",
+        )));
 
         assert!(
             take_prefetched(&slot, "7").is_none(),
@@ -1504,9 +1511,14 @@ mod tests {
             "对不上的那一份要就地丢掉,不能留着占一条下载"
         );
 
-        let slot =
-            RefCell::new(Some(("2".to_owned(), "备好的源")));
-        assert_eq!(take_prefetched(&slot, "2"), Some("备好的源"));
+        let slot = RefCell::new(Some((
+            "2".to_owned(),
+            "备好的源",
+        )));
+        assert_eq!(
+            take_prefetched(&slot, "2"),
+            Some("备好的源")
+        );
         assert!(
             take_prefetched(&slot, "2").is_none(),
             "同一份不该被交出两次"
