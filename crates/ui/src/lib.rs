@@ -312,6 +312,10 @@ pub fn run_with_renderers(
                                     ),
                             },
                             preset: ui.get_viz_preset(),
+                            // 现在一张深度卡片都没有:歌词改成与歌名同层,
+                            // 画在粒子之上(见 docs/adr/0010 的「歌词是例外」)。
+                            // 下一张深度卡片回来时把这里置真,那台相机就醒了。
+                            needs_occluder: false,
                         },
                         size.width,
                         size.height,

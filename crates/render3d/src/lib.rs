@@ -98,6 +98,15 @@ pub struct VizFrame<'a> {
     pub pointer: Pointer,
     /// 视觉预设的编号,越界回默认档。
     pub preset: i32,
+    /// 这一帧要不要遮挡层。
+    ///
+    /// 遮挡层是逐像素深度合成的那一半(见 [`spawn_occluder_camera`]):有一张
+    /// **深度卡片**要被场景挡住时才需要它。目前一张都没有 —— 歌词曾经是,后来
+    /// 改成画在粒子之上(见 `docs/adr/0010` 的「歌词是例外」)。
+    ///
+    /// 为假时那台相机整个关掉,不渲、不导入纹理。能力留着不拆:它是这套栈
+    /// 区别于「UI 贴在 canvas 上」的那件事,下一张深度卡片把这里置真即可。
+    pub needs_occluder: bool,
     /// 窗口的物理像素尺寸。与当前纹理不同就按需重建(动态分辨率),0 尺寸忽略。
     pub width: u32,
     pub height: u32,
@@ -378,6 +387,7 @@ impl Scene {
             cover,
             pointer,
             preset,
+            needs_occluder,
             width,
             height,
         } = *frame;
@@ -454,6 +464,16 @@ impl Scene {
             );
         }
 
+        // 没有深度卡片就整台相机关掉:不渲、不导入纹理。这是第二次全场景绘制,
+        // 白渲一帧就是白花一帧(见 VizFrame::needs_occluder)。
+        if let Some(mut cam) = self
+            .app
+            .world_mut()
+            .get_mut::<Camera>(self.occluder_camera)
+        {
+            cam.is_active = needs_occluder;
+        }
+
         // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
         // 这一帧的门槛与当帧一致,不必为它多跑一次 transform 传播。
         let depth = self.anchor_depth();
@@ -466,13 +486,17 @@ impl Scene {
                 Camera3dDepthLoadOp::Clear(depth);
         }
 
-        self.drive_and_finish(depth)
+        self.drive_and_finish(depth, needs_occluder)
     }
 
     /// update 一帧并把两张离屏纹理(按身份缓存)包装成 Image 交回。
+    ///
+    /// `needs_occluder` 为假时遮挡层那半整个跳过 —— 相机已经关了,纹理里
+    /// 是上一次的残留,导进去只会让 UI 拿到一张过期的图。
     fn drive_and_finish(
         &mut self,
         depth: f32,
+        needs_occluder: bool,
     ) -> (slint::Image, slint::Image) {
         let t_update = Instant::now();
         self.app.update();
@@ -488,7 +512,7 @@ impl Scene {
                     "render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示"
                 );
             }
-            return self.frame_images();
+            return self.frame_images(needs_occluder);
         };
 
         if self.frames.is_multiple_of(PERF_WINDOW) {
@@ -524,8 +548,9 @@ impl Scene {
 
         // 遮挡层同理:身份稳定就只包一次。它比场景图晚一帧就绪也无妨 —— UI 侧的
         // `occluder-3d.width > 0` 守卫会让卡片先以不被遮挡的样子出现。
-        if let Some(tex) =
-            self.extract_texture(&self.occluder_target)
+        if needs_occluder
+            && let Some(tex) =
+                self.extract_texture(&self.occluder_target)
         {
             let key = (tex.width(), tex.height());
             if self.occluder_key != Some(key) {
@@ -547,14 +572,25 @@ impl Scene {
             }
         }
 
-        self.frame_images()
+        self.frame_images(needs_occluder)
     }
 
     /// 当前这一帧交给 UI 的两张图:(场景, 遮挡层)。任一未就绪时给空图。
-    fn frame_images(&self) -> (slint::Image, slint::Image) {
+    fn frame_images(
+        &self,
+        needs_occluder: bool,
+    ) -> (slint::Image, slint::Image) {
         (
             self.image.clone().unwrap_or_default(),
-            self.occluder_image.clone().unwrap_or_default(),
+            // 不需要就给空图。UI 侧的 `viz-occluder.width > 0` 守卫据此
+            // 不摆那一层 —— 给一张过期的图会让卡片被上一帧的粒子挡着。
+            if needs_occluder {
+                self.occluder_image
+                    .clone()
+                    .unwrap_or_default()
+            } else {
+                slint::Image::default()
+            },
         )
     }
 

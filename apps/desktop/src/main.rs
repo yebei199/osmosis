@@ -77,6 +77,7 @@ fn main() {
                         active: v.pointer.active,
                     },
                     preset: v.preset,
+                    needs_occluder: v.needs_occluder,
                     width: w,
                     height: h,
                 });

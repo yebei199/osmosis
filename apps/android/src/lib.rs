@@ -104,6 +104,7 @@ fn android_main(app: slint::android::AndroidApp) {
                         active: v.pointer.active,
                     },
                     preset: v.preset,
+                    needs_occluder: v.needs_occluder,
                     width: w,
                     height: h,
                 });
