@@ -1294,9 +1294,12 @@ fn bind_volume(ui: &MainWindow, deck: &Deck) {
 
 /// 接上进度条的拖动。
 ///
-/// 跳转是**异步**的:这里只把请求送到解码线程,真正取字节可能要好几秒
-/// (见 `audio::ChannelSource::try_seek`)。所以这里立刻挂上「缓冲中」,
-/// 落地与失败由每秒那趟轮询从 `audio::SeekState` 上取回来。
+/// 跳转有**两种下场,两条报告路径**(见 `audio::ChannelSource::try_seek`):
+///
+/// - 当场就知道跳不动(格式不支持、这条流只进不退):`seek` 直接返回 `Err`,
+///   这里当场说。那一刻 rodio 的位置计数器根本没动过,进度条与声音仍然一致。
+/// - 真在取字节:`seek` 乐观返回 `Ok`,这里挂上「缓冲中」,结论由每秒那趟
+///   轮询从 `audio::SeekState` 上取(`push_seek_state`)。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_seek(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
@@ -1320,14 +1323,12 @@ fn bind_seek(ui: &MainWindow, deck: &Deck) {
         // 立刻挂上,不等轮询:那要慢一秒,而一秒的沉默正好是"点了没反应"
         ui.set_buffering(true);
 
-        // 这里的错只有一种含义:压根没有可跳的东西(没声卡、正在听同播)。
-        // 「这一首跳不了」是另一回事,要等解码线程试过,走轮询那条路。
         if let Ok(player) = deck.player.as_ref()
             && let Err(err) = player.seek(target)
         {
             ui.set_buffering(false);
             ui.set_playback_text(
-                format!("跳不了: {err}").into(),
+                format!("这首跳不了: {err}").into(),
             );
         }
     });
