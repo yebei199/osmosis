@@ -17,7 +17,8 @@ pub mod spectrum;
 mod stream_source;
 
 pub use stream_source::{
-    BUFFER_SAMPLES, ChannelSource, buffered, buffered_with,
+    BUFFER_SAMPLES, ChannelSource, SeekState, buffered,
+    buffered_with,
 };
 
 use std::io::{Read, Seek};
@@ -262,12 +263,8 @@ pub fn decode<R: Source>(
 /// 出声的那一头。持有音频设备,活多久声音就能放多久。
 pub struct Player {
     /// 设备句柄。drop 掉声音就断了,所以必须留着。
-    ///
-    /// 它内含一个 `cpal::Stream`,而那东西 **不是 `Send`** —— 整个 `Player`
-    /// 因此过不了线程边界,想在别的线程上碰播放器只能走 [`Seeker`]。
     _device: MixerDeviceSink,
-    /// `Arc` 而不是裸值:[`Seeker`] 要把它带去别的线程(见那里的说明)。
-    player: Arc<rodio::Player>,
+    player: rodio::Player,
     /// 可视化的频谱分析器,每次换源在 [`Self::play`] 里接上新支路。
     viz: spectrum::Analyzer,
 }
@@ -279,9 +276,8 @@ impl Player {
             .map_err(|e| {
                 AudioError::Device(e.to_string())
             })?;
-        let player = Arc::new(rodio::Player::connect_new(
-            device.mixer(),
-        ));
+        let player =
+            rodio::Player::connect_new(device.mixer());
 
         Ok(Self {
             _device: device,
@@ -351,13 +347,22 @@ impl Player {
         self.player.get_pos()
     }
 
-    /// 一个能带去别的线程的跳转句柄。
+    /// 跳到某个时间点。**送出请求就返回,不等它落地。**
     ///
-    /// 跳转**必然会阻塞**(见 [`Seeker::seek`]),所以它不能长在 `Player` 上:
-    /// `Player` 因设备句柄而不是 `Send`,方法一旦挂在它身上,调用方就只能在
-    /// 持有它的那个线程 —— 也就是界面线程 —— 上等。
-    pub fn seeker(&self) -> Seeker {
-        Seeker(self.player.clone())
+    /// 真正的读字节发生在解码线程上(见 [`ChannelSource::try_seek`]),可能要
+    /// 好几秒 —— 跳到还没下到的位置要重开一个 range 请求。这里等的只是
+    /// rodio 把请求排给音频线程的那一下,毫秒级。
+    ///
+    /// 所以 `Ok` **不代表跳成了**。结论要问 [`ChannelSource::seek_state`] ——
+    /// 那也是界面显示「缓冲中」与「这首跳不了」的来源。这里的 `Err` 只有
+    /// 一种含义:压根没有可跳的东西(比如正在听同播)。
+    pub fn seek(
+        &self,
+        to: core::time::Duration,
+    ) -> Result<(), AudioError> {
+        self.player.try_seek(to).map_err(|err| {
+            AudioError::Device(err.to_string())
+        })
     }
 
     /// 当前音量,0.0 到 1.0。
@@ -368,36 +373,6 @@ impl Player {
     /// 调音量。超出范围的值先夹再设(见 [`clamped_volume`])。
     pub fn set_volume(&self, volume: f32) {
         self.player.set_volume(clamped_volume(volume));
-    }
-}
-
-/// 跳转句柄:只带得动"跳到第几秒"这一件事,但**跨得过线程边界**。
-///
-/// 只装 rodio 的播放器而不装整个 [`Player`],是因为后者还捏着声卡句柄
-/// (`cpal::Stream`,不是 `Send`)。分出这一个的理由见 [`Self::seek`]。
-#[derive(Clone)]
-pub struct Seeker(Arc<rodio::Player>);
-
-impl Seeker {
-    /// 跳到某个时间点。**这是一次阻塞调用,不要在界面线程上叫它。**
-    ///
-    /// 阻塞有两段,叠在一起:rodio 把跳转排给音频线程后,自己在一个 channel 上
-    /// 等回执;而音频线程那边真去读字节 —— 底下那条流是 `Read + Seek`,落盘到
-    /// 临时文件正是为了这一下能落在已经下过的字节上(见 [`load`]),可跳到
-    /// **还没下到**的位置时,`StreamDownload` 会重开一个 range 请求并阻塞到
-    /// 数据来为止。一首无损往后拖两分钟,这一等是好几秒。
-    ///
-    /// 放在界面线程上等的后果不是"卡一下":那期间一帧都画不出来,于是连
-    /// "缓冲中"这三个字都送不到屏幕上,看起来就是整个应用死了。
-    ///
-    /// 有些格式跳不了(rodio 的解码器各自表态),那时返回错误而不是装作跳了。
-    pub fn seek(
-        &self,
-        to: core::time::Duration,
-    ) -> Result<(), AudioError> {
-        self.0.try_seek(to).map_err(|err| {
-            AudioError::Device(err.to_string())
-        })
     }
 }
 
@@ -425,17 +400,6 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
-
-    /// [`Seeker`] 必须过得了线程边界 —— 整个跳转设计就压在这一条上。
-    ///
-    /// 断言写成编译期的:哪天有人往 `Seeker` 里塞了不是 `Send` 的东西
-    /// (设备句柄就是一个),这里当场编译不过,而不是等到界面那侧发现
-    /// 又只能在界面线程上等,而那时症状是"拖进度条整个应用卡死"。
-    #[test]
-    fn a_seeker_crosses_thread_boundaries() {
-        const fn require_send<T: Send>() {}
-        require_send::<Seeker>();
-    }
 
     /// 合成一段单声道 44.1kHz 的 WAV,`samples` 个采样点。
     ///

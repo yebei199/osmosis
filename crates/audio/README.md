@@ -14,9 +14,7 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
   `PREFETCH_BYTES` 攒一段,让开头那几秒不必指望网络准时(它同时是**切歌的
   等待时间**,不能往大了调);曲中掉速由 `stream_source::buffered` 兜住,
   彻底不来数据则由重连计数放弃并置 `StreamHealth`(见 `docs/adr/0013`)。
-  跳转单独分出一个 `Seeker` 句柄:`Player` 捏着 `cpal::Stream` 而那不是 `Send`,
-  可跳转**必然阻塞**(rodio 等音频线程回执,音频线程等还没下到的字节),
-  留在界面线程上等就是整个应用画不出一帧。
+  `Player::seek` 只把请求送出去,成没成要问 `SeekState`(理由见下条)。
 - `src/range_stream.rs`:一条永远用 range 续传的 HTTP 流。stream-download 的
   重连在服务端没声明 `Accept-Ranges` 时会**从第 0 字节重拉整首歌**,而那些字节
   接着写在当前写位置上 —— 歌放到中段就又是一遍开头。这里把那个选择去掉:
@@ -33,5 +31,10 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
   隔着有界通道喂前者:rodio 在声卡回调里直接要采样,不隔这一层的话,
   流式解码器一次阻塞读就是一次设备欠载。缓冲还顺带把断流藏住几秒 ——
   流放弃之后存货照放,用户先听完那几秒才知道出事(`docs/adr/0013`)。
+  **跳转也归这一层**:能跳的解码器在通道的这一头,rodio 手里只有另一头那条
+  通道,所以 `ChannelSource::try_seek` 把请求转给解码线程执行,自己立刻返回 ——
+  它是在声卡回调里被调的,在那儿等就是让混音器停摆,而躲开回调正是本层存在的
+  理由。请求带着一条**新通道**,旧通道里那 5 秒采样因此整条作废,不必约定
+  「丢到哪一个为止」。跳成没成、失败原因走 `SeekState`,界面每秒问一次。
 - `tests/`:联机测试(`--ignored`),自己打 axum 后端拿真实直链验证整条
   下载解码链。不走 `api` crate,免得两个平行能力层串成依赖链。

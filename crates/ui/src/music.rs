@@ -310,6 +310,10 @@ struct Deck {
     prefetched: Prefetched,
     /// 预取是不是正在路上。少了它,轮询每秒都会再起一条下载。
     prefetching: Rc<std::cell::Cell<bool>>,
+    /// 当前这一路的跳转状态。跳转是异步的 —— `player.seek()` 只把请求送出去,
+    /// 真正取字节在解码线程上,成没成要问这里(见 `audio::SeekState`)。
+    /// 每首歌一个,换歌时跟着换。
+    seeking: Rc<RefCell<Option<audio::SeekState>>>,
 }
 
 /// 点云封面的取用口:播放页每帧问它「这一帧封面该怎么办」。
@@ -436,6 +440,7 @@ pub fn bind(
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(std::cell::Cell::new(false)),
+        seeking: Rc::new(RefCell::new(None)),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -1109,6 +1114,7 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     &commit.player,
                     &commit.sync,
                     &commit.stream,
+                    &commit.seeking,
                     decoded,
                     health,
                 );
@@ -1186,6 +1192,7 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
             // 而两个定时器意味着两套"现在放到哪"的说法。
             push_progress(&ui, &state, position);
+            push_seek_state(&ui, &deck);
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
@@ -1287,25 +1294,13 @@ fn bind_volume(ui: &MainWindow, deck: &Deck) {
 
 /// 接上进度条的拖动。
 ///
-/// 跳转在**另一条线程**上等。跳到还没下到的位置时,底下会重开一个 range 请求
-/// 并阻塞到数据来为止(见 `audio::Seeker::seek`);搁在界面线程上等的话那期间
-/// 一帧都画不出来,连"缓冲中"三个字都送不上屏,看起来就是应用死了。
+/// 跳转是**异步**的:这里只把请求送到解码线程,真正取字节可能要好几秒
+/// (见 `audio::ChannelSource::try_seek`)。所以这里立刻挂上「缓冲中」,
+/// 落地与失败由每秒那趟轮询从 `audio::SeekState` 上取回来。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_seek(ui: &MainWindow, deck: &Deck) {
-    // 没声卡就没有跳转:那时根本没在放,进度条也不会出现
-    let Ok(player) = deck.player.as_ref() else {
-        return;
-    };
-    let seeker = player.seeker();
-
     let deck = deck.clone();
     let weak = ui.as_weak();
-    // 连点几下会有几条线程同时等着。先回来的那条不该把仍在缓冲的状态清掉,
-    // 所以每一跳带一个序号,只有最新那一跳说了算。原子而不是 `Cell`:
-    // 这个计数要跟着收尾闭包一起过线程边界。
-    let latest = std::sync::Arc::new(
-        std::sync::atomic::AtomicU64::new(0),
-    );
 
     ui.on_seek(move |at| {
         let Some(ui) = weak.upgrade() else { return };
@@ -1322,37 +1317,43 @@ fn bind_seek(ui: &MainWindow, deck: &Deck) {
             return;
         };
 
-        use std::sync::atomic::Ordering;
-        let mine =
-            latest.fetch_add(1, Ordering::Relaxed) + 1;
-        let (latest, seeker) =
-            (latest.clone(), seeker.clone());
+        // 立刻挂上,不等轮询:那要慢一秒,而一秒的沉默正好是"点了没反应"
         ui.set_buffering(true);
 
-        let back = ui.as_weak();
-        std::thread::spawn(move || {
-            let outcome = seeker.seek(target);
-            let _ =
-                slint::invoke_from_event_loop(move || {
-                    let Some(ui) = back.upgrade() else {
-                        return;
-                    };
-                    if latest.load(Ordering::Relaxed)
-                        != mine
-                    {
-                        return;
-                    }
-                    ui.set_buffering(false);
-                    // 有些格式跳不了,那时说清楚,而不是让进度条弹回去还不吭声
-                    if let Err(err) = outcome {
-                        ui.set_playback_text(
-                            format!("这首跳不了: {err}")
-                                .into(),
-                        );
-                    }
-                });
-        });
+        // 这里的错只有一种含义:压根没有可跳的东西(没声卡、正在听同播)。
+        // 「这一首跳不了」是另一回事,要等解码线程试过,走轮询那条路。
+        if let Ok(player) = deck.player.as_ref()
+            && let Err(err) = player.seek(target)
+        {
+            ui.set_buffering(false);
+            ui.set_playback_text(
+                format!("跳不了: {err}").into(),
+            );
+        }
     });
+}
+
+/// 把跳转的下场推给界面。
+///
+/// 两个出口而不是一个:还在取字节 -> 挂着「缓冲中」;试过了不行 -> 摘掉缓冲
+/// 并说一句为什么。少了后一条,跳不了的歌会永远停在「缓冲中」上,
+/// 而那比一开始就说"跳不了"更难查。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_seek_state(ui: &MainWindow, deck: &Deck) {
+    let borrowed = deck.seeking.borrow();
+    let Some(state) = borrowed.as_ref() else {
+        return;
+    };
+
+    if let Some(why) = state.take_failure() {
+        ui.set_buffering(false);
+        ui.set_playback_text(
+            format!("这首跳不了: {why}").into(),
+        );
+        return;
+    }
+
+    ui.set_buffering(state.is_seeking());
 }
 
 /// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
@@ -1446,6 +1447,7 @@ fn emit(
     player: &Arc<Result<audio::Player, audio::AudioError>>,
     sync: &crate::syncplay::Sync,
     stream: &Rc<RefCell<Option<audio::StreamHealth>>>,
+    seeking: &Rc<RefCell<Option<audio::SeekState>>>,
     decoded: audio::Loaded,
     health: audio::StreamHealth,
 ) {
@@ -1461,10 +1463,10 @@ fn emit(
     // - 缓冲在中间:它把解码挪到自己的线程,声卡回调从此不碰网络(见
     //   `audio::buffered`)。少了这一层,网络抖一下就是设备欠载;
     // - 分支在最后:本机听到的和推给听众的因此仍是同一批采样。
-    let (tee, branch) = Tee::new(
-        buffered(normalize(decoded)),
-        BRANCH_CAPACITY,
-    );
+    let source = buffered(normalize(decoded));
+    // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
+    seeking.borrow_mut().replace(source.seek_state());
+    let (tee, branch) = Tee::new(source, BRANCH_CAPACITY);
     // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
     // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
     player.play(tee);

@@ -4,8 +4,10 @@
 //! 这里是「推」(网络什么时候给,就什么时候有)。两者的落差正是本模块存在的理由。
 
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
 use crate::codec::{SYNC_CHANNELS, SYNC_SAMPLE_RATE};
@@ -22,6 +24,77 @@ const SILENCE_BURST: usize = 64;
 pub const BUFFER_SAMPLES: usize =
     SYNC_SAMPLE_RATE as usize * SYNC_CHANNELS as usize * 5;
 
+/// 一次跳转请求:跳到哪,以及跳完之后往**哪条新通道**送采样。
+///
+/// 带着一条新通道是这件事的另一半。缓冲里躺着最多 5 秒的旧采样,跳完还得先
+/// 听完它们的话,声音会在跳过去之后又倒回来放一遍那 5 秒。换通道等于一次
+/// 倒干净,而挨个丢要在两条线程之间约定"丢到哪一个为止"。
+type SeekRequest = (Duration, mpsc::SyncSender<Sample>);
+
+/// 跳转走到哪一步了。
+///
+/// 跳转是**异步**的:请求送出去就返回,真正的读字节发生在解码线程上,可能
+/// 要好几秒(跳到还没下到的位置要重开一个 range 请求)。所以"成没成"不能
+/// 由 `try_seek` 的返回值回答 —— 那时还没有答案。界面改为定期问这里。
+#[derive(Clone, Default)]
+pub struct SeekState(Arc<Mutex<Phase>>);
+
+/// [`SeekState`] 的三种样子。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    /// 没有跳转在路上。
+    #[default]
+    Idle,
+    /// 请求已经送出,解码线程还在取字节。
+    Seeking,
+    /// 上一次跳转失败了,附带原因。取走即清 —— 一句提示说一次就够。
+    Failed(String),
+}
+
+impl SeekState {
+    /// 还在取字节吗。界面据此显示「缓冲中」。
+    fn begin(&self) {
+        self.set(Phase::Seeking);
+    }
+
+    fn finish(&self) {
+        self.set(Phase::Idle);
+    }
+
+    fn fail(&self, why: String) {
+        self.set(Phase::Failed(why));
+    }
+
+    fn set(&self, phase: Phase) {
+        // 锁只护一个枚举,中毒了也没有半截状态可言,取回去接着用
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
+            phase;
+    }
+
+    /// 还在等字节吗。界面据此显示「缓冲中」。
+    pub fn is_seeking(&self) -> bool {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner())
+            == Phase::Seeking
+    }
+
+    /// 取走上一次失败的原因,取走即清。
+    ///
+    /// 清掉是必须的:界面每秒问一次,不清的话那句"这首跳不了"会一直重贴,
+    /// 把后面真正该说的话盖住。
+    pub fn take_failure(&self) -> Option<String> {
+        let mut phase = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Phase::Failed(why) = &*phase else {
+            return None;
+        };
+        let why = why.clone();
+        *phase = Phase::Idle;
+        Some(why)
+    }
+}
+
 /// 把解码挪到自己的线程上,声卡回调那头只管从内存里取。
 ///
 /// **这是「卡住时反复放同一小段」的正解。** rodio 是在 cpal 的回调里直接向
@@ -32,9 +105,12 @@ pub const BUFFER_SAMPLES: usize =
 ///
 /// **必须在 [`crate::codec::normalize`] 之后调用**:[`ChannelSource`] 对外
 /// 声称的是 48kHz 立体声,喂进来的采样格式不对,放出来就是变调变速的。
+///
+/// 收 [`Source`] 而不只收迭代器:跳转要由**这条线程**执行 —— 能跳的解码器
+/// 在通道的这一头,而 rodio 手里只有另一头那条通道(见 [`ChannelSource::try_seek`])。
 pub fn buffered<S>(source: S) -> ChannelSource
 where
-    S: Iterator<Item = Sample> + Send + 'static,
+    S: Source + Send + 'static,
 {
     buffered_with(source, BUFFER_SAMPLES)
 }
@@ -44,25 +120,74 @@ where
 /// 容量做成参数只为测试:按 [`BUFFER_SAMPLES`] 那 5 秒,一条测试要真等 5 秒,
 /// 而它要验的恰恰是"存货撑住了多久"这件与时长成正比的事。
 pub fn buffered_with<S>(
-    source: S,
+    mut source: S,
     capacity: usize,
 ) -> ChannelSource
 where
-    S: Iterator<Item = Sample> + Send + 'static,
+    S: Source + Send + 'static,
 {
-    let (tx, rx) = mpsc::sync_channel(capacity);
+    let (mut tx, rx) = mpsc::sync_channel(capacity);
+    let (seek, requests) = mpsc::channel::<SeekRequest>();
+    let state = SeekState::default();
+    let reported = state.clone();
 
     std::thread::spawn(move || {
-        for sample in source {
-            // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
-            // 送不进去说明接收端已经走了(换歌、停止),就此收工,别让线程漏着。
-            if tx.send(sample).is_err() {
-                return;
+        loop {
+            // 跳转比手上这个采样急:抢在取下一个之前看一眼有没有人在等
+            if let Ok(request) = requests.try_recv() {
+                tx = apply_seek(
+                    &mut source,
+                    request,
+                    &reported,
+                );
+                continue;
             }
+
+            let Some(sample) = source.next() else {
+                return;
+            };
+            // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
+            if tx.send(sample).is_ok() {
+                continue;
+            }
+
+            // 送不进去有两种可能:接收端换了一条通道(正在跳转),或者它走了
+            // (换歌、停止)。阻塞收一次正好把两者分开 —— 前者的请求马上就到,
+            // 后者连发送端都一起没了,`recv` 立刻报错,线程就此收工不漏。
+            let Ok(request) = requests.recv() else {
+                return;
+            };
+            tx =
+                apply_seek(&mut source, request, &reported);
         }
     });
 
-    ChannelSource::new(rx)
+    ChannelSource {
+        samples: rx,
+        silence: 0,
+        capacity,
+        seek,
+        state,
+    }
+}
+
+/// 执行一次跳转,交回此后该用的通道。
+///
+/// 失败不结束这条线程:跳不了的格式照样能从当前位置接着放,
+/// 把歌掐掉是比"跳不动"更糟的答复。
+fn apply_seek<S: Source>(
+    source: &mut S,
+    (to, fresh): SeekRequest,
+    state: &SeekState,
+) -> mpsc::SyncSender<Sample> {
+    match source.try_seek(to) {
+        Ok(()) => state.finish(),
+        Err(err) => {
+            log::warn!("跳转到 {to:?} 失败: {err}");
+            state.fail(err.to_string());
+        }
+    }
+    fresh
 }
 
 /// 把一条采样通道当作音频源。
@@ -70,14 +195,31 @@ pub struct ChannelSource {
     samples: mpsc::Receiver<Sample>,
     /// 还欠多少个静音采样。
     silence: usize,
+    /// 换通道时新通道开多大。与原来那条一样,不然跳一次缓冲就缩水一次。
+    capacity: usize,
+    /// 把跳转请求送去解码线程。听众侧没有解码线程,这条通道生下来就是断的。
+    seek: mpsc::Sender<SeekRequest>,
+    state: SeekState,
 }
 
 impl ChannelSource {
+    /// 直接从一条通道建。听众侧用这条路:PCM 是网络推来的,没有解码器可跳。
     pub fn new(samples: mpsc::Receiver<Sample>) -> Self {
+        // 接收端当场丢掉,于是 `try_seek` 里那次 send 必然失败 ——
+        // 「没有可跳的东西」因此是如实报错,不是靠一个额外的标志位记着。
+        let (seek, _) = mpsc::channel();
         Self {
             samples,
             silence: 0,
+            capacity: 0,
+            seek,
+            state: SeekState::default(),
         }
+    }
+
+    /// 跳转进行到哪一步了。界面每秒问一次,据此显示「缓冲中」与失败原因。
+    pub fn seek_state(&self) -> SeekState {
+        self.state.clone()
     }
 }
 
@@ -127,6 +269,35 @@ impl Source for ChannelSource {
     fn total_duration(&self) -> Option<Duration> {
         None
     }
+
+    /// 把跳转转交给通道另一头的解码器。
+    ///
+    /// **返回 `Ok` 只表示请求送到了,不表示跳成了。** 真正的读字节在解码线程上
+    /// 发生,可能要好几秒;而 rodio 是在**声卡回调**里调这个方法的,在这儿等
+    /// 就是让整个混音器停摆 —— `buffered` 这一层存在的全部理由,正是不让
+    /// 回调碰网络。结论因此走 [`ChannelSource::seek_state`],由界面定期问。
+    ///
+    /// 换一条新通道而不是清空旧的:旧通道里躺着最多 5 秒的采样,而"丢到哪个
+    /// 为止"需要两条线程约定一个界碑。换通道让那个界碑变成通道本身。
+    fn try_seek(
+        &mut self,
+        pos: Duration,
+    ) -> Result<(), SeekError> {
+        let (tx, rx) = mpsc::sync_channel(self.capacity);
+        // 送不进去 = 那一头没有解码线程(听同播),或者它已经收工了。
+        // 这是唯一如实的答复:假装跳了的话进度条会跳走而声音留在原地。
+        if self.seek.send((pos, tx)).is_err() {
+            return Err(SeekError::NotSupported {
+                underlying_source: "ChannelSource(没有可跳的解码器)",
+            });
+        }
+
+        self.state.begin();
+        self.samples = rx;
+        // 欠着的静音跟着旧通道一起作废,不然跳完还要先补完它
+        self.silence = 0;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -134,6 +305,255 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 一个位置读得出来的假源:每个采样的值就是"已经跳到了第几秒"。
+    ///
+    /// 这样"跳成没成"不必去问被测代码自己 —— 直接从放出来的采样里读,
+    /// 而那正是真实链路上用户听到的东西。
+    struct Marker {
+        at: Sample,
+        /// 跳不跳得动。要演两种源:能跳的解码器,和跳不了的东西。
+        seekable: bool,
+        /// 跳一次要多久。真实链路上跳到还没下到的位置要重开一个 range 请求,
+        /// 而"缓冲中"这个状态只在那段时间里存在 —— 不让假源慢下来,
+        /// 就没有那一段可看。
+        delay: Duration,
+    }
+
+    impl Iterator for Marker {
+        type Item = Sample;
+
+        fn next(&mut self) -> Option<Sample> {
+            Some(self.at)
+        }
+    }
+
+    impl Source for Marker {
+        fn current_span_len(&self) -> Option<usize> {
+            None
+        }
+
+        fn channels(&self) -> ChannelCount {
+            ChannelCount::new(SYNC_CHANNELS).expect("非零")
+        }
+
+        fn sample_rate(&self) -> SampleRate {
+            SampleRate::new(SYNC_SAMPLE_RATE).expect("非零")
+        }
+
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+
+        fn try_seek(
+            &mut self,
+            pos: Duration,
+        ) -> Result<(), SeekError> {
+            std::thread::sleep(self.delay);
+            if !self.seekable {
+                return Err(SeekError::NotSupported {
+                    underlying_source: "Marker",
+                });
+            }
+            self.at = pos.as_secs_f32();
+            Ok(())
+        }
+    }
+
+    fn marker(at: Sample, seekable: bool) -> Marker {
+        Marker {
+            at,
+            seekable,
+            delay: Duration::ZERO,
+        }
+    }
+
+    /// 等解码线程给出跳转的结论。取走即清,所以只能问到一次。
+    fn wait_for_failure(
+        state: &SeekState,
+    ) -> Option<String> {
+        let deadline =
+            std::time::Instant::now() + SEEK_DEADLINE;
+        while std::time::Instant::now() < deadline {
+            if let Some(why) = state.take_failure() {
+                return Some(why);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        None
+    }
+
+    /// 跳转后多久必须听到新位置的声音。
+    ///
+    /// 给得远大于一次线程唤醒,好让判据不受调度抖动左右;真的坏了也不会
+    /// 让这条测试挂在那里。
+    const SEEK_DEADLINE: Duration = Duration::from_secs(2);
+
+    /// 一直取采样,直到读到 `want` 或者超时,返回取了多少个。
+    ///
+    /// 轮询而不是睡一觉:解码线程什么时候跟上是调度说了算,
+    /// 固定的睡眠要么白等,要么在忙机器上假红。
+    fn pull_until(
+        source: &mut ChannelSource,
+        want: Sample,
+    ) -> Option<usize> {
+        let deadline =
+            std::time::Instant::now() + SEEK_DEADLINE;
+        let mut pulled = 0;
+        while std::time::Instant::now() < deadline {
+            pulled += 1;
+            if source.next() == Some(want) {
+                return Some(pulled);
+            }
+        }
+        None
+    }
+
+    /// 跳转要穿过通道抵达另一头的解码器。
+    ///
+    /// 这是整条链上唯一认识"第几秒"的地方 —— rodio 手里只有一条采样通道,
+    /// 通道不认识时间。
+    #[test]
+    fn a_seek_reaches_the_source_behind_the_channel() {
+        let mut source =
+            buffered_with(marker(0.0, true), 8);
+
+        source
+            .try_seek(Duration::from_secs(3))
+            .expect("能跳的源该收下这次跳转");
+
+        assert!(
+            pull_until(&mut source, 3.0).is_some(),
+            "跳完该听到第 3 秒的采样"
+        );
+    }
+
+    /// 缓冲里躺着的旧采样必须丢掉。
+    ///
+    /// 不丢的话,跳过去之后要先把那最多 5 秒的旧声音放完 ——
+    /// 听起来是"拖了进度条,声音过几秒才跟上",而进度条早就跳走了。
+    #[test]
+    fn samples_queued_before_a_seek_are_thrown_away() {
+        /// 攒得足够多,好让"丢了"与"挨个嚼完"两种结果分得开。
+        const CAPACITY: usize = 1000;
+        /// 跳转之前那些采样的值。刻意不取 0.0 —— 那是欠数据时补的静音,
+        /// 两者同值的话,"嚼旧货"与"等新货"在断言里长得一模一样。
+        const STALE: Sample = 0.5;
+        /// 跳到第几秒。[`Marker`] 跳完之后放的采样就是这个数。
+        const TARGET: u64 = 7;
+
+        let mut source =
+            buffered_with(marker(STALE, true), CAPACITY);
+        // 先让解码线程把缓冲灌满旧采样,不然没有对照
+        std::thread::sleep(Duration::from_millis(50));
+
+        source
+            .try_seek(Duration::from_secs(TARGET))
+            .expect("能跳的源该收下这次跳转");
+
+        let deadline =
+            std::time::Instant::now() + SEEK_DEADLINE;
+        let mut stale = 0;
+        let mut arrived = false;
+        while std::time::Instant::now() < deadline {
+            let Some(sample) = source.next() else { break };
+            if sample == TARGET as Sample {
+                arrived = true;
+                break;
+            }
+            if sample == STALE {
+                stale += 1;
+            }
+        }
+
+        assert!(arrived, "跳完该听到第 {TARGET} 秒的采样");
+        assert_eq!(
+            stale, 0,
+            "跳转之前攒下的采样一个都不该再放出来"
+        );
+    }
+
+    /// 跳不动的源要说出来,而且不能把歌掐掉。
+    ///
+    /// 说不出口的失败会变成"点了没反应",用户只会一直点;
+    /// 而为一次跳不动就结束这一首,比跳不动本身更糟。
+    #[test]
+    fn a_source_that_cannot_seek_says_so_and_keeps_playing()
+    {
+        /// 一个不会与静音(0.0)混淆的采样值,好认出源还在往下放。
+        const STILL_PLAYING: Sample = 0.25;
+
+        let mut source =
+            buffered_with(marker(STILL_PLAYING, false), 8);
+        let state = source.seek_state();
+
+        // 请求本身送得出去 —— 成没成要等解码线程试过才知道
+        source
+            .try_seek(Duration::from_secs(3))
+            .expect("请求送得出去");
+
+        let why = wait_for_failure(&state)
+            .expect("跳不动该留下一句原因");
+        assert!(
+            why.contains("not supported"),
+            "该说清是跳不了,实际 {why}"
+        );
+        assert!(
+            pull_until(&mut source, STILL_PLAYING)
+                .is_some(),
+            "跳不动不该把这一首掐掉"
+        );
+    }
+
+    /// 听同播时没有解码器可跳,`try_seek` 必须报错而不是假装跳了。
+    ///
+    /// 假装跳了的话进度条会跳走,而声音还在原地 —— 两个说法对不上。
+    #[test]
+    fn a_listener_channel_cannot_be_seeked() {
+        let (_tx, rx) = mpsc::channel::<Sample>();
+        let mut source = ChannelSource::new(rx);
+
+        let err = source
+            .try_seek(Duration::from_secs(3))
+            .expect_err("没有解码器就跳不了");
+
+        assert!(
+            matches!(err, SeekError::NotSupported { .. }),
+            "该如实说不支持,实际 {err}"
+        );
+    }
+
+    /// 跳转期间对外是"正在跳",跳完回到"没事"。界面靠它显示「缓冲中」。
+    #[test]
+    fn the_seek_state_reports_while_it_is_fetching() {
+        /// 假源取字节要多久。够长到断言跑得完,够短到测试不难受。
+        const FETCH: Duration = Duration::from_millis(200);
+
+        let mut source = buffered_with(
+            Marker {
+                at: 0.0,
+                seekable: true,
+                delay: FETCH,
+            },
+            8,
+        );
+        let state = source.seek_state();
+        assert!(!state.is_seeking(), "还没跳,不该说在跳");
+
+        source
+            .try_seek(Duration::from_secs(3))
+            .expect("能跳的源该收下这次跳转");
+
+        assert!(
+            state.is_seeking(),
+            "请求送出去之后、字节到位之前,对外就该是「在跳」"
+        );
+        assert!(pull_until(&mut source, 3.0).is_some());
+        assert!(
+            !state.is_seeking(),
+            "跳完了就不该再说在跳"
+        );
+    }
 
     /// 通道里的采样原样播出。
     #[test]
