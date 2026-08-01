@@ -118,3 +118,162 @@ export component SyncStrip inherits HorizontalLayout {
         }
     }
 }
+
+// 进度条:已放到哪、还能拖。
+//
+// 拖动期间**手指说了算**:位置每秒由 Rust 推一次,拖的时候要让位给手指,
+// 否则滑块会在手指底下自己往回跳。松手才把最终位置交出去 —— 拖动过程中
+// 每帧都 seek 一次,等于让解码器跟着手指来回跑。
+export component ProgressBar inherits Rectangle {
+    // 已放到全曲的几分之几,0..=1。由 Rust 夹好(见 ui/src/progress.rs)。
+    in property <float> ratio;
+    // 「1:23 / 3:41」,同样已在 Rust 侧排好。
+    in property <string> text;
+
+    // 松手时交出去的位置,仍是 0..=1。
+    callback seek(float);
+
+    // 拖动中,以及手指当前落在哪。Rust 不关心手指的过程,只要松手那一下的值。
+    property <bool> dragging: false;
+    property <float> drag-ratio: 0;
+    // 画出来的那个值:拖动时用手指的,否则用每秒推来的。
+    //
+    // **这一行没有测试盖着。** 无头测试驱动不了真实指针,而这个组件既不是
+    // 独立编译的类型、又长在一个 `if` 里,Rust 侧引用不到它的属性。写成一个
+    // 声明式表达式而不是在 moved 里赋值,是为了让它没有"忘了某条路径"的余地 ——
+    // 但那是靠形状,不是靠断言。改这里要手动验:拖住不放,看滑块会不会自己往回跳。
+    property <float> shown: root.dragging ? root.drag-ratio : root.ratio;
+
+    height: 26px;
+
+    VerticalLayout {
+        spacing: 3px;
+
+        groove := Rectangle {
+            height: 4px;
+            background: #ffffff1f;
+            border-radius: 2px;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.shown, 0.0, 1.0);
+                height: parent.height;
+                background: #d9a86c;
+                border-radius: 2px;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-family: "Maple Mono NF CN";
+            color: #9aa0b4;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+
+    // 覆在整块上,比那条 4px 的槽好点得多 —— 手指按不准 4 个像素。
+    touch := TouchArea {
+        mouse-cursor: pointer;
+
+        moved => {
+            root.dragging = true;
+            root.drag-ratio = clamp(self.mouse-x / root.width, 0.0, 1.0);
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.up) {
+                // 没拖过就是点了一下:点哪跳哪
+                root.seek(root.dragging
+                    ? root.drag-ratio
+                    : clamp(self.mouse-x / root.width, 0.0, 1.0));
+                root.dragging = false;
+            }
+        }
+    }
+}
+
+// 音量:一颗喇叭键,点开就地展开滑块。
+//
+// 不常驻滑块:控制条宽版一排的最小宽度已经约 470px,而手机内容区只有 ~360px
+// (那正是紧凑版拆两行的原因)。再塞一条常驻滑块进去,两种版式都要重排。
+export component VolumeControl inherits HorizontalLayout {
+    in property <float> volume;
+    callback changed(float);
+
+    property <bool> open: false;
+
+    spacing: 6px;
+
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            border-radius: 16px;
+            background: speaker.has-hover ? #ffffff14 : transparent;
+
+            Text {
+                // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
+                text: root.volume <= 0.001 ? "🔇"
+                    : root.volume < 0.5 ? "🔈" : "🔊";
+                font-size: 15px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            speaker := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open = !root.open; }
+
+                // 屏幕阅读器要认得出这是个能按的东西;顺带让无头测试点得动它 ——
+                // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"
+                // (同 widgets.slint 里的 HoverButton)。
+                accessible-role: button;
+                accessible-label: "音量";
+                accessible-expandable: true;
+                accessible-expanded: root.open;
+                accessible-action-default => {
+                    root.open = !root.open;
+                }
+            }
+        }
+    }
+
+    if root.open: VerticalLayout {
+        alignment: center;
+
+        slider := Rectangle {
+            width: 92px;
+            height: 20px;
+
+            Rectangle {
+                y: (parent.height - 4px) / 2;
+                height: 4px;
+                background: #ffffff1f;
+                border-radius: 2px;
+
+                Rectangle {
+                    x: 0;
+                    width: parent.width * clamp(root.volume, 0.0, 1.0);
+                    height: parent.height;
+                    background: #d9a86c;
+                    border-radius: 2px;
+                }
+            }
+
+            // 音量没有「松手才生效」的问题:每动一下就该听见,
+            // 那正是人调音量时在等的反馈。
+            drag := TouchArea {
+                mouse-cursor: pointer;
+                moved => {
+                    root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
+                }
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
+                    }
+                }
+            }
+        }
+    }
+}

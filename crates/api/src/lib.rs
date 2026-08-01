@@ -559,6 +559,8 @@ fn server_error(status: u16, body: &str) -> ApiError {
 ///
 /// token 归本 crate 而不是 `app-core`:它是「怎么发请求」的一部分,
 /// 而客户端领域按 `CONTEXT.md` 不认识网络。
+pub mod settings;
+
 pub mod session {
     use std::sync::RwLock;
 
@@ -773,6 +775,49 @@ mod platform {
         Some(base.join("slint-study/session"))
     }
 
+    /// 本地设置文件,与会话文件同一个目录。
+    ///
+    /// 两者分开放而不是塞进一份:token 是凭据,权限 0600、登出即删;设置是偏好,
+    /// 登出之后照样该留着。合成一个文件的话,登出会顺手把音量也忘掉。
+    fn settings_file() -> Option<PathBuf> {
+        if let Ok(explicit) =
+            std::env::var("SLINT_STUDY_SETTINGS_FILE")
+        {
+            return Some(PathBuf::from(explicit));
+        }
+
+        session_path_from(
+            std::env::var("XDG_STATE_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .map(|path| path.with_file_name("settings.json"))
+    }
+
+    /// 读设置文件的原文。读不到就是没有 —— 解析那半归 `settings` 模块。
+    pub(super) fn load_settings() -> Option<String> {
+        std::fs::read_to_string(settings_file()?).ok()
+    }
+
+    /// 写设置文件。失败只记一笔:调音量本身已经生效了,
+    /// 存不下的后果是下次回到默认值,不该让它把这次也判为失败。
+    pub(super) fn save_settings(raw: &str) {
+        let Some(path) = settings_file() else {
+            return;
+        };
+
+        if let Some(parent) = path.parent()
+            && let Err(err) =
+                std::fs::create_dir_all(parent)
+        {
+            log::warn!("建设置目录失败: {err}");
+            return;
+        }
+
+        if let Err(err) = std::fs::write(&path, raw) {
+            log::warn!("写设置失败: {err}");
+        }
+    }
+
     /// 落盘的 token,没有就是没登录过。
     pub(super) fn load_session() -> Option<String> {
         let path = session_file()?;
@@ -884,6 +929,21 @@ mod platform {
 
     /// localStorage 里存会话用的键。
     const SESSION_KEY: &str = "slint-study.session";
+
+    /// localStorage 里存本地设置用的键。
+    ///
+    /// 与会话分成两个键:登出要删掉会话,而音量该留着。
+    const SETTINGS_KEY: &str = "slint-study.settings";
+
+    pub(super) fn load_settings() -> Option<String> {
+        storage()?.get_item(SETTINGS_KEY).ok()?
+    }
+
+    pub(super) fn save_settings(raw: &str) {
+        if let Some(storage) = storage() {
+            let _ = storage.set_item(SETTINGS_KEY, raw);
+        }
+    }
 
     pub(super) async fn get_json<T: DeserializeOwned>(
         url: String,

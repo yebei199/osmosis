@@ -449,6 +449,9 @@ pub fn bind(
         move |ui| reload_open_playlist(ui, &reloading),
     );
 
+    bind_volume(ui, &deck);
+    bind_seek(ui, &deck);
+
     bind_search(ui, &deck);
     bind_list(ui, &deck);
     bind_play(ui, &deck);
@@ -1168,6 +1171,10 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             let state = deck.playback.borrow().state().clone();
             let listening = deck.sync.is_listening();
 
+            // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
+            // 而两个定时器意味着两套"现在放到哪"的说法。
+            push_progress(&ui, &state, position);
+
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
             if should_report_loss(
@@ -1199,6 +1206,108 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
     // ponytail: 定时器与进程同寿,leak 掉省一条把 Timer 递回平台入口的通道;
     // 真要按页开关时再把它挂到 Deck 上管理。
     Box::leak(Box::new(timer));
+}
+
+/// 把当前进度推给界面。
+///
+/// 手上没歌时清成「没有」而不是留着上一首的数字 —— 停下之后那条进度条
+/// 还停在 3:41,读起来像是还在放。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_progress(
+    ui: &MainWindow,
+    state: &PlaybackState,
+    position: core::time::Duration,
+) {
+    let track = match state {
+        PlaybackState::Playing(track)
+        | PlaybackState::Loading(track) => track,
+        _ => {
+            ui.set_has_track(false);
+            return;
+        }
+    };
+
+    let secs = position.as_secs_f64();
+    ui.set_has_track(true);
+    ui.set_progress_ratio(crate::progress::ratio(
+        secs,
+        track.duration_ms,
+    ));
+    ui.set_progress_text(
+        crate::progress::progress_text(
+            secs,
+            track.duration_ms,
+        )
+        .into(),
+    );
+}
+
+/// 接上音量:开局从本地设置恢复,拖动时既改播放器也存回去。
+///
+/// 音量跟着设备走,不跟着账号 —— 笔记本外放与一副耳机不该共用一个数值
+/// (见 api::settings)。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_volume(ui: &MainWindow, deck: &Deck) {
+    let saved = api::settings::load().volume;
+    ui.set_volume(saved);
+    if let Ok(player) = deck.player.as_ref() {
+        player.set_volume(saved);
+    }
+
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_volume_changed(move |volume| {
+        let volume = audio::clamped_volume(volume);
+        if let Some(ui) = weak.upgrade() {
+            ui.set_volume(volume);
+        }
+        if let Ok(player) = deck.player.as_ref() {
+            player.set_volume(volume);
+        }
+
+        // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
+        // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
+        api::settings::save(&api::settings::Settings {
+            volume,
+        });
+    });
+}
+
+/// 接上进度条的拖动。
+///
+/// 跳到还没下到的位置会**阻塞**到数据来为止(见 audio::Player::seek)——
+/// 那一段的等待反馈还没做,是这一块已知的缺口。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_seek(ui: &MainWindow, deck: &Deck) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+
+    ui.on_seek(move |at| {
+        let Some(ui) = weak.upgrade() else { return };
+        let state = deck.playback.borrow().state().clone();
+        let (PlaybackState::Playing(track)
+        | PlaybackState::Loading(track)) = state
+        else {
+            return;
+        };
+        if track.duration_ms <= 0 {
+            return;
+        }
+
+        let target = core::time::Duration::from_secs_f64(
+            f64::from(at.clamp(0.0, 1.0))
+                * (track.duration_ms as f64 / 1000.0),
+        );
+
+        // 有些格式跳不了,那时说清楚,而不是让进度条弹回去还不吭声
+        if let Ok(player) = deck.player.as_ref()
+            && let Err(err) = player.seek(target)
+        {
+            ui.set_playback_text(
+                format!("这首跳不了: {err}").into(),
+            );
+        }
+    });
 }
 
 /// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。

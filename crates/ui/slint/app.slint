@@ -19,7 +19,7 @@ import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow } from "types.sli
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
-import { ControlCluster, SyncStrip } from "controls.slint";
+import { ControlCluster, SyncStrip, ProgressBar, VolumeControl } from "controls.slint";
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -56,6 +56,19 @@ export component MainWindow inherits Window {
     in-out property <string> banner-text;
     // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
     in property <bool> is-playing: false;
+
+    // ── 进度与音量 ──
+    // 手上有没有一首歌。没有时进度条整条不出现 —— 摆一条空槽会让人
+    // 以为点它能从头开始,而那时根本没有"头"。
+    in property <bool> has-track: false;
+    // 已放到全曲的几分之几,0..=1。夹取与格式化都在 Rust 侧(见 ui/src/progress.rs)。
+    in property <float> progress-ratio: 0;
+    in property <string> progress-text;
+    // 松手时跳到这个比例。
+    callback seek(float);
+    // 当前音量,0..=1。开局由本地设置恢复(见 api::settings)。
+    in property <float> volume: 1.0;
+    callback volume-changed(float);
     // 随机播放开关(日月开关的状态)。Rust 读它决定队列洗不洗牌。
     in-out property <bool> shuffle-on: false;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
@@ -655,6 +668,18 @@ export component MainWindow inherits Window {
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
                             }
+                            // 进度条占中间那块可伸缩的地方 —— 它是这一排里唯一
+                            // 越宽越好用的东西,别的都是固定尺寸的键。
+                            if root.has-track: wide-progress := ProgressBar {
+                                horizontal-stretch: 1;
+                                ratio: root.progress-ratio;
+                                text: root.progress-text;
+                                seek(at) => { root.seek(at); }
+                            }
+                            wide-volume := VolumeControl {
+                                volume: root.volume;
+                                changed(v) => { root.volume-changed(v); }
+                            }
                             // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
                             RoundControl {
                                 icon: "M12 7 L19 16 L5 16 Z";
@@ -686,6 +711,23 @@ export component MainWindow inherits Window {
                                 RoundControl {
                                     icon: "M12 7 L19 16 L5 16 Z";
                                     clicked => { root.play-page-open = true; }
+                                }
+                            }
+                            // 紧凑版式:进度条与音量共占第二行。
+                            // 挤进第一行的话,那一排要 470px 起,而手机只有 ~360px。
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                if root.has-track:
+                                compact-progress := ProgressBar {
+                                    horizontal-stretch: 1;
+                                    ratio: root.progress-ratio;
+                                    text: root.progress-text;
+                                    seek(at) => { root.seek(at); }
+                                }
+                                compact-volume := VolumeControl {
+                                    volume: root.volume;
+                                    changed(v) => { root.volume-changed(v); }
                                 }
                             }
                             HorizontalLayout {

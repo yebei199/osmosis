@@ -346,6 +346,48 @@ impl Player {
     pub fn position(&self) -> core::time::Duration {
         self.player.get_pos()
     }
+
+    /// 跳到某个时间点。
+    ///
+    /// 底下那条流是 `Read + Seek`,落盘到临时文件正是为了这一下能落在已经下过
+    /// 的字节上(见 [`load`])。跳到**还没下到**的位置时,读会阻塞到数据来为止
+    /// —— 那是 `StreamDownload` 的行为,这里不加额外处理:调用方要么等,要么
+    /// 先自己判断能不能跳。
+    ///
+    /// 有些格式跳不了(rodio 的解码器各自表态),那时返回错误而不是装作跳了。
+    pub fn seek(
+        &self,
+        to: core::time::Duration,
+    ) -> Result<(), AudioError> {
+        self.player.try_seek(to).map_err(|err| {
+            AudioError::Device(err.to_string())
+        })
+    }
+
+    /// 当前音量,0.0 到 1.0。
+    pub fn volume(&self) -> f32 {
+        self.player.volume()
+    }
+
+    /// 调音量。超出范围的值先夹再设(见 [`clamped_volume`])。
+    pub fn set_volume(&self, volume: f32) {
+        self.player.set_volume(clamped_volume(volume));
+    }
+}
+
+/// 把音量夹进 0.0..=1.0。
+///
+/// rodio 对越界值照单全收,而后果都不报错:负数是把波形反相 —— 单独听像是
+/// "声音变空了",与别的声源混在一起会互相抵消;大于 1 是数字过载,削波失真。
+/// 两种都难听,且都不会有任何一行日志说出原因。
+///
+/// NaN 当静音处理:它的比较全为假,不特判的话会原样传下去。
+pub fn clamped_volume(volume: f32) -> f32 {
+    if volume.is_nan() {
+        return 0.0;
+    }
+
+    volume.clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -495,6 +537,36 @@ mod tests {
         worst
     }
 
+    /// 音量夹在 0..=1。
+    ///
+    /// rodio 对越界值照单全收,而后果都不报错:负数是把波形反相,单独听像是
+    /// "声音变空了",与别的声源混在一起会互相抵消;大于 1 是数字过载削波。
+    /// 两种都难听,且都不会有任何一行日志说出原因。
+    #[test]
+    fn volume_is_clamped_to_a_sane_range() {
+        assert!(
+            (clamped_volume(0.5) - 0.5).abs()
+                < f32::EPSILON,
+            "范围内的值不该被动"
+        );
+        assert!(
+            (clamped_volume(1.7) - 1.0).abs()
+                < f32::EPSILON,
+            "过载要收到 1.0"
+        );
+        assert!(
+            (clamped_volume(-0.3) - 0.0).abs()
+                < f32::EPSILON,
+            "负数要收到 0.0,不能留着反相"
+        );
+        // NaN 的比较全为假,不特判就会原样传给 rodio
+        assert!(
+            (clamped_volume(f32::NAN) - 0.0).abs()
+                < f32::EPSILON,
+            "NaN 当静音"
+        );
+    }
+
     /// **字节流一卡,取样就跟着卡。**
     ///
     /// 生产环境里调 `next()` 的是 cpal 的声卡回调(rodio-0.22 `stream.rs:527`
@@ -634,7 +706,8 @@ mod tests {
             let spent = started.elapsed();
             worst = worst.max(spent);
             // 补足这一块的实时时长。真设备就是这样:填完就等下一次被叫醒。
-            if let Some(rest) = CALLBACK_BUDGET.checked_sub(spent)
+            if let Some(rest) =
+                CALLBACK_BUDGET.checked_sub(spent)
             {
                 std::thread::sleep(rest);
             }
@@ -655,7 +728,8 @@ mod tests {
     const PACED_BLOCKS: usize = 100;
 
     /// 一条会在 [`PACED_STALL_AFTER`] 处停摆一次的解码器。
-    fn stalling_decoder() -> rodio::Decoder<StallingSource> {
+    fn stalling_decoder() -> rodio::Decoder<StallingSource>
+    {
         decode(StallingSource {
             inner: Cursor::new(wav(441_000)),
             stall_after: PACED_STALL_AFTER,
@@ -765,7 +839,10 @@ mod tests {
     ///
     /// **重连拿到的是空响应**:第二个连接起只给响应头。让它重发一遍数据的话,
     /// `on_progress` 会把失联计数清零,于是永远走不到放弃那一步。
-    fn stalling_server(body: Vec<u8>, prefix: usize) -> String {
+    fn stalling_server(
+        body: Vec<u8>,
+        prefix: usize,
+    ) -> String {
         use std::io::{BufRead, BufReader, Write};
         use std::net::TcpListener;
         use std::sync::Arc;
@@ -780,7 +857,9 @@ mod tests {
         // 线程与进程同寿:测试进程退出即回收,不值得为它造一套关停。
         std::thread::spawn(move || {
             for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
                 let body = body.clone();
                 let served = served.clone();
 
@@ -805,7 +884,8 @@ mod tests {
                          Accept-Ranges: bytes\r\n\r\n",
                         body.len()
                     );
-                    let _ = stream.write_all(head.as_bytes());
+                    let _ =
+                        stream.write_all(head.as_bytes());
 
                     let first = served
                         .fetch_add(1, Ordering::Relaxed)
@@ -836,8 +916,10 @@ mod tests {
     fn range_watching_server(
         body: Vec<u8>,
         prefix: usize,
-    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>)
-    {
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
         use std::io::{BufRead, BufReader, Write};
         use std::net::TcpListener;
         use std::sync::{Arc, Mutex};
@@ -852,7 +934,9 @@ mod tests {
         std::thread::spawn(move || {
             let mut first = true;
             for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
                 let body = body.clone();
                 let recorder = recorder.clone();
                 let serve_body = first;
@@ -885,7 +969,8 @@ mod tests {
                          Content-Type: audio/wav\r\n\r\n",
                         body.len()
                     );
-                    let _ = stream.write_all(head.as_bytes());
+                    let _ =
+                        stream.write_all(head.as_bytes());
                     if serve_body {
                         let _ = stream.write_all(
                             &body[..prefix.min(body.len())],
@@ -907,7 +992,8 @@ mod tests {
     /// 连续四次 `Accept-Ranges: None`,位置停在 63223 / 63219 / 63214 / 126429,
     /// 几乎是同一个数和它的两倍,正是"每次重连都重新给开头那 62KB"。
     #[test]
-    fn a_reconnect_asks_only_for_the_bytes_it_still_needs() {
+    fn a_reconnect_asks_only_for_the_bytes_it_still_needs()
+    {
         let (url, requests) =
             range_watching_server(wav(200_000), 32 * 1024);
 
@@ -943,8 +1029,9 @@ mod tests {
         let url = stalling_server(wav(200_000), 32 * 1024);
 
         let started = std::time::Instant::now();
-        let (decoder, health) =
-            runtime().block_on(load_with(&url, FAST)).expect(
+        let (decoder, health) = runtime()
+            .block_on(load_with(&url, FAST))
+            .expect(
                 "头几十 KB 是完整的 WAV,起播这一步该成功",
             );
         // 取到源结束为止。放弃机制不成立的话,这一行永远回不来。

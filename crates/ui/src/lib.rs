@@ -25,6 +25,8 @@ mod account;
 mod playlist;
 // 红心:哪些歌在红心里,以及点一下之后发生什么。
 mod liked;
+// 播放进度的格式化。与列表里的时长同一条规矩:算在 Rust 侧,`.slint` 里只摆。
+mod progress;
 // 搜索的三个页签。歌曲那一路借 music 的队列,歌手与歌单各自成列。
 #[cfg(not(target_arch = "wasm32"))]
 mod search;
