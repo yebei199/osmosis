@@ -53,9 +53,77 @@ pub fn ratio(position_secs: f64, duration_ms: i64) -> f32 {
     ((position_secs / total) as f32).clamp(0.0, 1.0)
 }
 
+/// 进度条上的一个比例落在哪个时间点,即 [`ratio`] 的逆。
+///
+/// 给 `None` 表示这一跳不做:总长不知道就没有分母,而"跳到 0 秒"读起来是
+/// 倒回开头 —— 一次误操作换来重头再听。非有限的比例同样不跳,它一路来自
+/// 浮点除法,而 `Duration::from_secs_f64(NaN)` 是 **panic**,不是错误。
+pub fn seek_target(
+    at: f32,
+    duration_ms: i64,
+) -> Option<core::time::Duration> {
+    if duration_ms <= 0 || !at.is_finite() {
+        return None;
+    }
+
+    let total = duration_ms as f64 / 1000.0;
+    Some(core::time::Duration::from_secs_f64(
+        f64::from(at.clamp(0.0, 1.0)) * total,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 比例换算回时间点:半程就是总长的一半。
+    #[test]
+    fn a_ratio_maps_back_to_a_time_point() {
+        assert_eq!(
+            seek_target(0.5, 221_000),
+            Some(core::time::Duration::from_millis(
+                110_500
+            ))
+        );
+        assert_eq!(
+            seek_target(0.0, 221_000),
+            Some(core::time::Duration::ZERO)
+        );
+    }
+
+    /// 平台没给总长时不跳。没有分母就算不出秒数,
+    /// 而"跳到 0 秒"对用户是倒回开头 —— 一次误操作换来重头再听。
+    #[test]
+    fn an_unknown_duration_cannot_be_seeked() {
+        assert_eq!(seek_target(0.5, 0), None);
+        assert_eq!(seek_target(0.5, -1), None);
+    }
+
+    /// 越界的比例夹回曲内。手指滑出控件边界会给出 <0 或 >1。
+    #[test]
+    fn the_target_is_clamped_to_the_track() {
+        assert_eq!(
+            seek_target(1.5, 221_000),
+            Some(core::time::Duration::from_millis(
+                221_000
+            ))
+        );
+        assert_eq!(
+            seek_target(-0.2, 221_000),
+            Some(core::time::Duration::ZERO)
+        );
+    }
+
+    /// 非有限的比例不跳。它一路来自浮点除法,
+    /// 而 `Duration::from_secs_f64(NaN)` 是 panic,不是错误。
+    #[test]
+    fn a_nonfinite_ratio_does_not_seek() {
+        assert_eq!(seek_target(f32::NAN, 221_000), None);
+        assert_eq!(
+            seek_target(f32::INFINITY, 221_000),
+            None
+        );
+    }
 
     /// 进度文案是 已放/总长,分:秒,秒补零。
     ///

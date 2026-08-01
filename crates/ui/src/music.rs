@@ -1287,12 +1287,25 @@ fn bind_volume(ui: &MainWindow, deck: &Deck) {
 
 /// 接上进度条的拖动。
 ///
-/// 跳到还没下到的位置会**阻塞**到数据来为止(见 audio::Player::seek)——
-/// 那一段的等待反馈还没做,是这一块已知的缺口。
+/// 跳转在**另一条线程**上等。跳到还没下到的位置时,底下会重开一个 range 请求
+/// 并阻塞到数据来为止(见 `audio::Seeker::seek`);搁在界面线程上等的话那期间
+/// 一帧都画不出来,连"缓冲中"三个字都送不上屏,看起来就是应用死了。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_seek(ui: &MainWindow, deck: &Deck) {
+    // 没声卡就没有跳转:那时根本没在放,进度条也不会出现
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    let seeker = player.seeker();
+
     let deck = deck.clone();
     let weak = ui.as_weak();
+    // 连点几下会有几条线程同时等着。先回来的那条不该把仍在缓冲的状态清掉,
+    // 所以每一跳带一个序号,只有最新那一跳说了算。原子而不是 `Cell`:
+    // 这个计数要跟着收尾闭包一起过线程边界。
+    let latest = std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(0),
+    );
 
     ui.on_seek(move |at| {
         let Some(ui) = weak.upgrade() else { return };
@@ -1302,23 +1315,43 @@ fn bind_seek(ui: &MainWindow, deck: &Deck) {
         else {
             return;
         };
-        if track.duration_ms <= 0 {
+        let Some(target) = crate::progress::seek_target(
+            at,
+            track.duration_ms,
+        ) else {
             return;
-        }
+        };
 
-        let target = core::time::Duration::from_secs_f64(
-            f64::from(at.clamp(0.0, 1.0))
-                * (track.duration_ms as f64 / 1000.0),
-        );
+        use std::sync::atomic::Ordering;
+        let mine =
+            latest.fetch_add(1, Ordering::Relaxed) + 1;
+        let (latest, seeker) =
+            (latest.clone(), seeker.clone());
+        ui.set_buffering(true);
 
-        // 有些格式跳不了,那时说清楚,而不是让进度条弹回去还不吭声
-        if let Ok(player) = deck.player.as_ref()
-            && let Err(err) = player.seek(target)
-        {
-            ui.set_playback_text(
-                format!("这首跳不了: {err}").into(),
-            );
-        }
+        let back = ui.as_weak();
+        std::thread::spawn(move || {
+            let outcome = seeker.seek(target);
+            let _ =
+                slint::invoke_from_event_loop(move || {
+                    let Some(ui) = back.upgrade() else {
+                        return;
+                    };
+                    if latest.load(Ordering::Relaxed)
+                        != mine
+                    {
+                        return;
+                    }
+                    ui.set_buffering(false);
+                    // 有些格式跳不了,那时说清楚,而不是让进度条弹回去还不吭声
+                    if let Err(err) = outcome {
+                        ui.set_playback_text(
+                            format!("这首跳不了: {err}")
+                                .into(),
+                        );
+                    }
+                });
+        });
     });
 }
 

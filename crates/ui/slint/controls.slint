@@ -129,6 +129,9 @@ export component ProgressBar inherits Rectangle {
     in property <float> ratio;
     // 「1:23 / 3:41」,同样已在 Rust 侧排好。
     in property <string> text;
+    // 跳转还没落地。占的是时间那一行 —— 缓冲期间位置本来就不动,
+    // 让一个僵住的数字待在那里,恰恰是最像卡死的样子。
+    in property <bool> buffering: false;
 
     // 松手时交出去的位置,仍是 0..=1。
     callback seek(float);
@@ -164,9 +167,11 @@ export component ProgressBar inherits Rectangle {
         }
 
         Text {
-            text: root.text;
+            text: root.buffering ? "缓冲中…" : root.text;
             font-family: "Maple Mono NF CN";
-            color: #9aa0b4;
+            // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
+            // 说明「还在动」的东西。
+            color: root.buffering ? #d9a86c : #9aa0b4;
             font-size: 11px;
             horizontal-alignment: center;
         }

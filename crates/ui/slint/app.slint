@@ -66,6 +66,10 @@ export component MainWindow inherits Window {
     in property <string> progress-text;
     // 松手时跳到这个比例。
     callback seek(float);
+    // 正在等跳转落地。跳到还没下到的位置要重开一个 range 请求,一首无损往后
+    // 拖两分钟就是好几秒 —— 那期间进度条不动、声音不出,不说一句的话
+    // 看起来就是卡死了(见 ui/src/music.rs 的 bind-seek)。
+    in property <bool> buffering: false;
     // 当前音量,0..=1。开局由本地设置恢复(见 api::settings)。
     in property <float> volume: 1.0;
     callback volume-changed(float);
@@ -698,6 +702,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 ratio: root.progress-ratio;
                                 text: root.progress-text;
+                                buffering: root.buffering;
                                 seek(at) => { root.seek(at); }
                             }
                             wide-volume := VolumeControl {
@@ -747,6 +752,7 @@ export component MainWindow inherits Window {
                                     horizontal-stretch: 1;
                                     ratio: root.progress-ratio;
                                     text: root.progress-text;
+                                    buffering: root.buffering;
                                     seek(at) => { root.seek(at); }
                                 }
                                 compact-volume := VolumeControl {
