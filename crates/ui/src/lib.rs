@@ -61,6 +61,10 @@ fn build_ui() -> (
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
+    // 先恢复上次的登录态,再绑界面 —— 绑定那一步会按登录与否决定先拉什么。
+    // 恢复出来的 token 可能已被服务端吊销,那要等第一次请求 401 才知道。
+    api::session::restore();
+
     let (viz_source, lyrics, cover) = music::bind(&ui);
 
     ui.set_show_fps(fps_enabled());
