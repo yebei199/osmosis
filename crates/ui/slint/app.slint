@@ -15,7 +15,8 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
-import { NavEntry, TrackRow, DeviceRow } from "types.slint";
+import { NavEntry, TrackRow, DeviceRow, PlaylistRow } from "types.slint";
+import { PlaylistList } from "playlists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip } from "controls.slint";
 import { LoginPage } from "login.slint";
@@ -103,6 +104,18 @@ export component MainWindow inherits Window {
     in-out property <bool> rail-collapsed: false;
     // 换了分区。Rust 据此去取对应的一批歌。
     callback select-section(int);
+
+    // ── 我的歌单 ──
+    // 两个来源合并后的一张列表,「我喜欢的」在最前(见 docs/adr/0016)。
+    in property <[PlaylistRow]> playlists: [];
+    // 当前打开的歌单名。空串 = 停在列表那一层,没有打开任何歌单。
+    // 用名字而不是另设一个布尔:详情页要显示它,两个值会有对不上的一天。
+    in-out property <string> open-playlist-name;
+    // 打开某个歌单。参数是 PlaylistRow 的 id 与 source ——
+    // 两种歌单的 id 不在同一个空间,少了 source 就不知道该问谁要曲目。
+    callback open-playlist(string, int);
+    // 从详情退回列表。
+    callback close-playlist();
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -385,20 +398,55 @@ export component MainWindow inherits Window {
                                 overflow: elide;
                             }
 
-                            // 「我的歌单」的内容下一轮做。这里明说,而不是给一张
-                            // 空列表 —— 空列表看起来像「一个歌单都没有」。
-                            if root.music-section == 1: playlists-placeholder := Text {
-                                text: "歌单还在做";
-                                font-family: "Maple Mono NF CN";
-                                color: #6f7688;
-                                font-size: 13px;
-                                vertical-stretch: 1;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                            // 歌单分区的详情那一层:标题行 + 返回。
+                            // 与列表**互斥** —— 两个都在的话,返回键该收哪一层
+                            // 就说不清了。
+                            if root.music-section == 1
+                                && root.open-playlist-name != "":
+                            playlist-header := HorizontalLayout {
+                                spacing: 8px;
+                                height: 28px;
+
+                                back := TouchArea {
+                                    width: 28px;
+
+                                    Text {
+                                        text: "‹";
+                                        color: #9aa0b4;
+                                        font-size: 20px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+
+                                    clicked => { root.close-playlist(); }
+                                }
+
+                                Text {
+                                    text: root.open-playlist-name;
+                                    color: #e6e8ef;
+                                    font-size: 15px;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
                             }
 
-                            // 其余三个分区摆的是同一列曲目,差别只在这批歌哪来的。
-                            if root.music-section != 1: track-list := TrackList {
+                            // 歌单分区的列表那一层。
+                            if root.music-section == 1
+                                && root.open-playlist-name == "":
+                            playlist-list := PlaylistList {
+                                vertical-stretch: 1;
+                                playlists: root.playlists;
+                                open(id, source) => {
+                                    root.open-playlist(id, source);
+                                }
+                            }
+
+                            // 曲目列表:三个非歌单分区直接摆它,歌单分区
+                            // 进了详情之后也摆它 —— 都是「一批歌」。
+                            if root.music-section != 1
+                                || root.open-playlist-name != "":
+                            track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;
                                 play(id) => { root.play(id); }

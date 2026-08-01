@@ -27,6 +27,18 @@ export struct TrackRow {
 
 // 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,
 // 这里不指定子集字体。
+// 歌单列表里的一行。
+//
+// `source` 是编号而不是枚举:Slint 的枚举跨不到 Rust 那边来,而这个值要在
+// 两侧对齐(见 ui/src/playlist.rs 的 Source)。0=我喜欢的、1=平台、2=本地。
+export struct PlaylistRow {
+    id: string,
+    name: string,
+    // 「12 首」或「暂无曲目」,已在 Rust 侧格式化好。
+    subtitle: string,
+    source: int,
+}
+
 export struct DeviceRow {
     id: string,
     name: string,

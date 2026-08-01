@@ -251,7 +251,11 @@ mod tests {
             |()| committed.set(committed.get() + 1),
         ));
 
-        assert_eq!(committed.get(), 0, "过期的那次不该出声");
+        assert_eq!(
+            committed.get(),
+            0,
+            "过期的那次不该出声"
+        );
         assert_eq!(
             playback.borrow().state(),
             &PlaybackState::Loading(track("2")),
@@ -282,7 +286,7 @@ mod tests {
     /// 准备阶段就失败:不提交,状态进 Failed 并留下原因。
     #[test]
     fn a_failed_preparation_reports_failure_without_committing()
-    {
+     {
         let playback = RefCell::new(Playback::default());
         let committed = Cell::new(0);
 

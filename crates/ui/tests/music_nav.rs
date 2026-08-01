@@ -33,17 +33,14 @@ fn only_the_selected_section_is_in_the_tree() {
     ui.set_music_section(0);
     assert!(present(&ui, "MainWindow::track-list"));
     assert!(!present(&ui, "MainWindow::keyword"));
-    assert!(!present(
-        &ui,
-        "MainWindow::playlists-placeholder"
-    ));
+    assert!(!present(&ui, "MainWindow::playlist-list"));
 
-    // 1 = 我的歌单:摆占位,不摆曲目列表
+    // 1 = 我的歌单:摆歌单列表,不摆曲目列表。
+    //
+    // 这里曾经断言的是一个占位文本 —— 歌单列表做出来之后,这一节摆的东西换了,
+    // 但「摆自己的东西、不摆一批歌」这条没变。
     ui.set_music_section(1);
-    assert!(present(
-        &ui,
-        "MainWindow::playlists-placeholder"
-    ));
+    assert!(present(&ui, "MainWindow::playlist-list"));
     assert!(
         !present(&ui, "MainWindow::track-list"),
         "歌单分区不该摆曲目列表 —— 那是别的分区的一批歌"

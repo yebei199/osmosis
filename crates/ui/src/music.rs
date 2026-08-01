@@ -16,7 +16,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use app_core::{Playback, PlaybackState, TrackDto};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{
+    ComponentHandle, Model as _, ModelRc, VecModel,
+};
 
 use crate::{MainWindow, TrackRow};
 #[cfg(not(target_arch = "wasm32"))]
@@ -515,8 +517,48 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     ui.on_select_section(move |section| {
         if let Some(ui) = weak.upgrade() {
             ui.set_music_section(section);
+            // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
+            // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
+            ui.set_open_playlist_name(
+                slint::SharedString::new(),
+            );
         }
         load_section(&weak, &sectioned, section);
+    });
+
+    // 打开一个歌单:记下来源与 id,再按来源取它的曲目。
+    let opened = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_open_playlist(move |id, source| {
+        let Some(ui) = weak.upgrade() else { return };
+        // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了
+        let name = ui
+            .get_playlists()
+            .iter()
+            .find(|row| {
+                row.id == id && row.source == source
+            })
+            .map_or_else(
+                || slint::SharedString::from("歌单"),
+                |row| row.name.clone(),
+            );
+        ui.set_open_playlist_name(name);
+
+        let source =
+            crate::playlist::Source::from_index(source);
+        let id = id.to_string();
+        fetch_into(&weak, &opened, async move {
+            crate::playlist::tracks_of(source, &id).await
+        });
+    });
+
+    let weak = ui.as_weak();
+    ui.on_close_playlist(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_open_playlist_name(
+                slint::SharedString::new(),
+            );
+        }
     });
 
     let shown = deck.clone();
@@ -573,8 +615,14 @@ fn load_section(
                 api::recent().await.map(|dto| dto.tracks)
             });
         }
-        // 这两个分区不摆「一批歌」:搜索等关键词,歌单摆的是歌单。
-        Section::Search | Section::Playlists => {}
+        // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
+        Section::Playlists => {
+            if let Some(ui) = weak.upgrade() {
+                crate::playlist::refresh(&ui);
+            }
+        }
+        // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。
+        Section::Search => {}
     }
 }
 

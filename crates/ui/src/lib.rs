@@ -21,6 +21,8 @@ mod cover;
 
 // 登录页的绑定。所有端都要 —— 音乐相关的路由一律要登录态。
 mod account;
+// 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
+mod playlist;
 
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
