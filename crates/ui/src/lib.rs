@@ -23,6 +23,8 @@ mod cover;
 mod account;
 // 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
 mod playlist;
+// 红心:哪些歌在红心里,以及点一下之后发生什么。
+mod liked;
 
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。

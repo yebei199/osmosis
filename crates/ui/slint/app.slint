@@ -116,6 +116,9 @@ export component MainWindow inherits Window {
     callback open-playlist(string, int);
     // 从详情退回列表。
     callback close-playlist();
+
+    // 点某一行的红心。参数是曲目 id 与点完之后的状态。
+    callback toggle-liked(string, bool);
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -450,6 +453,9 @@ export component MainWindow inherits Window {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;
                                 play(id) => { root.play(id); }
+                                toggle-liked(id, liked) => {
+                                    root.toggle-liked(id, liked);
+                                }
                             }
                         }
                     }

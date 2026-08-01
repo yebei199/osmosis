@@ -215,6 +215,9 @@ fn to_rows(
             duration: format_duration(track.duration_ms)
                 .into(),
             loading: loading == Some(track.id.as_str()),
+            // 红心状态由 push_rows 之后的 remark 填 —— 这里没有那个集合,
+            // 而把它传进来会让这个纯格式化函数多认识一样东西。
+            liked: false,
         })
         .collect()
 }
@@ -284,6 +287,9 @@ struct Deck {
     /// 列表里那一批歌的权威副本。Slint 的 model 只存格式化后的字符串,
     /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
     tracks: Rc<RefCell<Vec<TrackDto>>>,
+    /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
+    /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::liked)。
+    liked: crate::liked::LikedSet,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
@@ -417,11 +423,17 @@ pub fn bind(
         lyrics: lyrics.clone(),
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
+        liked: crate::liked::LikedSet::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(std::cell::Cell::new(false)),
     };
+
+    // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
+    // 真正生效的是之后每次 push_rows 里的那次重标。
+    crate::liked::bind(ui, &deck.liked);
+    crate::liked::refresh(&deck.liked, ui);
 
     bind_search(ui, &deck);
     bind_list(ui, &deck);
@@ -706,6 +718,8 @@ fn push_rows(
 ) {
     let rows = to_rows(&deck.tracks.borrow(), loading);
     ui.set_tracks(ModelRc::new(VecModel::from(rows)));
+    // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
+    crate::liked::remark(&deck.liked, ui);
 }
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。

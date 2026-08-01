@@ -22,7 +22,8 @@ use contract::{
     ArtistSearchDto, HealthDto, LoginDto, LyricDto,
     PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
     PlaylistDto, PlaylistSearchDto, PlaylistsDto,
-    RegisterDto, SearchDto, SessionDto, TracksDto,
+    RegisterDto, SearchDto, SessionDto, TrackIdsDto,
+    TracksDto,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -191,6 +192,9 @@ async fn main() {
         .route("/search/playlists", get(search_playlists))
         .route("/daily", get(daily))
         .route("/liked", get(liked))
+        // 红心的**全量标识**,不分页。/liked 给的是一页曲目,回答不了
+        // 「这一首红心没有」—— 而界面每一行都要问这个问题。
+        .route("/liked/ids", get(liked_ids))
         // 红心与收藏各用自己的名词,不挂在 /playlists/{id} 下:
         // 那条路径的 id 是本地歌单的整数主键,而收藏的是平台歌单的字符串 id ——
         // 同一个 {id} 指两个 id 空间,迟早有人传错一个
@@ -502,6 +506,49 @@ struct PageQuery {
 ///
 /// user_id 不做缓存:重新扫码登录会换一个账号,缓存住的话红心列表会静默停在旧账号上。
 /// 这是一次同机 gRPC,便宜得没必要省。
+async fn liked_ids(
+    State(state): State<AppState>,
+    account: Account,
+) -> Result<Json<TrackIdsDto>, Failure> {
+    let mut auth = state.upstream.auth;
+    let mut library = state.upstream.library;
+
+    let netease_account = auth
+        .get_account_status(bangdream::as_user(
+            &account,
+            GetAccountStatusRequest {
+                platform: Platform::Netease as i32,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    // 没绑网易云是**状态**不是错误:那就是「一首红心都没有」,
+    // 界面据此把所有心画成空的,而不是整页失败。
+    if !netease_account.logged_in {
+        return Ok(Json(TrackIdsDto {
+            track_ids: Vec::new(),
+        }));
+    }
+
+    let found = library
+        .list_liked_tracks(bangdream::as_user(
+            &account,
+            ListLikedTracksRequest {
+                platform: Platform::Netease as i32,
+                user_id: netease_account.user_id,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    Ok(Json(TrackIdsDto {
+        track_ids: found.track_ids,
+    }))
+}
+
 async fn liked(
     State(state): State<AppState>,
     account: Account,

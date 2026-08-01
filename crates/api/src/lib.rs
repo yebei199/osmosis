@@ -8,7 +8,8 @@ use contract::{
     ArtistSearchDto, ErrorDto, HealthDto, LoginDto,
     LyricDto, PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
     PlaylistDto, PlaylistSearchDto, PlaylistsDto,
-    RegisterDto, SearchDto, SessionDto, TracksDto,
+    RegisterDto, SearchDto, SessionDto, TrackIdsDto,
+    TracksDto,
 };
 use serde::Serialize;
 
@@ -364,6 +365,15 @@ pub async fn remove_playlist_tracks(
         Some(TrackRefs::from(tracks)),
     )
     .await
+}
+
+/// `GET /liked/ids` —— 红心的全量标识。
+///
+/// 界面每一行都要问「这一首红心没有」,而 [`liked`] 给的是一页曲目,
+/// 回答不了这个问题。取一次存成集合,之后本地标。
+pub async fn liked_ids() -> Result<TrackIdsDto, ApiError> {
+    platform::get_json(format!("{}/liked/ids", base_url()))
+        .await
 }
 
 /// `PUT|DELETE /liked/{track_id}` —— 点红心或取消。

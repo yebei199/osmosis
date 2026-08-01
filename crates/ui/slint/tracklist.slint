@@ -12,6 +12,9 @@ export component TrackList inherits Flickable {
     in property <[TrackRow]> tracks;
 
     callback play(string);
+    // 点红心。参数是曲目 id 与**点完之后**的状态 —— 让 Rust 再去读一遍当前
+    // 状态的话,两边对「现在是红还是没红」的理解就有了两个来源。
+    callback toggle-liked(string, bool);
 
     vertical-stretch: 1;
     content-height: results.preferred-height;
@@ -62,6 +65,25 @@ export component TrackList inherits Flickable {
                         overflow: elide;
                     }
                 }
+                // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
+                heart := TouchArea {
+                    width: 32px;
+
+                    Text {
+                        text: row.liked ? "♥" : "♡";
+                        color: row.liked ? #d96c8a : #6f7688;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    // 不冒泡到整行那个 TouchArea —— 否则点红心的同时会把这首歌
+                    // 放出来。Slint 里子 TouchArea 先收到点击且不再往下传。
+                    clicked => {
+                        root.toggle-liked(row.id, !row.liked);
+                    }
+                }
+
                 // 时长让位给「加载中」:两个都摆会把歌名挤窄,
                 // 而正在加载时时长不是用户在等的信息。
                 Text {

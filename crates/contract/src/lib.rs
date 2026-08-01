@@ -208,6 +208,19 @@ pub struct PlayedDto {
     pub track_id: String,
 }
 
+/// `GET /liked/ids` 的响应体:红心的**全量标识**。
+///
+/// 与 [`TracksDto`] 是两件事:那个是一页曲目,这个是一个集合。界面每一行都要问
+/// 「这一首红心没有」,而分页的曲目回答不了这个问题。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct TrackIdsDto {
+    /// 平台内的曲目 id。目前只有网易云一个平台,故不带平台名 ——
+    /// 接第二个平台时这里要变成 `(平台, id)` 对,那是不兼容变更。
+    pub track_ids: Vec<String>,
+}
+
 /// 一台在线设备。
 ///
 /// 「在线」没有别的含义:它**等于**此刻与服务端之间存在活跃连接。
