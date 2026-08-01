@@ -1,3 +1,7 @@
+# 本机的 .env 进配方的环境(邀请码、测试账号)。文件不存在也不报错,
+# CI 上就是这样跑的。它在 .gitignore 里 —— 邀请码进了历史就等于没有邀请码。
+set dotenv-load := true
+
 apk := "dist/slint-study-debug.apk"
 # 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
 # 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
