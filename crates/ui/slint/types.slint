@@ -40,6 +40,9 @@ export struct PlaylistRow {
     // 「12 首」或「暂无曲目」,已在 Rust 侧格式化好。
     subtitle: string,
     source: int,
+    // 封面。取不到就是空图(width == 0),那时画一块占位色 ——
+    // CDN 会过期,取不到是常态不是故障(见 ui/src/artwork.rs)。
+    cover: image,
 }
 
 // 搜索结果里的一位歌手。

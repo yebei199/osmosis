@@ -294,6 +294,8 @@ struct Deck {
     /// 后者是「把刚才那批加进来」的唯一来源 —— 进歌单那一刻 `tracks`
     /// 就被换掉了(见 crate::playlist::Editing)。
     editing: crate::playlist::Editing,
+    /// 歌单封面表。取一次、记住、下次直接给(见 crate::artwork)。
+    artwork: crate::artwork::Artwork,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
@@ -429,6 +431,7 @@ pub fn bind(
         tracks: Rc::new(RefCell::new(Vec::new())),
         liked: crate::liked::LikedSet::default(),
         editing: crate::playlist::Editing::default(),
+        artwork: crate::artwork::Artwork::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
@@ -446,6 +449,7 @@ pub fn bind(
     crate::playlist::bind_edit(
         ui,
         &deck.editing,
+        &deck.artwork,
         move |ui| reload_open_playlist(ui, &reloading),
     );
 
@@ -618,6 +622,11 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
 
         let editable = crate::playlist::is_editable(source);
         ui.set_open_playlist_local(editable);
+        // 详情页那张封面按标识索引 —— 名字会重复,两个歌单可以同名
+        ui.set_open_playlist_id(id.as_str().into());
+        ui.set_open_playlist_cover(
+            opened.artwork.get(&id).unwrap_or_default(),
+        );
         ui.set_add_batch_text(
             if editable {
                 crate::playlist::add_batch_text(count)
@@ -719,7 +728,10 @@ fn load_section(
         // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
         Section::Playlists => {
             if let Some(ui) = weak.upgrade() {
-                crate::playlist::refresh(&ui);
+                crate::playlist::refresh(
+                    &ui,
+                    &deck.artwork,
+                );
             }
         }
         // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。

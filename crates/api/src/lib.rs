@@ -537,6 +537,19 @@ pub async fn fetch_bytes(
     platform::get_bytes(url.to_owned()).await
 }
 
+/// 读一张缓存下来的封面。没有就是没有。
+///
+/// `name` 必须已经过调用方的过滤(见 `ui::artwork::cache_name`)——
+/// 它会成为路径的一段,而歌单标识来自平台。
+pub fn load_artwork(name: &str) -> Option<Vec<u8>> {
+    platform::load_artwork(name)
+}
+
+/// 存一张封面。失败只记一笔:封面是装饰,存不下只是下次再取一遍。
+pub fn save_artwork(name: &str, bytes: &[u8]) {
+    platform::save_artwork(name, bytes);
+}
+
 /// 把服务端的错误响应体翻成一个带 code 的错误。
 ///
 /// 解不出 [`ErrorDto`] 就退回 [`ApiError::Transport`] —— 502 网关回的是 HTML,
@@ -793,6 +806,38 @@ mod platform {
         .map(|path| path.with_file_name("settings.json"))
     }
 
+    /// 封面缓存目录,与会话、设置同一个基座。
+    fn artwork_dir() -> Option<PathBuf> {
+        session_path_from(
+            std::env::var("XDG_STATE_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .map(|path| path.with_file_name("covers"))
+    }
+
+    pub(super) fn load_artwork(
+        name: &str,
+    ) -> Option<Vec<u8>> {
+        std::fs::read(artwork_dir()?.join(name)).ok()
+    }
+
+    pub(super) fn save_artwork(name: &str, bytes: &[u8]) {
+        let Some(dir) = artwork_dir() else {
+            return;
+        };
+
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            log::warn!("建封面目录失败: {err}");
+            return;
+        }
+
+        if let Err(err) =
+            std::fs::write(dir.join(name), bytes)
+        {
+            log::warn!("写封面失败: {err}");
+        }
+    }
+
     /// 读设置文件的原文。读不到就是没有 —— 解析那半归 `settings` 模块。
     pub(super) fn load_settings() -> Option<String> {
         std::fs::read_to_string(settings_file()?).ok()
@@ -937,6 +982,18 @@ mod platform {
 
     pub(super) fn load_settings() -> Option<String> {
         storage()?.get_item(SETTINGS_KEY).ok()?
+    }
+
+    /// web 上不缓存封面:localStorage 只存文本,而把图片编成 base64 塞进去
+    /// 会撞上 5MB 的配额 —— 那额度是留给会话与设置的。浏览器自己的 HTTP 缓存
+    /// 已经在做这件事,再来一层是白费。
+    pub(super) fn load_artwork(
+        _name: &str,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    pub(super) fn save_artwork(_name: &str, _bytes: &[u8]) {
     }
 
     pub(super) fn save_settings(raw: &str) {

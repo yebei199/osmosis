@@ -23,6 +23,9 @@ mod cover;
 mod account;
 // 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
 mod playlist;
+// 歌单封面:取一次、记住、下次直接给。
+#[cfg(not(target_arch = "wasm32"))]
+mod artwork;
 // 红心:哪些歌在红心里,以及点一下之后发生什么。
 mod liked;
 // 播放进度的格式化。与列表里的时长同一条规矩:算在 Rust 侧,`.slint` 里只摆。

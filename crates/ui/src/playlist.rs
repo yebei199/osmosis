@@ -106,13 +106,34 @@ pub async fn tracks_of(
 }
 
 /// 把契约里的歌单翻成界面要的一行。
+///
+/// 封面留空:它要一趟网络,而这个函数是同步的。图到了之后由
+/// `crate::artwork::apply` 回填(见那个模块)。
 pub fn to_row(list: &PlaylistDto) -> PlaylistRow {
     PlaylistRow {
         id: list.id.clone().into(),
         name: list.name.clone().into(),
         subtitle: track_count_text(list.track_count).into(),
         source: Source::from_dto(list.source).to_index(),
+        cover: slint::Image::default(),
     }
+}
+
+/// 给这一批歌单挨个把封面取上。
+///
+/// 已经在内存或磁盘里的那些在这一帧就摆上,剩下的各发一次请求。
+pub fn fetch_covers(
+    ui: &MainWindow,
+    art: &crate::artwork::Artwork,
+    lists: &[PlaylistDto],
+) {
+    for list in lists {
+        let Some(url) = list.cover.as_deref() else {
+            continue;
+        };
+        crate::artwork::ensure(ui, art, &list.id, url);
+    }
+    crate::artwork::apply(ui, art);
 }
 
 /// 正在编辑什么。
@@ -200,19 +221,24 @@ fn refs_of(tracks: &[TrackDto]) -> Vec<(String, String)> {
 pub fn bind_edit<R>(
     ui: &MainWindow,
     editing: &Editing,
+    art: &crate::artwork::Artwork,
     reload: R,
 ) where
     R: Fn(&MainWindow) + Clone + 'static,
 {
-    bind_create(ui);
-    bind_rename(ui, editing);
-    bind_delete(ui, editing);
+    bind_create(ui, art);
+    bind_rename(ui, editing, art);
+    bind_delete(ui, editing, art);
     bind_add_batch(ui, editing, reload.clone());
     bind_remove(ui, editing, reload);
 }
 
 /// 新建歌单。名字由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
-fn bind_create(ui: &MainWindow) {
+fn bind_create(
+    ui: &MainWindow,
+    art: &crate::artwork::Artwork,
+) {
+    let art = art.clone();
     let weak = ui.as_weak();
 
     ui.on_create_playlist(move |name| {
@@ -225,12 +251,13 @@ fn bind_create(ui: &MainWindow) {
             return;
         }
 
+        let art = art.clone();
         let weak = ui.as_weak();
         let _ = slint::spawn_local(async move {
             let done = api::create_playlist(&name).await;
             let Some(ui) = weak.upgrade() else { return };
             match done {
-                Ok(_) => refresh(&ui),
+                Ok(_) => refresh(&ui, &art),
                 Err(err) => report(&ui, &err, "建歌单失败"),
             }
         });
@@ -238,7 +265,12 @@ fn bind_create(ui: &MainWindow) {
 }
 
 /// 改名。
-fn bind_rename(ui: &MainWindow, editing: &Editing) {
+fn bind_rename(
+    ui: &MainWindow,
+    editing: &Editing,
+    art: &crate::artwork::Artwork,
+) {
+    let art = art.clone();
     let editing = editing.clone();
     let weak = ui.as_weak();
 
@@ -253,6 +285,7 @@ fn bind_rename(ui: &MainWindow, editing: &Editing) {
             return;
         }
 
+        let art = art.clone();
         let weak = ui.as_weak();
         let _ = slint::spawn_local(async move {
             let done =
@@ -264,7 +297,7 @@ fn bind_rename(ui: &MainWindow, editing: &Editing) {
                     ui.set_open_playlist_name(
                         name.as_str().into(),
                     );
-                    refresh(&ui);
+                    refresh(&ui, &art);
                 }
                 Err(err) => report(&ui, &err, "改名失败"),
             }
@@ -273,7 +306,12 @@ fn bind_rename(ui: &MainWindow, editing: &Editing) {
 }
 
 /// 删除。二次确认由界面那一层管(见 app.slint),到这里已经是确定要删了。
-fn bind_delete(ui: &MainWindow, editing: &Editing) {
+fn bind_delete(
+    ui: &MainWindow,
+    editing: &Editing,
+    art: &crate::artwork::Artwork,
+) {
+    let art = art.clone();
     let editing = editing.clone();
     let weak = ui.as_weak();
 
@@ -282,6 +320,7 @@ fn bind_delete(ui: &MainWindow, editing: &Editing) {
             return;
         };
         let editing = editing.clone();
+        let art = art.clone();
         let weak = weak.clone();
 
         let _ = slint::spawn_local(async move {
@@ -298,7 +337,7 @@ fn bind_delete(ui: &MainWindow, editing: &Editing) {
                     ui.set_add_batch_text(
                         slint::SharedString::new(),
                     );
-                    refresh(&ui);
+                    refresh(&ui, &art);
                 }
                 Err(err) => report(&ui, &err, "删歌单失败"),
             }
@@ -386,7 +425,11 @@ fn bind_remove<R>(
 }
 
 /// 拉一次歌单列表,填进界面。
-pub fn refresh(ui: &MainWindow) {
+pub fn refresh(
+    ui: &MainWindow,
+    art: &crate::artwork::Artwork,
+) {
+    let art = art.clone();
     let weak = ui.as_weak();
 
     let _ = slint::spawn_local(async move {
@@ -402,6 +445,9 @@ pub fn refresh(ui: &MainWindow) {
                         slint::VecModel::from(rows),
                     ),
                 );
+                // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
+                // 网络慢时整张列表都是空的。
+                fetch_covers(&ui, &art, &dto.playlists);
             }
             Err(err)
                 if crate::account::handle_session_expiry(

@@ -125,6 +125,10 @@ export component MainWindow inherits Window {
     // 当前打开的歌单名。空串 = 停在列表那一层,没有打开任何歌单。
     // 用名字而不是另设一个布尔:详情页要显示它,两个值会有对不上的一天。
     in-out property <string> open-playlist-name;
+    // 当前打开的歌单标识与封面。标识由 Rust 在打开时填 —— 封面表按它索引,
+    // 而名字会重复(两个歌单可以同名)。
+    in-out property <string> open-playlist-id;
+    in property <image> open-playlist-cover;
     // 打开某个歌单。参数是 PlaylistRow 的 id 与 source ——
     // 两种歌单的 id 不在同一个空间,少了 source 就不知道该问谁要曲目。
     callback open-playlist(string, int);
@@ -495,6 +499,26 @@ export component MainWindow inherits Window {
                                     }
 
                                     clicked => { root.close-playlist(); }
+                                }
+
+                                // 详情页那张封面。比列表里那张大一档,
+                                // 但不铺满 —— 这一层的主体是曲目,不是图。
+                                if root.open-playlist-cover.width > 0:
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        border-radius: 5px;
+                                        clip: true;
+
+                                        Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            image-fit: cover;
+                                            source: root.open-playlist-cover;
+                                        }
+                                    }
                                 }
 
                                 // 改名时标题就地变成输入框。另开一层对话框的话,
