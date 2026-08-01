@@ -9,6 +9,7 @@
 pub mod account;
 pub mod auth;
 pub mod bangdream;
+pub mod cache;
 pub mod db;
 pub mod error;
 pub mod history;
