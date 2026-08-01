@@ -69,7 +69,7 @@ apps/android/      Android 平台入口(cdylib)+ gradle/ 打包工程
 apps/ios/          iOS 平台入口(staticlib)。只验证编译,打包需 macOS
 apps/web/          Web 平台入口(cdylib + wasm-bindgen)。只验证编译
 server/            axum 后端:共享 contract,并把 bang-dream 的 gRPC 翻成 HTTP/JSON
-third_party/bang-dream/  音乐聚合层(Go, gRPC)。submodule,契约的唯一来源
+server/proto/      那份 gRPC 契约的副本。上游在 bang-dream,它是独立仓库
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
 xtask/             构建逻辑(`cargo xtask android`),容器/本机通用
@@ -95,9 +95,10 @@ target 上根本编不过。
 just desktop-dev
 ```
 
-想让它出声,四个终端。前置条件:`git submodule update --init` 拉到
+想让它出声,四个终端。前置条件:另外 clone 一份
 [bang-dream](https://github.com/yebei199/bang-dream)(把网易云等平台的加密与异构响应
-收敛成统一 gRPC 接口的聚合层),以及一次扫码登录。
+收敛成统一 gRPC 接口的聚合层),用 `BANG_DREAM_REPO` 指向它(默认找同级目录的
+`../bang-dream`),以及一次扫码登录。
 
 ```sh
 just pg                      # 终端 0:Postgres(账号、本地歌单、播放事件)

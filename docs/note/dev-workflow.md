@@ -47,11 +47,15 @@ just --set mcp_port 8091 desktop-dev        # 终端 3:实例 B,换个 MCP 端�
 
 ## 音乐链路的开发细节
 
-开发时跑的通常不是 submodule 里那份 bang-dream 副本,而是自己的工作树:
+bang-dream 是独立仓库,不挂在本仓库里。跑之前先告诉 just 它在哪
+(不设时默认找同级目录的 `../bang-dream`):
 
 ```sh
 BANG_DREAM_REPO=~/projects/bang_dream just bang-dream
 ```
+
+`cargo xtask boundaries` 也读这个变量:设了就拿上游的 `.proto` 跟 `server/proto`
+那份副本比对,没设就跳过 —— CI 上没有上游,这是常态。
 
 axum 侧的上游地址由 `BANG_DREAM_ADDR` 覆盖。
 
