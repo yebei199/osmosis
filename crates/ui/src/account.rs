@@ -131,6 +131,13 @@ pub fn handle_session_expiry(
     );
 
     if expired {
+        // 留下一行:清掉落盘的会话是**不可逆**的,而它此前一声不吭 ——
+        // 「一重启就要重登」这类报告因此无从查起,只知道文件没了,不知道谁删的。
+        // 这一行说出是哪一次请求的答复触发的。
+        log::warn!(
+            "会话被服务端判为失效,已清除本地登录态: {err}"
+        );
+
         api::session::clear();
         ui.set_logged_in(false);
         ui.set_login_error("登录已失效,请重新登录".into());
