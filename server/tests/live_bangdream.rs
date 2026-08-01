@@ -31,7 +31,6 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
-use server::paging;
 
 /// 与 `main.rs` 的默认上游地址一致。那个常量属于进程装配,不在 lib 里,
 /// 这里重复一次 —— 它写错了下面两条测试立刻连不上,不会静默漂移。
@@ -204,7 +203,9 @@ async fn liked_returns_hydrated_tracks() {
         .into_inner();
     assert!(!liked.track_ids.is_empty(), "一首红心都没有?");
 
-    let ids = paging::page(&liked.track_ids, 0, 5);
+    // 只验往返,取前几个就够 —— 973 首全取一遍是在测网易云的耐心
+    let ids =
+        &liked.track_ids[..5.min(liked.track_ids.len())];
     let response = CatalogServiceClient::new(channel)
         .get_tracks(req(GetTracksRequest {
             platform: Platform::Netease as i32,

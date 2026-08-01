@@ -391,6 +391,64 @@ async fn membership_without_details_is_rejected() {
     );
 }
 
+/// 按给定的 id 顺序读详情,与歌单无关。
+///
+/// 本地歌单的成员关系在自家表里,这里只借详情那一半 —— 把它也写进
+/// `platform_playlist_tracks` 的话,本地歌单的整数 id 会和平台歌单的字符串 id
+/// 撞在同一列上,而那时两个歌单会互相看见对方的歌。
+#[tokio::test]
+async fn details_of_follows_the_requested_order() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_details_order").await;
+
+    cache::put_details(
+        &mut tx,
+        &[
+            track("10", "甲"),
+            track("20", "乙"),
+            track("30", "丙"),
+        ],
+    )
+    .await
+    .expect("写详情应该成功");
+
+    // 要的顺序与存的顺序不同
+    let asked =
+        ["30".to_owned(), "10".to_owned(), "20".to_owned()];
+    let got = cache::details_of(&mut tx, "netease", &asked)
+        .await
+        .expect("读详情应该成功");
+
+    let titles: Vec<&str> =
+        got.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["丙", "甲", "乙"]);
+
+    // 账号在这条路径上不参与:详情是全账号共用的
+    let _ = account;
+}
+
+/// 没有详情的 id 直接跳过,不留空洞也不报错。
+///
+/// 平台不肯给的歌(下架、无权限)就是这样,而本地歌单里完全可能存着它 ——
+/// 那时整个歌单打不开,比少一首更坏。
+#[tokio::test]
+async fn details_of_skips_ids_without_details() {
+    let mut tx = tx().await;
+
+    cache::put_details(&mut tx, &[track("1", "有详情")])
+        .await
+        .expect("写详情应该成功");
+
+    let asked = ["1".to_owned(), "下架了".to_owned()];
+    let got = cache::details_of(&mut tx, "netease", &asked)
+        .await
+        .expect("缺详情不该是错误");
+
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].id, "1");
+}
+
 /// 「我喜欢的」用保留 id,走的是同一张表、同一套代码。
 #[tokio::test]
 async fn the_liked_list_is_an_ordinary_playlist() {

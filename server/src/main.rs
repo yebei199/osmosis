@@ -53,7 +53,7 @@ use server::error::Failure;
 use server::history;
 use server::playlist::{self, TrackRef};
 use server::signaling::{self, SharedRoster};
-use server::{cache, db, error, paging};
+use server::{cache, db, error};
 
 /// 默认监听地址。
 ///
@@ -499,18 +499,20 @@ async fn daily(
     }))
 }
 
-/// `GET /liked` 的查询参数。
+/// `GET /recent` 的查询参数。
+///
+/// 只剩 limit 一个:歌单类的路由都不再切页了,它们要的是完整的一批。
+/// 最近播放不同 —— 那是一条越来越长的流水,「最近多少条」是它的固有参数。
 #[derive(Deserialize)]
 struct PageQuery {
     limit: Option<usize>,
-    offset: Option<usize>,
 }
 
-/// `GET /liked?limit=&offset=` —— 我喜欢的音乐。
+/// `GET /liked` —— 我喜欢的音乐,全量。
 ///
-/// 三步:先问上游当前账号是谁,再拿它**全量**的红心标识列表,切一页出来补全成曲目。
+/// 三步:先问上游当前账号是谁,再拿它**全量**的红心标识列表,把缺详情的那些补齐。
 /// 上游只给标识是刻意的(它的 `docs/adr/0003`):平台返回的曲目列表会被截断,
-/// 标识列表不会,翻页因此由调用方持有列表自行完成,聚合层不必缓存。
+/// 标识列表不会。
 ///
 /// user_id 不做缓存:重新扫码登录会换一个账号,缓存住的话红心列表会静默停在旧账号上。
 /// 这是一次同机 gRPC,便宜得没必要省。
@@ -572,12 +574,47 @@ async fn cached_tracks(
     ids: &[String],
 ) -> Result<Vec<TrackDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
-    // 与 track_to_dto 存进缓存的那个值必须是同一个来源
-    let platform =
-        bangdream::platform_name(Platform::Netease as i32);
+    let platform = netease_name();
+
+    let unavailable =
+        fill_details(state, account, &mut conn, ids)
+            .await?;
+    let known: Vec<String> = ids
+        .iter()
+        .filter(|id| !unavailable.contains(*id))
+        .cloned()
+        .collect();
+
+    cache::set_membership(
+        &mut conn,
+        account.id,
+        playlist_id,
+        &platform,
+        &known,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    cache::tracks_of(&mut conn, account.id, playlist_id)
+        .await
+        .map_err(|err| error::map_error(&err))
+}
+
+/// 把这些 id 里还缺的详情向平台要回来存下,返回平台**仍然给不出**的那些。
+///
+/// 分成两步问「谁还缺」是有意的:第一次问的是「要不要发请求」,第二次问的是
+/// 「发完了还差谁」。合成一次的话,平台跳过的那些(下架、无权限)与从没问过的
+/// 那些混在一起,分不出来。
+async fn fill_details(
+    state: &AppState,
+    account: &Account,
+    conn: &mut sqlx::PgConnection,
+    ids: &[String],
+) -> Result<HashSet<String>, Failure> {
+    let platform = netease_name();
 
     let missing =
-        cache::missing_details(&mut conn, &platform, ids)
+        cache::missing_details(conn, &platform, ids)
             .await
             .map_err(|err| error::map_error(&err))?;
 
@@ -601,37 +638,25 @@ async fn cached_tracks(
             .map(bangdream::track_to_dto)
             .collect();
 
-        cache::put_details(&mut conn, &tracks)
+        cache::put_details(conn, &tracks)
             .await
             .map_err(|err| error::map_error(&err))?;
     }
 
-    // 再问一次谁还缺:上一轮里平台没给的那些就落在这里
-    let unavailable: HashSet<String> =
-        cache::missing_details(&mut conn, &platform, ids)
-            .await
-            .map_err(|err| error::map_error(&err))?
-            .into_iter()
-            .collect();
-    let known: Vec<String> = ids
-        .iter()
-        .filter(|id| !unavailable.contains(*id))
-        .cloned()
-        .collect();
-
-    cache::set_membership(
-        &mut conn,
-        account.id,
-        playlist_id,
-        &platform,
-        &known,
-    )
-    .await
-    .map_err(|err| error::map_error(&err))?;
-
-    cache::tracks_of(&mut conn, account.id, playlist_id)
+    Ok(cache::missing_details(conn, &platform, ids)
         .await
-        .map_err(|err| error::map_error(&err))
+        .map_err(|err| error::map_error(&err))?
+        .into_iter()
+        .collect())
+}
+
+/// 缓存里代表网易云的那个字符串。
+///
+/// 走 `track_to_dto` 用的同一个函数 —— 另写一份的话,prost 生成的
+/// `as_str_name()` 给的是 `PLATFORM_NETEASE`,与存进去的 `netease` 对不上,
+/// 而那是运行期才炸的外键错误,编译器一声不吭。
+fn netease_name() -> String {
+    bangdream::platform_name(Platform::Netease as i32)
 }
 
 async fn liked(
@@ -887,48 +912,29 @@ async fn playlist_tracks(
     State(state): State<AppState>,
     account: Account,
     Path(id): Path<i64>,
-    Query(query): Query<PageQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
     let refs = playlist::tracks(&mut conn, account.id, id)
         .await
         .map_err(|err| error::map_error(&err))?;
 
-    // 目前只有网易云一个平台。多平台之后这里要按 platform 分组各问各的,
-    // 那时 GetTracks 的一次调用装不下整页 —— 留到真有第二个平台时再改。
+    // 目前只有网易云一个平台。多平台之后这里要按 platform 分组各问各的 ——
+    // 留到真有第二个平台时再改。
     let ids: Vec<String> = refs
         .iter()
         .map(|track| track.track_id.clone())
         .collect();
-    let page = paging::page(
-        &ids,
-        query.offset.unwrap_or_default(),
-        query.limit.unwrap_or_default(),
-    );
-    if page.is_empty() {
-        return Ok(Json(TracksDto { tracks: Vec::new() }));
-    }
 
-    let mut catalog = state.upstream.catalog;
-    let response = catalog
-        .get_tracks(bangdream::as_user(
-            &account,
-            GetTracksRequest {
-                platform: Platform::Netease as i32,
-                track_ids: page.to_vec(),
-            },
-        ))
-        .await
-        .map_err(|status| fail(&status))?
-        .into_inner();
+    // 只借详情那一半:本地歌单的成员关系真相在自家表里,不进缓存。
+    // 进了的话,它的整数 id 会和平台歌单的字符串 id 撞在同一列上。
+    fill_details(&state, &account, &mut conn, &ids).await?;
 
-    Ok(Json(TracksDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
-    }))
+    let tracks =
+        cache::details_of(&mut conn, &netease_name(), &ids)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    Ok(Json(TracksDto { tracks }))
 }
 
 /// 增删曲目的请求体。

@@ -143,6 +143,42 @@ pub async fn missing_details(
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
+/// 按给定的 id 顺序读详情,与歌单无关。
+///
+/// 本地歌单用这条:它的成员关系真相在自家的 `local_playlist_tracks`,要借的只有
+/// 详情那一半。走 [`tracks_of`] 的话就得先把成员关系写进 `platform_playlist_tracks`,
+/// 而那张表的 `playlist_id` 是 TEXT —— 本地歌单的整数 id 会和平台歌单的字符串 id
+/// 撞在同一列上。
+///
+/// 没有详情的 id 直接跳过:平台不肯给的歌(下架、无权限)就是这样,而让整个歌单
+/// 打不开比少一首更坏。
+pub async fn details_of(
+    conn: &mut PgConnection,
+    platform: &str,
+    ids: &[String],
+) -> Result<Vec<TrackDto>, AppError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 顺序由请求方给,不是表里的任何一列 —— 用 UNNEST 的下标排,
+    // 免得把几百条记录取回来再在内存里重排一次。
+    let rows: Vec<TrackRow> = sqlx::query_as(
+        "SELECT d.platform, d.track_id, d.title, d.alias,
+                d.artists, d.cover, d.duration_ms
+         FROM UNNEST($1::text[]) WITH ORDINALITY AS asked (id, pos)
+         JOIN platform_tracks d
+           ON d.platform = $2 AND d.track_id = asked.id
+         ORDER BY asked.pos",
+    )
+    .bind(ids)
+    .bind(platform)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(rows.into_iter().map(TrackRow::into_dto).collect())
+}
+
 /// 读回一个歌单的曲目,按平台给的次序。
 ///
 /// 没缓存过就是空列表,不是错误 —— 冷启动走的正是这条路。
