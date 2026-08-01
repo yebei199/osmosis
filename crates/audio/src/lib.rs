@@ -240,9 +240,13 @@ async fn load_with(
                 AudioError::Stream(e.to_string())
             })?;
 
+            // 长度得在流被搬进解码任务之前问 —— 之后它就归解码器了。
+            // 拿不到(上游没给 Content-Length)时这一首只能往前跳,见 [`decode`]。
+            let byte_len = stream.content_length();
+
             // 解码要阻塞读若干秒(等够探测格式的字节),不能占着 async 线程。
             let decoder = tokio::task::spawn_blocking(
-                move || decode(stream),
+                move || decode(stream, byte_len),
             )
             .await
             .map_err(|e| AudioError::Stream(e.to_string()))??;
@@ -254,10 +258,29 @@ async fn load_with(
 }
 
 /// 解码一个音频源。失败时不 panic —— 直链过期是常态,不是程序错误。
+///
+/// **`byte_len` 决定这条流能不能往回跳。** rodio 的默认设置是
+/// `is_seekable: false` / `byte_len: None`,于是 symphonia 把流当作只进不退,
+/// 任何回跳都返回 `SeekErrorKind::ForwardOnly` —— 症状是进度条往前拖得动、
+/// 往回拖报「这首跳不了」,而两次拖的是同一首歌。它同时是 MP3/Vorbis
+/// **算总时长**的前提(这两种格式的头里没有时长)。
+///
+/// 拿不到长度时维持只进不退,如实报错。探长度要 seek 到流尾,而那对一条
+/// 边下边播的流意味着**先把整首下完**,正是 [`load`] 存在的理由的反面。
 pub fn decode<R: Source>(
     source: R,
+    byte_len: Option<u64>,
 ) -> Result<rodio::Decoder<R>, AudioError> {
-    Ok(rodio::Decoder::new(source)?)
+    let builder = rodio::decoder::DecoderBuilder::new()
+        .with_data(source);
+    // with_byte_len 顺带把 is_seekable 置真 —— 两者分开设是没有意义的,
+    // rodio 的文档也这么说
+    let builder = match byte_len {
+        Some(len) => builder.with_byte_len(len),
+        None => builder,
+    };
+
+    Ok(builder.build()?)
 }
 
 /// 出声的那一头。持有音频设备,活多久声音就能放多久。
@@ -347,15 +370,17 @@ impl Player {
         self.player.get_pos()
     }
 
-    /// 跳到某个时间点。**送出请求就返回,不等它落地。**
+    /// 跳到某个时间点。**下场有两种,别只看返回值。**
     ///
-    /// 真正的读字节发生在解码线程上(见 [`ChannelSource::try_seek`]),可能要
-    /// 好几秒 —— 跳到还没下到的位置要重开一个 range 请求。这里等的只是
-    /// rodio 把请求排给音频线程的那一下,毫秒级。
+    /// `Err`:当场就知道跳不动 —— 格式不支持、这条流只进不退、或者压根没有
+    /// 可跳的东西(正在听同播)。这一侧是**确定的**:rodio 的 `TrackPosition`
+    /// 只在 `Ok` 时挪位置,所以位置计数器纹丝不动,进度条不会显示一个声音
+    /// 没去过的时刻。
     ///
-    /// 所以 `Ok` **不代表跳成了**。结论要问 [`ChannelSource::seek_state`] ——
-    /// 那也是界面显示「缓冲中」与「这首跳不了」的来源。这里的 `Err` 只有
-    /// 一种含义:压根没有可跳的东西(比如正在听同播)。
+    /// `Ok`:请求收下了。可能已经跳完,也可能解码线程还在取字节 —— 跳到还没
+    /// 下到的位置要重开一个 range 请求,那要好几秒(见
+    /// [`ChannelSource::try_seek`] 的裁决窗口)。后一种情况的结论要问
+    /// [`ChannelSource::seek_state`],那也是界面显示「缓冲中」的来源。
     pub fn seek(
         &self,
         to: core::time::Duration,
@@ -374,6 +399,28 @@ impl Player {
     pub fn set_volume(&self, volume: f32) {
         self.player.set_volume(clamped_volume(volume));
     }
+}
+
+/// 把一条错误链摊成一句话。
+///
+/// rodio 的 `SeekError::SymphoniaDecoder(_)` 自己那句 Display 是笼统的
+/// 「Symphonia decoder returned an error」,真正说明问题的三选一
+/// (要精确跳转但没有时基 / 流不可回跳 / 解复用器自己失败)藏在 `source()` 链上。
+/// 只 `to_string()` 顶层的话,日志和界面都在说一句等于没说的话 —— 那次
+/// 「跳不了」的真实原因是我读 rodio 源码倒推出来的,不是日志告诉我的。
+pub fn full_cause(
+    error: &dyn core::error::Error,
+) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    text
 }
 
 /// 把音量夹进 0.0..=1.0。
@@ -400,6 +447,79 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 错误链要一路摊到底,不能停在最外面那句笼统话上。
+    ///
+    /// 「Symphonia decoder returned an error」对着日志的人等于没说 ——
+    /// 得说出是"没有时基"还是"这条流不能回跳",两者的修法完全不同。
+    #[test]
+    fn a_cause_chain_is_spelled_out_to_the_end() {
+        /// 最里面那一层:真正说明问题的那句。
+        #[derive(Debug)]
+        struct Why;
+        impl core::fmt::Display for Why {
+            fn fmt(
+                &self,
+                f: &mut core::fmt::Formatter<'_>,
+            ) -> core::fmt::Result {
+                write!(f, "这条流不能回跳")
+            }
+        }
+        impl core::error::Error for Why {}
+
+        /// 外面那一层:笼统,单看等于没说 —— rodio 的
+        /// `SeekError::SymphoniaDecoder` 正是这个形状。
+        #[derive(Debug)]
+        struct Vague(Why);
+        impl core::fmt::Display for Vague {
+            fn fmt(
+                &self,
+                f: &mut core::fmt::Formatter<'_>,
+            ) -> core::fmt::Result {
+                write!(f, "解码器报错了")
+            }
+        }
+        impl core::error::Error for Vague {
+            fn source(
+                &self,
+            ) -> Option<&(dyn core::error::Error + 'static)>
+            {
+                Some(&self.0)
+            }
+        }
+
+        assert_eq!(
+            full_cause(&Vague(Why)),
+            "解码器报错了: 这条流不能回跳"
+        );
+        assert_eq!(
+            full_cause(&Why),
+            "这条流不能回跳",
+            "只有一层时不该多出一个尾巴"
+        );
+    }
+
+    /// 解一段内存里的音频,**长度如实传下去**。
+    ///
+    /// 生产环境的长度来自 `Content-Length`(见 [`load_with`]),内存里的来自
+    /// `Vec::len` —— 两者对解码器是同一件事。测试走这条路,是为了让"能往回跳"
+    /// 这件事在测试里与真机里由同一个开关决定。
+    fn decode_cursor(
+        bytes: Vec<u8>,
+    ) -> Result<rodio::Decoder<Cursor<Vec<u8>>>, AudioError>
+    {
+        let len = bytes.len() as u64;
+        decode(Cursor::new(bytes), Some(len))
+    }
+
+    /// 解一条长度未知的流。真机上上游不给 `Content-Length` 时就是这样,
+    /// 那时这一首只能往前跳。
+    fn decode_stalling(
+        source: StallingSource,
+    ) -> Result<rodio::Decoder<StallingSource>, AudioError>
+    {
+        decode(source, None)
+    }
 
     /// 合成一段单声道 44.1kHz 的 WAV,`samples` 个采样点。
     ///
@@ -524,8 +644,8 @@ mod tests {
             stall_after: STALL_AFTER,
             stalled: false,
         };
-        let mut decoder =
-            decode(source).expect("合法 WAV 应能解码");
+        let mut decoder = decode(source, None)
+            .expect("合法 WAV 应能解码");
 
         let mut worst = Duration::ZERO;
         for _ in 0..count {
@@ -655,8 +775,8 @@ mod tests {
             // 老实流:一上来就当作"已经停摆过了",于是永不睡。
             stalled: !stalling,
         };
-        let decoder =
-            decode(source).expect("合法 WAV 应能解码");
+        let decoder = decode(source, None)
+            .expect("合法 WAV 应能解码");
         let (_player, mut out) = callback_end(decoder);
 
         let mut worst = Duration::ZERO;
@@ -731,7 +851,7 @@ mod tests {
     /// 一条会在 [`PACED_STALL_AFTER`] 处停摆一次的解码器。
     fn stalling_decoder() -> rodio::Decoder<StallingSource>
     {
-        decode(StallingSource {
+        decode_stalling(StallingSource {
             inner: Cursor::new(wav(441_000)),
             stall_after: PACED_STALL_AFTER,
             stalled: false,
@@ -808,7 +928,7 @@ mod tests {
     #[test]
     fn a_buffered_song_still_ends() {
         // 100ms 的音,归一到 48kHz 立体声约合 9600 个采样。
-        let decoder = decode(Cursor::new(wav(4_410)))
+        let decoder = decode_cursor(wav(4_410))
             .expect("合法 WAV 应能解码");
 
         let played =
@@ -1137,11 +1257,47 @@ mod tests {
     /// 因此这里读对了采样率和声道数,真实播放的格式协商也就是对的。
     #[test]
     fn decodes_wav_from_seekable_source() {
-        let decoder = decode(Cursor::new(wav(4_410)))
+        let decoder = decode_cursor(wav(4_410))
             .expect("合法 WAV 应能解码");
 
         assert_eq!(decoder.sample_rate().get(), 44_100);
         assert_eq!(decoder.channels().get(), 1);
+    }
+
+    /// **知道长度的流才跳得回去。**
+    ///
+    /// rodio 的默认设置是 `is_seekable: false` / `byte_len: None`,于是 symphonia
+    /// 把流当成只进不退,回跳返回 `ForwardOnly`。真机症状是往前拖得动、
+    /// 往回拖报「这首跳不了」,同一首歌两种结果 —— 而在此之前这条路
+    /// 一条测试都没有,这正是它溜过去的原因。
+    #[test]
+    fn a_decoder_with_a_known_length_seeks_backwards() {
+        // 10 秒,好让回跳真的跨过若干帧而不是原地打转
+        let mut decoder = decode_cursor(wav(441_000))
+            .expect("合法 WAV 应能解码");
+
+        // 先往前放一段。回跳正是默认设置下会失败的那一半 ——
+        // 往前跳在只进不退的流上本来就成立,证明不了什么。
+        decoder.by_ref().take(100_000).count();
+
+        decoder
+            .try_seek(Duration::from_secs(1))
+            .expect("知道长度的流该跳得回去");
+    }
+
+    /// 长度未知时照常解码、照常放,只是跳不回去。
+    ///
+    /// 守的是「拿不到 Content-Length 就整首放不了」这种过度反应 ——
+    /// 长度是**跳转**的前提,不是播放的前提。
+    #[test]
+    fn an_unknown_length_still_decodes_and_plays() {
+        let decoder = decode(Cursor::new(wav(4_410)), None)
+            .expect("长度未知也该解得开");
+
+        assert!(
+            decoder.count() > 0,
+            "长度是跳转的前提,不是播放的前提"
+        );
     }
 
     /// 直链过期时上游返回的是一个 HTML 错误页。必须报解码错误,
@@ -1154,7 +1310,7 @@ mod tests {
         // 用 matches! 而非 expect_err:rodio 的 Decoder 没有 Debug,
         // expect_err 要求 Ok 侧可 Debug,编不过。
         assert!(matches!(
-            decode(Cursor::new(html.to_vec())),
+            decode_cursor(html.to_vec()),
             Err(AudioError::Decode(_))
         ));
     }
@@ -1163,7 +1319,7 @@ mod tests {
     #[test]
     fn rejects_empty_source() {
         assert!(matches!(
-            decode(Cursor::new(Vec::new())),
+            decode_cursor(Vec::new()),
             Err(AudioError::Decode(_))
         ));
     }
@@ -1178,7 +1334,7 @@ mod tests {
         let full = wav(44_100);
         let truncated = full[..1_000].to_vec();
 
-        let decoder = decode(Cursor::new(truncated))
+        let decoder = decode_cursor(truncated)
             .expect("头完整时应能建出解码器");
 
         // 头里声称有 44100 个采样点,实到不足 500 个。
