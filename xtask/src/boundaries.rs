@@ -226,8 +226,9 @@ fn vendored_proto_matches_upstream() -> Result<(), String> {
     };
 
     // 相对路径按仓库根解释,与 justfile 的 `cd {{repo}}` 一致;绝对路径原样生效。
-    let upstream =
-        repo_root().join(&repo).join(UPSTREAM_PROTO_IN_REPO);
+    let upstream = repo_root()
+        .join(&repo)
+        .join(UPSTREAM_PROTO_IN_REPO);
     if !upstream.exists() {
         return Err(format!(
             "{UPSTREAM_REPO_ENV}={repo} 下没有 {UPSTREAM_PROTO_IN_REPO} —— 指错工作树了?"
