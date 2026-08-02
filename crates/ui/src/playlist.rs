@@ -424,6 +424,9 @@ fn bind_remove<R>(
     });
 }
 
+/// 取歌单失败时写进状态行的开头。成功那一轮据此认出该清哪句话。
+const FETCH_FAILED: &str = "取歌单失败";
+
 /// 拉一次歌单列表,填进界面。
 pub fn refresh(
     ui: &MainWindow,
@@ -448,13 +451,22 @@ pub fn refresh(
                 // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
                 // 网络慢时整张列表都是空的。
                 fetch_covers(&ui, &art, &dto.playlists);
+                // 状态行只有一行,谁写谁留:上一轮的失败不会因为这一轮成功
+                // 而消失,于是歌单已经摆满了,顶上还挂着「取歌单失败」。
+                // 只清自己写的那句 —— 此刻可能正放着歌,那句更该留着。
+                if ui.get_playback_text().starts_with(FETCH_FAILED)
+                {
+                    ui.set_playback_text(
+                        slint::SharedString::new(),
+                    );
+                }
             }
             Err(err)
                 if crate::account::handle_session_expiry(
                     &ui, &err,
                 ) => {}
             Err(err) => ui.set_playback_text(
-                format!("取歌单失败: {err}").into(),
+                format!("{FETCH_FAILED}: {err}").into(),
             ),
         }
     });
