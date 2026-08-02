@@ -22,6 +22,9 @@ mod cover;
 // 登录页的绑定。所有端都要 —— 音乐相关的路由一律要登录态。
 mod account;
 // 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
+// 与 artwork 同一道门:歌单封面要它,而它是原生 target 的依赖。用它的地方
+// (music 的 Deck、search)本来就都在门里。
+#[cfg(not(target_arch = "wasm32"))]
 mod playlist;
 // 歌单封面:取一次、记住、下次直接给。
 #[cfg(not(target_arch = "wasm32"))]

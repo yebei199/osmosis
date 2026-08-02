@@ -702,10 +702,12 @@ pub enum Section {
     Recent,
 }
 
+// 门要加在 impl 上,不能只加在方法上:方法没了,`impl Section` 这行还在,
+// 而 wasm 上根本没有 Section 这个类型(见上面枚举的同一道门)。
+#[cfg(not(target_arch = "wasm32"))]
 impl Section {
     /// 由界面给的编号认出分区。认不出的编号当每日推荐 ——
     /// 那是开局那一页,总比留在原地什么都不发生强。
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_index(index: i32) -> Self {
         match index {
             1 => Self::Playlists,
