@@ -10,7 +10,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 /// 与 `main.rs` 的默认值一致。
 const DEFAULT_DATABASE_URL: &str =
-    "postgres://slint:devonly@127.0.0.1:5432/slint_study";
+    "postgres://slint:devonly@127.0.0.1:5432/osmosis";
 
 const INVITE: &str = "let-me-in";
 

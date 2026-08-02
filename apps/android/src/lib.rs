@@ -2,7 +2,7 @@
 //!
 //! 职责只有三件:初始化日志、初始化渲染后端、把控制权交给 UI 层。
 //!
-//! 构建走 cargo-ndk(见 `cargo xtask android`),产物 `libslint_study.so`
+//! 构建走 cargo-ndk(见 `cargo xtask android`),产物 `libosmosis.so`
 //! 由 `MainActivity` 通过 manifest 里的 `android.app.lib_name` 加载。
 
 /// Android 入口点,在 `MainActivity` 加载本库后由 android-activity
@@ -24,7 +24,7 @@ fn android_main(app: slint::android::AndroidApp) {
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Info)
             // logcat 的过滤标签。取 crate 名(即 `[lib] name`,也就是
-            // `libslint_study.so` 里的那个名字),而不是另写一遍字面量 ——
+            // `libosmosis.so` 里的那个名字),而不是另写一遍字面量 ——
             // 改名时 `adb logcat -s <tag>` 才不会跟着失灵。
             .with_tag(env!("CARGO_CRATE_NAME")),
     );

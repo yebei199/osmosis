@@ -16,7 +16,7 @@ fork 里 semaphore 的交接,收益配不上工作量。这份文档按"哪天�
 | 特性 | `unstable-wgpu-29`,`backend-android-activity-06` |
 | 渲染器 | skia,走 `wgpu_29_surface` |
 | 设备 | 小米 13(`fuxi`),MIUI,1080x2400,120Hz 屏,Vulkan |
-| 应用 | `yebei199/slint_study`,3D 页把 bevy 渲染的 wgpu 纹理交给 Slint |
+| 应用 | `yebei199/osmosis`,3D 页把 bevy 渲染的 wgpu 纹理交给 Slint |
 
 ## 现象
 
@@ -102,7 +102,7 @@ gr_context.flush_submit_and_sync_cpu();
 ```sh
 # 基线
 just android-build-3d && just android-install
-adb shell am start -n io.github.slintstudy/.MainActivity
+adb shell am start -n io.github.osmosis/.MainActivity
 just android-flicker baseline 120
 
 # 探针:把上面那段打进 fork 的 dev,推上去

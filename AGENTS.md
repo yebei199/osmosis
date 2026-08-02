@@ -43,16 +43,16 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 **1. `pkill -f app-desktop` 会杀掉你自己的 shell。**
 `-f` 匹配整条命令行,而**你自己那条命令行里就有 "app-desktop" 这几个字**
 (`pkill -f app-desktop && cargo build -p app-desktop`)。于是 pkill 把自己的父 shell 也算作
-命中,整条命令带着退出码 144 消失。用 `pkill -x slint-study-desktop`(按进程名精确匹配),或者直接
+命中,整条命令带着退出码 144 消失。用 `pkill -x osmosis-desktop`(按进程名精确匹配),或者直接
 `just desktop-kill`。
 
-**2. 进程名是 `slint-study-desktop`,不是包名 `app-desktop`。**
+**2. 进程名是 `osmosis-desktop`,不是包名 `app-desktop`。**
 `apps/desktop/Cargo.toml` 里 `[package] name = "app-desktop"` 但 `[[bin]] name =
-"slint-study-desktop"`。拿包名去 `pkill` / 去跑 `target/debug/app-desktop`,**都不报错**
+"osmosis-desktop"`。拿包名去 `pkill` / 去跑 `target/debug/app-desktop`,**都不报错**
 —— 只是没杀掉、没启动,而你还在对着十几分钟前的**老进程**截图,以为自己的改动没生效。
 
 **3. 旧实例不杀干净,你截到的是上一版界面。**
-同时跑两个 app,就有两个 "Slint Study" 窗口;更阴的是 MCP server 绑不上 8090 时**只在日志里
+同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上 8090 时**只在日志里
 留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
 元素树、截图全是旧的,一切看起来"改了没生效"。
 
@@ -115,7 +115,7 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 停任务只结束你启动的那条命令,不一定收走它的子进程 —— 再确认一次:
 
 ```sh
-just desktop-kill                                       # 桌面实例(pkill -f 'target/debug/[s]lint-study-desktop')
+just desktop-kill                                       # 桌面实例(pkill -x osmosis-desktop)
 ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"   # 构建残留
 ```
 

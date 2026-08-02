@@ -22,7 +22,7 @@
                  后者会运行我们的 android_main。 -->
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="slint_study" />
+                android:value="osmosis" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -41,7 +41,7 @@ cargo tree -p app-android --features bevy-3d --target aarch64-linux-android -i f
 
 ## 顺带查出并修掉的一个真缺陷
 
-`build_ui` 本来就读 `SLINT_STUDY_TAB`,`just shot 420 2` 靠它直接截到 3D 页。给
+`build_ui` 本来就读 `OSMOSIS_TAB`,`just shot 420 2` 靠它直接截到 3D 页。给
 `run_with_renderer` 加 `initial_tab` 参数时,我在 `build_ui` 之后又 `set_current_tab`,
 于是桌面和安卓传的 0 把环境变量覆盖掉了,截图全部回到 Home 页。
 
@@ -54,7 +54,7 @@ cargo tree -p app-android --features bevy-3d --target aarch64-linux-android -i f
 `adb devices` 报 `no permissions`:`adb kill-server && adb start-server` 即可,不必动
 udev 规则。
 
-安卓上没有 `SLINT_STUDY_TAB` 这条路(`am start` 传不了环境变量),切页只能按坐标点:
+安卓上没有 `OSMOSIS_TAB` 这条路(`am start` 传不了环境变量),切页只能按坐标点:
 
 ```sh
 adb shell wm size                    # 1080x2400

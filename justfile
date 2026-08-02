@@ -2,7 +2,7 @@
 # CI 上就是这样跑的。它在 .gitignore 里 —— 邀请码进了历史就等于没有邀请码。
 set dotenv-load := true
 
-apk := "dist/slint-study-debug.apk"
+apk := "dist/osmosis-debug.apk"
 # 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
 # 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
 mcp_port := "8090"
@@ -48,7 +48,7 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
-# 左上角帧率读数:`SLINT_STUDY_FPS=1 just desktop-dev`(运行期开关,不必重编)
+# 左上角帧率读数:`OSMOSIS_FPS=1 just desktop-dev`(运行期开关,不必重编)
 #
 # **MCP 默认开着**。调试与验证一律走它 —— 读元素树、模拟点击、量真实尺寸,
 # 都比对着截图猜可靠。三个开关缺一不可,所以焊在这条配方里而不是让人记:
@@ -65,7 +65,7 @@ desktop-dev extra="": mcp-port-free
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
-# 左上角帧率读数:`SLINT_STUDY_FPS=1 just web-dev` —— wasm 读不到运行期环境变量,
+# 左上角帧率读数:`OSMOSIS_FPS=1 just web-dev` —— wasm 读不到运行期环境变量,
 # 这个开关在**构建期**生效,故必须重跑本命令。
 [group('三端')]
 web-dev:
@@ -120,12 +120,12 @@ font-subset:
 # 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
 # 数据在命名卷里,容器删了也还在。
 pg:
-    docker start slint-study-pg 2>/dev/null || \
-      docker run -d --name slint-study-pg \
-        -e POSTGRES_PASSWORD=devonly -e POSTGRES_USER=slint -e POSTGRES_DB=slint_study \
-        -p 127.0.0.1:5432:5432 -v slint-study-pgdata:/var/lib/postgresql/data \
+    docker start osmosis-pg 2>/dev/null || \
+      docker run -d --name osmosis-pg \
+        -e POSTGRES_PASSWORD=devonly -e POSTGRES_USER=slint -e POSTGRES_DB=osmosis \
+        -p 127.0.0.1:5432:5432 -v osmosis-pgdata:/var/lib/postgresql/data \
         postgres:17-alpine
-    @docker exec slint-study-pg sh -c 'until pg_isready -U slint -d slint_study >/dev/null 2>&1; do sleep 0.2; done'
+    @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
 
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
 [group('服务端')]
@@ -166,8 +166,8 @@ android-reverse:
 # 装 APK、接通端口转发,然后看日志。前提:server-dev 已在另一个终端里跑
 [group('安卓')]
 android-run: android-install android-reverse
-    adb shell am start -n io.github.slintstudy/.MainActivity
-    adb logcat -s slint_study
+    adb shell am start -n io.github.osmosis/.MainActivity
+    adb logcat -s osmosis
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
@@ -209,24 +209,26 @@ mcp-forward:
 # 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
 # 端口只能靠 apps/android/src/lib.rs 里的 option_env! 编进二进制。
-# 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s slint_study`
+# 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
 [group('mcp')]
 mcp-android: mcp-forward
     nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     adb install -r {{apk}}
-    adb shell am start -n io.github.slintstudy/.MainActivity
+    adb shell am start -n io.github.osmosis/.MainActivity
 
-# 杀掉所有跑着的桌面实例。这条命令踩过三层坑,每一层都**静默失败**:
+# 杀掉所有跑着的桌面实例。两处静默失败等着:
 #
-# 1. 进程名是 `slint-study-desktop`([[bin]] name),不是包名 `app-desktop`;
-# 2. 它有 19 个字符,而 Linux 的 comm 只存 15 个 —— `pkill -x slint-study-desktop`
-#    **永远匹配不到**,只吐一句 warning 就返回 0,看起来像"杀干净了";
-# 3. 于是只能用 `-f`(匹配整条命令行),但 `-f` 会连**本命令自己的命令行**一起命中,
-#    把调用它的 shell 杀掉,留下退出码 144。方括号 `[s]` 让正则匹配不到字面量本身,
-#    这一刀才只落在真正的 app 上。
+# 1. 进程名是 `osmosis-desktop`([[bin]] name),不是包名 `app-desktop`。拿包名去
+#    pkill 不报错,只是没杀掉 —— 而你还在对着十几分钟前的老进程截图;
+# 2. 用 `-x`(精确匹配进程名)而不是 `-f`(匹配整条命令行)。`-f` 会把本命令自己的
+#    命令行也算作命中,连调用它的 shell 一起杀掉,留下退出码 144。
+#
+# `-x` 能用是因为名字正好 15 个字符,是 Linux comm 存得下的上限;再长一个字就会被
+# 截断,`-x` 于是永远匹配不到,只吐一句 warning 就返回 0(改名前的 `slint-study-desktop`
+# 有 19 个字符,正是这样,只好绕道 `-f` 加方括号)。改 [[bin]] name 时留意这条线。
 [group('桌面')]
 desktop-kill:
-    -pkill -f 'target/debug/[s]lint-study-desktop'
+    -pkill -x osmosis-desktop
 
 # 关窗后进程是不是干净地走了(issue #15)。开一个实例、关掉、看退出码,要 0 不要 134。
 #
@@ -238,10 +240,10 @@ desktop-exit-check:
     set -uo pipefail
     just desktop-kill
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    nix-shell slint.nix --run 'target/debug/slint-study-desktop' > /tmp/slint-exit-check.log 2>&1 &
+    nix-shell slint.nix --run 'target/debug/osmosis-desktop' > /tmp/slint-exit-check.log 2>&1 &
     app=$!
     for _ in $(seq 60); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break
         sleep 1
     done
@@ -275,9 +277,9 @@ shot width="" tab="0":
     just desktop-kill
     # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    SLINT_STUDY_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/slint-study-desktop' > /tmp/slint-shot.log 2>&1 &
+    OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > /tmp/slint-shot.log 2>&1 &
     for _ in $(seq 30); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break
         sleep 1
     done

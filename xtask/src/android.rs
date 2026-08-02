@@ -19,7 +19,7 @@ const JNI_LIBS: &str =
 /// 最低支持的 Android API level。与 gradle 的 minSdk 保持一致。
 const MIN_SDK: &str = "26";
 /// 产物路径。
-const OUTPUT_APK: &str = "dist/slint-study-debug.apk";
+const OUTPUT_APK: &str = "dist/osmosis-debug.apk";
 
 /// 一个 Android ABI,以及它对应的 Rust target triple。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

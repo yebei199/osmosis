@@ -13,12 +13,12 @@ use contract::{
 };
 use serde::Serialize;
 
-/// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
+/// 服务端地址。可在编译期用 `OSMOSIS_API_BASE` 覆盖。
 ///
 /// 默认指向 `127.0.0.1` —— Android 上这是**手机自己**的回环地址,需要
 /// `adb reverse tcp:3000 tcp:3000` 把它转发到开发机(见 `just adb-reverse`)。
 pub fn base_url() -> &'static str {
-    option_env!("SLINT_STUDY_API_BASE")
+    option_env!("OSMOSIS_API_BASE")
         .unwrap_or("http://127.0.0.1:3000")
 }
 
@@ -749,13 +749,13 @@ mod platform {
         Err(super::server_error(status.as_u16(), &body))
     }
 
-    /// 会话文件的位置。可用 `SLINT_STUDY_SESSION_FILE` 直接指定。
+    /// 会话文件的位置。可用 `OSMOSIS_SESSION_FILE` 直接指定。
     ///
     /// 走 `XDG_STATE_HOME` 而不是配置目录:登录态是**状态**不是配置,
     /// 它不该被同步、也不该被人手写。
     fn session_file() -> Option<PathBuf> {
         if let Ok(explicit) =
-            std::env::var("SLINT_STUDY_SESSION_FILE")
+            std::env::var("OSMOSIS_SESSION_FILE")
         {
             return Some(PathBuf::from(explicit));
         }
@@ -785,7 +785,7 @@ mod platform {
             _ => return None,
         };
 
-        Some(base.join("slint-study/session"))
+        Some(base.join("osmosis/session"))
     }
 
     /// 本地设置文件,与会话文件同一个目录。
@@ -794,7 +794,7 @@ mod platform {
     /// 登出之后照样该留着。合成一个文件的话,登出会顺手把音量也忘掉。
     fn settings_file() -> Option<PathBuf> {
         if let Ok(explicit) =
-            std::env::var("SLINT_STUDY_SETTINGS_FILE")
+            std::env::var("OSMOSIS_SETTINGS_FILE")
         {
             return Some(PathBuf::from(explicit));
         }
@@ -973,12 +973,12 @@ mod platform {
     use super::ApiError;
 
     /// localStorage 里存会话用的键。
-    const SESSION_KEY: &str = "slint-study.session";
+    const SESSION_KEY: &str = "osmosis.session";
 
     /// localStorage 里存本地设置用的键。
     ///
     /// 与会话分成两个键:登出要删掉会话,而音量该留着。
-    const SETTINGS_KEY: &str = "slint-study.settings";
+    const SETTINGS_KEY: &str = "osmosis.settings";
 
     pub(super) fn load_settings() -> Option<String> {
         storage()?.get_item(SETTINGS_KEY).ok()?
@@ -1247,12 +1247,12 @@ mod tests {
     fn the_session_token_has_a_lifecycle() {
         // 用一个临时文件当会话落盘处,免得动到真实的那一份
         let dir = std::env::temp_dir()
-            .join("slint-study-session-lifecycle");
+            .join("osmosis-session-lifecycle");
         let _ = std::fs::create_dir_all(&dir);
         // SAFETY: 单线程测试起点,此时还没有别的线程在读环境
         unsafe {
             std::env::set_var(
-                "SLINT_STUDY_SESSION_FILE",
+                "OSMOSIS_SESSION_FILE",
                 dir.join("session"),
             );
         }
@@ -1295,7 +1295,7 @@ mod tests {
         .expect("给了 state home 就该有路径");
 
         assert!(path.starts_with("/tmp/state"));
-        assert!(path.ends_with("slint-study/session"));
+        assert!(path.ends_with("osmosis/session"));
     }
 
     /// 没有 XDG_STATE_HOME 就退到 HOME/.local/state。
@@ -1330,7 +1330,7 @@ mod tests {
     #[test]
     fn session_survives_a_restart() {
         let path = std::env::temp_dir()
-            .join("slint-study-session-restart/session");
+            .join("osmosis-session-restart/session");
         platform::write_session(&path, "kept");
 
         let read = std::fs::read_to_string(&path)
@@ -1347,7 +1347,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let path = std::env::temp_dir()
-            .join("slint-study-session-perm/session");
+            .join("osmosis-session-perm/session");
         platform::write_session(&path, "secret");
 
         let mode = std::fs::metadata(&path)

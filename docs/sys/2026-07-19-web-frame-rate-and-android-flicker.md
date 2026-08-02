@@ -17,14 +17,14 @@ wgpu 的 present 之间缺少顺序约束,证据充分,**决定不修**:发生�
 
 | 仓库 | 远端 | 本地路径 | 当前分支 |
 | --- | --- | --- | --- |
-| 主项目 | `yebei199/slint_study` | `~/RustroverProjects/slint_study` | `dev`,另有 `fix/glass-in-bevy-render-graph` |
+| 主项目 | `yebei199/osmosis` | `~/RustroverProjects/osmosis` | `dev`,另有 `fix/glass-in-bevy-render-graph` |
 | femtovg fork | `yebei199/femtovg` | `~/RustroverProjects/femtovg-fork` | 见下 |
 | slint fork | `yebei199/slint` | `~/RustroverProjects/slint-fork` | `dev` |
 
 依赖是这样串起来的,**主项目里只有 slint 一条 `[patch.crates-io]`**:
 
 ```
-slint_study ──patch──> yebei199/slint@dev ──git 依赖──> yebei199/femtovg@perf/wgpu-resident-buffers
+osmosis ──patch──> yebei199/slint@dev ──git 依赖──> yebei199/femtovg@perf/wgpu-resident-buffers
 ```
 
 `Cargo.lock` 当前锁定:
@@ -118,8 +118,8 @@ present 等在 Skia signal 的 semaphore 上,那是 slint fork 里的活,收益�
 `adb kill-server && adb start-server` 就够,不必动 udev 规则。
 
 ```sh
-just android-build-3d && adb install -r dist/slint-study-debug.apk
-adb shell am start -n io.github.slintstudy/.MainActivity
+just android-build-3d && adb install -r dist/osmosis-debug.apk
+adb shell am start -n io.github.osmosis/.MainActivity
 adb shell wm size                       # 1080x2400
 adb shell input tap 895 2196            # 底部导航第三项 = 3D 页
 ```

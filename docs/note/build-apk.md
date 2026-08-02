@@ -24,7 +24,7 @@
 一个能出 APK 的机器要同时具备:JDK 17、Android SDK(platform 34 + build-tools)、
 NDK r27、Gradle 8.11、带 Android target 的 Rust、cargo-ndk。手工在每台机器上装齐
 既慢又容易版本漂移。`docker/Dockerfile` 把这些固定成一个可复现的镜像
-`slint-study-builder`,于是构建结果不再依赖「你这台机器装了什么」。(NixOS 上则由
+`osmosis-builder`,于是构建结果不再依赖「你这台机器装了什么」。(NixOS 上则由
 `Android.nix` 从 nix 二进制缓存提供同样版本的工具链,见文末「NixOS 原生路径」。)
 
 `docker/build.sh` 负责的就是这层「外围事务」,它自己不碰编译:
@@ -49,7 +49,7 @@ cargo ndk -t <abi> --platform 26 -o apps/android/gradle/app/src/main/jniLibs \
     build -p app-android --lib --release
 ```
 
-- 编的是 `[lib] crate-type = ["cdylib"]`,产物是 `libslint_study.so`——APK 里被
+- 编的是 `[lib] crate-type = ["cdylib"]`,产物是 `libosmosis.so`——APK 里被
   `NativeActivity` 加载的那个 `.so`。
 - **即使是「debug」APK,native 库也一律用 `--release`**:debug profile 的
   Slint + Skia 体积巨大且极慢,所以打包进去的始终是 release profile 的 `.so`。
@@ -73,13 +73,13 @@ cd apps/android/gradle && gradle --no-daemon -PstudyAbis="$ABIS_CSV" assembleDeb
   - 把 `jniLibs/<abi>/*.so` 塞进 APK;
   - `-PstudyAbis` 通过 `abiFilters` 保证只打包这次真正构建了的 ABI;
   - 用 AGP 自动生成的 debug keystore 签名。
-- `AndroidManifest.xml` 里 `android.app.lib_name = slint_study` 告诉 NativeActivity
+- `AndroidManifest.xml` 里 `android.app.lib_name = osmosis` 告诉 NativeActivity
   加载哪个 `.so`;android-activity 胶水再调用 Rust 里的 `android_main`。
 
 ### 3. 收尾
 
 把 `apps/android/gradle/app/build/outputs/apk/debug/app-debug.apk` 拷成
-`dist/slint-study-debug.apk`。若设了 `CHOWN_UID`(仅 Docker 传)则把产物属主交回
+`dist/osmosis-debug.apk`。若设了 `CHOWN_UID`(仅 Docker 传)则把产物属主交回
 宿主机用户;本机原生构建不设这个变量,自然跳过。
 
 ## NixOS 原生路径
@@ -114,6 +114,6 @@ release 编译);冷启动原生更快(nix 二进制缓存替换 vs Docker 现装
 | `Android.nix` | NixOS 本机原生工具链(nix-shell),Docker 的等价替代 |
 | `xtask/src/android.rs` | 真正的编译逻辑,容器/本机通用(cargo-ndk → gradle → dist) |
 | `Cargo.toml`(根) | workspace 成员、`default-members`、统一依赖版本、release profile |
-| `apps/android/Cargo.toml` | `crate-type=cdylib`、`[lib] name=slint_study`、android 后端 |
+| `apps/android/Cargo.toml` | `crate-type=cdylib`、`[lib] name=osmosis`、android 后端 |
 | `apps/android/gradle/app/build.gradle` | Android 打包配置、abiFilters、buildTypes |
 | `apps/android/gradle/.../MainActivity.java` | 极薄 NativeActivity,只做全面屏 |

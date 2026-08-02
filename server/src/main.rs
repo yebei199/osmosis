@@ -86,7 +86,7 @@ const DEFAULT_RECENT_LIMIT: i64 = 50;
 
 /// 数据库连接串的默认值,与 `just pg` 起的容器一致。
 const DEFAULT_DATABASE_URL: &str =
-    "postgres://slint:devonly@127.0.0.1:5432/slint_study";
+    "postgres://slint:devonly@127.0.0.1:5432/osmosis";
 
 /// 四个 gRPC 客户端。共享同一条惰性连接,clone 只是加一份引用。
 ///

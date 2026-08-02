@@ -48,7 +48,7 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   因为输入框长在一个 `if` 里,Rust 引用不到它。
 - `src/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
 - `src/nav_glass.rs`:导航选中器的 seam 数据与转场省电门判定。
-- `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `SLINT_STUDY_FPS` 开关。
+- `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
 - `fonts/`:中文子集字体。硬编码中文必须落在子集里,`cargo test -p ui` 的
   glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
 - `tests/banner.rs`:断流横幅的界面行为,无头跑(`i-slint-backend-testing`

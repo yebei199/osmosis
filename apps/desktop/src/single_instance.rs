@@ -14,7 +14,7 @@ use std::io;
 
 /// 锁的名字。抽象地址不占文件系统,但仍然是全局的,所以取一个不会撞的名字。
 #[cfg(target_os = "linux")]
-const LOCK_NAME: &str = "slint-study-desktop.lock";
+const LOCK_NAME: &str = "osmosis-desktop.lock";
 
 /// 拿到的锁。**活多久,锁多久** —— 丢掉它就等于开门,所以调用方要把它一直留着。
 ///

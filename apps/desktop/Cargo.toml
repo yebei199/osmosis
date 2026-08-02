@@ -6,7 +6,7 @@ license-file.workspace = true
 description = "桌面平台入口(linux / windows / macOS)"
 
 [[bin]]
-name = "slint-study-desktop"
+name = "osmosis-desktop"
 path = "src/main.rs"
 
 [dependencies]

@@ -220,17 +220,17 @@ mod tests {
     /// 把会话落盘处指到临时文件上。
     ///
     /// **少了这一步,跑一次测试就把开发机上真实的登录态删掉** —— `handle_session_expiry`
-    /// 里那句 `session::clear()` 删的是 `~/.local/state/slint-study/session`,而它
+    /// 里那句 `session::clear()` 删的是 `~/.local/state/osmosis/session`,而它
     /// 一声不吭。症状是「每次跑完测试再开应用就要重新登录」,而人会去查应用,
     /// 查不到任何线索。`api` 那侧的会话测试早就这么防着了,这边漏了。
     fn redirect_session_to_a_temp_file() {
-        let dir = std::env::temp_dir()
-            .join("slint-study-ui-session");
+        let dir =
+            std::env::temp_dir().join("osmosis-ui-session");
         let _ = std::fs::create_dir_all(&dir);
         // SAFETY: 本 crate 只有这一条测试碰会话,不会与别的线程抢这个变量
         unsafe {
             std::env::set_var(
-                "SLINT_STUDY_SESSION_FILE",
+                "OSMOSIS_SESSION_FILE",
                 dir.join("session"),
             );
         }

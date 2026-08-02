@@ -21,7 +21,7 @@ fn main() {
     // `_lock` 要活到 main 结束,丢掉它就等于开门。
     let Ok(_lock) = single_instance::claim() else {
         eprintln!(
-            "已经有一个 slint-study-desktop 在跑了。先关掉它,或者 just desktop-kill。"
+            "已经有一个 osmosis-desktop 在跑了。先关掉它,或者 just desktop-kill。"
         );
         std::process::exit(1);
     };

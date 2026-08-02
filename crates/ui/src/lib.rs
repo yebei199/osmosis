@@ -41,7 +41,7 @@ mod syncplay;
 
 use slint::{ComponentHandle, RenderingState};
 
-/// 帧率读数开不开。`SLINT_STUDY_FPS` 设成任意值即开,与 `SLINT_STUDY_TAB` 同属调试开关。
+/// 帧率读数开不开。`OSMOSIS_FPS` 设成任意值即开,与 `OSMOSIS_TAB` 同属调试开关。
 ///
 /// 曾经是个 feature,但它不门控任何依赖 —— 关掉省下的只有一个 2Hz 定时器和每帧一次自增,
 /// 却要在四个 manifest 里各声明一遍、还被三个 `bevy-3d` 隐含。开发时想不想看,本就不是
@@ -51,14 +51,14 @@ use slint::{ComponentHandle, RenderingState};
 /// (页面由浏览器拉起、APK 由系统拉起),只能构建期烧进去 —— 同 `apps/android` 待
 /// `SLINT_MCP_PORT` 的办法。
 fn fps_enabled() -> bool {
-    std::env::var("SLINT_STUDY_FPS").is_ok()
-        || option_env!("SLINT_STUDY_FPS").is_some()
+    std::env::var("OSMOSIS_FPS").is_ok()
+        || option_env!("OSMOSIS_FPS").is_some()
 }
 
 /// 最大页签下标:0=Home、1=Music。
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
-/// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=2` 静默停在 Music 页」。
+/// 加页时两处都要动。加漏了的症状是「`OSMOSIS_TAB=2` 静默停在 Music 页」。
 const MAX_TAB: i32 = 1;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
@@ -86,10 +86,10 @@ fn build_ui() -> (
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
-    // 开局停在哪一页。默认 Home,`SLINT_STUDY_TAB` 覆盖它 —— 那是调试开关,
+    // 开局停在哪一页。默认 Home,`OSMOSIS_TAB` 覆盖它 —— 那是调试开关,
     // `just shot 420 1` 靠它直接截到 Music 页,不必再靠 MCP 模拟点击(那条路上有一串
     // 静默失败的坑,见 AGENTS.md)。没设或设歪了就留在 Home。
-    if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
+    if let Ok(tab) = std::env::var("OSMOSIS_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
         ui.set_current_tab(tab.clamp(0, MAX_TAB));

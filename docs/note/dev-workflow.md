@@ -8,18 +8,18 @@ README 只留最短跑通路径,细节都在这里。
 ```sh
 cargo run -p app-desktop                # 普通运行(需要 libfontconfig1-dev)
 just desktop-dev                        # 热重载
-SLINT_STUDY_FPS=1 just desktop-dev      # 外加左上角帧率读数
+OSMOSIS_FPS=1 just desktop-dev      # 外加左上角帧率读数
 ```
 
 `just desktop-dev` 启用了 Slint 的 `live-preview` 特性:编辑 `crates/ui/slint/*.slint`
 会直接刷新运行中的窗口,无需重新编译或重启(Rust 逻辑会保留;改 Rust 代码仍需重启)。
 
-`SLINT_STUDY_FPS` 是运行期开关,拨动它不必重新编译。读数是**诚实的即时帧率**:
+`OSMOSIS_FPS` 是运行期开关,拨动它不必重新编译。读数是**诚实的即时帧率**:
 只数渲染通知里真实发生的帧,刻意不主动请求重绘,所以空闲时会自己趴到 ~1,
 交互和动画时才飙上去。关掉时连采样定时器都不建。
 
 wasm 与 APK 读不到运行期环境变量(页面由浏览器拉起、APK 由系统拉起),那两端这个开关
-在构建期生效,得带着它重新构建:`SLINT_STUDY_FPS=1 just web-dev`。
+在构建期生效,得带着它重新构建:`OSMOSIS_FPS=1 just web-dev`。
 
 截真实窗口像素:
 
@@ -89,7 +89,7 @@ manifest 还必须声明 `INTERNET` 权限。Android 内核把 `AF_INET` socket 
 ```sh
 ./docker/build.sh      # Docker:给没有 nix 的机器/CI
 just android-build     # NixOS 本机原生:更快、无镜像开销(nix-shell Android.nix)
-adb install -r dist/slint-study-debug.apk
+adb install -r dist/osmosis-debug.apk
 ```
 
 为模拟器(x86_64)或多个 ABI 构建:

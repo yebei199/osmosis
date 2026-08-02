@@ -28,5 +28,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "slint_study"
+rootProject.name = "osmosis"
 include ':app'

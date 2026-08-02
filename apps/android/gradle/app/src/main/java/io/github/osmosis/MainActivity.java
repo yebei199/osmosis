@@ -1,4 +1,4 @@
-package io.github.slintstudy;
+package io.github.osmosis;
 
 import android.app.NativeActivity;
 import android.os.Build;

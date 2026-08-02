@@ -17,7 +17,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 /// 与 `main.rs` 的默认值一致。那个常量属于进程装配,不在 lib 里,
 /// 这里重复一次 —— 它漂移了下面每条测试立刻连不上,不会静默失效。
 const DEFAULT_DATABASE_URL: &str =
-    "postgres://slint:devonly@127.0.0.1:5432/slint_study";
+    "postgres://slint:devonly@127.0.0.1:5432/osmosis";
 
 /// 测试用的邀请码。
 const INVITE: &str = "let-me-in";

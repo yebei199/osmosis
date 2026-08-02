@@ -1,9 +1,9 @@
-# Slint Study Android APK 的构建环境。
+# Osmosis Android APK 的构建环境。
 #
 # 包含: JDK 17、Android SDK(platform 34 + build-tools)、NDK r27、
 # Gradle、带 Android target 的 stable Rust,以及 cargo-ndk。
 #
-# 构建镜像:      docker build -t slint-study-builder docker/
+# 构建镜像:      docker build -t osmosis-builder docker/
 # 构建 APK:      见 ./build.sh(把仓库挂载到 /work,并在容器内
 #                运行 cargo xtask android)
 

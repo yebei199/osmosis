@@ -40,7 +40,7 @@ global Nav {
 export component MainWindow inherits Window {
     // 帧率,由 Rust 测量并推送。仅在 `show-fps` 为真时被推送。
     in property <float> fps: 0;
-    // 是否显示帧率读数。由 Rust 按 `SLINT_STUDY_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
+    // 是否显示帧率读数。由 Rust 按 `OSMOSIS_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
     in property <bool> show-fps: false;
     // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
     in property <string> platform;
@@ -294,7 +294,7 @@ export component MainWindow inherits Window {
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
 
-    title: "Slint Study";
+    title: "Osmosis";
     background: #0f1117;
     // 开窗即宽版式;最小尺寸故意放到手机竖屏那么窄 —— 桌面上把窗口拖窄就能直接看到
     // 紧凑版式,不必开模拟器。
