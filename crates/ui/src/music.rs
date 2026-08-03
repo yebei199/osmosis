@@ -218,6 +218,14 @@ fn to_rows(
             // 红心状态由 push_rows 之后的 remark 填 —— 这里没有那个集合,
             // 而把它传进来会让这个纯格式化函数多认识一样东西。
             liked: false,
+            // 平台没给封面就是空串,那一行永远画占位色(见 tracklist.slint)。
+            cover_url: track
+                .cover
+                .clone()
+                .unwrap_or_default()
+                .into(),
+            // 图由 thumbnail 在行滑进可见区之后回填,与红心同理。
+            cover: slint::Image::default(),
         })
         .collect()
 }
@@ -296,6 +304,9 @@ struct Deck {
     editing: crate::playlist::Editing,
     /// 歌单封面表。取一次、记住、下次直接给(见 crate::artwork)。
     artwork: crate::artwork::Artwork,
+    /// 曲目行的缩略图。与 `artwork` 是两套:那边按歌单 id 存全量取,
+    /// 这边按封面 URL 存、只取滑进可见区的那些(见 crate::thumbnail)。
+    thumbnails: crate::thumbnail::Thumbnails,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
@@ -436,6 +447,7 @@ pub fn bind(
         liked: crate::liked::LikedSet::default(),
         editing: crate::playlist::Editing::default(),
         artwork: crate::artwork::Artwork::default(),
+        thumbnails: crate::thumbnail::Thumbnails::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
@@ -457,6 +469,11 @@ pub fn bind(
         &deck.artwork,
         move |ui| reload_open_playlist(ui, &reloading),
     );
+
+    // 缩略图目录削一次。放在这里而不是写入路径上:几百个文件的 metadata()
+    // 是毫秒级,而挂在每次写入后面会让滚一次列表 stat 整个目录几十遍。
+    api::sweep_track_artwork();
+    bind_needs_cover(ui, &deck);
 
     bind_volume(ui, &deck);
     bind_seek(ui, &deck);
@@ -828,6 +845,24 @@ fn push_rows(
     ui.set_tracks(ModelRc::new(VecModel::from(rows)));
     // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
     crate::liked::remark(&deck.liked, ui);
+    // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
+    // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。
+    deck.thumbnails.apply(ui);
+}
+
+/// 接上「这一行要封面」。
+///
+/// 行滑进可见区时由 `.slint` 那边报过来 —— 列表虚拟化之后,「哪一行现在是哪一
+/// 首」只有界面知道(见 tracklist.slint 里 `changed wanted` 那一段)。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_needs_cover(ui: &MainWindow, deck: &Deck) {
+    let thumbnails = deck.thumbnails.clone();
+    let weak = ui.as_weak();
+
+    ui.on_needs_cover(move |url| {
+        let Some(ui) = weak.upgrade() else { return };
+        thumbnails.request(&ui, &url);
+    });
 }
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。

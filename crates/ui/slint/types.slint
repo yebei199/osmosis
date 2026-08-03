@@ -26,6 +26,13 @@ export struct TrackRow {
     // 这一首在红心列表里。由 Rust 拿红心的全量标识比对后填(见 ui/src/liked.rs)——
     // 服务端给的曲目本身不带这个字段,那要让每个列表接口都多问一次上游。
     liked: bool,
+    // 封面的 CDN 地址。它同时是缓存的键(见 ui/src/thumbnail.rs):行滑进可见区
+    // 时把它报给 Rust,Rust 据此取图、去重、回填。放在行里而不是让 Rust 自己按
+    // id 查,是因为列表虚拟化之后「哪一行现在是哪一首」只有界面知道。
+    cover-url: string,
+    // 缩略图。取不到就是空图(width == 0),那时画一块占位色 ——
+    // 与 PlaylistRow.cover 同一条规矩:CDN 会过期,取不到是常态不是故障。
+    cover: image,
 }
 
 // 同播名册里的一台设备。名字由对端自报,是任意文本 —— 与歌名同理,

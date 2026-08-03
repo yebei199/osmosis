@@ -284,6 +284,9 @@ export component MainWindow inherits Window {
     callback music-shown();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
+    // 某一行滑进了可见区,它要这张封面。参数是 TrackRow 的 cover-url ——
+    // 列表虚拟化之后,「哪一行现在是哪一首」只有界面知道(见 tracklist.slint)。
+    callback needs-cover(string);
     // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
     callback toggle-play();
     // 队列内切歌。
@@ -666,6 +669,9 @@ export component MainWindow inherits Window {
                                     root.toggle-liked(id, liked);
                                 }
                                 remove(id) => { root.remove-track(id); }
+                                needs-cover(url) => {
+                                    root.needs-cover(url);
+                                }
                             }
                         }
                     }

@@ -550,6 +550,34 @@ pub fn save_artwork(name: &str, bytes: &[u8]) {
     platform::save_artwork(name, bytes);
 }
 
+/// 曲目缩略图目录的字节上限。
+///
+/// 歌单封面按稳定的歌单 id 存,取多少就是多少;曲目缩略图按**封面 URL** 存,
+/// 而 CDN 会换 URL —— 换掉那一刻旧文件就再没人会查,却还占着盘。所以这一层
+/// 必须有个硬上限,而歌单那一层不需要。
+pub const TRACK_ARTWORK_BUDGET: u64 = 64 * 1024 * 1024;
+
+/// 读一张缓存下来的曲目缩略图。
+///
+/// 与 [`load_artwork`] 分开是因为两者的键不同(URL 的散列 vs 歌单 id),
+/// 因而淘汰规则也不同 —— 混在一个目录里,清理会误伤歌单封面。
+pub fn load_track_artwork(name: &str) -> Option<Vec<u8>> {
+    platform::load_track_artwork(name)
+}
+
+/// 存一张曲目缩略图。与 [`save_artwork`] 同理,失败只记一笔。
+pub fn save_track_artwork(name: &str, bytes: &[u8]) {
+    platform::save_track_artwork(name, bytes);
+}
+
+/// 把曲目缩略图目录削回 [`TRACK_ARTWORK_BUDGET`] 以内,从最旧的删起。
+///
+/// 进程启动时跑一次就够:几百个文件的 `metadata()` 是毫秒级,而放在写入路径上
+/// 会让滚一次列表 stat 整个目录几十遍。
+pub fn sweep_track_artwork() {
+    platform::sweep_track_artwork(TRACK_ARTWORK_BUDGET);
+}
+
 /// 把服务端的错误响应体翻成一个带 code 的错误。
 ///
 /// 解不出 [`ErrorDto`] 就退回 [`ApiError::Transport`] —— 502 网关回的是 HTML,
@@ -825,8 +853,41 @@ mod platform {
         let Some(dir) = artwork_dir() else {
             return;
         };
+        write_artwork(&dir, name, bytes);
+    }
 
-        if let Err(err) = std::fs::create_dir_all(&dir) {
+    /// 曲目缩略图目录。挂在封面目录下面而不是并列一个新目录:它们是同一类
+    /// 东西,只是键与淘汰规则不同(见 `super::TRACK_ARTWORK_BUDGET`)。
+    fn track_artwork_dir() -> Option<PathBuf> {
+        artwork_dir().map(|dir| dir.join("tracks"))
+    }
+
+    pub(super) fn load_track_artwork(
+        name: &str,
+    ) -> Option<Vec<u8>> {
+        std::fs::read(track_artwork_dir()?.join(name)).ok()
+    }
+
+    pub(super) fn save_track_artwork(
+        name: &str,
+        bytes: &[u8],
+    ) {
+        let Some(dir) = track_artwork_dir() else {
+            return;
+        };
+        write_artwork(&dir, name, bytes);
+    }
+
+    pub(super) fn sweep_track_artwork(budget: u64) {
+        let Some(dir) = track_artwork_dir() else {
+            return;
+        };
+        sweep_dir(&dir, budget);
+    }
+
+    /// 往某个封面目录里写一份。目录不存在就建。
+    fn write_artwork(dir: &Path, name: &str, bytes: &[u8]) {
+        if let Err(err) = std::fs::create_dir_all(dir) {
             log::warn!("建封面目录失败: {err}");
             return;
         }
@@ -835,6 +896,54 @@ mod platform {
             std::fs::write(dir.join(name), bytes)
         {
             log::warn!("写封面失败: {err}");
+        }
+    }
+
+    /// 目录超出预算时按 mtime 从最旧的删起,删到线下为止。
+    ///
+    /// 单独一个函数是为了能对着临时目录测 —— 上面那几个都要先解出
+    /// `XDG_STATE_HOME`,测起来就成了改进程环境变量。
+    pub(super) fn sweep_dir(dir: &Path, budget: u64) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            // 目录还不存在:第一次运行,没什么可删的
+            return;
+        };
+
+        let mut files: Vec<(
+            std::time::SystemTime,
+            u64,
+            PathBuf,
+        )> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let meta = entry.metadata().ok()?;
+                if !meta.is_file() {
+                    return None;
+                }
+                Some((
+                    meta.modified().ok()?,
+                    meta.len(),
+                    entry.path(),
+                ))
+            })
+            .collect();
+
+        let mut total: u64 =
+            files.iter().map(|(_, len, _)| len).sum();
+        if total <= budget {
+            return;
+        }
+
+        // 最旧的排在前面 —— 删的就是这一头
+        files.sort_by_key(|(modified, _, _)| *modified);
+
+        for (_, len, path) in files {
+            if total <= budget {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(len);
+            }
         }
     }
 
@@ -996,6 +1105,21 @@ mod platform {
     pub(super) fn save_artwork(_name: &str, _bytes: &[u8]) {
     }
 
+    pub(super) fn load_track_artwork(
+        _name: &str,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    pub(super) fn save_track_artwork(
+        _name: &str,
+        _bytes: &[u8],
+    ) {
+    }
+
+    /// 没有磁盘缓存也就没什么可清 —— 浏览器自己的 HTTP 缓存在做这件事。
+    pub(super) fn sweep_track_artwork(_budget: u64) {}
+
     pub(super) fn save_settings(raw: &str) {
         if let Some(storage) = storage() {
             let _ = storage.set_item(SETTINGS_KEY, raw);
@@ -1123,6 +1247,107 @@ mod platform {
             .await
             .map(|b| b.to_vec())
             .map_err(|e| ApiError::Transport(e.to_string()))
+    }
+}
+
+/// 曲目缩略图目录的清理。
+///
+/// 这一层是**只增不删的反面**:歌单封面按稳定 id 存,取多少留多少;缩略图按
+/// 会过期的 CDN URL 存,不清就是一个永远长大的垃圾堆。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sweep_tests {
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    use super::platform::sweep_dir;
+
+    /// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
+    fn scratch(case: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("osmosis-sweep-{case}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)
+            .expect("建不出临时目录");
+        dir
+    }
+
+    /// 写一个指定大小、指定"有多旧"的文件。
+    ///
+    /// mtime 用 `File::set_modified` 精确设定,而不是靠 sleep 拉开时间差 ——
+    /// 那种测试在慢机器上会时好时坏。
+    fn file(
+        dir: &Path,
+        name: &str,
+        size: usize,
+        age_secs: u64,
+    ) {
+        let path = dir.join(name);
+        std::fs::write(&path, vec![0u8; size])
+            .expect("写不出测试文件");
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("打不开测试文件");
+        handle
+            .set_modified(
+                SystemTime::now()
+                    - Duration::from_secs(age_secs),
+            )
+            .expect("设不了 mtime");
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut found: Vec<String> = std::fs::read_dir(dir)
+            .expect("读不到临时目录")
+            .filter_map(|entry| {
+                Some(
+                    entry
+                        .ok()?
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// 超出预算时从最旧的删起,删到线下就停手。
+    ///
+    /// 删过头的现象是刚看过的那一屏封面下次还要重取 —— 缓存在,却总不命中。
+    #[test]
+    fn the_sweep_deletes_oldest_first_until_under_budget() {
+        let dir = scratch("oldest-first");
+        file(&dir, "old", 100, 300);
+        file(&dir, "mid", 100, 200);
+        file(&dir, "new", 100, 100);
+
+        // 预算 250:删掉最旧那一个就到 200,不该再动第二个
+        sweep_dir(&dir, 250);
+
+        assert_eq!(names(&dir), vec!["mid", "new"]);
+    }
+
+    /// 没超预算时一个都不删 —— 清理不该在正常情况下动手。
+    #[test]
+    fn the_sweep_keeps_everything_under_budget() {
+        let dir = scratch("under-budget");
+        file(&dir, "a", 100, 200);
+        file(&dir, "b", 100, 100);
+
+        sweep_dir(&dir, 1024);
+
+        assert_eq!(names(&dir), vec!["a", "b"]);
+    }
+
+    /// 目录还不存在时安静返回 —— 第一次启动就是这个样子,不是故障。
+    #[test]
+    fn the_sweep_tolerates_a_missing_directory() {
+        let dir =
+            scratch("missing").join("not-created-yet");
+        sweep_dir(&dir, 0);
+        assert!(!dir.exists());
     }
 }
 

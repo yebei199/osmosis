@@ -24,6 +24,8 @@ fn row(id: &str, liked: bool) -> TrackRow {
         duration: "03:00".into(),
         loading: false,
         liked,
+        cover_url: String::new().into(),
+        cover: slint::Image::default(),
     }
 }
 

@@ -25,6 +25,10 @@ syncplay.workspace = true
 # 封面解码:平台 CDN 给的是 jpeg/png 字节,slint 公开 API 只吃像素缓冲,
 # 中间这一步由 image 补上。web 端的封面等播放链路通了一起做(那边另有 <img> 可用)。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 曲目缩略图的磁盘缓存按封面 URL 存,而 URL 里有 `/` 与 `?`,不能直接当文件名。
+# 散列一下即可,但这个散列会跨进程复用(缓存文件名),所以不能用 std 的
+# DefaultHasher —— 它的输出不保证跨 Rust 版本稳定。已在依赖树里(webrtc 拖的)。
+blake3 = { version = "1", default-features = false, features = ["std"] }
 # 只为「今天是哪天」:当日推荐跨过零点就该重拉。std 给不出本地日期(没有时区),
 # 而 chrono 已经在依赖树里(bevy 拖的),不新增下载与编译负担。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

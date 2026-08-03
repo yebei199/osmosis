@@ -56,6 +56,48 @@ pub fn decode(
     ))
 }
 
+/// 列表行里那张缩略图的边长上限。
+///
+/// 行里画的是 40px 逻辑尺寸,2 倍 HiDPI 屏上是 80 物理像素,取 96 留一点余量。
+/// 原尺寸解码在这里是不能选的:歌单详情能到近千行,一张 500×500 解出来 1MB,
+/// 全摆上就是 GB 级常驻。
+pub const THUMBNAIL_SIZE: u32 = 96;
+
+/// 把封面字节解成列表行用的缩略图。
+///
+/// 与 [`decode`] 的差别只在尺寸和不出点云:那一个供播放页那张大图,要原分辨率;
+/// 这一个一次要出几十上百张,只能出小的。失败路径同样是常态路径 ——
+/// CDN 过期后回的是 HTML 错误页。
+pub fn decode_thumbnail(
+    bytes: &[u8],
+) -> Option<slint::Image> {
+    let decoded = image::load_from_memory(bytes).ok()?;
+    let (w, h) = (decoded.width(), decoded.height());
+
+    let long_side = w.max(h);
+    let small = if long_side > THUMBNAIL_SIZE {
+        // 与点云那一路同一个理由用 `thumbnail`:盒式降采样,快一个量级,
+        // 而 96px 上看不出重采样质量的差别。
+        let scale = f64::from(THUMBNAIL_SIZE)
+            / f64::from(long_side);
+        let target = |side: u32| {
+            (f64::from(side) * scale).round().max(1.0)
+                as u32
+        };
+        decoded.thumbnail(target(w), target(h)).to_rgba8()
+    } else {
+        // 比预算还小的原样留着 —— 放大只会糊,一个像素也多不出来。
+        decoded.to_rgba8()
+    };
+
+    let (tw, th) = small.dimensions();
+    Some(slint::Image::from_rgba8(SharedPixelBuffer::<
+        Rgba8Pixel,
+    >::clone_from_slice(
+        small.as_raw(), tw, th
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +145,37 @@ mod tests {
             (pixels.width, pixels.height),
             (300, 300)
         );
+    }
+
+    /// 大封面解成缩略图:长边压到预算、宽高比保住。
+    ///
+    /// 不压的话歌单详情近千行会把原图整批搬进内存 —— 那是 GB 级。
+    #[test]
+    fn decode_thumbnail_fits_the_thumbnail_budget() {
+        let img = decode_thumbnail(&png(1200, 800))
+            .expect("合法 PNG 应能解码");
+        assert_eq!(img.size().width, THUMBNAIL_SIZE);
+        // 1200:800 = 3:2,96 宽对应 64 高
+        assert_eq!(img.size().height, 64);
+    }
+
+    /// 小于预算的封面原样留着,不放大 —— 与 `decode` 同一条规矩。
+    #[test]
+    fn decode_thumbnail_keeps_small_covers_untouched() {
+        let img = decode_thumbnail(&png(48, 48))
+            .expect("合法 PNG 应能解码");
+        assert_eq!(
+            (img.size().width, img.size().height),
+            (48, 48)
+        );
+    }
+
+    /// 直链过期回的 HTML 错误页解不出图,返回 None 而不是 panic 掉 UI 线程。
+    #[test]
+    fn decode_thumbnail_rejects_a_html_error_page() {
+        let html =
+            b"<html><body>403 Forbidden</body></html>";
+        assert!(decode_thumbnail(html).is_none());
     }
 
     /// 在内存里编一张纯色 PNG,免得在测试里贴一段魔法字节。

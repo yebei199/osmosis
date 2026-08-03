@@ -29,6 +29,10 @@ mod playlist;
 // 歌单封面:取一次、记住、下次直接给。
 #[cfg(not(target_arch = "wasm32"))]
 mod artwork;
+// 曲目行的缩略图。与 artwork 分开是因为键不同(封面 URL vs 歌单 id),
+// 因而缓存、去重与淘汰的规则全都不同。
+#[cfg(not(target_arch = "wasm32"))]
+mod thumbnail;
 // 红心:哪些歌在红心里,以及点一下之后发生什么。
 mod liked;
 // 播放进度的格式化。与列表里的时长同一条规矩:算在 Rust 侧,`.slint` 里只摆。

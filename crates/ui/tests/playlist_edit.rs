@@ -41,6 +41,8 @@ fn one_track(ui: &MainWindow) {
             duration: "3:41".into(),
             loading: false,
             liked: false,
+            cover_url: String::new().into(),
+            cover: slint::Image::default(),
         },
     ])));
 }

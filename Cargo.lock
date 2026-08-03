@@ -9388,6 +9388,7 @@ dependencies = [
  "api",
  "app-core",
  "audio",
+ "blake3",
  "chrono",
  "i-slint-backend-testing",
  "image",
