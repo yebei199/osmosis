@@ -41,6 +41,9 @@ mod progress;
 #[cfg(not(target_arch = "wasm32"))]
 mod search;
 
+// 一次性提示的唯一出口。所有端都要 —— 报错的路各端都有。
+mod notice;
+
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]

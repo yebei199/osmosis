@@ -47,11 +47,17 @@ export component MainWindow inherits Window {
     // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
     in property <[TrackRow]> tracks: [];
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
+    //
+    // **只放状态的投影,不放一次性提示**。投影会随状态重算,永远等于此刻的真相;
+    // 而某次请求失败这类话描述的是过去的一刻,写进来就再没人会清 —— 那是
+    // 「歌单已经摆满、顶上还挂着取歌单失败」的成因。提示走 banner-text
+    // (见 ui/src/notice.rs)。
     in property <string> playback-text;
     // 正在为播放页那首歌取直链/开流。播放页只有歌名、歌手、封面,没有别的位置
     // 能表达"按下去了、正在办",而状态行长在音乐页上、被播放页盖住。
     in property <bool> now-loading: false;
-    // 断流横幅的文案。空字符串 = 不显示(见 docs/adr/0013)。
+    // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
+    // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
     // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
     in-out property <string> banner-text;
     // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
@@ -1074,9 +1080,10 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── 断流横幅:压在所有页之上 ──
+    // ── 横幅:压在所有页之上 ──
     // 状态行长在音乐页上,而播放页是覆层、盖住它 —— 断流恰恰发生在听歌时,
-    // 写在状态行等于说给没人在的房间(docs/adr/0013)。
+    // 写在状态行等于说给没人在的房间(docs/adr/0013)。一次性提示同理:
+    // 它们各自发生在哪一页并不确定,唯有压在所有页之上才一定被看见。
     // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
     if root.banner-text != "": banner := Rectangle {
         y: root.safe-area-insets.top + 10px;

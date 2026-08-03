@@ -505,6 +505,7 @@ pub fn bind(
 pub fn bind(
     ui: &MainWindow,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
+    // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.set_playback_text("Web 端暂不支持播放".into());
     (None, LyricFeed, CoverFeed::default())
 }
@@ -576,10 +577,9 @@ fn bind_search(ui: &MainWindow, deck: &Deck) {
             match found {
                 Ok(dto) => show(&ui, &deck, dto.tracks),
                 Err(error) => {
-                    // 搜索失败复用播放状态那一行 —— 音乐页只有一处报错位,
-                    // 再加一行"搜索状态"会让两行里总有一行是空的。
-                    ui.set_playback_text(
-                        format!("失败: {error}").into(),
+                    crate::notice::show(
+                        &ui,
+                        format!("搜索失败: {error}"),
                     );
                 }
             }
@@ -809,8 +809,9 @@ fn fetch_into<Fut>(
                 if crate::account::handle_session_expiry(
                     &ui, &error,
                 ) => {}
-            Err(error) => ui.set_playback_text(
-                format!("失败: {error}").into(),
+            Err(error) => crate::notice::show(
+                &ui,
+                format!("取曲目失败: {error}"),
             ),
         }
     })
@@ -1364,8 +1365,9 @@ fn bind_seek(ui: &MainWindow, deck: &Deck) {
             && let Err(err) = player.seek(target)
         {
             ui.set_buffering(false);
-            ui.set_playback_text(
-                format!("这首跳不了: {err}").into(),
+            crate::notice::show(
+                &ui,
+                format!("这首跳不了: {err}"),
             );
         }
     });
@@ -1385,8 +1387,9 @@ fn push_seek_state(ui: &MainWindow, deck: &Deck) {
 
     if let Some(why) = state.take_failure() {
         ui.set_buffering(false);
-        ui.set_playback_text(
-            format!("这首跳不了: {why}").into(),
+        crate::notice::show(
+            ui,
+            format!("这首跳不了: {why}"),
         );
         return;
     }
@@ -1432,7 +1435,11 @@ fn report_stream_loss(ui: &MainWindow, deck: &Deck) {
 /// 开机静默自检:`GET /health` 一次,健康就一声不吭。
 ///
 /// Server 页删掉之后,这是协议版本协商唯一的运行时入口(`api::health` 内部
-/// 比对 `PROTOCOL_VERSION`)。坏消息写进音乐页状态行 —— 那是用户最先看的地方。
+/// 比对 `PROTOCOL_VERSION`)。
+///
+/// 坏消息走横幅:这是**开机那一刻**的一次探测,不是一个会自己更新的状态。
+/// 写进播放状态行的话,上游恢复之后没有任何东西会重算它,那句「失败: 上游超时」
+/// 就一直挂在歌单顶上(见 `crate::notice`)。
 #[cfg(not(target_arch = "wasm32"))]
 fn startup_check(ui: &MainWindow) {
     let weak = ui.as_weak();
@@ -1441,7 +1448,7 @@ fn startup_check(ui: &MainWindow) {
         if let Some(message) = describe_startup(&result)
             && let Some(ui) = weak.upgrade()
         {
-            ui.set_playback_text(message.into());
+            crate::notice::show(&ui, message);
         }
     })
     .expect("event loop must be running");

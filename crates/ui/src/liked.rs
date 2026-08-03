@@ -128,8 +128,9 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
             if !crate::account::handle_session_expiry(
                 &ui, &err,
             ) {
-                ui.set_playback_text(
-                    format!("红心没能保存: {err}").into(),
+                crate::notice::show(
+                    &ui,
+                    format!("红心没能保存: {err}"),
                 );
             }
         });

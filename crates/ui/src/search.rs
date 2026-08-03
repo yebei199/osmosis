@@ -181,10 +181,7 @@ fn search_playlists(ui: &MainWindow, keyword: &str) {
     });
 }
 
-/// 报一次失败。
-///
-/// 复用播放状态那一行:音乐页只有一处报错位,再加一行「搜索状态」
-/// 会让两行里总有一行是空的。
+/// 报一次失败。走横幅,不走播放状态行(见 `crate::notice`)。
 fn report(
     ui: &MainWindow,
     err: &api::ApiError,
@@ -193,7 +190,7 @@ fn report(
     if crate::account::handle_session_expiry(ui, err) {
         return;
     }
-    ui.set_playback_text(format!("{what}: {err}").into());
+    crate::notice::show(ui, format!("{what}: {err}"));
 }
 
 #[cfg(test)]
