@@ -18,6 +18,9 @@
 /// default-members 排除本 crate 绕开了,但 IDE 照样按 host cfg 解析这个文件,于是
 /// 常年一片红。cfg 让整段在 host 上直接不存在,两边一起治。见 ADR 0003。
 #[cfg(target_os = "android")]
+mod controls;
+
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
@@ -56,6 +59,9 @@ fn android_main(app: slint::android::AndroidApp) {
     // 到 stderr,而 Android 把 native 的 stderr 丢进 /dev/null。「装上了却连不上」时
     // 别翻 logcat,直接 curl 那个端口。(踩过一次:manifest 缺 INTERNET 权限导致 bind
     // EACCES,全程零日志。)
+    // 媒体控件要 JavaVM,而它只能从 `app` 上取;`init` 会把 `app` 吃掉,
+    // 所以先克隆一份留着(`AndroidApp` 内部是 Arc,克隆是廉价的)。
+    let media_app = app.clone();
     slint::android::init(app)
         .expect("slint android init failed");
 
@@ -127,7 +133,8 @@ fn android_main(app: slint::android::AndroidApp) {
                 occluder,
             })
         },
-        // 系统媒体控件的后端还没接上,见 #38。
-        |_hooks| Box::new(ui::NoControls),
+        // 系统媒体控件:锁屏与通知栏那条播放条由 SystemUI 画,我们只负责报
+        // 状态与接按键(见 docs/adr/0020)。`app` 是 JavaVM 的唯一来源。
+        move |hooks| controls::start(&media_app, hooks),
     );
 }

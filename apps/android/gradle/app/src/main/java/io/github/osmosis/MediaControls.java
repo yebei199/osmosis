@@ -23,6 +23,20 @@ public final class MediaControls {
 
     private static final String TAG = "osmosis";
 
+    static {
+        // NativeActivity 是用 dlopen 加载 libosmosis.so 的,而 dlopen 进来的库
+        // **不会**登记到 Java 类加载器的库表里 —— JNI 解析 native 方法时查的正是
+        // 那张表,于是 nativeCommand 会抛 UnsatisfiedLinkError,尽管符号确实在
+        // .so 里(nm -D 看得到)。
+        //
+        // 这里补一次 System.loadLibrary:动态链接器认得已经加载的那份,不会真的
+        // 再加载一遍,但 ART 会把它记进本类加载器的表里,解析这才成得了。
+        //
+        // 库名与 apps/android/Cargo.toml 的 [lib] name、以及 AndroidManifest 里
+        // 的 android.app.lib_name 是同一个。
+        System.loadLibrary("osmosis");
+    }
+
     /** 与 Rust 侧 ui::MediaStatus 的顺序一一对应,改一边就要改另一边。 */
     public static final int STATUS_PLAYING = 0;
     public static final int STATUS_PAUSED = 1;
@@ -119,7 +133,18 @@ public final class MediaControls {
             String artists,
             long durationMs,
             long positionMs,
-            Bitmap art) {
+            int[] argb,
+            int artWidth,
+            int artHeight) {
+        // 封面以 ARGB_8888 的裸像素过来。通道重排在 Rust 侧做(那边拿到的是
+        // RGBA),这里只负责把它包成 Bitmap —— 一行的事,不值得为它多写 JNI。
+        Bitmap art = null;
+        if (argb != null && argb.length == artWidth * artHeight
+                && artWidth > 0 && artHeight > 0) {
+            art = Bitmap.createBitmap(
+                    argb, artWidth, artHeight, Bitmap.Config.ARGB_8888);
+        }
+
         current = new Snapshot(
                 status, title, artists, durationMs, positionMs, art);
 

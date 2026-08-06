@@ -26,6 +26,13 @@ slint = { workspace = true, features = [
 # 硬依赖,理由同 apps/desktop。
 render3d.workspace = true
 
+# 系统媒体控件要跨到 Java 那一侧(见 src/controls.rs)。版本必须与
+# android-activity 0.6 / i-slint-backend-android-activity 用的那份一致 ——
+# `AndroidApp::vm_as_ptr()` 交出来的句柄只有同一份 jni-rs 认得。
+# (锁文件里还有一个 jni 0.21,那是 cpal 的,与这里无关。)
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
 [features]
 default = []
 # 同 apps/desktop 的 mcp(两个必需的环境变量见那边的注释),但 android 这边有一处不同,
