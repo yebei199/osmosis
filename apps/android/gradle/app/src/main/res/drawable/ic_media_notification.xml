@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    通知栏的小图标。系统会把它当成蒙版:只看 alpha,颜色一律由系统按主题染,
+    所以这里画成纯白单色、不留任何色彩细节 —— 画成彩色的话在浅色主题上会糊成一团。
+
+    这是必需品,不是装饰:Notification.Builder 缺 small icon 会直接抛
+    IllegalArgumentException。应用图标是另一件事,见 #44。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4L14,7h4L18,3h-6z" />
+</vector>
