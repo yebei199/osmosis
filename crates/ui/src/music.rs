@@ -290,6 +290,8 @@ struct Deck {
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
     sync: crate::syncplay::Sync,
+    /// 系统媒体控件的把手。后端由平台入口给,这里只管往里推(见 `crate::media`)。
+    media: Rc<crate::media::Bridge>,
     lyrics: LyricFeed,
     cover: CoverFeed,
     /// 列表里那一批歌的权威副本。Slint 的 model 只存格式化后的字符串,
@@ -354,7 +356,10 @@ impl CoverFeed {
 
     /// 新封面解出来了:排上队等下一帧取走。上一个动作还没被取走就直接顶掉 ——
     /// 点云只显示当前这一首,过期的封面排队也没人要。
-    fn replace(&self, pixels: crate::viz::CoverPixels) {
+    fn replace(
+        &self,
+        pixels: std::sync::Arc<crate::viz::CoverPixels>,
+    ) {
         *self.pending.borrow_mut() =
             crate::viz::CoverUpdate::Show(pixels);
     }
@@ -424,8 +429,14 @@ impl LyricFeed {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(
     ui: &MainWindow,
+    media: impl FnOnce(
+        crate::media::MediaHooks,
+    )
+        -> Box<dyn crate::media::MediaControls>,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     let player = Arc::new(audio::Player::new());
+    let media =
+        Rc::new(crate::media::bind(ui, &player, media));
 
     let lyrics = LyricFeed {
         lines: Rc::new(RefCell::new(Vec::new())),
@@ -440,6 +451,7 @@ pub fn bind(
         ),
         queue: Rc::new(RefCell::new(Queue::default())),
         sync: crate::syncplay::bind(ui, &player),
+        media,
         player,
         lyrics: lyrics.clone(),
         cover: cover.clone(),
@@ -504,6 +516,10 @@ pub fn bind(
 #[cfg(target_arch = "wasm32")]
 pub fn bind(
     ui: &MainWindow,
+    _media: impl FnOnce(
+        crate::media::MediaHooks,
+    )
+        -> Box<dyn crate::media::MediaControls>,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.set_playback_text("Web 端暂不支持播放".into());
@@ -917,29 +933,13 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_toggle_play(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if toggle.sync.is_listening() {
-            toggle.sync.leave();
-            if let Ok(player) = toggle.player.as_ref() {
-                player.stop();
-            }
-            ui.set_is_playing(false);
-            return;
-        }
-
-        let Ok(player) = toggle.player.as_ref() else {
-            return;
-        };
-        if ui.get_is_playing() {
-            player.pause();
-            ui.set_is_playing(false);
-        } else if !player.empty() {
-            // 暂停中,接着放。
-            player.resume();
-            ui.set_is_playing(true);
-        } else {
-            // 放空了(队列结束后又按了播放):重放当前这首。
-            play_current(&ui, &toggle);
-        }
+        toggle_play(&ui, &toggle);
+        // 暂停图标不该慢一拍 —— 轮询要 1 秒之后才轮到。
+        crate::media::push(
+            &ui,
+            &toggle.playback,
+            &toggle.media,
+        );
     });
 
     let next = deck.clone();
@@ -1042,6 +1042,37 @@ fn advance(ui: &MainWindow, deck: &Deck) {
     }
 }
 
+/// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
+///
+/// 从回调里抽出来,是因为系统媒体控件按的也是这一下 —— 那边不该有第二套说法
+/// (见 [`dispatch_media`])。
+#[cfg(not(target_arch = "wasm32"))]
+fn toggle_play(ui: &MainWindow, deck: &Deck) {
+    if deck.sync.is_listening() {
+        deck.sync.leave();
+        if let Ok(player) = deck.player.as_ref() {
+            player.stop();
+        }
+        ui.set_is_playing(false);
+        return;
+    }
+
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    if ui.get_is_playing() {
+        player.pause();
+        ui.set_is_playing(false);
+    } else if !player.empty() {
+        // 暂停中,接着放。
+        player.resume();
+        ui.set_is_playing(true);
+    } else {
+        // 放空了(队列结束后又按了播放):重放当前这首。
+        play_current(ui, deck);
+    }
+}
+
 /// 放队列的当前曲目:取直链 → 开流 → 解码 → 出声,经 `app_core::play` 记账。
 #[cfg(not(target_arch = "wasm32"))]
 fn play_current(ui: &MainWindow, deck: &Deck) {
@@ -1102,10 +1133,13 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
     // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
     deck.cover.clear();
+    // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
+    deck.media.clear_art();
 
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
         let cover = deck.cover.clone();
+        let media = deck.media.clone();
         let playback = deck.playback.clone();
         let id = track.id.clone();
         slint::spawn_local(async move {
@@ -1125,7 +1159,12 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     return;
                 }
                 ui.set_cover_art(img);
-                cover.replace(pixels);
+                // 一张图三个去处:界面的封面卡、点云、系统媒体控件。
+                // `Arc` 免掉后两者各拷一份兆级字节。
+                let pixels = Arc::new(pixels);
+                cover.replace(pixels.clone());
+                media.set_art(pixels);
+                crate::media::push(&ui, &playback, &media);
             }
         })
         .expect("event loop must be running");
@@ -1183,6 +1222,12 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             push_rows(&ui, &deck, None);
+            // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
+            crate::media::push(
+                &ui,
+                &deck.playback,
+                &deck.media,
+            );
         }
     })
     .expect("event loop must be running");
@@ -1231,6 +1276,8 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             // 而两个定时器意味着两套"现在放到哪"的说法。
             push_progress(&ui, &state, position);
             push_seek_state(&ui, &deck);
+            // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
+            crate::media::push(&ui, &deck.playback, &deck.media);
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
@@ -1535,7 +1582,7 @@ mod tests {
             "没换歌不该有动作"
         );
 
-        feed.replace(pixels(2));
+        feed.replace(Arc::new(pixels(2)));
         assert!(
             matches!(feed.take(), CoverUpdate::Show(p) if p.width == 2)
         );
@@ -1551,8 +1598,8 @@ mod tests {
     #[test]
     fn cover_feed_replaces_a_pending_cover() {
         let feed = CoverFeed::default();
-        feed.replace(pixels(2));
-        feed.replace(pixels(4));
+        feed.replace(Arc::new(pixels(2)));
+        feed.replace(Arc::new(pixels(4)));
         assert!(
             matches!(feed.take(), CoverUpdate::Show(p) if p.width == 4)
         );
@@ -1571,7 +1618,7 @@ mod tests {
     #[test]
     fn cover_feed_clears_before_the_new_art_arrives() {
         let feed = CoverFeed::default();
-        feed.replace(pixels(2));
+        feed.replace(Arc::new(pixels(2)));
         // 上一首的图还排在队里没人取,这时候用户按了下一首。
         feed.clear();
 

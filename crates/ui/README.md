@@ -30,6 +30,15 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   落地与失败由每秒那趟轮询从 `audio::SeekState` 上取(`push_seek_state`)。
   `LyricFeed` 是歌词的取用口:行表随换歌整批替换并递增代际,播放页每帧问它
   当前行,靠 (代际, 行号) 判断该不该推新值 —— 每帧无脑推会标脏、破坏省电门。
+- `src/media.rs`:系统媒体控件的接缝(CONTEXT.md「系统媒体控件」)。定义
+  `NowPlaying` / `MediaCommand` / `MediaHooks` / `MediaControls`,后端由平台入口注入
+  (`docs/adr/0020`)—— zbus 那份在 apps/desktop,JNI 那份在 apps/android。换算全在
+  这一侧做完:`Play` 与 `Toggle` 的区分、相对跳转换成绝对位置、绝对位置换成 `seek`
+  要的比例,后端因此不必记住任何状态。封面给两份(CDN 链接给 MPRIS,裸像素给安卓
+  转 Bitmap),两份 ui 本来都攥着。`Bridge` 负责去重:推送搭 1Hz 的续播轮询,
+  不去重的话一首歌要往外发两百多次内容相同的状态变更。`dispatch` 把外面按的键
+  翻成 `.slint` 的回调 —— 只调回调、不碰状态,那一套规矩在 `music::bind_controls`
+  里已经有了,重写一遍就会长歪。
 - `src/viz.rs`:播放页可视化的 seam 数据(入参 `VizControls`,出参三图的
   `VizImages`,均 POD)与音频载荷的取帧 helper。wasm 侧数据源恒空,取帧代码
   无平台判断。

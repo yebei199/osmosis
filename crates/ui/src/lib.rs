@@ -7,6 +7,10 @@
 slint::include_modules!();
 
 mod nav_glass;
+pub use media::{
+    MediaCommand, MediaControls, MediaHooks, MediaStatus,
+    NoControls, NowPlaying,
+};
 pub use nav_glass::NavGlassControls;
 
 mod viz;
@@ -44,6 +48,7 @@ mod search;
 // 一次性提示的唯一出口。所有端都要 —— 报错的路各端都有。
 mod notice;
 
+mod media;
 mod music;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -77,7 +82,9 @@ const MAX_TAB: i32 = 1;
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui() -> (
+fn build_ui(
+    media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
+) -> (
     MainWindow,
     viz::Source,
     music::LyricFeed,
@@ -92,7 +99,8 @@ fn build_ui() -> (
     // 接登录页。它按恢复出来的会话决定开局是登录页还是主界面。
     account::bind(&ui);
 
-    let (viz_source, lyrics, cover) = music::bind(&ui);
+    let (viz_source, lyrics, cover) =
+        music::bind(&ui, media);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
@@ -112,7 +120,9 @@ fn build_ui() -> (
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
 /// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
-    let (ui, _viz_source, _lyrics, _cover) = build_ui();
+    // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
+    let (ui, _viz_source, _lyrics, _cover) =
+        build_ui(|_| Box::new(NoControls));
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
@@ -150,6 +160,10 @@ pub fn run() {
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则闭包产出的纹理
 /// 不属于 Slint 的 device,采样不出来。
+///
+/// `media` 交出这一端的系统媒体控件后端(见 [`MediaControls`] 与 `docs/adr/0020`)。
+/// 它收到的 [`MediaHooks`] 要等窗口与播放器都造好才存在,所以是这里回头调它,
+/// 而不是入口先造好塞进来。没有实现的端传 [`NoControls`]。
 pub fn run_with_renderers(
     mut nav_frame: impl FnMut(
         &NavGlassControls,
@@ -161,8 +175,9 @@ pub fn run_with_renderers(
         u32,
     ) -> Option<VizImages>
     + 'static,
+    media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
-    let (ui, viz_source, lyrics, cover) = build_ui();
+    let (ui, viz_source, lyrics, cover) = build_ui(media);
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));

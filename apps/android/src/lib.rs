@@ -127,5 +127,7 @@ fn android_main(app: slint::android::AndroidApp) {
                 occluder,
             })
         },
+        // 系统媒体控件的后端还没接上,见 #38。
+        |_hooks| Box::new(ui::NoControls),
     );
 }
