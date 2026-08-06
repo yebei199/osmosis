@@ -152,12 +152,12 @@ export component RoundControl inherits Rectangle {
         // 拨开了的键用强调色画图标 —— 那是这一排里唯一"有状态"的东西,
         // 光靠悬停变亮说不出"它现在是开着的"。
         stroke: root.checked ? Theme.accent
-            : (touch.has-hover ? Theme.accent-text : Theme.accent-text.darker(0.15));
+            : (touch.has-hover ? Theme.accent-ink : Theme.accent-ink.darker(0.15));
         stroke-width: 1.6px;
         // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
         // 图标本身都画成闭合形)。
         fill: root.checked ? Theme.accent
-            : (touch.has-hover ? Theme.accent-text : Theme.accent-text.darker(0.15));
+            : (touch.has-hover ? Theme.accent-ink : Theme.accent-ink.darker(0.15));
     }
 
     touch := TouchArea {

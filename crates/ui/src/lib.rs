@@ -198,6 +198,7 @@ pub fn run_with_renderers(
     // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
     let mut nav_last_ll: Option<(f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
+    let mut nav_last_dark: Option<bool> = None;
     // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
     // 都从定格处继续,不跳变。
     let mut viz_time = 0.0f32;
@@ -252,11 +253,17 @@ pub fn run_with_renderers(
                     (ui.get_nav_h() * scale).max(1.0);
                 let size_changed = nav_last_size
                     != Some((strip_w, strip_h));
+                // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
+                // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
+                // 要等下一次切 tab 才跟上。
+                let dark = ui.global::<Theme>().get_dark();
+                let theme_changed = nav_last_dark != Some(dark);
                 if nav_glass::nav_transition_active(
                     lead,
                     lag,
                     nav_last_ll,
                 ) || size_changed
+                    || theme_changed
                 {
                     if let Some(img) =
                         nav_frame(&NavGlassControls {
@@ -266,11 +273,13 @@ pub fn run_with_renderers(
                             lag_y: lag * scale,
                             slot_h: ui.get_nav_slot_h()
                                 * scale,
+                            dark,
                         })
                     {
                         ui.set_nav_bg(img);
                     }
                     nav_last_ll = Some((lead, lag));
+                    nav_last_dark = Some(dark);
                     nav_last_size =
                         Some((strip_w, strip_h));
                 }

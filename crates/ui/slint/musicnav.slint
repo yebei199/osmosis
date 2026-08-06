@@ -74,7 +74,7 @@ export component MusicRail inherits Rectangle {
             Text {
                 text: root.collapsed ? item.short : item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? Theme.accent-text : Theme.text-dim;
+                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -111,7 +111,7 @@ export component MusicBar inherits Rectangle {
             Text {
                 text: item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? Theme.accent-text : Theme.text-dim;
+                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -165,7 +165,7 @@ export component SearchTabBar inherits Rectangle {
             Text {
                 text: item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? Theme.accent-text : Theme.text-dim;
+                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;

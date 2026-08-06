@@ -54,8 +54,13 @@ export global Theme {
 
     // 琥珀色是这个 app 的身份色。浅色下要压深一档,不然在纸白底上糊掉。
     out property <color> accent: root.dark ? #d9a86c : #a9713c;
-    // 压在强调色上的字与图标。
+    // 压在**强调色实底**上的字(HoverButton 的标签、沉浸层上那个预设面板)。
+    // 两套都是近白:底本身够深,不必跟着主题翻。
     out property <color> accent-text: root.dark ? #f0e6d8 : #fdf6ec;
+    // **中性底上**表示"选中/强调"的字与图标:控制条那几颗键、栏目的当前项、
+    // 加载中那一行。与上面那个分开是因为它压的底会跟着主题翻 ——
+    // 合成一个的话,浅色下近白的图标会压在浅底上,整排控制键凭空消失。
+    out property <color> accent-ink: root.dark ? #f0e6d8 : #7a4f22;
 
     // —— 叠加与线 ——
     //
@@ -66,6 +71,27 @@ export global Theme {
     out property <color> divider: root.dark ? #ffffff10 : #00000012;
 
     out property <color> shadow: #000000;
+
+    // —— 极光与玻璃(`glass.slint`)——
+    //
+    // 玻璃是半透明的,**背后没东西就等于没有玻璃**;极光就是专门用来被透过的
+    // 那层内容。深色下它是暗底叠暖光斑,浅色下反过来:亮底叠更浅的暖光斑 ——
+    // 光斑的色相两套一样,变的是明度与浓度,不然换个主题连身份都变了。
+
+    out property <color> aurora-base: root.dark ? #17110d : #f3ece1;
+    // 焦糖、深咖、奶咖三团。alpha 带在颜色里,渐变的外圈用 `with-alpha(0)` 取同色透明端。
+    out property <color> aurora-warm: root.dark ? #8a5a2b9c : #e0b98cb0;
+    out property <color> aurora-deep: root.dark ? #5c3a1e95 : #d3a97fa0;
+    out property <color> aurora-soft: root.dark ? #b9885c66 : #fff2de99;
+
+    // 玻璃本身。深色下往上叠白,浅色下叠得更白**而不是**叠黑:玻璃的观感来自
+    // "比背后更亮的一层薄雾",叠黑会读成一块脏玻璃。
+    out property <color> glass-fill: root.dark ? #ffffff1f : #ffffff8c;
+    out property <color> glass-edge: root.dark ? #ffffff3d : #ffffffcc;
+    out property <color> glass-inner: root.dark ? #ffffff40 : #ffffffd9;
+    out property <color> glass-sheen: root.dark ? #ffffff2b : #ffffff73;
+    // 悬浮阴影。浅色下要淡得多 —— 同样的黑在亮底上重得多。
+    out property <color> glass-shadow: root.dark ? #00000073 : #0000001f;
 
     // —— 语义色 ——
 

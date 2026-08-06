@@ -49,6 +49,7 @@ fn main() {
                 lead_y: n.lead_y,
                 lag_y: n.lag_y,
                 slot_h: n.slot_h,
+                dark: n.dark,
             }))
         },
         move |v, w, h| {
