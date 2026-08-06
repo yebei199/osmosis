@@ -322,9 +322,11 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "libc",
+ "log",
  "render3d",
  "slint",
  "ui",
+ "zbus",
 ]
 
 [[package]]

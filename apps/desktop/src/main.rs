@@ -7,6 +7,7 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod mpris;
 mod single_instance;
 
 fn main() {
@@ -92,8 +93,8 @@ fn main() {
                 occluder,
             })
         },
-        // 系统媒体控件的后端还没接上,见 #38。
-        |_hooks| Box::new(ui::NoControls),
+        // 系统媒体控件:Linux 上是 MPRIS,别的桌面还没有(见 docs/adr/0020)。
+        mpris::start,
     );
 
     // 事件循环已经返回,进程该走了 —— 但**不能让它自然返回**,否则 debug 构建关窗必崩

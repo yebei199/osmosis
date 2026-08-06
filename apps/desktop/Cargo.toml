@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ui.workspace = true
 env_logger.workspace = true
+log.workspace = true
 # 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
 # 否则 android 构建会被 feature 统一拉进 winit。
 #
@@ -35,6 +36,12 @@ render3d.workspace = true
 # `process::exit` 走的是 libc `exit()`,退出处理器与 TLS 析构器照跑,正是要绕开的那段。
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# MPRIS(见 src/mpris.rs)。纯 Rust,不需要 libdbus,故 slint.nix 与 CI 的 apt
+# 行都不为它改;测试要的 dbus-daemon 是另一回事,那是运行期的可执行文件。
+# 版本跟着 Cargo.lock 里已有的那份走 —— i-slint-backend-winit 本就拉了 zbus 5。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
 
 [features]
 default = []

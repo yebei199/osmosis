@@ -41,7 +41,7 @@ jobs:
       # protoc 是 server/build.rs 的 codegen 用的 —— tonic-prost-build 不自带,
       # 要的是系统里那一个。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
 
       # 每条 cargo 都带 `--config profile.dev.package."*".opt-level=0`,把根 Cargo.toml
       # 里那条依赖优化按掉。那条存在的理由是本地 3D 的帧率(见 Cargo.toml 的注释),
@@ -65,7 +65,7 @@ jobs:
 
       # clippy 同样要编译整棵树,native 依赖与 test job 一致。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
 
       - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -- -D warnings
       - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
