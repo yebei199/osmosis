@@ -24,9 +24,13 @@
 一起改**:本目录这份 svg、安卓那两份 vector、通知那份。手算圆弧容易错,
 `M{cx-r},{cy}a{r},{r} 0 1,0 {2r},0a{r},{r} 0 1,0 {-2r},0Z` 是那个套路。
 
-## 装了才生效的那一样
+## 装了才生效的那些
 
-MPRIS 的 `DesktopEntry` 属性报的是 `io.github.osmosis` 这个 id
-(`apps/desktop/src/mpris.rs`)。外壳拿它回头去 XDG 的 applications 目录里找,
-`.desktop` 没装进去的话查不到,bar 上就只剩 `Identity` 那行文字、旁边没有图标。
-`just desktop-install` 是把它装进去的那条路。
+`.desktop` 与图标躺在仓库里对谁都不生效,要装进 XDG 的目录才有人看得见 ——
+`just desktop-install` 是那条路。装进去之后能看出来的是**桌面菜单、启动器、
+dock** 那一类地方:它们读 `.desktop` 的 `Icon=`,再去 hicolor 里取图。
+
+MPRIS 的 `DesktopEntry` 属性报的也是这个 id(`apps/desktop/src/mpris.rs`),
+但**它换不来媒体卡片上的图标**,至少在本机这条 DMS bar 上换不来 ——
+那里的图标写死是 Material 的 `music_note`,所有播放器一个样,`DesktopEntry`
+在它眼里只是排除名单的匹配材料。GNOME 与 KDE 的媒体控件才按这个 id 取图。

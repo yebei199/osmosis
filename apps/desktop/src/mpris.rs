@@ -195,12 +195,16 @@ mod linux {
             "Osmosis".to_owned()
         }
 
-        /// `.desktop` 文件的 stem,外壳靠它找图标。
+        /// `.desktop` 文件的 stem。规范让报,外壳拿它回头找这个应用的条目。
         ///
-        /// 与 `assets/io.github.osmosis.desktop` 的文件名绑死,而那个文件要先
-        /// 装到 XDG 的 applications 目录里才找得到(`just desktop-install`)。
-        /// **没装的话报了也白报** —— 外壳查不到那个 id,退回只显示 `Identity`
-        /// 那行文字,与不报这个属性是同一个结果,不会更糟。
+        /// 与 `assets/io.github.osmosis.desktop` 的文件名绑死,改一个要同时改
+        /// 另一个 —— 报一个不存在的 id,查它的外壳只会查空。
+        ///
+        /// **别指望它换来媒体卡片上的图标。** 各家外壳拿它做什么各不相同,
+        /// 本机这条 DMS bar 压根不看:`Modules/DankBar/Widgets/Media.qml` 里那个
+        /// 图标写死是 Material 的 `music_note`,所有播放器一个样;它唯一用到
+        /// `desktopEntry` 的地方是排除名单的字符串匹配。GNOME 与 KDE 的媒体
+        /// 控件确实按这个 id 取图标,报它是为了那些外壳。
         #[zbus(property)]
         fn desktop_entry(&self) -> String {
             "io.github.osmosis".to_owned()

@@ -232,9 +232,10 @@ desktop-kill:
 
 # 把 .desktop 与图标装进本用户的 XDG 目录,顺带把 release 二进制软链到 PATH 上。
 #
-# 装了才有意义的东西有两样:桌面菜单里那一项,以及 MPRIS 的 `DesktopEntry` ——
-# 外壳拿那个 id 回头去 applications 目录里找图标,文件不在,bar 上就只剩一行
-# 没有图标的文字。
+# 装了才看得见的是桌面菜单、启动器、dock 那一类地方 —— 它们读 `.desktop` 的
+# `Icon=` 再去 hicolor 取图。**媒体卡片上的图标不在此列**:本机这条 DMS bar
+# 把那个图标写死成 Material 的 `music_note`,装不装都一样(见 mpris.rs 的
+# `desktop_entry`)。
 #
 # 软链而不是拷贝:开发机上重编一次就该是新的,拷过去的那份会悄悄变成旧版本。
 # 因此这条 recipe 属于开发机自用,不是发行安装 —— 真正打包是另一件事(#44 之后)。
