@@ -71,6 +71,7 @@ export component ControlCluster inherits HorizontalLayout {
         alignment: center;
         DayNightSwitch {
             night: root.shuffle-on;
+            label: "随机播放";
             toggled => { root.shuffle-toggled(); }
         }
     }

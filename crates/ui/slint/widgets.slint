@@ -218,6 +218,8 @@ export component OutlinedText inherits Rectangle {
 // 让控件自己记一份的话,两份迟早有一份先变。
 export component DayNightSwitch inherits Rectangle {
     in property <bool> night: false;
+    // 读屏软件念的那句。开关本身只有日月两个图形,不给标签就只是"一个按钮"。
+    in property <string> label;
     callback toggled;
 
     // QML 原作 180×70,这里等比压到控制条尺寸。
@@ -355,6 +357,13 @@ export component DayNightSwitch inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: pointer;
+        // checkbox 而不是 button:它有"拨没拨"这个状态,而 button 说不出来。
+        // 无头测试也从这里驱动它(crates/ui/tests/controls.rs)。
+        accessible-role: checkbox;
+        accessible-label: root.label;
+        accessible-checkable: true;
+        accessible-checked: root.night;
+        accessible-action-default => { root.toggled(); }
         clicked => { root.toggled(); }
     }
 }

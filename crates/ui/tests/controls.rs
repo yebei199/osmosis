@@ -67,6 +67,38 @@ fn the_progress_bar_appears_only_with_a_track() {
     assert!(present(&ui, "MainWindow::wide-progress"));
 }
 
+/// **随机开关自己不置位。**
+///
+/// 真相在 `app_core::Queue` 上,`shuffle-on` 是它的投影。开关拨一下只该喊一声,
+/// 值由 Rust 拨完队列再写回来 —— 开关顺手把自己也拨了的话,这个属性就有两个
+/// 写入方,而系统媒体控件(锁屏、bar 上那张卡片)是第三个。三份状态里总有一份
+/// 先变,于是「界面上是开的、放出来却是顺序」这类事就没地方查。
+#[test]
+fn the_shuffle_switch_does_not_set_itself() {
+    let ui = wide_page();
+    ui.set_shuffle_on(false);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.on_shuffle_toggled(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    let switch = testing::ElementHandle::find_by_element_id(
+        &ui,
+        "DayNightSwitch::touch",
+    )
+    .next()
+    .expect("找不到随机开关");
+    switch.invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "拨一下该喊一声");
+    assert!(
+        !ui.get_shuffle_on(),
+        "值该纹丝不动 —— 写它是 Rust 的活,不是开关的"
+    );
+}
+
 // 「拖动时不被每秒的位置刷新拽回去」这一条**没有测试**。
 //
 // 骨架里原本有它,写不出来:无头测试驱动不了真实指针,而 ProgressBar 既不是
