@@ -84,6 +84,19 @@ pkgs.mkShell {
   CMAKE_POLICY_VERSION_MINIMUM = "3.5";
 
   shellHook = ''
+    # `.envrc` 里 direnv 一进目录就加载 slint.nix(桌面工具链),而本 shell 是**叠**在
+    # 那之上的,不是替换。它留下的 PKG_CONFIG_PATH 指着宿主机的 libopus;audiopus_sys
+    # 的 build.rs 会问 pkg-config,于是把宿主机那份 .so 的路径当成链接搜索路径发出去,
+    # aarch64 的链接器报「libopus.so is incompatible with aarch64linux」。
+    #
+    # 交叉编译时宿主机的库路径永远是错的,不是「这次不巧」。清掉之后 audiopus_sys 回落
+    # 到内嵌的 cmake 构建 —— 上面 CMAKE_POLICY_VERSION_MINIMUM 那条注释描述的本来就是
+    # 这条路径,只是它先撞上了宿主机的库,压根没走到。
+    #
+    # 这条错误只在**真的打 APK** 时才出现:`ci-cross` 与 CI 跑的都是 `cargo check`,
+    # 而 check 不链接。所以它躲过了每一条自动化路径,直到有人等完三小时的冷编(见 #45)。
+    unset PKG_CONFIG_PATH
+
     # AGP 会从 Maven 拉取预编译的 aapt2,但那个二进制在 NixOS 上跑不了;
     # 这里指向 androidenv build-tools 里的 aapt2,它已被 patchelf 过,可以运行。
     export GRADLE_OPTS="-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/build-tools/${buildToolsVersion}/aapt2"
