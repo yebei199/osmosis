@@ -178,9 +178,6 @@ fn handle(
                 roster.others().to_vec()
             };
             show_devices(weak, others);
-            // 名册到了就说明信令是通的,顺手把上一次的报错洗掉 ——
-            // 断线重连之后那一行本该恢复,否则它会一直停在一个已经不成立的错误上。
-            show_role(weak, describe_role(&lock(role)));
         }
         Event::Listening { host, source } => {
             // 直接出声,不切 UI 线程:切过去反而会让音频的起播等在
@@ -204,7 +201,13 @@ fn handle(
             });
         }
         Event::Failed(message) => {
-            show_role(weak, format!("同播: {message}"));
+            // 走提示,不写角色那一行:连不上的时候角色一动没动,那一行此刻
+            // 依然为真,而失败是**这一刻**的事。写进去就没人会重算它,那句话
+            // 会一直挂到角色碰巧变一次为止(见 `crate::notice`)。
+            let message = format!("同播失败: {message}");
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                crate::notice::show(&ui, message);
+            });
         }
     }
 }
@@ -435,7 +438,7 @@ mod tests {
                 "expected value".to_owned(),
             ),
         ] {
-            copy.push(format!("同播: {error}"));
+            copy.push(format!("同播失败: {error}"));
         }
 
         for line in copy {
