@@ -11,8 +11,8 @@
 //
 // - **常驻界面**(base/window/surface/raised/hover):导航、列表、控制条、卡片。
 //   跟着明暗走。
-// - **沉浸层**(immersive*):播放页压在封面与点云上的那块底。它存在的理由是让
-//   3D 粒子读得出来,浅色下要不要跟着变亮是另一个问题(见 #48)。
+// - **沉浸层**(immersive*):播放页压在封面与点云上的那块底,连同压在它上面的
+//   字与线。**整族两套主题下取值相同** —— 底钉死,字就得跟着钉死。
 // - **错误横幅**(danger*):自成一套,不跟别人共用名字 —— 共用了就没法只调它。
 //
 // 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
@@ -39,9 +39,18 @@ export global Theme {
 
     // —— 沉浸层:播放页那块压在封面与点云上的底 ——
 
-    out property <color> immersive: root.dark ? #0b0d13 : #0b0d13;
+    // **这一族两套主题下取值相同,这是它的定义而不是偷懒。** 那块底托着封面
+    // 点云:点云的颜色逐颗取自封面,亮底会把它冲掉。既然底钉死,压在它上面的
+    // 字也必须钉死 —— 用会翻的 token 的话,浅色主题下就是深字压深底
+    // (歌名曾经是 1.23:1)。`crates/ui/tests/theme.rs` 把这条钉住了。
+    out property <color> immersive: #0b0d13;
     // 浮在沉浸层上的小面板(可视化预设那个)。
-    out property <color> immersive-panel: root.dark ? #12141cee : #12141cee;
+    out property <color> immersive-panel: #12141cee;
+    out property <color> immersive-text: #e6e8ef;
+    out property <color> immersive-text-dim: #9aa0b4;
+    out property <color> immersive-accent: #d9a86c;
+    // 沉浸层上的边线。往上叠白 —— 底永远是深的,不存在"反过来"的情况。
+    out property <color> immersive-line: #ffffff1f;
 
     // —— 字,由强到弱 ——
 

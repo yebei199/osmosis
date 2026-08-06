@@ -890,7 +890,7 @@ export component MainWindow inherits Window {
             width: 100%;
             height: 30px;
             text: root.now-title;
-            text-color: Theme.text;
+            text-color: Theme.immersive-text;
             font-size: 22px;
         }
         OutlinedText {
@@ -898,7 +898,7 @@ export component MainWindow inherits Window {
             width: 100%;
             height: 20px;
             text: root.now-artists;
-            text-color: Theme.text-dim;
+            text-color: Theme.immersive-text-dim;
             font-size: 14px;
         }
 
@@ -911,7 +911,7 @@ export component MainWindow inherits Window {
             height: 18px;
             text: "加载中…";
             font-family: "Maple Mono NF CN";
-            text-color: Theme.accent;
+            text-color: Theme.immersive-accent;
             font-size: 13px;
         }
 
@@ -930,7 +930,7 @@ export component MainWindow inherits Window {
                 x: 16px;
                 height: root.viz-lyric-line-h;
                 text: root.lyric-line;
-                text-color: Theme.text.brighter(0.1);
+                text-color: Theme.immersive-text.brighter(0.1);
                 font-size: root.compact ? 21px : 30px;
                 // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
                 // 只是一圈灰边,拉不开对比。
@@ -942,7 +942,7 @@ export component MainWindow inherits Window {
                 x: 16px;
                 height: root.viz-lyric-tr-h;
                 text: root.lyric-translation;
-                text-color: Theme.text-dim.brighter(0.1);
+                text-color: Theme.immersive-text-dim.brighter(0.1);
                 font-size: root.compact ? 14px : 16px;
                 // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
                 // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
@@ -1038,7 +1038,7 @@ export component MainWindow inherits Window {
                     background: Theme.immersive-panel;
                     border-radius: 12px;
                     border-width: 1px;
-                    border-color: Theme.overlay;
+                    border-color: Theme.immersive-line;
 
                     VerticalLayout {
                         padding: 6px;
@@ -1057,7 +1057,7 @@ export component MainWindow inherits Window {
                                 // 预设名是硬编码中文,走子集字体。
                                 font-family: "Maple Mono NF CN";
                                 font-size: 14px;
-                                color: i == root.viz-preset ? Theme.accent-text : Theme.text-dim.brighter(0.2);
+                                color: i == root.viz-preset ? Theme.accent-text : Theme.immersive-text-dim;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }

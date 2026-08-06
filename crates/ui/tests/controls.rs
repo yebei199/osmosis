@@ -17,7 +17,8 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 /// 元素 id 分不开它们,而标签本来就是为了让人分得开才有的。
 fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
     testing::ElementHandle::find_by_accessible_label(
-        ui, "随机播放",
+        ui,
+        "随机播放",
     )
     .next()
     .expect("找不到随机键")
@@ -134,7 +135,8 @@ fn the_day_night_switch_now_asks_for_a_theme_change() {
     let ui = wide_page();
 
     let themed = std::rc::Rc::new(std::cell::Cell::new(0));
-    let shuffled = std::rc::Rc::new(std::cell::Cell::new(0));
+    let shuffled =
+        std::rc::Rc::new(std::cell::Cell::new(0));
     let a = themed.clone();
     ui.on_theme_toggled(move || a.set(a.get() + 1));
     let b = shuffled.clone();

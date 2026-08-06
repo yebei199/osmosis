@@ -257,7 +257,8 @@ pub fn run_with_renderers(
                 // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
                 // 要等下一次切 tab 才跟上。
                 let dark = ui.global::<Theme>().get_dark();
-                let theme_changed = nav_last_dark != Some(dark);
+                let theme_changed =
+                    nav_last_dark != Some(dark);
                 if nav_glass::nav_transition_active(
                     lead,
                     lag,
