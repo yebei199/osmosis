@@ -4,6 +4,7 @@
 // 覆层里的另一份实例走同一组回调(见 docs/adr/0010 的「功能等价路径」)。
 
 import { DeviceRow } from "types.slint";
+import { Theme } from "theme.slint";
 import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
 
 // 控制键簇:上一首 / 播放暂停 / 下一首 + 日月随机开关。
@@ -90,7 +91,7 @@ export component SyncStrip inherits HorizontalLayout {
         Text {
             text: "同播: 没有其他设备";
             font-family: "Maple Mono NF CN";
-            color: #6b7080;
+            color: Theme.text-faint;
             font-size: 12px;
         }
     }
@@ -100,7 +101,7 @@ export component SyncStrip inherits HorizontalLayout {
         Rectangle {
             width: chip-label.preferred-width + 24px;
             height: 30px;
-            background: chip.has-hover ? #b9885c66 : #ffffff0f;
+            background: chip.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak;
             border-radius: 15px;
 
             chip := TouchArea {
@@ -112,7 +113,7 @@ export component SyncStrip inherits HorizontalLayout {
             // 不指定 font-family,落到系统字体。
             chip-label := Text {
                 text: device.name;
-                color: #e6e8ef;
+                color: Theme.text;
                 font-size: 12px;
                 vertical-alignment: center;
                 horizontal-alignment: center;
@@ -156,14 +157,14 @@ export component ProgressBar inherits Rectangle {
 
         groove := Rectangle {
             height: 4px;
-            background: #ffffff1f;
+            background: Theme.overlay;
             border-radius: 2px;
 
             Rectangle {
                 x: 0;
                 width: parent.width * clamp(root.shown, 0.0, 1.0);
                 height: parent.height;
-                background: #d9a86c;
+                background: Theme.accent;
                 border-radius: 2px;
             }
         }
@@ -173,7 +174,7 @@ export component ProgressBar inherits Rectangle {
             font-family: "Maple Mono NF CN";
             // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
             // 说明「还在动」的东西。
-            color: root.buffering ? #d9a86c : #9aa0b4;
+            color: root.buffering ? Theme.accent : Theme.text-dim;
             font-size: 11px;
             horizontal-alignment: center;
         }
@@ -217,7 +218,7 @@ export component VolumeControl inherits HorizontalLayout {
             width: 32px;
             height: 32px;
             border-radius: 16px;
-            background: speaker.has-hover ? #ffffff14 : transparent;
+            background: speaker.has-hover ? Theme.overlay : transparent;
 
             Text {
                 // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
@@ -256,14 +257,14 @@ export component VolumeControl inherits HorizontalLayout {
             Rectangle {
                 y: (parent.height - 4px) / 2;
                 height: 4px;
-                background: #ffffff1f;
+                background: Theme.overlay;
                 border-radius: 2px;
 
                 Rectangle {
                     x: 0;
                     width: parent.width * clamp(root.volume, 0.0, 1.0);
                     height: parent.height;
-                    background: #d9a86c;
+                    background: Theme.accent;
                     border-radius: 2px;
                 }
             }

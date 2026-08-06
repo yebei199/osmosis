@@ -8,6 +8,8 @@
 
 // 四个分区。**唯一真相** —— 竖栏与横条都 `for` 它,免得两处各抄一份标签,
 // 改了一处忘另一处。顺序即编号,Rust 侧按编号决定拉什么。
+import { Theme } from "theme.slint";
+
 export struct MusicSection {
     label: string,
     // 竖栏收起后显示的短标签。显式给而不是截 label 的首字:
@@ -33,7 +35,7 @@ export component MusicRail inherits Rectangle {
     callback selected(int);
 
     width: root.collapsed ? 40px : 132px;
-    background: #ffffff08;
+    background: Theme.overlay-weak;
     border-radius: 10px;
     animate width { duration: 180ms; easing: ease-out; }
 
@@ -48,7 +50,7 @@ export component MusicRail inherits Rectangle {
 
             Text {
                 text: root.collapsed ? "»" : "«";
-                color: #9aa0b4;
+                color: Theme.text-dim;
                 font-size: 16px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -60,8 +62,8 @@ export component MusicRail inherits Rectangle {
         for item[i] in MusicSections.items: Rectangle {
             height: 34px;
             border-radius: 8px;
-            background: root.current == i ? #d9a86c33
-                : (item-touch.has-hover ? #ffffff14 : transparent);
+            background: root.current == i ? Theme.accent.with-alpha(0.2)
+                : (item-touch.has-hover ? Theme.overlay : transparent);
             animate background { duration: 140ms; easing: ease-out; }
 
             item-touch := TouchArea {
@@ -72,7 +74,7 @@ export component MusicRail inherits Rectangle {
             Text {
                 text: root.collapsed ? item.short : item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? #f0e2cf : #9aa0b4;
+                color: root.current == i ? Theme.accent-text : Theme.text-dim;
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -89,7 +91,7 @@ export component MusicBar inherits Rectangle {
     callback selected(int);
 
     height: 34px;
-    background: #ffffff08;
+    background: Theme.overlay-weak;
     border-radius: 10px;
 
     HorizontalLayout {
@@ -99,7 +101,7 @@ export component MusicBar inherits Rectangle {
         for item[i] in MusicSections.items: Rectangle {
             horizontal-stretch: 1;
             border-radius: 7px;
-            background: root.current == i ? #d9a86c33 : transparent;
+            background: root.current == i ? Theme.accent.with-alpha(0.2) : transparent;
             animate background { duration: 140ms; easing: ease-out; }
 
             TouchArea {
@@ -109,7 +111,7 @@ export component MusicBar inherits Rectangle {
             Text {
                 text: item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? #f0e2cf : #9aa0b4;
+                color: root.current == i ? Theme.accent-text : Theme.text-dim;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -143,7 +145,7 @@ export component SearchTabBar inherits Rectangle {
     callback selected(int);
 
     height: 30px;
-    background: #ffffff08;
+    background: Theme.overlay-weak;
     border-radius: 9px;
 
     HorizontalLayout {
@@ -153,7 +155,7 @@ export component SearchTabBar inherits Rectangle {
         for item[i] in SearchTabs.items: Rectangle {
             horizontal-stretch: 1;
             border-radius: 6px;
-            background: root.current == i ? #d9a86c33 : transparent;
+            background: root.current == i ? Theme.accent.with-alpha(0.2) : transparent;
             animate background { duration: 140ms; easing: ease-out; }
 
             TouchArea {
@@ -163,7 +165,7 @@ export component SearchTabBar inherits Rectangle {
             Text {
                 text: item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? #f0e2cf : #9aa0b4;
+                color: root.current == i ? Theme.accent-text : Theme.text-dim;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;

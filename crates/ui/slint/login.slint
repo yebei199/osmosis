@@ -10,6 +10,7 @@ import { LineEdit } from "std-widgets.slint";
 
 import { AuroraBackground, GlassCard } from "glass.slint";
 import { HoverButton } from "widgets.slint";
+import { Theme } from "theme.slint";
 
 export component LoginPage inherits Rectangle {
     // 正在等服务端答复。按钮据此变灰,免得连点发出两次注册。
@@ -44,7 +45,7 @@ export component LoginPage inherits Rectangle {
 
             Text {
                 text: root.registering ? "注册" : "登录";
-                color: #e6e8ef;
+                color: Theme.text;
                 font-size: 22px;
                 horizontal-alignment: center;
             }
@@ -73,7 +74,7 @@ export component LoginPage inherits Rectangle {
             // 失败说明。有话说才占位置 —— 常驻一个空行会把布局撑得莫名其妙。
             if root.error-text != "": error := Text {
                 text: root.error-text;
-                color: #ff9d9d;
+                color: Theme.danger-text;
                 font-size: 13px;
                 wrap: word-wrap;
                 horizontal-alignment: center;
@@ -90,7 +91,7 @@ export component LoginPage inherits Rectangle {
                     text: root.busy
                         ? "…"
                         : (root.registering ? "注册并登录" : "登录");
-                    color: #e6e8ef;
+                    color: Theme.text;
                     font-size: 15px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -104,7 +105,7 @@ export component LoginPage inherits Rectangle {
                     text: root.registering
                         ? "已有账号?去登录"
                         : "没有账号?去注册";
-                    color: #9aa3b8;
+                    color: Theme.text-dim;
                     font-size: 13px;
                     horizontal-alignment: center;
                     vertical-alignment: center;

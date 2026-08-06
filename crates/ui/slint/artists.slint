@@ -8,6 +8,7 @@
 
 import { ListView } from "std-widgets.slint";
 import { ArtistRow } from "types.slint";
+import { Theme } from "theme.slint";
 
 export component ArtistList inherits ListView {
     in property <[ArtistRow]> artists;
@@ -23,7 +24,7 @@ export component ArtistList inherits ListView {
         Rectangle {
             y: 2px;
             height: 52px;
-            background: touch.has-hover ? #ffffff14 : #ffffff08;
+            background: touch.has-hover ? Theme.overlay : Theme.overlay-weak;
             border-radius: 8px;
             animate background { duration: 160ms; easing: ease-out; }
         }
@@ -47,14 +48,14 @@ export component ArtistList inherits ListView {
                 // 落到系统字体(与曲目行同一个理由)。
                 Text {
                     text: row.name;
-                    color: #e6e8ef;
+                    color: Theme.text;
                     font-size: 14px;
                     overflow: elide;
                 }
                 Text {
                     text: row.subtitle;
                     font-family: "Maple Mono NF CN";
-                    color: #9aa0b4;
+                    color: Theme.text-dim;
                     font-size: 12px;
                     overflow: elide;
                 }

@@ -6,6 +6,7 @@
 
 // 入口卡片用它透出背后的极光。
 import { GlassCard } from "glass.slint";
+import { Theme } from "theme.slint";
 
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
@@ -27,8 +28,8 @@ export component HoverButton inherits Rectangle {
     width: 220px;
     border-radius: 14px;
     opacity: root.enabled ? 1.0 : 0.5;
-    background: down ? #6b4520 : hovered ? #a9713c : #8a5a2b;
-    drop-shadow-color: #8a5a2b80;
+    background: down ? Theme.accent.darker(0.55) : hovered ? Theme.accent.darker(0.25) : Theme.accent.darker(0.4);
+    drop-shadow-color: Theme.accent.darker(0.4).with-alpha(0.5);
     drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
     drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
     animate background, drop-shadow-blur, drop-shadow-offset-y {
@@ -38,7 +39,7 @@ export component HoverButton inherits Rectangle {
 
     Text {
         text: root.text;
-        color: #ffffff;
+        color: Theme.accent-text;
         font-size: 18px;
         font-weight: 600;
     }
@@ -79,8 +80,8 @@ export component NavItem inherits Rectangle {
 
     border-radius: 12px;
     background: root.gpu-selected
-        ? (touch.has-hover ? #ffffff14 : transparent)
-        : (active ? #2a1e14 : (touch.has-hover ? #1d150f : transparent));
+        ? (touch.has-hover ? Theme.overlay : transparent)
+        : (active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
     animate background { duration: 120ms; easing: ease-out; }
 
     VerticalLayout {
@@ -95,7 +96,7 @@ export component NavItem inherits Rectangle {
                 viewbox-width: 24;
                 viewbox-height: 24;
                 commands: root.icon;
-                stroke: active ? #d9a86c : #8b91a5;
+                stroke: active ? Theme.accent : Theme.text-dim;
                 stroke-width: 1.8px;
                 fill: transparent;
             }
@@ -103,7 +104,7 @@ export component NavItem inherits Rectangle {
 
         Text {
             text: root.label;
-            color: active ? #e6e8ef : #8b91a5;
+            color: active ? Theme.text : Theme.text-dim;
             font-size: 12px;
             font-weight: active ? 700 : 500;
             horizontal-alignment: center;
@@ -128,11 +129,11 @@ export component RoundControl inherits Rectangle {
     width: root.diameter;
     height: root.diameter;
     border-radius: self.width / 2;
-    background: touch.pressed ? #b9885c50
-        : (touch.has-hover ? #ffffff1e
-            : (root.transparent-base ? #00000000 : #ffffff10));
+    background: touch.pressed ? Theme.accent.darker(0.2).with-alpha(0.31)
+        : (touch.has-hover ? Theme.overlay
+            : (root.transparent-base ? transparent : Theme.divider));
     border-width: 1px;
-    border-color: touch.has-hover ? #d9a86c66 : #ffffff14;
+    border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.overlay;
     animate background, border-color { duration: 120ms; easing: ease-out; }
 
     Path {
@@ -141,11 +142,11 @@ export component RoundControl inherits Rectangle {
         viewbox-width: 24;
         viewbox-height: 24;
         commands: root.icon;
-        stroke: touch.has-hover ? #f0e6d8 : #d9cdbd;
+        stroke: touch.has-hover ? Theme.accent-text : Theme.accent-text.darker(0.15);
         stroke-width: 1.6px;
         // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
         // 图标本身都画成闭合形)。
-        fill: touch.has-hover ? #f0e6d8 : #d9cdbd;
+        fill: touch.has-hover ? Theme.accent-text : Theme.accent-text.darker(0.15);
     }
 
     touch := TouchArea {
@@ -172,7 +173,7 @@ export component OutlinedText inherits Rectangle {
     in property <length> font-size;
     // 描边宽度。1.5px 在 22px 的歌名与 14px 的歌手上都够,再粗会把小字糊住。
     in property <length> outline: 1.5px;
-    in property <color> outline-color: #05070ce0;
+    in property <color> outline-color: Theme.immersive.with-alpha(0.88);
     in property <TextVerticalAlignment> vertical-alignment: center;
     in property <TextWrap> wrap: no-wrap;
 
@@ -311,7 +312,7 @@ export component DayNightSwitch inherits Rectangle {
         drop-shadow-blur: 6px;
         drop-shadow-offset-x: 1px;
         drop-shadow-offset-y: 2px;
-        drop-shadow-color: #00000080;
+        drop-shadow-color: Theme.shadow.with-alpha(0.5);
         animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
         animate background { duration: 500ms; easing: ease-in-out; }
 
@@ -378,11 +379,11 @@ export component EntryCard inherits Rectangle {
     width: 148px;
     height: 168px;
     border-radius: 18px;
-    background: touch.has-hover ? #2a1e1466 : #17110d66;
+    background: touch.has-hover ? Theme.raised.with-alpha(0.4) : Theme.surface.with-alpha(0.4);
     border-width: 1px;
-    border-color: touch.has-hover ? #d9a86c88 : #ffffff14;
+    border-color: touch.has-hover ? Theme.accent.with-alpha(0.53) : Theme.overlay;
     drop-shadow-blur: touch.has-hover ? 24px : 12px;
-    drop-shadow-color: #00000055;
+    drop-shadow-color: Theme.shadow.with-alpha(0.33);
     drop-shadow-offset-y: touch.has-hover ? 8px : 4px;
     animate background, border-color, drop-shadow-blur, drop-shadow-offset-y {
         duration: 160ms;
@@ -401,14 +402,14 @@ export component EntryCard inherits Rectangle {
                 viewbox-width: 24;
                 viewbox-height: 24;
                 commands: root.icon;
-                stroke: touch.has-hover ? #d9a86c : #9aa0b4;
+                stroke: touch.has-hover ? Theme.accent : Theme.text-dim;
                 stroke-width: 1.6px;
                 fill: transparent;
             }
         }
         Text {
             text: root.label;
-            color: touch.has-hover ? #e6e8ef : #9aa0b4;
+            color: touch.has-hover ? Theme.text : Theme.text-dim;
             font-size: 15px;
             font-weight: 600;
             horizontal-alignment: center;

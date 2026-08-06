@@ -1,0 +1,78 @@
+// 色板。界面上每一个颜色都该从这里取,不在别处写死。
+//
+// 为什么要有这一层:在此之前颜色散在 9 个 .slint 里,133 处、67 种,其中 48 种
+// 只出现一次 —— 那些多半不是设计决定,是当时随手调的。要做明暗两套,先得让
+// "同一个语义只有一个值"这件事成立。
+//
+// **不是一一对应的改名**:一次性的色往最近的语义上归,深色因此会有肉眼难辨的
+// 位移。严格 1:1 的话浅色那套要配 67 个值,配不出来。
+//
+// 三族表面,别混:
+//
+// - **常驻界面**(base/window/surface/raised/hover):导航、列表、控制条、卡片。
+//   跟着明暗走。
+// - **沉浸层**(immersive*):播放页压在封面与点云上的那块底。它存在的理由是让
+//   3D 粒子读得出来,浅色下要不要跟着变亮是另一个问题(见 #48)。
+// - **错误横幅**(danger*):自成一套,不跟别人共用名字 —— 共用了就没法只调它。
+//
+// 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
+// 决定的三个亮度,分开写迟早会有一个忘了改。
+
+export global Theme {
+    // 深色还是浅色。**只有 Rust 写它**(见 crates/ui/src/theme.rs),
+    // 日月开关拨一下只喊一声。
+    in-out property <bool> dark: true;
+
+    // —— 常驻界面的表面,由深到浅 ——
+
+    // 窗口底。音乐页会用 base 盖住它,播放页会用 immersive 盖住它,
+    // 露出来的只有边角。
+    out property <color> window: root.dark ? #0f1117 : #ece7e0;
+    // 音乐页的底。
+    out property <color> base: root.dark ? #140f0b : #f5efe6;
+    // 卡片、面板、控制条。
+    out property <color> surface: root.dark ? #17110d : #ffffff;
+    // 选中的那一项。
+    out property <color> raised: root.dark ? #2a1e14 : #e6dccd;
+    // 悬停。
+    out property <color> hover: root.dark ? #1d150f : #f0e8dc;
+
+    // —— 沉浸层:播放页那块压在封面与点云上的底 ——
+
+    out property <color> immersive: root.dark ? #0b0d13 : #0b0d13;
+    // 浮在沉浸层上的小面板(可视化预设那个)。
+    out property <color> immersive-panel: root.dark ? #12141cee : #12141cee;
+
+    // —— 字,由强到弱 ——
+
+    out property <color> text: root.dark ? #e6e8ef : #2a2119;
+    out property <color> text-dim: root.dark ? #9aa0b4 : #6b6157;
+    // 最弱的一档:没点亮的红心、时长这类"在那儿但别看我"的字。
+    out property <color> text-faint: root.dark ? #6f7688 : #9a9188;
+
+    // —— 强调 ——
+
+    // 琥珀色是这个 app 的身份色。浅色下要压深一档,不然在纸白底上糊掉。
+    out property <color> accent: root.dark ? #d9a86c : #a9713c;
+    // 压在强调色上的字与图标。
+    out property <color> accent-text: root.dark ? #f0e6d8 : #fdf6ec;
+
+    // —— 叠加与线 ——
+    //
+    // 深色下往上叠白,浅色下往下叠黑 —— 同一个语义,方向相反。
+
+    out property <color> overlay-weak: root.dark ? #ffffff08 : #00000008;
+    out property <color> overlay: root.dark ? #ffffff14 : #00000014;
+    out property <color> divider: root.dark ? #ffffff10 : #00000012;
+
+    out property <color> shadow: #000000;
+
+    // —— 语义色 ——
+
+    // 红心点亮的那个红。两套里是同一个：它表示的是"喜欢",不是明暗。
+    out property <color> liked: #d96c8a;
+
+    out property <color> danger-surface: root.dark ? #33201fee : #fbe3e0;
+    out property <color> danger-line: root.dark ? #7a4f4a : #d9a9a2;
+    out property <color> danger-text: root.dark ? #f2dcd8 : #6b2a22;
+}

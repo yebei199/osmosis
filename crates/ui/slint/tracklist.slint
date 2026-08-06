@@ -8,6 +8,7 @@
 
 import { ListView } from "std-widgets.slint";
 import { TrackRow } from "types.slint";
+import { Theme } from "theme.slint";
 
 // ListView 而不是 Flickable + for:后者会把整批歌全部实例化,而歌单详情能到
 // 近千行 —— 每行还要配一张封面的话,那就是上千张图同时在内存里。
@@ -39,11 +40,11 @@ export component TrackList inherits ListView {
         Rectangle {
             y: 2px;
             height: 52px;
-            background: row.loading ? #d9a86c26
-                : (touch.has-hover ? #ffffff14 : #ffffff08);
+            background: row.loading ? Theme.accent.with-alpha(0.15)
+                : (touch.has-hover ? Theme.overlay : Theme.overlay-weak);
             border-radius: 8px;
             border-width: row.loading ? 1px : 0;
-            border-color: #d9a86c66;
+            border-color: Theme.accent.with-alpha(0.4);
             animate background { duration: 160ms; easing: ease-out; }
         }
 
@@ -71,7 +72,7 @@ export component TrackList inherits ListView {
                     width: 40px;
                     height: 40px;
                     border-radius: 6px;
-                    background: #ffffff10;
+                    background: Theme.divider;
                     clip: true;
 
                     if row.cover.width > 0: Image {
@@ -94,13 +95,13 @@ export component TrackList inherits ListView {
                 // 已知缺口,见 README「音乐链路」。
                 Text {
                     text: row.title;
-                    color: #e6e8ef;
+                    color: Theme.text;
                     font-size: 14px;
                     overflow: elide;
                 }
                 Text {
                     text: row.artists;
-                    color: #9aa0b4;
+                    color: Theme.text-dim;
                     font-size: 12px;
                     overflow: elide;
                 }
@@ -111,7 +112,7 @@ export component TrackList inherits ListView {
 
                 Text {
                     text: row.liked ? "♥" : "♡";
-                    color: row.liked ? #d96c8a : #6f7688;
+                    color: row.liked ? Theme.liked : Theme.text-faint;
                     font-size: 16px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -130,7 +131,7 @@ export component TrackList inherits ListView {
 
                 Text {
                     text: "−";
-                    color: #9aa0b4;
+                    color: Theme.text-dim;
                     font-size: 18px;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -145,7 +146,7 @@ export component TrackList inherits ListView {
             Text {
                 text: row.loading ? "加载中…" : row.duration;
                 font-family: row.loading ? "Maple Mono NF CN" : "";
-                color: row.loading ? #d9cdbd : #9aa0b4;
+                color: row.loading ? Theme.accent-text.darker(0.15) : Theme.text-dim;
                 font-size: 12px;
                 vertical-alignment: center;
             }

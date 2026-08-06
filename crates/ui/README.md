@@ -14,6 +14,12 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   目前一张也没有**:歌词曾经是一张,后来改成与歌名同层画在粒子之上,遮挡层
   因此不再逐帧渲染(`VizControls::needs_occluder` 为假时相机整个关掉),
   能力留着等下一张。无 GPU 端粒子为空图,自动退回 warp 形态。
+- `slint/theme.slint`:色板。**界面上每一个颜色都从 `Theme` 取,不在别处写死** ——
+  在此之前它们散在 9 个文件里,133 处、67 种,其中 48 种只出现一次。20 个语义 token,
+  深浅两列(`Theme.dark` 切换);强调色的三种状态由 `accent` 派生,不各给一个名字。
+  三族表面刻意分开:常驻界面、沉浸层(播放页压在封面与点云上的那块底)、错误横幅。
+  三处**不**走色板:日月开关那幅画的颜色(天空/太阳/月亮是图形不是语义)、
+  `glass.slint`(归 3D 那层)、帧率读数。见 `docs/change_log/2026-08-06/theme-palette.md`。
 - `slint/glass.slint`:极光背景与玻璃卡片两个可复用组件,视觉基调的唯一来源。
 - `slint/tracklist.slint` / `playlists.slint` / `artists.slint`:三列可滚的行。都是
   `ListView`(而非 `Flickable` + `for`)—— 歌单详情能到近千行,全量实例化配上每行
