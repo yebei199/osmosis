@@ -183,6 +183,33 @@ cp apps/web/index.html test/*.html dist/web/
 adb forward --remove tcp:8090
 ```
 
+## 真机的锁屏密码
+
+在 `.env` 的 `ANDROID_DEVICE_PIN`(该文件在 `.gitignore` 里,不进版本库)。装 APK、
+重新授权 USB 调试、翻通知栏都要先解锁,而屏幕过一会儿就自己锁上。
+
+```sh
+set -a; source .env; set +a
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell input text "$ANDROID_DEVICE_PIN"
+adb shell input keyevent KEYCODE_ENTER
+```
+
+**不要把这个值写进任何进版本库的文件**,包括提交信息、issue 与注释。要引用它就引用
+这个变量名。
+
+## MIUI 装不上
+
+`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,是「开发者
+选项 → USB 安装」这个开关没生效 —— 它联网校验之后会自己悄悄回退。先去手机上把它
+关掉再打开(可能要重新验证小米账号),仍不行就绕:
+
+```sh
+adb push dist/osmosis-debug.apk /data/local/tmp/x.apk
+adb shell pm install -i com.android.vending -r /data/local/tmp/x.apk
+adb shell rm /data/local/tmp/x.apk
+```
+
 ## 提交前
 
 `just ci` 逐字复述 `.github/workflows/ci.yml`。`dev` 分支的 push 不触发 CI,这是唯一的防线。
