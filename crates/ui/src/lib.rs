@@ -50,6 +50,8 @@ mod notice;
 
 mod media;
 mod music;
+// 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
+mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
 mod syncplay;
@@ -98,6 +100,10 @@ fn build_ui(
     api::session::restore();
     // 接登录页。它按恢复出来的会话决定开局是登录页还是主界面。
     account::bind(&ui);
+
+    // 主题要在别的绑定之前恢复:颜色是全局的,晚一步会让开局那一帧
+    // 用错配色闪一下。
+    theme::bind(&ui);
 
     let (viz_source, lyrics, cover) =
         music::bind(&ui, media);

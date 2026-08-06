@@ -1381,8 +1381,12 @@ fn bind_volume(ui: &MainWindow, deck: &Deck) {
 
         // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
         // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
+        //
+        // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被这次
+        // 调音量顺手冲回默认值。
         api::settings::save(&api::settings::Settings {
             volume,
+            ..api::settings::load()
         });
     });
 }

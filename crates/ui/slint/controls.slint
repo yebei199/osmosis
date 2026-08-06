@@ -20,6 +20,8 @@ export component ControlCluster inherits HorizontalLayout {
     callback toggle();
     callback next();
     callback shuffle-toggled();
+    // 请求换明暗主题。Theme.dark 那时还是旧值 —— 由 Rust 拨完再写回去。
+    callback theme-toggled();
 
     spacing: 10px;
 
@@ -28,6 +30,7 @@ export component ControlCluster inherits HorizontalLayout {
         RoundControl {
             // ⏮:竖杠 + 左向三角。
             icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+            label: "上一首";
             clicked => { root.prev(); }
         }
     }
@@ -56,6 +59,7 @@ export component ControlCluster inherits HorizontalLayout {
                 icon: root.is-playing
                     ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
                     : "M8 5 L19 12 L8 19 Z";
+                label: root.is-playing ? "暂停" : "播放";
                 clicked => { root.toggle(); }
             }
         }
@@ -65,15 +69,30 @@ export component ControlCluster inherits HorizontalLayout {
         RoundControl {
             // ⏭:右向三角 + 竖杠。
             icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+            label: "下一首";
             clicked => { root.next(); }
         }
     }
     VerticalLayout {
         alignment: center;
-        DayNightSwitch {
-            night: root.shuffle-on;
+        // 随机键。**这一排里唯一有状态的一颗**,所以它报成 checkbox 而不是
+        // button,开着时图标换成强调色。
+        RoundControl {
+            // ⤬:两条交叉的箭头(Material 的 shuffle 字形)。
+            icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
             label: "随机播放";
-            toggled => { root.shuffle-toggled(); }
+            checkable: true;
+            checked: root.shuffle-on;
+            clicked => { root.shuffle-toggled(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 日月开关管明暗,不管随机 —— 它画的就是白昼与黑夜。
+        DayNightSwitch {
+            night: Theme.dark;
+            label: "深色主题";
+            toggled => { root.theme-toggled(); }
         }
     }
 }

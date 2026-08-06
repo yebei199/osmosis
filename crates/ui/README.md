@@ -36,6 +36,9 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   落地与失败由每秒那趟轮询从 `audio::SeekState` 上取(`push_seek_state`)。
   `LyricFeed` 是歌词的取用口:行表随换歌整批替换并递增代际,播放页每帧问它
   当前行,靠 (代际, 行号) 判断该不该推新值 —— 每帧无脑推会标脏、破坏省电门。
+- `src/theme.rs`:明暗主题那一位布尔值住在哪。颜色本身全在 `slint/theme.slint`,
+  这里只负责开局从 `api::settings` 恢复、拨一下写回去 —— 跟着设备走,不跟着账号
+  (与音量同一条理由)。日月开关自己不置位,`Theme.dark` 的唯一写入方是这儿。
 - `src/media.rs`:系统媒体控件的接缝(CONTEXT.md「系统媒体控件」)。定义
   `NowPlaying` / `MediaCommand` / `MediaHooks` / `MediaControls`,后端由平台入口注入
   (`docs/adr/0020`)—— zbus 那份在 apps/desktop,JNI 那份在 apps/android。换算全在

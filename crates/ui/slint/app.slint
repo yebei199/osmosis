@@ -21,6 +21,9 @@ import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip, ProgressBar, VolumeControl } from "controls.slint";
 import { Theme } from "theme.slint";
+// 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
+// (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
+export { Theme }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -303,6 +306,9 @@ export component MainWindow inherits Window {
     // 请求翻转随机开关。**shuffle-on 那时还是旧值** —— 由 Rust 拨完队列
     // 再写回去。系统媒体控件送来的 SetShuffle 也走这一条。
     callback shuffle-toggled();
+    // 请求换明暗主题。日月开关拨一下只喊这一声,值由 Rust 写进 Theme.dark
+    // 并存进 api::settings(见 crates/ui/src/theme.rs)。
+    callback theme-toggled();
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
 
@@ -710,6 +716,7 @@ export component MainWindow inherits Window {
                                 toggle => { root.toggle-play(); }
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
+                                theme-toggled => { root.theme-toggled(); }
                             }
                             // 进度条占中间那块可伸缩的地方 —— 它是这一排里唯一
                             // 越宽越好用的东西,别的都是固定尺寸的键。
@@ -750,6 +757,7 @@ export component MainWindow inherits Window {
                                     toggle => { root.toggle-play(); }
                                     next => { root.next-track(); }
                                     shuffle-toggled => { root.shuffle-toggled(); }
+                                theme-toggled => { root.theme-toggled(); }
                                 }
                                 // 展开播放页,同宽版那颗。
                                 RoundControl {
@@ -985,6 +993,7 @@ export component MainWindow inherits Window {
                             toggle => { root.toggle-play(); }
                             next => { root.next-track(); }
                             shuffle-toggled => { root.shuffle-toggled(); }
+                                theme-toggled => { root.theme-toggled(); }
                         }
                         if !root.compact: RoundControl {
                             icon: root.preset-icon;
