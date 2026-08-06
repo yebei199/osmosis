@@ -46,3 +46,66 @@ pub fn show(ui: &MainWindow, text: String) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    /// 每个投影只有一个模块写得动它。
+    ///
+    /// 这条规矩本身是拦不住编译器的:往 `playback-text` 里写一句报错照样过编译,
+    /// 而它过期之后没有任何东西会去重算 —— 这个界面已经为此出过三次同样的错。
+    /// 所以在这里当着源码点名:谁写的、写的是不是自己那份状态。
+    ///
+    /// 新加的写者如果确实在渲染状态本身,把文件名添进 `owners` 即可;如果写的是
+    /// 一次性提示,那它该走 [`super::show`]。
+    #[test]
+    fn only_the_owner_writes_a_projection() {
+        // 分成两截拼,免得这个测试在源码里留下自己要找的字样 —— 它会举报自己。
+        let projections: [(String, &[&str]); 2] = [
+            // 播放状态行:music 渲染 PlaybackState,syncplay 在收听时接管它
+            // (扬声器里是推来的流,本机那首歌名已经不成立了)。
+            (
+                format!("set_{}", "playback_text"),
+                &["music.rs", "syncplay.rs"],
+            ),
+            // 同播角色行:角色归 syncplay 管,别处没有它的真相。
+            (
+                format!("set_{}", "sync_text"),
+                &["syncplay.rs"],
+            ),
+        ];
+
+        let src = std::path::Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        ))
+        .join("src");
+
+        for (setter, owners) in &projections {
+            for entry in std::fs::read_dir(&src)
+                .expect("src 目录读不到")
+            {
+                let path =
+                    entry.expect("目录项读不到").path();
+                if path
+                    .extension()
+                    .is_none_or(|ext| ext != "rs")
+                {
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .expect("文件名")
+                    .to_string_lossy()
+                    .into_owned();
+                let body = std::fs::read_to_string(&path)
+                    .expect("源码读不到");
+
+                assert!(
+                    !body.contains(setter.as_str())
+                        || owners.contains(&name.as_str()),
+                    "{name} 在写 {setter},而那是投影,不是它的状态 —— \
+                     一次性的提示走 crate::notice::show",
+                );
+            }
+        }
+    }
+}
