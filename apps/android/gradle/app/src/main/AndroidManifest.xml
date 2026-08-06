@@ -20,8 +20,12 @@
          也没有锁屏控件,但 MediaSession 还在 —— 耳机线控与蓝牙按键照常。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- roundIcon 指同一份:自适应图标本来就由启动器去裁形状,再给一份圆的
+         等于把同一件事说两遍,而两份迟早会不一致。 -->
     <application
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.SlintStudy"
         android:allowBackup="false">
 

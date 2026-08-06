@@ -230,6 +230,32 @@ mcp-android: mcp-forward
 desktop-kill:
     -pkill -x osmosis-desktop
 
+# 把 .desktop 与图标装进本用户的 XDG 目录,顺带把 release 二进制软链到 PATH 上。
+#
+# 装了才有意义的东西有两样:桌面菜单里那一项,以及 MPRIS 的 `DesktopEntry` ——
+# 外壳拿那个 id 回头去 applications 目录里找图标,文件不在,bar 上就只剩一行
+# 没有图标的文字。
+#
+# 软链而不是拷贝:开发机上重编一次就该是新的,拷过去的那份会悄悄变成旧版本。
+# 因此这条 recipe 属于开发机自用,不是发行安装 —— 真正打包是另一件事(#44 之后)。
+[group('桌面')]
+desktop-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+    bin="$HOME/.local/bin"
+    mkdir -p "$apps" "$icons" "$bin"
+    nix-shell slint.nix --run 'cargo build -p app-desktop --release'
+    ln -sfn "$PWD/target/release/osmosis-desktop" "$bin/osmosis-desktop"
+    install -m 644 assets/io.github.osmosis.desktop "$apps/"
+    install -m 644 assets/io.github.osmosis.svg "$icons/"
+    # 不刷新缓存的话,菜单里那一项要等下次登录才出现。两条命令都可能不在,
+    # 失败无妨 —— 所以各自吞掉,别让 set -e 把整条 recipe 带走。
+    update-desktop-database "$apps" 2>/dev/null || true
+    gtk-update-icon-cache -f -t "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" 2>/dev/null || true
+    echo "==> 装好了。$bin 不在 PATH 上的话,菜单项能用但命令行调不到。"
+
 # 关窗后进程是不是干净地走了(issue #15)。开一个实例、关掉、看退出码,要 0 不要 134。
 #
 # 这条不进 `just ci`:它要合成器给窗口、要显卡给 wgpu adapter,CI 里两样都没有。

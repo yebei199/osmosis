@@ -70,6 +70,7 @@ apps/ios/          iOS 平台入口(staticlib)。只验证编译,打包需 macOS
 apps/web/          Web 平台入口(cdylib + wasm-bindgen)。只验证编译
 server/            axum 后端:共享 contract,并把 bang-dream 的 gRPC 翻成 HTTP/JSON
 server/proto/      那份 gRPC 契约的副本。上游在 bang-dream,它是独立仓库
+assets/            图标源(一份 svg,三端都从它派生)与桌面的 .desktop
 docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/README.md
 Android.nix        NixOS 本机原生工具链(nix-shell)
 xtask/             构建逻辑(`cargo xtask android`),容器/本机通用

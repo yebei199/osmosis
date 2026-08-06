@@ -195,8 +195,17 @@ mod linux {
             "Osmosis".to_owned()
         }
 
-        // 不报 `DesktopEntry`:仓库里还没有 `.desktop` 文件(见 #44),
-        // 报一个不存在的 id 比不报更糟 —— 外壳会去找一个找不到的图标。
+        /// `.desktop` 文件的 stem,外壳靠它找图标。
+        ///
+        /// 与 `assets/io.github.osmosis.desktop` 的文件名绑死,而那个文件要先
+        /// 装到 XDG 的 applications 目录里才找得到(`just desktop-install`)。
+        /// **没装的话报了也白报** —— 外壳查不到那个 id,退回只显示 `Identity`
+        /// 那行文字,与不报这个属性是同一个结果,不会更糟。
+        #[zbus(property)]
+        fn desktop_entry(&self) -> String {
+            "io.github.osmosis".to_owned()
+        }
+
         #[zbus(property)]
         fn supported_uri_schemes(&self) -> Vec<String> {
             Vec::new()

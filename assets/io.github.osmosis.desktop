@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Osmosis
+Comment=听歌、看歌词、跟别的设备一起听
+# 装到 PATH 上的名字。仓库里那个二进制叫 osmosis-desktop([[bin]] name),
+# just desktop-install 会按这个名字建软链。
+Exec=osmosis-desktop
+# 与文件名的 stem 同名,外壳照这个去 hicolor 里找图标。
+Icon=io.github.osmosis
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+# MPRIS 的 DesktopEntry 属性报的就是这个文件的 stem(见 apps/desktop/src/mpris.rs)。
+# 改文件名要同时改那边 —— 报一个找不到的 id,外壳上就只剩一行没有图标的文字。
+StartupWMClass=osmosis-desktop
