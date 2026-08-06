@@ -213,8 +213,11 @@ export component OutlinedText inherits Rectangle {
 // 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
 // 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
 // 圆角矩形 clip 裁掉出界的云星,不需要 bevy。
+// 受控开关:自己**不**记状态,拨一下只喊一声,外面改了 night 它才动。
+// 真相住在 app_core::Queue 上,这里跟着走 —— 系统媒体控件也能拨这个开关,
+// 让控件自己记一份的话,两份迟早有一份先变。
 export component DayNightSwitch inherits Rectangle {
-    in-out property <bool> night: false;
+    in property <bool> night: false;
     callback toggled;
 
     // QML 原作 180×70,这里等比压到控制条尺寸。
@@ -352,10 +355,7 @@ export component DayNightSwitch inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: pointer;
-        clicked => {
-            root.night = !root.night;
-            root.toggled();
-        }
+        clicked => { root.toggled(); }
     }
 }
 

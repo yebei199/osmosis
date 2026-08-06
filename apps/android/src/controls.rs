@@ -27,7 +27,8 @@ pub fn start(
 ) -> Box<dyn ui::MediaControls> {
     // SAFETY:`vm_as_ptr` 返回的是 android-activity 在 `android_main` 之前就拿到
     // 的那个 JavaVM 指针,进程存续期间一直有效。
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let vm =
+        unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
 
     if COMMAND.set(hooks.command.clone()).is_err() {
         log::warn!("媒体控件被接了第二次,后一次没有生效");
@@ -43,9 +44,8 @@ struct Controls {
     vm: JavaVM,
     /// 位置每次推送现问一次。安卓 13+ 的通知会按倍率自己往前推,所以推一次
     /// 准确的就够,不必每秒推。
-    position: Arc<
-        dyn Fn() -> core::time::Duration + Send + Sync,
-    >,
+    position:
+        Arc<dyn Fn() -> core::time::Duration + Send + Sync>,
 }
 
 impl ui::MediaControls for Controls {
@@ -85,7 +85,7 @@ impl Controls {
                 // 另一边 —— 对不上抛的是 NoSuchMethodError,而且要等到第一次
                 // 换歌才抛。
                 jni::jni_sig!(
-                    "(ILjava/lang/String;Ljava/lang/String;JJ[III)V"
+                    "(ILjava/lang/String;Ljava/lang/String;JJ[IIIZ)V"
                 ),
                 &[
                     jni::objects::JValue::Int(status_code(
@@ -102,6 +102,7 @@ impl Controls {
                     (&pixels).into(),
                     jni::objects::JValue::Int(width),
                     jni::objects::JValue::Int(height),
+                    jni::objects::JValue::Bool(now.shuffle),
                 ],
             )?;
             Ok(())
@@ -131,7 +132,8 @@ fn argb_pixels(
         return (Vec::new(), 0, 0);
     };
 
-    let expected = art.width as usize * art.height as usize * 4;
+    let expected =
+        art.width as usize * art.height as usize * 4;
     if art.rgba.len() != expected {
         // 尺寸对不上就别送 —— Java 那边会按宽高去索引,越界要么抛要么花屏。
         log::warn!(
@@ -172,7 +174,9 @@ pub extern "system" fn Java_io_github_osmosis_MediaControls_nativeCommand(
     let caught = std::panic::catch_unwind(|| {
         let Some(command) = decode(command, argument)
         else {
-            log::warn!("媒体控件送来一个不认识的键: {command}");
+            log::warn!(
+                "媒体控件送来一个不认识的键: {command}"
+            );
             return;
         };
         let Some(sink) = COMMAND.get() else {
@@ -200,6 +204,9 @@ fn decode(
         4 => ui::MediaCommand::Previous,
         5 => ui::MediaCommand::SeekTo(argument),
         6 => ui::MediaCommand::SeekBy(argument),
+        // 参数是绝对值而不是「翻一下」:让 Java 侧去猜「现在是不是随机」,
+        // 它记的那一份迟早会跟队列对不上。
+        7 => ui::MediaCommand::SetShuffle(argument != 0),
         _ => return None,
     })
 }

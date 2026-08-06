@@ -10,7 +10,8 @@ import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets
 // 抽成组件是因为宽窄两种版式各摆一次 —— 摆法不同,键是同一套。
 export component ControlCluster inherits HorizontalLayout {
     in property <bool> is-playing;
-    in-out property <bool> shuffle-on;
+    // 只读:随机的真相在 app_core::Queue 上,这里是它的投影。
+    in property <bool> shuffle-on;
     // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
     // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
     in property <image> pulse;
@@ -69,7 +70,7 @@ export component ControlCluster inherits HorizontalLayout {
     VerticalLayout {
         alignment: center;
         DayNightSwitch {
-            night <=> root.shuffle-on;
+            night: root.shuffle-on;
             toggled => { root.shuffle-toggled(); }
         }
     }

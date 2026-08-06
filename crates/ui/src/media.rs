@@ -54,6 +54,12 @@ pub struct NowPlaying {
     pub duration_ms: i64,
     pub art_url: Option<String>,
     pub art: Option<Arc<CoverPixels>>,
+    /// 随机开着没有。
+    ///
+    /// 与上面那些不同,它**不是曲目的属性,是播放器的** —— MPRIS 把 `Shuffle`
+    /// 挂在 Player 接口上,安卓的 `MediaSession` 也一样。所以队列放完、
+    /// 曲目那半清空之后,这一位照旧要如实报出去。
+    pub shuffle: bool,
 }
 
 // —— 以下到文件末尾是原生那一半 ——
@@ -73,6 +79,7 @@ impl NowPlaying {
     pub(crate) fn render(
         state: &PlaybackState,
         playing: bool,
+        shuffle: bool,
         art: Option<Arc<CoverPixels>>,
     ) -> Self {
         let track = match state {
@@ -80,11 +87,17 @@ impl NowPlaying {
             | PlaybackState::Playing(track) => track,
             PlaybackState::Idle
             | PlaybackState::Failed(_) => {
-                return Self::default();
+                // 曲目那半清空,随机照旧报 —— 它是播放器的开关,
+                // 不随「这一刻装没装着歌」一起没。
+                return Self {
+                    shuffle,
+                    ..Self::default()
+                };
             }
         };
 
         Self {
+            shuffle,
             status: if playing {
                 MediaStatus::Playing
             } else {
@@ -104,8 +117,17 @@ impl NowPlaying {
     /// 封面的**有无**要算进来:换歌那一刻图还在路上,第一份必然没有图。只认
     /// id 的话,图到了也推不出去,控件上就永远是空封面。有无就够了 —— 同一首歌
     /// 不会换第二张图。
-    fn fingerprint(&self) -> (MediaStatus, &str, bool) {
-        (self.status, &self.track_id, self.art.is_some())
+    fn fingerprint(
+        &self,
+    ) -> (MediaStatus, &str, bool, bool) {
+        (
+            self.status,
+            &self.track_id,
+            self.art.is_some(),
+            // 只拨了随机的那一次,歌与状态一个字都没变。不认它的话去重
+            // 会把这次变更整个吃掉,外面那个开关就一直停在旧样子。
+            self.shuffle,
+        )
     }
 }
 
@@ -125,6 +147,9 @@ pub enum MediaCommand {
     SeekTo(i64),
     /// 相对当前位置跳,毫秒,可负。MPRIS 的 `Seek` 是这一种。
     SeekBy(i64),
+    /// 随机开关拨到这个值。外面给的是**绝对值**,而界面只有一个切换回调,
+    /// 那道翻译在 [`flips_shuffle`] 里做 —— 与 [`toggles`] 同一个理由。
+    SetShuffle(bool),
 }
 
 /// ui 交给后端的两根线。
@@ -235,6 +260,18 @@ pub(crate) fn toggles(
     }
 }
 
+/// 这个键该不该翻转随机开关。
+///
+/// 与 [`toggles`] 同一道翻译:外面给的是绝对值,界面只有一个切换回调。
+/// 值本来就一样还去调一次,开关会翻到反面 —— 而按下它的人什么都没要求。
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn flips_shuffle(
+    command: MediaCommand,
+    on: bool,
+) -> bool {
+    matches!(command, MediaCommand::SetShuffle(want) if want != on)
+}
+
 /// 这个键要跳到的绝对位置,毫秒。不是跳转键就没有答案。
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn seek_target(
@@ -337,6 +374,11 @@ fn dispatch(
                 ui.invoke_toggle_play();
             }
         }
+        MediaCommand::SetShuffle(_) => {
+            if flips_shuffle(command, ui.get_shuffle_on()) {
+                ui.invoke_shuffle_toggled();
+            }
+        }
         MediaCommand::SeekTo(_)
         | MediaCommand::SeekBy(_) => {
             let at = player
@@ -377,6 +419,7 @@ pub(crate) fn push(
     media.publish(NowPlaying::render(
         &state,
         ui.get_is_playing(),
+        ui.get_shuffle_on(),
         media.art(),
     ));
 }
@@ -441,6 +484,92 @@ mod tests {
         seek_ratio, seek_target, toggles,
     };
 
+    /// 随机开没开要一并报出去,不然外面那个开关永远是灭的。
+    #[test]
+    fn now_playing_carries_the_shuffle_flag() {
+        let state = PlaybackState::Playing(track("a"));
+
+        let on =
+            NowPlaying::render(&state, true, true, None);
+        let stopped = NowPlaying::render(
+            &PlaybackState::Idle,
+            false,
+            true,
+            Some(art()),
+        );
+
+        assert!(on.shuffle);
+        // 停下来抹掉的是曲目,不是播放器的开关:MPRIS 的 `Shuffle` 挂在
+        // Player 接口上,与这一刻装没装着歌无关。
+        assert!(
+            stopped.shuffle,
+            "停下来不该把随机也一起抹掉"
+        );
+        assert_eq!(
+            stopped.track_id, "",
+            "曲目那半照旧要清干净"
+        );
+    }
+
+    /// **只拨了随机也要重新推一次。**
+    ///
+    /// 指纹不认随机的话,去重会把这次变更整个吃掉 —— 歌没换、放没放也没变,
+    /// 于是系统控件上那个开关一直停在旧样子。
+    #[test]
+    fn toggling_shuffle_pushes_again() {
+        let spy = Rc::new(Spy::default());
+        let bridge = Bridge::new(
+            Box::new(spy.clone()),
+            Arc::default(),
+        );
+        let state = PlaybackState::Playing(track("a"));
+
+        bridge.publish(NowPlaying::render(
+            &state, true, false, None,
+        ));
+        bridge.publish(NowPlaying::render(
+            &state, true, true, None,
+        ));
+
+        let pushes = spy.pushes.borrow();
+        assert_eq!(
+            pushes.len(),
+            2,
+            "歌没换、放没放也没变,但随机换了 —— 去重不该吃掉它"
+        );
+        assert!(!pushes[0].shuffle);
+        assert!(pushes[1].shuffle);
+    }
+
+    /// 外面给的是绝对值,界面只有一个切换回调 —— 一样就别去动它。
+    ///
+    /// 与 [`toggles`] 同一道翻译,理由也同一个:让后端自己去猜「现在是不是
+    /// 随机」,两个后端迟早有一个猜错。
+    #[test]
+    fn set_shuffle_only_flips_when_it_differs() {
+        use crate::media::flips_shuffle;
+
+        assert!(flips_shuffle(
+            MediaCommand::SetShuffle(true),
+            false
+        ));
+        assert!(flips_shuffle(
+            MediaCommand::SetShuffle(false),
+            true
+        ));
+        assert!(!flips_shuffle(
+            MediaCommand::SetShuffle(true),
+            true
+        ));
+        assert!(!flips_shuffle(
+            MediaCommand::SetShuffle(false),
+            false
+        ));
+        // 别的键跟随机无关,一个都不许翻
+        assert!(!flips_shuffle(MediaCommand::Next, false));
+        assert!(!flips_shuffle(MediaCommand::Toggle, true));
+    }
+
     /// 装着一首歌但没在走 = 暂停。
     ///
     /// `PlaybackState` 里没有「暂停」这个态,它记的是装载了哪一首;传输走没走
@@ -450,9 +579,9 @@ mod tests {
         let state = PlaybackState::Playing(track("a"));
 
         let running =
-            NowPlaying::render(&state, true, None);
+            NowPlaying::render(&state, true, false, None);
         let paused =
-            NowPlaying::render(&state, false, None);
+            NowPlaying::render(&state, false, false, None);
 
         assert_eq!(running.status, MediaStatus::Playing);
         assert_eq!(paused.status, MediaStatus::Paused);
@@ -469,12 +598,14 @@ mod tests {
         let idle = NowPlaying::render(
             &PlaybackState::Idle,
             false,
+            false,
             None,
         );
         let failed = NowPlaying::render(
             &PlaybackState::Failed("上游超时".into()),
             // 失败那一刻界面可能还没来得及把 is-playing 抹掉。
             true,
+            false,
             None,
         );
 
@@ -490,6 +621,7 @@ mod tests {
     fn a_stopped_deck_carries_no_track() {
         let stopped = NowPlaying::render(
             &PlaybackState::Idle,
+            false,
             false,
             // 上一首的封面还攥在手里,也不该被带出去。
             Some(art()),
@@ -518,7 +650,7 @@ mod tests {
 
         for _ in 0..5 {
             bridge.publish(NowPlaying::render(
-                &state, true, None,
+                &state, true, false, None,
             ));
         }
 
@@ -539,11 +671,12 @@ mod tests {
         let state = PlaybackState::Playing(track("a"));
 
         bridge.publish(NowPlaying::render(
-            &state, true, None,
+            &state, true, false, None,
         ));
         bridge.publish(NowPlaying::render(
             &state,
             true,
+            false,
             Some(art()),
         ));
 

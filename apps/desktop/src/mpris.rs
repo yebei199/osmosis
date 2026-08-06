@@ -109,6 +109,10 @@ mod linux {
                 "Metadata",
                 Value::from(metadata_of(now)),
             );
+            changed.insert(
+                "Shuffle",
+                Value::from(now.shuffle),
+            );
 
             if let Err(err) = self.conn.emit_signal(
                 None::<()>,
@@ -270,6 +274,17 @@ mod linux {
         #[zbus(property)]
         fn metadata(&self) -> HashMap<String, OwnedValue> {
             metadata_of(&self.0.now())
+        }
+
+        /// 随机开着没有。可写 —— bar 上那颗随机键按下去走的是这条 setter。
+        #[zbus(property)]
+        fn shuffle(&self) -> bool {
+            self.0.now().shuffle
+        }
+
+        #[zbus(property)]
+        fn set_shuffle(&self, want: bool) {
+            self.0.send(ui::MediaCommand::SetShuffle(want));
         }
 
         /// 位置每时每刻都在变,规范明说它**不**走 `PropertiesChanged` ——
@@ -466,6 +481,7 @@ mod linux {
                     "https://cdn.example/a.jpg".to_owned(),
                 ),
                 art: None,
+                shuffle: false,
             }
         }
 

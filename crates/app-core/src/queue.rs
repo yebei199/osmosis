@@ -20,6 +20,12 @@ pub struct Queue {
     order: Vec<usize>,
     /// 在 `order` 里的位置。`order` 非空时恒有效。
     cursor: usize,
+    /// 这一批洗过没有。
+    ///
+    /// 真相住在这儿而不是界面上:接进系统媒体控件之后,拨开关的人可能在锁屏、
+    /// 在桌面外壳、也可能在 app 自己的控制条上,而它们都只是这一位的投影。
+    /// 存两份的话,总有一份会先变。
+    shuffled: bool,
 }
 
 impl Queue {
@@ -38,13 +44,14 @@ impl Queue {
             tracks,
             order,
             cursor,
+            shuffled: false,
         }
     }
 
-    /// 换一批:整个队列被替换,旧批与旧次序消失。
+    /// 换一批:整个队列被替换,旧批与旧次序消失,**随机也跟着清掉**。
     ///
-    /// 随机开关的状态不在这里 —— 它属于界面。开着随机换批的话,
-    /// 调用方在 `replace` 之后再补一次 [`Self::shuffle`]。
+    /// 新批还没洗过,说它是随机的就是撒谎。开着随机换批的话,调用方在
+    /// `replace` 之后再补一次 [`Self::shuffle`] —— 那一下顺带把标志立回去。
     pub fn replace(
         &mut self,
         tracks: Vec<TrackDto>,
@@ -99,6 +106,9 @@ impl Queue {
     /// 已放过的(含当前这首)留在原位 —— 这同时保证了两件事:
     /// 当前曲目不被打断,已放过的这一轮不再出现。
     pub fn shuffle(&mut self, seed: u64) {
+        // 先立标志再看洗不洗得动:一首歌的批洗起来是空操作,而"用户开着随机"
+        // 是另一回事。报成关的,界面上的开关会自己弹回去。
+        self.shuffled = true;
         if self.order.len() < 2 {
             return;
         }
@@ -116,12 +126,18 @@ impl Queue {
 
     /// 关随机:回到批的原始顺序,从当前曲目所在处继续。
     pub fn unshuffle(&mut self) {
+        self.shuffled = false;
         let Some(&current) = self.order.get(self.cursor)
         else {
             return;
         };
         self.order = (0..self.tracks.len()).collect();
         self.cursor = current;
+    }
+
+    /// 这一批洗过没有。界面上那个开关与系统媒体控件上的都读它。
+    pub fn is_shuffled(&self) -> bool {
+        self.shuffled
     }
 }
 
@@ -264,6 +280,58 @@ mod tests {
             queue.next().map(|t| t.id.clone()),
             Some("12".to_owned()),
             "next 该走新批,不是旧批"
+        );
+    }
+
+    /// 队列自己记得洗没洗过 —— 界面上那个开关只是它的投影。
+    #[test]
+    fn a_shuffled_queue_says_it_is_shuffled() {
+        let mut queue = Queue::new(batch(4), 0);
+        assert!(!queue.is_shuffled(), "刚建的批是原序");
+
+        queue.shuffle(42);
+
+        assert!(queue.is_shuffled());
+    }
+
+    /// 关随机之后不再是随机的。
+    #[test]
+    fn unshuffle_clears_the_flag() {
+        let mut queue = Queue::new(batch(4), 0);
+        queue.shuffle(42);
+
+        queue.unshuffle();
+
+        assert!(!queue.is_shuffled());
+    }
+
+    /// **边界:一首歌的批洗不动,但开关照样是开的。**
+    ///
+    /// 洗牌在那时是空操作,而"用户开着随机"是另一回事。报成关的,
+    /// 界面上的开关会自己弹回去。
+    #[test]
+    fn a_single_track_batch_is_still_marked_shuffled() {
+        let mut queue = Queue::new(batch(1), 0);
+
+        queue.shuffle(42);
+
+        assert!(
+            queue.is_shuffled(),
+            "洗不动是这一批的事,不是开关的事"
+        );
+    }
+
+    /// 换一批把随机清掉:新批的次序是原序,调用方要重新洗。
+    #[test]
+    fn replacing_the_batch_clears_the_flag() {
+        let mut queue = Queue::new(batch(4), 0);
+        queue.shuffle(42);
+
+        queue.replace(batch(4), 0);
+
+        assert!(
+            !queue.is_shuffled(),
+            "新批还没洗过 —— 说它是随机的就是撒谎"
         );
     }
 

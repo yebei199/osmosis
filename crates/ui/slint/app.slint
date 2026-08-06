@@ -79,7 +79,8 @@ export component MainWindow inherits Window {
     // 当前音量,0..=1。开局由本地设置恢复(见 api::settings)。
     in property <float> volume: 1.0;
     callback volume-changed(float);
-    // 随机播放开关(日月开关的状态)。Rust 读它决定队列洗不洗牌。
+    // 随机播放开关。**只有 Rust 写它** —— 真相在 app_core::Queue 上,
+    // 这里是投影。开关自己不置位,拨一下只喊 shuffle-toggled。
     in-out property <bool> shuffle-on: false;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
     in property <[DeviceRow]> devices: [];
@@ -298,7 +299,8 @@ export component MainWindow inherits Window {
     // 队列内切歌。
     callback next-track();
     callback prev-track();
-    // 随机开关拨动之后。新状态在 shuffle-on 里。
+    // 请求翻转随机开关。**shuffle-on 那时还是旧值** —— 由 Rust 拨完队列
+    // 再写回去。系统媒体控件送来的 SetShuffle 也走这一条。
     callback shuffle-toggled();
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
@@ -702,7 +704,7 @@ export component MainWindow inherits Window {
                             ControlCluster {
                                 alignment: start;
                                 is-playing: root.is-playing;
-                                shuffle-on <=> root.shuffle-on;
+                                shuffle-on: root.shuffle-on;
                                 prev => { root.prev-track(); }
                                 toggle => { root.toggle-play(); }
                                 next => { root.next-track(); }
@@ -742,7 +744,7 @@ export component MainWindow inherits Window {
                                 spacing: 10px;
                                 ControlCluster {
                                     is-playing: root.is-playing;
-                                    shuffle-on <=> root.shuffle-on;
+                                    shuffle-on: root.shuffle-on;
                                     prev => { root.prev-track(); }
                                     toggle => { root.toggle-play(); }
                                     next => { root.next-track(); }
@@ -974,7 +976,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         ControlCluster {
                             is-playing: root.is-playing;
-                            shuffle-on <=> root.shuffle-on;
+                            shuffle-on: root.shuffle-on;
                             // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
                             // 小圆点养一条 wgpu pass。
                             pulse: root.viz-bg;

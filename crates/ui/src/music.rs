@@ -914,6 +914,7 @@ fn bind_play(ui: &MainWindow, deck: &Deck) {
             return;
         };
 
+        // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
         deck.queue.borrow_mut().replace(batch, index);
         if ui.get_shuffle_on() {
             deck.queue.borrow_mut().shuffle(shuffle_seed());
@@ -969,14 +970,23 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_shuffle_toggled(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if ui.get_shuffle_on() {
-            shuffle
-                .queue
-                .borrow_mut()
-                .shuffle(shuffle_seed());
-        } else {
-            shuffle.queue.borrow_mut().unshuffle();
-        }
+        let on = {
+            let mut queue = shuffle.queue.borrow_mut();
+            if queue.is_shuffled() {
+                queue.unshuffle();
+            } else {
+                queue.shuffle(shuffle_seed());
+            }
+            queue.is_shuffled()
+        };
+        // 界面上那个开关是这一位的投影,拨完由这里写回去 —— 开关自己不置位。
+        ui.set_shuffle_on(on);
+        // 系统控件上的随机也该立刻跟着翻,轮询要 1 秒之后才轮到。
+        crate::media::push(
+            &ui,
+            &shuffle.playback,
+            &shuffle.media,
+        );
     });
 }
 
