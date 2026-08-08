@@ -127,9 +127,10 @@ pg:
         postgres:17-alpine
     @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
 
-# 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
+# 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它。
+# 依赖 pg:容器停着直接跑会连不上库,报 PoolTimedOut。
 [group('服务端')]
-server-dev:
+server-dev: pg
     cargo run -p server
 
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
