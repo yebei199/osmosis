@@ -139,6 +139,17 @@ cargo 认为它是新的就没重编,`ui` 于是链到了加 `dark` 之前的元
 `ui` 重编、把这个早就存在的陈旧缓存暴露出来。判断方法:错误指向的字段在源码里存在,
 就 `touch` 那个 crate 的源文件重跑一次,别去 fork 里找原因。
 
+femtovg 的补丁只在 wasm 上有意义,而 `cargo clean -p femtovg` **只清宿主 target**。
+不带 `--target` 地清一遍再 `cargo check --target wasm32-unknown-unknown`,日志里
+femtovg 根本不出现 —— 那份 wasm 单元原封不动地复用了缓存,而命令返回 0。想真的重编:
+
+```bash
+nix-shell slint.nix --run 'cargo clean -p femtovg --target wasm32-unknown-unknown && cargo check -p app-web --target wasm32-unknown-unknown'
+```
+
+验完看日志里有没有 `Checking femtovg v0.26.0 (…#<锁里的哈希>)`。这条比上一条更会骗人:
+`touch` 漏了至少还是原来的错,清错 target 却是一次看着通过的空验证。
+
 顺手核对锁文件确实指向了新的来源:
 
 ```bash
