@@ -13,7 +13,7 @@
 | 分支 | 内容 | 维护方式 |
 |---|---|---|
 | `master` | 上游 master 的镜像,零本地改动 | 纯快进 |
-| `dev` | 上游 master + 四条本地补丁,本项目实际依赖 | rebase,强推 |
+| `dev` | 上游 master + 三条本地补丁,本项目实际依赖 | rebase,强推 |
 | `fix/*` | 向上游提 PR 的分支,各自从上游 master 拉 | 只在 PR 需要时 rebase |
 | `backup/dev-pre-rebase` | 上一次 rebase 前的 dev,出事能回滚 | 每次 rebase 前更新 |
 
@@ -32,7 +32,7 @@
 `dev` 这个名字是刻意的。曾经叫 `pin/femtovg-0.26-wgpu-perf`,版本号写进分支名意味着
 femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`。固定名字一次到位。
 
-四条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
+三条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 
 ## 已删除的分支
 
@@ -108,26 +108,11 @@ git cherry-pick <四条补丁的 commit>
 已经自己修了」。判断方法:去上游 master 里找对应的代码,看那个缺陷还在不在。这次
 就是这样丢掉两条的(一条上游合了我们的 PR,一条被 femtovg 新版本顶掉)。
 
-### 4. 验证后再推
+### 4. 先推,再验
 
-验证要在推之前做,办法是把本项目的 patch 临时指向本地路径:
-
-```toml
-[patch.crates-io]
-slint = { path = "../slint-fork/api/rs/slint" }
-slint-build = { path = "../slint-fork/api/rs/build" }
-```
-
-用相对路径,绝对路径会把本机用户名和目录结构写进仓库。
-
-```bash
-nix-shell slint.nix --run 'cargo check --workspace && cargo test -p ui -p app-desktop -p render3d -p app-core -p audio'
-```
-
-`cargo check --workspace --all-features` 不能用:那会把 `mcp` 也一起开进来,而它是个
-调试后门(理由见 `apps/desktop/Cargo.toml` 的 feature 注释)。
-
-通过之后还原 `Cargo.toml`,推 dev:
+顺序是反直觉的:先把 `dev` 推上去,再验证本项目。`Cargo.toml` 的 patch 不许改成
+`path = "../slint-fork/..."`,哪怕只是临时的 —— 本机路径进了仓库,CI 和 docker 拉不到,
+而本地验证照样通过,谁都发现不了。回滚成本由第 3 步的 `backup/dev-pre-rebase` 兜底。
 
 ```bash
 cd ~/RustroverProjects/slint-fork
@@ -135,14 +120,24 @@ git push --force-with-lease origin rebuild/dev:dev
 git checkout dev && git reset --hard origin/dev && git branch -D rebuild/dev
 ```
 
-### 5. 本项目跟进锁文件
+回本项目跟进锁文件后再验:
 
 ```bash
 cargo update -p slint -p slint-build
+nix-shell slint.nix --run 'cargo check --workspace && cargo test -p ui -p app-desktop -p render3d -p app-core -p audio'
 ```
 
-**每个**被 patch 的包都要点名。cargo 不会自动放弃锁里已有的 registry 版本,少写一个
-就静默变成 `patch.unused`,补丁不进产物还不报错。
+`cargo check --workspace --all-features` 不能用:那会把 `mcp` 也一起开进来,而它是个
+调试后门(理由见 `apps/desktop/Cargo.toml` 的 feature 注释)。
+
+`cargo update` 要对**每个**被 patch 的包点名。cargo 不会自动放弃锁里已有的 registry
+版本,少写一个就静默变成 `patch.unused`,补丁不进产物还不报错。
+
+验证报出来的错未必是 fork 的。2026-08-08 这次,`cargo check` 说 `api::settings::Settings`
+没有 `dark` 字段,而源码里明明有 —— 是 `target/` 里那个 `api` 单元的 fingerprint 陈旧,
+cargo 认为它是新的就没重编,`ui` 于是链到了加 `dark` 之前的元数据。换 pin 只是碰巧让
+`ui` 重编、把这个早就存在的陈旧缓存暴露出来。判断方法:错误指向的字段在源码里存在,
+就 `touch` 那个 crate 的源文件重跑一次,别去 fork 里找原因。
 
 顺手核对锁文件确实指向了新的来源:
 
@@ -166,5 +161,8 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-08-08 slint 的 dev 从落后 288 个 commit 重建到上游 `a254143cb`,三条补丁全部
+  cherry-pick 干净。femtovg 侧无事可做:`origin/master` 已是上游头,`dev` 领先它十个
+  commit(femtovg#302 仍开着)。同时改掉本地路径验证的写法,理由见第 4 步。
 - 2026-07-29 首版。此前 dev 落后上游 194 个 commit,这次重建后追平,丢弃两条已被
   上游覆盖的补丁,femtovg 的 pin 从 0.25.1 迁到 0.26.0。

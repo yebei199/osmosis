@@ -121,16 +121,14 @@ panic = "abort"
 opt-level = 3
 debug = "line-tables-only"
 
-# Slint 走 yebei199/slint 的 dev 分支(上游 master + 四条本地补丁),而不是 crates.io。
-# 四条各自的去向不同,合并进上游后要逐条撤:
+# Slint 走 yebei199/slint 的 dev 分支(上游 master + 三条本地补丁),而不是 crates.io。
+# 三条各自的去向不同,合并进上游后要逐条撤:
 #
 #   1. fix(winit): wasm 上让浏览器自己定帧。上游的 TimerBasedFrameThrottle 在 web 端
 #      拿不到刷新率,回退到 60Hz 硬定时,144Hz 屏上被钉死在 16.14ms/帧。未提 PR。
 #   2. feat(api): Window::is_active()。播放页的可视化要「失焦即停」,上游没有等价物。
 #      可提 PR,尚未提。
-#   3. Android: pending redraw 参与 poll 超时计算。上游 request_redraw 只置标记不唤醒
-#      事件循环,自维持帧泵被压到 1fps。已提 slint#12687 / slint#12688,等维护者选修法。
-#   4. build(femtovg): 把 femtovg 指到 yebei199/femtovg 的 dev 分支。
+#   3. build(femtovg): 把 femtovg 指到 yebei199/femtovg 的 dev 分支。
 #      上游 femtovg 的 wgpu 后端每个 draw 新建六个 GPU 对象,wasm 上每元素约 0.5ms
 #      GPU 进程时间。分支 = femtovg master + femtovg#302 的十个 commit,版本仍 0.26.0。
 #      #302 合并后此条撤销。

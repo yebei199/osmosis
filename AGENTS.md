@@ -210,6 +210,16 @@ adb shell pm install -i com.android.vending -r /data/local/tmp/x.apk
 adb shell rm /data/local/tmp/x.apk
 ```
 
+## `[patch.crates-io]` 只写远程地址
+
+`Cargo.toml` 的 patch 永远指向 `git = "https://github.com/yebei199/..."`,不写
+`path = "../slint-fork/..."` —— 哪怕只是临时验证一下再改回来。本机路径进了仓库,CI 和
+docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
+
+同步 fork 时因此是**先推 fork,再验本仓库**:fork 的 `dev` 推上去,本仓库
+`cargo update -p slint -p slint-build` 跟进锁文件,然后才跑验证。推之前先更新
+`backup/dev-pre-rebase`,验证不过就从它回滚重来。
+
 ## 提交前
 
 `just ci` 逐字复述 `.github/workflows/ci.yml`。`dev` 分支的 push 不触发 CI,这是唯一的防线。
