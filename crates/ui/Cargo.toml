@@ -25,6 +25,10 @@ syncplay.workspace = true
 # 封面解码:平台 CDN 给的是 jpeg/png 字节,slint 公开 API 只吃像素缓冲,
 # 中间这一步由 image 补上。web 端的封面等播放链路通了一起做(那边另有 <img> 可用)。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 曲目缩略图的磁盘缓存按封面 URL 存,而 URL 里有 `/` 与 `?`,不能直接当文件名。
+# 散列一下即可,但这个散列会跨进程复用(缓存文件名),所以不能用 std 的
+# DefaultHasher —— 它的输出不保证跨 Rust 版本稳定。已在依赖树里(webrtc 拖的)。
+blake3 = { version = "1", default-features = false, features = ["std"] }
 # 只为「今天是哪天」:当日推荐跨过零点就该重拉。std 给不出本地日期(没有时区),
 # 而 chrono 已经在依赖树里(bevy 拖的),不新增下载与编译负担。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -37,6 +41,10 @@ slint-build.workspace = true
 [dev-dependencies]
 ttf-parser = "0.25"
 similar-asserts.workspace = true
+# 无头跑界面:软件后端 + 模拟时钟,不要窗口也不要显卡。已经在依赖树里
+# (i-slint-backend-selector 拉着它),所以只是显式声明,不新增下载与编译。
+# 必须与 slint 同源同分支,否则两份 i-slint-core 会在运行期打架。
+i-slint-backend-testing = { git = "https://github.com/yebei199/slint", branch = "dev" }
 
 # 本 crate 刻意没有 [features]:界面层不该被编译期开关参数化。帧率读数曾是个
-# `debug-fps` feature,现改为运行期的 `SLINT_STUDY_FPS`(见 src/lib.rs 的 fps_enabled)。
+# `debug-fps` feature,现改为运行期的 `OSMOSIS_FPS`(见 src/lib.rs 的 fps_enabled)。

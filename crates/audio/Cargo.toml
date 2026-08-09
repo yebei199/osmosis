@@ -13,6 +13,12 @@ stream-download.workspace = true
 opus = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 rustfft = "6"
+# 只用来记流的失联与重连。各平台入口已各自装好 logger。
+log.workspace = true
+# 自定义流(见 src/range_stream.rs)要实现 Stream,以及转发 Bytes。
+# 两者都已在依赖树里(stream-download 自己就用),不新增下载。
+futures-util = { version = "0.3", default-features = false }
+bytes = "1"
 
 [dev-dependencies]
 similar-asserts.workspace = true

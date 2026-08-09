@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    通知栏的小图标。系统会把它当成蒙版:只看 alpha,颜色一律由系统按主题染,
+    所以这里画成纯白单色、不留任何色彩细节 —— 画成彩色的话在浅色主题上会糊成一团。
+
+    形状与 assets/io.github.osmosis.svg 同源(那份的 24×24 网格,原样搬过来),
+    只是把两侧的色差抹掉了。密与疏的对比不靠颜色,靠点的大小和间距,所以单色
+    版仍然是同一个记号。
+
+    这是必需品,不是装饰:Notification.Builder 缺 small icon 会直接抛
+    IllegalArgumentException。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <!-- 膜。单色版里它是唯一能靠 alpha 退后的东西,不压半透就会盖过点 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M11.4,3H12.6V21H11.4Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5.1,7a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM7.6,6a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM6.1,10a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM8.6,10.5a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM5.6,14a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM8.1,15.5a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM6.6,18a0.9,0.9 0 1,0 1.8,0a0.9,0.9 0 1,0 -1.8,0ZM14.8,8a1.7,1.7 0 1,0 3.4,0a1.7,1.7 0 1,0 -3.4,0ZM17.3,13a1.7,1.7 0 1,0 3.4,0a1.7,1.7 0 1,0 -3.4,0ZM14.3,17.5a1.7,1.7 0 1,0 3.4,0a1.7,1.7 0 1,0 -3.4,0Z" />
+</vector>

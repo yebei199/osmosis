@@ -43,16 +43,16 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 **1. `pkill -f app-desktop` 会杀掉你自己的 shell。**
 `-f` 匹配整条命令行,而**你自己那条命令行里就有 "app-desktop" 这几个字**
 (`pkill -f app-desktop && cargo build -p app-desktop`)。于是 pkill 把自己的父 shell 也算作
-命中,整条命令带着退出码 144 消失。用 `pkill -x slint-study-desktop`(按进程名精确匹配),或者直接
+命中,整条命令带着退出码 144 消失。用 `pkill -x osmosis-desktop`(按进程名精确匹配),或者直接
 `just desktop-kill`。
 
-**2. 进程名是 `slint-study-desktop`,不是包名 `app-desktop`。**
+**2. 进程名是 `osmosis-desktop`,不是包名 `app-desktop`。**
 `apps/desktop/Cargo.toml` 里 `[package] name = "app-desktop"` 但 `[[bin]] name =
-"slint-study-desktop"`。拿包名去 `pkill` / 去跑 `target/debug/app-desktop`,**都不报错**
+"osmosis-desktop"`。拿包名去 `pkill` / 去跑 `target/debug/app-desktop`,**都不报错**
 —— 只是没杀掉、没启动,而你还在对着十几分钟前的**老进程**截图,以为自己的改动没生效。
 
 **3. 旧实例不杀干净,你截到的是上一版界面。**
-同时跑两个 app,就有两个 "Slint Study" 窗口;更阴的是 MCP server 绑不上 8090 时**只在日志里
+同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上 8090 时**只在日志里
 留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
 元素树、截图全是旧的,一切看起来"改了没生效"。
 
@@ -115,7 +115,7 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 停任务只结束你启动的那条命令,不一定收走它的子进程 —— 再确认一次:
 
 ```sh
-just desktop-kill                                       # 桌面实例(pkill -f 'target/debug/[s]lint-study-desktop')
+just desktop-kill                                       # 桌面实例(pkill -x osmosis-desktop)
 ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"   # 构建残留
 ```
 
@@ -182,6 +182,43 @@ cp apps/web/index.html test/*.html dist/web/
 ```sh
 adb forward --remove tcp:8090
 ```
+
+## 真机的锁屏密码
+
+在 `.env` 的 `ANDROID_DEVICE_PIN`(该文件在 `.gitignore` 里,不进版本库)。装 APK、
+重新授权 USB 调试、翻通知栏都要先解锁,而屏幕过一会儿就自己锁上。
+
+```sh
+set -a; source .env; set +a
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell input text "$ANDROID_DEVICE_PIN"
+adb shell input keyevent KEYCODE_ENTER
+```
+
+**不要把这个值写进任何进版本库的文件**,包括提交信息、issue 与注释。要引用它就引用
+这个变量名。
+
+## MIUI 装不上
+
+`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,是「开发者
+选项 → USB 安装」这个开关没生效 —— 它联网校验之后会自己悄悄回退。先去手机上把它
+关掉再打开(可能要重新验证小米账号),仍不行就绕:
+
+```sh
+adb push dist/osmosis-debug.apk /data/local/tmp/x.apk
+adb shell pm install -i com.android.vending -r /data/local/tmp/x.apk
+adb shell rm /data/local/tmp/x.apk
+```
+
+## `[patch.crates-io]` 只写远程地址
+
+`Cargo.toml` 的 patch 永远指向 `git = "https://github.com/yebei199/..."`,不写
+`path = "../slint-fork/..."` —— 哪怕只是临时验证一下再改回来。本机路径进了仓库,CI 和
+docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
+
+同步 fork 时因此是**先推 fork,再验本仓库**:fork 的 `dev` 推上去,本仓库
+`cargo update -p slint -p slint-build` 跟进锁文件,然后才跑验证。推之前先更新
+`backup/dev-pre-rebase`,验证不过就从它回滚重来。
 
 ## 提交前
 

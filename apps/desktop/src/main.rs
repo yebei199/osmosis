@@ -7,12 +7,25 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod mpris;
+mod single_instance;
+
 fn main() {
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info"),
     )
     .init();
+
+    // 启动锁在**一切之前**:两个实例会抢同一块声卡各放各的歌,而 MCP 那个固定
+    // 端口只有先起来的抢得到 —— 调试时连上的可能是上次忘了关的那个实例。
+    // `_lock` 要活到 main 结束,丢掉它就等于开门。
+    let Ok(_lock) = single_instance::claim() else {
+        eprintln!(
+            "已经有一个 osmosis-desktop 在跑了。先关掉它,或者 just desktop-kill。"
+        );
+        std::process::exit(1);
+    };
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
     // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
@@ -36,6 +49,7 @@ fn main() {
                 lead_y: n.lead_y,
                 lag_y: n.lag_y,
                 slot_h: n.slot_h,
+                dark: n.dark,
             }))
         },
         move |v, w, h| {
@@ -43,9 +57,21 @@ fn main() {
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
-                    cover: v.cover.as_ref().map(|c| {
-                        (c.width, c.height, c.rgba.as_slice())
-                    }),
+                    cover: match &v.cover {
+                        ui::CoverUpdate::Unchanged => {
+                            render3d::CoverUpdate::Unchanged
+                        }
+                        ui::CoverUpdate::Clear => {
+                            render3d::CoverUpdate::Clear
+                        }
+                        ui::CoverUpdate::Show(c) => {
+                            render3d::CoverUpdate::Show(
+                                c.width,
+                                c.height,
+                                c.rgba.as_slice(),
+                            )
+                        }
+                    },
                     pointer: render3d::Pointer {
                         x: v.pointer.x,
                         y: v.pointer.y,
@@ -53,6 +79,7 @@ fn main() {
                         active: v.pointer.active,
                     },
                     preset: v.preset,
+                    needs_occluder: v.needs_occluder,
                     width: w,
                     height: h,
                 });
@@ -67,6 +94,8 @@ fn main() {
                 occluder,
             })
         },
+        // 系统媒体控件:Linux 上是 MPRIS,别的桌面还没有(见 docs/adr/0020)。
+        mpris::start,
     );
 
     // 事件循环已经返回,进程该走了 —— 但**不能让它自然返回**,否则 debug 构建关窗必崩

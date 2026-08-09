@@ -1,0 +1,155 @@
+// 一列可滚的曲目。
+//
+// 每日推荐、搜索结果、最近播放、歌单详情摆的都是这一个 —— 它们的差别在
+// 「这批歌是哪来的」,而那是 Rust 侧的事,不是列表的事。
+//
+// 行内的字段都是**已经格式化好的字符串**:歌手怎么拼、时长怎么写由 Rust 决定
+// 并测过(见 types.slint)。
+
+import { ListView } from "std-widgets.slint";
+import { TrackRow } from "types.slint";
+import { Theme } from "theme.slint";
+
+// ListView 而不是 Flickable + for:后者会把整批歌全部实例化,而歌单详情能到
+// 近千行 —— 每行还要配一张封面的话,那就是上千张图同时在内存里。
+export component TrackList inherits ListView {
+    in property <[TrackRow]> tracks;
+    // 这一批歌是不是某个本地歌单的内容。是的话每行多一个「−」——
+    // 从每日推荐里「移除」一首没有意义,那不是一个能改的集合。
+    in property <bool> removable: false;
+
+    callback play(string);
+    // 点红心。参数是曲目 id 与**点完之后**的状态 —— 让 Rust 再去读一遍当前
+    // 状态的话,两边对「现在是红还是没红」的理解就有了两个来源。
+    callback toggle-liked(string, bool);
+    // 把这一首移出当前歌单。与红心是两件事:红心说的是「我喜欢这首歌」,
+    // 共用一个键的话,取消红心时会连带把歌从歌单里删掉。
+    callback remove(string);
+    // 这一行要它的封面了。由 Rust 去取、缓存、回填(见 ui/src/thumbnail.rs)。
+    callback needs-cover(string);
+
+    vertical-stretch: 1;
+
+    // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
+    // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
+    for row[i] in root.tracks: Rectangle {
+        height: 56px;
+
+        // ListView 把行贴着排,没有 spacing —— 原来那 4px 的间隔改由卡片
+        // 上下各让 2px 让出来,行本身仍占满一整格。先声明所以画在最底下。
+        Rectangle {
+            y: 2px;
+            height: 52px;
+            background: row.loading ? Theme.accent.with-alpha(0.15)
+                : (touch.has-hover ? Theme.overlay : Theme.overlay-weak);
+            border-radius: 8px;
+            border-width: row.loading ? 1px : 0;
+            border-color: Theme.accent.with-alpha(0.4);
+            animate background { duration: 160ms; easing: ease-out; }
+        }
+
+        // 报封面需求的那条线。ListView 会把滚出去的行**复用**到新行上,
+        // 而复用不会重跑 init —— 只有这个 changed 才追得上第 500 行。
+        // 反过来 init 也少不了:首屏那几行是创建出来的,不经过 changed。
+        property <string> wanted: row.cover-url;
+        changed wanted => { root.needs-cover(self.wanted); }
+        init => { root.needs-cover(self.wanted); }
+
+        touch := TouchArea {
+            clicked => { root.play(row.id); }
+        }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 12px;
+
+            // 封面。取不到就是一块占位色 —— 留个空洞会让整列参差不齐,
+            // 而封面取不到是常态(与歌单行同一条规矩,见 playlists.slint)。
+            VerticalLayout {
+                alignment: center;
+                cover-slot := Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 6px;
+                    background: Theme.divider;
+                    clip: true;
+
+                    if row.cover.width > 0: Image {
+                        width: 100%;
+                        height: 100%;
+                        image-fit: cover;
+                        source: row.cover;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+
+                // 歌名与歌手来自平台,是任意 CJK/日文 ——
+                // 不指定 font-family,落到系统字体。
+                // web 端 wasm 里没有系统字体,那边会是豆腐块,
+                // 已知缺口,见 README「音乐链路」。
+                Text {
+                    text: row.title;
+                    color: Theme.text;
+                    font-size: 14px;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.artists;
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+            }
+            // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
+            heart := TouchArea {
+                width: 32px;
+
+                Text {
+                    text: row.liked ? "♥" : "♡";
+                    color: row.liked ? Theme.liked : Theme.text-faint;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // 不冒泡到整行那个 TouchArea —— 否则点红心的同时会把这首歌
+                // 放出来。Slint 里子 TouchArea 先收到点击且不再往下传。
+                clicked => {
+                    root.toggle-liked(row.id, !row.liked);
+                }
+            }
+
+            // 移出歌单。只在本地歌单详情里出现。
+            if root.removable: remove-hit := TouchArea {
+                width: 28px;
+
+                Text {
+                    text: "−";
+                    color: Theme.text-dim;
+                    font-size: 18px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                // 同红心:不冒泡到整行,否则移除的同时会把这首放出来
+                clicked => { root.remove(row.id); }
+            }
+
+            // 时长让位给「加载中」:两个都摆会把歌名挤窄,
+            // 而正在加载时时长不是用户在等的信息。
+            Text {
+                text: row.loading ? "加载中…" : row.duration;
+                font-family: row.loading ? "Maple Mono NF CN" : "";
+                color: row.loading ? Theme.accent-ink.darker(0.15) : Theme.text-dim;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

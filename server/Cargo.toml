@@ -20,6 +20,22 @@ futures-util = { version = "0.3", default-features = false }
 # 信令走 JSON 文本帧。HTTP 那侧由 axum 的 Json 提取器负责,不必自己序列化;
 # WebSocket 没有对应的提取器,消息体只能自己转。
 serde_json = "1"
+# 自家数据(账号、本地歌单、播放事件)的落盘。平台歌单不进这里,见 docs/adr/0016。
+#
+# `macros` 开着只为 `migrate!`(它把 migrations/ 编进二进制,不连库)。
+# **不用 `query!`**:那个宏要在编译期连上数据库校验 SQL,会让 `cargo build`
+# 依赖一个跑着的 Postgres,或者养一个 `.sqlx` 离线目录跟着每次改 SQL 更新。
+# 一律用运行时的 `query_as` —— 代价是 SQL 写错要到测试才发现,
+# 而这些 SQL 每一条都有测试盖着。
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }
+# 密码哈希。argon2 是当前的推荐算法,自带盐与参数编码,不必自己拼格式。
+argon2 = "0.5"
+# 结构化日志。数据库错误、启动信息都走它 —— 之前那句 println! 一并换掉。
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 会话 token 落库前先过一次哈希。token 是高熵随机串,不需要 argon2 那种慢哈希,
+# sha256 足够 —— 目的只是让库泄露不等于会话被接管。
+sha2 = "0.10"
 
 [build-dependencies]
 tonic-prost-build.workspace = true

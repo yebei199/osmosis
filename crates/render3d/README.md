@@ -28,7 +28,7 @@
 
 ## 导航侧栏液态玻璃选中器(`navglass.rs` + `navglass.wgsl`)
 
-宽版式左侧导航栏的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:暗底 + 一层微极光,
+宽版式左侧导航栏的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:底色 + 一层微极光,
 外加一块会在 tab 之间「流动」的圆角矩形 metaball —— 头(快)尾(慢)两个位置都朝当前选中槽
 中心移动,行走时 smooth-union 拉出胶着的颈,静止时重合成单块,颈那一档折射自绘的极光背景。
 
@@ -40,6 +40,8 @@
   由 apps/* 在 seam 处翻译成 `NavParams`(POD,镜像 `ui::NavGlassControls`)。
 - **只在切 tab 的转场期间重渲**(省电门在 `ui::nav_glass::nav_transition_active`),静止时 Slint
   复用上一帧纹理 —— 与播放页视觉的门相互独立,同守仓库不主动重绘的省电取向。
+  **明暗主题也在这道门的判据里**:侧栏背景是本 pass 自绘的,采不到背后的像素,
+  换了主题必须重画一次,否则要等下一次切 tab 才跟上。
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 

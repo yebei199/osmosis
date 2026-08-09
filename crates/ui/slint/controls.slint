@@ -1,0 +1,306 @@
+// 常驻控制条那一簇:播放控制与同播条。
+//
+// 它们是「正在播放」这个状态的操作面,与页面内容无关 —— 播放页展开时,
+// 覆层里的另一份实例走同一组回调(见 docs/adr/0010 的「功能等价路径」)。
+
+import { DeviceRow } from "types.slint";
+import { Theme } from "theme.slint";
+import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
+
+// 控制键簇:上一首 / 播放暂停 / 下一首 + 日月随机开关。
+// 抽成组件是因为宽窄两种版式各摆一次 —— 摆法不同,键是同一套。
+export component ControlCluster inherits HorizontalLayout {
+    in property <bool> is-playing;
+    // 只读:随机的真相在 app_core::Queue 上,这里是它的投影。
+    in property <bool> shuffle-on;
+    // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
+    // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
+    in property <image> pulse;
+    callback prev();
+    callback toggle();
+    callback next();
+    callback shuffle-toggled();
+    // 请求换明暗主题。Theme.dark 那时还是旧值 —— 由 Rust 拨完再写回去。
+    callback theme-toggled();
+
+    spacing: 10px;
+
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏮:竖杠 + 左向三角。
+            icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+            label: "上一首";
+            clicked => { root.prev(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 播放键。接了 pulse 就把那圈 warp 画进按钮里,比旁边两颗大一圈 ——
+        // 它是这一排里唯一会动的东西,该占更多视觉分量。
+        Rectangle {
+            width: root.pulse.width > 0 ? 68px : 50px;
+            height: self.width;
+            border-radius: self.width / 2;
+            clip: true;
+
+            if root.pulse.width > 0: Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: root.pulse;
+            }
+
+            RoundControl {
+                diameter: parent.width;
+                // 有 warp 垫底时不再自带底色,免得把画面糊住。
+                transparent-base: root.pulse.width > 0;
+                // ▶ 或 ⏸,随播放状态换。
+                icon: root.is-playing
+                    ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                    : "M8 5 L19 12 L8 19 Z";
+                label: root.is-playing ? "暂停" : "播放";
+                clicked => { root.toggle(); }
+            }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        RoundControl {
+            // ⏭:右向三角 + 竖杠。
+            icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+            label: "下一首";
+            clicked => { root.next(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 随机键。**这一排里唯一有状态的一颗**,所以它报成 checkbox 而不是
+        // button,开着时图标换成强调色。
+        RoundControl {
+            // ⤬:两条交叉的箭头(Material 的 shuffle 字形)。
+            icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
+            label: "随机播放";
+            checkable: true;
+            checked: root.shuffle-on;
+            clicked => { root.shuffle-toggled(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 日月开关管明暗,不管随机 —— 它画的就是白昼与黑夜。
+        DayNightSwitch {
+            night: Theme.dark;
+            label: "深色主题";
+            toggled => { root.theme-toggled(); }
+        }
+    }
+}
+
+// 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——
+// **常驻**,不随名册隐藏。上一版设备区在单实例时整块消失,同播功能等于不存在。
+export component SyncStrip inherits HorizontalLayout {
+    in property <[DeviceRow]> devices;
+    callback push-to(string);
+
+    spacing: 8px;
+
+    if root.devices.length == 0: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "同播: 没有其他设备";
+            font-family: "Maple Mono NF CN";
+            color: Theme.text-faint;
+            font-size: 12px;
+        }
+    }
+
+    for device in root.devices: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: chip-label.preferred-width + 24px;
+            height: 30px;
+            background: chip.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak;
+            border-radius: 15px;
+
+            chip := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.push-to(device.id); }
+            }
+
+            // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,
+            // 不指定 font-family,落到系统字体。
+            chip-label := Text {
+                text: device.name;
+                color: Theme.text;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}
+
+// 进度条:已放到哪、还能拖。
+//
+// 拖动期间**手指说了算**:位置每秒由 Rust 推一次,拖的时候要让位给手指,
+// 否则滑块会在手指底下自己往回跳。松手才把最终位置交出去 —— 拖动过程中
+// 每帧都 seek 一次,等于让解码器跟着手指来回跑。
+export component ProgressBar inherits Rectangle {
+    // 已放到全曲的几分之几,0..=1。由 Rust 夹好(见 ui/src/progress.rs)。
+    in property <float> ratio;
+    // 「1:23 / 3:41」,同样已在 Rust 侧排好。
+    in property <string> text;
+    // 跳转还没落地。占的是时间那一行 —— 缓冲期间位置本来就不动,
+    // 让一个僵住的数字待在那里,恰恰是最像卡死的样子。
+    in property <bool> buffering: false;
+
+    // 松手时交出去的位置,仍是 0..=1。
+    callback seek(float);
+
+    // 拖动中,以及手指当前落在哪。Rust 不关心手指的过程,只要松手那一下的值。
+    property <bool> dragging: false;
+    property <float> drag-ratio: 0;
+    // 画出来的那个值:拖动时用手指的,否则用每秒推来的。
+    //
+    // **这一行没有测试盖着。** 无头测试驱动不了真实指针,而这个组件既不是
+    // 独立编译的类型、又长在一个 `if` 里,Rust 侧引用不到它的属性。写成一个
+    // 声明式表达式而不是在 moved 里赋值,是为了让它没有"忘了某条路径"的余地 ——
+    // 但那是靠形状,不是靠断言。改这里要手动验:拖住不放,看滑块会不会自己往回跳。
+    property <float> shown: root.dragging ? root.drag-ratio : root.ratio;
+
+    height: 26px;
+
+    VerticalLayout {
+        spacing: 3px;
+
+        groove := Rectangle {
+            height: 4px;
+            background: Theme.overlay;
+            border-radius: 2px;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * clamp(root.shown, 0.0, 1.0);
+                height: parent.height;
+                background: Theme.accent;
+                border-radius: 2px;
+            }
+        }
+
+        Text {
+            text: root.buffering ? "缓冲中…" : root.text;
+            font-family: "Maple Mono NF CN";
+            // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
+            // 说明「还在动」的东西。
+            color: root.buffering ? Theme.accent : Theme.text-dim;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+
+    // 覆在整块上,比那条 4px 的槽好点得多 —— 手指按不准 4 个像素。
+    touch := TouchArea {
+        mouse-cursor: pointer;
+
+        moved => {
+            root.dragging = true;
+            root.drag-ratio = clamp(self.mouse-x / root.width, 0.0, 1.0);
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.up) {
+                // 没拖过就是点了一下:点哪跳哪
+                root.seek(root.dragging
+                    ? root.drag-ratio
+                    : clamp(self.mouse-x / root.width, 0.0, 1.0));
+                root.dragging = false;
+            }
+        }
+    }
+}
+
+// 音量:一颗喇叭键,点开就地展开滑块。
+//
+// 不常驻滑块:控制条宽版一排的最小宽度已经约 470px,而手机内容区只有 ~360px
+// (那正是紧凑版拆两行的原因)。再塞一条常驻滑块进去,两种版式都要重排。
+export component VolumeControl inherits HorizontalLayout {
+    in property <float> volume;
+    callback changed(float);
+
+    property <bool> open: false;
+
+    spacing: 6px;
+
+    VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            border-radius: 16px;
+            background: speaker.has-hover ? Theme.overlay : transparent;
+
+            Text {
+                // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
+                text: root.volume <= 0.001 ? "🔇"
+                    : root.volume < 0.5 ? "🔈" : "🔊";
+                font-size: 15px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            speaker := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open = !root.open; }
+
+                // 屏幕阅读器要认得出这是个能按的东西;顺带让无头测试点得动它 ——
+                // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"
+                // (同 widgets.slint 里的 HoverButton)。
+                accessible-role: button;
+                accessible-label: "音量";
+                accessible-expandable: true;
+                accessible-expanded: root.open;
+                accessible-action-default => {
+                    root.open = !root.open;
+                }
+            }
+        }
+    }
+
+    if root.open: VerticalLayout {
+        alignment: center;
+
+        slider := Rectangle {
+            width: 92px;
+            height: 20px;
+
+            Rectangle {
+                y: (parent.height - 4px) / 2;
+                height: 4px;
+                background: Theme.overlay;
+                border-radius: 2px;
+
+                Rectangle {
+                    x: 0;
+                    width: parent.width * clamp(root.volume, 0.0, 1.0);
+                    height: parent.height;
+                    background: Theme.accent;
+                    border-radius: 2px;
+                }
+            }
+
+            // 音量没有「松手才生效」的问题:每动一下就该听见,
+            // 那正是人调音量时在等的反馈。
+            drag := TouchArea {
+                mouse-cursor: pointer;
+                moved => {
+                    root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
+                }
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
+                    }
+                }
+            }
+        }
+    }
+}

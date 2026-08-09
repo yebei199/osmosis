@@ -107,6 +107,20 @@ message Playlist {
   int32 track_count = 6;
   string owner = 7;
   string owner_id = 8;
+  // special_type 平台给歌单打的标记,原值搬运,这一层不解释它的含义。
+  // 网易云用 5 表示红心歌单、20 表示年度歌单;认哪个是哪个由调用方决定。
+  // 平台没给就是 0。见 osmosis 的 docs/adr/0022。
+  int32 special_type = 9;
+}
+
+// PlaylistTrackRef 歌单里的一条成员关系:哪首歌,什么时候被加进来的。
+message PlaylistTrackRef {
+  string id = 1;
+  // added_at_ms 这首歌被加进这个歌单的毫秒时间戳,平台给的。
+  //
+  // 它属于**歌单的经营者**,不属于看歌单的人 —— 订阅别人的歌单时,这是原作者
+  // 往里加曲目的时刻。平台没给就是 0。
+  int64 added_at_ms = 2;
 }
 
 message LyricWord {
@@ -231,6 +245,12 @@ message LogoutResponse {}
 service CatalogService {
   rpc SearchTracks(SearchTracksRequest) returns (SearchTracksResponse);
 
+  // SearchArtists 与 SearchPlaylists 按同一个关键词搜另外两类实体。
+  // 分成三个用例而不是一个带类型参数的:调用方在发起搜索时就已经知道自己要哪一类,
+  // 合成一个会让每个调用点先去问"这次返回的是哪一种"。
+  rpc SearchArtists(SearchArtistsRequest) returns (SearchArtistsResponse);
+  rpc SearchPlaylists(SearchPlaylistsRequest) returns (SearchPlaylistsResponse);
+
   // GetTracks 按标识批量取详情,结果按请求顺序排列。查不到的标识跳过。
   rpc GetTracks(GetTracksRequest) returns (GetTracksResponse);
 
@@ -304,6 +324,32 @@ message SearchTracksResponse {
   bool has_more = 3;
 }
 
+message SearchArtistsRequest {
+  Platform platform = 1;
+  string keyword = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message SearchArtistsResponse {
+  repeated Artist artists = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+message SearchPlaylistsRequest {
+  Platform platform = 1;
+  string keyword = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message SearchPlaylistsResponse {
+  repeated Playlist playlists = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
 message GetTracksRequest {
   Platform platform = 1;
   repeated string track_ids = 2;
@@ -372,7 +418,17 @@ message GetPlaylistRequest {
 
 message GetPlaylistResponse {
   Playlist playlist = 1;
-  repeated string track_ids = 2;
+  // 2 曾是 `repeated string track_ids`,由带加入时间的 track_refs 取代。
+  // 号不复用:两边灰度期间旧客户端解出来的会是一串乱码而不是报错。
+  reserved 2;
+  reserved "track_ids";
+  repeated PlaylistTrackRef track_refs = 3;
+  // tracks 是这次顺带拿到的那批完整曲目,**会被平台截断**,常常比 track_refs
+  // 短,也可能一条都没有。
+  //
+  // 它不是歌单长度的依据 —— 那永远是 track_refs。给它只为省往返:调用方补
+  // 详情要按批发请求,这一批白拿的能少发几次。
+  repeated Track tracks = 4;
 }
 
 message ListLikedTracksRequest {

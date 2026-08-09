@@ -1,0 +1,113 @@
+// 色板。界面上每一个颜色都该从这里取,不在别处写死。
+//
+// 为什么要有这一层:在此之前颜色散在 9 个 .slint 里,133 处、67 种,其中 48 种
+// 只出现一次 —— 那些多半不是设计决定,是当时随手调的。要做明暗两套,先得让
+// "同一个语义只有一个值"这件事成立。
+//
+// **不是一一对应的改名**:一次性的色往最近的语义上归,深色因此会有肉眼难辨的
+// 位移。严格 1:1 的话浅色那套要配 67 个值,配不出来。
+//
+// 三族表面,别混:
+//
+// - **常驻界面**(base/window/surface/raised/hover):导航、列表、控制条、卡片。
+//   跟着明暗走。
+// - **沉浸层**(immersive*):播放页压在封面与点云上的那块底,连同压在它上面的
+//   字与线。**整族两套主题下取值相同** —— 底钉死,字就得跟着钉死。
+// - **错误横幅**(danger*):自成一套,不跟别人共用名字 —— 共用了就没法只调它。
+//
+// 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
+// 决定的三个亮度,分开写迟早会有一个忘了改。
+
+export global Theme {
+    // 深色还是浅色。**只有 Rust 写它**(见 crates/ui/src/theme.rs),
+    // 日月开关拨一下只喊一声。
+    in-out property <bool> dark: true;
+
+    // —— 常驻界面的表面,由深到浅 ——
+
+    // 窗口底。音乐页会用 base 盖住它,播放页会用 immersive 盖住它,
+    // 露出来的只有边角。
+    out property <color> window: root.dark ? #0f1117 : #ece7e0;
+    // 音乐页的底。
+    out property <color> base: root.dark ? #140f0b : #f5efe6;
+    // 卡片、面板、控制条。
+    out property <color> surface: root.dark ? #17110d : #ffffff;
+    // 选中的那一项。
+    out property <color> raised: root.dark ? #2a1e14 : #e6dccd;
+    // 悬停。
+    out property <color> hover: root.dark ? #1d150f : #f0e8dc;
+
+    // —— 沉浸层:播放页那块压在封面与点云上的底 ——
+
+    // **这一族两套主题下取值相同,这是它的定义而不是偷懒。** 那块底托着封面
+    // 点云:点云的颜色逐颗取自封面,亮底会把它冲掉。既然底钉死,压在它上面的
+    // 字也必须钉死 —— 用会翻的 token 的话,浅色主题下就是深字压深底
+    // (歌名曾经是 1.23:1)。`crates/ui/tests/theme.rs` 把这条钉住了。
+    out property <color> immersive: #0b0d13;
+    // 浮在沉浸层上的小面板(可视化预设那个)。
+    out property <color> immersive-panel: #12141cee;
+    out property <color> immersive-text: #e6e8ef;
+    out property <color> immersive-text-dim: #9aa0b4;
+    out property <color> immersive-accent: #d9a86c;
+    // 沉浸层上的边线。往上叠白 —— 底永远是深的,不存在"反过来"的情况。
+    out property <color> immersive-line: #ffffff1f;
+
+    // —— 字,由强到弱 ——
+
+    out property <color> text: root.dark ? #e6e8ef : #2a2119;
+    out property <color> text-dim: root.dark ? #9aa0b4 : #6b6157;
+    // 最弱的一档:没点亮的红心、时长这类"在那儿但别看我"的字。
+    out property <color> text-faint: root.dark ? #6f7688 : #9a9188;
+
+    // —— 强调 ——
+
+    // 琥珀色是这个 app 的身份色。浅色下要压深一档,不然在纸白底上糊掉。
+    out property <color> accent: root.dark ? #d9a86c : #a9713c;
+    // 压在**强调色实底**上的字(HoverButton 的标签、沉浸层上那个预设面板)。
+    // 两套都是近白:底本身够深,不必跟着主题翻。
+    out property <color> accent-text: root.dark ? #f0e6d8 : #fdf6ec;
+    // **中性底上**表示"选中/强调"的字与图标:控制条那几颗键、栏目的当前项、
+    // 加载中那一行。与上面那个分开是因为它压的底会跟着主题翻 ——
+    // 合成一个的话,浅色下近白的图标会压在浅底上,整排控制键凭空消失。
+    out property <color> accent-ink: root.dark ? #f0e6d8 : #7a4f22;
+
+    // —— 叠加与线 ——
+    //
+    // 深色下往上叠白,浅色下往下叠黑 —— 同一个语义,方向相反。
+
+    out property <color> overlay-weak: root.dark ? #ffffff08 : #00000008;
+    out property <color> overlay: root.dark ? #ffffff14 : #00000014;
+    out property <color> divider: root.dark ? #ffffff10 : #00000012;
+
+    out property <color> shadow: #000000;
+
+    // —— 极光与玻璃(`glass.slint`)——
+    //
+    // 玻璃是半透明的,**背后没东西就等于没有玻璃**;极光就是专门用来被透过的
+    // 那层内容。深色下它是暗底叠暖光斑,浅色下反过来:亮底叠更浅的暖光斑 ——
+    // 光斑的色相两套一样,变的是明度与浓度,不然换个主题连身份都变了。
+
+    out property <color> aurora-base: root.dark ? #17110d : #f3ece1;
+    // 焦糖、深咖、奶咖三团。alpha 带在颜色里,渐变的外圈用 `with-alpha(0)` 取同色透明端。
+    out property <color> aurora-warm: root.dark ? #8a5a2b9c : #e0b98cb0;
+    out property <color> aurora-deep: root.dark ? #5c3a1e95 : #d3a97fa0;
+    out property <color> aurora-soft: root.dark ? #b9885c66 : #fff2de99;
+
+    // 玻璃本身。深色下往上叠白,浅色下叠得更白**而不是**叠黑:玻璃的观感来自
+    // "比背后更亮的一层薄雾",叠黑会读成一块脏玻璃。
+    out property <color> glass-fill: root.dark ? #ffffff1f : #ffffff8c;
+    out property <color> glass-edge: root.dark ? #ffffff3d : #ffffffcc;
+    out property <color> glass-inner: root.dark ? #ffffff40 : #ffffffd9;
+    out property <color> glass-sheen: root.dark ? #ffffff2b : #ffffff73;
+    // 悬浮阴影。浅色下要淡得多 —— 同样的黑在亮底上重得多。
+    out property <color> glass-shadow: root.dark ? #00000073 : #0000001f;
+
+    // —— 语义色 ——
+
+    // 红心点亮的那个红。两套里是同一个：它表示的是"喜欢",不是明暗。
+    out property <color> liked: #d96c8a;
+
+    out property <color> danger-surface: root.dark ? #33201fee : #fbe3e0;
+    out property <color> danger-line: root.dark ? #7a4f4a : #d9a9a2;
+    out property <color> danger-text: root.dark ? #f2dcd8 : #6b2a22;
+}

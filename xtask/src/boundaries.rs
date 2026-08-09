@@ -3,6 +3,7 @@
 //! ADR 里写的约束靠记忆是守不住的。这些检查在 CI 与本地(`just ci`)跑的是
 //! **同一份代码**,不是两份互相漂移的 shell 片段。
 
+use std::env;
 use std::fs;
 use std::path::Path;
 
@@ -11,9 +12,11 @@ use crate::shell::{capture, repo_root, run};
 /// codegen 实际读的那一份(`server/build.rs`)。
 const VENDORED_PROTO: &str =
     "server/proto/music/v1/music.proto";
-/// 契约的上游。只在 submodule 检出时存在。
-const UPSTREAM_PROTO: &str =
-    "third_party/bang-dream/proto/music/v1/music.proto";
+/// 上游 bang-dream 工作树的位置。它是独立仓库,不在本仓库里。
+const UPSTREAM_REPO_ENV: &str = "BANG_DREAM_REPO";
+/// 上游那份契约在它自己仓库里的相对位置。
+const UPSTREAM_PROTO_IN_REPO: &str =
+    "proto/music/v1/music.proto";
 
 /// `contract` 的依赖白名单之外的东西。
 ///
@@ -210,17 +213,26 @@ fn web_free_of_native_audio() -> Result<(), String> {
     Ok(())
 }
 
-/// 契约的上游是 bang-dream,但那是私有仓库。`server/proto` 存的是它的副本,
-/// codegen 只读副本,CI 因此不需要跨仓库凭据。代价是两份可能漂移,这条检查就是
-/// 兜住漂移的地方 —— submodule 在场时(本地开发)比对,不在场时(CI)跳过。
+/// 契约的上游是 bang-dream,那是一个独立仓库,不以任何形式挂在本仓库里。
+/// `server/proto` 存的是它的副本,codegen 只读副本,CI 因此不需要跨仓库凭据。
+/// 代价是两份可能漂移,这条检查就是兜住漂移的地方 —— `BANG_DREAM_REPO` 指向上游
+/// 工作树时比对,没指(CI、以及不碰契约的人)时跳过。
 fn vendored_proto_matches_upstream() -> Result<(), String> {
-    let upstream = repo_root().join(UPSTREAM_PROTO);
-    // submodule 没检出。CI 上是常态,不是错误 —— 副本本身已经在仓库里了。
-    if !upstream.exists() {
+    let Ok(repo) = env::var(UPSTREAM_REPO_ENV) else {
         println!(
-            "        (跳过:{UPSTREAM_PROTO} 不在,submodule 未检出)"
+            "        (跳过:{UPSTREAM_REPO_ENV} 未设置,拿不到上游)"
         );
         return Ok(());
+    };
+
+    // 相对路径按仓库根解释,与 justfile 的 `cd {{repo}}` 一致;绝对路径原样生效。
+    let upstream = repo_root()
+        .join(&repo)
+        .join(UPSTREAM_PROTO_IN_REPO);
+    if !upstream.exists() {
+        return Err(format!(
+            "{UPSTREAM_REPO_ENV}={repo} 下没有 {UPSTREAM_PROTO_IN_REPO} —— 指错工作树了?"
+        ));
     }
 
     let vendored = repo_root().join(VENDORED_PROTO);
@@ -230,12 +242,16 @@ fn vendored_proto_matches_upstream() -> Result<(), String> {
         })
     };
 
-    match first_difference(&read(&vendored)?, &read(&upstream)?)
-    {
+    match first_difference(
+        &read(&vendored)?,
+        &read(&upstream)?,
+    ) {
         None => Ok(()),
         Some(line) => Err(format!(
-            "{VENDORED_PROTO} 与 {UPSTREAM_PROTO} 在第 {line} 行起分歧 —— \
-             上游改了契约就把副本同步过去:cp {UPSTREAM_PROTO} {VENDORED_PROTO}"
+            "{VENDORED_PROTO} 与 {} 在第 {line} 行起分歧 —— \
+             上游改了契约就把副本同步过去:cp {} {VENDORED_PROTO}",
+            upstream.display(),
+            upstream.display()
         )),
     }
 }
@@ -244,7 +260,10 @@ fn vendored_proto_matches_upstream() -> Result<(), String> {
 ///
 /// 逐行比,不做 proto 的语义解析:副本是 codegen 的唯一输入,连注释差异都值得看一眼。
 /// 一侧是另一侧前缀时,分歧记在长的那侧多出来的第一行。
-fn first_difference(left: &str, right: &str) -> Option<usize> {
+fn first_difference(
+    left: &str,
+    right: &str,
+) -> Option<usize> {
     let common = left
         .lines()
         .zip(right.lines())
@@ -318,8 +337,8 @@ message Track { string id = 1; }";
     /// 中间某行改了,报的是那一行的 1-based 行号。
     #[test]
     fn first_difference_reports_changed_line() {
-        let changed =
-            PROTO.replace("string id = 1;", "int64 id = 1;");
+        let changed = PROTO
+            .replace("string id = 1;", "int64 id = 1;");
         assert_eq!(
             first_difference(PROTO, &changed),
             Some(3)
@@ -330,8 +349,14 @@ message Track { string id = 1; }";
     #[test]
     fn first_difference_reports_appended_line() {
         let longer = format!("{PROTO}\nmessage Album {{}}");
-        assert_eq!(first_difference(PROTO, &longer), Some(4));
-        assert_eq!(first_difference(&longer, PROTO), Some(4));
+        assert_eq!(
+            first_difference(PROTO, &longer),
+            Some(4)
+        );
+        assert_eq!(
+            first_difference(&longer, PROTO),
+            Some(4)
+        );
     }
 
     /// 边界:一侧为空。

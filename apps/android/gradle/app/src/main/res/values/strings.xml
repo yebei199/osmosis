@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Slint Study</string>
+    <string name="app_name">Osmosis</string>
+
+    <!-- 通知渠道。用户在系统设置里看到的就是这两行,所以说的是「这条通知是干什么的」,
+         不是「这个渠道叫什么」。 -->
+    <string name="media_channel_name">正在播放</string>
+    <string name="media_channel_description">显示当前播放的歌曲,并让你在通知栏和锁屏上控制它</string>
 </resources>

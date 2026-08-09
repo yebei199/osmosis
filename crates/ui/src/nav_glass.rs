@@ -24,6 +24,8 @@ pub struct NavGlassControls {
     pub lag_y: f32,
     /// 选中块参考高度(≈单个导航项高)。
     pub slot_h: f32,
+    /// 深色主题。侧栏背景是自绘的,采不到背后的像素,主题只能这样传进去。
+    pub dark: bool,
 }
 
 /// 省电门:这一帧要不要重渲导航选中器纹理。

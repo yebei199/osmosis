@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Slint Study 的 Docker 构建入口 —— 一切都在 Docker 容器里运行,宿主机唯一
+# Osmosis 的 Docker 构建入口 —— 一切都在 Docker 容器里运行,宿主机唯一
 # 需要的就是 Docker(或 Podman)。这是给「没有 nix」的机器/CI 准备的;
 # NixOS 本机原生编译请用 `just build-apk-native`(见 docker/README.md)。
 #
 # 用法:
-#   ./docker/build.sh            构建 debug APK -> dist/slint-study-debug.apk
+#   ./docker/build.sh            构建 debug APK -> dist/osmosis-debug.apk
 #   ./docker/build.sh image      只(重新)构建 builder 镜像
 #   ./docker/build.sh shell      在 builder 容器内打开交互式 shell
 #   ./docker/build.sh clean      清理构建产物
@@ -30,7 +30,7 @@ if [ -z "${DOCKER:-}" ]; then
     fi
 fi
 
-IMAGE=slint-study-builder
+IMAGE=osmosis-builder
 
 # 处于代理之后时(国内常见情况: dl.google.com / crates.io / gradle
 # 否则都无法访问),把宿主机代理转发进构建过程。--network=host 让
@@ -67,8 +67,8 @@ run_in_container() {
     # 仓库的 bind mount 承载 rust 的 target 目录(.docker-target)。
     "$DOCKER" run --rm "${DOCKER_RUN_EXTRA[@]}" \
         -v "$PWD:/work:z" \
-        -v slint-study-cargo-registry:/opt/cargo/registry \
-        -v slint-study-gradle-home:/root/.gradle \
+        -v osmosis-cargo-registry:/opt/cargo/registry \
+        -v osmosis-gradle-home:/root/.gradle \
         -e ABIS="${ABIS:-arm64-v8a}" \
         -e CARGO_TARGET_DIR="/work/.docker-target" \
         -e CHOWN_UID="$(id -u)" \
@@ -84,14 +84,14 @@ case "${1:-apk}" in
         build_image
         run_in_container cargo xtask android
         echo
-        echo "Install with: adb install -r dist/slint-study-debug.apk"
+        echo "Install with: adb install -r dist/osmosis-debug.apk"
         ;;
     shell)
         build_image
         "$DOCKER" run --rm -it \
             -v "$PWD:/work:z" \
-            -v slint-study-cargo-registry:/opt/cargo/registry \
-            -v slint-study-gradle-home:/root/.gradle \
+            -v osmosis-cargo-registry:/opt/cargo/registry \
+            -v osmosis-gradle-home:/root/.gradle \
             "$IMAGE" bash
         ;;
     clean)

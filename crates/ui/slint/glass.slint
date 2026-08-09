@@ -1,3 +1,5 @@
+import { Theme } from "theme.slint";
+
 // 玻璃拟态基元:一层极光背景 + 一张玻璃卡片。
 //
 // 为什么是这两个凑一对:玻璃是半透明的,**背后没东西就等于没有玻璃**。原本全局
@@ -16,7 +18,7 @@
 // 静态不动:玻璃的动感由 GlassCard 的指针高光提供;背景再飘就是待机也在重绘,
 // 与本仓库既有的省电取向(render-active 门控、不主动请求重绘)相左。
 export component AuroraBackground inherits Rectangle {
-    background: #17110d;
+    background: Theme.aurora-base;
     clip: true;
 
     // x/y 不接受百分比(只有 width/height 接受),所以位置写成父尺寸的表达式。
@@ -37,7 +39,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.45 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #8a5a2b9c 0%, #8a5a2b00 60%);
+        background: @radial-gradient(circle, Theme.aurora-warm 0%, Theme.aurora-warm.with-alpha(0) 60%);
     }
     // 深咖,中心略偏右下 —— 与焦糖在正中央交叠,那儿正是卡片所在
     Rectangle {
@@ -45,7 +47,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.58 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #5c3a1e95 0%, #5c3a1e00 60%);
+        background: @radial-gradient(circle, Theme.aurora-deep 0%, Theme.aurora-deep.with-alpha(0) 60%);
     }
     // 奶咖,顶部偏右,压一点暖光进来免得整片发闷
     Rectangle {
@@ -53,7 +55,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.08 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, #b9885c66 0%, #b9885c00 60%);
+        background: @radial-gradient(circle, Theme.aurora-soft 0%, Theme.aurora-soft.with-alpha(0) 60%);
     }
 
     @children
@@ -77,9 +79,9 @@ export component GlassCard inherits Rectangle {
     border-radius: root.radius;
     // 淡白:靠的是"透出背后的极光",不是自己有颜色。调太高会糊成一块白板,
     // 调太低则在暗处彻底看不出是玻璃 —— 12% 是两头之间试出来的值。
-    background: root.backdrop ? transparent : #ffffff1f;
+    background: root.backdrop ? transparent : Theme.glass-fill;
     border-width: 1px;
-    border-color: #ffffff3d;
+    border-color: Theme.glass-edge;
     // 高光光斑不许溢出圆角之外。裁的是子元素,root 自己的两个 shadow 画在外面,不受影响。
     clip: true;
 
@@ -88,7 +90,7 @@ export component GlassCard inherits Rectangle {
     //
     // 仅 Skia 生效(见 ADR-0006)。web 走 femtovg,这四行静默失效,卡片只是少一层
     // 厚度感,不报错、不塌布局 —— 渐进增强,与仓库既有的"余端 graceful 缺省"同一套。
-    inner-shadow-color: #ffffff40;
+    inner-shadow-color: Theme.glass-inner;
     inner-shadow-blur: 10px;
     inner-shadow-offset-y: -3px;
 
@@ -98,7 +100,7 @@ export component GlassCard inherits Rectangle {
     // 于是阴影会从卡片内部透上来,把玻璃压暗、且下半比上半更暗。所以这里 spread 收到
     // -16px、offset 推到 20px:阴影的主体落到卡片轮廓之外,只在下缘露出来。
     // 这是"半透明元素 + drop-shadow"绕不开的一个坑,别把 alpha 往上调来找回悬浮感。
-    drop-shadow-color: #00000073;
+    drop-shadow-color: Theme.glass-shadow;
     drop-shadow-blur: 40px;
     drop-shadow-offset-y: 20px;
     drop-shadow-spread: -16px;
@@ -113,7 +115,7 @@ export component GlassCard inherits Rectangle {
         y: touch.mouse-y - self.height / 2;
         width: 280px;
         height: 280px;
-        background: @radial-gradient(circle, #ffffff2b 0%, #ffffff00 70%);
+        background: @radial-gradient(circle, Theme.glass-sheen 0%, Theme.glass-sheen.with-alpha(0) 70%);
         opacity: touch.has-hover ? 1 : 0;
         animate opacity {
             duration: 240ms;

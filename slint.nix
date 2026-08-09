@@ -45,6 +45,10 @@ pkgs.mkShell {
     # 否则 CLI 直接拒绝生成胶水代码。python3 只用来起静态服务器。
     pkgs.wasm-bindgen-cli_0_2_126
     pkgs.python3
+    # MPRIS 的测试自己起一条临时总线(`dbus-daemon --session`),免得往用户
+    # 自己的会话总线上摆一个假播放器。zbus 本身是纯 Rust,不需要 libdbus ——
+    # 这里要的只是那个可执行文件。
+    pkgs.dbus
   ];
   buildInputs = runtimeLibs;
 

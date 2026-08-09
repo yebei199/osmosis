@@ -121,6 +121,18 @@ where
     fn total_duration(&self) -> Option<Duration> {
         self.inner.total_duration()
     }
+
+    /// 跳转照常传下去。
+    ///
+    /// 不写这一条的话拿到的是 trait 的默认实现 —— 一句「不支持」。而 [`Tee`]
+    /// 只是分了一支采样出去,凭什么让整条链失去跳转能力(真实症状:进度条
+    /// 一拖就报 `Seeking is not supported by source: Tee<Tee<...>>`)。
+    fn try_seek(
+        &mut self,
+        pos: Duration,
+    ) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)
+    }
 }
 
 /// 把 PCM 攒成整帧再编码成 Opus。
@@ -246,6 +258,23 @@ mod tests {
                 .expect("采样率是编译期常量,非零"),
             samples,
         )
+    }
+
+    /// **[`Tee`] 必须把跳转传下去。**
+    ///
+    /// 不传的话拿到的是 trait 默认的那句「不支持」,而 `Tee` 只是分了一支
+    /// 采样出去 —— 整条链凭什么因此失去跳转。真实症状是进度条一拖就报
+    /// `Seeking is not supported by source: Tee<Tee<...>>`。
+    #[test]
+    fn tee_passes_a_seek_down_to_its_inner_source() {
+        // SamplesBuffer 是能跳的,所以「跳得动」这件事只取决于 Tee 转不转发
+        let (mut tee, _branch) =
+            Tee::new(source(tone(4_800)), BRANCH_CAPACITY);
+
+        assert!(
+            tee.try_seek(Duration::from_millis(10)).is_ok(),
+            "Tee 该把跳转交给里面那一路"
+        );
     }
 
     /// **归一必须真的换算,不能只是改个标称值。**

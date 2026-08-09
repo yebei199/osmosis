@@ -15,8 +15,12 @@ use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
-use app_core::{Playback, PlaybackState, TrackDto};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use app_core::{
+    Playback, PlaybackState, TrackDto, TracksDto,
+};
+use slint::{
+    ComponentHandle, Model as _, ModelRc, VecModel,
+};
 
 use crate::{MainWindow, TrackRow};
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,6 +42,14 @@ const QUEUE_DONE: &str = "队列放完了";
 #[cfg(not(target_arch = "wasm32"))]
 const ADVANCE_POLL: core::time::Duration =
     core::time::Duration::from_secs(1);
+
+/// 当前这首放过多久之后才去备下一首。
+///
+/// 早了会和正在放的那首抢带宽,晚了等于没预取。十秒:那时起播的那阵下载高峰
+/// 已经过去,而离用户可能按「下一首」还早(见 [`should_prefetch`])。
+#[cfg(not(target_arch = "wasm32"))]
+const PREFETCH_AFTER: core::time::Duration =
+    core::time::Duration::from_secs(10);
 
 /// 歌手列表拼成一行。
 ///
@@ -84,6 +96,66 @@ pub fn describe_startup(
     match result {
         Ok(()) => None,
         Err(error) => Some(format!("失败: {error}")),
+    }
+}
+
+/// 该不该起预取:本机在放、已经放过一阵、手里没有备着的、队列还有下一首。
+///
+/// **不能一起播就预取**:那样两条下载会抢同一条链路,而正在放的那首经不起抢
+/// (取直链的 CDN 本来就爱停摆,见 `docs/adr/0013`)。等当前这首站稳了再备,
+/// 反正备的是"还有一整首歌的时间"之后才用得上的东西。
+///
+/// 听众那一条与 [`should_advance`] 同理:收听时切歌的决定权不在本机,
+/// 备了也用不上,白占一条下载。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn should_prefetch(
+    state: &PlaybackState,
+    position: core::time::Duration,
+    listening: bool,
+    already_have: bool,
+    has_next: bool,
+) -> bool {
+    matches!(state, PlaybackState::Playing(_))
+        && position >= PREFETCH_AFTER
+        && !listening
+        && !already_have
+        && has_next
+}
+
+/// 该不该报断流:本机在放、声源空了、而且这条流留下了放弃的证据。
+///
+/// 与 [`should_advance`] 是同一刻的两个出口,互斥:声源空下来时,要么是放完了
+/// 该切下一首,要么是断了该停下说话。四个输入一模一样,只多问一句"放弃过没有" ——
+/// 那正是两者唯一的分野(见 `docs/adr/0013`)。
+///
+/// 听众那一条与 [`should_advance`] 同理:收听时本机没有自己的流,`gave_up`
+/// 反映的是上一次本机播放留下的旧证据,不能拿它去掐别人推来的声音。
+pub fn should_report_loss(
+    state: &PlaybackState,
+    drained: bool,
+    listening: bool,
+    gave_up: bool,
+) -> bool {
+    matches!(state, PlaybackState::Playing(_))
+        && drained
+        && !listening
+        && gave_up
+}
+
+/// 断流横幅该说哪句话。
+///
+/// `server_reachable` 是那次 `/health` 探测的结论:`None` = 还没回来。
+/// 先弹粗文案再改精确文案,是为了不让沉默时长受探测连累(见 `docs/adr/0013`)。
+///
+/// 探得通只说明**我们自己的**服务端还在,上游 CDN 挂了也会落到这一支 ——
+/// 所以那句话指向用户能做的动作,不去断言是谁的锅。
+pub fn describe_stream_loss(
+    server_reachable: Option<bool>,
+) -> &'static str {
+    match server_reachable {
+        None => "播放中断了",
+        Some(false) => "没网了,检查一下网络再试",
+        Some(true) => "播放地址失效了,重新点一下这首歌",
     }
 }
 
@@ -145,6 +217,17 @@ fn to_rows(
             duration: format_duration(track.duration_ms)
                 .into(),
             loading: loading == Some(track.id.as_str()),
+            // 红心状态由 push_rows 之后的 remark 填 —— 这里没有那个集合,
+            // 而把它传进来会让这个纯格式化函数多认识一样东西。
+            liked: false,
+            // 平台没给封面就是空串,那一行永远画占位色(见 tracklist.slint)。
+            cover_url: track
+                .cover
+                .clone()
+                .unwrap_or_default()
+                .into(),
+            // 图由 thumbnail 在行滑进可见区之后回填,与红心同理。
+            cover: slint::Image::default(),
         })
         .collect()
 }
@@ -154,6 +237,21 @@ fn to_rows(
 fn loading_id(state: &PlaybackState) -> Option<&str> {
     match state {
         PlaybackState::Loading(track) => {
+            Some(track.id.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// 当前这一首的 id —— 正在加载的和已经在放的都算,没有就给 `None`。
+///
+/// 与 [`loading_id`] 的差别正是"算不算已经放起来的那一首":那一个用来在列表上
+/// 标加载态,这一个用来判断异步回来的东西**还是不是给当前这首的**。
+#[cfg(not(target_arch = "wasm32"))]
+fn current_id(state: &PlaybackState) -> Option<&str> {
+    match state {
+        PlaybackState::Loading(track)
+        | PlaybackState::Playing(track) => {
             Some(track.id.as_str())
         }
         _ => None,
@@ -170,6 +268,19 @@ fn shuffle_seed() -> u64 {
         .finish()
 }
 
+/// 备好的下一首:它是哪一首,以及备好的那一份(解码器 + 那条流的健康句柄)。
+///
+/// 抽成别名是 clippy 的要求 —— 三层嵌套写在字段上确实读不出是什么。
+#[cfg(not(target_arch = "wasm32"))]
+type Prefetched = Rc<
+    RefCell<
+        Option<(
+            String,
+            (audio::Loaded, audio::StreamHealth),
+        )>,
+    >,
+>;
+
 /// 播放侧所有回调共享的一组把手。
 ///
 /// 五个绑定函数各 clone 各的这几样东西,签名会长到看不出谁在用什么 ——
@@ -181,37 +292,78 @@ struct Deck {
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
     sync: crate::syncplay::Sync,
+    /// 系统媒体控件的把手。后端由平台入口给,这里只管往里推(见 `crate::media`)。
+    media: Rc<crate::media::Bridge>,
     lyrics: LyricFeed,
     cover: CoverFeed,
     /// 列表里那一批歌的权威副本。Slint 的 model 只存格式化后的字符串,
     /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
     tracks: Rc<RefCell<Vec<TrackDto>>>,
+    /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
+    /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::liked)。
+    liked: crate::liked::LikedSet,
+    /// 正在编辑哪个歌单,以及打开它之前列表里摆的那一批歌。
+    /// 后者是「把刚才那批加进来」的唯一来源 —— 进歌单那一刻 `tracks`
+    /// 就被换掉了(见 crate::playlist::Editing)。
+    editing: crate::playlist::Editing,
+    /// 歌单封面表。取一次、记住、下次直接给(见 crate::artwork)。
+    artwork: crate::artwork::Artwork,
+    /// 曲目行的缩略图。与 `artwork` 是两套:那边按歌单 id 存全量取,
+    /// 这边按封面 URL 存、只取滑进可见区的那些(见 crate::thumbnail)。
+    thumbnails: crate::thumbnail::Thumbnails,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
-    last_daily: Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
+    last_daily:
+        Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,
+    /// 当前这一路流的死亡证明。源结束时问它:放弃过就是断流,没放弃就是放完了。
+    /// 两者在播放器那头长得一模一样(见 `docs/adr/0013`)。
+    stream: Rc<RefCell<Option<audio::StreamHealth>>>,
+    /// 已经备好的下一首:(它是哪一首, 解码器, 健康句柄)。
+    ///
+    /// 带着 id 是必须的:用户中途点了别的歌、或洗了牌,备的就不是要放的那一首了。
+    /// 认错了会放出一首根本没点过的歌([`take_prefetched`] 负责这道校验)。
+    prefetched: Prefetched,
+    /// 预取是不是正在路上。少了它,轮询每秒都会再起一条下载。
+    prefetching: Rc<std::cell::Cell<bool>>,
+    /// 当前这一路的跳转状态。跳转是异步的 —— `player.seek()` 只把请求送出去,
+    /// 真正取字节在解码线程上,成没成要问这里(见 `audio::SeekState`)。
+    /// 每首歌一个,换歌时跟着换。
+    seeking: Rc<RefCell<Option<audio::SeekState>>>,
 }
 
-/// 封面像素的取用口:播放页每帧问它「有没有新封面要送进点云」。
+/// 点云封面的取用口:播放页每帧问它「这一帧封面该怎么办」。
 ///
-/// 只在换歌解出新封面的那一帧交出像素,取走即清空 —— 一张封面是兆级的字节,
+/// 只在换歌那一帧交出动作,取走即回到"没消息" —— 一张封面是兆级的字节,
 /// 每帧搬一次过 seam 纯属白耗(见 `crates/render3d::cloud`)。
+///
+/// 三态而不是"有没有新图":换歌与拿到新图之间隔着几百毫秒的网络,而封面
+/// 常常根本拿不到(CDN 会过期)。只有"有没有新图"的话,这两种情况长得一样,
+/// 点云就会一直挂着上一首(见 `crate::viz::CoverUpdate`)。
 #[derive(Clone, Default)]
 pub(crate) struct CoverFeed {
-    pending: Rc<RefCell<Option<crate::viz::CoverPixels>>>,
+    pending: Rc<RefCell<crate::viz::CoverUpdate>>,
 }
 
 impl CoverFeed {
-    /// 取走待送的封面像素,没有新的就给 `None`。
-    pub(crate) fn take(
-        &self,
-    ) -> Option<crate::viz::CoverPixels> {
-        self.pending.borrow_mut().take()
+    /// 取走这一帧的动作,取完回到 [`crate::viz::CoverUpdate::Unchanged`]。
+    pub(crate) fn take(&self) -> crate::viz::CoverUpdate {
+        core::mem::take(&mut *self.pending.borrow_mut())
     }
 
-    /// 换歌解出了新封面:排上队等下一帧取走。上一张还没被取走就直接顶掉 ——
+    /// 换歌了:先让点云退回渐变,别挂着上一首的图等新图。
+    fn clear(&self) {
+        *self.pending.borrow_mut() =
+            crate::viz::CoverUpdate::Clear;
+    }
+
+    /// 新封面解出来了:排上队等下一帧取走。上一个动作还没被取走就直接顶掉 ——
     /// 点云只显示当前这一首,过期的封面排队也没人要。
-    fn replace(&self, pixels: crate::viz::CoverPixels) {
-        *self.pending.borrow_mut() = Some(pixels);
+    fn replace(
+        &self,
+        pixels: std::sync::Arc<crate::viz::CoverPixels>,
+    ) {
+        *self.pending.borrow_mut() =
+            crate::viz::CoverUpdate::Show(pixels);
     }
 }
 
@@ -279,8 +431,14 @@ impl LyricFeed {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(
     ui: &MainWindow,
+    media: impl FnOnce(
+        crate::media::MediaHooks,
+    )
+        -> Box<dyn crate::media::MediaControls>,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     let player = Arc::new(audio::Player::new());
+    let media =
+        Rc::new(crate::media::bind(ui, &player, media));
 
     let lyrics = LyricFeed {
         lines: Rc::new(RefCell::new(Vec::new())),
@@ -295,12 +453,44 @@ pub fn bind(
         ),
         queue: Rc::new(RefCell::new(Queue::default())),
         sync: crate::syncplay::bind(ui, &player),
+        media,
         player,
         lyrics: lyrics.clone(),
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
+        liked: crate::liked::LikedSet::default(),
+        editing: crate::playlist::Editing::default(),
+        artwork: crate::artwork::Artwork::default(),
+        thumbnails: crate::thumbnail::Thumbnails::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
+        stream: Rc::new(RefCell::new(None)),
+        prefetched: Rc::new(RefCell::new(None)),
+        prefetching: Rc::new(std::cell::Cell::new(false)),
+        seeking: Rc::new(RefCell::new(None)),
     };
+
+    // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
+    // 真正生效的是之后每次 push_rows 里的那次重标。
+    crate::liked::bind(ui, &deck.liked);
+    crate::liked::refresh(&deck.liked, ui);
+
+    // 本地歌单的写操作。改完要把当前歌单的曲目重取一遍,而那要用播放队列 ——
+    // 队列归这里,所以重取那一步由这边交出去。
+    let reloading = deck.clone();
+    crate::playlist::bind_edit(
+        ui,
+        &deck.editing,
+        &deck.artwork,
+        move |ui| reload_open_playlist(ui, &reloading),
+    );
+
+    // 缩略图目录削一次。放在这里而不是写入路径上:几百个文件的 metadata()
+    // 是毫秒级,而挂在每次写入后面会让滚一次列表 stat 整个目录几十遍。
+    api::sweep_track_artwork();
+    bind_needs_cover(ui, &deck);
+
+    bind_volume(ui, &deck);
+    bind_seek(ui, &deck);
 
     bind_search(ui, &deck);
     bind_list(ui, &deck);
@@ -328,7 +518,12 @@ pub fn bind(
 #[cfg(target_arch = "wasm32")]
 pub fn bind(
     ui: &MainWindow,
+    _media: impl FnOnce(
+        crate::media::MediaHooks,
+    )
+        -> Box<dyn crate::media::MediaControls>,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
+    // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.set_playback_text("Web 端暂不支持播放".into());
     (None, LyricFeed, CoverFeed::default())
 }
@@ -339,30 +534,78 @@ pub fn bind(
 #[cfg(test)]
 const WASM_NOTICE: &str = "Web 端暂不支持播放";
 
-/// 搜索:关键词 → `GET /search` → 结果列表。
+/// 把当前打开的那个歌单的曲目重取一遍。
+///
+/// 加歌、删歌之后走这里:服务端已经变了,而界面上那一批还是改之前的。
+/// 乐观更新在这里不划算 —— 加进来的那批要重新格式化、还要标红心,
+/// 而这是一次本机往返。
+#[cfg(not(target_arch = "wasm32"))]
+fn reload_open_playlist(ui: &MainWindow, deck: &Deck) {
+    let Some((source, id)) = deck.editing.current() else {
+        return;
+    };
+    let weak = ui.as_weak();
+    fetch_into(&weak, deck, async move {
+        crate::playlist::tracks_of(source, &id).await
+    });
+}
+
+/// 某个歌单叫什么。先找「我的歌单」,再找搜索结果。
+///
+/// 两张列表都要找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里 ——
+/// 只找一张的现象是从搜索结果点进去,标题写着「歌单」。
+#[cfg(not(target_arch = "wasm32"))]
+fn playlist_name(
+    ui: &MainWindow,
+    id: &slint::SharedString,
+    source: i32,
+) -> slint::SharedString {
+    let matches = |row: &crate::PlaylistRow| {
+        row.id == id && row.source == source
+    };
+
+    ui.get_playlists()
+        .iter()
+        .find(matches)
+        .or_else(|| {
+            ui.get_found_playlists().iter().find(matches)
+        })
+        .map_or_else(
+            || slint::SharedString::from("歌单"),
+            |row| row.name.clone(),
+        )
+}
+
+/// 搜索:关键词 → 三条路由之一 → 对应的一列结果。
+///
+/// 页签与关键词的记账在 [`crate::search`],这里只交出「搜歌」那一路 ——
+/// 它要往播放队列里塞东西,而队列归这个模块。
 #[cfg(not(target_arch = "wasm32"))]
 fn bind_search(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
-    let weak = ui.as_weak();
 
-    ui.on_search(move |keyword| {
-        let keyword = keyword.to_string();
-        if keyword.trim().is_empty() {
-            return;
-        }
-
+    crate::search::bind(ui, move |ui, keyword| {
         let deck = deck.clone();
-        let weak = weak.clone();
+        let weak = ui.as_weak();
+        let keyword = keyword.to_owned();
+
         slint::spawn_local(async move {
-            let found = api::search(&keyword).await;
+            let found = api::search_tracks(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
             match found {
-                Ok(dto) => show(&ui, &deck, dto.tracks),
+                // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
+                Ok(dto) => show(
+                    &ui,
+                    &deck,
+                    TracksDto {
+                        tracks: dto.tracks,
+                        unavailable: 0,
+                    },
+                ),
                 Err(error) => {
-                    // 搜索失败复用播放状态那一行 —— 音乐页只有一处报错位,
-                    // 再加一行"搜索状态"会让两行里总有一行是空的。
-                    ui.set_playback_text(
-                        format!("失败: {error}").into(),
+                    crate::notice::show(
+                        &ui,
+                        format!("搜索失败: {error}"),
                     );
                 }
             }
@@ -385,7 +628,96 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_liked(move || {
         fetch_into(&weak, &liked, async {
-            api::liked().await.map(|dto| dto.tracks)
+            api::liked().await
+        });
+    });
+
+    // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
+    // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
+    let sectioned = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_select_section(move |section| {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_music_section(section);
+            // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
+            // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
+            ui.set_open_playlist_name(
+                slint::SharedString::new(),
+            );
+        }
+        load_section(&weak, &sectioned, section);
+    });
+
+    // 打开一个歌单:记下来源与 id,再按来源取它的曲目。
+    let opened = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_open_playlist(move |id, source| {
+        let Some(ui) = weak.upgrade() else { return };
+        // 顺手把红心集合重拉一次:在手机官方 App 里改过的红心,这边只有
+        // 重启才跟得上 —— 那个集合原本整个进程只拉一次。接口很轻(一次
+        // 全量 id),而每次进歌单都要用它决定每行的心画哪一态。
+        ui.invoke_refresh_liked();
+        // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了。
+        // 两张列表都找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里。
+        let name = playlist_name(&ui, &id, source);
+        ui.set_open_playlist_name(name);
+
+        let source =
+            crate::playlist::Source::from_index(source);
+        let id = id.to_string();
+
+        // 存下**现在**列表里那一批 —— 下一行就要把它换成这个歌单自己的歌了,
+        // 而「把刚才那批加进来」要的正是它。
+        let previous = opened.tracks.borrow().clone();
+        let count = previous.len();
+        opened.editing.opened(source, &id, previous);
+
+        let editable = crate::playlist::is_editable(source);
+        ui.set_open_playlist_local(editable);
+        // 详情页那张封面按标识索引 —— 名字会重复,两个歌单可以同名
+        ui.set_open_playlist_id(id.as_str().into());
+        ui.set_open_playlist_cover(
+            opened.artwork.get(&id).unwrap_or_default(),
+        );
+        ui.set_add_batch_text(
+            if editable {
+                crate::playlist::add_batch_text(count)
+            } else {
+                String::new()
+            }
+            .into(),
+        );
+        fetch_into(&weak, &opened, async move {
+            crate::playlist::tracks_of(source, &id).await
+        });
+    });
+
+    let closing = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_close_playlist(move || {
+        if let Some(ui) = weak.upgrade() {
+            closing.editing.closed();
+            ui.set_open_playlist_name(
+                slint::SharedString::new(),
+            );
+            ui.set_open_playlist_local(false);
+            ui.set_add_batch_text(
+                slint::SharedString::new(),
+            );
+        }
+    });
+
+    // 打开一位歌手:摆他此刻的热门曲目。走的是与歌单详情完全相同的那一层 ——
+    // 摊开之后两者都是「一批歌」,再造一套详情页只会让返回键有两种写法。
+    let artist = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_open_artist(move |id, name| {
+        let Some(ui) = weak.upgrade() else { return };
+        ui.set_open_playlist_name(name);
+
+        let id = id.to_string();
+        fetch_into(&weak, &artist, async move {
+            api::artist_tracks(&id).await
         });
     });
 
@@ -402,17 +734,75 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     });
 }
 
+/// Music 页的四个分区。编号即 `musicnav.slint` 里 `MusicSections.items` 的下标。
+///
+/// 两处手工对齐:那边加一项,这里就要多一个分支。做成枚举而不是散在各处的
+/// 魔数,是为了让「漏了一个分区」变成编译错误而不是运行时的一片空白。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Daily,
+    Playlists,
+    Search,
+    Recent,
+}
+
+// 门要加在 impl 上,不能只加在方法上:方法没了,`impl Section` 这行还在,
+// 而 wasm 上根本没有 Section 这个类型(见上面枚举的同一道门)。
+#[cfg(not(target_arch = "wasm32"))]
+impl Section {
+    /// 由界面给的编号认出分区。认不出的编号当每日推荐 ——
+    /// 那是开局那一页,总比留在原地什么都不发生强。
+    pub fn from_index(index: i32) -> Self {
+        match index {
+            1 => Self::Playlists,
+            2 => Self::Search,
+            3 => Self::Recent,
+            _ => Self::Daily,
+        }
+    }
+}
+
+/// 换到某个分区时该取什么。
+#[cfg(not(target_arch = "wasm32"))]
+fn load_section(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    section: i32,
+) {
+    match Section::from_index(section) {
+        Section::Daily => fetch_daily(weak, deck),
+        Section::Recent => {
+            fetch_into(weak, deck, async {
+                api::recent().await
+            });
+        }
+        // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
+        Section::Playlists => {
+            if let Some(ui) = weak.upgrade() {
+                crate::playlist::refresh(
+                    &ui,
+                    &deck.artwork,
+                );
+            }
+        }
+        // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。
+        Section::Search => {}
+    }
+}
+
 /// 拉当日推荐,并记下拉取的日期。
 ///
 /// 日期在**发出**请求时就戳上,而不是等结果回来:失败了也算今天试过,
 /// 否则请求一失败,此后每次进 Music 页都会再打一次。手动按 Daily 仍能重试。
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch_daily(weak: &slint::Weak<MainWindow>, deck: &Deck) {
+fn fetch_daily(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+) {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
-    fetch_into(weak, deck, async {
-        api::daily().await.map(|dto| dto.tracks)
-    });
+    fetch_into(weak, deck, async { api::daily().await });
 }
 
 /// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
@@ -429,7 +819,7 @@ fn fetch_into<Fut>(
     request: Fut,
 ) where
     Fut: core::future::Future<
-            Output = Result<Vec<TrackDto>, api::ApiError>,
+            Output = Result<TracksDto, api::ApiError>,
         > + 'static,
 {
     let deck = deck.clone();
@@ -439,8 +829,15 @@ fn fetch_into<Fut>(
         let Some(ui) = weak.upgrade() else { return };
         match found {
             Ok(found) => show(&ui, &deck, found),
-            Err(error) => ui.set_playback_text(
-                format!("失败: {error}").into(),
+            // 会话失效要把人送回登录页,而不是在音乐页上写一句"失败" ——
+            // 那句话解释不了为什么什么都拉不出来。已经送回去了就不再报错。
+            Err(error)
+                if crate::account::handle_session_expiry(
+                    &ui, &error,
+                ) => {}
+            Err(error) => crate::notice::show(
+                &ui,
+                format!("取曲目失败: {error}"),
             ),
         }
     })
@@ -449,10 +846,18 @@ fn fetch_into<Fut>(
 
 /// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
 #[cfg(not(target_arch = "wasm32"))]
-fn show(ui: &MainWindow, deck: &Deck, found: Vec<TrackDto>) {
-    *deck.tracks.borrow_mut() = found;
+fn show(ui: &MainWindow, deck: &Deck, found: TracksDto) {
+    // 平台给不出详情的那些没能进这一批。说一声,否则歌单静默变短
+    ui.set_unavailable_note(
+        crate::playlist::unavailable_text(
+            found.unavailable,
+        )
+        .into(),
+    );
+    *deck.tracks.borrow_mut() = found.tracks;
     let loading =
-        loading_id(deck.playback.borrow().state()).map(str::to_owned);
+        loading_id(deck.playback.borrow().state())
+            .map(str::to_owned);
     push_rows(ui, deck, loading.as_deref());
 }
 
@@ -468,6 +873,26 @@ fn push_rows(
 ) {
     let rows = to_rows(&deck.tracks.borrow(), loading);
     ui.set_tracks(ModelRc::new(VecModel::from(rows)));
+    // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
+    crate::liked::remark(&deck.liked, ui);
+    // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
+    // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。
+    deck.thumbnails.apply(ui);
+}
+
+/// 接上「这一行要封面」。
+///
+/// 行滑进可见区时由 `.slint` 那边报过来 —— 列表虚拟化之后,「哪一行现在是哪一
+/// 首」只有界面知道(见 tracklist.slint 里 `changed wanted` 那一段)。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_needs_cover(ui: &MainWindow, deck: &Deck) {
+    let thumbnails = deck.thumbnails.clone();
+    let weak = ui.as_weak();
+
+    ui.on_needs_cover(move |url| {
+        let Some(ui) = weak.upgrade() else { return };
+        thumbnails.request(&ui, &url);
+    });
 }
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
@@ -502,6 +927,7 @@ fn bind_play(ui: &MainWindow, deck: &Deck) {
             return;
         };
 
+        // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
         deck.queue.borrow_mut().replace(batch, index);
         if ui.get_shuffle_on() {
             deck.queue.borrow_mut().shuffle(shuffle_seed());
@@ -521,29 +947,13 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_toggle_play(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if toggle.sync.is_listening() {
-            toggle.sync.leave();
-            if let Ok(player) = toggle.player.as_ref() {
-                player.stop();
-            }
-            ui.set_is_playing(false);
-            return;
-        }
-
-        let Ok(player) = toggle.player.as_ref() else {
-            return;
-        };
-        if ui.get_is_playing() {
-            player.pause();
-            ui.set_is_playing(false);
-        } else if !player.empty() {
-            // 暂停中,接着放。
-            player.resume();
-            ui.set_is_playing(true);
-        } else {
-            // 放空了(队列结束后又按了播放):重放当前这首。
-            play_current(&ui, &toggle);
-        }
+        toggle_play(&ui, &toggle);
+        // 暂停图标不该慢一拍 —— 轮询要 1 秒之后才轮到。
+        crate::media::push(
+            &ui,
+            &toggle.playback,
+            &toggle.media,
+        );
     });
 
     let next = deck.clone();
@@ -573,15 +983,72 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_shuffle_toggled(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if ui.get_shuffle_on() {
-            shuffle
-                .queue
-                .borrow_mut()
-                .shuffle(shuffle_seed());
-        } else {
-            shuffle.queue.borrow_mut().unshuffle();
-        }
+        let on = {
+            let mut queue = shuffle.queue.borrow_mut();
+            if queue.is_shuffled() {
+                queue.unshuffle();
+            } else {
+                queue.shuffle(shuffle_seed());
+            }
+            queue.is_shuffled()
+        };
+        // 界面上那个开关是这一位的投影,拨完由这里写回去 —— 开关自己不置位。
+        ui.set_shuffle_on(on);
+        // 系统控件上的随机也该立刻跟着翻,轮询要 1 秒之后才轮到。
+        crate::media::push(
+            &ui,
+            &shuffle.playback,
+            &shuffle.media,
+        );
     });
+}
+
+/// 取走备好的那一份 —— **只在它确实是这一首时**。
+///
+/// 不是这一首就地丢掉:用户中途点了列表里别的歌、或洗了牌,备的那一份再也用不上,
+/// 留着只是占一个临时文件和一条还在跑的下载。认错了则更糟 —— 会放出一首
+/// 根本没点过的歌。
+///
+/// 泛型是为了能单独测这道校验:备好的那一份是解码器,测试里造不出来,
+/// 而这里唯一的逻辑是"id 对不对得上",与备的是什么东西无关。
+fn take_prefetched<T>(
+    slot: &RefCell<Option<(String, T)>>,
+    wanted: &str,
+) -> Option<T> {
+    let (id, ready) = slot.borrow_mut().take()?;
+    (id == wanted).then_some(ready)
+}
+
+/// 备下一首:与正常播放走**同一个** [`prepare`],只是备好了先搁着。
+///
+/// 失败不声张:预取只是提速,它没成的话照常走原路,用户什么都不会察觉。
+#[cfg(not(target_arch = "wasm32"))]
+fn start_prefetch(deck: &Deck) {
+    let Some(track) =
+        deck.queue.borrow().peek_next().cloned()
+    else {
+        return;
+    };
+
+    deck.prefetching.set(true);
+    let deck = deck.clone();
+    slint::spawn_local(async move {
+        let ready =
+            prepare(deck.player.clone(), track.clone())
+                .await;
+        deck.prefetching.set(false);
+        match ready {
+            Ok((decoded, health)) => {
+                log::debug!("预取就绪: {}", track.title);
+                *deck.prefetched.borrow_mut() =
+                    Some((track.id, (decoded, health)));
+            }
+            Err(error) => {
+                log::debug!("预取没成,照常走: {error}");
+            }
+        }
+    })
+    .expect("event loop must be running");
 }
 
 /// 队列前进一首;到底了就停下并说明(放完即停,见 `CONTEXT.md`「队列」)。
@@ -598,6 +1065,37 @@ fn advance(ui: &MainWindow, deck: &Deck) {
     }
 }
 
+/// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
+///
+/// 从回调里抽出来,是因为系统媒体控件按的也是这一下 —— 那边不该有第二套说法
+/// (见 [`dispatch_media`])。
+#[cfg(not(target_arch = "wasm32"))]
+fn toggle_play(ui: &MainWindow, deck: &Deck) {
+    if deck.sync.is_listening() {
+        deck.sync.leave();
+        if let Ok(player) = deck.player.as_ref() {
+            player.stop();
+        }
+        ui.set_is_playing(false);
+        return;
+    }
+
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    if ui.get_is_playing() {
+        player.pause();
+        ui.set_is_playing(false);
+    } else if !player.empty() {
+        // 暂停中,接着放。
+        player.resume();
+        ui.set_is_playing(true);
+    } else {
+        // 放空了(队列结束后又按了播放):重放当前这首。
+        play_current(ui, deck);
+    }
+}
+
 /// 放队列的当前曲目:取直链 → 开流 → 解码 → 出声,经 `app_core::play` 记账。
 #[cfg(not(target_arch = "wasm32"))]
 fn play_current(ui: &MainWindow, deck: &Deck) {
@@ -606,6 +1104,20 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     else {
         return;
     };
+
+    // 备好的那一份先取走 —— 取不到就是走原路。这一步要在停旧歌之前:
+    // 备着的话下面那段等待根本不存在,声音接上就换。
+    let ready =
+        take_prefetched(&deck.prefetched, &track.id);
+    let instant = ready.is_some();
+
+    // **旧歌立刻停。** 界面下面几行就要换成新歌了,让耳朵继续听上一首是自相矛盾
+    // ——「封面换了但还在放上一首」正是这么来的。备好了的话这一停是零长度的。
+    if let Ok(player) = deck.player.as_ref() {
+        player.stop();
+    }
+    ui.set_is_playing(false);
+    ui.set_now_loading(!instant);
 
     // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
     //
@@ -640,9 +1152,19 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
         .expect("event loop must be running");
     }
 
+    // 点云也跟着清:与上面那两样同一条原则。少了这一步,取封面的那几百毫秒里
+    // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
+    // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
+    deck.cover.clear();
+    // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
+    deck.media.clear_art();
+
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
         let cover = deck.cover.clone();
+        let media = deck.media.clone();
+        let playback = deck.playback.clone();
+        let id = track.id.clone();
         slint::spawn_local(async move {
             // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
             // 同一次解码喂两处:界面的封面卡,以及点云的采样纹理。
@@ -651,8 +1173,21 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     crate::cover::decode(&bytes)
                 && let Some(ui) = weak.upgrade()
             {
+                // 连按下一首时,先发的请求可能后回来。到这时它已经不是当前这首,
+                // 换上去就是「A 的封面配 B 的歌」—— 与 `app_core::play` 的代际
+                // 校验同一个道理,只是这里对得上 id 就够了。
+                if current_id(playback.borrow().state())
+                    != Some(id.as_str())
+                {
+                    return;
+                }
                 ui.set_cover_art(img);
-                cover.replace(pixels);
+                // 一张图三个去处:界面的封面卡、点云、系统媒体控件。
+                // `Arc` 免掉后两者各拷一份兆级字节。
+                let pixels = Arc::new(pixels);
+                cover.replace(pixels.clone());
+                media.set_art(pixels);
+                crate::media::push(&ui, &playback, &media);
             }
         })
         .expect("event loop must be running");
@@ -666,9 +1201,23 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
         app_core::play(
             &deck.playback,
             track,
-            move |track| prepare(player, track),
-            move |decoded| {
-                emit(&commit.player, &commit.sync, decoded);
+            move |track| async move {
+                // 备好了就直接交出去 —— 与现取的那份走同一个类型、同一段提交路径,
+                // 差别只有"等不等"。
+                match ready {
+                    Some(ready) => Ok(ready),
+                    None => prepare(player, track).await,
+                }
+            },
+            move |(decoded, health)| {
+                emit(
+                    &commit.player,
+                    &commit.sync,
+                    &commit.stream,
+                    &commit.seeking,
+                    decoded,
+                    health,
+                );
             },
         )
         .await;
@@ -686,9 +1235,22 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
             };
             ui.set_is_playing(playing);
             ui.set_playback_text(text.into());
+            ui.set_now_loading(false);
+            // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
+            if playing {
+                ui.set_banner_text(
+                    slint::SharedString::new(),
+                );
+            }
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             push_rows(&ui, &deck, None);
+            // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
+            crate::media::push(
+                &ui,
+                &deck.playback,
+                &deck.media,
+            );
         }
     })
     .expect("event loop must be running");
@@ -724,12 +1286,46 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             log::debug!(
                 "自动续播轮询: 位置 {position:?}, 放空 {drained}"
             );
-            if should_advance(
-                deck.playback.borrow().state(),
-                drained,
-                deck.sync.is_listening(),
+
+            let gave_up = deck
+                .stream
+                .borrow()
+                .as_ref()
+                .is_some_and(audio::StreamHealth::gave_up);
+            let state = deck.playback.borrow().state().clone();
+            let listening = deck.sync.is_listening();
+
+            // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
+            // 而两个定时器意味着两套"现在放到哪"的说法。
+            push_progress(&ui, &state, position);
+            push_seek_state(&ui, &deck);
+            // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
+            crate::media::push(&ui, &deck.playback, &deck.media);
+
+            // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
+            // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
+            if should_report_loss(
+                &state, drained, listening, gave_up,
             ) {
+                report_stream_loss(&ui, &deck);
+            } else if should_advance(&state, drained, listening)
+            {
                 advance(&ui, &deck);
+            }
+
+            // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
+            let already_have = deck.prefetching.get()
+                || deck.prefetched.borrow().is_some();
+            let has_next =
+                deck.queue.borrow().peek_next().is_some();
+            if should_prefetch(
+                &state,
+                position,
+                listening,
+                already_have,
+                has_next,
+            ) {
+                start_prefetch(&deck);
             }
         },
     );
@@ -739,10 +1335,185 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
     Box::leak(Box::new(timer));
 }
 
+/// 把当前进度推给界面。
+///
+/// 手上没歌时清成「没有」而不是留着上一首的数字 —— 停下之后那条进度条
+/// 还停在 3:41,读起来像是还在放。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_progress(
+    ui: &MainWindow,
+    state: &PlaybackState,
+    position: core::time::Duration,
+) {
+    let track = match state {
+        PlaybackState::Playing(track)
+        | PlaybackState::Loading(track) => track,
+        _ => {
+            ui.set_has_track(false);
+            return;
+        }
+    };
+
+    let secs = position.as_secs_f64();
+    ui.set_has_track(true);
+    ui.set_progress_ratio(crate::progress::ratio(
+        secs,
+        track.duration_ms,
+    ));
+    ui.set_progress_text(
+        crate::progress::progress_text(
+            secs,
+            track.duration_ms,
+        )
+        .into(),
+    );
+}
+
+/// 接上音量:开局从本地设置恢复,拖动时既改播放器也存回去。
+///
+/// 音量跟着设备走,不跟着账号 —— 笔记本外放与一副耳机不该共用一个数值
+/// (见 api::settings)。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_volume(ui: &MainWindow, deck: &Deck) {
+    let saved = api::settings::load().volume;
+    ui.set_volume(saved);
+    if let Ok(player) = deck.player.as_ref() {
+        player.set_volume(saved);
+    }
+
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_volume_changed(move |volume| {
+        let volume = audio::clamped_volume(volume);
+        if let Some(ui) = weak.upgrade() {
+            ui.set_volume(volume);
+        }
+        if let Ok(player) = deck.player.as_ref() {
+            player.set_volume(volume);
+        }
+
+        // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
+        // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
+        //
+        // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被这次
+        // 调音量顺手冲回默认值。
+        api::settings::save(&api::settings::Settings {
+            volume,
+            ..api::settings::load()
+        });
+    });
+}
+
+/// 接上进度条的拖动。
+///
+/// 跳转有**两种下场,两条报告路径**(见 `audio::ChannelSource::try_seek`):
+///
+/// - 当场就知道跳不动(格式不支持、这条流只进不退):`seek` 直接返回 `Err`,
+///   这里当场说。那一刻 rodio 的位置计数器根本没动过,进度条与声音仍然一致。
+/// - 真在取字节:`seek` 乐观返回 `Ok`,这里挂上「缓冲中」,结论由每秒那趟
+///   轮询从 `audio::SeekState` 上取(`push_seek_state`)。
+#[cfg(not(target_arch = "wasm32"))]
+fn bind_seek(ui: &MainWindow, deck: &Deck) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+
+    ui.on_seek(move |at| {
+        let Some(ui) = weak.upgrade() else { return };
+        let state = deck.playback.borrow().state().clone();
+        let (PlaybackState::Playing(track)
+        | PlaybackState::Loading(track)) = state
+        else {
+            return;
+        };
+        let Some(target) = crate::progress::seek_target(
+            at,
+            track.duration_ms,
+        ) else {
+            return;
+        };
+
+        // 立刻挂上,不等轮询:那要慢一秒,而一秒的沉默正好是"点了没反应"
+        ui.set_buffering(true);
+
+        if let Ok(player) = deck.player.as_ref()
+            && let Err(err) = player.seek(target)
+        {
+            ui.set_buffering(false);
+            crate::notice::show(
+                &ui,
+                format!("这首跳不了: {err}"),
+            );
+        }
+    });
+}
+
+/// 把跳转的下场推给界面。
+///
+/// 两个出口而不是一个:还在取字节 -> 挂着「缓冲中」;试过了不行 -> 摘掉缓冲
+/// 并说一句为什么。少了后一条,跳不了的歌会永远停在「缓冲中」上,
+/// 而那比一开始就说"跳不了"更难查。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_seek_state(ui: &MainWindow, deck: &Deck) {
+    let borrowed = deck.seeking.borrow();
+    let Some(state) = borrowed.as_ref() else {
+        return;
+    };
+
+    if let Some(why) = state.take_failure() {
+        ui.set_buffering(false);
+        crate::notice::show(
+            ui,
+            format!("这首跳不了: {why}"),
+        );
+        return;
+    }
+
+    ui.set_buffering(state.is_seeking());
+}
+
+/// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
+///
+/// 先弹粗文案,不等探测 —— 等的话最坏要让用户对着没声音的界面干等二十多秒,
+/// 那个区间里他已经在想"是不是卡死了"(见 `docs/adr/0013`)。
+#[cfg(not(target_arch = "wasm32"))]
+fn report_stream_loss(ui: &MainWindow, deck: &Deck) {
+    // 证据取走即清空。这个条件会一直成立到下次换歌,不清的话横幅每秒重弹一次。
+    deck.stream.borrow_mut().take();
+
+    let opening = describe_stream_loss(None);
+    deck.playback.borrow_mut().fail(opening.to_owned());
+    ui.set_is_playing(false);
+    ui.set_playback_text(
+        describe_playback(deck.playback.borrow().state())
+            .into(),
+    );
+    ui.set_banner_text(opening.into());
+
+    // 探测结果回来了再把话说准。探不通=本机没网,探得通=这条播放地址不行了。
+    let weak = ui.as_weak();
+    slint::spawn_local(async move {
+        let reachable = api::health().await.is_ok();
+        if let Some(ui) = weak.upgrade() {
+            // 期间用户可能已经把横幅关了,或者又放起了别的歌 —— 那就不打扰他。
+            if !ui.get_banner_text().is_empty() {
+                ui.set_banner_text(
+                    describe_stream_loss(Some(reachable))
+                        .into(),
+                );
+            }
+        }
+    })
+    .expect("event loop must be running");
+}
+
 /// 开机静默自检:`GET /health` 一次,健康就一声不吭。
 ///
 /// Server 页删掉之后,这是协议版本协商唯一的运行时入口(`api::health` 内部
-/// 比对 `PROTOCOL_VERSION`)。坏消息写进音乐页状态行 —— 那是用户最先看的地方。
+/// 比对 `PROTOCOL_VERSION`)。
+///
+/// 坏消息走横幅:这是**开机那一刻**的一次探测,不是一个会自己更新的状态。
+/// 写进播放状态行的话,上游恢复之后没有任何东西会重算它,那句「失败: 上游超时」
+/// 就一直挂在歌单顶上(见 `crate::notice`)。
 #[cfg(not(target_arch = "wasm32"))]
 fn startup_check(ui: &MainWindow) {
     let weak = ui.as_weak();
@@ -751,7 +1522,7 @@ fn startup_check(ui: &MainWindow) {
         if let Some(message) = describe_startup(&result)
             && let Some(ui) = weak.upgrade()
         {
-            ui.set_playback_text(message.into());
+            crate::notice::show(&ui, message);
         }
     })
     .expect("event loop must be running");
@@ -768,7 +1539,7 @@ fn startup_check(ui: &MainWindow) {
 async fn prepare(
     player: Arc<Result<audio::Player, audio::AudioError>>,
     track: TrackDto,
-) -> Result<audio::Loaded, String> {
+) -> Result<(audio::Loaded, audio::StreamHealth), String> {
     // 没声卡就在这里认输,别等下载完才发现放不了。
     if let Err(error) = player.as_ref() {
         return Err(error.to_string());
@@ -794,15 +1565,27 @@ async fn prepare(
 fn emit(
     player: &Arc<Result<audio::Player, audio::AudioError>>,
     sync: &crate::syncplay::Sync,
+    stream: &Rc<RefCell<Option<audio::StreamHealth>>>,
+    seeking: &Rc<RefCell<Option<audio::SeekState>>>,
     decoded: audio::Loaded,
+    health: audio::StreamHealth,
 ) {
+    use audio::buffered;
     use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
 
     let Ok(player) = player.as_ref() else { return };
-    // 先归一再分支:本机听到的和推出去的因此是同一批采样,
-    // 而 Opus 只在 48kHz 立体声上工作(见 `audio::codec::normalize`)。
-    let (tee, branch) =
-        Tee::new(normalize(decoded), BRANCH_CAPACITY);
+    // 换歌即换证据。上一首的死亡证明留着的话,新歌一放空就会被误报成断流。
+    stream.borrow_mut().replace(health);
+    // 先归一再缓冲再分支,三步的顺序都是硬的:
+    //
+    // - 归一在最前:`buffered` 交出的源对外声称 48kHz 立体声,格式得先对上;
+    // - 缓冲在中间:它把解码挪到自己的线程,声卡回调从此不碰网络(见
+    //   `audio::buffered`)。少了这一层,网络抖一下就是设备欠载;
+    // - 分支在最后:本机听到的和推给听众的因此仍是同一批采样。
+    let source = buffered(normalize(decoded));
+    // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
+    seeking.borrow_mut().replace(source.seek_state());
+    let (tee, branch) = Tee::new(source, BRANCH_CAPACITY);
     // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
     // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
     player.play(tee);
@@ -814,18 +1597,24 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+    use crate::viz::CoverUpdate;
 
-    /// 封面像素只交出一次:换歌那一帧给 `Some`,之后一直给 `None`。
+    /// 封面像素只交出一次:换歌那一帧给一个动作,之后一直是"没消息"。
     /// 一张封面是兆级的字节,每帧搬一次过 seam 纯属白耗。
     #[test]
     fn cover_feed_hands_pixels_over_once_per_track() {
         let feed = CoverFeed::default();
-        assert!(feed.take().is_none(), "没换歌不该有封面");
-
-        feed.replace(pixels(2));
-        assert_eq!(feed.take().map(|p| p.width), Some(2));
         assert!(
-            feed.take().is_none(),
+            matches!(feed.take(), CoverUpdate::Unchanged),
+            "没换歌不该有动作"
+        );
+
+        feed.replace(Arc::new(pixels(2)));
+        assert!(
+            matches!(feed.take(), CoverUpdate::Show(p) if p.width == 2)
+        );
+        assert!(
+            matches!(feed.take(), CoverUpdate::Unchanged),
             "同一张被交出了两次"
         );
     }
@@ -836,10 +1625,38 @@ mod tests {
     #[test]
     fn cover_feed_replaces_a_pending_cover() {
         let feed = CoverFeed::default();
-        feed.replace(pixels(2));
-        feed.replace(pixels(4));
-        assert_eq!(feed.take().map(|p| p.width), Some(4));
-        assert!(feed.take().is_none());
+        feed.replace(Arc::new(pixels(2)));
+        feed.replace(Arc::new(pixels(4)));
+        assert!(
+            matches!(feed.take(), CoverUpdate::Show(p) if p.width == 4)
+        );
+        assert!(matches!(
+            feed.take(),
+            CoverUpdate::Unchanged
+        ));
+    }
+
+    /// **换歌当场就要清,不等新封面。**
+    ///
+    /// 这是那个 bug 的回归测试:取封面要几百毫秒,而且常常根本取不到
+    /// (CDN 会过期、有的歌压根没有封面)。只在成功时换图的话,点云会挂着
+    /// 上一首的封面 —— 少则几百毫秒,多则一直到下次换歌
+    /// (见 `CONTEXT.md`「封面点云」)。
+    #[test]
+    fn cover_feed_clears_before_the_new_art_arrives() {
+        let feed = CoverFeed::default();
+        feed.replace(Arc::new(pixels(2)));
+        // 上一首的图还排在队里没人取,这时候用户按了下一首。
+        feed.clear();
+
+        assert!(
+            matches!(feed.take(), CoverUpdate::Clear),
+            "换歌那一帧该是清空,而不是把上一首的图交出去"
+        );
+        assert!(matches!(
+            feed.take(),
+            CoverUpdate::Unchanged
+        ));
     }
 
     /// 边长 `side` 的纯色封面像素,只用来分辨是哪一张。
@@ -878,7 +1695,7 @@ mod tests {
     /// 下载、每条回来都从头出声,这是 bug 不是"手快"。
     #[test]
     fn tapping_the_track_that_is_already_loading_is_redundant()
-    {
+     {
         assert!(is_redundant_tap(
             &PlaybackState::Loading(track_with_id("1")),
             "1"
@@ -888,7 +1705,7 @@ mod tests {
     /// 正在加载别的歌:这一下该换歌,不算多余。
     #[test]
     fn tapping_a_different_track_while_loading_is_not_redundant()
-    {
+     {
         assert!(!is_redundant_tap(
             &PlaybackState::Loading(track_with_id("1")),
             "2"
@@ -907,7 +1724,10 @@ mod tests {
     /// 空闲与失败态下的点击一律照常 —— 失败之后重试是常见动作。
     #[test]
     fn tapping_while_idle_or_failed_is_not_redundant() {
-        assert!(!is_redundant_tap(&PlaybackState::Idle, "1"));
+        assert!(!is_redundant_tap(
+            &PlaybackState::Idle,
+            "1"
+        ));
         assert!(!is_redundant_tap(
             &PlaybackState::Failed("直链已过期".to_owned()),
             "1"
@@ -932,7 +1752,10 @@ mod tests {
     /// 拉的是昨天的:跨天失效,该重拉。
     #[test]
     fn daily_fetched_on_an_earlier_day_is_due() {
-        assert!(daily_is_due(Some(&20_260_729), &20_260_730));
+        assert!(daily_is_due(
+            Some(&20_260_729),
+            &20_260_730
+        ));
     }
 
     /// 只标出加载中的那一行,其余行不受影响。
@@ -955,7 +1778,8 @@ mod tests {
     /// 没有歌在加载时,一行都不标。
     #[test]
     fn no_row_is_marked_when_nothing_is_loading() {
-        let batch = [track_with_id("1"), track_with_id("2")];
+        let batch =
+            [track_with_id("1"), track_with_id("2")];
         let rows = to_rows(&batch, None);
         assert!(rows.iter().all(|row| !row.loading));
     }
@@ -963,7 +1787,8 @@ mod tests {
     /// 加载中的歌不在当前列表里(点完歌又搜了别的):一行不标,也不出错。
     #[test]
     fn a_loading_track_outside_the_list_marks_nothing() {
-        let batch = [track_with_id("1"), track_with_id("2")];
+        let batch =
+            [track_with_id("1"), track_with_id("2")];
         let rows = to_rows(&batch, Some("99"));
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| !row.loading));
@@ -1042,6 +1867,164 @@ mod tests {
             true,
             false
         ));
+    }
+
+    /// **断流与放完了要走向相反的出口。**
+    ///
+    /// 两者在播放器那头是同一个现象(声源空了),区别只有那条流留没留下放弃的
+    /// 证据。分不清的话,断网时会一首接一首地切下去,每首再熬一轮超时,
+    /// 一分钟就把整个队列烧光,而用户得到的解释是零(见 `docs/adr/0013`)。
+    #[test]
+    fn a_drained_source_reports_a_loss_only_when_it_gave_up()
+     {
+        let playing = PlaybackState::Playing(track());
+
+        assert!(
+            should_report_loss(&playing, true, false, true),
+            "放空了且流放弃过,这就是断流"
+        );
+        assert!(
+            !should_report_loss(
+                &playing, true, false, false
+            ),
+            "放空了但流没放弃,那是正常放完,该切下一首"
+        );
+        // 两个出口必须互斥,否则同一刻既报错又切歌。
+        assert!(
+            !should_advance(&playing, true, false)
+                || !should_report_loss(
+                    &playing, true, false, false
+                )
+        );
+        assert!(
+            !should_report_loss(
+                &playing, false, false, true
+            ),
+            "还没放空就报断流,声音还在放呢"
+        );
+        assert!(
+            !should_report_loss(&playing, true, true, true),
+            "收听同播时本机没有自己的流,那是上一次留下的旧证据"
+        );
+        assert!(
+            !should_report_loss(
+                &PlaybackState::Loading(track()),
+                true,
+                false,
+                true
+            ),
+            "正在加载下一首时不许被上一首的证据打断"
+        );
+    }
+
+    /// **预取要等当前这首站稳了再起。**
+    ///
+    /// 一起播就备的话,两条下载抢同一条链路,而正在放的那首经不起抢 ——
+    /// 这个 CDN 本来就爱停摆(真机日志里连续四次失联,见 `docs/adr/0013`)。
+    #[test]
+    fn prefetch_starts_once_the_current_track_is_under_way()
+    {
+        let playing = PlaybackState::Playing(track());
+        let under_way = PREFETCH_AFTER;
+        let just_started = core::time::Duration::ZERO;
+
+        assert!(should_prefetch(
+            &playing, under_way, false, false, true
+        ));
+        assert!(
+            !should_prefetch(
+                &playing,
+                just_started,
+                false,
+                false,
+                true
+            ),
+            "刚起播就备下一首会和它自己抢带宽"
+        );
+        assert!(
+            !should_prefetch(
+                &playing, under_way, false, true, true
+            ),
+            "手里已经有备好的了,别再起一条"
+        );
+        assert!(
+            !should_prefetch(
+                &playing, under_way, false, false, false
+            ),
+            "队尾之后没有下一首可备"
+        );
+        assert!(
+            !should_prefetch(
+                &PlaybackState::Loading(track()),
+                under_way,
+                false,
+                false,
+                true
+            ),
+            "这一首自己还没放起来,轮不到备下一首"
+        );
+    }
+
+    /// 收听同播时不预取:切歌的决定权不在本机,备了也用不上,白占一条下载。
+    #[test]
+    fn a_listener_never_prefetches() {
+        assert!(!should_prefetch(
+            &PlaybackState::Playing(track()),
+            PREFETCH_AFTER,
+            true,
+            false,
+            true
+        ));
+    }
+
+    /// **备好的那一份只认它自己那一首。**
+    ///
+    /// 备下一首的时候用户可能改主意:点了列表里别的歌,或者洗了牌。认错了会放出
+    /// 一首根本没点过的歌 —— 而且界面显示的还是对的那一首,查起来极其别扭。
+    #[test]
+    fn a_prefetched_track_is_only_used_for_its_own_track() {
+        let slot = RefCell::new(Some((
+            "2".to_owned(),
+            "备好的源",
+        )));
+
+        assert!(
+            take_prefetched(&slot, "7").is_none(),
+            "id 对不上,不许拿来用"
+        );
+        assert!(
+            slot.borrow().is_none(),
+            "对不上的那一份要就地丢掉,不能留着占一条下载"
+        );
+
+        let slot = RefCell::new(Some((
+            "2".to_owned(),
+            "备好的源",
+        )));
+        assert_eq!(
+            take_prefetched(&slot, "2"),
+            Some("备好的源")
+        );
+        assert!(
+            take_prefetched(&slot, "2").is_none(),
+            "同一份不该被交出两次"
+        );
+    }
+
+    /// 横幅先说发生了什么,探明之后再说是哪一种。
+    ///
+    /// 三句话必须互不相同:探测没回来时说"中断了"是诚实的,而一旦探明,
+    /// 用户该做的事完全不同 —— 一个是等网络,一个是重新点这首歌。
+    #[test]
+    fn the_banner_says_what_the_user_can_do_about_it() {
+        let pending = describe_stream_loss(None);
+        let offline = describe_stream_loss(Some(false));
+        let stale = describe_stream_loss(Some(true));
+
+        assert!(!pending.is_empty());
+        assert_ne!(pending, offline);
+        assert_ne!(offline, stale);
+        assert_ne!(pending, stale);
     }
 
     /// 开机自检只在坏消息时开口:健康 → None,失败 → 一行能显示的话。
@@ -1164,5 +2147,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 四个编号各自认出自己的分区,认不出的落回每日推荐 ——
+    /// 那是开局那一页,总比留在原地什么都不发生强。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn each_section_knows_what_to_load() {
+        use super::Section;
+
+        assert_eq!(Section::from_index(0), Section::Daily);
+        assert_eq!(
+            Section::from_index(1),
+            Section::Playlists
+        );
+        assert_eq!(Section::from_index(2), Section::Search);
+        assert_eq!(Section::from_index(3), Section::Recent);
+        assert_eq!(Section::from_index(99), Section::Daily);
+        assert_eq!(Section::from_index(-1), Section::Daily);
     }
 }

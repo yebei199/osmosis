@@ -2,7 +2,7 @@
 //!
 //! 职责只有三件:初始化日志、初始化渲染后端、把控制权交给 UI 层。
 //!
-//! 构建走 cargo-ndk(见 `cargo xtask android`),产物 `libslint_study.so`
+//! 构建走 cargo-ndk(见 `cargo xtask android`),产物 `libosmosis.so`
 //! 由 `MainActivity` 通过 manifest 里的 `android.app.lib_name` 加载。
 
 /// Android 入口点,在 `MainActivity` 加载本库后由 android-activity
@@ -18,14 +18,20 @@
 /// default-members 排除本 crate 绕开了,但 IDE 照样按 host cfg 解析这个文件,于是
 /// 常年一片红。cfg 让整段在 host 上直接不存在,两边一起治。见 ADR 0003。
 #[cfg(target_os = "android")]
+mod controls;
+
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Info)
-            .with_tag("slint_study"),
+            // logcat 的过滤标签。取 crate 名(即 `[lib] name`,也就是
+            // `libosmosis.so` 里的那个名字),而不是另写一遍字面量 ——
+            // 改名时 `adb logcat -s <tag>` 才不会跟着失灵。
+            .with_tag(env!("CARGO_CRATE_NAME")),
     );
-    log::info!("slint_study starting");
+    log::info!("{} starting", env!("CARGO_CRATE_NAME"));
 
     // APK 由系统启动,拿不到运行时环境变量(桌面那边是 `SLINT_MCP_PORT=8090 cargo run`)。
     // 故把构建期的端口烧进二进制,再在这里塞回进程环境 —— 必须赶在下面 android::init
@@ -53,6 +59,9 @@ fn android_main(app: slint::android::AndroidApp) {
     // 到 stderr,而 Android 把 native 的 stderr 丢进 /dev/null。「装上了却连不上」时
     // 别翻 logcat,直接 curl 那个端口。(踩过一次:manifest 缺 INTERNET 权限导致 bind
     // EACCES,全程零日志。)
+    // 媒体控件要 JavaVM,而它只能从 `app` 上取;`init` 会把 `app` 吃掉,
+    // 所以先克隆一份留着(`AndroidApp` 内部是 Arc,克隆是廉价的)。
+    let media_app = app.clone();
     slint::android::init(app)
         .expect("slint android init failed");
 
@@ -80,6 +89,7 @@ fn android_main(app: slint::android::AndroidApp) {
                 lead_y: n.lead_y,
                 lag_y: n.lag_y,
                 slot_h: n.slot_h,
+                dark: n.dark,
             }))
         },
         move |v, w, h| {
@@ -87,9 +97,21 @@ fn android_main(app: slint::android::AndroidApp) {
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
-                    cover: v.cover.as_ref().map(|c| {
-                        (c.width, c.height, c.rgba.as_slice())
-                    }),
+                    cover: match &v.cover {
+                        ui::CoverUpdate::Unchanged => {
+                            render3d::CoverUpdate::Unchanged
+                        }
+                        ui::CoverUpdate::Clear => {
+                            render3d::CoverUpdate::Clear
+                        }
+                        ui::CoverUpdate::Show(c) => {
+                            render3d::CoverUpdate::Show(
+                                c.width,
+                                c.height,
+                                c.rgba.as_slice(),
+                            )
+                        }
+                    },
                     pointer: render3d::Pointer {
                         x: v.pointer.x,
                         y: v.pointer.y,
@@ -97,6 +119,7 @@ fn android_main(app: slint::android::AndroidApp) {
                         active: v.pointer.active,
                     },
                     preset: v.preset,
+                    needs_occluder: v.needs_occluder,
                     width: w,
                     height: h,
                 });
@@ -111,5 +134,8 @@ fn android_main(app: slint::android::AndroidApp) {
                 occluder,
             })
         },
+        // 系统媒体控件:锁屏与通知栏那条播放条由 SystemUI 画,我们只负责报
+        // 状态与接按键(见 docs/adr/0020)。`app` 是 JavaVM 的唯一来源。
+        move |hooks| controls::start(&media_app, hooks),
     );
 }

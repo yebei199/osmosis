@@ -6,19 +6,54 @@
 //! 翻译刻意**裁剪**:上游的 `Track` 有音质规格、付费等级等等,这里只留客户端
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
+use std::collections::HashSet;
+
 use contract::{
-    LyricDto, LyricLineDto, PlaySourceDto, TrackDto,
+    ArtistDto, LyricDto, LyricLineDto, PlaySourceDto,
+    PlaylistDto, PlaylistSource, TrackDto,
 };
+
+use crate::account::Account;
+use crate::cache::TrackRef;
 
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {
     tonic::include_proto!("bangdream.music.v1");
 }
 
+/// bang-dream 认这个 metadata 键来选该用哪个账号的网易云凭据。
+///
+/// 键名与那侧的 `internal/rpc/userid.go` 手工对齐 —— proto 里没有它,
+/// 因为「以谁的身份问」不是领域请求的一部分(见那个仓库的 `docs/adr/0009`)。
+const USER_ID_KEY: &str = "x-user-id";
+
+/// 把一条请求包成带用户标识的 gRPC 请求。
+///
+/// 上游没有默认用户:不带这个头的调用一律 `INVALID_ARGUMENT`。所以每一次上游调用
+/// 都要经过这里 —— 漏一处的现象是那条路由整个不可用,不会静默串号。
+pub fn as_user<T>(
+    account: &Account,
+    message: T,
+) -> tonic::Request<T> {
+    let mut request = tonic::Request::new(message);
+    // 用户标识是 accounts.id 的十进制串,永远是合法的 ASCII metadata 值
+    let value = account.upstream_user_id().parse().expect(
+        "用户标识是十进制数字,必然是合法的 metadata 值",
+    );
+
+    request.metadata_mut().insert(USER_ID_KEY, value);
+
+    request
+}
+
 /// 上游平台枚举翻成契约里的字符串。
 ///
 /// 用字符串而非数字:契约要能被人读懂,也要在加平台时不依赖枚举序号的稳定性。
-fn platform_name(raw: i32) -> String {
+///
+/// 缓存也按这个值存(见 `cache.rs`)—— 另写一份的话,prost 生成的
+/// `as_str_name()` 给的是 `PLATFORM_NETEASE`,与这里的 `netease` 对不上,
+/// 而那是运行期才炸的外键错误,编译器一声不吭。
+pub fn platform_name(raw: i32) -> String {
     match proto::Platform::try_from(raw) {
         Ok(proto::Platform::Netease) => "netease",
         _ => "unknown",
@@ -32,6 +67,124 @@ fn platform_name(raw: i32) -> String {
 /// `None` 是"平台没给",`Some("")` 会被客户端当成一个真实存在的空值。
 fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
+}
+
+/// 把上游的一个歌手翻成契约里的 [`ArtistDto`]。
+///
+/// 只在**搜歌手**这条路上用。内嵌在 `Track` 里的歌手走另一条路,翻成一串名字 ——
+/// 那里要的是显示,这里要的是能点进去的实体。
+pub fn artist_to_dto(artist: proto::Artist) -> ArtistDto {
+    ArtistDto {
+        id: artist.id,
+        name: artist.name,
+        avatar: non_empty(artist.avatar),
+        album_count: artist.album_count,
+    }
+}
+
+/// 把上游的一个歌单翻成契约里的 [`PlaylistDto`]。
+///
+/// `source` 一律是 `Platform`:能走到这个函数的都来自音乐平台。本地歌单
+/// 由 [`crate::playlist`] 那侧翻,两条路各自打标,不共用一个带参数的函数 ——
+/// 那样标错了不会有任何编译错误。
+pub fn playlist_to_dto(
+    list: proto::Playlist,
+) -> PlaylistDto {
+    PlaylistDto {
+        source: PlaylistSource::Platform,
+        id: list.id,
+        name: list.name,
+        cover: non_empty(list.cover),
+        track_count: list.track_count,
+    }
+}
+
+/// 网易云给红心歌单打的标记。
+///
+/// 别的特殊类型(年度歌单是 20)都是真歌单,所以判的是这一个值,不是「非零」。
+///
+/// 这个魔数是网易云的私有枚举,本该住在 bang-dream 里 —— `docs/adr/0022` 把它
+/// 换到了这边,理由与代价都记在那篇。接第二个平台时这里会长出平台分支。
+const LIKED_SPECIAL_TYPE: i32 = 5;
+
+/// 把上游的歌单列表翻成平台那半张,顺带把红心歌单摘出去。
+///
+/// 摘它是因为「我喜欢的」在客户端是**另一个来源**([`PlaylistSource::Liked`]),
+/// 由 [`crate::playlist::merged`] 单独置顶。不摘的话列表里会并排站着两个
+/// 「我喜欢的」,而它们连 id 都不一样 —— 去重的活没人干得对。
+pub fn platform_playlists_to_dto(
+    lists: Vec<proto::Playlist>,
+) -> Vec<PlaylistDto> {
+    lists
+        .into_iter()
+        .filter(|list| {
+            list.special_type != LIKED_SPECIAL_TYPE
+        })
+        .map(playlist_to_dto)
+        .collect()
+}
+
+/// 从歌单列表里认出红心歌单的 id。
+///
+/// 与 [`platform_playlists_to_dto`] 是同一个判据的两面:那边把它摘出去,
+/// 这边把它挑出来。判据只写一处([`LIKED_SPECIAL_TYPE`]),两边错开的话
+/// 现象是红心既不在平台列表里、也取不到详情。
+pub fn liked_playlist_id(
+    lists: &[proto::Playlist],
+) -> Option<String> {
+    lists
+        .iter()
+        .find(|list| {
+            list.special_type == LIKED_SPECIAL_TYPE
+        })
+        .map(|list| list.id.clone())
+}
+
+/// 上游的歌单详情少给了哪些曲目的详情。
+///
+/// 歌单详情一次会带回一批完整曲目,但那一批**会被平台截断**,而标识列表是全量的。
+/// 够全时一次补拉都不必发;截断了就只补差额 —— 不是整份重取。
+///
+/// 返回的次序跟着 `refs` 走,便于调用方按批切片。
+pub fn refs_missing_from(
+    detail_tracks: &[TrackDto],
+    refs: &[TrackRef],
+) -> Vec<String> {
+    let present: HashSet<&str> = detail_tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect();
+
+    refs.iter()
+        .filter(|track| {
+            !present.contains(track.id.as_str())
+        })
+        .map(|track| track.id.clone())
+        .collect()
+}
+
+/// 剔掉平台给不出详情的那些成员关系,并报出剔了几条。
+///
+/// 成员关系必须先有详情,否则外键会拒绝(见 `0004` 那条注释)。所以拿不到详情的
+/// 曲目只能不写进去 —— 但**必须报出来**:不报的话歌单会静默变短,而用户看到的
+/// 只是数目对不上,分不清「我少点了一个红心」和「平台不给这首歌的详情」。
+///
+/// 次序跟着 `refs` 走,过滤不重排。
+pub fn keep_available(
+    refs: &[TrackRef],
+    unavailable: &HashSet<String>,
+) -> (Vec<TrackRef>, usize) {
+    let known: Vec<TrackRef> = refs
+        .iter()
+        .filter(|track| !unavailable.contains(&track.id))
+        .cloned()
+        .collect();
+
+    // 用差值而不是 `unavailable.len()`:那个集合里可能有不属于这个歌单的 id,
+    // 拿它当条数会报出一个用户在这张列表上永远对不上的数字。
+    let dropped = refs.len() - known.len();
+
+    (known, dropped)
 }
 
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。
@@ -82,7 +235,9 @@ pub fn lyric_to_dto(lyric: proto::Lyric) -> LyricDto {
                     start_ms: line.start_ms,
                     end_ms: line.end_ms,
                     text: line.text,
-                    translation: non_empty(line.translation),
+                    translation: non_empty(
+                        line.translation,
+                    ),
                 })
                 .collect(),
         ),
@@ -211,7 +366,10 @@ fn split_translation(
     // 不如让它只在它对应的那一段出现。
     if pieces.len() < 2 {
         return std::iter::once(Some(translation))
-            .chain(std::iter::repeat_n(None, weights.len() - 1))
+            .chain(std::iter::repeat_n(
+                None,
+                weights.len() - 1,
+            ))
             .collect();
     }
 
@@ -323,8 +481,9 @@ mod tests {
     /// 超长行在标点处断开,切出的每段都不再超阈值。
     #[test]
     fn long_line_splits_at_punctuation() {
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, LONG,
+        )]);
         assert!(
             out.len() > 1,
             "108 字符的行应当被切开,实际 {} 段",
@@ -413,7 +572,9 @@ mod tests {
     }
 
     /// 各段的译文按顺序拼起来。
-    fn joined_translation(lines: &[LyricLineDto]) -> String {
+    fn joined_translation(
+        lines: &[LyricLineDto],
+    ) -> String {
         lines
             .iter()
             .filter_map(|line| line.translation.as_deref())
@@ -427,7 +588,10 @@ mod tests {
             LONG_TRANSLATION,
         )]);
         assert!(out.len() > 1);
-        assert_eq!(joined_translation(&out), LONG_TRANSLATION);
+        assert_eq!(
+            joined_translation(&out),
+            LONG_TRANSLATION
+        );
     }
 
     /// 分配比例跟着正文走:正文最长的那一段,拿到的译文也最长。
@@ -455,8 +619,8 @@ mod tests {
     ///
     /// 用加长版正文:[`LONG`] 只切得出两段,凑不出「片数少于段数」。
     #[test]
-    fn fewer_translation_pieces_than_segments_leaves_the_rest_empty(
-    ) {
+    fn fewer_translation_pieces_than_segments_leaves_the_rest_empty()
+     {
         let mut line =
             dto_line(0, 4_000, &format!("{LONG}, {LONG}"));
         line.translation = Some("甲,乙".to_owned());
@@ -472,10 +636,11 @@ mod tests {
     /// 没有标点可断的译文整份给第一段,其余段留空 —— 与其在三段里重复一句
     /// 读不全的话,不如只在它对应的那一段出现。
     #[test]
-    fn an_unsplittable_translation_goes_to_the_first_segment_only(
-    ) {
-        let out =
-            split_long_lines(vec![long_line_with("我还是老样子")]);
+    fn an_unsplittable_translation_goes_to_the_first_segment_only()
+     {
+        let out = split_long_lines(vec![long_line_with(
+            "我还是老样子",
+        )]);
         assert!(out.len() > 1);
         assert_eq!(
             out[0].translation.as_deref(),
@@ -488,9 +653,11 @@ mod tests {
 
     /// 没有译文的行,切出来的每一段也都没有译文。
     #[test]
-    fn a_missing_translation_stays_missing_across_segments() {
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, LONG)]);
+    fn a_missing_translation_stays_missing_across_segments()
+    {
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, LONG,
+        )]);
         assert!(out.len() > 1);
         for segment in &out {
             assert_eq!(segment.translation, None);
@@ -501,7 +668,8 @@ mod tests {
     #[test]
     fn unsplit_lines_keep_their_translation() {
         let mut line = dto_line(0, 1_000, "短短一行");
-        line.translation = Some(LONG_TRANSLATION.to_owned());
+        line.translation =
+            Some(LONG_TRANSLATION.to_owned());
         assert_eq!(
             split_long_lines(vec![line.clone()]),
             vec![line]
@@ -513,22 +681,27 @@ mod tests {
     fn translation_split_does_not_break_multibyte_chars() {
         let translation =
             "我弹着吉他,盼着明天,能说一句我很好,".repeat(4);
-        let out =
-            split_long_lines(vec![long_line_with(&translation)]);
+        let out = split_long_lines(vec![long_line_with(
+            &translation,
+        )]);
         assert!(out.len() > 1);
         assert_eq!(joined_translation(&out), translation);
         for segment in &out {
-            assert_ne!(segment.translation.as_deref(), Some(""));
+            assert_ne!(
+                segment.translation.as_deref(),
+                Some("")
+            );
         }
     }
 
     /// 切点落在 UTF-8 字符边界上,整行中文不 panic。
     #[test]
     fn split_does_not_break_multibyte_chars() {
-        let text = "我弹着吉他,盼着明天,能说一句我很好,"
-            .repeat(6);
-        let out =
-            split_long_lines(vec![dto_line(0, 4_000, &text)]);
+        let text =
+            "我弹着吉他,盼着明天,能说一句我很好,".repeat(6);
+        let out = split_long_lines(vec![dto_line(
+            0, 4_000, &text,
+        )]);
         assert!(out.len() > 1);
         for segment in &out {
             assert!(!segment.text.is_empty());
@@ -607,8 +780,7 @@ mod tests {
     /// 逐字档位:上游已拼好整行文本,行级消费方拿到的东西与逐行档位一致。
     #[test]
     fn word_timed_lyric_still_yields_line_text() {
-        let mut line =
-            proto_line(2_000, "拼好的整行", "");
+        let mut line = proto_line(2_000, "拼好的整行", "");
         line.words = vec![
             proto::LyricWord {
                 start_ms: 2_000,
@@ -755,5 +927,272 @@ mod tests {
         assert_eq!(dto.format, "mp3");
         assert_eq!(dto.bit_rate, 320_000);
         assert!(dto.trial);
+    }
+
+    /// 构造出的请求带上了 x-user-id —— 上游靠它选凭据,漏了那条路由整个不可用。
+    #[test]
+    fn request_carries_the_user_id_in_metadata() {
+        let account = Account {
+            id: 42,
+            username: "alice".to_owned(),
+        };
+
+        let request = as_user(
+            &account,
+            proto::GetTracksRequest::default(),
+        );
+
+        assert_eq!(
+            request
+                .metadata()
+                .get("x-user-id")
+                .map(|value| value.to_str().unwrap()),
+            Some("42"),
+        );
+    }
+
+    /// 加 metadata 不动消息体。
+    #[test]
+    fn request_body_is_untouched() {
+        let account = Account {
+            id: 1,
+            username: "alice".to_owned(),
+        };
+        let message = proto::GetTracksRequest {
+            platform: proto::Platform::Netease as i32,
+            track_ids: vec!["1".to_owned(), "2".to_owned()],
+        };
+
+        let request = as_user(&account, message.clone());
+
+        assert_eq!(request.into_inner(), message);
+    }
+
+    /// 歌手的详情字段都过桥;头像空串翻成 None,不用空串冒充"有头像"。
+    #[test]
+    fn artist_to_dto_maps_the_detail_fields() {
+        let dto = artist_to_dto(proto::Artist {
+            id: "11127".to_owned(),
+            name: "本兮".to_owned(),
+            avatar: "https://p1.music.126.net/a.jpg"
+                .to_owned(),
+            description: String::new(),
+            album_count: 24,
+        });
+
+        assert_eq!(dto.id, "11127");
+        assert_eq!(dto.name, "本兮");
+        assert_eq!(
+            dto.avatar.as_deref(),
+            Some("https://p1.music.126.net/a.jpg")
+        );
+        assert_eq!(dto.album_count, 24);
+
+        let no_avatar = artist_to_dto(proto::Artist {
+            id: "1".to_owned(),
+            name: "甲".to_owned(),
+            ..Default::default()
+        });
+        assert_eq!(no_avatar.avatar, None);
+    }
+
+    /// 走这条路的歌单一律标成平台来源 —— 本地歌单从不经过这里。
+    /// 标错的现象是界面把删除键画在了平台歌单上。
+    #[test]
+    fn playlist_to_dto_tags_the_platform_source() {
+        let dto = playlist_to_dto(proto::Playlist {
+            id: "24381616".to_owned(),
+            name: "华语经典".to_owned(),
+            track_count: 120,
+            ..Default::default()
+        });
+
+        assert_eq!(dto.source, PlaylistSource::Platform);
+        assert_eq!(dto.id, "24381616");
+        assert_eq!(dto.track_count, 120);
+        // 封面缺席时是 None
+        assert_eq!(dto.cover, None);
+    }
+
+    /// 红心歌单不进平台那半张列表。
+    ///
+    /// bang-dream 从此原样透传它(见 `docs/adr/0022`),排除的责任转移到了这边。
+    /// 漏掉这一步的现象是界面上并排站着两个「我喜欢的」,而它们连 id 都不一样。
+    #[test]
+    fn the_liked_playlist_is_dropped_from_the_platform_half()
+     {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "403421443".to_owned(),
+                name: "青城叶北喜欢的音乐".to_owned(),
+                special_type: 5,
+                ..Default::default()
+            },
+            proto::Playlist {
+                id: "17627306389".to_owned(),
+                name: "favorite_1".to_owned(),
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(
+            got.len(),
+            1,
+            "红心歌单不该进平台那半张"
+        );
+        assert_eq!(got[0].id, "17627306389");
+    }
+
+    /// 别的特殊类型一个都不能误伤:年度歌单(`special_type` 20)是真歌单。
+    /// 按「非零就排除」写会把它一起吃掉 —— 这个坑上游踩过一次。
+    #[test]
+    fn other_special_types_stay_in_the_platform_half() {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "13053579003".to_owned(),
+                name: "青城叶北的2024年度歌单".to_owned(),
+                special_type: 20,
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(got.len(), 1, "年度歌单是真歌单");
+    }
+
+    /// 边界:`special_type` 缺席落到 0,那是普通歌单,要留下。
+    #[test]
+    fn a_playlist_without_a_special_type_is_ordinary() {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "812552458".to_owned(),
+                name: "anime".to_owned(),
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(got.len(), 1);
+    }
+
+    fn dto(id: &str) -> TrackDto {
+        TrackDto {
+            platform: "netease".to_owned(),
+            id: id.to_owned(),
+            title: id.to_owned(),
+            alias: None,
+            artists: Vec::new(),
+            cover: None,
+            duration_ms: 1,
+        }
+    }
+
+    fn track_ref(id: &str) -> TrackRef {
+        TrackRef::new(id, None)
+    }
+
+    /// 快路径:歌单详情一次把每首的详情都给全了,一次补拉都不必发。
+    #[test]
+    fn nothing_is_backfilled_when_detail_covers_every_ref()
+    {
+        let missing = refs_missing_from(
+            &[dto("1"), dto("2")],
+            &[track_ref("1"), track_ref("2")],
+        );
+
+        assert!(
+            missing.is_empty(),
+            "详情够全时不该有任何补拉,实际 {missing:?}"
+        );
+    }
+
+    /// 平台把 `tracks` 截断时,只对差额补拉 —— 不是整份重取。
+    ///
+    /// 这正是不敢直接吃 `tracks` 的理由:`trackIds` 是全量的,`tracks` 不是。
+    #[test]
+    fn only_the_refs_missing_from_detail_are_backfilled() {
+        let missing = refs_missing_from(
+            &[dto("1"), dto("3")],
+            &[
+                track_ref("1"),
+                track_ref("2"),
+                track_ref("3"),
+                track_ref("4"),
+            ],
+        );
+
+        assert_eq!(
+            missing,
+            vec!["2".to_owned(), "4".to_owned()],
+            "只该补详情里没有的那些,且保持 refs 的次序"
+        );
+    }
+
+    /// 常态:每条成员关系都有详情,一条都不剔,报 0。
+    #[test]
+    fn nothing_is_dropped_when_every_ref_has_details() {
+        let (known, dropped) = keep_available(
+            &[track_ref("1"), track_ref("2")],
+            &HashSet::new(),
+        );
+
+        assert_eq!(known.len(), 2);
+        assert_eq!(dropped, 0, "常态就是这一条");
+    }
+
+    /// 剔掉的正是拿不到详情的那些,剩下的保持原次序。
+    #[test]
+    fn only_the_refs_without_details_are_dropped() {
+        let unavailable: HashSet<String> =
+            ["2".to_owned()].into_iter().collect();
+
+        let (known, dropped) = keep_available(
+            &[
+                track_ref("1"),
+                track_ref("2"),
+                track_ref("3"),
+            ],
+            &unavailable,
+        );
+
+        let ids: Vec<&str> =
+            known.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "3"], "过滤不该重排");
+        assert_eq!(dropped, 1);
+    }
+
+    /// 报出来的条数是**这个歌单里**少的那些,不是那个集合的大小。
+    ///
+    /// 集合里可能有不属于这个歌单的 id(它是按整批 id 问出来的)。拿集合大小
+    /// 当条数,用户会在这张列表上看到一个永远对不上的数字。
+    #[test]
+    fn the_dropped_count_ignores_ids_from_other_playlists()
+    {
+        let unavailable: HashSet<String> =
+            ["2".to_owned(), "别的歌单里的".to_owned()]
+                .into_iter()
+                .collect();
+
+        let (_known, dropped) = keep_available(
+            &[track_ref("1"), track_ref("2")],
+            &unavailable,
+        );
+
+        assert_eq!(
+            dropped, 1,
+            "只该数这个歌单里真的少掉的那一条"
+        );
+    }
+
+    /// 边界:平台一条 `tracks` 都没给(整份被截断),那就全部补拉。
+    #[test]
+    fn an_empty_detail_backfills_every_ref() {
+        let missing = refs_missing_from(
+            &[],
+            &[track_ref("1"), track_ref("2")],
+        );
+
+        assert_eq!(
+            missing,
+            vec!["1".to_owned(), "2".to_owned()]
+        );
     }
 }

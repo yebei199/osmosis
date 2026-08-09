@@ -24,3 +24,11 @@ local.properties
 
 # direnv cache
 /.direnv
+
+# bang-dream 是独立仓库,不以 submodule 挂进来。谁想 clone 到这里都行,
+# 但它不属于本仓库的内容
+/third_party/
+
+# 本地凭据:邀请码、测试账号。justfile 用 `set dotenv-load` 读它,
+# 别提交 —— 服务面向公网,邀请码进了历史就等于没有邀请码
+/.env

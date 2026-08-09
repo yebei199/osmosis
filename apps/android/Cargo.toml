@@ -7,7 +7,7 @@ description = "Android 平台入口:被 NativeActivity 加载的 cdylib"
 
 [lib]
 # 名字必须与 AndroidManifest.xml 里的 `android.app.lib_name` 一致。
-name = "slint_study"
+name = "osmosis"
 # NativeActivity 只能加载动态库。这里不需要 rlib —— 桌面链路走 apps/desktop。
 crate-type = ["cdylib"]
 
@@ -25,6 +25,13 @@ slint = { workspace = true, features = [
 ] }
 # 硬依赖,理由同 apps/desktop。
 render3d.workspace = true
+
+# 系统媒体控件要跨到 Java 那一侧(见 src/controls.rs)。版本必须与
+# android-activity 0.6 / i-slint-backend-android-activity 用的那份一致 ——
+# `AndroidApp::vm_as_ptr()` 交出来的句柄只有同一份 jni-rs 认得。
+# (锁文件里还有一个 jni 0.21,那是 cpal 的,与这里无关。)
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
 
 [features]
 default = []

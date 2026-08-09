@@ -21,6 +21,9 @@ pub struct NavParams {
     pub lag_y: f32,
     /// 选中块参考高度(≈单个导航项高),用来定块的半尺寸/圆角/融合半径。
     pub slot_h: f32,
+    /// 深色主题。侧栏背景由本 shader 自绘,所以主题得穿进 uniform ——
+    /// 采不到背后的像素,没法"跟着背景走"。
+    pub dark: bool,
 }
 
 /// uniform 缓冲字节数。对齐到 16 的整数倍(navglass.wgsl 的 Params 实占 40 字节,余下填 0)。
@@ -191,13 +194,18 @@ impl NavGlassPass {
         let half = [w as f32 * 0.42, p.slot_h * 0.42];
         let radius = half[0].min(half[1]) * 0.6;
         let smooth_k = (p.slot_h * 0.9).max(1.0);
+        // 一行一个 uniform,与 shader 里 UBO 的字段逐行对照 —— 那边是 vec2,
+        // 这边就并排两个标量。rustfmt 会把它摊成一行一个数,对照关系随之消失,
+        // 所以在这里按住它。全仓唯一一处。
+        #[rustfmt::skip]
         let vals: [f32; 12] = [
             w as f32, h as f32, // tex_size
             cx, p.lead_y, // lead
             cx, p.lag_y, // lag
             half[0], half[1], // half
             radius, smooth_k, // radius, smooth_k
-            0.0, 0.0, // 尾部对齐填充
+            if p.dark { 1.0 } else { 0.0 }, // dark
+            0.0, // 尾部对齐填充
         ];
         let mut bytes =
             Vec::with_capacity(UBO_BYTES as usize);

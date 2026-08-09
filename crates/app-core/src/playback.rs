@@ -76,6 +76,17 @@ impl Playback {
         self.generation += 1;
         self.state = PlaybackState::Idle;
     }
+
+    /// 出事了:停下,并把原因留在状态里。
+    ///
+    /// 与 [`Self::stop`] 的区别只在说不说话 —— 回 `Idle` 等于什么都没发生过,
+    /// 而声音放到一半没了必须有个交代(见 `docs/adr/0013`)。
+    ///
+    /// 同样作废当前代际,理由同 [`Self::stop`]。
+    pub fn fail(&mut self, message: String) {
+        self.generation += 1;
+        self.state = PlaybackState::Failed(message);
+    }
 }
 
 /// 播放一首歌,把结果写回 `playback`。
@@ -240,7 +251,11 @@ mod tests {
             |()| committed.set(committed.get() + 1),
         ));
 
-        assert_eq!(committed.get(), 0, "过期的那次不该出声");
+        assert_eq!(
+            committed.get(),
+            0,
+            "过期的那次不该出声"
+        );
         assert_eq!(
             playback.borrow().state(),
             &PlaybackState::Loading(track("2")),
@@ -271,7 +286,7 @@ mod tests {
     /// 准备阶段就失败:不提交,状态进 Failed 并留下原因。
     #[test]
     fn a_failed_preparation_reports_failure_without_committing()
-    {
+     {
         let playback = RefCell::new(Playback::default());
         let committed = Cell::new(0);
 

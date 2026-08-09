@@ -62,8 +62,10 @@ async fn play_url() -> String {
 async fn loads_and_decodes_real_stream() {
     let url = play_url().await;
 
-    let decoder =
+    let (decoder, health) =
         audio::load(&url).await.expect("开流或解码失败");
+
+    assert!(!health.gave_up(), "刚开的流不该已经放弃");
 
     assert!(
         decoder.sample_rate().get() >= 8_000,
@@ -87,7 +89,7 @@ async fn loads_and_decodes_real_stream() {
 #[ignore = "需要 bang-dream + server-dev 都在跑,且本机有可用声卡"]
 async fn plays_through_the_device_and_position_advances() {
     let url = play_url().await;
-    let decoded =
+    let (decoded, _health) =
         audio::load(&url).await.expect("开流或解码失败");
 
     let player =

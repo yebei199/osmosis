@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    自适应图标的前景层。派生自 assets/io.github.osmosis.svg —— 那份是 24×24 的
+    网格,这里按 ×3 放大再平移 18,于是内容正好落在 108 画布中央那块 72×72 的
+    安全区里。安全区之外的一圈会被启动器的形状裁掉,也会被视差动画推出去。
+
+    形状与色板改动要三处一起改:本文件、ic_launcher_background、那份 svg。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 膜 -->
+    <path
+        android:fillColor="#E8ECF5"
+        android:fillAlpha="0.5"
+        android:pathData="M52.2,27H55.8V81H52.2Z" />
+    <!-- 渗过去之前:密而小 -->
+    <path
+        android:fillColor="#D9A86C"
+        android:pathData="M33.3,39a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM40.8,36a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM36.3,48a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM43.8,49.5a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM34.8,60a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM42.3,64.5a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0ZM37.8,72a2.7,2.7 0 1,0 5.4,0a2.7,2.7 0 1,0 -5.4,0Z" />
+    <!-- 渗过去之后:疏而大 -->
+    <path
+        android:fillColor="#F0C48A"
+        android:pathData="M62.4,42a5.1,5.1 0 1,0 10.2,0a5.1,5.1 0 1,0 -10.2,0ZM69.9,57a5.1,5.1 0 1,0 10.2,0a5.1,5.1 0 1,0 -10.2,0ZM60.9,70.5a5.1,5.1 0 1,0 10.2,0a5.1,5.1 0 1,0 -10.2,0Z" />
+</vector>

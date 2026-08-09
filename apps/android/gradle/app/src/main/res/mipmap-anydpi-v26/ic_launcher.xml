@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    桌面图标。**没有 mipmap-hdpi 那一堆 png,这不是漏掉的。**
+
+    minSdk 是 26,而 anydpi-v26 在 API 26 及以上对任意密度都命中 —— 于是这一份
+    永远是被选中的那一份,传统的位图兜底没有任何设备会去取。矢量还顺带免掉了
+    「改一次图标要重新导出十几个 png」。
+
+    两层都在 drawable/ 下,派生自 assets/io.github.osmosis.svg。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

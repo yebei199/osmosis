@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'io.github.slintstudy'
+    namespace 'io.github.osmosis'
     compileSdk 34
 
     defaultConfig {
-        applicationId "io.github.slintstudy"
+        applicationId "io.github.osmosis"
         minSdk 26
         targetSdk 34
         versionCode 1
@@ -38,7 +38,7 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
-    // libslint_study.so (+ libc++_shared.so) are placed in
+    // libosmosis.so (+ libc++_shared.so) are placed in
     // src/main/jniLibs/<abi>/ by `cargo xtask android` via cargo-ndk.
 }
 

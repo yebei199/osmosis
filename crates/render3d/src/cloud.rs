@@ -109,9 +109,10 @@ const INTENSITY: f32 = 1.36;
 
 /// 视觉预设的个数。与 `cloud.wgsl` 里的分支手工对齐。
 ///
-/// 0 封面(SILK)、1 滚筒、2 星球、3 虚空、4 唱片、5 星河 —— 名字取自参照物的
-/// 视觉控制台。它的第 6 档「安魂」要一份骷髅点云资产,不是算法,不在这里(见 issue)。
-pub(crate) const PRESET_COUNT: i32 = 6;
+/// **只剩 0「封面」一档。** 曾经的滚筒/星球/虚空/唱片/星河已删 —— 粒子离开封面
+/// 平面之后那张图就散了,而点云存在的理由正是封面本身(见 `docs/adr/0014`)。
+/// 编号这条 seam 留着,加档时这里加数、着色器里把 switch 加回来。
+pub(crate) const PRESET_COUNT: i32 = 1;
 
 /// 界面给的预设编号 → 着色器认得的下标。越界回默认档。
 ///
@@ -345,13 +346,6 @@ pub(crate) struct CloudParams {
     pub color_mix: f32,
     /// 换歌脉冲强度:粒子外扩再归位。同上。
     pub burst: f32,
-    /// 还活着的涟漪路数,见 [`Ripples`]。
-    pub ripple_count: u32,
-    /// 涟漪表:每路 (x, y, 年龄, 强度)。见 [`Ripples::pack`]。
-    pub ripple_slots: [Vec4; RIPPLE_SLOTS],
-    /// 涟漪的半径与幅度倍数。理由同 [`MOTION_SCALE`],但不叠那一档额外的夸张 ——
-    /// 涟漪是照着指针位置画的,放大过头就跟手感对不上了。
-    pub ripple_scale: f32,
 }
 
 /// 静止、无封面的一帧参数:常量项按原版默认档,音频项全零。
@@ -372,9 +366,6 @@ impl Default for CloudParams {
             // 没有「上一首」可渐变,直接全新。
             color_mix: 1.0,
             burst: 0.0,
-            ripple_count: 0,
-            ripple_slots: [Vec4::ZERO; RIPPLE_SLOTS],
-            ripple_scale: PLANE_SCALE,
         }
     }
 }
@@ -491,99 +482,13 @@ pub(crate) fn build_cloud_mesh(
 
 // ── 指针交互:涟漪与拖动旋转 ────────────────────────────────────────────
 
-/// 同时活着的涟漪路数上限,同原版 `RIPPLE_MAX`。
-pub(crate) const RIPPLE_SLOTS: usize = 12;
-
-/// 一路涟漪的寿命,秒。同原版 `rippleSumAt` 里 `age > 2.0` 的那道门。
-const RIPPLE_LIFETIME: f32 = 2.0;
-
-/// 一路涟漪:位置在点云平面上,年龄从 0 走到 [`RIPPLE_LIFETIME`]。
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Ripple {
-    x: f32,
-    y: f32,
-    age: f32,
-    strength: f32,
-}
-
-/// 涟漪表:定长环形缓冲,满了顶掉最老的一路。
-///
-/// 定长而不是 `Vec`:着色器那边是一张 1×[`RIPPLE_SLOTS`] 的数据纹理,路数本来就
-/// 封了顶。指针每动一下就是一路,不封顶的话划一下鼠标能攒出上百路。
-#[derive(Default)]
-pub(crate) struct Ripples {
-    slots: [Ripple; RIPPLE_SLOTS],
-    /// 下一路写哪个槽。环着走,于是被顶掉的恒是最老的那一路。
-    next: usize,
-}
-
-impl Ripples {
-    /// 在点云平面的 `(x, y)` 处起一路涟漪。
-    pub(crate) fn spawn(&mut self, x: f32, y: f32) {
-        if !x.is_finite() || !y.is_finite() {
-            return;
-        }
-        self.slots[self.next] = Ripple {
-            x,
-            y,
-            age: 0.0,
-            strength: 1.0,
-        };
-        self.next = (self.next + 1) % RIPPLE_SLOTS;
-    }
-
-    /// 按播放页时钟推进 `dt` 秒。坏 `dt` 当作没走(理由同 `TrackTransition::advance`)。
-    pub(crate) fn advance(&mut self, dt: f32) {
-        if !dt.is_finite() || dt <= 0.0 {
-            return;
-        }
-        for slot in &mut self.slots {
-            if slot.strength <= 0.0 {
-                continue;
-            }
-            slot.age += dt;
-            if slot.age > RIPPLE_LIFETIME {
-                *slot = Ripple::default();
-            }
-        }
-    }
-
-    /// 还活着的路数。着色器靠它提前跳出循环。
-    pub(crate) fn active(&self) -> u32 {
-        self.slots
-            .iter()
-            .filter(|s| s.strength > 0.0)
-            .count() as u32
-    }
-
-    /// 打包成 uniform 里的一行行 (x, y, 年龄, 强度)。
-    ///
-    /// 直接进 uniform 而不是一张数据纹理:一共才 48 个 float,而纹理那条路要**每帧
-    /// 改资产** —— 资产一改材质就重建绑定组,重建期间它回落到 bevy 的默认图(那张是
-    /// 可过滤的),于是每帧报一次「采样器类型不匹配」,实测一分钟攒出六千条。
-    pub(crate) fn pack(&self) -> [Vec4; RIPPLE_SLOTS] {
-        self.slots
-            .map(|s| Vec4::new(s.x, s.y, s.age, s.strength))
-    }
-}
-
-/// 归一化的视觉区指针(0..1,左上原点)→ 点云平面上的坐标。
-///
-/// y 要翻:屏幕 y 向下,平面 y 向上。越界或非有限值给 `None` —— 指针位置来自
-/// `.slint`,属于跨层的外部输入。
-pub(crate) fn pointer_to_plane(
-    x: f32,
-    y: f32,
-) -> Option<(f32, f32)> {
-    if !x.is_finite()
-        || !y.is_finite()
-        || !(0.0..=1.0).contains(&x)
-        || !(0.0..=1.0).contains(&y)
-    {
-        return None;
-    }
-    Some(((x - 0.5) * PLANE_SIZE, (0.5 - y) * PLANE_SIZE))
-}
+// 这里曾有一整套「指针涟漪」:鼠标经过的地方顶起一个高斯包,配一圈往外走的环。
+// 它照抄自参照项目,而在本仓库里**从未真正生效过** —— uniform 的字段顺序与
+// cloud.wgsl 写反了,着色器一直从对齐用的填充字节里读它的幅度,读到的是 0,
+// 而最后一步是乘上那个幅度。顺序对齐之后它第一次露面:一个跟着鼠标走的巨大
+// 空洞,把整片点云推开。没人要过这个效果,遂整条删除,不留开关。
+//
+// 拖动旋转(下面的 Spin)是另一回事,留着 —— 那个一直都在工作。
 
 /// 横拖一像素转多少弧度(绕 Y),同原版 `PARTICLE_POINTER_SPIN_Y`。
 const SPIN_PER_PIXEL_Y: f32 = 0.0034;
@@ -986,7 +891,8 @@ mod tests {
 
     // ── 视觉预设 ──────────────────────────────────────────────────────
 
-    /// 每一档都保住自己的下标 —— 着色器按下标分支,错一位就画成另一个预设。
+    /// 每一档都保住自己的下标 —— 加档时着色器按下标分支,错一位就画成另一个预设。
+    /// 现在只有一档,这条守的是"默认档的下标必须是 0"。
     #[test]
     fn every_preset_keeps_its_index() {
         for i in 0..PRESET_COUNT {
@@ -1044,132 +950,6 @@ mod tests {
     {
         for (w, h) in [(0u32, 1080u32), (1080, 0), (0, 0)] {
             assert_eq!(object_scale(w, h), OBJECT_SCALE);
-        }
-    }
-
-    // ── 涟漪 ──────────────────────────────────────────────────────────
-
-    /// 新起的一路:年龄归零、强度满。
-    #[test]
-    fn a_new_ripple_starts_at_full_strength_and_zero_age() {
-        let mut r = Ripples::default();
-        assert_eq!(r.active(), 0);
-        r.spawn(1.0, -2.0);
-        assert_eq!(r.active(), 1);
-        assert_eq!(
-            r.pack()[0],
-            Vec4::new(1.0, -2.0, 0.0, 1.0)
-        );
-    }
-
-    /// 过了寿命的那一路退场,不再计入活跃数 —— 着色器靠活跃数提前跳出循环,
-    /// 退不掉就是每帧白算十二遍。
-    #[test]
-    fn advancing_retires_ripples_past_their_lifetime() {
-        let mut r = Ripples::default();
-        r.spawn(0.0, 0.0);
-        r.advance(RIPPLE_LIFETIME - 0.1);
-        assert_eq!(r.active(), 1, "还没到寿命就退场了");
-        r.advance(0.2);
-        assert_eq!(r.active(), 0, "过了寿命还赖着");
-    }
-
-    /// 表满之后顶掉的是**最老**的那一路,不是随便一路 —— 顶错了会让刚划出来的
-    /// 涟漪凭空消失。
-    #[test]
-    fn a_full_table_reuses_the_oldest_slot() {
-        let mut r = Ripples::default();
-        for i in 0..RIPPLE_SLOTS {
-            r.spawn(i as f32, 0.0);
-        }
-        assert_eq!(r.active(), RIPPLE_SLOTS as u32);
-        // 第 13 路:最老的那一路(x = 0)该被顶掉,其余仍在。
-        r.spawn(99.0, 0.0);
-        let xs: Vec<f32> =
-            r.pack().iter().map(|s| s.x).collect();
-        assert!(
-            !xs.contains(&0.0),
-            "顶掉的不是最老那一路: {xs:?}"
-        );
-        assert!(
-            xs.contains(&99.0),
-            "新的那一路没进表: {xs:?}"
-        );
-        assert!(
-            xs.contains(&1.0),
-            "第二老的那一路被误伤: {xs:?}"
-        );
-    }
-
-    /// 打包的布局:每路四个 f32 —— x、y、年龄、强度。着色器按这个顺序采样。
-    #[test]
-    fn packing_lays_out_position_age_and_strength_per_slot()
-    {
-        let mut r = Ripples::default();
-        r.spawn(3.0, 4.0);
-        r.advance(0.5);
-        let packed = r.pack();
-        assert_eq!(packed.len(), RIPPLE_SLOTS);
-        assert_eq!(
-            packed[0],
-            Vec4::new(3.0, 4.0, 0.5, 1.0)
-        );
-        // 空槽全零,着色器据此跳过。
-        assert_eq!(packed[1], Vec4::ZERO);
-    }
-
-    /// 坏 `dt` 不推进也不 panic。
-    #[test]
-    fn bad_delta_time_leaves_the_ripples_alone() {
-        let mut r = Ripples::default();
-        r.spawn(0.0, 0.0);
-        for dt in [f32::NAN, -1.0, f32::INFINITY, 0.0] {
-            r.advance(dt);
-        }
-        assert_eq!(r.pack()[0].z, 0.0, "坏 dt 推进了年龄");
-        assert_eq!(r.active(), 1);
-    }
-
-    // ── 指针映射 ──────────────────────────────────────────────────────
-
-    /// 屏幕四角映到平面四角,y 要翻 —— 屏幕 y 向下、平面 y 向上,不翻的话
-    /// 涟漪出现在鼠标关于中心对称的位置。
-    #[test]
-    fn screen_corners_map_onto_the_plane_corners() {
-        let half = PLANE_SIZE / 2.0;
-        assert_eq!(
-            pointer_to_plane(0.5, 0.5),
-            Some((0.0, 0.0))
-        );
-        assert_eq!(
-            pointer_to_plane(0.0, 0.0),
-            Some((-half, half)),
-            "屏幕左上该是平面左上"
-        );
-        assert_eq!(
-            pointer_to_plane(1.0, 1.0),
-            Some((half, -half)),
-            "屏幕右下该是平面右下"
-        );
-    }
-
-    /// 越界或非有限的指针位置不生成涟漪 —— 位置来自 `.slint`,是跨层的外部输入。
-    #[test]
-    fn pointer_outside_the_viewport_or_not_finite_yields_none()
-     {
-        for (x, y) in [
-            (-0.1, 0.5),
-            (1.1, 0.5),
-            (0.5, -0.01),
-            (0.5, 1.01),
-            (f32::NAN, 0.5),
-            (0.5, f32::INFINITY),
-        ] {
-            assert_eq!(
-                pointer_to_plane(x, y),
-                None,
-                "({x}, {y}) 不该映出坐标"
-            );
         }
     }
 

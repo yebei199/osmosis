@@ -6,8 +6,13 @@
 //!
 //! HTTP 路由留在 `main.rs`:它们是这个进程的装配方式,不是可复用的库。
 
+pub mod account;
+pub mod auth;
 pub mod bangdream;
+pub mod cache;
+pub mod db;
 pub mod error;
-pub mod paging;
+pub mod history;
+pub mod playlist;
 pub mod roster;
 pub mod signaling;

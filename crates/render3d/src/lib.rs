@@ -57,14 +57,29 @@ pub type SharedTexture = wgpu::Texture;
 
 /// 一帧里视觉区的指针状态,POD。镜像 `ui::VizPointer`,apps/* 在 seam 处平凡拷过来。
 ///
-/// 位置归一到 0..1(左上原点)。`active` 为假表示指针不在视觉区里,这一帧既不起
-/// 涟漪也不拖动。
+/// 位置归一到 0..1(左上原点)。`active` 为假表示指针不在视觉区里,这一帧不拖动。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pointer {
     pub x: f32,
     pub y: f32,
     pub down: bool,
     pub active: bool,
+}
+
+/// 点云封面这一帧的去向。镜像 `ui::viz::CoverUpdate`。
+///
+/// 三态而不是 `Option`:换歌与拿到新封面是两件事,中间隔着几百毫秒的网络,
+/// 而封面常常根本拿不到。两者挤进一个 `Option`,点云就会一直挂着上一首
+/// (见 `docs/adr/0014`)。
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CoverUpdate<'a> {
+    /// 没有新消息,保持现状。绝大多数帧都是这个。
+    #[default]
+    Unchanged,
+    /// 换歌了,退回渐变。
+    Clear,
+    /// 新封面到了:(宽, 高, RGBA8)。
+    Show(u32, u32, &'a [u8]),
 }
 
 /// 驱动一帧播放页视觉要的全部输入,POD。镜像 `ui::VizControls` 加上视口尺寸。
@@ -77,12 +92,21 @@ pub struct VizFrame<'a> {
     pub time: f32,
     /// `spectrum` 布局的载荷,频谱行在前。只用前 512 字节拆频段。
     pub audio: &'a [u8],
-    /// **换歌解出新封面的那一帧**才有值:(宽, 高, RGBA8)。
-    pub cover: Option<(u32, u32, &'a [u8])>,
+    /// 这一帧点云的封面该怎么办。平帧恒为 [`CoverUpdate::Unchanged`]。
+    pub cover: CoverUpdate<'a>,
     /// 视觉区里的指针。
     pub pointer: Pointer,
     /// 视觉预设的编号,越界回默认档。
     pub preset: i32,
+    /// 这一帧要不要遮挡层。
+    ///
+    /// 遮挡层是逐像素深度合成的那一半(见 [`spawn_occluder_camera`]):有一张
+    /// **深度卡片**要被场景挡住时才需要它。目前一张都没有 —— 歌词曾经是,后来
+    /// 改成画在粒子之上(见 `docs/adr/0010` 的「歌词是例外」)。
+    ///
+    /// 为假时那台相机整个关掉,不渲、不导入纹理。能力留着不拆:它是这套栈
+    /// 区别于「UI 贴在 canvas 上」的那件事,下一张深度卡片把这里置真即可。
+    pub needs_occluder: bool,
     /// 窗口的物理像素尺寸。与当前纹理不同就按需重建(动态分辨率),0 尺寸忽略。
     pub width: u32,
     pub height: u32,
@@ -101,13 +125,17 @@ const PERF_WINDOW: u32 = 120;
 /// 一整句词随时可能被埋掉。粒子从方片换成实心立方体、格数又从 384 降到 96
 /// 之后,盖住笔画的是整块色斑而不是细网点,读不成了。
 ///
-/// 往相机方向推到 0.9:封面档的 z 位移峰值约 1.2~1.5(见 `cloud.wgsl` 的
-/// `place_cover`),于是只有起伏最猛的那一小撮粒子还能从字前面掠过。「粒子
-/// 会穿过文字」这个观感留着 —— 那是 `docs/adr/0010` 的立身之本 —— 但不再
-/// 是一句词被整体埋掉。
+/// 曾经推到 0.9,想留住「粒子偶尔从字前掠过」那个观感。留不住:封面档的 z
+/// 位移峰值约 1.2~1.5(见 `cloud.wgsl` 的 `place_cover`),0.9 之上还有一大截,
+/// 而掠过字面的不是几个网点,是整块色斑 —— 一行词被压得读不成。
+///
+/// 现在抬到 1.8,**高过位移峰值**:粒子一颗不少、照旧起伏,只是全都从字后面走。
+///
+/// 抬高度而不是让粒子绕开歌词:绕开要按歌词块的包围盒推粒子,而那个盒是整行宽的,
+/// 结果是点云里横贯一条空带 —— 比被遮挡更难看(实测过)。
 ///
 /// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),所以正的 z 就是「更靠近相机」。
-const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 0.9);
+const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 1.8);
 
 // 锚点必须站在点云中心与相机**之间**。落回中心就是「半数粒子在字前面」;
 // 推过相机就再没有粒子能穿过字,`docs/adr/0010` 那套深度合成也就白建了。
@@ -136,11 +164,9 @@ pub struct Scene {
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
     transition: cloud::TrackTransition,
-    /// 指针涟漪表。
-    ripples: cloud::Ripples,
     /// 拖动带来的点云自转与松手后的惯性。
     spin: cloud::Spin,
-    /// 上一帧的指针状态,用来算这一帧拖了多少、该不该起一路涟漪。
+    /// 上一帧的指针状态,用来算这一帧拖了多少。
     last_pointer: Option<(f32, f32)>,
     /// 上一帧的播放页时钟,用来算过渡要推进多少。门关着时钟不走,过渡跟着定格。
     last_time: Option<f32>,
@@ -309,7 +335,6 @@ impl Scene {
             root,
             cloud_material: None,
             transition: cloud::TrackTransition::default(),
-            ripples: cloud::Ripples::default(),
             spin: cloud::Spin::default(),
             last_pointer: None,
             last_time: None,
@@ -362,6 +387,7 @@ impl Scene {
             cover,
             pointer,
             preset,
+            needs_occluder,
             width,
             height,
         } = *frame;
@@ -384,12 +410,15 @@ impl Scene {
         self.last_time = Some(time);
         self.transition.advance(delta);
 
-        if let Some((w, h, rgba)) = cover {
-            self.apply_cover(w, h, rgba);
+        match cover {
+            CoverUpdate::Unchanged => {}
+            CoverUpdate::Clear => self.clear_cover(),
+            CoverUpdate::Show(w, h, rgba) => {
+                self.apply_cover(w, h, rgba);
+            }
         }
 
         self.apply_pointer(&pointer, delta);
-        self.ripples.advance(delta);
 
         // 几何一动不动,一帧只换这一块 uniform:三万多颗粒子的位移在顶点
         // 着色器里算(见 docs/adr/0012)。
@@ -398,8 +427,6 @@ impl Scene {
         );
         let color_mix = self.transition.color_mix();
         let burst = self.transition.burst();
-        let ripple_count = self.ripples.active();
-        let ripple_slots = self.ripples.pack();
         let object_scale =
             cloud::object_scale(self.size.0, self.size.1);
         if let Some(handle) = self.cloud_material.clone()
@@ -415,8 +442,6 @@ impl Scene {
             material.params.treble = levels.treble;
             material.params.color_mix = color_mix;
             material.params.burst = burst;
-            material.params.ripple_count = ripple_count;
-            material.params.ripple_slots = ripple_slots;
             material.params.preset =
                 cloud::preset_index(preset);
             // 物体类预设在竖屏会左右出画,按长宽比再收一档(见 cloud.rs)。
@@ -439,6 +464,16 @@ impl Scene {
             );
         }
 
+        // 没有深度卡片就整台相机关掉:不渲、不导入纹理。这是第二次全场景绘制,
+        // 白渲一帧就是白花一帧(见 VizFrame::needs_occluder)。
+        if let Some(mut cam) = self
+            .app
+            .world_mut()
+            .get_mut::<Camera>(self.occluder_camera)
+        {
+            cam.is_active = needs_occluder;
+        }
+
         // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
         // 这一帧的门槛与当帧一致,不必为它多跑一次 transform 传播。
         let depth = self.anchor_depth();
@@ -451,13 +486,17 @@ impl Scene {
                 Camera3dDepthLoadOp::Clear(depth);
         }
 
-        self.drive_and_finish(depth)
+        self.drive_and_finish(depth, needs_occluder)
     }
 
     /// update 一帧并把两张离屏纹理(按身份缓存)包装成 Image 交回。
+    ///
+    /// `needs_occluder` 为假时遮挡层那半整个跳过 —— 相机已经关了,纹理里
+    /// 是上一次的残留,导进去只会让 UI 拿到一张过期的图。
     fn drive_and_finish(
         &mut self,
         depth: f32,
+        needs_occluder: bool,
     ) -> (slint::Image, slint::Image) {
         let t_update = Instant::now();
         self.app.update();
@@ -473,7 +512,7 @@ impl Scene {
                     "render3d: 已 120 帧仍未取到离屏纹理,3D 面板不会显示"
                 );
             }
-            return self.frame_images();
+            return self.frame_images(needs_occluder);
         };
 
         if self.frames.is_multiple_of(PERF_WINDOW) {
@@ -509,8 +548,9 @@ impl Scene {
 
         // 遮挡层同理:身份稳定就只包一次。它比场景图晚一帧就绪也无妨 —— UI 侧的
         // `occluder-3d.width > 0` 守卫会让卡片先以不被遮挡的样子出现。
-        if let Some(tex) =
-            self.extract_texture(&self.occluder_target)
+        if needs_occluder
+            && let Some(tex) =
+                self.extract_texture(&self.occluder_target)
         {
             let key = (tex.width(), tex.height());
             if self.occluder_key != Some(key) {
@@ -532,14 +572,25 @@ impl Scene {
             }
         }
 
-        self.frame_images()
+        self.frame_images(needs_occluder)
     }
 
     /// 当前这一帧交给 UI 的两张图:(场景, 遮挡层)。任一未就绪时给空图。
-    fn frame_images(&self) -> (slint::Image, slint::Image) {
+    fn frame_images(
+        &self,
+        needs_occluder: bool,
+    ) -> (slint::Image, slint::Image) {
         (
             self.image.clone().unwrap_or_default(),
-            self.occluder_image.clone().unwrap_or_default(),
+            // 不需要就给空图。UI 侧的 `viz-occluder.width > 0` 守卫据此
+            // 不摆那一层 —— 给一张过期的图会让卡片被上一帧的粒子挡着。
+            if needs_occluder {
+                self.occluder_image
+                    .clone()
+                    .unwrap_or_default()
+            } else {
+                slint::Image::default()
+            },
         )
     }
 
@@ -648,14 +699,27 @@ impl Scene {
         }
 
         self.spin.coast(delta);
-        // 指针没动就不再起新的一路 —— 停在那儿不动会把整张表刷成同一个点。
-        if previous == Some((pointer.x, pointer.y)) {
+    }
+
+    /// 换歌那一刻:点云退回渐变,不挂着上一首的封面等新图。
+    ///
+    /// 只把 `has_cover` 落回 0 —— 着色器据此走默认渐变色,纹理本身留着不动:
+    /// 换下一首时 [`Self::apply_cover`] 会把它轮成「上一首」,渐变过渡还要用。
+    ///
+    /// 不起过渡:这不是"换到另一张封面",而是"暂时没有封面",没有可渐变的两端。
+    fn clear_cover(&mut self) {
+        let Some(handle) = self.cloud_material.clone()
+        else {
             return;
-        }
-        if let Some((x, y)) =
-            cloud::pointer_to_plane(pointer.x, pointer.y)
+        };
+        let mut materials = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<cloud::CloudMaterial>>();
+        if let Some(mut material) =
+            materials.get_mut(&handle)
         {
-            self.ripples.spawn(x, y);
+            material.params.has_cover = 0.0;
         }
     }
 

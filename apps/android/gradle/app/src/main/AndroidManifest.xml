@@ -8,8 +8,24 @@
          feature 下内嵌的 MCP server(监听 127.0.0.1,见 apps/android/src/lib.rs)。 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 系统媒体控件(见 docs/adr/0020 与 src/main/java/.../MediaControls.java)。
+         锁屏与通知栏的媒体卡片必须挂在一条通知上,而通知要活过切后台就必须挂在
+         前台服务上。targetSdk 34 起 mediaPlayback 这个类型是强制声明的,少了
+         FOREGROUND_SERVICE_MEDIA_PLAYBACK 会在 startForeground 那一刻被系统拒掉。
+         顺带解决的是另一件事:没有前台服务时进程切后台会被冻住,声音跟着停。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- API 33 起这是运行期权限,第一次要出声时才申请。用户拒了就没有通知、
+         也没有锁屏控件,但 MediaSession 还在 —— 耳机线控与蓝牙按键照常。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- roundIcon 指同一份:自适应图标本来就由启动器去裁形状,再给一份圆的
+         等于把同一件事说两遍,而两份迟早会不一致。 -->
     <application
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.SlintStudy"
         android:allowBackup="false">
 
@@ -22,11 +38,18 @@
                  后者会运行我们的 android_main。 -->
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="slint_study" />
+                android:value="osmosis" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 与 Activity 同进程:音频仍在 Rust 那边出声,这个服务只是一张
+             「别冻我」的凭据加一块显示区。不导出 —— 没有跨进程的客户端。 -->
+        <service
+            android:name=".MediaControlsService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

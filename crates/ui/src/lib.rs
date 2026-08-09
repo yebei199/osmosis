@@ -7,26 +7,58 @@
 slint::include_modules!();
 
 mod nav_glass;
+pub use media::{
+    MediaCommand, MediaControls, MediaHooks, MediaStatus,
+    NoControls, NowPlaying,
+};
 pub use nav_glass::NavGlassControls;
 
 mod viz;
 pub use viz::{
-    VIZ_AUDIO_BYTES, VizControls, VizCover, VizImages,
-    VizPointer,
+    CoverUpdate, VIZ_AUDIO_BYTES, VizControls, VizCover,
+    VizImages, VizPointer,
 };
 
 // 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
 #[cfg(not(target_arch = "wasm32"))]
 mod cover;
 
+// 登录页的绑定。所有端都要 —— 音乐相关的路由一律要登录态。
+mod account;
+// 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
+// 与 artwork 同一道门:歌单封面要它,而它是原生 target 的依赖。用它的地方
+// (music 的 Deck、search)本来就都在门里。
+#[cfg(not(target_arch = "wasm32"))]
+mod playlist;
+// 歌单封面:取一次、记住、下次直接给。
+#[cfg(not(target_arch = "wasm32"))]
+mod artwork;
+// 曲目行的缩略图。与 artwork 分开是因为键不同(封面 URL vs 歌单 id),
+// 因而缓存、去重与淘汰的规则全都不同。
+#[cfg(not(target_arch = "wasm32"))]
+mod thumbnail;
+// 红心:哪些歌在红心里,以及点一下之后发生什么。
+mod liked;
+// 播放进度的格式化。与列表里的时长同一条规矩:算在 Rust 侧,`.slint` 里只摆。
+mod progress;
+// 搜索的三个页签。歌曲那一路借 music 的队列,歌手与歌单各自成列。
+#[cfg(not(target_arch = "wasm32"))]
+mod search;
+
+// 一次性提示的唯一出口。所有端都要 —— 报错的路各端都有。
+mod notice;
+
+mod media;
 mod music;
+// 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
+mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
 mod syncplay;
 
 use slint::{ComponentHandle, RenderingState};
 
-/// 帧率读数开不开。`SLINT_STUDY_FPS` 设成任意值即开,与 `SLINT_STUDY_TAB` 同属调试开关。
+/// 帧率读数开不开。`OSMOSIS_FPS` 设成任意值即开,与 `OSMOSIS_TAB` 同属调试开关。
 ///
 /// 曾经是个 feature,但它不门控任何依赖 —— 关掉省下的只有一个 2Hz 定时器和每帧一次自增,
 /// 却要在四个 manifest 里各声明一遍、还被三个 `bevy-3d` 隐含。开发时想不想看,本就不是
@@ -36,14 +68,14 @@ use slint::{ComponentHandle, RenderingState};
 /// (页面由浏览器拉起、APK 由系统拉起),只能构建期烧进去 —— 同 `apps/android` 待
 /// `SLINT_MCP_PORT` 的办法。
 fn fps_enabled() -> bool {
-    std::env::var("SLINT_STUDY_FPS").is_ok()
-        || option_env!("SLINT_STUDY_FPS").is_some()
+    std::env::var("OSMOSIS_FPS").is_ok()
+        || option_env!("OSMOSIS_FPS").is_some()
 }
 
 /// 最大页签下标:0=Home、1=Music。
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
-/// 加页时两处都要动。加漏了的症状是「`SLINT_STUDY_TAB=2` 静默停在 Music 页」。
+/// 加页时两处都要动。加漏了的症状是「`OSMOSIS_TAB=2` 静默停在 Music 页」。
 const MAX_TAB: i32 = 1;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
@@ -52,7 +84,9 @@ const MAX_TAB: i32 = 1;
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
-fn build_ui() -> (
+fn build_ui(
+    media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
+) -> (
     MainWindow,
     viz::Source,
     music::LyricFeed,
@@ -61,14 +95,25 @@ fn build_ui() -> (
     let ui = MainWindow::new()
         .expect("failed to create main window");
 
-    let (viz_source, lyrics, cover) = music::bind(&ui);
+    // 先恢复上次的登录态,再绑界面 —— 绑定那一步会按登录与否决定先拉什么。
+    // 恢复出来的 token 可能已被服务端吊销,那要等第一次请求 401 才知道。
+    api::session::restore();
+    // 接登录页。它按恢复出来的会话决定开局是登录页还是主界面。
+    account::bind(&ui);
+
+    // 主题要在别的绑定之前恢复:颜色是全局的,晚一步会让开局那一帧
+    // 用错配色闪一下。
+    theme::bind(&ui);
+
+    let (viz_source, lyrics, cover) =
+        music::bind(&ui, media);
 
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
-    // 开局停在哪一页。默认 Home,`SLINT_STUDY_TAB` 覆盖它 —— 那是调试开关,
+    // 开局停在哪一页。默认 Home,`OSMOSIS_TAB` 覆盖它 —— 那是调试开关,
     // `just shot 420 1` 靠它直接截到 Music 页,不必再靠 MCP 模拟点击(那条路上有一串
     // 静默失败的坑,见 AGENTS.md)。没设或设歪了就留在 Home。
-    if let Ok(tab) = std::env::var("SLINT_STUDY_TAB")
+    if let Ok(tab) = std::env::var("OSMOSIS_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
         ui.set_current_tab(tab.clamp(0, MAX_TAB));
@@ -81,7 +126,9 @@ fn build_ui() -> (
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
 /// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
-    let (ui, _viz_source, _lyrics, _cover) = build_ui();
+    // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
+    let (ui, _viz_source, _lyrics, _cover) =
+        build_ui(|_| Box::new(NoControls));
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
@@ -119,6 +166,10 @@ pub fn run() {
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则闭包产出的纹理
 /// 不属于 Slint 的 device,采样不出来。
+///
+/// `media` 交出这一端的系统媒体控件后端(见 [`MediaControls`] 与 `docs/adr/0020`)。
+/// 它收到的 [`MediaHooks`] 要等窗口与播放器都造好才存在,所以是这里回头调它,
+/// 而不是入口先造好塞进来。没有实现的端传 [`NoControls`]。
 pub fn run_with_renderers(
     mut nav_frame: impl FnMut(
         &NavGlassControls,
@@ -130,8 +181,9 @@ pub fn run_with_renderers(
         u32,
     ) -> Option<VizImages>
     + 'static,
+    media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
-    let (ui, viz_source, lyrics, cover) = build_ui();
+    let (ui, viz_source, lyrics, cover) = build_ui(media);
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -146,6 +198,7 @@ pub fn run_with_renderers(
     // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
     let mut nav_last_ll: Option<(f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
+    let mut nav_last_dark: Option<bool> = None;
     // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
     // 都从定格处继续,不跳变。
     let mut viz_time = 0.0f32;
@@ -200,11 +253,18 @@ pub fn run_with_renderers(
                     (ui.get_nav_h() * scale).max(1.0);
                 let size_changed = nav_last_size
                     != Some((strip_w, strip_h));
+                // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
+                // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
+                // 要等下一次切 tab 才跟上。
+                let dark = ui.global::<Theme>().get_dark();
+                let theme_changed =
+                    nav_last_dark != Some(dark);
                 if nav_glass::nav_transition_active(
                     lead,
                     lag,
                     nav_last_ll,
                 ) || size_changed
+                    || theme_changed
                 {
                     if let Some(img) =
                         nav_frame(&NavGlassControls {
@@ -214,11 +274,13 @@ pub fn run_with_renderers(
                             lag_y: lag * scale,
                             slot_h: ui.get_nav_slot_h()
                                 * scale,
+                            dark,
                         })
                     {
                         ui.set_nav_bg(img);
                     }
                     nav_last_ll = Some((lead, lag));
+                    nav_last_dark = Some(dark);
                     nav_last_size =
                         Some((strip_w, strip_h));
                 }
@@ -277,7 +339,7 @@ pub fn run_with_renderers(
                         &VizControls {
                             time: viz_time,
                             audio,
-                            // 换歌解出新封面的那一帧才有值,取走即清空。
+                            // 换歌那一帧才有动作(清空/换图),取走即回到"没消息"。
                             // `CoverPixels` 就是 `VizCover`(见 viz.rs),
                             // 直接交出去,不逐字段再抄一遍兆级的像素。
                             cover: cover.take(),
@@ -291,6 +353,10 @@ pub fn run_with_renderers(
                                     ),
                             },
                             preset: ui.get_viz_preset(),
+                            // 现在一张深度卡片都没有:歌词改成与歌名同层,
+                            // 画在粒子之上(见 docs/adr/0010 的「歌词是例外」)。
+                            // 下一张深度卡片回来时把这里置真,那台相机就醒了。
+                            needs_occluder: false,
                         },
                         size.width,
                         size.height,

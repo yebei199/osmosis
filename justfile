@@ -1,4 +1,8 @@
-apk := "dist/slint-study-debug.apk"
+# 本机的 .env 进配方的环境(邀请码、测试账号)。文件不存在也不报错,
+# CI 上就是这样跑的。它在 .gitignore 里 —— 邀请码进了历史就等于没有邀请码。
+set dotenv-load := true
+
+apk := "dist/osmosis-debug.apk"
 # 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
 # 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
 mcp_port := "8090"
@@ -13,17 +17,28 @@ _default:
 # 本地跑一遍 CI 会跑的全部检查。dev 上的 push 不触发 CI,提交前跑这个
 # 与 .github/workflows/ci.yml 一一对应,命令逐字相同
 [group('ci')]
-ci: ci-test ci-cross ci-boundaries
+ci: ci-fmt ci-test ci-cross ci-boundaries
     @echo "==> CI 全部通过"
 
-# 桌面链路:单测 + clippy(-D warnings,和 CI 一致)
+# 不套 nix-shell:slint.nix 给的是 fontconfig、alsa 这类原生库,rustfmt 一个都不用,
+# 而 Rust 工具链本来就来自外面的环境。CI 那个 fmt job 同样什么都不装
 #
+# 格式。放在 ci 的最前面 —— 它几秒出结果,后面每一条都要先编一遍整棵依赖树
+[group('ci')]
+ci-fmt:
+    cargo fmt --all --check
+
 # **一条命令都不设 RUSTFLAGS**。它进 cargo 的构建指纹,而且是整棵依赖树的 ——
 # 设了它,`just ci` 与 `just desktop-dev` 各自维护一套 500 多个 crate 的产物,
 # 来回切就是来回冷编。warning 的拦截改由 clippy 的 `-- -D warnings` 承担:
 # 那是传给最终 crate 的参数,不进依赖指纹,且 clippy 本就涵盖全部 rustc lint。
+#
+# 依赖 pg:server 的集成测试打真库,容器停着这一条整片红,报的还是 PoolTimedOut。
+# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事
+#
+# 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
-ci-test:
+ci-test: pg
     nix-shell slint.nix --run 'cargo test'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
@@ -44,11 +59,13 @@ ci-boundaries:
     nix-shell slint.nix --run 'cargo xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
-# 左上角帧率读数:`SLINT_STUDY_FPS=1 just desktop-dev`(运行期开关,不必重编)
+# 左上角帧率读数:`OSMOSIS_FPS=1 just desktop-dev`(运行期开关,不必重编)
 #
 # **MCP 默认开着**。调试与验证一律走它 —— 读元素树、模拟点击、量真实尺寸,
 # 都比对着截图猜可靠。三个开关缺一不可,所以焊在这条配方里而不是让人记:
 # feature `mcp`、构建期 SLINT_EMIT_DEBUG_INFO、运行期 SLINT_MCP_PORT。
+# 其中调试信息现在由 crates/ui/build.rs 在 debug 档一律打开(元素树少了它就是空的,
+# 且不报错),这里保留显式设置只为把三样凑齐、一眼看得全。
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
 [group('三端')]
 [group('桌面')]
@@ -59,7 +76,7 @@ desktop-dev extra="": mcp-port-free
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
-# 左上角帧率读数:`SLINT_STUDY_FPS=1 just web-dev` —— wasm 读不到运行期环境变量,
+# 左上角帧率读数:`OSMOSIS_FPS=1 just web-dev` —— wasm 读不到运行期环境变量,
 # 这个开关在**构建期**生效,故必须重跑本命令。
 [group('三端')]
 web-dev:
@@ -111,22 +128,32 @@ font-subset:
       --output-file=crates/ui/fonts/cjk-subset.ttf"
     @ls -la crates/ui/fonts/cjk-subset.ttf
 
-# 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它
+# 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
+# 数据在命名卷里,容器删了也还在。
+pg:
+    docker start osmosis-pg 2>/dev/null || \
+      docker run -d --name osmosis-pg \
+        -e POSTGRES_PASSWORD=devonly -e POSTGRES_USER=slint -e POSTGRES_DB=osmosis \
+        -p 127.0.0.1:5432:5432 -v osmosis-pgdata:/var/lib/postgresql/data \
+        postgres:17-alpine
+    @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
+
+# 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它。
+# 依赖 pg:容器停着直接跑会连不上库,报 PoolTimedOut。
 [group('服务端')]
-server-dev:
+server-dev: pg
     cargo run -p server
 
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
-# 源码是 third_party/bang-dream 这个 submodule,但那里只当契约来源用 ——
-# 开发时跑的是 BANG_DREAM_REPO 指向的工作副本,默认为 submodule 自身。
+# 它是独立仓库,自己 clone 一份,位置用 BANG_DREAM_REPO 指出,默认为同级目录。
 [group('服务端')]
-bang-dream repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
+bang-dream repo=env('BANG_DREAM_REPO', '../bang-dream'):
     cd {{repo}} && go run ./cmd/bang-dream
 
 # 网易云扫码登录,凭据写进 bang-dream 的 data/credentials.json。
 # 登录态是全服务一份的,登一次就够,过期了再来
 [group('服务端')]
-bang-dream-login repo=env('BANG_DREAM_REPO', 'third_party/bang-dream'):
+bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
     cd {{repo}} && go run ./cmd/qrlogin
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
@@ -151,8 +178,8 @@ android-reverse:
 # 装 APK、接通端口转发,然后看日志。前提:server-dev 已在另一个终端里跑
 [group('安卓')]
 android-run: android-install android-reverse
-    adb shell am start -n io.github.slintstudy/.MainActivity
-    adb logcat -s slint_study
+    adb shell am start -n io.github.osmosis/.MainActivity
+    adb logcat -s osmosis
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
@@ -194,24 +221,53 @@ mcp-forward:
 # 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
 # 端口只能靠 apps/android/src/lib.rs 里的 option_env! 编进二进制。
-# 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s slint_study`
+# 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
 [group('mcp')]
 mcp-android: mcp-forward
     nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     adb install -r {{apk}}
-    adb shell am start -n io.github.slintstudy/.MainActivity
+    adb shell am start -n io.github.osmosis/.MainActivity
 
-# 杀掉所有跑着的桌面实例。这条命令踩过三层坑,每一层都**静默失败**:
+# 杀掉所有跑着的桌面实例。两处静默失败等着:
 #
-# 1. 进程名是 `slint-study-desktop`([[bin]] name),不是包名 `app-desktop`;
-# 2. 它有 19 个字符,而 Linux 的 comm 只存 15 个 —— `pkill -x slint-study-desktop`
-#    **永远匹配不到**,只吐一句 warning 就返回 0,看起来像"杀干净了";
-# 3. 于是只能用 `-f`(匹配整条命令行),但 `-f` 会连**本命令自己的命令行**一起命中,
-#    把调用它的 shell 杀掉,留下退出码 144。方括号 `[s]` 让正则匹配不到字面量本身,
-#    这一刀才只落在真正的 app 上。
+# 1. 进程名是 `osmosis-desktop`([[bin]] name),不是包名 `app-desktop`。拿包名去
+#    pkill 不报错,只是没杀掉 —— 而你还在对着十几分钟前的老进程截图;
+# 2. 用 `-x`(精确匹配进程名)而不是 `-f`(匹配整条命令行)。`-f` 会把本命令自己的
+#    命令行也算作命中,连调用它的 shell 一起杀掉,留下退出码 144。
+#
+# `-x` 能用是因为名字正好 15 个字符,是 Linux comm 存得下的上限;再长一个字就会被
+# 截断,`-x` 于是永远匹配不到,只吐一句 warning 就返回 0(改名前的 `slint-study-desktop`
+# 有 19 个字符,正是这样,只好绕道 `-f` 加方括号)。改 [[bin]] name 时留意这条线。
 [group('桌面')]
 desktop-kill:
-    -pkill -f 'target/debug/[s]lint-study-desktop'
+    -pkill -x osmosis-desktop
+
+# 把 .desktop 与图标装进本用户的 XDG 目录,顺带把 release 二进制软链到 PATH 上。
+#
+# 装了才看得见的是桌面菜单、启动器、dock 那一类地方 —— 它们读 `.desktop` 的
+# `Icon=` 再去 hicolor 取图。**媒体卡片上的图标不在此列**:本机这条 DMS bar
+# 把那个图标写死成 Material 的 `music_note`,装不装都一样(见 mpris.rs 的
+# `desktop_entry`)。
+#
+# 软链而不是拷贝:开发机上重编一次就该是新的,拷过去的那份会悄悄变成旧版本。
+# 因此这条 recipe 属于开发机自用,不是发行安装 —— 真正打包是另一件事(#44 之后)。
+[group('桌面')]
+desktop-install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+    bin="$HOME/.local/bin"
+    mkdir -p "$apps" "$icons" "$bin"
+    nix-shell slint.nix --run 'cargo build -p app-desktop --release'
+    ln -sfn "$PWD/target/release/osmosis-desktop" "$bin/osmosis-desktop"
+    install -m 644 assets/io.github.osmosis.desktop "$apps/"
+    install -m 644 assets/io.github.osmosis.svg "$icons/"
+    # 不刷新缓存的话,菜单里那一项要等下次登录才出现。两条命令都可能不在,
+    # 失败无妨 —— 所以各自吞掉,别让 set -e 把整条 recipe 带走。
+    update-desktop-database "$apps" 2>/dev/null || true
+    gtk-update-icon-cache -f -t "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" 2>/dev/null || true
+    echo "==> 装好了。$bin 不在 PATH 上的话,菜单项能用但命令行调不到。"
 
 # 关窗后进程是不是干净地走了(issue #15)。开一个实例、关掉、看退出码,要 0 不要 134。
 #
@@ -223,10 +279,10 @@ desktop-exit-check:
     set -uo pipefail
     just desktop-kill
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    nix-shell slint.nix --run 'target/debug/slint-study-desktop' > /tmp/slint-exit-check.log 2>&1 &
+    nix-shell slint.nix --run 'target/debug/osmosis-desktop' > /tmp/slint-exit-check.log 2>&1 &
     app=$!
     for _ in $(seq 60); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break
         sleep 1
     done
@@ -260,9 +316,9 @@ shot width="" tab="0":
     just desktop-kill
     # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    SLINT_STUDY_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/slint-study-desktop' > /tmp/slint-shot.log 2>&1 &
+    OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > /tmp/slint-shot.log 2>&1 &
     for _ in $(seq 30); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Slint Study") | .id' | head -1)
+        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break
         sleep 1
     done

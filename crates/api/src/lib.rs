@@ -5,16 +5,20 @@
 //! `Send` 约束只存在于本 crate 内部的 `platform` 模块里。见 `docs/adr/0002`。
 
 use contract::{
-    HealthDto, LyricDto, PROTOCOL_VERSION, PlaySourceDto,
-    SearchDto, TracksDto,
+    ArtistSearchDto, ErrorDto, HealthDto, LoginDto,
+    LyricDto, PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
+    PlaylistDto, PlaylistSearchDto, PlaylistsDto,
+    RegisterDto, SearchDto, SessionDto, TrackIdsDto,
+    TracksDto,
 };
+use serde::Serialize;
 
-/// 服务端地址。可在编译期用 `SLINT_STUDY_API_BASE` 覆盖。
+/// 服务端地址。可在编译期用 `OSMOSIS_API_BASE` 覆盖。
 ///
 /// 默认指向 `127.0.0.1` —— Android 上这是**手机自己**的回环地址,需要
 /// `adb reverse tcp:3000 tcp:3000` 把它转发到开发机(见 `just adb-reverse`)。
 pub fn base_url() -> &'static str {
-    option_env!("SLINT_STUDY_API_BASE")
+    option_env!("OSMOSIS_API_BASE")
         .unwrap_or("http://127.0.0.1:3000")
 }
 
@@ -30,6 +34,14 @@ pub enum ApiError {
     Decode(String),
     /// 双方说的不是同一个版本的协议。
     VersionMismatch { expected: u32, actual: u32 },
+    /// 服务端明确拒绝了,并说明了原因。
+    ///
+    /// 与 [`Self::Transport`] 的区别是**有没有得到答复**:这一个是服务端想清楚了
+    /// 才说的不,调用方可以按 `code` 分支;那一个是话没传到。
+    ///
+    /// 不带 HTTP 状态码:契约规定客户端按 `code` 分支而不是按状态码
+    /// (见 `contract::ErrorDto`),带上它只会诱使人去用错的那个。
+    Server { code: String, message: String },
 }
 
 impl core::fmt::Display for ApiError {
@@ -43,6 +55,9 @@ impl core::fmt::Display for ApiError {
             }
             Self::Decode(message) => {
                 write!(f, "响应格式错误: {message}")
+            }
+            Self::Server { message, .. } => {
+                write!(f, "{message}")
             }
             Self::VersionMismatch { expected, actual } => {
                 write!(
@@ -87,11 +102,38 @@ fn check_version(
     Ok(dto)
 }
 
-/// `GET /search?q=…`。
-pub async fn search(
+/// `GET /search/tracks?q=…`。
+pub async fn search_tracks(
     keyword: &str,
 ) -> Result<SearchDto, ApiError> {
-    platform::get_json(search_url(keyword)).await
+    platform::get_json(search_url("tracks", keyword)).await
+}
+
+/// `GET /search/artists?q=…`。
+pub async fn search_artists(
+    keyword: &str,
+) -> Result<ArtistSearchDto, ApiError> {
+    platform::get_json(search_url("artists", keyword)).await
+}
+
+/// `GET /search/playlists?q=…`。
+///
+/// 只搜平台的歌单。本地歌单已经在手上,过滤是界面的事。
+pub async fn search_playlists(
+    keyword: &str,
+) -> Result<PlaylistSearchDto, ApiError> {
+    platform::get_json(search_url("playlists", keyword))
+        .await
+}
+
+/// `GET /artists/{id}/tracks` —— 某个歌手的热门曲目。
+///
+/// 搜到的歌手点下去听什么。不是这个歌手的全部作品 —— 平台给的就是「此刻热门」
+/// 那几首,要全部得另开一条路。
+pub async fn artist_tracks(
+    artist_id: &str,
+) -> Result<TracksDto, ApiError> {
+    platform::get_json(artist_tracks_url(artist_id)).await
 }
 
 /// `GET /play/{track_id}`。
@@ -122,9 +164,9 @@ pub async fn liked() -> Result<TracksDto, ApiError> {
 ///
 /// 抽出来单独可测:关键词直接插进 `format!` 的话,一个 `&` 就会把查询串截成
 /// 两个参数,服务端只看到半截关键词 —— 而这既不会报错,也不会有测试失败。
-fn search_url(keyword: &str) -> String {
+fn search_url(kind: &str, keyword: &str) -> String {
     format!(
-        "{}/search?q={}",
+        "{}/search/{kind}?q={}",
         base_url(),
         encode_component(keyword)
     )
@@ -181,6 +223,310 @@ pub async fn lyric(
     platform::get_json(lyric_url(track_id)).await
 }
 
+/// `POST /register` —— 凭邀请码开户,顺带拿到会话。
+///
+/// 成功即记住 token,调用方不必再单独调 [`session::set`] —— 那一步漏了的现象是
+/// 「注册成功但接着全是 401」,而人会去查服务端。
+pub async fn register(
+    username: &str,
+    password: &str,
+    invite: &str,
+) -> Result<SessionDto, ApiError> {
+    let dto: SessionDto = platform::send_json(
+        reqwest::Method::POST,
+        format!("{}/register", base_url()),
+        Some(RegisterDto {
+            username: username.to_owned(),
+            password: password.to_owned(),
+            invite: invite.to_owned(),
+        }),
+    )
+    .await?;
+
+    session::set(&dto.token);
+
+    Ok(dto)
+}
+
+/// `POST /login` —— 用用户名密码换会话,同样自动记住 token。
+pub async fn login(
+    username: &str,
+    password: &str,
+) -> Result<SessionDto, ApiError> {
+    let dto: SessionDto = platform::send_json(
+        reqwest::Method::POST,
+        format!("{}/login", base_url()),
+        Some(LoginDto {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        }),
+    )
+    .await?;
+
+    session::set(&dto.token);
+
+    Ok(dto)
+}
+
+/// `POST /logout` —— 吊销这一条会话。
+///
+/// 本地那份**无论服务端怎么答都要清掉**:请求失败时用户的意图仍然是登出,
+/// 留着一个可能已失效的 token 只会让下一次操作莫名其妙地 401。
+pub async fn logout() -> Result<(), ApiError> {
+    let result = platform::send_no_content::<()>(
+        reqwest::Method::POST,
+        format!("{}/logout", base_url()),
+        None,
+    )
+    .await;
+
+    session::clear();
+
+    result
+}
+
+/// `GET /playlists` —— 两个来源合并后的歌单列表,「我喜欢的」在最前。
+pub async fn playlists() -> Result<PlaylistsDto, ApiError> {
+    platform::get_json(format!("{}/playlists", base_url()))
+        .await
+}
+
+/// `POST /playlists` —— 建一个本地歌单。
+pub async fn create_playlist(
+    name: &str,
+) -> Result<PlaylistDto, ApiError> {
+    platform::send_json(
+        reqwest::Method::POST,
+        format!("{}/playlists", base_url()),
+        Some(Named {
+            name: name.to_owned(),
+        }),
+    )
+    .await
+}
+
+/// `PATCH /playlists/{id}` —— 给本地歌单改名。
+pub async fn rename_playlist(
+    id: &str,
+    name: &str,
+) -> Result<(), ApiError> {
+    platform::send_no_content(
+        reqwest::Method::PATCH,
+        playlist_url(id),
+        Some(Named {
+            name: name.to_owned(),
+        }),
+    )
+    .await
+}
+
+/// `DELETE /playlists/{id}` —— 删掉本地歌单。
+pub async fn delete_playlist(
+    id: &str,
+) -> Result<(), ApiError> {
+    platform::send_no_content::<()>(
+        reqwest::Method::DELETE,
+        playlist_url(id),
+        None,
+    )
+    .await
+}
+
+/// `GET /playlists/local/{id}/tracks` —— 本地歌单的曲目。
+pub async fn playlist_tracks(
+    id: &str,
+) -> Result<TracksDto, ApiError> {
+    platform::get_json(playlist_tracks_url(id)).await
+}
+
+/// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
+///
+/// 与本地那条是两个函数而不是一个带来源参数的:调用方在点开一个歌单时
+/// 就已经知道它是哪一种(列表里的 `source` 就是),合成一个只会让每个
+/// 调用点先去问一遍。
+pub async fn platform_playlist_tracks(
+    id: &str,
+) -> Result<TracksDto, ApiError> {
+    platform::get_json(platform_playlist_tracks_url(id))
+        .await
+}
+
+/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。
+pub async fn add_playlist_tracks(
+    id: &str,
+    tracks: &[(String, String)],
+) -> Result<(), ApiError> {
+    platform::send_no_content(
+        reqwest::Method::POST,
+        playlist_tracks_url(id),
+        Some(TrackRefs::from(tracks)),
+    )
+    .await
+}
+
+/// `DELETE /playlists/{id}/tracks` —— 从本地歌单移掉曲目。
+pub async fn remove_playlist_tracks(
+    id: &str,
+    tracks: &[(String, String)],
+) -> Result<(), ApiError> {
+    platform::send_no_content(
+        reqwest::Method::DELETE,
+        playlist_tracks_url(id),
+        Some(TrackRefs::from(tracks)),
+    )
+    .await
+}
+
+/// `GET /liked/ids` —— 红心的全量标识。
+///
+/// 界面每一行都要问「这一首红心没有」,而 [`liked`] 给的是一页曲目,
+/// 回答不了这个问题。取一次存成集合,之后本地标。
+pub async fn liked_ids() -> Result<TrackIdsDto, ApiError> {
+    platform::get_json(format!("{}/liked/ids", base_url()))
+        .await
+}
+
+/// `PUT|DELETE /liked/{track_id}` —— 点红心或取消。
+pub async fn set_liked(
+    track_id: &str,
+    liked: bool,
+) -> Result<(), ApiError> {
+    platform::send_no_content::<()>(
+        toggle_method(liked),
+        liked_url(track_id),
+        None,
+    )
+    .await
+}
+
+/// `PUT|DELETE /subscriptions/playlists/{id}` —— 收藏平台歌单或取消。
+pub async fn set_subscribed(
+    playlist_id: &str,
+    subscribed: bool,
+) -> Result<(), ApiError> {
+    platform::send_no_content::<()>(
+        toggle_method(subscribed),
+        subscription_url(playlist_id),
+        None,
+    )
+    .await
+}
+
+/// `POST /played` —— 报告一次起播。
+///
+/// 在声音真的出来之后才调,不是按下播放键就调:取直链可能失败,
+/// 那时并没有发生一次播放。
+pub async fn record_play(
+    platform_name: &str,
+    track_id: &str,
+) -> Result<(), ApiError> {
+    platform::send_no_content(
+        reqwest::Method::POST,
+        format!("{}/played", base_url()),
+        Some(PlayedDto {
+            platform: platform_name.to_owned(),
+            track_id: track_id.to_owned(),
+        }),
+    )
+    .await
+}
+
+/// `GET /recent` —— 最近播放。
+pub async fn recent() -> Result<TracksDto, ApiError> {
+    platform::get_json(format!("{}/recent", base_url()))
+        .await
+}
+
+/// 只有一个 `name` 字段的请求体,建歌单与改名共用。
+#[derive(Serialize)]
+struct Named {
+    name: String,
+}
+
+/// 增删曲目的请求体。
+#[derive(Serialize)]
+struct TrackRefs {
+    tracks: Vec<TrackRefDto>,
+}
+
+#[derive(Serialize)]
+struct TrackRefDto {
+    platform: String,
+    id: String,
+}
+
+impl TrackRefs {
+    fn from(tracks: &[(String, String)]) -> Self {
+        Self {
+            tracks: tracks
+                .iter()
+                .map(|(platform, id)| TrackRefDto {
+                    platform: platform.clone(),
+                    id: id.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// 开与关只差一个方法名。写成一处,免得两个端点各写一遍再有一处写反。
+fn toggle_method(on: bool) -> reqwest::Method {
+    if on {
+        reqwest::Method::PUT
+    } else {
+        reqwest::Method::DELETE
+    }
+}
+
+/// 本地歌单的地址。路径里带上 `local`,因为两种歌单的 id **不在同一个空间**:
+/// 本地是整数主键,平台是平台自己的字符串 id。混了的现象是「查无此歌单」,
+/// 看起来像数据没了。
+fn playlist_url(id: &str) -> String {
+    format!(
+        "{}/playlists/local/{}",
+        base_url(),
+        encode_component(id)
+    )
+}
+
+fn playlist_tracks_url(id: &str) -> String {
+    format!("{}/tracks", playlist_url(id))
+}
+
+/// 平台歌单曲目的地址。
+fn platform_playlist_tracks_url(id: &str) -> String {
+    format!(
+        "{}/playlists/platform/{}/tracks",
+        base_url(),
+        encode_component(id)
+    )
+}
+
+/// 歌手热门曲目的地址。
+fn artist_tracks_url(id: &str) -> String {
+    format!(
+        "{}/artists/{}/tracks",
+        base_url(),
+        encode_component(id)
+    )
+}
+
+fn liked_url(track_id: &str) -> String {
+    format!(
+        "{}/liked/{}",
+        base_url(),
+        encode_component(track_id)
+    )
+}
+
+fn subscription_url(playlist_id: &str) -> String {
+    format!(
+        "{}/subscriptions/playlists/{}",
+        base_url(),
+        encode_component(playlist_id)
+    )
+}
+
 /// 拉取任意 URL 的原始字节(封面图这类二进制资源)。
 ///
 /// 与 `play_source` 的直链同一注意事项:封面 URL 指向平台 CDN,可能过期或
@@ -191,9 +537,119 @@ pub async fn fetch_bytes(
     platform::get_bytes(url.to_owned()).await
 }
 
+/// 读一张缓存下来的封面。没有就是没有。
+///
+/// `name` 必须已经过调用方的过滤(见 `ui::artwork::cache_name`)——
+/// 它会成为路径的一段,而歌单标识来自平台。
+pub fn load_artwork(name: &str) -> Option<Vec<u8>> {
+    platform::load_artwork(name)
+}
+
+/// 存一张封面。失败只记一笔:封面是装饰,存不下只是下次再取一遍。
+pub fn save_artwork(name: &str, bytes: &[u8]) {
+    platform::save_artwork(name, bytes);
+}
+
+/// 曲目缩略图目录的字节上限。
+///
+/// 歌单封面按稳定的歌单 id 存,取多少就是多少;曲目缩略图按**封面 URL** 存,
+/// 而 CDN 会换 URL —— 换掉那一刻旧文件就再没人会查,却还占着盘。所以这一层
+/// 必须有个硬上限,而歌单那一层不需要。
+pub const TRACK_ARTWORK_BUDGET: u64 = 64 * 1024 * 1024;
+
+/// 读一张缓存下来的曲目缩略图。
+///
+/// 与 [`load_artwork`] 分开是因为两者的键不同(URL 的散列 vs 歌单 id),
+/// 因而淘汰规则也不同 —— 混在一个目录里,清理会误伤歌单封面。
+pub fn load_track_artwork(name: &str) -> Option<Vec<u8>> {
+    platform::load_track_artwork(name)
+}
+
+/// 存一张曲目缩略图。与 [`save_artwork`] 同理,失败只记一笔。
+pub fn save_track_artwork(name: &str, bytes: &[u8]) {
+    platform::save_track_artwork(name, bytes);
+}
+
+/// 把曲目缩略图目录削回 [`TRACK_ARTWORK_BUDGET`] 以内,从最旧的删起。
+///
+/// 进程启动时跑一次就够:几百个文件的 `metadata()` 是毫秒级,而放在写入路径上
+/// 会让滚一次列表 stat 整个目录几十遍。
+pub fn sweep_track_artwork() {
+    platform::sweep_track_artwork(TRACK_ARTWORK_BUDGET);
+}
+
+/// 把服务端的错误响应体翻成一个带 code 的错误。
+///
+/// 解不出 [`ErrorDto`] 就退回 [`ApiError::Transport`] —— 502 网关回的是 HTML,
+/// 反向代理回的可能是别的东西。编一个 code 出来会让上层按错误的分支走,
+/// 而那种错比"不知道为什么失败"更难查。
+fn server_error(status: u16, body: &str) -> ApiError {
+    match serde_json::from_str::<ErrorDto>(body) {
+        Ok(dto) => ApiError::Server {
+            code: dto.code,
+            message: dto.message,
+        },
+        Err(_) => ApiError::Transport(format!(
+            "HTTP {status}: {}",
+            body.chars().take(200).collect::<String>()
+        )),
+    }
+}
+
+/// 会话:登录之后拿到的 token,以及它的落盘。
+///
+/// token 归本 crate 而不是 `app-core`:它是「怎么发请求」的一部分,
+/// 而客户端领域按 `CONTEXT.md` 不认识网络。
+pub mod settings;
+
+pub mod session {
+    use std::sync::RwLock;
+
+    /// 当前会话的 token。没登录时是 `None`。
+    ///
+    /// 全局可变状态在这里是恰当的:一个进程只有一个登录态,
+    /// 而每一次请求都要用到它 —— 层层传递只会让每个函数都多一个参数。
+    static TOKEN: RwLock<Option<String>> =
+        RwLock::new(None);
+
+    /// 当前 token 的副本。
+    pub fn token() -> Option<String> {
+        TOKEN.read().ok().and_then(|slot| slot.clone())
+    }
+
+    /// 记住一个 token(登录成功后),并落盘。
+    pub fn set(token: &str) {
+        if let Ok(mut slot) = TOKEN.write() {
+            *slot = Some(token.to_owned());
+        }
+        super::platform::save_session(Some(token));
+    }
+
+    /// 忘掉 token(登出),并清掉落盘的那份。
+    pub fn clear() {
+        if let Ok(mut slot) = TOKEN.write() {
+            *slot = None;
+        }
+        super::platform::save_session(None);
+    }
+
+    /// 从落盘处恢复上次的登录态。各端入口在启动时调一次。
+    ///
+    /// 恢复出来的 token 可能已经被服务端吊销 —— 那不是这里能知道的事,
+    /// 第一次带着它请求时会得到 401,界面据此回到登录页。
+    pub fn restore() {
+        if let Some(saved) = super::platform::load_session()
+            && let Ok(mut slot) = TOKEN.write()
+        {
+            *slot = Some(saved);
+        }
+    }
+}
+
 /// 唯一按 target 分叉的地方。两个实现的**签名相同**,差异不外泄。
 #[cfg(not(target_arch = "wasm32"))]
 mod platform {
+    use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
 
     use serde::de::DeserializeOwned;
@@ -214,32 +670,360 @@ mod platform {
         })
     }
 
+    /// 一次请求最多等多久。与 [`get_bytes`] 取同一个值。
+    ///
+    /// **没有超时等于没有失败**:`reqwest::get` 默认不设超时,断网时那个 future
+    /// 会永远悬着 —— 点一首歌永远停在「加载中」,断流后的探测永远问不出结果,
+    /// 而横幅在等那个结果(见 `docs/adr/0013`)。宁可在十秒处认输。
+    const REQUEST_TIMEOUT: std::time::Duration =
+        std::time::Duration::from_secs(10);
+
     pub(super) async fn get_json<
         T: DeserializeOwned + Send + 'static,
     >(
         url: String,
     ) -> Result<T, ApiError> {
+        send_json::<(), T>(reqwest::Method::GET, url, None)
+            .await
+    }
+
+    /// 一次带请求体、带登录态的往返,并解码响应。
+    ///
+    /// 登录态在这里统一附上,而不是每个端点各自记得加 ——
+    /// 漏一处的现象是那条路由 401,而那时人会去查服务端。
+    pub(super) async fn send_json<
+        B: serde::Serialize + Send + 'static,
+        T: DeserializeOwned + Send + 'static,
+    >(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<T, ApiError> {
+        let response = send(method, url, body).await?;
+
+        response
+            .json::<T>()
+            .await
+            .map_err(|e| ApiError::Decode(e.to_string()))
+    }
+
+    /// 同上,但不看响应体 —— 写操作服务端回 204,那里没有内容可解。
+    pub(super) async fn send_no_content<
+        B: serde::Serialize + Send + 'static,
+    >(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<(), ApiError> {
+        send(method, url, body).await.map(|_| ())
+    }
+
+    /// 发出去、检查状态码,响应原样交给调用方。
+    async fn send<B: serde::Serialize + Send + 'static>(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<reqwest::Response, ApiError> {
+        let token = super::session::token();
+
         // spawn 把请求丢到后台线程池;await 的是 JoinHandle,它可以在任意
         // 线程上被 poll —— 包括 slint 的 UI 线程。
         runtime()
             .spawn(async move {
-                let response = reqwest::get(url)
-                    .await
-                    .map_err(|e| {
-                        ApiError::Transport(e.to_string())
-                    })?
-                    .error_for_status()
+                let client = reqwest::Client::builder()
+                    .timeout(REQUEST_TIMEOUT)
+                    .build()
                     .map_err(|e| {
                         ApiError::Transport(e.to_string())
                     })?;
-                response.json::<T>().await.map_err(|e| {
-                    ApiError::Decode(e.to_string())
-                })
+
+                let mut request =
+                    client.request(method, url);
+                if let Some(token) = token {
+                    request = request.bearer_auth(token);
+                }
+                if let Some(body) = body {
+                    request = request.json(&body);
+                }
+
+                let response =
+                    request.send().await.map_err(|e| {
+                        ApiError::Transport(e.to_string())
+                    })?;
+
+                check(response).await
             })
             .await
             .map_err(|join_error| {
                 ApiError::Transport(join_error.to_string())
             })?
+    }
+
+    /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。
+    ///
+    /// `error_for_status` 做不到这件事:它只看状态码,响应体连同里面的 code
+    /// 一起被丢掉,上层就只能拿到一句"HTTP 401"。
+    async fn check(
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, ApiError> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+
+        let body =
+            response.text().await.unwrap_or_default();
+
+        Err(super::server_error(status.as_u16(), &body))
+    }
+
+    /// 会话文件的位置。可用 `OSMOSIS_SESSION_FILE` 直接指定。
+    ///
+    /// 走 `XDG_STATE_HOME` 而不是配置目录:登录态是**状态**不是配置,
+    /// 它不该被同步、也不该被人手写。
+    fn session_file() -> Option<PathBuf> {
+        if let Ok(explicit) =
+            std::env::var("OSMOSIS_SESSION_FILE")
+        {
+            return Some(PathBuf::from(explicit));
+        }
+
+        session_path_from(
+            std::env::var("XDG_STATE_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+    }
+
+    /// 由环境算出会话文件的路径。抽成纯函数才测得到 ——
+    /// 直接读环境变量的话,测试之间会互相干扰。
+    ///
+    /// 两个变量都没有时返回 `None` 而不是猜一个路径:安卓上就是这种情况,
+    /// 那里的私有目录要走 JNI 才拿得到。猜错了写进去,失败还是静默的。
+    pub(super) fn session_path_from(
+        state_home: Option<&str>,
+        home: Option<&str>,
+    ) -> Option<PathBuf> {
+        let base = match (state_home, home) {
+            (Some(state), _) if !state.is_empty() => {
+                PathBuf::from(state)
+            }
+            (_, Some(home)) if !home.is_empty() => {
+                PathBuf::from(home).join(".local/state")
+            }
+            _ => return None,
+        };
+
+        Some(base.join("osmosis/session"))
+    }
+
+    /// 本地设置文件,与会话文件同一个目录。
+    ///
+    /// 两者分开放而不是塞进一份:token 是凭据,权限 0600、登出即删;设置是偏好,
+    /// 登出之后照样该留着。合成一个文件的话,登出会顺手把音量也忘掉。
+    fn settings_file() -> Option<PathBuf> {
+        if let Ok(explicit) =
+            std::env::var("OSMOSIS_SETTINGS_FILE")
+        {
+            return Some(PathBuf::from(explicit));
+        }
+
+        session_path_from(
+            std::env::var("XDG_STATE_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .map(|path| path.with_file_name("settings.json"))
+    }
+
+    /// 封面缓存目录,与会话、设置同一个基座。
+    fn artwork_dir() -> Option<PathBuf> {
+        session_path_from(
+            std::env::var("XDG_STATE_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .map(|path| path.with_file_name("covers"))
+    }
+
+    pub(super) fn load_artwork(
+        name: &str,
+    ) -> Option<Vec<u8>> {
+        std::fs::read(artwork_dir()?.join(name)).ok()
+    }
+
+    pub(super) fn save_artwork(name: &str, bytes: &[u8]) {
+        let Some(dir) = artwork_dir() else {
+            return;
+        };
+        write_artwork(&dir, name, bytes);
+    }
+
+    /// 曲目缩略图目录。挂在封面目录下面而不是并列一个新目录:它们是同一类
+    /// 东西,只是键与淘汰规则不同(见 `super::TRACK_ARTWORK_BUDGET`)。
+    fn track_artwork_dir() -> Option<PathBuf> {
+        artwork_dir().map(|dir| dir.join("tracks"))
+    }
+
+    pub(super) fn load_track_artwork(
+        name: &str,
+    ) -> Option<Vec<u8>> {
+        std::fs::read(track_artwork_dir()?.join(name)).ok()
+    }
+
+    pub(super) fn save_track_artwork(
+        name: &str,
+        bytes: &[u8],
+    ) {
+        let Some(dir) = track_artwork_dir() else {
+            return;
+        };
+        write_artwork(&dir, name, bytes);
+    }
+
+    pub(super) fn sweep_track_artwork(budget: u64) {
+        let Some(dir) = track_artwork_dir() else {
+            return;
+        };
+        sweep_dir(&dir, budget);
+    }
+
+    /// 往某个封面目录里写一份。目录不存在就建。
+    fn write_artwork(dir: &Path, name: &str, bytes: &[u8]) {
+        if let Err(err) = std::fs::create_dir_all(dir) {
+            log::warn!("建封面目录失败: {err}");
+            return;
+        }
+
+        if let Err(err) =
+            std::fs::write(dir.join(name), bytes)
+        {
+            log::warn!("写封面失败: {err}");
+        }
+    }
+
+    /// 目录超出预算时按 mtime 从最旧的删起,删到线下为止。
+    ///
+    /// 单独一个函数是为了能对着临时目录测 —— 上面那几个都要先解出
+    /// `XDG_STATE_HOME`,测起来就成了改进程环境变量。
+    pub(super) fn sweep_dir(dir: &Path, budget: u64) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            // 目录还不存在:第一次运行,没什么可删的
+            return;
+        };
+
+        let mut files: Vec<(
+            std::time::SystemTime,
+            u64,
+            PathBuf,
+        )> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let meta = entry.metadata().ok()?;
+                if !meta.is_file() {
+                    return None;
+                }
+                Some((
+                    meta.modified().ok()?,
+                    meta.len(),
+                    entry.path(),
+                ))
+            })
+            .collect();
+
+        let mut total: u64 =
+            files.iter().map(|(_, len, _)| len).sum();
+        if total <= budget {
+            return;
+        }
+
+        // 最旧的排在前面 —— 删的就是这一头
+        files.sort_by_key(|(modified, _, _)| *modified);
+
+        for (_, len, path) in files {
+            if total <= budget {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                total = total.saturating_sub(len);
+            }
+        }
+    }
+
+    /// 读设置文件的原文。读不到就是没有 —— 解析那半归 `settings` 模块。
+    pub(super) fn load_settings() -> Option<String> {
+        std::fs::read_to_string(settings_file()?).ok()
+    }
+
+    /// 写设置文件。失败只记一笔:调音量本身已经生效了,
+    /// 存不下的后果是下次回到默认值,不该让它把这次也判为失败。
+    pub(super) fn save_settings(raw: &str) {
+        let Some(path) = settings_file() else {
+            return;
+        };
+
+        if let Some(parent) = path.parent()
+            && let Err(err) =
+                std::fs::create_dir_all(parent)
+        {
+            log::warn!("建设置目录失败: {err}");
+            return;
+        }
+
+        if let Err(err) = std::fs::write(&path, raw) {
+            log::warn!("写设置失败: {err}");
+        }
+    }
+
+    /// 落盘的 token,没有就是没登录过。
+    pub(super) fn load_session() -> Option<String> {
+        let path = session_file()?;
+        let saved = std::fs::read_to_string(path).ok()?;
+        let saved = saved.trim();
+
+        (!saved.is_empty()).then(|| saved.to_owned())
+    }
+
+    /// 存一个 token,`None` 表示登出 —— 那要把文件删掉,
+    /// 而不是写一个空文件:留着一个空文件等于留着一份"曾经登录过"的痕迹。
+    pub(super) fn save_session(token: Option<&str>) {
+        let Some(path) = session_file() else {
+            return;
+        };
+
+        let Some(token) = token else {
+            let _ = std::fs::remove_file(&path);
+            return;
+        };
+
+        write_session(&path, token);
+    }
+
+    /// 写会话文件。权限 0600 —— token 等同于密码。
+    ///
+    /// 失败只记一笔:登录本身已经成功了,存不下来的后果是下次要重登,
+    /// 不该让它把这次登录也判为失败。
+    pub(super) fn write_session(path: &Path, token: &str) {
+        if let Some(parent) = path.parent()
+            && let Err(err) =
+                std::fs::create_dir_all(parent)
+        {
+            log::warn!("建会话目录失败: {err}");
+            return;
+        }
+
+        if let Err(err) = std::fs::write(path, token) {
+            log::warn!("写会话失败: {err}");
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            if let Err(err) = std::fs::set_permissions(
+                path,
+                std::fs::Permissions::from_mode(0o600),
+            ) {
+                log::warn!("设置会话文件权限失败: {err}");
+            }
+        }
     }
 
     /// 同 [`get_json`],但不解码,原样给字节。
@@ -287,28 +1071,162 @@ mod platform {
 }
 
 /// wasm 上没有线程,请求由浏览器的 fetch 驱动;future 不是 `Send`,无所谓。
+///
+/// 这一侧不设超时,与原生那边不对称是有意的:reqwest 的 wasm 客户端不支持
+/// `timeout`(fetch 的时限归浏览器管),而 wasm 上根本没有音频栈,
+/// 断流那条路走不到这里。
 #[cfg(target_arch = "wasm32")]
 mod platform {
     use serde::de::DeserializeOwned;
 
     use super::ApiError;
 
+    /// localStorage 里存会话用的键。
+    const SESSION_KEY: &str = "osmosis.session";
+
+    /// localStorage 里存本地设置用的键。
+    ///
+    /// 与会话分成两个键:登出要删掉会话,而音量该留着。
+    const SETTINGS_KEY: &str = "osmosis.settings";
+
+    pub(super) fn load_settings() -> Option<String> {
+        storage()?.get_item(SETTINGS_KEY).ok()?
+    }
+
+    /// web 上不缓存封面:localStorage 只存文本,而把图片编成 base64 塞进去
+    /// 会撞上 5MB 的配额 —— 那额度是留给会话与设置的。浏览器自己的 HTTP 缓存
+    /// 已经在做这件事,再来一层是白费。
+    pub(super) fn load_artwork(
+        _name: &str,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    pub(super) fn save_artwork(_name: &str, _bytes: &[u8]) {
+    }
+
+    pub(super) fn load_track_artwork(
+        _name: &str,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    pub(super) fn save_track_artwork(
+        _name: &str,
+        _bytes: &[u8],
+    ) {
+    }
+
+    /// 没有磁盘缓存也就没什么可清 —— 浏览器自己的 HTTP 缓存在做这件事。
+    pub(super) fn sweep_track_artwork(_budget: u64) {}
+
+    pub(super) fn save_settings(raw: &str) {
+        if let Some(storage) = storage() {
+            let _ = storage.set_item(SETTINGS_KEY, raw);
+        }
+    }
+
     pub(super) async fn get_json<T: DeserializeOwned>(
         url: String,
     ) -> Result<T, ApiError> {
-        let response = reqwest::get(url)
+        send_json::<(), T>(reqwest::Method::GET, url, None)
             .await
-            .map_err(|e| {
-                ApiError::Transport(e.to_string())
-            })?
-            .error_for_status()
-            .map_err(|e| {
-                ApiError::Transport(e.to_string())
-            })?;
+    }
+
+    /// 一次带请求体、带登录态的往返,并解码响应。
+    pub(super) async fn send_json<
+        B: serde::Serialize,
+        T: DeserializeOwned,
+    >(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<T, ApiError> {
+        let response = send(method, url, body).await?;
+
         response
             .json::<T>()
             .await
             .map_err(|e| ApiError::Decode(e.to_string()))
+    }
+
+    /// 同上,但不看响应体 —— 写操作服务端回 204。
+    pub(super) async fn send_no_content<
+        B: serde::Serialize,
+    >(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<(), ApiError> {
+        send(method, url, body).await.map(|_| ())
+    }
+
+    async fn send<B: serde::Serialize>(
+        method: reqwest::Method,
+        url: String,
+        body: Option<B>,
+    ) -> Result<reqwest::Response, ApiError> {
+        let mut request =
+            reqwest::Client::new().request(method, url);
+
+        if let Some(token) = super::session::token() {
+            request = request.bearer_auth(token);
+        }
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+
+        let response =
+            request.send().await.map_err(|e| {
+                ApiError::Transport(e.to_string())
+            })?;
+
+        check(response).await
+    }
+
+    /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。
+    ///
+    /// `error_for_status` 做不到这件事:它只看状态码,响应体连同里面的 code
+    /// 一起被丢掉,上层就只能拿到一句"HTTP 401"。
+    async fn check(
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, ApiError> {
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+
+        let body =
+            response.text().await.unwrap_or_default();
+
+        Err(super::server_error(status.as_u16(), &body))
+    }
+
+    /// 浏览器的 localStorage。取不到(隐私模式、没有 window)就当没有会话 ——
+    /// 那只意味着刷新后要重登,不是故障。
+    fn storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    pub(super) fn load_session() -> Option<String> {
+        let saved =
+            storage()?.get_item(SESSION_KEY).ok()??;
+
+        (!saved.is_empty()).then_some(saved)
+    }
+
+    pub(super) fn save_session(token: Option<&str>) {
+        let Some(storage) = storage() else {
+            return;
+        };
+
+        let _ = match token {
+            Some(token) => {
+                storage.set_item(SESSION_KEY, token)
+            }
+            // 登出要删掉,不是写空串:空串等于留着一份"曾经登录过"的痕迹
+            None => storage.remove_item(SESSION_KEY),
+        };
     }
 
     /// 同 [`get_json`],但不解码,原样给字节。
@@ -329,6 +1247,107 @@ mod platform {
             .await
             .map(|b| b.to_vec())
             .map_err(|e| ApiError::Transport(e.to_string()))
+    }
+}
+
+/// 曲目缩略图目录的清理。
+///
+/// 这一层是**只增不删的反面**:歌单封面按稳定 id 存,取多少留多少;缩略图按
+/// 会过期的 CDN URL 存,不清就是一个永远长大的垃圾堆。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sweep_tests {
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    use super::platform::sweep_dir;
+
+    /// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
+    fn scratch(case: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("osmosis-sweep-{case}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)
+            .expect("建不出临时目录");
+        dir
+    }
+
+    /// 写一个指定大小、指定"有多旧"的文件。
+    ///
+    /// mtime 用 `File::set_modified` 精确设定,而不是靠 sleep 拉开时间差 ——
+    /// 那种测试在慢机器上会时好时坏。
+    fn file(
+        dir: &Path,
+        name: &str,
+        size: usize,
+        age_secs: u64,
+    ) {
+        let path = dir.join(name);
+        std::fs::write(&path, vec![0u8; size])
+            .expect("写不出测试文件");
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("打不开测试文件");
+        handle
+            .set_modified(
+                SystemTime::now()
+                    - Duration::from_secs(age_secs),
+            )
+            .expect("设不了 mtime");
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut found: Vec<String> = std::fs::read_dir(dir)
+            .expect("读不到临时目录")
+            .filter_map(|entry| {
+                Some(
+                    entry
+                        .ok()?
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// 超出预算时从最旧的删起,删到线下就停手。
+    ///
+    /// 删过头的现象是刚看过的那一屏封面下次还要重取 —— 缓存在,却总不命中。
+    #[test]
+    fn the_sweep_deletes_oldest_first_until_under_budget() {
+        let dir = scratch("oldest-first");
+        file(&dir, "old", 100, 300);
+        file(&dir, "mid", 100, 200);
+        file(&dir, "new", 100, 100);
+
+        // 预算 250:删掉最旧那一个就到 200,不该再动第二个
+        sweep_dir(&dir, 250);
+
+        assert_eq!(names(&dir), vec!["mid", "new"]);
+    }
+
+    /// 没超预算时一个都不删 —— 清理不该在正常情况下动手。
+    #[test]
+    fn the_sweep_keeps_everything_under_budget() {
+        let dir = scratch("under-budget");
+        file(&dir, "a", 100, 200);
+        file(&dir, "b", 100, 100);
+
+        sweep_dir(&dir, 1024);
+
+        assert_eq!(names(&dir), vec!["a", "b"]);
+    }
+
+    /// 目录还不存在时安静返回 —— 第一次启动就是这个样子,不是故障。
+    #[test]
+    fn the_sweep_tolerates_a_missing_directory() {
+        let dir =
+            scratch("missing").join("not-created-yet");
+        sweep_dir(&dir, 0);
+        assert!(!dir.exists());
     }
 }
 
@@ -400,11 +1419,11 @@ mod tests {
     /// 不报错、不失败,只是搜出来的东西不对。
     #[test]
     fn search_url_percent_encodes_keyword() {
-        let url = search_url("紅蓮華 & LiSA");
+        let url = search_url("tracks", "紅蓮華 & LiSA");
 
         assert!(
             url.ends_with(
-                "/search?q=%E7%B4%85%E8%93%AE%E8%8F%AF%20%26%20LiSA"
+                "/search/tracks?q=%E7%B4%85%E8%93%AE%E8%8F%AF%20%26%20LiSA"
             ),
             "关键词没被完整转义: {url}"
         );
@@ -442,6 +1461,211 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "协议版本不匹配: 本机 v1,服务端 v2"
+        );
+    }
+
+    /// 会话 token 的一生:一开始没有,登录后有,换账号后是新的,登出后又没有。
+    ///
+    /// 四件事写在**一个**测试里而不是四个:token 是进程级的全局状态,
+    /// 拆成四个测试会并行地互相踩,而「一开始没有」那条还依赖执行顺序。
+    #[test]
+    fn the_session_token_has_a_lifecycle() {
+        // 用一个临时文件当会话落盘处,免得动到真实的那一份
+        let dir = std::env::temp_dir()
+            .join("osmosis-session-lifecycle");
+        let _ = std::fs::create_dir_all(&dir);
+        // SAFETY: 单线程测试起点,此时还没有别的线程在读环境
+        unsafe {
+            std::env::set_var(
+                "OSMOSIS_SESSION_FILE",
+                dir.join("session"),
+            );
+        }
+
+        session::clear();
+        assert_eq!(
+            session::token(),
+            None,
+            "一开始不该有 token"
+        );
+
+        session::set("first");
+        assert_eq!(
+            session::token().as_deref(),
+            Some("first")
+        );
+
+        session::set("second");
+        assert_eq!(
+            session::token().as_deref(),
+            Some("second"),
+            "换账号登录后带的该是新 token"
+        );
+
+        session::clear();
+        assert_eq!(
+            session::token(),
+            None,
+            "登出后不该还留着"
+        );
+    }
+
+    /// 有 XDG_STATE_HOME 就用它 —— 登录态是状态不是配置。
+    #[test]
+    fn session_path_prefers_state_home() {
+        let path = platform::session_path_from(
+            Some("/tmp/state"),
+            Some("/home/someone"),
+        )
+        .expect("给了 state home 就该有路径");
+
+        assert!(path.starts_with("/tmp/state"));
+        assert!(path.ends_with("osmosis/session"));
+    }
+
+    /// 没有 XDG_STATE_HOME 就退到 HOME/.local/state。
+    #[test]
+    fn session_path_falls_back_to_home() {
+        let path = platform::session_path_from(
+            None,
+            Some("/home/someone"),
+        )
+        .expect("有 HOME 就该有路径");
+
+        assert!(
+            path.starts_with("/home/someone/.local/state")
+        );
+    }
+
+    /// 两个都没有时不猜一个路径出来 —— 安卓上就是这种情况,
+    /// 猜错了写进去,失败还是静默的。空串等同于没有。
+    #[test]
+    fn session_path_is_none_without_either() {
+        assert_eq!(
+            platform::session_path_from(None, None),
+            None
+        );
+        assert_eq!(
+            platform::session_path_from(Some(""), Some("")),
+            None
+        );
+    }
+
+    /// 存了再读,拿回同一个 token —— 这是"下次启动还登着"的全部含义。
+    #[test]
+    fn session_survives_a_restart() {
+        let path = std::env::temp_dir()
+            .join("osmosis-session-restart/session");
+        platform::write_session(&path, "kept");
+
+        let read = std::fs::read_to_string(&path)
+            .expect("刚写的文件该读得到");
+
+        assert_eq!(read.trim(), "kept");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 会话文件权限是 0600 —— token 等同于密码。
+    #[cfg(unix)]
+    #[test]
+    fn session_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = std::env::temp_dir()
+            .join("osmosis-session-perm/session");
+        platform::write_session(&path, "secret");
+
+        let mode = std::fs::metadata(&path)
+            .expect("刚写的文件该在")
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(mode, 0o600, "会话文件权限应为 0600");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 歌单相关的三种地址各自成形,且 id 进路径要转义 ——
+    /// 不转义的话,一个带斜杠的 id 会把路径截成另一条路由。
+    #[test]
+    fn playlist_urls_are_built_per_kind() {
+        assert!(
+            playlist_url("3")
+                .ends_with("/playlists/local/3"),
+            "实际 {}",
+            playlist_url("3")
+        );
+        assert!(
+            playlist_tracks_url("3")
+                .ends_with("/playlists/local/3/tracks")
+        );
+        // 两种来源走两条路径 —— 混了的现象是「查无此歌单」,看着像数据没了
+        assert!(
+            platform_playlist_tracks_url("24381616")
+                .ends_with(
+                    "/playlists/platform/24381616/tracks"
+                )
+        );
+        assert!(subscription_url("24381616").ends_with(
+            "/subscriptions/playlists/24381616"
+        ));
+        assert!(
+            liked_url("347230").ends_with("/liked/347230")
+        );
+        assert!(
+            artist_tracks_url("11972")
+                .ends_with("/artists/11972/tracks")
+        );
+    }
+
+    /// id 里的斜杠与空格都要转义。
+    #[test]
+    fn track_ids_are_escaped_in_paths() {
+        assert!(
+            liked_url("a/b c")
+                .ends_with("/liked/a%2Fb%20c")
+        );
+        assert!(
+            playlist_url("a/b")
+                .ends_with("/playlists/local/a%2Fb")
+        );
+        // 平台 id 来自平台,更该转义:它可能带任何字符
+        assert!(
+            platform_playlist_tracks_url("a/b").ends_with(
+                "/playlists/platform/a%2Fb/tracks"
+            )
+        );
+    }
+
+    /// 服务端回的 code 保留进错误里,不被压成一句文本 ——
+    /// 契约里那些 code 存在的全部意义就是给客户端分支用的。
+    #[test]
+    fn server_error_body_keeps_its_code() {
+        let err = server_error(
+            401,
+            r#"{"code":"bad_credentials","message":"用户名或密码不对"}"#,
+        );
+
+        assert!(matches!(
+            &err,
+            ApiError::Server { code, message }
+                if code == "bad_credentials"
+                    && message == "用户名或密码不对"
+        ));
+    }
+
+    /// 解不出 ErrorDto 时退回 Transport,不编一个 code 出来。
+    /// 编了会让上层按错误的分支走,而那种错比"不知道为什么失败"更难查。
+    #[test]
+    fn unparseable_error_body_falls_back_to_transport() {
+        let err = server_error(
+            502,
+            "<html><body>Bad Gateway</body></html>",
+        );
+
+        assert!(
+            matches!(err, ApiError::Transport(_)),
+            "实际 {err:?}"
         );
     }
 }

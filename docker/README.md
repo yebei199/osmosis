@@ -20,7 +20,7 @@ Docker 路径和 `Android.nix` 原生路径都调它,只是工具链来源不同
 ## 用法
 
 ```sh
-just build-apk            # = ./docker/build.sh,产物 -> dist/slint-study-debug.apk
+just build-apk            # = ./docker/build.sh,产物 -> dist/osmosis-debug.apk
 # 或直接:
 ./docker/build.sh         # 构建 debug APK
 ./docker/build.sh image   # 只(重新)构建 builder 镜像

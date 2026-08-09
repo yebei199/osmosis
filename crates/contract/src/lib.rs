@@ -11,7 +11,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// 任何对本 crate 中类型的**不兼容**改动都必须让它加一:改字段名、删字段、
 /// 改字段语义。新增可选字段是兼容的,不必加一。
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// 2:音乐相关的路由开始要求登录态(既有路由多了一个必需的请求头,老客户端会
+/// 整片 401),`/search` 拆成 `/search/tracks`、`/search/artists`、
+/// `/search/playlists` 三条。
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// `GET /health` 的响应体。
 #[derive(
@@ -50,13 +54,53 @@ pub struct TrackDto {
     pub duration_ms: i64,
 }
 
-/// `GET /search` 的响应体。
+/// `GET /search/tracks` 的响应体。
+///
+/// 三类搜索各有一条路由、各有一个响应类型,而不是一条路由带 `?type=`:
+/// URL 与响应形状因此是**同一个决定**,不是两个必须彼此对上的决定。
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
 )]
 pub struct SearchDto {
     pub tracks: Vec<TrackDto>,
     /// 还有没有下一页。翻页由客户端持有 offset 自行推进。
+    pub has_more: bool,
+}
+
+/// 一个歌手。
+///
+/// 内嵌在 [`TrackDto`] 里的歌手只是个名字(那里 `artists` 是 `Vec<String>`) ——
+/// 那是显示用的;这里是搜索结果里的歌手**实体**,能点进去。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct ArtistDto {
+    pub id: String,
+    pub name: String,
+    /// 头像。平台没给就是 `None`,不用空串冒充。
+    pub avatar: Option<String>,
+    /// 专辑数,取自平台。
+    pub album_count: i32,
+}
+
+/// `GET /search/artists` 的响应体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct ArtistSearchDto {
+    pub artists: Vec<ArtistDto>,
+    pub has_more: bool,
+}
+
+/// `GET /search/playlists` 的响应体。
+///
+/// 不复用 [`PlaylistsDto`]:那是「我的歌单」那张合并列表,没有翻页;
+/// 搜索结果有。硬塞一个恒为 false 的字段等于让客户端解读一个没有意义的信号。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlaylistSearchDto {
+    pub playlists: Vec<PlaylistDto>,
     pub has_more: bool,
 }
 
@@ -69,6 +113,16 @@ pub struct SearchDto {
 )]
 pub struct TracksDto {
     pub tracks: Vec<TrackDto>,
+    /// 平台给不出详情、因此没能出现在 `tracks` 里的曲目有几首。
+    ///
+    /// 它们的成员关系写不进缓存(外键要求先有详情),所以只能不给 —— 但要报出
+    /// 数目,否则歌单静默变短,用户分不清「我少点了一个红心」和「平台不给这首歌
+    /// 的详情」。常态是 0。
+    ///
+    /// `serde(default)` 是必需的:服务端与客户端不同时上线,旧的那一半发出来的
+    /// 报文没有这个字段,不能因此整条解不出来。
+    #[serde(default)]
+    pub unavailable: usize,
 }
 
 /// `GET /play/{track_id}` 的响应体:一次取到的可播放源。
@@ -117,6 +171,64 @@ pub struct LyricLineDto {
 )]
 pub struct LyricDto {
     pub lines: Vec<LyricLineDto>,
+}
+
+/// `POST /register` 的请求体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct RegisterDto {
+    pub username: String,
+    pub password: String,
+    /// 部署时配置的邀请码。服务面向公网,没有它任何人都能开户。
+    pub invite: String,
+}
+
+/// `POST /login` 的请求体。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct LoginDto {
+    pub username: String,
+    pub password: String,
+}
+
+/// `POST /register` 与 `POST /login` 的响应体:一个可用的会话。
+///
+/// token 由客户端本地长期保存,之后每次请求放进 `Authorization: Bearer`。
+/// 服务端只存它的哈希,所以**这是它唯一一次出现**,丢了只能重新登录。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct SessionDto {
+    pub token: String,
+    /// 登录成功的账号名,回显给界面用,省客户端一次请求。
+    pub username: String,
+}
+
+/// `POST /played` 的请求体:报告一次起播。
+///
+/// 只说"放了什么、什么时候"(时刻由服务端记),不说"听了多久" ——
+/// 补记时长要靠客户端在退出或切歌时再发一次,而崩溃与断网时那一条就丢了。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlayedDto {
+    pub platform: String,
+    pub track_id: String,
+}
+
+/// `GET /liked/ids` 的响应体:红心的**全量标识**。
+///
+/// 与 [`TracksDto`] 是两件事:那个是一页曲目,这个是一个集合。界面每一行都要问
+/// 「这一首红心没有」,而分页的曲目回答不了这个问题。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct TrackIdsDto {
+    /// 平台内的曲目 id。目前只有网易云一个平台,故不带平台名 ——
+    /// 接第二个平台时这里要变成 `(平台, id)` 对,那是不兼容变更。
+    pub track_ids: Vec<String>,
 }
 
 /// 一台在线设备。
@@ -185,4 +297,76 @@ pub struct ErrorDto {
     pub code: String,
     /// 给人看的说明。客户端不应该拿它做分支判断。
     pub message: String,
+}
+
+/// 一个歌单的来源。客户端靠它决定哪些操作可用 —— 本地歌单可改名可删,
+/// 平台歌单只能取消收藏,「我喜欢的」两样都不行。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistSource {
+    /// 「我喜欢的」。它**就是**平台的红心列表,不是本地副本,
+    /// 所以既不能删也不能改名(见 `CONTEXT.md`)。
+    Liked,
+    /// 音乐平台上的歌单:自建的或收藏来的。真相在平台那边。
+    Platform,
+    /// 本应用自己的歌单。平台不知道它存在。
+    Local,
+}
+
+/// 一个歌单的元信息。曲目不在其中 —— 大歌单的曲目要另外分批取。
+///
+/// 两种来源的歌单归一成同一个形状(见 `docs/adr/0016`),差别只在 [`Self::source`]。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlaylistDto {
+    pub source: PlaylistSource,
+    /// 歌单标识。**只在同一个 `source` 内唯一** ——
+    /// 本地歌单的 3 与平台歌单的 3 是两个东西。
+    pub id: String,
+    pub name: String,
+    /// 封面图地址。本地歌单与「我喜欢的」目前没有封面,是 `None`。
+    pub cover: Option<String>,
+    /// 曲目总数,取自来源方而非已取到的条数。
+    pub track_count: i32,
+}
+
+/// `GET /playlists` 的响应体:两个来源合并后的一张列表,「我喜欢的」在最前。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct PlaylistsDto {
+    pub playlists: Vec<PlaylistDto>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 旧版报文里没有新加的字段,不能因此整个解不出来。
+    ///
+    /// 服务端与客户端不是同时上线的:两边都能装着旧的那一半跑一阵。
+    /// 少一个字段就整条响应失败的话,现象是「升级完 app 什么都拉不出来」,
+    /// 而错误信息只会说"服务端的答复看不懂"。
+    #[test]
+    fn a_tracks_response_without_the_new_field_still_parses()
+     {
+        // 旧服务端发出来的那份:只有 tracks
+        let dto: TracksDto =
+            serde_json::from_str(r#"{"tracks":[]}"#)
+                .expect("少一个字段不该让整条响应解不出来");
+
+        assert_eq!(
+            dto.unavailable, 0,
+            "没提这件事就是一首都没少"
+        );
+    }
 }
