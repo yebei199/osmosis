@@ -61,6 +61,29 @@ jobs:
     # 的默认值走,一个卡住的 job 要烧满六小时才有人发现。四个 job 各写一遍 ——
     # 这个键只有 job 级,没有 workflow 级的写法。
     timeout-minutes: 60
+
+    # server 的集成测试打的是真库 —— 开一个事务、断言、回滚,替身给不了这个。
+    # 镜像与账号密码跟 justfile 的 `pg` 配方逐字相同,测试里那个默认 URL
+    # 两边都连得上,所以这里不必再设一遍 DATABASE_URL。
+    #
+    # 表结构由 db::connect 里的 sqlx::migrate! 自己建,一个空库就够。
+    # 健康检查不能省:没有它,cargo 编完立刻就连,而库还在初始化,
+    # 拿到的是 PoolTimedOut —— 那句话不会告诉任何人库其实只是没起完。
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: slint
+          POSTGRES_PASSWORD: devonly
+          POSTGRES_DB: osmosis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U slint -d osmosis"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

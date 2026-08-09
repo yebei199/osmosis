@@ -28,14 +28,17 @@ ci: ci-fmt ci-test ci-cross ci-boundaries
 ci-fmt:
     cargo fmt --all --check
 
-# 桌面链路:单测 + clippy(-D warnings,和 CI 一致)
-#
 # **一条命令都不设 RUSTFLAGS**。它进 cargo 的构建指纹,而且是整棵依赖树的 ——
 # 设了它,`just ci` 与 `just desktop-dev` 各自维护一套 500 多个 crate 的产物,
 # 来回切就是来回冷编。warning 的拦截改由 clippy 的 `-- -D warnings` 承担:
 # 那是传给最终 crate 的参数,不进依赖指纹,且 clippy 本就涵盖全部 rustc lint。
+#
+# 依赖 pg:server 的集成测试打真库,容器停着这一条整片红,报的还是 PoolTimedOut。
+# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事
+#
+# 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
-ci-test:
+ci-test: pg
     nix-shell slint.nix --run 'cargo test'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
