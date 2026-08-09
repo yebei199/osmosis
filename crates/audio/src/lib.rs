@@ -1133,8 +1133,13 @@ mod tests {
             "服务端装死了,该发生过重连,实际只收到 {} 条请求",
             seen.len()
         );
+        // 比之前先压成小写。头名字本来就大小写不敏感,而线上写成什么样取决于谁在写:
+        // hyper 一律小写,开发机上的本地代理却会把它改写成 `Range:` 再转发。按大写比,
+        // 这条测试就在挂了代理的机器上过、在 CI 上挂 —— 已经这么挂过一次。
         assert!(
-            seen[1].contains("Range: bytes="),
+            seen[1]
+                .to_lowercase()
+                .contains("range: bytes="),
             "重连没带 Range,拿回来的会是整首歌的开头:\n{}",
             seen[1]
         );
