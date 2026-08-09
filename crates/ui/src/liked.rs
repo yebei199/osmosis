@@ -90,6 +90,44 @@ pub fn remark(set: &LikedSet, ui: &MainWindow) {
     }
 }
 
+/// 就地把「我喜欢的」那一行的条数加减一个数。
+///
+/// 那个数字来自 `/playlists`,而点红心不重拉它 —— 不动的话现象是心变红了、
+/// 旁边的数字还是旧的,要切出歌单分区再回来才变。
+///
+/// 数字只存在于那一行的副标题里(界面上没有别处存着它),读不回来就**不动**:
+/// 猜一个写上去比留着旧的更糟 —— 旧的下次拉 `/playlists` 会自愈,
+/// 猜的那个会一直看起来很正常。
+fn bump_liked_count(ui: &MainWindow, delta: i32) {
+    use slint::Model;
+
+    let rows = ui.get_playlists();
+    let liked = crate::playlist::Source::Liked.to_index();
+
+    for index in 0..rows.row_count() {
+        let Some(mut row) = rows.row_data(index) else {
+            continue;
+        };
+        if row.source != liked {
+            continue;
+        }
+
+        // 读不出条数就整个不动它,而不是从 0 起算
+        let Some(count) =
+            crate::playlist::track_count_of(&row.subtitle)
+        else {
+            return;
+        };
+
+        row.subtitle = crate::playlist::track_count_text(
+            (count + delta).max(0),
+        )
+        .into();
+        rows.set_row_data(index, row);
+        return;
+    }
+}
+
 /// 接上红心键。
 pub fn bind(ui: &MainWindow, set: &LikedSet) {
     // 重拉。绑定阶段那一次跑在登录之前,拿不到 token —— 登录收尾与进列表页
@@ -113,6 +151,7 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
             remark(&set, &ui);
             return;
         }
+        bump_liked_count(&ui, if liked { 1 } else { -1 });
         remark(&set, &ui);
 
         let set = set.clone();
@@ -131,6 +170,10 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
             // 失败要撤回:留着一个假的红心,下次进来就变回去了,
             // 而用户以为自己点成功了。
             set_liked(&set, &track_id, !liked);
+            bump_liked_count(
+                &ui,
+                if liked { -1 } else { 1 },
+            );
             remark(&set, &ui);
 
             // 会话失效已经把人送回登录页了,不必再在音乐页写一句
@@ -148,7 +191,47 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
 
 #[cfg(test)]
 mod tests {
+    use slint::{Model, ModelRc, VecModel};
+
     use super::*;
+    use crate::PlaylistRow;
+    use crate::playlist::Source;
+
+    /// 一个摆好歌单列表的无头窗口。
+    fn window_with(rows: Vec<PlaylistRow>) -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.set_playlists(ModelRc::new(VecModel::from(
+            rows,
+        )));
+        ui
+    }
+
+    fn playlist_row(
+        name: &str,
+        source: Source,
+        subtitle: &str,
+    ) -> PlaylistRow {
+        PlaylistRow {
+            id: name.into(),
+            name: name.into(),
+            subtitle: subtitle.into(),
+            source: source.to_index(),
+            cover: slint::Image::default(),
+        }
+    }
+
+    /// 某一行现在的副标题。
+    fn subtitle_of(
+        ui: &MainWindow,
+        index: usize,
+    ) -> String {
+        ui.get_playlists()
+            .row_data(index)
+            .expect("这一行该在")
+            .subtitle
+            .to_string()
+    }
 
     fn set_of(ids: &[&str]) -> LikedSet {
         Rc::new(RefCell::new(
@@ -164,6 +247,91 @@ mod tests {
         assert!(is_liked(&set, "1"));
         assert!(is_liked(&set, "3"));
         assert!(!is_liked(&set, "2"));
+    }
+
+    /// 点红心当场把「我喜欢的 N 首」加一。
+    ///
+    /// 那个数字来自 `/playlists`,而点红心的成功路径不重拉它 —— 现象是心变红了、
+    /// 旁边的数字还是旧的,要切出歌单分区再回来才变。
+    #[test]
+    fn liking_a_track_bumps_the_liked_count() {
+        let ui = window_with(vec![playlist_row(
+            "我喜欢的",
+            Source::Liked,
+            "976 首",
+        )]);
+
+        bump_liked_count(&ui, 1);
+
+        assert_eq!(subtitle_of(&ui, 0), "977 首");
+    }
+
+    /// 取消红心当场减一。
+    #[test]
+    fn unliking_a_track_drops_the_liked_count() {
+        let ui = window_with(vec![playlist_row(
+            "我喜欢的",
+            Source::Liked,
+            "976 首",
+        )]);
+
+        bump_liked_count(&ui, -1);
+
+        assert_eq!(subtitle_of(&ui, 0), "975 首");
+    }
+
+    /// 只动「我喜欢的」那一行。别的歌单的条数与这次点击无关,
+    /// 动了它们就是凭空改数据。
+    #[test]
+    fn other_playlists_keep_their_counts() {
+        let ui = window_with(vec![
+            playlist_row(
+                "我喜欢的",
+                Source::Liked,
+                "976 首",
+            ),
+            playlist_row(
+                "anime",
+                Source::Platform,
+                "152 首",
+            ),
+            playlist_row("rap", Source::Local, "7 首"),
+        ]);
+
+        bump_liked_count(&ui, 1);
+
+        assert_eq!(subtitle_of(&ui, 0), "977 首");
+        assert_eq!(
+            subtitle_of(&ui, 1),
+            "152 首",
+            "平台歌单的条数与这次点击无关"
+        );
+        assert_eq!(
+            subtitle_of(&ui, 2),
+            "7 首",
+            "本地歌单的条数与这次点击无关"
+        );
+    }
+
+    /// 边界:读不出条数的那一行不动它(比如「暂无曲目」)。
+    ///
+    /// 猜一个数字写上去比留着旧的更糟 —— 旧的至少下次拉 `/playlists` 会自愈,
+    /// 猜的那个会一直看起来很正常。
+    #[test]
+    fn a_row_without_a_readable_count_is_left_alone() {
+        let ui = window_with(vec![playlist_row(
+            "我喜欢的",
+            Source::Liked,
+            "暂无曲目",
+        )]);
+
+        bump_liked_count(&ui, 1);
+
+        assert_eq!(
+            subtitle_of(&ui, 0),
+            "暂无曲目",
+            "读不出条数就不动它 —— 猜一个写上去会一直看起来很正常"
+        );
     }
 
     /// 点下去立刻改本地集合 —— 等服务端来回一趟才变色的话,

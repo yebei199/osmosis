@@ -64,6 +64,17 @@ pub fn track_count_text(count: i32) -> String {
     }
 }
 
+/// 从 [`track_count_text`] 写出来的那句话里读回条数。
+///
+/// 读不出来就是 `None`。调用方据此**不动**那个数字 —— 凭空猜一个写上去,
+/// 比留着一个旧的更难发现。
+///
+/// 「暂无曲目」也读不出来,这是**有意**的:它既对应 0,也对应上游给了个负数
+/// (见 [`track_count_text`]),两者不该被读成同一个可加减的起点。
+pub fn track_count_of(text: &str) -> Option<i32> {
+    text.strip_suffix(" 首")?.parse().ok()
+}
+
 /// 「把刚才那批加进来」那行的文案。
 ///
 /// 带上条数,因为进歌单那一刻列表已经换掉了 —— 不说清是哪一批,用户点下去
@@ -547,6 +558,42 @@ mod tests {
         assert_eq!(track_count_text(0), "暂无曲目");
         // 上游给了个负数也不该露出来
         assert_eq!(track_count_text(-1), "暂无曲目");
+    }
+
+    /// 写出去的条数读得回来 —— 点红心之后要就地把这个数字加一,
+    /// 而界面上只剩这句话,没有别处存着那个数。
+    #[test]
+    fn a_track_count_survives_a_round_trip_through_its_text()
+     {
+        for count in [1, 7, 120, 976] {
+            assert_eq!(
+                track_count_of(&track_count_text(count)),
+                Some(count),
+                "{count} 首该读得回来"
+            );
+        }
+    }
+
+    /// 边界:读不出数字时返回 `None`,调用方据此不动它。
+    ///
+    /// 「暂无曲目」是其中一种 —— 它对应 0,但也对应「上游给了个负数」,
+    /// 两者不该被读成同一个可加减的起点。
+    #[test]
+    fn an_unreadable_subtitle_yields_no_count() {
+        // 「暂无曲目」既对应 0,也对应上游给的负数 —— 不是可加减的起点
+        assert_eq!(
+            track_count_of(&track_count_text(0)),
+            None
+        );
+        assert_eq!(
+            track_count_of(&track_count_text(-1)),
+            None
+        );
+        // 别处写来的文案不能被误读成条数
+        assert_eq!(track_count_of("12 张专辑"), None);
+        assert_eq!(track_count_of(""), None);
+        assert_eq!(track_count_of("首"), None);
+        assert_eq!(track_count_of("很多 首"), None);
     }
 
     /// 契约里的来源原样翻成界面编号,不在中间丢掉。
