@@ -336,3 +336,18 @@ pub struct PlaylistDto {
 pub struct PlaylistsDto {
     pub playlists: Vec<PlaylistDto>,
 }
+
+#[cfg(test)]
+mod tests {
+
+    /// 旧版报文里没有新加的字段,不能因此整个解不出来。
+    ///
+    /// 服务端与客户端不是同时上线的:两边都能装着旧的那一半跑一阵。
+    /// 少一个字段就整条响应失败的话,现象是「升级完 app 什么都拉不出来」,
+    /// 而错误信息只会说"服务端的答复看不懂"。
+    #[test]
+    #[ignore = "骨架待评审"]
+    fn a_tracks_response_without_the_new_field_still_parses()
+     {
+    }
+}

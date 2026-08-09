@@ -596,6 +596,22 @@ mod tests {
         assert_eq!(track_count_of("很多 首"), None);
     }
 
+    /// 「另有 N 首平台不再提供」要说出具体几首。
+    ///
+    /// 服务端把拿不到详情的曲目剔出成员关系(见 server 的 `cached_tracks`),
+    /// 不说一声的话用户看到的只是数目对不上,而分不清「我少点了一个红心」
+    /// 和「平台不给这首歌的详情」。
+    #[test]
+    #[ignore = "骨架待评审"]
+    fn the_note_says_how_many_are_unavailable() {}
+
+    /// 边界:一首都没少时返回空串,那一行整个不出现 ——
+    /// 与 `add_batch_text` 同一条规矩。常态就是这一条,一个恒显示的
+    /// 「另有 0 首」只会变成噪声。
+    #[test]
+    #[ignore = "骨架待评审"]
+    fn no_note_when_nothing_is_unavailable() {}
+
     /// 契约里的来源原样翻成界面编号,不在中间丢掉。
     #[test]
     fn the_contract_source_survives_the_trip() {
