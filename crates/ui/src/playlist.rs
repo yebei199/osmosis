@@ -7,7 +7,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use app_core::{PlaylistDto, PlaylistSource, TrackDto};
+use app_core::{
+    PlaylistDto, PlaylistSource, TrackDto, TracksDto,
+};
 use slint::ComponentHandle;
 
 use crate::{MainWindow, PlaylistRow};
@@ -87,6 +89,22 @@ pub fn add_batch_text(count: usize) -> String {
     }
 }
 
+/// 「另有 N 首平台不再提供」那一行的文案。
+///
+/// 与 [`add_batch_text`] 同一条规矩:0 返回空串,那一行整个不出现。常态就是 0,
+/// 一个恒显示的「另有 0 首」只会变成噪声。
+///
+/// 存在的理由是**别让歌单静默变短**:服务端把拿不到详情的曲目剔出成员关系
+/// (见 server 的 `keep_available`),不说一声的话用户只看到数目对不上,
+/// 而分不清「我少点了一个红心」和「平台不给这首歌的详情」。
+pub fn unavailable_text(count: usize) -> String {
+    if count == 0 {
+        String::new()
+    } else {
+        format!("另有 {count} 首平台不再提供")
+    }
+}
+
 /// 这个来源的歌单能不能改。
 ///
 /// 判据是**来源**不是名字:用户完全可以把一个本地歌单起名叫「我喜欢的」,
@@ -99,19 +117,13 @@ pub fn is_editable(source: Source) -> bool {
 pub async fn tracks_of(
     source: Source,
     id: &str,
-) -> Result<Vec<TrackDto>, api::ApiError> {
+) -> Result<TracksDto, api::ApiError> {
     match source {
         // 「我喜欢的」没有自己的 id —— 它是账号的属性,不是一个歌单实体
-        Source::Liked => {
-            api::liked().await.map(|dto| dto.tracks)
-        }
-        Source::Local => api::playlist_tracks(id)
-            .await
-            .map(|dto| dto.tracks),
+        Source::Liked => api::liked().await,
+        Source::Local => api::playlist_tracks(id).await,
         Source::Platform => {
-            api::platform_playlist_tracks(id)
-                .await
-                .map(|dto| dto.tracks)
+            api::platform_playlist_tracks(id).await
         }
     }
 }
@@ -602,15 +614,22 @@ mod tests {
     /// 不说一声的话用户看到的只是数目对不上,而分不清「我少点了一个红心」
     /// 和「平台不给这首歌的详情」。
     #[test]
-    #[ignore = "骨架待评审"]
-    fn the_note_says_how_many_are_unavailable() {}
+    fn the_note_says_how_many_are_unavailable() {
+        assert!(unavailable_text(1).contains('1'));
+        assert!(unavailable_text(23).contains("23"));
+    }
 
     /// 边界:一首都没少时返回空串,那一行整个不出现 ——
     /// 与 `add_batch_text` 同一条规矩。常态就是这一条,一个恒显示的
     /// 「另有 0 首」只会变成噪声。
     #[test]
-    #[ignore = "骨架待评审"]
-    fn no_note_when_nothing_is_unavailable() {}
+    fn no_note_when_nothing_is_unavailable() {
+        assert_eq!(
+            unavailable_text(0),
+            "",
+            "一首都没少时那一行整个不该出现"
+        );
+    }
 
     /// 契约里的来源原样翻成界面编号,不在中间丢掉。
     #[test]

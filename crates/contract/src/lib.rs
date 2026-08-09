@@ -113,6 +113,16 @@ pub struct PlaylistSearchDto {
 )]
 pub struct TracksDto {
     pub tracks: Vec<TrackDto>,
+    /// 平台给不出详情、因此没能出现在 `tracks` 里的曲目有几首。
+    ///
+    /// 它们的成员关系写不进缓存(外键要求先有详情),所以只能不给 —— 但要报出
+    /// 数目,否则歌单静默变短,用户分不清「我少点了一个红心」和「平台不给这首歌
+    /// 的详情」。常态是 0。
+    ///
+    /// `serde(default)` 是必需的:服务端与客户端不同时上线,旧的那一半发出来的
+    /// 报文没有这个字段,不能因此整条解不出来。
+    #[serde(default)]
+    pub unavailable: usize,
 }
 
 /// `GET /play/{track_id}` 的响应体:一次取到的可播放源。
@@ -339,6 +349,7 @@ pub struct PlaylistsDto {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     /// 旧版报文里没有新加的字段,不能因此整个解不出来。
     ///
@@ -346,8 +357,16 @@ mod tests {
     /// 少一个字段就整条响应失败的话,现象是「升级完 app 什么都拉不出来」,
     /// 而错误信息只会说"服务端的答复看不懂"。
     #[test]
-    #[ignore = "骨架待评审"]
     fn a_tracks_response_without_the_new_field_still_parses()
      {
+        // 旧服务端发出来的那份:只有 tracks
+        let dto: TracksDto =
+            serde_json::from_str(r#"{"tracks":[]}"#)
+                .expect("少一个字段不该让整条响应解不出来");
+
+        assert_eq!(
+            dto.unavailable, 0,
+            "没提这件事就是一首都没少"
+        );
     }
 }

@@ -158,6 +158,10 @@ export component MainWindow inherits Window {
     // 「把刚才那批加进来」那行的文案,已在 Rust 侧带上条数。
     // 空串 = 刚才没有可加的一批,整行不出现。
     in property <string> add-batch-text;
+    // 「另有 N 首平台不再提供」。平台给不出详情的曲目进不了这一批
+    // (成员关系要求先有详情),不说一声的话歌单就静默变短了。
+    // 空串 = 一首都没少,整行不出现;那是常态。
+    in property <string> unavailable-note;
     // 新建 / 改名的文本由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
     callback create-playlist(string);
     callback rename-playlist(string);
@@ -608,6 +612,16 @@ export component MainWindow inherits Window {
                                 height: 30px;
                                 text: root.add-batch-text;
                                 clicked => { root.add-batch(); }
+                            }
+
+                            // 平台给不出详情的那几首。摆在列表末尾:它说的是
+                            // 「上面那批之外还有」,不是一个可点的条目。
+                            if root.unavailable-note != "":
+                            unavailable-row := Text {
+                                height: 30px;
+                                text: root.unavailable-note;
+                                color: Theme.text-dim;
+                                vertical-alignment: center;
                             }
 
                             // 新建歌单。摆在列表那一层的顶上 ——

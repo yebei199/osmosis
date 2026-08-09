@@ -15,7 +15,9 @@ use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
-use app_core::{Playback, PlaybackState, TrackDto};
+use app_core::{
+    Playback, PlaybackState, TrackDto, TracksDto,
+};
 use slint::{
     ComponentHandle, Model as _, ModelRc, VecModel,
 };
@@ -591,7 +593,15 @@ fn bind_search(ui: &MainWindow, deck: &Deck) {
             let found = api::search_tracks(&keyword).await;
             let Some(ui) = weak.upgrade() else { return };
             match found {
-                Ok(dto) => show(&ui, &deck, dto.tracks),
+                // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
+                Ok(dto) => show(
+                    &ui,
+                    &deck,
+                    TracksDto {
+                        tracks: dto.tracks,
+                        unavailable: 0,
+                    },
+                ),
                 Err(error) => {
                     crate::notice::show(
                         &ui,
@@ -618,7 +628,7 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_liked(move || {
         fetch_into(&weak, &liked, async {
-            api::liked().await.map(|dto| dto.tracks)
+            api::liked().await
         });
     });
 
@@ -707,9 +717,7 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
 
         let id = id.to_string();
         fetch_into(&weak, &artist, async move {
-            api::artist_tracks(&id)
-                .await
-                .map(|dto| dto.tracks)
+            api::artist_tracks(&id).await
         });
     });
 
@@ -766,7 +774,7 @@ fn load_section(
         Section::Daily => fetch_daily(weak, deck),
         Section::Recent => {
             fetch_into(weak, deck, async {
-                api::recent().await.map(|dto| dto.tracks)
+                api::recent().await
             });
         }
         // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
@@ -794,9 +802,7 @@ fn fetch_daily(
 ) {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
-    fetch_into(weak, deck, async {
-        api::daily().await.map(|dto| dto.tracks)
-    });
+    fetch_into(weak, deck, async { api::daily().await });
 }
 
 /// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
@@ -813,7 +819,7 @@ fn fetch_into<Fut>(
     request: Fut,
 ) where
     Fut: core::future::Future<
-            Output = Result<Vec<TrackDto>, api::ApiError>,
+            Output = Result<TracksDto, api::ApiError>,
         > + 'static,
 {
     let deck = deck.clone();
@@ -840,12 +846,15 @@ fn fetch_into<Fut>(
 
 /// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
 #[cfg(not(target_arch = "wasm32"))]
-fn show(
-    ui: &MainWindow,
-    deck: &Deck,
-    found: Vec<TrackDto>,
-) {
-    *deck.tracks.borrow_mut() = found;
+fn show(ui: &MainWindow, deck: &Deck, found: TracksDto) {
+    // 平台给不出详情的那些没能进这一批。说一声,否则歌单静默变短
+    ui.set_unavailable_note(
+        crate::playlist::unavailable_text(
+            found.unavailable,
+        )
+        .into(),
+    );
+    *deck.tracks.borrow_mut() = found.tracks;
     let loading =
         loading_id(deck.playback.borrow().state())
             .map(str::to_owned);

@@ -467,6 +467,7 @@ async fn artist_tracks(
             .into_iter()
             .map(bangdream::track_to_dto)
             .collect(),
+        unavailable: 0,
     }))
 }
 
@@ -532,6 +533,7 @@ async fn daily(
             .into_iter()
             .map(bangdream::track_to_dto)
             .collect(),
+        unavailable: 0,
     }))
 }
 
@@ -609,7 +611,7 @@ async fn cached_tracks(
     playlist_id: &str,
     refs: &[cache::TrackRef],
     detail_tracks: &[TrackDto],
-) -> Result<Vec<TrackDto>, Failure> {
+) -> Result<(Vec<TrackDto>, usize), Failure> {
     let mut conn = conn(&state.pool).await?;
     let platform = netease_name();
 
@@ -624,11 +626,16 @@ async fn cached_tracks(
     let unavailable =
         fill_details(state, account, &mut conn, &missing)
             .await?;
-    let known: Vec<cache::TrackRef> = refs
-        .iter()
-        .filter(|track| !unavailable.contains(&track.id))
-        .cloned()
-        .collect();
+    // 剔掉平台给不出详情的那些,并记下剔了几条 —— 静默变短的歌单没人报得出来
+    let (known, dropped) =
+        bangdream::keep_available(refs, &unavailable);
+    if dropped > 0 {
+        tracing::warn!(
+            playlist_id,
+            dropped,
+            "平台给不出详情,这些曲目没能进成员关系"
+        );
+    }
 
     cache::set_membership(
         &mut conn,
@@ -640,9 +647,15 @@ async fn cached_tracks(
     .await
     .map_err(|err| error::map_error(&err))?;
 
-    cache::tracks_of(&mut conn, account.id, playlist_id)
-        .await
-        .map_err(|err| error::map_error(&err))
+    let tracks = cache::tracks_of(
+        &mut conn,
+        account.id,
+        playlist_id,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    Ok((tracks, dropped))
 }
 
 /// 把这些 id 里还缺的详情向平台要回来存下,返回平台**仍然给不出**的那些。
@@ -754,7 +767,7 @@ async fn liked(
 
     // 不分页:红心是一整批,不是搜索结果。973 首里只看得到 50 首的话,
     // 剩下的 923 首没有任何入口 —— 界面上没有翻页,也不该有。
-    let tracks = cached_tracks(
+    let (tracks, unavailable) = cached_tracks(
         &state,
         &account,
         cache::LIKED_PLAYLIST_ID,
@@ -763,7 +776,10 @@ async fn liked(
     )
     .await?;
 
-    Ok(Json(TracksDto { tracks }))
+    Ok(Json(TracksDto {
+        tracks,
+        unavailable,
+    }))
 }
 
 /// 找出这个账号的红心歌单在平台上的 id。
@@ -927,7 +943,7 @@ async fn platform_playlist_tracks(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    let tracks = cached_tracks(
+    let (tracks, unavailable) = cached_tracks(
         &state,
         &account,
         &id,
@@ -940,7 +956,10 @@ async fn platform_playlist_tracks(
     )
     .await?;
 
-    Ok(Json(TracksDto { tracks }))
+    Ok(Json(TracksDto {
+        tracks,
+        unavailable,
+    }))
 }
 
 /// 歌单详情里的成员关系。
@@ -1041,7 +1060,11 @@ async fn playlist_tracks(
             .await
             .map_err(|err| error::map_error(&err))?;
 
-    Ok(Json(TracksDto { tracks }))
+    // 这条路不经过缓存的剔除,没有"平台给不出详情"这回事
+    Ok(Json(TracksDto {
+        tracks,
+        unavailable: 0,
+    }))
 }
 
 /// 增删曲目的请求体。
@@ -1279,7 +1302,10 @@ async fn recent(
             .map_err(|err| error::map_error(&err))?;
 
     if refs.is_empty() {
-        return Ok(Json(TracksDto { tracks: Vec::new() }));
+        return Ok(Json(TracksDto {
+            tracks: Vec::new(),
+            unavailable: 0,
+        }));
     }
 
     // 目前只有网易云一个平台,与 playlist_tracks 同一处待办
@@ -1307,6 +1333,7 @@ async fn recent(
             .into_iter()
             .map(bangdream::track_to_dto)
             .collect(),
+        unavailable: 0,
     }))
 }
 

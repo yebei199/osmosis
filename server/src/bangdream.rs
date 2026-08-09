@@ -163,6 +163,30 @@ pub fn refs_missing_from(
         .collect()
 }
 
+/// 剔掉平台给不出详情的那些成员关系,并报出剔了几条。
+///
+/// 成员关系必须先有详情,否则外键会拒绝(见 `0004` 那条注释)。所以拿不到详情的
+/// 曲目只能不写进去 —— 但**必须报出来**:不报的话歌单会静默变短,而用户看到的
+/// 只是数目对不上,分不清「我少点了一个红心」和「平台不给这首歌的详情」。
+///
+/// 次序跟着 `refs` 走,过滤不重排。
+pub fn keep_available(
+    refs: &[TrackRef],
+    unavailable: &HashSet<String>,
+) -> (Vec<TrackRef>, usize) {
+    let known: Vec<TrackRef> = refs
+        .iter()
+        .filter(|track| !unavailable.contains(&track.id))
+        .cloned()
+        .collect();
+
+    // 用差值而不是 `unavailable.len()`:那个集合里可能有不属于这个歌单的 id,
+    // 拿它当条数会报出一个用户在这张列表上永远对不上的数字。
+    let dropped = refs.len() - known.len();
+
+    (known, dropped)
+}
+
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。
 pub fn track_to_dto(track: proto::Track) -> TrackDto {
     TrackDto {
@@ -1099,6 +1123,62 @@ mod tests {
             missing,
             vec!["2".to_owned(), "4".to_owned()],
             "只该补详情里没有的那些,且保持 refs 的次序"
+        );
+    }
+
+    /// 常态:每条成员关系都有详情,一条都不剔,报 0。
+    #[test]
+    fn nothing_is_dropped_when_every_ref_has_details() {
+        let (known, dropped) = keep_available(
+            &[track_ref("1"), track_ref("2")],
+            &HashSet::new(),
+        );
+
+        assert_eq!(known.len(), 2);
+        assert_eq!(dropped, 0, "常态就是这一条");
+    }
+
+    /// 剔掉的正是拿不到详情的那些,剩下的保持原次序。
+    #[test]
+    fn only_the_refs_without_details_are_dropped() {
+        let unavailable: HashSet<String> =
+            ["2".to_owned()].into_iter().collect();
+
+        let (known, dropped) = keep_available(
+            &[
+                track_ref("1"),
+                track_ref("2"),
+                track_ref("3"),
+            ],
+            &unavailable,
+        );
+
+        let ids: Vec<&str> =
+            known.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["1", "3"], "过滤不该重排");
+        assert_eq!(dropped, 1);
+    }
+
+    /// 报出来的条数是**这个歌单里**少的那些,不是那个集合的大小。
+    ///
+    /// 集合里可能有不属于这个歌单的 id(它是按整批 id 问出来的)。拿集合大小
+    /// 当条数,用户会在这张列表上看到一个永远对不上的数字。
+    #[test]
+    fn the_dropped_count_ignores_ids_from_other_playlists()
+    {
+        let unavailable: HashSet<String> =
+            ["2".to_owned(), "别的歌单里的".to_owned()]
+                .into_iter()
+                .collect();
+
+        let (_known, dropped) = keep_available(
+            &[track_ref("1"), track_ref("2")],
+            &unavailable,
+        );
+
+        assert_eq!(
+            dropped, 1,
+            "只该数这个歌单里真的少掉的那一条"
         );
     }
 
