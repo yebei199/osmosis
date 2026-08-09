@@ -772,7 +772,7 @@ async fn liked(
         &account,
         cache::LIKED_PLAYLIST_ID,
         &track_refs_of(&detail),
-        &[],
+        &detail_tracks_of(&detail),
     )
     .await?;
 
@@ -948,11 +948,7 @@ async fn platform_playlist_tracks(
         &account,
         &id,
         &track_refs_of(&detail),
-        // 上游此刻只回标识,不回曲目详情(见 bang-dream 的 PlaylistDetail
-        // 函数文档)。空切片意味着全部走补拉,也就是改动之前的行为。
-        // 等那侧把截断过的 tracks 一并带上来,这里换成它就有了快路径 ——
-        // 判据在 bangdream::refs_missing_from,已经有测试钉住。
-        &[],
+        &detail_tracks_of(&detail),
     )
     .await?;
 
@@ -960,6 +956,21 @@ async fn platform_playlist_tracks(
         tracks,
         unavailable,
     }))
+}
+
+/// 歌单详情随手带回来的那一批曲目详情。
+///
+/// **会被平台截断**,所以它只是省往返的顺风车,不是全量 —— 歌单有多长的判据
+/// 永远是 `track_refs`。差额由 `bangdream::refs_missing_from` 挑出来补拉。
+fn detail_tracks_of(
+    detail: &GetPlaylistResponse,
+) -> Vec<TrackDto> {
+    detail
+        .tracks
+        .iter()
+        .cloned()
+        .map(bangdream::track_to_dto)
+        .collect()
 }
 
 /// 歌单详情里的成员关系。

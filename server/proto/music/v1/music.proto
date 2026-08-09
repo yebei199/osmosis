@@ -423,6 +423,12 @@ message GetPlaylistResponse {
   reserved 2;
   reserved "track_ids";
   repeated PlaylistTrackRef track_refs = 3;
+  // tracks 是这次顺带拿到的那批完整曲目,**会被平台截断**,常常比 track_refs
+  // 短,也可能一条都没有。
+  //
+  // 它不是歌单长度的依据 —— 那永远是 track_refs。给它只为省往返:调用方补
+  // 详情要按批发请求,这一批白拿的能少发几次。
+  repeated Track tracks = 4;
 }
 
 message ListLikedTracksRequest {
