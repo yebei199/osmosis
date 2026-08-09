@@ -227,21 +227,25 @@ fn apply_seek<S: Source>(
         );
     }
 
-    let missed = {
-        let why = outcome
-            .as_ref()
-            .err()
-            .map(|err| crate::full_cause(err));
-        // send 失败 = 接收端已经丢了 = 调用方超时走了
-        match (verdict.send(outcome), why) {
-            (Err(_), Some(why)) => Some(why),
-            _ => None,
-        }
-    };
+    let why = outcome
+        .as_ref()
+        .err()
+        .map(|err| crate::full_cause(err));
 
-    match missed {
-        Some(why) => state.fail(why),
-        None => state.finish(),
+    // 先落状态,再把裁决交出去。反过来的话,调用方一拿到答复就会去问
+    // `is_seeking`,而那时这条线程还没走到下面 —— 谁先跑到纯看调度,
+    // 开发机上从没输过,两核的 CI runner 上输了。
+    state.finish();
+
+    // send 失败 = 接收端已经丢了 = 调用方超时走了,它那句失败没人听见,
+    // 于是留在状态上等界面来取。送进去了就不再说第二遍(见上面的注释)。
+    //
+    // 这中间有一小段状态是 Idle 而非 Failed。界面一秒问一次,撞进这几微秒
+    // 只是晚一秒看到那句话,而失败本身留在状态上,不会丢。
+    if verdict.send(outcome).is_err()
+        && let Some(why) = why
+    {
+        state.fail(why);
     }
 
     fresh
