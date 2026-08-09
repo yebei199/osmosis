@@ -45,9 +45,11 @@ pub async fn set_playlist(
         // 平台名此时没有意义:没有行要插进去。
         None => "",
     };
-    let ids: Vec<String> = tracks
+    // 这条路上没有加入时间:调用方只给了曲目详情,而加入时刻是**成员关系**的
+    // 属性,详情里没有它。这些行按 NULLS LAST 退回 position 次序。
+    let refs: Vec<TrackRef> = tracks
         .iter()
-        .map(|track| track.id.clone())
+        .map(|track| TrackRef::new(&track.id, None))
         .collect();
 
     set_membership(
@@ -55,9 +57,31 @@ pub async fn set_playlist(
         account_id,
         playlist_id,
         platform,
-        &ids,
+        &refs,
     )
     .await
+}
+
+/// 歌单里的一条成员关系:哪首歌,什么时候被加进来的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackRef {
+    pub id: String,
+    /// 加入这个歌单的时刻,平台给的毫秒时间戳。
+    ///
+    /// `None` 表示平台没给。那样它排在有时间的之后,彼此仍按 `position` 稳定 ——
+    /// 不编一个时间出来:错的顺序不会有任何人报错。
+    pub added_at_ms: Option<i64>,
+}
+
+impl TrackRef {
+    pub fn new(id: &str, added_at_ms: Option<i64>) -> Self {
+        Self {
+            id: id.to_owned(),
+            // 平台用 0 表示「没有」,这一层把它归一成 None ——
+            // 0 会被 to_timestamp 翻成 1970,那是个会参与排序的真实时刻
+            added_at_ms: added_at_ms.filter(|ms| *ms != 0),
+        }
+    }
 }
 
 /// 写一个歌单的成员关系与次序,替换原先那份。
@@ -73,7 +97,7 @@ pub async fn set_membership(
     account_id: i64,
     playlist_id: &str,
     platform: &str,
-    ids: &[String],
+    refs: &[TrackRef],
 ) -> Result<(), AppError> {
     sqlx::query(
         "DELETE FROM platform_playlist_tracks
@@ -85,22 +109,31 @@ pub async fn set_membership(
     .await?;
 
     for (offset, chunk) in
-        ids.chunks(ROWS_PER_STATEMENT).enumerate()
+        refs.chunks(ROWS_PER_STATEMENT).enumerate()
     {
         let base = (offset * ROWS_PER_STATEMENT) as i64;
 
         let mut query = QueryBuilder::new(
             "INSERT INTO platform_playlist_tracks
-             (account_id, playlist_id, platform, track_id, position) ",
+             (account_id, playlist_id, platform, track_id, position, added_at) ",
         );
         query.push_values(
             chunk.iter().enumerate(),
-            |mut row, (i, id)| {
+            |mut row, (i, track)| {
                 row.push_bind(account_id)
                     .push_bind(playlist_id)
                     .push_bind(platform)
-                    .push_bind(id)
+                    .push_bind(&track.id)
                     .push_bind(base + i as i64);
+                // 毫秒转 TIMESTAMPTZ 交给库:这个 crate 的 sqlx 没开时间
+                // feature,为一个排序键开它不值得。NULL 一路传到底。
+                row.push("to_timestamp(");
+                row.push_bind_unseparated(
+                    track.added_at_ms,
+                )
+                .push_unseparated(
+                    "::double precision / 1000)",
+                );
             },
         );
         // 同一首歌在一个歌单里出现两次是平台的事,不该让整次刷新失败
@@ -179,7 +212,11 @@ pub async fn details_of(
     Ok(rows.into_iter().map(TrackRow::into_dto).collect())
 }
 
-/// 读回一个歌单的曲目,按平台给的次序。
+/// 读回一个歌单的曲目,最近加入的在最前。
+///
+/// 次序由后端定,不是平台数组的原序(见 `docs/adr/0021`)。`position` 退居
+/// 第二排序键:它兜住加入时间相同、以及平台压根没给时间的那些行,让顺序在
+/// 两次读之间稳定 —— 否则同一个歌单每次进去的排法都可能不一样。
 ///
 /// 没缓存过就是空列表,不是错误 —— 冷启动走的正是这条路。
 pub async fn tracks_of(
@@ -194,7 +231,7 @@ pub async fn tracks_of(
          JOIN platform_tracks d
            ON d.platform = m.platform AND d.track_id = m.track_id
          WHERE m.account_id = $1 AND m.playlist_id = $2
-         ORDER BY m.position",
+         ORDER BY m.added_at DESC NULLS LAST, m.position",
     )
     .bind(account_id)
     .bind(playlist_id)

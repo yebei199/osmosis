@@ -38,11 +38,11 @@ use server::bangdream::{
         GetAccountStatusRequest, GetArtistRequest,
         GetDailyRecommendationsRequest, GetLyricRequest,
         GetPlaySourceRequest, GetPlaylistRequest,
-        GetTracksRequest, ListLikedTracksRequest,
-        ListUserPlaylistsRequest, Platform, QualityLevel,
-        SearchArtistsRequest, SearchPlaylistsRequest,
-        SearchTracksRequest, SetPlaylistSubscribedRequest,
-        SetTrackLikedRequest,
+        GetPlaylistResponse, GetTracksRequest,
+        ListLikedTracksRequest, ListUserPlaylistsRequest,
+        Platform, QualityLevel, SearchArtistsRequest,
+        SearchPlaylistsRequest, SearchTracksRequest,
+        SetPlaylistSubscribedRequest, SetTrackLikedRequest,
         auth_service_client::AuthServiceClient,
         catalog_service_client::CatalogServiceClient,
         discover_service_client::DiscoverServiceClient,
@@ -497,6 +497,7 @@ async fn search_playlists(
         .into_inner();
 
     Ok(Json(PlaylistSearchDto {
+        // 搜索结果里不会有红心歌单(那是账号自己的),照直翻就行
         playlists: response
             .playlists
             .into_iter()
@@ -606,17 +607,26 @@ async fn cached_tracks(
     state: &AppState,
     account: &Account,
     playlist_id: &str,
-    ids: &[String],
+    refs: &[cache::TrackRef],
+    detail_tracks: &[TrackDto],
 ) -> Result<Vec<TrackDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
     let platform = netease_name();
 
+    // 歌单详情随手带回来的那一批先入库,它们不必再问平台要一遍。
+    // 平台把这一批截断时,只有差额才走补拉。
+    cache::put_details(&mut conn, detail_tracks)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+    let missing =
+        bangdream::refs_missing_from(detail_tracks, refs);
+
     let unavailable =
-        fill_details(state, account, &mut conn, ids)
+        fill_details(state, account, &mut conn, &missing)
             .await?;
-    let known: Vec<String> = ids
+    let known: Vec<cache::TrackRef> = refs
         .iter()
-        .filter(|id| !unavailable.contains(*id))
+        .filter(|track| !unavailable.contains(&track.id))
         .cloned()
         .collect();
 
@@ -721,12 +731,21 @@ async fn liked(
         )));
     }
 
-    let liked = library
-        .list_liked_tracks(bangdream::as_user(
+    // 走红心**歌单**而不是 /liked/ids 那条路:红心接口返回的是裸数字数组,
+    // 结构上挂不住加入时间,而次序要按加入时间倒排(见 `docs/adr/0021`)。
+    let liked_id = liked_playlist_id(
+        &mut library,
+        &account,
+        &netease_account.user_id,
+    )
+    .await?;
+
+    let detail = library
+        .get_playlist(bangdream::as_user(
             &account,
-            ListLikedTracksRequest {
+            GetPlaylistRequest {
                 platform: Platform::Netease as i32,
-                user_id: netease_account.user_id,
+                playlist_id: liked_id,
             },
         ))
         .await
@@ -739,11 +758,45 @@ async fn liked(
         &state,
         &account,
         cache::LIKED_PLAYLIST_ID,
-        &liked.track_ids,
+        &track_refs_of(&detail),
+        &[],
     )
     .await?;
 
     Ok(Json(TracksDto { tracks }))
+}
+
+/// 找出这个账号的红心歌单在平台上的 id。
+///
+/// 平台把红心也算作一个用户歌单,靠 `special_type` 认;上游只搬运这个值,
+/// 判定归这边(见 `docs/adr/0022`)。找不到是**错误**而不是空列表 ——
+/// 每个账号都有这个歌单,找不到说明上游给的列表不完整,那时回空会被读成
+/// 「一首喜欢的都没有」。
+async fn liked_playlist_id(
+    library: &mut LibraryServiceClient<Channel>,
+    account: &Account,
+    netease_user_id: &str,
+) -> Result<String, Failure> {
+    let lists = library
+        .list_user_playlists(bangdream::as_user(
+            account,
+            ListUserPlaylistsRequest {
+                platform: Platform::Netease as i32,
+                user_id: netease_user_id.to_owned(),
+                limit: 0,
+                offset: 0,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner();
+
+    bangdream::liked_playlist_id(&lists.playlists)
+        .ok_or_else(|| {
+            fail(&tonic::Status::not_found(
+                "netease: 歌单列表里没有红心歌单",
+            ))
+        })
 }
 
 /// `GET /playlists` —— 两个来源合成的一张歌单列表。
@@ -817,12 +870,7 @@ async fn platform_playlists(
         ))
         .await
     {
-        Ok(response) => response
-            .into_inner()
-            .playlists
-            .into_iter()
-            .map(bangdream::playlist_to_dto)
-            .collect(),
+        Ok(response) => response.into_inner().playlists,
         Err(status) => {
             tracing::warn!(%status, "取平台歌单失败,只给本地那半");
             Vec::new()
@@ -851,7 +899,10 @@ async fn platform_playlists(
         }
     };
 
-    (lists, liked_count)
+    (
+        bangdream::platform_playlists_to_dto(lists),
+        liked_count,
+    )
 }
 
 /// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
@@ -876,18 +927,36 @@ async fn platform_playlist_tracks(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    // 只取标识。加入时间(`added_at_ms`)在这条路径上还没人读 —— 见 #50,
-    // 那一版会把它一路带到 `position` 的排序里。
-    let ids: Vec<String> = detail
-        .track_refs
-        .iter()
-        .map(|track| track.id.clone())
-        .collect();
-
-    let tracks =
-        cached_tracks(&state, &account, &id, &ids).await?;
+    let tracks = cached_tracks(
+        &state,
+        &account,
+        &id,
+        &track_refs_of(&detail),
+        // 上游此刻只回标识,不回曲目详情(见 bang-dream 的 PlaylistDetail
+        // 函数文档)。空切片意味着全部走补拉,也就是改动之前的行为。
+        // 等那侧把截断过的 tracks 一并带上来,这里换成它就有了快路径 ——
+        // 判据在 bangdream::refs_missing_from,已经有测试钉住。
+        &[],
+    )
+    .await?;
 
     Ok(Json(TracksDto { tracks }))
+}
+
+/// 歌单详情里的成员关系。
+fn track_refs_of(
+    detail: &GetPlaylistResponse,
+) -> Vec<cache::TrackRef> {
+    detail
+        .track_refs
+        .iter()
+        .map(|track| {
+            cache::TrackRef::new(
+                &track.id,
+                Some(track.added_at_ms),
+            )
+        })
+        .collect()
 }
 
 /// `POST /playlists` 的请求体。

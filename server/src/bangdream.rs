@@ -6,12 +6,15 @@
 //! 翻译刻意**裁剪**:上游的 `Track` 有音质规格、付费等级等等,这里只留客户端
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
+use std::collections::HashSet;
+
 use contract::{
     ArtistDto, LyricDto, LyricLineDto, PlaySourceDto,
     PlaylistDto, PlaylistSource, TrackDto,
 };
 
 use crate::account::Account;
+use crate::cache::TrackRef;
 
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {
@@ -94,6 +97,70 @@ pub fn playlist_to_dto(
         cover: non_empty(list.cover),
         track_count: list.track_count,
     }
+}
+
+/// 网易云给红心歌单打的标记。
+///
+/// 别的特殊类型(年度歌单是 20)都是真歌单,所以判的是这一个值,不是「非零」。
+///
+/// 这个魔数是网易云的私有枚举,本该住在 bang-dream 里 —— `docs/adr/0022` 把它
+/// 换到了这边,理由与代价都记在那篇。接第二个平台时这里会长出平台分支。
+const LIKED_SPECIAL_TYPE: i32 = 5;
+
+/// 把上游的歌单列表翻成平台那半张,顺带把红心歌单摘出去。
+///
+/// 摘它是因为「我喜欢的」在客户端是**另一个来源**([`PlaylistSource::Liked`]),
+/// 由 [`crate::playlist::merged`] 单独置顶。不摘的话列表里会并排站着两个
+/// 「我喜欢的」,而它们连 id 都不一样 —— 去重的活没人干得对。
+pub fn platform_playlists_to_dto(
+    lists: Vec<proto::Playlist>,
+) -> Vec<PlaylistDto> {
+    lists
+        .into_iter()
+        .filter(|list| {
+            list.special_type != LIKED_SPECIAL_TYPE
+        })
+        .map(playlist_to_dto)
+        .collect()
+}
+
+/// 从歌单列表里认出红心歌单的 id。
+///
+/// 与 [`platform_playlists_to_dto`] 是同一个判据的两面:那边把它摘出去,
+/// 这边把它挑出来。判据只写一处([`LIKED_SPECIAL_TYPE`]),两边错开的话
+/// 现象是红心既不在平台列表里、也取不到详情。
+pub fn liked_playlist_id(
+    lists: &[proto::Playlist],
+) -> Option<String> {
+    lists
+        .iter()
+        .find(|list| {
+            list.special_type == LIKED_SPECIAL_TYPE
+        })
+        .map(|list| list.id.clone())
+}
+
+/// 上游的歌单详情少给了哪些曲目的详情。
+///
+/// 歌单详情一次会带回一批完整曲目,但那一批**会被平台截断**,而标识列表是全量的。
+/// 够全时一次补拉都不必发;截断了就只补差额 —— 不是整份重取。
+///
+/// 返回的次序跟着 `refs` 走,便于调用方按批切片。
+pub fn refs_missing_from(
+    detail_tracks: &[TrackDto],
+    refs: &[TrackRef],
+) -> Vec<String> {
+    let present: HashSet<&str> = detail_tracks
+        .iter()
+        .map(|track| track.id.as_str())
+        .collect();
+
+    refs.iter()
+        .filter(|track| {
+            !present.contains(track.id.as_str())
+        })
+        .map(|track| track.id.clone())
+        .collect()
 }
 
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。
@@ -921,5 +988,131 @@ mod tests {
         assert_eq!(dto.track_count, 120);
         // 封面缺席时是 None
         assert_eq!(dto.cover, None);
+    }
+
+    /// 红心歌单不进平台那半张列表。
+    ///
+    /// bang-dream 从此原样透传它(见 `docs/adr/0022`),排除的责任转移到了这边。
+    /// 漏掉这一步的现象是界面上并排站着两个「我喜欢的」,而它们连 id 都不一样。
+    #[test]
+    fn the_liked_playlist_is_dropped_from_the_platform_half()
+     {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "403421443".to_owned(),
+                name: "青城叶北喜欢的音乐".to_owned(),
+                special_type: 5,
+                ..Default::default()
+            },
+            proto::Playlist {
+                id: "17627306389".to_owned(),
+                name: "favorite_1".to_owned(),
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(
+            got.len(),
+            1,
+            "红心歌单不该进平台那半张"
+        );
+        assert_eq!(got[0].id, "17627306389");
+    }
+
+    /// 别的特殊类型一个都不能误伤:年度歌单(`special_type` 20)是真歌单。
+    /// 按「非零就排除」写会把它一起吃掉 —— 这个坑上游踩过一次。
+    #[test]
+    fn other_special_types_stay_in_the_platform_half() {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "13053579003".to_owned(),
+                name: "青城叶北的2024年度歌单".to_owned(),
+                special_type: 20,
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(got.len(), 1, "年度歌单是真歌单");
+    }
+
+    /// 边界:`special_type` 缺席落到 0,那是普通歌单,要留下。
+    #[test]
+    fn a_playlist_without_a_special_type_is_ordinary() {
+        let got = platform_playlists_to_dto(vec![
+            proto::Playlist {
+                id: "812552458".to_owned(),
+                name: "anime".to_owned(),
+                ..Default::default()
+            },
+        ]);
+
+        assert_eq!(got.len(), 1);
+    }
+
+    fn dto(id: &str) -> TrackDto {
+        TrackDto {
+            platform: "netease".to_owned(),
+            id: id.to_owned(),
+            title: id.to_owned(),
+            alias: None,
+            artists: Vec::new(),
+            cover: None,
+            duration_ms: 1,
+        }
+    }
+
+    fn track_ref(id: &str) -> TrackRef {
+        TrackRef::new(id, None)
+    }
+
+    /// 快路径:歌单详情一次把每首的详情都给全了,一次补拉都不必发。
+    #[test]
+    fn nothing_is_backfilled_when_detail_covers_every_ref()
+    {
+        let missing = refs_missing_from(
+            &[dto("1"), dto("2")],
+            &[track_ref("1"), track_ref("2")],
+        );
+
+        assert!(
+            missing.is_empty(),
+            "详情够全时不该有任何补拉,实际 {missing:?}"
+        );
+    }
+
+    /// 平台把 `tracks` 截断时,只对差额补拉 —— 不是整份重取。
+    ///
+    /// 这正是不敢直接吃 `tracks` 的理由:`trackIds` 是全量的,`tracks` 不是。
+    #[test]
+    fn only_the_refs_missing_from_detail_are_backfilled() {
+        let missing = refs_missing_from(
+            &[dto("1"), dto("3")],
+            &[
+                track_ref("1"),
+                track_ref("2"),
+                track_ref("3"),
+                track_ref("4"),
+            ],
+        );
+
+        assert_eq!(
+            missing,
+            vec!["2".to_owned(), "4".to_owned()],
+            "只该补详情里没有的那些,且保持 refs 的次序"
+        );
+    }
+
+    /// 边界:平台一条 `tracks` 都没给(整份被截断),那就全部补拉。
+    #[test]
+    fn an_empty_detail_backfills_every_ref() {
+        let missing = refs_missing_from(
+            &[],
+            &[track_ref("1"), track_ref("2")],
+        );
+
+        assert_eq!(
+            missing,
+            vec!["1".to_owned(), "2".to_owned()]
+        );
     }
 }
