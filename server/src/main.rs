@@ -876,13 +876,16 @@ async fn platform_playlist_tracks(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    let tracks = cached_tracks(
-        &state,
-        &account,
-        &id,
-        &detail.track_ids,
-    )
-    .await?;
+    // 只取标识。加入时间(`added_at_ms`)在这条路径上还没人读 —— 见 #50,
+    // 那一版会把它一路带到 `position` 的排序里。
+    let ids: Vec<String> = detail
+        .track_refs
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+
+    let tracks =
+        cached_tracks(&state, &account, &id, &ids).await?;
 
     Ok(Json(TracksDto { tracks }))
 }

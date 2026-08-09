@@ -107,6 +107,20 @@ message Playlist {
   int32 track_count = 6;
   string owner = 7;
   string owner_id = 8;
+  // special_type 平台给歌单打的标记,原值搬运,这一层不解释它的含义。
+  // 网易云用 5 表示红心歌单、20 表示年度歌单;认哪个是哪个由调用方决定。
+  // 平台没给就是 0。见 osmosis 的 docs/adr/0022。
+  int32 special_type = 9;
+}
+
+// PlaylistTrackRef 歌单里的一条成员关系:哪首歌,什么时候被加进来的。
+message PlaylistTrackRef {
+  string id = 1;
+  // added_at_ms 这首歌被加进这个歌单的毫秒时间戳,平台给的。
+  //
+  // 它属于**歌单的经营者**,不属于看歌单的人 —— 订阅别人的歌单时,这是原作者
+  // 往里加曲目的时刻。平台没给就是 0。
+  int64 added_at_ms = 2;
 }
 
 message LyricWord {
@@ -404,7 +418,11 @@ message GetPlaylistRequest {
 
 message GetPlaylistResponse {
   Playlist playlist = 1;
-  repeated string track_ids = 2;
+  // 2 曾是 `repeated string track_ids`,由带加入时间的 track_refs 取代。
+  // 号不复用:两边灰度期间旧客户端解出来的会是一串乱码而不是报错。
+  reserved 2;
+  reserved "track_ids";
+  repeated PlaylistTrackRef track_refs = 3;
 }
 
 message ListLikedTracksRequest {
