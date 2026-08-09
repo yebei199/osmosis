@@ -27,6 +27,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 格式。单独一个 job,而且排在最前面:cargo fmt 不编译任何东西,不要 native 依赖、
+  # 也不要缓存,整轮二十来秒就有结论。挂到别的 job 后面的话,少一个空格也得等那边
+  # 把依赖树编完才说得出来。
+  #
+  # rustfmt 要点名。dtolnay/rust-toolchain 装的是 minimal profile,里面没有它 ——
+  # 下面 clippy job 要 `components: clippy` 是同一个道理。
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
   # test 与 clippy 是**两个** job,不是一个 job 里的四条命令。clippy 用的是另一个
   # rustc driver,产物与 cargo test 不共享指纹,串起来等于把整棵依赖树编两遍并把两次
   # 时间相加(实测 22m36s + 8m40s)。拆开之后墙钟取两者的较大值。上游 Slint 也是这么

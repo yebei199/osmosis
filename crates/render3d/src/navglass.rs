@@ -194,6 +194,10 @@ impl NavGlassPass {
         let half = [w as f32 * 0.42, p.slot_h * 0.42];
         let radius = half[0].min(half[1]) * 0.6;
         let smooth_k = (p.slot_h * 0.9).max(1.0);
+        // 一行一个 uniform,与 shader 里 UBO 的字段逐行对照 —— 那边是 vec2,
+        // 这边就并排两个标量。rustfmt 会把它摊成一行一个数,对照关系随之消失,
+        // 所以在这里按住它。全仓唯一一处。
+        #[rustfmt::skip]
         let vals: [f32; 12] = [
             w as f32, h as f32, // tex_size
             cx, p.lead_y, // lead
