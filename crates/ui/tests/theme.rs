@@ -214,13 +214,11 @@ fn immersive_text_does_not_follow_the_theme() {
 #[test]
 #[ignore = "text-faint 的判据未定,见文档注释"]
 fn the_faintest_text_is_legible() {
-    let pairs = [
-        Pair {
-            what: "最弱字 / 音乐页底",
-            fg: |t| t.get_text_faint(),
-            bg: |t| t.get_base(),
-        },
-    ];
+    let pairs = [Pair {
+        what: "最弱字 / 音乐页底",
+        fg: |t| t.get_text_faint(),
+        bg: |t| t.get_base(),
+    }];
 
     let bad = failures(&window(), &pairs);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
