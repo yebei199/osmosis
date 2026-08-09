@@ -18,6 +18,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# 一个 ref 上只留最新那一轮。往 PR 上连推两次时,先跑的那轮验证的是一个已经被
+# 覆盖掉的 head —— 让它跑完只是占着二十来分钟的机器时间和别人的排队位置。
+# `pull_request` 的 github.ref 是 refs/pull/<n>/merge,每个 PR 各一个,
+# 两个 PR 不会互相取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # test 与 clippy 是**两个** job,不是一个 job 里的四条命令。clippy 用的是另一个
   # rustc driver,产物与 cargo test 不共享指纹,串起来等于把整棵依赖树编两遍并把两次
@@ -31,6 +39,11 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    # 兜卡死用的,不是时间预算。观测到的最长一轮是 36m57s,那还是 test 与 clippy
+    # 合在一个 job、依赖按 -O3 编的旧配置;60 分钟离它足够远。不设的话按 Actions
+    # 的默认值走,一个卡住的 job 要烧满六小时才有人发现。四个 job 各写一遍 ——
+    # 这个键只有 job 级,没有 workflow 级的写法。
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -56,6 +69,7 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -81,6 +95,7 @@ jobs:
   cross-check:
     name: check ${{ matrix.target }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -125,6 +140,7 @@ jobs:
   boundaries:
     name: 架构边界
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
