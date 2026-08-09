@@ -92,6 +92,15 @@ pub fn remark(set: &LikedSet, ui: &MainWindow) {
 
 /// 接上红心键。
 pub fn bind(ui: &MainWindow, set: &LikedSet) {
+    // 重拉。绑定阶段那一次跑在登录之前,拿不到 token —— 登录收尾与进列表页
+    // 各喊一次这个回调,把集合补上(见 app.slint 的 refresh-liked)。
+    let reloading = set.clone();
+    let weak = ui.as_weak();
+    ui.on_refresh_liked(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        refresh(&reloading, &ui);
+    });
+
     let set = set.clone();
     let weak = ui.as_weak();
 

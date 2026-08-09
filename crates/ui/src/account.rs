@@ -98,13 +98,27 @@ where
         if let Some(ui) = weak.upgrade() {
             ui.set_login_busy(false);
             match result {
-                Ok(()) => ui.set_logged_in(true),
+                Ok(()) => on_login_succeeded(&ui),
                 Err(err) => ui.set_login_error(
                     login_failure_text(&err).into(),
                 ),
             }
         }
     });
+}
+
+/// 登录成功的收尾。
+///
+/// 两件事:置上登录态,以及**补拉一次红心集合**。后者不是顺手做的 ——
+/// 拉那个集合的唯一一次请求跑在绑定阶段,也就是登录之前(`build_ui` 先
+/// `session::restore` 再绑界面)。本次会话内才首次登录的人,那一次不带
+/// token,失败后按 `liked::refresh` 的规矩静默降级成空集合,屏幕上的现象是
+/// **整页所有歌**的心都是空的,看起来像红心全没了。
+///
+/// 恢复出来的会话不走这里:那条路上的请求本来就带得上 token。
+fn on_login_succeeded(ui: &MainWindow) {
+    ui.set_logged_in(true);
+    ui.invoke_refresh_liked();
 }
 
 /// 这次失败是不是「登录态没了」。
@@ -148,6 +162,9 @@ pub fn handle_session_expiry(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use super::*;
 
     fn server(code: &str) -> api::ApiError {
@@ -275,6 +292,74 @@ mod tests {
         assert!(
             ui.get_logged_in(),
             "网络抖动不该把人踢下线"
+        );
+    }
+
+    /// 一个把 `refresh-liked` 的调用次数记下来的窗口。
+    fn window_counting_refreshes()
+    -> (MainWindow, Rc<Cell<usize>>) {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        let count = Rc::new(Cell::new(0));
+        let seen = count.clone();
+        ui.on_refresh_liked(move || {
+            seen.set(seen.get() + 1);
+        });
+
+        (ui, count)
+    }
+
+    /// 登录成功要补拉一次红心集合。
+    ///
+    /// 决定每行心红还是空的那个集合,整个进程只拉一次,而那一次跑在登录
+    /// **之前**(`build_ui` 先 `session::restore` 再绑界面,`music::bind`
+    /// 里那次 refresh 因此不带 token)。本次会话内首次登录的用户,那一次
+    /// 必然失败,而失败是静默降级成空集合的 —— 屏幕上的现象是**整页所有
+    /// 歌**的心都是空的,看起来像红心全没了。
+    #[test]
+    fn logging_in_refreshes_the_liked_set() {
+        let (ui, refreshes) = window_counting_refreshes();
+
+        on_login_succeeded(&ui);
+
+        assert_eq!(
+            refreshes.get(),
+            1,
+            "登录成功该补拉一次红心集合,否则整页的心都是空的"
+        );
+    }
+
+    /// 补拉不能顶掉登录本来的职责:登录态照样要置上。
+    ///
+    /// 两件事挤在同一个收尾里,加一件容易漏掉另一件,而漏了的现象是
+    /// 登录成功却停在登录页。
+    #[test]
+    fn logging_in_still_marks_the_session_as_logged_in() {
+        let (ui, _refreshes) = window_counting_refreshes();
+        assert!(!ui.get_logged_in(), "开局该是没登录");
+
+        on_login_succeeded(&ui);
+
+        assert!(ui.get_logged_in(), "登录态该置上");
+    }
+
+    /// 边界:恢复出来的会话不走登录收尾,因此不该触发补拉。
+    ///
+    /// 那条路上的 refresh 本来就带得上 token(`build_ui` 先 `restore`
+    /// 再绑),再补一次是白发一个请求。
+    #[test]
+    fn restoring_a_session_does_not_go_through_the_login_path()
+     {
+        let (ui, refreshes) = window_counting_refreshes();
+
+        // 恢复会话走的是 bind 里那句 set_logged_in,不经过登录收尾
+        ui.set_logged_in(true);
+
+        assert_eq!(
+            refreshes.get(),
+            0,
+            "恢复会话那条路本来就带得上 token,不必再补一次"
         );
     }
 }

@@ -196,6 +196,12 @@ export component MainWindow inherits Window {
 
     // 点某一行的红心。参数是曲目 id 与点完之后的状态。
     callback toggle-liked(string, bool);
+    // 重拉红心的全量标识。
+    //
+    // 存在的理由是**时机**:那个集合决定每行心红还是空,而拉它的那次请求跑在
+    // 绑定阶段,也就是登录之前。本次会话内才首次登录的人,那一次不带 token,
+    // 失败后静默降级成空集合 —— 整页的心都是空的。登录收尾与进列表页各喊一次它。
+    callback refresh-liked();
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。

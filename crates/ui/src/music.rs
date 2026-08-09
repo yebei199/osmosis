@@ -643,6 +643,10 @@ fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.on_open_playlist(move |id, source| {
         let Some(ui) = weak.upgrade() else { return };
+        // 顺手把红心集合重拉一次:在手机官方 App 里改过的红心,这边只有
+        // 重启才跟得上 —— 那个集合原本整个进程只拉一次。接口很轻(一次
+        // 全量 id),而每次进歌单都要用它决定每行的心画哪一态。
+        ui.invoke_refresh_liked();
         // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了。
         // 两张列表都找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里。
         let name = playlist_name(&ui, &id, source);
