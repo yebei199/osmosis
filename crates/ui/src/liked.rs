@@ -98,6 +98,7 @@ pub fn remark(set: &LikedSet, ui: &MainWindow) {
 /// 数字只存在于那一行的副标题里(界面上没有别处存着它),读不回来就**不动**:
 /// 猜一个写上去比留着旧的更糟 —— 旧的下次拉 `/playlists` 会自愈,
 /// 猜的那个会一直看起来很正常。
+#[cfg(not(target_arch = "wasm32"))]
 fn bump_liked_count(ui: &MainWindow, delta: i32) {
     use slint::Model;
 
@@ -127,6 +128,14 @@ fn bump_liked_count(ui: &MainWindow, delta: i32) {
         return;
     }
 }
+
+/// wasm 上没有那一行可动。`playlist` 整个模块在门外(见 lib.rs),歌单列表
+/// 因此从没被填过 —— 上面那个循环在 web 上本来也一条都匹配不到,空壳与它等价。
+///
+/// 留空壳而不是把调用点也用 cfg 圈起来:红心那条路各端共用一份代码,
+/// 分叉一次就得在每个改动里维护两份。
+#[cfg(target_arch = "wasm32")]
+fn bump_liked_count(_ui: &MainWindow, _delta: i32) {}
 
 /// 接上红心键。
 pub fn bind(ui: &MainWindow, set: &LikedSet) {
