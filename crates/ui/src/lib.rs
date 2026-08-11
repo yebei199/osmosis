@@ -51,6 +51,7 @@ mod notice;
 mod media;
 mod music;
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
+mod aurora;
 mod profile;
 mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。

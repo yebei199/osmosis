@@ -1156,6 +1156,8 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
     // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
     // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
     deck.cover.clear();
+    // 极光的封面色同理:旧色配新歌比主题绿更误导(aurora.rs)。
+    crate::aurora::reset(ui);
     // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
     deck.media.clear_art();
 
@@ -1182,9 +1184,10 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     return;
                 }
                 ui.set_cover_art(img);
-                // 一张图三个去处:界面的封面卡、点云、系统媒体控件。
-                // `Arc` 免掉后两者各拷一份兆级字节。
+                // 一张图四个去处:封面卡、点云、媒体控件,以及极光的三团光斑。
+                // `Arc` 免掉后面几个各拷一份兆级字节。
                 let pixels = Arc::new(pixels);
+                crate::aurora::feed(&ui, &pixels);
                 cover.replace(pixels.clone());
                 media.set_art(pixels);
                 crate::media::push(&ui, &playback, &media);

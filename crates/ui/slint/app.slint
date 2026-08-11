@@ -352,6 +352,11 @@ export component MainWindow inherits Window {
     callback system-scheme-changed();
     // 退出登录:清会话是 Rust 的活(account.rs),这里只喊。
     callback logout();
+    // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
+    in property <bool> aurora-cover-active: false;
+    in property <color> aurora-cover-warm;
+    in property <color> aurora-cover-deep;
+    in property <color> aurora-cover-soft;
     // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
     callback profile-shown();
     // 个人主页的数据,全部由 profile.rs 格式化后推送。
@@ -452,6 +457,11 @@ export component MainWindow inherits Window {
                 AuroraBackground {
                     width: 100%;
                     height: 100%;
+                    // §4:封面取色喂极光。颜色由 aurora.rs 取好推进来。
+                    cover-active: root.aurora-cover-active;
+                    cover-warm: root.aurora-cover-warm;
+                    cover-deep: root.aurora-cover-deep;
+                    cover-soft: root.aurora-cover-soft;
                 }
 
                 // Home:壳的应用启动器(docs/adr/0024)。瓦片数据驱动:只放真实
