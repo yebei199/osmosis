@@ -78,6 +78,27 @@ export component PlaylistList inherits ListView {
                 }
             }
 
+            // 只读徽标。平台侧的歌单(红心与收藏)真相在平台,这边只能看
+            // (`playlist::is_editable`,docs/adr/0016)—— 摆出来,右键菜单里
+            // 少了改名/删除才不显得像坏了。本地歌单没有徽标。
+            if row.source != 2: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: badge.preferred-width + 16px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: Theme.overlay;
+                    badge := Text {
+                        text: "只读";
+                        font-family: "Maple Mono NF CN";
+                        color: Theme.text-faint;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
             // 来源标记。同名的本地歌单与收藏来的歌单看上去一样,
             // 但能做的事不同 —— 不标的话,删除键出现在哪一行全靠猜。
             Text {

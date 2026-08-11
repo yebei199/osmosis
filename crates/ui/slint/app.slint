@@ -877,6 +877,63 @@ export component MainWindow inherits Window {
 
                             // 曲目列表。四种情况摆它:每日推荐、最近播放、
                             // 搜索的歌曲页签,以及任何一层详情(歌单或歌手)——
+                            // 空状态:该有一批歌的地方一首都没有。大标题 +
+                            // 一个真动作(拉一批推荐);设计稿里的「打开本地
+                            // 文件夹」等入口等功能存在了再上(硬规则 8)。
+                            if root.tracks.length == 0
+                                && (root.open-playlist-name != ""
+                                    || root.music-section == 0
+                                    || root.music-section == 3
+                                    || (root.music-section == 2
+                                        && root.search-tab == 0)):
+                            empty-state := VerticalLayout {
+                                vertical-stretch: 1;
+                                alignment: center;
+                                spacing: 12px;
+
+                                Text {
+                                    text: "点一首歌开始";
+                                    font-family: Type.display-cjk;
+                                    font-weight: 900;
+                                    font-size: 34px;
+                                    color: Theme.text;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "点云在待机,选一首它就活过来";
+                                    font-family: "Maple Mono NF CN";
+                                    font-size: 13px;
+                                    color: Theme.text-dim;
+                                    horizontal-alignment: center;
+                                }
+                                HorizontalLayout {
+                                    alignment: center;
+                                    empty-daily := Rectangle {
+                                        width: empty-daily-label.preferred-width + 36px;
+                                        height: 38px;
+                                        border-radius: 999px;
+                                        background: empty-daily-touch.has-hover
+                                            ? Theme.accent.darker(0.2) : Theme.accent;
+                                        accessible-role: button;
+                                        accessible-label: "换一批推荐";
+                                        accessible-action-default => { root.daily(); }
+
+                                        empty-daily-label := Text {
+                                            text: "换一批推荐";
+                                            font-family: "Maple Mono NF CN";
+                                            font-size: 14px;
+                                            color: Theme.accent-text;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        empty-daily-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.daily(); }
+                                        }
+                                    }
+                                }
+                            }
+
                             // 它们都是「一批歌」。
                             if root.open-playlist-name != ""
                                 || root.music-section == 0
@@ -886,6 +943,9 @@ export component MainWindow inherits Window {
                             track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;
+                                // 最近播放画成时间轴,别的分区还是平列表。
+                                timeline: root.music-section == 3
+                                    && root.open-playlist-name == "";
                                 // 只有本地歌单的内容能移出去
                                 removable: root.open-playlist-local;
                                 play(id) => { root.play(id); }

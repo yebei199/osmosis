@@ -17,6 +17,9 @@ export component TrackList inherits ListView {
     // 这一批歌是不是某个本地歌单的内容。是的话每行多一个「−」——
     // 从每日推荐里「移除」一首没有意义,那不是一个能改的集合。
     in property <bool> removable: false;
+    // 时间轴档:最近播放用。左侧一条竖线,每行一个圆点,最新那条
+    // (第一行)是 accent 实心加光晕 —— 列表还是同一个列表,只多一列装饰。
+    in property <bool> timeline: false;
 
     callback play(string);
     // 点红心。参数是曲目 id 与**点完之后**的状态 —— 让 Rust 再去读一遍当前
@@ -63,6 +66,29 @@ export component TrackList inherits ListView {
             padding-left: 12px;
             padding-right: 12px;
             spacing: 12px;
+
+            // 时间轴那一列:竖线贯穿整行,圆点盖在线上。
+            if root.timeline: Rectangle {
+                width: 20px;
+
+                Rectangle {
+                    x: (parent.width - 2px) / 2;
+                    width: 2px;
+                    height: 100%;
+                    background: Theme.overlay;
+                }
+                Rectangle {
+                    width: i == 0 ? 12px : 8px;
+                    height: self.width;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: self.width / 2;
+                    background: i == 0 ? Theme.accent : Theme.overlay;
+                    // 最新那条的光晕:一圈半透明的强调色描边。
+                    border-width: i == 0 ? 4px : 0;
+                    border-color: Theme.accent.with-alpha(0.18);
+                }
+            }
 
             // 封面。取不到就是一块占位色 —— 留个空洞会让整列参差不齐,
             // 而封面取不到是常态(与歌单行同一条规矩,见 playlists.slint)。
