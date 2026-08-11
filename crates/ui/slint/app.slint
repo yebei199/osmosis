@@ -460,9 +460,9 @@ export component MainWindow inherits Window {
                 if root.current-tab == 0: Rectangle {
 
                     VerticalLayout {
-                        x: 48px;
-                        y: 56px;
-                        width: min(parent.width - 96px, 880px);
+                        x: root.compact ? 24px : 48px;
+                        y: root.compact ? 32px : 56px;
+                        width: min(parent.width - (root.compact ? 48px : 96px), 880px);
                         alignment: start;
                         spacing: 10px;
 
@@ -477,7 +477,7 @@ export component MainWindow inherits Window {
                             text: "今天做点什么";
                             font-family: Type.display-cjk;
                             font-weight: 900;
-                            font-size: 40px;
+                            font-size: root.compact ? 30px : 40px;
                             color: Theme.text;
                         }
                         Text {
@@ -494,10 +494,11 @@ export component MainWindow inherits Window {
                             alignment: start;
                             spacing: 20px;
 
-                            // 音乐:唯一的真瓦片。
+                            // 音乐:唯一的真瓦片。紧凑版式收一档,免得连空槽
+                            // 一起超出 420px 的内容宽。
                             Rectangle {
-                                width: 210px;
-                                height: 210px;
+                                width: root.compact ? 150px : 210px;
+                                height: root.compact ? 150px : 210px;
                                 border-radius: 22px;
                                 clip: true;
                                 background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
@@ -541,8 +542,8 @@ export component MainWindow inherits Window {
                             // 空槽:留给下一个应用。不是按钮,也不装成按钮 ——
                             // 没有 TouchArea,点了不会假装发生什么(硬规则 8)。
                             Rectangle {
-                                width: 168px;
-                                height: 210px;
+                                width: root.compact ? 120px : 168px;
+                                height: root.compact ? 150px : 210px;
                                 border-radius: 22px;
                                 background: Theme.overlay-weak;
                                 border-width: 1px;
@@ -1168,6 +1169,16 @@ export component MainWindow inherits Window {
                     icon: item.icon;
                     active: root.current-tab == i;
                     clicked => { root.current-tab = i; }
+                }
+                // 沉底那组在底栏里接着排:手机没有"栏底"可沉,四项等分。
+                // 设计稿的第三位是搜索,但搜索已经住在 Music 页的分段条里;
+                // 设置不上底栏的话,手机上就没有任何入口能到它 —— 等价路径优先。
+                for item[i] in Nav.bottom-items: NavItem {
+                    horizontal-stretch: 1;
+                    label: item.label;
+                    icon: item.icon;
+                    active: root.current-tab == i + 2;
+                    clicked => { root.current-tab = i + 2; }
                 }
             }
         }
