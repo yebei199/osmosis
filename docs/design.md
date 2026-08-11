@@ -6,7 +6,8 @@
 
 当前设计来自 2026-08 的整体改版(Claude Design handoff,规格全文在
 [`design/handoff-readme.md`](design/handoff-readme.md),shader 分层拆解在
-[`design/handoff-shaders.md`](design/handoff-shaders.md),原始设计稿归档在
+[`design/handoff-shaders.md`](design/handoff-shaders.md),光带按钮参考实现在
+[`design/aurora-button.js`](design/aurora-button.js),原始设计稿归档在
 [`design/设计范围确认.zip`](design/设计范围确认.zip))。本文件与 handoff 冲突时,
 以本文件为准。
 实现进度挂在 [issue #56](https://github.com/yebei199/osmosis/issues/56)。
@@ -97,6 +98,33 @@ Osmosis 是承载多个应用的壳,音乐是第一个应用(见 CONTEXT「壳�
 
 子集管线在 `just font-subset`;硬编码中文必须落在子集里,
 `cargo test -p ui` 的 glyph 测试守着。
+
+## 光带按钮与按钮变体
+
+参考实现在 [`design/aurora-button.js`](design/aurora-button.js)(WebGL,数学与
+WGSL 版逐行对应),分层拆解在 [`design/handoff-shaders.md`](design/handoff-shaders.md)
+§9/§10。五个变体共用一个片元程序,按 `variant` 分支:
+
+| variant | 用在哪 |
+|---|---|
+| `ribbon` 光带 | 一次性高光 |
+| `nebula` 星云 | Home「＋装一个」空槽,一屏一颗 |
+| `fluid` 流体玻璃 | 播放页长条、正在播放胶囊 |
+| `glass` 液态玻璃 | 次要按钮,可整屏铺 |
+| `progress` 流体进度 | 下载、导入曲库这类有进度的动作 |
+
+铁律三条:**全光谱色相只准出现在 Home 空槽**(别处一律收进绿板,不然它成了
+第二个强调色);**必须合批**(所有按钮渲进同一张图集,一个 pass,per-instance
+只差 seed 与转速,与 `nav_glass` 同构);**省电门同款**(hover 动画收敛后复用
+上一帧,失焦/不可见即停,设置页「动态极光按钮」关掉即纯色实底,无 GPU 端走
+关闭分支)。
+
+## 侧栏水滴导航
+
+选中指示器由三颗球组成(头球/尾球/小水滴),追随系数 0.30/0.19/0.13,同一个
+目标位置因系数不同天然拉开先后;Slint 侧粘合用 SDF smooth-min(k≈14px),
+不用滤镜链。拆解在 [`design/handoff-shaders.md`](design/handoff-shaders.md) §11,
+落点是 `render3d` 现有 `navglass` pass 的升级(现在是 lead/lag 两球)。
 
 ## 播放条
 
