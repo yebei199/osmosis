@@ -6,11 +6,17 @@
 改版总跟踪 #56(绿色 · 卡墙)已整体交付关闭;设计稿未实施的留档项见
 [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts。
 
+## 按钮落位 · 水滴导航(第六轮),总跟踪 #67
+
+- [ ] 控制胶囊重做:fluid 背景、撤日月开关、修紧凑行挤爆  #68
+- [ ] 播放页三变体接控件  #69
+- [ ] 移动端底栏水滴横滑  #70
+- [ ] 侧栏底部两颗 glass 圆钮  #71
+
 ## 已排期
 
 - [ ] android armeabi-v7a 编不出来,默认三 ABI 的构建整条失败  #47
 - [ ] 跟进上游 draft PR [slint-ui/slint#12861](https://github.com/slint-ui/slint/pull/12861)(present 顺序修复,已真机验证)  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
-- [ ] 紧凑版式的控制胶囊被第五颗键挤爆,展开播放页的 ▲ 出屏(循环键引入的版式回归)
 - [ ] 世界空间锚定:标注卡片跟着场景里的物体走  -> [docs/note/vision.md](note/vision.md)「下一面旗子」
 
 ## 载体路线(未开工,一行代码都没有)
