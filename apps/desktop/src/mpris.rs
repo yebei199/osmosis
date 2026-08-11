@@ -113,6 +113,12 @@ mod linux {
                 "Shuffle",
                 Value::from(now.shuffle),
             );
+            changed.insert(
+                "LoopStatus",
+                Value::from(loop_status_name(
+                    now.loop_mode,
+                )),
+            );
 
             if let Err(err) = self.conn.emit_signal(
                 None::<()>,
@@ -300,6 +306,25 @@ mod linux {
             self.0.send(ui::MediaCommand::SetShuffle(want));
         }
 
+        /// 循环三态。可写 —— bar 上那颗循环键走的是这条 setter。
+        #[zbus(property)]
+        fn loop_status(&self) -> String {
+            loop_status_name(self.0.now().loop_mode)
+                .to_owned()
+        }
+
+        /// 不认识的值不折腾:规范只有三个取值,别的都是对面写错了。
+        #[zbus(property)]
+        fn set_loop_status(&self, want: String) {
+            let Some(mode) = loop_mode_of(&want) else {
+                log::debug!(
+                    "MPRIS 送来不认识的 LoopStatus: {want}"
+                );
+                return;
+            };
+            self.0.send(ui::MediaCommand::SetLoop(mode));
+        }
+
         /// 位置每时每刻都在变,规范明说它**不**走 `PropertiesChanged` ——
         /// 对面要么来问,要么自己按倍率外推。
         #[zbus(property(emits_changed_signal = "false"))]
@@ -371,6 +396,27 @@ mod linux {
             ui::MediaStatus::Paused => "Paused",
             ui::MediaStatus::Stopped => "Stopped",
         }
+    }
+
+    /// 循环三态说成 MPRIS 的方言。取值规范钉死:None / Track / Playlist。
+    fn loop_status_name(
+        mode: ui::LoopMode,
+    ) -> &'static str {
+        match mode {
+            ui::LoopMode::Off => "None",
+            ui::LoopMode::All => "Playlist",
+            ui::LoopMode::One => "Track",
+        }
+    }
+
+    /// [`loop_status_name`] 的反向。不认识的值给 `None`(Option 的那个)。
+    fn loop_mode_of(name: &str) -> Option<ui::LoopMode> {
+        Some(match name {
+            "None" => ui::LoopMode::Off,
+            "Playlist" => ui::LoopMode::All,
+            "Track" => ui::LoopMode::One,
+            _ => return None,
+        })
     }
 
     /// 曲目 id 变成一条合法的 object path。
@@ -495,6 +541,7 @@ mod linux {
                 ),
                 art: None,
                 shuffle: false,
+                loop_mode: ui::LoopMode::Off,
             }
         }
 
@@ -769,6 +816,17 @@ mod linux {
             assert_eq!(
                 commands.recv().unwrap(),
                 ui::MediaCommand::SeekBy(10_000)
+            );
+
+            // 循环键写的是 LoopStatus 属性,方言在这一端翻:Playlist = 列表循环。
+            player
+                .set_property("LoopStatus", "Playlist")
+                .unwrap();
+            assert_eq!(
+                commands.recv().unwrap(),
+                ui::MediaCommand::SetLoop(
+                    ui::LoopMode::All
+                )
             );
         }
     }

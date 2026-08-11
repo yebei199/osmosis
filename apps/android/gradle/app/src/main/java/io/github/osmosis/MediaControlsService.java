@@ -256,6 +256,14 @@ public final class MediaControlsService extends Service {
                 now.shuffle ? "随机: 开" : "随机: 关",
                 MediaControls.COMMAND_SET_SHUFFLE,
                 now.shuffle ? 0 : 1));
+        // 循环三态,送下一态的绝对值(关→列表→单曲→关),理由同随机。
+        builder.addAction(action(
+                R.drawable.ic_media_repeat,
+                now.loopMode == 0
+                        ? "循环: 关"
+                        : now.loopMode == 1 ? "循环: 列表" : "循环: 单曲",
+                MediaControls.COMMAND_SET_LOOP,
+                (now.loopMode + 1) % 3));
 
         return builder.build();
     }

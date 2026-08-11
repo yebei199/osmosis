@@ -52,6 +52,8 @@ public final class MediaControls {
     public static final int COMMAND_SEEK_BY = 6;
     /** 参数是 1 / 0 —— 随机要拨到的<b>绝对值</b>,不是「翻一下」。 */
     public static final int COMMAND_SET_SHUFFLE = 7;
+    /** 参数是 0 / 1 / 2 —— 循环要拨到的绝对态:关 / 列表 / 单曲。 */
+    public static final int COMMAND_SET_LOOP = 8;
 
     /** 申请通知权限时用的请求码,只有这一处用它,取什么值都行。 */
     private static final int NOTIFICATION_PERMISSION_REQUEST = 0x05;
@@ -65,6 +67,8 @@ public final class MediaControls {
         final long positionMs;
         final Bitmap art;
         final boolean shuffle;
+        /** 循环三态:0 关、1 列表、2 单曲。与 Rust 侧 loop_code 一一对应。 */
+        final int loopMode;
 
         Snapshot(
                 int status,
@@ -73,7 +77,8 @@ public final class MediaControls {
                 long durationMs,
                 long positionMs,
                 Bitmap art,
-                boolean shuffle) {
+                boolean shuffle,
+                int loopMode) {
             this.status = status;
             this.title = title;
             this.artists = artists;
@@ -81,6 +86,7 @@ public final class MediaControls {
             this.positionMs = positionMs;
             this.art = art;
             this.shuffle = shuffle;
+            this.loopMode = loopMode;
         }
     }
 
@@ -93,7 +99,7 @@ public final class MediaControls {
      * Activity 本来就同进程,静态字段是直的那条路。
      */
     private static volatile Snapshot current =
-            new Snapshot(STATUS_STOPPED, null, null, 0, 0, null, false);
+            new Snapshot(STATUS_STOPPED, null, null, 0, 0, null, false, 0);
 
     /**
      * 当前的 Activity。申请运行期权限只能由 Activity 发起,而 Rust 那边拿到的
@@ -132,6 +138,7 @@ public final class MediaControls {
      * @param artists 已经拼好的一行,通知上本来就只有一行的位置
      * @param art     封面,可为 null
      * @param shuffle 随机开着没有。通知上那颗键按下时要送出它的<b>反面</b>
+     * @param loopMode 循环三态(0 关、1 列表、2 单曲),键按下时送下一态
      */
     public static void publish(
             int status,
@@ -142,7 +149,8 @@ public final class MediaControls {
             int[] argb,
             int artWidth,
             int artHeight,
-            boolean shuffle) {
+            boolean shuffle,
+            int loopMode) {
         // 封面以 ARGB_8888 的裸像素过来。通道重排在 Rust 侧做(那边拿到的是
         // RGBA),这里只负责把它包成 Bitmap —— 一行的事,不值得为它多写 JNI。
         Bitmap art = null;
@@ -153,7 +161,8 @@ public final class MediaControls {
         }
 
         current = new Snapshot(
-                status, title, artists, durationMs, positionMs, art, shuffle);
+                status, title, artists, durationMs, positionMs, art, shuffle,
+                loopMode);
 
         Activity host = activity;
         if (host == null) {
