@@ -78,6 +78,8 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   因为输入框长在一个 `if` 里,Rust 引用不到它。
 - `src/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
 - `src/nav_glass.rs`:导航选中器的 seam 数据与转场省电门判定。
+- `src/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
+  hover 收敛与冻结判定(收敛后补渲一帧静止态,然后零重绘)。
 - `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
 - `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
   `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件

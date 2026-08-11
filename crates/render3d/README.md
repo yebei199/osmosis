@@ -45,6 +45,20 @@
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 
+## 光带按钮(`aurorabtn.rs` + `aurorabtn.wgsl`)
+
+设计稿 §9/§10 的动态按钮背景,与 navglass 同构:共享 device 上不经 bevy 的独立
+fragment pass,每颗按钮渲进一张自己的离屏纹理,包装成 `slint::Image` 由 Slint 合成。
+五个变体(ribbon / nebula / fluid / glass / progress)共用一个 shader、一条管线,
+按 uniform 里的 `variant` 分支;当前界面接了两颗(Home 空槽 nebula、空状态 ribbon)。
+
+- **合批**:一条 pipeline、一个 uniform 缓冲(动态偏移,每槽 256 字节对齐)、一次
+  submit。每颗按钮一张纹理是有意的:尺寸互不相同,拼图集省不了带宽,反而让 Slint
+  侧多一套裁剪坐标。
+- **省电门在 ui 侧**(`ui::aurora_btn::ButtonAnim`):hover 振幅收敛后补渲一帧静止态
+  即冻结,时钟不走、纹理复用,这里根本不会被调到。设置页可整体关掉
+  (`api::settings` 的 `aurora_buttons`),关掉退回 Slint 纯色实底。
+
 ## 播放页反馈 warp 视觉(`warp.rs` + `warp.wgsl`)
 
 播放页(见 `CONTEXT.md`「播放页」与 `docs/adr/0010`)的全屏视觉,同样是**不经 bevy** 的

@@ -45,6 +45,27 @@ fn the_theme_segments_ask_for_the_matching_mode() {
     assert_eq!(asked.get(), 0, "深色档该报 0");
 }
 
+/// 动态极光按钮的开关也只喊一声,值由 Rust 写回(aurora_btn.rs)。
+#[test]
+fn the_aurora_toggle_asks_without_flipping() {
+    let ui = settings_page();
+    ui.set_aurora_buttons_on(true);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.on_aurora_buttons_toggled(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    invoke(&ui, "SettingsPage::aurora-toggle");
+
+    assert_eq!(asked.get(), 1, "拨一下该喊一声");
+    assert!(
+        ui.get_aurora_buttons_on(),
+        "值该纹丝不动 —— 写它是 Rust 的活"
+    );
+}
+
 /// 退出登录只喊一声,登录态由 Rust 写回 —— 控件不自己清会话。
 #[test]
 fn logging_out_asks_without_flipping_the_state() {

@@ -52,6 +52,10 @@ mod media;
 mod music;
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
 mod aurora;
+mod aurora_btn;
+pub use aurora_btn::{
+    AuroraBtnControls, AuroraBtnSlotControls,
+};
 mod profile;
 mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
@@ -107,6 +111,7 @@ fn build_ui(
     // 用错配色闪一下。
     theme::bind(&ui);
     profile::bind(&ui);
+    aurora_btn::bind(&ui);
 
     let (viz_source, lyrics, cover) =
         music::bind(&ui, media);
@@ -192,6 +197,10 @@ pub fn run_with_renderers(
         u32,
     ) -> Option<VizImages>
     + 'static,
+    mut btn_frame: impl FnMut(
+        &AuroraBtnControls,
+    ) -> Vec<slint::Image>
+    + 'static,
     media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
     let (ui, viz_source, lyrics, cover) = build_ui(media);
@@ -210,6 +219,13 @@ pub fn run_with_renderers(
     let mut nav_last_ll: Option<(f32, f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
     let mut nav_last_dark: Option<bool> = None;
+
+    // 光带按钮的跨帧状态:两颗按钮的振幅动画 + 按钮时钟。
+    // 时钟只在有按钮未收敛时推进 —— 冻结即静止画面(硬规则 7)。
+    let mut btn_home = aurora_btn::ButtonAnim::default();
+    let mut btn_daily = aurora_btn::ButtonAnim::default();
+    let mut btn_time = 0.0f32;
+    let mut btn_last: Option<web_time::Instant> = None;
     // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
     // 都从定格处继续,不跳变。
     let mut viz_time = 0.0f32;
@@ -297,6 +313,99 @@ pub fn run_with_renderers(
                     nav_last_dark = Some(dark);
                     nav_last_size =
                         Some((strip_w, strip_h));
+                }
+            }
+
+            // ── 光带按钮(§9)──
+            // 两颗:Home 空槽(nebula)与空状态「换一批推荐」(ribbon 绿板)。
+            // 任一未收敛才渲;都冻着就整段跳过,Slint 复用上一帧纹理。
+            // 关掉开关即整段不进 —— 纯色实底,功能不变。
+            if ui.get_aurora_buttons_on() {
+                let step_home = btn_home.step(
+                    ui.get_home_slot_hover(),
+                    (
+                        ui.get_home_slot_px(),
+                        ui.get_home_slot_py(),
+                    ),
+                );
+                let step_daily = btn_daily.step(
+                    ui.get_empty_daily_hover(),
+                    (
+                        ui.get_empty_daily_px(),
+                        ui.get_empty_daily_py(),
+                    ),
+                );
+                if step_home || step_daily {
+                    let now = web_time::Instant::now();
+                    if let Some(last) = btn_last {
+                        btn_time += now
+                            .duration_since(last)
+                            .as_secs_f32()
+                            .min(0.1);
+                    }
+                    btn_last = Some(now);
+
+                    // 绿色四色板:底/主/次/高光(handoff aurora-button.js 的 DEF)。
+                    const GREENS: [[f32; 3]; 4] = [
+                        [0.043, 0.075, 0.063],
+                        [0.310, 0.478, 0.247],
+                        [0.561, 0.769, 0.416],
+                        [0.914, 0.969, 0.839],
+                    ];
+                    let compact = ui.get_compact();
+                    let (hw, hh) = if compact {
+                        (120.0, 150.0)
+                    } else {
+                        (168.0, 210.0)
+                    };
+                    let imgs = btn_frame(&AuroraBtnControls {
+                        time: btn_time,
+                        slots: vec![
+                            // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
+                            AuroraBtnSlotControls {
+                                w: hw * scale,
+                                h: hh * scale,
+                                radius: 22.0 * scale,
+                                seed: 3.7,
+                                speed: 1.0,
+                                amp: btn_home.amp,
+                                mode: 1.0,
+                                bands: 3.0,
+                                variant: 1.0, // nebula
+                                progress: 0.0,
+                                pointer: (
+                                    btn_home.px,
+                                    btn_home.py,
+                                ),
+                                colors: GREENS,
+                            },
+                            AuroraBtnSlotControls {
+                                w: 150.0 * scale,
+                                h: 38.0 * scale,
+                                radius: 19.0 * scale,
+                                seed: 8.1,
+                                speed: 1.15,
+                                amp: btn_daily.amp,
+                                mode: 1.0, // 绿板:全光谱只准在 Home 空槽
+                                bands: 3.0,
+                                variant: 0.0, // ribbon
+                                progress: 0.0,
+                                pointer: (
+                                    btn_daily.px,
+                                    btn_daily.py,
+                                ),
+                                colors: GREENS,
+                            },
+                        ],
+                    });
+                    if let [home, daily] = imgs.as_slice() {
+                        ui.set_home_slot_bg(home.clone());
+                        ui.set_empty_daily_bg(
+                            daily.clone(),
+                        );
+                    }
+                } else {
+                    btn_last = None;
                 }
             }
 

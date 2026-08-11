@@ -47,6 +47,9 @@ component ThemeSegment inherits Rectangle {
 export component SettingsPage inherits Flickable {
     // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好推进来。
     in property <string> about-line;
+    // 动态极光按钮的开关状态(真相在 api::settings,Rust 写回)。
+    in property <bool> aurora-on;
+    callback aurora-toggled();
     // 主题三档:选了喊一声(0 深 1 浅 2 跟随系统),值由 Rust 写回 Theme.mode。
     callback theme-mode-selected(int);
     // 退出登录:清会话是 Rust 的活,这里只喊。
@@ -94,6 +97,52 @@ export component SettingsPage inherits Flickable {
             }
             Text {
                 text: "跟随系统当前只在桌面端生效,其他端按深色处理";
+                font-family: "Maple Mono NF CN";
+                font-size: 11px;
+                color: Theme.text-faint;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "动态极光按钮";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                aurora-toggle := Rectangle {
+                    width: 44px;
+                    height: 26px;
+                    border-radius: 13px;
+                    background: root.aurora-on ? Theme.accent : Theme.overlay;
+                    animate background { duration: 120ms; easing: ease-out; }
+                    accessible-role: checkbox;
+                    accessible-label: "动态极光按钮";
+                    accessible-checked: root.aurora-on;
+                    accessible-action-default => { root.aurora-toggled(); }
+
+                    Rectangle {
+                        x: root.aurora-on ? parent.width - 22px : 4px;
+                        y: 4px;
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 9px;
+                        background: root.aurora-on ? Theme.accent-text : Theme.text-dim;
+                        animate x { duration: 120ms; easing: ease-out; }
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.aurora-toggled(); }
+                    }
+                }
+            }
+            Text {
+                text: "动画收敛后零重绘,关掉就是纯色实底";
                 font-family: "Maple Mono NF CN";
                 font-size: 11px;
                 color: Theme.text-faint;

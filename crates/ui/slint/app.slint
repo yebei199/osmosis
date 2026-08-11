@@ -355,6 +355,18 @@ export component MainWindow inherits Window {
     callback system-scheme-changed();
     // 退出登录:清会话是 Rust 的活(account.rs),这里只喊。
     callback logout();
+    // §9 光带按钮:开关(真相在 api::settings,aurora_btn.rs 写)、两颗按钮的
+    // 纹理,以及 hover/指针的镜像(元素写,Rust 每帧读去喂 shader)。
+    in-out property <bool> aurora-buttons-on: true;
+    callback aurora-buttons-toggled();
+    in property <image> home-slot-bg;
+    in property <image> empty-daily-bg;
+    in-out property <bool> home-slot-hover: false;
+    in-out property <float> home-slot-px: 0.72;
+    in-out property <float> home-slot-py: 0.5;
+    in-out property <bool> empty-daily-hover: false;
+    in-out property <float> empty-daily-px: 0.72;
+    in-out property <float> empty-daily-py: 0.5;
     // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
     in property <bool> aurora-cover-active: false;
     in property <color> aurora-cover-warm;
@@ -561,6 +573,25 @@ export component MainWindow inherits Window {
                                 background: Theme.overlay-weak;
                                 border-width: 1px;
                                 border-color: Theme.divider;
+                                clip: true;
+
+                                // §9:星云纹理垫底(render3d 画,尺寸在 lib.rs 有一份镜像)。
+                                if root.aurora-buttons-on && root.home-slot-bg.width > 0: Image {
+                                    width: 100%;
+                                    height: 100%;
+                                    source: root.home-slot-bg;
+                                }
+                                // 只追 hover 喂给星云的指针涡旋;这仍不是按钮 ——
+                                // 没有点击行为(硬规则 8)。
+                                TouchArea {
+                                    changed has-hover => {
+                                        root.home-slot-hover = self.has-hover;
+                                    }
+                                    moved => {
+                                        root.home-slot-px = self.mouse-x / max(self.width, 1px);
+                                        root.home-slot-py = 1 - self.mouse-y / max(self.height, 1px);
+                                    }
+                                }
                                 VerticalLayout {
                                     alignment: center;
                                     spacing: 6px;
@@ -618,6 +649,8 @@ export component MainWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     about-line: root.about-line;
+                    aurora-on: root.aurora-buttons-on;
+                    aurora-toggled => { root.aurora-buttons-toggled(); }
                     theme-mode-selected(mode) => { root.theme-mode-selected(mode); }
                     logout => { root.logout(); }
                 }
@@ -923,26 +956,45 @@ export component MainWindow inherits Window {
                                 HorizontalLayout {
                                     alignment: center;
                                     empty-daily := Rectangle {
-                                        width: empty-daily-label.preferred-width + 36px;
+                                        // 定宽:光带纹理的尺寸在 lib.rs 有一份镜像,跟着 preferred-width
+                                        // 走的话两边会各算各的。
+                                        width: 150px;
                                         height: 38px;
                                         border-radius: 999px;
+                                        clip: true;
                                         background: empty-daily-touch.has-hover
                                             ? Theme.accent.darker(0.2) : Theme.accent;
                                         accessible-role: button;
                                         accessible-label: "换一批推荐";
                                         accessible-action-default => { root.daily(); }
 
+                                        // §9:光带纹理垫底(ribbon 绿板)。
+                                        if root.aurora-buttons-on && root.empty-daily-bg.width > 0: Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            source: root.empty-daily-bg;
+                                        }
+
                                         empty-daily-label := Text {
                                             text: "换一批推荐";
                                             font-family: "Maple Mono NF CN";
                                             font-size: 14px;
-                                            color: Theme.accent-text;
+                                            // 光带底是深的,字换近白;关掉开关回 accent 实底的深墨。
+                                            color: root.aurora-buttons-on && root.empty-daily-bg.width > 0
+                                                ? Theme.immersive-text : Theme.accent-text;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
                                         }
                                         empty-daily-touch := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.daily(); }
+                                            changed has-hover => {
+                                                root.empty-daily-hover = self.has-hover;
+                                            }
+                                            moved => {
+                                                root.empty-daily-px = self.mouse-x / max(self.width, 1px);
+                                                root.empty-daily-py = 1 - self.mouse-y / max(self.height, 1px);
+                                            }
                                         }
                                     }
                                 }

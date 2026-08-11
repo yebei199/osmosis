@@ -79,6 +79,10 @@ fn android_main(app: slint::android::AndroidApp) {
         scene.device(),
         scene.queue(),
     );
+    let mut btns = render3d::AuroraBtnPass::new(
+        scene.device(),
+        scene.queue(),
+    );
     // seam:把 ui 的 NavGlassControls / VizControls 平凡拷成 render3d 的镜像参数。
     // 两个闭包分别驱动导航选中器与播放页视觉。
     ui::run_with_renderers(
@@ -134,6 +138,32 @@ fn android_main(app: slint::android::AndroidApp) {
                 scene: viz_scene,
                 occluder,
             })
+        },
+        // 光带按钮:与上面两条同一个 seam 模式,逐字段平凡拷。
+        move |b| {
+            btns.render_frame(
+                &render3d::AuroraBtnParams {
+                    time: b.time,
+                    slots: b
+                        .slots
+                        .iter()
+                        .map(|s| render3d::AuroraBtnSlot {
+                            w: s.w,
+                            h: s.h,
+                            radius: s.radius,
+                            seed: s.seed,
+                            speed: s.speed,
+                            amp: s.amp,
+                            mode: s.mode,
+                            bands: s.bands,
+                            variant: s.variant,
+                            progress: s.progress,
+                            pointer: s.pointer,
+                            colors: s.colors,
+                        })
+                        .collect(),
+                },
+            )
         },
         // 系统媒体控件:锁屏与通知栏那条播放条由 SystemUI 画,我们只负责报
         // 状态与接按键(见 docs/adr/0020)。`app` 是 JavaVM 的唯一来源。

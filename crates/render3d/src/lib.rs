@@ -44,7 +44,11 @@ use bevy::render::texture::GpuImage;
 use bevy::window::{ExitCondition, WindowPlugin};
 use slint::wgpu_29::wgpu;
 
+mod aurorabtn;
 mod navglass;
+pub use aurorabtn::{
+    AuroraBtnParams, AuroraBtnPass, AuroraBtnSlot,
+};
 pub use navglass::{NavGlassPass, NavParams};
 
 mod warp;
