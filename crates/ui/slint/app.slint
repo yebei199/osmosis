@@ -27,8 +27,8 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow } from "types.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
-import { ControlCluster, SyncStrip, ProgressBar, VolumeControl } from "controls.slint";
+import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
+import { ControlCluster, SyncStrip, ProgressBar, VolumeControl, MiniPlayer } from "controls.slint";
 import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
@@ -403,28 +403,133 @@ export component MainWindow inherits Window {
                     height: 100%;
                 }
 
-                // Home:入口卡片页。标题 + 两扇门(Music / 3D)。
-                // 与左侧导航栏功能重复,是刻意的:这里是"落地页",导航栏是"随时切"。
-                if root.current-tab == 0: VerticalLayout {
-                    alignment: center;
-                    spacing: 28px;
+                // Home:壳的应用启动器(docs/adr/0024)。瓦片数据驱动:只放真实
+                // 存在的应用与一个空槽,加应用就是加一张瓦片。3D 漂移与视差归
+                // Bevy 瓦片场,与卡墙同期做(#66),这里先是 2D 摆法。
+                if root.current-tab == 0: Rectangle {
 
-                    Text {
-                        text: "Slint on " + root.platform;
-                        color: Theme.text;
-                        font-size: 22px;
-                        horizontal-alignment: center;
+                    VerticalLayout {
+                        x: 48px;
+                        y: 56px;
+                        width: min(parent.width - 96px, 880px);
+                        alignment: start;
+                        spacing: 10px;
+
+                        Text {
+                            text: "OSMOSIS";
+                            font-family: Type.mono;
+                            font-size: 11px;
+                            letter-spacing: 3px;
+                            color: Theme.accent;
+                        }
+                        Text {
+                            text: "今天做点什么";
+                            font-family: Type.display-cjk;
+                            font-weight: 900;
+                            font-size: 40px;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: "选一个应用开始";
+                            font-family: "Maple Mono NF CN";
+                            font-size: 13px;
+                            color: Theme.text-dim;
+                        }
+
+                        // 标题区与瓦片场之间的一口气。
+                        Rectangle { height: 22px; }
+
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 20px;
+
+                            // 音乐:唯一的真瓦片。
+                            Rectangle {
+                                width: 210px;
+                                height: 210px;
+                                border-radius: 22px;
+                                clip: true;
+                                background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                                drop-shadow-blur: 30px;
+                                drop-shadow-offset-y: 14px;
+                                drop-shadow-color: Theme.glass-shadow;
+
+                                // 压字渐变:上轻下重,左下角的字才读得出来。
+                                Rectangle {
+                                    background: @linear-gradient(180deg, Theme.overlay-weak 0%, Theme.shadow.with-alpha(0.4) 100%);
+                                }
+                                VerticalLayout {
+                                    alignment: end;
+                                    padding: 16px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "音乐";
+                                        font-family: Type.display-cjk;
+                                        font-weight: 900;
+                                        font-size: 17px;
+                                        color: Theme.immersive-text;
+                                    }
+                                    Text {
+                                        text: root.is-playing ? "MUSIC · " + root.now-title : "MUSIC";
+                                        font-family: Type.mono;
+                                        font-size: 11px;
+                                        letter-spacing: 1px;
+                                        color: Theme.immersive-text-dim;
+                                        overflow: elide;
+                                    }
+                                }
+                                music-tile := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.current-tab = 1; }
+                                    accessible-role: button;
+                                    accessible-label: "音乐";
+                                    accessible-action-default => { root.current-tab = 1; }
+                                }
+                            }
+
+                            // 空槽:留给下一个应用。不是按钮,也不装成按钮 ——
+                            // 没有 TouchArea,点了不会假装发生什么(硬规则 8)。
+                            Rectangle {
+                                width: 168px;
+                                height: 210px;
+                                border-radius: 22px;
+                                background: Theme.overlay-weak;
+                                border-width: 1px;
+                                border-color: Theme.divider;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 6px;
+                                    Text {
+                                        text: "+";
+                                        font-size: 22px;
+                                        color: Theme.text-faint;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "装一个";
+                                        font-family: Type.display-cjk;
+                                        font-weight: 900;
+                                        font-size: 13px;
+                                        color: Theme.text-faint;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    HorizontalLayout {
-                        alignment: center;
-                        spacing: 20px;
-
-                        EntryCard {
-                            label: "Music";
-                            icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16";
-                            clicked => { root.current-tab = 1; }
-                        }
+                    // 迷你播放条:壳持有、跨应用常驻,有歌才摆(docs/adr/0024)。
+                    if root.has-track: home-mini := MiniPlayer {
+                        x: (parent.width - self.width) / 2;
+                        y: parent.height - self.height - 22px;
+                        width: min(parent.width - 48px, 440px);
+                        cover-art: root.cover-art;
+                        title: root.now-title;
+                        artists: root.now-artists;
+                        is-playing: root.is-playing;
+                        ratio: root.progress-ratio;
+                        toggle => { root.toggle-play(); }
+                        next => { root.next-track(); }
                     }
                 }
 
@@ -783,6 +888,8 @@ export component MainWindow inherits Window {
                                     Text {
                                         max-width: 220px;
                                         // 缓冲时这行是唯一说明「还在动」的东西,提亮。
+                                        // 缓冲文案是硬编码中文,走子集;平时是平台数据,走系统字体。
+                                        font-family: root.buffering ? "Maple Mono NF CN" : "";
                                         text: root.buffering
                                             ? "缓冲中…"
                                             : root.now-artists + "  " + root.progress-text;

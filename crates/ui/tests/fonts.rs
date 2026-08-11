@@ -14,6 +14,8 @@ use std::path::Path;
 const CJK_TITLES: &[&str] = &[
     // Home
     "今天做点什么",
+    "选一个应用开始",
+    "音乐",
     "装一个",
     // 音乐页与次级入口
     "每日推荐",
