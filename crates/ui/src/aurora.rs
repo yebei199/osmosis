@@ -10,8 +10,6 @@
 //! 无差,而没有迭代、没有随机初值。饱和度过低的像素直接丢 —— 不丢的话
 //! 一堆脏灰会把桶全占了。
 
-use slint::ComponentHandle;
-
 use crate::viz::CoverPixels;
 use crate::MainWindow;
 
