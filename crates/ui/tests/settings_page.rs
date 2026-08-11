@@ -10,7 +10,8 @@ fn settings_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.set_logged_in(true);
-    ui.set_current_tab(2);
+    // 设置页是 tab 3(个人主页插在 2)。
+    ui.set_current_tab(3);
     ui.set_compact(false);
     ui
 }

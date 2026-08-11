@@ -13,6 +13,13 @@ export struct NavEntry {
     icon: string, // SVG path 数据,viewbox 24×24
 }
 
+// 个人主页「常听歌手」的一条。ratio 已在 Rust 侧按榜首归一,0..=1。
+export struct ArtistRankRow {
+    name: string,
+    plays-text: string,
+    ratio: float,
+}
+
 // 搜索结果里的一行。字段都是**已经格式化好的字符串** —— 歌手怎么拼、时长怎么写
 // 由 Rust 侧决定并测过,`.slint` 里不做任何计算。
 export struct TrackRow {

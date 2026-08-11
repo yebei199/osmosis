@@ -121,7 +121,7 @@ web-stop:
 font-subset:
     nix-shell -p python3Packages.fonttools --run "pyftsubset \
       $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
-      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他选个用缓冲置外观主题深浅色跟随系统账号退出登录已快捷桌面按处理生效当前页起' \
+      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他选个用缓冲置外观主题深浅色跟随系统账号退出登录已快捷桌面按处理生效当前页起月过续次天' \
       --unicodes=U+0020-007E \
       --layout-features= --no-hinting --desubroutinize \
       --notdef-outline --name-IDs+=13,14 \

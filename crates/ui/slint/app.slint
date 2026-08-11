@@ -24,7 +24,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
-import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow } from "types.slint";
+import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow } from "types.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
@@ -37,6 +37,7 @@ import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
 import { SettingsPage } from "settings.slint";
+import { ProfilePage } from "profile.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -49,9 +50,13 @@ global Nav {
             icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
         },
     ];
-    // 沉底那组(docs/design.md「壳与导航」)。tab 序号接着上面排:设置 = 2。
-    // 个人主页(#62)来了往这里加。
+    // 沉底那组(docs/design.md「壳与导航」)。tab 序号接着上面排:
+    // 个人 = 2,设置 = 3。
     out property <[NavEntry]> bottom-items: [
+        {
+            label: "个人",
+            icon: "M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4 20 C4 16 8 14 12 14 C16 14 20 16 20 20",
+        },
         {
             label: "设置",
             icon: "M12 9 A3 3 0 1 1 12 15 A3 3 0 1 1 12 9 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M19.1 4.9 L17 7 M7 17 L4.9 19.1",
@@ -301,9 +306,10 @@ export component MainWindow inherits Window {
     // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
     out property <bool> nav-visible: !root.compact;
     // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
-    // 设置(tab 2)沉在栏底,不按从上往下的等距槽算。
-    property <length> nav-target-y: root.current-tab == 2
-        ? root.nav-h - root.nav-pad - root.nav-slot-h / 2
+    // 沉底那组(个人 = 2、设置 = 3)从栏底往上排,不按从上往下的等距槽算。
+    // 3 是最后一个 tab 的序号,加导航项时跟着 Nav.bottom-items 一起改。
+    property <length> nav-target-y: root.current-tab >= 2
+        ? root.nav-h - root.nav-pad - (3 - root.current-tab) * (root.nav-slot-h + root.nav-gap) - root.nav-slot-h / 2
         : root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
     // metaball 的头(快)/尾(慢):都朝 nav-target-y 动,快慢不同 → 行走时一前一后被 shader
     // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这两个动画值喂 shader。
@@ -346,6 +352,16 @@ export component MainWindow inherits Window {
     callback system-scheme-changed();
     // 退出登录:清会话是 Rust 的活(account.rs),这里只喊。
     callback logout();
+    // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
+    callback profile-shown();
+    // 个人主页的数据,全部由 profile.rs 格式化后推送。
+    in property <string> profile-username;
+    in property <bool> profile-loaded;
+    in property <string> profile-error;
+    in property <string> profile-month-plays;
+    in property <string> profile-distinct-tracks;
+    in property <string> profile-streak-days;
+    in property <[ArtistRankRow]> profile-artists: [];
     // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好(lib.rs)。
     in property <string> about-line;
     // std-widgets 报的系统明暗,镜像成 bool 给 Rust 读:builtin 枚举不生成
@@ -568,8 +584,23 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // 设置(tab 2,rail 沉底那颗)。
-                if root.current-tab == 2: SettingsPage {
+                // 个人主页(tab 2)。进页即取统计,判断在 Rust 侧。
+                if root.current-tab == 2: ProfilePage {
+                    width: 100%;
+                    height: 100%;
+                    init => { root.profile-shown(); }
+                    username: root.profile-username;
+                    loaded: root.profile-loaded;
+                    error-text: root.profile-error;
+                    month-plays: root.profile-month-plays;
+                    distinct-tracks: root.profile-distinct-tracks;
+                    streak-days: root.profile-streak-days;
+                    top-artists: root.profile-artists;
+                    devices: root.devices;
+                }
+
+                // 设置(tab 3,rail 沉底最后一颗)。
+                if root.current-tab == 3: SettingsPage {
                     width: 100%;
                     height: 100%;
                     about-line: root.about-line;

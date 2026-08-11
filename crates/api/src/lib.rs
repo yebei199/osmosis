@@ -13,6 +13,10 @@ use contract::{
 };
 use serde::Serialize;
 
+// 个人主页的统计类型顺着 api 走:ui 不直接依赖 contract,
+// 它见到的形状都从取数的那一层拿(与 app-core 再导出播放类型同理)。
+pub use contract::{StatsDto, TopArtistDto};
+
 /// 服务端地址。可在编译期用 `OSMOSIS_API_BASE` 覆盖。
 ///
 /// 默认指向 `127.0.0.1` —— Android 上这是**手机自己**的回环地址,需要
@@ -438,8 +442,7 @@ pub async fn recent() -> Result<TracksDto, ApiError> {
 }
 
 /// `GET /stats` —— 收听统计,个人主页用。
-pub async fn stats() -> Result<contract::StatsDto, ApiError>
-{
+pub async fn stats() -> Result<StatsDto, ApiError> {
     platform::get_json(format!("{}/stats", base_url()))
         .await
 }

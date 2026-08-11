@@ -5,31 +5,7 @@
 // 没有数据源的卡不上屏(硬规则 8)。
 
 import { Theme, Type } from "theme.slint";
-
-// 一张设置卡:kicker 标题 + 内容。
-component SettingsCard inherits Rectangle {
-    in property <string> kicker;
-
-    background: Theme.surface;
-    border-radius: 18px;
-    border-width: 1px;
-    border-color: Theme.overlay;
-
-    VerticalLayout {
-        padding: 20px;
-        spacing: 14px;
-
-        Text {
-            text: root.kicker;
-            font-family: Type.display-cjk;
-            font-weight: 900;
-            font-size: 12px;
-            color: Theme.accent;
-        }
-
-        @children
-    }
-}
+import { SectionCard } from "widgets.slint";
 
 // 主题分段控件里的一档。选中态 accent 实底 + 深墨字(docs/adr/0023)。
 component ThemeSegment inherits Rectangle {
@@ -93,7 +69,7 @@ export component SettingsPage inherits Flickable {
             color: Theme.text;
         }
 
-        SettingsCard {
+        SectionCard {
             kicker: "外观";
 
             HorizontalLayout {
@@ -124,7 +100,7 @@ export component SettingsPage inherits Flickable {
             }
         }
 
-        SettingsCard {
+        SectionCard {
             kicker: "账号";
 
             HorizontalLayout {
@@ -168,7 +144,7 @@ export component SettingsPage inherits Flickable {
             }
         }
 
-        SettingsCard {
+        SectionCard {
             kicker: "快捷键";
 
             HorizontalLayout {
@@ -188,7 +164,7 @@ export component SettingsPage inherits Flickable {
             }
         }
 
-        SettingsCard {
+        SectionCard {
             kicker: "关于";
 
             Text {

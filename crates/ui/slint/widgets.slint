@@ -6,7 +6,32 @@
 
 // 入口卡片用它透出背后的极光。
 import { GlassCard } from "glass.slint";
-import { Theme } from "theme.slint";
+import { Theme, Type } from "theme.slint";
+
+// 一张分组卡:kicker 标题 + 内容。设置页与个人主页共用。
+export component SectionCard inherits Rectangle {
+    in property <string> kicker;
+
+    background: Theme.surface;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.overlay;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        Text {
+            text: root.kicker;
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 12px;
+            color: Theme.accent;
+        }
+
+        @children
+    }
+}
 
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。

@@ -1,0 +1,186 @@
+// 个人主页:收听统计与常听歌手(docs/design.md「页面清单」)。
+//
+// 数据来自 `/stats`,服务端从播放事件流查询时聚合。设计稿的「本月时长」
+// 没有数据源(事件流只记起播,不记听了多久),这里是本月播放次数;
+// 「口味画像」的流派维度同样无数据,已定改为常听歌手 —— 不编数字。
+
+import { Theme, Type } from "theme.slint";
+import { SectionCard } from "widgets.slint";
+import { ArtistRankRow, DeviceRow } from "types.slint";
+
+// 一张统计卡:大数字取副色板(硬规则 6 允许的用途),下面一行说明。
+component StatCard inherits Rectangle {
+    in property <string> value;
+    in property <string> label;
+    // 副色板序号,每张卡不同。
+    in property <int> tint;
+
+    background: Theme.surface;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.overlay;
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 4px;
+
+        Text {
+            text: root.value;
+            font-family: Type.body;
+            font-size: 30px;
+            font-weight: 700;
+            color: Theme.hues-bright[root.tint];
+        }
+        Text {
+            text: root.label;
+            font-family: "Maple Mono NF CN";
+            font-size: 12px;
+            color: Theme.text-dim;
+        }
+    }
+}
+
+export component ProfilePage inherits Flickable {
+    in property <string> username;
+    in property <bool> loaded;
+    // 取不回统计时的一句话;空串即没出错。
+    in property <string> error-text;
+    in property <string> month-plays;
+    in property <string> distinct-tracks;
+    in property <string> streak-days;
+    in property <[ArtistRankRow]> top-artists;
+    // 与控制条同播条同一份名册。
+    in property <[DeviceRow]> devices;
+
+    viewport-height: column.preferred-height + 52px;
+
+    column := VerticalLayout {
+        x: 26px;
+        y: 26px;
+        width: min(root.width - 52px, 720px);
+        alignment: start;
+        spacing: 14px;
+
+        // 头像 + 名字。头像是副色板渐变占位:账号没有头像这回事,先不装有。
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: start;
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 64px;
+                    height: 64px;
+                    border-radius: 32px;
+                    background: @linear-gradient(150deg, Theme.hues-bright[3], Theme.hues-deep[3]);
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                // 账号名是用户起的任意文本,不指定字体、走系统回退。
+                Text {
+                    text: root.username;
+                    font-size: 26px;
+                    font-weight: 700;
+                    color: Theme.text;
+                }
+            }
+        }
+
+        if root.error-text != "": Text {
+            text: root.error-text;
+            font-family: "Maple Mono NF CN";
+            font-size: 13px;
+            color: Theme.text-dim;
+        }
+
+        if root.loaded: stats-row := HorizontalLayout {
+            spacing: 14px;
+
+            StatCard {
+                value: root.month-plays;
+                label: "本月播放";
+                tint: 0;
+            }
+            StatCard {
+                value: root.distinct-tracks;
+                label: "听过";
+                tint: 1;
+            }
+            StatCard {
+                value: root.streak-days;
+                label: "连续在听";
+                tint: 2;
+            }
+        }
+
+        if root.loaded && root.top-artists.length > 0: SectionCard {
+            kicker: "常听歌手";
+
+            for artist[i] in root.top-artists: HorizontalLayout {
+                spacing: 12px;
+
+                // 歌手名来自平台,任意 CJK,走系统字体。
+                Text {
+                    width: 96px;
+                    text: artist.name;
+                    font-size: 13px;
+                    color: Theme.text;
+                    overflow: elide;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Rectangle {
+                        height: 9px;
+                        border-radius: 4.5px;
+                        background: Theme.overlay-weak;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * artist.ratio;
+                            height: parent.height;
+                            border-radius: 4.5px;
+                            background: @linear-gradient(90deg, Theme.hues-deep[i], Theme.hues-bright[i]);
+                        }
+                    }
+                }
+                Text {
+                    text: artist.plays-text;
+                    font-family: Type.mono;
+                    font-size: 11px;
+                    color: Theme.text-faint;
+                }
+            }
+        }
+
+        SectionCard {
+            kicker: "同播设备名册";
+
+            if root.devices.length == 0: Text {
+                text: "没有其他设备";
+                font-family: "Maple Mono NF CN";
+                font-size: 13px;
+                color: Theme.text-faint;
+            }
+            for device in root.devices: HorizontalLayout {
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: Theme.accent;
+                    }
+                }
+                // 设备名由对端自报,任意 CJK,走系统字体。
+                Text {
+                    text: device.name;
+                    font-size: 13px;
+                    color: Theme.text;
+                }
+            }
+        }
+    }
+}

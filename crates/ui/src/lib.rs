@@ -51,6 +51,7 @@ mod notice;
 mod media;
 mod music;
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
+mod profile;
 mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -76,7 +77,7 @@ fn fps_enabled() -> bool {
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,
 /// 加页时两处都要动。加漏了的症状是「`OSMOSIS_TAB=2` 静默停在 Music 页」。
-const MAX_TAB: i32 = 2;
+const MAX_TAB: i32 = 3;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
 ///
@@ -104,6 +105,7 @@ fn build_ui(
     // 主题要在别的绑定之前恢复:颜色是全局的,晚一步会让开局那一帧
     // 用错配色闪一下。
     theme::bind(&ui);
+    profile::bind(&ui);
 
     let (viz_source, lyrics, cover) =
         music::bind(&ui, media);
