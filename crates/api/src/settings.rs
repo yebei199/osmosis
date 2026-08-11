@@ -49,6 +49,9 @@ pub struct Settings {
     /// 与音量同一条理由跟着设备走:同一个账号在办公室的亮屏和床上的暗屏,
     /// 想要的不是同一套。
     pub theme: ThemeMode,
+    /// 动态极光按钮(handoff-shaders.md §9)。关掉就是纯色实底,功能不变;
+    /// 跟着设备走 —— 这是台性能偏好,不是账号偏好。
+    pub aurora_buttons: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +59,7 @@ impl Default for Settings {
         Self {
             volume: DEFAULT_VOLUME,
             theme: ThemeMode::Dark,
+            aurora_buttons: true,
         }
     }
 }
@@ -70,6 +74,7 @@ struct RawSettings {
     volume: Option<f32>,
     dark: Option<bool>,
     theme: Option<ThemeMode>,
+    aurora_buttons: Option<bool>,
 }
 
 /// 把文本解析成设置。**任何解析不了的东西都退回默认值**。
@@ -92,6 +97,8 @@ pub fn parse(raw: &str) -> Settings {
                 _ => ThemeMode::Dark,
             }
         }),
+        // 老文件没有这个字段:默认开,与 Settings::default 一致。
+        aurora_buttons: raw.aurora_buttons.unwrap_or(true),
     }
 }
 
@@ -197,6 +204,21 @@ mod tests {
         assert!(
             (parsed.volume - 0.3).abs() < f32::EPSILON,
             "少一个字段不该把已经存好的音量一起冲掉"
+        );
+    }
+
+    /// 动态极光按钮的开关存得住,老文件没有这个字段时默认开。
+    #[test]
+    fn the_aurora_toggle_survives_and_defaults_on() {
+        let settings = Settings {
+            aurora_buttons: false,
+            ..Settings::default()
+        };
+        assert_eq!(parse(&render(&settings)), settings);
+
+        assert!(
+            parse(r#"{"volume":0.3}"#).aurora_buttons,
+            "老文件该默认开"
         );
     }
 
