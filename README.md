@@ -104,7 +104,7 @@ just desktop-dev
 
 想让它出声,四个终端。前置条件:另外 clone 一份
 [bang-dream](https://github.com/yebei199/bang-dream)(把网易云等平台的加密与异构响应
-收敛成统一 gRPC 接口的聚合层),用 `BANG_DREAM_REPO` 指向它(默认找同级目录的
+收敛成统一 gRPC 接口的聚合层,协议实现取自开源播放器项目),用 `BANG_DREAM_REPO` 指向它(默认找同级目录的
 `../bang-dream`),以及一次扫码登录。
 
 ```sh
