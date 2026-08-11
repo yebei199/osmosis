@@ -126,6 +126,61 @@ fn the_shuffle_button_shows_whether_shuffle_is_on() {
     );
 }
 
+/// 控制簇上那颗循环键,按它此刻的标签找 —— 标签随三态换,
+/// 读屏念的就是它(checked 只说得出开没开,说不出列表还是单曲)。
+fn loop_key(
+    ui: &MainWindow,
+    label: &str,
+) -> Option<testing::ElementHandle> {
+    testing::ElementHandle::find_by_accessible_label(
+        ui, label,
+    )
+    .next()
+}
+
+/// 循环键拨一下只喊一声,值由 Rust 写回 —— 与随机键同一条规矩。
+#[test]
+fn the_loop_button_asks_without_setting_the_property() {
+    let ui = wide_page();
+    ui.set_loop_mode(0);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.on_loop_cycled(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    loop_key(&ui, "循环: 关")
+        .expect("找不到循环键")
+        .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "拨一下该喊一声");
+    assert_eq!(
+        ui.get_loop_mode(),
+        0,
+        "值该纹丝不动 —— 写它是 Rust 的活,不是控件的"
+    );
+}
+
+/// 循环键把三态念出来:关 / 列表 / 单曲,旧标签跟着退场。
+#[test]
+fn the_loop_button_labels_all_three_states() {
+    let ui = wide_page();
+
+    ui.set_loop_mode(0);
+    assert!(loop_key(&ui, "循环: 关").is_some());
+
+    ui.set_loop_mode(1);
+    assert!(loop_key(&ui, "循环: 列表").is_some());
+    assert!(
+        loop_key(&ui, "循环: 关").is_none(),
+        "换态之后旧标签不该还在"
+    );
+
+    ui.set_loop_mode(2);
+    assert!(loop_key(&ui, "循环: 单曲").is_some());
+}
+
 /// **日月开关改管明暗,不再管随机。**
 ///
 /// 这一条钉的是"换过去了"这件事本身:拨它要喊 theme-toggled,而且**不能**

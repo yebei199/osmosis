@@ -11,6 +11,8 @@ pub use media::{
     MediaCommand, MediaControls, MediaHooks, MediaStatus,
     NoControls, NowPlaying,
 };
+// 循环三态过 seam 原样透传:平台层(MPRIS/安卓)拿它翻成各自的方言。
+pub use app_core::LoopMode;
 pub use nav_glass::NavGlassControls;
 
 mod viz;

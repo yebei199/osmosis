@@ -1001,6 +1001,45 @@ fn bind_controls(ui: &MainWindow, deck: &Deck) {
             &shuffle.media,
         );
     });
+
+    let looper = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_loop_cycled(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        use app_core::LoopMode;
+        // 关→列表→单曲→关:单键三态,读的是队列里的真相,不是界面属性。
+        let next = match looper.queue.borrow().loop_mode()
+        {
+            LoopMode::Off => LoopMode::All,
+            LoopMode::All => LoopMode::One,
+            LoopMode::One => LoopMode::Off,
+        };
+        apply_loop(&ui, &looper, next);
+    });
+
+    let setter = deck.clone();
+    let weak = ui.as_weak();
+    ui.on_loop_mode_set(move |mode| {
+        let Some(ui) = weak.upgrade() else { return };
+        apply_loop(
+            &ui,
+            &setter,
+            crate::media::loop_from_index(mode),
+        );
+    });
+}
+
+/// 循环模式落到队列,把投影写回界面,并立刻推给系统媒体控件 ——
+/// 轮询要 1 秒之后才轮到,锁屏上的键不该慢一拍。
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_loop(
+    ui: &MainWindow,
+    deck: &Deck,
+    mode: app_core::LoopMode,
+) {
+    deck.queue.borrow_mut().set_loop_mode(mode);
+    ui.set_loop_mode(crate::media::loop_index(mode));
+    crate::media::push(ui, &deck.playback, &deck.media);
 }
 
 /// 取走备好的那一份 —— **只在它确实是这一首时**。

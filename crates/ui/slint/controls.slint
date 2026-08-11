@@ -149,6 +149,9 @@ export component ControlCluster inherits HorizontalLayout {
     in property <bool> is-playing;
     // 只读:随机的真相在 app_core::Queue 上,这里是它的投影。
     in property <bool> shuffle-on;
+    // 只读:循环的真相同样在 Queue 上。0 关,1 列表循环,2 单曲循环 ——
+    // builtin 枚举不生成 Rust 访问器,int 镜像(与 ColorScheme 同一个坑)。
+    in property <int> loop-mode;
     // 进度,喂给环形键的外圈。
     in property <float> progress-ratio: 0;
     // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
@@ -161,6 +164,9 @@ export component ControlCluster inherits HorizontalLayout {
     callback toggle();
     callback next();
     callback shuffle-toggled();
+    // 请求循环换到下一态(关→列表→单曲→关)。loop-mode 那时还是旧值 ——
+    // 由 Rust 拨完队列再写回。
+    callback loop-cycled();
     // 请求换明暗主题。Theme.dark 那时还是旧值 —— 由 Rust 拨完再写回去。
     callback theme-toggled();
 
@@ -206,6 +212,23 @@ export component ControlCluster inherits HorizontalLayout {
             checkable: true;
             checked: root.shuffle-on;
             clicked => { root.shuffle-toggled(); }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        // 循环键。与随机键同一条规矩:有状态,报成带 checked 的按钮;
+        // 三态念在标签里 —— checked 只说得出「开没开」,说不出列表还是单曲。
+        RoundControl {
+            // ↻:首尾折返的两条箭头(Material 的 repeat 字形);
+            // 单曲循环在中间多一个「1」(repeat_one)。
+            icon: root.loop-mode == 2
+                ? "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"
+                : "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
+            label: root.loop-mode == 0 ? "循环: 关"
+                : (root.loop-mode == 1 ? "循环: 列表" : "循环: 单曲");
+            checkable: true;
+            checked: root.loop-mode > 0;
+            clicked => { root.loop-cycled(); }
         }
     }
     VerticalLayout {

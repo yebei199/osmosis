@@ -109,6 +109,9 @@ export component MainWindow inherits Window {
     // 随机播放开关。**只有 Rust 写它** —— 真相在 app_core::Queue 上,
     // 这里是投影。开关自己不置位,拨一下只喊 shuffle-toggled。
     in-out property <bool> shuffle-on: false;
+    // 循环三态。**只有 Rust 写它** —— 真相在 app_core::Queue 上,这里是投影。
+    // 0 关,1 列表循环,2 单曲循环:builtin 枚举不生成 Rust 访问器,int 镜像。
+    in-out property <int> loop-mode: 0;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
@@ -346,6 +349,12 @@ export component MainWindow inherits Window {
     // 请求翻转随机开关。**shuffle-on 那时还是旧值** —— 由 Rust 拨完队列
     // 再写回去。系统媒体控件送来的 SetShuffle 也走这一条。
     callback shuffle-toggled();
+    // 请求循环换到下一态(关→列表→单曲→关)。**loop-mode 那时还是旧值** ——
+    // 由 Rust 拨完队列再写回。
+    callback loop-cycled();
+    // 循环拨到这个绝对值。系统媒体控件给的是绝对值(MPRIS 的 LoopStatus),
+    // 与现值的比对在 media.rs 的 dispatch 里做,这里只落地。
+    callback loop-mode-set(int);
     // 请求换明暗主题。日月开关拨一下只喊这一声,值由 Rust 写进 Theme.dark
     // 并存进 api::settings(见 crates/ui/src/theme.rs)。
     callback theme-toggled();
@@ -1267,11 +1276,13 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 0;
                                 is-playing: root.is-playing;
                                 shuffle-on: root.shuffle-on;
+                                loop-mode: root.loop-mode;
                                 progress-ratio: root.progress-ratio;
                                 prev => { root.prev-track(); }
                                 toggle => { root.toggle-play(); }
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
+                                loop-cycled => { root.loop-cycled(); }
                                 theme-toggled => { root.theme-toggled(); }
                             }
                             wide-volume := VolumeControl {
@@ -1322,11 +1333,13 @@ export component MainWindow inherits Window {
                                 ControlCluster {
                                     is-playing: root.is-playing;
                                     shuffle-on: root.shuffle-on;
+                                    loop-mode: root.loop-mode;
                                     progress-ratio: root.progress-ratio;
                                     prev => { root.prev-track(); }
                                     toggle => { root.toggle-play(); }
                                     next => { root.next-track(); }
                                     shuffle-toggled => { root.shuffle-toggled(); }
+                                    loop-cycled => { root.loop-cycled(); }
                                 theme-toggled => { root.theme-toggled(); }
                                 }
                                 // 展开播放页,同宽版那颗。
@@ -1611,6 +1624,7 @@ export component MainWindow inherits Window {
                         ControlCluster {
                             is-playing: root.is-playing;
                             shuffle-on: root.shuffle-on;
+                            loop-mode: root.loop-mode;
                             progress-ratio: root.progress-ratio;
                             // 播放页的环大一档(60/50);接了 warp 时环内是画面,再大一圈。
                             ring-diameter: 60px;
@@ -1622,6 +1636,7 @@ export component MainWindow inherits Window {
                             toggle => { root.toggle-play(); }
                             next => { root.next-track(); }
                             shuffle-toggled => { root.shuffle-toggled(); }
+                            loop-cycled => { root.loop-cycled(); }
                             theme-toggled => { root.theme-toggled(); }
                         }
                         // 时间读数:环报的是比例,数字在这里。

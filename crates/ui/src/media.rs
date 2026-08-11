@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+use app_core::LoopMode;
+
 // 下面这些只有原生那半边用得到 —— wasm 上界面在、播放不在,那半边整个不存在
 // (见下方「以下到文件末尾是原生那一半」)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,6 +62,9 @@ pub struct NowPlaying {
     /// 挂在 Player 接口上,安卓的 `MediaSession` 也一样。所以队列放完、
     /// 曲目那半清空之后,这一位照旧要如实报出去。
     pub shuffle: bool,
+    /// 循环三态。与随机同一个理由:播放器的属性,曲目清空后照旧报。
+    /// MPRIS 那边对应 `LoopStatus`,安卓对应 `REPEAT_MODE`。
+    pub loop_mode: LoopMode,
 }
 
 // —— 以下到文件末尾是原生那一半 ——
@@ -80,6 +85,7 @@ impl NowPlaying {
         state: &PlaybackState,
         playing: bool,
         shuffle: bool,
+        loop_mode: LoopMode,
         art: Option<Arc<CoverPixels>>,
     ) -> Self {
         let track = match state {
@@ -87,10 +93,11 @@ impl NowPlaying {
             | PlaybackState::Playing(track) => track,
             PlaybackState::Idle
             | PlaybackState::Failed(_) => {
-                // 曲目那半清空,随机照旧报 —— 它是播放器的开关,
+                // 曲目那半清空,随机与循环照旧报 —— 它们是播放器的开关,
                 // 不随「这一刻装没装着歌」一起没。
                 return Self {
                     shuffle,
+                    loop_mode,
                     ..Self::default()
                 };
             }
@@ -98,6 +105,7 @@ impl NowPlaying {
 
         Self {
             shuffle,
+            loop_mode,
             status: if playing {
                 MediaStatus::Playing
             } else {
@@ -119,14 +127,15 @@ impl NowPlaying {
     /// 不会换第二张图。
     fn fingerprint(
         &self,
-    ) -> (MediaStatus, &str, bool, bool) {
+    ) -> (MediaStatus, &str, bool, bool, LoopMode) {
         (
             self.status,
             &self.track_id,
             self.art.is_some(),
-            // 只拨了随机的那一次,歌与状态一个字都没变。不认它的话去重
-            // 会把这次变更整个吃掉,外面那个开关就一直停在旧样子。
+            // 只拨了随机或循环的那一次,歌与状态一个字都没变。不认它的话
+            // 去重会把这次变更整个吃掉,外面那个开关就一直停在旧样子。
             self.shuffle,
+            self.loop_mode,
         )
     }
 }
@@ -150,6 +159,8 @@ pub enum MediaCommand {
     /// 随机开关拨到这个值。外面给的是**绝对值**,而界面只有一个切换回调,
     /// 那道翻译在 [`flips_shuffle`] 里做 —— 与 [`toggles`] 同一个理由。
     SetShuffle(bool),
+    /// 循环拨到这个态。同样是绝对值,与现值的比对在 [`wants_loop`] 里做。
+    SetLoop(LoopMode),
 }
 
 /// ui 交给后端的两根线。
@@ -272,6 +283,40 @@ pub(crate) fn flips_shuffle(
     matches!(command, MediaCommand::SetShuffle(want) if want != on)
 }
 
+/// 这个键要把循环拨到哪一态。与 [`flips_shuffle`] 同一道翻译:
+/// 值本来就一样就不折腾 —— 按下它的人什么都没要求。
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn wants_loop(
+    command: MediaCommand,
+    current: LoopMode,
+) -> Option<LoopMode> {
+    match command {
+        MediaCommand::SetLoop(want) if want != current => {
+            Some(want)
+        }
+        _ => None,
+    }
+}
+
+/// slint 侧的循环三态镜像:0 关,1 列表,2 单曲。
+/// builtin 之外的枚举同样过不了 seam,int 是那根线的形状。
+pub(crate) fn loop_index(mode: LoopMode) -> i32 {
+    match mode {
+        LoopMode::Off => 0,
+        LoopMode::All => 1,
+        LoopMode::One => 2,
+    }
+}
+
+/// [`loop_index`] 的反向。界面写坏了也不 panic,当作关。
+pub(crate) fn loop_from_index(index: i32) -> LoopMode {
+    match index {
+        1 => LoopMode::All,
+        2 => LoopMode::One,
+        _ => LoopMode::Off,
+    }
+}
+
 /// 这个键要跳到的绝对位置,毫秒。不是跳转键就没有答案。
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn seek_target(
@@ -379,6 +424,14 @@ fn dispatch(
                 ui.invoke_shuffle_toggled();
             }
         }
+        MediaCommand::SetLoop(_) => {
+            if let Some(want) = wants_loop(
+                command,
+                loop_from_index(ui.get_loop_mode()),
+            ) {
+                ui.invoke_loop_mode_set(loop_index(want));
+            }
+        }
         MediaCommand::SeekTo(_)
         | MediaCommand::SeekBy(_) => {
             let at = player
@@ -420,6 +473,7 @@ pub(crate) fn push(
         &state,
         ui.get_is_playing(),
         ui.get_shuffle_on(),
+        loop_from_index(ui.get_loop_mode()),
         media.art(),
     ));
 }
@@ -477,7 +531,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use app_core::PlaybackState;
+    use app_core::{LoopMode, PlaybackState};
 
     use crate::media::{
         Bridge, MediaCommand, MediaStatus, NowPlaying,
@@ -490,12 +544,11 @@ mod tests {
         let state = PlaybackState::Playing(track("a"));
 
         let on =
-            NowPlaying::render(&state, true, true, None);
-        let stopped = NowPlaying::render(
-            &PlaybackState::Idle,
+            NowPlaying::render(&state, true, true, LoopMode::Off, None);
+        let stopped = NowPlaying::render(&PlaybackState::Idle,
             false,
             true,
-            Some(art()),
+            LoopMode::Off, Some(art()),
         );
 
         assert!(on.shuffle);
@@ -524,11 +577,9 @@ mod tests {
         );
         let state = PlaybackState::Playing(track("a"));
 
-        bridge.publish(NowPlaying::render(
-            &state, true, false, None,
+        bridge.publish(NowPlaying::render(&state, true, false, LoopMode::Off, None,
         ));
-        bridge.publish(NowPlaying::render(
-            &state, true, true, None,
+        bridge.publish(NowPlaying::render(&state, true, true, LoopMode::Off, None,
         ));
 
         let pushes = spy.pushes.borrow();
@@ -570,6 +621,60 @@ mod tests {
         assert!(!flips_shuffle(MediaCommand::Toggle, true));
     }
 
+    /// **只拨了循环也要重新推一次。**
+    ///
+    /// 与随机同一条:指纹不认它,去重会把这次变更吃掉,锁屏上的循环键
+    /// 就一直停在旧样子。
+    #[test]
+    fn changing_the_loop_mode_pushes_again() {
+        let spy = Rc::new(Spy::default());
+        let bridge = Bridge::new(
+            Box::new(spy.clone()),
+            Arc::default(),
+        );
+        let state = PlaybackState::Playing(track("a"));
+
+        bridge.publish(NowPlaying::render(&state, true, false, LoopMode::Off, None,
+        ));
+        bridge.publish(NowPlaying::render(&state, true, false, LoopMode::All, None,
+        ));
+
+        let pushes = spy.pushes.borrow();
+        assert_eq!(
+            pushes.len(),
+            2,
+            "歌没换、放没放也没变,但循环换了 —— 去重不该吃掉它"
+        );
+        assert_eq!(pushes[1].loop_mode, LoopMode::All);
+    }
+
+    /// 外面给的循环是绝对值,与现值一样就不折腾 —— 与随机同一道翻译。
+    #[test]
+    fn set_loop_only_changes_when_it_differs() {
+        use crate::media::wants_loop;
+
+        assert_eq!(
+            wants_loop(
+                MediaCommand::SetLoop(LoopMode::All),
+                LoopMode::Off
+            ),
+            Some(LoopMode::All)
+        );
+        assert_eq!(
+            wants_loop(
+                MediaCommand::SetLoop(LoopMode::Off),
+                LoopMode::Off
+            ),
+            None,
+            "值本来就一样,按下它的人什么都没要求"
+        );
+        // 别的键跟循环无关。
+        assert_eq!(
+            wants_loop(MediaCommand::Next, LoopMode::Off),
+            None
+        );
+    }
+
     /// 装着一首歌但没在走 = 暂停。
     ///
     /// `PlaybackState` 里没有「暂停」这个态,它记的是装载了哪一首;传输走没走
@@ -579,9 +684,9 @@ mod tests {
         let state = PlaybackState::Playing(track("a"));
 
         let running =
-            NowPlaying::render(&state, true, false, None);
+            NowPlaying::render(&state, true, false, LoopMode::Off, None);
         let paused =
-            NowPlaying::render(&state, false, false, None);
+            NowPlaying::render(&state, false, false, LoopMode::Off, None);
 
         assert_eq!(running.status, MediaStatus::Playing);
         assert_eq!(paused.status, MediaStatus::Paused);
@@ -595,17 +700,17 @@ mod tests {
     /// 的假象,而那首歌根本没装起来。
     #[test]
     fn an_idle_or_failed_deck_reports_stopped() {
-        let idle = NowPlaying::render(
-            &PlaybackState::Idle,
+        let idle = NowPlaying::render(&PlaybackState::Idle,
             false,
             false,
-            None,
+            LoopMode::Off, None,
         );
         let failed = NowPlaying::render(
             &PlaybackState::Failed("上游超时".into()),
             // 失败那一刻界面可能还没来得及把 is-playing 抹掉。
             true,
             false,
+            LoopMode::Off,
             None,
         );
 
@@ -619,11 +724,10 @@ mod tests {
     /// 的老毛病换了个地方犯(见 `crate::notice` 的模块注释)。
     #[test]
     fn a_stopped_deck_carries_no_track() {
-        let stopped = NowPlaying::render(
-            &PlaybackState::Idle,
+        let stopped = NowPlaying::render(&PlaybackState::Idle,
             false,
             false,
-            // 上一首的封面还攥在手里,也不该被带出去。
+            LoopMode::Off, // 上一首的封面还攥在手里,也不该被带出去。
             Some(art()),
         );
 
@@ -649,8 +753,7 @@ mod tests {
         let state = PlaybackState::Playing(track("a"));
 
         for _ in 0..5 {
-            bridge.publish(NowPlaying::render(
-                &state, true, false, None,
+            bridge.publish(NowPlaying::render(&state, true, false, LoopMode::Off, None,
             ));
         }
 
@@ -670,14 +773,12 @@ mod tests {
         );
         let state = PlaybackState::Playing(track("a"));
 
-        bridge.publish(NowPlaying::render(
-            &state, true, false, None,
+        bridge.publish(NowPlaying::render(&state, true, false, LoopMode::Off, None,
         ));
-        bridge.publish(NowPlaying::render(
-            &state,
+        bridge.publish(NowPlaying::render(&state,
             true,
             false,
-            Some(art()),
+            LoopMode::Off, Some(art()),
         ));
 
         let pushes = spy.pushes.borrow();
