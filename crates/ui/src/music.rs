@@ -258,8 +258,8 @@ fn current_id(state: &PlaybackState) -> Option<&str> {
     }
 }
 
-/// 洗牌的种子。`app-core` 不引 `rand`(要编到 wasm),种子由这里造 ——
-/// `RandomState` 每次实例化都带进程级随机,当种子够用。
+/// 洗牌与循环回卷重洗的种子。`app-core` 不引 `rand`(要编到 wasm),
+/// 种子由这里造:`RandomState` 每次实例化都带进程级随机,当种子够用。
 #[cfg(not(target_arch = "wasm32"))]
 fn shuffle_seed() -> u64 {
     use std::hash::{BuildHasher, Hasher};
@@ -1051,10 +1051,36 @@ fn start_prefetch(deck: &Deck) {
     .expect("event loop must be running");
 }
 
-/// 队列前进一首;到底了就停下并说明(放完即停,见 `CONTEXT.md`「队列」)。
+/// 手动「下一首」:队列前进一首;到底了就停下并说明
+/// (循环语义见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]
 fn advance(ui: &MainWindow, deck: &Deck) {
-    let has_next = deck.queue.borrow_mut().next().is_some();
+    let has_next = deck
+        .queue
+        .borrow_mut()
+        .next(shuffle_seed())
+        .is_some();
+    after_advance(ui, deck, has_next);
+}
+
+/// 播完一首的自动推进:与手动只差队列入口 —— 单曲循环时留在本曲重放。
+#[cfg(not(target_arch = "wasm32"))]
+fn advance_auto(ui: &MainWindow, deck: &Deck) {
+    let has_next = deck
+        .queue
+        .borrow_mut()
+        .advance_auto(shuffle_seed())
+        .is_some();
+    after_advance(ui, deck, has_next);
+}
+
+/// 推进之后的收尾:有歌就放,没有就停。
+#[cfg(not(target_arch = "wasm32"))]
+fn after_advance(
+    ui: &MainWindow,
+    deck: &Deck,
+    has_next: bool,
+) {
     if has_next {
         play_current(ui, deck);
     } else {
@@ -1313,7 +1339,7 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
                 report_stream_loss(&ui, &deck);
             } else if should_advance(&state, drained, listening)
             {
-                advance(&ui, &deck);
+                advance_auto(&ui, &deck);
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。

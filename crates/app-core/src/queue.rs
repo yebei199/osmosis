@@ -1,12 +1,29 @@
 //! 播放队列:当前那一批歌与其中的位置(见 `CONTEXT.md`「队列」)。
 //!
 //! 批就是音乐页最近一次装进列表的东西,换一批就整个换队列。
-//! 随机是对整批洗一次牌,一轮内不重复,放完即停 —— 不自作主张再来一轮。
+//! 随机是对整批洗一次牌,一轮内不重复。循环关着时放完即停,不自作主张
+//! 再来一轮;列表循环在队尾回卷(随机开着就重洗一轮),单曲循环只管
+//! 播完时的自动推进,手动「下一首」照样前进。
 //!
 //! 洗牌的随机种子由调用方传入:本 crate 要能编到 wasm 且保持确定性可测,
 //! 不引 `rand` —— `ui` 那侧用 `RandomState` 造种子,一行的事。
 
 use contract::TrackDto;
+
+/// 循环模式。三态与 MPRIS 的 `LoopStatus`(None/Playlist/Track)
+/// 及安卓 `REPEAT_MODE` 一一对应,上报时无损。
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq,
+)]
+pub enum LoopMode {
+    /// 放完即停,队列的原始语义。
+    #[default]
+    Off,
+    /// 列表循环:队尾回卷再来一轮。
+    All,
+    /// 单曲循环:只管自动推进,手动「下一首」照样前进。
+    One,
+}
 
 /// 当前播放队列。
 ///
@@ -26,6 +43,9 @@ pub struct Queue {
     /// 在桌面外壳、也可能在 app 自己的控制条上,而它们都只是这一位的投影。
     /// 存两份的话,总有一份会先变。
     shuffled: bool,
+    /// 循环模式。与 `shuffled` 不同,它是用户意图而不是批的属性:
+    /// 换批([`Self::replace`])保留它,跟人不跟批。
+    loop_mode: LoopMode,
 }
 
 impl Queue {
@@ -45,6 +65,7 @@ impl Queue {
             order,
             cursor,
             shuffled: false,
+            loop_mode: LoopMode::Off,
         }
     }
 
@@ -57,7 +78,10 @@ impl Queue {
         tracks: Vec<TrackDto>,
         start: usize,
     ) {
+        // 循环模式跟人不跟批:它是用户意图,换批不该把它拨回去。
+        let loop_mode = self.loop_mode;
         *self = Self::new(tracks, start);
+        self.loop_mode = loop_mode;
     }
 
     /// 正在放的那首。空批时是 `None`。
@@ -65,7 +89,9 @@ impl Queue {
         self.tracks.get(*self.order.get(self.cursor)?)
     }
 
-    /// 推进到下一首。**放完即停**:队尾之后是 `None`,位置不动。
+    /// 手动「下一首」。循环关着或单曲循环时**放完即停**:队尾之后是
+    /// `None`,位置不动;列表循环时队尾回卷再来一轮,`seed` 供回卷重洗
+    /// (没开随机就用不上)。
     ///
     /// 名字就叫 `next`:它是控制条上那个「下一首」,领域词优先。
     /// 不实现 `Iterator` —— 队列可以 `previous` 回头,迭代器语义反而是误导。
@@ -73,22 +99,86 @@ impl Queue {
         clippy::should_implement_trait,
         reason = "领域动作「下一首」,非迭代器;可回头的队列不该长得像 Iterator"
     )]
-    pub fn next(&mut self) -> Option<&TrackDto> {
+    pub fn next(
+        &mut self,
+        seed: u64,
+    ) -> Option<&TrackDto> {
         if self.cursor + 1 >= self.order.len() {
-            return None;
+            if self.loop_mode != LoopMode::All
+                || self.order.is_empty()
+            {
+                return None;
+            }
+            self.rewind(seed);
+            return self.current();
         }
         self.cursor += 1;
         self.current()
     }
 
+    /// 播完一首时的自动推进。与手动 [`Self::next`] 只差一处:
+    /// 单曲循环时留在本曲重放,手动则照样前进。
+    pub fn advance_auto(
+        &mut self,
+        seed: u64,
+    ) -> Option<&TrackDto> {
+        if self.loop_mode == LoopMode::One {
+            return self.current();
+        }
+        self.next(seed)
+    }
+
+    /// 回卷:列表循环在队尾之后开新一轮。
+    ///
+    /// 随机开着就重洗**整批** —— 每一轮都是新排列,「随机」不退化成
+    /// 固定的循环序。新一轮里整批都算未放过,所以不走 [`Self::shuffle`]
+    /// 的"只洗未放段"。
+    fn rewind(&mut self, seed: u64) {
+        self.cursor = 0;
+        if !self.shuffled {
+            return;
+        }
+        self.order = (0..self.tracks.len()).collect();
+        let mut state = seed;
+        for i in (1..self.order.len()).rev() {
+            let j =
+                (splitmix(&mut state) as usize) % (i + 1);
+            self.order.swap(i, j);
+        }
+    }
+
+    /// 循环模式。真相住在这儿,界面与系统媒体控件都只是投影。
+    pub fn loop_mode(&self) -> LoopMode {
+        self.loop_mode
+    }
+
+    /// 设循环模式。
+    pub fn set_loop_mode(&mut self, mode: LoopMode) {
+        self.loop_mode = mode;
+    }
+
     /// 下一首是谁,但**不推进**队列。
     ///
     /// 预取要用:备下一首的时候当前这首还在放,游标一动 `current()` 就跟着变,
-    /// 界面和播放器都会以为已经换歌了。判据与 [`Self::next`] 一致 ——
-    /// 队尾之后同样是 `None`,那时没有可预取的东西。
+    /// 界面和播放器都会以为已经换歌了。判据与 [`Self::advance_auto`] 一致:
+    /// 单曲循环预取的就是本曲;队尾之后循环关着是 `None`;列表循环+未随机
+    /// 是批序第一首;列表循环+随机也是 `None` —— 下一轮的次序回卷时才洗
+    /// 出来,预取不假装知道。
     pub fn peek_next(&self) -> Option<&TrackDto> {
-        let index = self.order.get(self.cursor + 1)?;
-        self.tracks.get(*index)
+        if self.loop_mode == LoopMode::One {
+            return self.current();
+        }
+        if let Some(&index) =
+            self.order.get(self.cursor + 1)
+        {
+            return self.tracks.get(index);
+        }
+        if self.loop_mode == LoopMode::All
+            && !self.shuffled
+        {
+            return self.tracks.get(*self.order.first()?);
+        }
+        None
     }
 
     /// 回到刚才放过的那首。随机模式下也成立 —— 走的是 `order`,
@@ -192,7 +282,7 @@ mod tests {
 
         let walked: Vec<String> =
             core::iter::from_fn(|| {
-                queue.next().map(|t| t.id.clone())
+                queue.next(0).map(|t| t.id.clone())
             })
             .collect();
 
@@ -235,8 +325,8 @@ mod tests {
     #[test]
     fn previous_returns_to_the_track_just_played() {
         let mut queue = Queue::new(batch(4), 0);
-        queue.next();
-        queue.next();
+        queue.next(0);
+        queue.next(0);
 
         assert_eq!(
             queue.previous().map(|t| t.id.clone()),
@@ -249,7 +339,7 @@ mod tests {
     fn next_at_the_end_returns_none_and_stays() {
         let mut queue = Queue::new(batch(3), 2);
 
-        assert!(queue.next().is_none());
+        assert!(queue.next(0).is_none());
         assert_eq!(
             id_of(&queue),
             Some("2".to_owned()),
@@ -277,7 +367,7 @@ mod tests {
 
         assert_eq!(id_of(&queue), Some("11".to_owned()));
         assert_eq!(
-            queue.next().map(|t| t.id.clone()),
+            queue.next(0).map(|t| t.id.clone()),
             Some("12".to_owned()),
             "next 该走新批,不是旧批"
         );
@@ -344,7 +434,7 @@ mod tests {
         let mut heard =
             vec![id_of(&queue).expect("有当前曲目")];
         heard.extend(core::iter::from_fn(|| {
-            queue.next().map(|t| t.id.clone())
+            queue.next(0).map(|t| t.id.clone())
         }));
 
         heard.sort();
@@ -368,11 +458,11 @@ mod tests {
     #[test]
     fn shuffle_skips_tracks_already_played() {
         let mut queue = Queue::new(batch(10), 0);
-        queue.next(); // 放过 0、1,正在放 1
+        queue.next(0); // 放过 0、1,正在放 1
         queue.shuffle(42);
 
         let rest: Vec<String> = core::iter::from_fn(|| {
-            queue.next().map(|t| t.id.clone())
+            queue.next(0).map(|t| t.id.clone())
         })
         .collect();
 
@@ -389,7 +479,7 @@ mod tests {
     fn unshuffle_resumes_batch_order_after_current() {
         let mut queue = Queue::new(batch(10), 0);
         queue.shuffle(42);
-        queue.next(); // 随机走到某一首
+        queue.next(0); // 随机走到某一首
 
         let current = id_of(&queue).expect("有当前曲目");
         queue.unshuffle();
@@ -402,7 +492,7 @@ mod tests {
         let expected_next: usize =
             current.parse::<usize>().unwrap() + 1;
         assert_eq!(
-            queue.next().map(|t| t.id.clone()),
+            queue.next(0).map(|t| t.id.clone()),
             Some(expected_next.to_string()),
             "接下来按批序走"
         );
@@ -414,7 +504,7 @@ mod tests {
         let mut queue = Queue::new(Vec::new(), 0);
 
         assert!(queue.current().is_none());
-        assert!(queue.next().is_none());
+        assert!(queue.next(0).is_none());
         assert!(queue.previous().is_none());
         queue.shuffle(1); // 不该 panic
         queue.unshuffle();
@@ -425,7 +515,7 @@ mod tests {
     fn single_track_batch_ends_after_one() {
         let mut queue = Queue::new(batch(1), 0);
 
-        assert!(queue.next().is_none());
+        assert!(queue.next(0).is_none());
         queue.shuffle(7);
         assert_eq!(id_of(&queue), Some("0".to_owned()));
     }
@@ -438,7 +528,7 @@ mod tests {
             let mut queue = Queue::new(batch(20), 0);
             queue.shuffle(seed);
             core::iter::from_fn(|| {
-                queue.next().map(|t| t.id.clone())
+                queue.next(0).map(|t| t.id.clone())
             })
             .collect()
         };
@@ -447,6 +537,208 @@ mod tests {
             walk(1),
             walk(2),
             "20 首的批,两个种子洗出同一个排列几乎不可能 —— 多半是 seed 没被用上"
+        );
+    }
+
+    /// 新队列循环是关的:「放完即停」语义原样成立,不因加字段而漂移。
+    #[test]
+    fn loop_mode_defaults_to_off() {
+        let queue = Queue::new(batch(3), 0);
+
+        assert_eq!(queue.loop_mode(), LoopMode::Off);
+    }
+
+    /// 设置后读回一致:真相住在 Queue,界面与媒体控件都只是投影。
+    #[test]
+    fn set_loop_mode_round_trips() {
+        let mut queue = Queue::new(batch(3), 0);
+
+        queue.set_loop_mode(LoopMode::One);
+        assert_eq!(queue.loop_mode(), LoopMode::One);
+        queue.set_loop_mode(LoopMode::All);
+        assert_eq!(queue.loop_mode(), LoopMode::All);
+    }
+
+    /// 换一批保留循环模式:随机是批的属性(换批清掉),循环是用户意图,
+    /// 跟人不跟批。
+    #[test]
+    fn replacing_the_batch_keeps_the_loop_mode() {
+        let mut queue = Queue::new(batch(3), 0);
+        queue.set_loop_mode(LoopMode::All);
+
+        queue.replace(batch(5), 0);
+
+        assert_eq!(queue.loop_mode(), LoopMode::All);
+    }
+
+    /// 列表循环:队尾 next 回卷到次序的第一首,不是 None。
+    #[test]
+    fn next_at_the_end_wraps_when_looping_all() {
+        let mut queue = Queue::new(batch(3), 2);
+        queue.set_loop_mode(LoopMode::All);
+
+        assert_eq!(
+            queue.next(0).map(|t| t.id.clone()),
+            Some("0".to_owned())
+        );
+        assert_eq!(id_of(&queue), Some("0".to_owned()));
+    }
+
+    /// 单曲循环不改手动语义:队尾手动 next 仍是 None(单曲只管自动推进)。
+    #[test]
+    fn manual_next_at_the_end_is_none_when_looping_one() {
+        let mut queue = Queue::new(batch(3), 2);
+        queue.set_loop_mode(LoopMode::One);
+
+        assert!(queue.next(0).is_none());
+        assert_eq!(id_of(&queue), Some("2".to_owned()));
+    }
+
+    /// 单曲循环:自动播完留在本曲,游标不动。
+    #[test]
+    fn advance_auto_repeats_current_when_looping_one() {
+        let mut queue = Queue::new(batch(3), 1);
+        queue.set_loop_mode(LoopMode::One);
+
+        assert_eq!(
+            queue.advance_auto(0).map(|t| t.id.clone()),
+            Some("1".to_owned())
+        );
+        assert_eq!(id_of(&queue), Some("1".to_owned()));
+    }
+
+    /// 单曲循环只锁自动:手动 next 照样前进到下一首。
+    #[test]
+    fn manual_next_advances_even_when_looping_one() {
+        let mut queue = Queue::new(batch(3), 0);
+        queue.set_loop_mode(LoopMode::One);
+
+        assert_eq!(
+            queue.next(0).map(|t| t.id.clone()),
+            Some("1".to_owned())
+        );
+    }
+
+    /// 循环关着时自动推进与 next 同判据:队尾即停,既有语义不被新入口绕过。
+    #[test]
+    fn advance_auto_stops_at_the_end_when_loop_off() {
+        let mut queue = Queue::new(batch(2), 1);
+
+        assert!(queue.advance_auto(0).is_none());
+        assert_eq!(id_of(&queue), Some("1".to_owned()));
+    }
+
+    /// 随机+列表循环回卷:新一轮重洗(不同种子给不同排列),
+    /// 且每首恰好出现一次。
+    #[test]
+    fn wrap_reshuffles_the_next_round_when_shuffled() {
+        let round2 = |wrap_seed: u64| -> Vec<String> {
+            let mut queue = Queue::new(batch(20), 0);
+            queue.shuffle(42);
+            queue.set_loop_mode(LoopMode::All);
+            // 走完第一轮:current 加 19 次 next。
+            for _ in 0..19 {
+                queue.next(0);
+            }
+            // 回卷,第二轮从这里开始,取整轮 20 首。
+            let mut ids = vec![
+                queue
+                    .next(wrap_seed)
+                    .map(|t| t.id.clone())
+                    .expect("回卷之后该有歌"),
+            ];
+            for _ in 0..19 {
+                ids.push(
+                    queue
+                        .next(0)
+                        .expect("第二轮未走完不该停")
+                        .id
+                        .clone(),
+                );
+            }
+            ids
+        };
+
+        let a = round2(1);
+        let b = round2(2);
+
+        let mut sorted = a.clone();
+        sorted.sort();
+        let mut expected: Vec<String> =
+            (0..20).map(|i| i.to_string()).collect();
+        expected.sort();
+        assert_eq!(sorted, expected, "第二轮是完整的一轮");
+        assert_ne!(
+            a, b,
+            "不同回卷种子该给不同排列 —— 多半是 seed 没进重洗"
+        );
+    }
+
+    /// 不随机时回卷回到批序第一首,顺序完整走第二轮。
+    /// 种子照传也不该把未洗过的队列搅乱。
+    #[test]
+    fn wrap_keeps_batch_order_when_not_shuffled() {
+        let mut queue = Queue::new(batch(3), 2);
+        queue.set_loop_mode(LoopMode::All);
+
+        let walked: Vec<String> = (0..3)
+            .map(|_| {
+                queue
+                    .next(7)
+                    .expect("循环着不该停")
+                    .id
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(walked, ["0", "1", "2"]);
+    }
+
+    /// 预取镜像自动推进:单曲循环预取本曲;列表循环+未随机队尾预取第一首;
+    /// 列表循环+随机队尾是 None —— 下一轮次序回卷时才洗出来,预取不假装知道。
+    #[test]
+    fn peek_next_mirrors_the_auto_advance_rule() {
+        let mut one = Queue::new(batch(3), 1);
+        one.set_loop_mode(LoopMode::One);
+        assert_eq!(
+            one.peek_next().map(|t| t.id.as_str()),
+            Some("1"),
+            "单曲循环预取本曲"
+        );
+
+        let mut all = Queue::new(batch(3), 2);
+        all.set_loop_mode(LoopMode::All);
+        assert_eq!(
+            all.peek_next().map(|t| t.id.as_str()),
+            Some("0"),
+            "列表循环队尾预取第一首"
+        );
+
+        let mut shuffled = Queue::new(batch(5), 4);
+        shuffled.shuffle(42);
+        shuffled.set_loop_mode(LoopMode::All);
+        assert!(
+            shuffled.peek_next().is_none(),
+            "随机的下一轮还没洗出来,预取不该假装知道"
+        );
+    }
+
+    /// 边界:空批开循环不 panic 也不给歌;单曲批+列表循环队尾回卷到自己。
+    #[test]
+    fn loop_edge_cases_on_empty_and_single_track_batches() {
+        let mut empty = Queue::new(Vec::new(), 0);
+        empty.set_loop_mode(LoopMode::All);
+        assert!(empty.next(0).is_none());
+        assert!(empty.advance_auto(0).is_none());
+        empty.set_loop_mode(LoopMode::One);
+        assert!(empty.advance_auto(0).is_none());
+
+        let mut single = Queue::new(batch(1), 0);
+        single.set_loop_mode(LoopMode::All);
+        assert_eq!(
+            single.next(0).map(|t| t.id.clone()),
+            Some("0".to_owned()),
+            "单曲批的列表循环回卷到自己"
         );
     }
 }
