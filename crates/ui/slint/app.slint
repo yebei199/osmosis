@@ -29,7 +29,7 @@ import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch, EntryCard } from "widgets.slint";
 import { ControlCluster, SyncStrip, ProgressBar, VolumeControl } from "controls.slint";
-import { Theme } from "theme.slint";
+import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
 export { Theme }
@@ -721,40 +721,89 @@ export component MainWindow inherits Window {
                     }
 
 
-                    // 控制条:上一首 / 播放暂停 / 下一首 / 日月随机开关 │ 同播设备。
+                    // 控制条:悬浮胶囊 + 环形进度播放键(docs/design.md「播放条」)。
+                    // 内容顺序:封面 · 曲名/歌手+时间 · 键簇 · 音量/展开 · 同播。
+                    // 进度的常态显示在环上;精确拖动靠悬停条身下缘浮出的细轨。
                     //
-                    // 宽版一排放下;紧凑版(手机)拆两行 —— 一排的最小宽度约 470px,
-                    // 而手机内容区只有 ~360px,硬挤会把按钮画出屏幕右缘。
-                    controls := Rectangle {
-                        height: root.compact ? 116px : 60px;
-                        border-radius: 16px;
-                        background: Theme.surface.with-alpha(0.67);
+                    // 宽版一颗胶囊居中;紧凑版(手机)仍拆两行 —— 一排的最小宽度
+                    // 约 470px,而手机内容区只有 ~360px,硬挤会把按钮画出屏幕右缘。
+                    // 胶囊仍在布局流里(列表不从它底下穿过),完全悬浮等 #66 动
+                    // 页面装配时一并做。
+                    // `if` 在 Rectangle 外面:条件子元素不给父元素贡献 preferred
+                    // 尺寸,放里面胶囊会坍缩成 0 宽、内容从中心溢出(实拍踩过)。
+                    if !root.compact: HorizontalLayout {
+                        // 胶囊收到内容宽、居中。
+                        alignment: center;
+                        controls := Rectangle {
+                        height: 62px;
+                        border-radius: self.height / 2;
+                        background: Theme.surface.with-alpha(0.9);
                         border-width: 1px;
-                        border-color: Theme.divider;
+                        border-color: Theme.glass-edge;
+                        drop-shadow-blur: 30px;
+                        drop-shadow-offset-y: 14px;
+                        drop-shadow-color: Theme.glass-shadow;
 
-                        if !root.compact: HorizontalLayout {
-                            padding-left: 14px;
-                            padding-right: 14px;
-                            spacing: 10px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 16px;
+                            spacing: 12px;
 
+                            // 正在放什么:封面 + 曲名/歌手 + 时间。没歌时整列不摆。
+                            if root.has-track: bar-now := HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 44px;
+                                        height: 44px;
+                                        border-radius: 11px;
+                                        clip: true;
+                                        // 封面没到位时的占位:副色板 0 号渐变(硬规则 6 允许的用途)。
+                                        background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                                        if root.cover-art.width > 0: Image {
+                                            width: 100%;
+                                            height: 100%;
+                                            image-fit: cover;
+                                            source: root.cover-art;
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        max-width: 220px;
+                                        text: root.now-title;
+                                        color: Theme.text;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        max-width: 220px;
+                                        // 缓冲时这行是唯一说明「还在动」的东西,提亮。
+                                        text: root.buffering
+                                            ? "缓冲中…"
+                                            : root.now-artists + "  " + root.progress-text;
+                                        color: root.buffering ? Theme.accent : Theme.text-dim;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
                             ControlCluster {
-                                alignment: start;
+                                // 胶囊要收到内容宽:键簇与同播条都是 layout,
+                                // 默认 stretch 1 会把胶囊撑满整行。
+                                horizontal-stretch: 0;
                                 is-playing: root.is-playing;
                                 shuffle-on: root.shuffle-on;
+                                progress-ratio: root.progress-ratio;
                                 prev => { root.prev-track(); }
                                 toggle => { root.toggle-play(); }
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
                                 theme-toggled => { root.theme-toggled(); }
-                            }
-                            // 进度条占中间那块可伸缩的地方 —— 它是这一排里唯一
-                            // 越宽越好用的东西,别的都是固定尺寸的键。
-                            if root.has-track: wide-progress := ProgressBar {
-                                horizontal-stretch: 1;
-                                ratio: root.progress-ratio;
-                                text: root.progress-text;
-                                buffering: root.buffering;
-                                seek(at) => { root.seek(at); }
                             }
                             wide-volume := VolumeControl {
                                 volume: root.volume;
@@ -763,16 +812,38 @@ export component MainWindow inherits Window {
                             // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
                             RoundControl {
                                 icon: "M12 7 L19 16 L5 16 Z";
+                                label: "展开播放页";
                                 clicked => { root.play-page-open = true; }
                             }
                             SyncStrip {
-                                alignment: end;
+                                horizontal-stretch: 0;
                                 devices: root.devices;
                                 push-to(id) => { root.push-to(id); }
                             }
                         }
 
-                        if root.compact: VerticalLayout {
+                        // 精确拖动的细轨:贴着胶囊下缘,悬停才现形。
+                        // 环报进度,它管落点 —— 两件事分开(docs/design.md「播放条」)。
+                        if root.has-track: wide-progress := ProgressBar {
+                            slim: true;
+                            x: 28px;
+                            width: parent.width - 56px;
+                            y: parent.height - self.height - 1px;
+                            ratio: root.progress-ratio;
+                            seek(at) => { root.seek(at); }
+                        }
+                        }
+                    }
+
+                    // 紧凑版:两行,占满内容宽(#64 再改成迷你条)。
+                    if root.compact: controls-compact := Rectangle {
+                        height: 116px;
+                        border-radius: 16px;
+                        background: Theme.surface.with-alpha(0.9);
+                        border-width: 1px;
+                        border-color: Theme.glass-edge;
+
+                        VerticalLayout {
                             padding: 8px;
                             spacing: 4px;
 
@@ -782,6 +853,7 @@ export component MainWindow inherits Window {
                                 ControlCluster {
                                     is-playing: root.is-playing;
                                     shuffle-on: root.shuffle-on;
+                                    progress-ratio: root.progress-ratio;
                                     prev => { root.prev-track(); }
                                     toggle => { root.toggle-play(); }
                                     next => { root.next-track(); }
@@ -917,13 +989,16 @@ export component MainWindow inherits Window {
         OutlinedText {
             y: root.viz-title-y;
             width: 100%;
-            height: 30px;
+            height: 42px;
             text: root.now-title;
             text-color: Theme.immersive-text;
-            font-size: 22px;
+            // display 字体只有拉丁字形;中文歌名按字形回退,得到的是
+            // 「拉丁 display + 中文系统字」的混排,与设计稿一致。
+            font-family: Type.display-latin;
+            font-size: root.compact ? 26px : 34px;
         }
         OutlinedText {
-            y: root.viz-title-y + 34px;
+            y: root.viz-title-y + 46px;
             width: 100%;
             height: 20px;
             text: root.now-artists;
@@ -935,7 +1010,7 @@ export component MainWindow inherits Window {
         // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
         // 而这一层还压在点云上。文案硬编码中文,走子集字体。
         if root.now-loading: OutlinedText {
-            y: root.viz-title-y + 58px;
+            y: root.viz-title-y + 70px;
             width: 100%;
             height: 18px;
             text: "加载中…";
@@ -1000,10 +1075,14 @@ export component MainWindow inherits Window {
             alignment: center;
             Rectangle {
                 height: root.viz-controls-h;
-                border-radius: 16px;
-                background: Theme.surface.with-alpha(0.67);
+                // 宽版一排时收成胶囊;紧凑版两行,胶囊半径会切掉角上的键。
+                border-radius: root.compact ? 16px : self.height / 2;
+                background: Theme.surface.with-alpha(0.9);
                 border-width: 1px;
-                border-color: Theme.divider;
+                border-color: Theme.glass-edge;
+                drop-shadow-blur: 30px;
+                drop-shadow-offset-y: 14px;
+                drop-shadow-color: Theme.glass-shadow;
 
                 VerticalLayout {
                     padding: 8px;
@@ -1015,6 +1094,10 @@ export component MainWindow inherits Window {
                         ControlCluster {
                             is-playing: root.is-playing;
                             shuffle-on: root.shuffle-on;
+                            progress-ratio: root.progress-ratio;
+                            // 播放页的环大一档(60/50);接了 warp 时环内是画面,再大一圈。
+                            ring-diameter: 60px;
+                            ring-inner-diameter: 50px;
                             // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
                             // 小圆点养一条 wgpu pass。
                             pulse: root.viz-bg;
@@ -1022,7 +1105,17 @@ export component MainWindow inherits Window {
                             toggle => { root.toggle-play(); }
                             next => { root.next-track(); }
                             shuffle-toggled => { root.shuffle-toggled(); }
-                                theme-toggled => { root.theme-toggled(); }
+                            theme-toggled => { root.theme-toggled(); }
+                        }
+                        // 时间读数:环报的是比例,数字在这里。
+                        if !root.compact && root.has-track: VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: root.buffering ? "缓冲中…" : root.progress-text;
+                                font-family: Type.mono;
+                                font-size: 11px;
+                                color: root.buffering ? Theme.accent : Theme.immersive-text-dim;
+                            }
                         }
                         if !root.compact: RoundControl {
                             icon: root.preset-icon;

@@ -158,6 +158,47 @@ fn the_day_night_switch_now_asks_for_a_theme_change() {
     );
 }
 
+/// 悬浮胶囊条身上带着「正在放什么」:封面、曲名那一列只在手上有歌时出现。
+///
+/// 没在放时不摆空壳 —— 与进度条同一条理由。
+#[test]
+fn the_bar_shows_the_current_track_only_when_there_is_one() {
+    let ui = wide_page();
+
+    ui.set_has_track(false);
+    assert!(!present(&ui, "MainWindow::bar-now"));
+
+    ui.set_has_track(true);
+    assert!(present(&ui, "MainWindow::bar-now"));
+}
+
+/// 播放键换成环形进度键后,对外仍是那颗「播放/暂停」按钮:
+/// 标签在、按一下喊 toggle-play、值由 Rust 写回。
+#[test]
+fn the_ring_play_key_still_toggles_playback() {
+    let ui = wide_page();
+    ui.set_is_playing(false);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.on_toggle_play(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    testing::ElementHandle::find_by_accessible_label(
+        &ui, "播放",
+    )
+    .next()
+    .expect("找不到播放键")
+    .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "按一下该喊一声");
+    assert!(
+        !ui.get_is_playing(),
+        "值该纹丝不动 —— 写它是 Rust 的活"
+    );
+}
+
 // 「拖动时不被每秒的位置刷新拽回去」这一条**没有测试**。
 //
 // 骨架里原本有它,写不出来:无头测试驱动不了真实指针,而 ProgressBar 既不是
