@@ -125,6 +125,36 @@ pub struct TracksDto {
     pub unavailable: usize,
 }
 
+/// `GET /stats` 的响应体:收听统计,服务端从播放事件流查询时聚合。
+///
+/// 没有「本月时长」:事件流只记起播、不记听了多久(见服务端 history 模块),
+/// 编一个时长出来等于谎报。新增路由是兼容变更,不动 [`PROTOCOL_VERSION`]。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct StatsDto {
+    /// 账号名,给个人主页当标题。
+    pub username: String,
+    /// 本月起播了多少次。
+    pub month_plays: u32,
+    /// 一共听过多少首不同的歌。
+    pub distinct_tracks: u32,
+    /// 连续在听的天数。今天还没听不清零,断更超过一天读作 0。
+    pub streak_days: u32,
+    /// 常听歌手,按播放次数从多到少,最多五个。
+    pub top_artists: Vec<TopArtistDto>,
+}
+
+/// [`StatsDto`] 里的一个歌手条目。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct TopArtistDto {
+    pub name: String,
+    /// 出现在播放事件里的次数。
+    pub plays: u32,
+}
+
 /// `GET /play/{track_id}` 的响应体:一次取到的可播放源。
 ///
 /// 这些字段属于"这次取到的源"而非歌曲本身 —— 换个音质档位再取会得到不同的值。

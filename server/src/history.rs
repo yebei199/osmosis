@@ -69,3 +69,93 @@ pub async fn recent(
         })
         .collect())
 }
+
+/// 收听统计。全部查询时聚合,不存统计表(见模块头)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListeningStats {
+    /// 本月起播了多少次。**不是时长**:事件流不记听了多久。
+    pub month_plays: i64,
+    /// 一共听过多少首不同的歌。
+    pub distinct_tracks: i64,
+    /// 连续在听的天数:从最近一个有播放的日子往回数,断一天即止。
+    /// 今天还没听不清零,到昨天为止仍算连着;断更超过一天读作 0。
+    pub streak_days: i64,
+}
+
+/// 聚合一个账号的收听统计。
+///
+/// 日界按 UTC 切:服务端不知道用户在哪个时区。跨着午夜听歌的人
+/// 会在边界上差一天,代价可接受,比在契约里传时区便宜得多。
+pub async fn stats(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<ListeningStats, AppError> {
+    let (month_plays, distinct_tracks): (i64, i64) =
+        sqlx::query_as(
+            "SELECT
+                 count(*) FILTER (WHERE played_at >= date_trunc('month', now())),
+                 count(DISTINCT (platform, track_id))
+             FROM play_events
+             WHERE account_id = $1",
+        )
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    // 连续段:第 n 个日子(按新到旧数)恰好比最新日子早 n 天,才还连着。
+    // 断档之后的日子永远追不上这个等式,不会误入。
+    let (streak_days,): (i64,) = sqlx::query_as(
+        "WITH days AS (
+             SELECT DISTINCT (played_at AT TIME ZONE 'UTC')::date AS d
+             FROM play_events WHERE account_id = $1
+         ),
+         latest AS (SELECT max(d) AS max_d FROM days),
+         runs AS (
+             SELECT d, row_number() OVER (ORDER BY d DESC) - 1 AS off
+             FROM days
+         )
+         SELECT COALESCE((
+             SELECT count(*) FROM runs, latest
+             WHERE runs.d = latest.max_d - runs.off::int
+               AND latest.max_d >= (now() AT TIME ZONE 'UTC')::date - 1
+         ), 0)",
+    )
+    .bind(account_id)
+    .fetch_one(&mut *conn)
+    .await?;
+
+    Ok(ListeningStats {
+        month_plays,
+        distinct_tracks,
+        streak_days,
+    })
+}
+
+/// 常听歌手,按出现在事件流里的次数排,次数相同按名字稳定排。
+///
+/// 名字来自 `platform_tracks` 缓存:缓存里没有详情的曲目不进榜单,
+/// 缓存随浏览补齐,统计跟着变准 —— 不为榜单单独去平台抓详情。
+pub async fn top_artists(
+    conn: &mut PgConnection,
+    account_id: i64,
+    limit: i64,
+) -> Result<Vec<(String, i64)>, AppError> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT artist, count(*) AS plays
+         FROM play_events AS pe
+         JOIN platform_tracks AS pt
+           ON pt.platform = pe.platform
+          AND pt.track_id = pe.track_id,
+         LATERAL unnest(pt.artists) AS artist
+         WHERE pe.account_id = $1
+         GROUP BY artist
+         ORDER BY plays DESC, artist
+         LIMIT $2",
+    )
+    .bind(account_id)
+    .bind(limit)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    Ok(rows)
+}

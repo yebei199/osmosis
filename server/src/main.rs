@@ -22,8 +22,8 @@ use contract::{
     ArtistSearchDto, HealthDto, LoginDto, LyricDto,
     PROTOCOL_VERSION, PlaySourceDto, PlayedDto,
     PlaylistDto, PlaylistSearchDto, PlaylistsDto,
-    RegisterDto, SearchDto, SessionDto, TrackDto,
-    TrackIdsDto, TracksDto,
+    RegisterDto, SearchDto, SessionDto, StatsDto,
+    TopArtistDto, TrackDto, TrackIdsDto, TracksDto,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -244,6 +244,7 @@ async fn main() {
         .route("/lyric/{track_id}", get(lyric))
         .route("/played", post(record_play))
         .route("/recent", get(recent))
+        .route("/stats", get(stats))
         .with_state(state)
         .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
@@ -1345,6 +1346,42 @@ async fn recent(
             .map(bangdream::track_to_dto)
             .collect(),
         unavailable: 0,
+    }))
+}
+
+/// `GET /stats`:收听统计,从播放事件流查询时聚合(见 `history` 模块)。
+async fn stats(
+    State(state): State<AppState>,
+    account: Account,
+) -> Result<Json<StatsDto>, Failure> {
+    /// 常听歌手取几个。设计稿的画像卡是五条(docs/design.md「页面清单」)。
+    const TOP_ARTISTS: i64 = 5;
+
+    let mut conn = conn(&state.pool).await?;
+    let listening =
+        history::stats(&mut conn, account.id)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+    let top =
+        history::top_artists(&mut conn, account.id, TOP_ARTISTS)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    // i64 → u32:负数不可能(count 出来的),溢出等于四十亿次起播,截断即可。
+    let clamp = |n: i64| u32::try_from(n).unwrap_or(u32::MAX);
+
+    Ok(Json(StatsDto {
+        username: account.username,
+        month_plays: clamp(listening.month_plays),
+        distinct_tracks: clamp(listening.distinct_tracks),
+        streak_days: clamp(listening.streak_days),
+        top_artists: top
+            .into_iter()
+            .map(|(name, plays)| TopArtistDto {
+                name,
+                plays: clamp(plays),
+            })
+            .collect(),
     }))
 }
 

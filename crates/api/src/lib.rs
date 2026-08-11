@@ -437,6 +437,13 @@ pub async fn recent() -> Result<TracksDto, ApiError> {
         .await
 }
 
+/// `GET /stats` —— 收听统计,个人主页用。
+pub async fn stats() -> Result<contract::StatsDto, ApiError>
+{
+    platform::get_json(format!("{}/stats", base_url()))
+        .await
+}
+
 /// 只有一个 `name` 字段的请求体,建歌单与改名共用。
 #[derive(Serialize)]
 struct Named {
