@@ -12,18 +12,22 @@
 struct Params {
     // 目标纹理尺寸,物理像素。
     tex_size: vec2<f32>,
-    // metaball 头(快)与尾(慢)的中心,物理像素。
+    // 三颗球的中心,物理像素:头(快)/尾(慢)/小水滴(最慢)。
+    // 追随系数不同,同一个目标位置天然拉开先后(handoff-shaders.md §11)。
     lead: vec2<f32>,
     lag: vec2<f32>,
-    // 选中块半尺寸与圆角,物理像素。
+    drop: vec2<f32>,
+    // 头球半尺寸与圆角,物理像素。尾球与小水滴按比例缩(见 fs)。
     half: vec2<f32>,
     radius: f32,
     // smin 的融合半径,物理像素:越大颈越粗、融得越"胶"。
     smooth_k: f32,
-    // 深色主题为 1,浅色为 0。从尾部那两个填充位里让出一个 —— 结构体大小不变。
+    // 深色主题为 1,浅色为 0。
     dark: f32,
-    // 尾部填充:把结构体凑成 16 字节的整数倍,满足 uniform 布局对齐(Rust 侧缓冲同为 48 字节)。
-    _pad: f32,
+    // 尾部填充:把结构体凑成 16 字节的整数倍,满足 uniform 布局对齐(Rust 侧缓冲同为 64 字节)。
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -79,15 +83,27 @@ fn base_color(uv: vec2<f32>) -> vec3<f32> {
     return c;
 }
 
+// 三球联合距离场:头球全尺寸,尾球收一档,小水滴最小(§11 的 52/38×34/20×18
+// 按头球比例换算)。行走时三球被追随系数拉开,smin 连出胶着的颈;静止时叠成单块。
+fn field(pix: vec2<f32>) -> f32 {
+    let d_lead = sd_round_rect(pix - u.lead, u.half, u.radius);
+    let d_lag = sd_round_rect(
+        pix - u.lag,
+        u.half * vec2<f32>(0.73, 0.65),
+        u.radius * 0.75);
+    let d_drop = sd_round_rect(
+        pix - u.drop,
+        u.half * vec2<f32>(0.38, 0.35),
+        u.radius * 0.5);
+    return smin(smin(d_lead, d_lag, u.smooth_k), d_drop, u.smooth_k);
+}
+
 @fragment
 fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let pix = frag.xy;
     let uv = pix / u.tex_size;
 
-    // metaball:头尾两个圆角矩形取 smooth-union。行走时两者分离 → 颈;静止时重合 → 单块。
-    let d_lead = sd_round_rect(pix - u.lead, u.half, u.radius);
-    let d_lag = sd_round_rect(pix - u.lag, u.half, u.radius);
-    let d = smin(d_lead, d_lag, u.smooth_k);
+    let d = field(pix);
 
     // 玻璃之外:侧栏自绘背景原样。这一支覆盖大多数像素。
     if (d > 0.0) {
@@ -97,14 +113,8 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     // ── 玻璃之内 ──
     // 边缘折射:用 SDF 梯度当法线,离边越近位移越大(平方衰减),把边缘背后的自绘背景"吸"进来。
     let e = 1.0;
-    let nx = smin(sd_round_rect(pix - u.lead + vec2<f32>(e, 0.0), u.half, u.radius),
-                  sd_round_rect(pix - u.lag + vec2<f32>(e, 0.0), u.half, u.radius), u.smooth_k)
-           - smin(sd_round_rect(pix - u.lead - vec2<f32>(e, 0.0), u.half, u.radius),
-                  sd_round_rect(pix - u.lag - vec2<f32>(e, 0.0), u.half, u.radius), u.smooth_k);
-    let ny = smin(sd_round_rect(pix - u.lead + vec2<f32>(0.0, e), u.half, u.radius),
-                  sd_round_rect(pix - u.lag + vec2<f32>(0.0, e), u.half, u.radius), u.smooth_k)
-           - smin(sd_round_rect(pix - u.lead - vec2<f32>(0.0, e), u.half, u.radius),
-                  sd_round_rect(pix - u.lag - vec2<f32>(0.0, e), u.half, u.radius), u.smooth_k);
+    let nx = field(pix + vec2<f32>(e, 0.0)) - field(pix - vec2<f32>(e, 0.0));
+    let ny = field(pix + vec2<f32>(0.0, e)) - field(pix - vec2<f32>(0.0, e));
     let n = normalize(vec2<f32>(nx, ny) + vec2<f32>(1e-6));
 
     let EDGE_PX = 16.0;

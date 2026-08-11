@@ -19,9 +19,12 @@ pub struct NavGlassControls {
     /// 侧栏纹理尺寸(= 目标纹理尺寸)。
     pub strip_w: f32,
     pub strip_h: f32,
-    /// metaball 头(快)/尾(慢)中心的 y,相对侧栏顶。
+    /// 三颗球中心的 y,相对侧栏顶:头(快)/尾(慢)/小水滴(最慢)。
+    /// 三条各自时长的动画朝同一个目标走,天然拉开先后(§11 的追随系数,
+    /// 这里用 Slint animate 的时长差实现,不逐帧积分)。
     pub lead_y: f32,
     pub lag_y: f32,
+    pub drop_y: f32,
     /// 选中块参考高度(≈单个导航项高)。
     pub slot_h: f32,
     /// 深色主题。侧栏背景是自绘的,采不到背后的像素,主题只能这样传进去。
@@ -45,13 +48,14 @@ pub struct NavGlassControls {
 pub fn nav_transition_active(
     lead: f32,
     lag: f32,
-    last: Option<(f32, f32)>,
+    drop: f32,
+    last: Option<(f32, f32, f32)>,
 ) -> bool {
     match last {
         // 首帧:还没有静止态纹理,必渲一次。
         None => true,
         // 有一个位置相对上一帧变了 = 转场还在走(含刚点下时进度跳变);都没变则跳过。
-        Some(prev) => (lead, lag) != prev,
+        Some(prev) => (lead, lag, drop) != prev,
     }
 }
 
@@ -62,43 +66,56 @@ mod tests {
     /// 首帧:last 为 None 时必须重渲,好让侧栏首屏就有静止态纹理。
     #[test]
     fn first_frame_forces_render() {
-        assert!(nav_transition_active(10.0, 10.0, None));
+        assert!(nav_transition_active(
+            10.0, 10.0, 10.0, None
+        ));
     }
 
-    /// 转场进行中:lead 或 lag 任一相对上一帧变化(还在走)时重渲。
+    /// 转场进行中:三球任一相对上一帧变化(还在走)时重渲。
     #[test]
     fn moving_position_triggers_render() {
         // 只有 lead 在动
         assert!(nav_transition_active(
             12.0,
             8.0,
-            Some((10.0, 8.0))
+            8.0,
+            Some((10.0, 8.0, 8.0))
         ));
         // 只有 lag 在动
         assert!(nav_transition_active(
             12.0,
             9.0,
-            Some((12.0, 8.0))
+            8.0,
+            Some((12.0, 8.0, 8.0))
+        ));
+        // 只有小水滴还在走 —— 它最慢,常常是最后一个到的。
+        assert!(nav_transition_active(
+            12.0,
+            12.0,
+            10.0,
+            Some((12.0, 12.0, 9.0))
         ));
     }
 
-    /// 稳定期:lead 与 lag 都与上一帧相等(转场结束/未切)时跳过,复用上一帧纹理。
+    /// 稳定期:三球都与上一帧相等(转场结束/未切)时跳过,复用上一帧纹理。
     #[test]
     fn settled_positions_skip_render() {
         assert!(!nav_transition_active(
             10.0,
             10.0,
-            Some((10.0, 10.0))
+            10.0,
+            Some((10.0, 10.0, 10.0))
         ));
     }
 
-    /// 转场结束那一帧:lead/lag 刚双双抵达终点、仍不同于上帧 → 重渲一次拿到最终静止态。
+    /// 转场结束那一帧:三球刚齐齐抵达终点、仍不同于上帧 → 重渲一次拿到最终静止态。
     #[test]
     fn final_settling_frame_still_renders_once() {
         assert!(nav_transition_active(
             10.0,
             10.0,
-            Some((11.0, 9.0))
+            10.0,
+            Some((11.0, 9.0, 8.0))
         ));
     }
 }

@@ -316,8 +316,11 @@ export component MainWindow inherits Window {
     // 用两个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
     out property <length> nav-lead-y: root.nav-target-y;
     out property <length> nav-lag-y: root.nav-target-y;
+    // 第三颗:小水滴,最慢的那份(§11 三球;系数差用时长差实现)。
+    out property <length> nav-drop-y: root.nav-target-y;
     animate nav-lead-y { duration: 240ms; easing: ease-out; }
     animate nav-lag-y { duration: 440ms; easing: ease-out; }
+    animate nav-drop-y { duration: 680ms; easing: ease-out; }
     // render3d 每帧(转场期间)渲出的侧栏背景纹理。非 GPU 构建恒为空图(width 0),
     // 侧栏退回 Slint 平底 + NavItem 自带高亮(见侧栏与 NavItem)。
     in-out property <image> nav-bg;

@@ -207,7 +207,7 @@ pub fn run_with_renderers(
     let weak = ui.as_weak();
     // 导航选中器的跨帧状态:上一帧的 (lead, lag) 逻辑位置与 (栏宽, 栏高) 物理尺寸,
     // 供省电门判定这一帧是否需要重渲(转场进行中 或 尺寸变化)。
-    let mut nav_last_ll: Option<(f32, f32)> = None;
+    let mut nav_last_ll: Option<(f32, f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
     let mut nav_last_dark: Option<bool> = None;
     // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
@@ -258,6 +258,7 @@ pub fn run_with_renderers(
             if ui.get_nav_visible() {
                 let lead = ui.get_nav_lead_y();
                 let lag = ui.get_nav_lag_y();
+                let drop = ui.get_nav_drop_y();
                 let strip_w =
                     (ui.get_nav_w() * scale).max(1.0);
                 let strip_h =
@@ -273,6 +274,7 @@ pub fn run_with_renderers(
                 if nav_glass::nav_transition_active(
                     lead,
                     lag,
+                    drop,
                     nav_last_ll,
                 ) || size_changed
                     || theme_changed
@@ -283,6 +285,7 @@ pub fn run_with_renderers(
                             strip_h,
                             lead_y: lead * scale,
                             lag_y: lag * scale,
+                            drop_y: drop * scale,
                             slot_h: ui.get_nav_slot_h()
                                 * scale,
                             dark,
@@ -290,7 +293,7 @@ pub fn run_with_renderers(
                     {
                         ui.set_nav_bg(img);
                     }
-                    nav_last_ll = Some((lead, lag));
+                    nav_last_ll = Some((lead, lag, drop));
                     nav_last_dark = Some(dark);
                     nav_last_size =
                         Some((strip_w, strip_h));

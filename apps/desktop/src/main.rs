@@ -48,6 +48,7 @@ fn main() {
                 strip_h: n.strip_h,
                 lead_y: n.lead_y,
                 lag_y: n.lag_y,
+                drop_y: n.drop_y,
                 slot_h: n.slot_h,
                 dark: n.dark,
             }))
