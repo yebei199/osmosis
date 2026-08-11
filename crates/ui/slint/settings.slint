@@ -1,0 +1,202 @@
+// 设置页:分组卡片流(docs/design.md「页面清单」)。
+//
+// 只摆背后真有东西的组:外观(主题三档)、账号(退出登录)、快捷键、关于。
+// 设计稿里的「缓存与存储」「动态极光按钮」等大小统计与 shader 落地后再上,
+// 没有数据源的卡不上屏(硬规则 8)。
+
+import { Theme, Type } from "theme.slint";
+
+// 一张设置卡:kicker 标题 + 内容。
+component SettingsCard inherits Rectangle {
+    in property <string> kicker;
+
+    background: Theme.surface;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.overlay;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        Text {
+            text: root.kicker;
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 12px;
+            color: Theme.accent;
+        }
+
+        @children
+    }
+}
+
+// 主题分段控件里的一档。选中态 accent 实底 + 深墨字(docs/adr/0023)。
+component ThemeSegment inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 34px;
+    width: seg-label.preferred-width + 32px;
+    border-radius: 999px;
+    background: root.selected
+        ? Theme.accent
+        : (seg-touch.has-hover ? Theme.hover : Theme.overlay-weak);
+    animate background { duration: 120ms; easing: ease-out; }
+
+    // a11y 挂在组件根上:无头测试按元素 id 找到的是这一层,
+    // 挂在里面的 TouchArea 上就点不动了。
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-action-default => { root.clicked(); }
+
+    seg-label := Text {
+        text: root.label;
+        font-family: "Maple Mono NF CN";
+        font-size: 13px;
+        color: root.selected ? Theme.accent-text : Theme.text-dim;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    seg-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SettingsPage inherits Flickable {
+    // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好推进来。
+    in property <string> about-line;
+    // 主题三档:选了喊一声(0 深 1 浅 2 跟随系统),值由 Rust 写回 Theme.mode。
+    callback theme-mode-selected(int);
+    // 退出登录:清会话是 Rust 的活,这里只喊。
+    callback logout();
+
+    viewport-height: column.preferred-height + 52px;
+
+    column := VerticalLayout {
+        x: 26px;
+        y: 26px;
+        width: min(root.width - 52px, 640px);
+        alignment: start;
+        spacing: 14px;
+
+        Text {
+            text: "设置";
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 30px;
+            color: Theme.text;
+        }
+
+        SettingsCard {
+            kicker: "外观";
+
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+
+                theme-dark := ThemeSegment {
+                    label: "深色";
+                    selected: Theme.mode == 0;
+                    clicked => { root.theme-mode-selected(0); }
+                }
+                theme-light := ThemeSegment {
+                    label: "浅色";
+                    selected: Theme.mode == 1;
+                    clicked => { root.theme-mode-selected(1); }
+                }
+                theme-system := ThemeSegment {
+                    label: "跟随系统";
+                    selected: Theme.mode == 2;
+                    clicked => { root.theme-mode-selected(2); }
+                }
+            }
+            Text {
+                text: "跟随系统当前只在桌面端生效,其他端按深色处理";
+                font-family: "Maple Mono NF CN";
+                font-size: 11px;
+                color: Theme.text-faint;
+            }
+        }
+
+        SettingsCard {
+            kicker: "账号";
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "已登录 · 本设备";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                logout-button := Rectangle {
+                    width: logout-label.preferred-width + 32px;
+                    height: 34px;
+                    border-radius: 999px;
+                    background: logout-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    // a11y 在根上,理由同 ThemeSegment。
+                    accessible-role: button;
+                    accessible-label: "退出登录";
+                    accessible-action-default => { root.logout(); }
+
+                    logout-label := Text {
+                        text: "退出登录";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    logout-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.logout(); }
+                    }
+                }
+            }
+        }
+
+        SettingsCard {
+            kicker: "快捷键";
+
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: "收起播放页";
+                    font-family: "Maple Mono NF CN";
+                    font-size: 13px;
+                    color: Theme.text;
+                }
+                Text {
+                    text: "Esc / Back";
+                    font-family: Type.mono;
+                    font-size: 12px;
+                    color: Theme.text-dim;
+                }
+            }
+        }
+
+        SettingsCard {
+            kicker: "关于";
+
+            Text {
+                text: root.about-line;
+                font-family: Type.mono;
+                font-size: 12px;
+                color: Theme.text-dim;
+            }
+        }
+    }
+}

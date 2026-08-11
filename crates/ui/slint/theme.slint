@@ -37,6 +37,10 @@ export global Theme {
     // 日月开关拨一下只喊一声。
     in-out property <bool> dark: true;
 
+    // 三档选择的投影:0 深、1 浅、2 跟随系统。同样**只有 Rust 写它**,
+    // 设置页读它画选中态;dark 是它解出来的结论,两个别在 UI 里私改。
+    in-out property <int> mode: 0;
+
     // —— 常驻界面的表面,由深到浅 ——
 
     // 窗口底。音乐页会用 base 盖住它,播放页会用 immersive 盖住它,

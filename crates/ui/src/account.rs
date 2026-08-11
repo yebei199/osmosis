@@ -77,6 +77,15 @@ pub fn bind(ui: &MainWindow) {
                 .map(|_| ())
         });
     });
+
+    // 设置页的退出登录:清掉落盘会话,回登录页。与 `handle_session_expiry`
+    // 的收尾同一件事,只是这次是用户自己要走的。
+    let weak = ui.as_weak();
+    ui.on_logout(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        api::session::clear();
+        ui.set_logged_in(false);
+    });
 }
 
 /// 跑一次登录/注册,并把结果落到界面上。

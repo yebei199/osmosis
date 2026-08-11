@@ -17,7 +17,7 @@ import "../fonts/figtree-700.ttf";
 import "../fonts/dm-mono.ttf";
 
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
-import { LineEdit } from "std-widgets.slint";
+import { LineEdit, Palette } from "std-widgets.slint";
 
 // 玻璃拟态:供 Home / Server 页透出颜色的极光背景,以及装内容的玻璃卡片。
 import { AuroraBackground, GlassCard } from "glass.slint";
@@ -36,6 +36,7 @@ export { Theme }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
+import { SettingsPage } from "settings.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -46,6 +47,14 @@ global Nav {
         {
             label: "Music",
             icon: "M9 18 L9 5 L20 3 L20 16 M9 18 A2.5 2.5 0 1 1 6.5 15.5 A2.5 2.5 0 0 1 9 18 M20 16 A2.5 2.5 0 1 1 17.5 13.5 A2.5 2.5 0 0 1 20 16",
+        },
+    ];
+    // 沉底那组(docs/design.md「壳与导航」)。tab 序号接着上面排:设置 = 2。
+    // 个人主页(#62)来了往这里加。
+    out property <[NavEntry]> bottom-items: [
+        {
+            label: "设置",
+            icon: "M12 9 A3 3 0 1 1 12 15 A3 3 0 1 1 12 9 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M19.1 4.9 L17 7 M7 17 L4.9 19.1",
         },
     ];
 }
@@ -292,7 +301,10 @@ export component MainWindow inherits Window {
     // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
     out property <bool> nav-visible: !root.compact;
     // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
-    property <length> nav-target-y: root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
+    // 设置(tab 2)沉在栏底,不按从上往下的等距槽算。
+    property <length> nav-target-y: root.current-tab == 2
+        ? root.nav-h - root.nav-pad - root.nav-slot-h / 2
+        : root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
     // metaball 的头(快)/尾(慢):都朝 nav-target-y 动,快慢不同 → 行走时一前一后被 shader
     // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这两个动画值喂 shader。
     // 用两个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
@@ -328,6 +340,18 @@ export component MainWindow inherits Window {
     // 请求换明暗主题。日月开关拨一下只喊这一声,值由 Rust 写进 Theme.dark
     // 并存进 api::settings(见 crates/ui/src/theme.rs)。
     callback theme-toggled();
+    // 设置页的主题三档(0 深 1 浅 2 跟随系统),选了喊一声,值由 Rust 写回。
+    callback theme-mode-selected(int);
+    // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
+    callback system-scheme-changed();
+    // 退出登录:清会话是 Rust 的活(account.rs),这里只喊。
+    callback logout();
+    // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好(lib.rs)。
+    in property <string> about-line;
+    // std-widgets 报的系统明暗,镜像成 bool 给 Rust 读:builtin 枚举不生成
+    // Rust 访问器。拿不到(unknown)按深色 —— 深色是这个 app 一直以来的样子。
+    out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
+    changed system-prefers-dark => { root.system-scheme-changed(); }
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
 
@@ -378,7 +402,6 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: root.nav-pad;
                     spacing: root.nav-gap;
-                    alignment: start;
 
                     for item[i] in Nav.items: NavItem {
                         height: root.nav-slot-h;
@@ -388,6 +411,18 @@ export component MainWindow inherits Window {
                         // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
                         gpu-selected: root.nav-bg.width > 0;
                         clicked => { root.current-tab = i; }
+                    }
+
+                    // 把沉底组压到底。
+                    Rectangle { vertical-stretch: 1; }
+
+                    for item[i] in Nav.bottom-items: NavItem {
+                        height: root.nav-slot-h;
+                        label: item.label;
+                        icon: item.icon;
+                        active: root.current-tab == i + 2;
+                        gpu-selected: root.nav-bg.width > 0;
+                        clicked => { root.current-tab = i + 2; }
                     }
                 }
             }
@@ -531,6 +566,15 @@ export component MainWindow inherits Window {
                         toggle => { root.toggle-play(); }
                         next => { root.next-track(); }
                     }
+                }
+
+                // 设置(tab 2,rail 沉底那颗)。
+                if root.current-tab == 2: SettingsPage {
+                    width: 100%;
+                    height: 100%;
+                    about-line: root.about-line;
+                    theme-mode-selected(mode) => { root.theme-mode-selected(mode); }
+                    logout => { root.logout(); }
                 }
 
                 // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
