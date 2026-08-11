@@ -116,6 +116,14 @@ fn chrome_text_is_legible_in_both_themes() {
             bg: |t| t.get_surface(),
         },
         Pair {
+            // 绿色 accent 的明度远高于琥珀,近白字压上去只有约 1.9:1,
+            // 所以 accent-text 反转成了深墨(docs/adr/0023)。这对就是那次
+            // 反转的守卫:再把它改回浅字,这里当场红。
+            what: "强调实底上的字 / 强调底",
+            fg: |t| t.get_accent_text(),
+            bg: |t| t.get_accent(),
+        },
+        Pair {
             what: "控制键图标 / 卡片面",
             fg: |t| t.get_accent_ink(),
             bg: |t| t.get_surface(),

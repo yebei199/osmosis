@@ -3,7 +3,7 @@ import { Theme } from "theme.slint";
 // 玻璃拟态基元:一层极光背景 + 一张玻璃卡片。
 //
 // 为什么是这两个凑一对:玻璃是半透明的,**背后没东西就等于没有玻璃**。原本全局
-// 是纯色 #0f1117,半透明卡片盖上去只是"深灰盖深灰",肉眼看不出任何玻璃感。
+// 是纯色的窗口底(Theme.window),半透明卡片盖上去只是"深灰盖深灰",肉眼看不出任何玻璃感。
 // AuroraBackground 就是专门用来"被透过"的那层内容。
 //
 // 边界:Slint 至今没有 backdrop blur(见 docs/slint/visual-effects-and-shaders.md),
