@@ -79,8 +79,12 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 - `src/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
 - `src/nav_glass.rs`:导航选中器的 seam 数据与转场省电门判定。
 - `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
-- `fonts/`:中文子集字体。硬编码中文必须落在子集里,`cargo test -p ui` 的
-  glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
+- `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
+  `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件
+  (Caprasimo / Figtree / DM Mono),族名统一从 `theme.slint` 的 `Type`
+  全局取,重生成走 `just font-subset` 与 `just font-title-subset`
+  (`fonts/regen.py`)。硬编码中文必须落在对应子集里,`cargo test -p ui`
+  的 glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
 - `tests/banner.rs`:断流横幅的界面行为,无头跑(`i-slint-backend-testing`
   的软件后端 + 模拟时钟,不要窗口也不要显卡)。补的是纯函数够不着的那一半 ——
   文案对不对是 `describe_stream_loss` 的事,看不看得见是 `.slint` 里那句

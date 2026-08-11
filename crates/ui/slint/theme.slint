@@ -18,6 +18,20 @@
 // 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
 // 决定的三个亮度,分开写迟早会有一个忘了改。
 
+// 字体族名收在这里,页面上只写 Type.xxx,不写字面族名。
+// 四个角色的分工与「中文标题为什么不是 Caprasimo」见 docs/design.md「字体」。
+export global Type {
+    // 中文大标题:思源宋体 Heavy 子集(Google 发行名 Noto Serif CJK SC)。
+    // 子集只含硬编码标题字,动态中文(歌名、歌手名)不要用它。
+    out property <string> display-cjk: "Noto Serif CJK SC";
+    // 拉丁与数字的大标题。没有中文字形,中文场景一律走 display-cjk。
+    out property <string> display-latin: "Caprasimo";
+    // 正文与界面。中文回落到系统字体(wasm 上回落 cjk-subset)。
+    out property <string> body: "Figtree";
+    // 时长、进度、版本号、标签:一切等宽读数。
+    out property <string> mono: "DM Mono";
+}
+
 export global Theme {
     // 深色还是浅色。**只有 Rust 写它**(见 crates/ui/src/theme.rs),
     // 日月开关拨一下只喊一声。

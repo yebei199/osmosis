@@ -128,6 +128,16 @@ font-subset:
       --output-file=crates/ui/fonts/cjk-subset.ttf"
     @ls -la crates/ui/fonts/cjk-subset.ttf
 
+# 重裁中文**标题**字体(思源宋体 Heavy,系统发行名 Noto Serif CJK SC)。
+# 标题字符集的唯一真相在 crates/ui/tests/fonts.rs 的 CJK_TITLES:新增页面标题
+# 先加那里,再跑这条;漏裁由同一个测试报红。拉丁三件(Caprasimo/Figtree/DM Mono)
+# 已提交仓库,一般不需重生成;要重下时把三个源文件放进一个目录,
+# 作为参数传给 regen.py(见脚本头部注释)。
+[group('工具')]
+font-title-subset:
+    nix-shell -p python3Packages.fonttools --run "python3 crates/ui/fonts/regen.py"
+    @ls -la crates/ui/fonts/cjk-title-subset.otf
+
 # 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
 # 数据在命名卷里,容器删了也还在。
 pg:

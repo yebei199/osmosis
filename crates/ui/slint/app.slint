@@ -7,6 +7,15 @@
 // 由 slint 编译器把字节打进产物,再按 family 名引用。
 import "../fonts/cjk-subset.ttf";
 
+// 改版字体四件(见 docs/design.md「字体」,族名统一从 theme.slint 的 Type 取):
+// 中文标题走思源宋体 Heavy 子集,拉丁标题 Caprasimo,正文 Figtree,读数 DM Mono。
+import "../fonts/cjk-title-subset.otf";
+import "../fonts/caprasimo.ttf";
+import "../fonts/figtree-400.ttf";
+import "../fonts/figtree-600.ttf";
+import "../fonts/figtree-700.ttf";
+import "../fonts/dm-mono.ttf";
+
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
 import { LineEdit } from "std-widgets.slint";
 
