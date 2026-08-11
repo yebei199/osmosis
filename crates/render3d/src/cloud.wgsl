@@ -224,15 +224,38 @@ fn vertex(vertex: Vertex) -> VertexOutput {
             local.z + (rand - 0.5) * params.burst * 0.9 * s);
     }
 
+    // §1 换歌过渡的另外两段(docs/design/handoff-shaders.md):全局进度
+    // 就是 color_mix(start 归 0,900ms 计满),不另加 uniform。
+    // 错峰:每颗按到封面中心的距离推迟自己的相位 —— 中心先落、边缘后落。
+    let tr = clamp(params.color_mix, 0.0, 1.0);
+    let center_d = clamp(
+        length(place.uv - vec2<f32>(0.5)) * 1.4142, 0.0, 1.0);
+    let phase_delay = center_d * 0.35;
+    let tp = clamp(
+        (tr - phase_delay) / max(1.0 - phase_delay, 0.001),
+        0.0, 1.0);
+    if tr < 1.0 {
+        // 中段脱格:伪 curl 流场(三对 snoise 差分),包络两端为 0 ——
+        // 起点与落点都在网格上,「散开」只存在于路上。过渡结束整段跳过,
+        // 平帧一次 snoise 都不多算。
+        let flow = sin(clamp((tp - 0.08) / 0.84, 0.0, 1.0) * 3.14159265);
+        let np = vec3<f32>(place.uv * 3.0, tr * 1.6);
+        let curl = vec3<f32>(
+            snoise(np + vec3<f32>(0.0, 13.7, 5.2)) - snoise(np + vec3<f32>(7.3, 0.0, 9.1)),
+            snoise(np + vec3<f32>(3.1, 8.8, 0.0)) - snoise(np + vec3<f32>(0.0, 4.4, 11.6)),
+            (snoise(np + vec3<f32>(9.9, 2.2, 6.6)) - snoise(np + vec3<f32>(5.5, 12.1, 0.0))) * 0.6);
+        local += curl * flow * 0.5 * s;
+    }
+
     // 颜色:有封面就采封面,没有就走原版的默认渐变(紫 → 粉/青)。
-    // 换歌时在新旧两张封面之间 mix —— 颜色平滑过渡,不是硬切。
+    // 换歌时在新旧两张封面之间按**这一颗自己的**错峰相位 mix ——
+    // 先落位的先换色,颜色跟着形体走,不是全场同一刻硬切。
     let sample_uv = clamp(place.uv, vec2(0.0012), vec2(0.9988));
     let new_color = textureSampleLevel(
         cover_texture, cover_sampler, sample_uv, 0.0).rgb;
     let prev_color = textureSampleLevel(
         prev_cover_texture, prev_cover_sampler, sample_uv, 0.0).rgb;
-    let cover_color = mix(
-        prev_color, new_color, clamp(params.color_mix, 0.0, 1.0));
+    let cover_color = mix(prev_color, new_color, tp);
     let fallback = mix(
         vec3<f32>(0.36, 0.28, 0.72),
         mix(vec3<f32>(0.85, 0.55, 0.95), vec3<f32>(0.45, 0.78, 0.95), place.uv.x),
