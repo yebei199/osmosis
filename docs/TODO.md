@@ -9,7 +9,8 @@
 ## 已排期
 
 - [ ] android armeabi-v7a 编不出来,默认三 ABI 的构建整条失败  #47
-- [ ] 把 slint 的 wgpu 呈现顺序问题上报上游  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
+- [ ] 把 slint 的 wgpu 呈现顺序问题上报上游(fork 已修复并真机验证,剩翻译上报)  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
+- [ ] 紧凑版式的控制胶囊被第五颗键挤爆,展开播放页的 ▲ 出屏(循环键引入的版式回归)
 - [ ] 世界空间锚定:标注卡片跟着场景里的物体走  -> [docs/note/vision.md](note/vision.md)「下一面旗子」
 
 ## 载体路线(未开工,一行代码都没有)
