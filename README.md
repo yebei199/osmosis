@@ -1,8 +1,12 @@
 # Osmosis
 
-一个横跨多端的综合应用。内容源(音乐,以后还有资讯与视频)在下面,从听过看过的东西里
-攒生词表在中间,一个能调用应用自身能力的助手横跨其上 —— 搜歌、加词、拉内容都可以对它说。
-UI 用 [Slint](https://slint.dev) 编写,逻辑用 Rust 编写,3D 用 Bevy,三者共享同一个 wgpu device。
+Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device」这条
+多端融合架构立住:一个进程、一块显存、一条类型系统,UI 与 3D 之间什么都不隔,
+一份代码出 desktop / android / web。音乐应用是它的首个载体,搜歌、边下边播、
+多设备同播、封面点云,每一项都在真实产品的压力下检验这套架构;这条更贵的路
+买到了什么、还能长成什么,见 [`docs/note/vision.md`](docs/note/vision.md)。
+载体自己的路线(应用内 AI 助手、从听过看过的内容攒生词表、资讯与视频源)
+继续往前走,但项目存在的理由是架构本身。
 
 **端**:
 
@@ -24,7 +28,7 @@ UI 用 [Slint](https://slint.dev) 编写,逻辑用 Rust 编写,3D 用 Bevy,三�
 | 背单词                  | 未开工。词从应用内的内容里抽,不做独立词库          |
 | 内容源接入(资讯 / 视频) | 未开工                                             |
 
-后三行是意图,不是承诺 —— 一行代码都还没有。
+后三行是载体路线的意图,一行代码都还没有;任务总账在 [`docs/TODO.md`](docs/TODO.md)。
 
 界面有两种**版式**,由运行时窗口宽度切换(< 600px 导航在底部,否则在左侧竖栏),桌面上把窗口
 拖窄就能看到移动端的样子,见 [`docs/adr/0007`](docs/adr/0007-layout-mode-by-width-not-by-platform.md)。
@@ -39,6 +43,8 @@ UI 用 [Slint](https://slint.dev) 编写,逻辑用 Rust 编写,3D 用 Bevy,三�
 | 术语的含义与边界               | [`CONTEXT.md`](CONTEXT.md)                               |
 | 某个选择为什么是这样           | [`docs/adr/`](docs/adr/)                                 |
 | 这套选型的能力上限             | [`docs/note/vision.md`](docs/note/vision.md)             |
+| UI 的设计原则与硬规则          | [`docs/design.md`](docs/design.md)                       |
+| 接下来要做什么                 | [`docs/TODO.md`](docs/TODO.md)                           |
 | 怎么装机、调试、看界面、打 APK | [`docs/note/dev-workflow.md`](docs/note/dev-workflow.md) |
 | AI 助手在本仓库怎么干活        | [`AGENTS.md`](AGENTS.md)                                 |
 
