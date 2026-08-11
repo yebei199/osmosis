@@ -56,6 +56,8 @@ mod aurora_btn;
 pub use aurora_btn::{
     AuroraBtnControls, AuroraBtnSlotControls,
 };
+// 卡墙的几何与交互动力学,纯数学、无 GPU 可测(adr/0025)。
+pub mod wall;
 mod profile;
 mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
