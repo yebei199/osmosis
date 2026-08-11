@@ -1221,6 +1221,44 @@ export component MainWindow inherits Window {
             source: root.viz-scene;
         }
 
+        // §8 grain + 扫描线(docs/design/handoff-shaders.md),只在沉浸层。
+        // 不走 wgsl 后处理:场景没有现成的全屏 pass,为一层 3–6% 的薄噪新开
+        // bevy 渲染图节点不值,两张平铺贴片叠出同样的观感。
+        // 扫描线静止,不驱动重绘;1px 亮 3px 暗,幅度约 -2%。
+        Image {
+            width: 100%;
+            height: 100%;
+            source: @image-url("../img/scanline.png");
+            horizontal-tiling: repeat;
+            vertical-tiling: repeat;
+        }
+        // 噪点分两档:播放中按帧跳相位(素数步长,平铺周期不可察),
+        // 暂停即换成下面那份静止的 —— 定格与点云一致(硬规则 7)。
+        // 已知缺口:失焦那半个门在 Rust(lib.rs 的 is_active),这里看不见,
+        // 失焦且仍在播放时这层还会动;代价是两张贴片的合成,可接受。
+        if root.viz-active: Image {
+            width: 100%;
+            height: 100%;
+            source: @image-url("../img/grain.png");
+            horizontal-tiling: repeat;
+            vertical-tiling: repeat;
+            source-clip-x: Math.mod(floor(animation-tick() / 33ms) * 37, 128);
+            source-clip-y: Math.mod(floor(animation-tick() / 33ms) * 61, 128);
+        }
+        if !root.viz-active: Image {
+            width: 100%;
+            height: 100%;
+            source: @image-url("../img/grain.png");
+            horizontal-tiling: repeat;
+            vertical-tiling: repeat;
+        }
+        // 一道极轻的 vignette 收边,把注意力拢回中心。
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: @radial-gradient(circle, transparent 55%, Theme.shadow.with-alpha(0.20) 100%);
+        }
+
         // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
         // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
         // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
