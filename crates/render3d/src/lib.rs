@@ -55,6 +55,10 @@ mod warp;
 pub use warp::{AUDIO_BYTES, WARP_SIDE, WarpPass};
 
 mod cloud;
+mod wall;
+pub use wall::{
+    WallCamera, WallCard, WallCover, WallFrame,
+};
 
 /// bevy 与 slint 共享的 `wgpu::Texture` 类型别名(经 slint 的 wgpu_29 再导出,与 bevy 同一份 crate)。
 pub type SharedTexture = wgpu::Texture;
@@ -197,6 +201,8 @@ pub struct Scene {
     /// bevy `app.update()` 的耗时累加器(毫秒)。每 [`PERF_WINDOW`] 帧算一次均值打日志
     /// 再清零 —— 帧率掉下来时,要先知道是不是 bevy 这一段吃掉的。
     perf: f64,
+    /// 卡墙那一摊(自己的相机、目标纹理、卡实体池),见 `wall.rs`。
+    wall: wall::WallScene,
 }
 
 impl Scene {
@@ -326,6 +332,8 @@ impl Scene {
             .world_mut()
             .spawn(Transform::default())
             .id();
+        // 7) 卡墙:自己的相机与目标,初始不激活(见 wall.rs)。
+        let wall_scene = wall::WallScene::new(&mut app);
 
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
@@ -353,6 +361,7 @@ impl Scene {
             occluder_key: None,
             perf: 0.0,
             frames: 0,
+            wall: wall_scene,
         }
     }
 
@@ -400,6 +409,17 @@ impl Scene {
             && (width, height) != self.size
         {
             self.resize(width, height);
+        }
+
+        // 点云与卡墙互斥:播放页开着就不该有人渲卡墙,反之亦然。
+        // 各自的入口把对方的相机关掉,谁也不会白渲一整面。
+        self.wall.set_active(&mut self.app, false);
+        if let Some(mut cam) = self
+            .app
+            .world_mut()
+            .get_mut::<Camera>(self.camera)
+        {
+            cam.is_active = true;
         }
 
         if !self.cloud_built {
@@ -491,6 +511,28 @@ impl Scene {
         }
 
         self.drive_and_finish(depth, needs_occluder)
+    }
+
+    /// 卡墙的一帧(docs/adr/0025):位姿与相机由 `ui::wall` 算好传入,
+    /// 这里摆进场景、渲一帧、交回纹理。与点云互斥 —— 本入口把点云的
+    /// 两台相机关掉,只亮卡墙那台。省电门在 ui 侧,静止的墙不会调到这。
+    pub fn render_wall_frame(
+        &mut self,
+        frame: &wall::WallFrame,
+    ) -> slint::Image {
+        self.wall.set_active(&mut self.app, true);
+        for cam in [self.camera, self.occluder_camera] {
+            if let Some(mut c) = self
+                .app
+                .world_mut()
+                .get_mut::<Camera>(cam)
+            {
+                c.is_active = false;
+            }
+        }
+        self.wall.apply(&mut self.app, frame);
+        self.app.update();
+        self.wall.finish(&self.app)
     }
 
     /// update 一帧并把两张离屏纹理(按身份缓存)包装成 Image 交回。
@@ -618,14 +660,7 @@ impl Scene {
         &self,
         handle: &Handle<Image>,
     ) -> Option<SharedTexture> {
-        let gpu_images = self
-            .app
-            .get_sub_app(RenderApp)?
-            .world()
-            .get_resource::<RenderAssets<GpuImage>>()?;
-        let gpu_image = gpu_images.get(handle)?;
-        // GpuImage.texture: render_resource::Texture, Deref 到 wgpu::Texture。
-        Some((*gpu_image.texture).clone())
+        extract_texture(&self.app, handle)
     }
 
     /// 按新尺寸重建离屏目标纹理,把相机的 RenderTarget 指过去,释放旧纹理。
@@ -857,6 +892,21 @@ impl Scene {
             cloud::CLOUD_GRID * cloud::CLOUD_GRID,
         );
     }
+}
+
+/// 从 bevy 的渲染子世界里取出某张离屏目标图对应的 `wgpu::Texture`。
+/// 自由函数版:卡墙的 `WallScene` 也要用,而它拿不到整个 `Scene`。
+fn extract_texture(
+    app: &App,
+    handle: &Handle<Image>,
+) -> Option<SharedTexture> {
+    let gpu_images = app
+        .get_sub_app(RenderApp)?
+        .world()
+        .get_resource::<RenderAssets<GpuImage>>()?;
+    let gpu_image = gpu_images.get(handle)?;
+    // GpuImage.texture: render_resource::Texture, Deref 到 wgpu::Texture。
+    Some((*gpu_image.texture).clone())
 }
 
 /// 造一张 bevy 离屏渲染目标图(Rgba8Unorm,满足 Slint 导入要求:格式 +
