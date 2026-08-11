@@ -363,9 +363,16 @@ fn placeholder_tint(index: usize) -> [f32; 3] {
 }
 
 /// 卡片材质:不受光、可透明(圆角在纹理 alpha 里)。
+///
+/// 透明度分平台,与点云同一个理由(见 cloud.rs 与 crate README):
+/// 小米13(Adreno)上 `Blend` 的元素整片不显示。安卓走 alpha 测试,
+/// 圆角从软边变硬边;桌面保留 `Blend` 的软边。
 fn card_material() -> StandardMaterial {
     StandardMaterial {
         unlit: true,
+        #[cfg(target_os = "android")]
+        alpha_mode: AlphaMode::Mask(0.5),
+        #[cfg(not(target_os = "android"))]
         alpha_mode: AlphaMode::Blend,
         ..default()
     }
