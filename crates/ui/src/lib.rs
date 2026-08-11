@@ -58,6 +58,11 @@ pub use aurora_btn::{
 };
 // 卡墙的几何与交互动力学,纯数学、无 GPU 可测(adr/0025)。
 pub mod wall;
+// 卡墙的每帧驱动与 slint 绑定,seam 类型也在这。
+mod wall_drive;
+pub use wall_drive::{
+    WallCardControls, WallControls, WallCoverControls,
+};
 mod profile;
 mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
@@ -203,9 +208,20 @@ pub fn run_with_renderers(
         &AuroraBtnControls,
     ) -> Vec<slint::Image>
     + 'static,
+    mut wall_frame: impl FnMut(
+        &WallControls,
+    ) -> Option<slint::Image>
+    + 'static,
     media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
     let (ui, viz_source, lyrics, cover) = build_ui(media);
+    // 卡墙状态:回调(点击/滚轮)与渲染循环共享同一份。
+    let wall_state = std::rc::Rc::new(
+        std::cell::RefCell::new(
+            wall_drive::WallDrive::new(),
+        ),
+    );
+    wall_drive::bind(&ui, &wall_state);
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
@@ -408,6 +424,26 @@ pub fn run_with_renderers(
                     }
                 } else {
                     btn_last = None;
+                }
+            }
+
+            // ── 卡墙(#66) ──
+            // 门:墙可见(wall-visible 已集齐分区/构建/曲目判据)∧ 播放页
+            // 没开 ∧ 窗口聚焦。frame() 给 None 表示全部动画收敛、封面传完,
+            // 冻结:Slint 复用上一帧纹理,静止的墙零重绘。
+            if ui.get_wall_visible()
+                && !ui.get_play_page_open()
+                && ui.window().is_active()
+            {
+                if let Some(controls) =
+                    wall_state.borrow_mut().frame(&ui)
+                {
+                    if let Some(img) =
+                        wall_frame(&controls)
+                    {
+                        ui.set_wall_bg(img);
+                    }
+                    ui.window().request_redraw();
                 }
             }
 

@@ -45,7 +45,11 @@ pub fn layout(w: f32, h: f32, compact: bool) -> WallLayout {
         col_pitch: 204.0
             * unit
             * if compact { 0.52 } else { 1.0 },
-        row_pitch: (h / 432.0) * 136.0,
+        // 行距与列距同源(按宽),不按高:场区是整页高,按高缩放会把
+        // 三行拉到天各一方 —— 布局形状恒定,竖向多余空间留白。
+        row_pitch: 136.0
+            * unit
+            * if compact { 0.52 } else { 1.0 },
         odd_shift: 26.0 * unit,
         rows: 3,
         z_min: -240.0 * unit,

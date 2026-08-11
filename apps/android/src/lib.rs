@@ -69,7 +69,7 @@ fn android_main(app: slint::android::AndroidApp) {
     // 曾抽成 render3d::run(scene) 试过,划不来:重复的只有这几行闭包,却要给 render3d
     // 加 ui 依赖、把它从「产帧的 3D 桥」抬成「驱动整个 app」,越过 SRP。入口 crate 本就
     // 同时依赖 ui 与 render3d,是接 seam 的天然组合根。
-    let mut scene = render3d::Scene::new();
+    let scene = render3d::Scene::new();
     // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue。
     let mut nav = render3d::NavGlassPass::new(
         scene.device(),
@@ -83,6 +83,11 @@ fn android_main(app: slint::android::AndroidApp) {
         scene.device(),
         scene.queue(),
     );
+    // 点云与卡墙两个闭包共用同一个 Scene(同线程,RefCell 即可)。
+    let scene = std::rc::Rc::new(
+        std::cell::RefCell::new(scene),
+    );
+    let wall_scene = scene.clone();
     // seam:把 ui 的 NavGlassControls / VizControls 平凡拷成 render3d 的镜像参数。
     // 两个闭包分别驱动导航选中器与播放页视觉。
     ui::run_with_renderers(
@@ -99,6 +104,7 @@ fn android_main(app: slint::android::AndroidApp) {
         },
         move |v, w, h| {
             let (viz_scene, occluder) = scene
+                .borrow_mut()
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
@@ -164,6 +170,43 @@ fn android_main(app: slint::android::AndroidApp) {
                         .collect(),
                 },
             )
+        },
+        // 卡墙(#66):同一个 seam 模式,位姿与封面逐字段平凡拷。
+        move |c| {
+            Some(wall_scene.borrow_mut().render_wall_frame(
+                &render3d::WallFrame {
+                    width: c.width,
+                    height: c.height,
+                    cam: render3d::WallCamera {
+                        pan_x: c.pan_x,
+                        dolly: c.dolly,
+                        perspective: c.perspective,
+                    },
+                    cards: c
+                        .cards
+                        .iter()
+                        .map(|k| render3d::WallCard {
+                            x: k.x,
+                            y: k.y,
+                            z: k.z,
+                            rot_y: k.rot_y,
+                            rot_x: k.rot_x,
+                            dim: k.dim,
+                            size: k.size,
+                        })
+                        .collect(),
+                    covers: c
+                        .covers
+                        .iter()
+                        .map(|k| render3d::WallCover {
+                            slot: k.slot,
+                            width: k.width,
+                            height: k.height,
+                            rgba: k.rgba.clone(),
+                        })
+                        .collect(),
+                },
+            ))
         },
         // 系统媒体控件:锁屏与通知栏那条播放条由 SystemUI 画,我们只负责报
         // 状态与接按键(见 docs/adr/0020)。`app` 是 JavaVM 的唯一来源。
