@@ -1,9 +1,11 @@
 # 待报上游:Skia 的绘制与 wgpu 的 present 之间缺少顺序约束
 
-状态:**已在 fork 修复并真机验证(2026-08-11),上游上报待定。**
+状态:**已在 fork 修复并真机验证(2026-08-11),上游 draft PR 已提交:
+<https://github.com/slint-ui/slint/pull/12861>**(分支 `fix/wgpu29-present-order`,
+基于 upstream/master 的最小 diff,不带 fork dev 里的日志标记)。
 fork issue 与验证数据:<https://github.com/yebei199/slint/issues/1>。
-修复提交:fork dev `be095f1`。要报上游时把本文与该 issue 翻成英文即可,
-证据链已经完整;上游是否愿意收 `transition_resources` 这个修法,由他们定。
+修复提交:fork dev `be095f1`,PR 分支 `5efe0d9`。复测第二轮 4376 帧 0 半截帧,
+两轮修复版合计 13575 帧零事件。
 
 ## 环境
 
