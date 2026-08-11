@@ -5,7 +5,7 @@
 
 import { DeviceRow } from "types.slint";
 import { Theme } from "theme.slint";
-import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
+import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
 
 // 环形进度播放键:外圈 conic 进度环(进度本身就是环,不再要常驻细线),
 // 内圈实心圆 + 播放/暂停图标。尺寸两档:条身 48/40,播放页 60/50
@@ -167,8 +167,6 @@ export component ControlCluster inherits HorizontalLayout {
     // 请求循环换到下一态(关→列表→单曲→关)。loop-mode 那时还是旧值 ——
     // 由 Rust 拨完队列再写回。
     callback loop-cycled();
-    // 请求换明暗主题。Theme.dark 那时还是旧值 —— 由 Rust 拨完再写回去。
-    callback theme-toggled();
 
     spacing: 10px;
 
@@ -231,16 +229,8 @@ export component ControlCluster inherits HorizontalLayout {
             clicked => { root.loop-cycled(); }
         }
     }
-    VerticalLayout {
-        alignment: center;
-        // 日月开关管明暗,不管随机 —— 它画的就是白昼与黑夜。
-        // 设置页(#61)落地后主题三选一住那边,这颗到时候撤。
-        DayNightSwitch {
-            night: Theme.dark;
-            label: "深色主题";
-            toggled => { root.theme-toggled(); }
-        }
-    }
+    // 日月开关已迁去设置页当主题区主视觉(#68):第五颗循环键进场后
+    // 紧凑行装不下它,而它本就等设置页落地后撤离控制簇。
 }
 
 // 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——

@@ -241,9 +241,11 @@ pub fn run_with_renderers(
     let mut nav_last_size: Option<(f32, f32)> = None;
     let mut nav_last_dark: Option<bool> = None;
 
-    // 光带按钮的跨帧状态:两颗按钮的振幅动画 + 按钮时钟,每帧推进。
+    // 光带按钮的跨帧状态:振幅动画 + 按钮时钟,每帧推进。
+    // bar 是 fluid 正在播放胶囊(#68):播放当"热",暂停收回静息。
     let mut btn_home = aurora_btn::ButtonAnim::default();
     let mut btn_daily = aurora_btn::ButtonAnim::default();
+    let mut btn_bar = aurora_btn::ButtonAnim::default();
     let mut btn_time = 0.0f32;
     let mut btn_last: Option<web_time::Instant> = None;
     // 播放页时钟:播放页开着就累加(暂停也动);收起再展开时从定格处继续,
@@ -354,6 +356,9 @@ pub fn run_with_renderers(
                         ui.get_empty_daily_py(),
                     ),
                 );
+                // 胶囊的 fluid:播放当"热"(振幅升到满),暂停收回静息。
+                btn_bar
+                    .step(ui.get_is_playing(), (0.72, 0.5));
                 {
                     let now = web_time::Instant::now();
                     if let Some(last) = btn_last {
@@ -377,9 +382,14 @@ pub fn run_with_renderers(
                     } else {
                         (168.0, 210.0)
                     };
-                    let imgs = btn_frame(&AuroraBtnControls {
-                        time: btn_time,
-                        slots: vec![
+                    // fluid 正在播放胶囊(#68):尺寸由 .slint 回写,
+                    // 没歌或场区未量出时不渲这一槽。
+                    let bar_w = ui.get_bar_w();
+                    let bar_h = ui.get_bar_h();
+                    let bar_on = ui.get_is_playing()
+                        && bar_w > 1.0
+                        && bar_h > 1.0;
+                    let mut slots = vec![
                             // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
                             AuroraBtnSlotControls {
                                 w: hw * scale,
@@ -415,13 +425,47 @@ pub fn run_with_renderers(
                                 ),
                                 colors: GREENS,
                             },
-                        ],
+                    ];
+                    if bar_on {
+                        slots.push(AuroraBtnSlotControls {
+                            w: bar_w * scale,
+                            h: bar_h * scale,
+                            // 宽版胶囊圆角 = 高的一半;紧凑版是 16px 圆角矩形。
+                            radius: if compact {
+                                16.0 * scale
+                            } else {
+                                bar_h * 0.5 * scale
+                            },
+                            seed: 5.3,
+                            speed: 0.9,
+                            amp: btn_bar.amp,
+                            mode: 1.0,
+                            bands: 3.0,
+                            variant: 2.0, // fluid
+                            progress: 0.0,
+                            pointer: (btn_bar.px, btn_bar.py),
+                            colors: GREENS,
+                        });
+                    }
+                    let imgs = btn_frame(&AuroraBtnControls {
+                        time: btn_time,
+                        slots,
                     });
-                    if let [home, daily] = imgs.as_slice() {
-                        ui.set_home_slot_bg(home.clone());
-                        ui.set_empty_daily_bg(
-                            daily.clone(),
-                        );
+                    match imgs.as_slice() {
+                        [home, daily] => {
+                            ui.set_home_slot_bg(home.clone());
+                            ui.set_empty_daily_bg(
+                                daily.clone(),
+                            );
+                        }
+                        [home, daily, bar] => {
+                            ui.set_home_slot_bg(home.clone());
+                            ui.set_empty_daily_bg(
+                                daily.clone(),
+                            );
+                            ui.set_bar_fluid_bg(bar.clone());
+                        }
+                        _ => {}
                     }
                 }
             } else {

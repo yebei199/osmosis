@@ -3,6 +3,7 @@
 //! `progress::ratio` 证明的是**算得对**,这些断言管的是**摆得对、拖得动**。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle;
 use ui::MainWindow;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -181,35 +182,64 @@ fn the_loop_button_labels_all_three_states() {
     assert!(loop_key(&ui, "循环: 单曲").is_some());
 }
 
-/// **日月开关改管明暗,不再管随机。**
-///
-/// 这一条钉的是"换过去了"这件事本身:拨它要喊 theme-toggled,而且**不能**
-/// 再喊 shuffle-toggled。两个都喊的话,拨一下主题会顺手把队列洗一遍。
+/// **日月开关退场**:控制簇里找不到它,主题唯一入口是设置页的三值选择。
+/// 设置页(#61)落地后它本就该撤;第五颗循环键进场把紧凑行挤爆,正式送走。
 #[test]
-fn the_day_night_switch_now_asks_for_a_theme_change() {
+fn the_day_night_switch_is_gone_from_the_cluster() {
     let ui = wide_page();
 
-    let themed = std::rc::Rc::new(std::cell::Cell::new(0));
-    let shuffled =
-        std::rc::Rc::new(std::cell::Cell::new(0));
-    let a = themed.clone();
-    ui.on_theme_toggled(move || a.set(a.get() + 1));
-    let b = shuffled.clone();
-    ui.on_shuffle_toggled(move || b.set(b.get() + 1));
+    assert!(
+        !present(&ui, "DayNightSwitch::touch"),
+        "日月开关该已从控制簇退场,主题去设置页拨"
+    );
+}
 
-    testing::ElementHandle::find_by_element_id(
-        &ui,
-        "DayNightSwitch::touch",
-    )
-    .next()
-    .expect("找不到日月开关")
-    .invoke_accessible_default_action();
+/// 胶囊把自己的尺寸回写给 fluid 背景通道(#68):Rust 侧按这个尺寸渲。
+#[test]
+fn the_capsule_mirrors_its_size_for_the_fluid_backdrop()
+{
+    let ui = wide_page();
+    ui.set_has_track(true);
 
-    assert_eq!(themed.get(), 1, "拨它该请求换主题");
-    assert_eq!(
-        shuffled.get(),
-        0,
-        "它不再管随机 —— 两个都喊的话,拨一下主题会顺手把队列洗一遍"
+    // 条件页面要先查一次元素逼出实例化,init 才会跑。
+    let _ =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui, "播放",
+        )
+        .next();
+
+    assert!(
+        ui.get_bar_w() > 0.0,
+        "胶囊该把宽度回写,实得 {}",
+        ui.get_bar_w()
+    );
+    assert!(ui.get_bar_h() > 0.0, "胶囊该把高度回写");
+}
+
+/// 紧凑版式里「展开播放页」键在屏内。
+///
+/// 钉 #68 修的挤爆回归:循环键进场后那一行超宽,▲ 被推出屏外,
+/// 播放页在手机上打不开。几何断言右缘不越窗宽。
+#[test]
+fn the_expand_button_stays_on_screen_in_compact() {
+    let ui = wide_page();
+    ui.set_compact(true);
+    ui.set_has_track(true);
+
+    let expand =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "展开播放页",
+        )
+        .next()
+        .expect("紧凑版式里找不到展开键");
+    let right = expand.absolute_position().x
+        + expand.size().width;
+    let window_w = ui.window().size().width as f32
+        / ui.window().scale_factor();
+    assert!(
+        right <= window_w,
+        "展开键右缘 {right} 超出窗宽 {window_w}"
     );
 }
 

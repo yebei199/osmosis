@@ -1,46 +1,41 @@
 // 设置页:分组卡片流(docs/design.md「页面清单」)。
 //
-// 只摆背后真有东西的组:外观(主题三档)、账号(退出登录)、快捷键、关于。
-// 设计稿里的「缓存与存储」「动态极光按钮」等大小统计与 shader 落地后再上,
+// 只摆背后真有东西的组:外观(日月开关 + 跟随系统)、账号(退出登录)、
+// 快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
 // 没有数据源的卡不上屏(硬规则 8)。
 
 import { Theme, Type } from "theme.slint";
-import { SectionCard } from "widgets.slint";
+import { SectionCard, DayNightSwitch } from "widgets.slint";
 
-// 主题分段控件里的一档。选中态 accent 实底 + 深墨字(docs/adr/0023)。
-component ThemeSegment inherits Rectangle {
+// 胶囊开关:aurora 与「跟随系统」共用。a11y 在组件根上,
+// 无头测试按元素 id 找到的是这一层,挂在里面的 TouchArea 上就点不动了。
+component PillToggle inherits Rectangle {
+    in property <bool> on;
     in property <string> label;
-    in property <bool> selected;
-    callback clicked();
+    callback toggled();
 
-    height: 34px;
-    width: seg-label.preferred-width + 32px;
-    border-radius: 999px;
-    background: root.selected
-        ? Theme.accent
-        : (seg-touch.has-hover ? Theme.hover : Theme.overlay-weak);
+    width: 44px;
+    height: 26px;
+    border-radius: 13px;
+    background: root.on ? Theme.accent : Theme.overlay;
     animate background { duration: 120ms; easing: ease-out; }
-
-    // a11y 挂在组件根上:无头测试按元素 id 找到的是这一层,
-    // 挂在里面的 TouchArea 上就点不动了。
-    accessible-role: button;
+    accessible-role: checkbox;
     accessible-label: root.label;
-    accessible-checkable: true;
-    accessible-checked: root.selected;
-    accessible-action-default => { root.clicked(); }
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(); }
 
-    seg-label := Text {
-        text: root.label;
-        font-family: "Maple Mono NF CN";
-        font-size: 13px;
-        color: root.selected ? Theme.accent-text : Theme.text-dim;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    Rectangle {
+        x: root.on ? parent.width - 22px : 4px;
+        y: 4px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: root.on ? Theme.accent-text : Theme.text-dim;
+        animate x { duration: 120ms; easing: ease-out; }
     }
-
-    seg-touch := TouchArea {
+    TouchArea {
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => { root.toggled(); }
     }
 }
 
@@ -75,24 +70,52 @@ export component SettingsPage inherits Flickable {
         SectionCard {
             kicker: "外观";
 
+            // 日月开关是主题区的主视觉(从控制簇迁来,#68):拨=显式明/暗。
+            // 跟随系统时它显示当前生效态,拨动即退出跟随。
             HorizontalLayout {
-                alignment: start;
-                spacing: 8px;
+                spacing: 12px;
 
-                theme-dark := ThemeSegment {
-                    label: "深色";
-                    selected: Theme.mode == 0;
-                    clicked => { root.theme-mode-selected(0); }
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "深浅主题";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
                 }
-                theme-light := ThemeSegment {
-                    label: "浅色";
-                    selected: Theme.mode == 1;
-                    clicked => { root.theme-mode-selected(1); }
+                theme-switch := DayNightSwitch {
+                    night: Theme.dark;
+                    label: "深浅主题";
+                    toggled => {
+                        root.theme-mode-selected(Theme.dark ? 1 : 0);
+                    }
                 }
-                theme-system := ThemeSegment {
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "跟随系统";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                follow-toggle := PillToggle {
+                    on: Theme.mode == 2;
                     label: "跟随系统";
-                    selected: Theme.mode == 2;
-                    clicked => { root.theme-mode-selected(2); }
+                    // 退出跟随时落在当前生效的那档,外观不跳变。
+                    toggled => {
+                        root.theme-mode-selected(Theme.mode == 2
+                            ? (Theme.dark ? 0 : 1)
+                            : 2);
+                    }
                 }
             }
             Text {
@@ -115,34 +138,14 @@ export component SettingsPage inherits Flickable {
                         color: Theme.text;
                     }
                 }
-                aurora-toggle := Rectangle {
-                    width: 44px;
-                    height: 26px;
-                    border-radius: 13px;
-                    background: root.aurora-on ? Theme.accent : Theme.overlay;
-                    animate background { duration: 120ms; easing: ease-out; }
-                    accessible-role: checkbox;
-                    accessible-label: "动态极光按钮";
-                    accessible-checked: root.aurora-on;
-                    accessible-action-default => { root.aurora-toggled(); }
-
-                    Rectangle {
-                        x: root.aurora-on ? parent.width - 22px : 4px;
-                        y: 4px;
-                        width: 18px;
-                        height: 18px;
-                        border-radius: 9px;
-                        background: root.aurora-on ? Theme.accent-text : Theme.text-dim;
-                        animate x { duration: 120ms; easing: ease-out; }
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.aurora-toggled(); }
-                    }
+                aurora-toggle := PillToggle {
+                    on: root.aurora-on;
+                    label: "动态极光按钮";
+                    toggled => { root.aurora-toggled(); }
                 }
             }
             Text {
-                text: "动画收敛后零重绘,关掉就是纯色实底";
+                text: "关掉就是纯色实底,不跑任何 shader";
                 font-family: "Maple Mono NF CN";
                 font-size: 11px;
                 color: Theme.text-faint;

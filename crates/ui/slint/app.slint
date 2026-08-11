@@ -109,6 +109,11 @@ export component MainWindow inherits Window {
     // 随机播放开关。**只有 Rust 写它** —— 真相在 app_core::Queue 上,
     // 这里是投影。开关自己不置位,拨一下只喊 shuffle-toggled。
     in-out property <bool> shuffle-on: false;
+    // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
+    // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
+    in property <image> bar-fluid-bg;
+    in-out property <length> bar-w: 0px;
+    in-out property <length> bar-h: 0px;
     // 循环三态。**只有 Rust 写它** —— 真相在 app_core::Queue 上,这里是投影。
     // 0 关,1 列表循环,2 单曲循环:builtin 枚举不生成 Rust 访问器,int 镜像。
     in-out property <int> loop-mode: 0;
@@ -352,9 +357,6 @@ export component MainWindow inherits Window {
     // 循环拨到这个绝对值。系统媒体控件给的是绝对值(MPRIS 的 LoopStatus),
     // 与现值的比对在 media.rs 的 dispatch 里做,这里只落地。
     callback loop-mode-set(int);
-    // 请求换明暗主题。日月开关拨一下只喊这一声,值由 Rust 写进 Theme.dark
-    // 并存进 api::settings(见 crates/ui/src/theme.rs)。
-    callback theme-toggled();
     // 设置页的主题三档(0 深 1 浅 2 跟随系统),选了喊一声,值由 Rust 写回。
     callback theme-mode-selected(int);
     // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
@@ -1212,6 +1214,19 @@ export component MainWindow inherits Window {
                         drop-shadow-blur: 30px;
                         drop-shadow-offset-y: 14px;
                         drop-shadow-color: Theme.glass-shadow;
+                        // fluid 正在播放胶囊(#68):尺寸回写给 Rust,渲成图贴回来。
+                        // shader 自带胶囊 alpha 裁切,reveal 左闸保住文字区。
+                        init => {
+                            root.bar-w = self.width;
+                            root.bar-h = self.height;
+                        }
+                        changed width => { root.bar-w = self.width; }
+                        changed height => { root.bar-h = self.height; }
+                        if root.is-playing && root.bar-fluid-bg.width > 0: Image {
+                            width: 100%;
+                            height: 100%;
+                            source: root.bar-fluid-bg;
+                        }
 
                         HorizontalLayout {
                             padding-left: 12px;
@@ -1276,7 +1291,6 @@ export component MainWindow inherits Window {
                                 next => { root.next-track(); }
                                 shuffle-toggled => { root.shuffle-toggled(); }
                                 loop-cycled => { root.loop-cycled(); }
-                                theme-toggled => { root.theme-toggled(); }
                             }
                             wide-volume := VolumeControl {
                                 volume: root.volume;
@@ -1315,6 +1329,18 @@ export component MainWindow inherits Window {
                         background: Theme.surface.with-alpha(0.9);
                         border-width: 1px;
                         border-color: Theme.glass-edge;
+                        // fluid 背景与宽版同一条通道(#68)。
+                        init => {
+                            root.bar-w = self.width;
+                            root.bar-h = self.height;
+                        }
+                        changed width => { root.bar-w = self.width; }
+                        changed height => { root.bar-h = self.height; }
+                        if root.is-playing && root.bar-fluid-bg.width > 0: Image {
+                            width: 100%;
+                            height: 100%;
+                            source: root.bar-fluid-bg;
+                        }
 
                         VerticalLayout {
                             padding: 8px;
@@ -1333,11 +1359,11 @@ export component MainWindow inherits Window {
                                     next => { root.next-track(); }
                                     shuffle-toggled => { root.shuffle-toggled(); }
                                     loop-cycled => { root.loop-cycled(); }
-                                theme-toggled => { root.theme-toggled(); }
                                 }
                                 // 展开播放页,同宽版那颗。
                                 RoundControl {
                                     icon: "M12 7 L19 16 L5 16 Z";
+                                    label: "展开播放页";
                                     clicked => { root.play-page-open = true; }
                                 }
                             }
@@ -1621,7 +1647,6 @@ export component MainWindow inherits Window {
                             next => { root.next-track(); }
                             shuffle-toggled => { root.shuffle-toggled(); }
                             loop-cycled => { root.loop-cycled(); }
-                            theme-toggled => { root.theme-toggled(); }
                         }
                         // 时间读数:环报的是比例,数字在这里。
                         if !root.compact && root.has-track: VerticalLayout {

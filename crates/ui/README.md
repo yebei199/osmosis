@@ -39,7 +39,8 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   当前行,靠 (代际, 行号) 判断该不该推新值 —— 每帧无脑推是纯浪费的标脏。
 - `src/theme.rs`:明暗主题那一位布尔值住在哪。颜色本身全在 `slint/theme.slint`,
   这里只负责开局从 `api::settings` 恢复、拨一下写回去 —— 跟着设备走,不跟着账号
-  (与音量同一条理由)。日月开关自己不置位,`Theme.dark` 的唯一写入方是这儿。
+  (与音量同一条理由)。唯一入口是设置页(日月开关当主视觉 + 跟随系统单列,
+  #68 起控制簇不再有主题键),控件自己不置位,`Theme.dark` 的唯一写入方是这儿。
 - `src/media.rs`:系统媒体控件的接缝(CONTEXT.md「系统媒体控件」)。定义
   `NowPlaying` / `MediaCommand` / `MediaHooks` / `MediaControls`,后端由平台入口注入
   (`docs/adr/0020`)—— zbus 那份在 apps/desktop,JNI 那份在 apps/android。换算全在

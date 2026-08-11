@@ -14,32 +14,16 @@ use slint::ComponentHandle;
 
 use crate::{MainWindow, Theme};
 
-/// 恢复上次的选择并接上设置页与日月开关。
+/// 恢复上次的选择并接上设置页。
 pub(crate) fn bind(ui: &MainWindow) {
     apply(ui, settings::load().theme);
 
-    // 设置页的三档分段控件:选哪档存哪档,当场生效。
+    // 设置页的唯一入口:日月开关拨显式明/暗,「跟随系统」开关报 2,
+    // 档位换算在 .slint 侧做完,这里只收档位序号(#68 起,控制簇不再有主题键)。
     let weak = ui.as_weak();
     ui.on_theme_mode_selected(move |index| {
         let Some(ui) = weak.upgrade() else { return };
         let mode = mode_from_index(index);
-        settings::save(&Settings {
-            theme: mode,
-            ..settings::load()
-        });
-        apply(&ui, mode);
-    });
-
-    // 日月开关在深浅之间翻。翻的是**档位**:跟随系统时拨一下,
-    // 等于显式选了与当前相反的那一档,而不是绕过档位改颜色。
-    let weak = ui.as_weak();
-    ui.on_theme_toggled(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        let mode = if ui.global::<Theme>().get_dark() {
-            ThemeMode::Light
-        } else {
-            ThemeMode::Dark
-        };
         settings::save(&Settings {
             theme: mode,
             ..settings::load()
