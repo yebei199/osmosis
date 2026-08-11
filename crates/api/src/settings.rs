@@ -159,6 +159,7 @@ mod tests {
             let settings = Settings {
                 volume: 0.42,
                 theme,
+                ..Settings::default()
             };
 
             assert_eq!(
