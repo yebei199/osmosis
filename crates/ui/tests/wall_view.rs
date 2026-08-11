@@ -125,3 +125,24 @@ fn the_wall_is_the_default_view_when_supported() {
         "墙可见时列表该让位"
     );
 }
+
+/// **静止的墙每帧照渲。**
+///
+/// 旧省电门在动画收敛后让 frame() 给 None(冻结);前台恒满帧之后
+/// (change_log 2026-08-11 always-on-rendering),只要场区量出了尺寸,
+/// frame() 每次都给控制量 —— 连续调用也一样。
+#[test]
+fn a_settled_wall_still_renders_every_frame() {
+    let ui = music_page(true);
+    ui.set_wall_field_w(904.0);
+    ui.set_wall_field_h(432.0);
+
+    let mut drive = ui::WallDrive::new();
+    // 走过收敛期,再连续多帧:每一帧都必须有控制量。
+    for i in 0..300 {
+        assert!(
+            drive.frame(&ui).is_some(),
+            "第 {i} 帧不该冻结"
+        );
+    }
+}

@@ -2,8 +2,8 @@
 //!
 //! 职责:把 slint 镜像来的指针/滚轮/点击变成相机与动画状态,每帧组装一份
 //! [`WallControls`](POD seam)交给 apps/* 的卡墙闭包;封面缩略图到货后取出
-//! 像素、烘上圆角,经同一条 seam 上传。省电门与 aurora_btn 同款:全部动画
-//! 收敛、没有待传封面时冻结,静止的墙零重绘(design.md 硬规则 7)。
+//! 像素、烘上圆角,经同一条 seam 上传。渲染循环前台恒满帧
+//! (见 change_log 2026-08-11 always-on-rendering),墙每帧照渲,没有冻结门。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -66,15 +66,7 @@ pub struct WallDrive {
     uploaded: Vec<slint::SharedString>,
     /// 已经喊过 needs-cover 的 URL,防止每帧重复喊。
     requested: Vec<slint::SharedString>,
-    /// 冻结前欠一帧静止态(与 aurora_btn 同款)。
-    rendered_settled: bool,
-    /// 等封面到货的耐心(帧)。冻结后没人叫醒渲染循环,所以有已请求
-    /// 未到货的封面时保持热身;归零就放弃(封面 404 不能烧一辈子 GPU)。
-    cover_patience: u32,
 }
-
-/// 等封面的耐心上限:约 10 秒。到货一张就重置。
-const COVER_PATIENCE: u32 = 600;
 
 impl WallDrive {
     pub fn new() -> Self {
@@ -88,8 +80,6 @@ impl WallDrive {
             was_pressed: false,
             uploaded: Vec::new(),
             requested: Vec::new(),
-            rendered_settled: false,
-            cover_patience: COVER_PATIENCE,
         }
     }
 
@@ -146,7 +136,8 @@ impl WallDrive {
         )
     }
 
-    /// 组装这一帧交给渲染闭包的控制量;`None` = 冻结,复用上一帧纹理。
+    /// 组装这一帧交给渲染闭包的控制量。
+    /// `None` 只剩一种情况:场区尺寸退化(还没量出来),没法组帧。
     pub fn frame(
         &mut self,
         ui: &MainWindow,
@@ -174,7 +165,7 @@ impl WallDrive {
         }
         self.was_pressed = pressed;
 
-        let cam_moving = self.cam.step(lay.col_pitch);
+        self.cam.step(lay.col_pitch);
         let collapsing = self.collapse.step();
 
         // 塌回落地:把墙藏掉,列表接管。
@@ -186,10 +177,8 @@ impl WallDrive {
         }
 
         // dolly 落位:开播放页、放歌,墙退场。
-        let mut dolly_moving = false;
         if let Some(run) = &mut self.dolly {
             let landed = run.step();
-            dolly_moving = !landed;
             if landed {
                 if let Some(id) = self.pending_play.take() {
                     ui.invoke_play(id);
@@ -203,40 +192,7 @@ impl WallDrive {
 
         let count = ui.get_tracks().row_count();
         let poses = self.poses(&lay, count);
-        let (covers, waiting) =
-            self.collect_covers(ui, poses.len());
-
-        // 封面是异步到货的,而冻结之后没人叫醒渲染循环 —— 所以还有
-        // 已请求未到货的封面时保持热身,直到耐心耗尽(404 的封面不能
-        // 烧一辈子 GPU)。到货一张就把耐心续上。
-        if !covers.is_empty() {
-            self.cover_patience = COVER_PATIENCE;
-        }
-        let waiting_covers =
-            waiting > 0 && self.cover_patience > 0;
-        if waiting_covers {
-            self.cover_patience -= 1;
-        }
-
-        // 纹理没到手之前也不许冻结:GpuImage 要几帧才就绪,冻在空图上
-        // 墙就永远是空的(与点云「纹理迟迟不就绪」同型的坑)。
-        let image_missing =
-            ui.get_wall_bg().size().width == 0;
-        let busy = pressed
-            || cam_moving
-            || collapsing
-            || dolly_moving
-            || !covers.is_empty()
-            || waiting_covers
-            || image_missing;
-        if !busy {
-            if self.rendered_settled {
-                return None;
-            }
-            self.rendered_settled = true;
-        } else {
-            self.rendered_settled = false;
-        }
+        let covers = self.collect_covers(ui, poses.len());
 
         let dolly_extra = self
             .dolly
@@ -276,8 +232,7 @@ impl WallDrive {
         &mut self,
         ui: &MainWindow,
         count: usize,
-    ) -> (Vec<WallCoverControls>, usize) {
-        let mut waiting = 0usize;
+    ) -> Vec<WallCoverControls> {
         let tracks = ui.get_tracks();
         self.uploaded.resize(
             count.max(self.uploaded.len()),
@@ -295,6 +250,7 @@ impl WallDrive {
             }
             let Some(buf) = row.cover.to_rgba8() else {
                 // 缩略图还没到:请求一次(列表虚拟化不会替看不见的行开口)。
+                // 循环恒满帧,到货那一帧自然会被下面的上传逻辑接住。
                 if !self.requested.contains(&row.cover_url)
                 {
                     self.requested
@@ -303,11 +259,10 @@ impl WallDrive {
                         row.cover_url.clone(),
                     );
                 }
-                waiting += 1;
                 continue;
             };
             if out.len() >= COVERS_PER_FRAME {
-                // 还有货没传完:本帧先不冻结,下一帧继续。
+                // 还有货没传完:下一帧继续。
                 break;
             }
             let (w, h) = (buf.width(), buf.height());
@@ -321,7 +276,7 @@ impl WallDrive {
                 rgba,
             });
         }
-        (out, waiting)
+        out
     }
 }
 
@@ -339,8 +294,6 @@ pub(crate) fn bind(
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
         d.focus = d.hit(&ui, x, y);
-        d.rendered_settled = false;
-        ui.window().request_redraw();
     });
 
     let weak = ui.as_weak();
@@ -364,27 +317,11 @@ pub(crate) fn bind(
             t: 0.0,
             target_z: pose.z,
         });
-        d.rendered_settled = false;
-        ui.window().request_redraw();
     });
 
-    let weak = ui.as_weak();
     let d = drive.clone();
     ui.on_wall_wheel(move |delta| {
-        let Some(ui) = weak.upgrade() else { return };
-        let mut d = d.borrow_mut();
-        d.cam.wheel(delta);
-        d.rendered_settled = false;
-        ui.window().request_redraw();
-    });
-
-    // 按下的那一刻要把渲染循环叫醒 —— 属性镜像自己不会触发重绘。
-    let weak = ui.as_weak();
-    let d = drive.clone();
-    ui.on_wall_poke(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        d.borrow_mut().rendered_settled = false;
-        ui.window().request_redraw();
+        d.borrow_mut().cam.wheel(delta);
     });
 
     // 列表 ⇄ 卡墙:目标一拨,插值自己走;塌回落地才真正藏墙(frame 里)。
@@ -398,8 +335,6 @@ pub(crate) fn bind(
             ui.set_wall_showing(true);
         }
         ui.set_view_wall(to_wall);
-        d.rendered_settled = false;
-        ui.window().request_redraw();
     });
 }
 
@@ -407,17 +342,26 @@ pub(crate) fn bind(
 mod tests {
     use super::*;
 
-    /// 冻结逻辑:静止的墙在补渲一帧后不再要求重渲。
+    /// 动画收敛只是插值到位,不再衍生冻结:step 收敛后照样可以每帧调用,
+    /// 状态稳定不漂移(前台恒满帧,见 change_log 2026-08-11)。
     #[test]
-    fn a_settled_wall_freezes() {
+    fn settled_steps_stay_stable_under_constant_calls() {
         let mut d = WallDrive::new();
-        // 没有 ui 也能测收敛判定:直接驱相机与塌回。
         let lay = wall::layout(1808.0, 864.0, false);
         for _ in 0..300 {
             d.cam.step(lay.col_pitch);
             d.collapse.step();
         }
-        assert!(!d.cam.step(lay.col_pitch));
-        assert!(!d.collapse.step());
+        let pan = d.cam.pan_x;
+        let collapse = d.collapse.value;
+        for _ in 0..100 {
+            d.cam.step(lay.col_pitch);
+            d.collapse.step();
+        }
+        assert_eq!(d.cam.pan_x, pan, "收敛后的相机不该漂移");
+        assert_eq!(
+            d.collapse.value, collapse,
+            "收敛后的塌回不该漂移"
+        );
     }
 }

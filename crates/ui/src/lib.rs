@@ -64,6 +64,7 @@ pub mod wall;
 mod wall_drive;
 pub use wall_drive::{
     WallCardControls, WallControls, WallCoverControls,
+    WallDrive,
 };
 mod profile;
 mod theme;
@@ -185,9 +186,9 @@ pub fn run() {
 /// 返回 `None` 则这一帧不更新 `nav-bg`。
 ///
 /// `viz_frame` 驱动播放页视觉(见 `render3d::WarpPass` 与 `Scene::render_viz_frame`):
-/// 门(展开 ∧ 播放 ∧ 窗口可见)开着的每一帧,以 [`VizControls`](播放页时钟 + 音频
-/// 纹理字节)和窗口**物理像素**尺寸调用,返回的三张图分别推到 `viz-bg` / `viz-scene` /
-/// `viz-occluder`。门关上就不再调用:暂停定格在最后一帧,时钟一并冻结,收起/失焦零重绘。
+/// 播放页展开的每一帧,以 [`VizControls`](播放页时钟 + 音频纹理字节)和窗口
+/// **物理像素**尺寸调用,返回的三张图分别推到 `viz-bg` / `viz-scene` / `viz-occluder`。
+/// 暂停与失焦照样调用(前台恒满帧);只有收起播放页才停。
 ///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则闭包产出的纹理
 /// 不属于 Slint 的 device,采样不出来。
@@ -240,14 +241,13 @@ pub fn run_with_renderers(
     let mut nav_last_size: Option<(f32, f32)> = None;
     let mut nav_last_dark: Option<bool> = None;
 
-    // 光带按钮的跨帧状态:两颗按钮的振幅动画 + 按钮时钟。
-    // 时钟只在有按钮未收敛时推进 —— 冻结即静止画面(硬规则 7)。
+    // 光带按钮的跨帧状态:两颗按钮的振幅动画 + 按钮时钟,每帧推进。
     let mut btn_home = aurora_btn::ButtonAnim::default();
     let mut btn_daily = aurora_btn::ButtonAnim::default();
     let mut btn_time = 0.0f32;
     let mut btn_last: Option<web_time::Instant> = None;
-    // 播放页时钟:只在门开着的帧间累加,门关即冻结 —— 重开门时画面与运动
-    // 都从定格处继续,不跳变。
+    // 播放页时钟:播放页开着就累加(暂停也动);收起再展开时从定格处继续,
+    // 不跳变。
     let mut viz_time = 0.0f32;
     let mut viz_last: Option<web_time::Instant> = None;
     // 上一次推给界面的歌词 (代际, 行号)。只在换行/换歌时推 —— 每帧无脑 set
@@ -338,24 +338,23 @@ pub fn run_with_renderers(
 
             // ── 光带按钮(§9)──
             // 两颗:Home 空槽(nebula)与空状态「换一批推荐」(ribbon 绿板)。
-            // 任一未收敛才渲;都冻着就整段跳过,Slint 复用上一帧纹理。
-            // 关掉开关即整段不进 —— 纯色实底,功能不变。
+            // 前台恒满帧,每帧照渲;关掉开关即整段不进 —— 纯色实底,功能不变。
             if ui.get_aurora_buttons_on() {
-                let step_home = btn_home.step(
+                btn_home.step(
                     ui.get_home_slot_hover(),
                     (
                         ui.get_home_slot_px(),
                         ui.get_home_slot_py(),
                     ),
                 );
-                let step_daily = btn_daily.step(
+                btn_daily.step(
                     ui.get_empty_daily_hover(),
                     (
                         ui.get_empty_daily_px(),
                         ui.get_empty_daily_py(),
                     ),
                 );
-                if step_home || step_daily {
+                {
                     let now = web_time::Instant::now();
                     if let Some(last) = btn_last {
                         btn_time += now
@@ -424,18 +423,17 @@ pub fn run_with_renderers(
                             daily.clone(),
                         );
                     }
-                } else {
-                    btn_last = None;
                 }
+            } else {
+                btn_last = None;
             }
 
             // ── 卡墙(#66) ──
             // 门:墙可见(wall-visible 已集齐分区/构建/曲目判据)∧ 播放页
-            // 没开 ∧ 窗口聚焦。frame() 给 None 表示全部动画收敛、封面传完,
-            // 冻结:Slint 复用上一帧纹理,静止的墙零重绘。
+            // 没开。前台恒满帧,静墙也每帧照渲;失焦不再是门
+            // (可见即前台,见 change_log 2026-08-11 always-on-rendering)。
             if ui.get_wall_visible()
                 && !ui.get_play_page_open()
-                && ui.window().is_active()
             {
                 if let Some(controls) =
                     wall_state.borrow_mut().frame(&ui)
@@ -445,7 +443,6 @@ pub fn run_with_renderers(
                     {
                         ui.set_wall_bg(img);
                     }
-                    ui.window().request_redraw();
                 }
             }
 
@@ -480,13 +477,9 @@ pub fn run_with_renderers(
             }
 
             // ── 播放页 warp 视觉 ──
-            // 门三条:展开 ∧ 播放(.slint 的 viz-active)∧ 窗口聚焦。任一不满足即
-            // 完全停手,Slint 复用上一帧 viz-bg:暂停定格,收起/失焦零重绘。
-            // is_active 是 fork 加的公开 getter(yebei199/slint 11642f2),
-            // 读的是最近一次 WindowActiveChanged 报告的激活状态。
-            if ui.get_viz_active()
-                && ui.window().is_active()
-            {
+            // 门只剩一条:播放页展开。暂停照样动(没音频时点云按环境节奏慢转),
+            // 失焦照样动 —— 前台恒满帧,可见即前台。
+            if ui.get_play_page_open() {
                 if let Some(audio) =
                     viz::payload(&viz_source)
                 {
@@ -528,11 +521,16 @@ pub fn run_with_renderers(
                         ui.set_viz_scene(imgs.scene);
                         ui.set_viz_occluder(imgs.occluder);
                     }
-                    ui.window().request_redraw();
                 }
             } else {
                 viz_last = None;
             }
+
+            // 前台恒满帧:每帧都要下一帧,循环自持在 vsync 节拍上
+            // (change_log 2026-08-11 always-on-rendering,推翻硬规则 7)。
+            // 后台自然暂停:安卓切后台、桌面最小化时平台不再派发重绘,
+            // 这里的请求落空,回调停摆;回前台第一帧由平台重启。
+            ui.window().request_redraw();
 
             frame_acct.end_callback();
         })

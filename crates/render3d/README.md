@@ -14,7 +14,8 @@
   经 `ui::run_with_renderers` 的 seam 交过去(见 `crates/ui`)。
 - 要加新 shader 前先看
   [`docs/note/animated-background-and-compute.md`](../../docs/note/animated-background-and-compute.md):
-  fragment 与 compute 的分界(判据是 scatter),以及持续动画与本 crate 两道省电门的冲突。
+  fragment 与 compute 的分界(判据是 scatter)。那篇里关于省电门的段落写于
+  旧架构;2026-08-11 起渲染循环前台恒满帧(change_log always-on-rendering)。
 
 ## 关键架构约束(见计划 `bevy-serialized-dove`)
 
@@ -38,9 +39,10 @@
 
 - 几何(槽位、栏尺寸、lead/lag 动画位置)由 `app.slint` 的 `nav-*` 属性给出,**是唯一真相**;
   由 apps/* 在 seam 处翻译成 `NavParams`(POD,镜像 `ui::NavGlassControls`)。
-- **只在切 tab 的转场期间重渲**(省电门在 `ui::nav_glass::nav_transition_active`),静止时 Slint
-  复用上一帧纹理 —— 与播放页视觉的门相互独立,同守仓库不主动重绘的省电取向。
-  **明暗主题也在这道门的判据里**:侧栏背景是本 pass 自绘的,采不到背后的像素,
+- **只在切 tab 的转场期间重算纹理**(判定在 `ui::nav_glass::nav_transition_active`),静止时 Slint
+  复用上一帧 —— 这是工作量缓存,不是会冻住动画的门:窗口本身每帧照常重绘
+  (前台恒满帧,change_log 2026-08-11)。
+  **明暗主题也在判据里**:侧栏背景是本 pass 自绘的,采不到背后的像素,
   换了主题必须重画一次,否则要等下一次切 tab 才跟上。
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
@@ -55,9 +57,9 @@ fragment pass,每颗按钮渲进一张自己的离屏纹理,包装成 `slint::Im
 - **合批**:一条 pipeline、一个 uniform 缓冲(动态偏移,每槽 256 字节对齐)、一次
   submit。每颗按钮一张纹理是有意的:尺寸互不相同,拼图集省不了带宽,反而让 Slint
   侧多一套裁剪坐标。
-- **省电门在 ui 侧**(`ui::aurora_btn::ButtonAnim`):hover 振幅收敛后补渲一帧静止态
-  即冻结,时钟不走、纹理复用,这里根本不会被调到。设置页可整体关掉
-  (`api::settings` 的 `aurora_buttons`),关掉退回 Slint 纯色实底。
+- **每帧重渲**(前台恒满帧):hover 振幅的收敛数学在 `ui::aurora_btn::ButtonAnim`,
+  没有冻结态。设置页可整体关掉(`api::settings` 的 `aurora_buttons`),
+  关掉退回 Slint 纯色实底。
 
 ## 音乐页卡墙(`wall.rs`)
 
@@ -71,8 +73,8 @@ dolly 进播放页。几何与动力学的真相全在 `ui::wall`,那边把每�
   `wall::project` 严格同构,命中测试与画面不会各说各话。
 - 卡墙实体与相机挂在渲染层 1,与点云互不可见;两条渲染入口互相关灯,
   谁激活谁渲,不会白画一整面。
-- 省电门在 ui 侧(`ui::wall_drive`):动画收敛、封面传完即冻结,静止的墙
-  零重绘。无 GPU 构建根本不会建 `Scene`,音乐页退回列表(web / iOS)。
+- 每帧由 `ui::wall_drive` 组帧,静墙也照渲(前台恒满帧)。无 GPU 构建
+  根本不会建 `Scene`,音乐页退回列表(web / iOS)。
 
 ## 播放页反馈 warp 视觉(`warp.rs` + `warp.wgsl`)
 
@@ -85,8 +87,8 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
 
 - 新内容是两圈极坐标可视化:外圈频谱环、内圈波形环,余弦调色板取紫/蓝/青一段与
   应用 aurora 同调;反馈能量用软限幅压住,不然高亮区几帧就烧成纯白。
-- 省电门在 ui 侧(展开 ∧ 播放 ∧ 可见):门关着没人调 `render_frame`,Slint 复用
-  上一帧纹理,GPU 归零;`time` 由 ui 的播放页时钟给,门关时钟停,重开从定格处继续。
+- 门在 ui 侧,只剩「播放页展开」一条:暂停与失焦照渲(前台恒满帧);收起播放页
+  才停,`time` 由 ui 的播放页时钟给,重开从定格处继续。
 - 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
 
 ## 播放页封面点云(`cloud.rs` + `cloud.wgsl` + `Scene`)

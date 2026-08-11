@@ -287,9 +287,6 @@ export component MainWindow inherits Window {
     // 没有歌词、或还在前奏时为空串,歌词区整块让位。
     in property <string> lyric-line;
     in property <string> lyric-translation;
-    // 省电门的 .slint 半边:展开 ∧ 播放。第三条「窗口可见」在 Rust 侧
-    // (lib.rs 渲染通知回调)判,三条齐了才渲 warp,暂停定格在最后一帧。
-    out property <bool> viz-active: root.play-page-open && root.is-playing;
 
     // ── 宽版式侧栏「液态玻璃 metaball 选中器」──
     // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
@@ -399,8 +396,6 @@ export component MainWindow inherits Window {
     callback wall-tap(length, length);
     callback wall-double(length, length);
     callback wall-wheel(length);
-    // 按下/松开时把渲染循环叫醒:属性镜像自己不触发重绘。
-    callback wall-poke();
     // 列表 ⇄ 卡墙。目标由 Rust 记,塌回插值走完才真正换视图。
     callback set-view-wall(bool);
     // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
@@ -1145,12 +1140,10 @@ export component MainWindow inherits Window {
                                             root.wall-px = self.mouse-x;
                                             root.wall-py = self.mouse-y;
                                             root.wall-pressed = true;
-                                            root.wall-poke();
                                         }
                                         if ev.kind == PointerEventKind.up
                                             || ev.kind == PointerEventKind.cancel {
                                             root.wall-pressed = false;
-                                            root.wall-poke();
                                         }
                                     }
                                     scroll-event(ev) => {
@@ -1471,11 +1464,9 @@ export component MainWindow inherits Window {
             horizontal-tiling: repeat;
             vertical-tiling: repeat;
         }
-        // 噪点分两档:播放中按帧跳相位(素数步长,平铺周期不可察),
-        // 暂停即换成下面那份静止的 —— 定格与点云一致(硬规则 7)。
-        // 已知缺口:失焦那半个门在 Rust(lib.rs 的 is_active),这里看不见,
-        // 失焦且仍在播放时这层还会动;代价是两张贴片的合成,可接受。
-        if root.viz-active: Image {
+        // 噪点按帧跳相位(素数步长,平铺周期不可察)。前台恒满帧,
+        // 暂停也照动(change_log 2026-08-11 always-on-rendering)。
+        Image {
             width: 100%;
             height: 100%;
             source: @image-url("../img/grain.png");
@@ -1483,13 +1474,6 @@ export component MainWindow inherits Window {
             vertical-tiling: repeat;
             source-clip-x: Math.mod(floor(animation-tick() / 33ms) * 37, 128);
             source-clip-y: Math.mod(floor(animation-tick() / 33ms) * 61, 128);
-        }
-        if !root.viz-active: Image {
-            width: 100%;
-            height: 100%;
-            source: @image-url("../img/grain.png");
-            horizontal-tiling: repeat;
-            vertical-tiling: repeat;
         }
         // 一道极轻的 vignette 收边,把注意力拢回中心。
         Rectangle {
