@@ -207,6 +207,17 @@ cp apps/web/index.html test/*.html dist/web/
 adb forward --remove tcp:8090
 ```
 
+## 装到真机上的是哪个档
+
+开发装机走 `just mcp-android`,它把 native 库编成 **debug** 档。别拿
+`just android-build`(release)的包去调界面:slint 的元素调试信息只在 debug 档
+生成,release 包在手机上跑起来 MCP 只截得到图、`get_element_tree` 一个元素也查不到,
+于是点按钮只能从全分辨率截图上量坐标,慢且容易点空。
+
+代价是编译更久、APK 更大。发布件仍走 `android-build`。
+
+出包一律带 `ABIS="arm64-v8a"`:默认三 ABI 的构建必然挂在 armeabi-v7a 上(issue #47)。
+
 ## 真机的锁屏密码
 
 在 `.env` 的 `ANDROID_DEVICE_PIN`(该文件在 `.gitignore` 里,不进版本库)。装 APK、

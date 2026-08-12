@@ -98,15 +98,31 @@ fn parse_abis(args: &[String]) -> Result<Vec<Abi>, String> {
     raw.split_whitespace().map(Abi::parse).collect()
 }
 
-/// 无论 APK 是哪个变体,native 库一律用 release profile:debug profile 的
-/// Slint+Skia 构建体积巨大且很慢。
+/// native 库的 profile。默认 release:debug 档的 Slint+Skia 构建体积巨大且很慢,
+/// 发布件也不需要调试信息。
+///
+/// `PROFILE=debug` 换成 debug 档,开发装机用 —— slint 的元素调试信息只在
+/// debug 档生成(见 crates/ui/build.rs),而它是 slint-app MCP 元素树与
+/// `ElementHandle` 的前提。装了 release 包的手机上,MCP 只截得到图、查不到
+/// 任何元素,驱动界面就只能靠量坐标。
+fn native_profile() -> Result<&'static str, String> {
+    match std::env::var("PROFILE").as_deref() {
+        Ok("debug") => Ok("debug"),
+        Ok("release") | Err(_) => Ok("release"),
+        Ok(other) => Err(format!(
+            "PROFILE 只认 debug 或 release,收到 {other}"
+        )),
+    }
+}
+
 fn build_native_libs(
     root: &Path,
     abis: &[Abi],
     android_home: &str,
 ) -> Result<(), String> {
+    let profile = native_profile()?;
     println!(
-        "==> Building Rust native libs (release) for: {}",
+        "==> Building Rust native libs ({profile}) for: {}",
         abis.iter()
             .map(|a| a.name())
             .collect::<Vec<_>>()
@@ -150,8 +166,10 @@ fn build_native_libs(
         "-p",
         "app-android",
         "--lib",
-        "--release",
     ]);
+    if profile == "release" {
+        args.push("--release");
+    }
     if let Some(features) = features.as_deref() {
         args.push("--features");
         args.push(features);

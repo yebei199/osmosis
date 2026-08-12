@@ -168,6 +168,10 @@ bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just android-build
+#
+# native 库走 release 档,这条是**发布用**的。开发装机请用 `mcp-android`:
+# release 包不带 slint 元素调试信息,手机上 MCP 查不到元素树,驱动界面只能量坐标
+# (见 xtask 的 native_profile 与 crates/ui/build.rs)。
 [group('三端')]
 [group('安卓')]
 android-build:
@@ -228,13 +232,18 @@ mcp-port-free:
 mcp-forward:
     adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
 
-# 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。
+# 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。**开发装机走这条**。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
 # 端口只能靠 apps/android/src/lib.rs 里的 option_env! 编进二进制。
+#
+# native 库走 debug 档(PROFILE=debug):slint 的元素调试信息只在 debug 档生成,
+# 而它是 MCP 元素树与 ElementHandle 的前提。装 release 包的话 MCP 只截得到图、
+# 查不到任何元素,点按钮就得从全分辨率截图上量坐标 —— 慢且容易点空。
+# 代价是编译更久、APK 更大,发布件请走 `android-build`(release)。
 # 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
 [group('mcp')]
 mcp-android: mcp-forward
-    nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
+    nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     adb install -r {{apk}}
     adb shell am start -n io.github.osmosis/.MainActivity
 

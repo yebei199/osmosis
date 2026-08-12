@@ -113,4 +113,7 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   只会让内存悄悄涨上去。
 - `build.rs`:slint-build 编译 `.slint`。debug 档一律带元素调试信息 ——
   `ElementHandle` 与 Slint MCP 的元素树都以它为前提,而少了它两者不报错、
-  只是查不到任何元素。release 不带。
+  只是查不到任何元素。release 不带。**安卓装机同理**:APK 的 native 库默认
+  走 release,所以开发装机要用 `just mcp-android`(它把 `PROFILE=debug` 传给
+  xtask),否则手机上 MCP 只截得到图、查不到元素,驱动界面只能量坐标。
+  发布件走 `just android-build`。
