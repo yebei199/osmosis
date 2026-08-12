@@ -3,14 +3,15 @@
 任务总账,一条只写任务名,详情在挂着的 issue 或文档里。条目做完即删;
 它挂着的 plan 或草稿在同一次改动里一并清理。
 
-改版总跟踪 #56(绿色 · 卡墙)已整体交付关闭;设计稿未实施的留档项见
-[change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts。
-第六轮「按钮落位 · 水滴导航」总跟踪 #67 同样已整体交付关闭。
+改版总跟踪 #56(绿色 · 卡墙)与第六轮「按钮落位 · 水滴导航」总跟踪 #67 都已整体
+交付关闭。#56 名下没做完的那几项已经挪进下面的账,别再去关掉的 issue 里找。
 
 ## 已排期
 
 - [ ] android armeabi-v7a 编不出来,默认三 ABI 的构建整条失败  #47
-- [ ] 跟进上游 draft PR [slint-ui/slint#12861](https://github.com/slint-ui/slint/pull/12861)(present 顺序修复,已真机验证)  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
+- [ ] slint fork 补丁栈收窄:present 顺序那条已进上游,跟进后从 fork 去掉  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
+- [ ] 卡墙设计稿的四项留档(卡面曲名、标题行与次级入口胶囊、超 36 张分页、单击的完整高亮描边)  -> [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts
+- [ ] 真机核验通知栏第五个循环键(MIUI 折叠态只给三个,要展开)
 - [ ] 世界空间锚定:标注卡片跟着场景里的物体走  -> [docs/note/vision.md](note/vision.md)「下一面旗子」
 
 ## 载体路线(未开工,一行代码都没有)

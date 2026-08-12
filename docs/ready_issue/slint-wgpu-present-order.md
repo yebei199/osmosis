@@ -1,11 +1,18 @@
-# 待报上游:Skia 的绘制与 wgpu 的 present 之间缺少顺序约束
+# 已上游:Skia 的绘制与 wgpu 的 present 之间缺少顺序约束
 
-状态:**已在 fork 修复并真机验证(2026-08-11),上游 draft PR 已提交:
-<https://github.com/slint-ui/slint/pull/12861>**(分支 `fix/wgpu29-present-order`,
-基于 upstream/master 的最小 diff,不带 fork dev 里的日志标记)。
-fork issue 与验证数据:<https://github.com/yebei199/slint/issues/1>。
-修复提交:fork dev `be095f1`,PR 分支 `5efe0d9`。复测第二轮 4376 帧 0 半截帧,
-两轮修复版合计 13575 帧零事件。
+状态:**已合并进上游 master**(<https://github.com/slint-ui/slint/pull/12861>,
+2026-08-11 由 tronical 合入,merge commit `88c9c7d`,改的是
+`internal/renderers/skia/wgpu_29_surface.rs` 一个文件 +14 行)。
+本仓库仍走 fork(`yebei199/slint` 的 `dev`,`be095f1`),因为那条分支上还有另外
+两条本地补丁;等 fork 跟进上游时,这一条可以从补丁栈里去掉。
+
+来路:fork issue 与验证数据在 <https://github.com/yebei199/slint/issues/1>,
+PR 分支 `fix/wgpu29-present-order`(`5efe0d9`,基于 upstream/master 的最小 diff,
+不带 fork dev 里的日志标记)。复测第二轮 4376 帧 0 半截帧,两轮修复版合计
+13575 帧零事件。
+
+这份文档留着的价值在于**怎么测**那一半:复现负载、判据、帧率测法都在下面,
+下次遇到类似的"偶发半截画面"照着走一遍即可。
 
 ## 环境
 

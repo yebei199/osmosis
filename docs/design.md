@@ -7,8 +7,8 @@
 当前设计来自 2026-08 的整体改版(Claude Design handoff,规格全文在
 [`design/handoff-readme.md`](design/handoff-readme.md)。设计源稿在 Claude Design:
 <https://claude.ai/design/p/457861b1-7d61-4b09-88bd-3803fd9c0027>(`osmosis-aurora.dc.html`
-为按钮五变体,`osmosis-inplace.dc.html` 为第六轮「按钮落位 · 水滴导航」,其 6a-6e
-落位规格尚未全部实施,缺口见 TODO)。shader 分层拆解在
+为按钮五变体,`osmosis-inplace.dc.html` 为第六轮「按钮落位 · 水滴导航」,6a-6e
+已全部实施,见 #67 及其四个子任务)。shader 分层拆解在
 [`design/handoff-shaders.md`](design/handoff-shaders.md),光带按钮参考实现在
 [`design/aurora-button.js`](design/aurora-button.js),原始设计稿归档在
 [`design/设计范围确认.zip`](design/设计范围确认.zip))。本文件与 handoff 冲突时,

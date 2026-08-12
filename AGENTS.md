@@ -198,6 +198,19 @@ cp apps/web/index.html test/*.html dist/web/
 
 跳过这一步,对方测的就是上一版产物 —— URL 参数被无视、开关"不生效",而你会去怀疑代码。
 
+## 界面报「查询失败」时,先看 3000 上跑的是哪天的 server
+
+`server` 不在 default-members 里,裸 `cargo build` 从不编它,于是本机 3000 上那个
+进程可能是好几天前起的。新加的路由它没有,客户端拿到 404,界面只说一句「查询失败」——
+看起来和「这个功能还没做」一模一样。个人主页的统计就这样被当成"后端聚合还没写"过一次,
+而 `/stats` 早就在 `server/src/main.rs` 里了。
+
+```sh
+ss -ltnp "sport = :3000"            # 谁在跑
+ps -o lstart= -p <pid>              # 什么时候起的
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
+```
+
 ## MCP 的两个端口:桌面 8091,真机 8090
 
 两边可能同时开着,所以各占一个号(justfile 头部的 `desktop_mcp_port` 与 `mcp_port`),
