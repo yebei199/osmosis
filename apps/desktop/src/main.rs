@@ -60,6 +60,7 @@ fn main() {
                 drop: n.drop,
                 cross: n.cross,
                 slot: n.slot,
+                thick: n.thick,
                 horizontal: n.horizontal,
                 ball: n.ball,
                 dark: n.dark,

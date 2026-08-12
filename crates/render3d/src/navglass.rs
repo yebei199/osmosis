@@ -25,6 +25,8 @@ pub struct NavParams {
     pub cross: f32,
     /// 移动轴上一格的长度(侧栏是项高,底栏是格宽),用来定块的半尺寸/圆角/融合半径。
     pub slot: f32,
+    /// 固定轴上的可用厚度(侧栏是栏宽,底栏是图标那一带的高,不含手势条 inset)。
+    pub thick: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。
     pub horizontal: bool,
     /// 三球的整体缩放,1 常态、0 缩没(侧栏底部两颗圆钮不在轨道上,#71)。
@@ -199,7 +201,7 @@ impl NavGlassPass {
 
         // 组 uniform(物理像素):三球沿移动轴走,固定轴上停在 cross;块的半尺寸
         // 一边按格长、一边按条的厚度取,轴对调时两者互换(#70)。
-        let thick = if p.horizontal { h as f32 } else { w as f32 };
+        let thick = p.thick.max(1.0);
         let ball = |pos: f32| {
             if p.horizontal {
                 [pos, p.cross]
@@ -215,8 +217,11 @@ impl NavGlassPass {
             [thick * 0.42 * s, p.slot * 0.42 * s]
         };
         let radius = half[0].min(half[1]) * 0.6;
-        // 融合半径跟着缩:不缩的话球都没了、颈还在,收尾那几帧会剩一团糊影。
-        let smooth_k = (p.slot * 0.9 * s).max(0.001);
+        // 融合半径按短边取:底栏一格比条厚得多(手机上 91 对 64),按格宽算出来的
+        // 融合半径比条本身还宽,三球会糊成一团淌出格外。
+        // 也跟着 ball 缩:不缩的话球都没了、颈还在,收尾那几帧会剩一团糊影。
+        let smooth_k =
+            (p.slot.min(thick) * 0.9 * s).max(0.001);
         let lead = ball(p.lead);
         let lag = ball(p.lag);
         let drop = ball(p.drop);

@@ -341,11 +341,12 @@ export component MainWindow inherits Window {
     out property <length> nav-strip-h: root.compact ? root.nav-bar-h : root.nav-h;
     // 移动轴上一格的长度:侧栏是项高,底栏是等分出来的格宽。
     out property <length> nav-slot: root.compact ? root.nav-slot-w : root.nav-slot-h;
-    // 固定轴上的中心:侧栏取栏宽的一半;底栏的图标被 inset 顶上去了,
-    // 所以取除掉手势条那段之后的一半。
-    out property <length> nav-cross: root.compact
-        ? (root.nav-bar-h - root.safe-area-insets.bottom) / 2
-        : root.nav-w / 2;
+    // 固定轴上的可用厚度与中心:侧栏是整条栏宽;底栏是图标那一带的高,
+    // 手势条那段不算 —— 把 inset 算进厚度的话,水滴会压到手势条上去。
+    out property <length> nav-thick: root.compact
+        ? root.nav-bar-h - root.safe-area-insets.bottom
+        : root.nav-w;
+    out property <length> nav-cross: root.nav-thick / 2;
 
     // 当前选中槽在移动轴上的中心(逻辑像素,相对条首)。
     // 侧栏只有主项两格在轨道上:沉底那组(个人 = 2、设置 = 3)自 #71 起是 glass 圆钮,

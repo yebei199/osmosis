@@ -332,6 +332,7 @@ pub fn run_with_renderers(
                             drop: drop * scale,
                             cross: ui.get_nav_cross() * scale,
                             slot: ui.get_nav_slot() * scale,
+                            thick: ui.get_nav_thick() * scale,
                             horizontal: ui
                                 .get_nav_horizontal(),
                             ball,
