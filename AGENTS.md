@@ -214,7 +214,11 @@ adb forward --remove tcp:8090
 生成,release 包在手机上跑起来 MCP 只截得到图、`get_element_tree` 一个元素也查不到,
 于是点按钮只能从全分辨率截图上量坐标,慢且容易点空。
 
-代价是编译更久、APK 更大。发布件仍走 `android-build`。
+代价是 APK 大得多(实测 debug 756MB 对 release 110MB),编译也更久。发布件仍走
+`android-build`。
+
+`target-android` 下的产物是按 profile 分开的两棵树,换档不会互相覆盖。仓库改过名的话
+旧树里的 `CMakeCache.txt` 还记着老路径,`audiopus_sys` 会直接编不过 —— 删掉那棵树重来。
 
 出包一律带 `ABIS="arm64-v8a"`:默认三 ABI 的构建必然挂在 armeabi-v7a 上(issue #47)。
 
