@@ -1263,9 +1263,6 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
 
     let deck = deck.clone();
     let weak = ui.as_weak();
-    // 上报用的身份先留一份:`track` 下面要整个交给 `app_core::play`。
-    // 身份是 (平台, 平台内 id),少了平台接第二个平台时 id 会撞车(contract)。
-    let played = (track.platform.clone(), track.id.clone());
     slint::spawn_local(async move {
         let commit = deck.clone();
         let player = deck.player.clone();
@@ -1289,20 +1286,6 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     decoded,
                     health,
                 );
-                // 一次起播的上报,个人主页的统计从这条账本(server 的
-                // `play_events`)查询时聚合。挂在**提交回调**里而不是按下播放键
-                // 那一刻:取直链失败、以及准备期间被顶掉的那几次都到不了这里
-                // (`app_core::play` 的代际校验),而那些都不是一次播放。
-                let (platform, id) = played;
-                slint::spawn_local(async move {
-                    if let Err(error) =
-                        api::record_play(&platform, &id).await
-                    {
-                        // 统计上报失败不影响听歌,也不该弹横幅打断人。
-                        log::debug!("起播上报没成: {error}");
-                    }
-                })
-                .expect("event loop must be running");
             },
         )
         .await;
@@ -1350,6 +1333,9 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
     let timer = slint::Timer::default();
+    // 上次报过的那一首。起播上报搭这趟轮询的车,判据见 `play_to_report`。
+    let reported: RefCell<Option<(String, String)>> =
+        RefCell::new(None);
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -1386,6 +1372,21 @@ fn start_auto_advance(ui: &MainWindow, deck: &Deck) {
             push_seek_state(&ui, &deck);
             // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
             crate::media::push(&ui, &deck.playback, &deck.media);
+
+            // 起播上报也搭这趟车:个人主页的统计从这条账本查询时聚合
+            // (server 的 `play_events`)。报失败只写日志 —— 统计不该打断听歌。
+            if let Some((platform, id)) =
+                play_to_report(&state, &mut reported.borrow_mut())
+            {
+                slint::spawn_local(async move {
+                    if let Err(error) =
+                        api::record_play(&platform, &id).await
+                    {
+                        log::debug!("起播上报没成: {error}");
+                    }
+                })
+                .expect("event loop must be running");
+            }
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
@@ -1613,6 +1614,36 @@ fn startup_check(ui: &MainWindow) {
     .expect("event loop must be running");
 }
 
+/// 起播上报的判据:声音真的出来那一刻报一次,同一次播放不重复报。
+///
+/// `last` 是上一次记住的身份,由调用方跨帧持有。返回 `Some` 就是这一帧要报的
+/// 那一首,身份取 (平台, 平台内 id) —— 歌曲的身份本来就是这一对(contract)。
+///
+/// - `Playing` 且与 `last` 不同:报,并记住它;
+/// - `Playing` 且与 `last` 相同:不报。轮询每秒经过一次,不去重的话一首三分钟
+///   的歌会报出一百八十次播放;
+/// - 其余状态:不报,并把 `last` 清掉。清掉是为了「重放同一首」—— 重新点会先
+///   经过 `Loading`,不清的话单曲循环整晚只记一次,而它确实放了一整晚。
+///
+/// 只认 `Playing` 就等于只认「出声了」:取流失败停在 `Failed`,准备期间被顶掉的
+/// 那次连状态都没换(`app_core::play` 的代际校验),两者都到不了这里。
+#[cfg(not(target_arch = "wasm32"))]
+fn play_to_report(
+    state: &PlaybackState,
+    last: &mut Option<(String, String)>,
+) -> Option<(String, String)> {
+    let PlaybackState::Playing(track) = state else {
+        *last = None;
+        return None;
+    };
+    let now = (track.platform.clone(), track.id.clone());
+    if last.as_ref() == Some(&now) {
+        return None;
+    }
+    *last = Some(now.clone());
+    Some(now)
+}
+
 /// 把一首歌准备到「随时能出声」为止:取直链 → 开流 → 解码。**慢**的那一半。
 ///
 /// 这是注入给 `app_core::play` 的 `prepare`。`app-core` 只看到"一个返回 Result
@@ -1772,6 +1803,98 @@ mod tests {
             title: format!("歌 {id}"),
             ..track()
         }
+    }
+
+    /// 出声那一刻报一次,之后放着的每一秒都不再报。
+    ///
+    /// 轮询每秒经过这里一次,不去重的话一首三分钟的歌会报出一百八十次播放。
+    #[test]
+    fn a_start_is_reported_once_and_not_every_tick() {
+        let mut last = None;
+        assert_eq!(
+            play_to_report(
+                &PlaybackState::Loading(track_with_id("1")),
+                &mut last
+            ),
+            None,
+            "还在取流,不算一次播放"
+        );
+
+        let started = play_to_report(
+            &PlaybackState::Playing(track_with_id("1")),
+            &mut last,
+        );
+        assert_eq!(
+            started,
+            Some(("netease".to_owned(), "1".to_owned())),
+            "出声了就报,身份是 (平台, 平台内 id)"
+        );
+
+        assert_eq!(
+            play_to_report(
+                &PlaybackState::Playing(track_with_id("1")),
+                &mut last
+            ),
+            None,
+            "同一首还在放,不重复报"
+        );
+    }
+
+    /// 换一首就再报一次。
+    #[test]
+    fn each_track_is_reported_on_its_own() {
+        let mut last = None;
+        play_to_report(
+            &PlaybackState::Playing(track_with_id("1")),
+            &mut last,
+        );
+        assert_eq!(
+            play_to_report(
+                &PlaybackState::Playing(track_with_id("2")),
+                &mut last
+            ),
+            Some(("netease".to_owned(), "2".to_owned()))
+        );
+    }
+
+    /// 重放同一首要能再报一次:重新点会先经过 Loading,记忆在那时清掉。
+    ///
+    /// 不清的话「单曲循环」整晚只记一次播放,而它确实放了一整晚。
+    #[test]
+    fn replaying_the_same_track_is_a_second_play() {
+        let mut last = None;
+        play_to_report(
+            &PlaybackState::Playing(track_with_id("1")),
+            &mut last,
+        );
+        play_to_report(
+            &PlaybackState::Loading(track_with_id("1")),
+            &mut last,
+        );
+        assert_eq!(
+            play_to_report(
+                &PlaybackState::Playing(track_with_id("1")),
+                &mut last
+            ),
+            Some(("netease".to_owned(), "1".to_owned()))
+        );
+    }
+
+    /// 没放成的不算播放:取流失败停在 Failed,报出去就是假数字。
+    #[test]
+    fn a_failed_start_is_not_a_play() {
+        let mut last = None;
+        assert_eq!(
+            play_to_report(
+                &PlaybackState::Failed("取流失败".into()),
+                &mut last
+            ),
+            None
+        );
+        assert_eq!(
+            play_to_report(&PlaybackState::Idle, &mut last),
+            None
+        );
     }
 
     /// 正在加载的就是这一首:再点它是多余的。
