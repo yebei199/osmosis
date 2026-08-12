@@ -211,17 +211,22 @@ impl NavGlassPass {
         };
         // ball 是整体缩放:0 时半尺寸归零,SDF 退化成一个点,画面上只剩自绘背景。
         let s = p.ball.clamp(0.0, 1.0);
-        let half = if p.horizontal {
-            [p.slot * 0.42 * s, thick * 0.42 * s]
-        } else {
-            [thick * 0.42 * s, p.slot * 0.42 * s]
-        };
-        let radius = half[0].min(half[1]) * 0.6;
         // 融合半径按短边取:底栏一格比条厚得多(手机上 91 对 64),按格宽算出来的
         // 融合半径比条本身还宽,三球会糊成一团淌出格外。
         // 也跟着 ball 缩:不缩的话球都没了、颈还在,收尾那几帧会剩一团糊影。
         let smooth_k =
             (p.slot.min(thick) * 0.9 * s).max(0.001);
+        // smin 把等值面往外推约 k/4(三球同心时 h=0.5,场值整体低 k/4),所以
+        // 半尺寸先扣掉这一圈,画出来才是这里写的这个框。不扣的话球会胀出格外:
+        // 侧栏里表现为胶囊顶满栏宽,底栏里表现为贴着屏幕边。
+        let grow = smooth_k * 0.25;
+        let box_half = |v: f32| (v * 0.42 * s - grow).max(1.0);
+        let half = if p.horizontal {
+            [box_half(p.slot), box_half(thick)]
+        } else {
+            [box_half(thick), box_half(p.slot)]
+        };
+        let radius = half[0].min(half[1]) * 0.6;
         let lead = ball(p.lead);
         let lag = ball(p.lag);
         let drop = ball(p.drop);
