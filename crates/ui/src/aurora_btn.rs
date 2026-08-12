@@ -4,7 +4,10 @@
 //! hover 振幅的收敛。渲染循环前台恒满帧(见 change_log 2026-08-11
 //! always-on-rendering),按钮每帧重渲,不再有冻结门。
 //!
-//! 当前接了两颗:Home 空槽(nebula)与空状态「换一批推荐」(ribbon 绿板)。
+//! 当前接了五槽:Home 空槽(nebula)、空状态「换一批推荐」(ribbon 绿板)、
+//! 正在播放胶囊(fluid,#68)、播放页主控条底(fluid,缓冲时换 progress)
+//! 与播放页两颗次要圆钮共用的一张 glass 底(#69)。后三槽按需追加,
+//! 场区没量出尺寸或覆层不在场就整个不进合批。
 //! 加按钮就是往 `lib.rs` 的驱动块里加一份 [`ButtonAnim`] 与一组 slint 属性。
 
 use slint::ComponentHandle;
@@ -13,6 +16,19 @@ use crate::MainWindow;
 
 /// 静息振幅:约一成亮度。悬停收敛到 1.0。
 pub const REST_AMP: f32 = 0.12;
+
+// 变体编号。着色器一条管线按 `uVariant` 分支,数学与用途见
+// handoff-shaders.md §10;这里给它们名字,免得驱动块里散着裸数字。
+/// 一次性高光,正弦流场中心线加逐通道色散。
+pub const VARIANT_RIBBON: f32 = 0.0;
+/// 域扭曲 fbm 加星点格,开销最高,一屏一颗。
+pub const VARIANT_NEBULA: f32 = 1.0;
+/// 域扭曲加 plume,`reveal` 沿 x 开闸保住左侧文字区。长条与胶囊用它。
+pub const VARIANT_FLUID: f32 = 2.0;
+/// 低密度底加折射亮边,开销最低,次要按钮可整屏铺。
+pub const VARIANT_GLASS: f32 = 3.0;
+/// fluid 加进度填充遮罩,交界处呼吸亮边。
+pub const VARIANT_PROGRESS: f32 = 4.0;
 /// 每帧向目标靠拢的比例(与参考实现同值,约 90ms 到位)。
 const CONVERGE: f32 = 0.09;
 
@@ -72,6 +88,23 @@ impl ButtonAnim {
     }
 }
 
+/// 主控条底这一帧走哪个变体、喂多少进度。
+///
+/// 播放页的进度是播放键那个环,条上没有常驻细线可挂,所以 progress 变体
+/// 只在缓冲时接管条底:那道呼吸亮边就是「还在动」的信号(#69)。
+/// 比例来自外部,夹到 0..=1 再进着色器 —— NaN 会让填充遮罩整条翻掉。
+pub fn fluid_or_progress(
+    buffering: bool,
+    ratio: f32,
+) -> (f32, f32) {
+    if !buffering {
+        return (VARIANT_FLUID, 0.0);
+    }
+    let p =
+        if ratio.is_finite() { ratio.clamp(0.0, 1.0) } else { 0.0 };
+    (VARIANT_PROGRESS, p)
+}
+
 /// 恢复开关并接上设置页的拨动。值的真相在 `api::settings`,跟设备走。
 pub(crate) fn bind(ui: &MainWindow) {
     ui.set_aurora_buttons_on(
@@ -93,6 +126,36 @@ pub(crate) fn bind(ui: &MainWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 缓冲时主控条底从 fluid 切成 progress、进度实时喂;不缓冲时切回
+    /// fluid 且 progress 归零(变体数学见 handoff-shaders.md §10)。
+    #[test]
+    fn the_bar_switches_to_progress_while_buffering() {
+        assert_eq!(
+            fluid_or_progress(true, 0.4),
+            (VARIANT_PROGRESS, 0.4),
+            "缓冲时该走 progress 变体并喂进度"
+        );
+        assert_eq!(
+            fluid_or_progress(false, 0.4),
+            (VARIANT_FLUID, 0.0),
+            "不缓冲时该切回 fluid,进度归零"
+        );
+    }
+
+    /// 比例喂进去先夹到 0..=1:进度是外来数据,越界或非有限值会让
+    /// 填充遮罩翻到条外。
+    #[test]
+    fn the_progress_ratio_is_clamped_before_it_reaches_the_shader(
+    ) {
+        assert_eq!(fluid_or_progress(true, 1.8).1, 1.0);
+        assert_eq!(fluid_or_progress(true, -0.3).1, 0.0);
+        assert_eq!(
+            fluid_or_progress(true, f32::NAN).1,
+            0.0,
+            "非有限值该按 0 处理,不能带着 NaN 进着色器"
+        );
+    }
 
     /// 悬停把振幅拉向 1,离开收回静息:冻结门撤了,收敛数学原样保留。
     #[test]

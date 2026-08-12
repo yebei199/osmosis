@@ -216,6 +216,40 @@ fn the_capsule_mirrors_its_size_for_the_fluid_backdrop()
     assert!(ui.get_bar_h() > 0.0, "胶囊该把高度回写");
 }
 
+/// 播放页控制条把自己的尺寸回写给 seam,fluid 底才知道该渲多大。
+///
+/// 没开过播放页时是 0,那一槽整个不进合批 —— 与胶囊同一条理由:
+/// 覆层不在场时为它养一次渲染是纯浪费。
+#[test]
+fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
+    let ui = wide_page();
+    ui.set_has_track(true);
+    assert_eq!(
+        ui.get_viz_bar_w(),
+        0.0,
+        "没开播放页时不该有尺寸"
+    );
+
+    ui.set_play_page_open(true);
+    // 覆层是条件页面,先查一次元素逼出实例化,init 才会跑。
+    let _ =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "收起播放页",
+        )
+        .next();
+
+    assert!(
+        ui.get_viz_bar_w() > 0.0,
+        "播放页控制条该回写宽度,实得 {}",
+        ui.get_viz_bar_w()
+    );
+    assert!(
+        ui.get_viz_bar_h() > 0.0,
+        "播放页控制条该回写高度"
+    );
+}
+
 /// 紧凑版式里「展开播放页」键在屏内。
 ///
 /// 钉 #68 修的挤爆回归:循环键进场后那一行超宽,▲ 被推出屏外,

@@ -400,7 +400,7 @@ pub fn run_with_renderers(
                                 amp: btn_home.amp,
                                 mode: 1.0,
                                 bands: 3.0,
-                                variant: 1.0, // nebula
+                                variant: aurora_btn::VARIANT_NEBULA,
                                 progress: 0.0,
                                 pointer: (
                                     btn_home.px,
@@ -417,7 +417,7 @@ pub fn run_with_renderers(
                                 amp: btn_daily.amp,
                                 mode: 1.0, // 绿板:全光谱只准在 Home 空槽
                                 bands: 3.0,
-                                variant: 0.0, // ribbon
+                                variant: aurora_btn::VARIANT_RIBBON,
                                 progress: 0.0,
                                 pointer: (
                                     btn_daily.px,
@@ -426,7 +426,10 @@ pub fn run_with_renderers(
                                 colors: GREENS,
                             },
                     ];
-                    if bar_on {
+                    // 后面几槽按需追加,记下各自的下标 —— 三个可选槽再用
+                    // 长度 match 就是八条臂,而错位不会报错,只会把玻璃底
+                    // 贴到胶囊上。
+                    let bar_i = bar_on.then(|| {
                         slots.push(AuroraBtnSlotControls {
                             w: bar_w * scale,
                             h: bar_h * scale,
@@ -441,31 +444,91 @@ pub fn run_with_renderers(
                             amp: btn_bar.amp,
                             mode: 1.0,
                             bands: 3.0,
-                            variant: 2.0, // fluid
+                            variant: aurora_btn::VARIANT_FLUID,
                             progress: 0.0,
                             pointer: (btn_bar.px, btn_bar.py),
                             colors: GREENS,
                         });
-                    }
+                        slots.len() - 1
+                    });
+                    // 播放页覆层在场时的两槽(#69):主控条底与两颗次要圆钮
+                    // 的 glass 底。覆层不在场就整个不进 —— 那时它们连元素
+                    // 都还没实例化。
+                    let viz_open = ui.get_play_page_open();
+                    let viz_bar_w = ui.get_viz_bar_w();
+                    let viz_bar_h = ui.get_viz_bar_h();
+                    let viz_bar_i = (viz_open
+                        && viz_bar_w > 1.0
+                        && viz_bar_h > 1.0)
+                        .then(|| {
+                            let (variant, progress) =
+                                aurora_btn::fluid_or_progress(
+                                    ui.get_buffering(),
+                                    ui.get_progress_ratio(),
+                                );
+                            slots.push(AuroraBtnSlotControls {
+                                w: viz_bar_w * scale,
+                                h: viz_bar_h * scale,
+                                // 与 app.slint 的 border-radius 同式。
+                                radius: if compact {
+                                    16.0 * scale
+                                } else {
+                                    viz_bar_h * 0.5 * scale
+                                },
+                                seed: 2.9,
+                                speed: 0.85,
+                                // 与胶囊同一个信号(播放当热),共用那份振幅,
+                                // 不为同一条曲线养第二台收敛机。
+                                amp: btn_bar.amp,
+                                mode: 1.0,
+                                bands: 3.0,
+                                variant,
+                                progress,
+                                pointer: (0.72, 0.5),
+                                colors: GREENS,
+                            });
+                            slots.len() - 1
+                        });
+                    let viz_glass_i = viz_open.then(|| {
+                        slots.push(AuroraBtnSlotControls {
+                            // 与 widgets.slint 的 RoundControl 默认直径一致。
+                            w: 44.0 * scale,
+                            h: 44.0 * scale,
+                            radius: 22.0 * scale,
+                            seed: 6.4,
+                            speed: 0.7,
+                            // 两颗共用一张图,拆不出各自的悬停,底幅因此固定;
+                            // glass 本就是低密度底,不靠振幅出戏。
+                            amp: 0.55,
+                            mode: 1.0,
+                            bands: 3.0,
+                            variant: aurora_btn::VARIANT_GLASS,
+                            progress: 0.0,
+                            pointer: (0.5, 0.5),
+                            colors: GREENS,
+                        });
+                        slots.len() - 1
+                    });
                     let imgs = btn_frame(&AuroraBtnControls {
                         time: btn_time,
                         slots,
                     });
-                    match imgs.as_slice() {
-                        [home, daily] => {
-                            ui.set_home_slot_bg(home.clone());
-                            ui.set_empty_daily_bg(
-                                daily.clone(),
-                            );
-                        }
-                        [home, daily, bar] => {
-                            ui.set_home_slot_bg(home.clone());
-                            ui.set_empty_daily_bg(
-                                daily.clone(),
-                            );
-                            ui.set_bar_fluid_bg(bar.clone());
-                        }
-                        _ => {}
+                    if let [home, daily, ..] = imgs.as_slice()
+                    {
+                        ui.set_home_slot_bg(home.clone());
+                        ui.set_empty_daily_bg(daily.clone());
+                    }
+                    let at = |i: Option<usize>| {
+                        i.and_then(|i| imgs.get(i)).cloned()
+                    };
+                    if let Some(img) = at(bar_i) {
+                        ui.set_bar_fluid_bg(img);
+                    }
+                    if let Some(img) = at(viz_bar_i) {
+                        ui.set_viz_bar_bg(img);
+                    }
+                    if let Some(img) = at(viz_glass_i) {
+                        ui.set_viz_glass_bg(img);
                     }
                 }
             } else {

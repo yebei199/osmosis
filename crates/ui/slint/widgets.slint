@@ -156,6 +156,9 @@ export component RoundControl inherits Rectangle {
     // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
     // 只留按下/悬停那一点点提示,不糊住下面。
     in property <bool> transparent-base: false;
+    // 垫在图标下的一张画(#69 起是 glass 变体的按钮底)。空图即没有,
+    // 素底照常。shader 自带圆形 alpha 裁切,这里不必再 clip。
+    in property <image> backdrop;
     callback clicked;
 
     width: root.diameter;
@@ -167,6 +170,12 @@ export component RoundControl inherits Rectangle {
     border-width: 1px;
     border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.overlay;
     animate background, border-color { duration: 120ms; easing: ease-out; }
+
+    if root.backdrop.width > 0: Image {
+        width: 100%;
+        height: 100%;
+        source: root.backdrop;
+    }
 
     Path {
         width: root.diameter * 0.5;
