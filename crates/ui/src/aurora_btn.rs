@@ -105,6 +105,34 @@ pub fn fluid_or_progress(
     (VARIANT_PROGRESS, p)
 }
 
+/// 侧栏底部那两颗圆钮的一槽(#71)。尺寸与 widgets.slint 的 `RoundControl`
+/// 默认直径一致,改那边要同步这里。
+///
+/// 选中那颗把振幅拉满,另一颗停在低位:水滴的轨道不覆盖这两格,亮度就是
+/// 它们表达「我被选中」的全部手段。两颗共用一张图会连这点差别都没有,
+/// 所以各渲各的 —— 44×44 一槽,代价可以忽略。
+pub fn nav_key_slot(
+    scale: f32,
+    seed: f32,
+    selected: bool,
+    colors: [[f32; 3]; 4],
+) -> AuroraBtnSlotControls {
+    AuroraBtnSlotControls {
+        w: 44.0 * scale,
+        h: 44.0 * scale,
+        radius: 22.0 * scale,
+        seed,
+        speed: 0.7,
+        amp: if selected { 1.0 } else { 0.35 },
+        mode: 1.0,
+        bands: 3.0,
+        variant: VARIANT_GLASS,
+        progress: 0.0,
+        pointer: (0.5, 0.5),
+        colors,
+    }
+}
+
 /// 恢复开关并接上设置页的拨动。值的真相在 `api::settings`,跟设备走。
 pub(crate) fn bind(ui: &MainWindow) {
     ui.set_aurora_buttons_on(

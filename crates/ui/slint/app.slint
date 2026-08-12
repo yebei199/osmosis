@@ -122,6 +122,10 @@ export component MainWindow inherits Window {
     in-out property <length> viz-bar-h: 0px;
     // 播放页次要动作(视觉预设、收起)共用的 glass 底。两颗同尺寸,渲一张够。
     in property <image> viz-glass-bg;
+    // 侧栏底部那两颗圆钮的 glass 底(#71)。这两颗各渲各的:选中的那颗要更亮,
+    // 共用一张就分不出谁被选中了。
+    in property <image> nav-key-a-bg;
+    in property <image> nav-key-b-bg;
     // 循环三态。**只有 Rust 写它** —— 真相在 app_core::Queue 上,这里是投影。
     // 0 关,1 列表循环,2 单曲循环:builtin 枚举不生成 Rust 访问器,int 镜像。
     in-out property <int> loop-mode: 0;
@@ -344,11 +348,15 @@ export component MainWindow inherits Window {
         : root.nav-w / 2;
 
     // 当前选中槽在移动轴上的中心(逻辑像素,相对条首)。
-    // 侧栏:pad + i·(项高+间距) + 项高/2;沉底那组(个人 = 2、设置 = 3)从栏底往上排,
-    // 不按从上往下的等距槽算。3 是最后一个 tab 的序号,加导航项时跟着 Nav.bottom-items 一起改。
-    property <length> nav-target-y: root.current-tab >= 2
-        ? root.nav-h - root.nav-pad - (3 - root.current-tab) * (root.nav-slot-h + root.nav-gap) - root.nav-slot-h / 2
-        : root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
+    // 侧栏只有主项两格在轨道上:沉底那组(个人 = 2、设置 = 3)自 #71 起是 glass 圆钮,
+    // 自己表达选中,水滴不去。选中它们时轨道位置停在最后一格主项上、球缩没,
+    // 免得「Home 亮着而人在设置页」。
+    property <int> nav-track-tab: min(root.current-tab, 1);
+    property <length> nav-target-y: root.nav-pad
+        + root.nav-track-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
+    // 球体缩放:1 是常态,0 是缩没。底栏四格全在轨道上,所以只有侧栏会缩。
+    out property <float> nav-ball: root.compact || root.current-tab < 2 ? 1.0 : 0.0;
+    animate nav-ball { duration: 260ms; easing: ease-out; }
     // 底栏四格等分,沉底那组不沉底,所以一路等距算下去。
     property <length> nav-target-x: root.nav-bar-pad-left
         + root.current-tab * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
@@ -522,13 +530,20 @@ export component MainWindow inherits Window {
                     // 把沉底组压到底。
                     Rectangle { vertical-stretch: 1; }
 
-                    for item[i] in Nav.bottom-items: NavItem {
-                        height: root.nav-slot-h;
-                        label: item.label;
-                        icon: item.icon;
-                        active: root.current-tab == i + 2;
-                        gpu-selected: root.nav-bg.width > 0;
-                        clicked => { root.current-tab = i + 2; }
+                    // 沉底那组是 glass 圆钮(#71):水滴的轨道只覆盖上面两格,
+                    // 这两颗自己表达选中 —— 一块大胶囊压在小圆钮下面,两者会互相抵消。
+                    for item[i] in Nav.bottom-items: HorizontalLayout {
+                        alignment: center;
+                        RoundControl {
+                            icon: item.icon;
+                            label: item.label;
+                            checkable: true;
+                            checked: root.current-tab == i + 2;
+                            backdrop: i == 0
+                                ? root.nav-key-a-bg
+                                : root.nav-key-b-bg;
+                            clicked => { root.current-tab = i + 2; }
+                        }
                     }
                 }
             }

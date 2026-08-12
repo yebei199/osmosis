@@ -7,7 +7,6 @@
 use std::time::Duration;
 
 use i_slint_backend_testing as testing;
-use slint::ComponentHandle;
 use ui::MainWindow;
 
 /// 登录之后才有导航。默认宽版式(侧栏)。
@@ -95,6 +94,102 @@ fn the_droplet_lands_on_the_selected_bottom_item() {
             "tab {tab} 的头球该落在 {left}..{right} 之间,实得 {lead}"
         );
     }
+}
+
+/// 侧栏底部两颗退出水滴轨道(#71):选中个人/设置时水滴停在最后一格主项的
+/// 位置上并缩没(球体缩放归零),不再滑到栏底;切回来又长出来。
+#[test]
+fn the_droplet_melts_away_for_the_bottom_round_keys() {
+    let ui = nav_window();
+
+    observe(&ui);
+    ui.set_current_tab(1);
+    testing::mock_elapsed_time(Duration::from_millis(900));
+    assert!(
+        ui.get_nav_ball() > 0.9,
+        "停在 Music 时水滴该是满的,实得 {}",
+        ui.get_nav_ball()
+    );
+    let on_music = ui.get_nav_lead();
+
+    observe(&ui);
+    ui.set_current_tab(3);
+    testing::mock_elapsed_time(Duration::from_millis(900));
+    assert_eq!(
+        ui.get_nav_ball(),
+        0.0,
+        "选中设置时水滴该缩没"
+    );
+    assert_eq!(
+        ui.get_nav_lead(),
+        on_music,
+        "水滴不该滑到栏底,该停在最后一格主项上"
+    );
+
+    observe(&ui);
+    ui.set_current_tab(0);
+    testing::mock_elapsed_time(Duration::from_millis(900));
+    assert!(
+        ui.get_nav_ball() > 0.9,
+        "切回主项该重新长出来,实得 {}",
+        ui.get_nav_ball()
+    );
+}
+
+/// 底栏那四格不受影响:紧凑版式里个人/设置仍在轨道上,水滴照走。
+#[test]
+fn the_bottom_bar_keeps_all_four_slots_on_the_track() {
+    let ui = nav_window();
+    ui.set_compact(true);
+    let _ = item_span(&ui, 0);
+
+    observe(&ui);
+    ui.set_current_tab(3);
+    testing::mock_elapsed_time(Duration::from_millis(900));
+
+    assert!(
+        ui.get_nav_ball() > 0.9,
+        "底栏四格都在轨道上,水滴不该缩没"
+    );
+    let (left, right) = item_span(&ui, 3);
+    let lead = ui.get_nav_lead();
+    assert!(
+        lead > left && lead < right,
+        "底栏的头球该落在第四格 {left}..{right},实得 {lead}"
+    );
+}
+
+/// 圆钮报得出自己开着还是关着 —— 它是 tab,读屏软件得念出「已选中」,
+/// 而不是只有一个亮圆;点一下切到那一页,换掉 NavItem 之后这条线不能断。
+#[test]
+fn the_bottom_round_keys_are_checkable_tabs() {
+    let ui = nav_window();
+    // 停在 Home:个人主页没建,「个人」这个标签全应用只有侧栏那颗。
+    ui.set_current_tab(0);
+
+    let key =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui, "个人",
+        )
+        .next()
+        .expect("侧栏底部找不到「个人」圆钮");
+    assert_eq!(
+        key.accessible_checkable(),
+        Some(true),
+        "它是 tab,得报得出有没有被选中"
+    );
+    assert_eq!(
+        key.accessible_checked(),
+        Some(false),
+        "还没切过去,该是关着的"
+    );
+
+    key.invoke_accessible_default_action();
+    assert_eq!(
+        ui.get_current_tab(),
+        2,
+        "点一下该切到个人主页"
+    );
 }
 
 /// 三球中途仍拉得开:切 tab 的半途读三个位置,头球最靠前、小水滴最靠后。

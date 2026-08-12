@@ -61,6 +61,7 @@ fn main() {
                 cross: n.cross,
                 slot: n.slot,
                 horizontal: n.horizontal,
+                ball: n.ball,
                 dark: n.dark,
             }))
         },

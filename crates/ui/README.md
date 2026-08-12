@@ -84,6 +84,8 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 - `src/nav_glass.rs`:导航水滴选中器的 seam 数据与转场判定(静止时不重算纹理的
   工作量缓存,不是会冻住动画的门)。宽版式侧栏与紧凑版式底栏共用一套:三球位置
   只带移动轴坐标,`horizontal` 说明那是 x 还是 y(#70),几何真相在 `app.slint`。
+  `ball` 是三球的整体缩放:侧栏底部两颗自 #71 起是 glass 圆钮、不在轨道上,
+  选中它们时水滴化掉,免得上面还亮着一格而人在别的页。
 - `src/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
   hover 振幅收敛数学。按钮每帧重渲,没有冻结态。五个变体编号在这里有名字
   (ribbon / nebula / fluid / glass / progress,数学见 handoff-shaders.md §10);

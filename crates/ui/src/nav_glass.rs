@@ -33,6 +33,9 @@ pub struct NavGlassControls {
     pub slot: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。同一套数学,轴对调(#70)。
     pub horizontal: bool,
+    /// 三球的整体缩放,1 常态、0 缩没。侧栏底部两颗自 #71 起是 glass 圆钮、
+    /// 不在轨道上,选中它们时水滴化掉,免得上面还亮着一格。
+    pub ball: f32,
     /// 深色主题。导航背景是自绘的,采不到背后的像素,主题只能这样传进去。
     pub dark: bool,
 }

@@ -27,6 +27,8 @@ pub struct NavParams {
     pub slot: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。
     pub horizontal: bool,
+    /// 三球的整体缩放,1 常态、0 缩没(侧栏底部两颗圆钮不在轨道上,#71)。
+    pub ball: f32,
     /// 深色主题。导航背景由本 shader 自绘,所以主题得穿进 uniform ——
     /// 采不到背后的像素,没法"跟着背景走"。
     pub dark: bool,
@@ -205,13 +207,16 @@ impl NavGlassPass {
                 [p.cross, pos]
             }
         };
+        // ball 是整体缩放:0 时半尺寸归零,SDF 退化成一个点,画面上只剩自绘背景。
+        let s = p.ball.clamp(0.0, 1.0);
         let half = if p.horizontal {
-            [p.slot * 0.42, thick * 0.42]
+            [p.slot * 0.42 * s, thick * 0.42 * s]
         } else {
-            [thick * 0.42, p.slot * 0.42]
+            [thick * 0.42 * s, p.slot * 0.42 * s]
         };
         let radius = half[0].min(half[1]) * 0.6;
-        let smooth_k = (p.slot * 0.9).max(1.0);
+        // 融合半径跟着缩:不缩的话球都没了、颈还在,收尾那几帧会剩一团糊影。
+        let smooth_k = (p.slot * 0.9 * s).max(0.001);
         let lead = ball(p.lead);
         let lag = ball(p.lag);
         let drop = ball(p.drop);

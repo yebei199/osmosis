@@ -101,6 +101,7 @@ fn android_main(app: slint::android::AndroidApp) {
                 cross: n.cross,
                 slot: n.slot,
                 horizontal: n.horizontal,
+                ball: n.ball,
                 dark: n.dark,
             }))
         },

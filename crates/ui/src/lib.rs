@@ -240,6 +240,7 @@ pub fn run_with_renderers(
     let mut nav_last_ll: Option<(f32, f32, f32)> = None;
     let mut nav_last_size: Option<(f32, f32)> = None;
     let mut nav_last_dark: Option<bool> = None;
+    let mut nav_last_ball: Option<f32> = None;
 
     // 光带按钮的跨帧状态:振幅动画 + 按钮时钟,每帧推进。
     // bar 是 fluid 正在播放胶囊(#68):播放当"热",暂停收回静息。
@@ -309,6 +310,10 @@ pub fn run_with_renderers(
                 let dark = ui.global::<Theme>().get_dark();
                 let theme_changed =
                     nav_last_dark != Some(dark);
+                // 球体缩放同理:切到侧栏底部那两颗圆钮时槽位不动、只有它在变
+                // (#71),不认它的话水滴就化不掉,停在原地不动。
+                let ball = ui.get_nav_ball();
+                let ball_changed = nav_last_ball != Some(ball);
                 if nav_glass::nav_transition_active(
                     lead,
                     lag,
@@ -316,6 +321,7 @@ pub fn run_with_renderers(
                     nav_last_ll,
                 ) || size_changed
                     || theme_changed
+                    || ball_changed
                 {
                     if let Some(img) =
                         nav_frame(&NavGlassControls {
@@ -328,6 +334,7 @@ pub fn run_with_renderers(
                             slot: ui.get_nav_slot() * scale,
                             horizontal: ui
                                 .get_nav_horizontal(),
+                            ball,
                             dark,
                         })
                     {
@@ -335,6 +342,7 @@ pub fn run_with_renderers(
                     }
                     nav_last_ll = Some((lead, lag, drop));
                     nav_last_dark = Some(dark);
+                    nav_last_ball = Some(ball);
                     nav_last_size =
                         Some((strip_w, strip_h));
                 }
@@ -491,6 +499,23 @@ pub fn run_with_renderers(
                             });
                             slots.len() - 1
                         });
+                    // 侧栏底部两颗 glass 圆钮(#71)。各渲各的:选中那颗把振幅
+                    // 拉满,共用一张图就分不出谁被选中。侧栏只在宽版式存在。
+                    let rail_keys = !compact;
+                    let tab = ui.get_current_tab();
+                    let mut rail_key = |i: i32, seed: f32| {
+                        rail_keys.then(|| {
+                            slots.push(aurora_btn::nav_key_slot(
+                                scale,
+                                seed,
+                                tab == i,
+                                GREENS,
+                            ));
+                            slots.len() - 1
+                        })
+                    };
+                    let key_a_i = rail_key(2, 4.6);
+                    let key_b_i = rail_key(3, 7.2);
                     let viz_glass_i = viz_open.then(|| {
                         slots.push(AuroraBtnSlotControls {
                             // 与 widgets.slint 的 RoundControl 默认直径一致。
@@ -531,6 +556,12 @@ pub fn run_with_renderers(
                     }
                     if let Some(img) = at(viz_glass_i) {
                         ui.set_viz_glass_bg(img);
+                    }
+                    if let Some(img) = at(key_a_i) {
+                        ui.set_nav_key_a_bg(img);
+                    }
+                    if let Some(img) = at(key_b_i) {
+                        ui.set_nav_key_b_bg(img);
                     }
                 }
             } else {
