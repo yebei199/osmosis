@@ -301,9 +301,10 @@ export component MainWindow inherits Window {
     in property <string> lyric-line;
     in property <string> lyric-translation;
 
-    // ── 宽版式侧栏「液态玻璃 metaball 选中器」──
+    // ── 「液态玻璃 metaball 选中器」(宽版式侧栏 / 紧凑版式底栏)──
     // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
-    // 几何与交互。侧栏槽位常量是**唯一真相**:布局与选中块位置都从这里算,不各写各的。
+    // 几何与交互。槽位常量是**唯一真相**:布局与选中块位置都从这里算,不各写各的。
+    // 两种版式同一套数学,差别只在移动轴:侧栏沿 y,底栏沿 x(#70,handoff §11)。
     property <length> nav-pad: 8px;
     property <length> nav-gap: 6px;
     // 单个导航项高,也是选中块的参考高。out:Rust 读它定块尺寸。
@@ -316,26 +317,54 @@ export component MainWindow inherits Window {
     out property <length> nav-h: root.height
         - root.safe-area-insets.top
         - root.safe-area-insets.bottom;
-    // 紧凑版式(手机底栏)没有这条侧栏,Rust 据此整段跳过导航选中器的渲染。
-    out property <bool> nav-visible: !root.compact;
-    // 当前选中槽的中心 y(逻辑像素,相对侧栏顶):pad + i·(项高+间距) + 项高/2。
-    // 沉底那组(个人 = 2、设置 = 3)从栏底往上排,不按从上往下的等距槽算。
-    // 3 是最后一个 tab 的序号,加导航项时跟着 Nav.bottom-items 一起改。
+    // 底栏(紧凑版式)的横条几何。宽由布局回写 —— 四格等分要它,而它随窗口变;
+    // 高是图标那 64px 加手势条 inset,背景要铺到手势条底下。
+    in-out property <length> nav-bar-w: 0px;
+    out property <length> nav-bar-h: 64px + root.safe-area-insets.bottom;
+    property <length> nav-bar-gap: 4px;
+    property <length> nav-bar-pad-left: root.safe-area-insets.left + 8px;
+    property <length> nav-bar-pad-right: root.safe-area-insets.right + 8px;
+    // 四格:主项两个加沉底那两个,手机上接着排(见底栏)。加导航项时跟着改。
+    property <int> nav-bar-count: 4;
+    property <length> nav-slot-w: (root.nav-bar-w - root.nav-bar-pad-left - root.nav-bar-pad-right
+        - (root.nav-bar-count - 1) * root.nav-bar-gap) / root.nav-bar-count;
+
+    // ── seam 出参:轴无关的一组数,Rust 照单喂 shader,不判版式 ──
+    // 底栏的宽度没量出来之前不渲(首帧布局还没跑),避免拿 0 当条长。
+    out property <bool> nav-visible: root.compact ? root.nav-bar-w > 1px : true;
+    out property <bool> nav-horizontal: root.compact;
+    out property <length> nav-strip-w: root.compact ? root.nav-bar-w : root.nav-w;
+    out property <length> nav-strip-h: root.compact ? root.nav-bar-h : root.nav-h;
+    // 移动轴上一格的长度:侧栏是项高,底栏是等分出来的格宽。
+    out property <length> nav-slot: root.compact ? root.nav-slot-w : root.nav-slot-h;
+    // 固定轴上的中心:侧栏取栏宽的一半;底栏的图标被 inset 顶上去了,
+    // 所以取除掉手势条那段之后的一半。
+    out property <length> nav-cross: root.compact
+        ? (root.nav-bar-h - root.safe-area-insets.bottom) / 2
+        : root.nav-w / 2;
+
+    // 当前选中槽在移动轴上的中心(逻辑像素,相对条首)。
+    // 侧栏:pad + i·(项高+间距) + 项高/2;沉底那组(个人 = 2、设置 = 3)从栏底往上排,
+    // 不按从上往下的等距槽算。3 是最后一个 tab 的序号,加导航项时跟着 Nav.bottom-items 一起改。
     property <length> nav-target-y: root.current-tab >= 2
         ? root.nav-h - root.nav-pad - (3 - root.current-tab) * (root.nav-slot-h + root.nav-gap) - root.nav-slot-h / 2
         : root.nav-pad + root.current-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
-    // metaball 的头(快)/尾(慢):都朝 nav-target-y 动,快慢不同 → 行走时一前一后被 shader
-    // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这两个动画值喂 shader。
-    // 用两个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
-    out property <length> nav-lead-y: root.nav-target-y;
-    out property <length> nav-lag-y: root.nav-target-y;
+    // 底栏四格等分,沉底那组不沉底,所以一路等距算下去。
+    property <length> nav-target-x: root.nav-bar-pad-left
+        + root.current-tab * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
+    property <length> nav-target: root.compact ? root.nav-target-x : root.nav-target-y;
+    // metaball 的头(快)/尾(慢):都朝 nav-target 动,快慢不同 → 行走时一前一后被 shader
+    // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这三个动画值喂 shader。
+    // 用三个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
+    out property <length> nav-lead: root.nav-target;
+    out property <length> nav-lag: root.nav-target;
     // 第三颗:小水滴,最慢的那份(§11 三球;系数差用时长差实现)。
-    out property <length> nav-drop-y: root.nav-target-y;
-    animate nav-lead-y { duration: 240ms; easing: ease-out; }
-    animate nav-lag-y { duration: 440ms; easing: ease-out; }
-    animate nav-drop-y { duration: 680ms; easing: ease-out; }
-    // render3d 每帧(转场期间)渲出的侧栏背景纹理。非 GPU 构建恒为空图(width 0),
-    // 侧栏退回 Slint 平底 + NavItem 自带高亮(见侧栏与 NavItem)。
+    out property <length> nav-drop: root.nav-target;
+    animate nav-lead { duration: 240ms; easing: ease-out; }
+    animate nav-lag { duration: 440ms; easing: ease-out; }
+    animate nav-drop { duration: 680ms; easing: ease-out; }
+    // render3d 每帧(转场期间)渲出的导航背景纹理。非 GPU 构建恒为空图(width 0),
+    // 两种版式都退回 Slint 平底 + NavItem 自带高亮。
     in-out property <image> nav-bg;
     // 用关键词搜歌。
     callback search(string);
@@ -1421,19 +1450,35 @@ export component MainWindow inherits Window {
         // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
         // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
         if root.compact: Rectangle {
-            height: 64px + root.safe-area-insets.bottom;
+            height: root.nav-bar-h;
+            // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
             background: Theme.base;
+            // 横条几何回写给 seam:四格等分要窗口宽,而它随窗口变(#70)。
+            init => { root.nav-bar-w = self.width; }
+            changed width => { root.nav-bar-w = self.width; }
+
+            // GPU 水滴选中器:与侧栏同一条 pass,只是移动轴换成 x。
+            // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+            Image {
+                source: root.nav-bg;
+                width: 100%;
+                height: 100%;
+                image-fit: fill;
+            }
+
             HorizontalLayout {
-                padding-left: root.safe-area-insets.left + 8px;
-                padding-right: root.safe-area-insets.right + 8px;
+                padding-left: root.nav-bar-pad-left;
+                padding-right: root.nav-bar-pad-right;
                 padding-bottom: root.safe-area-insets.bottom;
-                spacing: 4px;
+                spacing: root.nav-bar-gap;
 
                 for item[i] in Nav.items: NavItem {
                     horizontal-stretch: 1;
                     label: item.label;
                     icon: item.icon;
                     active: root.current-tab == i;
+                    // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
+                    gpu-selected: root.nav-bg.width > 0;
                     clicked => { root.current-tab = i; }
                 }
                 // 沉底那组在底栏里接着排:手机没有"栏底"可沉,四项等分。
@@ -1444,6 +1489,7 @@ export component MainWindow inherits Window {
                     label: item.label;
                     icon: item.icon;
                     active: root.current-tab == i + 2;
+                    gpu-selected: root.nav-bg.width > 0;
                     clicked => { root.current-tab = i + 2; }
                 }
             }

@@ -27,25 +27,31 @@
 3. **wgpu 版本对齐**:bevy 与 slint 必须共享同一 wgpu 大版本(现为 29,Cargo.lock
    里实为单份 `wgpu 29.0.4`)。升级任一方前先核对,否则 `wgpu::Texture` 类型不兼容。
 
-## 导航侧栏液态玻璃选中器(`navglass.rs` + `navglass.wgsl`)
+## 导航液态玻璃选中器(`navglass.rs` + `navglass.wgsl`)
 
-宽版式左侧导航栏的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:底色 + 一层微极光,
-外加一块会在 tab 之间「流动」的圆角矩形 metaball —— 头(快)尾(慢)两个位置都朝当前选中槽
-中心移动,行走时 smooth-union 拉出胶着的颈,静止时重合成单块,颈那一档折射自绘的极光背景。
+导航条的背景由一个**不经 bevy** 的独立全屏 fragment pass 画:底色 + 一层微极光,
+外加一块会在 tab 之间「流动」的圆角矩形 metaball —— 头(快)、尾(慢)、小水滴(最慢)
+三个位置都朝当前选中槽中心移动,行走时 smooth-union 拉出胶着的颈,静止时重合成单块,
+颈那一档折射自绘的极光背景。
+
+宽版式的左侧栏与紧凑版式的底栏共用这一条 pass,差别只有移动轴:侧栏沿 y,底栏沿 x
+(`horizontal`)。三球位置只带移动轴坐标,固定轴的中心由 ui 侧算好(底栏的图标被手势条
+inset 顶上去了,不在纹理正中);半尺寸一边按格长、一边按条的厚度取,自绘背景那三团极光
+的 uv 也跟着转置,否则在扁条上会挤成一坨。
 
 为什么不长在 bevy 里:选中器是纯 2D 玻璃,没有 3D 场景/ECS。而 texture→`slint::Image` 的桥
 (`Image::try_from(wgpu::Texture)`)本就与 bevy 无关,故在 `Scene` 暴露的**同一块共享 device**
 上自起一个 pass 即可。思路见 `docs/note/slint-bevy-architecture-and-direction.md` 第八节。
 
-- 几何(槽位、栏尺寸、lead/lag 动画位置)由 `app.slint` 的 `nav-*` 属性给出,**是唯一真相**;
+- 几何(槽位、条尺寸、移动轴、三球动画位置)由 `app.slint` 的 `nav-*` 属性给出,**是唯一真相**;
   由 apps/* 在 seam 处翻译成 `NavParams`(POD,镜像 `ui::NavGlassControls`)。
 - **只在切 tab 的转场期间重算纹理**(判定在 `ui::nav_glass::nav_transition_active`),静止时 Slint
   复用上一帧 —— 这是工作量缓存,不是会冻住动画的门:窗口本身每帧照常重绘
   (前台恒满帧,change_log 2026-08-11)。
-  **明暗主题也在判据里**:侧栏背景是本 pass 自绘的,采不到背后的像素,
+  **明暗主题也在判据里**:导航背景是本 pass 自绘的,采不到背后的像素,
   换了主题必须重画一次,否则要等下一次切 tab 才跟上。
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
-  为空,侧栏退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
+  为空,两种版式都退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 
 ## 光带按钮(`aurorabtn.rs` + `aurorabtn.wgsl`)
 

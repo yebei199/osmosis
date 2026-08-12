@@ -13,17 +13,21 @@ use slint::wgpu_29::wgpu;
 /// 在 apps/* 的 seam 处平凡拷来 —— 与 `SceneParams` 同样的镜像分离(ui 与 render3d 互不依赖)。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NavParams {
-    /// 侧栏纹理尺寸(= 目标纹理尺寸)。
+    /// 导航条纹理尺寸(= 目标纹理尺寸)。
     pub strip_w: f32,
     pub strip_h: f32,
-    /// 三颗球中心的 y,相对侧栏顶:头(快)/尾(慢)/小水滴(最慢)。
-    /// x 恒取栏宽一半。追随系数不同,同一个目标位置天然拉开先后(§11)。
-    pub lead_y: f32,
-    pub lag_y: f32,
-    pub drop_y: f32,
-    /// 选中块参考高度(≈单个导航项高),用来定块的半尺寸/圆角/融合半径。
-    pub slot_h: f32,
-    /// 深色主题。侧栏背景由本 shader 自绘,所以主题得穿进 uniform ——
+    /// 三颗球中心在移动轴上的位置,相对条首:头(快)/尾(慢)/小水滴(最慢)。
+    /// 追随系数不同,同一个目标位置天然拉开先后(§11)。
+    pub lead: f32,
+    pub lag: f32,
+    pub drop: f32,
+    /// 三颗球在固定轴上的中心。侧栏是栏宽一半,底栏由 ui 侧按 inset 算好。
+    pub cross: f32,
+    /// 移动轴上一格的长度(侧栏是项高,底栏是格宽),用来定块的半尺寸/圆角/融合半径。
+    pub slot: f32,
+    /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。
+    pub horizontal: bool,
+    /// 深色主题。导航背景由本 shader 自绘,所以主题得穿进 uniform ——
     /// 采不到背后的像素,没法"跟着背景走"。
     pub dark: bool,
 }
@@ -191,24 +195,40 @@ impl NavGlassPass {
             self.target = Some((tex, w, h));
         }
 
-        // 组 uniform(物理像素):x 居中,块的半尺寸/圆角/融合半径按比例从栏宽与槽高定。
-        let cx = w as f32 * 0.5;
-        let half = [w as f32 * 0.42, p.slot_h * 0.42];
+        // 组 uniform(物理像素):三球沿移动轴走,固定轴上停在 cross;块的半尺寸
+        // 一边按格长、一边按条的厚度取,轴对调时两者互换(#70)。
+        let thick = if p.horizontal { h as f32 } else { w as f32 };
+        let ball = |pos: f32| {
+            if p.horizontal {
+                [pos, p.cross]
+            } else {
+                [p.cross, pos]
+            }
+        };
+        let half = if p.horizontal {
+            [p.slot * 0.42, thick * 0.42]
+        } else {
+            [thick * 0.42, p.slot * 0.42]
+        };
         let radius = half[0].min(half[1]) * 0.6;
-        let smooth_k = (p.slot_h * 0.9).max(1.0);
+        let smooth_k = (p.slot * 0.9).max(1.0);
+        let lead = ball(p.lead);
+        let lag = ball(p.lag);
+        let drop = ball(p.drop);
         // 一行一个 uniform,与 shader 里 UBO 的字段逐行对照 —— 那边是 vec2,
         // 这边就并排两个标量。rustfmt 会把它摊成一行一个数,对照关系随之消失,
         // 所以在这里按住它。全仓唯一一处。
         #[rustfmt::skip]
         let vals: [f32; 16] = [
             w as f32, h as f32, // tex_size
-            cx, p.lead_y, // lead
-            cx, p.lag_y, // lag
-            cx, p.drop_y, // drop
+            lead[0], lead[1], // lead
+            lag[0], lag[1], // lag
+            drop[0], drop[1], // drop
             half[0], half[1], // half
             radius, smooth_k, // radius, smooth_k
             if p.dark { 1.0 } else { 0.0 }, // dark
-            0.0, 0.0, 0.0, // 尾部对齐填充
+            if p.horizontal { 1.0 } else { 0.0 }, // horizontal
+            0.0, 0.0, // 尾部对齐填充
         ];
         let mut bytes =
             Vec::with_capacity(UBO_BYTES as usize);

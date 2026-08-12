@@ -55,10 +55,12 @@ fn main() {
             Some(nav.render_frame(&render3d::NavParams {
                 strip_w: n.strip_w,
                 strip_h: n.strip_h,
-                lead_y: n.lead_y,
-                lag_y: n.lag_y,
-                drop_y: n.drop_y,
-                slot_h: n.slot_h,
+                lead: n.lead,
+                lag: n.lag,
+                drop: n.drop,
+                cross: n.cross,
+                slot: n.slot,
+                horizontal: n.horizontal,
                 dark: n.dark,
             }))
         },

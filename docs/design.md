@@ -122,12 +122,13 @@ WGSL 版逐行对应),分层拆解在 [`design/handoff-shaders.md`](design/hando
 上一帧,失焦/不可见即停,设置页「动态极光按钮」关掉即纯色实底,无 GPU 端走
 关闭分支)。
 
-## 侧栏水滴导航
+## 水滴导航
 
 选中指示器由三颗球组成(头球/尾球/小水滴),追随系数 0.30/0.19/0.13,同一个
 目标位置因系数不同天然拉开先后;Slint 侧粘合用 SDF smooth-min(k≈14px),
 不用滤镜链。拆解在 [`design/handoff-shaders.md`](design/handoff-shaders.md) §11,
-落点是 `render3d` 现有 `navglass` pass 的升级(现在是 lead/lag 两球)。
+落在 `render3d` 的 `navglass` pass。宽版式侧栏沿 y 走,手机底栏沿 x 走:同一套
+数学,轴对调,系数与三球比例共用(#70)。
 
 ## 播放条
 

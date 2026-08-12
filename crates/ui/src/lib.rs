@@ -289,18 +289,18 @@ pub fn run_with_renderers(
             let Some(ui) = weak.upgrade() else { return };
             let scale = ui.window().scale_factor();
 
-            // ── 导航侧栏液态玻璃选中器 ──
-            // 常驻侧栏,与下面播放页视觉的门相互独立:只在切 tab 的 metaball 还在走
-            // (lead/lag 相对上一帧变化)或栏尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
-            // 紧凑版式(手机底栏)没有这条侧栏,nav-visible 为假,整段跳过。
+            // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
+            // 常驻,与下面播放页视觉的门相互独立:只在切 tab 的 metaball 还在走
+            // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
+            // 轴的事全在 .slint 那侧算完,这里只搬数(#70)。
             if ui.get_nav_visible() {
-                let lead = ui.get_nav_lead_y();
-                let lag = ui.get_nav_lag_y();
-                let drop = ui.get_nav_drop_y();
+                let lead = ui.get_nav_lead();
+                let lag = ui.get_nav_lag();
+                let drop = ui.get_nav_drop();
                 let strip_w =
-                    (ui.get_nav_w() * scale).max(1.0);
+                    (ui.get_nav_strip_w() * scale).max(1.0);
                 let strip_h =
-                    (ui.get_nav_h() * scale).max(1.0);
+                    (ui.get_nav_strip_h() * scale).max(1.0);
                 let size_changed = nav_last_size
                     != Some((strip_w, strip_h));
                 // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
@@ -321,11 +321,13 @@ pub fn run_with_renderers(
                         nav_frame(&NavGlassControls {
                             strip_w,
                             strip_h,
-                            lead_y: lead * scale,
-                            lag_y: lag * scale,
-                            drop_y: drop * scale,
-                            slot_h: ui.get_nav_slot_h()
-                                * scale,
+                            lead: lead * scale,
+                            lag: lag * scale,
+                            drop: drop * scale,
+                            cross: ui.get_nav_cross() * scale,
+                            slot: ui.get_nav_slot() * scale,
+                            horizontal: ui
+                                .get_nav_horizontal(),
                             dark,
                         })
                     {

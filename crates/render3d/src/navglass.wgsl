@@ -24,10 +24,12 @@ struct Params {
     smooth_k: f32,
     // 深色主题为 1,浅色为 0。
     dark: f32,
+    // 移动轴是 x(手机底栏)为 1,是 y(宽版式侧栏)为 0。三球位置由 Rust 侧按轴组好,
+    // 这里只用它转置自绘背景的 uv —— 那三团极光是照竖条排的,扁条上不转会挤成一坨。
+    horizontal: f32,
     // 尾部填充:把结构体凑成 16 字节的整数倍,满足 uniform 布局对齐(Rust 侧缓冲同为 64 字节)。
     _pad0: f32,
     _pad1: f32,
-    _pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -60,8 +62,9 @@ fn glow(uv: vec2<f32>, c: vec2<f32>, rad: f32) -> f32 {
     return t * t;
 }
 
-// 侧栏自绘背景:深色底 + 三团极光(与应用 aurora 同调:苔绿/浅葱/薄荷),整体压暗,供玻璃折射透色。
-// 竖长条里光斑沿高度分布,x 方向都居中偏移一点,免得死板。
+// 导航条自绘背景:深色底 + 三团极光(与应用 aurora 同调:苔绿/浅葱/薄荷),整体压暗,供玻璃折射透色。
+// 光斑沿条的长边分布,短边方向都居中偏移一点,免得死板。入参的 uv 已按移动轴转置过
+// (见 fs 里的 buv),所以这里一律按"竖长条"写。
 // 色相跟 theme.slint 的 aurora 族同源(docs/adr/0023:绿是唯一强调色,装饰不引入新色相)。
 fn base_color(uv: vec2<f32>) -> vec3<f32> {
     if (u.dark < 0.5) {
@@ -102,12 +105,16 @@ fn field(pix: vec2<f32>) -> f32 {
 fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let pix = frag.xy;
     let uv = pix / u.tex_size;
+    // 背景采样用的 uv:横条上把两轴对调,光斑仍沿长边排(#70)。
+    // 折射位移也在这套坐标里加,所以位移向量同样要对调。
+    let flip = u.horizontal > 0.5;
+    let buv = select(uv, uv.yx, flip);
 
     let d = field(pix);
 
-    // 玻璃之外:侧栏自绘背景原样。这一支覆盖大多数像素。
+    // 玻璃之外:导航条自绘背景原样。这一支覆盖大多数像素。
     if (d > 0.0) {
-        return vec4<f32>(base_color(uv), 1.0);
+        return vec4<f32>(base_color(buv), 1.0);
     }
 
     // ── 玻璃之内 ──
@@ -121,7 +128,7 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let edge = clamp(1.0 + d / EDGE_PX, 0.0, 1.0); // d ∈ [-EDGE_PX, 0] → 0..1
     let disp = n * (edge * edge) * 14.0 / u.tex_size;
 
-    var col = base_color(uv + disp);
+    var col = base_color(buv + select(disp, disp.yx, flip));
     // 玻璃本体淡染:一层薄白,让选中块从背景里浮起来。
     col = mix(col, vec3<f32>(1.0), 0.12);
     // 顶部内侧高光:光从上方来,越靠上缘越亮 —— 液态玻璃最抓眼的那道厚度光边。
