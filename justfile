@@ -3,9 +3,14 @@
 set dotenv-load := true
 
 apk := "dist/osmosis-debug.apk"
-# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
-# 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
+# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。桌面与真机**各占一个**:
+# 同一时刻两边都可能开着,共用一个号的话 `adb forward` 一挂,桌面就起不来,而 AI
+# 客户端连过去看到的是手机(踩过,见 mcp-port-free 的注释)。
+#
+# 真机那个是**烧进 APK 的**(apps/android/src/lib.rs 的 option_env!),改它要重出包,
+# 所以让桌面让路、真机留在 8090。改任一个都要同步改 .mcp.json —— 那是 AI 客户端的地址。
 mcp_port := "8090"
+desktop_mcp_port := "8091"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -69,8 +74,8 @@ ci-boundaries:
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
 [group('三端')]
 [group('桌面')]
-desktop-dev extra="": mcp-port-free
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+desktop-dev extra="": (mcp-port-free desktop_mcp_port)
+    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
@@ -202,26 +207,29 @@ android-run: android-install android-reverse
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
 
-# {{mcp_port}} 被占就**立刻失败**,别让 app 起来。
+# 传进来的端口被占就**立刻失败**,别让 app 起来。
 #
 # 这是在补一个静默失败:slint 绑不上端口时只在日志里留一行 "failed to bind ...
 # Address already in use" 就继续跑,app 一切正常。而 .mcp.json 里 AI 客户端的地址是
-# 写死的 127.0.0.1:{{mcp_port}} —— 它会连上**占用者**,并把对方的界面当成你的。
+# 写死的 —— 它会连上**占用者**,并把对方的界面当成你的。
 #
-# 最容易中招的占用者就是 mcp-forward 留下的 adb forward:AI 于是读到手机里那个旧 APK
-# 的元素树和截图,浑然不觉。踩过一次,查了半天。
+# 桌面与真机分开占号之后(见文件头的两个变量),正常情况下不该再撞上;仍留着这道门,
+# 因为撞上时的症状是纯静默的。真撞了多半是上一个桌面实例没退干净。
 [private]
-mcp-port-free:
+mcp-port-free port:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! ss -ltn "sport = :{{mcp_port}}" | grep -q LISTEN; then exit 0; fi
-    echo "端口 {{mcp_port}} 已被占用,拒绝启动 —— 否则 app 会静默跑在没有 MCP 的状态," >&2
+    if ! ss -ltn "sport = :{{port}}" | grep -q LISTEN; then exit 0; fi
+    echo "端口 {{port}} 已被占用,拒绝启动 —— 否则 app 会静默跑在没有 MCP 的状态," >&2
     echo "而 AI 客户端会连到下面这个占用者身上,把它的界面当成你的:" >&2
-    ss -ltnp "sport = :{{mcp_port}}" >&2 || true
-    if adb forward --list 2>/dev/null | grep -q "tcp:{{mcp_port}}"; then
+    ss -ltnp "sport = :{{port}}" >&2 || true
+    if adb forward --list 2>/dev/null | grep -q "tcp:{{port}}"; then
         echo "" >&2
         echo "是 adb forward 占着(mcp-forward / mcp-android 留下的),连过去看到的是**手机**。" >&2
-        echo "解法:adb forward --remove tcp:{{mcp_port}}" >&2
+        echo "真机现在该用 {{mcp_port}},撞到这里说明端口串了:adb forward --remove tcp:{{port}}" >&2
+    else
+        echo "" >&2
+        echo "多半是上一个桌面实例没退干净:just desktop-kill" >&2
     fi
     exit 1
 

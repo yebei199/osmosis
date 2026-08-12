@@ -41,7 +41,7 @@ docs_synced_at: ba4002d
 **别因此放弃**——那是个普通的 HTTP 端点,直接打 JSON-RPC 即可:
 
 ```sh
-curl -s -X POST http://127.0.0.1:8090/mcp \
+curl -s -X POST http://127.0.0.1:8091/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
@@ -73,7 +73,7 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 —— 只是没杀掉、没启动,而你还在对着十几分钟前的**老进程**截图,以为自己的改动没生效。
 
 **3. 旧实例不杀干净,你截到的是上一版界面。**
-同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上 8090 时**只在日志里
+同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上端口时**只在日志里
 留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
 元素树、截图全是旧的,一切看起来"改了没生效"。
 
@@ -198,14 +198,16 @@ cp apps/web/index.html test/*.html dist/web/
 
 跳过这一步,对方测的就是上一版产物 —— URL 参数被无视、开关"不生效",而你会去怀疑代码。
 
-## 端口 8090 被占
+## MCP 的两个端口:桌面 8091,真机 8090
 
-`just desktop-dev*` 前置了端口守卫,占用时直接失败并点名占用者。最常见的占用者是上次
-`just mcp-android` 留下的 `adb forward` —— 撤掉它:
+两边可能同时开着,所以各占一个号(justfile 头部的 `desktop_mcp_port` 与 `mcp_port`),
+`.mcp.json` 里也是两条:`slint-app` 指桌面,`slint-android` 指手机。
 
-```sh
-adb forward --remove tcp:8090
-```
+真机那个号**烧在 APK 里**(`apps/android/src/lib.rs` 的 `option_env!`),改它要重出包;
+要挪就挪桌面那个。`just mcp-android` 建的 `adb forward tcp:8090` 留着不碍事,不必每次撤。
+
+`just desktop-dev*` 仍前置端口守卫:桌面那个号被占时直接失败并点名占用者。分号之后
+再撞上多半是上一个桌面实例没退干净,`just desktop-kill`。
 
 ## 装到真机上的是哪个档
 
