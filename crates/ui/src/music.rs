@@ -1263,6 +1263,9 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
 
     let deck = deck.clone();
     let weak = ui.as_weak();
+    // 上报用的身份先留一份:`track` 下面要整个交给 `app_core::play`。
+    // 身份是 (平台, 平台内 id),少了平台接第二个平台时 id 会撞车(contract)。
+    let played = (track.platform.clone(), track.id.clone());
     slint::spawn_local(async move {
         let commit = deck.clone();
         let player = deck.player.clone();
@@ -1286,6 +1289,20 @@ fn play_current(ui: &MainWindow, deck: &Deck) {
                     decoded,
                     health,
                 );
+                // 一次起播的上报,个人主页的统计从这条账本(server 的
+                // `play_events`)查询时聚合。挂在**提交回调**里而不是按下播放键
+                // 那一刻:取直链失败、以及准备期间被顶掉的那几次都到不了这里
+                // (`app_core::play` 的代际校验),而那些都不是一次播放。
+                let (platform, id) = played;
+                slint::spawn_local(async move {
+                    if let Err(error) =
+                        api::record_play(&platform, &id).await
+                    {
+                        // 统计上报失败不影响听歌,也不该弹横幅打断人。
+                        log::debug!("起播上报没成: {error}");
+                    }
+                })
+                .expect("event loop must be running");
             },
         )
         .await;
