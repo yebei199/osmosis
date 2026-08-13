@@ -45,6 +45,13 @@ femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`
 
 ## 已删除的分支
 
+2026-08-13 清了两条(`yebei199/slint`):
+
+| 分支 | 删时的 sha | 内容去了哪 |
+|---|---|---|
+| `fix/wgpu29-present-order` | `ec8329e24` | slint#12861 已合,`88c9c7d` 是上游 master 的祖先,代码在 `internal/renderers/skia/wgpu_29_surface.rs`。分支上独有的只有一个刷新用的 merge commit |
+| `dev-rebased-2026-08-13` | `d865051fa` | 走非强推路线时的中间产物。与 `dev` 的树逐字节相同(`git diff` 为空),没有独有内容 |
+
 2026-07-29 两个 fork 各清了一批,内容都已另有归宿。
 
 `yebei199/slint`:
