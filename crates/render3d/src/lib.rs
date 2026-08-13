@@ -127,29 +127,41 @@ const HEIGHT: u32 = 240;
 /// 每帧耗时日志的采样窗口(帧)。约两秒一行,够看趋势又不刷屏。
 const PERF_WINDOW: u32 = 120;
 
-/// 深度卡片(现在是歌词块)挂在场景里的哪个世界点。
+/// 点云自己在世界里的位置。
 ///
-/// 曾经取 `Vec3::ZERO`,也就是点云正中心 —— 那意味着**半数粒子在字的前面**,
-/// 一整句词随时可能被埋掉。粒子从方片换成实心立方体、格数又从 384 降到 96
-/// 之后,盖住笔画的是整块色斑而不是细网点,读不成了。
+/// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),点云往镜头前挪这一截才有现在的取景大小。
 ///
-/// 曾经推到 0.9,想留住「粒子偶尔从字前掠过」那个观感。留不住:封面档的 z
-/// 位移峰值约 1.2~1.5(见 `cloud.wgsl` 的 `place_cover`),0.9 之上还有一大截,
-/// 而掠过字面的不是几个网点,是整块色斑 —— 一行词被压得读不成。
-///
-/// 现在抬到 1.8,**高过位移峰值**:粒子一颗不少、照旧起伏,只是全都从字后面走。
-///
-/// 抬高度而不是让粒子绕开歌词:绕开要按歌词块的包围盒推粒子,而那个盒是整行宽的,
-/// 结果是点云里横贯一条空带 —— 比被遮挡更难看(实测过)。
-///
-/// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),所以正的 z 就是「更靠近相机」。
-const CARD_ANCHOR: Vec3 = Vec3::new(0.0, 0.0, 1.8);
+/// 这个数原先叫 `CARD_ANCHOR`,一个常量同时当「点云放哪」与「深度卡片挂哪」用
+/// (`76d3b73` 换成封面点云时借了 `71ce2f9` 的常量)。两者重合意味着锚点正落在
+/// 点云正中心,也就是半数粒子在卡片前面 —— 恰恰是那份文档说过不能落的地方。
+/// `needs_occluder` 一直恒假,这笔账在屏幕上从没露过面。现在拆开:点云的位置在
+/// 这里,卡片的锚点在 [`CARD_ANCHOR_LOCAL`]。
+const CLOUD_ORIGIN: Vec3 = Vec3::new(0.0, 0.0, 1.8);
 
-// 锚点必须站在点云中心与相机**之间**。落回中心就是「半数粒子在字前面」;
-// 推过相机就再没有粒子能穿过字,`docs/adr/0010` 那套深度合成也就白建了。
-// 编译期钉死而不是写成单测:两边都是常量,运行期断言 clippy 会直接拒绝。
-const _: () = assert!(CARD_ANCHOR.z > 0.0);
-const _: () = assert!(CARD_ANCHOR.z < BASE_CAMERA_POS.z);
+/// 标注卡挂在封面平面上的哪一点,**点云自己的局部坐标**。
+///
+/// 局部而非世界坐标,就是「跟着物体走」的全部机关:点云被拖动自转时,这一点由
+/// root 的 `GlobalTransform` 一并转过去(见 [`card_anchor_world`]),卡片跟着甩。
+///
+/// 不取平面的几何角(±`PLANE_SIZE`/2 = ±2.4):相机竖向 45°、平面在镜头前 6.2,
+/// 竖屏(小米13 是 0.45)横向可视半宽只有约 1.16,平面的角早就出画了。锚在那儿
+/// 的卡片一拖就一闪一灭。取 [`CARD_ANCHOR_R`],转到任何角度都还在画面内。
+const CARD_ANCHOR_LOCAL: Vec3 =
+    Vec3::new(CARD_ANCHOR_R, CARD_ANCHOR_R, 0.0);
+
+/// 局部锚点到封面平面中心的半径,x 与 y 各取这么多。
+///
+/// yaw 与 pitch 合起来最多把 |x| 放大到 √2 倍,0.8 × √2 ≈ 1.13,压在竖屏可视半宽
+/// 1.16 之内。验算在单测 `the_local_anchor_stays_on_the_cover_plane_and_on_screen`,
+/// 进不了编译期是因为算可视半宽要 `tan`。
+const CARD_ANCHOR_R: f32 = 0.8;
+
+// 锚点必须落在封面平面上:z 为 0(平面本身),半径不出平面边界。
+// 编译期钉死而不是写成单测:三边都是常量,运行期断言 clippy 会直接拒绝。
+const _: () = assert!(CARD_ANCHOR_LOCAL.z == 0.0);
+const _: () = assert!(CARD_ANCHOR_R > 0.0);
+const _: () =
+    assert!(CARD_ANCHOR_R <= cloud::PLANE_SIZE / 2.0);
 
 /// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
 const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
@@ -382,10 +394,13 @@ impl Scene {
     /// `spectrum` 布局的载荷(频谱行在前),只用前 512 字节拆频段;
     /// 粒子位置与缩放每帧由 [`particles::particle_pose`] 算好直写 Transform。
     ///
-    /// 返回 **(场景, 遮挡层)** 两张离屏纹理包装成的 [`slint::Image`]。两张图的用法见
-    /// [`spawn_occluder_camera`]:UI 侧把它们夹着封面卡叠三层,卡片就被更近的粒子
-    /// 逐像素挡住。返回裸元组而不是自定义结构体 —— `slint::Image` 是 ui 与 render3d
-    /// 本就共有的类型,新造一个镜像结构体只是多一份要同步的字段。
+    /// 返回 **(场景, 遮挡层, 卡片锚点)**。两张图的用法见 [`spawn_occluder_camera`]:
+    /// UI 侧把它们夹着标注卡叠三层,卡片就被更近的粒子逐像素挡住。锚点是
+    /// [`CARD_ANCHOR_LOCAL`] 投到视口的归一化位置(见 [`anchor_viewport`]),
+    /// `None` 表示这一帧它不在画面里,卡片该收起来。
+    ///
+    /// 返回裸元组而不是自定义结构体 —— `slint::Image` 是 ui 与 render3d 本就共有的
+    /// 类型,新造一个镜像结构体只是多一份要同步的字段。
     ///
     /// `width` / `height` 为窗口物理像素尺寸,与当前纹理不同就按需重建纹理
     /// (动态分辨率),0 尺寸忽略。纹理未就绪(首帧或刚重建)时返回空图;尺寸不变时
@@ -393,7 +408,7 @@ impl Scene {
     pub fn render_viz_frame(
         &mut self,
         frame: &VizFrame<'_>,
-    ) -> (slint::Image, slint::Image) {
+    ) -> (slint::Image, slint::Image, Option<(f32, f32)>) {
         let VizFrame {
             time,
             audio,
@@ -475,17 +490,14 @@ impl Scene {
         // 拖动转的是点云自己,不是相机 —— 相机一动遮挡层那台就得跟着动,
         // 两层还要逐像素对齐(见 cloud::Spin)。
         let (pitch, yaw) = self.spin.angles();
+        let rotation =
+            Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
         if let Some(mut transform) =
             self.app
                 .world_mut()
                 .get_mut::<Transform>(self.root)
         {
-            transform.rotation = Quat::from_euler(
-                EulerRot::YXZ,
-                yaw,
-                pitch,
-                0.0,
-            );
+            transform.rotation = rotation;
         }
 
         // 没有深度卡片就整台相机关掉:不渲、不导入纹理。这是第二次全场景绘制,
@@ -498,9 +510,9 @@ impl Scene {
             cam.is_active = needs_occluder;
         }
 
-        // 遮挡层的深度门槛。用的是上一帧传播完的相机 GlobalTransform —— 相机全程不动,
-        // 这一帧的门槛与当帧一致,不必为它多跑一次 transform 传播。
-        let depth = self.anchor_depth();
+        // 锚点一次投影,深度门槛与卡片挂点都从它出来。
+        let ndc = self.anchor_ndc(rotation);
+        let depth = occluder_depth(ndc);
         if let Some(mut cam3d) =
             self.app
                 .world_mut()
@@ -510,7 +522,9 @@ impl Scene {
                 Camera3dDepthLoadOp::Clear(depth);
         }
 
-        self.drive_and_finish(depth, needs_occluder)
+        let (scene, occluder) =
+            self.drive_and_finish(depth, needs_occluder);
+        (scene, occluder, anchor_viewport(ndc))
     }
 
     /// 卡墙的一帧(docs/adr/0025):位姿与相机由 `ui::wall` 算好传入,
@@ -640,18 +654,29 @@ impl Scene {
         )
     }
 
-    /// [`CARD_ANCHOR`] 在主相机里的 NDC 深度,供遮挡层清除深度缓冲用(见 [`occluder_depth`])。
-    fn anchor_depth(&self) -> f32 {
+    /// 卡片锚点这一帧在主相机里的 NDC。**一次投影,两个去处**:z 给遮挡层当深度
+    /// 门槛(见 [`occluder_depth`]),xy 给标注卡当挂点(见 [`anchor_viewport`])。
+    ///
+    /// `rotation` 是这一帧刚写进 root 的旋转,而不是从 `GlobalTransform` 读回来的 ——
+    /// 传播要等 `app.update()`,读它拿到的是上一帧的角度,拖动时卡片会慢半拍跟在
+    /// 粒子后面。root 没有父实体,`GlobalTransform` 与 `Transform` 恒等,拼出来就是准的。
+    fn anchor_ndc(&self, rotation: Quat) -> Option<Vec3> {
         let camera_entity =
             self.app.world().entity(self.camera);
-        let (Some(camera), Some(transform)) = (
+        let (Some(camera), Some(camera_pose)) = (
             camera_entity.get::<Camera>(),
             camera_entity.get::<GlobalTransform>(),
         ) else {
-            return EMPTY_OCCLUDER_DEPTH;
+            return None;
         };
-        occluder_depth(
-            camera.world_to_ndc(transform, CARD_ANCHOR),
+        let root_pose = GlobalTransform::from(Transform {
+            translation: CLOUD_ORIGIN,
+            rotation,
+            ..Default::default()
+        });
+        camera.world_to_ndc(
+            camera_pose,
+            card_anchor_world(&root_pose),
         )
     }
 
@@ -881,7 +906,7 @@ impl Scene {
             .spawn((
                 Mesh3d(mesh),
                 MeshMaterial3d(material.clone()),
-                Transform::from_translation(CARD_ANCHOR),
+                Transform::from_translation(CLOUD_ORIGIN),
             ))
             .id();
         self.cloud_material = Some(material);
@@ -1021,6 +1046,36 @@ fn spawn_occluder_camera(
 /// 锚点跑到相机背后、或投影退化出非有限值时退回 [`EMPTY_OCCLUDER_DEPTH`]:遮挡层为空,
 /// 卡片完整可见。宁可少一个效果,也不能把整幅场景糊在卡片上 —— 后者是刺眼的错画面。
 /// wgpu 另有硬性要求:深度清除值必须落在 [0, 1],越界会被校验层拒掉。
+/// 标注卡这一帧的**世界**锚点:局部锚点被点云 root 的位姿变换过去。
+///
+/// 「世界空间锚定」就是这一行:锚点写在物体的局部坐标里,物体一转,锚点跟着转,
+/// 卡片于是跟着物体走,而不是钉在画面某处。
+fn card_anchor_world(root: &GlobalTransform) -> Vec3 {
+    root.transform_point(CARD_ANCHOR_LOCAL)
+}
+
+/// 锚点在视口里的归一化位置(0..1,**左上**原点),出画或投影不出来时为 `None`。
+///
+/// 归一而非物理像素:离屏纹理尺寸与 UI 的逻辑像素是两套刻度,交给 UI 侧乘自己的
+/// 面板尺寸,中间少一次要同步的换算。
+///
+/// 出画就给 `None`,不钳到边上:钳过的卡片会粘在屏幕边缘假装还指着那个物体。
+fn anchor_viewport(
+    anchor_ndc: Option<Vec3>,
+) -> Option<(f32, f32)> {
+    let ndc = anchor_ndc?;
+    // 深度判据与遮挡层那条共用:锚点跑到相机背后或视锥之外,这一帧就没有卡片。
+    if !ndc.is_finite() || !(0.0..=1.0).contains(&ndc.z) {
+        return None;
+    }
+    // NDC 的 y 向上、UI 的 y 向下,所以 y 这一路取负。
+    let x = ndc.x * 0.5 + 0.5;
+    let y = 0.5 - ndc.y * 0.5;
+    let on_screen = (0.0..=1.0).contains(&x)
+        && (0.0..=1.0).contains(&y);
+    on_screen.then_some((x, y))
+}
+
 fn occluder_depth(anchor_ndc: Option<Vec3>) -> f32 {
     match anchor_ndc {
         Some(ndc)
@@ -1059,6 +1114,108 @@ mod tests {
         assert_eq!(
             occluder_depth(Some(Vec3::new(0.0, 0.0, 1.0))),
             1.0
+        );
+    }
+
+    /// 锚点在视锥内:除了深度,还要给出卡片挂在视口哪一点。
+    /// 归一到 0..1,**y 轴翻转** —— NDC 的 y 向上,UI 的 y 向下,不翻卡片就上下颠倒。
+    #[test]
+    fn an_anchor_in_front_of_the_camera_projects_to_a_viewport_point() {
+        assert_eq!(
+            anchor_viewport(Some(Vec3::new(0.0, 0.0, 0.5))),
+            Some((0.5, 0.5)),
+            "画面正中"
+        );
+        // NDC 左上角 (-1, 1) 对应视口 (0, 0):y 翻过来了。
+        assert_eq!(
+            anchor_viewport(Some(Vec3::new(-1.0, 1.0, 0.0))),
+            Some((0.0, 0.0))
+        );
+        // NDC 右下角 (1, -1) 对应视口 (1, 1)。
+        assert_eq!(
+            anchor_viewport(Some(Vec3::new(1.0, -1.0, 1.0))),
+            Some((1.0, 1.0))
+        );
+    }
+
+    /// 边界:锚点在相机背后(投影给不出值)或深度越界时,卡片这一帧不显示。
+    /// 与遮挡层退回空是同一个判据 —— 卡片藏起来的那一帧,不该还留着挡它的那一层。
+    #[test]
+    fn an_anchor_behind_the_camera_has_no_viewport_point() {
+        assert_eq!(anchor_viewport(None), None);
+        for z in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                anchor_viewport(Some(Vec3::new(0.0, 0.0, z))),
+                None,
+                "NDC z = {z} 的锚点不该挂出卡片"
+            );
+        }
+    }
+
+    /// 边界:锚点在画面左右(或上下)之外时同样不显示。
+    /// 竖屏视口只看得到封面平面中间一条,锚点转出画面是常态,不是异常;
+    /// 画到界外会糊在播放页别的控件上。
+    #[test]
+    fn an_anchor_off_the_side_of_the_screen_has_no_viewport_point() {
+        for (x, y) in
+            [(-1.2, 0.0), (1.5, 0.0), (0.0, -2.0), (0.0, 1.01)]
+        {
+            assert_eq!(
+                anchor_viewport(Some(Vec3::new(x, y, 0.5))),
+                None,
+                "NDC ({x}, {y}) 已经出画,卡片该藏起来"
+            );
+        }
+    }
+
+    /// 锚点跟着点云转:世界坐标由点云 root 的 GlobalTransform 变换局部锚点得来。
+    /// root 不转时它就是平移后的那点,root 转了多少它跟着转多少 —— 这就是"跟着物体走"。
+    #[test]
+    fn the_card_anchor_rides_the_cloud_rotation() {
+        let still = GlobalTransform::from(
+            Transform::from_translation(CLOUD_ORIGIN),
+        );
+        assert_eq!(
+            card_anchor_world(&still),
+            CLOUD_ORIGIN + CARD_ANCHOR_LOCAL,
+            "点云不转时锚点就是原点加局部偏移"
+        );
+
+        // 绕 Y 转四分之一圈:局部 +x 转到 -z,锚点跟着甩到点云侧后方。
+        let turned = GlobalTransform::from(Transform {
+            translation: CLOUD_ORIGIN,
+            rotation: Quat::from_rotation_y(
+                std::f32::consts::FRAC_PI_2,
+            ),
+            ..Default::default()
+        });
+        let want = CLOUD_ORIGIN
+            + Vec3::new(0.0, CARD_ANCHOR_R, -CARD_ANCHOR_R);
+        let got = card_anchor_world(&turned);
+        assert!(
+            got.abs_diff_eq(want, 1e-5),
+            "转过 90° 的锚点该在 {want},实际 {got}"
+        );
+    }
+
+    /// 局部锚点转到任何角度都还在竖屏画面里 —— 卡片不该一拖就一闪一灭。
+    ///
+    /// 「落在封面平面上」那一半钉在编译期(见 `CARD_ANCHOR_LOCAL` 下面的 const 断言);
+    /// 这一半进不了 const:算可视半宽要 `tan`,而它不是 const fn。
+    #[test]
+    fn the_local_anchor_stays_on_the_cover_plane_and_on_screen() {
+        // 小米13 竖屏,三端里最窄的那个视口。
+        const PORTRAIT_ASPECT: f32 = 1080.0 / 2400.0;
+        // 透视投影固定的是竖向视野,横向可视 = 竖向 × 长宽比。
+        let fov = PerspectiveProjection::default().fov;
+        let half_h = (BASE_CAMERA_POS.z - CLOUD_ORIGIN.z)
+            * (fov / 2.0).tan();
+        let half_w = half_h * PORTRAIT_ASPECT;
+        // yaw 与 pitch 合起来最多把 |x| 放大到 √2 倍(见 CARD_ANCHOR_R 的推导)。
+        let worst_x = CARD_ANCHOR_R * std::f32::consts::SQRT_2;
+        assert!(
+            worst_x < half_w,
+            "锚点最外侧到 |x| = {worst_x},竖屏可视半宽只有 {half_w}"
         );
     }
 

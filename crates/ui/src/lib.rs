@@ -253,6 +253,8 @@ pub fn run_with_renderers(
     // 不跳变。
     let mut viz_time = 0.0f32;
     let mut viz_last: Option<web_time::Instant> = None;
+    // 上一帧标注卡的视口锚点。既是下一帧遮挡层的开关,也是"锚点消失了"的判据。
+    let mut viz_anchor: Option<(f32, f32)> = None;
     // 上一次推给界面的歌词 (代际, 行号)。只在换行/换歌时推 —— 每帧无脑 set
     // 会把属性标脏,暂停定格与失焦零重绘就都白设了。
     let mut lyric_shown: Option<(u64, usize)> = None;
@@ -654,10 +656,13 @@ pub fn run_with_renderers(
                                     ),
                             },
                             preset: ui.get_viz_preset(),
-                            // 现在一张深度卡片都没有:歌词改成与歌名同层,
-                            // 画在粒子之上(见 docs/adr/0010 的「歌词是例外」)。
-                            // 下一张深度卡片回来时把这里置真,那台相机就醒了。
-                            needs_occluder: false,
+                            // 深度卡片是标注卡,它在画面里才需要遮挡层。
+                            // 用**上一帧**的锚点开关:锚点是这一帧渲染的产物,
+                            // 而这个开关是它的输入,拿不到同帧的答案。差一帧看不出来,
+                            // 换来的是卡片转出画面时那第二遍全场景绘制立刻停 ——
+                            // 9216 个立方体再来一遍,手机上不能白烧。
+                            needs_occluder: viz_anchor
+                                .is_some(),
                         },
                         size.width,
                         size.height,
@@ -665,6 +670,14 @@ pub fn run_with_renderers(
                         ui.set_viz_bg(imgs.warp);
                         ui.set_viz_scene(imgs.scene);
                         ui.set_viz_occluder(imgs.occluder);
+                        viz_anchor = imgs.anchor;
+                        if let Some((x, y)) = viz_anchor {
+                            ui.set_viz_anchor_x(x);
+                            ui.set_viz_anchor_y(y);
+                        }
+                        ui.set_viz_anchor_visible(
+                            viz_anchor.is_some(),
+                        );
                     }
                 }
             } else {

@@ -67,7 +67,7 @@ fn main() {
             }))
         },
         move |v, w, h| {
-            let (viz_scene, occluder) = scene
+            let (viz_scene, occluder, anchor) = scene
                 .borrow_mut()
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
@@ -107,6 +107,7 @@ fn main() {
                 ),
                 scene: viz_scene,
                 occluder,
+                anchor,
             })
         },
         // 光带按钮:与上面两条同一个 seam 模式,逐字段平凡拷。

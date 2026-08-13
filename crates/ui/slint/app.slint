@@ -257,6 +257,13 @@ export component MainWindow inherits Window {
     // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
     in property <image> viz-scene;
     in property <image> viz-occluder;
+    // 世界空间标注卡的挂点:封面点云上的一点,由 render3d 每帧投回视口
+    // (见 crates/render3d 的 CARD_ANCHOR_LOCAL),归一到 0..1、左上原点。
+    in property <float> viz-anchor-x;
+    in property <float> viz-anchor-y;
+    // 锚点这一帧在不在画面里。为假时整块卡片不实例化 —— 只把它挪到界外不算数,
+    // 界外的元素照样参与布局与命中测试。
+    in property <bool> viz-anchor-visible;
     // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
     // 负偏移都从这几个值算,别在别处重抄。歌词是播放页现在唯一的深度卡片 ——
     // 粒子从字的前后穿过。
@@ -1513,8 +1520,9 @@ export component MainWindow inherits Window {
     }
 
     // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
-    // 五层合成:warp 背景 → 封面点云 → 歌名与歌词 → 遮挡层(裁到歌词)→ 控制簇。
-    // 歌词是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从字前面掠过」;
+    // 五层合成:warp 背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
+    // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
+    // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
     // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
     if root.play-page-open: FocusScope {
         // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
@@ -1578,6 +1586,56 @@ export component MainWindow inherits Window {
             background: @radial-gradient(circle, transparent 55%, Theme.shadow.with-alpha(0.20) 100%);
         }
 
+        // 世界空间标注卡(docs/note/vision.md「下一面旗子」)。锚点是封面点云上的
+        // 一个局部点,点云被拖着自转时它跟着转,卡片于是跟着物体走而不是钉在画面
+        // 某处。转出画面就整块收起,不贴边钳制 —— 粘在屏幕边缘的卡片是在假装
+        // 自己还指着那个物体。
+        if root.viz-anchor-visible: Rectangle {
+            width: 100%;
+            height: 100%;
+
+            viz-anchor-card := Rectangle {
+                // 中心挂在锚点上:挂左上角的话卡片整体偏出半个身位,就指不准了。
+                x: root.viz-anchor-x * root.width - self.width / 2;
+                y: root.viz-anchor-y * root.height - self.height / 2;
+                width: root.compact ? 132px : 160px;
+                height: 36px;
+                border-radius: 10px;
+                background: Theme.immersive.with-alpha(0.62);
+                border-width: 1px;
+                border-color: Theme.immersive-text.with-alpha(0.22);
+
+                Text {
+                    width: parent.width - 20px;
+                    text: root.now-title;
+                    color: Theme.immersive-text;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            // 遮挡层裁到卡片自己。那张图铺的是整个视口,只有卡片这一块该露出来,
+            // 不裁就是把整幅点云盖在播放页上。图内偏移取负的卡片位置,于是它与
+            // 下面那层点云逐像素对齐,卡片被更近的粒子挡住(docs/adr/0010)。
+            if root.viz-occluder.width > 0: viz-anchor-occluder := Rectangle {
+                x: viz-anchor-card.x;
+                y: viz-anchor-card.y;
+                width: viz-anchor-card.width;
+                height: viz-anchor-card.height;
+                clip: true;
+
+                Image {
+                    x: -parent.x;
+                    y: -parent.y;
+                    width: root.width;
+                    height: root.height;
+                    image-fit: fill;
+                    source: root.viz-occluder;
+                }
+            }
+        }
+
         // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
         // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
         // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
@@ -1629,7 +1687,8 @@ export component MainWindow inherits Window {
             font-size: 13px;
         }
 
-        // 歌词:播放页现在唯一的深度卡片。当前行 + 译文,居中排在歌名下方;
+        // 歌词:当前行 + 译文,居中排在歌名下方;画在粒子之上,不参与深度合成
+        // (docs/adr/0010 的「歌词是例外」)。播放页的深度卡片是上面那块标注卡。
         // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
         if root.lyric-line != "": VerticalLayout {
             y: root.viz-lyric-y;

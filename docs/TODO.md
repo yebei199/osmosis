@@ -11,7 +11,6 @@
 - [ ] slint fork 补丁栈收窄:present 顺序那条已进上游,跟进后从 fork 去掉  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
 - [ ] 卡墙设计稿的四项留档(卡面曲名、标题行与次级入口胶囊、超 36 张分页、单击的完整高亮描边)  -> [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts
 - [ ] 真机核验通知栏第五个循环键(MIUI 折叠态只给三个,要展开)
-- [ ] 世界空间锚定:标注卡片跟着场景里的物体走  -> [docs/note/vision.md](note/vision.md)「下一面旗子」
 
 ## 载体路线(未开工,一行代码都没有)
 
