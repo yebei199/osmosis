@@ -28,7 +28,7 @@ import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow } 
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
-import { ControlCluster, SyncStrip, ProgressBar, VolumeControl, MiniPlayer } from "controls.slint";
+import { ControlCluster, SyncStrip, ProgressBar, VolumeControl, MiniPlayer, VerticalSeekBar } from "controls.slint";
 import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
@@ -1718,6 +1718,38 @@ export component MainWindow inherits Window {
         // 现在歌词与**歌名同层**:都画在粒子之上,谁也盖不住它们。
         // 歌名从来没有这层图,所以它一直是清楚的 —— 那就是要的样子。
 
+        // 进度滑条:贴右边缘竖着站(#75)。从控制簇里剥出来是为了让精确落点
+        // 有一条够长的行程 —— 横条挤在胶囊里只有一屏宽的几分之一,竖着能占半屏高。
+        // 站在视觉层的 TouchArea 之后,拖它不会连带拨到粒子。
+        // 时间读数跟着滑条走(滑条自己也把它报给读屏),控制簇里那一份删了 ——
+        // 两处各显示一份就是两处要对齐的状态。读数与条同属一个空壳,
+        // 好让它挂得上条的几何:`if` 里的具名元素在外面引用不到。
+        if root.has-track: Rectangle {
+            x: root.width - self.width - 8px
+                - root.safe-area-insets.right;
+            y: root.height * 0.28;
+            width: seek-slider.width;
+            height: root.height * 0.38;
+
+            seek-slider := VerticalSeekBar {
+                height: 100%;
+                ratio: root.progress-ratio;
+                text: root.progress-text;
+                buffering: root.buffering;
+                seek(at) => { root.seek(at); }
+            }
+
+            Text {
+                y: parent.height + 8px;
+                width: 100%;
+                horizontal-alignment: center;
+                text: root.buffering ? "缓冲中…" : root.progress-text;
+                font-family: Type.mono;
+                font-size: 11px;
+                color: root.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
+            }
+        }
+
         // 功能层:同一组回调,与音乐页的控制条完全等价。
         //
         // 宽版一排放下;紧凑版(手机)拆两行 —— 与音乐页同一个理由,只是这里的
@@ -1776,16 +1808,7 @@ export component MainWindow inherits Window {
                             shuffle-toggled => { root.shuffle-toggled(); }
                             loop-cycled => { root.loop-cycled(); }
                         }
-                        // 时间读数:环报的是比例,数字在这里。
-                        if !root.compact && root.has-track: VerticalLayout {
-                            alignment: center;
-                            Text {
-                                text: root.buffering ? "缓冲中…" : root.progress-text;
-                                font-family: Type.mono;
-                                font-size: 11px;
-                                color: root.buffering ? Theme.accent : Theme.immersive-text-dim;
-                            }
-                        }
+                        // 时间读数搬去了右侧滑条那边(#75)。
                         // 次要动作垫 glass 底(#69):两颗同尺寸,共用同一张图。
                         if !root.compact: RoundControl {
                             icon: root.preset-icon;
