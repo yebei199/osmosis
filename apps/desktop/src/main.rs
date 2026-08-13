@@ -11,6 +11,11 @@ mod mpris;
 mod single_instance;
 
 fn main() {
+    // 这里占下 log 的全局 logger 之后,bevy 的 LogPlugin 就装不上它那个 log 到
+    // tracing 的桥接,启动时会报一条 "Could not set global logger",属于预期。
+    // 两套日志都照常输出:wgpu 的 log:: 记录走 env_logger,bevy 自己的 tracing
+    // 事件走 LogPlugin 的 subscriber。别照那条提示去 disable::<LogPlugin>(),
+    // 它会把 bevy 的着色器编译与管线创建错误一起弄哑,见 Cargo.toml 里 bevy 那段。
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info"),
