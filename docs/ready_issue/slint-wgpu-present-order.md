@@ -1,10 +1,15 @@
 # 已上游:Skia 的绘制与 wgpu 的 present 之间缺少顺序约束
 
-状态:**已合并进上游 master**(<https://github.com/slint-ui/slint/pull/12861>,
-2026-08-11 由 tronical 合入,merge commit `88c9c7d`,改的是
+状态:**已收口**。上游合并见 <https://github.com/slint-ui/slint/pull/12861>
+(2026-08-11 由 tronical 合入,merge commit `88c9c7d`,改的是
 `internal/renderers/skia/wgpu_29_surface.rs` 一个文件 +14 行)。
-本仓库仍走 fork(`yebei199/slint` 的 `dev`,`be095f1`),因为那条分支上还有另外
-两条本地补丁;等 fork 跟进上游时,这一条可以从补丁栈里去掉。
+2026-08-13 fork 合进上游到 `e24172737`,冲突取上游那侧,我们那条从补丁栈撤掉 ——
+本仓库现在跑的是上游那版代码,`yebei199/slint` 的 `dev` 只剩三条本地补丁。
+
+**顺带没了一样东西**:我们那版比上游多一个 `Once` 启动日志
+(`skia/wgpu-29: present ordered after Skia submission`),当初是防止拿没修的包做测量。
+上游那版没有它。以后要再测半截帧,不能靠日志自证包里有修复,得从 `Cargo.lock` 锁的
+commit 反查。
 
 来路:fork issue 与验证数据在 <https://github.com/yebei199/slint/issues/1>,
 PR 分支 `fix/wgpu29-present-order`(`5efe0d9`,基于 upstream/master 的最小 diff,

@@ -13,9 +13,18 @@
 | 分支 | 内容 | 维护方式 |
 |---|---|---|
 | `master` | 上游 master 的镜像,零本地改动 | 纯快进 |
-| `dev` | 上游 master + 三条本地补丁,本项目实际依赖 | rebase,强推 |
+| `dev` | 本地补丁,加上历次合进来的上游 master,本项目实际依赖 | merge 上游,快进推 |
 | `fix/*` | 向上游提 PR 的分支,各自从上游 master 拉 | 只在 PR 需要时 rebase |
-| `backup/dev-pre-rebase` | 上一次 rebase 前的 dev,出事能回滚 | 每次 rebase 前更新 |
+| `backup/dev-*` | 上一次同步前的 dev,出事能回滚 | 每次同步前更新 |
+
+`dev` 从 rebase 改成 merge 是 2026-08-13 的决定,理由是**不再强推**。rebase 把补丁在新
+base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受 `--force` ——「必须强推」
+从来不是 git 或 cargo 的要求,是选了 rebase 的必然结果。merge 是追加,推送是快进。
+
+代价要认:合并之后 `git log upstream/master..dev` 列出的不再等于「我们还背着的补丁」。
+上游若自己修了同一个缺陷,冲突解决会把我们那条的效果抹掉,而那个 commit 仍挂在名单上
+(2026-08-13 的 `be095f1e4` 就是这样一条死 commit)。所以**补丁清单的权威副本不在 git
+历史里**,在 `Cargo.toml` 的 `[patch.crates-io]` 上方那段注释。核对补丁时看那里。
 
 `yebei199/femtovg`:
 
@@ -92,33 +101,40 @@ git push --force-with-lease origin dev
 不要直接 rebase `pr/wgpu-per-draw-allocations`:那是开着的 PR 分支,强推会打乱
 评审视图和行内评论。`dev` 是它的消费副本,两者分开。
 
-### 3. dev 重建
+### 3. dev 合进上游
 
-先备份,再从上游重新长出来:
+先备份,再把上游合进来:
 
 ```bash
 cd ~/RustroverProjects/slint-fork
-git branch -f backup/dev-pre-rebase dev
-git push origin backup/dev-pre-rebase
-git checkout -B rebuild/dev upstream/master
-git cherry-pick <四条补丁的 commit>
+git branch -f backup/dev-$(date +%F) dev
+git push origin backup/dev-$(date +%F)
+git checkout dev
+git merge upstream/master
 ```
 
-逐条 cherry-pick 而不是 `git rebase`,是为了在过程中对每条补丁问一遍「上游是不是
-已经自己修了」。判断方法:去上游 master 里找对应的代码,看那个缺陷还在不在。这次
-就是这样丢掉两条的(一条上游合了我们的 PR,一条被 femtovg 新版本顶掉)。
+冲突出现在哪,哪条补丁就该重新问一遍「上游是不是已经自己修了」。判断方法:去上游
+master 里找对应的代码,看那个缺陷还在不在。上游修了就取上游那侧
+(`git checkout --theirs <文件>`),我们那条从此是死 commit,把它从 `Cargo.toml`
+的补丁清单注释里划掉 —— 那份注释才是权威副本,git 历史不是。
+
+没冲突不等于没被上游收下。squash 合并会换掉哈希,内容一样也不会撞车。所以**每次
+都要逐条按内容核对**,不能只看 merge 干不干净。
 
 ### 4. 先推,再验
 
 顺序是反直觉的:先把 `dev` 推上去,再验证本项目。`Cargo.toml` 的 patch 不许改成
 `path = "../slint-fork/..."`,哪怕只是临时的 —— 本机路径进了仓库,CI 和 docker 拉不到,
-而本地验证照样通过,谁都发现不了。回滚成本由第 3 步的 `backup/dev-pre-rebase` 兜底。
+而本地验证照样通过,谁都发现不了。回滚成本由第 3 步的备份分支兜底。
 
 ```bash
 cd ~/RustroverProjects/slint-fork
-git push --force-with-lease origin rebuild/dev:dev
-git checkout dev && git reset --hard origin/dev && git branch -D rebuild/dev
+git push --dry-run origin dev   # 应当是 `旧..新` 两点,带 `+` 就说明历史被重写了
+git push origin dev
 ```
+
+推之前先 dry-run。走 merge 路线时它必须是快进;需要 `--force` 就说明中途做了 rebase
+或 amend,停下来查清楚,不要顺手加 force。
 
 回本项目跟进锁文件后再验:
 
@@ -172,6 +188,9 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-08-13 slint 的 dev 从落后 98 个 commit 合到上游 `e24172737`。present 顺序那条
+  (slint#12861)上游已收下,冲突取上游那侧,补丁栈从四条回到三条。同时把 dev 的维护
+  方式从「rebase + 强推」改成「merge + 快进推」,理由见第一节。
 - 2026-08-08 slint 的 dev 从落后 288 个 commit 重建到上游 `a254143cb`,三条补丁全部
   cherry-pick 干净。femtovg 侧无事可做:`origin/master` 已是上游头,`dev` 领先它十个
   commit(femtovg#302 仍开着)。同时改掉本地路径验证的写法,理由见第 4 步。

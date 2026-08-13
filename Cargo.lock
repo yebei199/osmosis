@@ -2297,7 +2297,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset"
 version = "0.2.1"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "const-field-offset-macro",
  "field-offset",
@@ -2306,7 +2306,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset-macro"
 version = "0.2.1"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4155,7 +4155,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-android-activity"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "android-activity 0.5.2",
  "android-activity 0.6.1",
@@ -4171,7 +4171,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-linuxkms"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "bytemuck",
  "calloop 0.14.4",
@@ -4194,7 +4194,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-selector"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "cfg-if",
  "cfg_aliases",
@@ -4212,7 +4212,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-testing"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "async-net",
  "base64",
@@ -4239,7 +4239,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-winit"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -4283,7 +4283,7 @@ dependencies = [
 [[package]]
 name = "i-slint-common"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "derive_more",
  "fontique",
@@ -4299,7 +4299,7 @@ dependencies = [
 [[package]]
 name = "i-slint-compiler"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "annotate-snippets",
  "by_address",
@@ -4332,7 +4332,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "auto_enums",
  "bitflags 2.13.0",
@@ -4384,7 +4384,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core-macros"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "quote",
  "serde_json",
@@ -4394,7 +4394,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-femtovg"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "cfg-if",
  "const-field-offset",
@@ -4415,7 +4415,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-skia"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "ash",
  "bytemuck",
@@ -4456,7 +4456,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-software"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "bytemuck",
  "clru",
@@ -7952,7 +7952,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slint"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "const-field-offset",
  "i-slint-backend-android-activity",
@@ -7975,7 +7975,7 @@ dependencies = [
 [[package]]
 name = "slint-build"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "derive_more",
  "fontique",
@@ -7987,7 +7987,7 @@ dependencies = [
 [[package]]
 name = "slint-macros"
 version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "i-slint-compiler",
  "proc-macro2",
@@ -9628,7 +9628,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vtable"
 version = "0.5.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "const-field-offset",
  "portable-atomic",
@@ -9639,7 +9639,7 @@ dependencies = [
 [[package]]
 name = "vtable-macro"
 version = "0.5.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#be095f1e4c41366a2fe0efaed3c4358b6029d8e7"
+source = "git+https://github.com/yebei199/slint?branch=dev#ced55e990c4fc7895286b844e58ae0f4373d28fc"
 dependencies = [
  "proc-macro2",
  "quote",

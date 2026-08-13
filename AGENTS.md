@@ -301,8 +301,13 @@ adb shell rm /data/local/tmp/x.apk
 docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
 
 同步 fork 时因此是**先推 fork,再验本仓库**:fork 的 `dev` 推上去,本仓库
-`cargo update -p slint -p slint-build` 跟进锁文件,然后才跑验证。推之前先更新
-`backup/dev-pre-rebase`,验证不过就从它回滚重来。
+`cargo update -p slint -p slint-build` 跟进锁文件,然后才跑验证。推之前先建当日的
+`backup/dev-<日期>`,验证不过就从它回滚重来。
+
+`dev` 靠 **merge 上游**跟进,不 rebase,因此推送永远是快进 —— 推之前 `--dry-run`
+一次,需要 `--force` 就说明中途做了 rebase 或 amend,停下来查,别顺手加 force。
+代价是历史里会留下被上游顶掉的死 commit,所以补丁清单以 `Cargo.toml` 里
+`[patch.crates-io]` 上方那段注释为准,不看 `git log`。步骤见 `docs/note/fork-sync.md`。
 
 ## 提交前
 
