@@ -399,6 +399,42 @@ impl LyricFeed {
         ))
     }
 
+    /// 歌词页要画的那一窗行,连同「有没有译文」。
+    ///
+    /// `browse` 是拖动浏览叠在当前行上的偏移。窗口怎么取归
+    /// `app_core::window`,这里只负责把行表接上去。
+    pub(crate) fn window(
+        &self,
+        browse: i32,
+    ) -> Option<(u64, usize, Vec<(i32, String, String)>, bool)>
+    {
+        let (generation, current, _, _) = self.current()?;
+        let lines = self.lines.borrow();
+        let window = app_core::window(&lines, current, browse);
+        if window.is_empty() {
+            return None;
+        }
+
+        let rows = (window.first
+            ..window.first + window.len())
+            .filter_map(|index| {
+                let line = lines.get(index)?;
+                Some((
+                    window.offset_of(index)?,
+                    line.text.clone(),
+                    line.translation
+                        .clone()
+                        .unwrap_or_default(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let translated = lines
+            .iter()
+            .any(|line| line.translation.is_some());
+
+        Some((generation, window.focus, rows, translated))
+    }
+
     /// 换歌:先清空(旧歌词配新歌比空着更误导),取到再整批换上并递增代际。
     fn replace(&self, lines: Vec<app_core::LyricLineDto>) {
         *self.lines.borrow_mut() = lines;
@@ -416,6 +452,14 @@ impl LyricFeed {
     pub(crate) fn current(
         &self,
     ) -> Option<(u64, usize, String, String)> {
+        None
+    }
+
+    pub(crate) fn window(
+        &self,
+        _browse: i32,
+    ) -> Option<(u64, usize, Vec<(i32, String, String)>, bool)>
+    {
         None
     }
 }

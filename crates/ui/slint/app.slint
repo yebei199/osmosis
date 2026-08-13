@@ -24,7 +24,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
-import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow } from "types.slint";
+import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, LyricRow } from "types.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
@@ -38,6 +38,7 @@ import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
 import { SettingsPage } from "settings.slint";
 import { ProfilePage } from "profile.slint";
+import { LyricsPage } from "lyrics.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -311,6 +312,12 @@ export component MainWindow inherits Window {
     // 没有歌词、或还在前奏时为空串,歌词区整块让位。
     in property <string> lyric-line;
     in property <string> lyric-translation;
+    // 歌词页(#73):整窗的行由 Rust 按 `app_core::window` 选好推来,
+    // 浏览偏移由界面在拖动里改、Rust 读它算窗口。
+    in property <[LyricRow]> lyric-rows;
+    in property <bool> lyric-has-translation;
+    in-out property <bool> lyrics-page-open: false;
+    in-out property <int> lyric-browse: 0;
 
     // ── 「液态玻璃 metaball 选中器」(宽版式侧栏 / 紧凑版式底栏)──
     // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
@@ -1555,6 +1562,9 @@ export component MainWindow inherits Window {
             height: 100%;
             image-fit: fill;
             source: root.viz-scene;
+            // 歌词页打开时退成背景光:整页字压在一片满亮的粒子上读不动(#73)。
+            opacity: root.lyrics-page-open ? 0.3 : 1.0;
+            animate opacity { duration: 260ms; easing: ease-out; }
         }
 
         // §8 的扫描线与噪点 2026-08-13 定为去除(#74):复古质感与产品方向不合。
@@ -1569,7 +1579,9 @@ export component MainWindow inherits Window {
         // 一个局部点,点云被拖着自转时它跟着转,卡片于是跟着物体走而不是钉在画面
         // 某处。转出画面就整块收起,不贴边钳制 —— 粘在屏幕边缘的卡片是在假装
         // 自己还指着那个物体。
-        if root.viz-anchor-visible: Rectangle {
+        // 歌词页打开时整块让位:点云已退成背景光,卡片再浮着就是标一个
+        // 看不见的物体。
+        if root.viz-anchor-visible && !root.lyrics-page-open: Rectangle {
             width: 100%;
             height: 100%;
 
@@ -1676,11 +1688,19 @@ export component MainWindow inherits Window {
         // 歌词:当前行 + 译文,居中排在歌名下方;画在粒子之上,不参与深度合成
         // (docs/adr/0010 的「歌词是例外」)。播放页的深度卡片是上面那块标注卡。
         // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
-        if root.lyric-line != "": VerticalLayout {
+        // 这块同时是歌词页的入口(#73):点它横向滑出整页歌词。
+        if root.lyric-line != "": lyric-entry := Rectangle {
             y: root.viz-lyric-y;
             height: root.viz-lyric-h;
-            alignment: start;
-            spacing: 10px;
+
+            TouchArea {
+                clicked => { root.lyrics-page-open = true; }
+            }
+
+            VerticalLayout {
+                height: 100%;
+                alignment: start;
+                spacing: 10px;
 
             // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
             // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
@@ -1708,6 +1728,7 @@ export component MainWindow inherits Window {
                 // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
                 vertical-alignment: top;
                 wrap: word-wrap;
+                }
             }
         }
 
@@ -1717,6 +1738,21 @@ export component MainWindow inherits Window {
         //
         // 现在歌词与**歌名同层**:都画在粒子之上,谁也盖不住它们。
         // 歌名从来没有这层图,所以它一直是清楚的 —— 那就是要的样子。
+
+        // 歌词页:从右侧横向滑出,盖住播放页的内容层(#73)。
+        // 控制簇仍排在它之后,于是照旧压在最上层、点得到 —— 歌词页上也要
+        // 能切歌暂停,那是 docs/adr/0010 的「功能永远在最上层 2D」。
+        if root.lyric-rows.length > 0: LyricsPage {
+            x: root.lyrics-page-open ? 0px : root.width;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            animate x { duration: 280ms; easing: ease-out; }
+            rows: root.lyric-rows;
+            has-translation: root.lyric-has-translation;
+            browse <=> root.lyric-browse;
+            dismiss => { root.lyrics-page-open = false; }
+        }
 
         // 进度滑条:贴右边缘竖着站(#75)。从控制簇里剥出来是为了让精确落点
         // 有一条够长的行程 —— 横条挤在胶囊里只有一屏宽的几分之一,竖着能占半屏高。

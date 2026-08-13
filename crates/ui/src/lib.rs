@@ -258,6 +258,10 @@ pub fn run_with_renderers(
     // 上一次推给界面的歌词 (代际, 行号)。只在换行/换歌时推 —— 每帧无脑 set
     // 会把属性标脏,暂停定格与失焦零重绘就都白设了。
     let mut lyric_shown: Option<(u64, usize)> = None;
+    // 上一次推给歌词页的一窗 (代际, 焦点行, 浏览偏移)。与上面同一个理由:
+    // 整窗行是个 model,每帧重建会把整页标脏。
+    let mut lyric_window_shown: Option<(u64, usize, i32)> =
+        None;
     // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
     // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
     // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
@@ -614,6 +618,56 @@ pub fn run_with_renderers(
                             slint::SharedString::new(),
                         );
                         lyric_shown = None;
+                    }
+                    _ => {}
+                }
+            }
+
+            // ── 歌词页整窗 ──
+            // 只在歌词页展开时算:收起时那一窗谁也看不见。
+            if ui.get_lyrics_page_open() {
+                let browse = ui.get_lyric_browse();
+                match lyrics.window(browse) {
+                    Some((generation, focus, rows, translated))
+                        if lyric_window_shown
+                            != Some((
+                                generation, focus, browse,
+                            )) =>
+                    {
+                        let rows = rows
+                            .into_iter()
+                            .map(|(offset, text, tr)| {
+                                LyricRow {
+                                    offset,
+                                    text: text.into(),
+                                    translation: tr.into(),
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        ui.set_lyric_rows(
+                            slint::ModelRc::new(
+                                slint::VecModel::from(rows),
+                            ),
+                        );
+                        ui.set_lyric_has_translation(
+                            translated,
+                        );
+                        lyric_window_shown = Some((
+                            generation, focus, browse,
+                        ));
+                    }
+                    None if lyric_window_shown.is_some() => {
+                        // 换歌后的前奏:清空整窗,顺手收起页 ——
+                        // 一页空行不是「歌词页」,是个走不掉的空屏。
+                        ui.set_lyric_rows(
+                            slint::ModelRc::new(
+                                slint::VecModel::<LyricRow>::from(
+                                    Vec::new(),
+                                ),
+                            ),
+                        );
+                        ui.set_lyrics_page_open(false);
+                        lyric_window_shown = None;
                     }
                     _ => {}
                 }

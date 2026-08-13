@@ -1,0 +1,141 @@
+// 歌词页:从播放页横向滑出的一整页歌词(#73)。
+//
+// 景深用透明度与字号做,不是真模糊:Slint 没有高斯模糊,文字模糊要么进 3D
+// 走一套字形管线,要么不做。焦点行满亮满大,每远一行淡一档、小一档,视线
+// 一眼落回「现在在哪」—— 那正是景深在这里要办的事。
+
+import { Theme, Type } from "theme.slint";
+import { LyricRow } from "types.slint";
+import { OutlinedText } from "widgets.slint";
+
+export component LyricsPage inherits Rectangle {
+    in property <[LyricRow]> rows;
+    // 有没有译文数据。空模型时为假,开关与译文行都不实例化。
+    in property <bool> has-translation;
+    in-out property <bool> translation-on: true;
+    // 拖动浏览叠在当前行上的偏移(行数)。Rust 拿它算窗口。
+    in-out property <int> browse: 0;
+
+    callback dismiss();
+
+    // 一行拖多远算翻一行。比行高小一截,拖起来跟手;太小则一抖就翻好几行。
+    property <length> line-step: 48px;
+    // 与 slint 自己的拖动判定同值,手感一致。
+    property <length> drag-threshold: 8px;
+    property <bool> dragging: false;
+    // 本次拖动开始时的偏移。增量按「从按下点算起」而不是逐帧累加,
+    // 逐帧累加会把取整的余数一次次丢掉,拖回原处回不到原来那一行。
+    property <int> drag-origin: 0;
+
+    // 焦点行的字号与透明度,以及每远一行减多少。
+    property <length> focus-size: 26px;
+    property <length> size-step: 4px;
+    property <float> fade-step: 0.26;
+
+    // 空白区:点它收回,拖它翻页。压在最底,行本身不吃事件。
+    backdrop := TouchArea {
+        width: 100%;
+        height: 100%;
+
+        moved => {
+            // 过了阈值才算拖。手指落下与抬起之间总有一两像素的抖,把那也当拖
+            // 的话每一次点都成了拖,收回这页的唯一手势就没了。
+            if (Math.abs(self.mouse-y - self.pressed-y) > root.drag-threshold) {
+                if (!root.dragging) {
+                    root.dragging = true;
+                    root.drag-origin = root.browse;
+                }
+                // 手指往上,窗口往后面的行走 —— 与拖动一张纸的方向一致。
+                root.browse = root.drag-origin
+                    - Math.round((self.mouse-y - self.pressed-y) / root.line-step);
+            }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.up) {
+                if (!root.dragging) {
+                    root.dismiss();
+                }
+                root.dragging = false;
+            }
+        }
+    }
+
+    // 松手三秒后回到跟随。拖动中不计时,否则会在半途把人拽回当前行。
+    Timer {
+        interval: 3s;
+        running: root.browse != 0 && !root.dragging;
+        triggered => { root.browse = 0; }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+
+        for row in root.rows: VerticalLayout {
+            spacing: 2px;
+            // 整行按距离淡出。焦点行满亮,三行开外只剩一层底噪。
+            opacity: max(0.08, 1 - Math.abs(row.offset) * root.fade-step);
+
+            line := OutlinedText {
+                width: root.width - 48px;
+                x: 24px;
+                // 高度跟着字号走:定高才排得稳,而字号本身就是景深的一半。
+                height: root.focus-size + 14px
+                    - Math.abs(row.offset) * root.size-step;
+                text: row.text;
+                text-color: Theme.immersive-text;
+                font-size: root.focus-size
+                    - Math.abs(row.offset) * root.size-step;
+                outline: row.offset == 0 ? 2px : 1px;
+                wrap: word-wrap;
+            }
+
+            if root.translation-on && row.translation != "":
+            translation := OutlinedText {
+                width: root.width - 48px;
+                x: 24px;
+                height: 20px;
+                text: row.translation;
+                text-color: Theme.immersive-text-dim;
+                font-size: 13px;
+                vertical-alignment: top;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    // 翻译开关。只在真有译文时出现 —— 一个永远切不出东西的开关比没有更糟。
+    if root.has-translation: translation-toggle := Rectangle {
+        x: root.width - self.width - 16px;
+        y: 16px;
+        width: 64px;
+        height: 30px;
+        border-radius: 15px;
+        background: root.translation-on
+            ? Theme.accent.with-alpha(0.22)
+            : Theme.overlay;
+        border-width: 1px;
+        border-color: Theme.immersive-line;
+
+        accessible-role: button;
+        accessible-label: "翻译";
+        accessible-checkable: true;
+        accessible-checked: root.translation-on;
+        accessible-action-default => { root.translation-on = !root.translation-on; }
+
+        Text {
+            text: "翻译";
+            font-family: Type.mono;
+            font-size: 12px;
+            color: root.translation-on
+                ? Theme.accent-text
+                : Theme.immersive-text-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.translation-on = !root.translation-on; }
+        }
+    }
+}

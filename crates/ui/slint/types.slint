@@ -73,3 +73,13 @@ export struct DeviceRow {
     id: string,
     name: string,
 }
+
+// 歌词页当前该画的那一段里的一行。窗口由 `app_core::window` 选好,
+// 界面只按 offset 画衰减(0 是焦点行,负数在它上面)。
+//
+// 译文空串表示这一行没有翻译,不是「翻译是空的」—— 上游给 None 时就是没有。
+export struct LyricRow {
+    text: string,
+    translation: string,
+    offset: int,
+}
