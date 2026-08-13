@@ -1596,8 +1596,15 @@ export component MainWindow inherits Window {
 
             viz-anchor-card := Rectangle {
                 // 中心挂在锚点上:挂左上角的话卡片整体偏出半个身位,就指不准了。
-                x: root.viz-anchor-x * root.width - self.width / 2;
-                y: root.viz-anchor-y * root.height - self.height / 2;
+                //
+                // 再钳进窗口内。锚点在画面里不等于卡片在画面里 —— 锚点是卡片的
+                // 中心,它贴着边时卡片已经探出去半个身位了(真机实拍切掉过右边
+                // 约 20%)。轨道半径按竖屏算过,正常不会碰到这道钳位;窗口更窄时
+                // 它兜住,代价是卡片在极端处会与锚点脱开一点。
+                x: Math.clamp(root.viz-anchor-x * root.width - self.width / 2,
+                              0px, max(0px, root.width - self.width));
+                y: Math.clamp(root.viz-anchor-y * root.height - self.height / 2,
+                              0px, max(0px, root.height - self.height));
                 width: root.compact ? 132px : 160px;
                 height: 36px;
                 border-radius: 10px;

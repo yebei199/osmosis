@@ -1208,8 +1208,11 @@ mod tests {
             "轨道远端 {farthest} 跑到封面平面 {} 后面了",
             CLOUD_ORIGIN.z
         );
+        // 远端离平面多远才算「粒子够得着」,判据是粒子 z 位移的峰值(1.2~1.5,
+        // 见 cloud.wgsl 的 place_cover):离得远小于峰值,就有成片的粒子穿过去。
+        // 0.5 这个上限比峰值小一半有余,留足余量。
         assert!(
-            gap < 0.3,
+            gap < 0.5,
             "轨道远端离平面 {gap},粒子够不着,遮挡演不出来"
         );
 
@@ -1268,10 +1271,14 @@ mod tests {
         );
     }
 
-    /// 卡片锚在标记体的**前表面**,不是中心。锚在中心的话,标记体自己的前半
-    /// 比锚点更近,会被画进遮挡层,于是它盖住自己的标签。
+    /// 卡片锚在标记体前表面**之前**,不是中心、也不是前表面本身。
+    ///
+    /// 中心不行:方块自己的前半比锚点更近,会被画进遮挡层、盖住自己的标签。
+    /// 前表面本身也不行,这是 2026-08-13 真机实拍到的 —— 深度测试是
+    /// `GreaterEqual`,含等号,前表面的片元深度恰好等于门槛就照样通过,
+    /// 方块把标签盖掉了大半。
     #[test]
-    fn the_card_anchor_sits_on_the_marker_front_face() {
+    fn the_card_anchor_clears_the_marker_front_face() {
         for step in 0..ORBIT_STEPS {
             let pose = marker::pose(orbit_time(step));
             // 不自转:一旦有姿态,前表面就不再是 +z 那面,锚点会飘进方块里。
@@ -1281,13 +1288,19 @@ mod tests {
                 "标记体不该自转"
             );
             let anchor = marker::front_face(&pose);
+            let offset = anchor - pose.translation;
             assert!(
-                (anchor - pose.translation).abs_diff_eq(
-                    Vec3::Z * marker::MARKER_HALF,
-                    1e-5
-                ),
-                "锚点该正好在前表面中心,实际偏移 {}",
-                anchor - pose.translation
+                offset.x.abs() < 1e-5 && offset.y.abs() < 1e-5,
+                "锚点该正对前表面中心,实际横向偏了 {offset}"
+            );
+            // 判据是「清出一段间隙」而不是「大于」。裸的 `>` 逮不住把锚点放回
+            // 前表面上的写法:`(t + h) - t` 的舍入误差本来就可能落在 h 之上一个
+            // ulp,于是那条断言恒真(这一点是变异检验实测出来的)。
+            assert!(
+                offset.z > marker::MARKER_HALF * 1.05,
+                "锚点只到 {},没从前表面 {} 清出间隙 —— 等号会让方块盖住自己的标签",
+                offset.z,
+                marker::MARKER_HALF
             );
         }
     }

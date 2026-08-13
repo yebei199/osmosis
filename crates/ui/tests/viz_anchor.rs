@@ -89,6 +89,38 @@ fn the_card_follows_the_anchor_across_the_viewport() {
     }
 }
 
+/// 锚点贴到画面边上时,卡片整块仍在窗口内。
+///
+/// 锚点在画面里不等于卡片在画面里:锚点是卡片的**中心**,它贴着边时卡片已经
+/// 探出去半个身位(真机实拍切掉过右边约 20%)。render3d 那侧按竖屏算过轨道
+/// 半径,但窗口宽度是 UI 这边的事,得在这里兜住。
+#[test]
+fn the_card_stays_inside_the_window_at_the_edges() {
+    let ui = play_window();
+    let (w, h) = window_size(&ui);
+
+    for (ax, ay) in [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0)] {
+        ui.set_viz_anchor_x(ax);
+        ui.set_viz_anchor_y(ay);
+
+        let card = card(&ui).expect("锚点可见时该有标注卡");
+        let pos = card.absolute_position();
+        let size = card.size();
+        assert!(
+            pos.x >= 0.0 && pos.x + size.width <= w,
+            "锚点 x = {ax} 时卡片横向探出窗口:{}..{},窗口宽 {w}",
+            pos.x,
+            pos.x + size.width
+        );
+        assert!(
+            pos.y >= 0.0 && pos.y + size.height <= h,
+            "锚点 y = {ay} 时卡片纵向探出窗口:{}..{},窗口高 {h}",
+            pos.y,
+            pos.y + size.height
+        );
+    }
+}
+
 /// 锚点不可见(转到画面外或相机背后)时,卡片整个不在元素树里。
 /// 只是挪到界外不算数:界外的元素照样参与布局与命中测试。
 #[test]
