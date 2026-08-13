@@ -39,9 +39,6 @@ public final class MediaControlsService extends Service {
     /** 通知上的按钮按的是哪个键。曲目信息不走 Intent,见 MediaControls.current。 */
     static final String EXTRA_COMMAND = "command";
 
-    /** 那个键的参数。目前只有随机键用得上(要拨到的绝对值),其余是 0。 */
-    static final String EXTRA_ARGUMENT = "argument";
-
     private static final String CHANNEL_ID = "media";
     /** 只有一条通知,固定编号即可。0 不能用 —— startForeground 不收。 */
     private static final int NOTIFICATION_ID = 1;
@@ -131,9 +128,10 @@ public final class MediaControlsService extends Service {
         }
 
         if (ACTION_COMMAND.equals(intent.getAction())) {
+            // 通知上的键都不带参数(带参数的只有会话回调那条 onSeekTo)。
             MediaControls.dispatch(
                     intent.getIntExtra(EXTRA_COMMAND, MediaControls.COMMAND_TOGGLE),
-                    intent.getLongExtra(EXTRA_ARGUMENT, 0));
+                    0);
             return START_NOT_STICKY;
         }
 
@@ -232,8 +230,9 @@ public final class MediaControlsService extends Service {
                         .setVisibility(Notification.VISIBILITY_PUBLIC)
                         .setStyle(new Notification.MediaStyle()
                                 .setMediaSession(session.getSessionToken())
-                                // 折叠态只放得下三个键里的这两个。
-                                .setShowActionsInCompactView(0, 1));
+                                // 折叠态上限就是三个(平台定的),而这里正好三个键,
+                                // 于是全放得下:展开与否看到的是同一排。
+                                .setShowActionsInCompactView(0, 1, 2));
 
         builder.addAction(action(
                 android.R.drawable.ic_media_previous,
@@ -249,43 +248,25 @@ public final class MediaControlsService extends Service {
                 android.R.drawable.ic_media_next,
                 "下一首",
                 MediaControls.COMMAND_NEXT));
-        // 送的是随机要拨到的**绝对值**,不是「翻一下」—— 通知上这份快照可能
-        // 比队列旧一拍,翻一下会把两边越拨越反。
-        builder.addAction(action(
-                R.drawable.ic_media_shuffle,
-                now.shuffle ? "随机: 开" : "随机: 关",
-                MediaControls.COMMAND_SET_SHUFFLE,
-                now.shuffle ? 0 : 1));
-        // 循环三态,送下一态的绝对值(关→列表→单曲→关),理由同随机。
-        builder.addAction(action(
-                R.drawable.ic_media_repeat,
-                now.loopMode == 0
-                        ? "循环: 关"
-                        : now.loopMode == 1 ? "循环: 列表" : "循环: 单曲",
-                MediaControls.COMMAND_SET_LOOP,
-                (now.loopMode + 1) % 3));
+        // 随机与循环**不上通知栏**,只在应用内设定(2026-08-13)。
+        //
+        // 它们曾经是第四、第五个键。折叠态最多显示三个(平台上限),于是这两个
+        // 平时根本看不见,要展开才够得着 —— 而它们恰恰是**要先看见当前状态才按得对**
+        // 的模式键,折叠态又不显示状态。锁屏上真正需要「不看也能按」的只有
+        // 上一首/播放/下一首。桌面 MPRIS 那边照旧提供,那是完整控制面板,不是应急面板。
 
         return builder.build();
     }
 
     private Notification.Action action(int icon, String label, int command) {
-        return action(icon, label, command, 0);
-    }
-
-    private Notification.Action action(
-            int icon, String label, int command, long argument) {
         Intent intent = new Intent(this, MediaControlsService.class)
                 .setAction(ACTION_COMMAND)
-                .putExtra(EXTRA_COMMAND, command)
-                .putExtra(EXTRA_ARGUMENT, argument);
+                .putExtra(EXTRA_COMMAND, command);
         PendingIntent pending = PendingIntent.getService(
                 this,
                 // 每个键要一个不同的 requestCode,否则后建的会顶掉先建的。
                 command,
                 intent,
-                // UPDATE_CURRENT 是随机键能用的前提:同一个 requestCode 会复用
-                // 已有的 PendingIntent,少了这一位,extra 里那个绝对值会永远停在
-                // 第一次建它时的样子。
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, icon),
