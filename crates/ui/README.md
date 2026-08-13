@@ -30,6 +30,10 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   `ListView`(而非 `Flickable` + `for`)—— 歌单详情能到近千行,全量实例化配上每行
   一张封面就是 GB 级内存。代价是 ListView 没有 `spacing`,行间那 4px 由卡片上下
   各让 2px 让出来。
+- `slint/lyrics.slint`:歌词页。整窗行由 Rust 按 `app_core::lyric::window` 选好推来,
+  这里只按 `offset` 画衰减 —— 透明度与字号随行距递减,充当景深。Slint 没有高斯模糊,
+  文字要真模糊得进 3D 走一套字形管线,与卡墙里砍掉内嵌文字是同一笔账。
+  拖动只改浏览偏移,不碰播放进度;松手三秒回到跟随。
 - `src/lib.rs`:crate 门面与帧驱动。`build_ui` 完成绑定;`run_with_renderers` 把渲染
   通知回调当帧泵,依次驱动导航选中器、光带按钮、卡墙与播放页 warp,末尾每帧
   `request_redraw`,前台恒满帧、后台由平台停发重绘而自然暂停
