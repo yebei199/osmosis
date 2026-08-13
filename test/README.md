@@ -1,8 +1,23 @@
 # test —— 端到端脚本与浏览器侧的对照页
 
+## mcp-login.sh —— 把界面登进去
+
+`played-e2e.sh` 把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
+这份脚本补上那一步,可重复跑(已登录时直接返回)。
+
+```sh
+test/mcp-login.sh           # 安卓默认 8090;桌面用 PORT=8091 test/mcp-login.sh
+```
+
+凭据从 `.env` 读进 shell 变量再交给 `set_element_value`,**不进命令行、不打印**。
+判据是登录页从元素树里消失,不是看画面。
+
+它第一次跑就体现了价值:失败信息把责任定在「连不上服务端」,而不是脚本自己。
+
 ## played-e2e.sh —— 起播真的被记进账本了吗
 
-跑之前:`just desktop-dev` 起着并已登录,`just server-dev` 与 `osmosis-pg` 在跑。
+跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
+(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑。
 
 ```sh
 test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
