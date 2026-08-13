@@ -13,13 +13,6 @@
 | 点行跳播 | 不做。歌词可上下拖动浏览,不影响播放进度;点某行仅滚动视图 |
 | 进度滑条 | 播放页右侧竖向滑条,时间读数从控制栏迁过去,环形键的比例显示保留 |
 
-## 1. CRT 移除
-
-- `app.slint` 沉浸层删扫描线与噪点两个 Image(§8 注释起约 1559 行),vignette 保留。
-- 删 `crates/ui/img/scanline.png`、`crates/ui/img/grain.png`。
-- `docs/design/handoff-shaders.md` §8 加一行结案说明:2026-08-13 定为去除,复古质感与
-  产品方向不合。
-
 ## 2. 右侧竖向进度滑条
 
 - 播放页右侧加竖向滑条:绑 `progress-ratio`,拖动调 `root.seek(float)`

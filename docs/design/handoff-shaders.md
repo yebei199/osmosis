@@ -101,6 +101,8 @@ Slint 至今没有 backdrop blur（`docs/slint/visual-effects-and-shaders.md`）
 
 ## §8 全局 grain + 扫描线（`#2h`）
 
+> 2026-08-13 结案（#74）：扫描线与噪点已移除，复古质感与产品方向不合。第 3 条的 vignette 留在沉浸层。
+
 1. 全屏后处理：hash 噪声按帧号变，overlay 混合，**强度 0.03–0.06**（再高就脏）。
 2. 扫描线 1px 亮 / 3px 暗，亮度 −2%，**只在沉浸层开**，常驻界面不加。
 3. 一道极轻的 vignette 收边，把注意力拢回中心。

@@ -1557,29 +1557,8 @@ export component MainWindow inherits Window {
             source: root.viz-scene;
         }
 
-        // §8 grain + 扫描线(docs/design/handoff-shaders.md),只在沉浸层。
-        // 不走 wgsl 后处理:场景没有现成的全屏 pass,为一层 3–6% 的薄噪新开
-        // bevy 渲染图节点不值,两张平铺贴片叠出同样的观感。
-        // 扫描线静止,不驱动重绘;1px 亮 3px 暗,幅度约 -2%。
-        Image {
-            width: 100%;
-            height: 100%;
-            source: @image-url("../img/scanline.png");
-            horizontal-tiling: repeat;
-            vertical-tiling: repeat;
-        }
-        // 噪点按帧跳相位(素数步长,平铺周期不可察)。前台恒满帧,
-        // 暂停也照动(change_log 2026-08-11 always-on-rendering)。
-        Image {
-            width: 100%;
-            height: 100%;
-            source: @image-url("../img/grain.png");
-            horizontal-tiling: repeat;
-            vertical-tiling: repeat;
-            source-clip-x: Math.mod(floor(animation-tick() / 33ms) * 37, 128);
-            source-clip-y: Math.mod(floor(animation-tick() / 33ms) * 61, 128);
-        }
-        // 一道极轻的 vignette 收边,把注意力拢回中心。
+        // §8 的扫描线与噪点 2026-08-13 定为去除(#74):复古质感与产品方向不合。
+        // vignette 留下 —— 它是把注意力拢回中心的手段,与复古无关。
         Rectangle {
             width: 100%;
             height: 100%;
