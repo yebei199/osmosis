@@ -292,7 +292,7 @@ pub fn hit_test(
         };
         if (px - sx).abs() <= half
             && (py - sy).abs() <= half
-            && best.map_or(true, |(_, bz)| world.z > bz)
+            && best.is_none_or(|(_, bz)| world.z > bz)
         {
             best = Some((i, world.z));
         }

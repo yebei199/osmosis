@@ -68,6 +68,12 @@ pub struct WallDrive {
     requested: Vec<slint::SharedString>,
 }
 
+impl Default for WallDrive {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WallDrive {
     pub fn new() -> Self {
         Self {

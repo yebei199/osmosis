@@ -581,17 +581,13 @@ pub fn run_with_renderers(
             // (可见即前台,见 change_log 2026-08-11 always-on-rendering)。
             if ui.get_wall_visible()
                 && !ui.get_play_page_open()
-            {
-                if let Some(controls) =
+                && let Some(controls) =
                     wall_state.borrow_mut().frame(&ui)
-                {
-                    if let Some(img) =
+                    && let Some(img) =
                         wall_frame(&controls)
                     {
                         ui.set_wall_bg(img);
                     }
-                }
-            }
 
             // ── 播放页歌词 ──
             // 只在覆层展开时跟随:收起时歌词不可见,读位置纯属白耗。
