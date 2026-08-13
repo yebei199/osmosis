@@ -8,7 +8,6 @@
 
 ## 已排期
 
-- [ ] 起播没人上报,个人主页统计恒为 0:`api::record_play` 全仓无调用者,`play_events` 空表
 - [ ] android armeabi-v7a 编不出来,默认三 ABI 的构建整条失败  #47
 - [ ] slint fork 补丁栈收窄:present 顺序那条已进上游,跟进后从 fork 去掉  -> [docs/ready_issue/slint-wgpu-present-order.md](ready_issue/slint-wgpu-present-order.md)
 - [ ] 卡墙设计稿的四项留档(卡面曲名、标题行与次级入口胶囊、超 36 张分页、单击的完整高亮描边)  -> [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts
