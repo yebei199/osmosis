@@ -95,6 +95,20 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 两者的颜色与合成不保证逐像素相同。量尺寸也归 MCP:`get_element_properties` 会告诉你 LineEdit
 其实有 56px 高,而不是你以为的 32px。
 
+## 端到端验证走 MCP,断言写进脚本
+
+跨了界面、api、server、数据库的链路(起播上报、登录、点播),单元测试够不着,**但也不该
+交给人去点**。用应用内嵌的 MCP 驱动界面,拿一个真相源当断言,整条写成能重跑的脚本:
+
+- 驱动:`find_elements_by_id` / `query_element_descendants` 找控件再 `click_element`,
+  **按元素 id 找,不量坐标** —— 坐标随版式与窗口尺寸变,量出来的脚本活不过一次改版;
+- 断言:数据库的行数、`get_element_properties` 量出来的尺寸、`assert` 得到的状态,
+  不是截图,也不是"我看着对";
+- 客户端没连上 app(会话启动时 app 没跑)就直接打 JSON-RPC,见上文那段 curl。
+
+现成的一份:[`test/played-e2e.sh`](test/played-e2e.sh) —— 点一首歌,断言 `play_events`
+多了一行。抄它的形状写新的。
+
 ## 判断遮挡有没有生效:量卡片边框,别看观感
 
 封面卡被粒子挡住时,肉眼很难和「玻璃透出那颗粒子」区分开 —— 两者都是「卡片区域里

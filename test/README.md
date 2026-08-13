@@ -1,4 +1,18 @@
-# test —— 浏览器侧的对照页
+# test —— 端到端脚本与浏览器侧的对照页
+
+## played-e2e.sh —— 起播真的被记进账本了吗
+
+跑之前:`just desktop-dev` 起着并已登录,`just server-dev` 与 `osmosis-pg` 在跑。
+
+```sh
+test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
+```
+
+它经**应用内嵌的 MCP** 点进音乐页、切列表、点第一行起播,然后盯 `play_events` 的行数:
+多了一行就通过,20 秒不动就失败退出。驱动按元素 id 找控件、断言查数据库,两头都不靠
+人看画面 —— 这类"要跑起来才知道"的链路(界面 → api → server → 表)就该这么验。
+
+## 浏览器侧的对照页
 
 本目录下的 `*.html` 是**排查性能问题时用来划定责任范围的最小对照页**。不含 Slint、
 不含 wasm、不含 bevy,纯 HTML + JS,能把「浏览器本身的行为」和「我们这套技术栈的行为」
