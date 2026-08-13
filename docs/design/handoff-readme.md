@@ -1,5 +1,16 @@
 # Handoff: Osmosis 播放器改版（绿色主调 · 卡墙主线 · 11 个页面）
 
+> 本文与同目录的 `handoff-shaders.md`、`aurora-button.js` 是那份设计交付里**还在用的**
+> 三份,已随实现更新过,以它们为准。
+>
+> 原始交付包 `设计范围确认.zip` 不在工作树里,它是冻结的快照,留着只会和这几份活文档
+> 打架。要看正本(含 `Osmosis 播放器改版.dc.html` 与完整的 `support.js`,后者比抽出来的
+> `aurora-button.js` 多约 1400 行)从历史里取:
+>
+> ```sh
+> git show 5c6da27:"docs/design/设计范围确认.zip" > /tmp/scope.zip
+> ```
+
 ## Overview
 
 Osmosis 现有 UI 的一次整体改版。范围：**壳的首页（应用启动器）+ 音乐应用的十个页面 + 移动端紧凑版式**，配套八个 shader / Bevy 效果方案。
