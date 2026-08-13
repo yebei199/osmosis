@@ -53,7 +53,7 @@ export component ProfilePage inherits Flickable {
     // 与控制条同播条同一份名册。
     in property <[DeviceRow]> devices;
 
-    viewport-height: column.preferred-height + 52px;
+    content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
         x: 26px;

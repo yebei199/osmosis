@@ -50,7 +50,7 @@ export component SettingsPage inherits Flickable {
     // 退出登录:清会话是 Rust 的活,这里只喊。
     callback logout();
 
-    viewport-height: column.preferred-height + 52px;
+    content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
         x: 26px;
