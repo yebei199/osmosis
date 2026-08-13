@@ -1101,6 +1101,8 @@ const BASE_CAMERA_POS: Vec3 = Vec3::new(0.0, 0.0, 8.0);
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 取投影矩阵的 trait,不在 prelude 里。
+    use bevy::camera::CameraProjection;
 
     /// 锚点在视锥内:深度门槛就是它自己的 NDC z,遮挡层据此只留更近的片元。
     #[test]
@@ -1198,25 +1200,54 @@ mod tests {
         );
     }
 
-    /// 局部锚点转到任何角度都还在竖屏画面里 —— 卡片不该一拖就一闪一灭。
+    /// 拿 bevy **自己的**投影矩阵把锚点转一整圈:每一个角度都得挂得出卡片。
     ///
-    /// 「落在封面平面上」那一半钉在编译期(见 `CARD_ANCHOR_LOCAL` 下面的 const 断言);
-    /// 这一半进不了 const:算可视半宽要 `tan`,而它不是 const fn。
+    /// 这条守的是上面几条守不住的那件事 —— 它们喂的是手写的 NDC,而真相机上锚点
+    /// 若恒在画面外,九条测试照样全绿、屏幕上什么都没有。这里复刻
+    /// `Camera::world_to_ndc` 的算法(裁剪矩阵 × 相机逆变换,再做透视除),
+    /// 不需要 GPU 也不需要 `App`,量的是真几何。
+    ///
+    /// 「落在封面平面上」那一半钉在编译期(见 [`CARD_ANCHOR_LOCAL`] 下面的 const 断言),
+    /// 这一半进不了 const:投影矩阵要 `tan`,而它不是 const fn。
     #[test]
     fn the_local_anchor_stays_on_the_cover_plane_and_on_screen() {
-        // 小米13 竖屏,三端里最窄的那个视口。
+        // 小米13 竖屏,三端里最窄的那个视口 —— 横向可视范围最小,最容易把锚点甩出去。
         const PORTRAIT_ASPECT: f32 = 1080.0 / 2400.0;
-        // 透视投影固定的是竖向视野,横向可视 = 竖向 × 长宽比。
-        let fov = PerspectiveProjection::default().fov;
-        let half_h = (BASE_CAMERA_POS.z - CLOUD_ORIGIN.z)
-            * (fov / 2.0).tan();
-        let half_w = half_h * PORTRAIT_ASPECT;
-        // yaw 与 pitch 合起来最多把 |x| 放大到 √2 倍(见 CARD_ANCHOR_R 的推导)。
-        let worst_x = CARD_ANCHOR_R * std::f32::consts::SQRT_2;
-        assert!(
-            worst_x < half_w,
-            "锚点最外侧到 |x| = {worst_x},竖屏可视半宽只有 {half_w}"
-        );
+        // 一整圈取 36 个角度。pitch 与 yaw 同步转,把「合起来最坏」那些姿态也扫进去。
+        const STEPS: u32 = 36;
+
+        let projection = PerspectiveProjection {
+            aspect_ratio: PORTRAIT_ASPECT,
+            ..Default::default()
+        };
+        let camera =
+            Transform::from_translation(BASE_CAMERA_POS)
+                .looking_at(Vec3::ZERO, Vec3::Y);
+        let clip_from_world = projection.get_clip_from_view()
+            * camera.to_matrix().inverse();
+
+        for step in 0..STEPS {
+            let angle = std::f32::consts::TAU
+                * f32::from(u16::try_from(step).unwrap())
+                / STEPS as f32;
+            let root = GlobalTransform::from(Transform {
+                translation: CLOUD_ORIGIN,
+                rotation: Quat::from_euler(
+                    EulerRot::YXZ,
+                    angle,
+                    angle,
+                    0.0,
+                ),
+                ..Default::default()
+            });
+            let ndc = clip_from_world
+                .project_point3(card_anchor_world(&root));
+            assert!(
+                anchor_viewport(Some(ndc)).is_some(),
+                "转到 {}° 时锚点出画了,NDC = {ndc}",
+                angle.to_degrees()
+            );
+        }
     }
 
     /// 边界:锚点投影不出来(在相机背后)或落在 [0,1] 之外时,遮挡层必须为空。
