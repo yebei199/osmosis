@@ -83,6 +83,12 @@ pub fn build_apk(args: &[String]) -> Result<(), String> {
 }
 
 /// `--abis "arm64-v8a x86_64"`,否则读 `ABIS`,否则只构建 arm64-v8a。
+///
+/// **armeabi-v7a 不在默认里**,而且是有意的:`skia-bindings` 没有 armv7 的预编译
+/// 产物(404),回退到全量编 skia,那条路还要 `ANDROID_NDK`,而 `Android.nix` 只导出了
+/// cargo-ndk 自己那套。为一个几乎绝迹的 ABI 付一次全量 skia 构建换不回什么 ——
+/// minSdk 是 26,64 位从 Android 5 就有了(issue #47)。
+/// 真需要仍可 `ABIS="armeabi-v7a"` 显式要,但得先把 NDK 那一步解决掉。
 fn parse_abis(args: &[String]) -> Result<Vec<Abi>, String> {
     let raw = match args {
         [] => std::env::var("ABIS")
