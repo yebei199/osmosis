@@ -9,9 +9,10 @@
 //!   绝不调 `App::run()` —— 事件循环永远归 Slint。
 //! - bevy 与 Slint 共享同一 wgpu 大版本(现为 29),纹理类型才是同一个,才能被 Slint 采样。
 //!
-//! 每帧产出**两张**图:粒子场本身,以及一张只含「比封面卡更近」的片元的遮挡层
+//! 每帧产出**两张**图:粒子场本身,以及一张只含「比标注卡更近」的片元的遮挡层
 //! (见 [`spawn_occluder_camera`])。UI 侧把二者夹着卡片叠三层,卡片就被粒子
-//! 逐像素挡住 —— 深度正确的 UI。
+//! 逐像素挡住 —— 深度正确的 UI。被标注的物体是 `marker` 那枚绕轨道走的方块;
+//! 点云当不了它,理由写在 [`CLOUD_ORIGIN`] 下面那段。
 //!
 //! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
 //! 必须在建窗口**之前**调 —— 再把 `move || scene.render_viz_frame()` 交给
@@ -55,6 +56,7 @@ mod warp;
 pub use warp::{AUDIO_BYTES, WARP_SIDE, WarpPass};
 
 mod cloud;
+mod marker;
 mod wall;
 pub use wall::{
     WallCamera, WallCard, WallCover, WallFrame,
@@ -109,11 +111,11 @@ pub struct VizFrame<'a> {
     /// 这一帧要不要遮挡层。
     ///
     /// 遮挡层是逐像素深度合成的那一半(见 [`spawn_occluder_camera`]):有一张
-    /// **深度卡片**要被场景挡住时才需要它。目前一张都没有 —— 歌词曾经是,后来
-    /// 改成画在粒子之上(见 `docs/adr/0010` 的「歌词是例外」)。
+    /// **深度卡片**要被场景挡住时才需要它。现在那张卡片是标注卡,挂在 `marker`
+    /// 的前表面上,所以这里跟着「锚点在不在画面里」走。歌词不算,它画在粒子之上
+    /// (见 `docs/adr/0010` 的「歌词是例外」)。
     ///
-    /// 为假时那台相机整个关掉,不渲、不导入纹理。能力留着不拆:它是这套栈
-    /// 区别于「UI 贴在 canvas 上」的那件事,下一张深度卡片把这里置真即可。
+    /// 为假时那台相机整个关掉,不渲、不导入纹理。
     pub needs_occluder: bool,
     /// 窗口的物理像素尺寸。与当前纹理不同就按需重建(动态分辨率),0 尺寸忽略。
     pub width: u32,
@@ -135,33 +137,30 @@ const PERF_WINDOW: u32 = 120;
 /// (`76d3b73` 换成封面点云时借了 `71ce2f9` 的常量)。两者重合意味着锚点正落在
 /// 点云正中心,也就是半数粒子在卡片前面 —— 恰恰是那份文档说过不能落的地方。
 /// `needs_occluder` 一直恒假,这笔账在屏幕上从没露过面。现在拆开:点云的位置在
-/// 这里,卡片的锚点在 [`CARD_ANCHOR_LOCAL`]。
+/// 这里,卡片的锚点跟着 `marker` 走。
 const CLOUD_ORIGIN: Vec3 = Vec3::new(0.0, 0.0, 1.8);
 
-/// 标注卡挂在封面平面上的哪一点,**点云自己的局部坐标**。
-///
-/// 局部而非世界坐标,就是「跟着物体走」的全部机关:点云被拖动自转时,这一点由
-/// root 的 `GlobalTransform` 一并转过去(见 [`card_anchor_world`]),卡片跟着甩。
-///
-/// 不取平面的几何角(±`PLANE_SIZE`/2 = ±2.4):相机竖向 45°、平面在镜头前 6.2,
-/// 竖屏(小米13 是 0.45)横向可视半宽只有约 1.16,平面的角早就出画了。锚在那儿
-/// 的卡片一拖就一闪一灭。取 [`CARD_ANCHOR_R`],转到任何角度都还在画面内。
-const CARD_ANCHOR_LOCAL: Vec3 =
-    Vec3::new(CARD_ANCHOR_R, CARD_ANCHOR_R, 0.0);
+// 标注卡挂在标记体的前表面上,几何全在 `marker` 模块里。
+//
+// 曾经挂在封面平面上(点云 root 的局部坐标 (0.8, 0.8, 0)),想让它跟着拖动自转走。
+// 真机上那张卡片一像素都看不见:锚点落在平面上,意味着半数粒子比它更近、全被画进
+// 遮挡层,把卡片整块糊掉 —— 正是 `CLOUD_ORIGIN` 那段历史里警告过的同一个错。
+//
+// 而且这不是调个数能解决的。要卡片读得成,锚点得抬到粒子位移峰值(1.2~1.5)之上;
+// 要它刚性挂在点云上还留在画面里,它到旋转中心的距离又不能超过竖屏可见半宽 1.156。
+// 两个条件互斥。结论是点云当不了被标注物 —— 它没有「一个东西」可指,于是有了
+// `marker`:一枚自己绕轨道走的方块,深度确定、边界可指,遮挡不必等人来拖。
 
-/// 局部锚点到封面平面中心的半径,x 与 y 各取这么多。
-///
-/// yaw 与 pitch 合起来最多把 |x| 放大到 √2 倍,0.8 × √2 ≈ 1.13,压在竖屏可视半宽
-/// 1.16 之内。验算在单测 `the_local_anchor_stays_on_the_cover_plane_and_on_screen`,
-/// 进不了编译期是因为算可视半宽要 `tan`。
-const CARD_ANCHOR_R: f32 = 0.8;
-
-// 锚点必须落在封面平面上:z 为 0(平面本身),半径不出平面边界。
-// 编译期钉死而不是写成单测:三边都是常量,运行期断言 clippy 会直接拒绝。
-const _: () = assert!(CARD_ANCHOR_LOCAL.z == 0.0);
-const _: () = assert!(CARD_ANCHOR_R > 0.0);
-const _: () =
-    assert!(CARD_ANCHOR_R <= cloud::PLANE_SIZE / 2.0);
+// 编译期钉死轨道与封面平面的关系:远端要贴着平面(粒子才穿得过去),
+// 近端要离开平面(卡片才读得成)。两边都是常量,不必进单测。
+const _: () = assert!(
+    marker::ORBIT_CENTER.z - marker::ORBIT_RADIUS
+        > CLOUD_ORIGIN.z
+);
+const _: () = assert!(
+    marker::ORBIT_CENTER.z + marker::ORBIT_RADIUS
+        < BASE_CAMERA_POS.z
+);
 
 /// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
 const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
@@ -180,6 +179,8 @@ pub struct Scene {
     target: Handle<Image>,
     /// 点云实体。首帧 despawn 占位实体后重建。
     root: Entity,
+    /// 被标注的那枚方块(见 `marker`)。每帧沿轨道挪一次,卡片锚在它前表面上。
+    marker: Entity,
     /// 点云材质的句柄:每帧改它的 uniform(时间、三段电平),几何一动不动。
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
@@ -192,7 +193,7 @@ pub struct Scene {
     last_time: Option<f32>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
-    /// 遮挡层的离屏目标图:同一个场景,但只留比 [`CARD_ANCHOR`] 更近的片元,其余透明。
+    /// 遮挡层的离屏目标图:同一个场景,但只留比卡片锚点更近的片元,其余透明。
     occluder_target: Handle<Image>,
     /// 画遮挡层的第二台相机(见 [`spawn_occluder_camera`])。
     occluder_camera: Entity,
@@ -344,6 +345,9 @@ impl Scene {
             .world_mut()
             .spawn(Transform::default())
             .id();
+        // 被标注的方块。不挂 RenderLayers,于是它在默认层上:点云的两台相机
+        // 看得见,卡墙那台(layer 1)看不见。
+        let marker = marker::spawn(&mut app);
         // 7) 卡墙:自己的相机与目标,初始不激活(见 wall.rs)。
         let wall_scene = wall::WallScene::new(&mut app);
 
@@ -357,6 +361,7 @@ impl Scene {
             queue: queue.clone(),
             target,
             root,
+            marker,
             cloud_material: None,
             transition: cloud::TrackTransition::default(),
             spin: cloud::Spin::default(),
@@ -510,8 +515,19 @@ impl Scene {
             cam.is_active = needs_occluder;
         }
 
+        // 标记体沿轨道走这一帧。用播放页时钟而不是墙钟:门关着时钟不走,
+        // 方块跟着定格,重开门从原处继续 —— 与换歌过渡同一套时基。
+        let marker_pose = marker::pose(time);
+        if let Some(mut transform) = self
+            .app
+            .world_mut()
+            .get_mut::<Transform>(self.marker)
+        {
+            *transform = marker_pose;
+        }
+
         // 锚点一次投影,深度门槛与卡片挂点都从它出来。
-        let ndc = self.anchor_ndc(rotation);
+        let ndc = self.anchor_ndc(&marker_pose);
         let depth = occluder_depth(ndc);
         if let Some(mut cam3d) =
             self.app
@@ -657,10 +673,13 @@ impl Scene {
     /// 卡片锚点这一帧在主相机里的 NDC。**一次投影,两个去处**:z 给遮挡层当深度
     /// 门槛(见 [`occluder_depth`]),xy 给标注卡当挂点(见 [`anchor_viewport`])。
     ///
-    /// `rotation` 是这一帧刚写进 root 的旋转,而不是从 `GlobalTransform` 读回来的 ——
-    /// 传播要等 `app.update()`,读它拿到的是上一帧的角度,拖动时卡片会慢半拍跟在
-    /// 粒子后面。root 没有父实体,`GlobalTransform` 与 `Transform` 恒等,拼出来就是准的。
-    fn anchor_ndc(&self, rotation: Quat) -> Option<Vec3> {
+    /// `marker_pose` 是这一帧刚写进标记体的位姿,而不是从 `GlobalTransform` 读回来的 ——
+    /// 传播要等 `app.update()`,读它拿到的是上一帧的位置,卡片会慢半拍跟在方块后面。
+    /// 标记体没有父实体,`GlobalTransform` 与 `Transform` 恒等,直接用就是准的。
+    fn anchor_ndc(
+        &self,
+        marker_pose: &Transform,
+    ) -> Option<Vec3> {
         let camera_entity =
             self.app.world().entity(self.camera);
         let (Some(camera), Some(camera_pose)) = (
@@ -669,14 +688,9 @@ impl Scene {
         ) else {
             return None;
         };
-        let root_pose = GlobalTransform::from(Transform {
-            translation: CLOUD_ORIGIN,
-            rotation,
-            ..Default::default()
-        });
         camera.world_to_ndc(
             camera_pose,
-            card_anchor_world(&root_pose),
+            marker::front_face(marker_pose),
         )
     }
 
@@ -1046,14 +1060,6 @@ fn spawn_occluder_camera(
 /// 锚点跑到相机背后、或投影退化出非有限值时退回 [`EMPTY_OCCLUDER_DEPTH`]:遮挡层为空,
 /// 卡片完整可见。宁可少一个效果,也不能把整幅场景糊在卡片上 —— 后者是刺眼的错画面。
 /// wgpu 另有硬性要求:深度清除值必须落在 [0, 1],越界会被校验层拒掉。
-/// 标注卡这一帧的**世界**锚点:局部锚点被点云 root 的位姿变换过去。
-///
-/// 「世界空间锚定」就是这一行:锚点写在物体的局部坐标里,物体一转,锚点跟着转,
-/// 卡片于是跟着物体走,而不是钉在画面某处。
-fn card_anchor_world(root: &GlobalTransform) -> Vec3 {
-    root.transform_point(CARD_ANCHOR_LOCAL)
-}
-
 /// 锚点在视口里的归一化位置(0..1,**左上**原点),出画或投影不出来时为 `None`。
 ///
 /// 归一而非物理像素:离屏纹理尺寸与 UI 的逻辑像素是两套刻度,交给 UI 侧乘自己的
@@ -1170,51 +1176,132 @@ mod tests {
         }
     }
 
-    /// 锚点跟着点云转:世界坐标由点云 root 的 GlobalTransform 变换局部锚点得来。
-    /// root 不转时它就是平移后的那点,root 转了多少它跟着转多少 —— 这就是"跟着物体走"。
+    /// 一圈取多少个采样点。够密到能逮住轨道端点,又不至于让单测变慢。
+    const ORBIT_STEPS: u32 = 72;
+
+    /// 轨道上第 `step` 个采样点对应的播放页时钟。
+    fn orbit_time(step: u32) -> f32 {
+        marker::ORBIT_PERIOD * f32::from(
+            u16::try_from(step).expect("采样点数远小于 u16 上限"),
+        ) / ORBIT_STEPS as f32
+    }
+
+    /// 标记体绕的那条轨道,近端离开封面平面、远端贴回去,且始终在相机这一侧。
+    /// 远端贴平面才有粒子成片从它前面过(遮挡演得出来),近端离开平面卡片才读得成。
     #[test]
-    fn the_card_anchor_rides_the_cloud_rotation() {
-        let still = GlobalTransform::from(
-            Transform::from_translation(CLOUD_ORIGIN),
+    fn the_marker_orbits_between_the_cover_plane_and_the_camera() {
+        let (mut nearest, mut farthest) =
+            (f32::MIN, f32::MAX);
+        for step in 0..ORBIT_STEPS {
+            let z = marker::pose(orbit_time(step))
+                .translation
+                .z;
+            nearest = nearest.max(z);
+            farthest = farthest.min(z);
+        }
+
+        // 远端贴着封面平面,但不穿到平面后面 —— 穿过去就再没有粒子能挡在前面,
+        // 遮挡反而演不出来了。
+        let gap = farthest - CLOUD_ORIGIN.z;
+        assert!(
+            gap > 0.0,
+            "轨道远端 {farthest} 跑到封面平面 {} 后面了",
+            CLOUD_ORIGIN.z
         );
-        assert_eq!(
-            card_anchor_world(&still),
-            CLOUD_ORIGIN + CARD_ANCHOR_LOCAL,
-            "点云不转时锚点就是原点加局部偏移"
+        assert!(
+            gap < 0.3,
+            "轨道远端离平面 {gap},粒子够不着,遮挡演不出来"
         );
 
-        // 绕 Y 转四分之一圈:局部 +x 转到 -z,锚点跟着甩到点云侧后方。
-        let turned = GlobalTransform::from(Transform {
-            translation: CLOUD_ORIGIN,
-            rotation: Quat::from_rotation_y(
-                std::f32::consts::FRAC_PI_2,
-            ),
-            ..Default::default()
-        });
-        let want = CLOUD_ORIGIN
-            + Vec3::new(0.0, CARD_ANCHOR_R, -CARD_ANCHOR_R);
-        let got = card_anchor_world(&turned);
+        // 近端要高过粒子 z 位移的峰值(约 1.2~1.5,见 cloud.wgsl 的 place_cover),
+        // 卡片在这一段才干净。
         assert!(
-            got.abs_diff_eq(want, 1e-5),
-            "转过 90° 的锚点该在 {want},实际 {got}"
+            nearest - CLOUD_ORIGIN.z > 1.4,
+            "轨道近端只离平面 {},粒子还会糊在卡片上",
+            nearest - CLOUD_ORIGIN.z
+        );
+        assert!(
+            nearest < BASE_CAMERA_POS.z,
+            "轨道近端 {nearest} 跑到相机后面了"
         );
     }
 
-    /// 拿 bevy **自己的**投影矩阵把锚点转一整圈:每一个角度都得挂得出卡片。
+    /// 一个周期正好转一圈,且四分之一周期就是四分之一圈 —— 卡片的移动由它驱动,
+    /// 转快转慢是观感,转不满一圈是错。
+    #[test]
+    fn the_marker_turns_once_per_period() {
+        let start = marker::pose(0.0).translation;
+        // 起点在轨道最近端(正对相机那一侧)。
+        assert!(
+            start.abs_diff_eq(
+                marker::ORBIT_CENTER
+                    + Vec3::Z * marker::ORBIT_RADIUS,
+                1e-4
+            ),
+            "起点该在轨道近端,实际 {start}"
+        );
+        assert!(
+            marker::pose(marker::ORBIT_PERIOD)
+                .translation
+                .abs_diff_eq(start, 1e-4),
+            "转满一个周期该回到起点"
+        );
+
+        // 四分之一圈到侧面,半圈到最远端。
+        assert!(
+            marker::pose(marker::ORBIT_PERIOD / 4.0)
+                .translation
+                .abs_diff_eq(
+                    marker::ORBIT_CENTER
+                        + Vec3::X * marker::ORBIT_RADIUS,
+                    1e-4
+                )
+        );
+        assert!(
+            marker::pose(marker::ORBIT_PERIOD / 2.0)
+                .translation
+                .abs_diff_eq(
+                    marker::ORBIT_CENTER
+                        - Vec3::Z * marker::ORBIT_RADIUS,
+                    1e-4
+                )
+        );
+    }
+
+    /// 卡片锚在标记体的**前表面**,不是中心。锚在中心的话,标记体自己的前半
+    /// 比锚点更近,会被画进遮挡层,于是它盖住自己的标签。
+    #[test]
+    fn the_card_anchor_sits_on_the_marker_front_face() {
+        for step in 0..ORBIT_STEPS {
+            let pose = marker::pose(orbit_time(step));
+            // 不自转:一旦有姿态,前表面就不再是 +z 那面,锚点会飘进方块里。
+            assert_eq!(
+                pose.rotation,
+                Quat::IDENTITY,
+                "标记体不该自转"
+            );
+            let anchor = marker::front_face(&pose);
+            assert!(
+                (anchor - pose.translation).abs_diff_eq(
+                    Vec3::Z * marker::MARKER_HALF,
+                    1e-5
+                ),
+                "锚点该正好在前表面中心,实际偏移 {}",
+                anchor - pose.translation
+            );
+        }
+    }
+
+    /// 拿 bevy **自己的**投影矩阵把锚点沿整条轨道走一圈:每一处都得挂得出卡片。
     ///
     /// 这条守的是上面几条守不住的那件事 —— 它们喂的是手写的 NDC,而真相机上锚点
-    /// 若恒在画面外,九条测试照样全绿、屏幕上什么都没有。这里复刻
+    /// 若恒在画面外,那几条照样全绿、屏幕上什么都没有。这里复刻
     /// `Camera::world_to_ndc` 的算法(裁剪矩阵 × 相机逆变换,再做透视除),
     /// 不需要 GPU 也不需要 `App`,量的是真几何。
-    ///
-    /// 「落在封面平面上」那一半钉在编译期(见 [`CARD_ANCHOR_LOCAL`] 下面的 const 断言),
-    /// 这一半进不了 const:投影矩阵要 `tan`,而它不是 const fn。
     #[test]
-    fn the_local_anchor_stays_on_the_cover_plane_and_on_screen() {
+    fn the_card_anchor_stays_on_screen_through_a_full_orbit() {
         // 小米13 竖屏,三端里最窄的那个视口 —— 横向可视范围最小,最容易把锚点甩出去。
         const PORTRAIT_ASPECT: f32 = 1080.0 / 2400.0;
-        // 一整圈取 36 个角度。pitch 与 yaw 同步转,把「合起来最坏」那些姿态也扫进去。
-        const STEPS: u32 = 36;
 
         let projection = PerspectiveProjection {
             aspect_ratio: PORTRAIT_ASPECT,
@@ -1226,26 +1313,15 @@ mod tests {
         let clip_from_world = projection.get_clip_from_view()
             * camera.to_matrix().inverse();
 
-        for step in 0..STEPS {
-            let angle = std::f32::consts::TAU
-                * f32::from(u16::try_from(step).unwrap())
-                / STEPS as f32;
-            let root = GlobalTransform::from(Transform {
-                translation: CLOUD_ORIGIN,
-                rotation: Quat::from_euler(
-                    EulerRot::YXZ,
-                    angle,
-                    angle,
-                    0.0,
-                ),
-                ..Default::default()
-            });
-            let ndc = clip_from_world
-                .project_point3(card_anchor_world(&root));
+        for step in 0..ORBIT_STEPS {
+            let time = orbit_time(step);
+            let anchor =
+                marker::front_face(&marker::pose(time));
+            let ndc =
+                clip_from_world.project_point3(anchor);
             assert!(
                 anchor_viewport(Some(ndc)).is_some(),
-                "转到 {}° 时锚点出画了,NDC = {ndc}",
-                angle.to_degrees()
+                "t = {time}s 时锚点出画了,世界坐标 {anchor},NDC = {ndc}"
             );
         }
     }
