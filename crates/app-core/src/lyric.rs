@@ -23,6 +23,67 @@ pub fn current_line(
         .next_back()
 }
 
+/// 焦点行上下各取几行。歌词页一屏放得下的行数,再多就挤成一片灰。
+pub const RADIUS: usize = 3;
+
+/// 歌词页当前该画的那一段行:焦点行 + 上下各 `RADIUS` 行,已按行表截断。
+///
+/// 只描述**取哪几行**,不管怎么画 —— 透明度与字号那条衰减曲线属于界面,
+/// 而「窗口停在哪」是规则,换个界面(桌面横排、手机竖排)答案都一样。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LyricWindow {
+    /// 窗口第一行的下标。空窗口时与 `focus` 同为 0,靠 `len` 判空。
+    pub first: usize,
+    /// 焦点行的下标。跟随时是当前唱到的行,拖动浏览时是拖到的行。
+    pub focus: usize,
+    /// 窗口含多少行。0 表示没有可画的行。
+    pub len: usize,
+}
+
+impl LyricWindow {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// 窗口末行的下标。空窗口时无意义,调用方先判空。
+    pub fn last(&self) -> usize {
+        self.first + self.len.saturating_sub(1)
+    }
+
+    /// 某一行相对焦点的距离:0 是焦点行,负数在它上面。
+    /// 界面拿它算衰减,不在窗口里的行给 `None`。
+    pub fn offset_of(&self, index: usize) -> Option<i32> {
+        (index >= self.first && index < self.first + self.len)
+            .then(|| index as i32 - self.focus as i32)
+    }
+}
+
+/// 取歌词页该画的那一段。`browse` 是拖动浏览叠在当前行上的偏移(行数)。
+///
+/// 两端**截断**而不回环:回环会把末尾几行画在第一行上方,读起来是一首
+/// 倒着接上的歌。拖过头就停在端点,与滚到底的列表同一种手感。
+pub fn window(
+    lines: &[LyricLineDto],
+    current: usize,
+    browse: i32,
+) -> LyricWindow {
+    if lines.is_empty() {
+        return LyricWindow { first: 0, focus: 0, len: 0 };
+    }
+
+    let last = lines.len() - 1;
+    let focus = (current as i64 + browse as i64)
+        .clamp(0, last as i64) as usize;
+    let first = focus.saturating_sub(RADIUS);
+    let end = focus.saturating_add(RADIUS).min(last);
+
+    LyricWindow { first, focus, len: end - first + 1 }
+}
+
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
@@ -80,6 +141,76 @@ mod tests {
     fn empty_lyric_selects_nothing() {
         assert_eq!(current_line(&[], 0), None);
         assert_eq!(current_line(&[], 10_000), None);
+    }
+
+    // ---- 窗口选行(歌词页 #73)----
+
+    /// 窗口以焦点行为中心,上下各取 `RADIUS` 行。
+    #[test]
+    fn the_window_centers_on_the_focus_line() {
+        let lines =
+            lines(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let window = window(&lines, 5, 0);
+
+        assert_eq!(window.focus, 5);
+        assert_eq!(window.first, 5 - RADIUS);
+        assert_eq!(window.len(), RADIUS * 2 + 1);
+        assert_eq!(window.offset_of(5), Some(0));
+        assert_eq!(window.offset_of(4), Some(-1));
+        assert_eq!(window.offset_of(8), Some(3));
+    }
+
+    /// 开头与结尾处窗口截断而不回环:第 0 行上面没有第 -1 行。
+    ///
+    /// 回环的话开头会把末尾几行画在当前行上方,读起来是一首倒着接上的歌。
+    #[test]
+    fn the_window_clamps_at_both_ends() {
+        let lines = lines(&[0, 1, 2, 3, 4]);
+
+        let head = window(&lines, 0, 0);
+        assert_eq!(head.first, 0);
+        assert_eq!(head.last(), RADIUS.min(4));
+        assert_eq!(head.offset_of(0), Some(0));
+
+        let tail = window(&lines, 4, 0);
+        assert_eq!(tail.last(), 4);
+        assert_eq!(tail.offset_of(4), Some(0));
+    }
+
+    /// 行数少于一整窗时窗口就是全表,不补空行。
+    #[test]
+    fn a_short_lyric_fills_the_window_exactly_once() {
+        let lines = lines(&[0, 1]);
+        let window = window(&lines, 0, 0);
+
+        assert_eq!(window.first, 0);
+        assert_eq!(window.len(), 2);
+    }
+
+    /// 空歌词没有窗口,调用方据此让位而不是画一片空行。
+    #[test]
+    fn an_empty_lyric_has_no_window() {
+        assert!(window(&[], 0, 0).is_empty());
+    }
+
+    /// 浏览偏移叠在焦点行上再取窗,偏移越界同样截断。
+    #[test]
+    fn a_browse_offset_shifts_the_window_within_bounds() {
+        let lines =
+            lines(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+        let moved = window(&lines, 5, 2);
+        assert_eq!(moved.focus, 7);
+        assert_eq!(moved.first, 7 - RADIUS);
+
+        // 拖过头:焦点钳在末行,窗口跟着停,不越界也不回环。
+        let past_end = window(&lines, 5, 99);
+        assert_eq!(past_end.focus, 10);
+        assert_eq!(past_end.last(), 10);
+
+        let past_start = window(&lines, 5, -99);
+        assert_eq!(past_start.focus, 0);
+        assert_eq!(past_start.first, 0);
     }
 
     /// 上游给的时刻乱序或重叠:不 panic,给出一个确定的答案 ——

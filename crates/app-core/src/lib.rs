@@ -15,7 +15,7 @@ mod queue;
 
 pub use counter::Counter;
 pub use health::{Health, HealthState, refresh};
-pub use lyric::current_line;
+pub use lyric::{LyricWindow, current_line, window};
 pub use playback::{Playback, PlaybackState, play};
 pub use queue::{LoopMode, Queue};
 
