@@ -1,2 +1,5 @@
 /cache
 /project.local.yml
+# agent 的本地草稿。值得留下的写进 AGENTS.md,那是本仓库唯一的 agent 入口文件;
+# 这里再存一份就是第二个索引,而两份索引意味着两份都不新。
+/memories
