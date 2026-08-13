@@ -10,10 +10,10 @@
 为按钮五变体,`osmosis-inplace.dc.html` 为第六轮「按钮落位 · 水滴导航」,6a-6e
 已全部实施,见 #67 及其四个子任务)。shader 分层拆解在
 [`design/handoff-shaders.md`](design/handoff-shaders.md),光带按钮参考实现在
-[`design/aurora-button.js`](design/aurora-button.js),原始设计稿归档在
-[`design/设计范围确认.zip`](design/设计范围确认.zip))。本文件与 handoff 冲突时,
-以本文件为准。
-实现进度挂在 [issue #56](https://github.com/yebei199/osmosis/issues/56)。
+[`design/aurora-button.js`](design/aurora-button.js);原始交付包不在工作树里,
+取法见 [`design/handoff-readme.md`](design/handoff-readme.md) 顶部)。本文件与
+handoff 冲突时,以本文件为准 —— handoff 是冻结的交付稿,本文件跟着实现走。
+改版跟踪 issue #56 与 #67 都已整体交付关闭。
 
 ## 原则
 
@@ -53,7 +53,11 @@ Osmosis 是承载多个应用的壳,音乐是第一个应用(见 CONTEXT「壳�
 ([`adr/0025`](adr/0025-card-wall-is-the-music-main-view.md))。
 无 GPU 的构建(web / iOS 默认)退回列表视图。
 
-次级入口(每日推荐 / 我的歌单 / 最近播放 / 红心)是标题行右侧的一排胶囊。
+次级入口(每日推荐 / 我的歌单 / 最近播放 / 红心)走 `MusicRail`。设计稿里它是
+标题行右侧的一排胶囊,那一版**定为不做**(理由见
+[change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts),
+现有 MusicRail 继续服役。
+
 卡墙的列距行距按容器尺寸计算,不写死像素:原稿里两处卡墙用了两套坐标,
 跨尺寸复用会错位。
 
@@ -63,9 +67,9 @@ Osmosis 是承载多个应用的壳,音乐是第一个应用(见 CONTEXT「壳�
 ([`adr/0007`](adr/0007-layout-mode-by-width-not-by-platform.md))。桌面把窗口
 拖窄就能看到移动端的样子,移动端排布因此在桌面上可见、可验证(`just shot 420`)。
 
-紧凑版式的要点:卡墙降到 2 列且相机后撤(`render3d` 的 `pullback`);播放页
-体素平面缩到 220px,控制簇只留上一首 / 环形键 / 下一首;个人主页统计卡 2×2;
-设置页分组导航折叠成整块卡片流;触摸目标不低于 44px。
+紧凑版式的要点:卡墙降到 2 列且相机后撤(`render3d` 的 `pullback`);播放页控制簇
+只留上一首 / 环形键 / 下一首;个人主页统计卡 2×2;设置页分组导航折叠成整块卡片流;
+触摸目标不低于 44px。播放页那张 220px 封面卡已随封面点云上线删除,点云自己铺满整屏。
 
 ## 主题与色板
 
