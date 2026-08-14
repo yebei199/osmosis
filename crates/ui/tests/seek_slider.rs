@@ -7,6 +7,7 @@ use i_slint_backend_testing as testing;
 use slint::platform::PointerEventButton;
 use slint::{ComponentHandle, LogicalPosition};
 use ui::MainWindow;
+use ui::Player;
 use ui::Session;
 
 /// 播放页展开、手上有一首歌的窗口。滑条是播放页里的条件元素。
@@ -18,7 +19,7 @@ fn play_window() -> MainWindow {
     // 登录页盖住整个窗口,它的表单控件会吃掉落在滑条上的指针事件。
     ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     ui.set_now_title("滑条测试曲".into());
     ui
 }
@@ -68,10 +69,10 @@ fn the_slider_exists_only_on_the_play_page_with_a_track() {
         "播放页有曲目时该有滑条"
     );
 
-    ui.set_has_track(false);
+    ui.global::<Player>().set_has_track(false);
     assert!(slider(&ui).is_none(), "没曲目不该留滑条");
 
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     ui.set_play_page_open(false);
     assert!(
         slider(&ui).is_none(),
@@ -86,11 +87,11 @@ fn the_fill_grows_with_the_progress_ratio() {
     let track = groove(&ui).size().height;
     assert!(track > 0.0, "轨道该有高度");
 
-    ui.set_progress_ratio(0.0);
+    ui.global::<Player>().set_progress_ratio(0.0);
     let empty = fill(&ui).size().height;
-    ui.set_progress_ratio(0.5);
+    ui.global::<Player>().set_progress_ratio(0.5);
     let half = fill(&ui).size().height;
-    ui.set_progress_ratio(1.0);
+    ui.global::<Player>().set_progress_ratio(1.0);
     let full = fill(&ui).size().height;
 
     assert!(
@@ -117,7 +118,7 @@ fn the_fill_grows_with_the_progress_ratio() {
 #[test]
 fn the_fill_starts_at_the_top() {
     let ui = play_window();
-    ui.set_progress_ratio(0.25);
+    ui.global::<Player>().set_progress_ratio(0.25);
 
     let fill_top = fill(&ui).absolute_position().y;
     let groove_top = groove(&ui).absolute_position().y;
@@ -133,13 +134,14 @@ fn the_fill_starts_at_the_top() {
 #[test]
 fn dragging_shouts_seek_without_setting_the_ratio() {
     let ui = play_window();
-    ui.set_progress_ratio(0.1);
+    ui.global::<Player>().set_progress_ratio(0.1);
 
     let heard = std::rc::Rc::new(std::cell::RefCell::new(
         Vec::<f32>::new(),
     ));
     let sink = heard.clone();
-    ui.on_seek(move |at| sink.borrow_mut().push(at));
+    ui.global::<Player>()
+        .on_seek(move |at| sink.borrow_mut().push(at));
 
     let track = groove(&ui);
     let top = track.absolute_position().y;
@@ -165,10 +167,11 @@ fn dragging_shouts_seek_without_setting_the_ratio() {
         calls[0]
     );
     assert!(
-        (ui.get_progress_ratio() - 0.1).abs()
+        (ui.global::<Player>().get_progress_ratio() - 0.1)
+            .abs()
             < f32::EPSILON,
         "界面不该自己置位,实测 {}",
-        ui.get_progress_ratio()
+        ui.global::<Player>().get_progress_ratio()
     );
 }
 
@@ -177,7 +180,7 @@ fn dragging_shouts_seek_without_setting_the_ratio() {
 #[test]
 fn the_slider_reports_its_position_to_assistive_tech() {
     let ui = play_window();
-    ui.set_progress_ratio(0.4);
+    ui.global::<Player>().set_progress_ratio(0.4);
 
     let handle = slider(&ui).expect("该有滑条");
     assert_eq!(
@@ -198,7 +201,7 @@ fn the_slider_reports_its_position_to_assistive_tech() {
     let heard =
         std::rc::Rc::new(std::cell::Cell::new(f32::NAN));
     let sink = heard.clone();
-    ui.on_seek(move |at| sink.set(at));
+    ui.global::<Player>().on_seek(move |at| sink.set(at));
     handle.set_accessible_value("0.8");
     assert!(
         (heard.get() - 0.8).abs() < 0.01,
@@ -212,7 +215,8 @@ fn the_slider_reports_its_position_to_assistive_tech() {
 #[test]
 fn the_slider_carries_the_time_readout() {
     let ui = play_window();
-    ui.set_progress_text("1:23 / 3:41".into());
+    ui.global::<Player>()
+        .set_progress_text("1:23 / 3:41".into());
 
     let handle = slider(&ui).expect("该有滑条");
     assert_eq!(
@@ -221,7 +225,7 @@ fn the_slider_carries_the_time_readout() {
         "滑条该报时间读数"
     );
 
-    ui.set_buffering(true);
+    ui.global::<Player>().set_buffering(true);
     assert_eq!(
         handle.accessible_label().as_deref(),
         Some("缓冲中…"),
@@ -234,7 +238,8 @@ fn the_slider_carries_the_time_readout() {
 #[test]
 fn the_time_readout_is_wider_than_the_slider() {
     let ui = play_window();
-    ui.set_progress_text("1:23 / 3:46".into());
+    ui.global::<Player>()
+        .set_progress_text("1:23 / 3:46".into());
 
     let readout =
         element(&ui, "MainWindow::play-time-readout")
@@ -254,7 +259,8 @@ fn the_time_readout_is_wider_than_the_slider() {
 #[test]
 fn the_time_readout_stays_inside_the_window() {
     let ui = play_window();
-    ui.set_progress_text("1:23 / 3:46".into());
+    ui.global::<Player>()
+        .set_progress_text("1:23 / 3:46".into());
     let (width, _) = window_size(&ui);
 
     let readout =

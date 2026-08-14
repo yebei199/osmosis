@@ -7,6 +7,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Player;
 use ui::Session;
 use ui::{MainWindow, TrackRow};
 
@@ -36,7 +37,8 @@ fn music_page_with(rows: Vec<TrackRow>) -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
-    ui.set_tracks(ModelRc::new(VecModel::from(rows)));
+    ui.global::<Player>()
+        .set_tracks(ModelRc::new(VecModel::from(rows)));
     ui
 }
 
@@ -70,13 +72,13 @@ fn an_empty_list_has_no_hearts() {
 fn the_heart_follows_the_row_state() {
     let ui = music_page_with(vec![row("1", false)]);
 
-    ui.set_tracks(ModelRc::new(VecModel::from(vec![row(
-        "1", true,
-    )])));
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![row("1", true)]),
+    ));
 
     // 心还在(没被整行重建掉),且这一行现在是红心态
     assert_eq!(hearts(&ui), 1);
-    let rows = ui.get_tracks();
+    let rows = ui.global::<Player>().get_tracks();
     assert!(
         slint::Model::row_data(&rows, 0)
             .expect("第一行该在")

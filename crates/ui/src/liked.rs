@@ -14,6 +14,7 @@ use slint::ComponentHandle;
 
 use crate::Library;
 use crate::MainWindow;
+use crate::Player;
 
 /// 红心里的曲目标识。
 ///
@@ -78,7 +79,7 @@ pub fn refresh(set: &LikedSet, ui: &MainWindow) {
 pub fn remark(set: &LikedSet, ui: &MainWindow) {
     use slint::Model as _;
 
-    let rows = ui.get_tracks();
+    let rows = ui.global::<Player>().get_tracks();
     for i in 0..rows.row_count() {
         let Some(mut row) = rows.row_data(i) else {
             continue;

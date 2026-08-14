@@ -1,6 +1,8 @@
 //! 传输核心:起播一首、播放状态的每帧推送,以及放完自动接上下一首。
 
 use super::*;
+use crate::Player;
+use slint::ComponentHandle as _;
 
 /// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
 ///
@@ -13,20 +15,20 @@ pub(super) fn toggle_play(ui: &MainWindow, deck: &Deck) {
         if let Ok(player) = deck.player.as_ref() {
             player.stop();
         }
-        ui.set_is_playing(false);
+        ui.global::<Player>().set_is_playing(false);
         return;
     }
 
     let Ok(player) = deck.player.as_ref() else {
         return;
     };
-    if ui.get_is_playing() {
+    if ui.global::<Player>().get_is_playing() {
         player.pause();
-        ui.set_is_playing(false);
+        ui.global::<Player>().set_is_playing(false);
     } else if !player.empty() {
         // 暂停中,接着放。
         player.resume();
-        ui.set_is_playing(true);
+        ui.global::<Player>().set_is_playing(true);
     } else {
         // 放空了(队列结束后又按了播放):重放当前这首。
         play_current(ui, deck);
@@ -53,14 +55,14 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
     if let Ok(player) = deck.player.as_ref() {
         player.stop();
     }
-    ui.set_is_playing(false);
-    ui.set_now_loading(!instant);
+    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Player>().set_now_loading(!instant);
 
     // spawn_local 的 future 要到下一轮事件循环才跑,而 Loading 要立刻显示。
     //
     // 状态先写进 `playback`,再让状态行与列表都从它读:列表那一行的加载态
     // 是用户手指底下唯一看得见的反馈,晚一帧就等于没有。
-    ui.set_playback_text(
+    ui.global::<Player>().set_playback_text(
         describe_playback(&PlaybackState::Loading(
             track.clone(),
         ))
@@ -173,9 +175,10 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
                     describe_playback(state.state()),
                 )
             };
-            ui.set_is_playing(playing);
-            ui.set_playback_text(text.into());
-            ui.set_now_loading(false);
+            ui.global::<Player>().set_is_playing(playing);
+            ui.global::<Player>()
+                .set_playback_text(text.into());
+            ui.global::<Player>().set_now_loading(false);
             // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
             if playing {
                 ui.set_banner_text(
@@ -310,18 +313,17 @@ pub(super) fn push_progress(
         PlaybackState::Playing(track)
         | PlaybackState::Loading(track) => track,
         _ => {
-            ui.set_has_track(false);
+            ui.global::<Player>().set_has_track(false);
             return;
         }
     };
 
     let secs = position.as_secs_f64();
-    ui.set_has_track(true);
-    ui.set_progress_ratio(crate::progress::ratio(
-        secs,
-        track.duration_ms,
-    ));
-    ui.set_progress_text(
+    ui.global::<Player>().set_has_track(true);
+    ui.global::<Player>().set_progress_ratio(
+        crate::progress::ratio(secs, track.duration_ms),
+    );
+    ui.global::<Player>().set_progress_text(
         crate::progress::progress_text(
             secs,
             track.duration_ms,

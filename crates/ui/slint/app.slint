@@ -26,6 +26,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
 import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, LyricRow } from "types.slint";
 import { Profile } from "globals/profile.slint";
+import { Player } from "globals/player.slint";
 import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
@@ -42,6 +43,7 @@ export { Profile }
 export { Session }
 // 曲库那一面同理:Rust 靠 `ui.global::<Library>()` 读写它。
 export { Library }
+export { Player }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -81,44 +83,6 @@ export component MainWindow inherits Window {
     in property <bool> show-fps: false;
     // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
     in property <string> platform;
-    // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
-    in property <[TrackRow]> tracks: [];
-    // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
-    //
-    // **只放状态的投影,不放一次性提示**。投影会随状态重算,永远等于此刻的真相;
-    // 而某次请求失败这类话描述的是过去的一刻,写进来就再没人会清 —— 那是
-    // 「歌单已经摆满、顶上还挂着取歌单失败」的成因。提示走 banner-text
-    // (见 ui/src/notice.rs)。
-    in property <string> playback-text;
-    // 正在为播放页那首歌取直链/开流。播放页只有歌名、歌手、封面,没有别的位置
-    // 能表达"按下去了、正在办",而状态行长在音乐页上、被播放页盖住。
-    in property <bool> now-loading: false;
-    // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
-    // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
-    // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
-    in-out property <string> banner-text;
-    // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
-    in property <bool> is-playing: false;
-
-    // ── 进度与音量 ──
-    // 手上有没有一首歌。没有时进度条整条不出现 —— 摆一条空槽会让人
-    // 以为点它能从头开始,而那时根本没有"头"。
-    in property <bool> has-track: false;
-    // 已放到全曲的几分之几,0..=1。夹取与格式化都在 Rust 侧(见 ui/src/progress.rs)。
-    in property <float> progress-ratio: 0;
-    in property <string> progress-text;
-    // 松手时跳到这个比例。
-    callback seek(float);
-    // 正在等跳转落地。跳到还没下到的位置要重开一个 range 请求,一首无损往后
-    // 拖两分钟就是好几秒 —— 那期间进度条不动、声音不出,不说一句的话
-    // 看起来就是卡死了(见 ui/src/music.rs 的 bind-seek)。
-    in property <bool> buffering: false;
-    // 当前音量,0..=1。开局由本地设置恢复(见 api::settings)。
-    in property <float> volume: 1.0;
-    callback volume-changed(float);
-    // 随机播放开关。**只有 Rust 写它** —— 真相在 app_core::Queue 上,
-    // 这里是投影。开关自己不置位,拨一下只喊 shuffle-toggled。
-    in-out property <bool> shuffle-on: false;
     // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
     // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
     in property <image> bar-fluid-bg;
@@ -136,10 +100,12 @@ export component MainWindow inherits Window {
     // 共用一张就分不出谁被选中了。
     in property <image> nav-key-a-bg;
     in property <image> nav-key-b-bg;
-    // 循环三态。**只有 Rust 写它** —— 真相在 app_core::Queue 上,这里是投影。
-    // 0 关,1 列表循环,2 单曲循环:builtin 枚举不生成 Rust 访问器,int 镜像。
-    in-out property <int> loop-mode: 0;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
+    // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
+    // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
+    // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
+    in-out property <string> banner-text;
+
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
     in property <string> sync-text;
@@ -316,33 +282,6 @@ export component MainWindow inherits Window {
     // 两种版式都退回 Slint 平底 + NavItem 自带高亮。
     in-out property <image> nav-bg;
     // 用关键词搜歌。
-    callback search(string);
-    // 取今日推荐,结果落进同一个 tracks 列表。
-    callback daily();
-    // 取我喜欢的音乐,同上。
-    callback liked();
-    // 进了 Music 页。当天还没拉过推荐时由 Rust 侧补一次 daily —— 判断在那边,
-    // 因为「今天」和「上次拉的日期」都不是界面该记的东西。
-    callback music-shown();
-    // 放某首歌。参数是 TrackRow 的 id。
-    callback play(string);
-    // 某一行滑进了可见区,它要这张封面。参数是 TrackRow 的 cover-url ——
-    // 列表虚拟化之后,「哪一行现在是哪一首」只有界面知道(见 tracklist.slint)。
-    callback needs-cover(string);
-    // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
-    callback toggle-play();
-    // 队列内切歌。
-    callback next-track();
-    callback prev-track();
-    // 请求翻转随机开关。**shuffle-on 那时还是旧值** —— 由 Rust 拨完队列
-    // 再写回去。系统媒体控件送来的 SetShuffle 也走这一条。
-    callback shuffle-toggled();
-    // 请求循环换到下一态(关→列表→单曲→关)。**loop-mode 那时还是旧值** ——
-    // 由 Rust 拨完队列再写回。
-    callback loop-cycled();
-    // 循环拨到这个绝对值。系统媒体控件给的是绝对值(MPRIS 的 LoopStatus),
-    // 与现值的比对在 media.rs 的 dispatch 里做,这里只落地。
-    callback loop-mode-set(int);
     // 设置页的主题三档(0 深 1 浅 2 跟随系统),选了喊一声,值由 Rust 写回。
     callback theme-mode-selected(int);
     // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
@@ -372,7 +311,7 @@ export component MainWindow inherits Window {
         && root.current-tab == 1
         && root.music-section == 0
         && Library.open-playlist-name == ""
-        && root.tracks.length > 0;
+        && Player.tracks.length > 0;
     // 指针镜像(逻辑像素,换算物理在 Rust);场区尺寸由元素回写。
     in-out property <bool> wall-pressed: false;
     in-out property <length> wall-px: 0px;
@@ -558,7 +497,7 @@ export component MainWindow inherits Window {
                                         color: Theme.immersive-text;
                                     }
                                     Text {
-                                        text: root.is-playing ? "MUSIC · " + root.now-title : "MUSIC";
+                                        text: Player.is-playing ? "MUSIC · " + root.now-title : "MUSIC";
                                         font-family: Type.mono;
                                         font-size: 11px;
                                         letter-spacing: 1px;
@@ -626,17 +565,17 @@ export component MainWindow inherits Window {
                     }
 
                     // 迷你播放条:壳持有、跨应用常驻,有歌才摆(docs/adr/0024)。
-                    if root.has-track: home-mini := MiniPlayer {
+                    if Player.has-track: home-mini := MiniPlayer {
                         x: (parent.width - self.width) / 2;
                         y: parent.height - self.height - 22px;
                         width: min(parent.width - 48px, 440px);
                         cover-art: root.cover-art;
                         title: root.now-title;
                         artists: root.now-artists;
-                        is-playing: root.is-playing;
-                        ratio: root.progress-ratio;
-                        toggle => { root.toggle-play(); }
-                        next => { root.next-track(); }
+                        is-playing: Player.is-playing;
+                        ratio: Player.progress-ratio;
+                        toggle => { Player.toggle-play(); }
+                        next => { Player.next-track(); }
                     }
                 }
 
@@ -677,7 +616,7 @@ export component MainWindow inherits Window {
                     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
                     // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
                     // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
-                    init => { root.music-shown(); }
+                    init => { Player.music-shown(); }
 
                     // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
                     if root.compact: music-bar := MusicBar {
@@ -713,12 +652,12 @@ export component MainWindow inherits Window {
                                 keyword := LineEdit {
                                     horizontal-stretch: 1;
                                     placeholder-text: "搜索";
-                                    accepted => { root.search(self.text); }
+                                    accepted => { Player.search(self.text); }
                                 }
                                 HoverButton {
                                     width: root.compact ? 60px : 84px;
                                     text: "Go";
-                                    clicked => { root.search(keyword.text); }
+                                    clicked => { Player.search(keyword.text); }
                                 }
                             }
 
@@ -736,7 +675,7 @@ export component MainWindow inherits Window {
                             // 播放状态行。文案是硬编码中文,走子集字体;
                             // 高度钉死,免得文案变长把下面的列表顶来顶去。
                             Text {
-                                text: root.playback-text;
+                                text: Player.playback-text;
                                 font-family: "Maple Mono NF CN";
                                 color: Theme.text-dim;
                                 font-size: 13px;
@@ -851,7 +790,7 @@ export component MainWindow inherits Window {
                             }
 
                             // 「把刚才那批加进来」。只在本地歌单详情、且刚才
-                            // 确实有一批歌时出现 —— 进歌单那一刻 tracks 就被
+                            // 确实有一批歌时出现 —— 进歌单那一刻 Player.tracks 就被
                             // 换掉了,所以那一批由 Rust 在打开前存下来。
                             if Library.open-playlist-local
                                 && Library.add-batch-text != "":
@@ -938,7 +877,7 @@ export component MainWindow inherits Window {
                             // 空状态:该有一批歌的地方一首都没有。大标题 +
                             // 一个真动作(拉一批推荐);设计稿里的「打开本地
                             // 文件夹」等入口等功能存在了再上(硬规则 8)。
-                            if root.tracks.length == 0
+                            if Player.tracks.length == 0
                                 && (Library.open-playlist-name != ""
                                     || root.music-section == 0
                                     || root.music-section == 3
@@ -977,7 +916,7 @@ export component MainWindow inherits Window {
                                             ? Theme.accent.darker(0.2) : Theme.accent;
                                         accessible-role: button;
                                         accessible-label: "换一批推荐";
-                                        accessible-action-default => { root.daily(); }
+                                        accessible-action-default => { Player.daily(); }
 
                                         // §9:光带纹理垫底(ribbon 绿板)。
                                         if root.aurora-buttons-on && root.empty-daily-bg.width > 0: Image {
@@ -998,7 +937,7 @@ export component MainWindow inherits Window {
                                         }
                                         empty-daily-touch := TouchArea {
                                             mouse-cursor: pointer;
-                                            clicked => { root.daily(); }
+                                            clicked => { Player.daily(); }
                                             changed has-hover => {
                                                 root.empty-daily-hover = self.has-hover;
                                             }
@@ -1017,7 +956,7 @@ export component MainWindow inherits Window {
                                 && root.current-tab == 1
                                 && root.music-section == 0
                                 && Library.open-playlist-name == ""
-                                && root.tracks.length > 0:
+                                && Player.tracks.length > 0:
                             HorizontalLayout {
                                 alignment: end;
                                 spacing: 6px;
@@ -1151,19 +1090,19 @@ export component MainWindow inherits Window {
                                 && !root.wall-visible:
                             track-list := TrackList {
                                 vertical-stretch: 1;
-                                tracks: root.tracks;
+                                tracks: Player.tracks;
                                 // 最近播放画成时间轴,别的分区还是平列表。
                                 timeline: root.music-section == 3
                                     && Library.open-playlist-name == "";
                                 // 只有本地歌单的内容能移出去
                                 removable: Library.open-playlist-local;
-                                play(id) => { root.play(id); }
+                                play(id) => { Player.play(id); }
                                 toggle-liked(id, liked) => {
                                     Library.toggle-liked(id, liked);
                                 }
                                 remove(id) => { Library.remove-track(id); }
                                 needs-cover(url) => {
-                                    root.needs-cover(url);
+                                    Player.needs-cover(url);
                                 }
                             }
                         }
@@ -1200,7 +1139,7 @@ export component MainWindow inherits Window {
                         }
                         changed width => { root.bar-w = self.width; }
                         changed height => { root.bar-h = self.height; }
-                        if root.is-playing && root.bar-fluid-bg.width > 0: Image {
+                        if Player.is-playing && root.bar-fluid-bg.width > 0: Image {
                             width: 100%;
                             height: 100%;
                             source: root.bar-fluid-bg;
@@ -1212,7 +1151,7 @@ export component MainWindow inherits Window {
                             spacing: 12px;
 
                             // 正在放什么:封面 + 曲名/歌手 + 时间。没歌时整列不摆。
-                            if root.has-track: bar-now := HorizontalLayout {
+                            if Player.has-track: bar-now := HorizontalLayout {
                                 spacing: 10px;
                                 VerticalLayout {
                                     alignment: center;
@@ -1246,11 +1185,11 @@ export component MainWindow inherits Window {
                                         max-width: 220px;
                                         // 缓冲时这行是唯一说明「还在动」的东西,提亮。
                                         // 缓冲文案是硬编码中文,走子集;平时是平台数据,走系统字体。
-                                        font-family: root.buffering ? "Maple Mono NF CN" : "";
-                                        text: root.buffering
+                                        font-family: Player.buffering ? "Maple Mono NF CN" : "";
+                                        text: Player.buffering
                                             ? "缓冲中…"
-                                            : root.now-artists + "  " + root.progress-text;
-                                        color: root.buffering ? Theme.accent : Theme.text-dim;
+                                            : root.now-artists + "  " + Player.progress-text;
+                                        color: Player.buffering ? Theme.accent : Theme.text-dim;
                                         font-size: 12px;
                                         overflow: elide;
                                     }
@@ -1260,19 +1199,19 @@ export component MainWindow inherits Window {
                                 // 胶囊要收到内容宽:键簇与同播条都是 layout,
                                 // 默认 stretch 1 会把胶囊撑满整行。
                                 horizontal-stretch: 0;
-                                is-playing: root.is-playing;
-                                shuffle-on: root.shuffle-on;
-                                loop-mode: root.loop-mode;
-                                progress-ratio: root.progress-ratio;
-                                prev => { root.prev-track(); }
-                                toggle => { root.toggle-play(); }
-                                next => { root.next-track(); }
-                                shuffle-toggled => { root.shuffle-toggled(); }
-                                loop-cycled => { root.loop-cycled(); }
+                                is-playing: Player.is-playing;
+                                shuffle-on: Player.shuffle-on;
+                                loop-mode: Player.loop-mode;
+                                progress-ratio: Player.progress-ratio;
+                                prev => { Player.prev-track(); }
+                                toggle => { Player.toggle-play(); }
+                                next => { Player.next-track(); }
+                                shuffle-toggled => { Player.shuffle-toggled(); }
+                                loop-cycled => { Player.loop-cycled(); }
                             }
                             wide-volume := VolumeControl {
-                                volume: root.volume;
-                                changed(v) => { root.volume-changed(v); }
+                                volume: Player.volume;
+                                changed(v) => { Player.volume-changed(v); }
                             }
                             // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
                             RoundControl {
@@ -1289,13 +1228,13 @@ export component MainWindow inherits Window {
 
                         // 精确拖动的细轨:贴着胶囊下缘,悬停才现形。
                         // 环报进度,它管落点 —— 两件事分开(docs/design.md「播放条」)。
-                        if root.has-track: wide-progress := ProgressBar {
+                        if Player.has-track: wide-progress := ProgressBar {
                             slim: true;
                             x: 28px;
                             width: parent.width - 56px;
                             y: parent.height - self.height - 1px;
-                            ratio: root.progress-ratio;
-                            seek(at) => { root.seek(at); }
+                            ratio: Player.progress-ratio;
+                            seek(at) => { Player.seek(at); }
                         }
                         }
                     }
@@ -1314,7 +1253,7 @@ export component MainWindow inherits Window {
                         }
                         changed width => { root.bar-w = self.width; }
                         changed height => { root.bar-h = self.height; }
-                        if root.is-playing && root.bar-fluid-bg.width > 0: Image {
+                        if Player.is-playing && root.bar-fluid-bg.width > 0: Image {
                             width: 100%;
                             height: 100%;
                             source: root.bar-fluid-bg;
@@ -1328,15 +1267,15 @@ export component MainWindow inherits Window {
                                 alignment: center;
                                 spacing: 10px;
                                 ControlCluster {
-                                    is-playing: root.is-playing;
-                                    shuffle-on: root.shuffle-on;
-                                    loop-mode: root.loop-mode;
-                                    progress-ratio: root.progress-ratio;
-                                    prev => { root.prev-track(); }
-                                    toggle => { root.toggle-play(); }
-                                    next => { root.next-track(); }
-                                    shuffle-toggled => { root.shuffle-toggled(); }
-                                    loop-cycled => { root.loop-cycled(); }
+                                    is-playing: Player.is-playing;
+                                    shuffle-on: Player.shuffle-on;
+                                    loop-mode: Player.loop-mode;
+                                    progress-ratio: Player.progress-ratio;
+                                    prev => { Player.prev-track(); }
+                                    toggle => { Player.toggle-play(); }
+                                    next => { Player.next-track(); }
+                                    shuffle-toggled => { Player.shuffle-toggled(); }
+                                    loop-cycled => { Player.loop-cycled(); }
                                 }
                                 // 展开播放页,同宽版那颗。
                                 RoundControl {
@@ -1350,17 +1289,17 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 spacing: 8px;
 
-                                if root.has-track:
+                                if Player.has-track:
                                 compact-progress := ProgressBar {
                                     horizontal-stretch: 1;
-                                    ratio: root.progress-ratio;
-                                    text: root.progress-text;
-                                    buffering: root.buffering;
-                                    seek(at) => { root.seek(at); }
+                                    ratio: Player.progress-ratio;
+                                    text: Player.progress-text;
+                                    buffering: Player.buffering;
+                                    seek(at) => { Player.seek(at); }
                                 }
                                 compact-volume := VolumeControl {
-                                    volume: root.volume;
-                                    changed(v) => { root.volume-changed(v); }
+                                    volume: Player.volume;
+                                    changed(v) => { Player.volume-changed(v); }
                                 }
                             }
                             HorizontalLayout {
@@ -1588,7 +1527,7 @@ export component MainWindow inherits Window {
         // 取直链/开流的那几秒:点下去了、正在办。
         // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
         // 而这一层还压在点云上。文案硬编码中文,走子集字体。
-        if root.now-loading && !root.lyrics-page-open: OutlinedText {
+        if Player.now-loading && !root.lyrics-page-open: OutlinedText {
             y: root.viz-title-y + 70px;
             width: 100%;
             height: 18px;
@@ -1675,7 +1614,7 @@ export component MainWindow inherits Window {
         // 好让它挂得上条的几何:`if` 里的具名元素在外面引用不到。
         // 歌词页打开时整组让位:滑条占着右边那条道,而歌词行铺到 width - 24px,
         // 叠在一起就是绿条压着字(小米13 真机实拍)。进度那会儿由控制簇的环报着。
-        if root.has-track && !root.lyrics-page-open: Rectangle {
+        if Player.has-track && !root.lyrics-page-open: Rectangle {
             x: root.width - self.width - 8px
                 - root.safe-area-insets.right;
             y: root.height * 0.28;
@@ -1684,10 +1623,10 @@ export component MainWindow inherits Window {
 
             seek-slider := VerticalSeekBar {
                 height: 100%;
-                ratio: root.progress-ratio;
-                text: root.progress-text;
-                buffering: root.buffering;
-                seek(at) => { root.seek(at); }
+                ratio: Player.progress-ratio;
+                text: Player.progress-text;
+                buffering: Player.buffering;
+                seek(at) => { Player.seek(at); }
             }
 
             // 读数比滑条宽得多:挂在 44px 的条上会被裁成「1:23 /」(真机实拍)。
@@ -1699,11 +1638,11 @@ export component MainWindow inherits Window {
                 y: parent.height + 8px;
                 width: 96px;
                 height: 16px;
-                text: root.buffering ? "缓冲中…" : root.progress-text;
+                text: Player.buffering ? "缓冲中…" : Player.progress-text;
                 font-family: Type.mono;
                 font-size: 11px;
                 outline: 1px;
-                text-color: root.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
+                text-color: Player.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
             }
         }
 
@@ -1749,21 +1688,21 @@ export component MainWindow inherits Window {
                         alignment: center;
                         spacing: 8px;
                         ControlCluster {
-                            is-playing: root.is-playing;
-                            shuffle-on: root.shuffle-on;
-                            loop-mode: root.loop-mode;
-                            progress-ratio: root.progress-ratio;
+                            is-playing: Player.is-playing;
+                            shuffle-on: Player.shuffle-on;
+                            loop-mode: Player.loop-mode;
+                            progress-ratio: Player.progress-ratio;
                             // 播放页的环大一档(60/50);接了 warp 时环内是画面,再大一圈。
                             ring-diameter: 60px;
                             ring-inner-diameter: 50px;
                             // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
                             // 小圆点养一条 wgpu pass。
                             pulse: root.viz-bg;
-                            prev => { root.prev-track(); }
-                            toggle => { root.toggle-play(); }
-                            next => { root.next-track(); }
-                            shuffle-toggled => { root.shuffle-toggled(); }
-                            loop-cycled => { root.loop-cycled(); }
+                            prev => { Player.prev-track(); }
+                            toggle => { Player.toggle-play(); }
+                            next => { Player.next-track(); }
+                            shuffle-toggled => { Player.shuffle-toggled(); }
+                            loop-cycled => { Player.loop-cycled(); }
                         }
                         // 时间读数搬去了右侧滑条那边(#75)。
                         // 次要动作垫 glass 底(#69):两颗同尺寸,共用同一张图。

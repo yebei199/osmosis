@@ -1,6 +1,8 @@
 //! 传输控件的绑定:播放键、上一首下一首、洗牌循环、音量与跳转。
 
 use super::*;
+use crate::Player;
+use slint::ComponentHandle as _;
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -8,7 +10,7 @@ pub(super) fn bind_play(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
 
-    ui.on_play(move |id| {
+    ui.global::<Player>().on_play(move |id| {
         let Some(ui) = weak.upgrade() else { return };
 
         // 这一首已经在加载了:这一下是多余的,直接丢掉。不挡的话,连点五下
@@ -36,7 +38,7 @@ pub(super) fn bind_play(ui: &MainWindow, deck: &Deck) {
 
         // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
         deck.queue.borrow_mut().replace(batch, index);
-        if ui.get_shuffle_on() {
+        if ui.global::<Player>().get_shuffle_on() {
             deck.queue.borrow_mut().shuffle(shuffle_seed());
         }
         play_current(&ui, &deck);
@@ -52,7 +54,7 @@ pub(super) fn bind_play(ui: &MainWindow, deck: &Deck) {
 pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
     let toggle = deck.clone();
     let weak = ui.as_weak();
-    ui.on_toggle_play(move || {
+    ui.global::<Player>().on_toggle_play(move || {
         let Some(ui) = weak.upgrade() else { return };
         toggle_play(&ui, &toggle);
         // 暂停图标不该慢一拍 —— 轮询要 1 秒之后才轮到。
@@ -65,7 +67,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
 
     let next = deck.clone();
     let weak = ui.as_weak();
-    ui.on_next_track(move || {
+    ui.global::<Player>().on_next_track(move || {
         let Some(ui) = weak.upgrade() else { return };
         if next.sync.is_listening() {
             next.sync.leave();
@@ -75,7 +77,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
 
     let previous = deck.clone();
     let weak = ui.as_weak();
-    ui.on_prev_track(move || {
+    ui.global::<Player>().on_prev_track(move || {
         let Some(ui) = weak.upgrade() else { return };
         if previous.sync.is_listening() {
             previous.sync.leave();
@@ -88,7 +90,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
 
     let shuffle = deck.clone();
     let weak = ui.as_weak();
-    ui.on_shuffle_toggled(move || {
+    ui.global::<Player>().on_shuffle_toggled(move || {
         let Some(ui) = weak.upgrade() else { return };
         let on = {
             let mut queue = shuffle.queue.borrow_mut();
@@ -100,7 +102,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
             queue.is_shuffled()
         };
         // 界面上那个开关是这一位的投影,拨完由这里写回去 —— 开关自己不置位。
-        ui.set_shuffle_on(on);
+        ui.global::<Player>().set_shuffle_on(on);
         // 系统控件上的随机也该立刻跟着翻,轮询要 1 秒之后才轮到。
         crate::media::push(
             &ui,
@@ -111,7 +113,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
 
     let looper = deck.clone();
     let weak = ui.as_weak();
-    ui.on_loop_cycled(move || {
+    ui.global::<Player>().on_loop_cycled(move || {
         let Some(ui) = weak.upgrade() else { return };
         use app_core::LoopMode;
         // 关→列表→单曲→关:单键三态,读的是队列里的真相,不是界面属性。
@@ -125,7 +127,7 @@ pub(super) fn bind_controls(ui: &MainWindow, deck: &Deck) {
 
     let setter = deck.clone();
     let weak = ui.as_weak();
-    ui.on_loop_mode_set(move |mode| {
+    ui.global::<Player>().on_loop_mode_set(move |mode| {
         let Some(ui) = weak.upgrade() else { return };
         apply_loop(
             &ui,
@@ -144,7 +146,8 @@ pub(super) fn apply_loop(
     mode: app_core::LoopMode,
 ) {
     deck.queue.borrow_mut().set_loop_mode(mode);
-    ui.set_loop_mode(crate::media::loop_index(mode));
+    ui.global::<Player>()
+        .set_loop_mode(crate::media::loop_index(mode));
     crate::media::push(ui, &deck.playback, &deck.media);
 }
 
@@ -155,32 +158,34 @@ pub(super) fn apply_loop(
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn bind_volume(ui: &MainWindow, deck: &Deck) {
     let saved = api::settings::load().volume;
-    ui.set_volume(saved);
+    ui.global::<Player>().set_volume(saved);
     if let Ok(player) = deck.player.as_ref() {
         player.set_volume(saved);
     }
 
     let deck = deck.clone();
     let weak = ui.as_weak();
-    ui.on_volume_changed(move |volume| {
-        let volume = audio::clamped_volume(volume);
-        if let Some(ui) = weak.upgrade() {
-            ui.set_volume(volume);
-        }
-        if let Ok(player) = deck.player.as_ref() {
-            player.set_volume(volume);
-        }
+    ui.global::<Player>().on_volume_changed(
+        move |volume| {
+            let volume = audio::clamped_volume(volume);
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Player>().set_volume(volume);
+            }
+            if let Ok(player) = deck.player.as_ref() {
+                player.set_volume(volume);
+            }
 
-        // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
-        // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
-        //
-        // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被这次
-        // 调音量顺手冲回默认值。
-        api::settings::save(&api::settings::Settings {
-            volume,
-            ..api::settings::load()
-        });
-    });
+            // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
+            // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
+            //
+            // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被这次
+            // 调音量顺手冲回默认值。
+            api::settings::save(&api::settings::Settings {
+                volume,
+                ..api::settings::load()
+            });
+        },
+    );
 }
 
 /// 接上进度条的拖动。
@@ -196,7 +201,7 @@ pub(super) fn bind_seek(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
 
-    ui.on_seek(move |at| {
+    ui.global::<Player>().on_seek(move |at| {
         let Some(ui) = weak.upgrade() else { return };
         let state = deck.playback.borrow().state().clone();
         let (PlaybackState::Playing(track)
@@ -212,12 +217,12 @@ pub(super) fn bind_seek(ui: &MainWindow, deck: &Deck) {
         };
 
         // 立刻挂上,不等轮询:那要慢一秒,而一秒的沉默正好是"点了没反应"
-        ui.set_buffering(true);
+        ui.global::<Player>().set_buffering(true);
 
         if let Ok(player) = deck.player.as_ref()
             && let Err(err) = player.seek(target)
         {
-            ui.set_buffering(false);
+            ui.global::<Player>().set_buffering(false);
             crate::notice::show(
                 &ui,
                 format!("这首跳不了: {err}"),
@@ -242,7 +247,7 @@ pub(super) fn push_seek_state(
     };
 
     if let Some(why) = state.take_failure() {
-        ui.set_buffering(false);
+        ui.global::<Player>().set_buffering(false);
         crate::notice::show(
             ui,
             format!("这首跳不了: {why}"),
@@ -250,5 +255,5 @@ pub(super) fn push_seek_state(
         return;
     }
 
-    ui.set_buffering(state.is_seeking());
+    ui.global::<Player>().set_buffering(state.is_seeking());
 }

@@ -11,6 +11,7 @@ use std::rc::Rc;
 use slint::{ComponentHandle, Model};
 
 use crate::MainWindow;
+use crate::Player;
 use crate::wall;
 
 /// 一张卡的世界位姿,物理像素。镜像 `render3d::WallCard`。
@@ -130,7 +131,8 @@ impl WallDrive {
         y: f32,
     ) -> Option<usize> {
         let lay = Self::layout_now(ui);
-        let count = ui.get_tracks().row_count();
+        let count =
+            ui.global::<Player>().get_tracks().row_count();
         let poses = self.poses(&lay, count);
         let dpr = ui.window().scale_factor();
         wall::hit_test(
@@ -187,7 +189,7 @@ impl WallDrive {
             let landed = run.step();
             if landed {
                 if let Some(id) = self.pending_play.take() {
-                    ui.invoke_play(id);
+                    ui.global::<Player>().invoke_play(id);
                 }
                 ui.set_play_page_open(true);
                 self.dolly = None;
@@ -196,7 +198,8 @@ impl WallDrive {
             }
         }
 
-        let count = ui.get_tracks().row_count();
+        let count =
+            ui.global::<Player>().get_tracks().row_count();
         let poses = self.poses(&lay, count);
         let covers = self.collect_covers(ui, poses.len());
 
@@ -239,7 +242,7 @@ impl WallDrive {
         ui: &MainWindow,
         count: usize,
     ) -> Vec<WallCoverControls> {
-        let tracks = ui.get_tracks();
+        let tracks = ui.global::<Player>().get_tracks();
         self.uploaded.resize(
             count.max(self.uploaded.len()),
             slint::SharedString::new(),
@@ -261,9 +264,10 @@ impl WallDrive {
                 {
                     self.requested
                         .push(row.cover_url.clone());
-                    ui.invoke_needs_cover(
-                        row.cover_url.clone(),
-                    );
+                    ui.global::<Player>()
+                        .invoke_needs_cover(
+                            row.cover_url.clone(),
+                        );
                 }
                 continue;
             };
@@ -310,7 +314,10 @@ pub(crate) fn bind(
         let Some(index) = d.hit(&ui, x, y) else {
             return;
         };
-        let Some(row) = ui.get_tracks().row_data(index)
+        let Some(row) = ui
+            .global::<Player>()
+            .get_tracks()
+            .row_data(index)
         else {
             return;
         };

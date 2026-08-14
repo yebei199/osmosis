@@ -7,6 +7,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Player;
 use ui::Session;
 use ui::{MainWindow, TrackRow};
 
@@ -29,10 +30,9 @@ fn music_page(supported: bool) -> MainWindow {
     ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
     ui.set_wall_supported(supported);
-    ui.set_tracks(ModelRc::new(VecModel::from(vec![
-        row("a"),
-        row("b"),
-    ])));
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![row("a"), row("b")]),
+    ));
     ui
 }
 

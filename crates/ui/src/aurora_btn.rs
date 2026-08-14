@@ -13,6 +13,7 @@
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::Player;
 
 /// 静息振幅:约一成亮度。悬停收敛到 1.0。
 pub const REST_AMP: f32 = 0.12;
@@ -256,7 +257,10 @@ impl ButtonBand {
                 ),
             );
             // 胶囊的 fluid:播放当"热"(振幅升到满),暂停收回静息。
-            self.bar.step(ui.get_is_playing(), (0.72, 0.5));
+            self.bar.step(
+                ui.global::<Player>().get_is_playing(),
+                (0.72, 0.5),
+            );
             {
                 let now = web_time::Instant::now();
                 if let Some(last) = self.last {
@@ -284,9 +288,10 @@ impl ButtonBand {
                 // 没歌或场区未量出时不渲这一槽。
                 let bar_w = ui.get_bar_w();
                 let bar_h = ui.get_bar_h();
-                let bar_on = ui.get_is_playing()
-                    && bar_w > 1.0
-                    && bar_h > 1.0;
+                let bar_on =
+                    ui.global::<Player>().get_is_playing()
+                        && bar_w > 1.0
+                        && bar_h > 1.0;
                 let mut slots = vec![
                     // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
                     AuroraBtnSlotControls {
@@ -361,8 +366,10 @@ impl ButtonBand {
                     .then(|| {
                         let (variant, progress) =
                             fluid_or_progress(
-                                ui.get_buffering(),
-                                ui.get_progress_ratio(),
+                                ui.global::<Player>()
+                                    .get_buffering(),
+                                ui.global::<Player>()
+                                    .get_progress_ratio(),
                             );
                         slots.push(AuroraBtnSlotControls {
                             w: viz_bar_w * scale,

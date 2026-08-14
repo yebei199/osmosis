@@ -1,6 +1,8 @@
 //! 两处要说给用户听的话:断流的横幅,以及启动时连不上服务端的提示。
 
 use super::*;
+use crate::Player;
+use slint::ComponentHandle as _;
 
 /// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
 ///
@@ -16,8 +18,8 @@ pub(super) fn report_stream_loss(
 
     let opening = describe_stream_loss(None);
     deck.playback.borrow_mut().fail(opening.to_owned());
-    ui.set_is_playing(false);
-    ui.set_playback_text(
+    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Player>().set_playback_text(
         describe_playback(deck.playback.borrow().state())
             .into(),
     );

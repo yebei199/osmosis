@@ -6,6 +6,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Player;
 use ui::Session;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -52,9 +53,9 @@ fn the_music_tile_opens_the_music_app() {
 fn the_mini_player_appears_only_with_a_track() {
     let ui = home();
 
-    ui.set_has_track(false);
+    ui.global::<Player>().set_has_track(false);
     assert!(!present(&ui, "MainWindow::home-mini"));
 
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     assert!(present(&ui, "MainWindow::home-mini"));
 }

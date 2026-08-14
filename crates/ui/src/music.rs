@@ -42,6 +42,7 @@ pub use rules::describe_playback;
 
 // 各子模块的条目都引进这一层,子模块的 `use super::*` 因此能互相看见 ——
 // 拆分前它们本就在同一个作用域里,这几行是把那个作用域重新拼起来。
+use crate::Player;
 use advance::*;
 use controls::*;
 use list::*;
@@ -202,7 +203,7 @@ pub fn bind(
     start_auto_advance(ui, &deck);
     startup_check(ui);
 
-    ui.set_playback_text(
+    ui.global::<Player>().set_playback_text(
         describe_playback(&PlaybackState::Idle).into(),
     );
 
@@ -227,7 +228,8 @@ pub fn bind(
         -> Box<dyn crate::media::MediaControls>,
 ) -> (crate::viz::Source, LyricFeed, CoverFeed) {
     // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
-    ui.set_playback_text("Web 端暂不支持播放".into());
+    ui.global::<Player>()
+        .set_playback_text("Web 端暂不支持播放".into());
     (None, LyricFeed, CoverFeed::default())
 }
 

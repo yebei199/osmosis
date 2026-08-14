@@ -15,6 +15,7 @@ use app_core::ArtistDto;
 use slint::ComponentHandle;
 
 use crate::Library;
+use crate::Player;
 use crate::{ArtistRow, MainWindow, PlaylistRow};
 
 /// 搜索结果的三类。数值即 `.slint` 里 `SearchTabs.items` 的下标 ——
@@ -78,7 +79,7 @@ pub fn bind(
     let weak = ui.as_weak();
     let keep = last.clone();
     let search_tracks = tracks.clone();
-    ui.on_search(move |keyword| {
+    ui.global::<Player>().on_search(move |keyword| {
         let keyword = keyword.trim().to_owned();
         if keyword.is_empty() {
             return;

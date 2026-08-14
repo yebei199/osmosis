@@ -5,6 +5,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Player;
 use ui::Session;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -75,10 +76,10 @@ fn the_volume_slider_starts_collapsed() {
 fn the_progress_bar_appears_only_with_a_track() {
     let ui = wide_page();
 
-    ui.set_has_track(false);
+    ui.global::<Player>().set_has_track(false);
     assert!(!present(&ui, "MainWindow::wide-progress"));
 
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     assert!(present(&ui, "MainWindow::wide-progress"));
 }
 
@@ -90,11 +91,11 @@ fn the_progress_bar_appears_only_with_a_track() {
 #[test]
 fn the_shuffle_button_asks_without_setting_the_property() {
     let ui = wide_page();
-    ui.set_shuffle_on(false);
+    ui.global::<Player>().set_shuffle_on(false);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_shuffle_toggled(move || {
+    ui.global::<Player>().on_shuffle_toggled(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -102,7 +103,7 @@ fn the_shuffle_button_asks_without_setting_the_property() {
 
     assert_eq!(asked.get(), 1, "拨一下该喊一声");
     assert!(
-        !ui.get_shuffle_on(),
+        !ui.global::<Player>().get_shuffle_on(),
         "值该纹丝不动 —— 写它是 Rust 的活,不是控件的"
     );
 }
@@ -114,13 +115,13 @@ fn the_shuffle_button_asks_without_setting_the_property() {
 fn the_shuffle_button_shows_whether_shuffle_is_on() {
     let ui = wide_page();
 
-    ui.set_shuffle_on(false);
+    ui.global::<Player>().set_shuffle_on(false);
     assert_eq!(
         shuffle_key(&ui).accessible_checked(),
         Some(false)
     );
 
-    ui.set_shuffle_on(true);
+    ui.global::<Player>().set_shuffle_on(true);
     assert_eq!(
         shuffle_key(&ui).accessible_checked(),
         Some(true),
@@ -144,11 +145,11 @@ fn loop_key(
 #[test]
 fn the_loop_button_asks_without_setting_the_property() {
     let ui = wide_page();
-    ui.set_loop_mode(0);
+    ui.global::<Player>().set_loop_mode(0);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_loop_cycled(move || {
+    ui.global::<Player>().on_loop_cycled(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -158,7 +159,7 @@ fn the_loop_button_asks_without_setting_the_property() {
 
     assert_eq!(asked.get(), 1, "拨一下该喊一声");
     assert_eq!(
-        ui.get_loop_mode(),
+        ui.global::<Player>().get_loop_mode(),
         0,
         "值该纹丝不动 —— 写它是 Rust 的活,不是控件的"
     );
@@ -169,17 +170,17 @@ fn the_loop_button_asks_without_setting_the_property() {
 fn the_loop_button_labels_all_three_states() {
     let ui = wide_page();
 
-    ui.set_loop_mode(0);
+    ui.global::<Player>().set_loop_mode(0);
     assert!(loop_key(&ui, "循环: 关").is_some());
 
-    ui.set_loop_mode(1);
+    ui.global::<Player>().set_loop_mode(1);
     assert!(loop_key(&ui, "循环: 列表").is_some());
     assert!(
         loop_key(&ui, "循环: 关").is_none(),
         "换态之后旧标签不该还在"
     );
 
-    ui.set_loop_mode(2);
+    ui.global::<Player>().set_loop_mode(2);
     assert!(loop_key(&ui, "循环: 单曲").is_some());
 }
 
@@ -199,7 +200,7 @@ fn the_day_night_switch_is_gone_from_the_cluster() {
 #[test]
 fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
     let ui = wide_page();
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
 
     // 条件页面要先查一次元素逼出实例化,init 才会跑。
     let _ =
@@ -223,7 +224,7 @@ fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
 #[test]
 fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
     let ui = wide_page();
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     assert_eq!(
         ui.get_viz_bar_w(),
         0.0,
@@ -258,7 +259,7 @@ fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
 fn the_expand_button_stays_on_screen_in_compact() {
     let ui = wide_page();
     ui.set_compact(true);
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
 
     let expand =
         testing::ElementHandle::find_by_accessible_label(
@@ -285,10 +286,10 @@ fn the_bar_shows_the_current_track_only_when_there_is_one()
 {
     let ui = wide_page();
 
-    ui.set_has_track(false);
+    ui.global::<Player>().set_has_track(false);
     assert!(!present(&ui, "MainWindow::bar-now"));
 
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     assert!(present(&ui, "MainWindow::bar-now"));
 }
 
@@ -297,11 +298,11 @@ fn the_bar_shows_the_current_track_only_when_there_is_one()
 #[test]
 fn the_ring_play_key_still_toggles_playback() {
     let ui = wide_page();
-    ui.set_is_playing(false);
+    ui.global::<Player>().set_is_playing(false);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_toggle_play(move || {
+    ui.global::<Player>().on_toggle_play(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -314,7 +315,7 @@ fn the_ring_play_key_still_toggles_playback() {
 
     assert_eq!(asked.get(), 1, "按一下该喊一声");
     assert!(
-        !ui.get_is_playing(),
+        !ui.global::<Player>().get_is_playing(),
         "值该纹丝不动 —— 写它是 Rust 的活"
     );
 }

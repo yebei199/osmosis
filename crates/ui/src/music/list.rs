@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::Library;
+use crate::Player;
 use slint::ComponentHandle as _;
 
 /// 把当前打开的那个歌单的曲目重取一遍。
@@ -99,11 +100,12 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
 pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let daily = deck.clone();
     let weak = ui.as_weak();
-    ui.on_daily(move || fetch_daily(&weak, &daily));
+    ui.global::<Player>()
+        .on_daily(move || fetch_daily(&weak, &daily));
 
     let liked = deck.clone();
     let weak = ui.as_weak();
-    ui.on_liked(move || {
+    ui.global::<Player>().on_liked(move || {
         fetch_into(&weak, &liked, async {
             api::liked().await
         });
@@ -211,7 +213,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
 
     let shown = deck.clone();
     let weak = ui.as_weak();
-    ui.on_music_shown(move || {
+    ui.global::<Player>().on_music_shown(move || {
         // 当天拉过就什么都不做 —— 搜完歌切出去再回来,搜索结果因此保得住。
         if daily_is_due(
             shown.last_daily.get().as_ref(),
@@ -364,7 +366,8 @@ pub(super) fn push_rows(
     loading: Option<&str>,
 ) {
     let rows = to_rows(&deck.tracks.borrow(), loading);
-    ui.set_tracks(ModelRc::new(VecModel::from(rows)));
+    ui.global::<Player>()
+        .set_tracks(ModelRc::new(VecModel::from(rows)));
     // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
     crate::liked::remark(&deck.liked, ui);
     // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
@@ -384,7 +387,7 @@ pub(super) fn bind_needs_cover(
     let thumbnails = deck.thumbnails.clone();
     let weak = ui.as_weak();
 
-    ui.on_needs_cover(move |url| {
+    ui.global::<Player>().on_needs_cover(move |url| {
         let Some(ui) = weak.upgrade() else { return };
         thumbnails.request(&ui, &url);
     });

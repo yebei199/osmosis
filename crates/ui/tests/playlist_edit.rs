@@ -8,6 +8,7 @@ use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
 use ui::Library;
+use ui::Player;
 use ui::Session;
 use ui::{MainWindow, TrackRow};
 
@@ -37,8 +38,8 @@ fn opened_local(ui: &MainWindow) {
 /// 列表里摆一首歌。行上的键长在 `for` 里 —— 一首都没有的话,
 /// 「有没有移除键」这个问题根本问不出来。
 fn one_track(ui: &MainWindow) {
-    ui.set_tracks(ModelRc::new(VecModel::from(vec![
-        TrackRow {
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![TrackRow {
             id: "1".into(),
             title: "甜甜的".into(),
             artists: "本兮".into(),
@@ -47,8 +48,8 @@ fn one_track(ui: &MainWindow) {
             liked: false,
             cover_url: String::new().into(),
             cover: slint::Image::default(),
-        },
-    ])));
+        }]),
+    ));
 }
 
 /// 「新建歌单」只在我的歌单那一层出现。

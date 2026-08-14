@@ -35,6 +35,7 @@ pub use seam::{
 
 pub(crate) use rules::{loop_from_index, loop_index};
 
+use crate::Player;
 use rules::*;
 
 /// 界面这一侧的媒体控件把手:后端,加上推给它的那些东西的最新一份。
@@ -163,26 +164,40 @@ fn dispatch(
     command: MediaCommand,
 ) {
     match command {
-        MediaCommand::Next => ui.invoke_next_track(),
-        MediaCommand::Previous => ui.invoke_prev_track(),
+        MediaCommand::Next => {
+            ui.global::<Player>().invoke_next_track()
+        }
+        MediaCommand::Previous => {
+            ui.global::<Player>().invoke_prev_track()
+        }
         MediaCommand::Play
         | MediaCommand::Pause
         | MediaCommand::Toggle => {
-            if toggles(command, ui.get_is_playing()) {
-                ui.invoke_toggle_play();
+            if toggles(
+                command,
+                ui.global::<Player>().get_is_playing(),
+            ) {
+                ui.global::<Player>().invoke_toggle_play();
             }
         }
         MediaCommand::SetShuffle(_) => {
-            if flips_shuffle(command, ui.get_shuffle_on()) {
-                ui.invoke_shuffle_toggled();
+            if flips_shuffle(
+                command,
+                ui.global::<Player>().get_shuffle_on(),
+            ) {
+                ui.global::<Player>()
+                    .invoke_shuffle_toggled();
             }
         }
         MediaCommand::SetLoop(_) => {
             if let Some(want) = wants_loop(
                 command,
-                loop_from_index(ui.get_loop_mode()),
+                loop_from_index(
+                    ui.global::<Player>().get_loop_mode(),
+                ),
             ) {
-                ui.invoke_loop_mode_set(loop_index(want));
+                ui.global::<Player>()
+                    .invoke_loop_mode_set(loop_index(want));
             }
         }
         MediaCommand::SeekTo(_)
@@ -206,7 +221,7 @@ fn dispatch(
             ) else {
                 return;
             };
-            ui.invoke_seek(ratio);
+            ui.global::<Player>().invoke_seek(ratio);
         }
     }
 }
@@ -224,9 +239,11 @@ pub(crate) fn push(
     let state = playback.borrow().state().clone();
     media.publish(NowPlaying::render(
         &state,
-        ui.get_is_playing(),
-        ui.get_shuffle_on(),
-        loop_from_index(ui.get_loop_mode()),
+        ui.global::<Player>().get_is_playing(),
+        ui.global::<Player>().get_shuffle_on(),
+        loop_from_index(
+            ui.global::<Player>().get_loop_mode(),
+        ),
         media.art(),
     ));
 }

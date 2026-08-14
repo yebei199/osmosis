@@ -9,6 +9,7 @@ use slint::platform::PointerEventButton;
 use slint::{
     ComponentHandle, LogicalPosition, ModelRc, VecModel,
 };
+use ui::Player;
 use ui::Session;
 use ui::{LyricRow, MainWindow};
 
@@ -22,7 +23,7 @@ fn play_window() -> MainWindow {
         .set_size(slint::LogicalSize::new(400.0, 800.0));
     ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
-    ui.set_has_track(true);
+    ui.global::<Player>().set_has_track(true);
     ui.set_now_title("歌词测试曲".into());
     ui.set_lyric_line("当前这一行".into());
     ui
@@ -226,11 +227,12 @@ fn dragging_browses_without_touching_playback() {
     let ui = play_window();
     ui.set_lyric_rows(rows(false));
     open_lyrics(&ui);
-    ui.set_progress_ratio(0.3);
+    ui.global::<Player>().set_progress_ratio(0.3);
 
     let sought = std::rc::Rc::new(std::cell::Cell::new(0));
     let sink = sought.clone();
-    ui.on_seek(move |_| sink.set(sink.get() + 1));
+    ui.global::<Player>()
+        .on_seek(move |_| sink.set(sink.get() + 1));
 
     let area = element(&ui, "LyricsPage::backdrop")
         .expect("该有可拖的区域");
@@ -253,7 +255,8 @@ fn dragging_browses_without_touching_playback() {
     );
     assert_eq!(sought.get(), 0, "拖歌词不该 seek");
     assert!(
-        (ui.get_progress_ratio() - 0.3).abs()
+        (ui.global::<Player>().get_progress_ratio() - 0.3)
+            .abs()
             < f32::EPSILON,
         "拖歌词不该动进度"
     );

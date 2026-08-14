@@ -7,6 +7,7 @@ use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use ui::Library;
 use ui::MainWindow;
+use ui::Player;
 use ui::Session;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -96,7 +97,7 @@ fn searching_again_stays_on_the_current_tab() {
     ui.global::<Library>().set_search_tab(1);
 
     // 搜索本身要网络,这里只发回调:它不该顺手把页签拨回去
-    ui.invoke_search("本兮".into());
+    ui.global::<Player>().invoke_search("本兮".into());
 
     assert_eq!(
         ui.global::<Library>().get_search_tab(),

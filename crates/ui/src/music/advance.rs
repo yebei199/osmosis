@@ -1,6 +1,8 @@
 //! 预取下一首,以及队列的推进 —— 手动的与放完自动的两条路。
 
 use super::*;
+use crate::Player;
+use slint::ComponentHandle as _;
 
 /// 取走备好的那一份 —— **只在它确实是这一首时**。
 ///
@@ -85,7 +87,8 @@ pub(super) fn after_advance(
     } else {
         // 状态机也要停:不停的话它仍是 Playing,自动续播每秒都会再撞进来。
         deck.playback.borrow_mut().stop();
-        ui.set_playback_text(QUEUE_DONE.into());
-        ui.set_is_playing(false);
+        ui.global::<Player>()
+            .set_playback_text(QUEUE_DONE.into());
+        ui.global::<Player>().set_is_playing(false);
     }
 }
