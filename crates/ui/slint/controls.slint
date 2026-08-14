@@ -484,7 +484,9 @@ export component VerticalSeekBar inherits Rectangle {
     groove := Rectangle {
         width: 6px;
         height: 100%;
-        background: Theme.overlay;
+        // 暗底而不是 `Theme.overlay`:那是一层 8% 的白,压在亮封面的点云上
+        // 一点也看不见(小米13 真机实拍)。这一层要在任何背景上都自带对比。
+        background: Theme.immersive.with-alpha(0.55);
         border-radius: 3px;
 
         fill := Rectangle {

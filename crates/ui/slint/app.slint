@@ -1652,7 +1652,9 @@ export component MainWindow inherits Window {
         }
 
         // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
-        OutlinedText {
+        // 歌词页打开时整组让位 —— 它们与歌词页画在同一片区域,留着就是两层字
+        // 叠在一起(小米13 真机实拍)。
+        if !root.lyrics-page-open: play-title := OutlinedText {
             y: root.viz-title-y;
             width: 100%;
             height: 42px;
@@ -1663,7 +1665,7 @@ export component MainWindow inherits Window {
             font-family: Type.display-latin;
             font-size: root.compact ? 26px : 34px;
         }
-        OutlinedText {
+        if !root.lyrics-page-open: OutlinedText {
             y: root.viz-title-y + 46px;
             width: 100%;
             height: 20px;
@@ -1675,7 +1677,7 @@ export component MainWindow inherits Window {
         // 取直链/开流的那几秒:点下去了、正在办。
         // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
         // 而这一层还压在点云上。文案硬编码中文,走子集字体。
-        if root.now-loading: OutlinedText {
+        if root.now-loading && !root.lyrics-page-open: OutlinedText {
             y: root.viz-title-y + 70px;
             width: 100%;
             height: 18px;
@@ -1689,7 +1691,7 @@ export component MainWindow inherits Window {
         // (docs/adr/0010 的「歌词是例外」)。播放页的深度卡片是上面那块标注卡。
         // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
         // 这块同时是歌词页的入口(#73):点它横向滑出整页歌词。
-        if root.lyric-line != "": lyric-entry := Rectangle {
+        if root.lyric-line != "" && !root.lyrics-page-open: lyric-entry := Rectangle {
             y: root.viz-lyric-y;
             height: root.viz-lyric-h;
 
@@ -1775,14 +1777,18 @@ export component MainWindow inherits Window {
                 seek(at) => { root.seek(at); }
             }
 
-            Text {
+            // 读数比滑条宽得多:挂在 44px 的条上会被裁成「1:23 /」(真机实拍)。
+            // 描边同歌名歌词 —— 亮封面的点云下,纯文本一个字也读不出来。
+            play-time-readout := OutlinedText {
+                x: (parent.width - self.width) / 2;
                 y: parent.height + 8px;
-                width: 100%;
-                horizontal-alignment: center;
+                width: 96px;
+                height: 16px;
                 text: root.buffering ? "缓冲中…" : root.progress-text;
                 font-family: Type.mono;
                 font-size: 11px;
-                color: root.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
+                outline: 1px;
+                text-color: root.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
             }
         }
 

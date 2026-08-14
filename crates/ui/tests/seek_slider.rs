@@ -218,3 +218,22 @@ fn the_slider_carries_the_time_readout() {
         "缓冲时该换成缓冲文案"
     );
 }
+
+/// 时间读数要能完整显示。它的框只有滑条那 44px 宽的话,
+/// 「1:23 / 3:46」会被裁成「1:23 /」(小米13 真机实拍)。
+#[test]
+fn the_time_readout_is_wider_than_the_slider() {
+    let ui = play_window();
+    ui.set_progress_text("1:23 / 3:46".into());
+
+    let readout = element(&ui, "MainWindow::play-time-readout")
+        .expect("播放页该有时间读数");
+    let bar = slider(&ui).expect("该有滑条");
+
+    assert!(
+        readout.size().width > bar.size().width * 1.5,
+        "读数框该比滑条宽出一截:滑条 {},读数 {}",
+        bar.size().width,
+        readout.size().width
+    );
+}

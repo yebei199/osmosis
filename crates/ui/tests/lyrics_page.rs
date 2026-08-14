@@ -257,3 +257,27 @@ fn dragging_browses_without_touching_playback() {
         "拖歌词不该动进度"
     );
 }
+
+/// 歌词页打开时,播放页的歌名与那两行歌词一并让位。
+///
+/// 它们与歌词页画在同一片区域,留着就是两层字叠在一起(小米13 真机实拍)。
+#[test]
+fn the_play_page_text_steps_aside_for_the_lyrics_page() {
+    let ui = play_window();
+    ui.set_lyric_rows(rows(false));
+    assert!(
+        element(&ui, "MainWindow::lyric-entry").is_some(),
+        "播放页该有那两行歌词"
+    );
+
+    open_lyrics(&ui);
+
+    assert!(
+        element(&ui, "MainWindow::lyric-entry").is_none(),
+        "歌词页打开后播放页那两行该让位"
+    );
+    assert!(
+        element(&ui, "MainWindow::play-title").is_none(),
+        "歌名也该让位"
+    );
+}

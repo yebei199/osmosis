@@ -9,6 +9,10 @@ import { LyricRow } from "types.slint";
 import { OutlinedText } from "widgets.slint";
 
 export component LyricsPage inherits Rectangle {
+    // 压一层暗底:点云已降到背景光,但亮封面的点云仍会把整页字吃掉
+    // (小米13 真机实拍)。这一层同时给了整页一个稳定的对比基准。
+    background: Theme.immersive.with-alpha(0.62);
+
     in property <[LyricRow]> rows;
     // 有没有译文数据。空模型时为假,开关与译文行都不实例化。
     in property <bool> has-translation;
@@ -80,14 +84,19 @@ export component LyricsPage inherits Rectangle {
                 width: root.width - 48px;
                 x: 24px;
                 // 高度跟着字号走:定高才排得稳,而字号本身就是景深的一半。
-                height: root.focus-size + 14px
-                    - Math.abs(row.offset) * root.size-step;
+                // 焦点行留两行的高度并折行,其余行单行截断 —— 定高配折行会让
+                // 长句溢出自己的框、压到邻居身上(小米13 真机实拍),而手机宽度上
+                // 一句日文歌词经常就是两行。
+                height: row.offset == 0
+                    ? root.focus-size * 2 + 14px
+                    : root.focus-size + 10px
+                        - Math.abs(row.offset) * root.size-step;
                 text: row.text;
                 text-color: Theme.immersive-text;
                 font-size: root.focus-size
                     - Math.abs(row.offset) * root.size-step;
                 outline: row.offset == 0 ? 2px : 1px;
-                wrap: word-wrap;
+                wrap: row.offset == 0 ? word-wrap : no-wrap;
             }
 
             if root.translation-on && row.translation != "":
