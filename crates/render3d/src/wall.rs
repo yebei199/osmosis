@@ -94,7 +94,7 @@ pub(crate) struct WallScene {
 impl WallScene {
     /// 建目标纹理与相机(初始不激活:音乐页不开卡墙就一帧也不渲)。
     pub(crate) fn new(app: &mut App) -> Self {
-        let target = crate::make_target(app, 4, 4);
+        let target = crate::scene::make_target(app, 4, 4);
         let camera = app
             .world_mut()
             .spawn((
@@ -309,7 +309,7 @@ impl WallScene {
         height: u32,
     ) {
         let new_target =
-            crate::make_target(app, width, height);
+            crate::scene::make_target(app, width, height);
         app.world_mut().entity_mut(self.camera).insert(
             RenderTarget::Image(new_target.clone().into()),
         );
@@ -328,9 +328,10 @@ impl WallScene {
         &mut self,
         app: &App,
     ) -> slint::Image {
-        let Some(tex) =
-            crate::extract_texture(app, &self.target)
-        else {
+        let Some(tex) = crate::scene::extract_texture(
+            app,
+            &self.target,
+        ) else {
             return self.image.clone().unwrap_or_default();
         };
         let key = (tex.width(), tex.height());

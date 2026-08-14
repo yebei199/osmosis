@@ -26,8 +26,7 @@ mod spin;
 mod transition;
 
 pub(crate) use mesh::{
-    CUBE_INDICES, CUBE_VERTICES, CloudVertices, Levels,
-    band_levels, cloud_vertices,
+    CloudVertices, band_levels, cloud_vertices,
 };
 
 pub(crate) use spin::Spin;
