@@ -78,13 +78,6 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
 元素树、截图全是旧的,一切看起来"改了没生效"。
 
-杀干净也不保证脱身:**元素树会在应用退出之后继续应答**。2026-08-13 实测,进程 kill、8091
-端口都释放了,`list_windows` 照样给出窗口;重启之后查唯一元素 `MainWindow::viz-anchor-card`
-返回**三个**句柄,句柄编号跨进程重启一路递增到 246,说明答的是几份树混在一起。因此
-**「元素不在树里」这个结论不能由 MCP 给**,它只证明你连的那份树里没有。要判元素在不在,
-写进 `crates/ui/tests/`,用 `i-slint-backend-testing` 的 `find_by_element_id` 查
-(见 [`docs/lesson/tooling.md`](docs/lesson/tooling.md))。
-
 **4. GPU 构建里,你看的那一层可能不是真的。**
 
 *你看不见自己改的东西*:`.slint` 元素会被导入的纹理盖住。侧栏那句
@@ -258,6 +251,13 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
 
 `just desktop-dev*` 仍前置端口守卫:桌面那个号被占时直接失败并点名占用者。分号之后
 再撞上多半是上一个桌面实例没退干净,`just desktop-kill`。
+
+**先确认工具连的是哪一台,再读它的答案。** 会话启动时桌面没跑,工具列表里就只有
+`slint-android`;它答得飞快、窗口 1080x2400、scale 2.75,很容易当成桌面窗口接着用,而
+那是手机,装的可能是几小时前的包。据此判过「桌面上新加的元素不存在」,查了一小时,
+真相是手机上的包还没有那个元素。**两条硬判据**:`adb shell wm size` 与工具报的窗口尺寸
+对得上就是手机;元素在不在最终以 `crates/ui/tests/` 里 `i-slint-backend-testing` 的
+`find_by_element_id` 为准(见 [`docs/lesson/tooling.md`](docs/lesson/tooling.md))。
 
 ## 装到真机上的是哪个档
 
