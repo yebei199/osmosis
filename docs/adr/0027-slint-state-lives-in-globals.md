@@ -14,16 +14,19 @@
 
 ## 决策
 
-**属性面按域拆成 `export global` 单例**:`Player`(播放与传输)、`Viz`(可视化与
-播放页几何)、`Library`(歌单/搜索/红心)、`Session`(登录与个人页)、`Shell`
-(版式、tab、卡墙、同播、GPU 纹理槽)、`Nav`(导航条目表,已存在)。
+**属性面按域拆成 `export global` 单例**,落地为六个:`Player`(播放与传输)、
+`Viz`(可视化与播放页几何)、`Library`(歌单/搜索/红心)、`Session`(登录)、
+`Profile`(个人页,与登录态分开)、`Shell`(版式、tab、卡墙、同播、GPU 纹理槽)。
 
 子组件直接读写 global,**不做属性转发**。Rust 侧 `bind_*` 改用
 `ui.global::<Player>().set_xxx()` 访问。
 
-**纯视觉的派生几何不进 global**,跟着它的组件走。global 只放 Rust ↔ UI 的
-状态契约。导航选中器那批带 `animate` 的派生 length 是分界线上的例子:其中
-`nav-bg` 由 Rust 侧渲染读取,留在 `Shell`;其余跟着 `navshell.slint` 走。
+**由窗口几何派生的量不进 global**,留在 `MainWindow` 上。这不只是归属品味:
+global 不在任何元素树里,没有 `root` 可指,拿不到 `root.height`、`root.width`
+与 safe-area inset,由窗口尺寸派生的属性在语言层面就进不去。导航选中器那批带
+`animate` 的派生 length 全属此类;连 Rust 侧每帧写入的 `nav-bg` 也因为和这批
+几何绑在一起,留在 `MainWindow`(`ui.set_nav_bg`),没进 `Shell`。global 只放
+与窗口无关的 Rust ↔ UI 状态契约。
 
 ## 备选方案
 
