@@ -1,6 +1,5 @@
 //! render3d 与 ui 之间的契约类型:指针、封面更新、一帧可视化的入参。
 
-use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。

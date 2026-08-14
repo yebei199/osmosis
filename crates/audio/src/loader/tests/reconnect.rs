@@ -1,4 +1,3 @@
-use similar_asserts::assert_eq;
 
 use std::time::Duration;
 

@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::Player;
-use slint::ComponentHandle as _;
 
 /// 取走备好的那一份 —— **只在它确实是这一首时**。
 ///

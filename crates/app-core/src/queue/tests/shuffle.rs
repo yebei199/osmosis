@@ -1,7 +1,7 @@
 use similar_asserts::assert_eq;
 
 use super::super::*;
-use super::{batch, id_of, track};
+use super::{batch, id_of};
 
 /// 队列自己记得洗没洗过 —— 界面上那个开关只是它的投影。
 #[test]

@@ -4,7 +4,6 @@ use super::*;
 use crate::Library;
 use crate::Player;
 use crate::Shell;
-use slint::ComponentHandle as _;
 
 /// 把当前打开的那个歌单的曲目重取一遍。
 ///

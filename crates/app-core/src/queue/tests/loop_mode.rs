@@ -1,7 +1,7 @@
 use similar_asserts::assert_eq;
 
 use super::super::*;
-use super::{batch, id_of, track};
+use super::{batch, id_of};
 
 /// 新队列循环是关的:「放完即停」语义原样成立,不因加字段而漂移。
 #[test]

@@ -1,8 +1,6 @@
 //! 一帧耗时的记账,以及可选的 FPS 读数定时器。
 
-use slint::ComponentHandle;
 
-use crate::MainWindow;
 use crate::Shell;
 
 /// 每帧耗时的记账窗口(帧)。约两秒一行,与 render3d 的采样窗口对齐,便于两边日志对读。

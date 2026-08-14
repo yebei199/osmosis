@@ -5,8 +5,6 @@ use std::io::Cursor;
 use rodio::Source as _;
 use std::time::Duration;
 
-use crate::codec;
-use crate::stream_source::buffered_with;
 
 use super::*;
 

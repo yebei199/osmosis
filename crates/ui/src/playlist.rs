@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use app_core::{
-    PlaylistDto, PlaylistSource, TrackDto, TracksDto,
+    PlaylistDto, TrackDto,
 };
 use slint::ComponentHandle;
 

@@ -1,14 +1,12 @@
 //! 帧驱动:挂在 Slint 的渲染通知上,每帧组装参数、驱动各渲染器、推结果回界面。
 
 // 循环三态过 seam 原样透传:平台层(MPRIS/安卓)拿它翻成各自的方言。
-pub use app_core::LoopMode;
 pub use nav_glass::NavGlassControls;
 
 use crate::Shell;
 use crate::Viz;
 use crate::frame_stats::{FrameAccounting, fps};
 use crate::*;
-use slint::ComponentHandle as _;
 
 /// 同 [`run`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。带 bevy 的端
 /// (桌面 / android)走这里。

@@ -1,9 +1,6 @@
 //! 根接口 `org.mpris.MediaPlayer2`:这个播放器是谁,能拿它怎么办。
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
 
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 /// 根接口:这个播放器是谁,能拿它怎么办。
 pub(super) struct Root;

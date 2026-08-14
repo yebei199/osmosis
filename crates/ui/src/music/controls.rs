@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::Player;
-use slint::ComponentHandle as _;
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
 #[cfg(not(target_arch = "wasm32"))]

@@ -36,7 +36,7 @@ impl SeekState {
         self.set(Phase::Failed(why));
     }
 
-    pub(super) fn set(&self, phase: Phase) {
+    fn set(&self, phase: Phase) {
         // 锁只护一个枚举,中毒了也没有半截状态可言,取回去接着用
         *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
             phase;

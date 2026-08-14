@@ -8,12 +8,8 @@ use app_core::LoopMode;
 // (见下方「以下到文件末尾是原生那一半」)。
 
 #[cfg(not(target_arch = "wasm32"))]
-use app_core::{Playback, PlaybackState};
-#[cfg(not(target_arch = "wasm32"))]
-use slint::ComponentHandle;
+use app_core::PlaybackState;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::MainWindow;
 use crate::viz::CoverPixels;
 
 /// 播放器在宿主系统眼里的样子。

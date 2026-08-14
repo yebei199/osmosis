@@ -1,6 +1,5 @@
 //! 测试共用的假 Source 与驱动 helper。
 
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

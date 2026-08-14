@@ -1,15 +1,11 @@
 //! 歌单那一面的纯换算:来源枚举、副标题文案、可编辑判据与行的成形。
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use app_core::{
-    PlaylistDto, PlaylistSource, TrackDto, TracksDto,
+    PlaylistDto, PlaylistSource, TracksDto,
 };
-use slint::ComponentHandle;
 
-use crate::Library;
-use crate::{MainWindow, PlaylistRow};
+use crate::PlaylistRow;
 
 /// 歌单的来源。数值即 `PlaylistSource` 的顺序,也是 `.slint` 里
 /// `PlaylistRow.source` 的取值 —— 三处手工对齐。

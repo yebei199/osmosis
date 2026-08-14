@@ -3,7 +3,6 @@
 use super::*;
 use crate::Player;
 use crate::Shell;
-use slint::ComponentHandle as _;
 
 /// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
 ///

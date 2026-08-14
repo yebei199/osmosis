@@ -1,7 +1,6 @@
 //! 把 ui 那侧的快照翻成 MPRIS 的方言:状态名、循环名、轨道路径、元数据字典。
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
 
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 

@@ -1,15 +1,10 @@
 //! 歌单的写操作绑定:新建、改名、删除、批量加入与移出。
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
-use app_core::{
-    PlaylistDto, PlaylistSource, TrackDto, TracksDto,
-};
 use slint::ComponentHandle;
 
 use crate::Library;
-use crate::{MainWindow, PlaylistRow};
+use crate::MainWindow;
 
 use super::*;
 

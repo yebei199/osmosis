@@ -4,7 +4,6 @@ use super::*;
 use crate::Player;
 use crate::Shell;
 use crate::Viz;
-use slint::ComponentHandle as _;
 
 /// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
 ///

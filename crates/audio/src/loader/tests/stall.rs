@@ -1,10 +1,8 @@
-use similar_asserts::assert_eq;
 
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek};
 use std::time::Duration;
 
 use crate::codec;
-use crate::stream_source::buffered_with;
 
 use super::super::*;
 use super::{decode_cursor, wav};
@@ -363,7 +361,7 @@ fn a_buffered_song_still_ends() {
 
 /// 解一条长度未知的流。真机上上游不给 `Content-Length` 时就是这样,
 /// 那时这一首只能往前跳。
-pub(super) fn decode_stalling(
+fn decode_stalling(
     source: StallingSource,
 ) -> Result<rodio::Decoder<StallingSource>, AudioError> {
     decode(source, None)

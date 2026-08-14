@@ -50,8 +50,7 @@ use std::sync::Arc;
 use app_core::{LoopMode, PlaybackState};
 
 use crate::media::{
-    Bridge, MediaCommand, MediaStatus, NowPlaying,
-    seek_ratio, seek_target, toggles,
+    Bridge, MediaCommand, MediaStatus, NowPlaying, toggles,
 };
 
 /// 随机开没开要一并报出去,不然外面那个开关永远是灭的。
