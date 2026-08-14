@@ -5,6 +5,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Session;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -29,7 +30,7 @@ fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
 fn wide_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
     ui.set_compact(false);
     ui
@@ -196,8 +197,7 @@ fn the_day_night_switch_is_gone_from_the_cluster() {
 
 /// 胶囊把自己的尺寸回写给 fluid 背景通道(#68):Rust 侧按这个尺寸渲。
 #[test]
-fn the_capsule_mirrors_its_size_for_the_fluid_backdrop()
-{
+fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
     let ui = wide_page();
     ui.set_has_track(true);
 
@@ -267,8 +267,8 @@ fn the_expand_button_stays_on_screen_in_compact() {
         )
         .next()
         .expect("紧凑版式里找不到展开键");
-    let right = expand.absolute_position().x
-        + expand.size().width;
+    let right =
+        expand.absolute_position().x + expand.size().width;
     let window_w = ui.window().size().width as f32
         / ui.window().scale_factor();
     assert!(
@@ -281,7 +281,8 @@ fn the_expand_button_stays_on_screen_in_compact() {
 ///
 /// 没在放时不摆空壳 —— 与进度条同一条理由。
 #[test]
-fn the_bar_shows_the_current_track_only_when_there_is_one() {
+fn the_bar_shows_the_current_track_only_when_there_is_one()
+{
     let ui = wide_page();
 
     ui.set_has_track(false);

@@ -26,6 +26,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
 import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, LyricRow } from "types.slint";
 import { Profile } from "globals/profile.slint";
+import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
@@ -36,6 +37,8 @@ import { Theme, Type } from "theme.slint";
 export { Theme }
 // 个人页的数据面同理:Rust 靠 `ui.global::<Profile>()` 写它。
 export { Profile }
+// 登录态同理:Rust 靠 `ui.global::<Session>()` 读写它。
+export { Session }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -160,17 +163,6 @@ export component MainWindow inherits Window {
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
     // 回调 —— docs/adr/0010 的「功能等价路径」。
     in-out property <bool> play-page-open: false;
-
-    // ── 登录态 ──
-    // 有没有一个可用的会话。恢复出来的 token 可能已被吊销,那要等第一次请求
-    // 401 才知道 —— 所以这个值会从真变假,登录页因此不是只在开局出现一次。
-    in-out property <bool> logged-in: false;
-    // 正在等注册/登录的答复。
-    in property <bool> login-busy: false;
-    // 登录失败的说明,已由 Rust 按错误码渲染成人话。空串 = 没有失败。
-    in property <string> login-error;
-    callback login(string, string);
-    callback register(string, string, string);
 
     // ── Music 页的二级导航 ──
     // 当前分区:0=每日推荐、1=我的歌单、2=搜索、3=最近播放。
@@ -424,8 +416,6 @@ export component MainWindow inherits Window {
     callback theme-mode-selected(int);
     // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
     callback system-scheme-changed();
-    // 退出登录:清会话是 Rust 的活(account.rs),这里只喊。
-    callback logout();
     // §9 光带按钮:开关(真相在 api::settings,aurora_btn.rs 写)、两颗按钮的
     // 纹理,以及 hover/指针的镜像(元素写,Rust 每帧读去喂 shader)。
     in-out property <bool> aurora-buttons-on: true;
@@ -488,7 +478,7 @@ export component MainWindow inherits Window {
     // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
     // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
     // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
-    if root.logged-in: VerticalLayout {
+    if Session.logged-in: VerticalLayout {
 
         // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
         HorizontalLayout {
@@ -742,7 +732,7 @@ export component MainWindow inherits Window {
                     aurora-on: root.aurora-buttons-on;
                     aurora-toggled => { root.aurora-buttons-toggled(); }
                     theme-mode-selected(mode) => { root.theme-mode-selected(mode); }
-                    logout => { root.logout(); }
+                    logout => { Session.logout(); }
                 }
 
                 // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
@@ -1938,16 +1928,16 @@ export component MainWindow inherits Window {
     // ── 登录页:未登录时盖住整个窗口 ──
     // 排在横幅之前,所以横幅仍压在它之上 —— 登录页上也可能断网,
     // 那句话必须看得见。
-    if !root.logged-in: login-page := LoginPage {
+    if !Session.logged-in: login-page := LoginPage {
         width: 100%;
         height: 100%;
-        busy: root.login-busy;
-        error-text: root.login-error;
+        busy: Session.busy;
+        error-text: Session.error;
         login(username, password) => {
-            root.login(username, password);
+            Session.login(username, password);
         }
         register(username, password, invite) => {
-            root.register(username, password, invite);
+            Session.register(username, password, invite);
         }
     }
 

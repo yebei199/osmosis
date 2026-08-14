@@ -9,6 +9,7 @@ use slint::platform::PointerEventButton;
 use slint::{
     ComponentHandle, LogicalPosition, ModelRc, VecModel,
 };
+use ui::Session;
 use ui::{LyricRow, MainWindow};
 
 /// 播放页展开、有歌词的窗口。
@@ -19,7 +20,7 @@ fn play_window() -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.window()
         .set_size(slint::LogicalSize::new(400.0, 800.0));
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
     ui.set_has_track(true);
     ui.set_now_title("歌词测试曲".into());

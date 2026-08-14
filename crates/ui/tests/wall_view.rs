@@ -5,7 +5,9 @@
 //! 那是 web / iOS 的默认样子,退化必须是静默的。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Session;
 use ui::{MainWindow, TrackRow};
 
 fn row(id: &str) -> TrackRow {
@@ -24,7 +26,7 @@ fn row(id: &str) -> TrackRow {
 fn music_page(supported: bool) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
     ui.set_wall_supported(supported);
     ui.set_tracks(ModelRc::new(VecModel::from(vec![

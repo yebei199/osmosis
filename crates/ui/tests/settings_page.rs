@@ -6,11 +6,12 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Session;
 
 fn settings_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     // 设置页是 tab 3(个人主页插在 2)。
     ui.set_current_tab(3);
     ui.set_compact(false);
@@ -104,7 +105,7 @@ fn logging_out_asks_without_flipping_the_state() {
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_logout(move || {
+    ui.global::<Session>().on_logout(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -112,7 +113,7 @@ fn logging_out_asks_without_flipping_the_state() {
 
     assert_eq!(asked.get(), 1, "按一下该喊一声");
     assert!(
-        ui.get_logged_in(),
+        ui.global::<Session>().get_logged_in(),
         "登录态该纹丝不动 —— 清会话是 Rust 的活"
     );
 }

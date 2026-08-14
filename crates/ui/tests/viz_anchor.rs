@@ -36,7 +36,8 @@ fn element(
     ui: &MainWindow,
     id: &str,
 ) -> Option<testing::ElementHandle> {
-    testing::ElementHandle::find_by_element_id(ui, id).next()
+    testing::ElementHandle::find_by_element_id(ui, id)
+        .next()
 }
 
 fn card(ui: &MainWindow) -> Option<testing::ElementHandle> {
@@ -124,7 +125,8 @@ fn the_card_stays_inside_the_window_at_the_edges() {
 /// 锚点不可见(转到画面外或相机背后)时,卡片整个不在元素树里。
 /// 只是挪到界外不算数:界外的元素照样参与布局与命中测试。
 #[test]
-fn the_card_leaves_the_tree_when_the_anchor_is_not_visible() {
+fn the_card_leaves_the_tree_when_the_anchor_is_not_visible()
+{
     let ui = play_window();
     assert!(card(&ui).is_some(), "锚点可见时它该在");
 
@@ -143,7 +145,8 @@ fn the_occluder_is_clipped_to_the_card() {
     ui.set_viz_occluder(filled_image(64, 64));
 
     let card = card(&ui).expect("锚点可见时该有标注卡");
-    let clip = occluder(&ui).expect("有遮挡层图时该有裁剪层");
+    let clip =
+        occluder(&ui).expect("有遮挡层图时该有裁剪层");
     assert_eq!(
         clip.absolute_position(),
         card.absolute_position(),

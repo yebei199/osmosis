@@ -4,7 +4,9 @@
 //! 后者写错的话,请求一路正确而屏幕上摆的是另一类结果。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Session;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -16,7 +18,7 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn search_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
     ui.set_music_section(2);
     ui

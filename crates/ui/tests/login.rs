@@ -8,7 +8,9 @@
 //! 后者写错的话,人点进音乐页只会收获一屏 401,而那看起来像是后端坏了。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Session;
 
 fn find(
     ui: &MainWindow,
@@ -27,13 +29,13 @@ fn the_login_page_is_shown_only_when_logged_out() {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
 
-    ui.set_logged_in(false);
+    ui.global::<Session>().set_logged_in(false);
     assert!(
         find(&ui, "MainWindow::login-page").is_some(),
         "没登录时登录页该在树里"
     );
 
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     assert!(
         find(&ui, "MainWindow::login-page").is_none(),
         "登录之后登录页该收掉,不能继续挡着"
@@ -49,13 +51,13 @@ fn the_nav_is_unreachable_while_logged_out() {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
 
-    ui.set_logged_in(false);
+    ui.global::<Session>().set_logged_in(false);
     assert!(
         find(&ui, "MainWindow::content").is_none(),
         "没登录时内容区不该在树里 —— 绕过登录点进去只会收获一屏 401"
     );
 
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     assert!(
         find(&ui, "MainWindow::content").is_some(),
         "登录之后内容区该回来"

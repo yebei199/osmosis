@@ -5,7 +5,9 @@
 //! 点下去才知道改不动。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Session;
 use ui::{MainWindow, TrackRow};
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -18,7 +20,7 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn playlist_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_current_tab(1);
     ui.set_music_section(1);
     ui

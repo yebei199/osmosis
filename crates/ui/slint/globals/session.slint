@@ -1,0 +1,17 @@
+// 登录态。**只有 Rust 写它**(见 crates/ui/src/account.rs),界面只读、只喊。
+//
+// 住在 global 而不是 MainWindow 上,是为了让登录页与它的两个回调不必从窗口根
+// 转发下来。取舍见 docs/adr/0027。
+export global Session {
+    // 有没有一个可用的会话。恢复出来的 token 可能已被吊销,那要等第一次请求
+    // 401 才知道 —— 所以这个值会从真变假,登录页因此不是只在开局出现一次。
+    in-out property <bool> logged-in: false;
+    // 正在等注册/登录的答复。
+    in property <bool> busy: false;
+    // 登录失败的说明,已由 Rust 按错误码渲染成人话。空串 = 没有失败。
+    in property <string> error;
+
+    callback login(string, string);
+    callback register(string, string, string);
+    callback logout();
+}

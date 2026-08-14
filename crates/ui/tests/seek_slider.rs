@@ -7,6 +7,7 @@ use i_slint_backend_testing as testing;
 use slint::platform::PointerEventButton;
 use slint::{ComponentHandle, LogicalPosition};
 use ui::MainWindow;
+use ui::Session;
 
 /// 播放页展开、手上有一首歌的窗口。滑条是播放页里的条件元素。
 fn play_window() -> MainWindow {
@@ -15,7 +16,7 @@ fn play_window() -> MainWindow {
     ui.window()
         .set_size(slint::LogicalSize::new(400.0, 800.0));
     // 登录页盖住整个窗口,它的表单控件会吃掉落在滑条上的指针事件。
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
     ui.set_has_track(true);
     ui.set_now_title("滑条测试曲".into());
@@ -235,8 +236,9 @@ fn the_time_readout_is_wider_than_the_slider() {
     let ui = play_window();
     ui.set_progress_text("1:23 / 3:46".into());
 
-    let readout = element(&ui, "MainWindow::play-time-readout")
-        .expect("播放页该有时间读数");
+    let readout =
+        element(&ui, "MainWindow::play-time-readout")
+            .expect("播放页该有时间读数");
     let bar = slider(&ui).expect("该有滑条");
 
     assert!(
@@ -255,8 +257,9 @@ fn the_time_readout_stays_inside_the_window() {
     ui.set_progress_text("1:23 / 3:46".into());
     let (width, _) = window_size(&ui);
 
-    let readout = element(&ui, "MainWindow::play-time-readout")
-        .expect("播放页该有时间读数");
+    let readout =
+        element(&ui, "MainWindow::play-time-readout")
+            .expect("播放页该有时间读数");
     let left = readout.absolute_position().x;
     let right = left + readout.size().width;
 
@@ -278,7 +281,10 @@ fn the_slider_steps_aside_for_the_lyrics_page() {
 
     ui.set_lyrics_page_open(true);
 
-    assert!(slider(&ui).is_none(), "歌词页打开后滑条该让位");
+    assert!(
+        slider(&ui).is_none(),
+        "歌词页打开后滑条该让位"
+    );
     assert!(
         element(&ui, "MainWindow::play-time-readout")
             .is_none(),

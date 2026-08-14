@@ -7,13 +7,15 @@
 use std::time::Duration;
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Session;
 
 /// 登录之后才有导航。默认宽版式(侧栏)。
 fn nav_window() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
+    ui.global::<Session>().set_logged_in(true);
     ui.set_compact(false);
     ui
 }
@@ -21,13 +23,12 @@ fn nav_window() -> MainWindow {
 /// 底栏第 i 项的横向范围。四项都是同一个 `NavItem`,标签是内部的 `Text`
 /// (设置页的标题也叫「设置」,按标签找会先撞上那个),所以按元素 id 取、按序号分。
 fn item_span(ui: &MainWindow, i: usize) -> (f32, f32) {
-    let item =
-        testing::ElementHandle::find_by_element_id(
-            ui,
-            "NavItem::touch",
-        )
-        .nth(i)
-        .unwrap_or_else(|| panic!("找不到第 {i} 个导航项"));
+    let item = testing::ElementHandle::find_by_element_id(
+        ui,
+        "NavItem::touch",
+    )
+    .nth(i)
+    .unwrap_or_else(|| panic!("找不到第 {i} 个导航项"));
     let x = item.absolute_position().x;
     (x, x + item.size().width)
 }
