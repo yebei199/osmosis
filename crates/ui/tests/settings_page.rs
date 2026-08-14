@@ -7,13 +7,14 @@ use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
 use ui::Session;
+use ui::Shell;
 
 fn settings_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     // 设置页是 tab 3(个人主页插在 2)。
-    ui.set_current_tab(3);
+    ui.global::<Shell>().set_current_tab(3);
     ui.set_compact(false);
     ui
 }
@@ -34,9 +35,11 @@ fn the_theme_switch_asks_for_the_opposite_mode() {
     let asked =
         std::rc::Rc::new(std::cell::Cell::new(-1i32));
     let seen = asked.clone();
-    ui.on_theme_mode_selected(move |index| {
-        seen.set(index);
-    });
+    ui.global::<Shell>().on_theme_mode_selected(
+        move |index| {
+            seen.set(index);
+        },
+    );
 
     let dark = ui.global::<ui::Theme>().get_dark();
     // 开关的 a11y 动作在其内部 TouchArea 上;控制簇那颗已退场,
@@ -58,9 +61,11 @@ fn the_follow_system_toggle_reports_mode_two() {
     let asked =
         std::rc::Rc::new(std::cell::Cell::new(-1i32));
     let seen = asked.clone();
-    ui.on_theme_mode_selected(move |index| {
-        seen.set(index);
-    });
+    ui.global::<Shell>().on_theme_mode_selected(
+        move |index| {
+            seen.set(index);
+        },
+    );
 
     let theme = ui.global::<ui::Theme>();
     theme.set_mode(0);
@@ -81,19 +86,21 @@ fn the_follow_system_toggle_reports_mode_two() {
 #[test]
 fn the_aurora_toggle_asks_without_flipping() {
     let ui = settings_page();
-    ui.set_aurora_buttons_on(true);
+    ui.global::<Shell>().set_aurora_buttons_on(true);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_aurora_buttons_toggled(move || {
-        counter.set(counter.get() + 1);
-    });
+    ui.global::<Shell>().on_aurora_buttons_toggled(
+        move || {
+            counter.set(counter.get() + 1);
+        },
+    );
 
     invoke(&ui, "SettingsPage::aurora-toggle");
 
     assert_eq!(asked.get(), 1, "拨一下该喊一声");
     assert!(
-        ui.get_aurora_buttons_on(),
+        ui.global::<Shell>().get_aurora_buttons_on(),
         "值该纹丝不动 —— 写它是 Rust 的活"
     );
 }

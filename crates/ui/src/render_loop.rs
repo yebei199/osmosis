@@ -4,6 +4,7 @@
 pub use app_core::LoopMode;
 pub use nav_glass::NavGlassControls;
 
+use crate::Shell;
 use crate::Viz;
 use crate::frame_stats::{FrameAccounting, fps};
 use crate::*;
@@ -117,13 +118,15 @@ pub fn run_with_renderers(
             // 门:墙可见(wall-visible 已集齐分区/构建/曲目判据)∧ 播放页
             // 没开。前台恒满帧,静墙也每帧照渲;失焦不再是门
             // (可见即前台,见 change_log 2026-08-11 always-on-rendering)。
-            if ui.get_wall_visible()
-                && !ui.get_play_page_open()
+            if ui.global::<Shell>().get_wall_visible()
+                && !ui
+                    .global::<Shell>()
+                    .get_play_page_open()
                 && let Some(controls) =
                     wall_state.borrow_mut().frame(&ui)
                 && let Some(img) = wall_frame(&controls)
             {
-                ui.set_wall_bg(img);
+                ui.global::<Shell>().set_wall_bg(img);
             }
 
             lyric.tick_line(&ui, &lyrics);
@@ -132,7 +135,7 @@ pub fn run_with_renderers(
             // ── 播放页 warp 视觉 ──
             // 门只剩一条:播放页展开。暂停照样动(没音频时点云按环境节奏慢转),
             // 失焦照样动 —— 前台恒满帧,可见即前台。
-            if ui.get_play_page_open() {
+            if ui.global::<Shell>().get_play_page_open() {
                 if let Some(audio) =
                     viz::payload(&viz_source)
                 {

@@ -3,6 +3,7 @@
 use super::*;
 use crate::Library;
 use crate::Player;
+use crate::Shell;
 use slint::ComponentHandle as _;
 
 /// 把当前打开的那个歌单的曲目重取一遍。
@@ -115,17 +116,21 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
     let sectioned = deck.clone();
     let weak = ui.as_weak();
-    ui.on_select_section(move |section| {
-        if let Some(ui) = weak.upgrade() {
-            ui.set_music_section(section);
-            // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
-            // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
-            ui.global::<Library>().set_open_playlist_name(
-                slint::SharedString::new(),
-            );
-        }
-        load_section(&weak, &sectioned, section);
-    });
+    ui.global::<Shell>().on_select_section(
+        move |section| {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Shell>()
+                    .set_music_section(section);
+                // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
+                // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
+                ui.global::<Library>()
+                    .set_open_playlist_name(
+                        slint::SharedString::new(),
+                    );
+            }
+            load_section(&weak, &sectioned, section);
+        },
+    );
 
     // 打开一个歌单:记下来源与 id,再按来源取它的曲目。
     let opened = deck.clone();

@@ -132,8 +132,9 @@ fn build_ui(
     let (viz_source, lyrics, cover) =
         music::bind(&ui, media);
 
-    ui.set_show_fps(fps_enabled());
-    ui.set_platform(platform_name().into());
+    ui.global::<Shell>().set_show_fps(fps_enabled());
+    ui.global::<Shell>()
+        .set_platform(platform_name().into());
     // 设置页「关于」那一行。版本取本 crate 的(workspace 里同一个版本号)。
     ui.global::<Profile>().set_about_line(
         format!(
@@ -148,7 +149,8 @@ fn build_ui(
     if let Ok(tab) = std::env::var("OSMOSIS_TAB")
         && let Ok(tab) = tab.parse::<i32>()
     {
-        ui.set_current_tab(tab.clamp(0, MAX_TAB));
+        ui.global::<Shell>()
+            .set_current_tab(tab.clamp(0, MAX_TAB));
     }
     (ui, viz_source, lyrics, cover)
 }

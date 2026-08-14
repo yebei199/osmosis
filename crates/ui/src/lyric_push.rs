@@ -5,6 +5,7 @@
 
 use slint::ComponentHandle;
 
+use crate::Shell;
 use crate::Viz;
 use crate::music::LyricFeed;
 use crate::{LyricRow, MainWindow};
@@ -26,7 +27,7 @@ impl LyricPush {
         // ── 播放页歌词 ──
         // 只在覆层展开时跟随:收起时歌词不可见,读位置纯属白耗。
         // 暂停时位置不前进,行自然定格,与省电门天然一致。
-        if ui.get_play_page_open() {
+        if ui.global::<Shell>().get_play_page_open() {
             match lyrics.current() {
                 Some((generation, index, text, tr))
                     if self.line

@@ -14,6 +14,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use syncplay::{Client, DeviceDto, Event, Role, Roster};
 
 use crate::Player;
+use crate::Shell;
 use crate::{DeviceRow, MainWindow};
 
 /// 读不到主机名时用的名字。
@@ -154,7 +155,8 @@ pub fn bind(
     ));
 
     bind_push(ui, &client, &role);
-    ui.set_sync_text(describe_role(&Role::Alone).into());
+    ui.global::<Shell>()
+        .set_sync_text(describe_role(&Role::Alone).into());
 
     Sync {
         client,
@@ -243,7 +245,7 @@ fn bind_push(
     let role = role.clone();
     let weak = ui.as_weak();
 
-    ui.on_push_to(move |id| {
+    ui.global::<Shell>().on_push_to(move |id| {
         let id = id.to_string();
         client.push(&id);
 
@@ -263,7 +265,8 @@ fn bind_push(
         *role = Role::Host { listeners };
         // 这里已经在 UI 线程上,直接改 —— 走 `show_role` 会让文案晚一轮事件循环才出来。
         if let Some(ui) = weak.upgrade() {
-            ui.set_sync_text(describe_role(&role).into());
+            ui.global::<Shell>()
+                .set_sync_text(describe_role(&role).into());
         }
     });
 }
@@ -283,14 +286,16 @@ fn show_devices(
                 name: device.name.clone().into(),
             })
             .collect();
-        ui.set_devices(ModelRc::new(VecModel::from(rows)));
+        ui.global::<Shell>().set_devices(ModelRc::new(
+            VecModel::from(rows),
+        ));
     });
 }
 
 /// 把状态行推到界面上。
 fn show_role(weak: &slint::Weak<MainWindow>, text: String) {
     let _ = weak.upgrade_in_event_loop(move |ui| {
-        ui.set_sync_text(text.into());
+        ui.global::<Shell>().set_sync_text(text.into());
     });
 }
 

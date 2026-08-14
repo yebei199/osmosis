@@ -8,6 +8,7 @@ use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -20,7 +21,7 @@ fn home() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(0);
+    ui.global::<Shell>().set_current_tab(0);
     ui.set_compact(false);
     ui
 }
@@ -41,7 +42,7 @@ fn the_music_tile_opens_the_music_app() {
     .invoke_accessible_default_action();
 
     assert_eq!(
-        ui.get_current_tab(),
+        ui.global::<Shell>().get_current_tab(),
         1,
         "点音乐瓦片该切到音乐页"
     );

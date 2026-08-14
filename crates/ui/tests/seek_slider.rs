@@ -9,6 +9,7 @@ use slint::{ComponentHandle, LogicalPosition};
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 use ui::Viz;
 
 /// 播放页展开、手上有一首歌的窗口。滑条是播放页里的条件元素。
@@ -19,7 +20,7 @@ fn play_window() -> MainWindow {
         .set_size(slint::LogicalSize::new(400.0, 800.0));
     // 登录页盖住整个窗口,它的表单控件会吃掉落在滑条上的指针事件。
     ui.global::<Session>().set_logged_in(true);
-    ui.set_play_page_open(true);
+    ui.global::<Shell>().set_play_page_open(true);
     ui.global::<Player>().set_has_track(true);
     ui.global::<Viz>().set_now_title("滑条测试曲".into());
     ui
@@ -74,7 +75,7 @@ fn the_slider_exists_only_on_the_play_page_with_a_track() {
     assert!(slider(&ui).is_none(), "没曲目不该留滑条");
 
     ui.global::<Player>().set_has_track(true);
-    ui.set_play_page_open(false);
+    ui.global::<Shell>().set_play_page_open(false);
     assert!(
         slider(&ui).is_none(),
         "播放页收起后滑条该跟着走"

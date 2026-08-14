@@ -12,6 +12,7 @@ use slint::{ComponentHandle, Model};
 
 use crate::MainWindow;
 use crate::Player;
+use crate::Shell;
 use crate::wall;
 
 /// 一张卡的世界位姿,物理像素。镜像 `render3d::WallCard`。
@@ -94,8 +95,8 @@ impl WallDrive {
     fn layout_now(ui: &MainWindow) -> wall::WallLayout {
         let dpr = ui.window().scale_factor();
         wall::layout(
-            ui.get_wall_field_w() * dpr,
-            ui.get_wall_field_h() * dpr,
+            ui.global::<Shell>().get_wall_field_w() * dpr,
+            ui.global::<Shell>().get_wall_field_h() * dpr,
             ui.get_compact(),
         )
     }
@@ -157,9 +158,10 @@ impl WallDrive {
         let dpr = ui.window().scale_factor();
 
         // 指针:按下时拖动,松开那一帧 release。
-        let pressed = ui.get_wall_pressed();
-        let px = ui.get_wall_px() * dpr;
-        let py = ui.get_wall_py() * dpr;
+        let pressed =
+            ui.global::<Shell>().get_wall_pressed();
+        let px = ui.global::<Shell>().get_wall_px() * dpr;
+        let py = ui.global::<Shell>().get_wall_py() * dpr;
         if pressed {
             if let Some((lx, ly)) = self.last_pointer {
                 self.cam.drag(px - lx, py - ly);
@@ -179,9 +181,9 @@ impl WallDrive {
         // 塌回落地:把墙藏掉,列表接管。
         if !collapsing
             && self.collapse.target == 0.0
-            && ui.get_wall_showing()
+            && ui.global::<Shell>().get_wall_showing()
         {
-            ui.set_wall_showing(false);
+            ui.global::<Shell>().set_wall_showing(false);
         }
 
         // dolly 落位:开播放页、放歌,墙退场。
@@ -191,7 +193,8 @@ impl WallDrive {
                 if let Some(id) = self.pending_play.take() {
                     ui.global::<Player>().invoke_play(id);
                 }
-                ui.set_play_page_open(true);
+                ui.global::<Shell>()
+                    .set_play_page_open(true);
                 self.dolly = None;
                 // 回来时相机回到静息位。
                 self.cam = wall::WallCam::default();
@@ -296,11 +299,11 @@ pub(crate) fn bind(
     drive: &Rc<RefCell<WallDrive>>,
 ) {
     // GPU 构建才会走到 run_with_renderers,这里就是「支持卡墙」的判据。
-    ui.set_wall_supported(true);
+    ui.global::<Shell>().set_wall_supported(true);
 
     let weak = ui.as_weak();
     let d = drive.clone();
-    ui.on_wall_tap(move |x, y| {
+    ui.global::<Shell>().on_wall_tap(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
         d.focus = d.hit(&ui, x, y);
@@ -308,7 +311,7 @@ pub(crate) fn bind(
 
     let weak = ui.as_weak();
     let d = drive.clone();
-    ui.on_wall_double(move |x, y| {
+    ui.global::<Shell>().on_wall_double(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
         let Some(index) = d.hit(&ui, x, y) else {
@@ -333,21 +336,21 @@ pub(crate) fn bind(
     });
 
     let d = drive.clone();
-    ui.on_wall_wheel(move |delta| {
+    ui.global::<Shell>().on_wall_wheel(move |delta| {
         d.borrow_mut().cam.wheel(delta);
     });
 
     // 列表 ⇄ 卡墙:目标一拨,插值自己走;塌回落地才真正藏墙(frame 里)。
     let weak = ui.as_weak();
     let d = drive.clone();
-    ui.on_set_view_wall(move |to_wall| {
+    ui.global::<Shell>().on_set_view_wall(move |to_wall| {
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
         d.collapse.target = if to_wall { 1.0 } else { 0.0 };
         if to_wall {
-            ui.set_wall_showing(true);
+            ui.global::<Shell>().set_wall_showing(true);
         }
-        ui.set_view_wall(to_wall);
+        ui.global::<Shell>().set_view_wall(to_wall);
     });
 }
 

@@ -9,6 +9,7 @@ use slint::ComponentHandle as _;
 use ui::Library;
 use ui::MainWindow;
 use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -21,8 +22,8 @@ fn playlists_section() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_music_section(1);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_music_section(1);
     ui
 }
 
@@ -73,7 +74,7 @@ fn going_back_returns_to_the_list() {
         .set_open_playlist_name("".into());
 
     assert_eq!(
-        ui.get_music_section(),
+        ui.global::<Shell>().get_music_section(),
         1,
         "返回是退一层,不是换一节"
     );

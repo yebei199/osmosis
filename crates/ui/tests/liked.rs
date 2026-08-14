@@ -9,6 +9,7 @@ use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 use ui::{MainWindow, TrackRow};
 
 fn hearts(ui: &MainWindow) -> usize {
@@ -36,7 +37,7 @@ fn music_page_with(rows: Vec<TrackRow>) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
+    ui.global::<Shell>().set_current_tab(1);
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
     ui

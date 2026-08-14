@@ -22,6 +22,7 @@
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::Shell;
 
 /// 一句提示在屏幕上待多久。
 ///
@@ -36,13 +37,16 @@ const NOTICE_LIFETIME: core::time::Duration =
 /// 那些各有各的寿命,不该被上一句的计时器带走。比对文本就够认出来,不必为此
 /// 再养一个代号 —— 两句一模一样的提示谁先收都是同一个结果。
 pub fn show(ui: &MainWindow, text: String) {
-    ui.set_banner_text(text.clone().into());
+    ui.global::<Shell>()
+        .set_banner_text(text.clone().into());
 
     let weak = ui.as_weak();
     slint::Timer::single_shot(NOTICE_LIFETIME, move || {
         let Some(ui) = weak.upgrade() else { return };
-        if ui.get_banner_text() == text.as_str() {
-            ui.set_banner_text(slint::SharedString::new());
+        if ui.global::<Shell>().get_banner_text()
+            == text.as_str()
+        {
+            ui.global::<Shell>().set_banner_text(slint::SharedString::new());
         }
     });
 }

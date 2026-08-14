@@ -9,6 +9,7 @@ use ui::Library;
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -21,8 +22,8 @@ fn search_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_music_section(2);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_music_section(2);
     ui
 }
 
@@ -49,7 +50,7 @@ fn the_tabs_appear_only_in_the_search_section() {
     assert!(present(&ui, "MainWindow::search-tabs"));
 
     for section in [0, 1, 3] {
-        ui.set_music_section(section);
+        ui.global::<Shell>().set_music_section(section);
         assert!(
             !present(&ui, "MainWindow::search-tabs"),
             "分区 {section} 不该有搜索页签"

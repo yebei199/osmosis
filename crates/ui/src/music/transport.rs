@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::Player;
+use crate::Shell;
 use crate::Viz;
 use slint::ComponentHandle as _;
 
@@ -188,7 +189,7 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
             ui.global::<Player>().set_now_loading(false);
             // 放起来了就把断流横幅收掉:声音回来了,那句话已经过期。
             if playing {
-                ui.set_banner_text(
+                ui.global::<Shell>().set_banner_text(
                     slint::SharedString::new(),
                 );
             }

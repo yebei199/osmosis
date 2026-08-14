@@ -12,6 +12,7 @@
 use api::settings::{self, Settings, ThemeMode};
 use slint::ComponentHandle;
 
+use crate::Shell;
 use crate::{MainWindow, Theme};
 
 /// 恢复上次的选择并接上设置页。
@@ -21,25 +22,29 @@ pub(crate) fn bind(ui: &MainWindow) {
     // 设置页的唯一入口:日月开关拨显式明/暗,「跟随系统」开关报 2,
     // 档位换算在 .slint 侧做完,这里只收档位序号(#68 起,控制簇不再有主题键)。
     let weak = ui.as_weak();
-    ui.on_theme_mode_selected(move |index| {
-        let Some(ui) = weak.upgrade() else { return };
-        let mode = mode_from_index(index);
-        settings::save(&Settings {
-            theme: mode,
-            ..settings::load()
-        });
-        apply(&ui, mode);
-    });
+    ui.global::<Shell>().on_theme_mode_selected(
+        move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mode = mode_from_index(index);
+            settings::save(&Settings {
+                theme: mode,
+                ..settings::load()
+            });
+            apply(&ui, mode);
+        },
+    );
 
     // 系统主题变了(`MainWindow` 上的 changed 观察器转发)。只在跟随系统档生效。
     let weak = ui.as_weak();
-    ui.on_system_scheme_changed(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        if ui.global::<Theme>().get_mode() == 2 {
-            let dark = system_prefers_dark(&ui);
-            ui.global::<Theme>().set_dark(dark);
-        }
-    });
+    ui.global::<Shell>().on_system_scheme_changed(
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.global::<Theme>().get_mode() == 2 {
+                let dark = system_prefers_dark(&ui);
+                ui.global::<Theme>().set_dark(dark);
+            }
+        },
+    );
 }
 
 /// 把一档选择写进 `Theme`:mode 给设置页画选中态,dark 是解出来的结论。
@@ -55,7 +60,7 @@ fn apply(ui: &MainWindow, mode: ThemeMode) {
 /// 系统现在偏好深色吗。真相由 `MainWindow.system-prefers-dark` 镜像
 /// std-widgets 的 `Palette.color-scheme`(unknown 已在那边折成深色)。
 fn system_prefers_dark(ui: &MainWindow) -> bool {
-    ui.get_system_prefers_dark()
+    ui.global::<Shell>().get_system_prefers_dark()
 }
 
 /// 设置页分段控件的序号 ↔ 档位。序号只在 UI 与这儿之间走,不落盘。

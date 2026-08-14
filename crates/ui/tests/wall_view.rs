@@ -9,6 +9,7 @@ use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 use ui::{MainWindow, TrackRow};
 
 fn row(id: &str) -> TrackRow {
@@ -28,8 +29,8 @@ fn music_page(supported: bool) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_wall_supported(supported);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_wall_supported(supported);
     ui.global::<Player>().set_tracks(ModelRc::new(
         VecModel::from(vec![row("a"), row("b")]),
     ));
@@ -52,14 +53,14 @@ fn the_view_toggle_asks_without_flipping() {
     let asked =
         std::rc::Rc::new(std::cell::Cell::new(-1i32));
     let seen = asked.clone();
-    ui.on_set_view_wall(move |to_wall| {
+    ui.global::<Shell>().on_set_view_wall(move |to_wall| {
         seen.set(i32::from(to_wall));
     });
 
     invoke(&ui, "MainWindow::view-list-btn");
     assert_eq!(asked.get(), 0, "列表键该报 false");
     assert!(
-        ui.get_view_wall(),
+        ui.global::<Shell>().get_view_wall(),
         "意图值该由 Rust 写,控件不自己置位"
     );
 
@@ -136,8 +137,8 @@ fn the_wall_is_the_default_view_when_supported() {
 #[test]
 fn a_settled_wall_still_renders_every_frame() {
     let ui = music_page(true);
-    ui.set_wall_field_w(904.0);
-    ui.set_wall_field_h(432.0);
+    ui.global::<Shell>().set_wall_field_w(904.0);
+    ui.global::<Shell>().set_wall_field_h(432.0);
 
     let mut drive = ui::WallDrive::new();
     // 走过收敛期,再连续多帧:每一帧都必须有控制量。

@@ -28,6 +28,7 @@ import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, L
 import { Profile } from "globals/profile.slint";
 import { Player } from "globals/player.slint";
 import { Viz } from "globals/viz.slint";
+import { Shell } from "globals/shell.slint";
 import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
@@ -44,6 +45,7 @@ export { Profile }
 export { Session }
 // 曲库那一面同理:Rust 靠 `ui.global::<Library>()` 读写它。
 export { Library }
+export { Shell }
 export { Viz }
 export { Player }
 import { LoginPage } from "login.slint";
@@ -79,40 +81,12 @@ global Nav {
 }
 
 export component MainWindow inherits Window {
-    // 帧率,由 Rust 测量并推送。仅在 `show-fps` 为真时被推送。
-    in property <float> fps: 0;
-    // 是否显示帧率读数。由 Rust 按 `OSMOSIS_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
-    in property <bool> show-fps: false;
-    // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
-    in property <string> platform;
+    // 帧率,由 Rust 测量并推送。仅在 `Shell.show-fps` 为真时被推送。
     // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
     // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
-    in property <image> bar-fluid-bg;
-    in-out property <length> bar-w: 0px;
-    in-out property <length> bar-h: 0px;
-    // 播放页主控条的底(#69):平时 fluid,缓冲时同一槽换成 progress 变体、
-    // 进度实时喂,那道呼吸亮边就是「还在动」的信号。尺寸同样由 .slint 回写,
-    // 覆层不在场时是 0,那一槽整个不进合批。
-    in property <image> viz-bar-bg;
-    in-out property <length> viz-bar-w: 0px;
-    in-out property <length> viz-bar-h: 0px;
-    // 播放页次要动作(视觉预设、收起)共用的 glass 底。两颗同尺寸,渲一张够。
-    in property <image> viz-glass-bg;
-    // 侧栏底部那两颗圆钮的 glass 底(#71)。这两颗各渲各的:选中的那颗要更亮,
-    // 共用一张就分不出谁被选中了。
-    in property <image> nav-key-a-bg;
-    in property <image> nav-key-b-bg;
     // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
-    // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
-    // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
-    // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
-    in-out property <string> banner-text;
 
-    in property <[DeviceRow]> devices: [];
-    // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
-    in property <string> sync-text;
     // 当前选中的导航页:0=Home、1=Music。由左侧导航栏点击设置。
-    in-out property <int> current-tab: 0;
     // 版式(Layout Mode):窄→紧凑(底部导航),宽→侧栏。**由运行时窗口宽度决定,不由端决定**
     // —— 桌面把窗口拖窄一样变成紧凑版式,这既是要的体验,也是唯一能在桌面验证移动版式的办法。
     // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
@@ -133,16 +107,10 @@ export component MainWindow inherits Window {
     // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
     // 回调 —— docs/adr/0010 的「功能等价路径」。
-    in-out property <bool> play-page-open: false;
 
     // ── Music 页的二级导航 ──
     // 当前分区:0=每日推荐、1=我的歌单、2=搜索、3=最近播放。
     // 编号即 musicnav.slint 里 MusicSections.items 的下标,Rust 按它决定拉什么。
-    in-out property <int> music-section: 0;
-    // 宽版式竖栏收起没有。私有于界面 —— Rust 不关心用户把栏收没收。
-    in-out property <bool> rail-collapsed: false;
-    // 换了分区。Rust 据此去取对应的一批歌。
-    callback select-section(int);
 
     // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
     // 负偏移都从这几个值算,别在别处重抄。歌词**不**参与深度合成,它与歌名同层
@@ -216,15 +184,15 @@ export component MainWindow inherits Window {
     // 侧栏只有主项两格在轨道上:沉底那组(个人 = 2、设置 = 3)自 #71 起是 glass 圆钮,
     // 自己表达选中,水滴不去。选中它们时轨道位置停在最后一格主项上、球缩没,
     // 免得「Home 亮着而人在设置页」。
-    property <int> nav-track-tab: min(root.current-tab, 1);
+    property <int> nav-track-tab: min(Shell.current-tab, 1);
     property <length> nav-target-y: root.nav-pad
         + root.nav-track-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
     // 球体缩放:1 是常态,0 是缩没。底栏四格全在轨道上,所以只有侧栏会缩。
-    out property <float> nav-ball: root.compact || root.current-tab < 2 ? 1.0 : 0.0;
+    out property <float> nav-ball: root.compact || Shell.current-tab < 2 ? 1.0 : 0.0;
     animate nav-ball { duration: 260ms; easing: ease-out; }
     // 底栏四格等分,沉底那组不沉底,所以一路等距算下去。
     property <length> nav-target-x: root.nav-bar-pad-left
-        + root.current-tab * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
+        + Shell.current-tab * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
     property <length> nav-target: root.compact ? root.nav-target-x : root.nav-target-y;
     // metaball 的头(快)/尾(慢):都朝 nav-target 动,快慢不同 → 行走时一前一后被 shader
     // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这三个动画值喂 shader。
@@ -241,56 +209,6 @@ export component MainWindow inherits Window {
     in-out property <image> nav-bg;
     // 用关键词搜歌。
     // 设置页的主题三档(0 深 1 浅 2 跟随系统),选了喊一声,值由 Rust 写回。
-    callback theme-mode-selected(int);
-    // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
-    callback system-scheme-changed();
-    // §9 光带按钮:开关(真相在 api::settings,aurora_btn.rs 写)、两颗按钮的
-    // 纹理,以及 hover/指针的镜像(元素写,Rust 每帧读去喂 shader)。
-    in-out property <bool> aurora-buttons-on: true;
-    callback aurora-buttons-toggled();
-    in property <image> home-slot-bg;
-    in property <image> empty-daily-bg;
-    in-out property <bool> home-slot-hover: false;
-    in-out property <float> home-slot-px: 0.72;
-    in-out property <float> home-slot-py: 0.5;
-    in-out property <bool> empty-daily-hover: false;
-    in-out property <float> empty-daily-px: 0.72;
-    in-out property <float> empty-daily-py: 0.5;
-    // #66 卡墙(adr/0025):每日推荐分区的主视图。wall-supported 由 Rust 在
-    // GPU 构建里置真;view-wall 是用户意图,wall-showing 是显示态 ——
-    // 切列表要等塌回动画落地才熄,由 wall_drive.rs 写。
-    in-out property <bool> wall-supported: false;
-    in-out property <bool> view-wall: true;
-    in-out property <bool> wall-showing: true;
-    in property <image> wall-bg;
-    // 墙可见的总判据。列表与开关都照它排布。
-    out property <bool> wall-visible: root.wall-supported
-        && root.wall-showing
-        && root.current-tab == 1
-        && root.music-section == 0
-        && Library.open-playlist-name == ""
-        && Player.tracks.length > 0;
-    // 指针镜像(逻辑像素,换算物理在 Rust);场区尺寸由元素回写。
-    in-out property <bool> wall-pressed: false;
-    in-out property <length> wall-px: 0px;
-    in-out property <length> wall-py: 0px;
-    in-out property <length> wall-field-w: 0px;
-    in-out property <length> wall-field-h: 0px;
-    callback wall-tap(length, length);
-    callback wall-double(length, length);
-    callback wall-wheel(length);
-    // 列表 ⇄ 卡墙。目标由 Rust 记,塌回插值走完才真正换视图。
-    callback set-view-wall(bool);
-    // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
-    in property <bool> aurora-cover-active: false;
-    in property <color> aurora-cover-warm;
-    in property <color> aurora-cover-deep;
-    in property <color> aurora-cover-soft;
-    // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
-    out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
-    changed system-prefers-dark => { root.system-scheme-changed(); }
-    // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
-    callback push-to(string);
 
     title: "Osmosis";
     background: Theme.window;
@@ -344,10 +262,10 @@ export component MainWindow inherits Window {
                         height: root.nav-slot-h;
                         label: item.label;
                         icon: item.icon;
-                        active: root.current-tab == i;
+                        active: Shell.current-tab == i;
                         // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
                         gpu-selected: root.nav-bg.width > 0;
-                        clicked => { root.current-tab = i; }
+                        clicked => { Shell.current-tab = i; }
                     }
 
                     // 把沉底组压到底。
@@ -361,17 +279,17 @@ export component MainWindow inherits Window {
                             icon: item.icon;
                             label: item.label;
                             checkable: true;
-                            checked: root.current-tab == i + 2;
+                            checked: Shell.current-tab == i + 2;
                             backdrop: i == 0
-                                ? root.nav-key-a-bg
-                                : root.nav-key-b-bg;
-                            clicked => { root.current-tab = i + 2; }
+                                ? Shell.nav-key-a-bg
+                                : Shell.nav-key-b-bg;
+                            clicked => { Shell.current-tab = i + 2; }
                         }
                     }
                 }
             }
 
-            // ── 内容区。两页共用这块矩形,按 current-tab 切换子内容 ──
+            // ── 内容区。两页共用这块矩形,按 Shell.current-tab 切换子内容 ──
             content := Rectangle {
                 horizontal-stretch: 1;
 
@@ -381,16 +299,16 @@ export component MainWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     // §4:封面取色喂极光。颜色由 aurora.rs 取好推进来。
-                    cover-active: root.aurora-cover-active;
-                    cover-warm: root.aurora-cover-warm;
-                    cover-deep: root.aurora-cover-deep;
-                    cover-soft: root.aurora-cover-soft;
+                    cover-active: Shell.aurora-cover-active;
+                    cover-warm: Shell.aurora-cover-warm;
+                    cover-deep: Shell.aurora-cover-deep;
+                    cover-soft: Shell.aurora-cover-soft;
                 }
 
                 // Home:壳的应用启动器(docs/adr/0024)。瓦片数据驱动:只放真实
                 // 存在的应用与一个空槽,加应用就是加一张瓦片。3D 漂移与视差归
                 // Bevy 瓦片场,与卡墙同期做(#66),这里先是 2D 摆法。
-                if root.current-tab == 0: Rectangle {
+                if Shell.current-tab == 0: Rectangle {
 
                     VerticalLayout {
                         x: root.compact ? 24px : 48px;
@@ -465,10 +383,10 @@ export component MainWindow inherits Window {
                                 }
                                 music-tile := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => { root.current-tab = 1; }
+                                    clicked => { Shell.current-tab = 1; }
                                     accessible-role: button;
                                     accessible-label: "音乐";
-                                    accessible-action-default => { root.current-tab = 1; }
+                                    accessible-action-default => { Shell.current-tab = 1; }
                                 }
                             }
 
@@ -484,20 +402,20 @@ export component MainWindow inherits Window {
                                 clip: true;
 
                                 // §9:星云纹理垫底(render3d 画,尺寸在 lib.rs 有一份镜像)。
-                                if root.aurora-buttons-on && root.home-slot-bg.width > 0: Image {
+                                if Shell.aurora-buttons-on && Shell.home-slot-bg.width > 0: Image {
                                     width: 100%;
                                     height: 100%;
-                                    source: root.home-slot-bg;
+                                    source: Shell.home-slot-bg;
                                 }
                                 // 只追 hover 喂给星云的指针涡旋;这仍不是按钮 ——
                                 // 没有点击行为(硬规则 8)。
                                 TouchArea {
                                     changed has-hover => {
-                                        root.home-slot-hover = self.has-hover;
+                                        Shell.home-slot-hover = self.has-hover;
                                     }
                                     moved => {
-                                        root.home-slot-px = self.mouse-x / max(self.width, 1px);
-                                        root.home-slot-py = 1 - self.mouse-y / max(self.height, 1px);
+                                        Shell.home-slot-px = self.mouse-x / max(self.width, 1px);
+                                        Shell.home-slot-py = 1 - self.mouse-y / max(self.height, 1px);
                                     }
                                 }
                                 VerticalLayout {
@@ -538,7 +456,7 @@ export component MainWindow inherits Window {
                 }
 
                 // 个人主页(tab 2)。进页即取统计,判断在 Rust 侧。
-                if root.current-tab == 2: ProfilePage {
+                if Shell.current-tab == 2: ProfilePage {
                     width: 100%;
                     height: 100%;
                     init => { Profile.shown(); }
@@ -549,17 +467,17 @@ export component MainWindow inherits Window {
                     distinct-tracks: Profile.distinct-tracks;
                     streak-days: Profile.streak-days;
                     top-artists: Profile.artists;
-                    devices: root.devices;
+                    devices: Shell.devices;
                 }
 
                 // 设置(tab 3,rail 沉底最后一颗)。
-                if root.current-tab == 3: SettingsPage {
+                if Shell.current-tab == 3: SettingsPage {
                     width: 100%;
                     height: 100%;
                     about-line: Profile.about-line;
-                    aurora-on: root.aurora-buttons-on;
-                    aurora-toggled => { root.aurora-buttons-toggled(); }
-                    theme-mode-selected(mode) => { root.theme-mode-selected(mode); }
+                    aurora-on: Shell.aurora-buttons-on;
+                    aurora-toggled => { Shell.aurora-buttons-toggled(); }
+                    theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
                     logout => { Session.logout(); }
                 }
 
@@ -567,7 +485,7 @@ export component MainWindow inherits Window {
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
                 // Music:二级导航 + 四个分区。整页可滚,不裹玻璃卡片 ——
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                if root.current-tab == 1: VerticalLayout {
+                if Shell.current-tab == 1: VerticalLayout {
                     padding: 16px;
                     spacing: 12px;
 
@@ -578,8 +496,8 @@ export component MainWindow inherits Window {
 
                     // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
                     if root.compact: music-bar := MusicBar {
-                        current: root.music-section;
-                        selected(section) => { root.select-section(section); }
+                        current: Shell.music-section;
+                        selected(section) => { Shell.select-section(section); }
                     }
 
                     HorizontalLayout {
@@ -588,9 +506,9 @@ export component MainWindow inherits Window {
 
                         // 宽版式:可收缩竖栏。
                         if !root.compact: music-rail := MusicRail {
-                            current: root.music-section;
-                            collapsed <=> root.rail-collapsed;
-                            selected(section) => { root.select-section(section); }
+                            current: Shell.music-section;
+                            collapsed <=> Shell.rail-collapsed;
+                            selected(section) => { Shell.select-section(section); }
                         }
 
                         VerticalLayout {
@@ -600,7 +518,7 @@ export component MainWindow inherits Window {
                             // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
                             // 常驻一个空框会让人以为那三页也要先搜一下。
                             // 进了歌手详情也收起来:那一层有自己的标题行与返回键。
-                            if root.music-section == 2
+                            if Shell.music-section == 2
                                 && Library.open-playlist-name == "":
                             HorizontalLayout {
                                 spacing: 8px;
@@ -621,7 +539,7 @@ export component MainWindow inherits Window {
 
                             // 搜索结果的三个页签。与搜索框同进同出 ——
                             // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
-                            if root.music-section == 2
+                            if Shell.music-section == 2
                                 && Library.open-playlist-name == "":
                             search-tabs := SearchTabBar {
                                 current: Library.search-tab;
@@ -644,7 +562,7 @@ export component MainWindow inherits Window {
 
                             // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
                             Text {
-                                text: root.sync-text;
+                                text: Shell.sync-text;
                                 font-family: "Maple Mono NF CN";
                                 color: Theme.text-dim;
                                 font-size: 13px;
@@ -771,7 +689,7 @@ export component MainWindow inherits Window {
                             // 新建歌单。摆在列表那一层的顶上 ——
                             // 名字由回调带出来,因为这个输入框在 `if` 里,
                             // Rust 引用不到它。
-                            if root.music-section == 1
+                            if Shell.music-section == 1
                                 && Library.open-playlist-name == "":
                             new-playlist-row := HorizontalLayout {
                                 spacing: 8px;
@@ -796,7 +714,7 @@ export component MainWindow inherits Window {
                             }
 
                             // 歌单分区的列表那一层。
-                            if root.music-section == 1
+                            if Shell.music-section == 1
                                 && Library.open-playlist-name == "":
                             playlist-list := PlaylistList {
                                 vertical-stretch: 1;
@@ -807,7 +725,7 @@ export component MainWindow inherits Window {
                             }
 
                             // 搜索的歌手页签。
-                            if root.music-section == 2
+                            if Shell.music-section == 2
                                 && Library.open-playlist-name == ""
                                 && Library.search-tab == 1:
                             artist-list := ArtistList {
@@ -819,7 +737,7 @@ export component MainWindow inherits Window {
 
                             // 搜索的歌单页签。与「我的歌单」同一个组件、
                             // 不同的一份数据 —— 点开走的也是同一条路。
-                            if root.music-section == 2
+                            if Shell.music-section == 2
                                 && Library.open-playlist-name == ""
                                 && Library.search-tab == 2:
                             found-playlist-list := PlaylistList {
@@ -837,9 +755,9 @@ export component MainWindow inherits Window {
                             // 文件夹」等入口等功能存在了再上(硬规则 8)。
                             if Player.tracks.length == 0
                                 && (Library.open-playlist-name != ""
-                                    || root.music-section == 0
-                                    || root.music-section == 3
-                                    || (root.music-section == 2
+                                    || Shell.music-section == 0
+                                    || Shell.music-section == 3
+                                    || (Shell.music-section == 2
                                         && Library.search-tab == 0)):
                             empty-state := VerticalLayout {
                                 vertical-stretch: 1;
@@ -877,10 +795,10 @@ export component MainWindow inherits Window {
                                         accessible-action-default => { Player.daily(); }
 
                                         // §9:光带纹理垫底(ribbon 绿板)。
-                                        if root.aurora-buttons-on && root.empty-daily-bg.width > 0: Image {
+                                        if Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0: Image {
                                             width: 100%;
                                             height: 100%;
-                                            source: root.empty-daily-bg;
+                                            source: Shell.empty-daily-bg;
                                         }
 
                                         empty-daily-label := Text {
@@ -888,7 +806,7 @@ export component MainWindow inherits Window {
                                             font-family: "Maple Mono NF CN";
                                             font-size: 14px;
                                             // 光带底是深的,字换近白;关掉开关回 accent 实底的深墨。
-                                            color: root.aurora-buttons-on && root.empty-daily-bg.width > 0
+                                            color: Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0
                                                 ? Theme.immersive-text : Theme.accent-text;
                                             horizontal-alignment: center;
                                             vertical-alignment: center;
@@ -897,11 +815,11 @@ export component MainWindow inherits Window {
                                             mouse-cursor: pointer;
                                             clicked => { Player.daily(); }
                                             changed has-hover => {
-                                                root.empty-daily-hover = self.has-hover;
+                                                Shell.empty-daily-hover = self.has-hover;
                                             }
                                             moved => {
-                                                root.empty-daily-px = self.mouse-x / max(self.width, 1px);
-                                                root.empty-daily-py = 1 - self.mouse-y / max(self.height, 1px);
+                                                Shell.empty-daily-px = self.mouse-x / max(self.width, 1px);
+                                                Shell.empty-daily-py = 1 - self.mouse-y / max(self.height, 1px);
                                             }
                                         }
                                     }
@@ -910,9 +828,9 @@ export component MainWindow inherits Window {
 
                             // #66 列表 ⇄ 卡墙的二选一开关。只在每日推荐分区、
                             // GPU 构建下出现 —— 别的分区没有墙可切。
-                            if root.wall-supported
-                                && root.current-tab == 1
-                                && root.music-section == 0
+                            if Shell.wall-supported
+                                && Shell.current-tab == 1
+                                && Shell.music-section == 0
                                 && Library.open-playlist-name == ""
                                 && Player.tracks.length > 0:
                             HorizontalLayout {
@@ -923,18 +841,18 @@ export component MainWindow inherits Window {
                                 view-list-btn := Rectangle {
                                     width: 56px;
                                     border-radius: 13px;
-                                    background: root.view-wall
+                                    background: Shell.view-wall
                                         ? Theme.surface : Theme.accent;
                                     accessible-role: button;
                                     accessible-label: "列表视图";
                                     accessible-action-default => {
-                                        root.set-view-wall(false);
+                                        Shell.set-view-wall(false);
                                     }
                                     Text {
                                         text: "列表";
                                         font-family: "Maple Mono NF CN";
                                         font-size: 12px;
-                                        color: root.view-wall
+                                        color: Shell.view-wall
                                             ? Theme.text-dim
                                             : Theme.accent-text;
                                         horizontal-alignment: center;
@@ -943,25 +861,25 @@ export component MainWindow inherits Window {
                                     TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => {
-                                            root.set-view-wall(false);
+                                            Shell.set-view-wall(false);
                                         }
                                     }
                                 }
                                 view-wall-btn := Rectangle {
                                     width: 56px;
                                     border-radius: 13px;
-                                    background: root.view-wall
+                                    background: Shell.view-wall
                                         ? Theme.accent : Theme.surface;
                                     accessible-role: button;
                                     accessible-label: "卡墙视图";
                                     accessible-action-default => {
-                                        root.set-view-wall(true);
+                                        Shell.set-view-wall(true);
                                     }
                                     Text {
                                         text: "卡墙";
                                         font-family: "Maple Mono NF CN";
                                         font-size: 12px;
-                                        color: root.view-wall
+                                        color: Shell.view-wall
                                             ? Theme.accent-text
                                             : Theme.text-dim;
                                         horizontal-alignment: center;
@@ -970,7 +888,7 @@ export component MainWindow inherits Window {
                                     TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => {
-                                            root.set-view-wall(true);
+                                            Shell.set-view-wall(true);
                                         }
                                     }
                                 }
@@ -979,25 +897,25 @@ export component MainWindow inherits Window {
                             // #66 卡墙场区:纹理由 render3d 画,这里只摆图、
                             // 收指针。硬规则 8:TouchArea 只写镜像与喊回调,
                             // 命中测试在 Rust(wall_drive.rs)。
-                            if root.wall-visible:
+                            if Shell.wall-visible:
                             wall-area := Rectangle {
                                 vertical-stretch: 1;
                                 clip: true;
                                 init => {
-                                    root.wall-field-w = self.width;
-                                    root.wall-field-h = self.height;
+                                    Shell.wall-field-w = self.width;
+                                    Shell.wall-field-h = self.height;
                                 }
                                 changed width => {
-                                    root.wall-field-w = self.width;
+                                    Shell.wall-field-w = self.width;
                                 }
                                 changed height => {
-                                    root.wall-field-h = self.height;
+                                    Shell.wall-field-h = self.height;
                                 }
 
-                                if root.wall-bg.width > 0: Image {
+                                if Shell.wall-bg.width > 0: Image {
                                     width: 100%;
                                     height: 100%;
-                                    source: root.wall-bg;
+                                    source: Shell.wall-bg;
                                 }
                                 Text {
                                     x: 4px;
@@ -1009,30 +927,30 @@ export component MainWindow inherits Window {
                                 }
                                 wall-touch := TouchArea {
                                     moved => {
-                                        root.wall-px = self.mouse-x;
-                                        root.wall-py = self.mouse-y;
+                                        Shell.wall-px = self.mouse-x;
+                                        Shell.wall-py = self.mouse-y;
                                     }
                                     pointer-event(ev) => {
                                         if ev.kind == PointerEventKind.down {
-                                            root.wall-px = self.mouse-x;
-                                            root.wall-py = self.mouse-y;
-                                            root.wall-pressed = true;
+                                            Shell.wall-px = self.mouse-x;
+                                            Shell.wall-py = self.mouse-y;
+                                            Shell.wall-pressed = true;
                                         }
                                         if ev.kind == PointerEventKind.up
                                             || ev.kind == PointerEventKind.cancel {
-                                            root.wall-pressed = false;
+                                            Shell.wall-pressed = false;
                                         }
                                     }
                                     scroll-event(ev) => {
-                                        root.wall-wheel(ev.delta-y);
+                                        Shell.wall-wheel(ev.delta-y);
                                         return accept;
                                     }
                                     clicked => {
-                                        root.wall-tap(
+                                        Shell.wall-tap(
                                             self.mouse-x, self.mouse-y);
                                     }
                                     double-clicked => {
-                                        root.wall-double(
+                                        Shell.wall-double(
                                             self.mouse-x, self.mouse-y);
                                     }
                                 }
@@ -1041,16 +959,16 @@ export component MainWindow inherits Window {
                             // 它们都是「一批歌」。墙可见时列表让位 ——
                             // 同一批卡的两种摆法,不同时出现。
                             if (Library.open-playlist-name != ""
-                                || root.music-section == 0
-                                || root.music-section == 3
-                                || (root.music-section == 2
+                                || Shell.music-section == 0
+                                || Shell.music-section == 3
+                                || (Shell.music-section == 2
                                     && Library.search-tab == 0))
-                                && !root.wall-visible:
+                                && !Shell.wall-visible:
                             track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: Player.tracks;
                                 // 最近播放画成时间轴,别的分区还是平列表。
-                                timeline: root.music-section == 3
+                                timeline: Shell.music-section == 3
                                     && Library.open-playlist-name == "";
                                 // 只有本地歌单的内容能移出去
                                 removable: Library.open-playlist-local;
@@ -1092,15 +1010,15 @@ export component MainWindow inherits Window {
                         // fluid 正在播放胶囊(#68):尺寸回写给 Rust,渲成图贴回来。
                         // shader 自带胶囊 alpha 裁切,reveal 左闸保住文字区。
                         init => {
-                            root.bar-w = self.width;
-                            root.bar-h = self.height;
+                            Shell.bar-w = self.width;
+                            Shell.bar-h = self.height;
                         }
-                        changed width => { root.bar-w = self.width; }
-                        changed height => { root.bar-h = self.height; }
-                        if Player.is-playing && root.bar-fluid-bg.width > 0: Image {
+                        changed width => { Shell.bar-w = self.width; }
+                        changed height => { Shell.bar-h = self.height; }
+                        if Player.is-playing && Shell.bar-fluid-bg.width > 0: Image {
                             width: 100%;
                             height: 100%;
-                            source: root.bar-fluid-bg;
+                            source: Shell.bar-fluid-bg;
                         }
 
                         HorizontalLayout {
@@ -1175,12 +1093,12 @@ export component MainWindow inherits Window {
                             RoundControl {
                                 icon: "M12 7 L19 16 L5 16 Z";
                                 label: "展开播放页";
-                                clicked => { root.play-page-open = true; }
+                                clicked => { Shell.play-page-open = true; }
                             }
                             SyncStrip {
                                 horizontal-stretch: 0;
-                                devices: root.devices;
-                                push-to(id) => { root.push-to(id); }
+                                devices: Shell.devices;
+                                push-to(id) => { Shell.push-to(id); }
                             }
                         }
 
@@ -1206,15 +1124,15 @@ export component MainWindow inherits Window {
                         border-color: Theme.glass-edge;
                         // fluid 背景与宽版同一条通道(#68)。
                         init => {
-                            root.bar-w = self.width;
-                            root.bar-h = self.height;
+                            Shell.bar-w = self.width;
+                            Shell.bar-h = self.height;
                         }
-                        changed width => { root.bar-w = self.width; }
-                        changed height => { root.bar-h = self.height; }
-                        if Player.is-playing && root.bar-fluid-bg.width > 0: Image {
+                        changed width => { Shell.bar-w = self.width; }
+                        changed height => { Shell.bar-h = self.height; }
+                        if Player.is-playing && Shell.bar-fluid-bg.width > 0: Image {
                             width: 100%;
                             height: 100%;
-                            source: root.bar-fluid-bg;
+                            source: Shell.bar-fluid-bg;
                         }
 
                         VerticalLayout {
@@ -1239,7 +1157,7 @@ export component MainWindow inherits Window {
                                 RoundControl {
                                     icon: "M12 7 L19 16 L5 16 Z";
                                     label: "展开播放页";
-                                    clicked => { root.play-page-open = true; }
+                                    clicked => { Shell.play-page-open = true; }
                                 }
                             }
                             // 紧凑版式:进度条与音量共占第二行。
@@ -1263,20 +1181,20 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 alignment: center;
                                 SyncStrip {
-                                    devices: root.devices;
-                                    push-to(id) => { root.push-to(id); }
+                                    devices: Shell.devices;
+                                    push-to(id) => { Shell.push-to(id); }
                                 }
                             }
                         }
                     }
                 }
 
-                // fps 浮层:content 的最后一个子元素 → 画在最上层。
-                // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 fps 模块)。
-                if root.show-fps: Text {
+                // Shell.fps 浮层:content 的最后一个子元素 → 画在最上层。
+                // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 Shell.fps 模块)。
+                if Shell.show-fps: Text {
                     x: 8px;
                     y: 8px;
-                    text: "FPS " + round(root.fps);
+                    text: "FPS " + round(Shell.fps);
                     color: #51cf66;
                     font-size: 14px;
                     font-weight: 700;
@@ -1314,10 +1232,10 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     label: item.label;
                     icon: item.icon;
-                    active: root.current-tab == i;
+                    active: Shell.current-tab == i;
                     // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
                     gpu-selected: root.nav-bg.width > 0;
-                    clicked => { root.current-tab = i; }
+                    clicked => { Shell.current-tab = i; }
                 }
                 // 沉底那组在底栏里接着排:手机没有"栏底"可沉,四项等分。
                 // 设计稿的第三位是搜索,但搜索已经住在 Music 页的分段条里;
@@ -1326,9 +1244,9 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     label: item.label;
                     icon: item.icon;
-                    active: root.current-tab == i + 2;
+                    active: Shell.current-tab == i + 2;
                     gpu-selected: root.nav-bg.width > 0;
-                    clicked => { root.current-tab = i + 2; }
+                    clicked => { Shell.current-tab = i + 2; }
                 }
             }
         }
@@ -1339,7 +1257,7 @@ export component MainWindow inherits Window {
     // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
     // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
     // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
-    if root.play-page-open: FocusScope {
+    if Shell.play-page-open: FocusScope {
         // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
         // key-pressed 一次都不会触发。
         init => { self.focus(); }
@@ -1352,7 +1270,7 @@ export component MainWindow inherits Window {
         // 全屏沉浸层,那不是任何人对返回的预期。
         key-pressed(event) => {
             if (event.text == Key.Back || event.text == Key.Escape) {
-                root.play-page-open = false;
+                Shell.play-page-open = false;
                 return accept;
             }
             return reject;
@@ -1627,15 +1545,15 @@ export component MainWindow inherits Window {
                 // fluid 主控条底(#69):尺寸回写给 Rust,渲成图贴回来。
                 // shader 自带圆角 alpha 裁切,reveal 左闸保住时间读数那一块。
                 init => {
-                    root.viz-bar-w = self.width;
-                    root.viz-bar-h = self.height;
+                    Shell.viz-bar-w = self.width;
+                    Shell.viz-bar-h = self.height;
                 }
-                changed width => { root.viz-bar-w = self.width; }
-                changed height => { root.viz-bar-h = self.height; }
-                if root.viz-bar-bg.width > 0: Image {
+                changed width => { Shell.viz-bar-w = self.width; }
+                changed height => { Shell.viz-bar-h = self.height; }
+                if Shell.viz-bar-bg.width > 0: Image {
                     width: 100%;
                     height: 100%;
-                    source: root.viz-bar-bg;
+                    source: Shell.viz-bar-bg;
                 }
 
                 VerticalLayout {
@@ -1667,14 +1585,14 @@ export component MainWindow inherits Window {
                         if !root.compact: RoundControl {
                             icon: root.preset-icon;
                             label: "视觉预设";
-                            backdrop: root.viz-glass-bg;
+                            backdrop: Shell.viz-glass-bg;
                             clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
                         }
                         if !root.compact: RoundControl {
                             icon: root.collapse-icon;
                             label: "收起播放页";
-                            backdrop: root.viz-glass-bg;
-                            clicked => { root.play-page-open = false; }
+                            backdrop: Shell.viz-glass-bg;
+                            clicked => { Shell.play-page-open = false; }
                         }
                     }
                     if root.compact: HorizontalLayout {
@@ -1685,7 +1603,7 @@ export component MainWindow inherits Window {
                         RoundControl {
                             icon: root.preset-icon;
                             label: "视觉预设";
-                            backdrop: root.viz-glass-bg;
+                            backdrop: Shell.viz-glass-bg;
                             clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
                         }
                         // 收起播放页:向下的小三角,与展开用的向上三角对称。
@@ -1693,8 +1611,8 @@ export component MainWindow inherits Window {
                         RoundControl {
                             icon: root.collapse-icon;
                             label: "收起播放页";
-                            backdrop: root.viz-glass-bg;
-                            clicked => { root.play-page-open = false; }
+                            backdrop: Shell.viz-glass-bg;
+                            clicked => { Shell.play-page-open = false; }
                         }
                     }
                 }
@@ -1774,7 +1692,7 @@ export component MainWindow inherits Window {
     // 写在状态行等于说给没人在的房间(docs/adr/0013)。一次性提示同理:
     // 它们各自发生在哪一页并不确定,唯有压在所有页之上才一定被看见。
     // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
-    if root.banner-text != "": banner := Rectangle {
+    if Shell.banner-text != "": banner := Rectangle {
         y: root.safe-area-insets.top + 10px;
         x: (parent.width - self.width) / 2;
         width: min(parent.width - 32px, 420px);
@@ -1790,7 +1708,7 @@ export component MainWindow inherits Window {
             spacing: 6px;
 
             Text {
-                text: root.banner-text;
+                text: Shell.banner-text;
                 // 文案是硬编码中文,与状态行同一套子集字体。
                 font-family: "Maple Mono NF CN";
                 font-size: 13px;
@@ -1805,7 +1723,7 @@ export component MainWindow inherits Window {
                 diameter: 32px;
                 transparent-base: true;
                 icon: "M7 7 L17 17 M17 7 L7 17";
-                clicked => { root.banner-text = ""; }
+                clicked => { Shell.banner-text = ""; }
             }
         }
     }

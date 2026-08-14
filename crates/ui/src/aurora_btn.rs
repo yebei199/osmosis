@@ -14,6 +14,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::Player;
+use crate::Shell;
 
 /// 静息振幅:约一成亮度。悬停收敛到 1.0。
 pub const REST_AMP: f32 = 0.12;
@@ -143,20 +144,24 @@ pub fn nav_key_slot(
 
 /// 恢复开关并接上设置页的拨动。值的真相在 `api::settings`,跟设备走。
 pub(crate) fn bind(ui: &MainWindow) {
-    ui.set_aurora_buttons_on(
+    ui.global::<Shell>().set_aurora_buttons_on(
         api::settings::load().aurora_buttons,
     );
 
     let weak = ui.as_weak();
-    ui.on_aurora_buttons_toggled(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        let on = !ui.get_aurora_buttons_on();
-        ui.set_aurora_buttons_on(on);
-        api::settings::save(&api::settings::Settings {
-            aurora_buttons: on,
-            ..api::settings::load()
-        });
-    });
+    ui.global::<Shell>().on_aurora_buttons_toggled(
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let on = !ui
+                .global::<Shell>()
+                .get_aurora_buttons_on();
+            ui.global::<Shell>().set_aurora_buttons_on(on);
+            api::settings::save(&api::settings::Settings {
+                aurora_buttons: on,
+                ..api::settings::load()
+            });
+        },
+    );
 }
 
 #[cfg(test)]
@@ -241,19 +246,22 @@ impl ButtonBand {
         // ── 光带按钮(§9)──
         // 两颗:Home 空槽(nebula)与空状态「换一批推荐」(ribbon 绿板)。
         // 前台恒满帧,每帧照渲;关掉开关即整段不进 —— 纯色实底,功能不变。
-        if ui.get_aurora_buttons_on() {
+        if ui.global::<Shell>().get_aurora_buttons_on() {
             self.home.step(
-                ui.get_home_slot_hover(),
+                ui.global::<Shell>().get_home_slot_hover(),
                 (
-                    ui.get_home_slot_px(),
-                    ui.get_home_slot_py(),
+                    ui.global::<Shell>().get_home_slot_px(),
+                    ui.global::<Shell>().get_home_slot_py(),
                 ),
             );
             self.daily.step(
-                ui.get_empty_daily_hover(),
+                ui.global::<Shell>()
+                    .get_empty_daily_hover(),
                 (
-                    ui.get_empty_daily_px(),
-                    ui.get_empty_daily_py(),
+                    ui.global::<Shell>()
+                        .get_empty_daily_px(),
+                    ui.global::<Shell>()
+                        .get_empty_daily_py(),
                 ),
             );
             // 胶囊的 fluid:播放当"热"(振幅升到满),暂停收回静息。
@@ -286,8 +294,10 @@ impl ButtonBand {
                 };
                 // fluid 正在播放胶囊(#68):尺寸由 .slint 回写,
                 // 没歌或场区未量出时不渲这一槽。
-                let bar_w = ui.get_bar_w();
-                let bar_h = ui.get_bar_h();
+                let bar_w =
+                    ui.global::<Shell>().get_bar_w();
+                let bar_h =
+                    ui.global::<Shell>().get_bar_h();
                 let bar_on =
                     ui.global::<Player>().get_is_playing()
                         && bar_w > 1.0
@@ -357,9 +367,13 @@ impl ButtonBand {
                 // 播放页覆层在场时的两槽(#69):主控条底与两颗次要圆钮
                 // 的 glass 底。覆层不在场就整个不进 —— 那时它们连元素
                 // 都还没实例化。
-                let viz_open = ui.get_play_page_open();
-                let viz_bar_w = ui.get_viz_bar_w();
-                let viz_bar_h = ui.get_viz_bar_h();
+                let viz_open = ui
+                    .global::<Shell>()
+                    .get_play_page_open();
+                let viz_bar_w =
+                    ui.global::<Shell>().get_viz_bar_w();
+                let viz_bar_h =
+                    ui.global::<Shell>().get_viz_bar_h();
                 let viz_bar_i = (viz_open
                     && viz_bar_w > 1.0
                     && viz_bar_h > 1.0)
@@ -401,7 +415,8 @@ impl ButtonBand {
                 // 侧栏底部两颗 glass 圆钮(#71)。各渲各的:选中那颗把振幅
                 // 拉满,共用一张图就分不出谁被选中。侧栏只在宽版式存在。
                 let rail_keys = !compact;
-                let tab = ui.get_current_tab();
+                let tab =
+                    ui.global::<Shell>().get_current_tab();
                 let mut rail_key = |i: i32, seed: f32| {
                     rail_keys.then(|| {
                         slots.push(nav_key_slot(
@@ -441,26 +456,33 @@ impl ButtonBand {
                         slots,
                     });
                 if let [home, daily, ..] = imgs.as_slice() {
-                    ui.set_home_slot_bg(home.clone());
-                    ui.set_empty_daily_bg(daily.clone());
+                    ui.global::<Shell>()
+                        .set_home_slot_bg(home.clone());
+                    ui.global::<Shell>()
+                        .set_empty_daily_bg(daily.clone());
                 }
                 let at = |i: Option<usize>| {
                     i.and_then(|i| imgs.get(i)).cloned()
                 };
                 if let Some(img) = at(bar_i) {
-                    ui.set_bar_fluid_bg(img);
+                    ui.global::<Shell>()
+                        .set_bar_fluid_bg(img);
                 }
                 if let Some(img) = at(viz_bar_i) {
-                    ui.set_viz_bar_bg(img);
+                    ui.global::<Shell>()
+                        .set_viz_bar_bg(img);
                 }
                 if let Some(img) = at(viz_glass_i) {
-                    ui.set_viz_glass_bg(img);
+                    ui.global::<Shell>()
+                        .set_viz_glass_bg(img);
                 }
                 if let Some(img) = at(key_a_i) {
-                    ui.set_nav_key_a_bg(img);
+                    ui.global::<Shell>()
+                        .set_nav_key_a_bg(img);
                 }
                 if let Some(img) = at(key_b_i) {
-                    ui.set_nav_key_b_bg(img);
+                    ui.global::<Shell>()
+                        .set_nav_key_b_bg(img);
                 }
             }
         } else {

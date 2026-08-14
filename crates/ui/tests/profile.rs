@@ -8,6 +8,7 @@ use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Profile;
 use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -34,7 +35,7 @@ fn entering_the_profile_asks_for_stats() {
         counter.set(counter.get() + 1);
     });
 
-    ui.set_current_tab(2);
+    ui.global::<Shell>().set_current_tab(2);
     // 无头下条件元素惰性实例化,init 在第一次元素查询时才触发;
     // 查一下页面里的任意元素,把实例化逼出来。
     let _ = present(&ui, "ProfilePage::stats-row");
@@ -46,7 +47,7 @@ fn entering_the_profile_asks_for_stats() {
 #[test]
 fn stat_cards_wait_for_the_data() {
     let ui = window();
-    ui.set_current_tab(2);
+    ui.global::<Shell>().set_current_tab(2);
 
     ui.global::<Profile>().set_loaded(false);
     assert!(!present(&ui, "ProfilePage::stats-row"));

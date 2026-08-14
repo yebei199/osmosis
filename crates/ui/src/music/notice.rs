@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::Player;
+use crate::Shell;
 use slint::ComponentHandle as _;
 
 /// 声音放到一半没了:停下,弹横幅,再去问清是哪一种没了。
@@ -23,7 +24,7 @@ pub(super) fn report_stream_loss(
         describe_playback(deck.playback.borrow().state())
             .into(),
     );
-    ui.set_banner_text(opening.into());
+    ui.global::<Shell>().set_banner_text(opening.into());
 
     // 探测结果回来了再把话说准。探不通=本机没网,探得通=这条播放地址不行了。
     let weak = ui.as_weak();
@@ -31,8 +32,12 @@ pub(super) fn report_stream_loss(
         let reachable = api::health().await.is_ok();
         if let Some(ui) = weak.upgrade() {
             // 期间用户可能已经把横幅关了,或者又放起了别的歌 —— 那就不打扰他。
-            if !ui.get_banner_text().is_empty() {
-                ui.set_banner_text(
+            if !ui
+                .global::<Shell>()
+                .get_banner_text()
+                .is_empty()
+            {
+                ui.global::<Shell>().set_banner_text(
                     describe_stream_loss(Some(reachable))
                         .into(),
                 );

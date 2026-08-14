@@ -1,0 +1,104 @@
+import { Palette } from "std-widgets.slint";
+import { DeviceRow } from "../types.slint";
+import { Library } from "library.slint";
+import { Player } from "player.slint";
+
+// 壳级的状态面:调试读数、GPU 纹理槽、同播名册、卡墙、封面取色与横幅。
+//
+// **不含版式与导航几何**(compact、nav-* 那一整簇、current-tab) —— 它们要读
+// root.width / root.height / safe-area-insets,global 拿不到窗口上下文,
+// 那批留在 MainWindow。这条界线见 docs/adr/0027。
+export global Shell {
+    in property <float> fps: 0;
+    // 是否显示帧率读数。由 Rust 按 `OSMOSIS_FPS` 环境变量设置(见 lib.rs 的 fps_enabled)。
+    in property <bool> show-fps: false;
+    // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
+    in property <string> platform;
+
+    in property <image> bar-fluid-bg;
+    in-out property <length> bar-w: 0px;
+    in-out property <length> bar-h: 0px;
+    // 播放页主控条的底(#69):平时 fluid,缓冲时同一槽换成 progress 变体、
+    // 进度实时喂,那道呼吸亮边就是「还在动」的信号。尺寸同样由 .slint 回写,
+    // 覆层不在场时是 0,那一槽整个不进合批。
+    in property <image> viz-bar-bg;
+    in-out property <length> viz-bar-w: 0px;
+    in-out property <length> viz-bar-h: 0px;
+    // 播放页次要动作(视觉预设、收起)共用的 glass 底。两颗同尺寸,渲一张够。
+    in property <image> viz-glass-bg;
+    // 侧栏底部那两颗圆钮的 glass 底(#71)。这两颗各渲各的:选中的那颗要更亮,
+    // 共用一张就分不出谁被选中了。
+    in property <image> nav-key-a-bg;
+    in property <image> nav-key-b-bg;
+
+    // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
+    // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
+    // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
+    in-out property <string> banner-text;
+
+    in property <[DeviceRow]> devices: [];
+    // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
+    in property <string> sync-text;
+
+    in-out property <bool> aurora-buttons-on: true;
+    callback aurora-buttons-toggled();
+    in property <image> home-slot-bg;
+    in property <image> empty-daily-bg;
+    in-out property <bool> home-slot-hover: false;
+    in-out property <float> home-slot-px: 0.72;
+    in-out property <float> home-slot-py: 0.5;
+    in-out property <bool> empty-daily-hover: false;
+    in-out property <float> empty-daily-px: 0.72;
+    in-out property <float> empty-daily-py: 0.5;
+    // #66 卡墙(adr/0025):每日推荐分区的主视图。wall-supported 由 Rust 在
+    // GPU 构建里置真;view-wall 是用户意图,wall-showing 是显示态 ——
+    // 切列表要等塌回动画落地才熄,由 wall_drive.rs 写。
+    in-out property <bool> wall-supported: false;
+    in-out property <bool> view-wall: true;
+    in-out property <bool> wall-showing: true;
+    in property <image> wall-bg;
+    // 墙可见的总判据。列表与开关都照它排布。
+    out property <bool> wall-visible: wall-supported
+        && wall-showing
+        && current-tab == 1
+        && music-section == 0
+        && Library.open-playlist-name == ""
+        && Player.tracks.length > 0;
+    // 指针镜像(逻辑像素,换算物理在 Rust);场区尺寸由元素回写。
+    in-out property <bool> wall-pressed: false;
+    in-out property <length> wall-px: 0px;
+    in-out property <length> wall-py: 0px;
+    in-out property <length> wall-field-w: 0px;
+    in-out property <length> wall-field-h: 0px;
+    callback wall-tap(length, length);
+    callback wall-double(length, length);
+    callback wall-wheel(length);
+    // 列表 ⇄ 卡墙。目标由 Rust 记,塌回插值走完才真正换视图。
+    callback set-view-wall(bool);
+    // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
+    in property <bool> aurora-cover-active: false;
+    in property <color> aurora-cover-warm;
+    in property <color> aurora-cover-deep;
+    in property <color> aurora-cover-soft;
+
+    in-out property <int> current-tab: 0;
+
+    in-out property <int> music-section: 0;
+    // 宽版式竖栏收起没有。私有于界面 —— Rust 不关心用户把栏收没收。
+    in-out property <bool> rail-collapsed: false;
+    // 换了分区。Rust 据此去取对应的一批歌。
+    callback select-section(int);
+
+    in-out property <bool> play-page-open: false;
+
+    callback theme-mode-selected(int);
+    // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
+    callback system-scheme-changed();
+    // §9 光带按钮:开关(真相在 api::settings,aurora_btn.rs 写)、两颗按钮的
+    // 纹理,以及 hover/指针的镜像(元素写,Rust 每帧读去喂 shader)。
+    // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
+    out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
+    changed system-prefers-dark => { system-scheme-changed(); }
+    // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
+    callback push-to(string);
+}

@@ -7,6 +7,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Shell;
 use ui::Viz;
 
 /// 播放页展开的窗口。标注卡是播放页里的条件元素,页不开它不实例化。
@@ -15,7 +16,7 @@ fn play_window() -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.window()
         .set_size(slint::LogicalSize::new(400.0, 800.0));
-    ui.set_play_page_open(true);
+    ui.global::<Shell>().set_play_page_open(true);
     ui.global::<Viz>().set_now_title("锚定测试曲".into());
     ui.global::<Viz>().set_viz_anchor_x(0.5);
     ui.global::<Viz>().set_viz_anchor_y(0.5);

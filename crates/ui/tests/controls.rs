@@ -7,6 +7,7 @@ use slint::ComponentHandle;
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -32,7 +33,7 @@ fn wide_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
+    ui.global::<Shell>().set_current_tab(1);
     ui.set_compact(false);
     ui
 }
@@ -210,11 +211,14 @@ fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
         .next();
 
     assert!(
-        ui.get_bar_w() > 0.0,
+        ui.global::<Shell>().get_bar_w() > 0.0,
         "胶囊该把宽度回写,实得 {}",
-        ui.get_bar_w()
+        ui.global::<Shell>().get_bar_w()
     );
-    assert!(ui.get_bar_h() > 0.0, "胶囊该把高度回写");
+    assert!(
+        ui.global::<Shell>().get_bar_h() > 0.0,
+        "胶囊该把高度回写"
+    );
 }
 
 /// 播放页控制条把自己的尺寸回写给 seam,fluid 底才知道该渲多大。
@@ -226,12 +230,12 @@ fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
     let ui = wide_page();
     ui.global::<Player>().set_has_track(true);
     assert_eq!(
-        ui.get_viz_bar_w(),
+        ui.global::<Shell>().get_viz_bar_w(),
         0.0,
         "没开播放页时不该有尺寸"
     );
 
-    ui.set_play_page_open(true);
+    ui.global::<Shell>().set_play_page_open(true);
     // 覆层是条件页面,先查一次元素逼出实例化,init 才会跑。
     let _ =
         testing::ElementHandle::find_by_accessible_label(
@@ -241,12 +245,12 @@ fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
         .next();
 
     assert!(
-        ui.get_viz_bar_w() > 0.0,
+        ui.global::<Shell>().get_viz_bar_w() > 0.0,
         "播放页控制条该回写宽度,实得 {}",
-        ui.get_viz_bar_w()
+        ui.global::<Shell>().get_viz_bar_w()
     );
     assert!(
-        ui.get_viz_bar_h() > 0.0,
+        ui.global::<Shell>().get_viz_bar_h() > 0.0,
         "播放页控制条该回写高度"
     );
 }

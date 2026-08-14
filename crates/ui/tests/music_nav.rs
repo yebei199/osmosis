@@ -9,6 +9,7 @@ use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 use ui::Viz;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -22,7 +23,7 @@ fn music_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_current_tab(1);
+    ui.global::<Shell>().set_current_tab(1);
     ui
 }
 
@@ -34,7 +35,7 @@ fn only_the_selected_section_is_in_the_tree() {
     let ui = music_page();
 
     // 0 = 每日推荐:摆曲目列表,没有搜索框
-    ui.set_music_section(0);
+    ui.global::<Shell>().set_music_section(0);
     assert!(present(&ui, "MainWindow::track-list"));
     assert!(!present(&ui, "MainWindow::keyword"));
     assert!(!present(&ui, "MainWindow::playlist-list"));
@@ -43,7 +44,7 @@ fn only_the_selected_section_is_in_the_tree() {
     //
     // 这里曾经断言的是一个占位文本 —— 歌单列表做出来之后,这一节摆的东西换了,
     // 但「摆自己的东西、不摆一批歌」这条没变。
-    ui.set_music_section(1);
+    ui.global::<Shell>().set_music_section(1);
     assert!(present(&ui, "MainWindow::playlist-list"));
     assert!(
         !present(&ui, "MainWindow::track-list"),
@@ -51,7 +52,7 @@ fn only_the_selected_section_is_in_the_tree() {
     );
 
     // 2 = 搜索:搜索框出现
-    ui.set_music_section(2);
+    ui.global::<Shell>().set_music_section(2);
     assert!(present(&ui, "MainWindow::keyword"));
     assert!(present(&ui, "MainWindow::track-list"));
 }
@@ -83,11 +84,11 @@ fn the_rail_is_wide_only_and_the_bar_is_compact_only() {
 #[test]
 fn collapsing_the_rail_keeps_the_selection() {
     let ui = music_page();
-    ui.set_music_section(3);
+    ui.global::<Shell>().set_music_section(3);
 
-    ui.set_rail_collapsed(true);
+    ui.global::<Shell>().set_rail_collapsed(true);
 
-    assert_eq!(ui.get_music_section(), 3);
+    assert_eq!(ui.global::<Shell>().get_music_section(), 3);
     assert!(present(&ui, "MainWindow::track-list"));
 }
 
@@ -100,8 +101,8 @@ fn switching_sections_does_not_disturb_playback() {
     ui.global::<Viz>().set_now_title("紅蓮華".into());
     ui.global::<Player>().set_is_playing(true);
 
-    ui.set_music_section(1);
-    ui.set_music_section(3);
+    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_music_section(3);
 
     assert_eq!(
         ui.global::<Viz>().get_now_title(),

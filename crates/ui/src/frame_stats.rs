@@ -3,6 +3,7 @@
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::Shell;
 
 /// 每帧耗时的记账窗口(帧)。约两秒一行,与 render3d 的采样窗口对齐,便于两边日志对读。
 const FRAME_ACCT_WINDOW: u32 = 120;
@@ -84,6 +85,7 @@ impl FrameAccounting {
 /// ~1(交互/动画时才飙高),这正是诚实的即时帧率,也不会白耗电。3D 页每帧自请求重绘,
 /// 这里自然就读到满帧。
 pub(crate) mod fps {
+    use super::Shell;
     use std::cell::Cell;
     use std::rc::Rc;
     use std::time::Duration;
@@ -113,7 +115,7 @@ pub(crate) mod fps {
             move || {
                 let counted = frames_sample.replace(0);
                 if let Some(ui) = weak_fps.upgrade() {
-                    ui.set_fps(
+                    ui.global::<Shell>().set_fps(
                         counted as f32
                             / SAMPLE_PERIOD.as_secs_f32(),
                     );

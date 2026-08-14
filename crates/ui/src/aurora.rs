@@ -11,7 +11,9 @@
 //! 一堆脏灰会把桶全占了。
 
 use crate::MainWindow;
+use crate::Shell;
 use crate::viz::CoverPixels;
+use slint::ComponentHandle as _;
 
 /// 色相桶数。12 桶 = 每桶 30°,再细分辨不出光斑的差别。
 const HUE_BUCKETS: usize = 12;
@@ -29,10 +31,14 @@ pub(crate) fn feed(ui: &MainWindow, cover: &CoverPixels) {
         &cover.rgba,
     ) {
         Some([warm, deep, soft]) => {
-            ui.set_aurora_cover_warm(color(warm));
-            ui.set_aurora_cover_deep(color(deep));
-            ui.set_aurora_cover_soft(color(soft));
-            ui.set_aurora_cover_active(true);
+            ui.global::<Shell>()
+                .set_aurora_cover_warm(color(warm));
+            ui.global::<Shell>()
+                .set_aurora_cover_deep(color(deep));
+            ui.global::<Shell>()
+                .set_aurora_cover_soft(color(soft));
+            ui.global::<Shell>()
+                .set_aurora_cover_active(true);
         }
         None => reset(ui),
     }
@@ -40,7 +46,7 @@ pub(crate) fn feed(ui: &MainWindow, cover: &CoverPixels) {
 
 /// 换歌先清:与封面卡、点云同一条原则,旧色配新歌比主题绿更误导。
 pub(crate) fn reset(ui: &MainWindow) {
-    ui.set_aurora_cover_active(false);
+    ui.global::<Shell>().set_aurora_cover_active(false);
 }
 
 fn color(rgb: [u8; 3]) -> slint::Color {

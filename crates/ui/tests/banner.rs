@@ -9,7 +9,9 @@
 //! 什么都没有(见 `docs/adr/0013`)。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Shell;
 
 /// 当前树里的横幅。`None` = 它压根不在,不是"在但空着"。
 fn banner(
@@ -37,14 +39,16 @@ fn the_banner_shows_up_only_when_there_is_something_to_say()
         "还没出事,横幅不该在树里"
     );
 
-    ui.set_banner_text("没网了,检查一下网络再试".into());
+    ui.global::<Shell>()
+        .set_banner_text("没网了,检查一下网络再试".into());
     assert!(
         banner(&ui).is_some(),
         "有话说了,横幅该出现 —— 文案对而看不见等于没说"
     );
 
     // 放成功了会走这一步(见 music.rs 的 play_current)。
-    ui.set_banner_text(slint::SharedString::new());
+    ui.global::<Shell>()
+        .set_banner_text(slint::SharedString::new());
     assert!(
         banner(&ui).is_none(),
         "声音回来了,那句话已经过期,横幅该收掉"

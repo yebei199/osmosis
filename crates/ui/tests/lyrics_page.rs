@@ -11,6 +11,7 @@ use slint::{
 };
 use ui::Player;
 use ui::Session;
+use ui::Shell;
 use ui::Viz;
 use ui::{LyricRow, MainWindow};
 
@@ -23,7 +24,7 @@ fn play_window() -> MainWindow {
     ui.window()
         .set_size(slint::LogicalSize::new(400.0, 800.0));
     ui.global::<Session>().set_logged_in(true);
-    ui.set_play_page_open(true);
+    ui.global::<Shell>().set_play_page_open(true);
     ui.global::<Player>().set_has_track(true);
     ui.global::<Viz>().set_now_title("歌词测试曲".into());
     ui.global::<Viz>().set_lyric_line("当前这一行".into());
@@ -124,7 +125,7 @@ fn tapping_outside_the_lines_returns_to_the_play_page() {
         "点空白该收回歌词页"
     );
     assert!(
-        ui.get_play_page_open(),
+        ui.global::<Shell>().get_play_page_open(),
         "收回歌词页不该连播放页一起收"
     );
 }

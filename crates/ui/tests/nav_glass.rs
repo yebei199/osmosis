@@ -10,6 +10,7 @@ use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Session;
+use ui::Shell;
 
 /// 登录之后才有导航。默认宽版式(侧栏)。
 fn nav_window() -> MainWindow {
@@ -82,7 +83,7 @@ fn the_droplet_lands_on_the_selected_bottom_item() {
 
     for tab in 0..4 {
         observe(&ui);
-        ui.set_current_tab(tab);
+        ui.global::<Shell>().set_current_tab(tab);
         // 最慢那颗是 680ms,给足时间让三球都到位。
         testing::mock_elapsed_time(Duration::from_millis(
             900,
@@ -104,7 +105,7 @@ fn the_droplet_melts_away_for_the_bottom_round_keys() {
     let ui = nav_window();
 
     observe(&ui);
-    ui.set_current_tab(1);
+    ui.global::<Shell>().set_current_tab(1);
     testing::mock_elapsed_time(Duration::from_millis(900));
     assert!(
         ui.get_nav_ball() > 0.9,
@@ -114,7 +115,7 @@ fn the_droplet_melts_away_for_the_bottom_round_keys() {
     let on_music = ui.get_nav_lead();
 
     observe(&ui);
-    ui.set_current_tab(3);
+    ui.global::<Shell>().set_current_tab(3);
     testing::mock_elapsed_time(Duration::from_millis(900));
     assert_eq!(
         ui.get_nav_ball(),
@@ -128,7 +129,7 @@ fn the_droplet_melts_away_for_the_bottom_round_keys() {
     );
 
     observe(&ui);
-    ui.set_current_tab(0);
+    ui.global::<Shell>().set_current_tab(0);
     testing::mock_elapsed_time(Duration::from_millis(900));
     assert!(
         ui.get_nav_ball() > 0.9,
@@ -145,7 +146,7 @@ fn the_bottom_bar_keeps_all_four_slots_on_the_track() {
     let _ = item_span(&ui, 0);
 
     observe(&ui);
-    ui.set_current_tab(3);
+    ui.global::<Shell>().set_current_tab(3);
     testing::mock_elapsed_time(Duration::from_millis(900));
 
     assert!(
@@ -166,7 +167,7 @@ fn the_bottom_bar_keeps_all_four_slots_on_the_track() {
 fn the_bottom_round_keys_are_checkable_tabs() {
     let ui = nav_window();
     // 停在 Home:个人主页没建,「个人」这个标签全应用只有侧栏那颗。
-    ui.set_current_tab(0);
+    ui.global::<Shell>().set_current_tab(0);
 
     let key =
         testing::ElementHandle::find_by_accessible_label(
@@ -187,7 +188,7 @@ fn the_bottom_round_keys_are_checkable_tabs() {
 
     key.invoke_accessible_default_action();
     assert_eq!(
-        ui.get_current_tab(),
+        ui.global::<Shell>().get_current_tab(),
         2,
         "点一下该切到个人主页"
     );
@@ -203,7 +204,7 @@ fn the_three_balls_stay_strung_out_mid_transition() {
 
     // 从最左边一格往最右边走,只走一小段:头球 240ms、尾球 440ms、小水滴 680ms。
     observe(&ui);
-    ui.set_current_tab(3);
+    ui.global::<Shell>().set_current_tab(3);
     testing::mock_elapsed_time(Duration::from_millis(120));
 
     let lead = ui.get_nav_lead();
