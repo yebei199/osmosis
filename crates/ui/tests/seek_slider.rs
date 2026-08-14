@@ -22,6 +22,15 @@ fn play_window() -> MainWindow {
     ui
 }
 
+/// 窗口的逻辑尺寸。贴边几何要拿它做判据。
+fn window_size(ui: &MainWindow) -> (f32, f32) {
+    let size = ui
+        .window()
+        .size()
+        .to_logical(ui.window().scale_factor());
+    (size.width, size.height)
+}
+
 fn element(
     ui: &MainWindow,
     id: &str,
@@ -235,5 +244,25 @@ fn the_time_readout_is_wider_than_the_slider() {
         "读数框该比滑条宽出一截:滑条 {},读数 {}",
         bar.size().width,
         readout.size().width
+    );
+}
+
+/// 读数得留在屏幕里。把一个比滑条宽的框居中挂在贴着右边缘的滑条上,
+/// 右半截就探出了屏幕,读数被屏幕边裁掉(小米13 真机实拍)。
+#[test]
+fn the_time_readout_stays_inside_the_window() {
+    let ui = play_window();
+    ui.set_progress_text("1:23 / 3:46".into());
+    let (width, _) = window_size(&ui);
+
+    let readout = element(&ui, "MainWindow::play-time-readout")
+        .expect("播放页该有时间读数");
+    let left = readout.absolute_position().x;
+    let right = left + readout.size().width;
+
+    assert!(left >= 0.0, "读数左边探出屏幕:{left}");
+    assert!(
+        right <= width,
+        "读数右边探出屏幕:窗口宽 {width},读数右缘 {right}"
     );
 }

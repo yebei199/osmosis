@@ -1780,7 +1780,9 @@ export component MainWindow inherits Window {
             // 读数比滑条宽得多:挂在 44px 的条上会被裁成「1:23 /」(真机实拍)。
             // 描边同歌名歌词 —— 亮封面的点云下,纯文本一个字也读不出来。
             play-time-readout := OutlinedText {
-                x: (parent.width - self.width) / 2;
+                // 右缘对齐滑条、向左长。居中挂在贴着屏幕右边的滑条上,
+                // 右半截会探出屏幕被裁掉(小米13 真机实拍,探出 18px)。
+                x: parent.width - self.width;
                 y: parent.height + 8px;
                 width: 96px;
                 height: 16px;
