@@ -1,5 +1,5 @@
 ---
-docs_synced_at: 188534f
+docs_synced_at: 278f667
 ---
 
 # AGENTS.md
@@ -77,6 +77,13 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
 同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上端口时**只在日志里
 留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
 元素树、截图全是旧的,一切看起来"改了没生效"。
+
+杀干净也不保证脱身:**元素树会在应用退出之后继续应答**。2026-08-13 实测,进程 kill、8091
+端口都释放了,`list_windows` 照样给出窗口;重启之后查唯一元素 `MainWindow::viz-anchor-card`
+返回**三个**句柄,句柄编号跨进程重启一路递增到 246,说明答的是几份树混在一起。因此
+**「元素不在树里」这个结论不能由 MCP 给**,它只证明你连的那份树里没有。要判元素在不在,
+写进 `crates/ui/tests/`,用 `i-slint-backend-testing` 的 `find_by_element_id` 查
+(见 [`docs/lesson/tooling.md`](docs/lesson/tooling.md))。
 
 **4. GPU 构建里,你看的那一层可能不是真的。**
 
@@ -190,9 +197,10 @@ ls -la --time-style=+%H:%M:%S dist/web/app_web_bg.wasm
 
 ## 后台任务:怎么知道它是死是活
 
-Claude Code 的 Bash 工具跑在进程沙箱里,`ps` 与 `pgrep` **看不到**后台任务的进程。
-实测过 `osmosis-desktop` 占着端口、而 `pgrep` 查无此进程。判死活只有三条路:任务完成
-通知、落盘日志在长、产物时间戳变新。拿 `pgrep` 的空结果当"已经退了"会一路错下去。
+`ps` 与 `pgrep` 时灵时不灵:2026-08-11 实测 `osmosis-desktop` 占着端口而 `pgrep` 查无
+此进程,2026-08-13 同一台机上 `pgrep -x osmosis-desktop` 与 `ps -o lstart` 又都正常。
+所以两个方向都不能单独采信 —— 拿 `pgrep` 的空结果当"已经退了"会一路错下去。判死活以这三条
+为准:任务完成通知、落盘日志在长、产物时间戳变新。
 
 **重构建命令不要接管道。**`cargo build | tail` 这类写法里,输出会被管道攒到进程结束才吐,
 中途永远是空的,看起来和吊死一模一样。全量重定向进文件(`> log 2>&1`),再去读那个文件。
