@@ -23,7 +23,8 @@ docs_synced_at: 188534f
 | 待办在哪 | [`docs/TODO.md`](docs/TODO.md) |
 | 怎么验 | `just ci` 逐字复述 CI,`dev` 分支的 push 不触发 CI,它是唯一防线;UI 改动用 `just shot` 与 MCP,贴屏幕边/随窗口变形的几何还要真机复核(`just mcp-android`),见下文 |
 
-术语在 [`CONTEXT.md`](CONTEXT.md),架构决策在 [`docs/adr/`](docs/adr/)。
+术语在 [`CONTEXT.md`](CONTEXT.md),架构决策在 [`docs/adr/`](docs/adr/),
+操作陷阱记在 [`docs/lesson/`](docs/lesson/)。
 以下只记**别人踩过、不写下来就会再踩一遍**的操作陷阱。
 
 ## 两条总则:调试走 MCP,像素走 niri
