@@ -6,11 +6,12 @@
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::Profile;
 use crate::{ArtistRankRow, MainWindow};
 
 pub(crate) fn bind(ui: &MainWindow) {
     let weak = ui.as_weak();
-    ui.on_profile_shown(move || {
+    ui.global::<Profile>().on_shown(move || {
         let weak = weak.clone();
         let _ = slint::spawn_local(async move {
             let result = api::stats().await;
@@ -19,7 +20,8 @@ pub(crate) fn bind(ui: &MainWindow) {
                 Ok(stats) => show(&ui, &stats),
                 Err(_) => {
                     // 细节进不了一行字,横幅归断流那类大事;这里只说结果。
-                    ui.set_profile_error("查询失败".into());
+                    ui.global::<Profile>()
+                        .set_error("查询失败".into());
                 }
             }
         });
@@ -28,14 +30,15 @@ pub(crate) fn bind(ui: &MainWindow) {
 
 /// 把一份统计摆上页面。数字在这里格式化,`.slint` 不做计算。
 fn show(ui: &MainWindow, stats: &api::StatsDto) {
-    ui.set_profile_username(stats.username.as_str().into());
-    ui.set_profile_month_plays(
+    ui.global::<Profile>()
+        .set_username(stats.username.as_str().into());
+    ui.global::<Profile>().set_month_plays(
         format!("{} 次", stats.month_plays).into(),
     );
-    ui.set_profile_distinct_tracks(
+    ui.global::<Profile>().set_distinct_tracks(
         format!("{} 首", stats.distinct_tracks).into(),
     );
-    ui.set_profile_streak_days(
+    ui.global::<Profile>().set_streak_days(
         format!("{} 天", stats.streak_days).into(),
     );
 
@@ -54,10 +57,10 @@ fn show(ui: &MainWindow, stats: &api::StatsDto) {
             ratio: artist.plays as f32 / most as f32,
         })
         .collect();
-    ui.set_profile_artists(ModelRc::new(VecModel::from(
-        rows,
-    )));
+    ui.global::<Profile>()
+        .set_artists(ModelRc::new(VecModel::from(rows)));
 
-    ui.set_profile_error(slint::SharedString::new());
-    ui.set_profile_loaded(true);
+    ui.global::<Profile>()
+        .set_error(slint::SharedString::new());
+    ui.global::<Profile>().set_loaded(true);
 }

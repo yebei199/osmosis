@@ -135,7 +135,7 @@ fn build_ui(
     ui.set_show_fps(fps_enabled());
     ui.set_platform(platform_name().into());
     // 设置页「关于」那一行。版本取本 crate 的(workspace 里同一个版本号)。
-    ui.set_about_line(
+    ui.global::<Profile>().set_about_line(
         format!(
             "Osmosis {} · Slint + Bevy",
             env!("CARGO_PKG_VERSION")

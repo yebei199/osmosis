@@ -4,7 +4,9 @@
 //! 「没数不摆卡」。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Profile;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -27,7 +29,7 @@ fn entering_the_profile_asks_for_stats() {
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_profile_shown(move || {
+    ui.global::<Profile>().on_shown(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -45,9 +47,9 @@ fn stat_cards_wait_for_the_data() {
     let ui = window();
     ui.set_current_tab(2);
 
-    ui.set_profile_loaded(false);
+    ui.global::<Profile>().set_loaded(false);
     assert!(!present(&ui, "ProfilePage::stats-row"));
 
-    ui.set_profile_loaded(true);
+    ui.global::<Profile>().set_loaded(true);
     assert!(present(&ui, "ProfilePage::stats-row"));
 }

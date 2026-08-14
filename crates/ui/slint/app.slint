@@ -25,6 +25,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
 import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, LyricRow } from "types.slint";
+import { Profile } from "globals/profile.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
@@ -33,6 +34,8 @@ import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
 export { Theme }
+// 个人页的数据面同理:Rust 靠 `ui.global::<Profile>()` 写它。
+export { Profile }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -466,19 +469,6 @@ export component MainWindow inherits Window {
     in property <color> aurora-cover-deep;
     in property <color> aurora-cover-soft;
     // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
-    callback profile-shown();
-    // 个人主页的数据,全部由 profile.rs 格式化后推送。
-    in property <string> profile-username;
-    in property <bool> profile-loaded;
-    in property <string> profile-error;
-    in property <string> profile-month-plays;
-    in property <string> profile-distinct-tracks;
-    in property <string> profile-streak-days;
-    in property <[ArtistRankRow]> profile-artists: [];
-    // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好(lib.rs)。
-    in property <string> about-line;
-    // std-widgets 报的系统明暗,镜像成 bool 给 Rust 读:builtin 枚举不生成
-    // Rust 访问器。拿不到(unknown)按深色 —— 深色是这个 app 一直以来的样子。
     out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
     changed system-prefers-dark => { root.system-scheme-changed(); }
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
@@ -733,14 +723,14 @@ export component MainWindow inherits Window {
                 if root.current-tab == 2: ProfilePage {
                     width: 100%;
                     height: 100%;
-                    init => { root.profile-shown(); }
-                    username: root.profile-username;
-                    loaded: root.profile-loaded;
-                    error-text: root.profile-error;
-                    month-plays: root.profile-month-plays;
-                    distinct-tracks: root.profile-distinct-tracks;
-                    streak-days: root.profile-streak-days;
-                    top-artists: root.profile-artists;
+                    init => { Profile.shown(); }
+                    username: Profile.username;
+                    loaded: Profile.loaded;
+                    error-text: Profile.error;
+                    month-plays: Profile.month-plays;
+                    distinct-tracks: Profile.distinct-tracks;
+                    streak-days: Profile.streak-days;
+                    top-artists: Profile.artists;
                     devices: root.devices;
                 }
 
@@ -748,7 +738,7 @@ export component MainWindow inherits Window {
                 if root.current-tab == 3: SettingsPage {
                     width: 100%;
                     height: 100%;
-                    about-line: root.about-line;
+                    about-line: Profile.about-line;
                     aurora-on: root.aurora-buttons-on;
                     aurora-toggled => { root.aurora-buttons-toggled(); }
                     theme-mode-selected(mode) => { root.theme-mode-selected(mode); }
