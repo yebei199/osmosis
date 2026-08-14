@@ -46,7 +46,7 @@ fn element(
 fn slider(
     ui: &MainWindow,
 ) -> Option<testing::ElementHandle> {
-    element(ui, "MainWindow::seek-slider")
+    element(ui, "PlayPage::seek-slider")
 }
 
 /// 滑条里那条填充。它的高度就是「放到哪儿了」的全部视觉证据。
@@ -244,7 +244,7 @@ fn the_time_readout_is_wider_than_the_slider() {
         .set_progress_text("1:23 / 3:46".into());
 
     let readout =
-        element(&ui, "MainWindow::play-time-readout")
+        element(&ui, "PlayPage::play-time-readout")
             .expect("播放页该有时间读数");
     let bar = slider(&ui).expect("该有滑条");
 
@@ -266,7 +266,7 @@ fn the_time_readout_stays_inside_the_window() {
     let (width, _) = window_size(&ui);
 
     let readout =
-        element(&ui, "MainWindow::play-time-readout")
+        element(&ui, "PlayPage::play-time-readout")
             .expect("播放页该有时间读数");
     let left = readout.absolute_position().x;
     let right = left + readout.size().width;
@@ -294,7 +294,7 @@ fn the_slider_steps_aside_for_the_lyrics_page() {
         "歌词页打开后滑条该让位"
     );
     assert!(
-        element(&ui, "MainWindow::play-time-readout")
+        element(&ui, "PlayPage::play-time-readout")
             .is_none(),
         "读数跟着滑条走"
     );

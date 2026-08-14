@@ -34,7 +34,7 @@ fn wide_page() -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_current_tab(1);
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 
@@ -262,7 +262,7 @@ fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
 #[test]
 fn the_expand_button_stays_on_screen_in_compact() {
     let ui = wide_page();
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     ui.global::<Player>().set_has_track(true);
 
     let expand =

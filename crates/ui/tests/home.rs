@@ -22,7 +22,7 @@ fn home() -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_current_tab(0);
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 

@@ -43,13 +43,13 @@ fn element(
 }
 
 fn card(ui: &MainWindow) -> Option<testing::ElementHandle> {
-    element(ui, "MainWindow::viz-anchor-card")
+    element(ui, "PlayPage::viz-anchor-card")
 }
 
 fn occluder(
     ui: &MainWindow,
 ) -> Option<testing::ElementHandle> {
-    element(ui, "MainWindow::viz-anchor-occluder")
+    element(ui, "PlayPage::viz-anchor-occluder")
 }
 
 /// 一张非空的图。遮挡层那一层的守卫是 `width > 0`,空图不实例化。

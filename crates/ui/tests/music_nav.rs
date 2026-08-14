@@ -68,11 +68,11 @@ fn only_the_selected_section_is_in_the_tree() {
 fn the_rail_is_wide_only_and_the_bar_is_compact_only() {
     let ui = music_page();
 
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     assert!(present(&ui, "MainWindow::music-rail"));
     assert!(!present(&ui, "MainWindow::music-bar"));
 
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     assert!(present(&ui, "MainWindow::music-bar"));
     assert!(
         !present(&ui, "MainWindow::music-rail"),

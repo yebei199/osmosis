@@ -15,7 +15,7 @@ fn settings_page() -> MainWindow {
     ui.global::<Session>().set_logged_in(true);
     // 设置页是 tab 3(个人主页插在 2)。
     ui.global::<Shell>().set_current_tab(3);
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 

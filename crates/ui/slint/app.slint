@@ -54,6 +54,7 @@ import { TrackList } from "tracklist.slint";
 import { SettingsPage } from "settings.slint";
 import { ProfilePage } from "profile.slint";
 import { LyricsPage } from "lyrics.slint";
+import { PlayPage } from "playpage.slint";
 
 global Nav {
     out property <[NavEntry]> items: [
@@ -92,17 +93,16 @@ export component MainWindow inherits Window {
     // 见 docs/adr/0007。600px 是 Material 的标准断点:手机竖屏(~393dp)紧凑,
     // 手机横屏(~850dp)回到侧栏 —— 横屏本来就矮,底栏再吃 64px 太亏。
     //
-    // 用 changed 回调赋值、而不是写成 `compact: root.width < 600px` 的绑定:版式一变,子元素的
-    // 约束(侧栏在不在、底栏在不在)就变,窗口的 layoutinfo 跟着变,宽度又回头喂给 compact ——
+    // 用 changed 回调赋值、而不是写成 `Shell.compact: root.width < 600px` 的绑定:版式一变,子元素的
+    // 约束(侧栏在不在、底栏在不在)就变,窗口的 layoutinfo 跟着变,宽度又回头喂给 Shell.compact ——
     // 那是一个真的求值环,Slint 1.18 起会警告并可能在运行时 panic。命令式赋值把环剪断:
     // 宽度先定下来,再单向推出版式。
     //
     // in-out 而不是私有:无头测试里 `set_size` 不驱动 `width`,版式因此推不出来。
     // 开放它之后测试能直接给定版式,验的是「这个版式该摆哪个导航」——
     // 「宽度推出版式」那半由下面两行自己保证,不在测试覆盖内。
-    in-out property <bool> compact;
-    init => { root.compact = root.width < 600px; }
-    changed width => { root.compact = root.width < 600px; }
+    init => { Shell.compact = root.width < 600px; }
+    changed width => { Shell.compact = root.width < 600px; }
 
     // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
@@ -123,18 +123,10 @@ export component MainWindow inherits Window {
     // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
     // 原文最多三行、译文最多两行,按各自字号的行高估。
     // 播放页控制条的高度。紧凑版拆两行(见那一段的注释),故高一档。
-    out property <length> viz-controls-h: root.compact ? 128px : 84px;
     // 两颗只在播放页出现的键,图形在宽/紧凑两处版式里各用一次 —— 常量化,
     // 免得改一处漏一处。
-    out property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
-    out property <string> collapse-icon: "M5 8 L19 8 L12 17 Z";
 
-    out property <length> viz-lyric-line-h: root.compact ? 84px : 120px;
-    out property <length> viz-lyric-tr-h: root.compact ? 40px : 46px;
-    out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
-    out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
-    out property <length> viz-title-y: root.viz-lyric-y - 96px;
     // 正在播的封面(已解码)。取不到 / 解不出时为空图 —— 控制条上的小图用它。
 
     // ── 「液态玻璃 metaball 选中器」(宽版式侧栏 / 紧凑版式底栏)──
@@ -167,15 +159,15 @@ export component MainWindow inherits Window {
 
     // ── seam 出参:轴无关的一组数,Rust 照单喂 shader,不判版式 ──
     // 底栏的宽度没量出来之前不渲(首帧布局还没跑),避免拿 0 当条长。
-    out property <bool> nav-visible: root.compact ? root.nav-bar-w > 1px : true;
-    out property <bool> nav-horizontal: root.compact;
-    out property <length> nav-strip-w: root.compact ? root.nav-bar-w : root.nav-w;
-    out property <length> nav-strip-h: root.compact ? root.nav-bar-h : root.nav-h;
+    out property <bool> nav-visible: Shell.compact ? root.nav-bar-w > 1px : true;
+    out property <bool> nav-horizontal: Shell.compact;
+    out property <length> nav-strip-w: Shell.compact ? root.nav-bar-w : root.nav-w;
+    out property <length> nav-strip-h: Shell.compact ? root.nav-bar-h : root.nav-h;
     // 移动轴上一格的长度:侧栏是项高,底栏是等分出来的格宽。
-    out property <length> nav-slot: root.compact ? root.nav-slot-w : root.nav-slot-h;
+    out property <length> nav-slot: Shell.compact ? root.nav-slot-w : root.nav-slot-h;
     // 固定轴上的可用厚度与中心:侧栏是整条栏宽;底栏是图标那一带的高,
     // 手势条那段不算 —— 把 inset 算进厚度的话,水滴会压到手势条上去。
-    out property <length> nav-thick: root.compact
+    out property <length> nav-thick: Shell.compact
         ? root.nav-bar-h - root.safe-area-insets.bottom
         : root.nav-w;
     out property <length> nav-cross: root.nav-thick / 2;
@@ -188,12 +180,12 @@ export component MainWindow inherits Window {
     property <length> nav-target-y: root.nav-pad
         + root.nav-track-tab * (root.nav-slot-h + root.nav-gap) + root.nav-slot-h / 2;
     // 球体缩放:1 是常态,0 是缩没。底栏四格全在轨道上,所以只有侧栏会缩。
-    out property <float> nav-ball: root.compact || Shell.current-tab < 2 ? 1.0 : 0.0;
+    out property <float> nav-ball: Shell.compact || Shell.current-tab < 2 ? 1.0 : 0.0;
     animate nav-ball { duration: 260ms; easing: ease-out; }
     // 底栏四格等分,沉底那组不沉底,所以一路等距算下去。
     property <length> nav-target-x: root.nav-bar-pad-left
         + Shell.current-tab * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
-    property <length> nav-target: root.compact ? root.nav-target-x : root.nav-target-y;
+    property <length> nav-target: Shell.compact ? root.nav-target-x : root.nav-target-y;
     // metaball 的头(快)/尾(慢):都朝 nav-target 动,快慢不同 → 行走时一前一后被 shader
     // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这三个动画值喂 shader。
     // 用三个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
@@ -234,13 +226,13 @@ export component MainWindow inherits Window {
             padding-right: root.safe-area-insets.right;
             // 紧凑版式的底部 inset 归底栏管 —— 它的背景要铺到手势条底下,不能在这里先留白,
             // 否则手势条那一条会露出窗口底色,全面屏观感碎掉。
-            padding-bottom: root.compact ? 0 : root.safe-area-insets.bottom;
+            padding-bottom: Shell.compact ? 0 : root.safe-area-insets.bottom;
 
             // ── 侧栏(宽版式)──
             // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
             // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
             // 把侧栏也拆成「背景铺满 + 内部 padding」。
-            if !root.compact: Rectangle {
+            if !Shell.compact: Rectangle {
                 width: root.nav-w;
                 // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
                 background: Theme.base;
@@ -311,9 +303,9 @@ export component MainWindow inherits Window {
                 if Shell.current-tab == 0: Rectangle {
 
                     VerticalLayout {
-                        x: root.compact ? 24px : 48px;
-                        y: root.compact ? 32px : 56px;
-                        width: min(parent.width - (root.compact ? 48px : 96px), 880px);
+                        x: Shell.compact ? 24px : 48px;
+                        y: Shell.compact ? 32px : 56px;
+                        width: min(parent.width - (Shell.compact ? 48px : 96px), 880px);
                         alignment: start;
                         spacing: 10px;
 
@@ -328,7 +320,7 @@ export component MainWindow inherits Window {
                             text: "今天做点什么";
                             font-family: Type.display-cjk;
                             font-weight: 900;
-                            font-size: root.compact ? 30px : 40px;
+                            font-size: Shell.compact ? 30px : 40px;
                             color: Theme.text;
                         }
                         Text {
@@ -348,8 +340,8 @@ export component MainWindow inherits Window {
                             // 音乐:唯一的真瓦片。紧凑版式收一档,免得连空槽
                             // 一起超出 420px 的内容宽。
                             Rectangle {
-                                width: root.compact ? 150px : 210px;
-                                height: root.compact ? 150px : 210px;
+                                width: Shell.compact ? 150px : 210px;
+                                height: Shell.compact ? 150px : 210px;
                                 border-radius: 22px;
                                 clip: true;
                                 background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
@@ -393,8 +385,8 @@ export component MainWindow inherits Window {
                             // 空槽:留给下一个应用。不是按钮,也不装成按钮 ——
                             // 没有 TouchArea,点了不会假装发生什么(硬规则 8)。
                             Rectangle {
-                                width: root.compact ? 120px : 168px;
-                                height: root.compact ? 150px : 210px;
+                                width: Shell.compact ? 120px : 168px;
+                                height: Shell.compact ? 150px : 210px;
                                 border-radius: 22px;
                                 background: Theme.overlay-weak;
                                 border-width: 1px;
@@ -495,7 +487,7 @@ export component MainWindow inherits Window {
                     init => { Player.music-shown(); }
 
                     // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
-                    if root.compact: music-bar := MusicBar {
+                    if Shell.compact: music-bar := MusicBar {
                         current: Shell.music-section;
                         selected(section) => { Shell.select-section(section); }
                     }
@@ -505,7 +497,7 @@ export component MainWindow inherits Window {
                         spacing: 12px;
 
                         // 宽版式:可收缩竖栏。
-                        if !root.compact: music-rail := MusicRail {
+                        if !Shell.compact: music-rail := MusicRail {
                             current: Shell.music-section;
                             collapsed <=> Shell.rail-collapsed;
                             selected(section) => { Shell.select-section(section); }
@@ -531,7 +523,7 @@ export component MainWindow inherits Window {
                                     accepted => { Player.search(self.text); }
                                 }
                                 HoverButton {
-                                    width: root.compact ? 60px : 84px;
+                                    width: Shell.compact ? 60px : 84px;
                                     text: "Go";
                                     clicked => { Player.search(keyword.text); }
                                 }
@@ -995,7 +987,7 @@ export component MainWindow inherits Window {
                     // 页面装配时一并做。
                     // `if` 在 Rectangle 外面:条件子元素不给父元素贡献 preferred
                     // 尺寸,放里面胶囊会坍缩成 0 宽、内容从中心溢出(实拍踩过)。
-                    if !root.compact: HorizontalLayout {
+                    if !Shell.compact: HorizontalLayout {
                         // 胶囊收到内容宽、居中。
                         alignment: center;
                         controls := Rectangle {
@@ -1116,7 +1108,7 @@ export component MainWindow inherits Window {
                     }
 
                     // 紧凑版:两行,占满内容宽(#64 再改成迷你条)。
-                    if root.compact: controls-compact := Rectangle {
+                    if Shell.compact: controls-compact := Rectangle {
                         height: 116px;
                         border-radius: 16px;
                         background: Theme.surface.with-alpha(0.9);
@@ -1205,7 +1197,7 @@ export component MainWindow inherits Window {
         // ── 底栏(紧凑版式)──
         // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
         // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
-        if root.compact: Rectangle {
+        if Shell.compact: Rectangle {
             height: root.nav-bar-h;
             // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
             background: Theme.base;
@@ -1257,418 +1249,13 @@ export component MainWindow inherits Window {
     // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
     // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
     // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
-    if Shell.play-page-open: FocusScope {
-        // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
-        // key-pressed 一次都不会触发。
-        init => { self.focus(); }
-
-        // 安卓的返回键、桌面的 Esc:都先收起播放页。
-        //
-        // 安卓那条不是锦上添花 —— 上游把 Back 派成 Key.Back,**只有我们不接**
-        // 才去 finish_activity()(见 slint 的 android-activity 后端
-        // callback_on_back_invoked)。不接就是「按返回直接退应用」,而播放页是
-        // 全屏沉浸层,那不是任何人对返回的预期。
-        key-pressed(event) => {
-            if (event.text == Key.Back || event.text == Key.Escape) {
-                Shell.play-page-open = false;
-                return accept;
-            }
-            return reject;
-        }
-
-      Rectangle {
-        // 纯深色底。反馈 warp 曾铺在这里当全屏背景,现在收进了播放键 ——
-        // 封面点云自己就有颜色,再叠两圈青紫只是把主体糊掉。
-        background: Theme.immersive;
-
-        // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
-        // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
-        if Viz.viz-scene.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            image-fit: fill;
-            source: Viz.viz-scene;
-            // 歌词页打开时退成背景光:整页字压在一片满亮的粒子上读不动(#73)。
-            opacity: Viz.lyrics-page-open ? 0.3 : 1.0;
-            animate opacity { duration: 260ms; easing: ease-out; }
-        }
-
-        // §8 的扫描线与噪点 2026-08-13 定为去除(#74):复古质感与产品方向不合。
-        // vignette 留下 —— 它是把注意力拢回中心的手段,与复古无关。
-        Rectangle {
-            width: 100%;
-            height: 100%;
-            background: @radial-gradient(circle, transparent 55%, Theme.shadow.with-alpha(0.20) 100%);
-        }
-
-        // 世界空间标注卡(docs/note/vision.md「下一面旗子」)。锚点是封面点云上的
-        // 一个局部点,点云被拖着自转时它跟着转,卡片于是跟着物体走而不是钉在画面
-        // 某处。转出画面就整块收起,不贴边钳制 —— 粘在屏幕边缘的卡片是在假装
-        // 自己还指着那个物体。
-        // 歌词页打开时整块让位:点云已退成背景光,卡片再浮着就是标一个
-        // 看不见的物体。
-        if Viz.viz-anchor-visible && !Viz.lyrics-page-open: Rectangle {
-            width: 100%;
-            height: 100%;
-
-            viz-anchor-card := Rectangle {
-                // 中心挂在锚点上:挂左上角的话卡片整体偏出半个身位,就指不准了。
-                //
-                // 再钳进窗口内。锚点在画面里不等于卡片在画面里 —— 锚点是卡片的
-                // 中心,它贴着边时卡片已经探出去半个身位了(真机实拍切掉过右边
-                // 约 20%)。轨道半径按竖屏算过,正常不会碰到这道钳位;窗口更窄时
-                // 它兜住,代价是卡片在极端处会与锚点脱开一点。
-                x: Math.clamp(Viz.viz-anchor-x * root.width - self.width / 2,
-                              0px, max(0px, root.width - self.width));
-                y: Math.clamp(Viz.viz-anchor-y * root.height - self.height / 2,
-                              0px, max(0px, root.height - self.height));
-                width: root.compact ? 132px : 160px;
-                height: 36px;
-                border-radius: 10px;
-                background: Theme.immersive.with-alpha(0.62);
-                border-width: 1px;
-                border-color: Theme.immersive-text.with-alpha(0.22);
-
-                Text {
-                    width: parent.width - 20px;
-                    text: Viz.now-title;
-                    color: Theme.immersive-text;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    overflow: elide;
-                }
-            }
-
-            // 遮挡层裁到卡片自己。那张图铺的是整个视口,只有卡片这一块该露出来,
-            // 不裁就是把整幅点云盖在播放页上。图内偏移取负的卡片位置,于是它与
-            // 下面那层点云逐像素对齐,卡片被更近的粒子挡住(docs/adr/0010)。
-            if Viz.viz-occluder.width > 0: viz-anchor-occluder := Rectangle {
-                x: viz-anchor-card.x;
-                y: viz-anchor-card.y;
-                width: viz-anchor-card.width;
-                height: viz-anchor-card.height;
-                clip: true;
-
-                Image {
-                    x: -parent.x;
-                    y: -parent.y;
-                    width: root.width;
-                    height: root.height;
-                    image-fit: fill;
-                    source: Viz.viz-occluder;
-                }
-            }
-        }
-
-        // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
-        // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
-        // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
-        TouchArea {
-            moved => {
-                Viz.viz-pointer-x = self.mouse-x / root.width;
-                Viz.viz-pointer-y = self.mouse-y / root.height;
-                Viz.viz-pointer-down = self.pressed;
-            }
-            pointer-event(event) => {
-                Viz.viz-pointer-x = self.mouse-x / root.width;
-                Viz.viz-pointer-y = self.mouse-y / root.height;
-                Viz.viz-pointer-down = self.pressed;
-                Viz.viz-pointer-active = event.kind != PointerEventKind.up;
-            }
-        }
-
-        // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
-        // 歌词页打开时整组让位 —— 它们与歌词页画在同一片区域,留着就是两层字
-        // 叠在一起(小米13 真机实拍)。
-        if !Viz.lyrics-page-open: play-title := OutlinedText {
-            y: root.viz-title-y;
-            width: 100%;
-            height: 42px;
-            text: Viz.now-title;
-            text-color: Theme.immersive-text;
-            // display 字体只有拉丁字形;中文歌名按字形回退,得到的是
-            // 「拉丁 display + 中文系统字」的混排,与设计稿一致。
-            font-family: Type.display-latin;
-            font-size: root.compact ? 26px : 34px;
-        }
-        if !Viz.lyrics-page-open: OutlinedText {
-            y: root.viz-title-y + 46px;
-            width: 100%;
-            height: 20px;
-            text: Viz.now-artists;
-            text-color: Theme.immersive-text-dim;
-            font-size: 14px;
-        }
-
-        // 取直链/开流的那几秒:点下去了、正在办。
-        // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
-        // 而这一层还压在点云上。文案硬编码中文,走子集字体。
-        if Player.now-loading && !Viz.lyrics-page-open: OutlinedText {
-            y: root.viz-title-y + 70px;
-            width: 100%;
-            height: 18px;
-            text: "加载中…";
-            font-family: "Maple Mono NF CN";
-            text-color: Theme.immersive-accent;
-            font-size: 13px;
-        }
-
-        // 歌词:当前行 + 译文,居中排在歌名下方;画在粒子之上,不参与深度合成
-        // (docs/adr/0010 的「歌词是例外」)。播放页的深度卡片是上面那块标注卡。
-        // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
-        // 这块同时是歌词页的入口(#73):点它横向滑出整页歌词。
-        if Viz.lyric-line != "" && !Viz.lyrics-page-open: lyric-entry := Rectangle {
-            y: root.viz-lyric-y;
-            height: root.viz-lyric-h;
-
-            TouchArea {
-                clicked => { Viz.lyrics-page-open = true; }
-            }
-
-            VerticalLayout {
-                height: 100%;
-                alignment: start;
-                spacing: 10px;
-
-            // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
-            // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
-            OutlinedText {
-                width: root.width - 32px;
-                x: 16px;
-                height: root.viz-lyric-line-h;
-                text: Viz.lyric-line;
-                text-color: Theme.immersive-text.brighter(0.1);
-                font-size: root.compact ? 21px : 30px;
-                // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
-                // 只是一圈灰边,拉不开对比。
-                outline: 2px;
-                wrap: word-wrap;
-            }
-            OutlinedText {
-                width: root.width - 32px;
-                x: 16px;
-                height: root.viz-lyric-tr-h;
-                text: Viz.lyric-translation;
-                text-color: Theme.immersive-text-dim.brighter(0.1);
-                font-size: root.compact ? 14px : 16px;
-                // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
-                // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
-                // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
-                vertical-alignment: top;
-                wrap: word-wrap;
-                }
-            }
-        }
-
-        // 这里曾有一层「遮挡图」:把比歌词更近的那些粒子重新画到歌词上面,
-        // 好让粒子看起来从字的前后穿过。删了 —— 歌词读不了,而它是播放页
-        // 唯一没有等价路径的信息(见 docs/adr/0010 的「歌词是例外」)。
-        //
-        // 现在歌词与**歌名同层**:都画在粒子之上,谁也盖不住它们。
-        // 歌名从来没有这层图,所以它一直是清楚的 —— 那就是要的样子。
-
-        // 歌词页:从右侧横向滑出,盖住播放页的内容层(#73)。
-        // 控制簇仍排在它之后,于是照旧压在最上层、点得到 —— 歌词页上也要
-        // 能切歌暂停,那是 docs/adr/0010 的「功能永远在最上层 2D」。
-        if Viz.lyric-rows.length > 0: LyricsPage {
-            x: Viz.lyrics-page-open ? 0px : root.width;
-            y: 0;
-            width: 100%;
-            height: 100%;
-            animate x { duration: 280ms; easing: ease-out; }
-            rows: Viz.lyric-rows;
-            has-translation: Viz.lyric-has-translation;
-            browse <=> Viz.lyric-browse;
-            dismiss => { Viz.lyrics-page-open = false; }
-        }
-
-        // 进度滑条:贴右边缘竖着站(#75)。从控制簇里剥出来是为了让精确落点
-        // 有一条够长的行程 —— 横条挤在胶囊里只有一屏宽的几分之一,竖着能占半屏高。
-        // 站在视觉层的 TouchArea 之后,拖它不会连带拨到粒子。
-        // 时间读数跟着滑条走(滑条自己也把它报给读屏),控制簇里那一份删了 ——
-        // 两处各显示一份就是两处要对齐的状态。读数与条同属一个空壳,
-        // 好让它挂得上条的几何:`if` 里的具名元素在外面引用不到。
-        // 歌词页打开时整组让位:滑条占着右边那条道,而歌词行铺到 width - 24px,
-        // 叠在一起就是绿条压着字(小米13 真机实拍)。进度那会儿由控制簇的环报着。
-        if Player.has-track && !Viz.lyrics-page-open: Rectangle {
-            x: root.width - self.width - 8px
-                - root.safe-area-insets.right;
-            y: root.height * 0.28;
-            width: seek-slider.width;
-            height: root.height * 0.38;
-
-            seek-slider := VerticalSeekBar {
-                height: 100%;
-                ratio: Player.progress-ratio;
-                text: Player.progress-text;
-                buffering: Player.buffering;
-                seek(at) => { Player.seek(at); }
-            }
-
-            // 读数比滑条宽得多:挂在 44px 的条上会被裁成「1:23 /」(真机实拍)。
-            // 描边同歌名歌词 —— 亮封面的点云下,纯文本一个字也读不出来。
-            play-time-readout := OutlinedText {
-                // 右缘对齐滑条、向左长。居中挂在贴着屏幕右边的滑条上,
-                // 右半截会探出屏幕被裁掉(小米13 真机实拍,探出 18px)。
-                x: parent.width - self.width;
-                y: parent.height + 8px;
-                width: 96px;
-                height: 16px;
-                text: Player.buffering ? "缓冲中…" : Player.progress-text;
-                font-family: Type.mono;
-                font-size: 11px;
-                outline: 1px;
-                text-color: Player.buffering ? Theme.immersive-accent : Theme.immersive-text-dim;
-            }
-        }
-
-        // 功能层:同一组回调,与音乐页的控制条完全等价。
-        //
-        // 宽版一排放下;紧凑版(手机)拆两行 —— 与音乐页同一个理由,只是这里的
-        // 一排更宽:播放键接了 warp 之后是 68px,比别的键大一圈。挤在一排的话
-        // 最右边的 ▼ 会被推出屏幕(小米13 真机实测),而那是收起播放页唯一的按键。
-        HorizontalLayout {
-            y: root.height - root.viz-controls-h
-                - root.safe-area-insets.bottom - 24px;
-            height: root.viz-controls-h;
-            alignment: center;
-            Rectangle {
-                height: root.viz-controls-h;
-                // 宽版一排时收成胶囊;紧凑版两行,胶囊半径会切掉角上的键。
-                border-radius: root.compact ? 16px : self.height / 2;
-                background: Theme.surface.with-alpha(0.9);
-                border-width: 1px;
-                border-color: Theme.glass-edge;
-                drop-shadow-blur: 30px;
-                drop-shadow-offset-y: 14px;
-                drop-shadow-color: Theme.glass-shadow;
-                // fluid 主控条底(#69):尺寸回写给 Rust,渲成图贴回来。
-                // shader 自带圆角 alpha 裁切,reveal 左闸保住时间读数那一块。
-                init => {
-                    Shell.viz-bar-w = self.width;
-                    Shell.viz-bar-h = self.height;
-                }
-                changed width => { Shell.viz-bar-w = self.width; }
-                changed height => { Shell.viz-bar-h = self.height; }
-                if Shell.viz-bar-bg.width > 0: Image {
-                    width: 100%;
-                    height: 100%;
-                    source: Shell.viz-bar-bg;
-                }
-
-                VerticalLayout {
-                    padding: 8px;
-                    spacing: 4px;
-
-                    HorizontalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        ControlCluster {
-                            is-playing: Player.is-playing;
-                            shuffle-on: Player.shuffle-on;
-                            loop-mode: Player.loop-mode;
-                            progress-ratio: Player.progress-ratio;
-                            // 播放页的环大一档(60/50);接了 warp 时环内是画面,再大一圈。
-                            ring-diameter: 60px;
-                            ring-inner-diameter: 50px;
-                            // 只有播放页接 warp:音乐页的那两处控制簇不该为一个
-                            // 小圆点养一条 wgpu pass。
-                            pulse: Viz.viz-bg;
-                            prev => { Player.prev-track(); }
-                            toggle => { Player.toggle-play(); }
-                            next => { Player.next-track(); }
-                            shuffle-toggled => { Player.shuffle-toggled(); }
-                            loop-cycled => { Player.loop-cycled(); }
-                        }
-                        // 时间读数搬去了右侧滑条那边(#75)。
-                        // 次要动作垫 glass 底(#69):两颗同尺寸,共用同一张图。
-                        if !root.compact: RoundControl {
-                            icon: root.preset-icon;
-                            label: "视觉预设";
-                            backdrop: Shell.viz-glass-bg;
-                            clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
-                        }
-                        if !root.compact: RoundControl {
-                            icon: root.collapse-icon;
-                            label: "收起播放页";
-                            backdrop: Shell.viz-glass-bg;
-                            clicked => { Shell.play-page-open = false; }
-                        }
-                    }
-                    if root.compact: HorizontalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        // 换视觉预设:点开一列名字来选。参照物那整个「视觉控制台」
-                        // 是另一件事,这里只要一个选得动的入口。
-                        RoundControl {
-                            icon: root.preset-icon;
-                            label: "视觉预设";
-                            backdrop: Shell.viz-glass-bg;
-                            clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
-                        }
-                        // 收起播放页:向下的小三角,与展开用的向上三角对称。
-                        // 收起是操作,所以它在最上层 2D、永远点得到(docs/adr/0010)。
-                        RoundControl {
-                            icon: root.collapse-icon;
-                            label: "收起播放页";
-                            backdrop: Shell.viz-glass-bg;
-                            clicked => { Shell.play-page-open = false; }
-                        }
-                    }
-                }
-
-                // 视觉预设的选择列表。点控制簇里的预设键弹出,选完收起。
-                // 摆在控制簇**上方**:列表向上长,不会把控制键顶出屏幕,
-                // 也不遮住它们 —— 选的时候还看得见自己在放什么。
-                //
-                // 宽版与紧凑版共用这一个:两处的预设键开合的是同一个属性,
-                // 列表本身只有一份。
-                if Viz.viz-preset-list-open: Rectangle {
-                    width: 150px;
-                    height: Viz.viz-preset-names.length * 38px + 12px;
-                    x: (parent.width - self.width) / 2;
-                    y: parent.height - root.viz-controls-h
-                        - root.safe-area-insets.bottom
-                        - self.height - 34px;
-                    background: Theme.immersive-panel;
-                    border-radius: 12px;
-                    border-width: 1px;
-                    border-color: Theme.immersive-line;
-
-                    VerticalLayout {
-                        padding: 6px;
-
-                        for name[i] in Viz.viz-preset-names: Rectangle {
-                            height: 38px;
-                            border-radius: 8px;
-                            // 当前项高亮。只有一档时它恒亮 —— 那正是"你在这一档"。
-                            background: i == Viz.viz-preset
-                                ? Theme.accent.with-alpha(0.2)
-                                : (item-touch.has-hover ? Theme.overlay-weak : transparent);
-                            animate background { duration: 120ms; easing: ease-out; }
-
-                            Text {
-                                text: name;
-                                // 预设名是硬编码中文,走子集字体。
-                                font-family: "Maple Mono NF CN";
-                                font-size: 14px;
-                                color: i == Viz.viz-preset ? Theme.accent-text : Theme.immersive-text-dim;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-
-                            item-touch := TouchArea {
-                                clicked => {
-                                    Viz.viz-preset = i;
-                                    Viz.viz-preset-list-open = false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-      }
+    if Shell.play-page-open: PlayPage {
+        width: 100%;
+        height: 100%;
+        safe-left: root.safe-area-insets.left;
+        safe-right: root.safe-area-insets.right;
+        safe-top: root.safe-area-insets.top;
+        safe-bottom: root.safe-area-insets.bottom;
     }
 
     // ── 登录页:未登录时盖住整个窗口 ──

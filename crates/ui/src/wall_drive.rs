@@ -97,7 +97,7 @@ impl WallDrive {
         wall::layout(
             ui.global::<Shell>().get_wall_field_w() * dpr,
             ui.global::<Shell>().get_wall_field_h() * dpr,
-            ui.get_compact(),
+            ui.global::<Shell>().get_compact(),
         )
     }
 

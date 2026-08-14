@@ -286,7 +286,7 @@ impl ButtonBand {
                     [0.561, 0.769, 0.416],
                     [0.914, 0.969, 0.839],
                 ];
-                let compact = ui.get_compact();
+                let compact = ui.global::<Shell>().get_compact();
                 let (hw, hh) = if compact {
                     (120.0, 150.0)
                 } else {

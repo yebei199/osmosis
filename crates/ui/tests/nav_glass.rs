@@ -17,7 +17,7 @@ fn nav_window() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 
@@ -56,7 +56,7 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
         "宽版式的条宽就是侧栏宽"
     );
 
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     // 底栏是条件页面,先查一次元素逼出实例化,init 才会跑。
     let _ = item_span(&ui, 0);
 
@@ -78,7 +78,7 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
 #[test]
 fn the_droplet_lands_on_the_selected_bottom_item() {
     let ui = nav_window();
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
     for tab in 0..4 {
@@ -142,7 +142,7 @@ fn the_droplet_melts_away_for_the_bottom_round_keys() {
 #[test]
 fn the_bottom_bar_keeps_all_four_slots_on_the_track() {
     let ui = nav_window();
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
     observe(&ui);
@@ -199,7 +199,7 @@ fn the_bottom_round_keys_are_checkable_tabs() {
 #[test]
 fn the_three_balls_stay_strung_out_mid_transition() {
     let ui = nav_window();
-    ui.set_compact(true);
+    ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
     // 从最左边一格往最右边走,只走一小段:头球 240ms、尾球 440ms、小水滴 680ms。

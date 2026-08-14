@@ -20,7 +20,7 @@ fn window() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.set_compact(false);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 

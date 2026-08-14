@@ -101,4 +101,6 @@ export global Shell {
     changed system-prefers-dark => { system-scheme-changed(); }
     // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
     callback push-to(string);
+
+    in-out property <bool> compact;
 }

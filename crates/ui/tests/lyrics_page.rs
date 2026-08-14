@@ -74,7 +74,7 @@ fn all(
 
 /// 播放页上那块歌词,它同时是歌词页的入口。
 fn lyric_area(ui: &MainWindow) -> testing::ElementHandle {
-    element(ui, "MainWindow::lyric-entry")
+    element(ui, "PlayPage::lyric-entry")
         .expect("播放页该有歌词入口")
 }
 
@@ -104,7 +104,7 @@ fn there_is_no_entry_without_lyrics() {
     ui.global::<Viz>().set_lyric_line("".into());
 
     assert!(
-        element(&ui, "MainWindow::lyric-entry").is_none(),
+        element(&ui, "PlayPage::lyric-entry").is_none(),
         "没歌词不该留入口"
     );
 }
@@ -213,14 +213,14 @@ fn the_annotation_card_hides_while_lyrics_are_open() {
     let ui = play_window();
     ui.global::<Viz>().set_viz_anchor_visible(true);
     assert!(
-        element(&ui, "MainWindow::viz-anchor-card")
+        element(&ui, "PlayPage::viz-anchor-card")
             .is_some(),
         "播放页该有标注卡"
     );
 
     ui.global::<Viz>().set_lyrics_page_open(true);
     assert!(
-        element(&ui, "MainWindow::viz-anchor-card")
+        element(&ui, "PlayPage::viz-anchor-card")
             .is_none(),
         "歌词页打开后标注卡该让位"
     );
@@ -275,18 +275,18 @@ fn the_play_page_text_steps_aside_for_the_lyrics_page() {
     let ui = play_window();
     ui.global::<Viz>().set_lyric_rows(rows(false));
     assert!(
-        element(&ui, "MainWindow::lyric-entry").is_some(),
+        element(&ui, "PlayPage::lyric-entry").is_some(),
         "播放页该有那两行歌词"
     );
 
     open_lyrics(&ui);
 
     assert!(
-        element(&ui, "MainWindow::lyric-entry").is_none(),
+        element(&ui, "PlayPage::lyric-entry").is_none(),
         "歌词页打开后播放页那两行该让位"
     );
     assert!(
-        element(&ui, "MainWindow::play-title").is_none(),
+        element(&ui, "PlayPage::play-title").is_none(),
         "歌名也该让位"
     );
 }
