@@ -7,6 +7,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Viz;
 
 /// 播放页展开的窗口。标注卡是播放页里的条件元素,页不开它不实例化。
 fn play_window() -> MainWindow {
@@ -15,10 +16,10 @@ fn play_window() -> MainWindow {
     ui.window()
         .set_size(slint::LogicalSize::new(400.0, 800.0));
     ui.set_play_page_open(true);
-    ui.set_now_title("锚定测试曲".into());
-    ui.set_viz_anchor_x(0.5);
-    ui.set_viz_anchor_y(0.5);
-    ui.set_viz_anchor_visible(true);
+    ui.global::<Viz>().set_now_title("锚定测试曲".into());
+    ui.global::<Viz>().set_viz_anchor_x(0.5);
+    ui.global::<Viz>().set_viz_anchor_y(0.5);
+    ui.global::<Viz>().set_viz_anchor_visible(true);
     ui
 }
 
@@ -65,8 +66,8 @@ fn the_card_follows_the_anchor_across_the_viewport() {
     let (w, h) = window_size(&ui);
 
     for (ax, ay) in [(0.5, 0.5), (0.25, 0.75), (0.8, 0.2)] {
-        ui.set_viz_anchor_x(ax);
-        ui.set_viz_anchor_y(ay);
+        ui.global::<Viz>().set_viz_anchor_x(ax);
+        ui.global::<Viz>().set_viz_anchor_y(ay);
 
         let card = card(&ui).expect("锚点可见时该有标注卡");
         let pos = card.absolute_position();
@@ -101,8 +102,8 @@ fn the_card_stays_inside_the_window_at_the_edges() {
     let (w, h) = window_size(&ui);
 
     for (ax, ay) in [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0)] {
-        ui.set_viz_anchor_x(ax);
-        ui.set_viz_anchor_y(ay);
+        ui.global::<Viz>().set_viz_anchor_x(ax);
+        ui.global::<Viz>().set_viz_anchor_y(ay);
 
         let card = card(&ui).expect("锚点可见时该有标注卡");
         let pos = card.absolute_position();
@@ -130,7 +131,7 @@ fn the_card_leaves_the_tree_when_the_anchor_is_not_visible()
     let ui = play_window();
     assert!(card(&ui).is_some(), "锚点可见时它该在");
 
-    ui.set_viz_anchor_visible(false);
+    ui.global::<Viz>().set_viz_anchor_visible(false);
     assert!(
         card(&ui).is_none(),
         "锚点不可见时卡片该整块离开元素树"
@@ -142,7 +143,8 @@ fn the_card_leaves_the_tree_when_the_anchor_is_not_visible()
 #[test]
 fn the_occluder_is_clipped_to_the_card() {
     let ui = play_window();
-    ui.set_viz_occluder(filled_image(64, 64));
+    ui.global::<Viz>()
+        .set_viz_occluder(filled_image(64, 64));
 
     let card = card(&ui).expect("锚点可见时该有标注卡");
     let clip =

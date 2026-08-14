@@ -11,6 +11,7 @@ use slint::{
 };
 use ui::Player;
 use ui::Session;
+use ui::Viz;
 use ui::{LyricRow, MainWindow};
 
 /// 播放页展开、有歌词的窗口。
@@ -24,15 +25,15 @@ fn play_window() -> MainWindow {
     ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
     ui.global::<Player>().set_has_track(true);
-    ui.set_now_title("歌词测试曲".into());
-    ui.set_lyric_line("当前这一行".into());
+    ui.global::<Viz>().set_now_title("歌词测试曲".into());
+    ui.global::<Viz>().set_lyric_line("当前这一行".into());
     ui
 }
 
 /// 把歌词页展开并让滑出动画走完 —— 无头跑没有时间流逝,
 /// 不推时钟的话整页仍停在屏幕外,点不着也拖不动。
 fn open_lyrics(ui: &MainWindow) {
-    ui.set_lyrics_page_open(true);
+    ui.global::<Viz>().set_lyrics_page_open(true);
     testing::mock_elapsed_time(
         std::time::Duration::from_millis(400),
     );
@@ -80,14 +81,17 @@ fn lyric_area(ui: &MainWindow) -> testing::ElementHandle {
 #[test]
 fn tapping_the_lyric_area_opens_the_lyrics_page() {
     let ui = play_window();
-    ui.set_lyric_rows(rows(false));
-    assert!(!ui.get_lyrics_page_open(), "初始该是收着的");
+    ui.global::<Viz>().set_lyric_rows(rows(false));
+    assert!(
+        !ui.global::<Viz>().get_lyrics_page_open(),
+        "初始该是收着的"
+    );
 
     lyric_area(&ui)
         .mock_single_click(PointerEventButton::Left);
 
     assert!(
-        ui.get_lyrics_page_open(),
+        ui.global::<Viz>().get_lyrics_page_open(),
         "点歌词该展开歌词页"
     );
 }
@@ -96,7 +100,7 @@ fn tapping_the_lyric_area_opens_the_lyrics_page() {
 #[test]
 fn there_is_no_entry_without_lyrics() {
     let ui = play_window();
-    ui.set_lyric_line("".into());
+    ui.global::<Viz>().set_lyric_line("".into());
 
     assert!(
         element(&ui, "MainWindow::lyric-entry").is_none(),
@@ -108,7 +112,7 @@ fn there_is_no_entry_without_lyrics() {
 #[test]
 fn tapping_outside_the_lines_returns_to_the_play_page() {
     let ui = play_window();
-    ui.set_lyric_rows(rows(false));
+    ui.global::<Viz>().set_lyric_rows(rows(false));
     open_lyrics(&ui);
 
     element(&ui, "LyricsPage::backdrop")
@@ -116,7 +120,7 @@ fn tapping_outside_the_lines_returns_to_the_play_page() {
         .mock_single_click(PointerEventButton::Left);
 
     assert!(
-        !ui.get_lyrics_page_open(),
+        !ui.global::<Viz>().get_lyrics_page_open(),
         "点空白该收回歌词页"
     );
     assert!(
@@ -131,7 +135,7 @@ fn tapping_outside_the_lines_returns_to_the_play_page() {
 #[test]
 fn opacity_and_size_fall_off_with_line_distance() {
     let ui = play_window();
-    ui.set_lyric_rows(rows(false));
+    ui.global::<Viz>().set_lyric_rows(rows(false));
     open_lyrics(&ui);
 
     let lines = all(&ui, "LyricsPage::line");
@@ -171,8 +175,8 @@ fn the_translation_toggle_exists_only_with_translation_data()
     let ui = play_window();
     open_lyrics(&ui);
 
-    ui.set_lyric_rows(rows(false));
-    ui.set_lyric_has_translation(false);
+    ui.global::<Viz>().set_lyric_rows(rows(false));
+    ui.global::<Viz>().set_lyric_has_translation(false);
     assert!(
         element(&ui, "LyricsPage::translation-toggle")
             .is_none(),
@@ -183,8 +187,8 @@ fn the_translation_toggle_exists_only_with_translation_data()
         "没译文不该画译文行"
     );
 
-    ui.set_lyric_rows(rows(true));
-    ui.set_lyric_has_translation(true);
+    ui.global::<Viz>().set_lyric_rows(rows(true));
+    ui.global::<Viz>().set_lyric_has_translation(true);
     let toggle =
         element(&ui, "LyricsPage::translation-toggle")
             .expect("有译文该有开关");
@@ -206,14 +210,14 @@ fn the_translation_toggle_exists_only_with_translation_data()
 #[test]
 fn the_annotation_card_hides_while_lyrics_are_open() {
     let ui = play_window();
-    ui.set_viz_anchor_visible(true);
+    ui.global::<Viz>().set_viz_anchor_visible(true);
     assert!(
         element(&ui, "MainWindow::viz-anchor-card")
             .is_some(),
         "播放页该有标注卡"
     );
 
-    ui.set_lyrics_page_open(true);
+    ui.global::<Viz>().set_lyrics_page_open(true);
     assert!(
         element(&ui, "MainWindow::viz-anchor-card")
             .is_none(),
@@ -225,7 +229,7 @@ fn the_annotation_card_hides_while_lyrics_are_open() {
 #[test]
 fn dragging_browses_without_touching_playback() {
     let ui = play_window();
-    ui.set_lyric_rows(rows(false));
+    ui.global::<Viz>().set_lyric_rows(rows(false));
     open_lyrics(&ui);
     ui.global::<Player>().set_progress_ratio(0.3);
 
@@ -249,9 +253,9 @@ fn dragging_browses_without_touching_playback() {
     );
 
     assert!(
-        ui.get_lyric_browse() > 0,
+        ui.global::<Viz>().get_lyric_browse() > 0,
         "上拖该把窗口推向后面的行,实测 {}",
-        ui.get_lyric_browse()
+        ui.global::<Viz>().get_lyric_browse()
     );
     assert_eq!(sought.get(), 0, "拖歌词不该 seek");
     assert!(
@@ -268,7 +272,7 @@ fn dragging_browses_without_touching_playback() {
 #[test]
 fn the_play_page_text_steps_aside_for_the_lyrics_page() {
     let ui = play_window();
-    ui.set_lyric_rows(rows(false));
+    ui.global::<Viz>().set_lyric_rows(rows(false));
     assert!(
         element(&ui, "MainWindow::lyric-entry").is_some(),
         "播放页该有那两行歌词"

@@ -4,8 +4,10 @@
 pub use app_core::LoopMode;
 pub use nav_glass::NavGlassControls;
 
+use crate::Viz;
 use crate::frame_stats::{FrameAccounting, fps};
 use crate::*;
+use slint::ComponentHandle as _;
 
 /// 同 [`run`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。带 bevy 的端
 /// (桌面 / android)走这里。
@@ -151,15 +153,23 @@ pub fn run_with_renderers(
                             // 直接交出去,不逐字段再抄一遍兆级的像素。
                             cover: cover.take(),
                             pointer: VizPointer {
-                                x: ui.get_viz_pointer_x(),
-                                y: ui.get_viz_pointer_y(),
+                                x: ui
+                                    .global::<Viz>()
+                                    .get_viz_pointer_x(),
+                                y: ui
+                                    .global::<Viz>()
+                                    .get_viz_pointer_y(),
                                 down: ui
+                                    .global::<Viz>()
                                     .get_viz_pointer_down(),
                                 active: ui
+                                    .global::<Viz>()
                                     .get_viz_pointer_active(
                                     ),
                             },
-                            preset: ui.get_viz_preset(),
+                            preset: ui
+                                .global::<Viz>()
+                                .get_viz_preset(),
                             // 深度卡片是标注卡,它在画面里才需要遮挡层。
                             // 用**上一帧**的锚点开关:锚点是这一帧渲染的产物,
                             // 而这个开关是它的输入,拿不到同帧的答案。差一帧看不出来,
@@ -171,17 +181,25 @@ pub fn run_with_renderers(
                         size.width,
                         size.height,
                     ) {
-                        ui.set_viz_bg(imgs.warp);
-                        ui.set_viz_scene(imgs.scene);
-                        ui.set_viz_occluder(imgs.occluder);
+                        ui.global::<Viz>()
+                            .set_viz_bg(imgs.warp);
+                        ui.global::<Viz>()
+                            .set_viz_scene(imgs.scene);
+                        ui.global::<Viz>()
+                            .set_viz_occluder(
+                                imgs.occluder,
+                            );
                         viz_anchor = imgs.anchor;
                         if let Some((x, y)) = viz_anchor {
-                            ui.set_viz_anchor_x(x);
-                            ui.set_viz_anchor_y(y);
+                            ui.global::<Viz>()
+                                .set_viz_anchor_x(x);
+                            ui.global::<Viz>()
+                                .set_viz_anchor_y(y);
                         }
-                        ui.set_viz_anchor_visible(
-                            viz_anchor.is_some(),
-                        );
+                        ui.global::<Viz>()
+                            .set_viz_anchor_visible(
+                                viz_anchor.is_some(),
+                            );
                     }
                 }
             } else {

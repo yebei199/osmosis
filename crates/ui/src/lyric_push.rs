@@ -5,6 +5,7 @@
 
 use slint::ComponentHandle;
 
+use crate::Viz;
 use crate::music::LyricFeed;
 use crate::{LyricRow, MainWindow};
 
@@ -31,18 +32,21 @@ impl LyricPush {
                     if self.line
                         != Some((generation, index)) =>
                 {
-                    ui.set_lyric_line(text.into());
-                    ui.set_lyric_translation(tr.into());
+                    ui.global::<Viz>()
+                        .set_lyric_line(text.into());
+                    ui.global::<Viz>()
+                        .set_lyric_translation(tr.into());
                     self.line = Some((generation, index));
                 }
                 None if self.line.is_some() => {
                     // 换歌后的前奏:清空,不留上一首的最后一行。
-                    ui.set_lyric_line(
+                    ui.global::<Viz>().set_lyric_line(
                         slint::SharedString::new(),
                     );
-                    ui.set_lyric_translation(
-                        slint::SharedString::new(),
-                    );
+                    ui.global::<Viz>()
+                        .set_lyric_translation(
+                            slint::SharedString::new(),
+                        );
                     self.line = None;
                 }
                 _ => {}
@@ -58,8 +62,9 @@ impl LyricPush {
     ) {
         // ── 歌词页整窗 ──
         // 只在歌词页展开时算:收起时那一窗谁也看不见。
-        if ui.get_lyrics_page_open() {
-            let browse = ui.get_lyric_browse();
+        if ui.global::<Viz>().get_lyrics_page_open() {
+            let browse =
+                ui.global::<Viz>().get_lyric_browse();
             match lyrics.window(browse) {
                 Some((
                     generation,
@@ -81,24 +86,29 @@ impl LyricPush {
                             }
                         })
                         .collect::<Vec<_>>();
-                    ui.set_lyric_rows(slint::ModelRc::new(
-                        slint::VecModel::from(rows),
-                    ));
-                    ui.set_lyric_has_translation(
-                        translated,
+                    ui.global::<Viz>().set_lyric_rows(
+                        slint::ModelRc::new(
+                            slint::VecModel::from(rows),
+                        ),
                     );
+                    ui.global::<Viz>()
+                        .set_lyric_has_translation(
+                            translated,
+                        );
                     self.window =
                         Some((generation, focus, browse));
                 }
                 None if self.window.is_some() => {
                     // 换歌后的前奏:清空整窗,顺手收起页 ——
                     // 一页空行不是「歌词页」,是个走不掉的空屏。
-                    ui.set_lyric_rows(slint::ModelRc::new(
+                    ui.global::<Viz>()
+                        .set_lyric_rows(slint::ModelRc::new(
                         slint::VecModel::<LyricRow>::from(
                             Vec::new(),
                         ),
                     ));
-                    ui.set_lyrics_page_open(false);
+                    ui.global::<Viz>()
+                        .set_lyrics_page_open(false);
                     self.window = None;
                 }
                 _ => {}

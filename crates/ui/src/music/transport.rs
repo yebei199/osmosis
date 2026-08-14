@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::Player;
+use crate::Viz;
 use slint::ComponentHandle as _;
 
 /// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
@@ -71,15 +72,21 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
     push_rows(ui, deck, Some(&track.id));
 
     // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
-    ui.set_now_title(track.title.clone().into());
-    ui.set_now_artists(join_artists(&track.artists).into());
-    ui.set_cover_art(slint::Image::default());
+    ui.global::<Viz>()
+        .set_now_title(track.title.clone().into());
+    ui.global::<Viz>().set_now_artists(
+        join_artists(&track.artists).into(),
+    );
+    ui.global::<Viz>()
+        .set_cover_art(slint::Image::default());
 
     // 歌词也随歌换:先清空(旧歌词配新歌比空着更误导),取到再整批换上。
     // 取不到不影响播放 —— 没歌词是正常状态,不是故障(见 crates/contract)。
     deck.lyrics.replace(Vec::new());
-    ui.set_lyric_line(slint::SharedString::new());
-    ui.set_lyric_translation(slint::SharedString::new());
+    ui.global::<Viz>()
+        .set_lyric_line(slint::SharedString::new());
+    ui.global::<Viz>()
+        .set_lyric_translation(slint::SharedString::new());
     {
         let lyrics = deck.lyrics.clone();
         let id = track.id.clone();
@@ -122,7 +129,7 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
                 {
                     return;
                 }
-                ui.set_cover_art(img);
+                ui.global::<Viz>().set_cover_art(img);
                 // 一张图四个去处:封面卡、点云、媒体控件,以及极光的三团光斑。
                 // `Arc` 免掉后面几个各拷一份兆级字节。
                 let pixels = Arc::new(pixels);

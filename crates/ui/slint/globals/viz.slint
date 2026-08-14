@@ -1,0 +1,55 @@
+import { LyricRow } from "../types.slint";
+
+// 播放页视觉的状态面:三张每帧推来的纹理、标注卡的锚点、预设与指针。
+//
+// **不含窗口几何派生的那几条**(歌词块高度、控制条高度、标题纵位) —— 它们要读
+// root.height 与 safe-area-insets,而 global 拿不到窗口上下文,那批留在 MainWindow。
+// 这条界线与代价见 docs/adr/0027。
+export global Viz {
+    // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
+    // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
+    // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
+    in property <image> viz-bg;
+    // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
+    // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
+    in property <image> viz-scene;
+    in property <image> viz-occluder;
+    // 世界空间标注卡的挂点:封面点云上的一点,由 render3d 每帧投回视口
+    // (见 crates/render3d 的 CARD_ANCHOR_LOCAL),归一到 0..1、左上原点。
+    in property <float> viz-anchor-x;
+    in property <float> viz-anchor-y;
+    // 锚点这一帧在不在画面里。为假时整块卡片不实例化 —— 只把它挪到界外不算数,
+    // 界外的元素照样参与布局与命中测试。
+    in property <bool> viz-anchor-visible;
+
+    // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
+    // 手工对齐 —— 那边按下标分支,加档时两处都要动。
+    in-out property <int> viz-preset: 0;
+    // 预设名,列表里逐项显示。只剩「封面」一档 —— 另外五档让粒子离开封面平面,
+    // 那张图就散了,而点云存在的理由正是封面本身(见 docs/adr/0014)。
+    in-out property <[string]> viz-preset-names: ["封面"];
+    // 预设列表是不是展开着。私有:只有这一层自己用,Rust 侧不认识它。
+    in-out property <bool> viz-preset-list-open: false;
+    // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
+    // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
+    // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
+    in-out property <float> viz-pointer-x: 0.5;
+    in-out property <float> viz-pointer-y: 0.5;
+    in-out property <bool> viz-pointer-down: false;
+    in-out property <bool> viz-pointer-active: false;
+
+    in property <image> cover-art;
+    // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
+    in property <string> now-title;
+    in property <string> now-artists;
+    // 当前歌词行与其译文,Rust 每帧按播放位置选出后推送(见 app_core::current_line)。
+    // 没有歌词、或还在前奏时为空串,歌词区整块让位。
+    in property <string> lyric-line;
+    in property <string> lyric-translation;
+    // 歌词页(#73):整窗的行由 Rust 按 `app_core::window` 选好推来,
+    // 浏览偏移由界面在拖动里改、Rust 读它算窗口。
+    in property <[LyricRow]> lyric-rows;
+    in property <bool> lyric-has-translation;
+    in-out property <bool> lyrics-page-open: false;
+    in-out property <int> lyric-browse: 0;
+}

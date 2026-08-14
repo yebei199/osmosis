@@ -9,6 +9,7 @@ use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Viz;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -96,13 +97,16 @@ fn collapsing_the_rail_keeps_the_selection() {
 #[test]
 fn switching_sections_does_not_disturb_playback() {
     let ui = music_page();
-    ui.set_now_title("紅蓮華".into());
+    ui.global::<Viz>().set_now_title("紅蓮華".into());
     ui.global::<Player>().set_is_playing(true);
 
     ui.set_music_section(1);
     ui.set_music_section(3);
 
-    assert_eq!(ui.get_now_title(), "紅蓮華");
+    assert_eq!(
+        ui.global::<Viz>().get_now_title(),
+        "紅蓮華"
+    );
     assert!(
         ui.global::<Player>().get_is_playing(),
         "换个列表看不该把歌停掉"

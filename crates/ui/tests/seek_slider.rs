@@ -9,6 +9,7 @@ use slint::{ComponentHandle, LogicalPosition};
 use ui::MainWindow;
 use ui::Player;
 use ui::Session;
+use ui::Viz;
 
 /// 播放页展开、手上有一首歌的窗口。滑条是播放页里的条件元素。
 fn play_window() -> MainWindow {
@@ -20,7 +21,7 @@ fn play_window() -> MainWindow {
     ui.global::<Session>().set_logged_in(true);
     ui.set_play_page_open(true);
     ui.global::<Player>().set_has_track(true);
-    ui.set_now_title("滑条测试曲".into());
+    ui.global::<Viz>().set_now_title("滑条测试曲".into());
     ui
 }
 
@@ -285,7 +286,7 @@ fn the_slider_steps_aside_for_the_lyrics_page() {
     let ui = play_window();
     assert!(slider(&ui).is_some(), "播放页该有滑条");
 
-    ui.set_lyrics_page_open(true);
+    ui.global::<Viz>().set_lyrics_page_open(true);
 
     assert!(
         slider(&ui).is_none(),
