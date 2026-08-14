@@ -1,7 +1,5 @@
 //! 播放器:一个常驻的输出设备,加上音量与位置的读写。
 
-use std::io::{Read, Seek};
-
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 
 use crate::{AudioError, codec, spectrum};
