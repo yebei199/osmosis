@@ -364,7 +364,10 @@ mod tests {
             d.cam.step(lay.col_pitch);
             d.collapse.step();
         }
-        assert_eq!(d.cam.pan_x, pan, "收敛后的相机不该漂移");
+        assert_eq!(
+            d.cam.pan_x, pan,
+            "收敛后的相机不该漂移"
+        );
         assert_eq!(
             d.collapse.value, collapse,
             "收敛后的塌回不该漂移"

@@ -10,8 +10,8 @@
 //! 无差,而没有迭代、没有随机初值。饱和度过低的像素直接丢 —— 不丢的话
 //! 一堆脏灰会把桶全占了。
 
-use crate::viz::CoverPixels;
 use crate::MainWindow;
+use crate::viz::CoverPixels;
 
 /// 色相桶数。12 桶 = 每桶 30°,再细分辨不出光斑的差别。
 const HUE_BUCKETS: usize = 12;
@@ -53,8 +53,7 @@ fn dominant_colors(
     height: u32,
     rgba: &[u8],
 ) -> Option<[[u8; 3]; 3]> {
-    let (width, height) =
-        (width as usize, height as usize);
+    let (width, height) = (width as usize, height as usize);
     if width == 0
         || height == 0
         || rgba.len() < width * height * 4
@@ -85,8 +84,7 @@ fn dominant_colors(
         }
     }
 
-    let colorful: u64 =
-        buckets.iter().map(|b| b[3]).sum();
+    let colorful: u64 = buckets.iter().map(|b| b[3]).sum();
     if sampled == 0
         || (colorful as f32 / sampled as f32)
             < MIN_COLORFUL_RATIO
@@ -98,7 +96,8 @@ fn dominant_colors(
         .iter()
         .filter(|bucket| bucket[3] > 0)
         .collect();
-    order.sort_by_key(|bucket| std::cmp::Reverse(bucket[3]));
+    order
+        .sort_by_key(|bucket| std::cmp::Reverse(bucket[3]));
 
     let average = |bucket: &[u64; 4]| -> [u8; 3] {
         let n = bucket[3].max(1);
@@ -165,10 +164,13 @@ mod tests {
     fn two_hues_rank_by_area_and_pad_the_third() {
         let mut rgba = solid(16, 12, [200, 40, 40]);
         rgba.extend(solid(16, 4, [40, 60, 220]));
-        let [a, b, c] =
-            dominant_colors(16, 16, &rgba).expect("该取出主色");
+        let [a, b, c] = dominant_colors(16, 16, &rgba)
+            .expect("该取出主色");
 
-        assert!(a[0] > a[2], "面积大的红该排第一,实得 {a:?}");
+        assert!(
+            a[0] > a[2],
+            "面积大的红该排第一,实得 {a:?}"
+        );
         assert!(b[2] > b[0], "蓝该排第二,实得 {b:?}");
         assert_eq!(c, a, "不足三桶时循环补齐");
     }
@@ -183,6 +185,8 @@ mod tests {
     /// 尺寸对不上像素长度时不 panic,给 None。
     #[test]
     fn a_short_buffer_is_rejected() {
-        assert!(dominant_colors(16, 16, &[0; 12]).is_none());
+        assert!(
+            dominant_colors(16, 16, &[0; 12]).is_none()
+        );
     }
 }

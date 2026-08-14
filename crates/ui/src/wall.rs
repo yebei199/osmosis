@@ -41,7 +41,9 @@ pub fn layout(w: f32, h: f32, compact: bool) -> WallLayout {
     // 参考场 904×432 的各项比例。行数固定 3,列数由卡数决定(横向翻找)。
     let unit = if compact { w / 420.0 } else { w / 904.0 };
     WallLayout {
-        card: 150.0 * unit * if compact { 0.48 } else { 1.0 },
+        card: 150.0
+            * unit
+            * if compact { 0.48 } else { 1.0 },
         col_pitch: 204.0
             * unit
             * if compact { 0.52 } else { 1.0 },
@@ -93,24 +95,23 @@ pub fn card_pose(
 ) -> CardPose {
     let row = index % lay.rows;
     let col = index / lay.rows;
-    let odd = if row % 2 == 1 { lay.odd_shift } else { 0.0 };
+    let odd =
+        if row % 2 == 1 { lay.odd_shift } else { 0.0 };
     // 网格基准位:三行居中,列从场左往右铺。
-    let x = col as f32 * lay.col_pitch + odd
-        - lay.w * 0.28;
+    let x = col as f32 * lay.col_pitch + odd - lay.w * 0.28;
     let y = (row as f32 - (lay.rows as f32 - 1.0) / 2.0)
         * lay.row_pitch;
 
     // 卡墙态的深度散布与旋转抖动(handoff 3b 的范围)。
     let z = lay.z_min
         + jitter(index, 1) * (lay.z_max - lay.z_min);
-    let rot_y = (-16.0 + jitter(index, 2) * 30.0)
-        .to_radians();
+    let rot_y =
+        (-16.0 + jitter(index, 2) * 30.0).to_radians();
     let rot_x =
         (-5.0 + jitter(index, 3) * 12.0).to_radians();
 
     // 越远越暗:z_min 处 0.55,z_max 处 1.0。
-    let depth01 =
-        (z - lay.z_min) / (lay.z_max - lay.z_min);
+    let depth01 = (z - lay.z_min) / (lay.z_max - lay.z_min);
     let dim_wall = 0.55 + 0.45 * depth01;
 
     let t = collapse.clamp(0.0, 1.0);
@@ -168,8 +169,8 @@ impl WallCam {
         self.dragging = true;
         self.pan_x -= dx;
         self.vel_x = -dx;
-        self.pitch = (self.pitch - dy * 0.0009)
-            .clamp(-0.12, 0.12);
+        self.pitch =
+            (self.pitch - dy * 0.0009).clamp(-0.12, 0.12);
     }
 
     pub fn release(&mut self) {
@@ -199,8 +200,7 @@ impl WallCam {
         self.vel_x *= DRAG_DAMPING;
         self.pan_x += self.vel_x;
         let snap = self.snap_target(col_pitch);
-        self.pan_x +=
-            (snap - self.pan_x) * SNAP_CONVERGE;
+        self.pan_x += (snap - self.pan_x) * SNAP_CONVERGE;
         self.yaw *= 0.85;
         self.pitch *= 0.90;
 
@@ -219,7 +219,8 @@ impl WallCam {
 }
 
 /// 整场基础俯仰(CSS `rotateX(6deg)`):墙顶微微向后倒。
-pub const BASE_PITCH: f32 = 6.0 * core::f32::consts::PI / 180.0;
+pub const BASE_PITCH: f32 =
+    6.0 * core::f32::consts::PI / 180.0;
 
 /// 把网格位姿变换到世界:绕场心先 yaw 后 pitch(基础 6° + 用户拖出的),
 /// 卡自身的抖动旋转与整场旋转小角度合成(直接相加,量级都在 ±20° 内)。
@@ -339,7 +340,10 @@ pub struct Collapse {
 impl Default for Collapse {
     fn default() -> Self {
         // 每次开局回卡墙(adr/0025:视图选择不持久化)。
-        Self { value: 1.0, target: 1.0 }
+        Self {
+            value: 1.0,
+            target: 1.0,
+        }
     }
 }
 
@@ -358,11 +362,7 @@ impl Collapse {
 
 /// 把一张 RGBA 缩略图的四角按圆角半径抠成透明(在 CPU 上烘,
 /// 免得 render3d 为圆角开一条自定义材质)。半径按卡片比例 14/150。
-pub fn bake_rounded(
-    rgba: &mut [u8],
-    w: u32,
-    h: u32,
-) {
+pub fn bake_rounded(rgba: &mut [u8], w: u32, h: u32) {
     let r = (w.min(h) as f32) * (14.0 / 150.0);
     let (fw, fh) = (w as f32, h as f32);
     for y in 0..h {
@@ -376,8 +376,7 @@ pub fn bake_rounded(
             if d > r - 0.5 {
                 let a = (r + 0.5 - d).clamp(0.0, 1.0);
                 let i = ((y * w + x) * 4 + 3) as usize;
-                rgba[i] =
-                    (f32::from(rgba[i]) * a) as u8;
+                rgba[i] = (f32::from(rgba[i]) * a) as u8;
             }
         }
     }
@@ -502,9 +501,7 @@ mod tests {
         let hit =
             hit_test(&lay, &cam, &poses, sx, sy).unwrap();
         // 命中的要么是它自己,要么是遮在它前面(z 更大)的卡。
-        assert!(
-            world_pose(&cam, &poses[hit]).z >= world.z
-        );
+        assert!(world_pose(&cam, &poses[hit]).z >= world.z);
     }
 
     /// 空白处点不中任何卡。
@@ -532,8 +529,10 @@ mod tests {
             assert!(frames < 60, "塌回一秒都收不住");
         }
 
-        let mut d =
-            DollyRun { t: 0.0, target_z: 40.0 };
+        let mut d = DollyRun {
+            t: 0.0,
+            target_z: 40.0,
+        };
         let mut frames = 0;
         while !d.step() {
             frames += 1;
