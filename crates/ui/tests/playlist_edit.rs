@@ -7,6 +7,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Library;
 use ui::Session;
 use ui::{MainWindow, TrackRow};
 
@@ -28,8 +29,9 @@ fn playlist_page() -> MainWindow {
 
 /// 打开一个本地歌单的详情。
 fn opened_local(ui: &MainWindow) {
-    ui.set_open_playlist_name("睡前".into());
-    ui.set_open_playlist_local(true);
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
+    ui.global::<Library>().set_open_playlist_local(true);
 }
 
 /// 列表里摆一首歌。行上的键长在 `for` 里 —— 一首都没有的话,
@@ -82,10 +84,12 @@ fn only_a_local_playlist_can_be_renamed_or_deleted() {
     assert!(present(&ui, "MainWindow::delete-button"));
 
     // 平台歌单 / 我喜欢的:同一层详情,但没有那两个键
-    ui.set_open_playlist_local(false);
+    ui.global::<Library>().set_open_playlist_local(false);
     assert!(!present(&ui, "MainWindow::delete-button"));
     // 曲目行上的「−」也一起消失:那也是一次写
-    assert!(!ui.get_open_playlist_local());
+    assert!(
+        !ui.global::<Library>().get_open_playlist_local()
+    );
 }
 
 /// 删除要点两下:第一下变成「确认删除?」,第二下才真删。
@@ -99,7 +103,7 @@ fn deleting_asks_once_before_it_happens() {
     let deleted =
         std::rc::Rc::new(std::cell::Cell::new(0_u32));
     let count = deleted.clone();
-    ui.on_delete_playlist(move || {
+    ui.global::<Library>().on_delete_playlist(move || {
         count.set(count.get() + 1)
     });
 
@@ -130,7 +134,7 @@ fn a_half_finished_delete_does_not_follow_to_the_next() {
     let deleted =
         std::rc::Rc::new(std::cell::Cell::new(0_u32));
     let count = deleted.clone();
-    ui.on_delete_playlist(move || {
+    ui.global::<Library>().on_delete_playlist(move || {
         count.set(count.get() + 1)
     });
 
@@ -145,7 +149,8 @@ fn a_half_finished_delete_does_not_follow_to_the_next() {
 
     find().invoke_accessible_default_action();
     // 换到另一个歌单
-    ui.set_open_playlist_name("通勤".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("通勤".into());
 
     find().invoke_accessible_default_action();
     assert_eq!(
@@ -163,14 +168,16 @@ fn the_add_batch_row_needs_both_a_local_playlist_and_a_batch()
     opened_local(&ui);
 
     // 没有刚才那一批:整行不出现
-    ui.set_add_batch_text("".into());
+    ui.global::<Library>().set_add_batch_text("".into());
     assert!(!present(&ui, "MainWindow::add-batch-row"));
 
-    ui.set_add_batch_text("+ 把刚才那 30 首加进来".into());
+    ui.global::<Library>().set_add_batch_text(
+        "+ 把刚才那 30 首加进来".into(),
+    );
     assert!(present(&ui, "MainWindow::add-batch-row"));
 
     // 平台歌单收不了东西
-    ui.set_open_playlist_local(false);
+    ui.global::<Library>().set_open_playlist_local(false);
     assert!(!present(&ui, "MainWindow::add-batch-row"));
 }
 
@@ -184,14 +191,15 @@ fn rows_can_be_removed_only_inside_a_local_playlist() {
     one_track(&ui);
     assert!(present(&ui, "TrackList::remove-hit"));
 
-    ui.set_open_playlist_local(false);
+    ui.global::<Library>().set_open_playlist_local(false);
     assert!(
         !present(&ui, "TrackList::remove-hit"),
         "平台歌单里不该有移除键"
     );
 
     // 每日推荐同理:那一批根本不属于任何可改的集合
-    ui.set_open_playlist_name("".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("".into());
     ui.set_music_section(0);
     assert!(!present(&ui, "TrackList::remove-hit"));
 }

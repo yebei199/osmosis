@@ -26,6 +26,7 @@ import { AuroraBackground, GlassCard } from "glass.slint";
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
 import { NavEntry, TrackRow, DeviceRow, PlaylistRow, ArtistRow, ArtistRankRow, LyricRow } from "types.slint";
 import { Profile } from "globals/profile.slint";
+import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
@@ -39,6 +40,8 @@ export { Theme }
 export { Profile }
 // 登录态同理:Rust 靠 `ui.global::<Session>()` 读写它。
 export { Session }
+// 曲库那一面同理:Rust 靠 `ui.global::<Library>()` 读写它。
+export { Library }
 import { LoginPage } from "login.slint";
 import { MusicRail, MusicBar, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
@@ -173,78 +176,6 @@ export component MainWindow inherits Window {
     // 换了分区。Rust 据此去取对应的一批歌。
     callback select-section(int);
 
-    // ── 我的歌单 ──
-    // 两个来源合并后的一张列表,「我喜欢的」在最前(见 docs/adr/0016)。
-    in property <[PlaylistRow]> playlists: [];
-    // 当前打开的歌单名。空串 = 停在列表那一层,没有打开任何歌单。
-    // 用名字而不是另设一个布尔:详情页要显示它,两个值会有对不上的一天。
-    in-out property <string> open-playlist-name;
-    // 当前打开的歌单标识与封面。标识由 Rust 在打开时填 —— 封面表按它索引,
-    // 而名字会重复(两个歌单可以同名)。
-    in-out property <string> open-playlist-id;
-    in property <image> open-playlist-cover;
-    // 打开某个歌单。参数是 PlaylistRow 的 id 与 source ——
-    // 两种歌单的 id 不在同一个空间,少了 source 就不知道该问谁要曲目。
-    callback open-playlist(string, int);
-    // 从详情退回列表。
-    callback close-playlist();
-
-    // ── 本地歌单的写操作 ──
-    // 当前打开的这个歌单是不是本地的。只有本地歌单能改名、删除、增删曲目 ——
-    // 平台歌单与「我喜欢的」的真相在平台,这边改不动,摆个按钮上去只会让人
-    // 点了才知道。由 Rust 在打开时按来源填,不由界面猜名字。
-    in property <bool> open-playlist-local: false;
-    // 「把刚才那批加进来」那行的文案,已在 Rust 侧带上条数。
-    // 空串 = 刚才没有可加的一批,整行不出现。
-    in property <string> add-batch-text;
-    // 「另有 N 首平台不再提供」。平台给不出详情的曲目进不了这一批
-    // (成员关系要求先有详情),不说一声的话歌单就静默变短了。
-    // 空串 = 一首都没少,整行不出现;那是常态。
-    in property <string> unavailable-note;
-    // 新建 / 改名的文本由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
-    callback create-playlist(string);
-    callback rename-playlist(string);
-    callback delete-playlist();
-    // 把刚才那批歌收进当前打开的这个歌单。
-    callback add-batch();
-    // 把某一首从当前打开的这个歌单里移出去。
-    callback remove-track(string);
-    // 标题正在改名 / 删除键正在等第二下确认。两个都私有于界面 ——
-    // Rust 不关心用户点开了哪个输入框,只关心最后交出来的那个名字。
-    //
-    // 存的是**哪个歌单**处在那个状态,而不是一个布尔:换了歌单,比较自然就不
-    // 成立了,状态跟着作废。用布尔加一个 `changed` 回调复位也行,但那个回调
-    // 什么时候跑不由这里说了算 —— 而「上一个歌单点了删除没确认就退出去,下一个
-    // 歌单的删除键已经处在再点一下就没的状态」这件事,不能指望时机。
-    property <string> renaming-for: "";
-    property <string> confirming-for: "";
-    out property <bool> renaming:
-        root.open-playlist-name != ""
-        && root.renaming-for == root.open-playlist-name;
-    out property <bool> confirming-delete:
-        root.open-playlist-name != ""
-        && root.confirming-for == root.open-playlist-name;
-
-    // ── 搜索的三个页签 ──
-    // 0=歌曲、1=歌手、2=歌单,编号即 musicnav.slint 里 SearchTabs.items 的下标。
-    in-out property <int> search-tab: 0;
-    callback select-search-tab(int);
-    // 歌手与歌单的结果各自成列,**不与「我的歌单」共用** `playlists` ——
-    // 共用的话,切回我的歌单会看见上一次的搜索结果。
-    // 曲目仍然共用 `tracks`:那个属性本来就是「当前这批歌」。
-    in property <[ArtistRow]> found-artists: [];
-    in property <[PlaylistRow]> found-playlists: [];
-    // 打开某位歌手的热门曲目。带上名字,详情页的标题要它。
-    callback open-artist(string, string);
-
-    // 点某一行的红心。参数是曲目 id 与点完之后的状态。
-    callback toggle-liked(string, bool);
-    // 重拉红心的全量标识。
-    //
-    // 存在的理由是**时机**:那个集合决定每行心红还是空,而拉它的那次请求跑在
-    // 绑定阶段,也就是登录之前。本次会话内才首次登录的人,那一次不带 token,
-    // 失败后静默降级成空集合 —— 整页的心都是空的。登录收尾与进列表页各喊一次它。
-    callback refresh-liked();
     // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
     // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
@@ -440,7 +371,7 @@ export component MainWindow inherits Window {
         && root.wall-showing
         && root.current-tab == 1
         && root.music-section == 0
-        && root.open-playlist-name == ""
+        && Library.open-playlist-name == ""
         && root.tracks.length > 0;
     // 指针镜像(逻辑像素,换算物理在 Rust);场区尺寸由元素回写。
     in-out property <bool> wall-pressed: false;
@@ -773,7 +704,7 @@ export component MainWindow inherits Window {
                             // 常驻一个空框会让人以为那三页也要先搜一下。
                             // 进了歌手详情也收起来:那一层有自己的标题行与返回键。
                             if root.music-section == 2
-                                && root.open-playlist-name == "":
+                                && Library.open-playlist-name == "":
                             HorizontalLayout {
                                 spacing: 8px;
 
@@ -794,11 +725,11 @@ export component MainWindow inherits Window {
                             // 搜索结果的三个页签。与搜索框同进同出 ——
                             // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
                             if root.music-section == 2
-                                && root.open-playlist-name == "":
+                                && Library.open-playlist-name == "":
                             search-tabs := SearchTabBar {
-                                current: root.search-tab;
+                                current: Library.search-tab;
                                 selected(tab) => {
-                                    root.select-search-tab(tab);
+                                    Library.select-search-tab(tab);
                                 }
                             }
 
@@ -830,7 +761,7 @@ export component MainWindow inherits Window {
                             // 让返回键有两种写法。
                             // 与列表**互斥**:两个都在的话,返回键该收哪一层
                             // 就说不清了。
-                            if root.open-playlist-name != "":
+                            if Library.open-playlist-name != "":
                             playlist-header := HorizontalLayout {
                                 spacing: 8px;
                                 height: 28px;
@@ -846,12 +777,12 @@ export component MainWindow inherits Window {
                                         vertical-alignment: center;
                                     }
 
-                                    clicked => { root.close-playlist(); }
+                                    clicked => { Library.close-playlist(); }
                                 }
 
                                 // 详情页那张封面。比列表里那张大一档,
                                 // 但不铺满 —— 这一层的主体是曲目,不是图。
-                                if root.open-playlist-cover.width > 0:
+                                if Library.open-playlist-cover.width > 0:
                                 VerticalLayout {
                                     alignment: center;
                                     Rectangle {
@@ -864,56 +795,56 @@ export component MainWindow inherits Window {
                                             width: 100%;
                                             height: 100%;
                                             image-fit: cover;
-                                            source: root.open-playlist-cover;
+                                            source: Library.open-playlist-cover;
                                         }
                                     }
                                 }
 
                                 // 改名时标题就地变成输入框。另开一层对话框的话,
                                 // 那一层要盖住的正是「原来叫什么」。
-                                if !renaming: Text {
-                                    text: root.open-playlist-name;
+                                if !Library.renaming: Text {
+                                    text: Library.open-playlist-name;
                                     color: Theme.text;
                                     font-size: 15px;
                                     horizontal-stretch: 1;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
-                                if renaming: rename-box := LineEdit {
+                                if Library.renaming: rename-box := LineEdit {
                                     horizontal-stretch: 1;
-                                    text: root.open-playlist-name;
+                                    text: Library.open-playlist-name;
                                     accepted => {
-                                        root.rename-playlist(self.text);
-                                        root.renaming-for = "";
+                                        Library.rename-playlist(self.text);
+                                        Library.renaming-for = "";
                                     }
                                 }
 
                                 // 改名与删除只给本地歌单 —— 平台那两种的真相
                                 // 不在这边,摆上去只会让人点了才知道。
-                                if root.open-playlist-local:
+                                if Library.open-playlist-local:
                                 rename-button := HoverButton {
                                     width: 56px;
-                                    text: renaming ? "取消" : "改名";
+                                    text: Library.renaming ? "取消" : "改名";
                                     clicked => {
-                                        root.renaming-for =
-                                            renaming ? "" : root.open-playlist-name;
-                                        root.confirming-for = "";
+                                        Library.renaming-for =
+                                            Library.renaming ? "" : Library.open-playlist-name;
+                                        Library.confirming-for = "";
                                     }
                                 }
-                                if root.open-playlist-local:
+                                if Library.open-playlist-local:
                                 delete-button := HoverButton {
-                                    width: confirming-delete ? 96px : 56px;
+                                    width: Library.confirming-delete ? 96px : 56px;
                                     // 点两下才真删:一下就删的话,手指滑一下
                                     // 就没了一个歌单,而歌单没有回收站。
-                                    text: confirming-delete ? "确认删除?" : "删除";
+                                    text: Library.confirming-delete ? "确认删除?" : "删除";
                                     clicked => {
-                                        if (confirming-delete) {
-                                            root.delete-playlist();
-                                            root.confirming-for = "";
+                                        if (Library.confirming-delete) {
+                                            Library.delete-playlist();
+                                            Library.confirming-for = "";
                                         } else {
-                                            root.confirming-for =
-                                                root.open-playlist-name;
-                                            root.renaming-for = "";
+                                            Library.confirming-for =
+                                                Library.open-playlist-name;
+                                            Library.renaming-for = "";
                                         }
                                     }
                                 }
@@ -922,20 +853,20 @@ export component MainWindow inherits Window {
                             // 「把刚才那批加进来」。只在本地歌单详情、且刚才
                             // 确实有一批歌时出现 —— 进歌单那一刻 tracks 就被
                             // 换掉了,所以那一批由 Rust 在打开前存下来。
-                            if root.open-playlist-local
-                                && root.add-batch-text != "":
+                            if Library.open-playlist-local
+                                && Library.add-batch-text != "":
                             add-batch-row := HoverButton {
                                 height: 30px;
-                                text: root.add-batch-text;
-                                clicked => { root.add-batch(); }
+                                text: Library.add-batch-text;
+                                clicked => { Library.add-batch(); }
                             }
 
                             // 平台给不出详情的那几首。摆在列表末尾:它说的是
                             // 「上面那批之外还有」,不是一个可点的条目。
-                            if root.unavailable-note != "":
+                            if Library.unavailable-note != "":
                             unavailable-row := Text {
                                 height: 30px;
-                                text: root.unavailable-note;
+                                text: Library.unavailable-note;
                                 color: Theme.text-dim;
                                 vertical-alignment: center;
                             }
@@ -944,7 +875,7 @@ export component MainWindow inherits Window {
                             // 名字由回调带出来,因为这个输入框在 `if` 里,
                             // Rust 引用不到它。
                             if root.music-section == 1
-                                && root.open-playlist-name == "":
+                                && Library.open-playlist-name == "":
                             new-playlist-row := HorizontalLayout {
                                 spacing: 8px;
                                 height: 32px;
@@ -953,7 +884,7 @@ export component MainWindow inherits Window {
                                     horizontal-stretch: 1;
                                     placeholder-text: "新建歌单";
                                     accepted => {
-                                        root.create-playlist(self.text);
+                                        Library.create-playlist(self.text);
                                         self.text = "";
                                     }
                                 }
@@ -961,7 +892,7 @@ export component MainWindow inherits Window {
                                     width: 56px;
                                     text: "新建";
                                     clicked => {
-                                        root.create-playlist(new-name.text);
+                                        Library.create-playlist(new-name.text);
                                         new-name.text = "";
                                     }
                                 }
@@ -969,36 +900,36 @@ export component MainWindow inherits Window {
 
                             // 歌单分区的列表那一层。
                             if root.music-section == 1
-                                && root.open-playlist-name == "":
+                                && Library.open-playlist-name == "":
                             playlist-list := PlaylistList {
                                 vertical-stretch: 1;
-                                playlists: root.playlists;
+                                playlists: Library.playlists;
                                 open(id, source) => {
-                                    root.open-playlist(id, source);
+                                    Library.open-playlist(id, source);
                                 }
                             }
 
                             // 搜索的歌手页签。
                             if root.music-section == 2
-                                && root.open-playlist-name == ""
-                                && root.search-tab == 1:
+                                && Library.open-playlist-name == ""
+                                && Library.search-tab == 1:
                             artist-list := ArtistList {
-                                artists: root.found-artists;
+                                artists: Library.found-artists;
                                 open(id, name) => {
-                                    root.open-artist(id, name);
+                                    Library.open-artist(id, name);
                                 }
                             }
 
                             // 搜索的歌单页签。与「我的歌单」同一个组件、
                             // 不同的一份数据 —— 点开走的也是同一条路。
                             if root.music-section == 2
-                                && root.open-playlist-name == ""
-                                && root.search-tab == 2:
+                                && Library.open-playlist-name == ""
+                                && Library.search-tab == 2:
                             found-playlist-list := PlaylistList {
                                 vertical-stretch: 1;
-                                playlists: root.found-playlists;
+                                playlists: Library.found-playlists;
                                 open(id, source) => {
-                                    root.open-playlist(id, source);
+                                    Library.open-playlist(id, source);
                                 }
                             }
 
@@ -1008,11 +939,11 @@ export component MainWindow inherits Window {
                             // 一个真动作(拉一批推荐);设计稿里的「打开本地
                             // 文件夹」等入口等功能存在了再上(硬规则 8)。
                             if root.tracks.length == 0
-                                && (root.open-playlist-name != ""
+                                && (Library.open-playlist-name != ""
                                     || root.music-section == 0
                                     || root.music-section == 3
                                     || (root.music-section == 2
-                                        && root.search-tab == 0)):
+                                        && Library.search-tab == 0)):
                             empty-state := VerticalLayout {
                                 vertical-stretch: 1;
                                 alignment: center;
@@ -1085,7 +1016,7 @@ export component MainWindow inherits Window {
                             if root.wall-supported
                                 && root.current-tab == 1
                                 && root.music-section == 0
-                                && root.open-playlist-name == ""
+                                && Library.open-playlist-name == ""
                                 && root.tracks.length > 0:
                             HorizontalLayout {
                                 alignment: end;
@@ -1212,25 +1143,25 @@ export component MainWindow inherits Window {
 
                             // 它们都是「一批歌」。墙可见时列表让位 ——
                             // 同一批卡的两种摆法,不同时出现。
-                            if (root.open-playlist-name != ""
+                            if (Library.open-playlist-name != ""
                                 || root.music-section == 0
                                 || root.music-section == 3
                                 || (root.music-section == 2
-                                    && root.search-tab == 0))
+                                    && Library.search-tab == 0))
                                 && !root.wall-visible:
                             track-list := TrackList {
                                 vertical-stretch: 1;
                                 tracks: root.tracks;
                                 // 最近播放画成时间轴,别的分区还是平列表。
                                 timeline: root.music-section == 3
-                                    && root.open-playlist-name == "";
+                                    && Library.open-playlist-name == "";
                                 // 只有本地歌单的内容能移出去
-                                removable: root.open-playlist-local;
+                                removable: Library.open-playlist-local;
                                 play(id) => { root.play(id); }
                                 toggle-liked(id, liked) => {
-                                    root.toggle-liked(id, liked);
+                                    Library.toggle-liked(id, liked);
                                 }
-                                remove(id) => { root.remove-track(id); }
+                                remove(id) => { Library.remove-track(id); }
                                 needs-cover(url) => {
                                     root.needs-cover(url);
                                 }

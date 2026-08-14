@@ -1,6 +1,8 @@
 //! 歌单、分区与搜索结果的装配:哪一批歌进列表,以及列表怎么刷新。
 
 use super::*;
+use crate::Library;
+use slint::ComponentHandle as _;
 
 /// 把当前打开的那个歌单的曲目重取一遍。
 ///
@@ -35,11 +37,15 @@ pub(super) fn playlist_name(
         row.id == id && row.source == source
     };
 
-    ui.get_playlists()
+    ui.global::<Library>()
+        .get_playlists()
         .iter()
         .find(matches)
         .or_else(|| {
-            ui.get_found_playlists().iter().find(matches)
+            ui.global::<Library>()
+                .get_found_playlists()
+                .iter()
+                .find(matches)
         })
         .map_or_else(
             || slint::SharedString::from("歌单"),
@@ -112,7 +118,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             ui.set_music_section(section);
             // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
             // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
-            ui.set_open_playlist_name(
+            ui.global::<Library>().set_open_playlist_name(
                 slint::SharedString::new(),
             );
         }
@@ -122,57 +128,65 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     // 打开一个歌单:记下来源与 id,再按来源取它的曲目。
     let opened = deck.clone();
     let weak = ui.as_weak();
-    ui.on_open_playlist(move |id, source| {
-        let Some(ui) = weak.upgrade() else { return };
-        // 顺手把红心集合重拉一次:在手机官方 App 里改过的红心,这边只有
-        // 重启才跟得上 —— 那个集合原本整个进程只拉一次。接口很轻(一次
-        // 全量 id),而每次进歌单都要用它决定每行的心画哪一态。
-        ui.invoke_refresh_liked();
-        // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了。
-        // 两张列表都找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里。
-        let name = playlist_name(&ui, &id, source);
-        ui.set_open_playlist_name(name);
+    ui.global::<Library>().on_open_playlist(
+        move |id, source| {
+            let Some(ui) = weak.upgrade() else { return };
+            // 顺手把红心集合重拉一次:在手机官方 App 里改过的红心,这边只有
+            // 重启才跟得上 —— 那个集合原本整个进程只拉一次。接口很轻(一次
+            // 全量 id),而每次进歌单都要用它决定每行的心画哪一态。
+            ui.global::<Library>().invoke_refresh_liked();
+            // 标题从列表那一行取 —— 详情页要显示它,而 Rust 侧已经有这份数据了。
+            // 两张列表都找:搜到的歌单点开走的是同一条路,只是它不在「我的歌单」里。
+            let name = playlist_name(&ui, &id, source);
+            ui.global::<Library>()
+                .set_open_playlist_name(name);
 
-        let source =
-            crate::playlist::Source::from_index(source);
-        let id = id.to_string();
+            let source =
+                crate::playlist::Source::from_index(source);
+            let id = id.to_string();
 
-        // 存下**现在**列表里那一批 —— 下一行就要把它换成这个歌单自己的歌了,
-        // 而「把刚才那批加进来」要的正是它。
-        let previous = opened.tracks.borrow().clone();
-        let count = previous.len();
-        opened.editing.opened(source, &id, previous);
+            // 存下**现在**列表里那一批 —— 下一行就要把它换成这个歌单自己的歌了,
+            // 而「把刚才那批加进来」要的正是它。
+            let previous = opened.tracks.borrow().clone();
+            let count = previous.len();
+            opened.editing.opened(source, &id, previous);
 
-        let editable = crate::playlist::is_editable(source);
-        ui.set_open_playlist_local(editable);
-        // 详情页那张封面按标识索引 —— 名字会重复,两个歌单可以同名
-        ui.set_open_playlist_id(id.as_str().into());
-        ui.set_open_playlist_cover(
-            opened.artwork.get(&id).unwrap_or_default(),
-        );
-        ui.set_add_batch_text(
-            if editable {
-                crate::playlist::add_batch_text(count)
-            } else {
-                String::new()
-            }
-            .into(),
-        );
-        fetch_into(&weak, &opened, async move {
-            crate::playlist::tracks_of(source, &id).await
-        });
-    });
+            let editable =
+                crate::playlist::is_editable(source);
+            ui.global::<Library>()
+                .set_open_playlist_local(editable);
+            // 详情页那张封面按标识索引 —— 名字会重复,两个歌单可以同名
+            ui.global::<Library>()
+                .set_open_playlist_id(id.as_str().into());
+            ui.global::<Library>().set_open_playlist_cover(
+                opened.artwork.get(&id).unwrap_or_default(),
+            );
+            ui.global::<Library>().set_add_batch_text(
+                if editable {
+                    crate::playlist::add_batch_text(count)
+                } else {
+                    String::new()
+                }
+                .into(),
+            );
+            fetch_into(&weak, &opened, async move {
+                crate::playlist::tracks_of(source, &id)
+                    .await
+            });
+        },
+    );
 
     let closing = deck.clone();
     let weak = ui.as_weak();
-    ui.on_close_playlist(move || {
+    ui.global::<Library>().on_close_playlist(move || {
         if let Some(ui) = weak.upgrade() {
             closing.editing.closed();
-            ui.set_open_playlist_name(
+            ui.global::<Library>().set_open_playlist_name(
                 slint::SharedString::new(),
             );
-            ui.set_open_playlist_local(false);
-            ui.set_add_batch_text(
+            ui.global::<Library>()
+                .set_open_playlist_local(false);
+            ui.global::<Library>().set_add_batch_text(
                 slint::SharedString::new(),
             );
         }
@@ -182,15 +196,18 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     // 摊开之后两者都是「一批歌」,再造一套详情页只会让返回键有两种写法。
     let artist = deck.clone();
     let weak = ui.as_weak();
-    ui.on_open_artist(move |id, name| {
-        let Some(ui) = weak.upgrade() else { return };
-        ui.set_open_playlist_name(name);
+    ui.global::<Library>().on_open_artist(
+        move |id, name| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.global::<Library>()
+                .set_open_playlist_name(name);
 
-        let id = id.to_string();
-        fetch_into(&weak, &artist, async move {
-            api::artist_tracks(&id).await
-        });
-    });
+            let id = id.to_string();
+            fetch_into(&weak, &artist, async move {
+                api::artist_tracks(&id).await
+            });
+        },
+    );
 
     let shown = deck.clone();
     let weak = ui.as_weak();
@@ -323,7 +340,7 @@ pub(super) fn show(
     found: TracksDto,
 ) {
     // 平台给不出详情的那些没能进这一批。说一声,否则歌单静默变短
-    ui.set_unavailable_note(
+    ui.global::<Library>().set_unavailable_note(
         crate::playlist::unavailable_text(
             found.unavailable,
         )

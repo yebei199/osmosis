@@ -14,6 +14,7 @@ use std::rc::Rc;
 use app_core::ArtistDto;
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::{ArtistRow, MainWindow, PlaylistRow};
 
 /// 搜索结果的三类。数值即 `.slint` 里 `SearchTabs.items` 的下标 ——
@@ -94,22 +95,29 @@ pub fn bind(
     });
 
     let weak = ui.as_weak();
-    ui.on_select_search_tab(move |index| {
-        let Some(ui) = weak.upgrade() else { return };
-        ui.set_search_tab(index);
+    ui.global::<Library>().on_select_search_tab(
+        move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.global::<Library>().set_search_tab(index);
 
-        // 没搜过就只是换个空页签,不打一次空搜索
-        let keyword = last.borrow().clone();
-        if keyword.is_empty() {
-            return;
-        }
-        run(&ui, &keyword, Tab::from_index(index), &tracks);
-    });
+            // 没搜过就只是换个空页签,不打一次空搜索
+            let keyword = last.borrow().clone();
+            if keyword.is_empty() {
+                return;
+            }
+            run(
+                &ui,
+                &keyword,
+                Tab::from_index(index),
+                &tracks,
+            );
+        },
+    );
 }
 
 /// 界面当前停在哪个页签。
 fn current_tab(ui: &MainWindow) -> Tab {
-    Tab::from_index(ui.get_search_tab())
+    Tab::from_index(ui.global::<Library>().get_search_tab())
 }
 
 /// 按页签搜一次。
@@ -142,9 +150,11 @@ fn search_artists(ui: &MainWindow, keyword: &str) {
                     .iter()
                     .map(to_artist_row)
                     .collect();
-                ui.set_found_artists(slint::ModelRc::new(
-                    slint::VecModel::from(rows),
-                ));
+                ui.global::<Library>().set_found_artists(
+                    slint::ModelRc::new(
+                        slint::VecModel::from(rows),
+                    ),
+                );
             }
             Err(err) => report(&ui, &err, "搜歌手失败"),
         }
@@ -170,7 +180,7 @@ fn search_playlists(ui: &MainWindow, keyword: &str) {
                     .iter()
                     .map(crate::playlist::to_row)
                     .collect();
-                ui.set_found_playlists(
+                ui.global::<Library>().set_found_playlists(
                     slint::ModelRc::new(
                         slint::VecModel::from(rows),
                     ),

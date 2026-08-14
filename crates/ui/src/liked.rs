@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::MainWindow;
 
 /// 红心里的曲目标识。
@@ -102,7 +103,7 @@ pub fn remark(set: &LikedSet, ui: &MainWindow) {
 fn bump_liked_count(ui: &MainWindow, delta: i32) {
     use slint::Model;
 
-    let rows = ui.get_playlists();
+    let rows = ui.global::<Library>().get_playlists();
     let liked = crate::playlist::Source::Liked.to_index();
 
     for index in 0..rows.row_count() {
@@ -143,7 +144,7 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
     // 各喊一次这个回调,把集合补上(见 app.slint 的 refresh-liked)。
     let reloading = set.clone();
     let weak = ui.as_weak();
-    ui.on_refresh_liked(move || {
+    ui.global::<Library>().on_refresh_liked(move || {
         let Some(ui) = weak.upgrade() else { return };
         refresh(&reloading, &ui);
     });
@@ -151,51 +152,58 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
     let set = set.clone();
     let weak = ui.as_weak();
 
-    ui.on_toggle_liked(move |track_id, liked| {
-        let Some(ui) = weak.upgrade() else { return };
-
-        // 先改本地、先变色。等服务端答复再变的话,手指底下没有反馈,人会连点。
-        if !set_liked(&set, track_id.as_str(), liked) {
-            // 集合没变说明界面与集合已经不一致了,重标一遍把它拉回来
-            remark(&set, &ui);
-            return;
-        }
-        bump_liked_count(&ui, if liked { 1 } else { -1 });
-        remark(&set, &ui);
-
-        let set = set.clone();
-        let weak = weak.clone();
-        let track_id = track_id.to_string();
-
-        let _ = slint::spawn_local(async move {
-            let Err(err) =
-                api::set_liked(&track_id, liked).await
-            else {
-                return;
-            };
-
+    ui.global::<Library>().on_toggle_liked(
+        move |track_id, liked| {
             let Some(ui) = weak.upgrade() else { return };
 
-            // 失败要撤回:留着一个假的红心,下次进来就变回去了,
-            // 而用户以为自己点成功了。
-            set_liked(&set, &track_id, !liked);
+            // 先改本地、先变色。等服务端答复再变的话,手指底下没有反馈,人会连点。
+            if !set_liked(&set, track_id.as_str(), liked) {
+                // 集合没变说明界面与集合已经不一致了,重标一遍把它拉回来
+                remark(&set, &ui);
+                return;
+            }
             bump_liked_count(
                 &ui,
-                if liked { -1 } else { 1 },
+                if liked { 1 } else { -1 },
             );
             remark(&set, &ui);
 
-            // 会话失效已经把人送回登录页了,不必再在音乐页写一句
-            if !crate::account::handle_session_expiry(
-                &ui, &err,
-            ) {
-                crate::notice::show(
+            let set = set.clone();
+            let weak = weak.clone();
+            let track_id = track_id.to_string();
+
+            let _ = slint::spawn_local(async move {
+                let Err(err) =
+                    api::set_liked(&track_id, liked).await
+                else {
+                    return;
+                };
+
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+
+                // 失败要撤回:留着一个假的红心,下次进来就变回去了,
+                // 而用户以为自己点成功了。
+                set_liked(&set, &track_id, !liked);
+                bump_liked_count(
                     &ui,
-                    format!("红心没能保存: {err}"),
+                    if liked { -1 } else { 1 },
                 );
-            }
-        });
-    });
+                remark(&set, &ui);
+
+                // 会话失效已经把人送回登录页了,不必再在音乐页写一句
+                if !crate::account::handle_session_expiry(
+                    &ui, &err,
+                ) {
+                    crate::notice::show(
+                        &ui,
+                        format!("红心没能保存: {err}"),
+                    );
+                }
+            });
+        },
+    );
 }
 
 #[cfg(test)]
@@ -210,9 +218,9 @@ mod tests {
     fn window_with(rows: Vec<PlaylistRow>) -> MainWindow {
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
-        ui.set_playlists(ModelRc::new(VecModel::from(
-            rows,
-        )));
+        ui.global::<Library>().set_playlists(ModelRc::new(
+            VecModel::from(rows),
+        ));
         ui
     }
 
@@ -235,7 +243,8 @@ mod tests {
         ui: &MainWindow,
         index: usize,
     ) -> String {
-        ui.get_playlists()
+        ui.global::<Library>()
+            .get_playlists()
             .row_data(index)
             .expect("这一行该在")
             .subtitle

@@ -6,6 +6,7 @@
 
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::MainWindow;
 use crate::Session;
 
@@ -138,7 +139,7 @@ where
 /// 恢复出来的会话不走这里:那条路上的请求本来就带得上 token。
 fn on_login_succeeded(ui: &MainWindow) {
     ui.global::<Session>().set_logged_in(true);
-    ui.invoke_refresh_liked();
+    ui.global::<Library>().invoke_refresh_liked();
 }
 
 /// 这次失败是不是「登录态没了」。
@@ -327,9 +328,11 @@ mod tests {
 
         let count = Rc::new(Cell::new(0));
         let seen = count.clone();
-        ui.on_refresh_liked(move || {
-            seen.set(seen.get() + 1);
-        });
+        ui.global::<Library>().on_refresh_liked(
+            move || {
+                seen.set(seen.get() + 1);
+            },
+        );
 
         (ui, count)
     }

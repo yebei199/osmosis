@@ -13,6 +13,7 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::MainWindow;
 
 /// 进程内的封面表:歌单标识 → 已解码的图。
@@ -149,9 +150,10 @@ pub fn ensure(
 pub fn apply(ui: &MainWindow, art: &Artwork) {
     use slint::Model as _;
 
-    for rows in
-        [ui.get_playlists(), ui.get_found_playlists()]
-    {
+    for rows in [
+        ui.global::<Library>().get_playlists(),
+        ui.global::<Library>().get_found_playlists(),
+    ] {
         for i in 0..rows.row_count() {
             let Some(mut row) = rows.row_data(i) else {
                 continue;
@@ -168,10 +170,13 @@ pub fn apply(ui: &MainWindow, art: &Artwork) {
     }
 
     // 详情页那张大的:当前打开的歌单如果有图,一并推上去
-    if let Some(image) =
-        art.get(ui.get_open_playlist_id().as_str())
-    {
-        ui.set_open_playlist_cover(image);
+    if let Some(image) = art.get(
+        ui.global::<Library>()
+            .get_open_playlist_id()
+            .as_str(),
+    ) {
+        ui.global::<Library>()
+            .set_open_playlist_cover(image);
     }
 }
 

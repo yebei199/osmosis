@@ -5,6 +5,7 @@
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
+use ui::Library;
 use ui::MainWindow;
 use ui::Session;
 
@@ -29,7 +30,11 @@ fn search_page() -> MainWindow {
 fn search_opens_on_the_tracks_tab() {
     let ui = search_page();
 
-    assert_eq!(ui.get_search_tab(), 0, "默认该是歌曲");
+    assert_eq!(
+        ui.global::<Library>().get_search_tab(),
+        0,
+        "默认该是歌曲"
+    );
     assert!(present(&ui, "MainWindow::track-list"));
     assert!(!present(&ui, "MainWindow::artist-list"));
 }
@@ -57,7 +62,7 @@ fn the_tabs_appear_only_in_the_search_section() {
 #[test]
 fn the_artists_tab_shows_the_artist_list() {
     let ui = search_page();
-    ui.set_search_tab(1);
+    ui.global::<Library>().set_search_tab(1);
 
     assert!(present(&ui, "MainWindow::artist-list"));
     assert!(
@@ -70,7 +75,7 @@ fn the_artists_tab_shows_the_artist_list() {
 #[test]
 fn the_playlists_tab_shows_the_playlist_list() {
     let ui = search_page();
-    ui.set_search_tab(2);
+    ui.global::<Library>().set_search_tab(2);
 
     assert!(present(
         &ui,
@@ -88,12 +93,16 @@ fn the_playlists_tab_shows_the_playlist_list() {
 #[test]
 fn searching_again_stays_on_the_current_tab() {
     let ui = search_page();
-    ui.set_search_tab(1);
+    ui.global::<Library>().set_search_tab(1);
 
     // 搜索本身要网络,这里只发回调:它不该顺手把页签拨回去
     ui.invoke_search("本兮".into());
 
-    assert_eq!(ui.get_search_tab(), 1, "重搜不该换页签");
+    assert_eq!(
+        ui.global::<Library>().get_search_tab(),
+        1,
+        "重搜不该换页签"
+    );
     assert!(present(&ui, "MainWindow::artist-list"));
 }
 
@@ -103,8 +112,9 @@ fn searching_again_stays_on_the_current_tab() {
 #[test]
 fn opening_an_artist_replaces_the_search_layer() {
     let ui = search_page();
-    ui.set_search_tab(1);
-    ui.set_open_playlist_name("本兮".into());
+    ui.global::<Library>().set_search_tab(1);
+    ui.global::<Library>()
+        .set_open_playlist_name("本兮".into());
 
     assert!(present(&ui, "MainWindow::playlist-header"));
     assert!(present(&ui, "MainWindow::track-list"));

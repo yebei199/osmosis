@@ -12,6 +12,7 @@ use app_core::{
 };
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::{MainWindow, PlaylistRow};
 
 /// 歌单的来源。数值即 `PlaylistSource` 的顺序,也是 `.slint` 里
@@ -264,30 +265,37 @@ fn bind_create(
     let art = art.clone();
     let weak = ui.as_weak();
 
-    ui.on_create_playlist(move |name| {
-        let name = name.trim().to_owned();
-        let Some(ui) = weak.upgrade() else { return };
-        // 空名字服务端也会拒,但那要等一趟往返才说 ——
-        // 而「没打字就按了新建」这件事这边就看得见。
-        if name.is_empty() {
-            crate::notice::show(
-                &ui,
-                "歌单要有名字".to_owned(),
-            );
-            return;
-        }
-
-        let art = art.clone();
-        let weak = ui.as_weak();
-        let _ = slint::spawn_local(async move {
-            let done = api::create_playlist(&name).await;
+    ui.global::<Library>().on_create_playlist(
+        move |name| {
+            let name = name.trim().to_owned();
             let Some(ui) = weak.upgrade() else { return };
-            match done {
-                Ok(_) => refresh(&ui, &art),
-                Err(err) => report(&ui, &err, "建歌单失败"),
+            // 空名字服务端也会拒,但那要等一趟往返才说 ——
+            // 而「没打字就按了新建」这件事这边就看得见。
+            if name.is_empty() {
+                crate::notice::show(
+                    &ui,
+                    "歌单要有名字".to_owned(),
+                );
+                return;
             }
-        });
-    });
+
+            let art = art.clone();
+            let weak = ui.as_weak();
+            let _ = slint::spawn_local(async move {
+                let done =
+                    api::create_playlist(&name).await;
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match done {
+                    Ok(_) => refresh(&ui, &art),
+                    Err(err) => {
+                        report(&ui, &err, "建歌单失败")
+                    }
+                }
+            });
+        },
+    );
 }
 
 /// 改名。
@@ -300,38 +308,45 @@ fn bind_rename(
     let editing = editing.clone();
     let weak = ui.as_weak();
 
-    ui.on_rename_playlist(move |name| {
-        let name = name.trim().to_owned();
-        let Some(ui) = weak.upgrade() else { return };
-        let Some(id) = editing.current_local() else {
-            return;
-        };
-        if name.is_empty() {
-            crate::notice::show(
-                &ui,
-                "歌单要有名字".to_owned(),
-            );
-            return;
-        }
-
-        let art = art.clone();
-        let weak = ui.as_weak();
-        let _ = slint::spawn_local(async move {
-            let done =
-                api::rename_playlist(&id, &name).await;
+    ui.global::<Library>().on_rename_playlist(
+        move |name| {
+            let name = name.trim().to_owned();
             let Some(ui) = weak.upgrade() else { return };
-            match done {
-                Ok(()) => {
-                    // 标题就地改掉,不等列表刷新 —— 详情页正显示着它
-                    ui.set_open_playlist_name(
-                        name.as_str().into(),
-                    );
-                    refresh(&ui, &art);
-                }
-                Err(err) => report(&ui, &err, "改名失败"),
+            let Some(id) = editing.current_local() else {
+                return;
+            };
+            if name.is_empty() {
+                crate::notice::show(
+                    &ui,
+                    "歌单要有名字".to_owned(),
+                );
+                return;
             }
-        });
-    });
+
+            let art = art.clone();
+            let weak = ui.as_weak();
+            let _ = slint::spawn_local(async move {
+                let done =
+                    api::rename_playlist(&id, &name).await;
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match done {
+                    Ok(()) => {
+                        // 标题就地改掉,不等列表刷新 —— 详情页正显示着它
+                        ui.global::<Library>()
+                            .set_open_playlist_name(
+                                name.as_str().into(),
+                            );
+                        refresh(&ui, &art);
+                    }
+                    Err(err) => {
+                        report(&ui, &err, "改名失败")
+                    }
+                }
+            });
+        },
+    );
 }
 
 /// 删除。二次确认由界面那一层管(见 app.slint),到这里已经是确定要删了。
@@ -344,7 +359,7 @@ fn bind_delete(
     let editing = editing.clone();
     let weak = ui.as_weak();
 
-    ui.on_delete_playlist(move || {
+    ui.global::<Library>().on_delete_playlist(move || {
         let Some(id) = editing.current_local() else {
             return;
         };
@@ -359,13 +374,16 @@ fn bind_delete(
                 Ok(()) => {
                     // 删掉的歌单不能再停在它的详情里
                     editing.closed();
-                    ui.set_open_playlist_name(
-                        slint::SharedString::new(),
-                    );
-                    ui.set_open_playlist_local(false);
-                    ui.set_add_batch_text(
-                        slint::SharedString::new(),
-                    );
+                    ui.global::<Library>()
+                        .set_open_playlist_name(
+                            slint::SharedString::new(),
+                        );
+                    ui.global::<Library>()
+                        .set_open_playlist_local(false);
+                    ui.global::<Library>()
+                        .set_add_batch_text(
+                            slint::SharedString::new(),
+                        );
                     refresh(&ui, &art);
                 }
                 Err(err) => report(&ui, &err, "删歌单失败"),
@@ -385,7 +403,7 @@ fn bind_add_batch<R>(
     let editing = editing.clone();
     let weak = ui.as_weak();
 
-    ui.on_add_batch(move || {
+    ui.global::<Library>().on_add_batch(move || {
         let Some(id) = editing.current_local() else {
             return;
         };
@@ -407,9 +425,10 @@ fn bind_add_batch<R>(
                     // 留着的话再点一次是把同一批又加一遍(服务端幂等,
                     // 但界面上看着像什么都没发生)。
                     editing.clear_stash();
-                    ui.set_add_batch_text(
-                        slint::SharedString::new(),
-                    );
+                    ui.global::<Library>()
+                        .set_add_batch_text(
+                            slint::SharedString::new(),
+                        );
                     reload(&ui);
                 }
                 Err(err) => report(&ui, &err, "加歌失败"),
@@ -429,28 +448,34 @@ fn bind_remove<R>(
     let editing = editing.clone();
     let weak = ui.as_weak();
 
-    ui.on_remove_track(move |track_id| {
-        let Some(id) = editing.current_local() else {
-            return;
-        };
-        let refs = vec![(
-            ONLY_PLATFORM.to_owned(),
-            track_id.to_string(),
-        )];
+    ui.global::<Library>().on_remove_track(
+        move |track_id| {
+            let Some(id) = editing.current_local() else {
+                return;
+            };
+            let refs = vec![(
+                ONLY_PLATFORM.to_owned(),
+                track_id.to_string(),
+            )];
 
-        let weak = weak.clone();
-        let reload = reload.clone();
-        let _ = slint::spawn_local(async move {
-            let done =
-                api::remove_playlist_tracks(&id, &refs)
-                    .await;
-            let Some(ui) = weak.upgrade() else { return };
-            match done {
-                Ok(()) => reload(&ui),
-                Err(err) => report(&ui, &err, "移出失败"),
-            }
-        });
-    });
+            let weak = weak.clone();
+            let reload = reload.clone();
+            let _ = slint::spawn_local(async move {
+                let done =
+                    api::remove_playlist_tracks(&id, &refs)
+                        .await;
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match done {
+                    Ok(()) => reload(&ui),
+                    Err(err) => {
+                        report(&ui, &err, "移出失败")
+                    }
+                }
+            });
+        },
+    );
 }
 
 /// 拉一次歌单列表,填进界面。
@@ -469,7 +494,7 @@ pub fn refresh(
             Ok(dto) => {
                 let rows: Vec<PlaylistRow> =
                     dto.playlists.iter().map(to_row).collect();
-                ui.set_playlists(
+                ui.global::<Library>().set_playlists(
                     slint::ModelRc::new(
                         slint::VecModel::from(rows),
                     ),

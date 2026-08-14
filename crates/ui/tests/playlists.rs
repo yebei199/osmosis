@@ -6,6 +6,7 @@
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
+use ui::Library;
 use ui::MainWindow;
 use ui::Session;
 
@@ -36,7 +37,8 @@ fn the_list_and_the_detail_are_never_both_shown() {
     assert!(present(&ui, "MainWindow::playlist-list"));
     assert!(!present(&ui, "MainWindow::playlist-header"));
 
-    ui.set_open_playlist_name("睡前".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
     assert!(present(&ui, "MainWindow::playlist-header"));
     assert!(
         !present(&ui, "MainWindow::playlist-list"),
@@ -48,9 +50,13 @@ fn the_list_and_the_detail_are_never_both_shown() {
 #[test]
 fn opening_a_playlist_shows_its_name() {
     let ui = playlists_section();
-    ui.set_open_playlist_name("华语经典".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("华语经典".into());
 
-    assert_eq!(ui.get_open_playlist_name(), "华语经典");
+    assert_eq!(
+        ui.global::<Library>().get_open_playlist_name(),
+        "华语经典"
+    );
     assert!(present(&ui, "MainWindow::playlist-header"));
     // 详情里摆的是曲目,与别的分区同一个列表组件
     assert!(present(&ui, "MainWindow::track-list"));
@@ -60,9 +66,11 @@ fn opening_a_playlist_shows_its_name() {
 #[test]
 fn going_back_returns_to_the_list() {
     let ui = playlists_section();
-    ui.set_open_playlist_name("睡前".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
 
-    ui.set_open_playlist_name("".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("".into());
 
     assert_eq!(
         ui.get_music_section(),
