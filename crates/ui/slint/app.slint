@@ -1762,7 +1762,9 @@ export component MainWindow inherits Window {
         // 时间读数跟着滑条走(滑条自己也把它报给读屏),控制簇里那一份删了 ——
         // 两处各显示一份就是两处要对齐的状态。读数与条同属一个空壳,
         // 好让它挂得上条的几何:`if` 里的具名元素在外面引用不到。
-        if root.has-track: Rectangle {
+        // 歌词页打开时整组让位:滑条占着右边那条道,而歌词行铺到 width - 24px,
+        // 叠在一起就是绿条压着字(小米13 真机实拍)。进度那会儿由控制簇的环报着。
+        if root.has-track && !root.lyrics-page-open: Rectangle {
             x: root.width - self.width - 8px
                 - root.safe-area-insets.right;
             y: root.height * 0.28;

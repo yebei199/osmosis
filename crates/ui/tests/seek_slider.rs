@@ -266,3 +266,22 @@ fn the_time_readout_stays_inside_the_window() {
         "读数右边探出屏幕:窗口宽 {width},读数右缘 {right}"
     );
 }
+
+/// 歌词页打开时滑条与读数一并让位。
+///
+/// 滑条占着右边那条 44px 的道,而歌词行铺到 `width - 24px`,两者叠在一起
+/// 就是绿条压着字(小米13 真机实拍)。进度仍由控制簇里的环报着。
+#[test]
+fn the_slider_steps_aside_for_the_lyrics_page() {
+    let ui = play_window();
+    assert!(slider(&ui).is_some(), "播放页该有滑条");
+
+    ui.set_lyrics_page_open(true);
+
+    assert!(slider(&ui).is_none(), "歌词页打开后滑条该让位");
+    assert!(
+        element(&ui, "MainWindow::play-time-readout")
+            .is_none(),
+        "读数跟着滑条走"
+    );
+}
