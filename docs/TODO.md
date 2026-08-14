@@ -9,11 +9,6 @@
 那四项定为**不做**,理由记在
 [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts。
 
-## 在做
-
-- [ ] 超长文件拆同名 mod #78,方案在
-      [plans/long-file-split.md](plans/long-file-split.md)
-
 ## 载体路线(未开工,一行代码都没有)
 
 - [ ] AI agent:应用内助手,把应用已有能力当工具调
