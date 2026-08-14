@@ -220,7 +220,8 @@ impl NavGlassPass {
         // 半尺寸先扣掉这一圈,画出来才是这里写的这个框。不扣的话球会胀出格外:
         // 侧栏里表现为胶囊顶满栏宽,底栏里表现为贴着屏幕边。
         let grow = smooth_k * 0.25;
-        let box_half = |v: f32| (v * 0.42 * s - grow).max(1.0);
+        let box_half =
+            |v: f32| (v * 0.42 * s - grow).max(1.0);
         let half = if p.horizontal {
             [box_half(p.slot), box_half(thick)]
         } else {

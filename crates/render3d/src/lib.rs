@@ -413,7 +413,8 @@ impl Scene {
     pub fn render_viz_frame(
         &mut self,
         frame: &VizFrame<'_>,
-    ) -> (slint::Image, slint::Image, Option<(f32, f32)>) {
+    ) -> (slint::Image, slint::Image, Option<(f32, f32)>)
+    {
         let VizFrame {
             time,
             audio,
@@ -495,8 +496,12 @@ impl Scene {
         // 拖动转的是点云自己,不是相机 —— 相机一动遮挡层那台就得跟着动,
         // 两层还要逐像素对齐(见 cloud::Spin)。
         let (pitch, yaw) = self.spin.angles();
-        let rotation =
-            Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+        let rotation = Quat::from_euler(
+            EulerRot::YXZ,
+            yaw,
+            pitch,
+            0.0,
+        );
         if let Some(mut transform) =
             self.app
                 .world_mut()
@@ -518,10 +523,10 @@ impl Scene {
         // 标记体沿轨道走这一帧。用播放页时钟而不是墙钟:门关着时钟不走,
         // 方块跟着定格,重开门从原处继续 —— 与换歌过渡同一套时基。
         let marker_pose = marker::pose(time);
-        if let Some(mut transform) = self
-            .app
-            .world_mut()
-            .get_mut::<Transform>(self.marker)
+        if let Some(mut transform) =
+            self.app
+                .world_mut()
+                .get_mut::<Transform>(self.marker)
         {
             *transform = marker_pose;
         }
@@ -552,10 +557,8 @@ impl Scene {
     ) -> slint::Image {
         self.wall.set_active(&mut self.app, true);
         for cam in [self.camera, self.occluder_camera] {
-            if let Some(mut c) = self
-                .app
-                .world_mut()
-                .get_mut::<Camera>(cam)
+            if let Some(mut c) =
+                self.app.world_mut().get_mut::<Camera>(cam)
             {
                 c.is_active = false;
             }
@@ -939,10 +942,10 @@ fn extract_texture(
     app: &App,
     handle: &Handle<Image>,
 ) -> Option<SharedTexture> {
-    let gpu_images = app
-        .get_sub_app(RenderApp)?
-        .world()
-        .get_resource::<RenderAssets<GpuImage>>()?;
+    let gpu_images =
+        app.get_sub_app(RenderApp)?
+            .world()
+            .get_resource::<RenderAssets<GpuImage>>()?;
     let gpu_image = gpu_images.get(handle)?;
     // GpuImage.texture: render_resource::Texture, Deref 到 wgpu::Texture。
     Some((*gpu_image.texture).clone())
@@ -1128,7 +1131,8 @@ mod tests {
     /// 锚点在视锥内:除了深度,还要给出卡片挂在视口哪一点。
     /// 归一到 0..1,**y 轴翻转** —— NDC 的 y 向上,UI 的 y 向下,不翻卡片就上下颠倒。
     #[test]
-    fn an_anchor_in_front_of_the_camera_projects_to_a_viewport_point() {
+    fn an_anchor_in_front_of_the_camera_projects_to_a_viewport_point()
+     {
         assert_eq!(
             anchor_viewport(Some(Vec3::new(0.0, 0.0, 0.5))),
             Some((0.5, 0.5)),
@@ -1136,12 +1140,16 @@ mod tests {
         );
         // NDC 左上角 (-1, 1) 对应视口 (0, 0):y 翻过来了。
         assert_eq!(
-            anchor_viewport(Some(Vec3::new(-1.0, 1.0, 0.0))),
+            anchor_viewport(Some(Vec3::new(
+                -1.0, 1.0, 0.0
+            ))),
             Some((0.0, 0.0))
         );
         // NDC 右下角 (1, -1) 对应视口 (1, 1)。
         assert_eq!(
-            anchor_viewport(Some(Vec3::new(1.0, -1.0, 1.0))),
+            anchor_viewport(Some(Vec3::new(
+                1.0, -1.0, 1.0
+            ))),
             Some((1.0, 1.0))
         );
     }
@@ -1153,7 +1161,9 @@ mod tests {
         assert_eq!(anchor_viewport(None), None);
         for z in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
             assert_eq!(
-                anchor_viewport(Some(Vec3::new(0.0, 0.0, z))),
+                anchor_viewport(Some(Vec3::new(
+                    0.0, 0.0, z
+                ))),
                 None,
                 "NDC z = {z} 的锚点不该挂出卡片"
             );
@@ -1164,10 +1174,14 @@ mod tests {
     /// 竖屏视口只看得到封面平面中间一条,锚点转出画面是常态,不是异常;
     /// 画到界外会糊在播放页别的控件上。
     #[test]
-    fn an_anchor_off_the_side_of_the_screen_has_no_viewport_point() {
-        for (x, y) in
-            [(-1.2, 0.0), (1.5, 0.0), (0.0, -2.0), (0.0, 1.01)]
-        {
+    fn an_anchor_off_the_side_of_the_screen_has_no_viewport_point()
+     {
+        for (x, y) in [
+            (-1.2, 0.0),
+            (1.5, 0.0),
+            (0.0, -2.0),
+            (0.0, 1.01),
+        ] {
             assert_eq!(
                 anchor_viewport(Some(Vec3::new(x, y, 0.5))),
                 None,
@@ -1181,15 +1195,19 @@ mod tests {
 
     /// 轨道上第 `step` 个采样点对应的播放页时钟。
     fn orbit_time(step: u32) -> f32 {
-        marker::ORBIT_PERIOD * f32::from(
-            u16::try_from(step).expect("采样点数远小于 u16 上限"),
-        ) / ORBIT_STEPS as f32
+        marker::ORBIT_PERIOD
+            * f32::from(
+                u16::try_from(step)
+                    .expect("采样点数远小于 u16 上限"),
+            )
+            / ORBIT_STEPS as f32
     }
 
     /// 标记体绕的那条轨道,近端离开封面平面、远端贴回去,且始终在相机这一侧。
     /// 远端贴平面才有粒子成片从它前面过(遮挡演得出来),近端离开平面卡片才读得成。
     #[test]
-    fn the_marker_orbits_between_the_cover_plane_and_the_camera() {
+    fn the_marker_orbits_between_the_cover_plane_and_the_camera()
+     {
         let (mut nearest, mut farthest) =
             (f32::MIN, f32::MAX);
         for step in 0..ORBIT_STEPS {
@@ -1290,7 +1308,8 @@ mod tests {
             let anchor = marker::front_face(&pose);
             let offset = anchor - pose.translation;
             assert!(
-                offset.x.abs() < 1e-5 && offset.y.abs() < 1e-5,
+                offset.x.abs() < 1e-5
+                    && offset.y.abs() < 1e-5,
                 "锚点该正对前表面中心,实际横向偏了 {offset}"
             );
             // 判据是「清出一段间隙」而不是「大于」。裸的 `>` 逮不住把锚点放回
@@ -1312,7 +1331,8 @@ mod tests {
     /// `Camera::world_to_ndc` 的算法(裁剪矩阵 × 相机逆变换,再做透视除),
     /// 不需要 GPU 也不需要 `App`,量的是真几何。
     #[test]
-    fn the_card_anchor_stays_on_screen_through_a_full_orbit() {
+    fn the_card_anchor_stays_on_screen_through_a_full_orbit()
+     {
         // 小米13 竖屏,三端里最窄的那个视口 —— 横向可视范围最小,最容易把锚点甩出去。
         const PORTRAIT_ASPECT: f32 = 1080.0 / 2400.0;
 
@@ -1323,7 +1343,8 @@ mod tests {
         let camera =
             Transform::from_translation(BASE_CAMERA_POS)
                 .looking_at(Vec3::ZERO, Vec3::Y);
-        let clip_from_world = projection.get_clip_from_view()
+        let clip_from_world = projection
+            .get_clip_from_view()
             * camera.to_matrix().inverse();
 
         for step in 0..ORBIT_STEPS {

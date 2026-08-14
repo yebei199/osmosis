@@ -68,7 +68,8 @@ const FRONT_MARGIN: f32 = 0.02;
 /// 自己的标签。相机在 +z 一侧(见 `BASE_CAMERA_POS`),所以前表面是 `+z` 那面。
 /// 也不取前表面本身,理由见 [`FRONT_MARGIN`]。
 pub(crate) fn front_face(pose: &Transform) -> Vec3 {
-    pose.translation + Vec3::Z * (MARKER_HALF + FRONT_MARGIN)
+    pose.translation
+        + Vec3::Z * (MARKER_HALF + FRONT_MARGIN)
 }
 
 /// 方块的网格与材质。
