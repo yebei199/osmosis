@@ -88,7 +88,10 @@ export component LyricsPage inherits Rectangle {
                 // 长句溢出自己的框、压到邻居身上(小米13 真机实拍),而手机宽度上
                 // 一句日文歌词经常就是两行。
                 height: row.offset == 0
-                    ? root.focus-size * 2 + 14px
+                    // 两行 26px 的字要约 70px:给 66px 的话第二行会被 elide 掉,
+                    // 看起来就像折行没生效(小米13 真机实拍,日文没有空格,
+                    // 折行只能发生在词内部)。
+                    ? root.focus-size * 3
                     : root.focus-size + 10px
                         - Math.abs(row.offset) * root.size-step;
                 text: row.text;
