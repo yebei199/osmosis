@@ -30,14 +30,14 @@ pub(super) fn apply_seek<S: Source>(
         // 摊开整条因果链:最外面那句往往是「解码器报错了」,等于没说
         log::warn!(
             "跳转到 {to:?} 失败: {}",
-            crate::full_cause(err)
+            crate::error::full_cause(err)
         );
     }
 
     let why = outcome
         .as_ref()
         .err()
-        .map(|err| crate::full_cause(err));
+        .map(|err| crate::error::full_cause(err));
 
     // 先落状态,再把裁决交出去。反过来的话,调用方一拿到答复就会去问
     // `is_seeking`,而那时这条线程还没走到下面 —— 谁先跑到纯看调度,
@@ -81,7 +81,7 @@ pub(super) fn seek_with_retry<S: Source>(
 
     log::warn!(
         "跳转到 {to:?} 落点解不开({}),回退到 {earlier:?} 重试",
-        crate::full_cause(&stuck)
+        crate::error::full_cause(&stuck)
     );
     source.try_seek(earlier)?;
     discard(source, to - earlier);
