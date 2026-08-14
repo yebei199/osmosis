@@ -78,10 +78,10 @@ fn the_progress_bar_appears_only_with_a_track() {
     let ui = wide_page();
 
     ui.global::<Player>().set_has_track(false);
-    assert!(!present(&ui, "MainWindow::wide-progress"));
+    assert!(!present(&ui, "MusicPage::wide-progress"));
 
     ui.global::<Player>().set_has_track(true);
-    assert!(present(&ui, "MainWindow::wide-progress"));
+    assert!(present(&ui, "MusicPage::wide-progress"));
 }
 
 /// **随机播放有自己的键了。**
@@ -291,10 +291,10 @@ fn the_bar_shows_the_current_track_only_when_there_is_one()
     let ui = wide_page();
 
     ui.global::<Player>().set_has_track(false);
-    assert!(!present(&ui, "MainWindow::bar-now"));
+    assert!(!present(&ui, "MusicPage::bar-now"));
 
     ui.global::<Player>().set_has_track(true);
-    assert!(present(&ui, "MainWindow::bar-now"));
+    assert!(present(&ui, "MusicPage::bar-now"));
 }
 
 /// 播放键换成环形进度键后,对外仍是那颗「播放/暂停」按钮:

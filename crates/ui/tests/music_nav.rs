@@ -36,25 +36,25 @@ fn only_the_selected_section_is_in_the_tree() {
 
     // 0 = 每日推荐:摆曲目列表,没有搜索框
     ui.global::<Shell>().set_music_section(0);
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::keyword"));
-    assert!(!present(&ui, "MainWindow::playlist-list"));
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::keyword"));
+    assert!(!present(&ui, "MusicPage::playlist-list"));
 
     // 1 = 我的歌单:摆歌单列表,不摆曲目列表。
     //
     // 这里曾经断言的是一个占位文本 —— 歌单列表做出来之后,这一节摆的东西换了,
     // 但「摆自己的东西、不摆一批歌」这条没变。
     ui.global::<Shell>().set_music_section(1);
-    assert!(present(&ui, "MainWindow::playlist-list"));
+    assert!(present(&ui, "MusicPage::playlist-list"));
     assert!(
-        !present(&ui, "MainWindow::track-list"),
+        !present(&ui, "MusicPage::track-list"),
         "歌单分区不该摆曲目列表 —— 那是别的分区的一批歌"
     );
 
     // 2 = 搜索:搜索框出现
     ui.global::<Shell>().set_music_section(2);
-    assert!(present(&ui, "MainWindow::keyword"));
-    assert!(present(&ui, "MainWindow::track-list"));
+    assert!(present(&ui, "MusicPage::keyword"));
+    assert!(present(&ui, "MusicPage::track-list"));
 }
 
 /// 竖栏只在宽版式、分段条只在紧凑版式。
@@ -69,13 +69,13 @@ fn the_rail_is_wide_only_and_the_bar_is_compact_only() {
     let ui = music_page();
 
     ui.global::<Shell>().set_compact(false);
-    assert!(present(&ui, "MainWindow::music-rail"));
-    assert!(!present(&ui, "MainWindow::music-bar"));
+    assert!(present(&ui, "MusicPage::music-rail"));
+    assert!(!present(&ui, "MusicPage::music-bar"));
 
     ui.global::<Shell>().set_compact(true);
-    assert!(present(&ui, "MainWindow::music-bar"));
+    assert!(present(&ui, "MusicPage::music-bar"));
     assert!(
-        !present(&ui, "MainWindow::music-rail"),
+        !present(&ui, "MusicPage::music-rail"),
         "紧凑版式下竖栏会把内容挤没"
     );
 }
@@ -89,7 +89,7 @@ fn collapsing_the_rail_keeps_the_selection() {
     ui.global::<Shell>().set_rail_collapsed(true);
 
     assert_eq!(ui.global::<Shell>().get_music_section(), 3);
-    assert!(present(&ui, "MainWindow::track-list"));
+    assert!(present(&ui, "MusicPage::track-list"));
 }
 
 /// 切换分区不动正在播的那首。

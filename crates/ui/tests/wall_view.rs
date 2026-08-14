@@ -57,14 +57,14 @@ fn the_view_toggle_asks_without_flipping() {
         seen.set(i32::from(to_wall));
     });
 
-    invoke(&ui, "MainWindow::view-list-btn");
+    invoke(&ui, "WallView::view-list-btn");
     assert_eq!(asked.get(), 0, "列表键该报 false");
     assert!(
         ui.global::<Shell>().get_view_wall(),
         "意图值该由 Rust 写,控件不自己置位"
     );
 
-    invoke(&ui, "MainWindow::view-wall-btn");
+    invoke(&ui, "WallView::view-wall-btn");
     assert_eq!(asked.get(), 1, "卡墙键该报 true");
 }
 
@@ -77,7 +77,7 @@ fn unsupported_builds_fall_back_to_the_list() {
     assert_eq!(
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::view-wall-btn",
+            "WallView::view-wall-btn",
         )
         .count(),
         0,
@@ -86,7 +86,7 @@ fn unsupported_builds_fall_back_to_the_list() {
     assert_eq!(
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::wall-area",
+            "WallView::wall-area",
         )
         .count(),
         0,
@@ -112,7 +112,7 @@ fn the_wall_is_the_default_view_when_supported() {
     assert_eq!(
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::wall-area",
+            "WallView::wall-area",
         )
         .count(),
         1,

@@ -37,8 +37,8 @@ fn search_opens_on_the_tracks_tab() {
         0,
         "默认该是歌曲"
     );
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::artist-list"));
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::artist-list"));
 }
 
 /// 三个页签只在搜索分区里出现。
@@ -47,12 +47,12 @@ fn search_opens_on_the_tracks_tab() {
 #[test]
 fn the_tabs_appear_only_in_the_search_section() {
     let ui = search_page();
-    assert!(present(&ui, "MainWindow::search-tabs"));
+    assert!(present(&ui, "MusicPage::search-tabs"));
 
     for section in [0, 1, 3] {
         ui.global::<Shell>().set_music_section(section);
         assert!(
-            !present(&ui, "MainWindow::search-tabs"),
+            !present(&ui, "MusicPage::search-tabs"),
             "分区 {section} 不该有搜索页签"
         );
     }
@@ -66,9 +66,9 @@ fn the_artists_tab_shows_the_artist_list() {
     let ui = search_page();
     ui.global::<Library>().set_search_tab(1);
 
-    assert!(present(&ui, "MainWindow::artist-list"));
+    assert!(present(&ui, "MusicPage::artist-list"));
     assert!(
-        !present(&ui, "MainWindow::track-list"),
+        !present(&ui, "MusicPage::track-list"),
         "歌手页签不该同时摆着一批歌"
     );
 }
@@ -81,12 +81,12 @@ fn the_playlists_tab_shows_the_playlist_list() {
 
     assert!(present(
         &ui,
-        "MainWindow::found-playlist-list"
+        "MusicPage::found-playlist-list"
     ));
-    assert!(!present(&ui, "MainWindow::track-list"));
+    assert!(!present(&ui, "MusicPage::track-list"));
     // 「我的歌单」那张列表不在:两者各摆各的,共用一份数据的话,
     // 切回我的歌单会看见上一次的搜索结果
-    assert!(!present(&ui, "MainWindow::playlist-list"));
+    assert!(!present(&ui, "MusicPage::playlist-list"));
 }
 
 /// 换关键词重搜,停在当前页签,不跳回歌曲。
@@ -105,7 +105,7 @@ fn searching_again_stays_on_the_current_tab() {
         1,
         "重搜不该换页签"
     );
-    assert!(present(&ui, "MainWindow::artist-list"));
+    assert!(present(&ui, "MusicPage::artist-list"));
 }
 
 /// 点开一位歌手之后,搜索框与页签让位给详情那一层。
@@ -118,9 +118,9 @@ fn opening_an_artist_replaces_the_search_layer() {
     ui.global::<Library>()
         .set_open_playlist_name("本兮".into());
 
-    assert!(present(&ui, "MainWindow::playlist-header"));
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::artist-list"));
-    assert!(!present(&ui, "MainWindow::search-tabs"));
-    assert!(!present(&ui, "MainWindow::keyword"));
+    assert!(present(&ui, "MusicPage::playlist-header"));
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::artist-list"));
+    assert!(!present(&ui, "MusicPage::search-tabs"));
+    assert!(!present(&ui, "MusicPage::keyword"));
 }

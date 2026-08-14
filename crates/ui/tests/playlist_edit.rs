@@ -59,12 +59,12 @@ fn one_track(ui: &MainWindow) {
 #[test]
 fn the_new_playlist_row_lives_on_the_playlist_list() {
     let ui = playlist_page();
-    assert!(present(&ui, "MainWindow::new-playlist-row"));
+    assert!(present(&ui, "MusicPage::new-playlist-row"));
 
     for section in [0, 2, 3] {
         ui.global::<Shell>().set_music_section(section);
         assert!(
-            !present(&ui, "MainWindow::new-playlist-row"),
+            !present(&ui, "MusicPage::new-playlist-row"),
             "分区 {section} 不该有新建歌单"
         );
     }
@@ -72,7 +72,7 @@ fn the_new_playlist_row_lives_on_the_playlist_list() {
     // 进了详情也不该有:那一层要建的不是歌单
     ui.global::<Shell>().set_music_section(1);
     opened_local(&ui);
-    assert!(!present(&ui, "MainWindow::new-playlist-row"));
+    assert!(!present(&ui, "MusicPage::new-playlist-row"));
 }
 
 /// 只有本地歌单的详情有改名与删除。
@@ -83,11 +83,11 @@ fn the_new_playlist_row_lives_on_the_playlist_list() {
 fn only_a_local_playlist_can_be_renamed_or_deleted() {
     let ui = playlist_page();
     opened_local(&ui);
-    assert!(present(&ui, "MainWindow::delete-button"));
+    assert!(present(&ui, "MusicPage::delete-button"));
 
     // 平台歌单 / 我喜欢的:同一层详情,但没有那两个键
     ui.global::<Library>().set_open_playlist_local(false);
-    assert!(!present(&ui, "MainWindow::delete-button"));
+    assert!(!present(&ui, "MusicPage::delete-button"));
     // 曲目行上的「−」也一起消失:那也是一次写
     assert!(
         !ui.global::<Library>().get_open_playlist_local()
@@ -112,7 +112,7 @@ fn deleting_asks_once_before_it_happens() {
     let button =
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::delete-button",
+            "MusicPage::delete-button",
         )
         .next()
         .expect("找不到删除键");
@@ -143,7 +143,7 @@ fn a_half_finished_delete_does_not_follow_to_the_next() {
     let find = || {
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::delete-button",
+            "MusicPage::delete-button",
         )
         .next()
         .expect("找不到删除键")
@@ -171,16 +171,16 @@ fn the_add_batch_row_needs_both_a_local_playlist_and_a_batch()
 
     // 没有刚才那一批:整行不出现
     ui.global::<Library>().set_add_batch_text("".into());
-    assert!(!present(&ui, "MainWindow::add-batch-row"));
+    assert!(!present(&ui, "MusicPage::add-batch-row"));
 
     ui.global::<Library>().set_add_batch_text(
         "+ 把刚才那 30 首加进来".into(),
     );
-    assert!(present(&ui, "MainWindow::add-batch-row"));
+    assert!(present(&ui, "MusicPage::add-batch-row"));
 
     // 平台歌单收不了东西
     ui.global::<Library>().set_open_playlist_local(false);
-    assert!(!present(&ui, "MainWindow::add-batch-row"));
+    assert!(!present(&ui, "MusicPage::add-batch-row"));
 }
 
 /// 本地歌单详情里每行多一个「−」,别处没有。
