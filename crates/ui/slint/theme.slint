@@ -18,24 +18,42 @@
 // 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
 // 决定的三个亮度,分开写迟早会有一个忘了改。
 
+// 字体族名收在这里,页面上只写 Type.xxx,不写字面族名。
+// 四个角色的分工与「中文标题为什么不是 Caprasimo」见 docs/design.md「字体」。
+export global Type {
+    // 中文大标题:思源宋体 Heavy 子集(Google 发行名 Noto Serif CJK SC)。
+    // 子集只含硬编码标题字,动态中文(歌名、歌手名)不要用它。
+    out property <string> display-cjk: "Noto Serif CJK SC";
+    // 拉丁与数字的大标题。没有中文字形,中文场景一律走 display-cjk。
+    out property <string> display-latin: "Caprasimo";
+    // 正文与界面。中文回落到系统字体(wasm 上回落 cjk-subset)。
+    out property <string> body: "Figtree";
+    // 时长、进度、版本号、标签:一切等宽读数。
+    out property <string> mono: "DM Mono";
+}
+
 export global Theme {
     // 深色还是浅色。**只有 Rust 写它**(见 crates/ui/src/theme.rs),
     // 日月开关拨一下只喊一声。
     in-out property <bool> dark: true;
 
+    // 三档选择的投影:0 深、1 浅、2 跟随系统。同样**只有 Rust 写它**,
+    // 设置页读它画选中态;dark 是它解出来的结论,两个别在 UI 里私改。
+    in-out property <int> mode: 0;
+
     // —— 常驻界面的表面,由深到浅 ——
 
     // 窗口底。音乐页会用 base 盖住它,播放页会用 immersive 盖住它,
     // 露出来的只有边角。
-    out property <color> window: root.dark ? #0f1117 : #ece7e0;
+    out property <color> window: root.dark ? #0b100c : #e9ece6;
     // 音乐页的底。
-    out property <color> base: root.dark ? #140f0b : #f5efe6;
+    out property <color> base: root.dark ? #0e130f : #f2f5ee;
     // 卡片、面板、控制条。
-    out property <color> surface: root.dark ? #17110d : #ffffff;
+    out property <color> surface: root.dark ? #131a14 : #ffffff;
     // 选中的那一项。
-    out property <color> raised: root.dark ? #2a1e14 : #e6dccd;
+    out property <color> raised: root.dark ? #1e2b1f : #dde7d6;
     // 悬停。
-    out property <color> hover: root.dark ? #1d150f : #f0e8dc;
+    out property <color> hover: root.dark ? #18211a : #eaf0e5;
 
     // —— 沉浸层:播放页那块压在封面与点云上的底 ——
 
@@ -43,33 +61,35 @@ export global Theme {
     // 点云:点云的颜色逐颗取自封面,亮底会把它冲掉。既然底钉死,压在它上面的
     // 字也必须钉死 —— 用会翻的 token 的话,浅色主题下就是深字压深底
     // (歌名曾经是 1.23:1)。`crates/ui/tests/theme.rs` 把这条钉住了。
-    out property <color> immersive: #0b0d13;
+    out property <color> immersive: #0a1210;
     // 浮在沉浸层上的小面板(可视化预设那个)。
-    out property <color> immersive-panel: #12141cee;
-    out property <color> immersive-text: #e6e8ef;
+    out property <color> immersive-panel: #101a15ee;
+    out property <color> immersive-text: #eaf3e2;
     out property <color> immersive-text-dim: #9aa0b4;
-    out property <color> immersive-accent: #d9a86c;
+    out property <color> immersive-accent: #8fc46a;
     // 沉浸层上的边线。往上叠白 —— 底永远是深的,不存在"反过来"的情况。
     out property <color> immersive-line: #ffffff1f;
 
     // —— 字,由强到弱 ——
 
-    out property <color> text: root.dark ? #e6e8ef : #2a2119;
-    out property <color> text-dim: root.dark ? #9aa0b4 : #6b6157;
+    out property <color> text: root.dark ? #e6e8ef : #1c2419;
+    out property <color> text-dim: root.dark ? #9aa0b4 : #5a6356;
     // 最弱的一档:没点亮的红心、时长这类"在那儿但别看我"的字。
-    out property <color> text-faint: root.dark ? #6f7688 : #9a9188;
+    out property <color> text-faint: root.dark ? #6f7688 : #8d968a;
 
     // —— 强调 ——
 
-    // 琥珀色是这个 app 的身份色。浅色下要压深一档,不然在纸白底上糊掉。
-    out property <color> accent: root.dark ? #d9a86c : #a9713c;
+    // 绿是这个 app 的身份色,也是**唯一的强调色**(docs/adr/0023):按钮、
+    // 选中态、链接只用它,副色板不承担语义。浅色下要压深一档,不然在纸白底上糊掉。
+    out property <color> accent: root.dark ? #8fc46a : #4f7a3f;
     // 压在**强调色实底**上的字(HoverButton 的标签、沉浸层上那个预设面板)。
-    // 两套都是近白:底本身够深,不必跟着主题翻。
-    out property <color> accent-text: root.dark ? #f0e6d8 : #fdf6ec;
+    // 绿的明度高,这里是深墨而不是近白 —— 琥珀年代的近白压绿底只有 1.9:1
+    // (docs/adr/0023),tests/theme.rs 里有守卫。
+    out property <color> accent-text: root.dark ? #0f2410 : #f2f7ec;
     // **中性底上**表示"选中/强调"的字与图标:控制条那几颗键、栏目的当前项、
     // 加载中那一行。与上面那个分开是因为它压的底会跟着主题翻 ——
-    // 合成一个的话,浅色下近白的图标会压在浅底上,整排控制键凭空消失。
-    out property <color> accent-ink: root.dark ? #f0e6d8 : #7a4f22;
+    // 合成一个的话,浅色下的浅字会压在浅底上,整排控制键凭空消失。
+    out property <color> accent-ink: root.dark ? #8fc46a : #35521f;
 
     // —— 叠加与线 ——
     //
@@ -84,14 +104,14 @@ export global Theme {
     // —— 极光与玻璃(`glass.slint`)——
     //
     // 玻璃是半透明的,**背后没东西就等于没有玻璃**;极光就是专门用来被透过的
-    // 那层内容。深色下它是暗底叠暖光斑,浅色下反过来:亮底叠更浅的暖光斑 ——
+    // 那层内容。深色下它是暗底叠绿光斑,浅色下反过来:亮底叠更浅的绿光斑 ——
     // 光斑的色相两套一样,变的是明度与浓度,不然换个主题连身份都变了。
 
-    out property <color> aurora-base: root.dark ? #17110d : #f3ece1;
-    // 焦糖、深咖、奶咖三团。alpha 带在颜色里,渐变的外圈用 `with-alpha(0)` 取同色透明端。
-    out property <color> aurora-warm: root.dark ? #8a5a2b9c : #e0b98cb0;
-    out property <color> aurora-deep: root.dark ? #5c3a1e95 : #d3a97fa0;
-    out property <color> aurora-soft: root.dark ? #b9885c66 : #fff2de99;
+    out property <color> aurora-base: root.dark ? #131a14 : #eef2e8;
+    // 苔绿、深林、浅葱三团。alpha 带在颜色里,渐变的外圈用 `with-alpha(0)` 取同色透明端。
+    out property <color> aurora-warm: root.dark ? #3f7a4a9c : #bcd6a4b0;
+    out property <color> aurora-deep: root.dark ? #2b5c3f95 : #a3c9ada0;
+    out property <color> aurora-soft: root.dark ? #86b98c66 : #d8ead0aa;
 
     // 玻璃本身。深色下往上叠白,浅色下叠得更白**而不是**叠黑:玻璃的观感来自
     // "比背后更亮的一层薄雾",叠黑会读成一块脏玻璃。
@@ -101,6 +121,20 @@ export global Theme {
     out property <color> glass-sheen: root.dark ? #ffffff2b : #ffffff73;
     // 悬浮阴影。浅色下要淡得多 —— 同样的黑在亮底上重得多。
     out property <color> glass-shadow: root.dark ? #00000073 : #0000001f;
+
+    // —— 副色板:12 对渐变端点,只做封面占位、卡墙卡片、波形条、统计数字 ——
+    //
+    // **不承担任何界面语义**(docs/design.md 硬规则 6):按钮、选中态、链接、
+    // 状态色永远只用 accent。取用规则 `hues-bright[i % 12]` 配 `hues-deep[i % 12]`,
+    // 渐变从亮端到深端。真实封面到位后,这些只是加载前的占位与失败兜底。
+    out property <[color]> hues-deep: [
+        #2f6b47, #1f5c5a, #3d6b2f, #5a4a86, #7a4a52, #2f5c86,
+        #6b5a2f, #2a6b62, #4a3d6b, #6b3d3d, #3d6b5a, #5c6b2f,
+    ];
+    out property <[color]> hues-bright: [
+        #8fc46a, #6fc2a8, #c3d96a, #a08fd9, #d98fa0, #6fa8d9,
+        #d9c46a, #8fd9c4, #8f9fd9, #d9958f, #8fd9b4, #bdd98f,
+    ];
 
     // —— 语义色 ——
 

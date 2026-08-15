@@ -10,10 +10,15 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 - `slint/app.slint`:整个界面的声明。两个 tab(卡片主页、音乐页)、宽/紧凑
   两种版式(由宽度决定,`docs/adr/0007`)、常驻于音乐页的控制条,以及从控制条展开的
   播放页覆层(CONTEXT.md「播放页」),覆层分层合成:warp 背景 → 粒子场景 →
-  歌名与歌词 → 复用 ControlCluster 的功能层(`docs/adr/0010`)。**深度卡片
-  目前一张也没有**:歌词曾经是一张,后来改成与歌名同层画在粒子之上,遮挡层
-  因此不再逐帧渲染(`VizControls::needs_occluder` 为假时相机整个关掉),
-  能力留着等下一张。无 GPU 端粒子为空图,自动退回 warp 形态。
+  标注卡 → 遮挡层(裁到标注卡)→ 歌名与歌词 → 复用 ControlCluster 的功能层
+  (`docs/adr/0010`)。功能层那条控制条的底与两颗次要圆钮(视觉预设、收起)由
+  aurora 管线渲图贴回来(#69,底走 fluid、圆钮走 glass),尺寸由 `.slint` 回写。
+  播放页唯一的**深度卡片**是那块世界空间标注卡:它标的是场景里一枚绕轨道慢转的
+  方块,锚点由 render3d 每帧投回视口(`viz-anchor-x/y/visible`),方块转到远端时
+  粒子成片从卡片前面过。卡片位置另有一道 `clamp` —— 锚点在画面里不等于卡片在画面里,
+  锚点是卡片中心,贴边时卡片已经探出半个身位(真机实拍切掉过右边约 20%)。
+  歌词不算,它画在粒子之上(`docs/adr/0010` 的「歌词是例外」)。
+  无 GPU 端粒子为空图、锚点恒无,自动退回 warp 形态。
 - `slint/theme.slint`:色板。**界面上每一个颜色都从 `Theme` 取,不在别处写死** ——
   在此之前它们散在 9 个文件里,133 处、67 种,其中 48 种只出现一次。20 个语义 token,
   深浅两列(`Theme.dark` 切换);强调色的三种状态由 `accent` 派生,不各给一个名字。
@@ -25,9 +30,14 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   `ListView`(而非 `Flickable` + `for`)—— 歌单详情能到近千行,全量实例化配上每行
   一张封面就是 GB 级内存。代价是 ListView 没有 `spacing`,行间那 4px 由卡片上下
   各让 2px 让出来。
+- `slint/lyrics.slint`:歌词页。整窗行由 Rust 按 `app_core::lyric::window` 选好推来,
+  这里只按 `offset` 画衰减 —— 透明度与字号随行距递减,充当景深。Slint 没有高斯模糊,
+  文字要真模糊得进 3D 走一套字形管线,与卡墙里砍掉内嵌文字是同一笔账。
+  拖动只改浏览偏移,不碰播放进度;松手三秒回到跟随。
 - `src/lib.rs`:crate 门面与帧驱动。`build_ui` 完成绑定;`run_with_renderers` 把渲染
-  通知回调当帧泵,依次驱动导航选中器(转场门)、播放页 warp(展开∧播放∧可见门)
-  与 3D 场景(`render-active` 门),三道省电门相互独立。
+  通知回调当帧泵,依次驱动导航选中器、光带按钮、卡墙与播放页 warp,末尾每帧
+  `request_redraw`,前台恒满帧、后台由平台停发重绘而自然暂停
+  (change_log 2026-08-11 always-on-rendering)。
 - `src/music.rs`:音乐页绑定。搜索/每日/红心、队列点播、控制条、自动续播、
   下一首的预取(判据 `should_prefetch`,认领判据 `take_prefetched`)、
   开机自检,以及播放页元数据(歌名/歌手/封面/歌词)的推送。显示格式化都在这层做。
@@ -35,10 +45,11 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   而**跳转是异步的** —— `bind_seek` 只把请求送到解码线程并立刻挂上「缓冲中」,
   落地与失败由每秒那趟轮询从 `audio::SeekState` 上取(`push_seek_state`)。
   `LyricFeed` 是歌词的取用口:行表随换歌整批替换并递增代际,播放页每帧问它
-  当前行,靠 (代际, 行号) 判断该不该推新值 —— 每帧无脑推会标脏、破坏省电门。
+  当前行,靠 (代际, 行号) 判断该不该推新值 —— 每帧无脑推是纯浪费的标脏。
 - `src/theme.rs`:明暗主题那一位布尔值住在哪。颜色本身全在 `slint/theme.slint`,
   这里只负责开局从 `api::settings` 恢复、拨一下写回去 —— 跟着设备走,不跟着账号
-  (与音量同一条理由)。日月开关自己不置位,`Theme.dark` 的唯一写入方是这儿。
+  (与音量同一条理由)。唯一入口是设置页(日月开关当主视觉 + 跟随系统单列,
+  #68 起控制簇不再有主题键),控件自己不置位,`Theme.dark` 的唯一写入方是这儿。
 - `src/media.rs`:系统媒体控件的接缝(CONTEXT.md「系统媒体控件」)。定义
   `NowPlaying` / `MediaCommand` / `MediaHooks` / `MediaControls`,后端由平台入口注入
   (`docs/adr/0020`)—— zbus 那份在 apps/desktop,JNI 那份在 apps/android。换算全在
@@ -77,10 +88,30 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 - `src/search.rs`:搜索的三个页签(单曲/歌手/歌单)。关键词记在 Rust 侧,
   因为输入框长在一个 `if` 里,Rust 引用不到它。
 - `src/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
-- `src/nav_glass.rs`:导航选中器的 seam 数据与转场省电门判定。
+- `src/nav_glass.rs`:导航水滴选中器的 seam 数据与转场判定(静止时不重算纹理的
+  工作量缓存,不是会冻住动画的门)。宽版式侧栏与紧凑版式底栏共用一套:三球位置
+  只带移动轴坐标,`horizontal` 说明那是 x 还是 y(#70),几何真相在 `app.slint`。
+  `ball` 是三球的整体缩放:侧栏底部两颗自 #71 起是 glass 圆钮、不在轨道上,
+  选中它们时水滴化掉,免得上面还亮着一格而人在别的页。
+- `src/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
+  hover 振幅收敛数学。按钮每帧重渲,没有冻结态。五个变体编号在这里有名字
+  (ribbon / nebula / fluid / glass / progress,数学见 handoff-shaders.md §10);
+  `fluid_or_progress` 定播放页主控条底这一帧走哪个:平时 fluid,缓冲时换
+  progress 并把播放比例喂进去 —— 播放页的进度是那个环,条上没有细线可挂。
+- `src/wall.rs`:卡墙的几何真相(adr/0025)—— 布局按容器尺寸推导、逐卡
+  确定性散布、拖动惯性与格点吸附、塌回插值、投影与命中测试。纯数学,
+  无 GPU 可测;render3d 只摆这里算出的世界位姿,点击与画面不会各说各话。
+- `src/wall_drive.rs`:卡墙的每帧驱动与 slint 绑定。指针/滚轮/双击变成
+  相机与动画状态,封面缩略图取出像素、烘圆角后经 seam 上传。动画收敛只是插值
+  到位,不再衍生冻结门 —— 前台恒满帧,墙每帧照渲(change_log 2026-08-11
+  always-on-rendering)。
 - `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
-- `fonts/`:中文子集字体。硬编码中文必须落在子集里,`cargo test -p ui` 的
-  glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
+- `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
+  `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件
+  (Caprasimo / Figtree / DM Mono),族名统一从 `theme.slint` 的 `Type`
+  全局取,重生成走 `just font-subset` 与 `just font-title-subset`
+  (`fonts/regen.py`)。硬编码中文必须落在对应子集里,`cargo test -p ui`
+  的 glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
 - `tests/banner.rs`:断流横幅的界面行为,无头跑(`i-slint-backend-testing`
   的软件后端 + 模拟时钟,不要窗口也不要显卡)。补的是纯函数够不着的那一半 ——
   文案对不对是 `describe_stream_loss` 的事,看不看得见是 `.slint` 里那句
@@ -90,4 +121,7 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   只会让内存悄悄涨上去。
 - `build.rs`:slint-build 编译 `.slint`。debug 档一律带元素调试信息 ——
   `ElementHandle` 与 Slint MCP 的元素树都以它为前提,而少了它两者不报错、
-  只是查不到任何元素。release 不带。
+  只是查不到任何元素。release 不带。**安卓装机同理**:APK 的 native 库默认
+  走 release,所以开发装机要用 `just mcp-android`(它把 `PROFILE=debug` 传给
+  xtask),否则手机上 MCP 只截得到图、查不到元素,驱动界面只能量坐标。
+  发布件走 `just android-build`。

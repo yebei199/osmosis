@@ -14,10 +14,13 @@ android {
         versionName "0.1.0"
 
         // ABIs are controlled by which jniLibs cargo-ndk produced; this
-        // filter just guards against stray folders.
+        // filter just guards against stray folders. `cargo xtask android`
+        // always passes -PstudyAbis, so the fallback only applies to a bare
+        // gradle invocation. armeabi-v7a is deliberately absent from both
+        // (issue #47): skia-bindings ships no armv7 prebuilt.
         ndk {
             //noinspection ChromeOsAbiSupport
-            abiFilters = (project.findProperty('studyAbis') ?: 'arm64-v8a,armeabi-v7a,x86_64').split(',')
+            abiFilters = (project.findProperty('studyAbis') ?: 'arm64-v8a,x86_64').split(',')
         }
     }
 

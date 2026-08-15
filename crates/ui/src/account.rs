@@ -6,7 +6,9 @@
 
 use slint::ComponentHandle;
 
+use crate::Library;
 use crate::MainWindow;
+use crate::Session;
 
 /// 登录失败时给用户看的话。
 ///
@@ -47,35 +49,51 @@ pub fn login_failure_text(err: &api::ApiError) -> String {
 pub fn bind(ui: &MainWindow) {
     // 启动时若已有落盘的会话,直接进主界面。它可能已被吊销 —— 那要等第一次
     // 请求失败才知道,届时由 `handle_session_expiry` 把人送回登录页。
-    ui.set_logged_in(api::session::token().is_some());
+    ui.global::<Session>()
+        .set_logged_in(api::session::token().is_some());
 
     let weak = ui.as_weak();
-    ui.on_login(move |username, password| {
-        let weak = weak.clone();
-        let (username, password) =
-            (username.to_string(), password.to_string());
+    ui.global::<Session>().on_login(
+        move |username, password| {
+            let weak = weak.clone();
+            let (username, password) = (
+                username.to_string(),
+                password.to_string(),
+            );
 
-        spawn(weak, async move {
-            api::login(&username, &password)
-                .await
-                .map(|_| ())
-        });
-    });
+            spawn(weak, async move {
+                api::login(&username, &password)
+                    .await
+                    .map(|_| ())
+            });
+        },
+    );
 
     let weak = ui.as_weak();
-    ui.on_register(move |username, password, invite| {
-        let weak = weak.clone();
-        let (username, password, invite) = (
-            username.to_string(),
-            password.to_string(),
-            invite.to_string(),
-        );
+    ui.global::<Session>().on_register(
+        move |username, password, invite| {
+            let weak = weak.clone();
+            let (username, password, invite) = (
+                username.to_string(),
+                password.to_string(),
+                invite.to_string(),
+            );
 
-        spawn(weak, async move {
-            api::register(&username, &password, &invite)
-                .await
-                .map(|_| ())
-        });
+            spawn(weak, async move {
+                api::register(&username, &password, &invite)
+                    .await
+                    .map(|_| ())
+            });
+        },
+    );
+
+    // 设置页的退出登录:清掉落盘会话,回登录页。与 `handle_session_expiry`
+    // 的收尾同一件事,只是这次是用户自己要走的。
+    let weak = ui.as_weak();
+    ui.global::<Session>().on_logout(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        api::session::clear();
+        ui.global::<Session>().set_logged_in(false);
     });
 }
 
@@ -88,20 +106,23 @@ where
     F: Future<Output = Result<(), api::ApiError>> + 'static,
 {
     if let Some(ui) = weak.upgrade() {
-        ui.set_login_busy(true);
-        ui.set_login_error(slint::SharedString::new());
+        ui.global::<Session>().set_busy(true);
+        ui.global::<Session>()
+            .set_error(slint::SharedString::new());
     }
 
     let _ = slint::spawn_local(async move {
         let result = request.await;
 
         if let Some(ui) = weak.upgrade() {
-            ui.set_login_busy(false);
+            ui.global::<Session>().set_busy(false);
             match result {
                 Ok(()) => on_login_succeeded(&ui),
-                Err(err) => ui.set_login_error(
-                    login_failure_text(&err).into(),
-                ),
+                Err(err) => {
+                    ui.global::<Session>().set_error(
+                        login_failure_text(&err).into(),
+                    )
+                }
             }
         }
     });
@@ -117,8 +138,8 @@ where
 ///
 /// 恢复出来的会话不走这里:那条路上的请求本来就带得上 token。
 fn on_login_succeeded(ui: &MainWindow) {
-    ui.set_logged_in(true);
-    ui.invoke_refresh_liked();
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Library>().invoke_refresh_liked();
 }
 
 /// 这次失败是不是「登录态没了」。
@@ -153,8 +174,9 @@ pub fn handle_session_expiry(
         );
 
         api::session::clear();
-        ui.set_logged_in(false);
-        ui.set_login_error("登录已失效,请重新登录".into());
+        ui.global::<Session>().set_logged_in(false);
+        ui.global::<Session>()
+            .set_error("登录已失效,请重新登录".into());
     }
 
     expired
@@ -259,7 +281,7 @@ mod tests {
         redirect_session_to_a_temp_file();
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
-        ui.set_logged_in(true);
+        ui.global::<Session>().set_logged_in(true);
 
         let handled = handle_session_expiry(
             &ui,
@@ -267,9 +289,12 @@ mod tests {
         );
 
         assert!(handled, "这就是会话失效,该被认出来");
-        assert!(!ui.get_logged_in(), "该回到登录页");
         assert!(
-            !ui.get_login_error().is_empty(),
+            !ui.global::<Session>().get_logged_in(),
+            "该回到登录页"
+        );
+        assert!(
+            !ui.global::<Session>().get_error().is_empty(),
             "得说一句为什么被登出了,否则人只看到界面莫名跳回去"
         );
     }
@@ -279,7 +304,7 @@ mod tests {
     fn other_failures_do_not_log_the_user_out() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
-        ui.set_logged_in(true);
+        ui.global::<Session>().set_logged_in(true);
 
         let handled = handle_session_expiry(
             &ui,
@@ -290,7 +315,7 @@ mod tests {
 
         assert!(!handled);
         assert!(
-            ui.get_logged_in(),
+            ui.global::<Session>().get_logged_in(),
             "网络抖动不该把人踢下线"
         );
     }
@@ -303,9 +328,11 @@ mod tests {
 
         let count = Rc::new(Cell::new(0));
         let seen = count.clone();
-        ui.on_refresh_liked(move || {
-            seen.set(seen.get() + 1);
-        });
+        ui.global::<Library>().on_refresh_liked(
+            move || {
+                seen.set(seen.get() + 1);
+            },
+        );
 
         (ui, count)
     }
@@ -337,11 +364,17 @@ mod tests {
     #[test]
     fn logging_in_still_marks_the_session_as_logged_in() {
         let (ui, _refreshes) = window_counting_refreshes();
-        assert!(!ui.get_logged_in(), "开局该是没登录");
+        assert!(
+            !ui.global::<Session>().get_logged_in(),
+            "开局该是没登录"
+        );
 
         on_login_succeeded(&ui);
 
-        assert!(ui.get_logged_in(), "登录态该置上");
+        assert!(
+            ui.global::<Session>().get_logged_in(),
+            "登录态该置上"
+        );
     }
 
     /// 边界:恢复出来的会话不走登录收尾,因此不该触发补拉。
@@ -354,7 +387,7 @@ mod tests {
         let (ui, refreshes) = window_counting_refreshes();
 
         // 恢复会话走的是 bind 里那句 set_logged_in,不经过登录收尾
-        ui.set_logged_in(true);
+        ui.global::<Session>().set_logged_in(true);
 
         assert_eq!(
             refreshes.get(),

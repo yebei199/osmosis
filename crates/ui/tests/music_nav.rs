@@ -5,7 +5,12 @@
 //! 摆的是另一个分区。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Player;
+use ui::Session;
+use ui::Shell;
+use ui::Viz;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -17,8 +22,8 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn music_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
     ui
 }
 
@@ -30,26 +35,26 @@ fn only_the_selected_section_is_in_the_tree() {
     let ui = music_page();
 
     // 0 = 每日推荐:摆曲目列表,没有搜索框
-    ui.set_music_section(0);
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::keyword"));
-    assert!(!present(&ui, "MainWindow::playlist-list"));
+    ui.global::<Shell>().set_music_section(0);
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::keyword"));
+    assert!(!present(&ui, "MusicPage::playlist-list"));
 
     // 1 = 我的歌单:摆歌单列表,不摆曲目列表。
     //
     // 这里曾经断言的是一个占位文本 —— 歌单列表做出来之后,这一节摆的东西换了,
     // 但「摆自己的东西、不摆一批歌」这条没变。
-    ui.set_music_section(1);
-    assert!(present(&ui, "MainWindow::playlist-list"));
+    ui.global::<Shell>().set_music_section(1);
+    assert!(present(&ui, "MusicPage::playlist-list"));
     assert!(
-        !present(&ui, "MainWindow::track-list"),
+        !present(&ui, "MusicPage::track-list"),
         "歌单分区不该摆曲目列表 —— 那是别的分区的一批歌"
     );
 
     // 2 = 搜索:搜索框出现
-    ui.set_music_section(2);
-    assert!(present(&ui, "MainWindow::keyword"));
-    assert!(present(&ui, "MainWindow::track-list"));
+    ui.global::<Shell>().set_music_section(2);
+    assert!(present(&ui, "MusicPage::keyword"));
+    assert!(present(&ui, "MusicPage::track-list"));
 }
 
 /// 竖栏只在宽版式、分段条只在紧凑版式。
@@ -63,14 +68,14 @@ fn only_the_selected_section_is_in_the_tree() {
 fn the_rail_is_wide_only_and_the_bar_is_compact_only() {
     let ui = music_page();
 
-    ui.set_compact(false);
-    assert!(present(&ui, "MainWindow::music-rail"));
-    assert!(!present(&ui, "MainWindow::music-bar"));
+    ui.global::<Shell>().set_compact(false);
+    assert!(present(&ui, "MusicPage::music-rail"));
+    assert!(!present(&ui, "MusicPage::music-bar"));
 
-    ui.set_compact(true);
-    assert!(present(&ui, "MainWindow::music-bar"));
+    ui.global::<Shell>().set_compact(true);
+    assert!(present(&ui, "MusicPage::music-bar"));
     assert!(
-        !present(&ui, "MainWindow::music-rail"),
+        !present(&ui, "MusicPage::music-rail"),
         "紧凑版式下竖栏会把内容挤没"
     );
 }
@@ -79,12 +84,12 @@ fn the_rail_is_wide_only_and_the_bar_is_compact_only() {
 #[test]
 fn collapsing_the_rail_keeps_the_selection() {
     let ui = music_page();
-    ui.set_music_section(3);
+    ui.global::<Shell>().set_music_section(3);
 
-    ui.set_rail_collapsed(true);
+    ui.global::<Shell>().set_rail_collapsed(true);
 
-    assert_eq!(ui.get_music_section(), 3);
-    assert!(present(&ui, "MainWindow::track-list"));
+    assert_eq!(ui.global::<Shell>().get_music_section(), 3);
+    assert!(present(&ui, "MusicPage::track-list"));
 }
 
 /// 切换分区不动正在播的那首。
@@ -93,12 +98,18 @@ fn collapsing_the_rail_keeps_the_selection() {
 #[test]
 fn switching_sections_does_not_disturb_playback() {
     let ui = music_page();
-    ui.set_now_title("紅蓮華".into());
-    ui.set_is_playing(true);
+    ui.global::<Viz>().set_now_title("紅蓮華".into());
+    ui.global::<Player>().set_is_playing(true);
 
-    ui.set_music_section(1);
-    ui.set_music_section(3);
+    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_music_section(3);
 
-    assert_eq!(ui.get_now_title(), "紅蓮華");
-    assert!(ui.get_is_playing(), "换个列表看不该把歌停掉");
+    assert_eq!(
+        ui.global::<Viz>().get_now_title(),
+        "紅蓮華"
+    );
+    assert!(
+        ui.global::<Player>().get_is_playing(),
+        "换个列表看不该把歌停掉"
+    );
 }

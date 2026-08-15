@@ -2,6 +2,10 @@
   "mcpServers": {
     "slint-app": {
       "type": "http",
+      "url": "http://127.0.0.1:8091/mcp"
+    },
+    "slint-android": {
+      "type": "http",
       "url": "http://127.0.0.1:8090/mcp"
     }
   }

@@ -4,7 +4,12 @@
 //! 后者写错的话,请求一路正确而屏幕上摆的是另一类结果。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
+use ui::Library;
 use ui::MainWindow;
+use ui::Player;
+use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -16,9 +21,9 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn search_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_music_section(2);
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_music_section(2);
     ui
 }
 
@@ -27,9 +32,13 @@ fn search_page() -> MainWindow {
 fn search_opens_on_the_tracks_tab() {
     let ui = search_page();
 
-    assert_eq!(ui.get_search_tab(), 0, "默认该是歌曲");
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::artist-list"));
+    assert_eq!(
+        ui.global::<Library>().get_search_tab(),
+        0,
+        "默认该是歌曲"
+    );
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::artist-list"));
 }
 
 /// 三个页签只在搜索分区里出现。
@@ -38,12 +47,12 @@ fn search_opens_on_the_tracks_tab() {
 #[test]
 fn the_tabs_appear_only_in_the_search_section() {
     let ui = search_page();
-    assert!(present(&ui, "MainWindow::search-tabs"));
+    assert!(present(&ui, "MusicPage::search-tabs"));
 
     for section in [0, 1, 3] {
-        ui.set_music_section(section);
+        ui.global::<Shell>().set_music_section(section);
         assert!(
-            !present(&ui, "MainWindow::search-tabs"),
+            !present(&ui, "MusicPage::search-tabs"),
             "分区 {section} 不该有搜索页签"
         );
     }
@@ -55,11 +64,11 @@ fn the_tabs_appear_only_in_the_search_section() {
 #[test]
 fn the_artists_tab_shows_the_artist_list() {
     let ui = search_page();
-    ui.set_search_tab(1);
+    ui.global::<Library>().set_search_tab(1);
 
-    assert!(present(&ui, "MainWindow::artist-list"));
+    assert!(present(&ui, "MusicPage::artist-list"));
     assert!(
-        !present(&ui, "MainWindow::track-list"),
+        !present(&ui, "MusicPage::track-list"),
         "歌手页签不该同时摆着一批歌"
     );
 }
@@ -68,16 +77,16 @@ fn the_artists_tab_shows_the_artist_list() {
 #[test]
 fn the_playlists_tab_shows_the_playlist_list() {
     let ui = search_page();
-    ui.set_search_tab(2);
+    ui.global::<Library>().set_search_tab(2);
 
     assert!(present(
         &ui,
-        "MainWindow::found-playlist-list"
+        "MusicPage::found-playlist-list"
     ));
-    assert!(!present(&ui, "MainWindow::track-list"));
+    assert!(!present(&ui, "MusicPage::track-list"));
     // 「我的歌单」那张列表不在:两者各摆各的,共用一份数据的话,
     // 切回我的歌单会看见上一次的搜索结果
-    assert!(!present(&ui, "MainWindow::playlist-list"));
+    assert!(!present(&ui, "MusicPage::playlist-list"));
 }
 
 /// 换关键词重搜,停在当前页签,不跳回歌曲。
@@ -86,13 +95,17 @@ fn the_playlists_tab_shows_the_playlist_list() {
 #[test]
 fn searching_again_stays_on_the_current_tab() {
     let ui = search_page();
-    ui.set_search_tab(1);
+    ui.global::<Library>().set_search_tab(1);
 
     // 搜索本身要网络,这里只发回调:它不该顺手把页签拨回去
-    ui.invoke_search("本兮".into());
+    ui.global::<Player>().invoke_search("本兮".into());
 
-    assert_eq!(ui.get_search_tab(), 1, "重搜不该换页签");
-    assert!(present(&ui, "MainWindow::artist-list"));
+    assert_eq!(
+        ui.global::<Library>().get_search_tab(),
+        1,
+        "重搜不该换页签"
+    );
+    assert!(present(&ui, "MusicPage::artist-list"));
 }
 
 /// 点开一位歌手之后,搜索框与页签让位给详情那一层。
@@ -101,12 +114,13 @@ fn searching_again_stays_on_the_current_tab() {
 #[test]
 fn opening_an_artist_replaces_the_search_layer() {
     let ui = search_page();
-    ui.set_search_tab(1);
-    ui.set_open_playlist_name("本兮".into());
+    ui.global::<Library>().set_search_tab(1);
+    ui.global::<Library>()
+        .set_open_playlist_name("本兮".into());
 
-    assert!(present(&ui, "MainWindow::playlist-header"));
-    assert!(present(&ui, "MainWindow::track-list"));
-    assert!(!present(&ui, "MainWindow::artist-list"));
-    assert!(!present(&ui, "MainWindow::search-tabs"));
-    assert!(!present(&ui, "MainWindow::keyword"));
+    assert!(present(&ui, "MusicPage::playlist-header"));
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::artist-list"));
+    assert!(!present(&ui, "MusicPage::search-tabs"));
+    assert!(!present(&ui, "MusicPage::keyword"));
 }

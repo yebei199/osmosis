@@ -74,8 +74,10 @@ loop {
 
 ## 四、我们的修法:把 pending_redraw 纳入超时,且归零
 
-fork(`yebei199/slint` 的 dev 分支)里改一行:计算超时时,若 `pending_redraw` 已置,
-超时取 0 —— poll 立刻返回,循环立刻渲染。
+改一行:计算超时时,若 `pending_redraw` 已置,超时取 0 —— poll 立刻返回,循环立刻渲染。
+
+这条**已经在上游**(slint#12688,上游提交 `c51982e7c`,代码在
+`internal/backends/android-activity/lib.rs`),不再是 fork 的本地补丁,别去补丁栈里找。
 
 备选与为什么不选:
 

@@ -1,0 +1,230 @@
+// 设置页:分组卡片流(docs/design.md「页面清单」)。
+//
+// 只摆背后真有东西的组:外观(日月开关 + 跟随系统)、账号(退出登录)、
+// 快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
+// 没有数据源的卡不上屏(硬规则 8)。
+
+import { Theme, Type } from "theme.slint";
+import { SectionCard, DayNightSwitch } from "widgets.slint";
+
+// 胶囊开关:aurora 与「跟随系统」共用。a11y 在组件根上,
+// 无头测试按元素 id 找到的是这一层,挂在里面的 TouchArea 上就点不动了。
+component PillToggle inherits Rectangle {
+    in property <bool> on;
+    in property <string> label;
+    callback toggled();
+
+    width: 44px;
+    height: 26px;
+    border-radius: 13px;
+    background: root.on ? Theme.accent : Theme.overlay;
+    animate background { duration: 120ms; easing: ease-out; }
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.on;
+    accessible-action-default => { root.toggled(); }
+
+    Rectangle {
+        x: root.on ? parent.width - 22px : 4px;
+        y: 4px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: root.on ? Theme.accent-text : Theme.text-dim;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+export component SettingsPage inherits Flickable {
+    // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好推进来。
+    in property <string> about-line;
+    // 动态极光按钮的开关状态(真相在 api::settings,Rust 写回)。
+    in property <bool> aurora-on;
+    callback aurora-toggled();
+    // 主题三档:选了喊一声(0 深 1 浅 2 跟随系统),值由 Rust 写回 Theme.mode。
+    callback theme-mode-selected(int);
+    // 退出登录:清会话是 Rust 的活,这里只喊。
+    callback logout();
+
+    content-height: column.preferred-height + 52px;
+
+    column := VerticalLayout {
+        x: 26px;
+        y: 26px;
+        width: min(root.width - 52px, 640px);
+        alignment: start;
+        spacing: 14px;
+
+        Text {
+            text: "设置";
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 30px;
+            color: Theme.text;
+        }
+
+        SectionCard {
+            kicker: "外观";
+
+            // 日月开关是主题区的主视觉(从控制簇迁来,#68):拨=显式明/暗。
+            // 跟随系统时它显示当前生效态,拨动即退出跟随。
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "深浅主题";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                theme-switch := DayNightSwitch {
+                    night: Theme.dark;
+                    label: "深浅主题";
+                    toggled => {
+                        root.theme-mode-selected(Theme.dark ? 1 : 0);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "跟随系统";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                follow-toggle := PillToggle {
+                    on: Theme.mode == 2;
+                    label: "跟随系统";
+                    // 退出跟随时落在当前生效的那档,外观不跳变。
+                    toggled => {
+                        root.theme-mode-selected(Theme.mode == 2
+                            ? (Theme.dark ? 0 : 1)
+                            : 2);
+                    }
+                }
+            }
+            Text {
+                text: "跟随系统当前只在桌面端生效,其他端按深色处理";
+                font-family: "Maple Mono NF CN";
+                font-size: 11px;
+                color: Theme.text-faint;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "动态极光按钮";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                aurora-toggle := PillToggle {
+                    on: root.aurora-on;
+                    label: "动态极光按钮";
+                    toggled => { root.aurora-toggled(); }
+                }
+            }
+            Text {
+                text: "关掉就是纯色实底,不跑任何 shader";
+                font-family: "Maple Mono NF CN";
+                font-size: 11px;
+                color: Theme.text-faint;
+            }
+        }
+
+        SectionCard {
+            kicker: "账号";
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: "已登录 · 本设备";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                    }
+                }
+                logout-button := Rectangle {
+                    width: logout-label.preferred-width + 32px;
+                    height: 34px;
+                    border-radius: 999px;
+                    background: logout-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    // a11y 在根上,理由同 ThemeSegment。
+                    accessible-role: button;
+                    accessible-label: "退出登录";
+                    accessible-action-default => { root.logout(); }
+
+                    logout-label := Text {
+                        text: "退出登录";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    logout-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.logout(); }
+                    }
+                }
+            }
+        }
+
+        SectionCard {
+            kicker: "快捷键";
+
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: "收起播放页";
+                    font-family: "Maple Mono NF CN";
+                    font-size: 13px;
+                    color: Theme.text;
+                }
+                Text {
+                    text: "Esc / Back";
+                    font-family: Type.mono;
+                    font-size: 12px;
+                    color: Theme.text-dim;
+                }
+            }
+        }
+
+        SectionCard {
+            kicker: "关于";
+
+            Text {
+                text: root.about-line;
+                font-family: Type.mono;
+                font-size: 12px;
+                color: Theme.text-dim;
+            }
+        }
+    }
+}

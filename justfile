@@ -3,9 +3,14 @@
 set dotenv-load := true
 
 apk := "dist/osmosis-debug.apk"
-# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。web-dev、server-dev 各占
-# 一个(见下),故取 8090。改这里就得同步改 .mcp.json —— 那是 AI 客户端那一侧的地址。
+# 应用内嵌 MCP server 的端口(见 mcp-* 配方与 .mcp.json)。桌面与真机**各占一个**:
+# 同一时刻两边都可能开着,共用一个号的话 `adb forward` 一挂,桌面就起不来,而 AI
+# 客户端连过去看到的是手机(踩过,见 mcp-port-free 的注释)。
+#
+# 真机那个是**烧进 APK 的**(apps/android/src/lib.rs 的 option_env!),改它要重出包,
+# 所以让桌面让路、真机留在 8090。改任一个都要同步改 .mcp.json —— 那是 AI 客户端的地址。
 mcp_port := "8090"
+desktop_mcp_port := "8091"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -69,8 +74,8 @@ ci-boundaries:
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
 [group('三端')]
 [group('桌面')]
-desktop-dev extra="": mcp-port-free
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+desktop-dev extra="": (mcp-port-free desktop_mcp_port)
+    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
@@ -121,12 +126,22 @@ web-stop:
 font-subset:
     nix-shell -p python3Packages.fonttools --run "pyftsubset \
       $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
-      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他' \
+      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他选个用缓冲置外观主题深浅色跟随系统账号退出登录已快捷桌面按处理生效当前页起月过续次天只读云待活来它就换批荐动态极光钮画零重绘拖翻找双击滚轮进度卡墙表视图' \
       --unicodes=U+0020-007E \
       --layout-features= --no-hinting --desubroutinize \
       --notdef-outline --name-IDs+=13,14 \
       --output-file=crates/ui/fonts/cjk-subset.ttf"
     @ls -la crates/ui/fonts/cjk-subset.ttf
+
+# 重裁中文**标题**字体(思源宋体 Heavy,系统发行名 Noto Serif CJK SC)。
+# 标题字符集的唯一真相在 crates/ui/tests/fonts.rs 的 CJK_TITLES:新增页面标题
+# 先加那里,再跑这条;漏裁由同一个测试报红。拉丁三件(Caprasimo/Figtree/DM Mono)
+# 已提交仓库,一般不需重生成;要重下时把三个源文件放进一个目录,
+# 作为参数传给 regen.py(见脚本头部注释)。
+[group('工具')]
+font-title-subset:
+    nix-shell -p python3Packages.fonttools --run "python3 crates/ui/fonts/regen.py"
+    @ls -la crates/ui/fonts/cjk-title-subset.otf
 
 # 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
 # 数据在命名卷里,容器删了也还在。
@@ -158,6 +173,10 @@ bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just android-build
+#
+# native 库走 release 档,这条是**发布用**的。开发装机请用 `mcp-android`:
+# release 包不带 slint 元素调试信息,手机上 MCP 查不到元素树,驱动界面只能量坐标
+# (见 xtask 的 native_profile 与 crates/ui/build.rs)。
 [group('三端')]
 [group('安卓')]
 android-build:
@@ -188,26 +207,29 @@ android-run: android-install android-reverse
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
 
-# {{mcp_port}} 被占就**立刻失败**,别让 app 起来。
+# 传进来的端口被占就**立刻失败**,别让 app 起来。
 #
 # 这是在补一个静默失败:slint 绑不上端口时只在日志里留一行 "failed to bind ...
 # Address already in use" 就继续跑,app 一切正常。而 .mcp.json 里 AI 客户端的地址是
-# 写死的 127.0.0.1:{{mcp_port}} —— 它会连上**占用者**,并把对方的界面当成你的。
+# 写死的 —— 它会连上**占用者**,并把对方的界面当成你的。
 #
-# 最容易中招的占用者就是 mcp-forward 留下的 adb forward:AI 于是读到手机里那个旧 APK
-# 的元素树和截图,浑然不觉。踩过一次,查了半天。
+# 桌面与真机分开占号之后(见文件头的两个变量),正常情况下不该再撞上;仍留着这道门,
+# 因为撞上时的症状是纯静默的。真撞了多半是上一个桌面实例没退干净。
 [private]
-mcp-port-free:
+mcp-port-free port:
     #!/usr/bin/env bash
     set -euo pipefail
-    if ! ss -ltn "sport = :{{mcp_port}}" | grep -q LISTEN; then exit 0; fi
-    echo "端口 {{mcp_port}} 已被占用,拒绝启动 —— 否则 app 会静默跑在没有 MCP 的状态," >&2
+    if ! ss -ltn "sport = :{{port}}" | grep -q LISTEN; then exit 0; fi
+    echo "端口 {{port}} 已被占用,拒绝启动 —— 否则 app 会静默跑在没有 MCP 的状态," >&2
     echo "而 AI 客户端会连到下面这个占用者身上,把它的界面当成你的:" >&2
-    ss -ltnp "sport = :{{mcp_port}}" >&2 || true
-    if adb forward --list 2>/dev/null | grep -q "tcp:{{mcp_port}}"; then
+    ss -ltnp "sport = :{{port}}" >&2 || true
+    if adb forward --list 2>/dev/null | grep -q "tcp:{{port}}"; then
         echo "" >&2
         echo "是 adb forward 占着(mcp-forward / mcp-android 留下的),连过去看到的是**手机**。" >&2
-        echo "解法:adb forward --remove tcp:{{mcp_port}}" >&2
+        echo "真机现在该用 {{mcp_port}},撞到这里说明端口串了:adb forward --remove tcp:{{port}}" >&2
+    else
+        echo "" >&2
+        echo "多半是上一个桌面实例没退干净:just desktop-kill" >&2
     fi
     exit 1
 
@@ -218,13 +240,18 @@ mcp-port-free:
 mcp-forward:
     adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
 
-# 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。
+# 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。**开发装机走这条**。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
 # 端口只能靠 apps/android/src/lib.rs 里的 option_env! 编进二进制。
+#
+# native 库走 debug 档(PROFILE=debug):slint 的元素调试信息只在 debug 档生成,
+# 而它是 MCP 元素树与 ElementHandle 的前提。装 release 包的话 MCP 只截得到图、
+# 查不到任何元素,点按钮就得从全分辨率截图上量坐标 —— 慢且容易点空。
+# 代价是编译更久、APK 更大,发布件请走 `android-build`(release)。
 # 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
 [group('mcp')]
 mcp-android: mcp-forward
-    nix-shell Android.nix --run 'SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
+    nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     adb install -r {{apk}}
     adb shell am start -n io.github.osmosis/.MainActivity
 

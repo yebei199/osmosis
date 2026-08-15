@@ -6,7 +6,35 @@
 
 // 入口卡片用它透出背后的极光。
 import { GlassCard } from "glass.slint";
-import { Theme } from "theme.slint";
+import { Theme, Type } from "theme.slint";
+
+import { OutlinedText, DayNightSwitch } from "textfx.slint";
+export { OutlinedText, DayNightSwitch }
+
+// 一张分组卡:kicker 标题 + 内容。设置页与个人主页共用。
+export component SectionCard inherits Rectangle {
+    in property <string> kicker;
+
+    background: Theme.surface;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.overlay;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 14px;
+
+        Text {
+            text: root.kicker;
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 12px;
+            color: Theme.accent;
+        }
+
+        @children
+    }
+}
 
 // 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
 // 观感;按下时变暗下沉。全部带动画过渡。
@@ -131,6 +159,9 @@ export component RoundControl inherits Rectangle {
     // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
     // 只留按下/悬停那一点点提示,不糊住下面。
     in property <bool> transparent-base: false;
+    // 垫在图标下的一张画(#69 起是 glass 变体的按钮底)。空图即没有,
+    // 素底照常。shader 自带圆形 alpha 裁切,这里不必再 clip。
+    in property <image> backdrop;
     callback clicked;
 
     width: root.diameter;
@@ -142,6 +173,12 @@ export component RoundControl inherits Rectangle {
     border-width: 1px;
     border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.overlay;
     animate background, border-color { duration: 120ms; easing: ease-out; }
+
+    if root.backdrop.width > 0: Image {
+        width: 100%;
+        height: 100%;
+        source: root.backdrop;
+    }
 
     Path {
         width: root.diameter * 0.5;
@@ -173,275 +210,5 @@ export component RoundControl inherits Rectangle {
         accessible-checkable: root.checkable;
         accessible-checked: root.checked;
         accessible-action-default => { root.clicked(); }
-    }
-}
-
-// 描边文字。播放页专用 —— 那里的字压在**封面**上,而封面是任意亮度的照片:
-// 近白色的字遇上一张接近全白的封面就整个消失(本兮《未成年》实测)。
-//
-// Slint 的 Text 没有 stroke,drop-shadow 又只有 Rectangle 才有,所以只能把同一句话
-// 先用深色朝八个方向各画一遍,再把亮色那层压上去。八向而不是四向:四向在字的
-// 对角缺口上漏底,CJK 笔画交叉多,漏得明显。
-//
-// 尺寸由调用方给死,不让它自己算 —— 九层必须逐像素对齐,任何一层的换行或省略
-// 判断跟别人不一样,描边就会错位成重影。
-export component OutlinedText inherits Rectangle {
-    in property <string> text;
-    // 字体族。默认空 = 走系统字体,平台数据(歌名、歌手)就该如此;
-    // **硬编码中文必须显式指定子集字体**,否则 wasm 上没有 CJK 可回退,是豆腐块。
-    in property <string> font-family;
-    // 不叫 color:Rectangle 那一族已经占了这个名字,重名会被 slint 编译器拒绝。
-    in property <color> text-color;
-    in property <length> font-size;
-    // 描边宽度。1.5px 在 22px 的歌名与 14px 的歌手上都够,再粗会把小字糊住。
-    in property <length> outline: 1.5px;
-    in property <color> outline-color: Theme.immersive.with-alpha(0.88);
-    in property <TextVerticalAlignment> vertical-alignment: center;
-    in property <TextWrap> wrap: no-wrap;
-
-    for offset in [
-        { x: -1.0, y: -1.0 }, { x: 0.0, y: -1.0 }, { x: 1.0, y: -1.0 },
-        { x: -1.0, y: 0.0 },                       { x: 1.0, y: 0.0 },
-        { x: -1.0, y: 1.0 },  { x: 0.0, y: 1.0 },  { x: 1.0, y: 1.0 },
-    ]: Text {
-        x: offset.x * root.outline;
-        y: offset.y * root.outline;
-        width: root.width;
-        height: root.height;
-        text: root.text;
-        color: root.outline-color;
-        font-family: root.font-family;
-        font-size: root.font-size;
-        horizontal-alignment: center;
-        vertical-alignment: root.vertical-alignment;
-        wrap: root.wrap;
-        overflow: elide;
-    }
-
-    Text {
-        width: root.width;
-        height: root.height;
-        text: root.text;
-        color: root.text-color;
-        font-family: root.font-family;
-        font-size: root.font-size;
-        horizontal-alignment: center;
-        vertical-alignment: root.vertical-alignment;
-        wrap: root.wrap;
-        overflow: elide;
-    }
-}
-
-// 日月开关:白昼(顺序播放)⇄ 夜晚(随机播放)。
-// 参考 StatIndet/dotfiles 的 QML DemoSwitch:天空底色渐变、云与星随昼夜升降、
-// 太阳滑到对侧变月亮、贝塞尔回弹缓动、悬停时滑块向对侧探身 —— 全部纯 Slint,
-// 圆角矩形 clip 裁掉出界的云星,不需要 bevy。
-// 受控开关:自己**不**记状态,拨一下只喊一声,外面改了 night 它才动。
-// 真相住在 api::settings 上并跟着设备存,这里跟着走。
-//
-// 它管的是**明暗主题** —— 太阳与月亮字面上的意思。曾经借去管随机播放,
-// 那是没人认得出来的语义,播放顺序因此在界面上等于没有控件(见 #48)。
-export component DayNightSwitch inherits Rectangle {
-    in property <bool> night: false;
-    // 读屏软件念的那句。开关本身只有日月两个图形,不给标签就只是"一个按钮"。
-    in property <string> label;
-    callback toggled;
-
-    // QML 原作 180×70,这里等比压到控制条尺寸。
-    width: 92px;
-    height: 36px;
-    border-radius: self.height / 2;
-    clip: true;
-    background: root.night ? #191e32 : #4685c0;
-    animate background { duration: 700ms; easing: ease-in-out; }
-
-    // 光晕:三层同心白圈跟着滑块走,昼夜都在,给按钮一点"发光体"的存在感。
-    for halo[i] in [66px, 88px, 110px]: Rectangle {
-        width: halo;
-        height: halo;
-        border-radius: self.width / 2;
-        background: white;
-        opacity: 0.20 - i * 0.07;
-        x: knob.x + knob.width / 2 - self.width / 2;
-        y: knob.y + knob.height / 2 - self.height / 2;
-        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-    }
-
-    // 云:三团白圆压在下缘,白天在场,入夜整体沉出画面。
-    // 悬停(白天)时被太阳"推"远一点 —— 原作的斥力,只取其形。
-    clouds := Rectangle {
-        width: 100%;
-        height: 100%;
-        y: root.night ? root.height : 0;
-        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-
-        for cloud[i] in [
-            { cx: 52px, cy: 26px, d: 26px },
-            { cx: 68px, cy: 20px, d: 30px },
-            { cx: 84px, cy: 26px, d: 34px },
-        ]: Rectangle {
-            width: cloud.d;
-            height: cloud.d;
-            border-radius: self.width / 2;
-            background: white;
-            opacity: 0.9;
-            x: cloud.cx - self.width / 2 + (touch.has-hover && !root.night ? 5px : 0px);
-            y: cloud.cy - self.height / 2 + 6px;
-            animate x { duration: 400ms; easing: ease-out; }
-        }
-    }
-
-    // 星:小菱形散在上半,入夜降下来,白天升出画面。
-    // 悬停(夜里)时被月亮推开一点。
-    stars := Rectangle {
-        width: 100%;
-        height: 100%;
-        y: root.night ? 0 : -root.height;
-        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-
-        for star[i] in [
-            { sx: 14px, sy: 8px, d: 7px },
-            { sx: 30px, sy: 18px, d: 5px },
-            { sx: 22px, sy: 27px, d: 4px },
-            { sx: 42px, sy: 9px, d: 4px },
-        ]: Path {
-            width: star.d;
-            height: star.d;
-            x: star.sx + (touch.has-hover && root.night ? -4px : 0px);
-            y: star.sy;
-            viewbox-width: 10;
-            viewbox-height: 10;
-            // 四角星:四段二次曲线,腰收向圆心 —— 原作 Shape 的形状。
-            commands: "M 5 0 Q 5 5 10 5 Q 5 5 5 10 Q 5 5 0 5 Q 5 5 5 0 Z";
-            fill: white;
-            animate x { duration: 400ms; easing: ease-out; }
-        }
-    }
-
-    // 滑块:白天是太阳(暖黄 + 高光),入夜滑到右侧变月亮(冷灰 + 陨石坑)。
-    // 悬停时向对侧探 4px,像在提示"按我会滑过去"。
-    knob := Rectangle {
-        property <length> margin: 4px;
-        property <length> start-x: self.margin;
-        property <length> end-x: root.width - self.width - self.margin;
-
-        width: root.height - 8px;
-        height: root.height - 8px;
-        y: 4px;
-        x: root.night
-            ? (touch.has-hover ? knob.end-x - 4px : knob.end-x)
-            : (touch.has-hover ? knob.start-x + 4px : knob.start-x);
-        border-radius: self.width / 2;
-        background: root.night ? #c3c8d2 : #ffc323;
-        drop-shadow-blur: 6px;
-        drop-shadow-offset-x: 1px;
-        drop-shadow-offset-y: 2px;
-        drop-shadow-color: Theme.shadow.with-alpha(0.5);
-        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-        animate background { duration: 500ms; easing: ease-in-out; }
-
-        // 太阳高光:偏心一点的亮斑,夜里淡出。
-        Rectangle {
-            width: parent.width * 0.8;
-            height: parent.height * 0.8;
-            x: parent.width * 0.06;
-            y: parent.height * 0.06;
-            border-radius: self.width / 2;
-            background: #ffe650;
-            opacity: root.night ? 0 : 0.6;
-            animate opacity { duration: 500ms; }
-        }
-
-        // 陨石坑:三个灰圆,白天淡出,并跟着原作绕月心转 -90° 入场。
-        // Rectangle 没有 rotation-angle,所以坑的位置直接用极坐标写:
-        // 动 spin 一个角度,三个坑各自沿圆弧走 —— 与 transform: rotate 等价。
-        craters := Rectangle {
-            // 坑相对月心(14px, 14px)的极坐标,由原作的直角坐标换算而来。
-            property <angle> spin: root.night ? 0deg : -90deg;
-
-            width: 100%;
-            height: 100%;
-            opacity: root.night ? 1 : 0;
-            animate opacity { duration: 300ms; }
-            animate spin { duration: 300ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-
-            for crater[i] in [
-                { r: 9.06px, a: 263.66deg, d: 7px },
-                { r: 9.22px, a: 192.53deg, d: 10px },
-                { r: 4.24px, a: 45deg, d: 6px },
-            ]: Rectangle {
-                width: crater.d;
-                height: crater.d;
-                border-radius: self.width / 2;
-                background: #96a0b4;
-                x: 14px + crater.r * Math.cos(crater.a + craters.spin) - self.width / 2;
-                y: 14px + crater.r * Math.sin(crater.a + craters.spin) - self.height / 2;
-            }
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        // checkbox 而不是 button:它有"拨没拨"这个状态,而 button 说不出来。
-        // 无头测试也从这里驱动它(crates/ui/tests/controls.rs)。
-        accessible-role: checkbox;
-        accessible-label: root.label;
-        accessible-checkable: true;
-        accessible-checked: root.night;
-        accessible-action-default => { root.toggled(); }
-        clicked => { root.toggled(); }
-    }
-}
-
-// Home 的入口卡片:大图标 + 名字,点了切页。悬停时上浮、描边亮起 ——
-// 让"这是个门"一眼可见,不用靠猜。
-export component EntryCard inherits Rectangle {
-    in property <string> label;
-    in property <string> icon;
-    callback clicked;
-
-    width: 148px;
-    height: 168px;
-    border-radius: 18px;
-    background: touch.has-hover ? Theme.raised.with-alpha(0.4) : Theme.surface.with-alpha(0.4);
-    border-width: 1px;
-    border-color: touch.has-hover ? Theme.accent.with-alpha(0.53) : Theme.overlay;
-    drop-shadow-blur: touch.has-hover ? 24px : 12px;
-    drop-shadow-color: Theme.shadow.with-alpha(0.33);
-    drop-shadow-offset-y: touch.has-hover ? 8px : 4px;
-    animate background, border-color, drop-shadow-blur, drop-shadow-offset-y {
-        duration: 160ms;
-        easing: ease-out;
-    }
-
-    VerticalLayout {
-        alignment: center;
-        spacing: 14px;
-
-        HorizontalLayout {
-            alignment: center;
-            Path {
-                width: 44px;
-                height: 44px;
-                viewbox-width: 24;
-                viewbox-height: 24;
-                commands: root.icon;
-                stroke: touch.has-hover ? Theme.accent : Theme.text-dim;
-                stroke-width: 1.6px;
-                fill: transparent;
-            }
-        }
-        Text {
-            text: root.label;
-            color: touch.has-hover ? Theme.text : Theme.text-dim;
-            font-size: 15px;
-            font-weight: 600;
-            horizontal-alignment: center;
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
     }
 }

@@ -5,7 +5,11 @@
 //! 就说不清了。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
+use ui::Library;
 use ui::MainWindow;
+use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -17,9 +21,9 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn playlists_section() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_music_section(1);
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_music_section(1);
     ui
 }
 
@@ -31,13 +35,14 @@ fn the_list_and_the_detail_are_never_both_shown() {
     let ui = playlists_section();
 
     // 没打开任何歌单 = 停在列表层
-    assert!(present(&ui, "MainWindow::playlist-list"));
-    assert!(!present(&ui, "MainWindow::playlist-header"));
+    assert!(present(&ui, "MusicPage::playlist-list"));
+    assert!(!present(&ui, "MusicPage::playlist-header"));
 
-    ui.set_open_playlist_name("睡前".into());
-    assert!(present(&ui, "MainWindow::playlist-header"));
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
+    assert!(present(&ui, "MusicPage::playlist-header"));
     assert!(
-        !present(&ui, "MainWindow::playlist-list"),
+        !present(&ui, "MusicPage::playlist-list"),
         "进了详情就不该还摆着列表"
     );
 }
@@ -46,29 +51,35 @@ fn the_list_and_the_detail_are_never_both_shown() {
 #[test]
 fn opening_a_playlist_shows_its_name() {
     let ui = playlists_section();
-    ui.set_open_playlist_name("华语经典".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("华语经典".into());
 
-    assert_eq!(ui.get_open_playlist_name(), "华语经典");
-    assert!(present(&ui, "MainWindow::playlist-header"));
+    assert_eq!(
+        ui.global::<Library>().get_open_playlist_name(),
+        "华语经典"
+    );
+    assert!(present(&ui, "MusicPage::playlist-header"));
     // 详情里摆的是曲目,与别的分区同一个列表组件
-    assert!(present(&ui, "MainWindow::track-list"));
+    assert!(present(&ui, "MusicPage::track-list"));
 }
 
 /// 返回回到列表,且**留在歌单分区** —— 不是跳回每日推荐。
 #[test]
 fn going_back_returns_to_the_list() {
     let ui = playlists_section();
-    ui.set_open_playlist_name("睡前".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
 
-    ui.set_open_playlist_name("".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("".into());
 
     assert_eq!(
-        ui.get_music_section(),
+        ui.global::<Shell>().get_music_section(),
         1,
         "返回是退一层,不是换一节"
     );
-    assert!(present(&ui, "MainWindow::playlist-list"));
-    assert!(!present(&ui, "MainWindow::playlist-header"));
+    assert!(present(&ui, "MusicPage::playlist-list"));
+    assert!(!present(&ui, "MusicPage::playlist-header"));
 }
 
 /// 歌单分区停在列表层时不摆曲目列表 —— 那一层摆的是歌单。
@@ -77,7 +88,7 @@ fn the_list_layer_shows_playlists_not_tracks() {
     let ui = playlists_section();
 
     assert!(
-        !present(&ui, "MainWindow::track-list"),
+        !present(&ui, "MusicPage::track-list"),
         "列表层摆的是歌单,不是某一批歌"
     );
 }

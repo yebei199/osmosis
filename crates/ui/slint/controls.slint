@@ -5,23 +5,171 @@
 
 import { DeviceRow } from "types.slint";
 import { Theme } from "theme.slint";
-import { HoverButton, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
+import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
 
-// 控制键簇:上一首 / 播放暂停 / 下一首 + 日月随机开关。
+import { ProgressBar, VolumeControl, VerticalSeekBar } from "progress.slint";
+export { ProgressBar, VolumeControl, VerticalSeekBar }
+
+// 环形进度播放键:外圈 conic 进度环(进度本身就是环,不再要常驻细线),
+// 内圈实心圆 + 播放/暂停图标。尺寸两档:条身 48/40,播放页 60/50
+// (docs/design.md「播放条」)。
+export component RingControl inherits Rectangle {
+    in property <bool> is-playing;
+    // 已放到全曲的几分之几,0..=1。与 ProgressBar 同一个来源(progress.rs 夹好)。
+    in property <float> ratio: 0;
+    in property <length> diameter: 48px;
+    in property <length> inner-diameter: 40px;
+    // 播放键里那圈随音乐跳动的画面(反馈 warp)。空图退回纯色内圈 ——
+    // 音乐页不接它,没 GPU 的构建也不接。
+    in property <image> pulse;
+    callback toggle();
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: self.width / 2;
+    // 进度环:走过的弧是 accent,剩下的弧是弱叠加。conic 从 12 点起顺时针。
+    background: @conic-gradient(
+        Theme.accent 0deg,
+        Theme.accent clamp(root.ratio, 0.0, 1.0) * 360deg,
+        Theme.overlay clamp(root.ratio, 0.0, 1.0) * 360deg,
+        Theme.overlay 360deg);
+
+    inner := Rectangle {
+        width: root.inner-diameter;
+        height: root.inner-diameter;
+        border-radius: self.width / 2;
+        background: Theme.surface;
+        clip: true;
+
+        if root.pulse.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            image-fit: cover;
+            source: root.pulse;
+        }
+
+        RoundControl {
+            diameter: parent.width;
+            // 环里的内圈自己是底,再叠一层灰底会把环糊成同心圆;
+            // 接了 warp 时同理,不糊住画面。
+            transparent-base: true;
+            // ▶ 或 ⏸,随播放状态换。
+            icon: root.is-playing
+                ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
+                : "M8 5 L19 12 L8 19 Z";
+            label: root.is-playing ? "暂停" : "播放";
+            clicked => { root.toggle(); }
+        }
+    }
+}
+
+// 迷你播放条:控制条的最小形态,由壳持有、跨应用常驻(CONTEXT.md「迷你播放条」)。
+// 封面 · 曲名/歌手 · 环形键 · 下一首;完整控制在音乐页的胶囊条与播放页。
+export component MiniPlayer inherits Rectangle {
+    // 不叫 cover:那个名字会把 `image-fit: cover` 里的枚举值遮蔽掉。
+    in property <image> cover-art;
+    in property <string> title;
+    in property <string> artists;
+    in property <bool> is-playing;
+    in property <float> ratio;
+    callback toggle();
+    callback next();
+
+    height: 60px;
+    border-radius: self.height / 2;
+    background: Theme.surface.with-alpha(0.9);
+    border-width: 1px;
+    border-color: Theme.glass-edge;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 14px;
+    drop-shadow-color: Theme.glass-shadow;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 12px;
+        spacing: 10px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 40px;
+                height: 40px;
+                border-radius: 10px;
+                clip: true;
+                // 封面没到位时的占位:副色板 0 号渐变。
+                background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                if root.cover-art.width > 0: Image {
+                    width: 100%;
+                    height: 100%;
+                    image-fit: cover;
+                    source: root.cover-art;
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.artists;
+                color: Theme.text-dim;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            RingControl {
+                is-playing: root.is-playing;
+                ratio: root.ratio;
+                diameter: 40px;
+                inner-diameter: 32px;
+                toggle => { root.toggle(); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            RoundControl {
+                diameter: 36px;
+                icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+                label: "下一首";
+                clicked => { root.next(); }
+            }
+        }
+    }
+}
+
+// 控制键簇:上一首 / 环形播放键 / 下一首 + 随机 + 日月开关。
 // 抽成组件是因为宽窄两种版式各摆一次 —— 摆法不同,键是同一套。
 export component ControlCluster inherits HorizontalLayout {
     in property <bool> is-playing;
     // 只读:随机的真相在 app_core::Queue 上,这里是它的投影。
     in property <bool> shuffle-on;
+    // 只读:循环的真相同样在 Queue 上。0 关,1 列表循环,2 单曲循环 ——
+    // builtin 枚举不生成 Rust 访问器,int 镜像(与 ColorScheme 同一个坑)。
+    in property <int> loop-mode;
+    // 进度,喂给环形键的外圈。
+    in property <float> progress-ratio: 0;
     // 播放键里那圈随音乐跳动的画面(反馈 warp,见 crates/render3d/src/warp.wgsl)。
     // 空图就退回普通按钮 —— 音乐页不接它,没 GPU 的构建也不接。
     in property <image> pulse;
+    // 环形键的两档尺寸(条身 48/40,播放页 60/50)。
+    in property <length> ring-diameter: 48px;
+    in property <length> ring-inner-diameter: 40px;
     callback prev();
     callback toggle();
     callback next();
     callback shuffle-toggled();
-    // 请求换明暗主题。Theme.dark 那时还是旧值 —— 由 Rust 拨完再写回去。
-    callback theme-toggled();
+    // 请求循环换到下一态(关→列表→单曲→关)。loop-mode 那时还是旧值 ——
+    // 由 Rust 拨完队列再写回。
+    callback loop-cycled();
 
     spacing: 10px;
 
@@ -36,32 +184,13 @@ export component ControlCluster inherits HorizontalLayout {
     }
     VerticalLayout {
         alignment: center;
-        // 播放键。接了 pulse 就把那圈 warp 画进按钮里,比旁边两颗大一圈 ——
-        // 它是这一排里唯一会动的东西,该占更多视觉分量。
-        Rectangle {
-            width: root.pulse.width > 0 ? 68px : 50px;
-            height: self.width;
-            border-radius: self.width / 2;
-            clip: true;
-
-            if root.pulse.width > 0: Image {
-                width: 100%;
-                height: 100%;
-                image-fit: cover;
-                source: root.pulse;
-            }
-
-            RoundControl {
-                diameter: parent.width;
-                // 有 warp 垫底时不再自带底色,免得把画面糊住。
-                transparent-base: root.pulse.width > 0;
-                // ▶ 或 ⏸,随播放状态换。
-                icon: root.is-playing
-                    ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
-                    : "M8 5 L19 12 L8 19 Z";
-                label: root.is-playing ? "暂停" : "播放";
-                clicked => { root.toggle(); }
-            }
+        RingControl {
+            is-playing: root.is-playing;
+            ratio: root.progress-ratio;
+            diameter: root.pulse.width > 0 ? 68px : root.ring-diameter;
+            inner-diameter: root.pulse.width > 0 ? 58px : root.ring-inner-diameter;
+            pulse: root.pulse;
+            toggle => { root.toggle(); }
         }
     }
     VerticalLayout {
@@ -88,13 +217,23 @@ export component ControlCluster inherits HorizontalLayout {
     }
     VerticalLayout {
         alignment: center;
-        // 日月开关管明暗,不管随机 —— 它画的就是白昼与黑夜。
-        DayNightSwitch {
-            night: Theme.dark;
-            label: "深色主题";
-            toggled => { root.theme-toggled(); }
+        // 循环键。与随机键同一条规矩:有状态,报成带 checked 的按钮;
+        // 三态念在标签里 —— checked 只说得出「开没开」,说不出列表还是单曲。
+        RoundControl {
+            // ↻:首尾折返的两条箭头(Material 的 repeat 字形);
+            // 单曲循环在中间多一个「1」(repeat_one)。
+            icon: root.loop-mode == 2
+                ? "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"
+                : "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
+            label: root.loop-mode == 0 ? "循环: 关"
+                : (root.loop-mode == 1 ? "循环: 列表" : "循环: 单曲");
+            checkable: true;
+            checked: root.loop-mode > 0;
+            clicked => { root.loop-cycled(); }
         }
     }
+    // 日月开关已迁去设置页当主题区主视觉(#68):第五颗循环键进场后
+    // 紧凑行装不下它,而它本就等设置页落地后撤离控制簇。
 }
 
 // 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——
@@ -136,170 +275,6 @@ export component SyncStrip inherits HorizontalLayout {
                 font-size: 12px;
                 vertical-alignment: center;
                 horizontal-alignment: center;
-            }
-        }
-    }
-}
-
-// 进度条:已放到哪、还能拖。
-//
-// 拖动期间**手指说了算**:位置每秒由 Rust 推一次,拖的时候要让位给手指,
-// 否则滑块会在手指底下自己往回跳。松手才把最终位置交出去 —— 拖动过程中
-// 每帧都 seek 一次,等于让解码器跟着手指来回跑。
-export component ProgressBar inherits Rectangle {
-    // 已放到全曲的几分之几,0..=1。由 Rust 夹好(见 ui/src/progress.rs)。
-    in property <float> ratio;
-    // 「1:23 / 3:41」,同样已在 Rust 侧排好。
-    in property <string> text;
-    // 跳转还没落地。占的是时间那一行 —— 缓冲期间位置本来就不动,
-    // 让一个僵住的数字待在那里,恰恰是最像卡死的样子。
-    in property <bool> buffering: false;
-
-    // 松手时交出去的位置,仍是 0..=1。
-    callback seek(float);
-
-    // 拖动中,以及手指当前落在哪。Rust 不关心手指的过程,只要松手那一下的值。
-    property <bool> dragging: false;
-    property <float> drag-ratio: 0;
-    // 画出来的那个值:拖动时用手指的,否则用每秒推来的。
-    //
-    // **这一行没有测试盖着。** 无头测试驱动不了真实指针,而这个组件既不是
-    // 独立编译的类型、又长在一个 `if` 里,Rust 侧引用不到它的属性。写成一个
-    // 声明式表达式而不是在 moved 里赋值,是为了让它没有"忘了某条路径"的余地 ——
-    // 但那是靠形状,不是靠断言。改这里要手动验:拖住不放,看滑块会不会自己往回跳。
-    property <float> shown: root.dragging ? root.drag-ratio : root.ratio;
-
-    height: 26px;
-
-    VerticalLayout {
-        spacing: 3px;
-
-        groove := Rectangle {
-            height: 4px;
-            background: Theme.overlay;
-            border-radius: 2px;
-
-            Rectangle {
-                x: 0;
-                width: parent.width * clamp(root.shown, 0.0, 1.0);
-                height: parent.height;
-                background: Theme.accent;
-                border-radius: 2px;
-            }
-        }
-
-        Text {
-            text: root.buffering ? "缓冲中…" : root.text;
-            font-family: "Maple Mono NF CN";
-            // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
-            // 说明「还在动」的东西。
-            color: root.buffering ? Theme.accent : Theme.text-dim;
-            font-size: 11px;
-            horizontal-alignment: center;
-        }
-    }
-
-    // 覆在整块上,比那条 4px 的槽好点得多 —— 手指按不准 4 个像素。
-    touch := TouchArea {
-        mouse-cursor: pointer;
-
-        moved => {
-            root.dragging = true;
-            root.drag-ratio = clamp(self.mouse-x / root.width, 0.0, 1.0);
-        }
-        pointer-event(event) => {
-            if (event.kind == PointerEventKind.up) {
-                // 没拖过就是点了一下:点哪跳哪
-                root.seek(root.dragging
-                    ? root.drag-ratio
-                    : clamp(self.mouse-x / root.width, 0.0, 1.0));
-                root.dragging = false;
-            }
-        }
-    }
-}
-
-// 音量:一颗喇叭键,点开就地展开滑块。
-//
-// 不常驻滑块:控制条宽版一排的最小宽度已经约 470px,而手机内容区只有 ~360px
-// (那正是紧凑版拆两行的原因)。再塞一条常驻滑块进去,两种版式都要重排。
-export component VolumeControl inherits HorizontalLayout {
-    in property <float> volume;
-    callback changed(float);
-
-    property <bool> open: false;
-
-    spacing: 6px;
-
-    VerticalLayout {
-        alignment: center;
-        Rectangle {
-            width: 32px;
-            height: 32px;
-            border-radius: 16px;
-            background: speaker.has-hover ? Theme.overlay : transparent;
-
-            Text {
-                // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
-                text: root.volume <= 0.001 ? "🔇"
-                    : root.volume < 0.5 ? "🔈" : "🔊";
-                font-size: 15px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-
-            speaker := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.open = !root.open; }
-
-                // 屏幕阅读器要认得出这是个能按的东西;顺带让无头测试点得动它 ——
-                // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"
-                // (同 widgets.slint 里的 HoverButton)。
-                accessible-role: button;
-                accessible-label: "音量";
-                accessible-expandable: true;
-                accessible-expanded: root.open;
-                accessible-action-default => {
-                    root.open = !root.open;
-                }
-            }
-        }
-    }
-
-    if root.open: VerticalLayout {
-        alignment: center;
-
-        slider := Rectangle {
-            width: 92px;
-            height: 20px;
-
-            Rectangle {
-                y: (parent.height - 4px) / 2;
-                height: 4px;
-                background: Theme.overlay;
-                border-radius: 2px;
-
-                Rectangle {
-                    x: 0;
-                    width: parent.width * clamp(root.volume, 0.0, 1.0);
-                    height: parent.height;
-                    background: Theme.accent;
-                    border-radius: 2px;
-                }
-            }
-
-            // 音量没有「松手才生效」的问题:每动一下就该听见,
-            // 那正是人调音量时在等的反馈。
-            drag := TouchArea {
-                mouse-cursor: pointer;
-                moved => {
-                    root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
-                }
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        root.changed(clamp(self.mouse-x / slider.width, 0.0, 1.0));
-                    }
-                }
             }
         }
     }

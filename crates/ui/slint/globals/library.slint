@@ -1,0 +1,81 @@
+import { PlaylistRow, ArtistRow } from "../types.slint";
+
+// 曲库那一面:我的歌单、歌单详情的写操作、搜索结果与红心。
+//
+// 这些字段住在 global 而不是 MainWindow 上,是为了让歌单详情头与搜索页那两棵
+// 子树不必从窗口根一路转发下来。名字与搬迁前一致 —— Rust 侧只换接收者。
+// 取舍见 docs/adr/0027。
+export global Library {
+    // ── 我的歌单 ──
+    // 两个来源合并后的一张列表,「我喜欢的」在最前(见 docs/adr/0016)。
+    in property <[PlaylistRow]> playlists: [];
+    // 当前打开的歌单名。空串 = 停在列表那一层,没有打开任何歌单。
+    // 用名字而不是另设一个布尔:详情页要显示它,两个值会有对不上的一天。
+    in-out property <string> open-playlist-name;
+    // 当前打开的歌单标识与封面。标识由 Rust 在打开时填 —— 封面表按它索引,
+    // 而名字会重复(两个歌单可以同名)。
+    in-out property <string> open-playlist-id;
+    in property <image> open-playlist-cover;
+    // 打开某个歌单。参数是 PlaylistRow 的 id 与 source ——
+    // 两种歌单的 id 不在同一个空间,少了 source 就不知道该问谁要曲目。
+    callback open-playlist(string, int);
+    // 从详情退回列表。
+    callback close-playlist();
+
+    // ── 本地歌单的写操作 ──
+    // 当前打开的这个歌单是不是本地的。只有本地歌单能改名、删除、增删曲目 ——
+    // 平台歌单与「我喜欢的」的真相在平台,这边改不动,摆个按钮上去只会让人
+    // 点了才知道。由 Rust 在打开时按来源填,不由界面猜名字。
+    in property <bool> open-playlist-local: false;
+    // 「把刚才那批加进来」那行的文案,已在 Rust 侧带上条数。
+    // 空串 = 刚才没有可加的一批,整行不出现。
+    in property <string> add-batch-text;
+    // 「另有 N 首平台不再提供」。平台给不出详情的曲目进不了这一批
+    // (成员关系要求先有详情),不说一声的话歌单就静默变短了。
+    // 空串 = 一首都没少,整行不出现;那是常态。
+    in property <string> unavailable-note;
+    // 新建 / 改名的文本由回调带出来 —— 输入框在 `if` 里,Rust 引用不到它。
+    callback create-playlist(string);
+    callback rename-playlist(string);
+    callback delete-playlist();
+    // 把刚才那批歌收进当前打开的这个歌单。
+    callback add-batch();
+    // 把某一首从当前打开的这个歌单里移出去。
+    callback remove-track(string);
+    // 标题正在改名 / 删除键正在等第二下确认。两个都私有于界面 ——
+    // Rust 不关心用户点开了哪个输入框,只关心最后交出来的那个名字。
+    //
+    // 存的是**哪个歌单**处在那个状态,而不是一个布尔:换了歌单,比较自然就不
+    // 成立了,状态跟着作废。用布尔加一个 `changed` 回调复位也行,但那个回调
+    // 什么时候跑不由这里说了算 —— 而「上一个歌单点了删除没确认就退出去,下一个
+    // 歌单的删除键已经处在再点一下就没的状态」这件事,不能指望时机。
+    in-out property <string> renaming-for: "";
+    in-out property <string> confirming-for: "";
+    out property <bool> renaming:
+        open-playlist-name != ""
+        && renaming-for == open-playlist-name;
+    out property <bool> confirming-delete:
+        open-playlist-name != ""
+        && confirming-for == open-playlist-name;
+
+    // ── 搜索的三个页签 ──
+    // 0=歌曲、1=歌手、2=歌单,编号即 musicnav.slint 里 SearchTabs.items 的下标。
+    in-out property <int> search-tab: 0;
+    callback select-search-tab(int);
+    // 歌手与歌单的结果各自成列,**不与「我的歌单」共用** `playlists` ——
+    // 共用的话,切回我的歌单会看见上一次的搜索结果。
+    // 曲目仍然共用 `tracks`:那个属性本来就是「当前这批歌」。
+    in property <[ArtistRow]> found-artists: [];
+    in property <[PlaylistRow]> found-playlists: [];
+    // 打开某位歌手的热门曲目。带上名字,详情页的标题要它。
+    callback open-artist(string, string);
+
+    // 点某一行的红心。参数是曲目 id 与点完之后的状态。
+    callback toggle-liked(string, bool);
+    // 重拉红心的全量标识。
+    //
+    // 存在的理由是**时机**:那个集合决定每行心红还是空,而拉它的那次请求跑在
+    // 绑定阶段,也就是登录之前。本次会话内才首次登录的人,那一次不带 token,
+    // 失败后静默降级成空集合 —— 整页的心都是空的。登录收尾与进列表页各喊一次它。
+    callback refresh-liked();
+}

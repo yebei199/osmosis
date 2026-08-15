@@ -11,6 +11,11 @@ mod mpris;
 mod single_instance;
 
 fn main() {
+    // 这里占下 log 的全局 logger 之后,bevy 的 LogPlugin 就装不上它那个 log 到
+    // tracing 的桥接,启动时会报一条 "Could not set global logger",属于预期。
+    // 两套日志都照常输出:wgpu 的 log:: 记录走 env_logger,bevy 自己的 tracing
+    // 事件走 LogPlugin 的 subscriber。别照那条提示去 disable::<LogPlugin>(),
+    // 它会把 bevy 的着色器编译与管线创建错误一起弄哑,见 Cargo.toml 里 bevy 那段。
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info"),
@@ -29,7 +34,7 @@ fn main() {
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
     // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
-    let mut scene = render3d::Scene::new();
+    let scene = render3d::Scene::new();
     // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue。
     let mut nav = render3d::NavGlassPass::new(
         scene.device(),
@@ -39,6 +44,15 @@ fn main() {
         scene.device(),
         scene.queue(),
     );
+    let mut btns = render3d::AuroraBtnPass::new(
+        scene.device(),
+        scene.queue(),
+    );
+    // 点云与卡墙两个闭包共用同一个 Scene(同线程,RefCell 即可)。
+    let scene = std::rc::Rc::new(
+        std::cell::RefCell::new(scene),
+    );
+    let wall_scene = scene.clone();
     // seam:把 ui 的 NavGlassControls / VizControls 平凡拷成 render3d 的镜像参数。
     // 两个闭包分别驱动导航选中器与播放页视觉。
     ui::run_with_renderers(
@@ -46,14 +60,20 @@ fn main() {
             Some(nav.render_frame(&render3d::NavParams {
                 strip_w: n.strip_w,
                 strip_h: n.strip_h,
-                lead_y: n.lead_y,
-                lag_y: n.lag_y,
-                slot_h: n.slot_h,
+                lead: n.lead,
+                lag: n.lag,
+                drop: n.drop,
+                cross: n.cross,
+                slot: n.slot,
+                thick: n.thick,
+                horizontal: n.horizontal,
+                ball: n.ball,
                 dark: n.dark,
             }))
         },
         move |v, w, h| {
-            let (viz_scene, occluder) = scene
+            let (viz_scene, occluder, anchor) = scene
+                .borrow_mut()
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
@@ -92,7 +112,71 @@ fn main() {
                 ),
                 scene: viz_scene,
                 occluder,
+                anchor,
             })
+        },
+        // 光带按钮:与上面两条同一个 seam 模式,逐字段平凡拷。
+        move |b| {
+            btns.render_frame(
+                &render3d::AuroraBtnParams {
+                    time: b.time,
+                    slots: b
+                        .slots
+                        .iter()
+                        .map(|s| render3d::AuroraBtnSlot {
+                            w: s.w,
+                            h: s.h,
+                            radius: s.radius,
+                            seed: s.seed,
+                            speed: s.speed,
+                            amp: s.amp,
+                            mode: s.mode,
+                            bands: s.bands,
+                            variant: s.variant,
+                            progress: s.progress,
+                            pointer: s.pointer,
+                            colors: s.colors,
+                        })
+                        .collect(),
+                },
+            )
+        },
+        // 卡墙(#66):同一个 seam 模式,位姿与封面逐字段平凡拷。
+        move |c| {
+            Some(wall_scene.borrow_mut().render_wall_frame(
+                &render3d::WallFrame {
+                    width: c.width,
+                    height: c.height,
+                    cam: render3d::WallCamera {
+                        pan_x: c.pan_x,
+                        dolly: c.dolly,
+                        perspective: c.perspective,
+                    },
+                    cards: c
+                        .cards
+                        .iter()
+                        .map(|k| render3d::WallCard {
+                            x: k.x,
+                            y: k.y,
+                            z: k.z,
+                            rot_y: k.rot_y,
+                            rot_x: k.rot_x,
+                            dim: k.dim,
+                            size: k.size,
+                        })
+                        .collect(),
+                    covers: c
+                        .covers
+                        .iter()
+                        .map(|k| render3d::WallCover {
+                            slot: k.slot,
+                            width: k.width,
+                            height: k.height,
+                            rgba: k.rgba.clone(),
+                        })
+                        .collect(),
+                },
+            ))
         },
         // 系统媒体控件:Linux 上是 MPRIS,别的桌面还没有(见 docs/adr/0020)。
         mpris::start,

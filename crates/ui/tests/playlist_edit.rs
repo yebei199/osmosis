@@ -5,7 +5,12 @@
 //! 点下去才知道改不动。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Library;
+use ui::Player;
+use ui::Session;
+use ui::Shell;
 use ui::{MainWindow, TrackRow};
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -18,23 +23,24 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 fn playlist_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_music_section(1);
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_music_section(1);
     ui
 }
 
 /// 打开一个本地歌单的详情。
 fn opened_local(ui: &MainWindow) {
-    ui.set_open_playlist_name("睡前".into());
-    ui.set_open_playlist_local(true);
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
+    ui.global::<Library>().set_open_playlist_local(true);
 }
 
 /// 列表里摆一首歌。行上的键长在 `for` 里 —— 一首都没有的话,
 /// 「有没有移除键」这个问题根本问不出来。
 fn one_track(ui: &MainWindow) {
-    ui.set_tracks(ModelRc::new(VecModel::from(vec![
-        TrackRow {
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![TrackRow {
             id: "1".into(),
             title: "甜甜的".into(),
             artists: "本兮".into(),
@@ -43,8 +49,8 @@ fn one_track(ui: &MainWindow) {
             liked: false,
             cover_url: String::new().into(),
             cover: slint::Image::default(),
-        },
-    ])));
+        }]),
+    ));
 }
 
 /// 「新建歌单」只在我的歌单那一层出现。
@@ -53,20 +59,20 @@ fn one_track(ui: &MainWindow) {
 #[test]
 fn the_new_playlist_row_lives_on_the_playlist_list() {
     let ui = playlist_page();
-    assert!(present(&ui, "MainWindow::new-playlist-row"));
+    assert!(present(&ui, "MusicPage::new-playlist-row"));
 
     for section in [0, 2, 3] {
-        ui.set_music_section(section);
+        ui.global::<Shell>().set_music_section(section);
         assert!(
-            !present(&ui, "MainWindow::new-playlist-row"),
+            !present(&ui, "MusicPage::new-playlist-row"),
             "分区 {section} 不该有新建歌单"
         );
     }
 
     // 进了详情也不该有:那一层要建的不是歌单
-    ui.set_music_section(1);
+    ui.global::<Shell>().set_music_section(1);
     opened_local(&ui);
-    assert!(!present(&ui, "MainWindow::new-playlist-row"));
+    assert!(!present(&ui, "MusicPage::new-playlist-row"));
 }
 
 /// 只有本地歌单的详情有改名与删除。
@@ -77,13 +83,15 @@ fn the_new_playlist_row_lives_on_the_playlist_list() {
 fn only_a_local_playlist_can_be_renamed_or_deleted() {
     let ui = playlist_page();
     opened_local(&ui);
-    assert!(present(&ui, "MainWindow::delete-button"));
+    assert!(present(&ui, "MusicPage::delete-button"));
 
     // 平台歌单 / 我喜欢的:同一层详情,但没有那两个键
-    ui.set_open_playlist_local(false);
-    assert!(!present(&ui, "MainWindow::delete-button"));
+    ui.global::<Library>().set_open_playlist_local(false);
+    assert!(!present(&ui, "MusicPage::delete-button"));
     // 曲目行上的「−」也一起消失:那也是一次写
-    assert!(!ui.get_open_playlist_local());
+    assert!(
+        !ui.global::<Library>().get_open_playlist_local()
+    );
 }
 
 /// 删除要点两下:第一下变成「确认删除?」,第二下才真删。
@@ -97,14 +105,14 @@ fn deleting_asks_once_before_it_happens() {
     let deleted =
         std::rc::Rc::new(std::cell::Cell::new(0_u32));
     let count = deleted.clone();
-    ui.on_delete_playlist(move || {
+    ui.global::<Library>().on_delete_playlist(move || {
         count.set(count.get() + 1)
     });
 
     let button =
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::delete-button",
+            "MusicPage::delete-button",
         )
         .next()
         .expect("找不到删除键");
@@ -128,14 +136,14 @@ fn a_half_finished_delete_does_not_follow_to_the_next() {
     let deleted =
         std::rc::Rc::new(std::cell::Cell::new(0_u32));
     let count = deleted.clone();
-    ui.on_delete_playlist(move || {
+    ui.global::<Library>().on_delete_playlist(move || {
         count.set(count.get() + 1)
     });
 
     let find = || {
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "MainWindow::delete-button",
+            "MusicPage::delete-button",
         )
         .next()
         .expect("找不到删除键")
@@ -143,7 +151,8 @@ fn a_half_finished_delete_does_not_follow_to_the_next() {
 
     find().invoke_accessible_default_action();
     // 换到另一个歌单
-    ui.set_open_playlist_name("通勤".into());
+    ui.global::<Library>()
+        .set_open_playlist_name("通勤".into());
 
     find().invoke_accessible_default_action();
     assert_eq!(
@@ -161,15 +170,17 @@ fn the_add_batch_row_needs_both_a_local_playlist_and_a_batch()
     opened_local(&ui);
 
     // 没有刚才那一批:整行不出现
-    ui.set_add_batch_text("".into());
-    assert!(!present(&ui, "MainWindow::add-batch-row"));
+    ui.global::<Library>().set_add_batch_text("".into());
+    assert!(!present(&ui, "MusicPage::add-batch-row"));
 
-    ui.set_add_batch_text("+ 把刚才那 30 首加进来".into());
-    assert!(present(&ui, "MainWindow::add-batch-row"));
+    ui.global::<Library>().set_add_batch_text(
+        "+ 把刚才那 30 首加进来".into(),
+    );
+    assert!(present(&ui, "MusicPage::add-batch-row"));
 
     // 平台歌单收不了东西
-    ui.set_open_playlist_local(false);
-    assert!(!present(&ui, "MainWindow::add-batch-row"));
+    ui.global::<Library>().set_open_playlist_local(false);
+    assert!(!present(&ui, "MusicPage::add-batch-row"));
 }
 
 /// 本地歌单详情里每行多一个「−」,别处没有。
@@ -182,14 +193,15 @@ fn rows_can_be_removed_only_inside_a_local_playlist() {
     one_track(&ui);
     assert!(present(&ui, "TrackList::remove-hit"));
 
-    ui.set_open_playlist_local(false);
+    ui.global::<Library>().set_open_playlist_local(false);
     assert!(
         !present(&ui, "TrackList::remove-hit"),
         "平台歌单里不该有移除键"
     );
 
     // 每日推荐同理:那一批根本不属于任何可改的集合
-    ui.set_open_playlist_name("".into());
-    ui.set_music_section(0);
+    ui.global::<Library>()
+        .set_open_playlist_name("".into());
+    ui.global::<Shell>().set_music_section(0);
     assert!(!present(&ui, "TrackList::remove-hit"));
 }

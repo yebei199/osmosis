@@ -5,7 +5,11 @@
 //! 而那正是这次要改掉的东西。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
+use ui::Player;
+use ui::Session;
+use ui::Shell;
 use ui::{MainWindow, TrackRow};
 
 fn covers(ui: &MainWindow) -> usize {
@@ -32,9 +36,10 @@ fn row(id: &str) -> TrackRow {
 fn music_page_with(rows: Vec<TrackRow>) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_tracks(ModelRc::new(VecModel::from(rows)));
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Player>()
+        .set_tracks(ModelRc::new(VecModel::from(rows)));
     ui
 }
 

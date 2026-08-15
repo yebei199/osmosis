@@ -1,0 +1,26 @@
+import { ArtistRankRow } from "../types.slint";
+
+// 个人页的数据面。**只有 Rust 写它**(见 crates/ui/src/profile.rs),
+// 界面只读。
+//
+// 这些字段住在 global 而不是 MainWindow 上,是为了让个人页这棵子树不必
+// 从窗口根一路转发下来 —— 转发链每加一个字段就要动两处,而这里只动一处。
+// 取舍与代价见 docs/adr/0027。
+export global Profile {
+    // 这一页被显示出来了,该去取数了。
+    callback shown();
+
+    in property <string> username;
+    // 取数回来了没有。没回来时页面显示骨架而不是一串空值。
+    in property <bool> loaded;
+    // 取数失败的那句话。空串表示没失败。
+    in property <string> error;
+
+    in property <string> month-plays;
+    in property <string> distinct-tracks;
+    in property <string> streak-days;
+    in property <[ArtistRankRow]> artists: [];
+
+    // 版本与构建信息那一行。
+    in property <string> about-line;
+}

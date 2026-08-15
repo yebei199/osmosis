@@ -136,7 +136,9 @@ debug = "line-tables-only"
 # 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
 # 跟进上游要对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
 # —— cargo 不会自动放弃锁里已有的 registry 版本,少一个就静默变成 patch.unused。
-# fork 的 master 分支保持从上游纯快进,dev 靠 rebase 跟进,步骤见 docs/note/fork-sync.md。
+# fork 的 master 分支保持从上游纯快进,dev 靠 merge 跟进(不强推),步骤见 docs/note/fork-sync.md。
+# 这段注释是补丁清单的**权威副本**:merge 之后 git 历史里会留下被上游顶掉的死 commit,
+# `git log upstream/master..dev` 列出的东西不再等于我们还背着的东西。
 [patch.crates-io]
 slint = { git = "https://github.com/yebei199/slint", branch = "dev" }
 slint-build = { git = "https://github.com/yebei199/slint", branch = "dev" }

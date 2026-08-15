@@ -85,7 +85,7 @@ impl Controls {
                 // 另一边 —— 对不上抛的是 NoSuchMethodError,而且要等到第一次
                 // 换歌才抛。
                 jni::jni_sig!(
-                    "(ILjava/lang/String;Ljava/lang/String;JJ[IIIZ)V"
+                    "(ILjava/lang/String;Ljava/lang/String;JJ[III)V"
                 ),
                 &[
                     jni::objects::JValue::Int(status_code(
@@ -102,7 +102,6 @@ impl Controls {
                     (&pixels).into(),
                     jni::objects::JValue::Int(width),
                     jni::objects::JValue::Int(height),
-                    jni::objects::JValue::Bool(now.shuffle),
                 ],
             )?;
             Ok(())
@@ -118,6 +117,10 @@ fn status_code(status: ui::MediaStatus) -> jint {
         ui::MediaStatus::Stopped => 2,
     }
 }
+
+// 随机与循环不再过这条 seam:它们从通知栏撤掉了(见 `MediaControlsService.java`),
+// 安卓这一端没有别的地方显示或改动它们。`ui::NowPlaying` 上那两个字段留着 ——
+// 桌面 MPRIS 要用。
 
 /// 封面像素从 RGBA 重排成 `Bitmap.Config.ARGB_8888` 要的那种打包 int。
 ///
@@ -207,6 +210,12 @@ fn decode(
         // 参数是绝对值而不是「翻一下」:让 Java 侧去猜「现在是不是随机」,
         // 它记的那一份迟早会跟队列对不上。
         7 => ui::MediaCommand::SetShuffle(argument != 0),
+        // 循环同理,参数是要拨到的绝对态。
+        8 => ui::MediaCommand::SetLoop(match argument {
+            1 => ui::LoopMode::All,
+            2 => ui::LoopMode::One,
+            _ => ui::LoopMode::Off,
+        }),
         _ => return None,
     })
 }

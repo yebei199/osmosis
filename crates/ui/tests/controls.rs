@@ -3,7 +3,11 @@
 //! `progress::ratio` 证明的是**算得对**,这些断言管的是**摆得对、拖得动**。
 
 use i_slint_backend_testing as testing;
+use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Player;
+use ui::Session;
+use ui::Shell;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -28,9 +32,9 @@ fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
 fn wide_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
-    ui.set_logged_in(true);
-    ui.set_current_tab(1);
-    ui.set_compact(false);
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_compact(false);
     ui
 }
 
@@ -73,11 +77,11 @@ fn the_volume_slider_starts_collapsed() {
 fn the_progress_bar_appears_only_with_a_track() {
     let ui = wide_page();
 
-    ui.set_has_track(false);
-    assert!(!present(&ui, "MainWindow::wide-progress"));
+    ui.global::<Player>().set_has_track(false);
+    assert!(!present(&ui, "MusicPage::wide-progress"));
 
-    ui.set_has_track(true);
-    assert!(present(&ui, "MainWindow::wide-progress"));
+    ui.global::<Player>().set_has_track(true);
+    assert!(present(&ui, "MusicPage::wide-progress"));
 }
 
 /// **随机播放有自己的键了。**
@@ -88,11 +92,11 @@ fn the_progress_bar_appears_only_with_a_track() {
 #[test]
 fn the_shuffle_button_asks_without_setting_the_property() {
     let ui = wide_page();
-    ui.set_shuffle_on(false);
+    ui.global::<Player>().set_shuffle_on(false);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.on_shuffle_toggled(move || {
+    ui.global::<Player>().on_shuffle_toggled(move || {
         counter.set(counter.get() + 1);
     });
 
@@ -100,7 +104,7 @@ fn the_shuffle_button_asks_without_setting_the_property() {
 
     assert_eq!(asked.get(), 1, "拨一下该喊一声");
     assert!(
-        !ui.get_shuffle_on(),
+        !ui.global::<Player>().get_shuffle_on(),
         "值该纹丝不动 —— 写它是 Rust 的活,不是控件的"
     );
 }
@@ -112,13 +116,13 @@ fn the_shuffle_button_asks_without_setting_the_property() {
 fn the_shuffle_button_shows_whether_shuffle_is_on() {
     let ui = wide_page();
 
-    ui.set_shuffle_on(false);
+    ui.global::<Player>().set_shuffle_on(false);
     assert_eq!(
         shuffle_key(&ui).accessible_checked(),
         Some(false)
     );
 
-    ui.set_shuffle_on(true);
+    ui.global::<Player>().set_shuffle_on(true);
     assert_eq!(
         shuffle_key(&ui).accessible_checked(),
         Some(true),
@@ -126,35 +130,197 @@ fn the_shuffle_button_shows_whether_shuffle_is_on() {
     );
 }
 
-/// **日月开关改管明暗,不再管随机。**
-///
-/// 这一条钉的是"换过去了"这件事本身:拨它要喊 theme-toggled,而且**不能**
-/// 再喊 shuffle-toggled。两个都喊的话,拨一下主题会顺手把队列洗一遍。
-#[test]
-fn the_day_night_switch_now_asks_for_a_theme_change() {
-    let ui = wide_page();
-
-    let themed = std::rc::Rc::new(std::cell::Cell::new(0));
-    let shuffled =
-        std::rc::Rc::new(std::cell::Cell::new(0));
-    let a = themed.clone();
-    ui.on_theme_toggled(move || a.set(a.get() + 1));
-    let b = shuffled.clone();
-    ui.on_shuffle_toggled(move || b.set(b.get() + 1));
-
-    testing::ElementHandle::find_by_element_id(
-        &ui,
-        "DayNightSwitch::touch",
+/// 控制簇上那颗循环键,按它此刻的标签找 —— 标签随三态换,
+/// 读屏念的就是它(checked 只说得出开没开,说不出列表还是单曲)。
+fn loop_key(
+    ui: &MainWindow,
+    label: &str,
+) -> Option<testing::ElementHandle> {
+    testing::ElementHandle::find_by_accessible_label(
+        ui, label,
     )
     .next()
-    .expect("找不到日月开关")
+}
+
+/// 循环键拨一下只喊一声,值由 Rust 写回 —— 与随机键同一条规矩。
+#[test]
+fn the_loop_button_asks_without_setting_the_property() {
+    let ui = wide_page();
+    ui.global::<Player>().set_loop_mode(0);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Player>().on_loop_cycled(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    loop_key(&ui, "循环: 关")
+        .expect("找不到循环键")
+        .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "拨一下该喊一声");
+    assert_eq!(
+        ui.global::<Player>().get_loop_mode(),
+        0,
+        "值该纹丝不动 —— 写它是 Rust 的活,不是控件的"
+    );
+}
+
+/// 循环键把三态念出来:关 / 列表 / 单曲,旧标签跟着退场。
+#[test]
+fn the_loop_button_labels_all_three_states() {
+    let ui = wide_page();
+
+    ui.global::<Player>().set_loop_mode(0);
+    assert!(loop_key(&ui, "循环: 关").is_some());
+
+    ui.global::<Player>().set_loop_mode(1);
+    assert!(loop_key(&ui, "循环: 列表").is_some());
+    assert!(
+        loop_key(&ui, "循环: 关").is_none(),
+        "换态之后旧标签不该还在"
+    );
+
+    ui.global::<Player>().set_loop_mode(2);
+    assert!(loop_key(&ui, "循环: 单曲").is_some());
+}
+
+/// **日月开关退场**:控制簇里找不到它,主题唯一入口是设置页的三值选择。
+/// 设置页(#61)落地后它本就该撤;第五颗循环键进场把紧凑行挤爆,正式送走。
+#[test]
+fn the_day_night_switch_is_gone_from_the_cluster() {
+    let ui = wide_page();
+
+    assert!(
+        !present(&ui, "DayNightSwitch::touch"),
+        "日月开关该已从控制簇退场,主题去设置页拨"
+    );
+}
+
+/// 胶囊把自己的尺寸回写给 fluid 背景通道(#68):Rust 侧按这个尺寸渲。
+#[test]
+fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
+    let ui = wide_page();
+    ui.global::<Player>().set_has_track(true);
+
+    // 条件页面要先查一次元素逼出实例化,init 才会跑。
+    let _ =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui, "播放",
+        )
+        .next();
+
+    assert!(
+        ui.global::<Shell>().get_bar_w() > 0.0,
+        "胶囊该把宽度回写,实得 {}",
+        ui.global::<Shell>().get_bar_w()
+    );
+    assert!(
+        ui.global::<Shell>().get_bar_h() > 0.0,
+        "胶囊该把高度回写"
+    );
+}
+
+/// 播放页控制条把自己的尺寸回写给 seam,fluid 底才知道该渲多大。
+///
+/// 没开过播放页时是 0,那一槽整个不进合批 —— 与胶囊同一条理由:
+/// 覆层不在场时为它养一次渲染是纯浪费。
+#[test]
+fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
+    let ui = wide_page();
+    ui.global::<Player>().set_has_track(true);
+    assert_eq!(
+        ui.global::<Shell>().get_viz_bar_w(),
+        0.0,
+        "没开播放页时不该有尺寸"
+    );
+
+    ui.global::<Shell>().set_play_page_open(true);
+    // 覆层是条件页面,先查一次元素逼出实例化,init 才会跑。
+    let _ =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "收起播放页",
+        )
+        .next();
+
+    assert!(
+        ui.global::<Shell>().get_viz_bar_w() > 0.0,
+        "播放页控制条该回写宽度,实得 {}",
+        ui.global::<Shell>().get_viz_bar_w()
+    );
+    assert!(
+        ui.global::<Shell>().get_viz_bar_h() > 0.0,
+        "播放页控制条该回写高度"
+    );
+}
+
+/// 紧凑版式里「展开播放页」键在屏内。
+///
+/// 钉 #68 修的挤爆回归:循环键进场后那一行超宽,▲ 被推出屏外,
+/// 播放页在手机上打不开。几何断言右缘不越窗宽。
+#[test]
+fn the_expand_button_stays_on_screen_in_compact() {
+    let ui = wide_page();
+    ui.global::<Shell>().set_compact(true);
+    ui.global::<Player>().set_has_track(true);
+
+    let expand =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "展开播放页",
+        )
+        .next()
+        .expect("紧凑版式里找不到展开键");
+    let right =
+        expand.absolute_position().x + expand.size().width;
+    let window_w = ui.window().size().width as f32
+        / ui.window().scale_factor();
+    assert!(
+        right <= window_w,
+        "展开键右缘 {right} 超出窗宽 {window_w}"
+    );
+}
+
+/// 悬浮胶囊条身上带着「正在放什么」:封面、曲名那一列只在手上有歌时出现。
+///
+/// 没在放时不摆空壳 —— 与进度条同一条理由。
+#[test]
+fn the_bar_shows_the_current_track_only_when_there_is_one()
+{
+    let ui = wide_page();
+
+    ui.global::<Player>().set_has_track(false);
+    assert!(!present(&ui, "MusicPage::bar-now"));
+
+    ui.global::<Player>().set_has_track(true);
+    assert!(present(&ui, "MusicPage::bar-now"));
+}
+
+/// 播放键换成环形进度键后,对外仍是那颗「播放/暂停」按钮:
+/// 标签在、按一下喊 toggle-play、值由 Rust 写回。
+#[test]
+fn the_ring_play_key_still_toggles_playback() {
+    let ui = wide_page();
+    ui.global::<Player>().set_is_playing(false);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Player>().on_toggle_play(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    testing::ElementHandle::find_by_accessible_label(
+        &ui, "播放",
+    )
+    .next()
+    .expect("找不到播放键")
     .invoke_accessible_default_action();
 
-    assert_eq!(themed.get(), 1, "拨它该请求换主题");
-    assert_eq!(
-        shuffled.get(),
-        0,
-        "它不再管随机 —— 两个都喊的话,拨一下主题会顺手把队列洗一遍"
+    assert_eq!(asked.get(), 1, "按一下该喊一声");
+    assert!(
+        !ui.global::<Player>().get_is_playing(),
+        "值该纹丝不动 —— 写它是 Rust 的活"
     );
 }
 

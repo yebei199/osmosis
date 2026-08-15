@@ -3,7 +3,7 @@ import { Theme } from "theme.slint";
 // 玻璃拟态基元:一层极光背景 + 一张玻璃卡片。
 //
 // 为什么是这两个凑一对:玻璃是半透明的,**背后没东西就等于没有玻璃**。原本全局
-// 是纯色 #0f1117,半透明卡片盖上去只是"深灰盖深灰",肉眼看不出任何玻璃感。
+// 是纯色的窗口底(Theme.window),半透明卡片盖上去只是"深灰盖深灰",肉眼看不出任何玻璃感。
 // AuroraBackground 就是专门用来"被透过"的那层内容。
 //
 // 边界:Slint 至今没有 backdrop blur(见 docs/slint/visual-effects-and-shaders.md),
@@ -20,6 +20,19 @@ import { Theme } from "theme.slint";
 export component AuroraBackground inherits Rectangle {
     background: Theme.aurora-base;
     clip: true;
+
+    // §4 封面取色喂极光(docs/design/handoff-shaders.md):cover-active 时
+    // 三团光斑的色相来自当前封面,副色调由歌决定;关掉即回主题绿。
+    // 三个 alpha 取主题 token 的中间档,两套主题共用 —— 亮度已经在取色里。
+    // 换歌 400ms 插值,不硬跳。
+    in property <bool> cover-active: false;
+    in property <color> cover-warm;
+    in property <color> cover-deep;
+    in property <color> cover-soft;
+    property <color> warm: root.cover-active ? root.cover-warm.with-alpha(0.58) : Theme.aurora-warm;
+    property <color> deep: root.cover-active ? root.cover-deep.with-alpha(0.55) : Theme.aurora-deep;
+    property <color> soft: root.cover-active ? root.cover-soft.with-alpha(0.42) : Theme.aurora-soft;
+    animate warm, deep, soft { duration: 400ms; easing: ease-out; }
 
     // x/y 不接受百分比(只有 width/height 接受),所以位置写成父尺寸的表达式。
     //
@@ -39,7 +52,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.45 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, Theme.aurora-warm 0%, Theme.aurora-warm.with-alpha(0) 60%);
+        background: @radial-gradient(circle, root.warm 0%, root.warm.with-alpha(0) 60%);
     }
     // 深咖,中心略偏右下 —— 与焦糖在正中央交叠,那儿正是卡片所在
     Rectangle {
@@ -47,7 +60,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.58 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, Theme.aurora-deep 0%, Theme.aurora-deep.with-alpha(0) 60%);
+        background: @radial-gradient(circle, root.deep 0%, root.deep.with-alpha(0) 60%);
     }
     // 奶咖,顶部偏右,压一点暖光进来免得整片发闷
     Rectangle {
@@ -55,7 +68,7 @@ export component AuroraBackground inherits Rectangle {
         y: root.height * 0.08 - root.spot / 2;
         width: root.spot;
         height: root.spot;
-        background: @radial-gradient(circle, Theme.aurora-soft 0%, Theme.aurora-soft.with-alpha(0) 60%);
+        background: @radial-gradient(circle, root.soft 0%, root.soft.with-alpha(0) 60%);
     }
 
     @children

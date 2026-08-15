@@ -1,0 +1,143 @@
+import { Theme, Type } from "theme.slint";
+import { Library } from "globals/library.slint";
+import { Player } from "globals/player.slint";
+import { Shell } from "globals/shell.slint";
+
+// 卡墙(#66):列表 ⇄ 卡墙的二选一开关,以及卡墙场区本身。
+//
+// 纹理由 render3d 画,这里只摆图、收指针 —— 硬规则 8:TouchArea 只写镜像与
+// 喊回调,命中测试在 Rust(wall_drive.rs)。
+//
+// 两块合在一处:开关与场区共用同一组 wall-* 判据,分开放会让「墙什么时候在」
+// 有两个说法。
+export component WallView inherits VerticalLayout {
+    // #66 列表 ⇄ 卡墙的二选一开关。只在每日推荐分区、
+    // GPU 构建下出现 —— 别的分区没有墙可切。
+    if Shell.wall-supported
+        && Shell.current-tab == 1
+        && Shell.music-section == 0
+        && Library.open-playlist-name == ""
+        && Player.tracks.length > 0:
+    HorizontalLayout {
+        alignment: end;
+        spacing: 6px;
+        height: 26px;
+
+        view-list-btn := Rectangle {
+            width: 56px;
+            border-radius: 13px;
+            background: Shell.view-wall
+                ? Theme.surface : Theme.accent;
+            accessible-role: button;
+            accessible-label: "列表视图";
+            accessible-action-default => {
+                Shell.set-view-wall(false);
+            }
+            Text {
+                text: "列表";
+                font-family: "Maple Mono NF CN";
+                font-size: 12px;
+                color: Shell.view-wall
+                    ? Theme.text-dim
+                    : Theme.accent-text;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    Shell.set-view-wall(false);
+                }
+            }
+        }
+        view-wall-btn := Rectangle {
+            width: 56px;
+            border-radius: 13px;
+            background: Shell.view-wall
+                ? Theme.accent : Theme.surface;
+            accessible-role: button;
+            accessible-label: "卡墙视图";
+            accessible-action-default => {
+                Shell.set-view-wall(true);
+            }
+            Text {
+                text: "卡墙";
+                font-family: "Maple Mono NF CN";
+                font-size: 12px;
+                color: Shell.view-wall
+                    ? Theme.accent-text
+                    : Theme.text-dim;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    Shell.set-view-wall(true);
+                }
+            }
+        }
+    }
+
+    // #66 卡墙场区:纹理由 render3d 画,这里只摆图、
+    // 收指针。硬规则 8:TouchArea 只写镜像与喊回调,
+    // 命中测试在 Rust(wall_drive.rs)。
+    if Shell.wall-visible:
+    wall-area := Rectangle {
+        vertical-stretch: 1;
+        clip: true;
+        init => {
+            Shell.wall-field-w = self.width;
+            Shell.wall-field-h = self.height;
+        }
+        changed width => {
+            Shell.wall-field-w = self.width;
+        }
+        changed height => {
+            Shell.wall-field-h = self.height;
+        }
+
+        if Shell.wall-bg.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            source: Shell.wall-bg;
+        }
+        Text {
+            x: 4px;
+            y: 0;
+            text: "拖动翻找 · 双击播放 · 滚轮进深度";
+            font-family: "Maple Mono NF CN";
+            font-size: 11px;
+            color: Theme.text-dim;
+        }
+        wall-touch := TouchArea {
+            moved => {
+                Shell.wall-px = self.mouse-x;
+                Shell.wall-py = self.mouse-y;
+            }
+            pointer-event(ev) => {
+                if ev.kind == PointerEventKind.down {
+                    Shell.wall-px = self.mouse-x;
+                    Shell.wall-py = self.mouse-y;
+                    Shell.wall-pressed = true;
+                }
+                if ev.kind == PointerEventKind.up
+                    || ev.kind == PointerEventKind.cancel {
+                    Shell.wall-pressed = false;
+                }
+            }
+            scroll-event(ev) => {
+                Shell.wall-wheel(ev.delta-y);
+                return accept;
+            }
+            clicked => {
+                Shell.wall-tap(
+                    self.mouse-x, self.mouse-y);
+            }
+            double-clicked => {
+                Shell.wall-double(
+                    self.mouse-x, self.mouse-y);
+            }
+        }
+    }
+}

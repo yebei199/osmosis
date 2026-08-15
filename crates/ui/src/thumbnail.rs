@@ -16,6 +16,7 @@ use std::time::Duration;
 use slint::ComponentHandle;
 
 use crate::MainWindow;
+use crate::Player;
 
 /// 内存里最多留几张缩略图。
 ///
@@ -255,7 +256,7 @@ fn flush(
 fn apply(ui: &MainWindow, cache: &Rc<RefCell<Lru>>) {
     use slint::Model as _;
 
-    let rows = ui.get_tracks();
+    let rows = ui.global::<Player>().get_tracks();
     for i in 0..rows.row_count() {
         let Some(mut row) = rows.row_data(i) else {
             continue;

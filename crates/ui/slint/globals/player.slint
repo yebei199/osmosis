@@ -1,0 +1,75 @@
+import { TrackRow } from "../types.slint";
+
+// 播放与传输的状态面。真相在 app-core 的 Queue 与播放器上,这里是它的投影
+// —— 开关自己不置位,拨一下只喊对应的回调(见 crates/ui/src/music)。
+//
+// 住在 global 而不是 MainWindow 上,是为了让两套控制条与播放页覆层各自直接读它,
+// 不必从窗口根转发三层。取舍见 docs/adr/0027。
+export global Player {
+    // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
+    in property <[TrackRow]> tracks: [];
+    // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
+    //
+    // **只放状态的投影,不放一次性提示**。投影会随状态重算,永远等于此刻的真相;
+    // 而某次请求失败这类话描述的是过去的一刻,写进来就再没人会清 —— 那是
+    // 「歌单已经摆满、顶上还挂着取歌单失败」的成因。提示走 banner-text
+    // (见 ui/src/notice.rs)。
+    in property <string> playback-text;
+    // 正在为播放页那首歌取直链/开流。播放页只有歌名、歌手、封面,没有别的位置
+    // 能表达"按下去了、正在办",而状态行长在音乐页上、被播放页盖住。
+    in property <bool> now-loading: false;
+    // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
+    in property <bool> is-playing: false;
+
+    // ── 进度与音量 ──
+    // 手上有没有一首歌。没有时进度条整条不出现 —— 摆一条空槽会让人
+    // 以为点它能从头开始,而那时根本没有"头"。
+    in property <bool> has-track: false;
+    // 已放到全曲的几分之几,0..=1。夹取与格式化都在 Rust 侧(见 ui/src/progress.rs)。
+    in property <float> progress-ratio: 0;
+    in property <string> progress-text;
+    // 松手时跳到这个比例。
+    callback seek(float);
+    // 正在等跳转落地。跳到还没下到的位置要重开一个 range 请求,一首无损往后
+    // 拖两分钟就是好几秒 —— 那期间进度条不动、声音不出,不说一句的话
+    // 看起来就是卡死了(见 ui/src/music.rs 的 bind-seek)。
+    in property <bool> buffering: false;
+    // 当前音量,0..=1。开局由本地设置恢复(见 api::settings)。
+    in property <float> volume: 1.0;
+    callback volume-changed(float);
+    // 随机播放开关。**只有 Rust 写它** —— 真相在 app_core::Queue 上,
+    // 这里是投影。开关自己不置位,拨一下只喊 shuffle-toggled。
+    in-out property <bool> shuffle-on: false;
+
+    // 循环三态。**只有 Rust 写它** —— 真相在 app_core::Queue 上,这里是投影。
+    // 0 关,1 列表循环,2 单曲循环:builtin 枚举不生成 Rust 访问器,int 镜像。
+    in-out property <int> loop-mode: 0;
+
+    callback search(string);
+    // 取今日推荐,结果落进同一个 Player.tracks 列表。
+    callback daily();
+    // 取我喜欢的音乐,同上。
+    callback liked();
+    // 进了 Music 页。当天还没拉过推荐时由 Rust 侧补一次 daily —— 判断在那边,
+    // 因为「今天」和「上次拉的日期」都不是界面该记的东西。
+    callback music-shown();
+    // 放某首歌。参数是 TrackRow 的 id。
+    callback play(string);
+    // 某一行滑进了可见区,它要这张封面。参数是 TrackRow 的 cover-url ——
+    // 列表虚拟化之后,「哪一行现在是哪一首」只有界面知道(见 tracklist.slint)。
+    callback needs-cover(string);
+    // 播放/暂停。正在收听同播时按下等于退出收听(见 CONTEXT.md「听众」)。
+    callback toggle-play();
+    // 队列内切歌。
+    callback next-track();
+    callback prev-track();
+    // 请求翻转随机开关。**Player.shuffle-on 那时还是旧值** —— 由 Rust 拨完队列
+    // 再写回去。系统媒体控件送来的 SetShuffle 也走这一条。
+    callback shuffle-toggled();
+    // 请求循环换到下一态(关→列表→单曲→关)。**Player.loop-mode 那时还是旧值** ——
+    // 由 Rust 拨完队列再写回。
+    callback loop-cycled();
+    // 循环拨到这个绝对值。系统媒体控件给的是绝对值(MPRIS 的 LoopStatus),
+    // 与现值的比对在 media.rs 的 dispatch 里做,这里只落地。
+    callback loop-mode-set(int);
+}
