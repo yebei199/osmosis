@@ -59,12 +59,27 @@ export component PlayerBar inherits Rectangle {
         >= root.fixed-w + root.min-title-w + root.time-w + root.gap;
 
     width: min(root.fixed-w + 320px, root.width-cap);
-    // 抽屉在 `if` 里,引用不到它的 height,所以高度从同一个 global 函数取 ——
+    // 抽屉在 `if` 里,引用不到它的 height,所以高度从同一个 global 取 ——
     // 不是在这里抄一遍行高(ADR 0028 那次就是抄出来的债)。
-    property <length> drawer-h: DrawerMetrics.height-for(root.immersive);
+    property <length> drawer-h: DrawerMetrics.total-h;
     height: root.drawer-open
         ? root.drawer-h + root.drawer-gap + root.bar-h
         : root.bar-h;
+
+    // 抽屉开着时,点条外任意处收起。
+    //
+    // **必须声明在最前面。** slint 里后声明即在上层,命中测试也从上往下走;
+    // 这块盖住整根条的 TouchArea 一旦排在后面,随机、循环、音量乃至主条上的
+    // 上下曲全都点不动 —— 每一次点击都被它吃成「收起抽屉」。
+    // 无障碍动作那条路不过命中测试,所以这个 bug 能骗过一整组按标签点的测试
+    // (真按一下的探针见 tests/player_bar.rs 的 click_at)。
+    if root.drawer-open: TouchArea {
+        x: -4000px;
+        y: -4000px;
+        width: 8000px;
+        height: 8000px;
+        clicked => { root.drawer-open = false; }
+    }
 
     // ── 抽屉:摆在主条**上方**,所以条身长高时向上长,底边不动 ──
     if root.drawer-open: drawer := Drawer {
@@ -76,13 +91,10 @@ export component PlayerBar inherits Rectangle {
         loop-mode: Player.loop-mode;
         volume: Player.volume;
         devices: Shell.devices;
-        show-preset: root.immersive;
-        preset-icon: root.preset-icon;
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
         volume-changed(v) => { Player.volume-changed(v); }
         push-to(id) => { Shell.push-to(id); }
-        preset-clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
     }
 
     capsule := Rectangle {
@@ -259,16 +271,6 @@ export component PlayerBar inherits Rectangle {
         }
     }
 
-    // 抽屉开着时,点条外任意处收起。垫在最底下、只在开着时存在,
-    // 不挡任何常态操作。
-    if root.drawer-open: TouchArea {
-        x: -4000px;
-        y: -4000px;
-        width: 8000px;
-        height: 8000px;
-        clicked => { root.drawer-open = false; }
-    }
-
     // 覆层那份读另一槽,两条同时在场时各渲各的底。
     property <image> backdrop: root.immersive
         ? Shell.viz-bar-bg
@@ -280,7 +282,6 @@ export component PlayerBar inherits Rectangle {
     property <string> next-icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
     // ⋯:三个点,「还有更多」最不容易认错的画法。
     property <string> more-icon: "M6 10 A2 2 0 1 1 6 14 A2 2 0 1 1 6 10 Z M12 10 A2 2 0 1 1 12 14 A2 2 0 1 1 12 10 Z M18 10 A2 2 0 1 1 18 14 A2 2 0 1 1 18 10 Z";
-    property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
 
     function mirror-size() {
         if (root.immersive) {

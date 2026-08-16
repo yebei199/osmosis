@@ -24,12 +24,14 @@ export global Viz {
 
     // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
     // 手工对齐 —— 那边按下标分支,加档时两处都要动。
+    //
+    // **暂时没有界面能改它。** 名册只剩「封面」一档 —— 另外五档让粒子离开封面
+    // 平面,那张图就散了,而点云存在的理由正是封面本身(见 docs/adr/0014)。
+    // 一个只有一项的选择器选不动任何东西,却让播放页的抽屉比别处多一行,
+    // 所以选择列表连同那一行一起退场(docs/adr/0029)。加回第二档时,
+    // 界面加在抽屉里(slint/drawer.slint),而不是再长一处播放页专属的浮层。
     in-out property <int> viz-preset: 0;
-    // 预设名,列表里逐项显示。只剩「封面」一档 —— 另外五档让粒子离开封面平面,
-    // 那张图就散了,而点云存在的理由正是封面本身(见 docs/adr/0014)。
     in-out property <[string]> viz-preset-names: ["封面"];
-    // 预设列表是不是展开着。私有:只有这一层自己用,Rust 侧不认识它。
-    in-out property <bool> viz-preset-list-open: false;
     // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
     // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
     // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。

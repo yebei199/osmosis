@@ -15,7 +15,7 @@ import { VolumeControl } from "progress.slint";
 
 // 抽屉的行度量。抽出成 global 是因为**条身要在抽屉实例化之前就知道它有多高**:
 // 抽屉长在一个 `if` 里,而条件子元素在 slint 里既引用不到、也不给父元素贡献
-// preferred 尺寸(ADR 0028 已经为这条栽过一次)。让两边读同一个函数,
+// preferred 尺寸(ADR 0028 已经为这条栽过一次)。让两边读同一个数,
 // 好过在条身里再抄一遍行高。
 export global DrawerMetrics {
     out property <length> row-h: 44px;
@@ -23,13 +23,12 @@ export global DrawerMetrics {
     out property <length> pad: 8px;
     out property <length> gap: 2px;
 
-    // 模式两行 + 音量一行 + 同播一行,播放页多一行视觉预设。
-    pure public function height-for(show-preset: bool) -> length {
-        self.pad * 2
-            + self.row-h * (show-preset ? 4 : 3)
-            + self.sync-h
-            + self.gap * (show-preset ? 4 : 3)
-    }
+    // 模式两行 + 音量一行 + 同播一行。**到处都是这个数** —— 抽屉在播放页里
+    // 与在别处一样高、一样几行,否则「展开」在两处就不是同一件事了。
+    out property <length> total-h: self.pad * 2
+        + self.row-h * 3
+        + self.sync-h
+        + self.gap * 3;
 }
 
 // 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
@@ -124,15 +123,11 @@ export component Drawer inherits Rectangle {
     in property <int> loop-mode;
     in property <float> volume;
     in property <[DeviceRow]> devices;
-    // 播放页才有的那一行:视觉预设的列表长在覆层里,别处点了没反应。
-    in property <bool> show-preset: false;
-    in property <string> preset-icon;
 
     callback shuffle-toggled();
     callback loop-cycled();
     callback volume-changed(float);
     callback push-to(string);
-    callback preset-clicked();
 
     border-radius: 16px;
     background: Theme.surface.with-alpha(0.96);
@@ -142,7 +137,7 @@ export component Drawer inherits Rectangle {
     drop-shadow-offset-y: 14px;
     drop-shadow-color: Theme.glass-shadow;
 
-    height: DrawerMetrics.height-for(root.show-preset);
+    height: DrawerMetrics.total-h;
 
     VerticalLayout {
         padding: DrawerMetrics.pad;
@@ -192,13 +187,10 @@ export component Drawer inherits Rectangle {
             }
         }
 
-        if root.show-preset: DrawerRow {
-            icon: root.preset-icon;
-            title: "视觉预设";
-            state: "选";
-            label: "视觉预设";
-            clicked => { root.preset-clicked(); }
-        }
+        // 视觉预设那一行连同它的选择列表一起退场:名册里只剩「封面」一档
+        // (另外五档让粒子离开封面平面,那张图就散了 —— 见 globals/viz.slint),
+        // 于是它是一个选不动的选择器,还偏偏只长在播放页,成了两处抽屉唯一的差别。
+        // 加档时把行与列表一起加回来,并且加在**这里** —— 抽屉到处一样。
 
         // 同播:设备为空时那句说明也常驻 —— 名册空不等于功能不存在。
         HorizontalLayout {

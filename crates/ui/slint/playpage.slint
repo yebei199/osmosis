@@ -37,14 +37,6 @@ export component PlayPage inherits FocusScope {
     out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
     out property <length> viz-title-y: root.viz-lyric-y - 96px;
-    // 播放页控制条的高度。紧凑版拆两行(见那一段的注释),故高一档。
-    // 控制条那一层占的高度。三面各摆一簇之后宽窄都是单行,
-    // 紧凑版不再需要两行的那一档。
-    out property <length> viz-controls-h: 84px;
-    // 两颗只在播放页出现的键,图形在宽/紧凑两处版式里各用一次 —— 常量化,
-    // 免得改一处漏一处。
-    out property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
-    out property <string> collapse-icon: "M5 8 L19 8 L12 17 Z";
 
     // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
     // key-pressed 一次都不会触发。
@@ -274,66 +266,24 @@ export component PlayPage inherits FocusScope {
     // (槽宽、颜色、把手规则各一套)、同一个时间读数显示两遍。seek 归条上
     // 那道细轨,时间归条上那一行。
 
-    // 功能层:全应用共用的那一条(playerbar.slint)。播放页这一档环大一圈、
-    // 接 warp,方向键翻成「收起」—— 差别都在组件内部,这里只管摆位置。
+    // 功能层:全应用共用的那一条(playerbar.slint)。这里只管摆位置,
+    // 尺寸一概归组件自己 —— 一根条到处一样(docs/adr/0029)。
     // 功能永远在最上层 2D、点得到 —— docs/adr/0010。
-    HorizontalLayout {
-        y: root.height - root.viz-controls-h
-            - root.safe-bottom - 24px;
-        height: root.viz-controls-h;
-        alignment: center;
-        PlayerBar {
-            immersive: true;
-            // 与壳里那根同一个内缩常量,不再各给各的(docs/adr/0029)。
-            width-cap: parent.width - root.bar-inset * 2;
-        }
+    //
+    // **不许套布局。** 条身的高度随抽屉开合变(收起 62px,展开 262px),而布局
+    // 会拿自己那一格的高度把它焊死;条内所有摆位都按 parent.height 算,于是抽屉
+    // 从条的位置往下铺、盖住主条、越过窗口下缘。按下缘定位、高度让组件自己说,
+    // 抽屉才向上长 —— 壳里那根(app.slint)一直是这么摆的。
+    PlayerBar {
+        immersive: true;
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - root.safe-bottom - 24px;
+        // 与壳里那根同一个内缩常量,不再各给各的(docs/adr/0029)。
+        width-cap: parent.width - root.bar-inset * 2;
     }
 
-    // 视觉预设的选择列表。点条上面 C 的预设键弹出,选完收起。
-    // 摆在条**上方**:列表向上长,不会把控制键顶出屏幕,也不遮住它们 ——
-    // 选的时候还看得见自己在放什么。
-    if Viz.viz-preset-list-open: Rectangle {
-        width: 150px;
-        height: Viz.viz-preset-names.length * 38px + 12px;
-        x: (root.width - self.width) / 2;
-        y: root.height - root.viz-controls-h
-            - root.safe-bottom - 24px
-            - self.height - 12px;
-        background: Theme.immersive-panel;
-        border-radius: 12px;
-        border-width: 1px;
-        border-color: Theme.immersive-line;
-
-        VerticalLayout {
-            padding: 6px;
-
-            for name[i] in Viz.viz-preset-names: Rectangle {
-                height: 38px;
-                border-radius: 8px;
-                // 当前项高亮。只有一档时它恒亮 —— 那正是"你在这一档"。
-                background: i == Viz.viz-preset
-                    ? Theme.accent.with-alpha(0.2)
-                    : (item-touch.has-hover ? Theme.overlay-weak : transparent);
-                animate background { duration: 120ms; easing: ease-out; }
-
-                Text {
-                    text: name;
-                    // 预设名是硬编码中文,走子集字体。
-                    font-family: Type.mono;
-                    font-size: 14px;
-                    color: i == Viz.viz-preset ? Theme.accent-text : Theme.immersive-text-dim;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                item-touch := TouchArea {
-                    clicked => {
-                        Viz.viz-preset = i;
-                        Viz.viz-preset-list-open = false;
-                    }
-                }
-            }
-        }
-    }
+    // 视觉预设的选择列表已退场:名册里只剩「封面」一档,列表里那一项恒高亮、
+    // 点了等于不点,而开它的那一行只长在播放页 —— 那是两处抽屉唯一的差别。
+    // 加档时列表连同抽屉里那一行一起回来,并且回到抽屉里(drawer.slint)。
   }
 }
