@@ -169,6 +169,7 @@ fn android_main(app: slint::android::AndroidApp) {
                             bands: s.bands,
                             variant: s.variant,
                             progress: s.progress,
+                            flip: s.flip,
                             pointer: s.pointer,
                             colors: s.colors,
                         })

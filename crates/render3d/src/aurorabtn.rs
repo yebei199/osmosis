@@ -27,9 +27,11 @@ pub struct AuroraBtnSlot {
     pub mode: f32,
     /// ribbon 的光带条数 1..4。
     pub bands: f32,
-    /// 0 ribbon 1 nebula 2 fluid 3 glass 4 progress。
+    /// 0 ribbon 1 nebula 2 fluid 3 glass 4 progress 5 prism。
     pub variant: f32,
     pub progress: f32,
+    /// 棱柱转到哪儿了,单位是「面」。只有 prism 变体读它。
+    pub flip: f32,
     /// 按钮内归一化指针位置。
     pub pointer: (f32, f32),
     /// 四色板:底 / 主 / 次 / 高光。
@@ -194,7 +196,7 @@ impl AuroraBtnPass {
                 slot.w, slot.h,              // res
                 p.time, slot.seed, slot.speed, slot.amp,
                 slot.mode, slot.radius, slot.bands, slot.variant,
-                slot.progress, 0.0,          // progress, _pad0
+                slot.progress, slot.flip,    // progress, flip
                 slot.pointer.0, slot.pointer.1,
                 c[0][0], c[0][1], c[0][2], 0.0,
                 c[1][0], c[1][1], c[1][2], 0.0,

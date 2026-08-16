@@ -1,4 +1,4 @@
-// 光带按钮:五个变体共用的片元程序(docs/design/handoff-shaders.md §9/§10)。
+// 光带按钮:六个变体共用的片元程序(docs/design/handoff-shaders.md §9/§10)。
 // 数学逐行移植自 docs/design/aurora-button.js 的 GLSL 参考实现,只做语法换壳;
 // fbm 四阶(按钮尺寸下与六阶无肉眼差别)。配色一律由 uniform 里的四色板给,
 // 全光谱色相环只在 mode = 0(仅 Home 空槽,docs/design.md 铁律)。
@@ -20,10 +20,11 @@ struct Params {
     radius: f32,
     // ribbon 的光带条数 1..4。
     bands: f32,
-    // 0 ribbon 1 nebula 2 fluid 3 glass 4 progress。
+    // 0 ribbon 1 nebula 2 fluid 3 glass 4 progress 5 prism。
     variant: f32,
     progress: f32,
-    _pad0: f32,
+    // 棱柱转到哪儿了,单位是「面」:0 面 A、1 面 B、2 面 C,面间为小数。
+    flip: f32,
     // 按钮内归一化指针位置。
     pointer: vec2<f32>,
     // 四色板:底 / 主 / 次 / 高光(w 分量空置)。
@@ -263,6 +264,78 @@ fn render_glass(uv: vec2<f32>, p_in: vec2<f32>, t: f32, dens: ptr<function, f32>
     return col;
 }
 
+// 三棱柱条身(#83)。柱轴沿条身长边(x),绕轴转;每转 120° 换一面。
+//
+// 真透视而不是压扁:相机架在 z = CAM_Z 处,朝 -z 看,只对 y/z 做透视除法
+// (x 方向保持正交 —— 条身很宽,给 x 也加透视会把两端拉成鱼眼)。
+// 逐像素朝三个面的平面投射线,取最近的正对面,命中点在面内的坐标就是贴图的 v。
+//
+// 这一层只是**装饰**:键仍是条上那层 2D 元素,命中测试归 slint,
+// 转面时按钮不跟着歪(docs/adr/0010、0028)。
+const CAM_Z: f32 = 3.0;
+// 正三角形外接圆半径取 1,内切圆(面到轴的距离)因此是 0.5。
+const APOTHEM: f32 = 0.5;
+const TAU_3: f32 = 2.0943951;   // 120°
+
+fn render_prism(uv: vec2<f32>, t: f32, dens: ptr<function, f32>) -> vec3<f32> {
+    // 屏幕纵向映到相机像平面。张角是这里唯一的调节旋钮:条身宽是高的九倍,
+    // 张角小了三个面挤成一条缝、根本看不出在转,大了侧面又会吃掉整条。
+    // 1.8 是实拍挑出来的:侧面各占约两成高,棱边看得见,中间那面还留得住文字。
+    let sy = (uv.y - 0.5) * 1.8;
+    let ro = vec3<f32>(0.0, 0.0, CAM_Z);
+    let rd = normalize(vec3<f32>(0.0, sy, -1.0));
+
+    let ang = u.flip * TAU_3;
+    var best_dist = 1e9;
+    var best_v = 0.0;
+    var best_face = 0.0;
+    var best_facing = 0.0;
+
+    for (var i = 0; i < 3; i = i + 1) {
+        // 第 i 面的外法线,绕 x 轴转 ang 之后的朝向。
+        let a = ang + f32(i) * TAU_3;
+        let n = vec3<f32>(0.0, cos(a), sin(a));
+        let facing = -dot(rd, n);
+        // 背对相机的面不画:那是柱体的另一侧。
+        if (facing <= 0.001) { continue; }
+        let dist = (APOTHEM - dot(ro, n)) / dot(rd, n);
+        if (dist <= 0.0 || dist >= best_dist) { continue; }
+        // 命中点在该面内的横坐标(沿柱面切向),用作贴图的 v。
+        let hit = ro + rd * dist;
+        let tangent = vec3<f32>(0.0, -sin(a), cos(a));
+        best_dist = dist;
+        best_v = dot(hit, tangent);
+        best_face = f32(i);
+        best_facing = facing;
+    }
+
+    // 一个面也没命中(理论上不会,棱柱是闭合的)——退回底色。
+    if (best_dist > 1e8) {
+        *dens = 0.0;
+        return u.col_a.rgb;
+    }
+
+    // 每面各取一段贴图,面与面之间不重样 —— 三面共用一段的话,
+    // 转过去和没转看着一模一样。
+    //
+    // 错位只动 **v**,绝不动 u:render_fluid 的 reveal 左闸是按 uv.x 开的,
+    // 那道闸保的正是条身左边的曲名与时间。动了 u 就等于把闸挪走,
+    // 面 B、面 C 上流体会漫过文字区,字直接读不出来(实拍踩过)。
+    var fl = 1.0;
+    let face_uv = vec2<f32>(uv.x, fract(best_v * 0.5 + 0.5 + best_face * 0.31));
+    let fp = (face_uv - 0.5) * vec2<f32>(u.res.x / max(u.res.y, 1.0), 1.0);
+    let base = render_fluid(face_uv, fp, t, &fl);
+
+    // 正对相机的面最亮,偏过去的面按余弦压暗 —— 那道明暗就是「它是个柱体」
+    // 唯一说得出口的证据(条身太扁,轮廓变化几乎看不见)。
+    // 压得比朗伯更狠:侧面要暗到一眼分得出是另一个面,而不是同一面的渐变。
+    let shade = 0.10 + 0.90 * pow(clamp(best_facing, 0.0, 1.0), 1.6);
+    // 棱边:相邻两面的交界压一道暗线,免得两面糊成一片。
+    let edge = smoothstep(0.0, 0.035, abs(abs(best_v) - APOTHEM * 1.1547));
+    *dens = clamp(fl * shade, 0.0, 1.0);
+    return base * shade * mix(0.35, 1.0, edge);
+}
+
 @fragment
 fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let fc = frag.xy - u.origin;
@@ -285,6 +358,9 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     } else if (u.variant < 3.5) {
         col = render_glass(uv, p, t, &dens);
         col = mix(u.col_a.rgb, col, clamp(dens * mix(0.62, 1.0, u.amp), 0.0, 1.0));
+    } else if (u.variant > 4.5) {
+        col = render_prism(uv, t, &dens);
+        col = mix(u.col_a.rgb, col, clamp(dens * mix(0.72, 1.0, u.amp), 0.0, 1.0));
     } else {
         // 进度胶囊:填充段跑流体,未完成段只留极暗底;交界处一条呼吸亮边。
         var fl = 1.0;

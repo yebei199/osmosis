@@ -134,6 +134,7 @@ fn main() {
                             bands: s.bands,
                             variant: s.variant,
                             progress: s.progress,
+                            flip: s.flip,
                             pointer: s.pointer,
                             colors: s.colors,
                         })

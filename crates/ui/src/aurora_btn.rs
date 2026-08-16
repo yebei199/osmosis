@@ -31,8 +31,14 @@ pub const VARIANT_FLUID: f32 = 2.0;
 pub const VARIANT_GLASS: f32 = 3.0;
 /// fluid 加进度填充遮罩,交界处呼吸亮边。
 pub const VARIANT_PROGRESS: f32 = 4.0;
+/// 三棱柱条身:fluid 贴在柱面上,按 `flip` 转。装饰而已 ——
+/// 键仍是条上那层 2D,永远点得到(docs/adr/0010、0028)。
+pub const VARIANT_PRISM: f32 = 5.0;
 /// 每帧向目标靠拢的比例(与参考实现同值,约 90ms 到位)。
 const CONVERGE: f32 = 0.09;
+/// 棱柱转面的收敛比例。比振幅慢一档:振幅是底色明暗,转面是整块几何在动,
+/// 太快就只剩一次闪,看不出它是转过去的。
+const FLIP_CONVERGE: f32 = 0.14;
 
 /// 一颗按钮这一帧的控制量,**物理像素**。POD,apps/* 在 seam 处平凡拷成
 /// `render3d::AuroraBtnSlot`(镜像分离,ui 与 render3d 互不依赖)。
@@ -48,6 +54,9 @@ pub struct AuroraBtnSlotControls {
     pub bands: f32,
     pub variant: f32,
     pub progress: f32,
+    /// 棱柱转到哪儿了,单位是「面」:0 面 A、1 面 B、2 面 C,面与面之间是小数。
+    /// 只有 prism 变体读它。
+    pub flip: f32,
     pub pointer: (f32, f32),
     pub colors: [[f32; 3]; 4],
 }
@@ -96,15 +105,16 @@ impl ButtonAnim {
 
 /// 主控条底这一帧走哪个变体、喂多少进度。
 ///
-/// 播放页的进度是播放键那个环,条上没有常驻细线可挂,所以 progress 变体
-/// 只在缓冲时接管条底:那道呼吸亮边就是「还在动」的信号(#69)。
-/// 比例来自外部,夹到 0..=1 再进着色器 —— NaN 会让填充遮罩整条翻掉。
-pub fn fluid_or_progress(
+/// 平时是棱柱(#83);缓冲时让位给 progress 变体,那道呼吸亮边就是
+/// 「还在动」的信号(#69)—— 条上那点转面的观赏性,不值得盖掉唯一说明
+/// 「没卡死」的提示。比例来自外部,夹到 0..=1 再进着色器 ——
+/// NaN 会让填充遮罩整条翻掉。
+pub fn prism_or_progress(
     buffering: bool,
     ratio: f32,
 ) -> (f32, f32) {
     if !buffering {
-        return (VARIANT_FLUID, 0.0);
+        return (VARIANT_PRISM, 0.0);
     }
     let p = if ratio.is_finite() {
         ratio.clamp(0.0, 1.0)
@@ -137,6 +147,8 @@ pub fn nav_key_slot(
         bands: 3.0,
         variant: VARIANT_GLASS,
         progress: 0.0,
+        // 只有棱柱变体读它。
+        flip: 0.0,
         pointer: (0.5, 0.5),
         colors,
     }
@@ -173,13 +185,13 @@ mod tests {
     #[test]
     fn the_bar_switches_to_progress_while_buffering() {
         assert_eq!(
-            fluid_or_progress(true, 0.4),
+            prism_or_progress(true, 0.4),
             (VARIANT_PROGRESS, 0.4),
             "缓冲时该走 progress 变体并喂进度"
         );
         assert_eq!(
-            fluid_or_progress(false, 0.4),
-            (VARIANT_FLUID, 0.0),
+            prism_or_progress(false, 0.4),
+            (VARIANT_PRISM, 0.0),
             "不缓冲时该切回 fluid,进度归零"
         );
     }
@@ -189,10 +201,10 @@ mod tests {
     #[test]
     fn the_progress_ratio_is_clamped_before_it_reaches_the_shader()
      {
-        assert_eq!(fluid_or_progress(true, 1.8).1, 1.0);
-        assert_eq!(fluid_or_progress(true, -0.3).1, 0.0);
+        assert_eq!(prism_or_progress(true, 1.8).1, 1.0);
+        assert_eq!(prism_or_progress(true, -0.3).1, 0.0);
         assert_eq!(
-            fluid_or_progress(true, f32::NAN).1,
+            prism_or_progress(true, f32::NAN).1,
             0.0,
             "非有限值该按 0 处理,不能带着 NaN 进着色器"
         );
@@ -229,6 +241,10 @@ pub struct ButtonBand {
     home: ButtonAnim,
     daily: ButtonAnim,
     bar: ButtonAnim,
+    /// 棱柱当前转到的角度(单位「面」)。朝界面报的面号收敛 ——
+    /// 补间放在这里而不是 .slint:global 不许挂 animate,而摆在元素上就会
+    /// 每个实例各转各的(音乐页与播放页覆层可以同时在场)。
+    flip: f32,
     time: f32,
     last: Option<web_time::Instant>,
 }
@@ -269,6 +285,10 @@ impl ButtonBand {
                 ui.global::<Player>().get_is_playing(),
                 (0.72, 0.5),
             );
+            // 棱柱朝目标面走一步。与振幅同一套收敛,不为一条曲线养第二台机器。
+            let face =
+                ui.global::<Shell>().get_bar_face() as f32;
+            self.flip += (face - self.flip) * FLIP_CONVERGE;
             {
                 let now = web_time::Instant::now();
                 if let Some(last) = self.last {
@@ -315,6 +335,8 @@ impl ButtonBand {
                         bands: 3.0,
                         variant: VARIANT_NEBULA,
                         progress: 0.0,
+                        // 只有棱柱变体读它。
+                        flip: 0.0,
                         pointer: (
                             self.home.px,
                             self.home.py,
@@ -332,6 +354,8 @@ impl ButtonBand {
                         bands: 3.0,
                         variant: VARIANT_RIBBON,
                         progress: 0.0,
+                        // 只有棱柱变体读它。
+                        flip: 0.0,
                         pointer: (
                             self.daily.px,
                             self.daily.py,
@@ -357,8 +381,9 @@ impl ButtonBand {
                         amp: self.bar.amp,
                         mode: 1.0,
                         bands: 3.0,
-                        variant: VARIANT_FLUID,
+                        variant: VARIANT_PRISM,
                         progress: 0.0,
+                        flip: self.flip,
                         pointer: (self.bar.px, self.bar.py),
                         colors: GREENS,
                     });
@@ -379,7 +404,7 @@ impl ButtonBand {
                     && viz_bar_h > 1.0)
                     .then(|| {
                         let (variant, progress) =
-                            fluid_or_progress(
+                            prism_or_progress(
                                 ui.global::<Player>()
                                     .get_buffering(),
                                 ui.global::<Player>()
@@ -407,6 +432,7 @@ impl ButtonBand {
                             bands: 3.0,
                             variant,
                             progress,
+                            flip: self.flip,
                             pointer: (0.72, 0.5),
                             colors: GREENS,
                         });
@@ -445,6 +471,8 @@ impl ButtonBand {
                         bands: 3.0,
                         variant: VARIANT_GLASS,
                         progress: 0.0,
+                        // 只有棱柱变体读它。
+                        flip: 0.0,
                         pointer: (0.5, 0.5),
                         colors: GREENS,
                     });
