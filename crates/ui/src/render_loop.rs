@@ -130,10 +130,18 @@ pub fn run_with_renderers(
             lyric.tick_line(&ui, &lyrics);
 
             lyric.tick_window(&ui, &lyrics);
-            // ── 播放页 warp 视觉 ──
-            // 门只剩一条:播放页展开。暂停照样动(没音频时点云按环境节奏慢转),
-            // 失焦照样动 —— 前台恒满帧,可见即前台。
-            if ui.global::<Shell>().get_play_page_open() {
+            // ── warp 与播放页场景 ──
+            // **两道门,不是一道**(#87):
+            // warp 那张 192×192 的小图只要手上有歌就出 —— 环形播放键里那圈
+            // 随音乐翻涌的画面靠它,而键在每一页上都有,彩虹环凭什么只有
+            // 播放页配得上(用户点名)。
+            // 场景那一趟(封面点云 + 标注卡 + 遮挡层)仍只在播放页开着时走:
+            // 它是 9216 个立方体的全绘,而且与卡墙互斥 —— render_viz_frame
+            // 进门就把墙的相机关掉,常驻会把音乐页的墙渲没。
+            // 暂停照样动,失焦照样动 —— 前台恒满帧,可见即前台。
+            let wants_scene =
+                ui.global::<Shell>().get_play_page_open();
+            if ui.global::<Player>().get_has_track() {
                 if let Some(audio) =
                     viz::payload(&viz_source)
                 {
@@ -152,7 +160,15 @@ pub fn run_with_renderers(
                             // 换歌那一帧才有动作(清空/换图),取走即回到"没消息"。
                             // `CoverPixels` 就是 `VizCover`(见 viz.rs),
                             // 直接交出去,不逐字段再抄一遍兆级的像素。
-                            cover: cover.take(),
+                            // **只在渲场景那一帧取走**:不渲场景时取走等于把
+                            // 待处理的换封面消息丢进垃圾桶,等播放页真开时
+                            // 点云还挂着上一首的封面(CONTEXT.md「封面点云」
+                            // 那个 bug 的同一个坑)。
+                            cover: if wants_scene {
+                                cover.take()
+                            } else {
+                                Default::default()
+                            },
                             pointer: VizPointer {
                                 x: ui
                                     .global::<Viz>()
@@ -176,31 +192,38 @@ pub fn run_with_renderers(
                             // 而这个开关是它的输入,拿不到同帧的答案。差一帧看不出来,
                             // 换来的是卡片转出画面时那第二遍全场景绘制立刻停 ——
                             // 9216 个立方体再来一遍,手机上不能白烧。
-                            needs_occluder: viz_anchor
-                                .is_some(),
+                            needs_scene: wants_scene,
+                            needs_occluder: wants_scene
+                                && viz_anchor.is_some(),
                         },
                         size.width,
                         size.height,
                     ) {
+                        // warp 每帧都写:环形键到处都在。
                         ui.global::<Viz>()
                             .set_viz_bg(imgs.warp);
-                        ui.global::<Viz>()
-                            .set_viz_scene(imgs.scene);
-                        ui.global::<Viz>()
-                            .set_viz_occluder(
-                                imgs.occluder,
-                            );
-                        viz_anchor = imgs.anchor;
-                        if let Some((x, y)) = viz_anchor {
+                        // 场景那三样只在播放页开着时写 —— 关着时写空图
+                        // 是每帧一次白白的属性变更通知。
+                        if wants_scene {
                             ui.global::<Viz>()
-                                .set_viz_anchor_x(x);
+                                .set_viz_scene(imgs.scene);
                             ui.global::<Viz>()
-                                .set_viz_anchor_y(y);
+                                .set_viz_occluder(
+                                    imgs.occluder,
+                                );
+                            viz_anchor = imgs.anchor;
+                            if let Some((x, y)) = viz_anchor
+                            {
+                                ui.global::<Viz>()
+                                    .set_viz_anchor_x(x);
+                                ui.global::<Viz>()
+                                    .set_viz_anchor_y(y);
+                            }
+                            ui.global::<Viz>()
+                                .set_viz_anchor_visible(
+                                    viz_anchor.is_some(),
+                                );
                         }
-                        ui.global::<Viz>()
-                            .set_viz_anchor_visible(
-                                viz_anchor.is_some(),
-                            );
                     }
                 }
             } else {

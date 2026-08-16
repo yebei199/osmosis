@@ -107,7 +107,13 @@ fn android_main(app: slint::android::AndroidApp) {
             }))
         },
         move |v, w, h| {
-            let (viz_scene, occluder, anchor) = scene
+            // 场景那一趟只在播放页开着时走(#87):它是 9216 个立方体的全绘,
+            // 而且进门就把卡墙的相机关掉 —— 常驻会把音乐页的墙渲没。
+            // warp 是 192×192 一张独立小图,每帧照出,环形键的彩虹靠它。
+            let (viz_scene, occluder, anchor) = if v
+                .needs_scene
+            {
+                scene
                 .borrow_mut()
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
@@ -137,7 +143,14 @@ fn android_main(app: slint::android::AndroidApp) {
                     needs_occluder: v.needs_occluder,
                     width: w,
                     height: h,
-                });
+                })
+            } else {
+                (
+                    slint::Image::default(),
+                    slint::Image::default(),
+                    None,
+                )
+            };
             Some(ui::VizImages {
                 warp: warp.render_frame(
                     v.time,
