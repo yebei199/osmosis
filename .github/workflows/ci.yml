@@ -5,10 +5,16 @@ on:
   #
   # master 的 push 也不触发,尽管进主干正是最该验证的时刻:GitHub 给 `pull_request`
   # 跑的本来就是**合并后**的结果(base 与 head 的临时 merge ref),PR 绿了就等于合进去
-  # 绿了。合并后再跑一遍是同一件事算第二次,而这个 workflow 一轮三十多分钟。
+  # 绿了。合并后再跑一遍是同一件事算第二次,而这个 workflow 一轮八到十分钟。
   # 代价是直接推 master(热修、网页端改文件)完全没有 CI —— 那种改动请走 PR。
+  #
+  # draft 期间不跑,由下面每个 job 的 if 拦住 —— workflow 级没有 if 的写法。
+  # types 要点名 ready_for_review:默认的 opened/synchronize/reopened 不含这个动作,
+  # 不补上的话,一个转正的 PR 得再推一次 commit 才有 CI。
   pull_request:
-  # 想在某个分支上手动跑一次时用。
+    types: [opened, synchronize, reopened, ready_for_review]
+  # 想在某个分支上手动跑一次时用。draft 的判断对它恒真(没有 pull_request 这个字段),
+  # 所以 draft PR 想提前跑一轮,从这里手动发。
   workflow_dispatch:
 
 # 这里刻意不设 RUSTFLAGS。它进 cargo 的构建指纹,本地 `just ci` 与 `just desktop-dev`
@@ -19,7 +25,7 @@ env:
   CARGO_TERM_COLOR: always
 
 # 一个 ref 上只留最新那一轮。往 PR 上连推两次时,先跑的那轮验证的是一个已经被
-# 覆盖掉的 head —— 让它跑完只是占着二十来分钟的机器时间和别人的排队位置。
+# 覆盖掉的 head —— 让它跑完只是占着十分钟的机器时间和别人的排队位置。
 # `pull_request` 的 github.ref 是 refs/pull/<n>/merge,每个 PR 各一个,
 # 两个 PR 不会互相取消。
 concurrency:
@@ -35,6 +41,7 @@ jobs:
   # 下面 clippy job 要 `components: clippy` 是同一个道理。
   fmt:
     name: fmt
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -55,6 +62,7 @@ jobs:
   # 桌面链路:workspace 的 default-members,外加 server 与 xtask。
   test:
     name: test
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     # 兜卡死用的,不是时间预算。观测到的最长一轮是 36m57s,那还是 test 与 clippy
     # 合在一个 job、依赖按 -O3 编的旧配置;60 分钟离它足够远。不设的话按 Actions
@@ -108,6 +116,7 @@ jobs:
 
   clippy:
     name: clippy
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -134,6 +143,7 @@ jobs:
   # `架构边界` 里的 web_ios_free_of_3d 仍然覆盖 app-ios 的依赖形状。
   cross-check:
     name: check ${{ matrix.target }}
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -179,6 +189,7 @@ jobs:
   # 跑到同一份代码。`just ci` 调的是同一个命令。见 docs/adr/0004。
   boundaries:
     name: 架构边界
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
