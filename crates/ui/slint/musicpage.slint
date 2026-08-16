@@ -3,7 +3,6 @@ import { Palette } from "std-widgets.slint";
 import { Theme, Type } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
 import { HoverButton } from "widgets.slint";
-import { PlayerBar } from "playerbar.slint";
 import { MusicBar, MusicRail, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
@@ -393,17 +392,8 @@ export component MusicPage inherits VerticalLayout {
     }
 
 
-    // 控制条:全应用共用的那一条(playerbar.slint)。宽窄两种版式、三面的
-    // 内容取舍都在组件内部,这里只管给它一个宽度、把它摆在页尾。
-    //
-    // 条仍在布局流里(列表不从它底下穿过),完全悬浮等 #66 动页面装配时一并做。
-    // `if` 在条外面:条件子元素不给父元素贡献 preferred 尺寸,
-    // 放里面胶囊会坍缩成 0 宽、内容从中心溢出(实拍踩过)。
-    if Player.has-track: HorizontalLayout {
-        // 条收自己内容的宽、居中,只封一个上限免得溢出窗口。
-        alignment: center;
-        PlayerBar {
-            width-cap: parent.width - 32px;
-        }
-    }
+    // 控制条不在这一页里 —— 它是壳持有的那一根,一个实例管四个页签
+    // (app.slint,docs/adr/0029)。这里只把页尾垫高,免得列表最后几行
+    // 藏在条底下。垫的量 = 条高 + 底边距 + 富余。
+    Rectangle { height: 100px; }
 }

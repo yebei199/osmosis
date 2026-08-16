@@ -83,6 +83,10 @@ global Nav {
 }
 
 export component MainWindow inherits Window {
+    // 控制条左右内缩。**同一时刻全应用一个数** —— 此前三个调用点各给各的
+    // (16 / 24 / 32px),切页时条的边沿在跳(docs/adr/0029)。
+    // 随宽度收是另一回事:手机上 24px 的内缩会从本就不够的文字区里再拿走 48px。
+    out property <length> bar-inset: Shell.compact ? 12px : 24px;
     // 帧率,由 Rust 测量并推送。仅在 `Shell.show-fps` 为真时被推送。
     // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
     // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
@@ -467,14 +471,14 @@ export component MainWindow inherits Window {
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
                 if Shell.current-tab == 1: MusicPage { }
 
-                // 迷你播放条:壳持有、跨应用常驻,有歌才摆(docs/adr/0024)。
-                // 一份管三页 —— 音乐页有完整条,别处摆这颗小胶囊,点它就地展开。
-                // 改版前只有首页有,个人主页与设置页整个没有控制入口(#81)。
-                if Player.has-track && Shell.current-tab != 1: PlayerBar {
-                    mini: true;
+                // 控制条:壳持有、跨应用常驻(CONTEXT.md「控制条」)。
+                // **一个实例管四个页签** —— 不是每页各摆一根:各摆一根就有各自的
+                // 容器内缩与各自的形态,而那正是用户点名的「不统一」(docs/adr/0029)。
+                // 播放页开着时让位:覆层整个盖住这一层,它自己带一根同样的条。
+                if Player.has-track && !Shell.play-page-open: PlayerBar {
                     x: (parent.width - self.width) / 2;
                     y: parent.height - self.height - 22px;
-                    width-cap: parent.width - 48px;
+                    width-cap: parent.width - root.bar-inset * 2;
                 }
 
                 // Shell.fps 浮层:content 的最后一个子元素 → 画在最上层。
@@ -548,6 +552,7 @@ export component MainWindow inherits Window {
     if Shell.play-page-open: PlayPage {
         width: 100%;
         height: 100%;
+        bar-inset: root.bar-inset;
         safe-left: root.safe-area-insets.left;
         safe-right: root.safe-area-insets.right;
         safe-top: root.safe-area-insets.top;

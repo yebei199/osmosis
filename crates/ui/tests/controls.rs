@@ -43,44 +43,32 @@ fn wide_page() -> MainWindow {
     ui
 }
 
-/// 随机、循环与音量翻到面 B 上了(#81):三面各摆一簇,
-/// 拨它们之前先把条翻过去。
+/// 随机、循环与音量住进抽屉了(#84/docs/adr/0029):三面轮换退场,
+/// 拨它们之前先把抽屉拉开。
 fn modes_face(ui: &MainWindow) {
-    ui.global::<Shell>().set_bar_face(1);
+    // 幂等:抽屉已经开着就别再拨一下 —— 那会把它关上。
+    // (helper 与用例都会调它,不幂等就是开了又关。)
+    if testing::ElementHandle::find_by_accessible_label(
+        ui,
+        "收起更多",
+    )
+    .next()
+    .is_some()
+    {
+        return;
+    }
+    testing::ElementHandle::find_by_accessible_label(
+        ui, "更多",
+    )
+    .next()
+    .expect("找不到抽屉键")
+    .invoke_accessible_default_action();
 }
 
-/// 音量滑块默认收起,点喇叭才展开。
-///
-/// 常驻滑块在紧凑版式里塞不下:那一排的最小宽度已经约 470px,
-/// 而手机内容区只有 ~360px —— 那正是紧凑版拆两行的原因。
-#[test]
-fn the_volume_slider_starts_collapsed() {
-    let ui = wide_page();
-    modes_face(&ui);
-
-    assert!(
-        present(&ui, "VolumeControl::speaker"),
-        "喇叭键该一直在"
-    );
-    assert!(
-        !present(&ui, "VolumeControl::slider"),
-        "滑块默认不该展开"
-    );
-
-    let speaker =
-        testing::ElementHandle::find_by_element_id(
-            &ui,
-            "VolumeControl::speaker",
-        )
-        .next()
-        .expect("找不到喇叭键");
-    speaker.invoke_accessible_default_action();
-
-    assert!(
-        present(&ui, "VolumeControl::slider"),
-        "点了之后该展开"
-    );
-}
+// 「音量滑块默认收起,点喇叭才展开」这条**前提已被 docs/adr/0029 改掉**:
+// 滑块在抽屉里常驻。原来的折叠是为「一排塞不下」而设的(那一排最小宽约
+// 470px,手机只有 ~360px),抽屉里没有那个约束,再让人先点开喇叭是白多一步。
+// 新的断言在 player_bar.rs 的 the_drawer_holds_the_modes_and_sync 里。
 
 
 /// **随机播放有自己的键了。**

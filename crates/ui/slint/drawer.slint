@@ -1,0 +1,223 @@
+// 控制条的抽屉:向上展开的开关面板(docs/adr/0029)。
+//
+// 主条只留高频核心,其余住这里。每行都是「图标 + 名字 + 状态文字」——
+// **开关的状态由填充底色表达,不由图标明暗表达**。此前那套失效得很彻底:
+// 深色档下 `accent` 与 `accent-ink` 是同一个 #8fc46a,开与关的唯一差别是
+// 图标暗 15%,谁也看不出随机到底开着没有(用户点名)。
+//
+// 抽屉里有的是横向空间,所以三态直接写字:「循环: 列表」比让人辨认图标里
+// 那个小小的 1 靠谱得多。
+
+import { Theme, Type } from "theme.slint";
+import { DeviceRow } from "types.slint";
+import { SyncStrip } from "controls.slint";
+import { VolumeControl } from "progress.slint";
+
+// 抽屉的行度量。抽出成 global 是因为**条身要在抽屉实例化之前就知道它有多高**:
+// 抽屉长在一个 `if` 里,而条件子元素在 slint 里既引用不到、也不给父元素贡献
+// preferred 尺寸(ADR 0028 已经为这条栽过一次)。让两边读同一个函数,
+// 好过在条身里再抄一遍行高。
+export global DrawerMetrics {
+    out property <length> row-h: 44px;
+    out property <length> sync-h: 38px;
+    out property <length> pad: 8px;
+    out property <length> gap: 2px;
+
+    // 模式两行 + 音量一行 + 同播一行,播放页多一行视觉预设。
+    pure public function height-for(show-preset: bool) -> length {
+        self.pad * 2
+            + self.row-h * (show-preset ? 4 : 3)
+            + self.sync-h
+            + self.gap * (show-preset ? 4 : 3)
+    }
+}
+
+// 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
+export component DrawerRow inherits Rectangle {
+    in property <string> icon;
+    // 这一行叫什么(左侧文字)。
+    in property <string> title;
+    // 此刻是什么状态(右侧文字)。开关类写「开 / 关」,三态类写具体那一态。
+    in property <string> state;
+    // 读屏念的那句。含状态 —— 三态开关光靠 checked 说不清自己是哪一态。
+    in property <string> label;
+    in property <bool> checked: false;
+
+    callback clicked();
+
+    height: DrawerMetrics.row-h;
+    border-radius: 10px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: 120ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 12px;
+        spacing: 12px;
+
+        // 图标芯片:开着填强调色、图标反白;关着透底描边。
+        // 这是本行唯一的状态视觉,不靠图标自身的明暗。
+        VerticalLayout {
+            alignment: center;
+            chip := Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: 8px;
+                background: root.checked ? Theme.accent : transparent;
+                border-width: 1px;
+                border-color: root.checked ? Theme.accent : Theme.overlay;
+                animate background, border-color { duration: 140ms; easing: ease-out; }
+
+                Path {
+                    width: 18px;
+                    height: 18px;
+                    viewbox-width: 24;
+                    viewbox-height: 24;
+                    commands: root.icon;
+                    // 填在强调色上要能读出来 —— accent-text 就是为这个存在的。
+                    stroke: root.checked ? Theme.accent-text : Theme.text-dim;
+                    stroke-width: 1.6px;
+                    fill: root.checked ? Theme.accent-text : Theme.text-dim;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 14px;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            state-text := Text {
+                text: root.state;
+                font-family: Type.mono;
+                color: root.checked ? Theme.accent : Theme.text-faint;
+                font-size: 12px;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        accessible-role: button;
+        accessible-label: root.label;
+        accessible-checkable: true;
+        accessible-checked: root.checked;
+        accessible-action-default => { root.clicked(); }
+    }
+}
+
+// 抽屉本体。行的顺序按使用频率:模式在上,声音居中,设备与特效沉底。
+export component Drawer inherits Rectangle {
+    in property <bool> shuffle-on;
+    // 0 关 / 1 列表 / 2 单曲。int 镜像的理由同 Player 那边:
+    // builtin 枚举不生成 Rust 访问器。
+    in property <int> loop-mode;
+    in property <float> volume;
+    in property <[DeviceRow]> devices;
+    // 播放页才有的那一行:视觉预设的列表长在覆层里,别处点了没反应。
+    in property <bool> show-preset: false;
+    in property <string> preset-icon;
+
+    callback shuffle-toggled();
+    callback loop-cycled();
+    callback volume-changed(float);
+    callback push-to(string);
+    callback preset-clicked();
+
+    border-radius: 16px;
+    background: Theme.surface.with-alpha(0.96);
+    border-width: 1px;
+    border-color: Theme.glass-edge;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 14px;
+    drop-shadow-color: Theme.glass-shadow;
+
+    height: DrawerMetrics.height-for(root.show-preset);
+
+    VerticalLayout {
+        padding: DrawerMetrics.pad;
+        spacing: DrawerMetrics.gap;
+
+        DrawerRow {
+            icon: root.shuffle-icon;
+            title: "随机";
+            state: root.shuffle-on ? "开" : "关";
+            label: "随机播放";
+            checked: root.shuffle-on;
+            clicked => { root.shuffle-toggled(); }
+        }
+
+        DrawerRow {
+            icon: root.loop-mode == 2 ? root.loop-one-icon : root.loop-icon;
+            title: "循环";
+            state: root.loop-name;
+            // 三态写进标签:checked 只说得出开没开,说不出列表还是单曲。
+            label: "循环: " + root.loop-name;
+            checked: root.loop-mode > 0;
+            clicked => { root.loop-cycled(); }
+        }
+
+        // 音量:抽屉里有地方,滑块常驻,不必再点开一层。
+        HorizontalLayout {
+            height: DrawerMetrics.row-h;
+            padding-left: 8px;
+            padding-right: 12px;
+            spacing: 12px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: "音量";
+                    color: Theme.text;
+                    font-size: 14px;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                VolumeControl {
+                    expanded: true;
+                    volume: root.volume;
+                    changed(v) => { root.volume-changed(v); }
+                }
+            }
+        }
+
+        if root.show-preset: DrawerRow {
+            icon: root.preset-icon;
+            title: "视觉预设";
+            state: "选";
+            label: "视觉预设";
+            clicked => { root.preset-clicked(); }
+        }
+
+        // 同播:设备为空时那句说明也常驻 —— 名册空不等于功能不存在。
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 12px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            alignment: start;
+            SyncStrip {
+                devices: root.devices;
+                push-to(id) => { root.push-to(id); }
+            }
+        }
+    }
+
+    // 图标一律内嵌 SVG path,viewbox 24×24,不引外部资源。
+    property <string> shuffle-icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
+    property <string> loop-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
+    property <string> loop-one-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";
+    property <string> loop-name: root.loop-mode == 0 ? "关"
+        : (root.loop-mode == 1 ? "列表" : "单曲");
+}

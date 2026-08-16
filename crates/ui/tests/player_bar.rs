@@ -1,6 +1,6 @@
-//! 统一播放条 PlayerBar 的界面行为(#81)。无头跑,与 controls.rs 同一套路。
+//! 控制条:主条 + 抽屉(#84/#85/#86)。无头跑,与 controls.rs 同一套路。
 //!
-//! 这一组管的是「条在不在、摆得对不对、翻得动翻不动」;
+//! 这一组管的是「一根条到处一样、抽屉装得下、开关看得出」。
 //! 进度算得对不对仍由 progress::ratio 那边证。
 
 use i_slint_backend_testing as testing;
@@ -10,8 +10,9 @@ use ui::Player;
 use ui::Session;
 use ui::Shell;
 
-/// 按无障碍标签找键。那一条上的圆键都是同一个 `RoundControl`,
-/// 元素 id 分不开它们,而标签本来就是为了让人分得开才有的。
+/// 除播放页外的四个页签。播放页是覆层,由 `play-page-open` 单开。
+const PAGE_TABS: [i32; 4] = [0, 1, 2, 3];
+
 fn key(
     ui: &MainWindow,
     label: &str,
@@ -20,13 +21,26 @@ fn key(
         .next()
 }
 
-fn present(ui: &MainWindow, id: &str) -> bool {
-    testing::ElementHandle::find_by_element_id(ui, id)
-        .next()
-        .is_some()
+fn ids(
+    ui: &MainWindow,
+    id: &str,
+) -> Vec<testing::ElementHandle> {
+    testing::ElementHandle::find_by_element_id(ui, id).collect()
 }
 
-/// 登录、有歌、宽版式。条要在这三样都齐了才摆得出来。
+fn present(ui: &MainWindow, id: &str) -> bool {
+    !ids(ui, id).is_empty()
+}
+
+/// 把窗口调到手机那么窄。**只拨 `compact` 那一位是不够的** ——
+/// 它只说明「该用紧凑版式」,窗口宽度不跟着变,条照样是宽的,
+/// 于是所有关于让位的断言都会假通过。
+fn narrow(ui: &MainWindow) {
+    ui.window().set_size(slint::LogicalSize::new(360.0, 780.0));
+    ui.global::<Shell>().set_compact(true);
+}
+
+/// 登录、有歌、宽版式。条要这三样齐了才摆得出来。
 fn playing_app() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
@@ -36,28 +50,194 @@ fn playing_app() -> MainWindow {
     ui
 }
 
-/// 非音乐页也有播放条:首页、个人主页、设置页在有歌时都摆迷你胶囊。
-/// 改版前这三页里只有首页有,另两页整个没有 —— 换页就丢失控制入口。
+/// 条身那颗胶囊此刻的几何。没有条时返回 None。
+fn bar_box(
+    ui: &MainWindow,
+) -> Option<(f32, f32, f32, f32)> {
+    let h = ids(ui, "PlayerBar::capsule").into_iter().next()?;
+    let p = h.absolute_position();
+    let s = h.size();
+    Some((p.x, p.y, s.width, s.height))
+}
+
+/// 按无障碍标签取一颗键的直径(宽)。
+fn key_width(ui: &MainWindow, label: &str) -> f32 {
+    key(ui, label)
+        .unwrap_or_else(|| panic!("找不到「{label}」"))
+        .size()
+        .width
+}
+
+/// 环形播放键的直径。它的标签随播放态在「播放 / 暂停」之间换,
+/// 任一时刻只有一个在场 —— 探针得认这一点,不能两个都要。
+fn ring_width(ui: &MainWindow) -> f32 {
+    key(ui, "播放")
+        .or_else(|| key(ui, "暂停"))
+        .expect("找不到环形播放键")
+        .size()
+        .width
+}
+
+// ============ 一根条到处一样(#85)============
+
+/// 五处页面都摆同一根条:首页、个人主页、设置、音乐页,以及播放页覆层。
+/// 改版前非音乐页那颗是另一套内容(少上一曲、少时间),换页就换了根条。
 #[test]
-fn the_mini_bar_shows_on_every_non_music_page() {
+fn every_page_carries_the_same_bar() {
     let ui = playing_app();
 
-    for tab in [0, 2, 3] {
+    for tab in PAGE_TABS {
         ui.global::<Shell>().set_current_tab(tab);
         assert!(
             present(&ui, "PlayerBar::capsule"),
-            "tab {tab} 上该有迷你播放条"
+            "tab {tab} 上该有控制条"
+        );
+    }
+
+    ui.global::<Shell>().set_play_page_open(true);
+    assert!(
+        ids(&ui, "PlayerBar::capsule").len() >= 1,
+        "播放页覆层上也该有同一根条"
+    );
+}
+
+/// 条高、圆环直径、按键直径、封面尺寸在所有页面上完全相同。
+/// 此前是六档条高、五档圆环 —— 这条把「不统一」钉成可回归的数字。
+#[test]
+fn the_bar_geometry_is_identical_everywhere() {
+    let ui = playing_app();
+    let mut seen: Vec<(i32, f32, f32, f32, f32)> = vec![];
+
+    for tab in PAGE_TABS {
+        ui.global::<Shell>().set_current_tab(tab);
+        let (_, _, _, h) =
+            bar_box(&ui).expect("该有条");
+        seen.push((
+            tab,
+            h,
+            ring_width(&ui),
+            key_width(&ui, "上一首"),
+            key_width(&ui, "下一首"),
+        ));
+    }
+
+    let first = seen[0];
+    for row in &seen[1..] {
+        assert_eq!(
+            (row.1, row.2, row.3, row.4),
+            (first.1, first.2, first.3, first.4),
+            "tab {} 的条高/环径/键径与 tab {} 不一致:{row:?} vs {first:?}",
+            row.0,
+            first.0
         );
     }
 }
 
-/// 没歌时哪一页都不摆条。空壳会让人以为点它能开始放,而那时没有「开始」可言。
+/// 条身左右内缩在所有调用点相同。此前三处 16 / 24 / 32px,切页时边沿在跳。
+#[test]
+fn the_bar_inset_is_identical_everywhere() {
+    let ui = playing_app();
+    let window_w = ui.window().size().width as f32
+        / ui.window().scale_factor();
+    let mut insets: Vec<(i32, f32)> = vec![];
+
+    for tab in PAGE_TABS {
+        ui.global::<Shell>().set_current_tab(tab);
+        let (x, _, w, _) = bar_box(&ui).expect("该有条");
+        // 右内缩;左内缩由居中保证与它相等。
+        insets.push((tab, window_w - (x + w)));
+    }
+
+    let first = insets[0].1;
+    for (tab, inset) in &insets[1..] {
+        assert!(
+            (inset - first).abs() < 0.5,
+            "tab {tab} 的内缩 {inset} 与 tab {} 的 {first} 不一致",
+            insets[0].0
+        );
+    }
+}
+
+/// 每一页都能切上一首。改版前迷你形态压根没有这颗键,
+/// 在设置页想切回上一首是做不到的。
+#[test]
+fn previous_track_is_reachable_from_every_page() {
+    let ui = playing_app();
+
+    for tab in PAGE_TABS {
+        ui.global::<Shell>().set_current_tab(tab);
+        assert!(
+            key(&ui, "上一首").is_some(),
+            "tab {tab} 上该能切上一首"
+        );
+    }
+}
+
+/// 窄容器下条不溢出,让位的是曲名那一列而不是按键。
+/// 钉 #68 那次挤爆回归:一行塞不下时按钮会被推出屏外。
+#[test]
+fn a_narrow_container_shrinks_the_title_not_the_keys() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    narrow(&ui);
+
+    let window_w = ui.window().size().width as f32
+        / ui.window().scale_factor();
+    for label in ["上一首", "下一首", "更多"] {
+        let k = key(&ui, label)
+            .unwrap_or_else(|| panic!("找不到「{label}」"));
+        let right =
+            k.absolute_position().x + k.size().width;
+        assert!(
+            right <= window_w,
+            "紧凑版式里「{label}」右缘 {right} 超出窗宽 {window_w}"
+        );
+    }
+}
+
+/// 窄到只放得下一样时,留下的是曲名而不是时间读数。
+/// 位置本来就有进度轨在报,而「在放哪首」没有第二个出处。
+/// 两次实拍才试出这个顺序:时间跟歌手串一行会被末尾吃掉,
+/// 给时间一个不让位的槽又会把曲名压成一个省略号。
+#[test]
+fn a_narrow_bar_keeps_the_title_and_drops_the_clock() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    narrow(&ui);
+
+    let title = ids(&ui, "PlayerBar::title")
+        .into_iter()
+        .next()
+        .expect("找不到曲名");
+    assert!(
+        title.size().width > 60.0,
+        "窄档下曲名该还剩得下几个字,实得 {}",
+        title.size().width
+    );
+    assert!(
+        !present(&ui, "PlayerBar::clock"),
+        "窄到放不下时时间该整格收起,而不是留个被切断的读数"
+    );
+}
+
+/// 宽到放得下时,时间读数在场。
+#[test]
+fn a_wide_bar_shows_the_clock() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    assert!(
+        present(&ui, "PlayerBar::clock"),
+        "宽版式下该看得见时间读数"
+    );
+}
+
+/// 没歌时哪一页都不摆条。空壳会让人以为点它能开始放。
 #[test]
 fn no_bar_anywhere_without_a_track() {
     let ui = playing_app();
     ui.global::<Player>().set_has_track(false);
 
-    for tab in [0, 1, 2, 3] {
+    for tab in PAGE_TABS {
         ui.global::<Shell>().set_current_tab(tab);
         assert!(
             !present(&ui, "PlayerBar::capsule"),
@@ -66,238 +246,311 @@ fn no_bar_anywhere_without_a_track() {
     }
 }
 
-/// 迷你条点非控件区就地展开成完整条,再点收回。
-/// 「就地」是关键:展开不该把人踢去音乐页,当前页的上下文要留着。
+/// 三面轮换退场:面号、指示点、翻面手势都不该还在。
+/// 留着任何一个,就还有第二种「条现在长什么样」。
 #[test]
-fn tapping_the_mini_bar_expands_it_in_place() {
+fn the_three_face_rotation_is_gone() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_current_tab(1);
 
-    // 迷你形态没有切歌键,那是完整条面 A 才有的。
-    assert!(key(&ui, "上一首").is_none(), "迷你形态不该有上一首");
-
-    key(&ui, "展开播放条")
-        .expect("找不到展开手势")
-        .invoke_accessible_default_action();
-
+    for label in ["翻到播放", "翻到模式", "翻到同播"] {
+        assert!(
+            key(&ui, label).is_none(),
+            "指示点「{label}」该随三面轮换一起退场"
+        );
+    }
     assert!(
-        key(&ui, "上一首").is_some(),
-        "展开后该露出面 A 的切歌键"
+        !present(&ui, "PlayerBar::flip-touch"),
+        "翻面手势该退场"
     );
-    assert_eq!(
-        ui.global::<Shell>().get_current_tab(),
-        2,
-        "展开是就地的,不该换页"
-    );
-
-    key(&ui, "收起播放条")
-        .expect("找不到收起手势")
-        .invoke_accessible_default_action();
-    assert!(key(&ui, "上一首").is_none(), "收回后该退回迷你形态");
 }
 
-/// 迷你条上的环形键仍然只切播放,不触发展开 ——
-/// 控件区的点击归控件,别被底下那层展开手势吃掉。
+// ============ 封面兼任播放页进出口(#85)============
+
+/// 条外点封面展开播放页,播放页里点封面收起。一个入口管两个方向,
+/// 专用的 ▲/▼ 键随之退场。
 #[test]
-fn the_mini_ring_toggles_playback_without_expanding() {
+fn the_cover_toggles_the_play_page() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(2);
-    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Shell>().set_current_tab(1);
+
+    // 钉到封面元素本身:此前有一颗专用箭头键也叫这个标签,
+    // 只按标签找会匹配到它,测不出「封面兼任入口」。
+    assert!(
+        present(&ui, "PlayerBar::cover"),
+        "封面该是个具名元素,它就是播放页的进出口"
+    );
+    let cover = ids(&ui, "PlayerBar::cover")
+        .into_iter()
+        .next()
+        .expect("找不到封面");
+    assert_eq!(
+        cover.accessible_label().as_deref(),
+        Some("展开播放页"),
+        "条外时封面该报成展开播放页"
+    );
+    cover.invoke_accessible_default_action();
+    assert!(
+        ui.global::<Shell>().get_play_page_open(),
+        "点封面该展开播放页"
+    );
+
+    let cover = ids(&ui, "PlayerBar::cover")
+        .into_iter()
+        .next()
+        .expect("找不到封面");
+    assert_eq!(
+        cover.accessible_label().as_deref(),
+        Some("收起播放页"),
+        "播放页里同一个封面该翻成收起"
+    );
+    cover.invoke_accessible_default_action();
+    assert!(
+        !ui.global::<Shell>().get_play_page_open(),
+        "再点该收起"
+    );
+}
+
+/// 播放页上只剩一套 seek 面。此前条上的横轨与右缘竖向滑条并存,
+/// 两套槽宽、颜色、把手规则,而只有竖的那条报 slider 角色。
+#[test]
+fn the_play_page_has_exactly_one_seek_surface() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_play_page_open(true);
+
+    assert!(
+        !present(&ui, "PlayPage::seek-slider"),
+        "竖向进度条该退场,seek 只归条上那道轨"
+    );
+}
+
+/// 时间读数全应用只剩一份。播放页此前在条上和右缘各显示一次,
+/// 两种字体两种颜色。
+#[test]
+fn the_time_readout_appears_once() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_play_page_open(true);
+
+    assert!(
+        !present(&ui, "PlayPage::play-time-readout"),
+        "播放页右缘那份时间读数该退场"
+    );
+}
+
+// ============ 抽屉(#86)============
+
+/// 抽屉默认收起,点抽屉键才展开,再点条外收起。
+#[test]
+fn the_drawer_starts_closed_and_toggles() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+
+    assert!(
+        !present(&ui, "PlayerBar::drawer"),
+        "抽屉默认该收着"
+    );
+
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+    assert!(
+        present(&ui, "PlayerBar::drawer"),
+        "点抽屉键该展开"
+    );
+
+    key(&ui, "收起更多")
+        .expect("展开后该有收起的入口")
+        .invoke_accessible_default_action();
+    assert!(
+        !present(&ui, "PlayerBar::drawer"),
+        "再点该收起"
+    );
+}
+
+/// 随机、循环、音量、同播都住在抽屉里,收起时不占主条。
+#[test]
+fn the_drawer_holds_the_modes_and_sync() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+
+    assert!(
+        key(&ui, "随机播放").is_none(),
+        "收起时随机不该占主条"
+    );
+    assert!(
+        !present(&ui, "VolumeControl::slider"),
+        "收起时音量滑块不该占主条"
+    );
+
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+
+    assert!(key(&ui, "随机播放").is_some());
+    assert!(key(&ui, "循环: 关").is_some());
+    assert!(
+        present(&ui, "VolumeControl::slider"),
+        "音量滑块在抽屉里常驻,不必再点开一层"
+    );
+    assert!(
+        present(&ui, "SyncStrip::sync-empty"),
+        "同播区在抽屉里,一台设备都没有时那句说明也常驻"
+    );
+}
+
+/// 视觉预设只在播放页的抽屉里 —— 预设列表长在覆层里,
+/// 别处摆一颗点了没反应的键不如不摆。
+#[test]
+fn the_visual_preset_row_is_play_page_only() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+    assert!(
+        key(&ui, "视觉预设").is_none(),
+        "音乐页的抽屉里不该有视觉预设"
+    );
+
+    // 覆层那根是另一个实例,抽屉开合各记各的 —— 换过去要重开一次。
+    ui.global::<Shell>().set_play_page_open(true);
+    key(&ui, "更多")
+        .expect("覆层那根也该有抽屉键")
+        .invoke_accessible_default_action();
+    assert!(
+        key(&ui, "视觉预设").is_some(),
+        "播放页的抽屉里该有视觉预设"
+    );
+}
+
+/// 开关的状态不靠图标明暗:开着与关着对外报的 checked 位不同,
+/// 且每一行都有写明状态的文字标签。
+/// 钉本次的起因 —— 深色档下 accent 与 accent-ink 曾是同一个色值。
+#[test]
+fn a_toggle_states_itself_in_words_not_only_in_color() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+
+    ui.global::<Player>().set_shuffle_on(false);
+    let off = key(&ui, "随机播放").expect("找不到随机");
+    assert_eq!(off.accessible_checked(), Some(false));
+
+    ui.global::<Player>().set_shuffle_on(true);
+    let on = key(&ui, "随机播放").expect("找不到随机");
+    assert_eq!(
+        on.accessible_checked(),
+        Some(true),
+        "开着就该报开着 —— 读屏软件念的是这一位"
+    );
+
+    assert!(
+        present(&ui, "DrawerRow::state-text"),
+        "开关行该有写明状态的文字,不能只靠颜色"
+    );
+}
+
+/// 循环三态各有各的文字:关 / 列表 / 单曲。
+/// checked 只说得出开没开,说不出是哪一种。
+#[test]
+fn the_loop_row_names_all_three_states() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+
+    ui.global::<Player>().set_loop_mode(0);
+    assert!(key(&ui, "循环: 关").is_some());
+
+    ui.global::<Player>().set_loop_mode(1);
+    assert!(key(&ui, "循环: 列表").is_some());
+    assert!(
+        key(&ui, "循环: 关").is_none(),
+        "换态之后旧标签不该还在"
+    );
+
+    ui.global::<Player>().set_loop_mode(2);
+    assert!(key(&ui, "循环: 单曲").is_some());
+}
+
+/// 拨开关只喊一声,值由 Rust 写回 —— 界面不自置位。
+#[test]
+fn a_toggle_asks_without_setting_the_property() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+    ui.global::<Player>().set_shuffle_on(false);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Player>().on_shuffle_toggled(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    key(&ui, "随机播放")
+        .expect("找不到随机")
+        .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "拨一下该喊一声");
+    assert!(
+        !ui.global::<Player>().get_shuffle_on(),
+        "值该纹丝不动 —— 写它是 Rust 的活"
+    );
+}
+
+/// 抽屉展开时主条仍在、仍可操作:抽屉是加一层,不是换一页。
+#[test]
+fn the_main_bar_stays_usable_while_the_drawer_is_open() {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+
+    assert!(present(&ui, "PlayerBar::capsule"), "主条该还在");
+    assert!(key(&ui, "上一首").is_some());
+    assert!(key(&ui, "下一首").is_some());
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
     ui.global::<Player>().on_toggle_play(move || {
         counter.set(counter.get() + 1);
     });
-
     key(&ui, "播放")
-        .expect("迷你条上找不到播放键")
+        .or_else(|| key(&ui, "暂停"))
+        .expect("找不到播放键")
         .invoke_accessible_default_action();
-
-    assert_eq!(asked.get(), 1, "按一下该喊一声");
-    assert!(
-        key(&ui, "上一首").is_none(),
-        "按播放键不该顺手把条展开"
-    );
+    assert_eq!(asked.get(), 1, "抽屉开着时播放键仍该管用");
 }
 
-/// 面 A 是默认面:播放键与上下曲在场,模式键与同播不在。
+// ============ 尺寸回写(两处槽不合并)============
+
+/// 条身把尺寸回写给 GPU 背景通道;播放页覆层那份走另一槽 ——
+/// 两条可以同时在场,共用一槽会互相踩掉对方的尺寸。
 #[test]
-fn face_a_carries_playback_and_nothing_else() {
+fn each_bar_mirrors_its_size_into_its_own_slot() {
     let ui = playing_app();
     ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_bar_face(0);
-
-    assert!(key(&ui, "上一首").is_some());
-    assert!(key(&ui, "下一首").is_some());
-    assert!(key(&ui, "播放").is_some());
-    assert!(
-        key(&ui, "随机播放").is_none(),
-        "随机键归面 B,不该出现在面 A"
-    );
-    assert!(
-        !present(&ui, "SyncStrip::sync-empty"),
-        "同播归面 C,不该出现在面 A"
-    );
-}
-
-/// 面 B 才有随机、循环与音量;此时面 A 的切歌键退场。
-/// 三面轮换的意义就在这里:每面只摆自己那一簇。
-#[test]
-fn face_b_carries_the_modes_and_volume() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_bar_face(1);
-
-    assert!(key(&ui, "随机播放").is_some());
-    assert!(key(&ui, "循环: 关").is_some());
-    assert!(
-        present(&ui, "VolumeControl::speaker"),
-        "音量键归面 B"
-    );
-    assert!(
-        key(&ui, "上一首").is_none(),
-        "切歌键归面 A,翻走了就该退场"
-    );
-}
-
-/// 面 C 才有同播区。设备为空时那句说明仍常驻 —— 同播不能因为没设备就消失。
-#[test]
-fn face_c_carries_the_sync_strip() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_bar_face(2);
-
-    assert!(
-        present(&ui, "SyncStrip::sync-empty"),
-        "一台设备都没有时那句说明该常驻"
-    );
-    assert!(
-        key(&ui, "随机播放").is_none(),
-        "模式键归面 B,翻走了就该退场"
-    );
-}
-
-/// 三颗指示点各自直达一面,点哪面到哪面,不必挨个轮。
-#[test]
-fn the_face_dots_jump_straight_to_their_face() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_bar_face(0);
-
-    key(&ui, "翻到同播")
-        .expect("找不到同播那颗指示点")
-        .invoke_accessible_default_action();
-    assert_eq!(
-        ui.global::<Shell>().get_bar_face(),
-        2,
-        "点同播那颗该直接到面 C,不该只走一格"
-    );
-
-    key(&ui, "翻到播放")
-        .expect("找不到播放那颗指示点")
-        .invoke_accessible_default_action();
-    assert_eq!(ui.global::<Shell>().get_bar_face(), 0);
-}
-
-/// 进度轨跨三面常驻:翻到模式面、同播面时,拖动落点的能力不丢。
-/// 这是 ADR 0010「功能永远有等价路径」在翻面结构上的落点。
-#[test]
-fn the_progress_track_stays_across_all_faces() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-
-    for face in [0, 1, 2] {
-        ui.global::<Shell>().set_bar_face(face);
-        assert!(
-            present(&ui, "PlayerBar::track"),
-            "面 {face} 上进度轨该还在"
-        );
-    }
-}
-
-/// 紧凑版式里进度轨不靠悬停现形。手机没有 hover,
-/// 一条只在指针悬停时才出现的轨道在触屏上等于不存在。
-#[test]
-fn the_progress_track_is_always_visible_in_compact() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_compact(true);
-
-    let track =
-        testing::ElementHandle::find_by_element_id(
-            &ui,
-            "PlayerBar::track",
-        )
-        .next()
-        .expect("紧凑版式里找不到进度轨");
-    assert!(
-        track.size().height > 0.0,
-        "紧凑版式里进度轨该占着实高,而不是等悬停才现形"
-    );
-}
-
-/// 条身把尺寸回写给背景通道,Rust 侧按这个尺寸渲(沿用 #68 的 bar-w/h)。
-#[test]
-fn the_bar_mirrors_its_size_for_the_backdrop() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-
-    // 条件页面要先查一次元素逼出实例化,init 才会跑。
-    let _ = key(&ui, "播放");
+    let _ = key(&ui, "上一首");
 
     assert!(
         ui.global::<Shell>().get_bar_w() > 0.0,
-        "条身该把宽度回写,实得 {}",
+        "页内那条该把宽度回写,实得 {}",
         ui.global::<Shell>().get_bar_w()
     );
-    assert!(
-        ui.global::<Shell>().get_bar_h() > 0.0,
-        "条身该把高度回写"
-    );
-}
-
-/// 播放页用的是同一个条,不再是另一套控制簇。
-/// 展开/收起播放页共用面 A 上那颗方向键,图标随场景翻个个儿。
-#[test]
-fn the_play_page_uses_the_same_bar() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_bar_face(0);
-
-    assert!(
-        key(&ui, "展开播放页").is_some(),
-        "音乐页那颗方向键该是展开"
-    );
+    assert!(ui.global::<Shell>().get_bar_h() > 0.0);
 
     ui.global::<Shell>().set_play_page_open(true);
-    assert!(
-        key(&ui, "收起播放页").is_some(),
-        "播放页上同一颗键该翻成收起"
-    );
+    let _ = key(&ui, "收起播放页");
     assert!(
         ui.global::<Shell>().get_viz_bar_w() > 0.0,
-        "播放页的条该把尺寸回写给覆层那一槽"
-    );
-}
-
-/// 紧凑版式里方向键仍在屏内。钉 #68 那次挤爆回归:
-/// 一行塞不下时按钮会被推出屏外,而那是播放页唯一的出入口。
-#[test]
-fn the_expand_button_stays_on_screen_in_compact() {
-    let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_compact(true);
-    ui.global::<Shell>().set_bar_face(0);
-
-    let expand =
-        key(&ui, "展开播放页").expect("紧凑版式里找不到方向键");
-    let right =
-        expand.absolute_position().x + expand.size().width;
-    let window_w = ui.window().size().width as f32
-        / ui.window().scale_factor();
-    assert!(
-        right <= window_w,
-        "方向键右缘 {right} 超出窗宽 {window_w}"
+        "覆层那条该把尺寸回写给自己那一槽"
     );
 }

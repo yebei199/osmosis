@@ -18,14 +18,6 @@ export global Shell {
     in property <image> bar-fluid-bg;
     in-out property <length> bar-w: 0px;
     in-out property <length> bar-h: 0px;
-    // 播放条当前翻到哪一面:0 播放、1 模式与声音、2 同播与特效(#81)。
-    // 一份全局而不是每个实例各存一份:音乐页的条与播放页覆层的条是同一条的
-    // 两个实例,翻了一个另一个也该跟着 —— 那本来就是同一件事。
-    in-out property <int> bar-face: 0;
-    // 条上竖着拖了一把(向上为负,与指针坐标同向),或滚了一格滚轮。
-    // 落点由 Rust 算(music/prism.rs):那是一段能写死断言的算术,
-    // 而无头测试驱动不了真实指针,留在这一侧就没有测试盖得住(#82)。
-    callback bar-flip-drag(length);
     // 播放页主控条的底(#69):平时 fluid,缓冲时同一槽换成 progress 变体、
     // 进度实时喂,那道呼吸亮边就是「还在动」的信号。尺寸同样由 .slint 回写,
     // 覆层不在场时是 0,那一槽整个不进合批。
