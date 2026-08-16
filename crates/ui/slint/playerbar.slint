@@ -34,6 +34,8 @@ export component PlayerBar inherits Rectangle {
 
     // 迷你条展开了没有。私有于界面:Rust 不关心用户把条撑没撑开。
     property <bool> expanded: false;
+    // 这一把翻面手势按下时手指在哪。只在手势期间有意义。
+    property <length> drag-from: 0px;
     property <bool> showing-full: !root.mini || root.expanded;
     // 窄摆法。手机版式,以及迷你条就地展开后的那一档 —— 后者宽度受迷你条
     // 的父容器限制(≤440px),按宽版摆法排会把右边的键推出胶囊。
@@ -90,6 +92,32 @@ export component PlayerBar inherits Rectangle {
             width: 100%;
             height: 100%;
             source: root.backdrop;
+        }
+
+        // 翻面手势:条上竖着拖一把,或桌面上滚一格滚轮。
+        //
+        // 垫在最底下 —— 排在内容之前,于是按钮压在它上面、照旧点得到,
+        // 只有落在条身与文字上的手势才归它。**按在按钮上起手的拖动翻不了面**
+        // (那一下归按钮,slint 的 TouchArea 不转发),模式面的中段几乎全是键,
+        // 那里基本拖不动。指示点因此不是锦上添花而是必需的那条路径:
+        // 三颗点在任何一面上都点得到,手势只是顺手时的快捷方式。
+        if root.showing-full: flip-touch := TouchArea {
+            mouse-cursor: ns-resize;
+
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    root.drag-from = self.mouse-y;
+                }
+                if (event.kind == PointerEventKind.up) {
+                    Shell.bar-flip-drag(self.mouse-y - root.drag-from);
+                }
+            }
+            // 滚轮一格当一次到位的拖动:桌面上滚轮比按住拖顺手,
+            // 而两者要落到同一套落点计算上。
+            scroll-event(event) => {
+                Shell.bar-flip-drag(event.delta-y > 0 ? 100px : -100px);
+                return accept;
+            }
         }
 
         // 展开手势垫在最底下:排在内容之前,于是控件压在它上面、照旧点得到,

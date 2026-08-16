@@ -33,6 +33,7 @@ mod controls;
 mod feed;
 mod list;
 mod notice;
+mod prism;
 mod report;
 mod rules;
 mod transport;
@@ -47,6 +48,7 @@ use advance::*;
 use controls::*;
 use list::*;
 use notice::*;
+use prism::*;
 use report::*;
 use rules::*;
 use transport::*;
@@ -200,6 +202,8 @@ pub fn bind(
     bind_list(ui, &deck);
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
+    // 翻面手势不碰播放器,两端都接:条在 wasm 上照样摆着,翻不动才是怪事。
+    bind_flip(ui);
     start_auto_advance(ui, &deck);
     startup_check(ui);
 
@@ -230,6 +234,7 @@ pub fn bind(
     // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.global::<Player>()
         .set_playback_text("Web 端暂不支持播放".into());
+    bind_flip(ui);
     (None, LyricFeed, CoverFeed::default())
 }
 
