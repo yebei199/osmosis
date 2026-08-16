@@ -106,12 +106,10 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   `ball` 是三球的整体缩放:侧栏底部两颗自 #71 起是 glass 圆钮、不在轨道上,
   选中它们时水滴化掉,免得上面还亮着一格而人在别的页。
 - `src/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
-  hover 振幅收敛数学。按钮每帧重渲,没有冻结态。六个变体编号在这里有名字
-  (ribbon / nebula / fluid / glass / progress / prism,数学见 handoff-shaders.md §10);
-  `prism_or_progress` 定主控条底这一帧走哪个:平时 prism,缓冲时换
-  progress 并把播放比例喂进去 —— 那道呼吸亮边是唯一说明「没卡死」的提示,
-  比转面的观赏性要紧。棱柱转到哪儿也在这里收敛(`flip`,单位是「面」):
-  slint 的 global 不许挂 animate,而摆在元素上就会每个实例各转各的。
+  hover 振幅收敛数学。按钮每帧重渲,没有冻结态。五个变体编号在这里有名字
+  (ribbon / nebula / fluid / glass / progress,数学见 handoff-shaders.md §10);
+  `fluid_or_progress` 定播放页主控条底这一帧走哪个:平时 fluid,缓冲时换
+  progress 并把播放比例喂进去 —— 播放页的进度是那个环,条上没有细线可挂。
 - `src/wall.rs`:卡墙的几何真相(adr/0025)—— 布局按容器尺寸推导、逐卡
   确定性散布、拖动惯性与格点吸附、塌回插值、投影与命中测试。纯数学,
   无 GPU 可测;render3d 只摆这里算出的世界位姿,点击与画面不会各说各话。

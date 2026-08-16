@@ -165,9 +165,9 @@ Slint 至今没有 backdrop blur（`docs/slint/visual-effects-and-shaders.md`）
 - 无 GPU 端（web / ios 默认构建）粒子为空图，自动退回 warp 形态；本文件所有效果都必须在这条路径上**静默降级而不是报错**。
 
 
-## §10 按钮变体（第五轮新增，`prism` 为 #83 追加）
+## §10 按钮变体（第五轮新增）
 
-六类共用一个片元程序，`uVariant` 分支。真机 WGSL 同构，四阶 fbm 足够按钮尺寸使用，不要照搬参考实现的六阶。
+五类共用一个片元程序，`uVariant` 分支。真机 WGSL 同构，四阶 fbm 足够按钮尺寸使用，不要照搬参考实现的六阶。
 
 | variant | 数学 | 开销 | 用在哪 |
 | --- | --- | --- | --- |
@@ -176,13 +176,8 @@ Slint 至今没有 backdrop blur（`docs/slint/visual-effects-and-shaders.md`）
 | `fluid` | 域扭曲 + softBlob plume + `reveal` 沿 x 开闸 + spec/caustic | 中高 | 播放页长条、正在播放胶囊 |
 | `glass` | 低密度底 + 折射亮边 + 焦散高光 | 低 | 次要按钮，可整屏铺 |
 | `progress` | `fluid` + 进度填充遮罩 + 交界处呼吸亮边 | 中高 | 下载、导入曲库、模型加载 |
-| `prism` | 逐像素朝三棱柱三个面投射线（真透视，只对 y/z 除法）+ 面法线余弦压暗 + 棱边暗线，面上贴 `fluid` | 中高 | 播放控制条条身，随 `flip` 转面 |
 
 关键约束：`reveal = smoothstep(0.055, 0.735, uv.x + (0.5 - broad) * 0.27 + …)` —— 左侧接近 0，长条按钮上的文字区不会被流体糊住。这条在 WGSL 版必须保留。
-
-`prism` 因此有一条自己的约束：**每面取不同贴图段时只许错开 v，绝不许错开 u**。`reveal` 是按 `uv.x` 开的闸，动了 u 等于把闸挪走，转到面 B、面 C 时流体会漫过条身左边的曲名与时间，字直接读不出来（实拍踩过）。
-
-`prism` 的张角（`sy = (uv.y - 0.5) * 1.8`）是唯一的调节旋钮：条身宽是高的九倍，张角小了三个面挤成一条缝、看不出在转，大了侧面吃掉整条。另外，**停在某一面时棱柱正对相机、看上去本就是平的**——3D 只在转的过程中现形，静态截图验不了这个变体，要抓转场中的帧。
 
 参考实现：域扭曲 + plume + reveal 的做法来自 fluidglass-ui 的 canonical fragment shader；星云与柔光带来自 nebula-capsules 的 `src/cosmic-shader.js`。两者都只取数学，配色一律走 Osmosis 绿板。
 
