@@ -29,6 +29,8 @@ export component ProgressBar inherits Rectangle {
     // 细轨档:进度的常态显示已由环形键承担,这条只管**精确拖动**,
     // 悬停或拖动时才现形,时间行也不画(时间在条身上)。
     in property <bool> slim: false;
+    // 细轨常驻。触屏没有悬停,一条要指过来才现形的轨道在手机上等于不存在。
+    in property <bool> pinned: false;
 
     // 松手时交出去的位置,仍是 0..=1。
     callback seek(float);
@@ -56,7 +58,7 @@ export component ProgressBar inherits Rectangle {
             border-radius: 2px;
             // 细轨档平时隐身,指过来或拖着才现形 —— 环形键已经报着进度,
             // 这条只在要精确落点的那一刻出现。
-            opacity: !root.slim || touch.has-hover || root.dragging ? 1 : 0;
+            opacity: !root.slim || root.pinned || touch.has-hover || root.dragging ? 1 : 0;
             animate opacity { duration: 120ms; easing: ease-out; }
 
             Rectangle {

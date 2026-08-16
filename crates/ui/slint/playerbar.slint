@@ -1,0 +1,405 @@
+// 播放条:全应用唯一的一条,三面棱柱形态(#81)。
+//
+// 在此之前条身写了四遍 —— 音乐页宽窄各一份、播放页覆层一份、首页迷你条一份,
+// 玻璃胶囊那套样式跟着抄了四遍,而个人主页与设置页干脆没有条。这里收成一个组件,
+// 四处只剩四个实例。
+//
+// 为什么是三面而不是一排摆开:条上的功能还在长(同播、粒子云,之后是筛选与均衡器),
+// 一排平铺的最小宽度已经顶到手机内容区的上限。三面各摆一簇,每面都宽松,
+// 加新功能是给某一面添一颗键,不是把整条挤窄一格。
+//
+// 面 A 播放 · 面 B 模式与声音 · 面 C 同播与特效。翻面的手势与 GPU 棱柱底
+// 分别在 #82、#83;这里先把三面的内容与指示点摆定,翻面靠右缘那三颗点。
+//
+// 进度轨跨三面常驻:翻到别的面时,拖动落点的能力不该跟着翻走
+// (docs/adr/0010 的「功能永远有等价路径」)。
+
+import { Theme, Type } from "theme.slint";
+import { RoundControl } from "widgets.slint";
+import { RingControl, SyncStrip } from "controls.slint";
+import { ProgressBar, VolumeControl } from "progress.slint";
+import { Player } from "globals/player.slint";
+import { Shell } from "globals/shell.slint";
+import { Viz } from "globals/viz.slint";
+
+export component PlayerBar inherits Rectangle {
+    // 迷你形态:非音乐页摆的那颗小胶囊。点非控件区就地展开成完整条,
+    // 不跳页 —— 展开是为了操作正在放的这首,不是为了换个地方待着。
+    in property <bool> mini: false;
+    // 播放页覆层那一档:环大一圈、接 warp,方向键翻成「收起」。
+    in property <bool> immersive: false;
+    // 可用宽度的上限,由调用点按容器给。宽度不由调用点直接钉死:钉死之后
+    // 每面各自的宽就被压成同一个值,只有两三颗键的面又摊回一片空胶囊。
+    in property <length> width-cap: 100000px;
+
+    // 迷你条展开了没有。私有于界面:Rust 不关心用户把条撑没撑开。
+    property <bool> expanded: false;
+    property <bool> showing-full: !root.mini || root.expanded;
+    // 窄摆法。手机版式,以及迷你条就地展开后的那一档 —— 后者宽度受迷你条
+    // 的父容器限制(≤440px),按宽版摆法排会把右边的键推出胶囊。
+    property <bool> tight: Shell.compact || (root.mini && root.expanded);
+    property <length> key-size: root.tight ? 36px : 44px;
+    property <length> ring-size: root.immersive
+        ? (Viz.viz-bg.width > 0 ? 68px : 60px)
+        : (root.tight ? 44px : 48px);
+    property <length> ring-inner: root.immersive
+        ? (Viz.viz-bg.width > 0 ? 58px : 50px)
+        : (root.tight ? 36px : 40px);
+
+    height: root.showing-full
+        ? (root.tight ? 56px : 62px)
+        + (root.immersive ? root.ring-size - 48px : 0px)
+        : 60px;
+    // 每面各有各的宽,而不是三面共用一个钉死的宽度 —— 后者会让只有两三颗键的
+    // 模式面与同播面摊在一大片空胶囊里(实拍确认过)。
+    //
+    // 宽度只能这样按面写死,不能让条收内容宽:三面的内容各自长在 `if` 里,
+    // 而**条件子元素不给父元素贡献 preferred 尺寸**,收出来的是 0。
+    // 数值 = 内边距 + 该面各件的宽与间距之和,与下面的摆法一一对应,改摆法要跟着改。
+    // 窗口窄于此值时由 width-cap 夹住,曲名那一列跟着让位、省略号收尾。
+    width: min(root.natural-width, root.width-cap);
+    property <length> natural-width: !root.showing-full
+        ? 440px
+        : (Shell.bar-face == 0
+            ? (root.tight ? 410px : 580px)
+            : (Shell.bar-face == 1
+                ? (root.tight ? 210px : 250px)
+                // 播放页的面 C 多一颗视觉预设键,宽度跟着让出那一颗的位置。
+                : (root.tight ? 250px : 270px)
+                    + (root.immersive ? root.key-size + (root.tight ? 8px : 14px) : 0px)));
+
+    capsule := Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: self.height / 2;
+        background: Theme.surface.with-alpha(0.9);
+        border-width: 1px;
+        border-color: Theme.glass-edge;
+        drop-shadow-blur: 30px;
+        drop-shadow-offset-y: 14px;
+        drop-shadow-color: Theme.glass-shadow;
+
+        // 尺寸回写给背景通道:Rust 按这个尺寸渲图贴回来(#68/#69)。
+        // 覆层那一份走 viz-bar-* 另一槽 —— 两条可以同时在场(播放页盖着音乐页),
+        // 共用一槽就会互相踩掉对方的尺寸。
+        init => { root.mirror-size(); }
+        changed width => { root.mirror-size(); }
+        changed height => { root.mirror-size(); }
+
+        if root.backdrop.width > 0: Image {
+            width: 100%;
+            height: 100%;
+            source: root.backdrop;
+        }
+
+        // 展开手势垫在最底下:排在内容之前,于是控件压在它上面、照旧点得到,
+        // 落在缝隙里的点击才归它。迷你形态才有。
+        if root.mini: expand-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.expanded = !root.expanded; }
+
+            accessible-role: button;
+            accessible-label: root.expanded ? "收起播放条" : "展开播放条";
+            accessible-expandable: true;
+            accessible-expanded: root.expanded;
+            accessible-action-default => { root.expanded = !root.expanded; }
+        }
+
+        // ── 迷你形态:封面 · 曲名/歌手 · 环形键 · 下一首 ──
+        if !root.showing-full: HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 12px;
+            spacing: 10px;
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 10px;
+                    clip: true;
+                    // 封面没到位时的占位:副色板 0 号渐变。
+                    background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                    if Viz.cover-art.width > 0: Image {
+                        width: 100%;
+                        height: 100%;
+                        image-fit: cover;
+                        source: Viz.cover-art;
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                horizontal-stretch: 1;
+                Text {
+                    text: Viz.now-title;
+                    color: Theme.text;
+                    font-size: 13px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    text: Viz.now-artists;
+                    color: Theme.text-dim;
+                    font-size: 11px;
+                    overflow: elide;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                RingControl {
+                    is-playing: Player.is-playing;
+                    ratio: Player.progress-ratio;
+                    diameter: 40px;
+                    inner-diameter: 32px;
+                    toggle => { Player.toggle-play(); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                RoundControl {
+                    diameter: 36px;
+                    icon: root.next-icon;
+                    label: "下一首";
+                    clicked => { Player.next-track(); }
+                }
+            }
+        }
+
+        // ── 完整形态:当前面的内容 + 右缘指示点 ──
+        if root.showing-full: HorizontalLayout {
+            padding-left: root.tight ? 8px : 12px;
+            padding-right: root.tight ? 4px : 8px;
+            spacing: root.tight ? 6px : 10px;
+
+            // 面 A:正在放什么 + 切歌 + 播放页出入口。
+            if Shell.bar-face == 0: HorizontalLayout {
+                spacing: root.tight ? 6px : 10px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: root.tight ? 36px : 44px;
+                        height: self.width;
+                        border-radius: self.width / 4;
+                        clip: true;
+                        background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                        if Viz.cover-art.width > 0: Image {
+                            width: 100%;
+                            height: 100%;
+                            image-fit: cover;
+                            source: Viz.cover-art;
+                        }
+                    }
+                }
+                // 曲名那一列封顶:条收内容宽,不封顶的话一首长名字能把整条
+                // 撑得比窗口还宽。封顶之后多出来的字省略号收尾。
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    max-width: root.tight ? 150px : 240px;
+                    Text {
+                        text: Viz.now-title;
+                        color: Theme.text;
+                        font-size: root.tight ? 13px : 14px;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        // 缓冲时这行是唯一说明「还在动」的东西,提亮。
+                        // 缓冲文案是硬编码中文,走子集;平时是平台数据,走系统字体。
+                        font-family: Player.buffering ? Type.mono : "";
+                        text: Player.buffering
+                            ? "缓冲中…"
+                            : Viz.now-artists + "  " + Player.progress-text;
+                        color: Player.buffering ? Theme.accent : Theme.text-dim;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: root.prev-icon;
+                        label: "上一首";
+                        clicked => { Player.prev-track(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    RingControl {
+                        is-playing: Player.is-playing;
+                        ratio: Player.progress-ratio;
+                        diameter: root.ring-size;
+                        inner-diameter: root.ring-inner;
+                        // 只有播放页接 warp:别的条不该为一个小圆点养一条 wgpu pass。
+                        pulse: root.immersive ? Viz.viz-bg : root.no-image;
+                        toggle => { Player.toggle-play(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: root.next-icon;
+                        label: "下一首";
+                        clicked => { Player.next-track(); }
+                    }
+                }
+                // 播放页的出入口:一颗键管两个方向,图标随场景翻个个儿。
+                // 收起是操作,所以它在最上层 2D、永远点得到(docs/adr/0010)。
+                VerticalLayout {
+                    alignment: center;
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: root.immersive ? root.collapse-icon : root.expand-icon;
+                        label: root.immersive ? "收起播放页" : "展开播放页";
+                        backdrop: root.immersive ? Shell.viz-glass-bg : root.no-image;
+                        clicked => { Shell.play-page-open = !root.immersive; }
+                    }
+                }
+            }
+
+            // 面 B:播放顺序与声音。均衡器落地后加在这一面。
+            if Shell.bar-face == 1: HorizontalLayout {
+                alignment: center;
+                spacing: root.tight ? 8px : 14px;
+
+                VerticalLayout {
+                    alignment: center;
+                    // 随机键。有状态,所以报成带 checked 的按钮,开着时图标换强调色。
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: root.shuffle-icon;
+                        label: "随机播放";
+                        checkable: true;
+                        checked: Player.shuffle-on;
+                        clicked => { Player.shuffle-toggled(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    // 循环键。三态念在标签里 —— checked 只说得出「开没开」,
+                    // 说不出列表还是单曲。
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: Player.loop-mode == 2 ? root.loop-one-icon : root.loop-icon;
+                        label: Player.loop-mode == 0 ? "循环: 关"
+                            : (Player.loop-mode == 1 ? "循环: 列表" : "循环: 单曲");
+                        checkable: true;
+                        checked: Player.loop-mode > 0;
+                        clicked => { Player.loop-cycled(); }
+                    }
+                }
+                VolumeControl {
+                    horizontal-stretch: 0;
+                    volume: Player.volume;
+                    changed(v) => { Player.volume-changed(v); }
+                }
+            }
+
+            // 面 C:同播与特效。筛选落地后加在这一面。
+            if Shell.bar-face == 2: HorizontalLayout {
+                alignment: center;
+                spacing: root.tight ? 8px : 14px;
+
+                SyncStrip {
+                    horizontal-stretch: 0;
+                    devices: Shell.devices;
+                    push-to(id) => { Shell.push-to(id); }
+                }
+                // 视觉预设只在播放页有得选 —— 预设列表长在覆层里,
+                // 音乐页上摆一颗点了没反应的键,不如不摆。
+                if root.immersive: VerticalLayout {
+                    alignment: center;
+                    RoundControl {
+                        diameter: root.key-size;
+                        icon: root.preset-icon;
+                        label: "视觉预设";
+                        backdrop: Shell.viz-glass-bg;
+                        clicked => { Viz.viz-preset-list-open = !Viz.viz-preset-list-open; }
+                    }
+                }
+            }
+
+            // 指示点:当前在第几面,点哪颗直达哪面。
+            // 竖排贴右缘 —— 翻面的手势是上下滑(#82),指示点顺着同一根轴。
+            // 没翻到的那两颗用 text-faint 而不是 overlay:后者是 8% 的白,
+            // 压在条身上一颗也看不见,等于把翻面这件事藏了起来。
+            VerticalLayout {
+                alignment: center;
+                for face[i] in root.faces: Rectangle {
+                    width: 24px;
+                    height: 17px;
+
+                    Rectangle {
+                        width: Shell.bar-face == i ? 9px : 7px;
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: self.width / 2;
+                        background: Shell.bar-face == i ? Theme.accent : Theme.text-faint;
+                        animate width, background { duration: 140ms; easing: ease-out; }
+                    }
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Shell.bar-face = i; }
+
+                        accessible-role: button;
+                        accessible-label: face;
+                        accessible-checkable: true;
+                        accessible-checked: Shell.bar-face == i;
+                        accessible-action-default => { Shell.bar-face = i; }
+                    }
+                }
+            }
+        }
+
+        // 精确拖动的细轨:贴着胶囊下缘,跨三面常驻。
+        // 环报进度,它管落点 —— 两件事分开(docs/design.md「播放条」)。
+        // 触屏上钉住不隐:手机没有悬停,要指过来才现形的轨道在那里等于不存在。
+        if root.showing-full: track := ProgressBar {
+            slim: true;
+            pinned: Shell.compact;
+            x: 28px;
+            width: parent.width - 56px;
+            y: parent.height - self.height - 1px;
+            ratio: Player.progress-ratio;
+            seek(at) => { Player.seek(at); }
+        }
+    }
+
+    // 三面的名字,同时是指示点报给读屏的那句。
+    property <[string]> faces: ["翻到播放", "翻到模式", "翻到同播"];
+    // 覆层那一份读另一槽,两条同时在场时各渲各的底。
+    property <image> backdrop: root.immersive
+        ? Shell.viz-bar-bg
+        : (Player.is-playing ? Shell.bar-fluid-bg : root.no-image);
+    // 空图常量:某些位置要显式地「没有图」,而 slint 没有 image 字面量。
+    property <image> no-image;
+
+    // 图标一律内嵌 SVG path,viewbox 24×24,不引外部资源(同 RoundControl)。
+    property <string> prev-icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
+    property <string> next-icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
+    property <string> expand-icon: "M12 7 L19 16 L5 16 Z";
+    property <string> collapse-icon: "M5 8 L19 8 L12 17 Z";
+    property <string> preset-icon: "M12 4 A8 8 0 1 1 4 12 L7 12 L3 17 L-1 12 L2 12 A10 10 0 1 0 12 2 Z";
+    // ⤬:两条交叉的箭头(Material 的 shuffle 字形)。
+    property <string> shuffle-icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
+    // ↻:首尾折返的两条箭头;单曲循环在中间多一个「1」。
+    property <string> loop-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
+    property <string> loop-one-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";
+
+    function mirror-size() {
+        if (root.immersive) {
+            Shell.viz-bar-w = capsule.width;
+            Shell.viz-bar-h = capsule.height;
+        } else {
+            Shell.bar-w = capsule.width;
+            Shell.bar-h = capsule.height;
+        }
+    }
+}

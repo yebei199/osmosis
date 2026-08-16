@@ -33,8 +33,8 @@ import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { HoverButton, NavItem, RoundControl, OutlinedText, DayNightSwitch } from "widgets.slint";
-import { ControlCluster, SyncStrip, ProgressBar, VolumeControl, MiniPlayer, VerticalSeekBar } from "controls.slint";
+import { NavItem, RoundControl } from "widgets.slint";
+import { PlayerBar } from "playerbar.slint";
 import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
@@ -433,19 +433,6 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // 迷你播放条:壳持有、跨应用常驻,有歌才摆(docs/adr/0024)。
-                    if Player.has-track: home-mini := MiniPlayer {
-                        x: (parent.width - self.width) / 2;
-                        y: parent.height - self.height - 22px;
-                        width: min(parent.width - 48px, 440px);
-                        cover-art: Viz.cover-art;
-                        title: Viz.now-title;
-                        artists: Viz.now-artists;
-                        is-playing: Player.is-playing;
-                        ratio: Player.progress-ratio;
-                        toggle => { Player.toggle-play(); }
-                        next => { Player.next-track(); }
-                    }
                 }
 
                 // 个人主页(tab 2)。进页即取统计,判断在 Rust 侧。
@@ -479,6 +466,16 @@ export component MainWindow inherits Window {
                 // Music:二级导航 + 四个分区。整页可滚,不裹玻璃卡片 ——
                 // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
                 if Shell.current-tab == 1: MusicPage { }
+
+                // 迷你播放条:壳持有、跨应用常驻,有歌才摆(docs/adr/0024)。
+                // 一份管三页 —— 音乐页有完整条,别处摆这颗小胶囊,点它就地展开。
+                // 改版前只有首页有,个人主页与设置页整个没有控制入口(#81)。
+                if Player.has-track && Shell.current-tab != 1: PlayerBar {
+                    mini: true;
+                    x: (parent.width - self.width) / 2;
+                    y: parent.height - self.height - 22px;
+                    width-cap: parent.width - 48px;
+                }
 
                 // Shell.fps 浮层:content 的最后一个子元素 → 画在最上层。
                 // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 Shell.fps 模块)。

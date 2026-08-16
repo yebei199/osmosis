@@ -2,8 +2,8 @@ import { Palette } from "std-widgets.slint";
 
 import { Theme, Type } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
-import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
-import { ControlCluster, SyncStrip, ProgressBar, VolumeControl, MiniPlayer } from "controls.slint";
+import { HoverButton } from "widgets.slint";
+import { PlayerBar } from "playerbar.slint";
 import { MusicBar, MusicRail, SearchTabBar } from "musicnav.slint";
 import { TrackList } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
@@ -393,206 +393,17 @@ export component MusicPage inherits VerticalLayout {
     }
 
 
-    // 控制条:悬浮胶囊 + 环形进度播放键(docs/design.md「播放条」)。
-    // 内容顺序:封面 · 曲名/歌手+时间 · 键簇 · 音量/展开 · 同播。
-    // 进度的常态显示在环上;精确拖动靠悬停条身下缘浮出的细轨。
+    // 控制条:全应用共用的那一条(playerbar.slint)。宽窄两种版式、三面的
+    // 内容取舍都在组件内部,这里只管给它一个宽度、把它摆在页尾。
     //
-    // 宽版一颗胶囊居中;紧凑版(手机)仍拆两行 —— 一排的最小宽度
-    // 约 470px,而手机内容区只有 ~360px,硬挤会把按钮画出屏幕右缘。
-    // 胶囊仍在布局流里(列表不从它底下穿过),完全悬浮等 #66 动
-    // 页面装配时一并做。
-    // `if` 在 Rectangle 外面:条件子元素不给父元素贡献 preferred
-    // 尺寸,放里面胶囊会坍缩成 0 宽、内容从中心溢出(实拍踩过)。
-    if !Shell.compact: HorizontalLayout {
-        // 胶囊收到内容宽、居中。
+    // 条仍在布局流里(列表不从它底下穿过),完全悬浮等 #66 动页面装配时一并做。
+    // `if` 在条外面:条件子元素不给父元素贡献 preferred 尺寸,
+    // 放里面胶囊会坍缩成 0 宽、内容从中心溢出(实拍踩过)。
+    if Player.has-track: HorizontalLayout {
+        // 条收自己内容的宽、居中,只封一个上限免得溢出窗口。
         alignment: center;
-        controls := Rectangle {
-        height: 62px;
-        border-radius: self.height / 2;
-        background: Theme.surface.with-alpha(0.9);
-        border-width: 1px;
-        border-color: Theme.glass-edge;
-        drop-shadow-blur: 30px;
-        drop-shadow-offset-y: 14px;
-        drop-shadow-color: Theme.glass-shadow;
-        // fluid 正在播放胶囊(#68):尺寸回写给 Rust,渲成图贴回来。
-        // shader 自带胶囊 alpha 裁切,reveal 左闸保住文字区。
-        init => {
-            Shell.bar-w = self.width;
-            Shell.bar-h = self.height;
-        }
-        changed width => { Shell.bar-w = self.width; }
-        changed height => { Shell.bar-h = self.height; }
-        if Player.is-playing && Shell.bar-fluid-bg.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            source: Shell.bar-fluid-bg;
-        }
-
-        HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 16px;
-            spacing: 12px;
-
-            // 正在放什么:封面 + 曲名/歌手 + 时间。没歌时整列不摆。
-            if Player.has-track: bar-now := HorizontalLayout {
-                spacing: 10px;
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 44px;
-                        height: 44px;
-                        border-radius: 11px;
-                        clip: true;
-                        // 封面没到位时的占位:副色板 0 号渐变(硬规则 6 允许的用途)。
-                        background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
-                        if Viz.cover-art.width > 0: Image {
-                            width: 100%;
-                            height: 100%;
-                            image-fit: cover;
-                            source: Viz.cover-art;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 2px;
-                    Text {
-                        max-width: 220px;
-                        text: Viz.now-title;
-                        color: Theme.text;
-                        font-size: 14px;
-                        font-weight: 600;
-                        overflow: elide;
-                    }
-                    Text {
-                        max-width: 220px;
-                        // 缓冲时这行是唯一说明「还在动」的东西,提亮。
-                        // 缓冲文案是硬编码中文,走子集;平时是平台数据,走系统字体。
-                        font-family: Player.buffering ? "Maple Mono NF CN" : "";
-                        text: Player.buffering
-                            ? "缓冲中…"
-                            : Viz.now-artists + "  " + Player.progress-text;
-                        color: Player.buffering ? Theme.accent : Theme.text-dim;
-                        font-size: 12px;
-                        overflow: elide;
-                    }
-                }
-            }
-            ControlCluster {
-                // 胶囊要收到内容宽:键簇与同播条都是 layout,
-                // 默认 stretch 1 会把胶囊撑满整行。
-                horizontal-stretch: 0;
-                is-playing: Player.is-playing;
-                shuffle-on: Player.shuffle-on;
-                loop-mode: Player.loop-mode;
-                progress-ratio: Player.progress-ratio;
-                prev => { Player.prev-track(); }
-                toggle => { Player.toggle-play(); }
-                next => { Player.next-track(); }
-                shuffle-toggled => { Player.shuffle-toggled(); }
-                loop-cycled => { Player.loop-cycled(); }
-            }
-            wide-volume := VolumeControl {
-                volume: Player.volume;
-                changed(v) => { Player.volume-changed(v); }
-            }
-            // 展开播放页:向上的小三角。「正在播放」是状态,展开是看它的方式。
-            RoundControl {
-                icon: "M12 7 L19 16 L5 16 Z";
-                label: "展开播放页";
-                clicked => { Shell.play-page-open = true; }
-            }
-            SyncStrip {
-                horizontal-stretch: 0;
-                devices: Shell.devices;
-                push-to(id) => { Shell.push-to(id); }
-            }
-        }
-
-        // 精确拖动的细轨:贴着胶囊下缘,悬停才现形。
-        // 环报进度,它管落点 —— 两件事分开(docs/design.md「播放条」)。
-        if Player.has-track: wide-progress := ProgressBar {
-            slim: true;
-            x: 28px;
-            width: parent.width - 56px;
-            y: parent.height - self.height - 1px;
-            ratio: Player.progress-ratio;
-            seek(at) => { Player.seek(at); }
-        }
-        }
-    }
-
-    // 紧凑版:两行,占满内容宽(#64 再改成迷你条)。
-    if Shell.compact: controls-compact := Rectangle {
-        height: 116px;
-        border-radius: 16px;
-        background: Theme.surface.with-alpha(0.9);
-        border-width: 1px;
-        border-color: Theme.glass-edge;
-        // fluid 背景与宽版同一条通道(#68)。
-        init => {
-            Shell.bar-w = self.width;
-            Shell.bar-h = self.height;
-        }
-        changed width => { Shell.bar-w = self.width; }
-        changed height => { Shell.bar-h = self.height; }
-        if Player.is-playing && Shell.bar-fluid-bg.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            source: Shell.bar-fluid-bg;
-        }
-
-        VerticalLayout {
-            padding: 8px;
-            spacing: 4px;
-
-            HorizontalLayout {
-                alignment: center;
-                spacing: 10px;
-                ControlCluster {
-                    is-playing: Player.is-playing;
-                    shuffle-on: Player.shuffle-on;
-                    loop-mode: Player.loop-mode;
-                    progress-ratio: Player.progress-ratio;
-                    prev => { Player.prev-track(); }
-                    toggle => { Player.toggle-play(); }
-                    next => { Player.next-track(); }
-                    shuffle-toggled => { Player.shuffle-toggled(); }
-                    loop-cycled => { Player.loop-cycled(); }
-                }
-                // 展开播放页,同宽版那颗。
-                RoundControl {
-                    icon: "M12 7 L19 16 L5 16 Z";
-                    label: "展开播放页";
-                    clicked => { Shell.play-page-open = true; }
-                }
-            }
-            // 紧凑版式:进度条与音量共占第二行。
-            // 挤进第一行的话,那一排要 470px 起,而手机只有 ~360px。
-            HorizontalLayout {
-                spacing: 8px;
-
-                if Player.has-track:
-                compact-progress := ProgressBar {
-                    horizontal-stretch: 1;
-                    ratio: Player.progress-ratio;
-                    text: Player.progress-text;
-                    buffering: Player.buffering;
-                    seek(at) => { Player.seek(at); }
-                }
-                compact-volume := VolumeControl {
-                    volume: Player.volume;
-                    changed(v) => { Player.volume-changed(v); }
-                }
-            }
-            HorizontalLayout {
-                alignment: center;
-                SyncStrip {
-                    devices: Shell.devices;
-                    push-to(id) => { Shell.push-to(id); }
-                }
-            }
+        PlayerBar {
+            width-cap: parent.width - 32px;
         }
     }
 }

@@ -1,20 +1,12 @@
 //! Home(壳的应用启动器)的界面行为。无头跑,与 controls.rs 同一套路。
 //!
-//! 瓦片与迷你播放条的视觉断言不了,这里钉的是行为与"摆没摆":
-//! 瓦片是真按钮、点了真切页;迷你条只在手上有歌时出现(docs/adr/0024)。
+//! 瓦片的视觉断言不了,这里钉的是行为:瓦片是真按钮、点了真切页。
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use ui::MainWindow;
-use ui::Player;
 use ui::Session;
 use ui::Shell;
-
-fn present(ui: &MainWindow, id: &str) -> bool {
-    testing::ElementHandle::find_by_element_id(ui, id)
-        .next()
-        .is_some()
-}
 
 /// 登录后落在 Home。
 fn home() -> MainWindow {
@@ -48,15 +40,5 @@ fn the_music_tile_opens_the_music_app() {
     );
 }
 
-/// 迷你播放条跨应用常驻,但只在手上有歌时出现 —— 没歌时一枚空胶囊
-/// 只是骗人的摆设(docs/design.md 硬规则 8)。
-#[test]
-fn the_mini_player_appears_only_with_a_track() {
-    let ui = home();
-
-    ui.global::<Player>().set_has_track(false);
-    assert!(!present(&ui, "MainWindow::home-mini"));
-
-    ui.global::<Player>().set_has_track(true);
-    assert!(present(&ui, "MainWindow::home-mini"));
-}
+// 「迷你播放条只在手上有歌时出现」搬去了 player_bar.rs —— #81 起那颗胶囊
+// 归 PlayerBar,而它现在管的是三页而不只是 Home,断言跟着条走。

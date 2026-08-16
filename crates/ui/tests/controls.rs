@@ -1,6 +1,8 @@
-//! 控制条上进度条与音量的界面行为。无头跑,与 music_nav.rs 同一套路。
+//! 控制条上那几颗键的界面行为:拨得动、拨完喊得对、状态报得出。无头跑。
 //!
-//! `progress::ratio` 证明的是**算得对**,这些断言管的是**摆得对、拖得动**。
+//! `progress::ratio` 证明的是**算得对**,这些断言管的是**拨得动**。
+//! 条身本身摆得对不对(在哪几页、翻不翻得动、尺寸回写)归 player_bar.rs ——
+//! #81 把条收成一个组件之后,那些断言跟着搬去了条自己的测试里。
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
@@ -20,6 +22,7 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 /// 按无障碍标签找而不是按元素 id:那一排四颗键都是同一个 `RoundControl`,
 /// 元素 id 分不开它们,而标签本来就是为了让人分得开才有的。
 fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
+    modes_face(ui);
     testing::ElementHandle::find_by_accessible_label(
         ui,
         "随机播放",
@@ -28,14 +31,22 @@ fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
     .expect("找不到随机键")
 }
 
-/// 登录之后才有控制条。宽版式,免得断言落到紧凑版那一份上。
+/// 登录、有歌、宽版式。#81 起整条只在手上有歌时才摆 —— 没歌时连条身都不在,
+/// 于是这些断言全要先有一首歌垫着。
 fn wide_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_current_tab(1);
     ui.global::<Shell>().set_compact(false);
+    ui.global::<Player>().set_has_track(true);
     ui
+}
+
+/// 随机、循环与音量翻到面 B 上了(#81):三面各摆一簇,
+/// 拨它们之前先把条翻过去。
+fn modes_face(ui: &MainWindow) {
+    ui.global::<Shell>().set_bar_face(1);
 }
 
 /// 音量滑块默认收起,点喇叭才展开。
@@ -45,6 +56,7 @@ fn wide_page() -> MainWindow {
 #[test]
 fn the_volume_slider_starts_collapsed() {
     let ui = wide_page();
+    modes_face(&ui);
 
     assert!(
         present(&ui, "VolumeControl::speaker"),
@@ -70,19 +82,6 @@ fn the_volume_slider_starts_collapsed() {
     );
 }
 
-/// 进度条只在手上有歌时出现。
-///
-/// 没在放的时候摆一条空槽,会让人以为点它能从头开始 —— 而那时根本没有"头"。
-#[test]
-fn the_progress_bar_appears_only_with_a_track() {
-    let ui = wide_page();
-
-    ui.global::<Player>().set_has_track(false);
-    assert!(!present(&ui, "MusicPage::wide-progress"));
-
-    ui.global::<Player>().set_has_track(true);
-    assert!(present(&ui, "MusicPage::wide-progress"));
-}
 
 /// **随机播放有自己的键了。**
 ///
@@ -136,6 +135,7 @@ fn loop_key(
     ui: &MainWindow,
     label: &str,
 ) -> Option<testing::ElementHandle> {
+    modes_face(ui);
     testing::ElementHandle::find_by_accessible_label(
         ui, label,
     )
@@ -197,105 +197,9 @@ fn the_day_night_switch_is_gone_from_the_cluster() {
     );
 }
 
-/// 胶囊把自己的尺寸回写给 fluid 背景通道(#68):Rust 侧按这个尺寸渲。
-#[test]
-fn the_capsule_mirrors_its_size_for_the_fluid_backdrop() {
-    let ui = wide_page();
-    ui.global::<Player>().set_has_track(true);
 
-    // 条件页面要先查一次元素逼出实例化,init 才会跑。
-    let _ =
-        testing::ElementHandle::find_by_accessible_label(
-            &ui, "播放",
-        )
-        .next();
 
-    assert!(
-        ui.global::<Shell>().get_bar_w() > 0.0,
-        "胶囊该把宽度回写,实得 {}",
-        ui.global::<Shell>().get_bar_w()
-    );
-    assert!(
-        ui.global::<Shell>().get_bar_h() > 0.0,
-        "胶囊该把高度回写"
-    );
-}
 
-/// 播放页控制条把自己的尺寸回写给 seam,fluid 底才知道该渲多大。
-///
-/// 没开过播放页时是 0,那一槽整个不进合批 —— 与胶囊同一条理由:
-/// 覆层不在场时为它养一次渲染是纯浪费。
-#[test]
-fn the_play_page_bar_mirrors_its_size_for_the_backdrop() {
-    let ui = wide_page();
-    ui.global::<Player>().set_has_track(true);
-    assert_eq!(
-        ui.global::<Shell>().get_viz_bar_w(),
-        0.0,
-        "没开播放页时不该有尺寸"
-    );
-
-    ui.global::<Shell>().set_play_page_open(true);
-    // 覆层是条件页面,先查一次元素逼出实例化,init 才会跑。
-    let _ =
-        testing::ElementHandle::find_by_accessible_label(
-            &ui,
-            "收起播放页",
-        )
-        .next();
-
-    assert!(
-        ui.global::<Shell>().get_viz_bar_w() > 0.0,
-        "播放页控制条该回写宽度,实得 {}",
-        ui.global::<Shell>().get_viz_bar_w()
-    );
-    assert!(
-        ui.global::<Shell>().get_viz_bar_h() > 0.0,
-        "播放页控制条该回写高度"
-    );
-}
-
-/// 紧凑版式里「展开播放页」键在屏内。
-///
-/// 钉 #68 修的挤爆回归:循环键进场后那一行超宽,▲ 被推出屏外,
-/// 播放页在手机上打不开。几何断言右缘不越窗宽。
-#[test]
-fn the_expand_button_stays_on_screen_in_compact() {
-    let ui = wide_page();
-    ui.global::<Shell>().set_compact(true);
-    ui.global::<Player>().set_has_track(true);
-
-    let expand =
-        testing::ElementHandle::find_by_accessible_label(
-            &ui,
-            "展开播放页",
-        )
-        .next()
-        .expect("紧凑版式里找不到展开键");
-    let right =
-        expand.absolute_position().x + expand.size().width;
-    let window_w = ui.window().size().width as f32
-        / ui.window().scale_factor();
-    assert!(
-        right <= window_w,
-        "展开键右缘 {right} 超出窗宽 {window_w}"
-    );
-}
-
-/// 悬浮胶囊条身上带着「正在放什么」:封面、曲名那一列只在手上有歌时出现。
-///
-/// 没在放时不摆空壳 —— 与进度条同一条理由。
-#[test]
-fn the_bar_shows_the_current_track_only_when_there_is_one()
-{
-    let ui = wide_page();
-
-    ui.global::<Player>().set_has_track(false);
-    assert!(!present(&ui, "MusicPage::bar-now"));
-
-    ui.global::<Player>().set_has_track(true);
-    assert!(present(&ui, "MusicPage::bar-now"));
-}
 
 /// 播放键换成环形进度键后,对外仍是那颗「播放/暂停」按钮:
 /// 标签在、按一下喊 toggle-play、值由 Rust 写回。
