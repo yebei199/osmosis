@@ -298,12 +298,29 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
 ```sh
 set -a; source .env; set +a
 adb shell input keyevent KEYCODE_WAKEUP
+adb shell input swipe 540 2200 540 600 200   # 少了这步 PIN 键盘不出来,input text 打进空气
 adb shell input text "$ANDROID_DEVICE_PIN"
 adb shell input keyevent KEYCODE_ENTER
 ```
 
+`wm dismiss-keyguard` 过不去这道锁,别试。锁着时的症状认得出来:`screencap` 出
+**0 字节**(锁屏壁纸还截得到,进到安全层就全黑或空),应用的 slint 窗口
+`get_window_properties` 里 `size` 是空的 —— 那不是 MCP 坏了,是画面根本没上屏。
+验证期间用 `adb shell svc power stayon usb` 顶住熄屏,收尾记得 `stayon false`。
+
 **不要把这个值写进任何进版本库的文件**,包括提交信息、issue 与注释。要引用它就引用
 这个变量名。
+
+## 真机上的应用登录
+
+服务端不时把旧会话判失效(装新 APK 后 logcat 见「会话被服务端判为失效」),应用
+就停在登录页。测试账号在同一个 `.env`:`TEST_USERNAME` / `TEST_PASSWORD`,照着
+锁屏那节的规矩,只引用变量名。
+
+填表走 MCP(8090):`find_elements_by_id` 找 `LoginPage::username` /
+`LoginPage::password`,`set_element_value` 灌值。登录键是 `HoverButton`,**没有
+无障碍标签**,`click_element` 按标签找不到它 —— 按几何 `adb shell input tap` 点
+(2400×1080 竖屏在 (434, 1372) 附近),或先给它补上 `accessible-label` 再驱动。
 
 ## MIUI 装不上
 
