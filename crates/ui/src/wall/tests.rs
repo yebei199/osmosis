@@ -135,8 +135,10 @@ fn hit_test_misses_empty_space() {
 /// 塌回与 dolly 都在有限帧内收敛(420ms ≈ 25 帧的量级)。
 #[test]
 fn transitions_settle_within_a_second() {
-    let mut c = Collapse::default();
-    c.target = 0.0;
+    let mut c = Collapse {
+        target: 0.0,
+        ..Collapse::default()
+    };
     let mut frames = 0;
     while c.step() {
         frames += 1;

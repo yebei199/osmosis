@@ -151,7 +151,7 @@ fn every_page_carries_the_same_bar() {
 
     ui.global::<Shell>().set_play_page_open(true);
     assert!(
-        ids(&ui, "PlayerBar::capsule").len() >= 1,
+        !ids(&ui, "PlayerBar::capsule").is_empty(),
         "播放页覆层上也该有同一根条"
     );
 }

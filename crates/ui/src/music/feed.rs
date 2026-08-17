@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// `LyricFeed::window` 交出的一窗歌词:
+/// (代际, 焦点行号, 各行的 (相对偏移, 原文, 译文), 全曲有没有译文)。
+/// 起别名不只为了压 clippy 的 type_complexity:原生与 wasm 两个 `window`
+/// 必须同型,写两遍元组等于留一处能悄悄岔开的地方。
+pub(crate) type LyricWindow =
+    (u64, usize, Vec<(i32, String, String)>, bool);
+
 /// 点云封面的取用口:播放页每帧问它「这一帧封面该怎么办」。
 ///
 /// 只在换歌那一帧交出动作,取走即回到"没消息" —— 一张封面是兆级的字节,
@@ -79,12 +86,7 @@ impl LyricFeed {
     pub(crate) fn window(
         &self,
         browse: i32,
-    ) -> Option<(
-        u64,
-        usize,
-        Vec<(i32, String, String)>,
-        bool,
-    )> {
+    ) -> Option<LyricWindow> {
         let (generation, current, _, _) = self.current()?;
         let lines = self.lines.borrow();
         let window =
@@ -139,12 +141,7 @@ impl LyricFeed {
     pub(crate) fn window(
         &self,
         _browse: i32,
-    ) -> Option<(
-        u64,
-        usize,
-        Vec<(i32, String, String)>,
-        bool,
-    )> {
+    ) -> Option<LyricWindow> {
         None
     }
 }
