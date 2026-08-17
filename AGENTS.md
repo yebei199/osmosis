@@ -249,6 +249,9 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
 真机那个号**烧在 APK 里**(`apps/android/src/lib.rs` 的 `option_env!`),改它要重出包;
 要挪就挪桌面那个。`just mcp-android` 建的 `adb forward tcp:8090` 留着不碍事,不必每次撤。
 
+真机上 MCP 的 `take_screenshot` 会报 Skia 包装错误 —— 元素树、点击、填值都好用,
+唯独截图走 `adb shell screencap`(物理像素,scale 2.75,逻辑坐标乘 2.75 才对得上图)。
+
 `just desktop-dev*` 仍前置端口守卫:桌面那个号被占时直接失败并点名占用者。分号之后
 再撞上多半是上一个桌面实例没退干净,`just desktop-kill`。
 
@@ -318,9 +321,9 @@ adb shell input keyevent KEYCODE_ENTER
 锁屏那节的规矩,只引用变量名。
 
 填表走 MCP(8090):`find_elements_by_id` 找 `LoginPage::username` /
-`LoginPage::password`,`set_element_value` 灌值。登录键是 `HoverButton`,**没有
-无障碍标签**,`click_element` 按标签找不到它 —— 按几何 `adb shell input tap` 点
-(2400×1080 竖屏在 (434, 1372) 附近),或先给它补上 `accessible-label` 再驱动。
+`LoginPage::password`,`set_element_value` 灌值,再按无障碍标签「登录」点提交键。
+(曾经那颗键用子 Text 而不是 `text` 属性,标签为空、只能从截图量坐标 ——
+HoverButton 的标签绑的是属性,塞子 Text 画得出来但读屏念不出,别再犯。)
 
 ## MIUI 装不上
 

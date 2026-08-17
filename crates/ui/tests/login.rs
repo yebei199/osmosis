@@ -42,6 +42,30 @@ fn the_login_page_is_shown_only_when_logged_out() {
     );
 }
 
+/// **提交键按无障碍标签找得到、点得动。**
+///
+/// 曾经它是唯一不走 HoverButton `text` 属性、自己塞子 Text 的调用点,
+/// 标签因此为空:读屏念不出它,真机驱动只能从截图上量坐标点
+/// (AGENTS.md「真机上的应用登录」记的就是这次绕行)。
+#[test]
+fn the_submit_button_answers_to_its_label() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+    ui.global::<Session>().set_logged_in(false);
+
+    let button = testing::ElementHandle::find_by_accessible_label(&ui, "登录")
+        .find(|h| h.accessible_role() == Some(testing::AccessibleRole::Button))
+        .expect("登录键该报出自己的标签");
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Session>().on_login(move |_, _| {
+        counter.set(counter.get() + 1);
+    });
+    button.invoke_accessible_default_action();
+    assert_eq!(asked.get(), 1, "点登录键该喊一声 login");
+}
+
 /// 登录页盖着时导航不在树里。
 ///
 /// 用 `if` 而不是 `visible: false` 正是为了这一条:后者只是看不见,

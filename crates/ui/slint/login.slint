@@ -82,20 +82,16 @@ export component LoginPage inherits Rectangle {
 
             HoverButton {
                 height: 40px;
+                // 字走 `text` 属性而不是塞子 Text:HoverButton 的无障碍标签
+                // 绑的是这个属性,子 Text 画得出来、读屏却念不出 —— 真机驱动
+                // 曾因此只能从截图上量坐标点它。
+                text: root.busy
+                    ? "…"
+                    : (root.registering ? "注册并登录" : "登录");
                 // 等答复时不给按 —— 连点会发出两次注册,第二次注定撞用户名重复,
                 // 而那句报错会盖掉第一次的成功。
                 enabled: !root.busy;
                 clicked => { root.submit(); }
-
-                Text {
-                    text: root.busy
-                        ? "…"
-                        : (root.registering ? "注册并登录" : "登录");
-                    color: Theme.text;
-                    font-size: 15px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
             }
 
             switch-mode := TouchArea {
