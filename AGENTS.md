@@ -1,5 +1,5 @@
 ---
-docs_synced_at: d900bbd
+docs_synced_at: fba905d
 ---
 
 # AGENTS.md
