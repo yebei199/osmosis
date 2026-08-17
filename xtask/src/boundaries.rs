@@ -139,13 +139,13 @@ fn app_core_compiles_for_wasm() -> Result<(), String> {
     )
 }
 
-/// 3D 桥(render3d/bevy/wgpu)不进 web / ios 的**默认**构建。
+/// 3D 桥(render3d/bevy/wgpu)完全不进 web / ios。
 ///
-/// web / ios 的默认产物一旦拉进 bevy 或 wgpu,体积爆炸,且违反「余端 graceful 缺省」
-/// 的约定(见计划 `bevy-serialized-dove`):默认应隐藏 3D 面板,而非把整套渲染器
-/// 打包进去。web 自 slint#11580 起有了 opt-in 的 `bevy-3d` feature(desktop/android
-/// 同名),但 `cargo tree` 查的是默认 feature 集,这里守住的正是「默认不外溢」;
-/// ios 则仍然完全禁入。
+/// bevy 在桌面与 android 上是硬依赖(docs/adr/0011),但 web / ios 一旦拉进 bevy
+/// 或 wgpu,体积爆炸;这两端按「余端 graceful 缺省」退回无 3D 形态 —— 空图缺省、
+/// 锚点恒无,`.slint` 里零平台判断。曾经三端各有一个 opt-in 的 `bevy-3d` feature,
+/// 随 0011 一并拆除(可关性只剩一个没人验证过的降级形态);哪天要给 web / ios
+/// 开 3D,是把 render3d 接进它们的入口 crate,而不是复活那个 feature。
 fn web_ios_free_of_3d() -> Result<(), String> {
     const FORBIDDEN: &[&str] =
         &["render3d", "bevy", "wgpu"];
