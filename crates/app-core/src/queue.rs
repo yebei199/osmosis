@@ -93,10 +93,8 @@ impl Queue {
     ///
     /// 名字就叫 `next`:它是控制条上那个「下一首」,领域词优先。
     /// 不实现 `Iterator` —— 队列可以 `previous` 回头,迭代器语义反而是误导。
-    #[expect(
-        clippy::should_implement_trait,
-        reason = "领域动作「下一首」,非迭代器;可回头的队列不该长得像 Iterator"
-    )]
+    /// (曾有一个压 `should_implement_trait` 的 `#[expect]`;clippy 1.97 起
+    /// 带参数的 `next` 不再触发那条 lint,expect 落空反而变成错误,遂删。)
     pub fn next(&mut self, seed: u64) -> Option<&TrackDto> {
         if self.cursor + 1 >= self.order.len() {
             if self.loop_mode != LoopMode::All

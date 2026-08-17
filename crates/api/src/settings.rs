@@ -91,11 +91,9 @@ pub fn parse(raw: &str) -> Settings {
             raw.volume.unwrap_or(DEFAULT_VOLUME),
         ),
         // 新字段优先;没有就翻译琥珀年代的 dark 布尔;都没有落默认(深色)。
-        theme: raw.theme.unwrap_or_else(|| {
-            match raw.dark {
-                Some(false) => ThemeMode::Light,
-                _ => ThemeMode::Dark,
-            }
+        theme: raw.theme.unwrap_or(match raw.dark {
+            Some(false) => ThemeMode::Light,
+            _ => ThemeMode::Dark,
         }),
         // 老文件没有这个字段:默认开,与 Settings::default 一致。
         aurora_buttons: raw.aurora_buttons.unwrap_or(true),
