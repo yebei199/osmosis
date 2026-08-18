@@ -1,7 +1,8 @@
 # 手动同步 fork
 
-本项目的 slint 走 `yebei199/slint` 的 `dev` 分支,它又把 femtovg 指到
-`yebei199/femtovg` 的一个分支。两层 fork 都不自动跟进上游,需要时按本文跑一遍。
+本项目的 slint 走 `yebei199/slint` 的 `dev` 分支,它又把 femtovg 指到上游
+`femtovg/femtovg` 的 git master(femtovg#302 已合并,fork 已退役;等上游发出含
+#302 的版本后改回 crates.io)。fork 不自动跟进上游,需要时按本文跑一遍。
 
 不上定时任务是刻意的:`master` 要保持从上游**纯快进**,而 GitHub 的定时 workflow
 只从默认分支读取,往 master 塞一个上游没有的 workflow 文件就把快进本身破坏了。
@@ -26,13 +27,10 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 (2026-08-13 的 `be095f1e4` 就是这样一条死 commit)。所以**补丁清单的权威副本不在 git
 历史里**,在 `Cargo.toml` 的 `[patch.crates-io]` 上方那段注释。核对补丁时看那里。
 
-`yebei199/femtovg`:
-
-| 分支 | 内容 | 维护方式 |
-|---|---|---|
-| `master` | 上游 master 的镜像,零本地改动 | 纯快进 |
-| `dev` | 上游 master + femtovg#302 的十个 commit,slint fork 实际依赖 | 重建,强推 |
-| `pr/wgpu-per-draw-allocations` | femtovg#302 的 PR 分支,不要 rebase(会打乱评审视图) | 只在 PR 需要时动 |
+`yebei199/femtovg` 已于 2026-08-18 退役:它唯一承载的 femtovg#302 于 2026-08-17
+并入上游 master,slint fork 从此直接指上游 git。`dev` 与 `pr/wgpu-per-draw-allocations`
+两条分支还挂在 fork 上未删 —— 历史上的 Cargo.lock 按 `?branch=dev` 指过它,删前要
+确认旧 commit 还能按 sha 取回。
 
 两个 fork 用同一套角色:`master` 镜像上游,`dev` 承载全部本地改动,PR 从 `dev` 拆出去
 单独开分支,上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容
@@ -93,20 +91,12 @@ git push origin upstream/master:refs/heads/master
 
 `push-guard` 会拦主分支,这是设计如此。确认要更新后重跑同一条命令。
 
-### 2. femtovg 的 dev 重建
+### 2. femtovg 跟进上游
 
-只在上游 femtovg 有新版本、或 #302 有新 commit 时需要。
-
-```bash
-cd ~/RustroverProjects/femtovg-fork
-git fetch upstream
-git checkout -B dev upstream/master
-git cherry-pick <#302 分支的第一个 commit>^..<最后一个 commit>
-git push --force-with-lease origin dev
-```
-
-不要直接 rebase `pr/wgpu-per-draw-allocations`:那是开着的 PR 分支,强推会打乱
-评审视图和行内评论。`dev` 是它的消费副本,两者分开。
+fork 退役后没有重建步骤:femtovg 直接指上游 git master,跟进就是在 slint fork 里
+`cargo update -p femtovg` 再走第 3、4 步。上游发出含 #302 的版本后,把
+`internal/renderers/femtovg/Cargo.toml` 里的 git 依赖改回 crates.io,本文相关段落
+一并删掉。
 
 ### 3. dev 合进上游
 
@@ -195,6 +185,10 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-08-18 femtovg fork 退役:#302 前一天并入上游 master,slint fork 的 femtovg
+  依赖改指 `femtovg/femtovg` git master(最新发布 0.26.0 早于合并,还回不了
+  crates.io)。slint 侧核对确认 wasm 定帧、`Window::is_active()` 两条补丁上游仍
+  没有,fork 继续;skia present 顺序那条已是死 commit(文件与上游逐字节相同)。
 - 2026-08-13 slint 的 dev 从落后 98 个 commit 合到上游 `e24172737`。present 顺序那条
   (slint#12861)上游已收下,冲突取上游那侧,补丁栈从四条回到三条。同时把 dev 的维护
   方式从「rebase + 强推」改成「merge + 快进推」,理由见第一节。

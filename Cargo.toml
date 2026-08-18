@@ -128,10 +128,10 @@ debug = "line-tables-only"
 #      拿不到刷新率,回退到 60Hz 硬定时,144Hz 屏上被钉死在 16.14ms/帧。未提 PR。
 #   2. feat(api): Window::is_active()。播放页的可视化要「失焦即停」,上游没有等价物。
 #      可提 PR,尚未提。
-#   3. build(femtovg): 把 femtovg 指到 yebei199/femtovg 的 dev 分支。
-#      上游 femtovg 的 wgpu 后端每个 draw 新建六个 GPU 对象,wasm 上每元素约 0.5ms
-#      GPU 进程时间。分支 = femtovg master + femtovg#302 的十个 commit,版本仍 0.26.0。
-#      #302 合并后此条撤销。
+#   3. build(femtovg): 把 femtovg 指到上游 femtovg/femtovg 的 git master。
+#      femtovg#302(wgpu 后端每 draw 新建六个 GPU 对象、wasm 上每元素约 0.5ms 的
+#      修复)已于 2026-08-17 并入上游 master,yebei199/femtovg fork 已退役;但最新
+#      发布 0.26.0 早于合并,所以还得走 git。上游发出含 #302 的版本后此条撤销。
 #
 # 具体 commit 由 Cargo.lock 锁死,所以 CI/docker 拉到的和本地一致;
 # 跟进上游要对**每个**被 patch 的包 `cargo update -p slint -p slint-build`
