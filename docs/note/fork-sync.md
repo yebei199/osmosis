@@ -28,9 +28,7 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 历史里**,在 `Cargo.toml` 的 `[patch.crates-io]` 上方那段注释。核对补丁时看那里。
 
 `yebei199/femtovg` 已于 2026-08-18 退役:它唯一承载的 femtovg#302 于 2026-08-17
-并入上游 master,slint fork 从此直接指上游 git。`dev` 与 `pr/wgpu-per-draw-allocations`
-两条分支还挂在 fork 上未删 —— 历史上的 Cargo.lock 按 `?branch=dev` 指过它,删前要
-确认旧 commit 还能按 sha 取回。
+并入上游 master,slint fork 从此直接指上游 git。两条分支同日删除,见下节。
 
 两个 fork 用同一套角色:`master` 镜像上游,`dev` 承载全部本地改动,PR 从 `dev` 拆出去
 单独开分支,上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容
@@ -42,6 +40,13 @@ femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`
 三条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 
 ## 已删除的分支
+
+2026-08-18 清了两条(`yebei199/femtovg`,fork 退役):
+
+| 分支 | 删时的 sha | 内容去了哪 |
+|---|---|---|
+| `dev` | `0a2767199` | femtovg#302 已合进上游 master。历史 Cargo.lock 按 `?branch=dev` 锁过这个 sha,所以删前打了 `archive/dev-2026-08-18` tag 指着它,commit 保持可达、可按 sha fetch |
+| `pr/wgpu-per-draw-allocations` | — | #302 的 PR 分支。commit 永久挂在上游的 `refs/pull/302/head`,PR 页面可见,无需归档 |
 
 2026-08-13 清了两条(`yebei199/slint`):
 
