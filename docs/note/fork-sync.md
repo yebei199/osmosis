@@ -30,14 +30,19 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 `yebei199/femtovg` 已于 2026-08-18 退役:它唯一承载的 femtovg#302 于 2026-08-17
 并入上游 master,slint fork 从此直接指上游 git。两条分支同日删除,见下节。
 
-两个 fork 用同一套角色:`master` 镜像上游,`dev` 承载全部本地改动,PR 从 `dev` 拆出去
-单独开分支,上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容
-自然留在上游代码或 PR 正文里。
-
-`dev` 这个名字是刻意的。曾经叫 `pin/femtovg-0.26-wgpu-perf`,版本号写进分支名意味着
-femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`。固定名字一次到位。
+角色分工:`master` 镜像上游,`dev` 承载全部本地改动,PR 从 `dev` 拆出去单独开分支,
+上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容自然留在上游
+代码或 PR 正文里 —— femtovg fork 走完这条路后整个退役,就是这套规则的终点。
 
 三条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
+2026-08-18 按三点 diff 核对过,`dev` 相对上游独有的改动正好只有这三处代码加一个
+`Cargo.lock`,与那份清单一致:
+
+| 文件 | 补丁 | 撤销条件 |
+|---|---|---|
+| `internal/backends/winit/frame_throttle.rs` | wasm 上交给浏览器的 requestAnimationFrame 定帧 | 未提 PR,上游也没自己修 |
+| `internal/core/api.rs` | `Window::is_active()` | 未提 PR,上游无等价物 |
+| `internal/renderers/femtovg/Cargo.toml` | femtovg 走上游 git 而非 crates.io | 上游发出含 femtovg#302 的版本 |
 
 ## 已删除的分支
 
@@ -75,14 +80,29 @@ femtovg 每升一次版都要改名,还要跟着改 slint fork 里的 `branch =`
 | `fix/wgpu-cache-static-bindings`、`pr/wgpu-cache-static-bindings` | femtovg#303 已关,内容并进 #302 | #302 分支里 sampler 缓存在位 |
 | `perf/wgpu-resident-buffers` | 5 commit 的旧版,被 #302 的 10 commit 版覆盖 | pin 分支已改指新版 |
 
-删分支前先确认它的内容在别处能找回。两处经验:
-
-探针那条差点漏掉。结论早就写下了,但复现步骤当时指向分支本身,那 11 行补丁只存在于
-那条分支上。
+删分支前先确认它的内容在别处能找回。想删掉分支又保住 commit,标准做法是打 tag:
+tag 一样让 commit 可达、可按 sha fetch,但不占分支列表,也不会被误当成还在维护的
+分支。历史 Cargo.lock 用 `?branch=` 锁过的分支尤其要这样处理 —— 锁文件记的是 sha,
+只要 sha 还可达,旧提交就还能构建。PR 分支不用打:commit 永久挂在上游的
+`refs/pull/<n>/head`,PR 页面也一直在。
 
 判断「上游是否已经收下」不能用 `git rev-list --count upstream/master..branch`。squash
 合并会换掉哈希,分支看上去永远领先。要按内容查:去上游代码里找那个函数、那个文件、
 那个符号在不在。
+
+同理,查「fork 还背着什么」要用**三点** diff,不能用两点:
+
+```bash
+git -C ~/RustroverProjects/slint-fork fetch upstream
+git diff upstream/master...origin/dev --stat   # 三个点
+```
+
+两点 diff 比的是两个 tip 的树,上游自己新增的 commit 会被算成「差异」,反着显示成我们
+删了几千行。三点从 merge-base 起算,列出来的才是 fork 独有的改动。2026-08-18 实测:
+两点报 237 个文件,三点只有 4 个 —— 后者才是真相。
+
+探针那条差点漏掉。结论早就写下了,但复现步骤当时指向分支本身,那 11 行补丁只存在于
+那条分支上。
 
 ## 二、同步步骤
 
@@ -192,8 +212,10 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 - 2026-08-18 femtovg fork 退役:#302 前一天并入上游 master,slint fork 的 femtovg
   依赖改指 `femtovg/femtovg` git master(最新发布 0.26.0 早于合并,还回不了
-  crates.io)。slint 侧核对确认 wasm 定帧、`Window::is_active()` 两条补丁上游仍
-  没有,fork 继续;skia present 顺序那条已是死 commit(文件与上游逐字节相同)。
+  crates.io),`dev` 与 PR 两条分支删除,`dev` 留 tag 归档。slint 侧核对确认 wasm
+  定帧、`Window::is_active()` 两条补丁上游仍没有,fork 继续;skia present 顺序那条
+  已是死 commit(文件与上游逐字节相同)。宿主与 wasm 两侧验证均通过,wasm 日志里
+  femtovg 确实从新来源重编。
 - 2026-08-13 slint 的 dev 从落后 98 个 commit 合到上游 `e24172737`。present 顺序那条
   (slint#12861)上游已收下,冲突取上游那侧,补丁栈从四条回到三条。同时把 dev 的维护
   方式从「rebase + 强推」改成「merge + 快进推」,理由见第一节。
