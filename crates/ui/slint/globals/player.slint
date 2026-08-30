@@ -20,6 +20,10 @@ export global Player {
     in property <bool> now-loading: false;
     // 是否正在出声。决定控制条中键画 ⏸ 还是 ▶。
     in property <bool> is-playing: false;
+    // 当前这一首的 id(加载中的也算),没有就是空串。卡墙据此挑出
+    // 「在播的那一张」走闪卡材质 —— tracks 里的 loading 只在取流那几秒为真,
+    // 指不了整段播放。
+    in property <string> now-id;
 
     // ── 进度与音量 ──
     // 手上有没有一首歌。没有时进度条整条不出现 —— 摆一条空槽会让人

@@ -237,6 +237,11 @@ impl Scene {
         app.add_plugins(MaterialPlugin::<
             cloud::CloudMaterial,
         >::default());
+        // 卡墙上「正在放的那一张」的闪卡材质,同一套内嵌路数。
+        bevy::asset::embedded_asset!(app, "foil.wgsl");
+        app.add_plugins(MaterialPlugin::<
+            crate::foil::FoilMaterial,
+        >::default());
 
         // 4) 造初始离屏目标图。UI 传来的窗口尺寸会触发按需重建(动态分辨率,见 render_viz_frame)。
         let target = make_target(&mut app, WIDTH, HEIGHT);

@@ -161,10 +161,10 @@ fn main() {
                     width: c.width,
                     height: c.height,
                     cam: render3d::WallCamera {
-                        pan_x: c.pan_x,
                         dolly: c.dolly,
                         perspective: c.perspective,
                     },
+                    foil: c.foil,
                     cards: c
                         .cards
                         .iter()
@@ -186,6 +186,7 @@ fn main() {
                             width: k.width,
                             height: k.height,
                             rgba: k.rgba.clone(),
+                            blank: k.blank,
                         })
                         .collect(),
                 },

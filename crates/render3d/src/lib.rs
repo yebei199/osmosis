@@ -30,6 +30,8 @@ mod warp;
 pub use warp::{AUDIO_BYTES, WARP_SIDE, WarpPass};
 
 mod cloud;
+
+mod foil;
 mod marker;
 mod wall;
 pub use wall::{

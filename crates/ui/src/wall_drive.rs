@@ -27,13 +27,15 @@ pub struct WallCardControls {
     pub size: f32,
 }
 
-/// 新到的一张封面(已烘圆角)。镜像 `render3d::WallCover`。
+/// 新到的一张卡面(圆角、描边、投影已烘进 alpha)。镜像 `render3d::WallCover`。
 #[derive(Clone, Debug)]
 pub struct WallCoverControls {
     pub slot: usize,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// 这张是封面还没到时的空白卡面。纯白,需要占位底色乘上去。
+    pub blank: bool,
 }
 
 /// 一帧卡墙的全部控制量。镜像 `render3d::WallFrame`。
@@ -41,9 +43,10 @@ pub struct WallCoverControls {
 pub struct WallControls {
     pub width: u32,
     pub height: u32,
-    pub pan_x: f32,
     pub dolly: f32,
     pub perspective: f32,
+    /// 正在放的那首歌占的槽位。只有它走闪卡材质。
+    pub foil: Option<usize>,
     pub cards: Vec<WallCardControls>,
     pub covers: Vec<WallCoverControls>,
 }
@@ -52,6 +55,11 @@ pub struct WallControls {
 const FOCUS_LIFT: f32 = 0.45;
 /// 一帧最多上传几张封面,免得首屏三十多张一起解压卡一帧。
 const COVERS_PER_FRAME: usize = 6;
+/// 空白卡面的边长。它只是一块圆角白底,低频,不需要高分辨率。
+const BLANK_SIZE: u32 = 64;
+/// `uploaded` 里代表「这一格现在挂的是空白卡面」的记号。真 URL 不会
+/// 长这样,占位与封面因此共用同一套「换了才重传」的判据。
+const BLANK_KEY: &str = "\u{1}blank";
 
 /// 卡墙的跨帧状态。
 pub struct WallDrive {
@@ -68,6 +76,8 @@ pub struct WallDrive {
     uploaded: Vec<slint::SharedString>,
     /// 已经喊过 needs-cover 的 URL,防止每帧重复喊。
     requested: Vec<slint::SharedString>,
+    /// 烘一次就不动的空白卡面(像素, 宽, 高)。
+    blank: Option<(Vec<u8>, u32, u32)>,
 }
 
 impl Default for WallDrive {
@@ -88,16 +98,19 @@ impl WallDrive {
             was_pressed: false,
             uploaded: Vec::new(),
             requested: Vec::new(),
+            blank: None,
         }
     }
 
-    /// 这一帧的布局(物理像素)。场区尺寸由 slint 元素回写到 root 属性。
+    /// 这一帧的布局(物理像素)。场区尺寸由 slint 元素回写到 root 属性,
+    /// 卡数决定环面的行列形状。
     fn layout_now(ui: &MainWindow) -> wall::WallLayout {
         let dpr = ui.window().scale_factor();
         wall::layout(
             ui.global::<Shell>().get_wall_field_w() * dpr,
             ui.global::<Shell>().get_wall_field_h() * dpr,
             ui.global::<Shell>().get_compact(),
+            ui.global::<Player>().get_tracks().row_count(),
         )
     }
 
@@ -175,7 +188,7 @@ impl WallDrive {
         }
         self.was_pressed = pressed;
 
-        self.cam.step(lay.col_pitch);
+        self.cam.step();
         let collapsing = self.collapse.step();
 
         // 塌回落地:把墙藏掉,列表接管。
@@ -214,7 +227,8 @@ impl WallDrive {
         let cards = poses
             .iter()
             .map(|p| {
-                let w = wall::world_pose(&self.cam, p);
+                let w =
+                    wall::world_pose(&lay, &self.cam, p);
                 WallCardControls {
                     x: w.x,
                     y: w.y,
@@ -222,7 +236,10 @@ impl WallDrive {
                     rot_y: w.rot_y,
                     rot_x: w.rot_x,
                     dim: w.dim,
-                    size: lay.card,
+                    // 方片要连投影那一圈一起摆:纹理四周撑大了,
+                    // 方片不跟着撑,投影会被压进卡面里。
+                    size: lay.card
+                        * (1.0 + 2.0 * wall::CARD_PAD),
                 }
             })
             .collect();
@@ -230,16 +247,38 @@ impl WallDrive {
         Some(WallControls {
             width: lay.w as u32,
             height: lay.h as u32,
-            pan_x: self.cam.pan_x,
-            dolly: self.cam.dolly + dolly_extra,
+            dolly: dolly_extra,
             perspective: lay.perspective,
+            foil: self.foil_slot(ui, poses.len()),
             cards,
             covers,
         })
     }
 
-    /// 收集这一帧新到的封面:有图、URL 换过、限量取出并烘圆角。
-    /// 没图的槽顺便喊一声 needs-cover(墙上的卡多半还没进过列表可视区)。
+    /// 正在放的那首歌落在哪一格。没有在放的歌、或者它不在这批卡里就给
+    /// `None` —— 闪卡是「在播」的视觉信号,没歌可指时不该有卡在闪。
+    fn foil_slot(
+        &self,
+        ui: &MainWindow,
+        count: usize,
+    ) -> Option<usize> {
+        let now = ui.global::<Player>().get_now_id();
+        if now.is_empty() {
+            return None;
+        }
+        let tracks = ui.global::<Player>().get_tracks();
+        (0..count).find(|&i| {
+            tracks
+                .row_data(i)
+                .is_some_and(|row| row.id == now)
+        })
+    }
+
+    /// 收集这一帧要上传的卡面:新到的封面,以及还没封面那些格子的空白卡面。
+    ///
+    /// 圆角、描边、投影都在 [`wall::bake_card`] 里一次烘完。没图的槽顺便
+    /// 喊一声 needs-cover(墙上的卡多半还没进过列表可视区),在那之前先挂
+    /// 一张空白卡面 —— 否则封面到货前露出的是一个没圆角没投影的方块。
     fn collect_covers(
         &mut self,
         ui: &MainWindow,
@@ -255,39 +294,67 @@ impl WallDrive {
             let Some(row) = tracks.row_data(slot) else {
                 continue;
             };
-            if row.cover_url.is_empty()
-                || self.uploaded[slot] == row.cover_url
+            if !row.cover_url.is_empty()
+                && self.uploaded[slot] == row.cover_url
             {
                 continue;
             }
-            let Some(buf) = row.cover.to_rgba8() else {
-                // 缩略图还没到:请求一次(列表虚拟化不会替看不见的行开口)。
-                // 循环恒满帧,到货那一帧自然会被下面的上传逻辑接住。
-                if !self.requested.contains(&row.cover_url)
-                {
-                    self.requested
-                        .push(row.cover_url.clone());
-                    ui.global::<Player>()
-                        .invoke_needs_cover(
-                            row.cover_url.clone(),
-                        );
-                }
-                continue;
-            };
             if out.len() >= COVERS_PER_FRAME {
                 // 还有货没传完:下一帧继续。
                 break;
             }
-            let (w, h) = (buf.width(), buf.height());
-            let mut rgba = buf.as_bytes().to_vec();
-            wall::bake_rounded(&mut rgba, w, h);
-            self.uploaded[slot] = row.cover_url.clone();
-            out.push(WallCoverControls {
-                slot,
-                width: w,
-                height: h,
-                rgba,
-            });
+            match row.cover.to_rgba8() {
+                Some(buf) if !row.cover_url.is_empty() => {
+                    let (w, h) = (buf.width(), buf.height());
+                    let (rgba, w, h) = wall::bake_card(
+                        buf.as_bytes(),
+                        w,
+                        h,
+                    );
+                    self.uploaded[slot] =
+                        row.cover_url.clone();
+                    out.push(WallCoverControls {
+                        slot,
+                        width: w,
+                        height: h,
+                        rgba,
+                        blank: false,
+                    });
+                }
+                _ => {
+                    // 缩略图还没到:请求一次(列表虚拟化不会替看不见的行开口)。
+                    // 循环恒满帧,到货那一帧自然会被上面那一支接住。
+                    if !row.cover_url.is_empty()
+                        && !self
+                            .requested
+                            .contains(&row.cover_url)
+                    {
+                        self.requested
+                            .push(row.cover_url.clone());
+                        ui.global::<Player>()
+                            .invoke_needs_cover(
+                                row.cover_url.clone(),
+                            );
+                    }
+                    if self.uploaded[slot] != BLANK_KEY {
+                        let (rgba, w, h) = self
+                            .blank
+                            .get_or_insert_with(|| {
+                                wall::bake_blank(BLANK_SIZE)
+                            })
+                            .clone();
+                        self.uploaded[slot] =
+                            BLANK_KEY.into();
+                        out.push(WallCoverControls {
+                            slot,
+                            width: w,
+                            height: h,
+                            rgba,
+                            blank: true,
+                        });
+                    }
+                }
+            }
         }
         out
     }
@@ -335,9 +402,14 @@ pub(crate) fn bind(
         });
     });
 
+    // 滚轮 = 竖着划一下,与移动端同一套语义。逻辑像素转物理,
+    // 一格滚轮在高分屏上才不是半格。
+    let weak = ui.as_weak();
     let d = drive.clone();
     ui.global::<Shell>().on_wall_wheel(move |delta| {
-        d.borrow_mut().cam.wheel(delta);
+        let Some(ui) = weak.upgrade() else { return };
+        let dpr = ui.window().scale_factor();
+        d.borrow_mut().cam.wheel(delta * dpr);
     });
 
     // 列表 ⇄ 卡墙:目标一拨,插值自己走;塌回落地才真正藏墙(frame 里)。
@@ -363,15 +435,14 @@ mod tests {
     #[test]
     fn settled_steps_stay_stable_under_constant_calls() {
         let mut d = WallDrive::new();
-        let lay = wall::layout(1808.0, 864.0, false);
         for _ in 0..300 {
-            d.cam.step(lay.col_pitch);
+            d.cam.step();
             d.collapse.step();
         }
         let pan = d.cam.pan_x;
         let collapse = d.collapse.value;
         for _ in 0..100 {
-            d.cam.step(lay.col_pitch);
+            d.cam.step();
             d.collapse.step();
         }
         assert_eq!(
