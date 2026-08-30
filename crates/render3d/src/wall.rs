@@ -443,14 +443,20 @@ fn placeholder_tint(index: usize) -> [f32; 3] {
 
 /// 卡片材质:不受光、可透明(圆角与投影在纹理 alpha 里)。
 ///
-/// **两端都走 `Blend`。** 曾经安卓单独走 `Mask(0.5)`,是绕小米13(Adreno)
-/// 上「半透明元素整片不显示」那个坑(见 docs/adr/0012);而卡面现在带一圈
-/// 柔和投影,alpha 测试会把渐变切成硬边光晕,比没有投影更糟。安卓真机换成
-/// 努比亚平板后这一档需要在设备上复验:真出不来再退回 `Mask`,并且把投影
-/// 一起去掉。
+/// **安卓走 alpha 测试,桌面走混合。** Adreno 上 `Blend` 的元素整片不显示
+/// 是本仓的老坑(见 docs/adr/0012),2026-08-30 在努比亚平板上复验过:整面墙
+/// 一张卡都画不出来,而同一批曲目在列表里封面齐全 —— 换成 `Mask` 立刻正常。
+/// 换了设备、换了芯片,这个坑还在。
+///
+/// 代价是安卓上没有投影:投影的峰值 alpha 是 0.42,整段低于 0.5 的门槛,
+/// 会被 alpha 测试整个丢掉 —— 干净地消失,而不是切成硬边光晕。圆角也从
+/// 软边变硬边。描边不受影响,它长在 alpha 为 1 的卡面里。
 fn card_material() -> StandardMaterial {
     StandardMaterial {
         unlit: true,
+        #[cfg(target_os = "android")]
+        alpha_mode: AlphaMode::Mask(0.5),
+        #[cfg(not(target_os = "android"))]
         alpha_mode: AlphaMode::Blend,
         ..default()
     }

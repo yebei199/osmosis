@@ -50,7 +50,10 @@ impl Material for FoilMaterial {
 
     /// 与普通卡同一档透明度,理由见 `wall::card_material`。
     fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
+        #[cfg(target_os = "android")]
+        return AlphaMode::Mask(0.5);
+        #[cfg(not(target_os = "android"))]
+        return AlphaMode::Blend;
     }
 
     /// 卡墙是装饰层,场景里没有承影面,也没有 prepass 要喂。
