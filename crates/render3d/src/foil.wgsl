@@ -50,6 +50,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let shine = face * (0.28 + 0.55 * sweep);
 
     let lit = base.rgb * params.dim;
-    let rgb = lit + holo * shine + vec3<f32>(sweep * face * 0.18);
+    // 加光要看这一点还剩多少余量。纯加性的话浅色封面会被推到过曝,
+    // 线条和字全糊成一片白 —— 封面才是内容,闪卡是它上面的一层膜。
+    // 亮处只做**色偏**(零均值,不动亮度),暗处才补整段彩虹。
+    let lum = dot(lit, vec3<f32>(0.299, 0.587, 0.114));
+    let room = 1.0 - lum;
+    let tint = (holo - vec3<f32>(0.5)) * shine * 0.45;
+    let glow = holo * shine * room * 0.9;
+    let rgb = lit + tint + glow
+        + vec3<f32>(sweep * face * 0.16 * room);
     return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), base.a);
 }
