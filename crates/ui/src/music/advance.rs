@@ -89,5 +89,9 @@ pub(super) fn after_advance(
         ui.global::<Player>()
             .set_playback_text(QUEUE_DONE.into());
         ui.global::<Player>().set_is_playing(false);
+        // 手上没歌了就别再指着谁。留着的话卡墙上最后那张会一直闪 ——
+        // 「投影过期」换个地方犯(见 crate::notice 的模块注释)。
+        ui.global::<Player>()
+            .set_now_id(slint::SharedString::new());
     }
 }
