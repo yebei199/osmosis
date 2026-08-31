@@ -255,6 +255,42 @@ impl WallDrive {
         })
     }
 
+    /// 这一下点按要不要起播:点中的正是**已经浮起**的那张,而且没有
+    /// 播放动画在跑。
+    ///
+    /// 「点一下浮起、再点一下播放」而不是双击 —— **触摸屏上收不到双击**。
+    /// Slint 每次触摸抬起都在 `Released` 之后补一个 `MouseEvent::Exit`
+    /// (`internal/core/input.rs` 的 `process_ended`),而窗口发现「指针下的
+    /// 顶层元素变了」就会清掉连击计数(`window.rs` 的 `click_state.reset`)。
+    /// 于是第二次抬起看到的计数永远是 0,`double-clicked` 一次也发不出来。
+    /// 鼠标没这个问题:光标两次点击之间一直停在元素上。
+    ///
+    /// 桌面上一次双击会连着来两个 `clicked` 和一个 `double-clicked`,
+    /// `dolly` 那道闸挡住后两次,免得同一下点按连放两次。
+    fn should_play(&self, hit: Option<usize>) -> bool {
+        hit.is_some()
+            && hit == self.focus
+            && self.dolly.is_none()
+    }
+
+    /// 起播第 `index` 张卡:记下曲目,推相机。播放与开页都等 dolly 落位
+    /// (设计稿:落位后才起点云),落位处理在 [`Self::frame`] 里。
+    fn start_play(&mut self, ui: &MainWindow, index: usize) {
+        let Some(row) =
+            ui.global::<Player>().get_tracks().row_data(index)
+        else {
+            return;
+        };
+        let lay = Self::layout_now(ui);
+        let pose =
+            wall::card_pose(&lay, index, self.collapse.value);
+        self.pending_play = Some(row.id);
+        self.dolly = Some(wall::DollyRun {
+            t: 0.0,
+            target_z: pose.z,
+        });
+    }
+
     /// 正在放的那首歌落在哪一格。没有在放的歌、或者它不在这批卡里就给
     /// `None` —— 闪卡是「在播」的视觉信号,没歌可指时不该有卡在闪。
     fn foil_slot(
@@ -373,33 +409,31 @@ pub(crate) fn bind(
     ui.global::<Shell>().on_wall_tap(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
-        d.focus = d.hit(&ui, x, y);
+        let hit = d.hit(&ui, x, y);
+        // 再点一次已经浮起的那张 = 播放。见 should_play:触摸屏收不到双击。
+        if d.should_play(hit)
+            && let Some(index) = hit
+        {
+            d.start_play(&ui, index);
+            return;
+        }
+        d.focus = hit;
     });
 
     let weak = ui.as_weak();
     let d = drive.clone();
+    // 鼠标的双击照旧能播 —— 它走得到这条回调,而触摸走不到。
     ui.global::<Shell>().on_wall_double(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
         let mut d = d.borrow_mut();
         let Some(index) = d.hit(&ui, x, y) else {
             return;
         };
-        let Some(row) = ui
-            .global::<Player>()
-            .get_tracks()
-            .row_data(index)
-        else {
+        if d.dolly.is_some() {
+            // 同一下双击里 `clicked` 已经起播过了,别再推一次相机。
             return;
-        };
-        // 播放与开页都等 dolly 落位(设计稿:落位后才起点云)。
-        let lay = WallDrive::layout_now(&ui);
-        let pose =
-            wall::card_pose(&lay, index, d.collapse.value);
-        d.pending_play = Some(row.id);
-        d.dolly = Some(wall::DollyRun {
-            t: 0.0,
-            target_z: pose.z,
-        });
+        }
+        d.start_play(&ui, index);
     });
 
     // 滚轮 = 竖着划一下,与移动端同一套语义。逻辑像素转物理,
@@ -429,6 +463,35 @@ pub(crate) fn bind(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「点一下浮起、再点一下播放」的判据,以及它的两道闸。
+    ///
+    /// 触摸屏收不到双击(见 should_play 的文档),播放因此挂在普通点按上。
+    /// 但桌面上一次双击会连着来两个 `clicked` 和一个 `double-clicked` ——
+    /// 第一下浮起、第二下起播、双击那次必须落空,否则同一下点按放两次歌。
+    #[test]
+    fn the_second_tap_on_a_lifted_card_plays_it_once() {
+        let mut d = WallDrive::new();
+        // 第一下:没有浮起的卡,只选中,不播。
+        assert!(!d.should_play(Some(3)), "第一下不该起播");
+        d.focus = Some(3);
+        // 第二下点在同一张上:起播。
+        assert!(d.should_play(Some(3)));
+        // 点在别的卡上只是换选中。
+        assert!(!d.should_play(Some(4)));
+        // 点空处什么也不做。
+        assert!(!d.should_play(None));
+
+        // 起播之后 dolly 在跑,后面跟来的 clicked / double-clicked 都要落空。
+        d.dolly = Some(wall::DollyRun {
+            t: 0.0,
+            target_z: 0.0,
+        });
+        assert!(
+            !d.should_play(Some(3)),
+            "dolly 还在跑就又起播了,同一下点按会放两次"
+        );
+    }
 
     /// 动画收敛只是插值到位,不再衍生冻结:step 收敛后照样可以每帧调用,
     /// 状态稳定不漂移(前台恒满帧,见 change_log 2026-08-11)。
