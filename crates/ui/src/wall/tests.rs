@@ -17,12 +17,8 @@ fn layout_scales_with_container() {
     let a = layout(904.0, 432.0, false, N);
     let b = layout(1808.0, 864.0, false, N);
     assert!((b.card - a.card * 2.0).abs() < 0.01);
-    assert!(
-        (b.col_pitch - a.col_pitch * 2.0).abs() < 0.01
-    );
-    assert!(
-        (b.row_pitch - a.row_pitch * 2.0).abs() < 0.01
-    );
+    assert!((b.col_pitch - a.col_pitch * 2.0).abs() < 0.01);
+    assert!((b.row_pitch - a.row_pitch * 2.0).abs() < 0.01);
     // 参考尺寸下卡取回设计稿原值。列距不再是设计稿的 204:环面周期要罩住
     // 最远那层的视口,撑出来的间距总比它大,204 只剩「不许更密」的下限意义。
     assert!((a.card - 150.0).abs() < 0.01);
@@ -75,13 +71,11 @@ fn wrap_span_covers_the_viewport() {
         let lay = layout(w, h, compact, n);
         let far = 1.0 + (-lay.z_min) / lay.perspective;
         assert!(
-            lay.span_x()
-                >= w * far + lay.card * 2.0 - 0.01,
+            lay.span_x() >= w * far + lay.card * 2.0 - 0.01,
             "x 周期不够罩住 {w}×{h} 的最远层"
         );
         assert!(
-            lay.span_y()
-                >= h * far + lay.card * 2.0 - 0.01,
+            lay.span_y() >= h * far + lay.card * 2.0 - 0.01,
             "y 周期不够罩住 {w}×{h} 的最远层"
         );
     }
@@ -194,7 +188,10 @@ fn empty_pointer_frames_do_not_shake_the_wall() {
     let mut angles = Vec::new();
     for frame in 0..40 {
         // 偶数帧有事件、奇数帧没有:120Hz 屏配 60Hz 鼠标。
-        cam.drag(if frame % 2 == 0 { -24.0 } else { 0.0 }, 0.0);
+        cam.drag(
+            if frame % 2 == 0 { -24.0 } else { 0.0 },
+            0.0,
+        );
         cam.step();
         angles.push(cam.yaw);
     }
@@ -286,12 +283,14 @@ fn check_no_visible_jump(
             if let (Some(a), Some(b), true) =
                 (prev[i], now, frame > settle)
             {
-                let moved =
-                    ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+                let moved = ((b.0 - a.0).powi(2)
+                    + (b.1 - a.1).powi(2))
+                .sqrt();
                 // 宽到 4 倍指针位移:投影放大与姿态微调都算正常。
                 if moved > STEP * 4.0 {
                     assert!(
-                        offscreen(&lay, a) && offscreen(&lay, b),
+                        offscreen(&lay, a)
+                            && offscreen(&lay, b),
                         "{w}×{h} 拖 ({dx}, {dy}):第 {frame} 帧卡 {i} \
                          在屏幕上跳了 {moved:.0}px,{a:?} → {b:?}"
                     );
@@ -330,7 +329,10 @@ fn wheel_scrolls_vertically() {
     let before = cam.pan_x;
     cam.wheel(-120.0);
     assert!(cam.pan_y > 0.0, "滚轮下滑该让内容往上走");
-    assert!(cam.pan_y > 100.0, "滚轮的平移量该吃满,不该被平滑削掉");
+    assert!(
+        cam.pan_y > 100.0,
+        "滚轮的平移量该吃满,不该被平滑削掉"
+    );
     assert_eq!(cam.pan_x, before, "滚轮不该动横轴");
 }
 
@@ -395,7 +397,11 @@ fn card_bake_adds_rounded_corners_border_and_shadow() {
     // 中灰,好让描边的提亮看得出来。
     let src = vec![128u8; (w * h * 4) as usize];
     let (out, ow, oh) = bake_card(&src, w, h);
-    assert_eq!((ow, oh), (w + 20, h + 20), "四周该各留 10px");
+    assert_eq!(
+        (ow, oh),
+        (w + 20, h + 20),
+        "四周该各留 10px"
+    );
     assert_eq!(out.len(), (ow * oh * 4) as usize);
 
     let at = |x: u32, y: u32| {

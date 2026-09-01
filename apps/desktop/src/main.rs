@@ -49,9 +49,8 @@ fn main() {
         scene.queue(),
     );
     // 点云与卡墙两个闭包共用同一个 Scene(同线程,RefCell 即可)。
-    let scene = std::rc::Rc::new(
-        std::cell::RefCell::new(scene),
-    );
+    let scene =
+        std::rc::Rc::new(std::cell::RefCell::new(scene));
     let wall_scene = scene.clone();
     // seam:把 ui 的 NavGlassControls / VizControls 平凡拷成 render3d 的镜像参数。
     // 两个闭包分别驱动导航选中器与播放页视觉。
@@ -75,10 +74,9 @@ fn main() {
             // 场景那一趟只在播放页开着时走(#87):它是 9216 个立方体的全绘,
             // 而且进门就把卡墙的相机关掉 —— 常驻会把音乐页的墙渲没。
             // warp 是 192×192 一张独立小图,每帧照出,环形键的彩虹靠它。
-            let (viz_scene, occluder, anchor) = if v
-                .needs_scene
-            {
-                scene
+            let (viz_scene, occluder, anchor) =
+                if v.needs_scene {
+                    scene
                 .borrow_mut()
                 .render_viz_frame(&render3d::VizFrame {
                     time: v.time,
@@ -109,13 +107,13 @@ fn main() {
                     width: w,
                     height: h,
                 })
-            } else {
-                (
-                    slint::Image::default(),
-                    slint::Image::default(),
-                    None,
-                )
-            };
+                } else {
+                    (
+                        slint::Image::default(),
+                        slint::Image::default(),
+                        None,
+                    )
+                };
             Some(ui::VizImages {
                 warp: warp.render_frame(
                     v.time,
@@ -130,67 +128,67 @@ fn main() {
         },
         // 光带按钮:与上面两条同一个 seam 模式,逐字段平凡拷。
         move |b| {
-            btns.render_frame(
-                &render3d::AuroraBtnParams {
-                    time: b.time,
-                    slots: b
-                        .slots
-                        .iter()
-                        .map(|s| render3d::AuroraBtnSlot {
-                            w: s.w,
-                            h: s.h,
-                            radius: s.radius,
-                            seed: s.seed,
-                            speed: s.speed,
-                            amp: s.amp,
-                            mode: s.mode,
-                            bands: s.bands,
-                            variant: s.variant,
-                            progress: s.progress,
-                            pointer: s.pointer,
-                            colors: s.colors,
-                        })
-                        .collect(),
-                },
-            )
+            btns.render_frame(&render3d::AuroraBtnParams {
+                time: b.time,
+                slots: b
+                    .slots
+                    .iter()
+                    .map(|s| render3d::AuroraBtnSlot {
+                        w: s.w,
+                        h: s.h,
+                        radius: s.radius,
+                        seed: s.seed,
+                        speed: s.speed,
+                        amp: s.amp,
+                        mode: s.mode,
+                        bands: s.bands,
+                        variant: s.variant,
+                        progress: s.progress,
+                        pointer: s.pointer,
+                        colors: s.colors,
+                    })
+                    .collect(),
+            })
         },
         // 卡墙(#66):同一个 seam 模式,位姿与封面逐字段平凡拷。
         move |c| {
-            Some(wall_scene.borrow_mut().render_wall_frame(
-                &render3d::WallFrame {
-                    width: c.width,
-                    height: c.height,
-                    cam: render3d::WallCamera {
-                        dolly: c.dolly,
-                        perspective: c.perspective,
+            Some(
+                wall_scene.borrow_mut().render_wall_frame(
+                    &render3d::WallFrame {
+                        width: c.width,
+                        height: c.height,
+                        cam: render3d::WallCamera {
+                            dolly: c.dolly,
+                            perspective: c.perspective,
+                        },
+                        foil: c.foil,
+                        cards: c
+                            .cards
+                            .iter()
+                            .map(|k| render3d::WallCard {
+                                x: k.x,
+                                y: k.y,
+                                z: k.z,
+                                rot_y: k.rot_y,
+                                rot_x: k.rot_x,
+                                dim: k.dim,
+                                size: k.size,
+                            })
+                            .collect(),
+                        covers: c
+                            .covers
+                            .iter()
+                            .map(|k| render3d::WallCover {
+                                slot: k.slot,
+                                width: k.width,
+                                height: k.height,
+                                rgba: k.rgba.clone(),
+                                blank: k.blank,
+                            })
+                            .collect(),
                     },
-                    foil: c.foil,
-                    cards: c
-                        .cards
-                        .iter()
-                        .map(|k| render3d::WallCard {
-                            x: k.x,
-                            y: k.y,
-                            z: k.z,
-                            rot_y: k.rot_y,
-                            rot_x: k.rot_x,
-                            dim: k.dim,
-                            size: k.size,
-                        })
-                        .collect(),
-                    covers: c
-                        .covers
-                        .iter()
-                        .map(|k| render3d::WallCover {
-                            slot: k.slot,
-                            width: k.width,
-                            height: k.height,
-                            rgba: k.rgba.clone(),
-                            blank: k.blank,
-                        })
-                        .collect(),
-                },
-            ))
+                ),
+            )
         },
         // 系统媒体控件:Linux 上是 MPRIS,别的桌面还没有(见 docs/adr/0020)。
         mpris::start,

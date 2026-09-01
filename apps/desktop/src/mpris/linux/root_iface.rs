@@ -1,7 +1,5 @@
 //! 根接口 `org.mpris.MediaPlayer2`:这个播放器是谁,能拿它怎么办。
 
-
-
 /// 根接口:这个播放器是谁,能拿它怎么办。
 pub(super) struct Root;
 

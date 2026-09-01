@@ -5,7 +5,9 @@
 //! 屏幕坐标少一整摊代码,光泽也白拿卡片自身的俯仰抖动。
 
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::render_resource::{
+    AsBindGroup, ShaderType,
+};
 use bevy::shader::ShaderRef;
 
 /// `foil.wgsl` 在资产系统里的路径。着色器随二进制内嵌(`embedded_asset!`),

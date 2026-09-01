@@ -275,15 +275,24 @@ impl WallDrive {
 
     /// 起播第 `index` 张卡:记下曲目,推相机。播放与开页都等 dolly 落位
     /// (设计稿:落位后才起点云),落位处理在 [`Self::frame`] 里。
-    fn start_play(&mut self, ui: &MainWindow, index: usize) {
-        let Some(row) =
-            ui.global::<Player>().get_tracks().row_data(index)
+    fn start_play(
+        &mut self,
+        ui: &MainWindow,
+        index: usize,
+    ) {
+        let Some(row) = ui
+            .global::<Player>()
+            .get_tracks()
+            .row_data(index)
         else {
             return;
         };
         let lay = Self::layout_now(ui);
-        let pose =
-            wall::card_pose(&lay, index, self.collapse.value);
+        let pose = wall::card_pose(
+            &lay,
+            index,
+            self.collapse.value,
+        );
         self.pending_play = Some(row.id);
         self.dolly = Some(wall::DollyRun {
             t: 0.0,
@@ -341,7 +350,8 @@ impl WallDrive {
             }
             match row.cover.to_rgba8() {
                 Some(buf) if !row.cover_url.is_empty() => {
-                    let (w, h) = (buf.width(), buf.height());
+                    let (w, h) =
+                        (buf.width(), buf.height());
                     let (rgba, w, h) = wall::bake_card(
                         buf.as_bytes(),
                         w,

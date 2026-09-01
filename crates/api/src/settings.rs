@@ -160,10 +160,7 @@ mod tests {
                 ..Settings::default()
             };
 
-            assert_eq!(
-                parse(&render(&settings)),
-                settings
-            );
+            assert_eq!(parse(&render(&settings)), settings);
         }
     }
 

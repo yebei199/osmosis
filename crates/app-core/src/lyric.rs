@@ -57,7 +57,8 @@ impl LyricWindow {
     /// 某一行相对焦点的距离:0 是焦点行,负数在它上面。
     /// 界面拿它算衰减,不在窗口里的行给 `None`。
     pub fn offset_of(&self, index: usize) -> Option<i32> {
-        (index >= self.first && index < self.first + self.len)
+        (index >= self.first
+            && index < self.first + self.len)
             .then(|| index as i32 - self.focus as i32)
     }
 }
@@ -72,7 +73,11 @@ pub fn window(
     browse: i32,
 ) -> LyricWindow {
     if lines.is_empty() {
-        return LyricWindow { first: 0, focus: 0, len: 0 };
+        return LyricWindow {
+            first: 0,
+            focus: 0,
+            len: 0,
+        };
     }
 
     let last = lines.len() - 1;
@@ -81,7 +86,11 @@ pub fn window(
     let first = focus.saturating_sub(RADIUS);
     let end = focus.saturating_add(RADIUS).min(last);
 
-    LyricWindow { first, focus, len: end - first + 1 }
+    LyricWindow {
+        first,
+        focus,
+        len: end - first + 1,
+    }
 }
 
 #[cfg(test)]

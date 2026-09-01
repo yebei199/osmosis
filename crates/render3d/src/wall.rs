@@ -213,7 +213,11 @@ impl WallScene {
     /// 让闪卡材质挂在这一帧该挂的那一格上,并推进它的时钟。
     ///
     /// 换材质靠增删组件:一个实体同时挂两种 `MeshMaterial3d` 会被画两遍。
-    fn sync_foil(&mut self, app: &mut App, frame: &WallFrame) {
+    fn sync_foil(
+        &mut self,
+        app: &mut App,
+        frame: &WallFrame,
+    ) {
         let want = frame.foil.filter(|&i| {
             i < self.cards.len() && i < frame.cards.len()
         });
@@ -221,7 +225,8 @@ impl WallScene {
             if let Some(old) = self.foil_slot
                 && let Some(entity) = self.cards.get(old)
             {
-                let mut e = app.world_mut().entity_mut(*entity);
+                let mut e =
+                    app.world_mut().entity_mut(*entity);
                 e.remove::<MeshMaterial3d<FoilMaterial>>();
                 e.insert(MeshMaterial3d(
                     self.materials[old].clone(),
@@ -230,7 +235,8 @@ impl WallScene {
             if let Some(new) = want
                 && let Some(entity) = self.cards.get(new)
             {
-                let mut e = app.world_mut().entity_mut(*entity);
+                let mut e =
+                    app.world_mut().entity_mut(*entity);
                 e.remove::<MeshMaterial3d<StandardMaterial>>();
                 e.insert(MeshMaterial3d(self.foil.clone()));
             }

@@ -299,10 +299,9 @@ async fn top_artists_rank_by_plays() {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_artists").await;
 
-    for (id, artists) in [
-        ("a", &["独步"][..]),
-        ("b", &["独步", "客串"][..]),
-    ] {
+    for (id, artists) in
+        [("a", &["独步"][..]), ("b", &["独步", "客串"][..])]
+    {
         sqlx::query(
             "INSERT INTO platform_tracks
                  (platform, track_id, title, artists, duration_ms)

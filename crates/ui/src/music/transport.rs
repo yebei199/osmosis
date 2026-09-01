@@ -72,7 +72,8 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
     push_rows(ui, deck, Some(&track.id));
 
     // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
-    ui.global::<Player>().set_now_id(track.id.clone().into());
+    ui.global::<Player>()
+        .set_now_id(track.id.clone().into());
     ui.global::<Viz>()
         .set_now_title(track.title.clone().into());
     ui.global::<Viz>().set_now_artists(

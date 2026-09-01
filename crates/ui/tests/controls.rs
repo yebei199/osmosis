@@ -70,7 +70,6 @@ fn modes_face(ui: &MainWindow) {
 // 470px,手机只有 ~360px),抽屉里没有那个约束,再让人先点开喇叭是白多一步。
 // 新的断言在 player_bar.rs 的 the_drawer_holds_the_modes_and_sync 里。
 
-
 /// **随机播放有自己的键了。**
 ///
 /// 在此之前它借的是日月开关 —— 一个画着太阳和月亮的控件,谁看都以为它管明暗,
@@ -184,10 +183,6 @@ fn the_day_night_switch_is_gone_from_the_cluster() {
         "日月开关该已从控制簇退场,主题去设置页拨"
     );
 }
-
-
-
-
 
 /// 播放键换成环形进度键后,对外仍是那颗「播放/暂停」按钮:
 /// 标签在、按一下喊 toggle-play、值由 Rust 写回。

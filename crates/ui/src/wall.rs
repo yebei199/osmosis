@@ -84,7 +84,8 @@ pub fn layout(
 ) -> WallLayout {
     let unit = if compact { w / 420.0 } else { w / 904.0 };
     let shrink = if compact { 0.52 } else { 1.0 };
-    let card = 150.0 * unit * if compact { 0.48 } else { 1.0 };
+    let card =
+        150.0 * unit * if compact { 0.48 } else { 1.0 };
     let base_col = 204.0 * unit * shrink;
     // 行距与列距同源(按宽),不按高:布局形状恒定,竖向靠周期撑开而不是拉行距。
     let base_row = 136.0 * unit * shrink;
@@ -226,10 +227,10 @@ pub fn bake_card(
     let mut out = vec![0u8; (ow * oh * 4) as usize];
     for y in 0..oh {
         for x in 0..ow {
-            let (px, py) =
-                (x as f32 + 0.5, y as f32 + 0.5);
-            let sd =
-                round_rect_sd(px, py, cx, cy, hx, hy, radius);
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let sd = round_rect_sd(
+                px, py, cx, cy, hx, hy, radius,
+            );
             // 卡面覆盖率:1px 抗锯齿过渡。
             let cov = (0.5 - sd).clamp(0.0, 1.0);
             // 投影:同一个圆角矩形往下挪一点再糊开。
@@ -265,12 +266,13 @@ pub fn bake_card(
             let a = cov + shadow * (1.0 - cov);
             if a > 0.0 {
                 for c in 0..3 {
-                    out[o + c] =
-                        (rgb[c] * cov / a).clamp(0.0, 255.0)
-                            as u8;
+                    out[o + c] = (rgb[c] * cov / a)
+                        .clamp(0.0, 255.0)
+                        as u8;
                 }
             }
-            out[o + 3] = (a * 255.0).clamp(0.0, 255.0) as u8;
+            out[o + 3] =
+                (a * 255.0).clamp(0.0, 255.0) as u8;
         }
     }
     (out, ow, oh)

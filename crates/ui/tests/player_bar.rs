@@ -17,15 +17,18 @@ fn key(
     ui: &MainWindow,
     label: &str,
 ) -> Option<testing::ElementHandle> {
-    testing::ElementHandle::find_by_accessible_label(ui, label)
-        .next()
+    testing::ElementHandle::find_by_accessible_label(
+        ui, label,
+    )
+    .next()
 }
 
 fn ids(
     ui: &MainWindow,
     id: &str,
 ) -> Vec<testing::ElementHandle> {
-    testing::ElementHandle::find_by_element_id(ui, id).collect()
+    testing::ElementHandle::find_by_element_id(ui, id)
+        .collect()
 }
 
 fn present(ui: &MainWindow, id: &str) -> bool {
@@ -36,7 +39,8 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 /// 它只说明「该用紧凑版式」,窗口宽度不跟着变,条照样是宽的,
 /// 于是所有关于让位的断言都会假通过。
 fn narrow(ui: &MainWindow) {
-    ui.window().set_size(slint::LogicalSize::new(360.0, 780.0));
+    ui.window()
+        .set_size(slint::LogicalSize::new(360.0, 780.0));
     ui.global::<Shell>().set_compact(true);
 }
 
@@ -54,7 +58,8 @@ fn playing_app() -> MainWindow {
 fn bar_box(
     ui: &MainWindow,
 ) -> Option<(f32, f32, f32, f32)> {
-    let h = ids(ui, "PlayerBar::capsule").into_iter().next()?;
+    let h =
+        ids(ui, "PlayerBar::capsule").into_iter().next()?;
     let p = h.absolute_position();
     let s = h.size();
     Some((p.x, p.y, s.width, s.height))
@@ -90,7 +95,9 @@ fn click_point(ui: &MainWindow, x: f32, y: f32) {
     let position = slint::LogicalPosition::new(x, y);
     let button = PointerEventButton::Left;
     let win = ui.window();
-    win.dispatch_event(WindowEvent::PointerMoved { position });
+    win.dispatch_event(WindowEvent::PointerMoved {
+        position,
+    });
     win.dispatch_event(WindowEvent::PointerPressed {
         position,
         button,
@@ -165,8 +172,7 @@ fn the_bar_geometry_is_identical_everywhere() {
 
     for tab in PAGE_TABS {
         ui.global::<Shell>().set_current_tab(tab);
-        let (_, _, _, h) =
-            bar_box(&ui).expect("该有条");
+        let (_, _, _, h) = bar_box(&ui).expect("该有条");
         seen.push((
             tab,
             h,
@@ -308,7 +314,8 @@ fn the_three_face_rotation_is_gone() {
     let ui = playing_app();
     ui.global::<Shell>().set_current_tab(1);
 
-    for label in ["翻到播放", "翻到模式", "翻到同播"] {
+    for label in ["翻到播放", "翻到模式", "翻到同播"]
+    {
         assert!(
             key(&ui, label).is_none(),
             "指示点「{label}」该随三面轮换一起退场"
@@ -465,7 +472,10 @@ fn the_drawer_grows_upward_and_never_moves_the_bar() {
 
     for tab in PAGE_TABS {
         ui.global::<Shell>().set_current_tab(tab);
-        check_drawer_grows_upward(&ui, &format!("tab {tab}"));
+        check_drawer_grows_upward(
+            &ui,
+            &format!("tab {tab}"),
+        );
     }
 
     ui.global::<Shell>().set_play_page_open(true);
@@ -480,17 +490,14 @@ fn check_drawer_grows_upward(ui: &MainWindow, page: &str) {
         .invoke_accessible_default_action();
 
     let after = bar_box(ui).expect("开着抽屉时条该还在");
-    assert_eq!(
-        after, before,
-        "{page}:开抽屉不该动主条"
-    );
+    assert_eq!(after, before, "{page}:开抽屉不该动主条");
 
     let drawer = ids(ui, "PlayerBar::drawer")
         .into_iter()
         .next()
         .expect("抽屉该开着");
-    let bottom = drawer.absolute_position().y
-        + drawer.size().height;
+    let bottom =
+        drawer.absolute_position().y + drawer.size().height;
     assert!(
         bottom <= after.1,
         "{page}:抽屉下缘 {bottom} 压到了主条上缘 {}",
@@ -514,10 +521,7 @@ fn the_drawer_is_identical_everywhere() {
     ui.global::<Shell>().set_play_page_open(true);
     let inside = drawer_shape(&ui);
 
-    assert_eq!(
-        inside, outside,
-        "播放页的抽屉与别处不一致"
-    );
+    assert_eq!(inside, outside, "播放页的抽屉与别处不一致");
 }
 
 /// 抽屉里那几行要真的点得到。
@@ -686,7 +690,10 @@ fn the_main_bar_stays_usable_while_the_drawer_is_open() {
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
 
-    assert!(present(&ui, "PlayerBar::capsule"), "主条该还在");
+    assert!(
+        present(&ui, "PlayerBar::capsule"),
+        "主条该还在"
+    );
     assert!(key(&ui, "上一首").is_some());
     assert!(key(&ui, "下一首").is_some());
 

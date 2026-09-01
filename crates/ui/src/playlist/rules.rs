@@ -1,9 +1,6 @@
 //! 歌单那一面的纯换算:来源枚举、副标题文案、可编辑判据与行的成形。
 
-
-use app_core::{
-    PlaylistDto, PlaylistSource, TracksDto,
-};
+use app_core::{PlaylistDto, PlaylistSource, TracksDto};
 
 use crate::PlaylistRow;
 

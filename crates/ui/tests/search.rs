@@ -79,10 +79,7 @@ fn the_playlists_tab_shows_the_playlist_list() {
     let ui = search_page();
     ui.global::<Library>().set_search_tab(2);
 
-    assert!(present(
-        &ui,
-        "MusicPage::found-playlist-list"
-    ));
+    assert!(present(&ui, "MusicPage::found-playlist-list"));
     assert!(!present(&ui, "MusicPage::track-list"));
     // 「我的歌单」那张列表不在:两者各摆各的,共用一份数据的话,
     // 切回我的歌单会看见上一次的搜索结果

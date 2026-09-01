@@ -213,15 +213,13 @@ fn the_annotation_card_hides_while_lyrics_are_open() {
     let ui = play_window();
     ui.global::<Viz>().set_viz_anchor_visible(true);
     assert!(
-        element(&ui, "PlayPage::viz-anchor-card")
-            .is_some(),
+        element(&ui, "PlayPage::viz-anchor-card").is_some(),
         "播放页该有标注卡"
     );
 
     ui.global::<Viz>().set_lyrics_page_open(true);
     assert!(
-        element(&ui, "PlayPage::viz-anchor-card")
-            .is_none(),
+        element(&ui, "PlayPage::viz-anchor-card").is_none(),
         "歌词页打开后标注卡该让位"
     );
 }

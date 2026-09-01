@@ -53,8 +53,14 @@ fn the_submit_button_answers_to_its_label() {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(false);
 
-    let button = testing::ElementHandle::find_by_accessible_label(&ui, "登录")
-        .find(|h| h.accessible_role() == Some(testing::AccessibleRole::Button))
+    let button =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui, "登录",
+        )
+        .find(|h| {
+            h.accessible_role()
+                == Some(testing::AccessibleRole::Button)
+        })
         .expect("登录键该报出自己的标签");
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
