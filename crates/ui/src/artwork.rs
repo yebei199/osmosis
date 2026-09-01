@@ -182,6 +182,8 @@ pub fn apply(ui: &MainWindow, art: &Artwork) {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     /// 歌单标识变成文件名时,路径分隔符与相对路径一律被吃掉。
@@ -224,5 +226,159 @@ mod tests {
     #[test]
     fn an_empty_id_has_no_cache_file() {
         assert_eq!(cache_name(""), None);
+    }
+
+    // ── 取一次的那道闸([`ensure`] 与 [`apply`])──
+    //
+    // 三步依次问:内存 → 磁盘 → CDN。前两步答得上就不该有第三步,而多发的
+    // 那几次请求在界面上一点痕迹都没有 —— 只有那张表说得出到底问到了哪一步。
+
+    use slint::{Model as _, ModelRc, VecModel};
+
+    use crate::{PlaylistRow, Session, Shell};
+
+    /// 一张 1×1 的图。有没有图才是被测的东西,画的什么无关紧要。
+    fn image() -> slint::Image {
+        slint::Image::from_rgba8(
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                1, 1,
+            ),
+        )
+    }
+
+    /// 一行歌单,封面槽空着。
+    fn row(id: &str) -> PlaylistRow {
+        PlaylistRow {
+            id: id.into(),
+            name: "歌单".into(),
+            subtitle: "1 首".into(),
+            source: 0,
+            cover: slint::Image::default(),
+        }
+    }
+
+    /// 无头音乐页,「我的歌单」里摆着这几行。
+    fn window_with(rows: Vec<PlaylistRow>) -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.global::<Session>().set_logged_in(true);
+        ui.global::<Shell>().set_current_tab(1);
+        ui.global::<Library>().set_playlists(ModelRc::new(
+            VecModel::from(rows),
+        ));
+        ui
+    }
+
+    /// 平台没给封面时不占「正在取」的名额。
+    ///
+    /// 占了的话,以后这个歌单**真的**有封面了也再取不到 —— 那张表只增不减,
+    /// 而空 URL 根本没有请求会回来把它释放掉。
+    #[test]
+    fn a_playlist_without_a_cover_is_never_claimed() {
+        let ui = window_with(vec![row("163")]);
+        let art = Artwork::default();
+
+        ensure(&ui, &art, "163", "");
+
+        assert!(
+            art.claim("163"),
+            "空 URL 什么都没发出去,不该把这个歌单占住"
+        );
+    }
+
+    /// 内存里已经有的那张不再取一遍。
+    ///
+    /// 列表每次刷新都会把每一行都问一遍(见 `playlist::fetch_covers`),
+    /// 不认这一步就是每刷新一次把三十几张封面全下一遍。
+    #[test]
+    fn a_cover_already_in_memory_is_not_fetched_again() {
+        let ui = window_with(vec![row("163")]);
+        let art = Artwork::default();
+        art.put("163", image());
+
+        ensure(&ui, &art, "163", "https://cdn/163.jpg");
+
+        assert!(
+            art.claim("163"),
+            "手上已经有图了,不该再发一次请求"
+        );
+    }
+
+    /// 同一个歌单连点几次只发一次请求。
+    ///
+    /// 点开歌单、返回、再点开,每一下都会走到这里 —— 没有这道闸就是几条
+    /// 并发的下载抢同一张图,而它们最后写进的是同一格。
+    #[test]
+    fn a_cover_already_on_its_way_is_not_asked_for_twice() {
+        let ui = window_with(vec![row("163")]);
+        let art = Artwork::default();
+
+        ensure(&ui, &art, "163", "https://cdn/163.jpg");
+        ensure(&ui, &art, "163", "https://cdn/163.jpg");
+
+        assert!(
+            !art.claim("163"),
+            "第一次就该把这个歌单占住,后面几次才有东西可挡"
+        );
+        assert!(
+            art.get("163").is_none(),
+            "图还在路上,这时不该有任何东西被摆进内存表"
+        );
+    }
+
+    /// 手上的封面按标识回填到行里,而不是按下标。
+    ///
+    /// 行会因为刷新、搜索、改名而换位置 —— 记下的下标随时会指向另一个歌单,
+    /// 而那时列表里显示的就是别人的封面,两边都不报错。
+    #[test]
+    fn covers_are_filled_in_by_id_not_by_position() {
+        let ui =
+            window_with(vec![row("163"), row("24381616")]);
+        let art = Artwork::default();
+        art.put("24381616", image());
+
+        apply(&ui, &art);
+
+        let rows = ui.global::<Library>().get_playlists();
+        assert_eq!(
+            rows.row_data(0)
+                .expect("第一行该在")
+                .cover
+                .size()
+                .width,
+            0,
+            "手上没有这个歌单的图,第一行不该被填上别人的"
+        );
+        assert_eq!(
+            rows.row_data(1)
+                .expect("第二行该在")
+                .cover
+                .size()
+                .width,
+            1
+        );
+    }
+
+    /// 当前打开的那个歌单,详情页那张大图也一并推上去。
+    ///
+    /// 详情页按标识索引而不是名字 —— 两个歌单可以同名,而封面挂错了
+    /// 只有人眼看得出来。
+    #[test]
+    fn the_open_playlist_gets_its_own_big_cover() {
+        let ui = window_with(vec![row("163")]);
+        let art = Artwork::default();
+        art.put("163", image());
+        ui.global::<Library>()
+            .set_open_playlist_id("163".into());
+
+        apply(&ui, &art);
+
+        assert_eq!(
+            ui.global::<Library>()
+                .get_open_playlist_cover()
+                .size()
+                .width,
+            1
+        );
     }
 }

@@ -80,6 +80,20 @@ impl Client {
         Self { commands }
     }
 
+    /// 一个谁也不连的客户端:通道建了,编排循环没起。
+    ///
+    /// 给那些需要一个 `Client` 才装得起来、却与同播毫无关系的调用方用 ——
+    /// 主要是测试。所有指令方法都是 `let _ = send`,接收端一开始就没有,
+    /// 于是每一个都成了空操作,不会 panic,也不会有后台任务。
+    ///
+    /// **不要在生产路径上用它。** 真要连的地方走 [`Self::start`];这里之所以
+    /// 不是 `#[cfg(test)]`,是因为用它的测试在别的 crate 里(见
+    /// `ui::syncplay::detached`),那个属性在这里对它们不生效。
+    pub fn detached() -> Self {
+        let (commands, _) = mpsc::unbounded_channel();
+        Self { commands }
+    }
+
     /// 告诉客户端本机正在放的是这路采样。
     ///
     /// 每换一首歌调一次。已经在推流时换歌,听众听到的会跟着换 ——

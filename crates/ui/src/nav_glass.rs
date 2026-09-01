@@ -77,6 +77,8 @@ pub fn nav_transition_active(
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     /// 首帧:last 为 None 时必须重渲,好让侧栏首屏就有静止态纹理。
@@ -133,6 +135,232 @@ mod tests {
             10.0,
             Some((11.0, 9.0, 8.0))
         ));
+    }
+
+    // ── 省电门接到真窗口上之后的样子([`NavSelector::tick`])──
+    //
+    // 上面几条钉的是判据本身,下面几条钉的是**判据都问到了没有**:
+    // 主题、球体缩放、条尺寸各是一个独立的入口,漏掉哪一个,那一样变了
+    // 画面就不跟,要等下一次切 tab 才补上 —— 而那不会报错。
+
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    use crate::{Session, Shell};
+
+    /// 一张 1×1 的图。渲染器给回什么不重要,给没给回才是被测的东西。
+    fn image() -> slint::Image {
+        slint::Image::from_rgba8(
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                1, 1,
+            ),
+        )
+    }
+
+    /// 登录之后才有导航。宽版式(侧栏),`nav-visible` 恒为真。
+    fn nav_window() -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.global::<Session>().set_logged_in(true);
+        ui.global::<Shell>().set_compact(false);
+        ui.global::<Shell>().set_current_tab(1);
+        // 三球是 animate 属性:先读一遍建立静止态,免得首帧读到的是半路的值。
+        i_slint_backend_testing::mock_elapsed_time(
+            Duration::from_millis(900),
+        );
+        ui
+    }
+
+    /// 记下渲染器被喊了几次,以及每次收到的那份控制量。
+    #[derive(Default)]
+    struct Renders(RefCell<Vec<NavGlassControls>>);
+
+    impl Renders {
+        fn count(&self) -> usize {
+            self.0.borrow().len()
+        }
+
+        fn last(&self) -> NavGlassControls {
+            *self
+                .0
+                .borrow()
+                .last()
+                .expect("还没渲过任何一帧")
+        }
+
+        /// 一个只记账、返回假图的渲染器。真渲染在 render3d 那侧,要 GPU。
+        fn recorder(
+            &self,
+        ) -> impl FnMut(&NavGlassControls) -> Option<slint::Image>
+        {
+            move |controls| {
+                self.0.borrow_mut().push(*controls);
+                Some(image())
+            }
+        }
+    }
+
+    /// 导航不在场时一帧都不渲。
+    ///
+    /// 紧凑版式下底栏是条件页面,没实例化时条宽是 0 —— 那时按 0 宽去渲,
+    /// 拿到的是一张空纹理,而它会盖掉上一帧的好图。
+    #[test]
+    fn a_nav_that_is_not_on_screen_is_never_rendered() {
+        let ui = nav_window();
+        ui.global::<Shell>().set_compact(true);
+        assert!(
+            !ui.get_nav_visible(),
+            "底栏还没实例化,前提不成立"
+        );
+
+        let renders = Renders::default();
+        NavSelector::default().tick(
+            &ui,
+            1.0,
+            &mut renders.recorder(),
+        );
+
+        assert_eq!(renders.count(), 0);
+        assert_eq!(
+            ui.get_nav_bg().size().width,
+            0,
+            "没渲的那一帧不该往 nav-bg 里塞东西"
+        );
+    }
+
+    /// 首帧渲一张、推上去;紧接着的静止帧一张都不再渲。
+    ///
+    /// 3D 页每帧都强制重绘,渲染通知因此每帧都来。不判定的话,静止不动的
+    /// 导航会被每帧白重渲一遍 —— 画面看不出任何区别,电却在掉。
+    #[test]
+    fn the_first_frame_renders_and_a_settled_one_does_not()
+    {
+        let ui = nav_window();
+        let renders = Renders::default();
+        let mut selector = NavSelector::default();
+
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+        assert_eq!(renders.count(), 1);
+        assert!(
+            ui.get_nav_bg().size().width > 0,
+            "渲出来的那张该推给界面,否则侧栏首屏没有底"
+        );
+
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+        assert_eq!(
+            renders.count(),
+            1,
+            "什么都没变,这一帧不该再渲一次"
+        );
+    }
+
+    /// 换了明暗要重渲,哪怕三球一动没动。
+    ///
+    /// 侧栏背景是这条 pass 自绘的,采不到背后的像素。不认主题的话,拨完
+    /// 深色开关侧栏仍是旧配色,要等下一次切 tab 才跟上。
+    #[test]
+    fn flipping_the_theme_alone_still_renders() {
+        let ui = nav_window();
+        let renders = Renders::default();
+        let mut selector = NavSelector::default();
+
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+        let was = renders.last().dark;
+
+        ui.global::<crate::Theme>().set_dark(!was);
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+
+        assert_eq!(renders.count(), 2);
+        assert_eq!(
+            renders.last().dark,
+            !was,
+            "新的明暗要一并喂进去,不然重渲出来还是旧配色"
+        );
+    }
+
+    /// 水滴化掉那一下也要重渲,哪怕槽位没动。
+    ///
+    /// 切到侧栏底部两颗圆钮(#71)时三球停在原处,只有球体缩放在变。
+    /// 不认它的话水滴就化不掉,停在最后一格主项上不动。
+    #[test]
+    fn melting_the_droplet_alone_still_renders() {
+        let ui = nav_window();
+        let renders = Renders::default();
+        let mut selector = NavSelector::default();
+
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+        let before = renders.last();
+        assert_eq!(
+            before.ball, 1.0,
+            "停在 Music 时水滴是满的"
+        );
+
+        // 2 是个人主页 —— 圆钮不在水滴轨道上,槽位不动、只有它缩没。
+        ui.global::<Shell>().set_current_tab(2);
+        i_slint_backend_testing::mock_elapsed_time(
+            Duration::from_millis(900),
+        );
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+
+        let after = renders.last();
+        assert_eq!(renders.count(), 2);
+        assert_eq!(after.ball, 0.0);
+        assert_eq!(
+            (after.lead, after.lag, after.drop),
+            (before.lead, before.lag, before.drop),
+            "三球本就没动 —— 这一帧是缩放触发的,不是位置"
+        );
+    }
+
+    /// 只有缩放系数变了(窗口挪到另一块屏)也要重渲。
+    ///
+    /// 三球位置存的是逻辑像素,换屏时它们一个字都不变;不认条的物理尺寸的话,
+    /// 侧栏会一直沿用旧 DPI 那张纹理,直到下一次切 tab。
+    #[test]
+    fn a_scale_change_alone_still_renders() {
+        let ui = nav_window();
+        let renders = Renders::default();
+        let mut selector = NavSelector::default();
+
+        selector.tick(&ui, 1.0, &mut renders.recorder());
+        let single = renders.last();
+
+        selector.tick(&ui, 2.0, &mut renders.recorder());
+        let double = renders.last();
+
+        assert_eq!(renders.count(), 2);
+        assert_eq!(
+            double.strip_w,
+            single.strip_w * 2.0,
+            "条宽要按缩放换成物理像素"
+        );
+        assert_eq!(double.lead, single.lead * 2.0);
+    }
+
+    /// 渲染器交白卷时 nav-bg 不动,但这一帧仍算问过了。
+    ///
+    /// 非 GPU 构建里那条 pass 根本不存在。若因为没拿到图就不记账,下一帧
+    /// 判据仍是「首帧」,于是每一帧都去问一次一个永远给不出图的渲染器。
+    #[test]
+    fn a_renderer_with_nothing_to_give_leaves_the_texture_alone()
+     {
+        let ui = nav_window();
+        let asked = RefCell::new(0_u32);
+        let mut blank = |_: &NavGlassControls| {
+            *asked.borrow_mut() += 1;
+            None
+        };
+        let mut selector = NavSelector::default();
+
+        selector.tick(&ui, 1.0, &mut blank);
+        selector.tick(&ui, 1.0, &mut blank);
+
+        assert_eq!(
+            *asked.borrow(),
+            1,
+            "交白卷也算问过了,静止的下一帧不该再问一次"
+        );
+        assert_eq!(ui.get_nav_bg().size().width, 0);
     }
 }
 

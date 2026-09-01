@@ -276,6 +276,8 @@ fn apply(ui: &MainWindow, cache: &Rc<RefCell<Lru>>) {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     /// 一张 1×1 的图,只用来占位 —— 这些用例关心的是表怎么进怎么出。
@@ -395,5 +397,155 @@ mod tests {
         pending.push("other".to_owned());
 
         assert_eq!(pending.take_last(BATCH).len(), 2);
+    }
+
+    // ── 防抖到点那一下([`flush`])──
+    //
+    // 上面几条钉的是三张表各自的行为,下面几条钉的是 flush 把它们串起来的
+    // 那条路:哪些 URL 真的会被取、取过的会不会再取一遍、手上有的图有没有
+    // 在这一帧就摆回行里。串错了不会报错,只会让列表要么一直空、要么反复下同一张图。
+
+    use slint::{ModelRc, VecModel};
+
+    use crate::{Session, Shell, TrackRow};
+
+    /// 一行歌,封面槽空着,只有 URL 是有意义的。
+    fn row(url: &str) -> TrackRow {
+        TrackRow {
+            id: "1".into(),
+            title: "曲".into(),
+            artists: "人".into(),
+            duration: "03:00".into(),
+            loading: false,
+            liked: false,
+            cover_url: url.into(),
+            cover: slint::Image::default(),
+        }
+    }
+
+    /// 无头音乐页,列表里摆着这几行。
+    fn window_with(rows: Vec<TrackRow>) -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.global::<Session>().set_logged_in(true);
+        ui.global::<Shell>().set_current_tab(1);
+        ui.global::<Player>()
+            .set_tracks(ModelRc::new(VecModel::from(rows)));
+        ui
+    }
+
+    /// flush 要的那三张表:已解出来的、等着取的、正在取的。
+    type Tables = (
+        Rc<RefCell<Lru>>,
+        Rc<RefCell<Pending>>,
+        Rc<RefCell<HashSet<String>>>,
+    );
+
+    /// 三张表都空着。
+    fn tables() -> Tables {
+        (
+            Rc::new(RefCell::new(Lru::default())),
+            Rc::new(RefCell::new(Pending::default())),
+            Rc::new(RefCell::new(HashSet::new())),
+        )
+    }
+
+    /// 第一行的封面槽有没有被填上。
+    fn first_row_has_cover(ui: &MainWindow) -> bool {
+        use slint::Model as _;
+
+        ui.global::<Player>()
+            .get_tracks()
+            .row_data(0)
+            .expect("列表里该有第一行")
+            .cover
+            .size()
+            .width
+            > 0
+    }
+
+    /// 手上已经有的那张不再发一次请求,而且这一帧就摆回行里。
+    ///
+    /// 一张专辑封面被十几首歌共用,滚回去时全在缓存里 —— 不认这一步就是
+    /// 同一张图下十几遍,而画面上一点区别都没有。
+    #[test]
+    fn a_url_already_in_the_cache_is_never_fetched_again() {
+        let url = "https://cdn/a.jpg";
+        let ui = window_with(vec![row(url)]);
+        let (cache, pending, inflight) = tables();
+        cache.borrow_mut().put(url.to_owned(), image());
+        pending.borrow_mut().push(url.to_owned());
+
+        flush(&ui, &cache, &pending, &inflight);
+
+        assert!(
+            inflight.borrow().is_empty(),
+            "缓存里已经有了,不该再占一个在取的名额"
+        );
+        assert!(
+            first_row_has_cover(&ui),
+            "手上有的图该在这一帧就摆回行里"
+        );
+    }
+
+    /// 待办表取完就空:同一批不会在下一次防抖到点时又取一遍。
+    ///
+    /// 防抖是单次定时器,滚动不停就一直往后推 —— 到点那一下若不把表清干净,
+    /// 下一屏的请求会带着上一屏的一起发,越滚越多。
+    #[test]
+    fn flushing_drains_the_pending_set() {
+        let ui =
+            window_with(vec![row("https://cdn/a.jpg")]);
+        let (cache, pending, inflight) = tables();
+        pending
+            .borrow_mut()
+            .push("https://cdn/a.jpg".into());
+        pending
+            .borrow_mut()
+            .push("https://cdn/b.jpg".into());
+
+        flush(&ui, &cache, &pending, &inflight);
+        assert_eq!(
+            inflight.borrow().len(),
+            2,
+            "两张都该被取"
+        );
+
+        // 假装两条请求都回来了,好让「又取了一遍」看得出来。
+        inflight.borrow_mut().clear();
+        flush(&ui, &cache, &pending, &inflight);
+
+        assert!(
+            inflight.borrow().is_empty(),
+            "表已经空了,第二次到点不该再取一遍"
+        );
+    }
+
+    /// 快速滚过几百行之后,只取最后那一批。
+    ///
+    /// 已经滚过去的行现在不在屏幕上,取回来也没人看,而它们会挤占带宽,
+    /// 让真正可见的那一屏更晚出图。
+    #[test]
+    fn a_long_scroll_only_fetches_the_last_batch() {
+        let ui =
+            window_with(vec![row("https://cdn/a.jpg")]);
+        let (cache, pending, inflight) = tables();
+        for i in 0..PENDING_CAP {
+            pending.borrow_mut().push(format!("u{i}"));
+        }
+
+        flush(&ui, &cache, &pending, &inflight);
+
+        let inflight = inflight.borrow();
+        assert_eq!(inflight.len(), BATCH);
+        assert!(
+            inflight
+                .contains(&format!("u{}", PENDING_CAP - 1)),
+            "最后进来的那个必须在这一批里"
+        );
+        assert!(
+            !inflight.contains("u0"),
+            "早就滚过去的那些不该还在下载"
+        );
     }
 }

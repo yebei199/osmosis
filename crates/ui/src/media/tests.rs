@@ -1,3 +1,5 @@
+use similar_asserts::assert_eq;
+
 use helpers::*;
 
 /// 测试里用的一首歌。只有 id 变,别的字段跟着 id 走。
@@ -48,7 +50,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use app_core::{LoopMode, PlaybackState};
+use slint::ComponentHandle as _;
 
+use crate::Player;
 use crate::media::{
     Bridge, MediaCommand, MediaStatus, NowPlaying, toggles,
 };
@@ -358,4 +362,236 @@ fn play_while_already_playing_changes_nothing() {
     // 切换键名副其实,两种情形下都翻。
     assert!(toggles(MediaCommand::Toggle, true));
     assert!(toggles(MediaCommand::Toggle, false));
+}
+
+// ── 路由表:哪个键落到 `.slint` 的哪个回调(`super::dispatch`)──
+//
+// 判定本身(翻不翻、跳到哪)在 `rules.rs` 已经各有断言,`dispatch` 剩下的
+// 全部职责就是这张表。接错一根线不会报错,只会让锁屏上的「下一首」去暂停。
+
+use routing::*;
+
+mod routing {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use slint::ComponentHandle as _;
+
+    use crate::{MainWindow, Player};
+
+    /// 一台开不出声的播放器。
+    ///
+    /// `dispatch` 只在跳转那一支问它「现在放到哪」,而 `Err` 那条路取默认值 0 ——
+    /// 于是相对跳转的起点是确定的,不必真开设备。
+    pub fn deaf_player()
+    -> Arc<Result<audio::Player, audio::AudioError>> {
+        Arc::new(Err(audio::AudioError::Device(
+            "测试里没有声卡".to_owned(),
+        )))
+    }
+
+    /// 一台无头主窗口,外加数一数那几个回调各被喊了几次、带了什么参数。
+    pub struct Routed {
+        pub ui: MainWindow,
+        pub next: Rc<Cell<u32>>,
+        pub prev: Rc<Cell<u32>>,
+        pub toggle: Rc<Cell<u32>>,
+        pub shuffle: Rc<Cell<u32>>,
+        pub loop_set: Rc<RefCell<Vec<i32>>>,
+        pub seek: Rc<RefCell<Vec<f32>>>,
+    }
+
+    impl Routed {
+        pub fn new() -> Self {
+            i_slint_backend_testing::init_no_event_loop();
+            let ui =
+                MainWindow::new().expect("建不出主窗口");
+
+            let next = Rc::new(Cell::new(0));
+            let prev = Rc::new(Cell::new(0));
+            let toggle = Rc::new(Cell::new(0));
+            let shuffle = Rc::new(Cell::new(0));
+            let loop_set =
+                Rc::new(RefCell::new(Vec::new()));
+            let seek = Rc::new(RefCell::new(Vec::new()));
+
+            let player = ui.global::<Player>();
+            player.on_next_track({
+                let hits = next.clone();
+                move || hits.set(hits.get() + 1)
+            });
+            player.on_prev_track({
+                let hits = prev.clone();
+                move || hits.set(hits.get() + 1)
+            });
+            player.on_toggle_play({
+                let hits = toggle.clone();
+                move || hits.set(hits.get() + 1)
+            });
+            player.on_shuffle_toggled({
+                let hits = shuffle.clone();
+                move || hits.set(hits.get() + 1)
+            });
+            player.on_loop_mode_set({
+                let asked = loop_set.clone();
+                move |index| asked.borrow_mut().push(index)
+            });
+            player.on_seek({
+                let asked = seek.clone();
+                move |ratio| asked.borrow_mut().push(ratio)
+            });
+
+            Self {
+                ui,
+                next,
+                prev,
+                toggle,
+                shuffle,
+                loop_set,
+                seek,
+            }
+        }
+
+        /// 按下一个键。时长单独给:它平时由 `Bridge::publish` 写进那个原子。
+        pub fn press(
+            &self,
+            command: crate::media::MediaCommand,
+            duration_ms: i64,
+        ) {
+            super::super::dispatch(
+                &self.ui,
+                &deaf_player(),
+                &std::sync::atomic::AtomicI64::new(
+                    duration_ms,
+                ),
+                command,
+            );
+        }
+    }
+}
+
+/// 上一首与下一首各走各的回调。
+///
+/// 两个键长得最像,接反了在界面上毫无痕迹 —— 锁屏按「下一首」听到的是上一首。
+#[test]
+fn next_and_previous_reach_their_own_callbacks() {
+    let routed = Routed::new();
+
+    routed.press(MediaCommand::Next, 0);
+    assert_eq!(routed.next.get(), 1);
+    assert_eq!(
+        routed.prev.get(),
+        0,
+        "按下一首不该同时惊动上一首"
+    );
+
+    routed.press(MediaCommand::Previous, 0);
+    assert_eq!(routed.prev.get(), 1);
+    assert_eq!(routed.next.get(), 1);
+}
+
+/// 正在放时按 `Play` 一声不吭,按 `Pause` 才落到切换回调上。
+///
+/// 界面只有一个切换回调,而 MPRIS 给的是三个键。`Play` 一律当切换的话,
+/// 锁屏上误触播放会把正在放的歌按停。
+#[test]
+fn play_and_pause_only_reach_the_toggle_when_they_change_something()
+ {
+    let routed = Routed::new();
+    routed.ui.global::<Player>().set_is_playing(true);
+
+    routed.press(MediaCommand::Play, 0);
+    assert_eq!(
+        routed.toggle.get(),
+        0,
+        "已经在放了,`Play` 不该按停它"
+    );
+
+    routed.press(MediaCommand::Pause, 0);
+    assert_eq!(routed.toggle.get(), 1);
+
+    // 切换键名副其实,状态是什么都翻。
+    routed.press(MediaCommand::Toggle, 0);
+    assert_eq!(routed.toggle.get(), 2);
+}
+
+/// 随机拨到它已经在的那个值 = 什么都没要求,不该喊那个切换回调。
+///
+/// 外面给的是绝对值,而界面只有一个切换回调 —— 不比一下就调,开关会翻到反面。
+#[test]
+fn set_shuffle_only_reaches_the_toggle_when_it_differs() {
+    let routed = Routed::new();
+    routed.ui.global::<Player>().set_shuffle_on(false);
+
+    routed.press(MediaCommand::SetShuffle(false), 0);
+    assert_eq!(
+        routed.shuffle.get(),
+        0,
+        "本来就是关的,再拨一次「关」不该把它打开"
+    );
+
+    routed.press(MediaCommand::SetShuffle(true), 0);
+    assert_eq!(routed.shuffle.get(), 1);
+}
+
+/// 循环拨到别的态时,喊出去的是 `.slint` 那侧的**编号**,不是枚举。
+///
+/// 编号是 seam 的形状(0 关 / 1 列表 / 2 单曲)。这里翻错一位不会报错,
+/// 只会让锁屏上按「列表循环」变成单曲循环。
+#[test]
+fn set_loop_hands_over_the_index_the_slint_side_speaks() {
+    let routed = Routed::new();
+    routed.ui.global::<Player>().set_loop_mode(0);
+
+    routed.press(MediaCommand::SetLoop(LoopMode::Off), 0);
+    assert!(
+        routed.loop_set.borrow().is_empty(),
+        "本来就是关的,不该再拨一次"
+    );
+
+    routed.press(MediaCommand::SetLoop(LoopMode::One), 0);
+    assert_eq!(
+        routed.loop_set.borrow().as_slice(),
+        [2],
+        "单曲循环在 slint 那侧是 2"
+    );
+}
+
+/// 跳转:绝对位置换成比例才喊得出去,而时长为 0 时这一跳整个丢掉。
+///
+/// `.slint` 的 `seek` 收的是 0..=1 的比例。时长还没到手就除,得到的是
+/// 无穷大或 NaN —— 进度条会跳到条外,而没有任何东西会报错。
+#[test]
+fn a_seek_without_a_duration_is_dropped() {
+    let routed = Routed::new();
+
+    routed.press(MediaCommand::SeekTo(60_000), 0);
+    assert!(
+        routed.seek.borrow().is_empty(),
+        "时长未知时这一跳该被丢掉,而不是除零"
+    );
+
+    routed.press(MediaCommand::SeekTo(60_000), 240_000);
+    assert_eq!(routed.seek.borrow().as_slice(), [0.25]);
+}
+
+/// 相对跳转从「现在放到哪」起算;没有播放器时那个起点是 0。
+///
+/// 无声卡是常态(见 `music::bind`),那时按 MPRIS 的 `Seek` 不该 panic,
+/// 也不该把一个来路不明的位置当起点。
+#[test]
+fn a_relative_seek_starts_from_the_players_position() {
+    let routed = Routed::new();
+
+    routed.press(MediaCommand::SeekBy(60_000), 240_000);
+    assert_eq!(routed.seek.borrow().as_slice(), [0.25]);
+
+    // 往回跳过了头落到开头,而不是负比例。
+    routed.press(MediaCommand::SeekBy(-60_000), 240_000);
+    assert_eq!(
+        routed.seek.borrow().as_slice(),
+        [0.25, 0.0],
+        "往回跳过头该停在开头"
+    );
 }

@@ -166,6 +166,8 @@ pub(crate) fn bind(ui: &MainWindow) {
 
 #[cfg(test)]
 mod tests {
+    use similar_asserts::assert_eq;
+
     use super::*;
 
     /// 缓冲时主控条底从 fluid 切成 progress、进度实时喂;不缓冲时切回
@@ -219,6 +221,341 @@ mod tests {
             (anim.amp - REST_AMP).abs() < 0.01,
             "该回到静息振幅,实得 {}",
             anim.amp
+        );
+    }
+
+    // ── 合批([`ButtonBand::tick`])──
+    //
+    // 这一帧有几槽、各是哪一槽、渲回来的图分别摆到哪 —— 三个可选槽都是按需
+    // 追加的,下标错位不会报错,只会把玻璃底贴到胶囊上(见 tick 里那段注释)。
+    // 视觉在 render3d 那侧、要 GPU,所以渲染器是注进来的:这里只钉编排。
+
+    use std::cell::RefCell;
+
+    use crate::{MainWindow, Session};
+
+    /// 编号即图宽:第 i 槽渲回来的图宽是 i+1 像素。
+    ///
+    /// 摆错位是这段代码唯一会犯的错,而它不报错 —— 只有让图自报家门才认得出。
+    fn tagged(slot: usize) -> slint::Image {
+        slint::Image::from_rgba8(
+            slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                slot as u32 + 1,
+                1,
+            ),
+        )
+    }
+
+    /// 某张图是第几槽渲出来的。没图(宽 0)就是没摆上。
+    fn slot_of(image: &slint::Image) -> Option<usize> {
+        match image.size().width {
+            0 => None,
+            width => Some(width as usize - 1),
+        }
+    }
+
+    /// 登录、光带开着、宽版式、没在放歌、播放页没开 —— 最素的一帧。
+    fn band_window() -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.global::<Session>().set_logged_in(true);
+        ui.global::<Shell>().set_aurora_buttons_on(true);
+        ui.global::<Shell>().set_compact(false);
+        ui.global::<Shell>().set_current_tab(0);
+        ui
+    }
+
+    /// 记下每一帧交上来的控制量。
+    #[derive(Default)]
+    struct Frames(RefCell<Vec<AuroraBtnControls>>);
+
+    impl Frames {
+        fn count(&self) -> usize {
+            self.0.borrow().len()
+        }
+
+        fn last(&self) -> AuroraBtnControls {
+            self.0
+                .borrow()
+                .last()
+                .expect("还没渲过任何一帧")
+                .clone()
+        }
+
+        fn renderer(
+            &self,
+        ) -> impl FnMut(&AuroraBtnControls) -> Vec<slint::Image>
+        {
+            move |controls| {
+                self.0.borrow_mut().push(controls.clone());
+                (0..controls.slots.len())
+                    .map(tagged)
+                    .collect()
+            }
+        }
+    }
+
+    /// 关掉开关就整段不进:一槽不渲,已经摆上的图也不去动它。
+    ///
+    /// 关掉之后按钮退回纯色实底,功能不变 —— 但若仍照渲不误,省下的那点
+    /// 开销正是这个开关存在的全部理由。
+    #[test]
+    fn switching_the_aurora_buttons_off_renders_nothing() {
+        let ui = band_window();
+        ui.global::<Shell>().set_aurora_buttons_on(false);
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        assert_eq!(frames.count(), 0);
+        assert_eq!(
+            slot_of(
+                &ui.global::<Shell>().get_home_slot_bg()
+            ),
+            None
+        );
+    }
+
+    /// 最素的一帧:两颗光带按钮加侧栏底部那两颗圆钮,图各就各位。
+    ///
+    /// 胶囊与播放页那几槽都是按需追加的,没歌、没开播放页时它们不该在场 ——
+    /// 多渲一槽就是多算一遍 fbm,而那张图没有任何地方会用到。
+    #[test]
+    fn an_idle_wide_frame_carries_the_two_ribbons_and_the_rail_keys()
+     {
+        let ui = band_window();
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        let shell = ui.global::<Shell>();
+        assert_eq!(
+            frames.last().slots.len(),
+            4,
+            "空槽、绿板、侧栏两颗圆钮,不多不少"
+        );
+        assert_eq!(
+            slot_of(&shell.get_home_slot_bg()),
+            Some(0)
+        );
+        assert_eq!(
+            slot_of(&shell.get_empty_daily_bg()),
+            Some(1)
+        );
+        assert_eq!(
+            slot_of(&shell.get_nav_key_a_bg()),
+            Some(2)
+        );
+        assert_eq!(
+            slot_of(&shell.get_nav_key_b_bg()),
+            Some(3)
+        );
+        assert_eq!(
+            slot_of(&shell.get_bar_fluid_bg()),
+            None,
+            "没在放歌,胶囊那一槽不该在场"
+        );
+    }
+
+    /// 胶囊要等**既在放歌、又量出了尺寸**才进合批。
+    ///
+    /// 尺寸由 `.slint` 回写,场区没摆出来之前是 0 —— 拿 0 去渲得到一张空图,
+    /// 而它会盖掉胶囊原本的底。
+    #[test]
+    fn the_capsule_waits_for_both_a_song_and_a_measured_size()
+     {
+        let ui = band_window();
+        let frames = Frames::default();
+        let mut band = ButtonBand::default();
+        ui.global::<Player>().set_is_playing(true);
+
+        band.tick(&ui, 1.0, &mut frames.renderer());
+        assert_eq!(
+            frames.last().slots.len(),
+            4,
+            "尺寸还没量出来,胶囊不该进合批"
+        );
+
+        ui.global::<Shell>().set_bar_w(240.0);
+        ui.global::<Shell>().set_bar_h(60.0);
+        band.tick(&ui, 1.0, &mut frames.renderer());
+
+        let slots = frames.last().slots;
+        assert_eq!(slots.len(), 5);
+        assert_eq!(slots[2].variant, VARIANT_FLUID);
+        assert_eq!(
+            slot_of(
+                &ui.global::<Shell>().get_bar_fluid_bg()
+            ),
+            Some(2),
+            "胶囊要拿第 2 槽那张图,拿错就是把绿板贴到胶囊上"
+        );
+    }
+
+    /// 播放页开着时多出两槽,而且两张图不能对调。
+    ///
+    /// 主控条底是长条、次要圆钮是 44×44 的玻璃底,下标错一位不会报错,
+    /// 只会把玻璃底拉长贴到条上 —— 这正是 tick 里改用「记下标」的原因。
+    #[test]
+    fn the_play_page_overlay_adds_a_bar_and_a_glass_slot() {
+        let ui = band_window();
+        let shell = ui.global::<Shell>();
+        shell.set_play_page_open(true);
+        shell.set_viz_bar_w(300.0);
+        shell.set_viz_bar_h(56.0);
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        let slots = frames.last().slots;
+        assert_eq!(
+            slots.len(),
+            6,
+            "空槽、绿板、条底、两颗圆钮、玻璃底"
+        );
+        assert_eq!(slots[2].variant, VARIANT_FLUID);
+        assert_eq!(slots[5].variant, VARIANT_GLASS);
+        assert_eq!(
+            slot_of(&shell.get_viz_bar_bg()),
+            Some(2)
+        );
+        assert_eq!(
+            slot_of(&shell.get_viz_glass_bg()),
+            Some(5)
+        );
+    }
+
+    /// 缓冲时播放页条底换成 progress 变体,并把当前进度一路喂到那一槽。
+    ///
+    /// 播放页的进度是播放键那个环,条上没有常驻细线 —— 缓冲时那道呼吸亮边
+    /// 就是「还在动」的唯一信号(#69)。
+    #[test]
+    fn a_buffering_play_page_bar_shows_the_progress_variant()
+     {
+        let ui = band_window();
+        let shell = ui.global::<Shell>();
+        shell.set_play_page_open(true);
+        shell.set_viz_bar_w(300.0);
+        shell.set_viz_bar_h(56.0);
+        ui.global::<Player>().set_buffering(true);
+        ui.global::<Player>().set_progress_ratio(0.4);
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        let bar = frames.last().slots[2];
+        assert_eq!(bar.variant, VARIANT_PROGRESS);
+        assert_eq!(bar.progress, 0.4);
+    }
+
+    /// 紧凑版式没有侧栏,那两颗圆钮整个不在场。
+    ///
+    /// 它们的元素只长在宽版式里。照渲的话是两张没人取的图,而下标还会
+    /// 往后顶一位,把玻璃底挪到别人的位置上。
+    #[test]
+    fn the_compact_layout_drops_the_rail_keys() {
+        let ui = band_window();
+        ui.global::<Shell>().set_compact(true);
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        assert_eq!(frames.last().slots.len(), 2);
+        assert_eq!(
+            slot_of(
+                &ui.global::<Shell>().get_nav_key_a_bg()
+            ),
+            None
+        );
+    }
+
+    /// 选中的那颗圆钮亮、另一颗暗。
+    ///
+    /// 水滴的轨道不覆盖这两格(#71),亮度是它们表达「我被选中」的全部手段 ——
+    /// 两颗共用一份振幅的话,界面上就完全看不出停在哪一页。
+    #[test]
+    fn the_selected_rail_key_is_the_bright_one() {
+        let ui = band_window();
+        // 2 是个人主页,3 是设置 —— 侧栏底部那两颗。
+        ui.global::<Shell>().set_current_tab(2);
+        let frames = Frames::default();
+
+        ButtonBand::default().tick(
+            &ui,
+            1.0,
+            &mut frames.renderer(),
+        );
+
+        let slots = frames.last().slots;
+        assert_eq!(slots[2].amp, 1.0, "选中那颗该拉满");
+        assert!(
+            slots[3].amp < slots[2].amp,
+            "另一颗该停在低位,实得 {} 对 {}",
+            slots[3].amp,
+            slots[2].amp
+        );
+    }
+
+    /// 按钮时钟从零起走,单帧最多补 0.1 秒,而关掉的那段一秒都不补。
+    ///
+    /// 时钟直接喂进着色器的相位。首帧若把进程启动到现在那一大段算进去,
+    /// 第一眼看到的就是流场中途;关掉再打开时补上整段,则是肉眼可见的一跳。
+    #[test]
+    fn the_button_clock_starts_at_zero_and_never_jumps() {
+        let ui = band_window();
+        let frames = Frames::default();
+        let mut band = ButtonBand::default();
+
+        band.tick(&ui, 1.0, &mut frames.renderer());
+        assert_eq!(
+            frames.last().time,
+            0.0,
+            "首帧的相位该是 0"
+        );
+
+        std::thread::sleep(
+            core::time::Duration::from_millis(150),
+        );
+        band.tick(&ui, 1.0, &mut frames.renderer());
+        assert_eq!(
+            frames.last().time,
+            0.1,
+            "掉了一帧最多补 0.1 秒"
+        );
+
+        // 关掉一段时间再打开:那段不该在重开那一帧一次性补进来。
+        std::thread::sleep(
+            core::time::Duration::from_millis(150),
+        );
+        ui.global::<Shell>().set_aurora_buttons_on(false);
+        band.tick(&ui, 1.0, &mut frames.renderer());
+        ui.global::<Shell>().set_aurora_buttons_on(true);
+        band.tick(&ui, 1.0, &mut frames.renderer());
+
+        assert_eq!(
+            frames.last().time,
+            0.1,
+            "关掉期间的时间不该在重开那一帧补上"
         );
     }
 }

@@ -165,6 +165,24 @@ pub fn bind(
     }
 }
 
+/// 一个谁也不连的把手,给测试用。
+///
+/// [`bind`] 会当场把客户端连去 `api::base_url()` 的信令地址。那个地址是
+/// **编译期**决定的(见 `api::base_url`),于是测试连去哪里取决于构建时的
+/// `OSMOSIS_API_BASE`:不设时是本机 3000 —— 而开发服务器正好在那儿,测试
+/// 于是会因为本机有没有开 server-dev 而表现不同;设成集群地址跑一次
+/// `cargo test`,那就是拿生产环境当测试靶子。两种都不能要。
+///
+/// 需要 `Deck` 的测试并不关心同播,给它一个空壳即可。
+#[cfg(test)]
+pub(crate) fn detached(ui: &MainWindow) -> Sync {
+    Sync {
+        client: Arc::new(Client::detached()),
+        role: Arc::new(Mutex::new(Role::Alone)),
+        weak: ui.as_weak(),
+    }
+}
+
 /// 处理一条同播事件。**在后台线程上**跑。
 fn handle(
     event: Event,
