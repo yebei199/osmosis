@@ -467,3 +467,6 @@ fn card_material() -> StandardMaterial {
         ..default()
     }
 }
+
+#[cfg(test)]
+mod tests;
