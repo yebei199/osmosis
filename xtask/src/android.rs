@@ -135,12 +135,7 @@ fn build_native_libs(
             .join(" ")
     );
 
-    let jni_libs = root.join(JNI_LIBS);
-    if jni_libs.exists() {
-        fs::remove_dir_all(&jni_libs).map_err(|e| {
-            format!("无法清理 {}: {e}", jni_libs.display())
-        })?;
-    }
+    clear_jni_libs(root)?;
 
     // Slint 的 android 后端在构建时会编译一个小的 Java helper 并以 dex 形式
     // 内嵌;让它针对已安装的最新 platform jar 编译(类似 gradle 的 compileSdk)。
@@ -156,7 +151,38 @@ fn build_native_libs(
     // 例:`FEATURES=bevy-3d cargo xtask android` 出带 3D 的 APK。
     let features = std::env::var("FEATURES").ok();
 
-    // 走 `cargo ndk` 而非直接调 `cargo-ndk`:cargo 子命令期望 argv[1] 是子命令名。
+    let args = native_build_args(
+        abis,
+        profile,
+        features.as_deref(),
+    );
+    run("cargo", &args)
+}
+
+/// 清空 jniLibs。目录本来就不在(刚 clone 的机器)不算错。
+///
+/// 必须先清空再让 cargo-ndk 往里写:它只写这一轮点名的 ABI,上一轮留下的
+/// 其它 ABI 的 `.so` 还躺在原地,而 gradle 是照单全收地打包整个目录。
+/// 于是 `--abis arm64-v8a` 出来的包里会混进上次那个 x86_64 的库 —— 包变大,
+/// 且里面那份代码是旧的。
+fn clear_jni_libs(root: &Path) -> Result<(), String> {
+    let jni_libs = root.join(JNI_LIBS);
+    if !jni_libs.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&jni_libs).map_err(|e| {
+        format!("无法清理 {}: {e}", jni_libs.display())
+    })
+}
+
+/// 拼出 `cargo ndk` 的命令行。
+///
+/// 走 `cargo ndk` 而非直接调 `cargo-ndk`:cargo 子命令期望 argv[1] 是子命令名。
+fn native_build_args<'a>(
+    abis: &[Abi],
+    profile: &str,
+    features: Option<&'a str>,
+) -> Vec<&'a str> {
     let mut args: Vec<&str> = vec!["ndk"];
     for abi in abis {
         args.push("-t");
@@ -176,11 +202,11 @@ fn build_native_libs(
     if profile == "release" {
         args.push("--release");
     }
-    if let Some(features) = features.as_deref() {
+    if let Some(features) = features {
         args.push("--features");
         args.push(features);
     }
-    run("cargo", &args)
+    args
 }
 
 /// 找出 `platforms/android-<N>/android.jar` 里 N 最大的那个。
