@@ -1,9 +1,7 @@
-# 显式关掉 rustc 包装器:空串覆盖任何上层(全局 ~/.cargo/config.toml)设的
-# rustc-wrapper。曾被全局 sccache 反复坑过——它依赖 nix-shell 的易失 TMPDIR 和
-# 写死的 store 路径,一被清理就整个编译爆炸,且命中率为 0 毫无收益。本项目一律不走它。
-# ponytail: 环境变量 RUSTC_WRAPPER 优先级高于本文件;真要临时开就在命令行显式设。
-[build]
-rustc-wrapper = ""
+# 这里曾有 rustc-wrapper = "" 压掉全局 sccache(易失 TMPDIR + 写死 store 路径,
+# 一清理就编译爆炸)。全局配置里那个 wrapper 已经删了,而空串会让 cargo-llvm-cov
+# 拼出「空 wrapper + 空格 + rustc」去 exec,覆盖率整个跑不了 —— 所以不再留空串。
+# 若全局 sccache 回来,去 ~/.cargo/config.toml 删它,别在这里用空串对冲。
 
 # 覆盖全局 config 里写死的 /nix/store/…-clang-wrapper-21.1.8/bin/clang。链接器路径
 # 进 cargo 指纹,store hash 随 clang 升版本一变,整棵依赖树就得重编 —— 本仓库
