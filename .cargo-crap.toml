@@ -1,0 +1,41 @@
+# CRAP 闸门的豁免名单(`cargo crap` 自动读本文件,故 `scripts/final-check.sh`
+# 那条不带参数的调用也认它)。
+#
+# 名单的目的不是把闸门刷绿,而是**留住信号**:这六个永远过不去的条目一旦常驻
+# 报告,新长出来的真问题就淹在里面没人看得见。每一条都写清"为什么测不了",
+# 前提变了就该删掉对应行 —— 比如哪天真给渲染搭起了无头 GPU 测试。
+#
+# 反例警告:不要因为"补测试很麻烦"往这里加。卡墙那三个方法(`WallScene::apply`
+# 等)一度也被当成"要 GPU",实际查下来只是 ECS 操作,搭个 `MinimalPlugins`
+# 的无头 App 就测到了 97% 以上(见 crates/render3d/src/wall/tests.rs)。
+# 加之前先问一遍:是真的够不着,还是只是还没找到缝。
+
+allow = [
+    # ── 真的要 GPU:这四个各自持有 wgpu device 并往离屏纹理上画 ──
+    # 生产路径里的 bevy App 是用 Slint 交出来的真实 adapter 建的
+    # (crates/render3d/src/scene.rs 的 `DefaultPlugins.set(RenderPlugin{..})`),
+    # 拿不到 adapter 就连 App 都建不起来。用软件光栅器倒是能跑,但那是给一个
+    # 指标养一套又慢又飘的渲染测试,拦不住真正的视觉回归 —— 那类回归靠的是
+    # 真机截图复核(见 docs/lesson 与 CONTEXT.md 里的设备验证约定)。
+    "Scene::render_viz_frame",
+    "Scene::drive_and_finish",
+    "AuroraBtnPass::render_frame",
+    "NavGlassPass::render_frame",
+
+    # ── host 上的覆盖率采集物理上看不见它 ──
+    # `decode` 本身是个纯函数(Java 的 COMMAND_* 常量映射到 MediaCommand),
+    # 但 app-android 是纯 cdylib、不在 default-members 里,且它的 jni 依赖只在
+    # `cfg(target_os = "android")` 下存在。llvm-cov 跑的是 host,插桩不到这里,
+    # 补测试也不会计入分数。
+    # 真想要这份保障,该做的是把这张映射表挪到 MediaCommand 所在的 ui crate
+    # 里去测,而不是在这里刷分 —— 那是一次独立的重构,不该混进本次改动。
+    "decode",
+
+    # ── 分数来自度量口径,不是复杂度 ──
+    # `build_apk` 的圈复杂度 9 里一个判断都没有:函数体没有 if / match / 循环,
+    # 9 = 1 + 8 个 `?`。也就是说这里量的是错误传播的管道数。参数校验之后每一行
+    # 都是外部世界(ANDROID_HOME、cargo-ndk、gradle、拷产物、chown),而它内部
+    # 写死 `repo_root()`,真跑会删掉仓库自己的 jniLibs。
+    # 它调用的四步各自单独计分且都在线下,排除它不会让任何真实逻辑逃过闸门。
+    "build_apk",
+]
