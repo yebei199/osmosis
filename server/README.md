@@ -50,7 +50,13 @@ metadata 分片保存平台凭据,不带就一律 `INVALID_ARGUMENT`。忘了包
 - 迁移在启动时跑,`migrations/` 目录编进二进制。少一个能忘的部署步骤。
 - **不用 `sqlx::query!` 宏**:它要在编译期连库校验 SQL,会让 `cargo build` 依赖一个
   跑着的 Postgres。一律用运行时的 `query_as`,SQL 由测试盖住。
-- 起库:`just pg`。测试直接对着它跑,每个测试在自己的事务里回滚,因此可以并行。
+- 起库:`just pg`。测试直接对着它跑。`tests/` 下的每条在自己的事务里回滚,因此可以
+  并行、也不留数据。路由那几条(`src/routes/*/tests.rs`)例外 —— handler 自己从池里
+  取连接,塞不进测试的事务;它们改用固定的账号名与曲目 id 前缀,开跑先清上一轮的残留,
+  见 `src/routes/testing.rs`。
+- 路由测试的上游由**进程内的假 gRPC 服务**扮演(同一个文件)。handler 拿的是
+  `CatalogServiceClient<Channel>` 这种具体类型,中间没有可替换的接口,所以 `build.rs`
+  连 server 桩一并生成 —— 生产代码一个都不实现。
 
 ## 缓存不是镜像
 

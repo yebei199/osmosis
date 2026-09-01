@@ -45,3 +45,7 @@ similar-asserts.workspace = true
 # 信令测试要当**客户端**连自己的 WebSocket。axum 只提供服务端那一半,
 # 客户端另找一个 —— tungstenite 是 axum 自己底下用的那套,协议实现一致。
 tokio-tungstenite = "0.28"
+# 路由测试要在进程内起一个假的 bang-dream。端口交给内核挑(:0),
+# 而 `serve_with_incoming` 要的是一个 Stream —— 这个 crate 提供那层包装。
+# 先绑再交出去,并行的测试因此撞不上,也不必猜一个空闲端口。
+tokio-stream = { version = "0.1", features = ["net"] }

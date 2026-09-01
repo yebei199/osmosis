@@ -10,6 +10,15 @@ use std::sync::RwLock;
 /// 而每一次请求都要用到它 —— 层层传递只会让每个函数都多一个参数。
 static TOKEN: RwLock<Option<String>> = RwLock::new(None);
 
+/// 串行化每一条会碰全局 token 的测试。
+///
+/// 它是进程级状态,而单元测试默认并行:两条测试各自 set 一个 token,断言到的
+/// 会是对方那个,而且是偶发的。落盘处也一样 —— 拿着这把锁才好安全地把
+/// `OSMOSIS_SESSION_FILE` 指到临时目录去,免得动到真实的那一份。
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> =
+    std::sync::Mutex::new(());
+
 /// 当前 token 的副本。
 pub fn token() -> Option<String> {
     TOKEN.read().ok().and_then(|slot| slot.clone())

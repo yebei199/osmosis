@@ -174,3 +174,6 @@ pub(crate) fn track_refs_of(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

@@ -21,8 +21,9 @@ async fn health_fetches_server_status() {
 
 /// 不带登录态打一条受保护的路由,必须失败。
 ///
-/// 这条与下一条是**唯一**能证明 `Authorization` 头真的发出去了的测试:
-/// 头是在 reqwest 内部拼的,纯函数测不到它。
+/// 头长什么样由 `platform::native` 的单测证明(那里在本机接住请求原文,
+/// 不需要服务端)。这条与下一条证明的是另一件事:**服务端认这个头** ——
+/// 两侧对同一个头的拼法各错一半,只有真的连起来才看得见。
 #[tokio::test]
 #[ignore = "需要 `just dev-server` 正在运行"]
 async fn protected_route_without_token_is_rejected() {

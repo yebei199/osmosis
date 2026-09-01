@@ -277,3 +277,6 @@ pub(crate) async fn set_subscribed(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+mod tests;

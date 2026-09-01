@@ -6,7 +6,11 @@
 //! 要求 CI 持有跨仓库凭据,不成比例。漂移由 `cargo xtask boundaries` 在 submodule
 //! 在场时挡住。
 //!
-//! 只生成 client:本服务是 bang-dream 的调用方,不实现它的 service。
+//! 生产代码只用 client —— 本服务是 bang-dream 的调用方,不实现它的 service。
+//! server 桩仍然生成,唯一的用处是让测试在进程内起一个假上游:路由函数拿的是
+//! `CatalogServiceClient<Channel>` 这种具体类型,不套接口就只能给它一个真的
+//! gRPC 服务端说话。配 `generate_default_stubs`,假上游因此只需要实现自己
+//! 关心的那几个方法,其余一律回 UNIMPLEMENTED。
 
 use std::path::PathBuf;
 
@@ -24,7 +28,8 @@ fn main() {
     );
 
     tonic_prost_build::configure()
-        .build_server(false)
+        .build_server(true)
+        .generate_default_stubs(true)
         .compile_protos(&[&proto], &[&proto_dir])
         .expect("protoc 生成失败");
 

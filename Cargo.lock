@@ -293,6 +293,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "similar-asserts",
  "tokio",
  "web-sys",
 ]
@@ -7829,6 +7830,7 @@ dependencies = [
  "similar-asserts",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite 0.28.0",
  "tonic",
  "tonic-prost",
@@ -10937,6 +10939,9 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "similar-asserts",
+]
 
 [[package]]
 name = "y4m"

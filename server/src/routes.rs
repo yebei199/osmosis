@@ -8,3 +8,6 @@ pub(crate) mod lyric;
 pub(crate) mod play;
 pub(crate) mod playlists;
 pub(crate) mod search;
+
+#[cfg(test)]
+pub(crate) mod testing;

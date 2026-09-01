@@ -6,6 +6,11 @@ use crate::platform;
 /// 拆成四个测试会并行地互相踩,而「一开始没有」那条还依赖执行顺序。
 #[test]
 fn the_session_token_has_a_lifecycle() {
+    // 别的模块也有碰 token 的测试,与它们串起来跑
+    let _guard = super::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     // 用一个临时文件当会话落盘处,免得动到真实的那一份
     let dir = std::env::temp_dir()
         .join("osmosis-session-lifecycle");
