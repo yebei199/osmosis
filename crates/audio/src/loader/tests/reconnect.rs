@@ -1,4 +1,3 @@
-
 use std::time::Duration;
 
 use super::stall::{CALLBACK_BUDGET, CALLBACK_FRAMES};
