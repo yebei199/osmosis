@@ -11,6 +11,11 @@ apk := "dist/osmosis-debug.apk"
 # 所以让桌面让路、真机留在 8090。改任一个都要同步改 .mcp.json —— 那是 AI 客户端的地址。
 mcp_port := "8090"
 desktop_mcp_port := "8091"
+# 发行构建烘进二进制的服务端地址(crates/api 的 option_env!,编译期生效)。
+# 两个后端跑在 main-vps 的 k3s 上(infra#67),仅 tailnet 可达。
+# 要打一个连本机后端的包:OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build。
+# dev 配方(desktop-dev / web-dev)不设它,保持连本机 server-dev 的老习惯。
+api_base := env('OSMOSIS_API_BASE', "https://music.k3s.cryptorust.uk:32443")
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -180,7 +185,7 @@ bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
 [group('三端')]
 [group('安卓')]
 android-build:
-    nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
+    OSMOSIS_API_BASE={{api_base}} nix-shell Android.nix --run 'CARGO_TARGET_DIR=target-android cargo xtask android'
 
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
@@ -190,6 +195,8 @@ android-install:
 # 把手机的 127.0.0.1:3000 转发到开发机的 server-dev
 # 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
 # adb 重连后需要重新执行
+# 只有连本机后端的包(OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build)
+# 才需要这条;默认包直连集群,装完即用。
 [group('安卓')]
 android-reverse:
     adb reverse tcp:3000 tcp:3000
@@ -286,7 +293,7 @@ desktop-install:
     icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
     bin="$HOME/.local/bin"
     mkdir -p "$apps" "$icons" "$bin"
-    nix-shell slint.nix --run 'cargo build -p app-desktop --release'
+    OSMOSIS_API_BASE={{api_base}} nix-shell slint.nix --run 'cargo build -p app-desktop --release'
     ln -sfn "$PWD/target/release/osmosis-desktop" "$bin/osmosis-desktop"
     install -m 644 assets/io.github.osmosis.desktop "$apps/"
     install -m 644 assets/io.github.osmosis.svg "$icons/"

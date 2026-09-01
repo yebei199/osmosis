@@ -22,6 +22,9 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
   重连在服务端没声明 `Accept-Ranges` 时会**从第 0 字节重拉整首歌**,而那些字节
   接着写在当前写位置上 —— 歌放到中段就又是一遍开头。这里把那个选择去掉:
   重连一律带 Range(真机日志证据见模块头)。
+- `src/stream_client.rs`:给 stream-download 的 HTTP 客户端,reqwest 0.12 +
+  rustls-tls,与 crates/api 同一条栈。不用它自带的 reqwest 0.13:那条的 rustls
+  强制 rustls-platform-verifier,安卓要 JNI 胶水才能验证书。
 - `src/codec.rs`:同播用的 Opus 编解码与 `Tee`。`normalize` 把任意源统一成
   48kHz 立体声,`Tee` 把播放中的采样原样传下去、复制一份进有界支路,
   攒帧逻辑吸收「Opus 只收固定帧长而 rodio 一次给一个采样」的错位。

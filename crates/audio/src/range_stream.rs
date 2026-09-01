@@ -20,11 +20,12 @@ use std::task::{Context, Poll};
 
 use futures_util::Stream;
 use stream_download::http::HttpStream;
-use stream_download::http::reqwest::Client;
+
+use crate::stream_client::StreamClient;
 use stream_download::source::SourceStream;
 
 /// 包一层 [`HttpStream`],只改重连那一步。
-pub struct RangeStream(HttpStream<Client>);
+pub struct RangeStream(HttpStream<StreamClient>);
 
 impl RangeStream {
     /// 转发响应头的读取。`load` 用它记日志(尤其是 `Accept-Ranges` 到底有没有)。
@@ -34,7 +35,7 @@ impl RangeStream {
 }
 
 impl Stream for RangeStream {
-    type Item = <HttpStream<Client> as Stream>::Item;
+    type Item = <HttpStream<StreamClient> as Stream>::Item;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -46,8 +47,8 @@ impl Stream for RangeStream {
 
 impl SourceStream for RangeStream {
     type Params =
-        <HttpStream<Client> as SourceStream>::Params;
-    type StreamCreationError = <HttpStream<Client> as SourceStream>::StreamCreationError;
+        <HttpStream<StreamClient> as SourceStream>::Params;
+    type StreamCreationError = <HttpStream<StreamClient> as SourceStream>::StreamCreationError;
 
     async fn create(
         params: Self::Params,

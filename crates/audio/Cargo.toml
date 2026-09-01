@@ -19,6 +19,11 @@ log.workspace = true
 # 两者都已在依赖树里(stream-download 自己就用),不新增下载。
 futures-util = { version = "0.3", default-features = false }
 bytes = "1"
+# 给 stream-download 当 HTTP 客户端(见 src/stream_client.rs)。特性选择与
+# crates/api 同一套理由:rustls-tls 是 ring + 内置 webpki 根,安卓零胶水;
+# 不开 default-features 挡掉 native-tls 和 system-proxy。"stream" 给
+# bytes_stream 用 —— 边下边读靠它。
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 
 [dev-dependencies]
 similar-asserts.workspace = true

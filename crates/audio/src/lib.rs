@@ -14,6 +14,7 @@
 pub mod codec;
 mod range_stream;
 pub mod spectrum;
+mod stream_client;
 mod stream_source;
 
 pub use stream_source::{

@@ -4,8 +4,10 @@ use contract::ErrorDto;
 
 /// 服务端地址。可在编译期用 `OSMOSIS_API_BASE` 覆盖。
 ///
-/// 默认指向 `127.0.0.1` —— Android 上这是**手机自己**的回环地址,需要
-/// `adb reverse tcp:3000 tcp:3000` 把它转发到开发机(见 `just adb-reverse`)。
+/// 默认指向 `127.0.0.1`,给 dev 配方连本机 server-dev 用 —— Android 上这是
+/// **手机自己**的回环地址,需要 `adb reverse tcp:3000 tcp:3000` 转发到开发机
+/// (见 `just android-reverse`)。发行构建(`just desktop-install` /
+/// `just android-build`)烘的是 k3s 集群地址,见 justfile 的 `api_base`。
 pub fn base_url() -> &'static str {
     option_env!("OSMOSIS_API_BASE")
         .unwrap_or("http://127.0.0.1:3000")
