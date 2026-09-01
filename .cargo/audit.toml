@@ -1,0 +1,19 @@
+# cargo-audit 的忽略名单。只放**查证过不可达或无修复路径**的条目,并写清理由 ——
+# 目的不是让审计变绿,而是让下一条新漏洞能从输出里跳出来。永久噪音会淹掉真警报。
+#
+# 每条都该定期复核:上游出了修复版就删掉对应行,别让它烂在这里。
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 rsa 0.9.10 Marvin 计时侧信道,上游至今无修复版本。
+    # 它来自 sqlx-mysql,而 server 只开 postgres(见 server/Cargo.toml 的
+    # default-features = false),`cargo tree --workspace --target all -i rsa`
+    # 在任何目标下都找不到它 —— 纯 Cargo.lock 残留,从不编译、从不链接。
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0194 / 0195 quick-xml 0.39.4 两条 XML 解析 DoS。
+    # 修复在 0.41,但它的唯一来路是 wayland-scanner(proc-macro)且锁死 ^0.39,
+    # 升不动。而 wayland-scanner 是**编译期**依赖,解析的是随 crate 发布的
+    # Wayland 协议 XML,不是运行期外部输入 —— 攻击面在这里不存在。
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
