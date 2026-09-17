@@ -32,3 +32,7 @@ local.properties
 # 本地凭据:邀请码、测试账号。justfile 用 `set dotenv-load` 读它,
 # 别提交 —— 服务面向公网,邀请码进了历史就等于没有邀请码
 /.env
+
+# issue-dispatch 往 worktree 里放的返工结论文件。不忽略的话它会以游离文件
+# 出现在实施者的树里,被 `git add -A` 顺手带进提交
+/.dispatch/
