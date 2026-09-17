@@ -59,7 +59,6 @@ jobs:
           mkdir -p dist
           cp target/release/osmosis-desktop dist/osmosis-desktop-x86_64-linux
           cd dist && sha256sum osmosis-desktop-x86_64-linux > sha256sums.txt
-          ls -l dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,9 +80,10 @@ jobs:
           name: osmosis-desktop-x86_64-linux
           path: dist
 
-      # 这个 job 没有 actions/checkout,工作目录不是 git 仓库;gh 认仓库靠
-      # GH_REPO/GITHUB_REPOSITORY 这个环境变量,不读本地 git remote,显式点名
-      # 就够,不必为此拉一份代码下来。
+      # gh 默认从本地 git remote 认仓库;这个 job 没有 actions/checkout,工作
+      # 目录不是 git 仓库,所以要显式给 GH_REPO。GITHUB_REPOSITORY 不顶用——
+      # gh 不读它,只认本地 git remote 或 GH_REPO,r1 那次探针在两者都缺时
+      # 报的就是 `fatal: not a git repository`。
       - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
