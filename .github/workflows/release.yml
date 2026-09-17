@@ -20,26 +20,31 @@ permissions:
 jobs:
   build:
     name: build
-    runs-on: ubuntu-latest
-    # 产物要在 glibc 2.42 的 NixOS 上经 autoPatchelfHook 跑起来,构建端的 glibc
-    # 不得高于运行端。ubuntu-22.04 这个 runner label 从 2026-09-17 起进入弃用
-    # brownout(到 2027-04-17 完全下线,见 actions/runner-images#14254),固定用
-    # 这个 label 会在弃用窗口里随机失败。改用 ubuntu-latest 跑 + 手动拉起
-    # ubuntu:22.04 容器,glibc 基线就不再跟着 runner 镜像的生命周期走。
-    container: ubuntu:22.04
-    timeout-minutes: 60
+    # ubuntu-22.04 这个 label 从 2026-09-17 起进入弃用 brownout(到 2027-04-17
+    # 下线,见 actions/runner-images#14254),固定用它会在弃用窗口里被故意判失败。
+    # 第一版换成了裸 `container: ubuntu:22.04` 想让 glibc 基线不跟着镜像生命周期
+    # 走,但跳过头了:
+    # - glibc 2.39(24.04)≤ 2.42(消费方 NixOS)仍然满足约束,余量还在,不需要
+    #   多退一版去够 2.35。
+    # - Cargo.lock 里 skia-bindings 0.99.0 没开 build-from-source,正常靠下载
+    #   预编译库;一旦拿不到会退回 bindgen,那需要 clang + python3。托管镜像自带,
+    #   裸 ubuntu:22.04 两个都没有——「裸容器缺某个东西」这一整类首跑失败,换回
+    #   托管镜像就整类消失。
+    # - apt 依赖表抄的是 ci.yml test job 那张、已经在托管 ubuntu runner 上编过
+    #   app-desktop(含 skia)的表;换成裸容器,这份「已验证」的出处就对不上了。
+    # 代价是基线重新跟着镜像生命周期走,认了——24.04 退役还早,到时候也只是换一个
+    # label,和这次的动作一样;弃用公告给的迁移路径本来就是 ubuntu-24.04。
+    runs-on: ubuntu-24.04
+    # 空缓存的 --release 全量构建要编 992 个 crate,含 skia 与 bevy;ci.yml 那
+    # 37 分钟是靠 opt-level=0 按下来的,release 这边按不掉,60 分钟不够留余量。
+    timeout-minutes: 90
     steps:
-      # 裸 ubuntu:22.04 镜像没有 git/curl/编译工具链 —— runner 镜像本来就预装好的
-      # 东西,进了容器要自己补上。apt 依赖表本身抄 ci.yml 的 test job:
-      # libfontconfig1-dev 是 femtovg 后端链接期要的,libasound2-dev 是 cpal→alsa,
-      # libopus-dev 是 syncplay 的 C 绑定,protobuf-compiler 是 server/build.rs 的
-      # codegen,dbus 是 MPRIS。这次只编 app-desktop,若某一项实际编译时发现根本
-      # 用不上,再删。
-      - name: 安装容器基础工具与 native 依赖
-        run: |
-          apt-get update
-          apt-get install -y git ca-certificates curl build-essential pkg-config \
-            libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
+      # apt 依赖表逐字照抄 ci.yml test job:libfontconfig1-dev 是 femtovg 后端
+      # 链接期要的,libasound2-dev 是 cpal→alsa,libopus-dev 是 syncplay 的 C
+      # 绑定,protobuf-compiler 是 server/build.rs 的 codegen,dbus 是 MPRIS。
+      # 这次只编 app-desktop,若某一项实际编译时发现根本用不上,再删。
+      - name: 安装 native 依赖
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
 
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -54,6 +59,7 @@ jobs:
           mkdir -p dist
           cp target/release/osmosis-desktop dist/osmosis-desktop-x86_64-linux
           cd dist && sha256sum osmosis-desktop-x86_64-linux > sha256sums.txt
+          ls -l dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -63,9 +69,10 @@ jobs:
   release:
     name: release
     needs: build
-    # workflow_dispatch 触发时 github.ref 是分支 ref,这条不满足,
-    # 只有 push 了 v* tag 才真的创建 GitHub Release。
-    if: startsWith(github.ref, 'refs/tags/')
+    # 只判 ref 不够:对着一个 tag ref 手动发 workflow_dispatch 也会匹配
+    # startsWith(ref, 'refs/tags/'),而 issue 明写 workflow_dispatch 那条路径
+    # 只能 upload artifact、不许 create release。event_name 把这种误用也挡住。
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,9 +81,13 @@ jobs:
           name: osmosis-desktop-x86_64-linux
           path: dist
 
+      # 这个 job 没有 actions/checkout,工作目录不是 git 仓库;gh 认仓库靠
+      # GH_REPO/GITHUB_REPOSITORY 这个环境变量,不读本地 git remote,显式点名
+      # 就够,不必为此拉一份代码下来。
       - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${{ github.ref_name }}" \
             dist/osmosis-desktop-x86_64-linux dist/sha256sums.txt \
