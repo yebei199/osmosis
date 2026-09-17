@@ -36,3 +36,7 @@ local.properties
 # issue-dispatch 往 worktree 里放的返工结论文件。不忽略的话它会以游离文件
 # 出现在实施者的树里,被 `git add -A` 顺手带进提交
 /.dispatch/
+
+# Claude Code 的本机设置(哪些 MCP server 在这台机器上开着)。settings.json 是
+# 共享的、进版本库;这一份是每台机器各自的
+/.claude/settings.local.json
