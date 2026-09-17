@@ -36,6 +36,10 @@ Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device
 **提交前跑 `just ci`** —— 它逐字复述 `.github/workflows/ci.yml` 的命令序列。
 `dev` 分支上的 push 不触发 CI,这是唯一的防线。
 
+**发布**:推一个 `v*` tag(如 `v0.1.0`)触发 `.github/workflows/release.yml`,
+产出 `osmosis-desktop-x86_64-linux` 与 `sha256sums.txt` 到该 tag 的 GitHub
+Release;NixOS 侧由 `nixos_config` 的 `fetchurl` 钉住这份产物消费。
+
 ## 文档去哪找
 
 | 想知道                         | 看                                                       |

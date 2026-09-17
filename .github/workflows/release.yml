@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  # 第一个 tag 是 v0.1.0,与 Cargo.toml 的 workspace version 对齐。
+  push:
+    tags:
+      - 'v*'
+  # 不打 tag 也能把构建这半跑一遍 —— release job 的 if 挡住了它,
+  # 这条路径只产出 artifact,不建 GitHub Release。
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# 默认的 GITHUB_TOKEN 是只读的,没有这条 `gh release create` 会失败,
+# 报出来的错看着像认证问题、不像配置问题。
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    # 产物要在 glibc 2.42 的 NixOS 上经 autoPatchelfHook 跑起来,构建端的 glibc
+    # 不得高于运行端。ubuntu-22.04 这个 runner label 从 2026-09-17 起进入弃用
+    # brownout(到 2027-04-17 完全下线,见 actions/runner-images#14254),固定用
+    # 这个 label 会在弃用窗口里随机失败。改用 ubuntu-latest 跑 + 手动拉起
+    # ubuntu:22.04 容器,glibc 基线就不再跟着 runner 镜像的生命周期走。
+    container: ubuntu:22.04
+    timeout-minutes: 60
+    steps:
+      # 裸 ubuntu:22.04 镜像没有 git/curl/编译工具链 —— runner 镜像本来就预装好的
+      # 东西,进了容器要自己补上。apt 依赖表本身抄 ci.yml 的 test job:
+      # libfontconfig1-dev 是 femtovg 后端链接期要的,libasound2-dev 是 cpal→alsa,
+      # libopus-dev 是 syncplay 的 C 绑定,protobuf-compiler 是 server/build.rs 的
+      # codegen,dbus 是 MPRIS。这次只编 app-desktop,若某一项实际编译时发现根本
+      # 用不上,再删。
+      - name: 安装容器基础工具与 native 依赖
+        run: |
+          apt-get update
+          apt-get install -y git ca-certificates curl build-essential pkg-config \
+            libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
+
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release -p app-desktop
+
+      # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
+      # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
+      - name: 打包产物与校验和
+        run: |
+          mkdir -p dist
+          cp target/release/osmosis-desktop dist/osmosis-desktop-x86_64-linux
+          cd dist && sha256sum osmosis-desktop-x86_64-linux > sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osmosis-desktop-x86_64-linux
+          path: dist/*
+
+  release:
+    name: release
+    needs: build
+    # workflow_dispatch 触发时 github.ref 是分支 ref,这条不满足,
+    # 只有 push 了 v* tag 才真的创建 GitHub Release。
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: osmosis-desktop-x86_64-linux
+          path: dist
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/osmosis-desktop-x86_64-linux dist/sha256sums.txt \
+            --title "${{ github.ref_name }}"
