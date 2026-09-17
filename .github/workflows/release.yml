@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  # 第一个 tag 是 v0.1.0,与 Cargo.toml 的 workspace version 对齐。
+  push:
+    tags:
+      - 'v*'
+  # 不打 tag 也能把构建这半跑一遍 —— release job 的 if 挡住了它,
+  # 这条路径只产出 artifact,不建 GitHub Release。
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# 默认的 GITHUB_TOKEN 是只读的,没有这条 `gh release create` 会失败,
+# 报出来的错看着像认证问题、不像配置问题。
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build
+    # ubuntu-22.04 这个 label 从 2026-09-17 起进入弃用 brownout(到 2027-04-17
+    # 下线,见 actions/runner-images#14254),固定用它会在弃用窗口里被故意判失败。
+    # 第一版换成了裸 `container: ubuntu:22.04` 想让 glibc 基线不跟着镜像生命周期
+    # 走,但跳过头了:
+    # - glibc 2.39(24.04)≤ 2.42(消费方 NixOS)仍然满足约束,余量还在,不需要
+    #   多退一版去够 2.35。
+    # - Cargo.lock 里 skia-bindings 0.99.0 没开 build-from-source,正常靠下载
+    #   预编译库;一旦拿不到会退回 bindgen,那需要 clang + python3。托管镜像自带,
+    #   裸 ubuntu:22.04 两个都没有——「裸容器缺某个东西」这一整类首跑失败,换回
+    #   托管镜像就整类消失。
+    # - apt 依赖表抄的是 ci.yml test job 那张、已经在托管 ubuntu runner 上编过
+    #   app-desktop(含 skia)的表;换成裸容器,这份「已验证」的出处就对不上了。
+    # 代价是基线重新跟着镜像生命周期走,认了——24.04 退役还早,到时候也只是换一个
+    # label,和这次的动作一样;弃用公告给的迁移路径本来就是 ubuntu-24.04。
+    runs-on: ubuntu-24.04
+    # 空缓存的 --release 全量构建要编 992 个 crate,含 skia 与 bevy;ci.yml 那
+    # 37 分钟是靠 opt-level=0 按下来的,release 这边按不掉,60 分钟不够留余量。
+    timeout-minutes: 90
+    steps:
+      # apt 依赖表逐字照抄 ci.yml test job:libfontconfig1-dev 是 femtovg 后端
+      # 链接期要的,libasound2-dev 是 cpal→alsa,libopus-dev 是 syncplay 的 C
+      # 绑定,protobuf-compiler 是 server/build.rs 的 codegen,dbus 是 MPRIS。
+      # 这次只编 app-desktop,若某一项实际编译时发现根本用不上,再删。
+      - name: 安装 native 依赖
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
+
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release -p app-desktop
+
+      # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
+      # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
+      - name: 打包产物与校验和
+        run: |
+          mkdir -p dist
+          cp target/release/osmosis-desktop dist/osmosis-desktop-x86_64-linux
+          cd dist && sha256sum osmosis-desktop-x86_64-linux > sha256sums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osmosis-desktop-x86_64-linux
+          path: dist/*
+
+  release:
+    name: release
+    needs: build
+    # 只判 ref 不够:对着一个 tag ref 手动发 workflow_dispatch 也会匹配
+    # startsWith(ref, 'refs/tags/'),而 issue 明写 workflow_dispatch 那条路径
+    # 只能 upload artifact、不许 create release。event_name 把这种误用也挡住。
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: osmosis-desktop-x86_64-linux
+          path: dist
+
+      # gh 默认从本地 git remote 认仓库;这个 job 没有 actions/checkout,工作
+      # 目录不是 git 仓库,所以要显式给 GH_REPO。GITHUB_REPOSITORY 不顶用——
+      # gh 不读它,只认本地 git remote 或 GH_REPO,r1 那次探针在两者都缺时
+      # 报的就是 `fatal: not a git repository`。
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/osmosis-desktop-x86_64-linux dist/sha256sums.txt \
+            --title "${{ github.ref_name }}"
