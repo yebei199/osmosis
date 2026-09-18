@@ -50,7 +50,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # OSMOSIS_API_BASE 是 crates/api 的 option_env!,编译期烘进二进制;
+      # 不设它默认回退 127.0.0.1:3000,发出去的包连不上线上后端(#90)。
+      # 地址与 justfile 的 api_base 默认值一字不差。
       - run: cargo build --release -p app-desktop
+        env:
+          OSMOSIS_API_BASE: https://music.k3s.cryptorust.uk:32443
+
+      # option_env! 是编译期常量,上一步漏设环境变量时构建照样成功,只有
+      # 产物烘错了地址——这类失败不会在构建阶段报错,必须另开一道门去查
+      # 产物本身。
+      - name: 校验产物烘的是线上地址
+        run: |
+          online_count=$(grep -a -c 'music.k3s.cryptorust.uk:32443' target/release/osmosis-desktop || true)
+          local_count=$(grep -a -c 'http://127.0.0.1:3000' target/release/osmosis-desktop || true)
+          echo "online_count=$online_count local_count=$local_count"
+          if [ "$online_count" -lt 1 ] || [ "$local_count" -ne 0 ]; then
+            echo "产物烘的地址不对:期望线上地址 >=1、本机地址 =0" >&2
+            exit 1
+          fi
 
       # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
       # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
