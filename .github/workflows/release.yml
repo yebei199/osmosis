@@ -50,7 +50,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # OSMOSIS_API_BASE 是 crates/api 的 option_env!,编译期烘进二进制;
+      # 不设它默认回退 127.0.0.1:3000,发出去的包连不上线上后端(#90)。
+      # 地址与 justfile 的 api_base 默认值一字不差。
       - run: cargo build --release -p app-desktop
+        env:
+          OSMOSIS_API_BASE: https://music.k3s.cryptorust.uk:32443
 
       # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
       # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
