@@ -190,6 +190,7 @@ fn deck_window_with(
             app_core::Queue::default(),
         )),
         sync: crate::syncplay::detached(&ui),
+        remote: crate::remote::detached(&ui),
         media,
         player,
         lyrics,

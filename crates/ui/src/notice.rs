@@ -69,7 +69,9 @@ mod tests {
             // (扬声器里是推来的流,本机那首歌名已经不成立了)。
             (
                 format!("set_{}", "playback_text"),
-                &["music.rs", "syncplay.rs"],
+                // remote.rs 同理:输出设备不是本机时,那一行渲染的是
+                // 被控端报来的状态,而本机的 playback 此刻是空的。
+                &["music.rs", "syncplay.rs", "remote.rs"],
             ),
             // 同播角色行:角色归 syncplay 管,别处没有它的真相。
             (
