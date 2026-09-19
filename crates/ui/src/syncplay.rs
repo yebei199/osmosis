@@ -43,8 +43,9 @@ pub fn signalling_url(api_base: &str) -> String {
 
 /// 本机在同播里的身份。
 ///
-/// 身份是**自报的在场证明**,不是账号(`docs/adr/0009`),所以不落盘、不校验,
-/// 每次启动重新生成即可。
+/// 只是**这台设备叫什么**,不是"我是谁":归属由服务端从连接的 token 定
+/// (见 `server::signaling`)。所以它不落盘、不校验,每次启动重新生成即可,
+/// 而且只需要在自己账号那一桶里分得开。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)
         .map(|name| name.trim().to_owned())
@@ -143,6 +144,8 @@ pub fn bind(
     let client = Arc::new(Client::start(
         &signalling_url(api::base_url()),
         me,
+        // 每次建连现取:开机时多半还没登录,而登录之后同播要能自己接上。
+        api::session::token,
         {
             let roster = roster.clone();
             let role = role.clone();
@@ -229,6 +232,16 @@ fn handle(
             let message = format!("同播失败: {message}");
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 crate::notice::show(&ui, message);
+            });
+        }
+        // 与 HTTP 那侧拿到 401 是同一件事,善后也走同一处。
+        // 同播自己不会重试,下一个 token 到位时它会自己接上。
+        Event::Unauthorized => {
+            let _ = weak.upgrade_in_event_loop(|ui| {
+                crate::account::to_login_page(
+                    &ui,
+                    "同播信令被服务端拒绝",
+                );
             });
         }
     }

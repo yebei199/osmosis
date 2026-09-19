@@ -33,6 +33,8 @@ async fn wss_url_reaches_connection_layer_not_tls_url_error()
     let Err(err) = Signalling::connect(
         &format!("wss://{addr}"),
         device,
+        // 必须是合法的头值:不合法的话连接在发起之前就被本地拒了,测不到这条路。
+        "wss-probe-token",
     )
     .await
     else {

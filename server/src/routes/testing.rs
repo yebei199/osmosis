@@ -407,5 +407,10 @@ pub(crate) fn state(
         upstream,
         pool,
         invite: INVITE.to_owned(),
+        roster: server::signaling::SharedRoster::default(),
+        origins: server::signaling::AllowedOrigins::default(
+        ),
+        limiter: server::ratelimit::SharedLimiter::default(
+        ),
     }
 }

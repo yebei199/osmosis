@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode, header},
 };
 use contract::{
@@ -15,6 +15,29 @@ use server::error;
 use server::error::Failure;
 
 use crate::{AppState, conn};
+
+/// 同一个来源 IP 一分钟内能试几次登录或注册。
+///
+/// 人手输密码一分钟撑死几次,这道闸拦的是脚本:没有它,`/login` 就是一条
+/// 敞开的口令穷举通道,而每一次失败在日志里都长得一模一样。
+const ATTEMPTS_PER_MINUTE: u32 = 20;
+
+/// 记一次来自某个 IP 的账号操作,超了就回 429。
+fn count_attempt(
+    state: &AppState,
+    from: std::net::SocketAddr,
+) -> Result<(), Failure> {
+    let mut limiter =
+        state.limiter.lock().expect("限流器锁中毒");
+    if limiter.check(
+        &format!("account:{}", from.ip()),
+        ATTEMPTS_PER_MINUTE,
+    ) {
+        Ok(())
+    } else {
+        Err(error::rate_limited())
+    }
+}
 
 /// `GET /health` —— 能返回就说明服务端活着。
 ///
@@ -33,8 +56,11 @@ pub(crate) async fn health() -> Json<HealthDto> {
 /// 状态没有任何用处。
 pub(crate) async fn register(
     State(state): State<AppState>,
+    ConnectInfo(from): ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<RegisterDto>,
 ) -> Result<Json<SessionDto>, Failure> {
+    count_attempt(&state, from)?;
+
     let mut conn = conn(&state.pool).await?;
 
     let created = account::register(
@@ -64,8 +90,11 @@ pub(crate) async fn register(
 /// `POST /login` —— 用用户名密码换一个会话 token。
 pub(crate) async fn login(
     State(state): State<AppState>,
+    ConnectInfo(from): ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<LoginDto>,
 ) -> Result<Json<SessionDto>, Failure> {
+    count_attempt(&state, from)?;
+
     let mut conn = conn(&state.pool).await?;
 
     let token = account::login(

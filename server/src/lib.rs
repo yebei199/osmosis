@@ -14,5 +14,6 @@ pub mod db;
 pub mod error;
 pub mod history;
 pub mod playlist;
+pub mod ratelimit;
 pub mod roster;
 pub mod signaling;

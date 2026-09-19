@@ -52,6 +52,32 @@ pub fn unauthorized(message: &str) -> Failure {
     )
 }
 
+/// 403,附一句给人看的说明。
+///
+/// 与 401 分开:401 是"你是谁我不知道",403 是"我知道你是谁,但这条路不通"。
+pub fn forbidden(message: &str) -> Failure {
+    (
+        StatusCode::FORBIDDEN,
+        Json(ErrorDto {
+            code: "forbidden".to_owned(),
+            message: message.to_owned(),
+        }),
+    )
+}
+
+/// 429,请求太密。
+///
+/// 不说清是哪一道闸、还差多久:那等于告诉打这道闸的人该怎么绕。
+pub fn rate_limited() -> Failure {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ErrorDto {
+            code: "rate_limited".to_owned(),
+            message: "请求太频繁,稍后再试".to_owned(),
+        }),
+    )
+}
+
 /// 把自家的失败翻成一对 (HTTP 状态码, 响应体)。
 ///
 /// 密码错与用户不存在映射到**同一个** code 和同一句话:分开会把

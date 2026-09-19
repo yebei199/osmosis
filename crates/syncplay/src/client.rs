@@ -41,6 +41,9 @@ pub enum Event {
     Listening { host: String, source: ChannelSource },
     /// 某一步失败了。给界面一行能显示的话,而不是让它停在一个永远不会变的状态上。
     Failed(String),
+    /// 服务端不认这个登录态。界面该把人送回登录页 —— 同播不会自己重试,
+    /// 换一个 token 之前再连也只是再得到一个 401。
+    Unauthorized,
 }
 
 /// 界面发给编排循环的指令。
@@ -64,18 +67,28 @@ impl Client {
     /// 连上信令服务器并开始编排。
     ///
     /// 立即返回:连接是在后台建的。连不上会走 [`Event::Failed`],而不是让调用方等。
+    /// `token` 每次建连时现取一次,而不是启动时取一次:登录态会变 ——
+    /// 开机时还没登录、中途被服务端吊销、重新登录换了一个,都要能自己接上。
     pub fn start(
         base_url: &str,
         device: DeviceDto,
+        token: impl Fn() -> Option<String>
+        + Send
+        + Sync
+        + 'static,
         events: impl Fn(Event) + Send + Sync + 'static,
     ) -> Self {
         let (commands, inbox) = mpsc::unbounded_channel();
         let base_url = base_url.to_owned();
         let events: Arc<dyn Fn(Event) + Send + Sync> =
             Arc::new(events);
+        let token: Arc<
+            dyn Fn() -> Option<String> + Send + Sync,
+        > = Arc::new(token);
 
-        runtime()
-            .spawn(run(base_url, device, events, inbox));
+        runtime().spawn(run(
+            base_url, device, token, events, inbox,
+        ));
 
         Self { commands }
     }
@@ -136,11 +149,41 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-/// 断线后隔多久重连一次。
+/// 第一次重连前等多久。
+const RETRY_MIN: Duration = Duration::from_secs(1);
+
+/// 重连间隔的上限。
 ///
-/// 服务端多半只是在重启。退避算法在这里是过度设计:同播的服务端就在自家网络里,
-/// 重试的代价是一次本地 TCP 连接。
-const RETRY_DELAY: Duration = Duration::from_secs(3);
+/// 退避不是为了省本机那次 TCP 连接,是为了别在服务端刚倒下的时候,几十台
+/// 设备一起每三秒敲一次门。上限留在一分钟:服务端回来之后,最迟一分钟接上。
+const RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// 没有登录态可用时,隔多久回头看一眼。
+///
+/// 这一段不建连、不发包,只是问一句"登录了吗" —— 所以可以密一点。
+const RELOGIN_POLL: Duration = Duration::from_secs(3);
+
+/// 下一次的等待时长:翻倍,到上限为止。
+fn next_backoff(current: Duration) -> Duration {
+    (current * 2).min(RETRY_MAX)
+}
+
+/// 给等待时长加上 ±25% 的抖动。
+///
+/// 不引随机数 crate:这里只要"两台设备不会掐着同一个毫秒一起重连",
+/// 挂钟的纳秒位已经足够乱。
+fn jittered(base: Duration) -> Duration {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    // 75% ~ 125%
+    let factor = 75 + u64::from(nanos % 51);
+    Duration::from_millis(
+        (base.as_millis() as u64).saturating_mul(factor)
+            / 100,
+    )
+}
 
 /// 编排循环:连上、干活、断了就重连,直到 [`Client`] 被丢掉。
 ///
@@ -149,6 +192,7 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 async fn run(
     base_url: String,
     device: DeviceDto,
+    token: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     events: Arc<dyn Fn(Event) + Send + Sync>,
     mut commands: mpsc::UnboundedReceiver<Command>,
 ) {
@@ -156,20 +200,45 @@ async fn run(
     // 而重建一条轨会让还在推的那条泵写进一个没人订阅的地方。
     let track = audio_track();
 
+    let mut backoff = RETRY_MIN;
+    // 上一个被服务端拒掉的 token。它没换之前不必再试 —— 结果只会一样。
+    let mut rejected: Option<String> = None;
+
     loop {
+        // 还没登录,或者手上只有那个已经被拒的 token:等它变,别空转建连。
+        let Some(credential) = token().filter(|current| {
+            rejected.as_deref() != Some(current.as_str())
+        }) else {
+            tokio::time::sleep(RELOGIN_POLL).await;
+            continue;
+        };
+
         let signalling = match Signalling::connect(
             &base_url,
             device.clone(),
+            &credential,
         )
         .await
         {
             Ok(signalling) => signalling,
+            Err(SyncError::Unauthorized) => {
+                // 不重试:界面把人送回登录页,下一个 token 到位时上面那一句
+                // 会自己把它捡起来。
+                rejected = Some(credential);
+                events(Event::Unauthorized);
+                continue;
+            }
             Err(error) => {
                 events(Event::Failed(error.to_string()));
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(jittered(backoff)).await;
+                backoff = next_backoff(backoff);
                 continue;
             }
         };
+
+        // 连上了就把退避清零:下一次断开多半是另一回事。
+        backoff = RETRY_MIN;
+        rejected = None;
 
         if !serve(
             signalling,
@@ -344,4 +413,38 @@ fn relay_candidates(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 退避翻倍,并停在上限上 —— 不会一路涨到几小时。
+    #[test]
+    fn backoff_doubles_up_to_the_ceiling() {
+        assert_eq!(next_backoff(RETRY_MIN), RETRY_MIN * 2);
+        assert_eq!(next_backoff(RETRY_MAX), RETRY_MAX);
+        assert_eq!(
+            next_backoff(RETRY_MAX / 2 + RETRY_MIN),
+            RETRY_MAX,
+            "越过上限要被压回上限"
+        );
+    }
+
+    /// 抖动不会把等待变成 0,也不会离原值太远。
+    ///
+    /// 抖成 0 的话退避就白做了:一群设备仍然会一起敲门。
+    #[test]
+    fn jitter_stays_within_a_quarter_of_the_base() {
+        let base = Duration::from_secs(8);
+
+        for _ in 0..50 {
+            let actual = jittered(base);
+            assert!(
+                actual >= base.mul_f32(0.75)
+                    && actual <= base.mul_f32(1.25),
+                "抖动出界: {actual:?}"
+            );
+        }
+    }
 }
