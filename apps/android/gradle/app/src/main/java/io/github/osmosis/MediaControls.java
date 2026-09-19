@@ -2,6 +2,7 @@ package io.github.osmosis;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -108,6 +109,16 @@ public final class MediaControls {
 
     static void attachActivity(Activity current) {
         activity = current;
+    }
+
+    /**
+     * 应用级 Context。{@link Downloads} 要它来拿 ContentResolver ——
+     * 那一侧不申请权限、也不弹任何东西,所以用 application context 而不是
+     * Activity 本身:Activity 会随旋转屏幕重建,而一次下载要活得比它久。
+     */
+    static Context appContext() {
+        Activity host = activity;
+        return host == null ? null : host.getApplicationContext();
     }
 
     static void detachActivity(Activity current) {

@@ -21,6 +21,9 @@
 mod controls;
 
 #[cfg(target_os = "android")]
+mod downloads;
+
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
@@ -62,6 +65,9 @@ fn android_main(app: slint::android::AndroidApp) {
     // 媒体控件要 JavaVM,而它只能从 `app` 上取;`init` 会把 `app` 吃掉,
     // 所以先克隆一份留着(`AndroidApp` 内部是 Arc,克隆是廉价的)。
     let media_app = app.clone();
+    // 下载落点。与媒体控件同一条理由要提前克隆:`init` 会把 `app` 吃掉,
+    // 而这两样都要从它身上取 JavaVM。
+    ui::install_download_store(downloads::start(&app));
     slint::android::init(app)
         .expect("slint android init failed");
 

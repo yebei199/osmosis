@@ -8,7 +8,11 @@ android {
 
     defaultConfig {
         applicationId "io.github.osmosis"
-        minSdk 26
+        // 29(Android 10)而不是 26:下载要把文件写进系统的公共音乐目录,
+        // 而 MediaStore 的 RELATIVE_PATH 与 IS_PENDING 是 API 29 才有的。
+        // 退回旧路径要 WRITE_EXTERNAL_STORAGE,那是个用户看得见、也该拒绝的权限,
+        // 换来的只是多支持两个 2017 年的系统版本。
+        minSdk 29
         targetSdk 34
         versionCode 1
         versionName "0.1.0"
