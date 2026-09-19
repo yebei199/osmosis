@@ -16,7 +16,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use audio::ChannelSource;
-use contract::{DeviceDto, ServerSignal};
+use contract::{
+    DeviceDto, RemoteCommand, RemoteStateDto, ServerSignal,
+};
 use rodio::Sample;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -44,6 +46,20 @@ pub enum Event {
     /// 服务端不认这个登录态。界面该把人送回登录页 —— 同播不会自己重试,
     /// 换一个 token 之前再连也只是再得到一个 401。
     Unauthorized,
+
+    // ── 遥控器模式(`docs/adr/0030`)。与上面几条共用同一条信令连接。 ──
+    /// 本机拿到了 `target` 的控制权。界面该把输出设备切过去,并要一次快照。
+    ControlGranted { target: String, generation: u64 },
+    /// 本机的控制权没了 —— 被别的遥控器顶掉,或者被控端自己退出了。
+    ControlRevoked { by: String },
+    /// 本机被这台设备接管了:进锁定态,挂「正被 xx 遥控」。
+    ControlledBy { device: DeviceDto },
+    /// 遥控器发来一条命令。本机此刻是被控端。
+    Command { cmd: RemoteCommand },
+    /// 被控端报来的状态。本机此刻是遥控器。
+    RemoteState { from: String, state: RemoteStateDto },
+    /// 遥控器要一次完整状态,立刻回一条 [`Client::report`]。
+    SnapshotRequest,
 }
 
 /// 界面发给编排循环的指令。
@@ -54,6 +70,30 @@ enum Command {
     Push(String),
     /// 关掉所有连接,回到单机。
     Leave,
+
+    /// 接管这台设备(用户主动按下的那一次)。
+    Claim(String),
+    /// 本机不再遥控谁了。只忘掉本地那份持权记录,**不发信令** ——
+    /// 遥控器一走了之,被控端仍然该接着放(手机没电不能让 pc1 停)。
+    ReleaseControl,
+    /// 被控端退出被遥控。
+    ExitControlled,
+    /// 把一条命令发给当前持权的那台设备。
+    Send(RemoteCommand),
+    /// 把本机的状态报给正在遥控本机的那台设备。
+    Report(Box<RemoteStateDto>),
+    /// 向当前持权的那台设备要一次快照。
+    Snapshot,
+}
+
+/// 本机作为**遥控器**持有的那份控制权。
+///
+/// 活在 [`run`] 的作用域里而不是 [`serve`] 里 —— 它要跨重连活下来,
+/// 而 `peers` 那一类是每条信令各自的东西。
+struct Held {
+    target: String,
+    /// 服务端给的代次。还没拿到就是 `None`(刚发出去、答复没回来)。
+    generation: Option<u64>,
 }
 
 /// 一个连着信令服务器、随时可以推流的同播客户端。
@@ -134,6 +174,50 @@ impl Client {
     pub fn leave(&self) {
         let _ = self.commands.send(Command::Leave);
     }
+
+    /// 接管这台设备:本机当它的遥控器。
+    ///
+    /// 这是用户**主动**按下的那一次,顶掉当前的遥控器。重连之后的自动重发
+    /// 由编排循环自己做,走的是另一条路(见 [`Held`])。
+    pub fn claim(&self, target: &str) {
+        let _ = self
+            .commands
+            .send(Command::Claim(target.to_owned()));
+    }
+
+    /// 输出设备选回本机:忘掉持权记录,不知会任何人。
+    pub fn release_control(&self) {
+        let _ = self.commands.send(Command::ReleaseControl);
+    }
+
+    /// 被控端按了「退出被遥控」。
+    pub fn exit_controlled(&self) {
+        let _ = self.commands.send(Command::ExitControlled);
+    }
+
+    /// 把一条命令发给正在被本机遥控的那台设备。没有持权就地丢掉 ——
+    /// 界面那时本就不该让人按下去。
+    pub fn command(&self, cmd: RemoteCommand) {
+        let _ = self.commands.send(Command::Send(cmd));
+    }
+
+    /// 把本机的播放状态报给正在遥控本机的那台设备。
+    ///
+    /// 发去哪里由服务端从控制权槽位查:让被控端自己写目标的话,
+    /// 它能把自己的播放位置每秒推给任何一台设备。
+    pub fn report(&self, state: RemoteStateDto) {
+        let _ = self
+            .commands
+            .send(Command::Report(Box::new(state)));
+    }
+
+    /// 向被控端要一次完整状态。
+    ///
+    /// 取得控制权、换目标、重连之后各要一次 —— 服务端不缓存状态
+    /// (`docs/adr/0030`),「现在是什么样」只能问被控端本人。
+    pub fn request_snapshot(&self) {
+        let _ = self.commands.send(Command::Snapshot);
+    }
 }
 
 /// 后台多线程 runtime。
@@ -203,6 +287,9 @@ async fn run(
     let mut backoff = RETRY_MIN;
     // 上一个被服务端拒掉的 token。它没换之前不必再试 —— 结果只会一样。
     let mut rejected: Option<String> = None;
+    // 本机遥控着谁。**跨重连保留** —— 断线不该让用户重新挑一次设备
+    // (`docs/adr/0030`)。理由与上面那条轨相同:重连的是信令,不是遥控关系。
+    let mut held: Option<Held> = None;
 
     loop {
         // 还没登录,或者手上只有那个已经被拒的 token:等它变,别空转建连。
@@ -245,6 +332,7 @@ async fn run(
             &track,
             &events,
             &mut commands,
+            &mut held,
         )
         .await
         {
@@ -261,10 +349,20 @@ async fn serve(
     track: &Arc<TrackLocalStaticSample>,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
+    held: &mut Option<Held>,
 ) -> bool {
     let sender = signalling.sender();
     // 连接是每条信令各自的,不跨重连保留:重连之后对端会重新邀请。
     let mut peers: HashMap<String, Peer> = HashMap::new();
+
+    // 重连之后**先确认还持不持权**,再由界面去要快照(`docs/adr/0030`)。
+    // 带着手上那个代次:槽位已经换人时服务端只会回一条撤权,而不是让这台
+    // 刚恢复网络的设备把接管者顶掉(产品规则:旧遥控器自动重连不夺回)。
+    if let Some(current) = held.as_ref() {
+        let _ = sender
+            .claim(&current.target, current.generation)
+            .await;
+    }
 
     loop {
         let step = tokio::select! {
@@ -272,15 +370,17 @@ async fn serve(
                 let Some(message) = incoming else {
                     return true;
                 };
-                accept(message, &mut peers, &sender, events)
-                    .await
+                accept(
+                    message, &mut peers, &sender, events, held,
+                )
+                .await
             }
             command = commands.recv() => {
                 let Some(command) = command else {
                     return false;
                 };
                 dispatch(
-                    command, track, &mut peers, &sender,
+                    command, track, &mut peers, &sender, held,
                 )
                 .await
             }
@@ -300,6 +400,7 @@ async fn accept(
     peers: &mut HashMap<String, Peer>,
     sender: &SignalSender,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
+    held: &mut Option<Held>,
 ) -> Result<(), SyncError> {
     match message {
         ServerSignal::Roster { devices } => {
@@ -333,13 +434,40 @@ async fn accept(
                 "{code}: {message}"
             )))
         }
-        // 遥控器模式的几条:本层还没接上它们,下一步开始。
-        ServerSignal::ControlGranted { .. }
-        | ServerSignal::ControlRevoked { .. }
-        | ServerSignal::Command { .. }
-        | ServerSignal::State { .. }
-        | ServerSignal::SnapshotRequest
-        | ServerSignal::ControlledBy { .. } => Ok(()),
+        ServerSignal::ControlGranted { generation } => {
+            // 拿到代次才算真的持权。重连时要拿它去续,所以记下来。
+            let Some(current) = held.as_mut() else {
+                return Ok(());
+            };
+            current.generation = Some(generation);
+            events(Event::ControlGranted {
+                target: current.target.clone(),
+                generation,
+            });
+            Ok(())
+        }
+        ServerSignal::ControlRevoked { by } => {
+            // 失权就把记录清掉,否则重连时还会去续一份已经不存在的权。
+            *held = None;
+            events(Event::ControlRevoked { by });
+            Ok(())
+        }
+        ServerSignal::Command { cmd } => {
+            events(Event::Command { cmd });
+            Ok(())
+        }
+        ServerSignal::State { from, state } => {
+            events(Event::RemoteState { from, state });
+            Ok(())
+        }
+        ServerSignal::SnapshotRequest => {
+            events(Event::SnapshotRequest);
+            Ok(())
+        }
+        ServerSignal::ControlledBy { device } => {
+            events(Event::ControlledBy { device });
+            Ok(())
+        }
     }
 }
 
@@ -372,6 +500,7 @@ async fn dispatch(
     track: &Arc<TrackLocalStaticSample>,
     peers: &mut HashMap<String, Peer>,
     sender: &SignalSender,
+    held: &mut Option<Held>,
 ) -> Result<(), SyncError> {
     match command {
         // 旧泵不用显式停:上一首的支路随播放器换歌而断,它自己就收工了。
@@ -395,6 +524,40 @@ async fn dispatch(
             }
             Ok(())
         }
+
+        // 主动接管:先记下目标,代次等服务端的 ControlGranted 回来再填。
+        // 先记是必须的 —— 答复到达时要靠它认出这份权是谁的。
+        Command::Claim(target) => {
+            *held = Some(Held {
+                target: target.clone(),
+                generation: None,
+            });
+            sender.claim(&target, None).await
+        }
+        Command::ReleaseControl => {
+            *held = None;
+            Ok(())
+        }
+        Command::ExitControlled => {
+            sender.exit_controlled().await
+        }
+        // 没持权就地丢掉:界面那时本就不该让人按下去,而往服务端发一条
+        // 必然被拒的命令只会换回一条没人看的报错。
+        Command::Send(cmd) => match held.as_ref() {
+            Some(current) => {
+                sender.command(&current.target, cmd).await
+            }
+            None => Ok(()),
+        },
+        Command::Report(state) => {
+            sender.report(*state).await
+        }
+        Command::Snapshot => match held.as_ref() {
+            Some(current) => {
+                sender.snapshot(&current.target).await
+            }
+            None => Ok(()),
+        },
     }
 }
 
