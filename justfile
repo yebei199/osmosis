@@ -12,10 +12,11 @@ apk := "dist/osmosis-debug.apk"
 mcp_port := "8090"
 desktop_mcp_port := "8091"
 # 发行构建烘进二进制的服务端地址(crates/api 的 option_env!,编译期生效)。
-# 两个后端跑在 main-vps 的 k3s 上(infra#67),仅 tailnet 可达。
+# 两个后端跑在 main-vps 的 k3s 上(infra#67);music.cryptorust.uk 经 Cloudflare Tunnel 公网可达(infra#83),
+# music.k3s.cryptorust.uk:32443 是 tailnet 内的直连入口,两者同一 backend。
 # 要打一个连本机后端的包:OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build。
 # dev 配方(desktop-dev / web-dev)不设它,保持连本机 server-dev 的老习惯。
-api_base := env('OSMOSIS_API_BASE', "https://music.k3s.cryptorust.uk:32443")
+api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"

@@ -59,7 +59,7 @@ jobs:
       # 边界见 apps/desktop/Cargo.toml 的 [features] 注释,这里不重复。
       - run: cargo build --release -p app-desktop --features mcp
         env:
-          OSMOSIS_API_BASE: https://music.k3s.cryptorust.uk:32443
+          OSMOSIS_API_BASE: https://music.cryptorust.uk
           SLINT_EMIT_DEBUG_INFO: "1"
 
       # option_env! 是编译期常量,上一步漏设环境变量时构建照样成功,只有
@@ -67,7 +67,7 @@ jobs:
       # 产物本身。
       - name: 校验产物烘的是线上地址
         run: |
-          online_count=$(grep -a -c 'music.k3s.cryptorust.uk:32443' target/release/osmosis-desktop || true)
+          online_count=$(grep -a -c 'https://music.cryptorust.uk' target/release/osmosis-desktop || true)
           local_count=$(grep -a -c 'http://127.0.0.1:3000' target/release/osmosis-desktop || true)
           echo "online_count=$online_count local_count=$local_count"
           if [ "$online_count" -lt 1 ] || [ "$local_count" -ne 0 ]; then
