@@ -17,11 +17,13 @@ use serde::{Deserialize, Serialize};
 mod account;
 mod catalog;
 mod playlist;
+mod remote;
 mod sync;
 
 pub use account::*;
 pub use catalog::*;
 pub use playlist::*;
+pub use remote::*;
 pub use sync::*;
 
 /// 协议版本。客户端与服务端就线上格式达成的约定的版本号。

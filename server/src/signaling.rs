@@ -348,6 +348,12 @@ fn route(
     match message {
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
+        // 遥控器模式的几条:控制权槽位还没建起来,下一步接上。
+        ClientSignal::ClaimControl { .. }
+        | ClientSignal::ExitControlled
+        | ClientSignal::Command { .. }
+        | ClientSignal::State { .. }
+        | ClientSignal::SnapshotRequest { .. } => None,
         ClientSignal::Signal { to, payload } => {
             let Some(target) = roster.sink(account, &to)
             else {

@@ -333,6 +333,13 @@ async fn accept(
                 "{code}: {message}"
             )))
         }
+        // 遥控器模式的几条:本层还没接上它们,下一步开始。
+        ServerSignal::ControlGranted { .. }
+        | ServerSignal::ControlRevoked { .. }
+        | ServerSignal::Command { .. }
+        | ServerSignal::State { .. }
+        | ServerSignal::SnapshotRequest
+        | ServerSignal::ControlledBy { .. } => Ok(()),
     }
 }
 
