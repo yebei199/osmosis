@@ -54,3 +54,59 @@ fn the_banner_shows_up_only_when_there_is_something_to_say()
         "声音回来了,那句话已经过期,横幅该收掉"
     );
 }
+
+/// **有去处的提示点得动**,点完把自己收掉。
+///
+/// 「网易云未登录」这一句的解法在个人页。只说不给路的话,用户读完还得
+/// 自己在四个页签里翻 —— 而他正是因为不知道该去哪儿才看到这句话。
+#[test]
+fn a_banner_with_somewhere_to_go_takes_you_there() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+
+    ui.global::<Shell>().set_banner_text(
+        "网易云未登录,去个人页扫码绑定".into(),
+    );
+    ui.global::<Shell>().set_banner_tab(2);
+
+    let jump = testing::ElementHandle::find_by_element_id(
+        &ui,
+        "MainWindow::jump",
+    )
+    .next()
+    .expect("有去处的提示该有一块能按的区域");
+    jump.invoke_accessible_default_action();
+
+    assert_eq!(
+        ui.global::<Shell>().get_current_tab(),
+        2,
+        "该把人送到个人页"
+    );
+    assert!(
+        ui.global::<Shell>().get_banner_text().is_empty(),
+        "人已经领到了,这句话该收掉"
+    );
+}
+
+/// 没有去处的提示点不动。
+///
+/// 断流那一句点下去该什么都不发生 —— 跳到一个与失败无关的页面更糟。
+#[test]
+fn an_ordinary_banner_has_nothing_to_click() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+
+    ui.global::<Shell>()
+        .set_banner_text("没网了,检查一下网络再试".into());
+
+    assert!(banner(&ui).is_some(), "这句话本身要看得见");
+    assert!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::jump"
+        )
+        .next()
+        .is_none(),
+        "没去处就不该有能按的区域"
+    );
+}

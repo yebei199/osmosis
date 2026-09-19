@@ -21,6 +21,18 @@ export global Profile {
     in property <string> streak-days;
     in property <[ArtistRankRow]> artists: [];
 
+    // ── 网易云绑定(issue #96)──
+    // 绑没绑。这个账号的凭据按账号分片存在上游,与设备无关。
+    in property <bool> netease-bound;
+    // 绑上了的那个平台昵称。没绑时是空串。
+    in property <string> netease-nickname;
+    // 未绑定时要扫的那张码。Rust 按上游给的 url 画出来;没有码时是空图。
+    in property <image> netease-qr;
+    // 这一节此刻的一句话:等待扫码、已扫码待确认、取码失败……
+    in property <string> netease-hint;
+    // 解绑。上游清掉这个账号的凭据。
+    callback unbind-netease();
+
     // 版本与构建信息那一行。
     in property <string> about-line;
 }

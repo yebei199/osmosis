@@ -14,6 +14,8 @@ mod error;
 
 mod history;
 
+mod netease;
+
 mod playlists;
 mod url;
 
@@ -43,6 +45,11 @@ pub(crate) use error::server_error;
 
 pub use history::{recent, record_play, stats};
 
+pub use netease::{
+    QrStep, netease_qr, netease_qr_state, netease_status,
+    netease_unbind, qr_poll,
+};
+
 pub use playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
     liked_ids, platform_playlist_tracks, playlist_tracks,
@@ -54,4 +61,7 @@ pub use playlists::{
 
 // 它见到的形状都从取数的那一层拿(与 app-core 再导出播放类型同理)。
 
-pub use contract::{StatsDto, TopArtistDto};
+pub use contract::{
+    NeteaseStatusDto, QrEventDto, QrLoginDto, StatsDto,
+    TopArtistDto,
+};

@@ -166,6 +166,8 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
     slint::spawn_local(async move {
         let commit = deck.clone();
         let player = deck.player.clone();
+        // 取直链失败时 prepare 要能弹一条通知,那需要一个窗口句柄。
+        let noticing = weak.clone();
         app_core::play(
             &deck.playback,
             track,
@@ -174,7 +176,14 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
                 // 差别只有"等不等"。
                 match ready {
                     Some(ready) => Ok(ready),
-                    None => prepare(player, track).await,
+                    None => {
+                        prepare(
+                            player,
+                            Some(noticing),
+                            track,
+                        )
+                        .await
+                    }
                 }
             },
             move |(decoded, health)| {

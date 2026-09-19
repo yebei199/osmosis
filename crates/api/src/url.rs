@@ -93,6 +93,16 @@ pub(crate) fn artist_tracks_url(id: &str) -> String {
     )
 }
 
+/// 问一张二维码扫到哪一步的地址。key 由上游生成,同样按路径段转义 ——
+/// 它是平台给的不透明串,谁也不保证里面没有 `/`。
+pub(crate) fn netease_qr_url(key: &str) -> String {
+    format!(
+        "{}/netease/qr/{}",
+        base_url(),
+        encode_component(key)
+    )
+}
+
 pub(crate) fn liked_url(track_id: &str) -> String {
     format!(
         "{}/liked/{}",

@@ -55,3 +55,61 @@ fn stat_cards_wait_for_the_data() {
     ui.global::<Profile>().set_loaded(true);
     assert!(present(&ui, "ProfilePage::stats-row"));
 }
+
+/// 网易云一节:没绑摆码,绑了摆昵称。
+///
+/// 两个方向都要钉。只钉「没绑摆码」的话,一个永远摆着码的页面照样通过 ——
+/// 而那意味着绑好之后用户还在对着一张已经没用的码。
+#[test]
+fn the_netease_section_swaps_the_code_for_the_nickname() {
+    let ui = window();
+    ui.global::<Shell>().set_current_tab(2);
+
+    assert!(
+        present(&ui, "ProfilePage::netease-code"),
+        "没绑的时候该摆出二维码"
+    );
+    assert!(
+        !present(&ui, "ProfilePage::netease-name"),
+        "没绑哪来的昵称"
+    );
+
+    ui.global::<Profile>().set_netease_bound(true);
+    ui.global::<Profile>()
+        .set_netease_nickname("某人".into());
+
+    assert!(
+        present(&ui, "ProfilePage::netease-name"),
+        "绑上了该报昵称"
+    );
+    assert!(
+        !present(&ui, "ProfilePage::netease-code"),
+        "绑上了就别再摆码 —— 那张码已经没用了"
+    );
+}
+
+/// 「解绑」真的接到了 Rust 那一侧。
+///
+/// 接空了的现象是按下去什么都不发生,而那与「请求发出去了但失败了」
+/// 在屏幕上长得一模一样。
+#[test]
+fn the_unbind_button_reaches_rust() {
+    let ui = window();
+    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Profile>().set_netease_bound(true);
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Profile>().on_unbind_netease(move || {
+        counter.set(counter.get() + 1);
+    });
+
+    testing::ElementHandle::find_by_accessible_label(
+        &ui, "解绑",
+    )
+    .next()
+    .expect("绑上了该有一颗解绑键")
+    .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 1, "按一下该发一次解绑");
+}

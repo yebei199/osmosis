@@ -23,7 +23,12 @@ pub(super) fn report_stream_loss(
         describe_playback(deck.playback.borrow().state())
             .into(),
     );
-    ui.global::<Shell>().set_banner_text(opening.into());
+    // 经过 notice 而不是直接写:`banner-tab` 归那个模块管,绕过去的话
+    // 上一条提示留下的去处会挂到这句断流上。
+    crate::notice::banner_without_link(
+        ui,
+        opening.to_owned(),
+    );
 
     // 探测结果回来了再把话说准。探不通=本机没网,探得通=这条播放地址不行了。
     let weak = ui.as_weak();
@@ -36,9 +41,10 @@ pub(super) fn report_stream_loss(
                 .get_banner_text()
                 .is_empty()
             {
-                ui.global::<Shell>().set_banner_text(
+                crate::notice::banner_without_link(
+                    &ui,
                     describe_stream_loss(Some(reachable))
-                        .into(),
+                        .to_owned(),
                 );
             }
         }
