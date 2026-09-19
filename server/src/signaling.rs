@@ -84,12 +84,13 @@ pub async fn handler(
     })
 }
 
-/// 一条连接的一生:等 Hello → 入册 → 转发信令 → 断开时出册。
+/// 一条连接的一生:等 Hello → 入册 → 转发信令与探活 → 断开时出册。
 ///
 /// 账号由调用方给定,不从连接里读 —— 它是鉴权的产物。
 ///
-/// 收与发拆成两半跑:发件端要能在**没有任何来信**时主动推名册(别的设备上下线),
-/// 只在收信循环里顺带发的话,一台安静的设备永远收不到名册更新。
+/// 收、发、探活在**同一个循环**里轮转。发件端要能在没有任何来信时主动推名册
+/// (别的设备上下线),所以不能写成"读到一条才发一条";而 `select!` 一次挑一件
+/// 事做,三者各不相误,也不必为发件端另起一个任务再想办法叫停它。
 pub async fn serve(
     socket: WebSocket,
     roster: SharedRoster,
@@ -101,23 +102,6 @@ pub async fn serve(
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (sink, mut outbox) = mpsc::channel(OUTBOX_CAPACITY);
 
-    // 发件端:把收件箱里的消息序列化后写进连接。
-    let pump = tokio::spawn(async move {
-        while let Some(message) = outbox.recv().await {
-            let Ok(text) = serde_json::to_string(&message)
-            else {
-                continue;
-            };
-            if ws_tx
-                .send(Message::text(text))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
-
     // 第一句必须是 Hello。不自报家门就不入册,也就不出现在任何人的名册里。
     // 超时是必要的:鉴权只保证对端有账号,不保证它还打算说话。
     let Ok(Some(device)) = tokio::time::timeout(
@@ -126,50 +110,101 @@ pub async fn serve(
     )
     .await
     else {
-        pump.abort();
         return;
     };
     let device_id = device.id.clone();
+
+    let generation = {
+        let mut guard = roster.lock().expect("名册锁中毒");
+        // 旧连接的出口交还给我们:丢掉它,那条连接的循环下一轮就收到通道已关,
+        // 自己收工 —— 不必从外面去掐它。
+        let (generation, stale) =
+            guard.join(account, device, sink);
+        drop(stale);
+        broadcast_roster(&guard, account);
+        generation
+    };
     tracing::debug!(
         account,
         device = %device_id,
+        generation,
         "设备入册"
     );
 
-    {
-        let mut guard = roster.lock().expect("名册锁中毒");
-        // 旧连接的出口交还给我们:丢掉它,那条僵死连接的 pump 会随之退出。
-        drop(guard.join(account, device, sink));
-        broadcast_roster(&guard, account);
-    }
+    // 探活:每 `ping_every` 发一次 Ping,连着 `misses` 次没有任何回音就判死。
+    // 没有它的话,一条被路由器悄悄丢掉的连接要等 TCP 自己发现 —— 那是十几分钟,
+    // 而这段时间里名册一直说这台设备在线,谁往它推流谁卡住。
+    let mut ping = tokio::time::interval(timing.ping_every);
+    // interval 的第一次 tick 立刻就绪,先把它吃掉,免得刚连上就发一次 Ping。
+    ping.tick().await;
+    let mut unanswered = 0;
 
-    while let Some(Ok(message)) = ws_rx.next().await {
-        let Message::Text(text) = message else {
-            continue;
-        };
-        let Ok(parsed) =
-            serde_json::from_str::<ClientSignal>(&text)
-        else {
-            continue;
-        };
-
-        let guard = roster.lock().expect("名册锁中毒");
-        if let Some(reply) =
-            route(&guard, account, &device_id, parsed)
-            && let Some(own) =
-                guard.sink(account, &device_id)
-        {
-            // try_send 而非 send:这里握着锁,await 会把整个名册卡住。
-            // 发件箱满说明这台设备已经读不动了,丢掉这条应答不比卡住所有人差。
-            let _ = own.try_send(reply);
+    loop {
+        tokio::select! {
+            outgoing = outbox.recv() => {
+                // 通道关了:本条连接已被同 id 的新连接顶替。
+                let Some(message) = outgoing else { break };
+                let Ok(text) = serde_json::to_string(&message) else {
+                    continue;
+                };
+                if ws_tx.send(Message::text(text)).await.is_err() {
+                    break;
+                }
+            }
+            incoming = ws_rx.next() => {
+                let Some(Ok(message)) = incoming else { break };
+                // 任何一帧都算活着 —— Pong 只是其中最常见的那种。
+                unanswered = 0;
+                if let Message::Text(text) = message {
+                    dispatch(&roster, account, &device_id, &text);
+                }
+            }
+            _ = ping.tick() => {
+                if unanswered >= timing.misses {
+                    break;
+                }
+                unanswered += 1;
+                if ws_tx
+                    .send(Message::Ping(axum::body::Bytes::new()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
         }
     }
 
     let mut guard = roster.lock().expect("名册锁中毒");
-    guard.leave(account, &device_id);
+    guard.leave(account, &device_id, generation);
     broadcast_roster(&guard, account);
-    drop(guard);
-    pump.abort();
+}
+
+/// 处理一条文本帧:解析、路由,应答塞回发信人自己的收件箱。
+///
+/// 单独一个**同步**函数,是为了让名册的锁不可能被握过一个 await 点 ——
+/// 握着它 await 会把所有人的名册一起卡住,而那种卡是偶发且难查的。
+fn dispatch(
+    roster: &SharedRoster,
+    account: AccountId,
+    device_id: &str,
+    text: &str,
+) {
+    let Ok(parsed) =
+        serde_json::from_str::<ClientSignal>(text)
+    else {
+        return;
+    };
+
+    let guard = roster.lock().expect("名册锁中毒");
+    if let Some(reply) =
+        route(&guard, account, device_id, parsed)
+        && let Some(own) = guard.sink(account, device_id)
+    {
+        // try_send 而非 send:发件箱满说明这台设备已经读不动了,
+        // 丢掉这条应答不比卡住所有人差。
+        let _ = own.try_send(reply);
+    }
 }
 
 /// 不鉴权的信令路由,**只给测试用**:账号由查询参数 `?account=<id>` 给,缺省 1。

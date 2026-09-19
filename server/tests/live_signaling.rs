@@ -352,3 +352,93 @@ async fn signalling_to_another_account_is_refused() {
         "别人账号的设备收到了不该收到的东西: {leaked:?}"
     );
 }
+
+/// 不回 Pong 的连接会被清出名册,而且别人**被推到**这个变化。
+///
+/// 没有这道探活,一条被路由器悄悄丢掉的连接要等 TCP 自己发现 —— 十几分钟里
+/// 名册一直说它在线,谁往它推流谁卡在那儿。
+#[tokio::test]
+async fn a_device_that_stops_answering_pings_is_dropped() {
+    let addr = start_server_with(Timing {
+        ping_every: std::time::Duration::from_millis(50),
+        ..Timing::default()
+    })
+    .await;
+
+    let mut a = connect(addr, "a").await;
+    let _ = next_signal(&mut a).await;
+    // 连上之后**再也不轮询它**:tungstenite 只在被轮询时才回 Pong,
+    // 于是服务端那边的回音就此断了,而 TCP 连接还好端端地开着。
+    let _mute = connect(addr, "b").await;
+
+    let ServerSignal::Roster { devices } =
+        next_signal(&mut a).await
+    else {
+        panic!("a 没收到 b 上线的名册");
+    };
+    assert_eq!(devices.len(), 2, "b 该先在线");
+
+    let dropped = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            loop {
+                if let ServerSignal::Roster { devices } =
+                    next_signal(&mut a).await
+                    && devices.len() == 1
+                {
+                    return devices;
+                }
+            }
+        },
+    )
+    .await
+    .expect("不回 Pong 的设备没有被清出名册");
+
+    assert_eq!(dropped[0].id, "a");
+}
+
+/// 同一台设备重连:新连接入册之后旧连接才收工,名册里仍然有它。
+///
+/// 这是重连最常见的时序。旧连接的清理不看代次的话,它会把刚上线的新连接
+/// 一起带走 —— 设备自己以为在线,别人却怎么也找不到它。
+#[tokio::test]
+async fn reconnecting_the_same_device_keeps_it_in_the_roster()
+ {
+    let addr = start_server().await;
+
+    let mut watcher = connect(addr, "watcher").await;
+    let _ = next_signal(&mut watcher).await;
+
+    let old = connect(addr, "device").await;
+    let _ = next_signal(&mut watcher).await;
+
+    // 同一个 device id 再连一次。旧连接此时还开着。
+    let _new = connect(addr, "device").await;
+    let _ = next_signal(&mut watcher).await;
+
+    // 现在才关掉旧的那条。
+    drop(old);
+
+    // 给旧连接的清理留出时间,再看名册里还有没有这台设备。
+    let still_there = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        async {
+            loop {
+                if let ServerSignal::Roster { devices } =
+                    next_signal(&mut watcher).await
+                    && !devices
+                        .iter()
+                        .any(|d| d.id == "device")
+                {
+                    return devices;
+                }
+            }
+        },
+    )
+    .await;
+
+    assert!(
+        still_there.is_err(),
+        "旧连接收工时把重连上来的那条从名册里带走了: {still_there:?}"
+    );
+}

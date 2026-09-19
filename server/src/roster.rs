@@ -16,22 +16,38 @@ use contract::DeviceDto;
 
 use crate::signaling::AccountId;
 
+/// 一条连接在名册里的代次。
+///
+/// 同一台设备重连时,新旧两条连接有一段重叠:旧连接的清理跑在它自己的任务里,
+/// 完全可能**晚于**新连接入册。只按设备 id 删的话,那次清理会把刚上线的新连接
+/// 从名册里带走 —— 设备自己以为在线,别人却怎么也找不到它,而这不报任何错。
+/// 代次让 [`Roster::leave`] 认得出"我要删的那条早就被顶替了"。
+pub type Generation = u64;
+
+/// 名册里的一条。
+struct Entry<Sink> {
+    device: DeviceDto,
+    sink: Sink,
+    generation: Generation,
+}
+
 /// 一台设备的出口:往它的连接里塞消息用的发送端。
 ///
 /// 泛型而非写死 `mpsc::Sender`:测试里塞一个记录用的假出口,就能验证
 /// "只发给目标那一台"这类断言,不必真的建连接。
 pub struct Roster<Sink> {
-    /// 账号 id → (设备 id → (设备信息, 出口))。
-    buckets: HashMap<
-        AccountId,
-        HashMap<String, (DeviceDto, Sink)>,
-    >,
+    /// 账号 id → (设备 id → 条目)。
+    buckets:
+        HashMap<AccountId, HashMap<String, Entry<Sink>>>,
+    /// 下一条连接的代次。全局递增,不按设备分 —— 它只需要互不相同。
+    next_generation: Generation,
 }
 
 impl<Sink> Default for Roster<Sink> {
     fn default() -> Self {
         Self {
             buckets: HashMap::new(),
+            next_generation: 0,
         }
     }
 }
@@ -39,31 +55,51 @@ impl<Sink> Default for Roster<Sink> {
 impl<Sink> Roster<Sink> {
     /// 设备上线。同账号下同 id 已在册时**替换**旧条目并返回它的出口。
     ///
-    /// 返回旧出口而不是丢弃:调用方得关掉那条僵死的连接,否则它会一直占着资源,
-    /// 而且下线时会把新连接从名册里带走。
+    /// 返回旧出口而不是丢弃:调用方得关掉那条僵死的连接,否则它会一直占着资源。
+    /// 一并返回本条连接的代次 —— 出册时要带着它,见 [`Generation`]。
     pub fn join(
         &mut self,
         account: AccountId,
         device: DeviceDto,
         sink: Sink,
-    ) -> Option<Sink> {
-        self.buckets
+    ) -> (Generation, Option<Sink>) {
+        let generation = self.next_generation;
+        self.next_generation += 1;
+
+        let stale = self
+            .buckets
             .entry(account)
             .or_default()
-            .insert(device.id.clone(), (device, sink))
-            .map(|(_, stale)| stale)
+            .insert(
+                device.id.clone(),
+                Entry {
+                    device,
+                    sink,
+                    generation,
+                },
+            )
+            .map(|entry| entry.sink);
+
+        (generation, stale)
     }
 
-    /// 设备下线。
+    /// 设备下线。**只删代次相同的那一条**,已经被重连顶替掉的留着不动。
     pub fn leave(
         &mut self,
         account: AccountId,
         device_id: &str,
+        generation: Generation,
     ) {
         let Some(bucket) = self.buckets.get_mut(&account)
         else {
             return;
         };
+
+        if bucket.get(device_id).is_none_or(|entry| {
+            entry.generation != generation
+        }) {
+            return;
+        }
         bucket.remove(device_id);
 
         // 桶空了就连桶一起删:账号数量没有上界,留着空桶等于一张只涨不落的表。
@@ -82,7 +118,7 @@ impl<Sink> Roster<Sink> {
     ) -> Vec<DeviceDto> {
         let mut devices: Vec<DeviceDto> = self
             .entries(account)
-            .map(|(device, _)| device.clone())
+            .map(|entry| entry.device.clone())
             .collect();
         devices.sort_by(|a, b| a.id.cmp(&b.id));
         devices
@@ -99,7 +135,7 @@ impl<Sink> Roster<Sink> {
         self.buckets
             .get(&account)?
             .get(device_id)
-            .map(|(_, sink)| sink)
+            .map(|entry| &entry.sink)
     }
 
     /// 某个账号名下的全部出口,用于广播名册变化。
@@ -107,13 +143,13 @@ impl<Sink> Roster<Sink> {
         &self,
         account: AccountId,
     ) -> impl Iterator<Item = &Sink> {
-        self.entries(account).map(|(_, sink)| sink)
+        self.entries(account).map(|entry| &entry.sink)
     }
 
     fn entries(
         &self,
         account: AccountId,
-    ) -> impl Iterator<Item = &(DeviceDto, Sink)> {
+    ) -> impl Iterator<Item = &Entry<Sink>> {
         self.buckets
             .get(&account)
             .into_iter()
@@ -144,11 +180,10 @@ mod tests {
     fn joining_makes_device_visible() {
         let mut roster = Roster::default();
 
-        assert!(
-            roster
-                .join(ALICE, device("a"), "出口a")
-                .is_none()
-        );
+        let (_, stale) =
+            roster.join(ALICE, device("a"), "出口a");
+
+        assert!(stale.is_none());
 
         assert_eq!(
             roster.devices(ALICE),
@@ -160,9 +195,10 @@ mod tests {
     #[test]
     fn leaving_removes_device() {
         let mut roster = Roster::default();
-        roster.join(ALICE, device("a"), "出口a");
+        let (generation, _) =
+            roster.join(ALICE, device("a"), "出口a");
 
-        roster.leave(ALICE, "a");
+        roster.leave(ALICE, "a", generation);
 
         assert!(roster.devices(ALICE).is_empty());
         assert!(roster.sink(ALICE, "a").is_none());
@@ -177,7 +213,7 @@ mod tests {
         let mut roster = Roster::default();
         roster.join(ALICE, device("a"), "旧出口");
 
-        let stale =
+        let (_, stale) =
             roster.join(ALICE, device("a"), "新出口");
 
         assert_eq!(
@@ -273,6 +309,26 @@ mod tests {
         assert_eq!(
             roster.sink(BOB, "笔记本"),
             Some(&"鲍勃的")
+        );
+    }
+
+    /// 旧连接晚一步收工时,不许把顶替它的新连接从名册里带走。
+    ///
+    /// 这是重连最常见的时序:新连接已经入册,旧连接的清理才跑起来。
+    /// 不看代次的话,设备自己以为在线,别人却怎么也找不到它。
+    #[test]
+    fn a_stale_leave_does_not_evict_the_new_connection() {
+        let mut roster = Roster::default();
+        let (old, _) =
+            roster.join(ALICE, device("a"), "旧出口");
+        roster.join(ALICE, device("a"), "新出口");
+
+        roster.leave(ALICE, "a", old);
+
+        assert_eq!(
+            roster.sink(ALICE, "a"),
+            Some(&"新出口"),
+            "旧连接的清理把新连接删掉了"
         );
     }
 
