@@ -701,4 +701,107 @@ export component MainWindow inherits Window {
             }
         }
     }
+
+    // ── 下载进度。压在所有页之上,与横幅同一条理由 ──
+    //
+    // 它是个**状况**不是一次性提示:从起头到落盘都为真,收它的是下载本身的结束
+    // (见 globals/shell.slint 的 download-text)。摆在横幅与被遥控条之下,
+    // 三条同时在场时不叠在一起。
+    if Shell.download-text != "": download-strip := Rectangle {
+        y: root.safe-area-insets.top
+            + (Shell.banner-text != "" ? 62px : 10px)
+            + (Shell.controlled-text != "" ? 52px : 0px);
+        x: (parent.width - self.width) / 2;
+        width: min(parent.width - 32px, 420px);
+        height: 40px;
+        background: Theme.surface.with-alpha(0.96);
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.overlay;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+
+            Text {
+                text: Shell.download-text;
+                font-size: 13px;
+                color: Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    // ── 曲目行的长按菜单 ──
+    //
+    // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
+    // 关掉」也正是靠这一整块接住的。只有一项是有意的 —— 这一期就下载一件事,
+    // 为它先造一套通用菜单,是给一个不存在的第二项付账。
+    if Library.track-menu-id != "": track-menu := Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000.with-alpha(0.5);
+
+        TouchArea {
+            clicked => { Library.track-menu-id = ""; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(parent.width - 48px, 360px);
+            height: menu-body.preferred-height + 28px;
+            background: Theme.surface;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.overlay;
+
+            // 挡住底下那块「点别处关掉」的区域 —— 没有它,点菜单自己也会把菜单关掉。
+            TouchArea { }
+
+            menu-body := VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+
+                Text {
+                    text: Library.track-menu-title;
+                    font-size: 14px;
+                    color: Theme.text-dim;
+                    overflow: elide;
+                }
+
+                Rectangle {
+                    height: 44px;
+                    border-radius: 10px;
+                    background: download-touch.has-hover
+                        ? Theme.accent : Theme.overlay-weak;
+                    animate background { duration: 140ms; easing: ease-out; }
+
+                    download-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        // 无头测试只认无障碍动作,裸 TouchArea 在那里点不动
+                        // (见 crates/ui/tests/banner.rs)。
+                        accessible-role: button;
+                        accessible-label: "下载";
+                        accessible-action-default => { download-touch.clicked(); }
+                        clicked => {
+                            Library.download-track(Library.track-menu-id);
+                            Library.track-menu-id = "";
+                        }
+                    }
+
+                    Text {
+                        text: "下载";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 14px;
+                        color: download-touch.has-hover
+                            ? Theme.accent-text : Theme.text;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
 }

@@ -384,6 +384,10 @@ export component MusicPage inherits VerticalLayout {
                     Library.toggle-liked(id, liked);
                 }
                 remove(id) => { Library.remove-track(id); }
+                long-press(id, title) => {
+                    Library.track-menu-id = id;
+                    Library.track-menu-title = title;
+                }
                 needs-cover(url) => {
                     Player.needs-cover(url);
                 }

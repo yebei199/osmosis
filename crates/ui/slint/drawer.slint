@@ -23,12 +23,12 @@ export global DrawerMetrics {
     out property <length> pad: 8px;
     out property <length> gap: 2px;
 
-    // 模式两行 + 音量一行 + 输出设备一行 + 同播一行。**到处都是这个数** ——
+    // 模式两行 + 下载一行 + 音量一行 + 输出设备一行 + 同播一行。**到处都是这个数** ——
     // 抽屉在播放页里与在别处一样高、一样几行,否则「展开」在两处就不是同一件事了。
     out property <length> total-h: self.pad * 2
-        + self.row-h * 3
+        + self.row-h * 4
         + self.sync-h * 2
-        + self.gap * 4;
+        + self.gap * 5;
 }
 
 // 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
@@ -41,6 +41,9 @@ export component DrawerRow inherits Rectangle {
     // 读屏念的那句。含状态 —— 三态开关光靠 checked 说不清自己是哪一态。
     in property <string> label;
     in property <bool> checked: false;
+    // 这一行是开关还是动作。动作那种没有"开着没有"可言 —— 读屏把它念成
+    // 一个复选框的话,用户会以为按下去会留在按下的状态。
+    in property <bool> checkable: true;
 
     callback clicked();
 
@@ -109,7 +112,7 @@ export component DrawerRow inherits Rectangle {
 
         accessible-role: button;
         accessible-label: root.label;
-        accessible-checkable: true;
+        accessible-checkable: root.checkable;
         accessible-checked: root.checked;
         accessible-action-default => { root.clicked(); }
     }
@@ -126,6 +129,13 @@ export component Drawer inherits Rectangle {
     // 当前输出设备的 id,空串 = 本机(docs/adr/0030)。
     in property <string> output-current;
 
+    // 手上有没有一首歌可下。没有时那一行灰着 —— 摆一个按了没反应的键,
+    // 比不摆更让人以为功能坏了。
+    in property <bool> can-download;
+    // 下载这一行右侧的状态文字:空串 / 「下载中 42%」/ 「已保存」。
+    in property <string> download-state;
+
+    callback download-clicked();
     callback shuffle-toggled();
     callback loop-cycled();
     callback volume-changed(float);
@@ -163,6 +173,21 @@ export component Drawer inherits Rectangle {
             label: "循环: " + root.loop-name;
             checked: root.loop-mode > 0;
             clicked => { root.loop-cycled(); }
+        }
+
+        // 下载:把正在放的这一首存到本机(统一 mp3)。摆在这里而不是主条上 ——
+        // 主条只放高频核心,其余住抽屉(README「playerbar.slint」)。曲目行长按
+        // 菜单是同一件事的另一个入口,两处都在,播放页因此没有独占的操作。
+        DrawerRow {
+            icon: root.download-icon;
+            title: "下载";
+            state: root.download-state;
+            label: "下载这一首";
+            checkable: false;
+            opacity: root.can-download ? 1.0 : 0.4;
+            clicked => {
+                if (root.can-download) { root.download-clicked(); }
+            }
         }
 
         // 音量:抽屉里有地方,滑块常驻,不必再点开一层。
@@ -225,6 +250,7 @@ export component Drawer inherits Rectangle {
 
     // 图标一律内嵌 SVG path,viewbox 24×24,不引外部资源。
     property <string> shuffle-icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
+    property <string> download-icon: "M12 3v10.55l3.29-3.26 1.42 1.42L12 16.4l-4.71-4.69 1.42-1.42L12 13.55V3h0zM5 18h14v2H5z";
     property <string> loop-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
     property <string> loop-one-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";
     property <string> loop-name: root.loop-mode == 0 ? "关"

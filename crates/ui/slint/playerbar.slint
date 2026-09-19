@@ -22,6 +22,7 @@ import { ProgressBar } from "progress.slint";
 import { Drawer, DrawerMetrics } from "drawer.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
+import { Library } from "globals/library.slint";
 import { Viz } from "globals/viz.slint";
 
 export component PlayerBar inherits Rectangle {
@@ -92,6 +93,9 @@ export component PlayerBar inherits Rectangle {
         volume: Player.volume;
         devices: Shell.devices;
         output-current: Shell.output-id;
+        can-download: Player.now-id != "";
+        download-state: Shell.download-text;
+        download-clicked => { Library.download-track(Player.now-id); }
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
         volume-changed(v) => { Player.volume-changed(v); }

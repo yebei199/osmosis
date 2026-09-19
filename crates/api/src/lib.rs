@@ -71,5 +71,5 @@ pub use playlists::{
 
 pub use contract::{
     NeteaseStatusDto, QrEventDto, QrLoginDto, StatsDto,
-    TopArtistDto,
+    TRIAL_ONLY, TopArtistDto, download_file_name,
 };
