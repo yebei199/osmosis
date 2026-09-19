@@ -16,11 +16,13 @@ use serde::{Deserialize, Serialize};
 /// 整片 401),`/search` 拆成 `/search/tracks`、`/search/artists`、
 mod account;
 mod catalog;
+mod netease;
 mod playlist;
 mod sync;
 
 pub use account::*;
 pub use catalog::*;
+pub use netease::*;
 pub use playlist::*;
 pub use sync::*;
 
