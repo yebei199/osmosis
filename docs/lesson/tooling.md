@@ -12,3 +12,11 @@
 - **元素在不在,以 `crates/ui/tests/` 里 `i-slint-backend-testing` 的
   `find_by_element_id` 为准,不以 MCP 为准。** MCP 只能证明「你连的那份树里没有」,
   证不了「代码里没有」。无头测试查的是当前源码编出来的树,没有装错包、连错端口的余地。
+- **几棵 worktree 共用一个 `target/`,会互相覆盖工作区 crate 的产物。** cargo 的单元哈希用的是
+  **相对工作区**的路径,于是 `94-signal-auth` 与 `96-netease-qr` 两棵树里的 `crates/api` 落进
+  同一个槽位(实测同为 `libapi-bdaf7d3a43baf0e3`),谁后编谁覆盖,另一边随后报「找不到刚加的
+  符号」而源码里明明有——2026-09-19 一天里三个实施者各吃了两次这种假红,也可能反过来假绿
+  (链进去的是对方那一版)。共用 target 是为了省几十分钟的全量重编(见
+  `memory` 里 worktree 必须复用主目录 target 那条),所以不改这个安排,改的是纪律:
+  **同一时刻只让一棵树在编**;真要并行,`cp -a --reflink=always` 克隆一份私有 target
+  (btrfs 上 106G 十几秒、几乎不占空间)再 `touch` 全量源码逼它重编工作区 crate。
