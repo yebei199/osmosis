@@ -15,6 +15,10 @@ log.workspace = true
 # std::time::Instant 在 wasm32-unknown-unknown 上会 panic;web-time 同 API,
 # wasm 下走 performance.now(),原生下就是 std 的再导出。已在依赖树里(bevy 用它)。
 web-time = "1"
+# 二维码的像素在这一层画:服务端只传 url(见 contract::QrLoginDto),
+# 而 slint 的 Image 吃像素缓冲。不开 default-features —— 那会拖进 image 与
+# svg 两套渲染器,这里两样都不用,画方块自己来就够。
+qrcode = { version = "0.14", default-features = false }
 
 # 原生音频栈。cpal 在 linux 链 alsa、在 android 链 AAudio,wasm 上两者都不存在 ——
 # 无条件依赖会让 app-web 编不过,而那个错误要等下次构建 wasm 才炸出来。

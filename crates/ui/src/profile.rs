@@ -6,25 +6,38 @@
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+mod netease;
+
 use crate::Profile;
 use crate::{ArtistRankRow, MainWindow};
 
 pub(crate) fn bind(ui: &MainWindow) {
+    // 网易云那一节自己管自己的轮询与解绑,只把「进页了」这件事交回来 ——
+    // `shown` 只有一个回调,两边各挂一次的话后挂的会顶掉先挂的。
+    let netease_shown = netease::bind(ui);
+
     let weak = ui.as_weak();
     ui.global::<Profile>().on_shown(move || {
-        let weak = weak.clone();
-        let _ = slint::spawn_local(async move {
-            let result = api::stats().await;
-            let Some(ui) = weak.upgrade() else { return };
-            match result {
-                Ok(stats) => show(&ui, &stats),
-                Err(_) => {
-                    // 细节进不了一行字,横幅归断流那类大事;这里只说结果。
-                    ui.global::<Profile>()
-                        .set_error("查询失败".into());
-                }
+        let Some(ui) = weak.upgrade() else { return };
+        netease_shown(&ui);
+        fetch_stats(&ui);
+    });
+}
+
+/// 取一次收听统计,摆上页面。
+fn fetch_stats(ui: &MainWindow) {
+    let weak = ui.as_weak();
+    let _ = slint::spawn_local(async move {
+        let result = api::stats().await;
+        let Some(ui) = weak.upgrade() else { return };
+        match result {
+            Ok(stats) => show(&ui, &stats),
+            Err(_) => {
+                // 细节进不了一行字,横幅归断流那类大事;这里只说结果。
+                ui.global::<Profile>()
+                    .set_error("查询失败".into());
             }
-        });
+        }
     });
 }
 

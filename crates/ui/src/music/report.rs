@@ -40,8 +40,12 @@ pub(super) fn play_to_report(
 /// 停在解码,不往下走:再往下就是把源塞进播放器,那一步不可撤销。中间隔着
 /// 一次代际校验 —— 准备期间被顶掉的这一份就地丢掉(见 `app_core::play`)。
 #[cfg(not(target_arch = "wasm32"))]
+///
+/// `notice` 是要不要把失败说给用户听:点播给一个窗口句柄,预取给 `None`
+/// —— 预取失败不声张(见 [`super::advance::start_prefetch`])。
 pub(super) async fn prepare(
     player: Arc<Result<audio::Player, audio::AudioError>>,
+    notice: Option<slint::Weak<MainWindow>>,
     track: TrackDto,
 ) -> Result<(audio::Loaded, audio::StreamHealth), String> {
     // 没声卡就在这里认输,别等下载完才发现放不了。
@@ -49,9 +53,30 @@ pub(super) async fn prepare(
         return Err(error.to_string());
     }
 
-    let source = api::play_source(&track.id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let source = match api::play_source(&track.id).await {
+        Ok(source) => source,
+        Err(error) => {
+            // 状态行那句话点不了,而这一种失败的解法是去个人页扫码 ——
+            // 所以额外弹一条带去处的通知。别的失败不弹:状态行已经说过
+            // 一遍,再弹一条只是同一件事说两次。
+            if crate::account::netease_unbound(&error)
+                && let Some(ui) =
+                    notice.and_then(|weak| weak.upgrade())
+            {
+                crate::account::report_failure(
+                    &ui,
+                    "点播失败",
+                    &error,
+                );
+            }
+
+            return Err(
+                crate::account::request_failure_text(
+                    &error,
+                ),
+            );
+        }
+    };
     // 开流与解码都在 `audio` 自己的后台 runtime 上跑 —— 这里是 Slint 的 UI 线程,
     // 没有 tokio 反应堆,也不能被阻塞读占住。
     audio::load(&source.url)
