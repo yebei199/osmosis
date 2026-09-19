@@ -8,11 +8,9 @@
 
 use std::net::SocketAddr;
 
-use axum::Router;
-use axum::routing::get;
 use contract::{ClientSignal, DeviceDto, ServerSignal};
 use futures_util::{SinkExt, StreamExt};
-use server::signaling::{self, SharedRoster};
+use server::signaling::{self, Timing};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -23,10 +21,18 @@ type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 ///
 /// 端口写 0 让系统分配:写死端口的话两个测试并发跑就会互相撞,
 /// 而那种失败每次落在不同的测试上,看起来像随机的 flaky。
+///
+/// 走不鉴权的测试路由:这里验的是"消息有没有过去",账号从哪来是
+/// `signal_auth.rs` 的事,不必为此起一个数据库。
 async fn start_server() -> SocketAddr {
-    let app = Router::new()
-        .route("/signal", get(signaling::handler))
-        .with_state(SharedRoster::default());
+    start_server_with(Timing::default()).await
+}
+
+/// 同上,但自己指定时限 —— 超时那几条不能用生产的秒级数字,
+/// 否则每次 `cargo test` 都要为它们干等十几秒。
+async fn start_server_with(timing: Timing) -> SocketAddr {
+    let app =
+        signaling::unauthenticated_test_router(timing);
 
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -206,5 +212,44 @@ async fn signal_to_offline_device_reports_error() {
                 if code == "device_offline"
         ),
         "实得 {received:?}"
+    );
+}
+
+/// 连上了却一直不自报家门,会被断开。
+///
+/// 鉴权只保证对端有账号,不保证它还打算说话:没有这道超时,
+/// 一个连上就沉默的客户端能白占一个连接槽,而名册里看不见它。
+#[tokio::test]
+async fn silent_connection_is_dropped_after_the_hello_timeout()
+ {
+    let addr = start_server_with(Timing {
+        hello: std::time::Duration::from_millis(100),
+        ..Timing::default()
+    })
+    .await;
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(
+        format!("ws://{addr}/signal"),
+    )
+    .await
+    .expect("连不上信令端点");
+
+    // 一句 Hello 都不发。服务端该在时限到了之后关掉这条连接 ——
+    // 读到流末尾(或读出错)都算关掉了。
+    let closed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            while let Some(message) = socket.next().await {
+                if message.is_err() {
+                    return;
+                }
+            }
+        },
+    )
+    .await;
+
+    assert!(
+        closed.is_ok(),
+        "沉默的连接没有被断开,它会一直占着"
     );
 }

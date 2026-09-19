@@ -13,10 +13,8 @@ use std::time::{Duration, Instant};
 use audio::codec::{
     BRANCH_CAPACITY, SYNC_CHANNELS, SYNC_SAMPLE_RATE,
 };
-use axum::Router;
-use axum::routing::get;
 use rodio::Sample;
-use server::signaling::{self, SharedRoster};
+use server::signaling;
 use syncplay::{Client, DeviceDto, Event};
 
 /// 等一件事发生的上界。WebRTC 建连在回环上是百毫秒级,给足余量。
@@ -24,9 +22,11 @@ const PATIENCE: Duration = Duration::from_secs(20);
 
 /// 起一个只有信令路由的服务端,端口交给系统分配。
 async fn start_signalling_server() -> SocketAddr {
-    let app = Router::new()
-        .route("/signal", get(signaling::handler))
-        .with_state(SharedRoster::default());
+    // 不鉴权的测试路由:本文件验的是同播链路,不是鉴权,起一个真数据库
+    // 只为了造一个 token 是本末倒置。鉴权本身在 server/tests/live_signaling.rs。
+    let app = signaling::unauthenticated_test_router(
+        signaling::Timing::default(),
+    );
 
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")

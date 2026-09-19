@@ -344,5 +344,6 @@ pub(crate) fn state(
         upstream,
         pool,
         invite: INVITE.to_owned(),
+        roster: server::signaling::SharedRoster::default(),
     }
 }

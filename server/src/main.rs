@@ -78,20 +78,30 @@ pub(crate) struct Upstream {
 
 /// 进程的全部共享状态。
 ///
-/// 三样东西凑在一起只是因为 handler 需要它们,彼此之间没有关系:
-/// 上游连接、自家的库、以及注册用的邀请码。
+/// 四样东西凑在一起只是因为 handler 需要它们,彼此之间没有关系:
+/// 上游连接、自家的库、注册用的邀请码,以及同播的在线名册。
 #[derive(Clone)]
 pub(crate) struct AppState {
     upstream: Upstream,
     pool: PgPool,
     /// 注册时必须对上的邀请码,由环境变量 `INVITE_CODE` 给。
     invite: String,
+    /// 同播的在线名册。与音乐那几条路由毫无关系,只是同住一个进程 ——
+    /// 但 `/signal` 要鉴权,而鉴权提取器要池,两者因此必须在同一份 state 里。
+    roster: SharedRoster,
 }
 
 // 鉴权提取器只要池,不该认识别的东西 —— 见 server::auth。
 impl FromRef<AppState> for PgPool {
     fn from_ref(state: &AppState) -> Self {
         state.pool.clone()
+    }
+}
+
+// 信令 handler 只要名册,同理。
+impl FromRef<AppState> for SharedRoster {
+    fn from_ref(state: &AppState) -> Self {
+        state.roster.clone()
     }
 }
 
@@ -154,14 +164,8 @@ async fn main() {
         invite: std::env::var("INVITE_CODE").expect(
             "必须设置 INVITE_CODE —— 没有它任何人都能注册",
         ),
+        roster: SharedRoster::default(),
     };
-
-    // 同播信令。与音乐那几条路由**共用不了** state(一个是 gRPC 客户端、一个是
-    // 在线名册),故各自 with_state 后再 merge —— 这也如实反映了两者毫无关系:
-    // 信令不碰 bang-dream,音乐不碰 WebRTC。
-    let signal = Router::new()
-        .route("/signal", get(signaling::handler))
-        .with_state(SharedRoster::default());
 
     let app = Router::new()
         .route("/health", get(health))
@@ -221,8 +225,10 @@ async fn main() {
         .route("/played", post(record_play))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
+        // 同播信令。与音乐那几条路由毫无关系(信令不碰 bang-dream,音乐不碰
+        // WebRTC),但它一样要登录态,而鉴权提取器要的池就在这份 state 里。
+        .route("/signal", get(signaling::handler))
         .with_state(state)
-        .merge(signal)
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // permissive 只适用于开发:它允许任意来源。
         .layer(CorsLayer::permissive());
