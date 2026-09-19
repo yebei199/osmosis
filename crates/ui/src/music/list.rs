@@ -329,9 +329,12 @@ pub(super) fn fetch_into<Fut>(
                 if crate::account::handle_session_expiry(
                     &ui, &error,
                 ) => {}
-            Err(error) => crate::notice::show(
+            // 网易云没绑那一种会走能点进个人页的通知 —— 那正是用户要去
+            // 绑的地方(见 crate::account::report_failure)。
+            Err(error) => crate::account::report_failure(
                 &ui,
-                format!("取曲目失败: {error}"),
+                "取曲目失败",
+                &error,
             ),
         }
     })

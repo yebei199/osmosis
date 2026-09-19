@@ -5,7 +5,7 @@
 // 「口味画像」的流派维度同样无数据,已定改为常听歌手 —— 不编数字。
 
 import { Theme, Type } from "theme.slint";
-import { SectionCard } from "widgets.slint";
+import { SectionCard, HoverButton } from "widgets.slint";
 import { ArtistRankRow, DeviceRow } from "types.slint";
 
 // 一张统计卡:大数字取副色板(硬规则 6 允许的用途),下面一行说明。
@@ -52,6 +52,15 @@ export component ProfilePage inherits Flickable {
     in property <[ArtistRankRow]> top-artists;
     // 与控制条同播条同一份名册。
     in property <[DeviceRow]> devices;
+
+    // ── 网易云绑定 ──
+    in property <bool> netease-bound;
+    in property <string> netease-nickname;
+    in property <image> netease-qr;
+    in property <string> netease-hint;
+    // 这一端是手机。手机扫不了自己屏幕上的码,要多说一句。
+    in property <bool> on-phone;
+    callback unbind-netease();
 
     content-height: column.preferred-height + 52px;
 
@@ -150,6 +159,68 @@ export component ProfilePage inherits Flickable {
                     font-family: Type.mono;
                     font-size: 11px;
                     color: Theme.text-faint;
+                }
+            }
+        }
+
+        // 网易云绑定。点播要的凭据在这里绑,绑定按账号走(docs/adr/0017)——
+        // 桌面绑好,手机上登同一个账号就已经是绑好的。
+        SectionCard {
+            kicker: "网易云";
+
+            if root.netease-bound: HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    // 昵称来自平台,任意 CJK,走系统字体。
+                    netease-name := Text {
+                        text: root.netease-nickname;
+                        font-size: 15px;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                }
+                HoverButton {
+                    text: "解绑";
+                    width: 96px;
+                    height: 40px;
+                    clicked => { root.unbind-netease(); }
+                }
+            }
+
+            if !root.netease-bound: VerticalLayout {
+                spacing: 10px;
+                alignment: start;
+
+                // 码是黑白定死的,不跟主题走:扫码器认的是对比度,
+                // 深色底上的浅色码有一半的机器扫不出来。
+                netease-code := Image {
+                    width: 180px;
+                    height: 180px;
+                    image-fit: contain;
+                    // 每个模块是整数个像素,缩放要保持方块边界锐利
+                    image-rendering: pixelated;
+                    source: root.netease-qr;
+                    accessible-role: image;
+                    accessible-label: "网易云登录二维码";
+                }
+
+                Text {
+                    text: root.netease-hint;
+                    font-family: "Maple Mono NF CN";
+                    font-size: 13px;
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
+                }
+
+                if root.on-phone: Text {
+                    text: "这台手机扫不了自己屏幕上的码 —— 用另一台已登录网易云的手机扫";
+                    font-family: "Maple Mono NF CN";
+                    font-size: 12px;
+                    color: Theme.text-faint;
+                    wrap: word-wrap;
                 }
             }
         }

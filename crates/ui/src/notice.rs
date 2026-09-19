@@ -31,12 +31,32 @@ use crate::Shell;
 const NOTICE_LIFETIME: core::time::Duration =
     core::time::Duration::from_secs(8);
 
+/// 个人页在导航里的位次(app.slint 里 `Shell.current-tab == 2` 那一支)。
+const PROFILE_TAB: i32 = 2;
+
+/// 点不了的那一句用这个位次。
+const NOWHERE: i32 = -1;
+
 /// 说一句一次性的提示。
 ///
 /// 到点自己收,但**只收自己那句**:这期间可能已经换成了别的提示或断流横幅,
 /// 那些各有各的寿命,不该被上一句的计时器带走。比对文本就够认出来,不必为此
 /// 再养一个代号 —— 两句一模一样的提示谁先收都是同一个结果。
 pub fn show(ui: &MainWindow, text: String) {
+    show_at(ui, text, NOWHERE);
+}
+
+/// 同 [`show`],但这一句**点得动**:点它就去个人页。
+///
+/// 给出去处的那种提示才算说完整:「网易云未登录」告诉用户出了什么事,
+/// 而他还得自己在四个页签里找到该去哪儿绑。
+pub fn show_to_profile(ui: &MainWindow, text: String) {
+    show_at(ui, text, PROFILE_TAB);
+}
+
+/// 落一句提示,并说明它点下去去哪一页。
+fn show_at(ui: &MainWindow, text: String, tab: i32) {
+    ui.global::<Shell>().set_banner_tab(tab);
     ui.global::<Shell>()
         .set_banner_text(text.clone().into());
 

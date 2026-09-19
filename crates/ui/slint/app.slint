@@ -452,6 +452,13 @@ export component MainWindow inherits Window {
                     streak-days: Profile.streak-days;
                     top-artists: Profile.artists;
                     devices: Shell.devices;
+                    netease-bound: Profile.netease-bound;
+                    netease-nickname: Profile.netease-nickname;
+                    netease-qr: Profile.netease-qr;
+                    netease-hint: Profile.netease-hint;
+                    // 手机扫不了自己屏幕上的码,那一句提示只在安卓上说
+                    on-phone: Shell.platform == "android";
+                    unbind-netease => { Profile.unbind-netease(); }
                 }
 
                 // 设置(tab 3,rail 沉底最后一颗)。
@@ -589,6 +596,22 @@ export component MainWindow inherits Window {
         border-radius: 10px;
         border-width: 1px;
         border-color: Theme.danger-line;
+
+        // 有去处的提示可以点整块。摆在内容**之前**,于是右边那颗关闭键仍在它
+        // 上面 —— 反过来的话,想关掉提示会变成跳页。
+        // 断流那类提示没有去处(tab 为 -1),这一块整个不在,横幅仍只是文字。
+        if Shell.banner-tab >= 0: jump := TouchArea {
+            // 屏幕阅读器要认得出这块能按;无头测试也只认无障碍动作,
+            // 裸 TouchArea 在那里点不动(见 crates/ui/tests/banner.rs)。
+            accessible-role: button;
+            accessible-label: Shell.banner-text;
+            accessible-action-default => { jump.clicked(); }
+            clicked => {
+                Shell.current-tab = Shell.banner-tab;
+                Shell.banner-text = "";
+                Shell.banner-tab = -1;
+            }
+        }
 
         HorizontalLayout {
             padding-left: 14px;

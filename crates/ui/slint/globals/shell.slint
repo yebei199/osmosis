@@ -35,6 +35,11 @@ export global Shell {
     // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
     // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
     in-out property <string> banner-text;
+    // 这句提示点下去该去哪一页,-1 = 点不了。
+    //
+    // 「网易云没绑」那一句要能直达个人页:说出问题却不给去处,用户只能自己
+    // 在四个页签里找(见 ui/src/account.rs 的 report-failure)。
+    in-out property <int> banner-tab: -1;
 
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。

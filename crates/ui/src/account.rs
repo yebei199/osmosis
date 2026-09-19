@@ -45,6 +45,61 @@ pub fn login_failure_text(err: &api::ApiError) -> String {
     }
 }
 
+/// 服务端说「这个账号还没绑网易云」时给的 code(见 server 的 `error::map_status`)。
+const NETEASE_UNBOUND: &str = "netease_not_logged_in";
+
+/// 网易云没绑时给用户看的话。
+///
+/// 只写一遍:播放状态行与那条能点进个人页的通知说的是同一句 ——
+/// 各写一遍的话,改了一处另一处就成了另一件事。
+pub const NETEASE_UNBOUND_TEXT: &str =
+    "网易云未登录,去个人页扫码绑定";
+
+/// 这次失败是不是「网易云还没绑」。
+///
+/// 按 code 判而不是按 HTTP 状态码,也不按上游那句话的措辞 —— 它来自网易云,
+/// 想怎么变就怎么变。
+pub fn netease_unbound(err: &api::ApiError) -> bool {
+    matches!(
+        err,
+        api::ApiError::Server { code, .. }
+            if code == NETEASE_UNBOUND
+    )
+}
+
+/// 一次普通请求失败时给用户看的话(取曲目、点播这一类)。
+///
+/// 与 [`login_failure_text`] 分开:那一份服务的是登录页,同一个 code 在两处
+/// 的意思不一样。这里只改写一种 —— 上游原话是「netease: 未登录」,读的人
+/// 会以为是**本应用**的登录掉了,于是去重登一个好好的账号。
+pub fn request_failure_text(err: &api::ApiError) -> String {
+    if netease_unbound(err) {
+        return NETEASE_UNBOUND_TEXT.to_owned();
+    }
+
+    err.to_string()
+}
+
+/// 报一次请求失败。
+///
+/// 网易云没绑的那一种走**能点进个人页**的通知:用户此刻要去的正是那一页,
+/// 而说出问题却不给去处,他只能自己在四个页签里找。其余照旧一句
+/// 「什么什么失败: 原因」。
+pub fn report_failure(
+    ui: &MainWindow,
+    what: &str,
+    err: &api::ApiError,
+) {
+    if netease_unbound(err) {
+        crate::notice::show_to_profile(
+            ui,
+            NETEASE_UNBOUND_TEXT.to_owned(),
+        );
+    } else {
+        crate::notice::show(ui, format!("{what}: {err}"));
+    }
+}
+
 /// 把登录页的两个回调接到 api 上。
 pub fn bind(ui: &MainWindow) {
     // 启动时若已有落盘的会话,直接进主界面。它可能已被吊销 —— 那要等第一次
@@ -253,6 +308,104 @@ mod tests {
                 "x".to_owned()
             ))
             .is_empty()
+        );
+    }
+
+    /// 「网易云没绑」要被认出来,且只认它。
+    ///
+    /// 认错的代价是把一句「去个人页扫码」贴到一个与网易云无关的失败上,
+    /// 而那条路点过去什么也解决不了。
+    #[test]
+    fn only_the_netease_code_counts_as_unbound() {
+        assert!(netease_unbound(&server(
+            "netease_not_logged_in"
+        )));
+        assert!(!netease_unbound(&server("not_found")));
+        assert!(!netease_unbound(
+            &api::ApiError::Transport(
+                "timed out".to_owned()
+            )
+        ));
+    }
+
+    /// 网易云没绑要说成「去个人页扫码」,不能原样转上游那句「netease: 未登录」。
+    ///
+    /// 原话会被读成**本应用**的登录掉了,于是用户去重登一个好好的账号,
+    /// 而点播照样不出声。
+    #[test]
+    fn an_unbound_netease_points_at_the_profile_page() {
+        let text = request_failure_text(&server(
+            "netease_not_logged_in",
+        ));
+
+        assert!(
+            text.contains("个人页"),
+            "得说清去哪儿绑,实际 {text}"
+        );
+    }
+
+    /// 别的失败原样转出去,不被这条改写吞掉。
+    #[test]
+    fn other_failures_keep_their_own_words() {
+        let text = request_failure_text(
+            &api::ApiError::Transport(
+                "connection refused".to_owned(),
+            ),
+        );
+
+        assert!(text.contains("网络"), "实际 {text}");
+    }
+
+    /// 网易云那一句要**点得动**:横幅带上个人页的位次。
+    ///
+    /// 只有文案没有去处的话,用户读完还得自己在四个页签里找 ——
+    /// 而这条提示正是在他不知道该去哪儿的时候出现的。
+    #[test]
+    fn the_unbound_notice_can_be_clicked_through() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        report_failure(
+            &ui,
+            "取曲目失败",
+            &server("netease_not_logged_in"),
+        );
+
+        assert_eq!(
+            ui.global::<crate::Shell>().get_banner_text(),
+            NETEASE_UNBOUND_TEXT
+        );
+        assert_eq!(
+            ui.global::<crate::Shell>().get_banner_tab(),
+            2,
+            "这一句该能点进个人页"
+        );
+    }
+
+    /// 别的失败不带去处 —— 点它跳到一个与失败无关的页面更糟。
+    #[test]
+    fn an_ordinary_failure_has_nowhere_to_go() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        report_failure(
+            &ui,
+            "取曲目失败",
+            &api::ApiError::Transport(
+                "timed out".to_owned(),
+            ),
+        );
+
+        assert!(
+            ui.global::<crate::Shell>()
+                .get_banner_text()
+                .starts_with("取曲目失败"),
+            "该照旧报出是哪件事失败了"
+        );
+        assert_eq!(
+            ui.global::<crate::Shell>().get_banner_tab(),
+            -1,
+            "没有去处的提示不该点得动"
         );
     }
 

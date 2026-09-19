@@ -33,9 +33,13 @@ pub(super) fn start_prefetch(deck: &Deck) {
     deck.prefetching.set(true);
     let deck = deck.clone();
     slint::spawn_local(async move {
-        let ready =
-            prepare(deck.player.clone(), track.clone())
-                .await;
+        let ready = prepare(
+            deck.player.clone(),
+            // 预取失败不声张:它只是提速,没成就照常走原路
+            None,
+            track.clone(),
+        )
+        .await;
         deck.prefetching.set(false);
         match ready {
             Ok((decoded, health)) => {
