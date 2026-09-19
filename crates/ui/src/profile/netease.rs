@@ -295,6 +295,189 @@ fn render(content: &str) -> Option<slint::Image> {
 mod tests {
     use super::*;
 
+    use crate::Session;
+
+    /// 一个无头窗口,外加一份干净的轮询状态。
+    fn fixture() -> (MainWindow, Scan) {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        (ui, Scan::default())
+    }
+
+    /// 这一节此刻显示的那句话。
+    fn hint_of(ui: &MainWindow) -> String {
+        ui.global::<Profile>()
+            .get_netease_hint()
+            .to_string()
+    }
+
+    /// 上游发来的一张码。
+    fn code(key: &str) -> api::QrLoginDto {
+        api::QrLoginDto {
+            key: key.to_owned(),
+            url: format!(
+                "https://music.163.com/login?codekey={key}"
+            ),
+        }
+    }
+
+    /// 把会话落盘处指到临时文件上。
+    ///
+    /// 少了这一步,跑一次测试就把开发机上真实的登录态删掉 ——
+    /// 下面那条会话失效的用例会走到 `session::clear()`,而它删的是
+    /// `~/.local/state/osmosis/session`,且一声不吭(理由同 account.rs)。
+    fn redirect_session_to_a_temp_file() {
+        let dir = std::env::temp_dir()
+            .join("osmosis-netease-session");
+        let _ = std::fs::create_dir_all(&dir);
+        // SAFETY: 本 crate 只有这一条与 account.rs 那条碰这个变量,
+        // 两条指的都是临时目录,谁先谁后都不会动到真实的那一份
+        unsafe {
+            std::env::set_var(
+                "OSMOSIS_SESSION_FILE",
+                dir.join("session"),
+            );
+        }
+    }
+
+    /// 还没人扫:让用户知道该拿手机来扫这张码。
+    #[test]
+    fn waiting_tells_the_user_to_scan() {
+        let (ui, scan) = fixture();
+
+        advance(&ui, &scan, Ok(api::QrStep::Waiting));
+
+        assert!(
+            hint_of(&ui).contains("扫"),
+            "该说去扫码,实际 {}",
+            hint_of(&ui)
+        );
+    }
+
+    /// 扫到了但还没确认:话要变,否则用户以为自己那一扫没生效,
+    /// 会反复去扫同一张码。
+    #[test]
+    fn scanning_asks_for_the_confirmation_on_the_phone() {
+        let (ui, scan) = fixture();
+
+        advance(&ui, &scan, Ok(api::QrStep::Waiting));
+        let waiting = hint_of(&ui);
+        advance(&ui, &scan, Ok(api::QrStep::Scanned));
+
+        assert!(
+            hint_of(&ui).contains("确认"),
+            "该让人去手机上按确认,实际 {}",
+            hint_of(&ui)
+        );
+        assert_ne!(
+            hint_of(&ui),
+            waiting,
+            "扫到之后必须换一句话"
+        );
+    }
+
+    /// 绑好了就**停下轮询**。
+    ///
+    /// 不停的话,这一页每两秒还在问一张已经作废的码 —— 而它的 key
+    /// 随后会被清掉,于是每一拍都白发一个请求。
+    #[test]
+    fn binding_stops_the_polling() {
+        let (ui, scan) = fixture();
+        scan.timer.start(
+            TimerMode::Repeated,
+            POLL_INTERVAL,
+            || {},
+        );
+        assert!(scan.timer.running(), "开局节拍该是转着的");
+
+        advance(&ui, &scan, Ok(api::QrStep::Bound));
+
+        assert!(
+            !scan.timer.running(),
+            "绑好了还在轮询,那是每两秒一个白发的请求"
+        );
+    }
+
+    /// 换来的新码要真的换上去:key 跟着换,屏幕上那张图也跟着换。
+    ///
+    /// 只换图不换 key 的话,下一拍问的还是那张过期的码,界面会永远
+    /// 停在「换码 → 过期 → 再换」的循环里。
+    #[test]
+    fn a_renewed_code_replaces_both_the_key_and_the_image()
+    {
+        let (ui, scan) = fixture();
+        *scan.key.borrow_mut() = "old-key".to_owned();
+
+        advance(
+            &ui,
+            &scan,
+            Ok(api::QrStep::Renewed(code("new-key"))),
+        );
+
+        assert_eq!(scan.key.borrow().as_str(), "new-key");
+        assert!(
+            ui.global::<Profile>()
+                .get_netease_qr()
+                .size()
+                .width
+                > 0,
+            "新码该画出来,空图等于让用户对着空白扫"
+        );
+    }
+
+    /// 问不到进展就说出来,不要不声不响。
+    ///
+    /// 界面上那张码看起来永远是好的,用户会一直扫下去。
+    #[test]
+    fn a_failed_poll_says_so() {
+        let (ui, scan) = fixture();
+
+        advance(
+            &ui,
+            &scan,
+            Err(api::ApiError::Transport(
+                "connection refused".to_owned(),
+            )),
+        );
+
+        assert!(
+            hint_of(&ui).contains("进展"),
+            "该说是问进展这一步失败了,实际 {}",
+            hint_of(&ui)
+        );
+    }
+
+    /// 本应用的登录态失效走登录页,而不是在这一节里留一句话。
+    ///
+    /// 那句话解释不了为什么连绑定状态都查不到,而人已经被送回登录页了 ——
+    /// 再报一遍只是同一件事说两次。
+    #[test]
+    fn an_expired_session_goes_back_to_the_login_page() {
+        redirect_session_to_a_temp_file();
+        let (ui, scan) = fixture();
+        ui.global::<Session>().set_logged_in(true);
+
+        advance(
+            &ui,
+            &scan,
+            Err(api::ApiError::Server {
+                code: "unauthorized".to_owned(),
+                message: "登录状态已失效".to_owned(),
+            }),
+        );
+
+        assert!(
+            !ui.global::<Session>().get_logged_in(),
+            "会话没了该回登录页"
+        );
+        assert!(
+            hint_of(&ui).is_empty(),
+            "已经送回登录页了,这一节不必再报一遍,实际 {}",
+            hint_of(&ui)
+        );
+    }
+
     /// 画出来的是一张方图,边长 = (模块数 + 两侧静区) × 每模块像素。
     ///
     /// 这条钉的是那两层循环的下标算术:算错一格不会 panic(缓冲是整块的),
