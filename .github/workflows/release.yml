@@ -13,11 +13,78 @@ env:
   CARGO_TERM_COLOR: always
 
 # 默认的 GITHUB_TOKEN 是只读的,没有这条 `gh release create` 会失败,
-# 报出来的错看着像认证问题、不像配置问题。
+# 报出来的错看着像认证问题、不像配置问题。`packages: write` 是 server-image
+# job 推 ghcr 要的那一份,同一个 token 两个 job 分别用。
 permissions:
   contents: write
+  packages: write
 
 jobs:
+  server-image:
+    name: server-image
+    # 与 build job 并行、互不等待:两者产物不同(桌面二进制 vs 服务端镜像),
+    # 谁先谁后都不影响对方,串起来只是白白多等十几分钟。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # server/Dockerfile 的运行阶段刻意零 RUN(见该文件开头注释),QEMU 只在
+      # buildx 元数据/manifest 层用得到,不会触发几十分钟的模拟编译。
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # tag 是 v0.1.6 这样的 refname,ghcr 的版本号约定不带前导 v;workflow_dispatch
+      # 没有 tag,退回 `dispatch` 这个占位版本,与下面 push-only 的 Release 步骤
+      # 是同一个 event_name 判据,行为上没有额外分支。
+      - name: 计算镜像 tag
+        id: image_tags
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="dispatch"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        id: build_push
+        with:
+          context: .
+          file: server/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ghcr.io/yebei199/osmosis-server:${{ steps.image_tags.outputs.version }}
+            ghcr.io/yebei199/osmosis-server:sha-${{ github.sha }}
+
+      # digest 是 infra 侧钉版本要的唯一凭据(见 issue #101 的教训:空 digest
+      # 曾被错误地钉进过 infra 清单)。只有打了 tag 的 push 才有 Release 可写,
+      # workflow_dispatch 路径与 build job 一致,只出镜像不碰 Release。
+      - name: 把 digest 写进 Release 说明
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "server-image-digest=${{ steps.build_push.outputs.digest }}"
+            echo ""
+            echo "ghcr.io/yebei199/osmosis-server@${{ steps.build_push.outputs.digest }}"
+          } >> digest-note.txt
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        with:
+          name: server-image-digest
+          path: digest-note.txt
+
   build:
     name: build
     # ubuntu-22.04 这个 label 从 2026-09-17 起进入弃用 brownout(到 2027-04-17
@@ -120,7 +187,7 @@ jobs:
 
   release:
     name: release
-    needs: build
+    needs: [build, server-image]
     # 只判 ref 不够:对着一个 tag ref 手动发 workflow_dispatch 也会匹配
     # startsWith(ref, 'refs/tags/'),而 issue 明写 workflow_dispatch 那条路径
     # 只能 upload artifact、不许 create release。event_name 把这种误用也挡住。
@@ -133,10 +200,17 @@ jobs:
           name: osmosis-desktop-x86_64-linux
           path: dist
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-image-digest
+          path: dist
+
       # gh 默认从本地 git remote 认仓库;这个 job 没有 actions/checkout,工作
       # 目录不是 git 仓库,所以要显式给 GH_REPO。GITHUB_REPOSITORY 不顶用——
       # gh 不读它,只认本地 git remote 或 GH_REPO,r1 那次探针在两者都缺时
-      # 报的就是 `fatal: not a git repository`。
+      # 报的就是 `fatal: not a git repository`。digest-note.txt 来自
+      # server-image job,内容就是 ghcr 镜像的 digest,原样作 Release 说明——
+      # infra 侧照抄这一行去钉 osmosis.yaml 的镜像版本。
       - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,4 +219,5 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             dist/osmosis-desktop-x86_64-linux dist/io.github.osmosis.desktop \
             dist/io.github.osmosis.svg dist/sha256sums.txt \
-            --title "${{ github.ref_name }}"
+            --title "${{ github.ref_name }}" \
+            --notes-file dist/digest-note.txt
