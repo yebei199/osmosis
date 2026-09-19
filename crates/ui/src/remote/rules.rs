@@ -12,6 +12,7 @@ use app_core::{Output, RemotePlayState, RemoteView};
 /// 就是一个方框。改了那边的措辞,这里跟着改。
 ///
 /// 出处:`slint/drawer.slint` 的输出设备一行,`slint/app.slint` 的被遥控横幅。
+#[cfg(test)]
 pub const SLINT_COPY: &[&str] =
     &["输出设备", "本机", "退出被遥控"];
 

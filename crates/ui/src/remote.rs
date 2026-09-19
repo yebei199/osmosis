@@ -112,11 +112,6 @@ impl Remote {
         }
     }
 
-    /// 现在该显示到第几毫秒 —— 两次上报之间按本地钟插值。
-    pub fn position_ms(&self) -> u64 {
-        lock(&self.inner.view).position_ms(now_ms())
-    }
-
     /// 遥控那一侧的曲目、队列与状态,交给调用方去画。
     pub fn with_view<T>(
         &self,
