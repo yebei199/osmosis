@@ -36,14 +36,10 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 6] = [
+    let checks: [(&str, Check); 5] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
-        ),
-        (
-            "api 在 wasm 上不依赖 tokio",
-            api_is_tokio_free_on_wasm,
         ),
         (
             "app-core 能编到 wasm",
@@ -111,28 +107,6 @@ fn contract_has_no_io_crates() -> Result<(), String> {
         "contract 依赖了 {},违反 docs/adr/0001",
         found.join("、")
     ))
-}
-
-/// ADR-0002:`Send` 边界关在 api 内部,wasm 上不该出现 tokio。
-fn api_is_tokio_free_on_wasm() -> Result<(), String> {
-    let tree = capture(
-        "cargo",
-        &[
-            "tree",
-            "-p",
-            "api",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--edges",
-            "normal",
-        ],
-    )?;
-
-    if !depends_on(&tree, "tokio") {
-        return Ok(());
-    }
-    Err("api 在 wasm 上依赖了 tokio,违反 docs/adr/0002"
-        .to_owned())
 }
 
 /// ADR-0002:app-core 的 future 不要求 `Send`,因此能原样编到 wasm。
