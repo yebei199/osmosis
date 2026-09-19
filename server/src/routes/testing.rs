@@ -19,12 +19,14 @@ use tonic::{Request, Response, Status};
 
 use server::account::{Account, register};
 use server::bangdream::proto::{
-    Artist, GetAccountStatusRequest,
-    GetAccountStatusResponse, GetPlaylistRequest,
-    GetPlaylistResponse, GetTracksRequest,
-    GetTracksResponse, ListUserPlaylistsRequest,
-    ListUserPlaylistsResponse, Platform, Playlist,
-    PlaylistTrackRef, Track,
+    Artist, CreateQrLoginRequest, CreateQrLoginResponse,
+    GetAccountStatusRequest, GetAccountStatusResponse,
+    GetPlaylistRequest, GetPlaylistResponse,
+    GetTracksRequest, GetTracksResponse,
+    ListUserPlaylistsRequest, ListUserPlaylistsResponse,
+    LogoutRequest, LogoutResponse, Platform, Playlist,
+    PlaylistTrackRef, QrLoginEvent, Track,
+    WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
     auth_service_server::{AuthService, AuthServiceServer},
     catalog_service_client::CatalogServiceClient,
@@ -169,6 +171,15 @@ pub(crate) struct FakeUpstream {
     /// 问到不在里面的 id 就**跳过**,不报错 —— 下架和无权限的歌在真实平台
     /// 上正是这个待遇,而那正是 `keep_available` 要处理的输入。
     pub(crate) details: HashMap<String, Track>,
+    /// `CreateQRLogin` 回的那一张码。
+    pub(crate) qr: CreateQrLoginResponse,
+    /// `WatchQRLogin` 这一刻推的状态,取 `QRLoginState` 的枚举值。
+    pub(crate) qr_state: i32,
+    /// `Logout` 被调了几次。
+    ///
+    /// 解绑这条路由回的是 204,响应体里什么都没有 —— 除了数它,没有别的
+    /// 办法分辨「真的转给上游了」与「什么都没干就回了 204」。
+    pub(crate) logouts: Arc<Mutex<usize>>,
     /// 每一次 `GetTracks` 收到的 id 批次,按到达顺序记下来。
     ///
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
@@ -193,6 +204,14 @@ impl FakeUpstream {
         }
     }
 
+    /// 上游至今被要求解绑几次。
+    pub(crate) fn logouts(&self) -> usize {
+        *self
+            .logouts
+            .lock()
+            .expect("记解绑次数的锁被毒化了")
+    }
+
     /// 至今为止每一批被问到的 id。
     pub(crate) fn batches(&self) -> Vec<Vec<String>> {
         self.asked
@@ -204,6 +223,44 @@ impl FakeUpstream {
 
 #[tonic::async_trait]
 impl AuthService for FakeUpstream {
+    async fn create_qr_login(
+        &self,
+        _request: Request<CreateQrLoginRequest>,
+    ) -> Result<Response<CreateQrLoginResponse>, Status>
+    {
+        Ok(Response::new(self.qr.clone()))
+    }
+
+    /// 只推一条就结束这条流 —— 被测的路由本来就只取第一条(它是一次轮询,
+    /// 不是一条长连接)。推完不结束的话,测试要等到超时才回来。
+    async fn watch_qr_login(
+        &self,
+        _request: Request<WatchQrLoginRequest>,
+    ) -> Result<
+        Response<tonic::codegen::BoxStream<QrLoginEvent>>,
+        Status,
+    > {
+        let event = QrLoginEvent {
+            state: self.qr_state,
+        };
+
+        Ok(Response::new(Box::pin(tokio_stream::once(Ok(
+            event,
+        )))))
+    }
+
+    async fn logout(
+        &self,
+        _request: Request<LogoutRequest>,
+    ) -> Result<Response<LogoutResponse>, Status> {
+        *self
+            .logouts
+            .lock()
+            .expect("记解绑次数的锁被毒化了") += 1;
+
+        Ok(Response::new(LogoutResponse {}))
+    }
+
     async fn get_account_status(
         &self,
         _request: Request<GetAccountStatusRequest>,
@@ -212,7 +269,13 @@ impl AuthService for FakeUpstream {
         Ok(Response::new(GetAccountStatusResponse {
             logged_in: self.logged_in,
             user_id: self.user_id.clone(),
-            nickname: "测试账号".to_owned(),
+            // 没登录时上游给的是空串,这里照着来 —— 无条件给个名字的话,
+            // 「没绑却显示着昵称」这种错在测试里看不见。
+            nickname: if self.logged_in {
+                "测试账号".to_owned()
+            } else {
+                String::new()
+            },
         }))
     }
 }

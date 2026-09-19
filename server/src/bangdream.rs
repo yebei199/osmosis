@@ -13,9 +13,11 @@ mod lyric_split;
 mod track_refs;
 
 pub use dto::{
-    artist_to_dto, liked_playlist_id, lyric_to_dto,
+    account_status_to_dto, artist_to_dto,
+    liked_playlist_id, lyric_to_dto,
     platform_playlists_to_dto, play_source_to_dto,
-    playlist_to_dto, track_to_dto,
+    playlist_to_dto, qr_login_to_dto, qr_state_name,
+    track_to_dto,
 };
 pub use track_refs::{keep_available, refs_missing_from};
 

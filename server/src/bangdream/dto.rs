@@ -4,8 +4,10 @@
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
 use contract::{
-    ArtistDto, LyricDto, LyricLineDto, PlaySourceDto,
-    PlaylistDto, PlaylistSource, TrackDto,
+    ArtistDto, LyricDto, LyricLineDto, NeteaseStatusDto,
+    PlaySourceDto, PlaylistDto, PlaylistSource,
+    QR_CONFIRMED, QR_EXPIRED, QR_SCANNED, QR_WAITING,
+    QrLoginDto, TrackDto,
 };
 
 use super::lyric_split::split_long_lines;
@@ -137,6 +139,50 @@ pub fn lyric_to_dto(lyric: proto::Lyric) -> LyricDto {
                 .collect(),
         ),
     }
+}
+
+/// 把上游的账号状态翻成契约里的 [`NeteaseStatusDto`]。
+///
+/// 丢掉 `user_id`:那是上游按账号分片存凭据时自己用的键,客户端拿它没用处
+/// (界面认人靠的是本服务的账号,不是网易云那边的号)。
+pub fn account_status_to_dto(
+    status: proto::GetAccountStatusResponse,
+) -> NeteaseStatusDto {
+    NeteaseStatusDto {
+        bound: status.logged_in,
+        // 没绑时上游给的是空串。照搬的话界面会把它当成一个真实存在的空名字
+        // 画出来 —— 那一行看起来像「绑上了,只是没有名字」。
+        nickname: non_empty(status.nickname),
+    }
+}
+
+/// 把上游的二维码会话翻成契约里的 [`QrLoginDto`]。
+///
+/// 只搬运,不渲染:二维码的像素归客户端(见 contract 的 `QrLoginDto`)。
+pub fn qr_login_to_dto(
+    response: proto::CreateQrLoginResponse,
+) -> QrLoginDto {
+    QrLoginDto {
+        key: response.key,
+        url: response.url,
+    }
+}
+
+/// 上游的扫码状态枚举翻成契约里的字符串。
+///
+/// 与 [`super::platform_name`] 同一个理由:契约要能被人读懂,也不该依赖枚举
+/// 序号的稳定性。
+///
+/// 认不出的值当成「还在等」:客户端据此**继续轮询**。判成过期的话,一张还没
+/// 被扫的码会被界面换掉,而用户正对着它扫 —— 换码是不可撤销的。
+pub fn qr_state_name(raw: i32) -> String {
+    match proto::QrLoginState::try_from(raw) {
+        Ok(proto::QrLoginState::Scanned) => QR_SCANNED,
+        Ok(proto::QrLoginState::Confirmed) => QR_CONFIRMED,
+        Ok(proto::QrLoginState::Expired) => QR_EXPIRED,
+        _ => QR_WAITING,
+    }
+    .to_owned()
 }
 
 #[cfg(test)]

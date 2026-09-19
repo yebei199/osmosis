@@ -40,6 +40,9 @@ use routes::likes::{
     unlike_track, unsubscribe_playlist,
 };
 use routes::lyric::lyric;
+use routes::netease::{
+    create_qr, qr_state, status as netease_status, unbind,
+};
 use routes::play::play;
 use routes::playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
@@ -216,6 +219,14 @@ async fn main() {
             "/playlists/platform/{id}/tracks",
             get(platform_playlist_tracks),
         )
+        // 网易云绑定。凭据按账号分片(docs/adr/0017),所以这几条都要登录态 ——
+        // 提取器给出的账号正是上游用来分片的那个键。
+        .route("/netease/status", get(netease_status))
+        .route("/netease", axum::routing::delete(unbind))
+        .route("/netease/qr", post(create_qr))
+        // 轮询一次当前态。上游那条是 server stream,长连接留在服务端这一侧:
+        // 客户端两端都只有 get_json 一种传输(见 routes::netease)。
+        .route("/netease/qr/{key}", get(qr_state))
         .route("/play/{track_id}", get(play))
         .route("/lyric/{track_id}", get(lyric))
         .route("/played", post(record_play))
