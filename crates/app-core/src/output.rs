@@ -88,13 +88,23 @@ impl RemoteView {
         *self = Self::default();
     }
 
-    /// 连着 [`STALE_AFTER_MS`] 没有上报,或者一条都还没收到。
+    /// 收到过至少一条上报。
     ///
-    /// 一条都没收到同样算过期:那时该禁用控制,而不是对着一份猜出来的状态
-    /// 发命令。
+    /// 与「过期」是两回事,分开是因为它们该导向相反的行为:刚接管、快照还在
+    /// 路上时,控制**要能发出去** —— 从选中设备到第一条上报回来是三个来回,
+    /// 这期间挡住的话,选完设备马上点一首歌就会被静默丢掉,而那正是
+    /// 「按了没反应」。而真的过期时必须挡住:那份状态已经不知道被控端在
+    /// 干什么了。
+    pub fn is_known(&self) -> bool {
+        self.report.is_some()
+    }
+
+    /// 收到过上报,但连着 [`STALE_AFTER_MS`] 没有新的了。
+    ///
+    /// 一条都还没收到时**不算过期**,算「还不知道」—— 见 [`Self::is_known`]。
     pub fn is_stale(&self, now_ms: u64) -> bool {
-        self.report.is_none()
-            || now_ms.saturating_sub(self.received_at_ms)
+        self.is_known()
+            && now_ms.saturating_sub(self.received_at_ms)
                 > STALE_AFTER_MS
     }
 
@@ -300,13 +310,18 @@ mod tests {
         assert_eq!(view.position_ms(60_000), 13_000);
     }
 
-    /// 一条上报都还没收到时就是过期态:控制该禁用,而不是对着一份
-    /// 猜出来的状态发命令。
+    /// 一条上报都还没收到时是「还不知道」,**不是**过期。
+    ///
+    /// 两者该导向相反的行为,所以不能合成一个判断:刚接管、快照还在路上的
+    /// 那几百毫秒里控制要能发出去(选完设备马上点歌是最自然的操作顺序);
+    /// 真的过期时才该挡住。此前这里写的是「没有上报也算过期」,那会让
+    /// 选完设备的第一次点击被静默丢掉。
     #[test]
-    fn a_view_without_any_report_is_stale() {
+    fn a_view_without_any_report_is_unknown_not_stale() {
         let view = RemoteView::default();
 
-        assert!(view.is_stale(0));
+        assert!(!view.is_known());
+        assert!(!view.is_stale(0));
         assert_eq!(view.state(), RemotePlayState::Idle);
         assert_eq!(view.track(), None);
     }
@@ -380,6 +395,6 @@ mod tests {
         view.clear();
 
         assert_eq!(view.track(), None);
-        assert!(view.is_stale(50_000));
+        assert!(!view.is_known());
     }
 }

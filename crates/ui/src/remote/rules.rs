@@ -42,6 +42,11 @@ pub fn describe_remote(
     view: &RemoteView,
     now_ms: u64,
 ) -> String {
+    // 还没收到过上报:接管刚发出去,快照还在路上。与过期分开说 ——
+    // 「过期」是曾经知道又失去了,而这里是还没开始。
+    if !view.is_known() {
+        return "遥控: 正在连接".to_owned();
+    }
     if view.is_stale(now_ms) {
         return "遥控: 状态已过期".to_owned();
     }
@@ -76,6 +81,10 @@ pub fn describe_revoked(by: &str) -> String {
 ///
 /// 过期时不发:那份状态已经不知道被控端在干什么了,照着它发命令等于蒙 ——
 /// 而用户会看到「按了没反应」,再按几下,然后一次全到。
+///
+/// 但**刚接管、一条上报都还没回来时要发**:从选中设备到第一条上报回来是
+/// 三个来回,而「选完设备马上点一首歌」是最自然的操作顺序。把那一下也挡掉
+/// 的话,得到的同样是「按了没反应」—— 只是原因反过来了。
 pub fn accepts_control(
     output: &Output,
     view: &RemoteView,
@@ -206,6 +215,27 @@ mod tests {
         let view = view(RemotePlayState::Playing);
 
         assert!(accepts_control(&remote(), &view, 0));
+    }
+
+    /// 刚接管、快照还在路上时,控制要能发出去。
+    ///
+    /// 挡掉的话,选完设备马上点的那一首会被静默丢掉 —— 那正是这条
+    /// 判断本来要防住的「按了没反应」,只是原因反过来了。
+    #[test]
+    fn a_just_claimed_view_still_accepts_control() {
+        let view = RemoteView::default();
+
+        assert!(accepts_control(&remote(), &view, 0));
+    }
+
+    /// 那一刻界面说的是「正在连接」,不是「状态已过期」——
+    /// 后者会让人以为出了故障,而实际上一切正常,只是还没回来。
+    #[test]
+    fn a_view_awaiting_its_first_report_says_so() {
+        assert_eq!(
+            describe_remote(&RemoteView::default(), 0),
+            "遥控: 正在连接"
+        );
     }
 
     /// 过期时按键不发命令。
