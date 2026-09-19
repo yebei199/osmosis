@@ -1,5 +1,7 @@
 use similar_asserts::assert_eq;
 
+mod remote;
+
 use super::fixtures::*;
 use super::*;
 use crate::viz::CoverUpdate;

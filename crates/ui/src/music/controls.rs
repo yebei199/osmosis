@@ -354,7 +354,7 @@ pub(super) fn bind_remote(ui: &MainWindow, deck: &Deck) {
 
 /// 执行一条遥控命令。
 #[cfg(not(target_arch = "wasm32"))]
-fn apply_remote(
+pub(super) fn apply_remote(
     ui: &MainWindow,
     deck: &Deck,
     cmd: RemoteCommand,

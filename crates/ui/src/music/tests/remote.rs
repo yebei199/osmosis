@@ -1,0 +1,292 @@
+//! 遥控两端的接线:被控端执行命令,以及遥控器侧的事件落地。
+//!
+//! 这两条路径都跑在「不是普通回调」的位置上 —— 命令绕过回调入口那两道闸
+//! (锁住的是这台机器前面的人,不是遥控它的那个人),事件跑在后台线程上。
+//! 正因为绕过了平常那条路,它们不测就真的没人走过。
+
+use similar_asserts::assert_eq;
+use syncplay::Event;
+
+use super::super::fixtures::*;
+use super::super::*;
+use crate::Player;
+
+fn device(id: &str) -> app_core::DeviceDto {
+    app_core::DeviceDto {
+        id: id.to_owned(),
+        name: format!("设备 {id}"),
+    }
+}
+
+fn report(
+    position_ms: u64,
+    state: app_core::RemotePlayState,
+) -> app_core::RemoteStateDto {
+    app_core::RemoteStateDto {
+        track: Some(track()),
+        position_ms,
+        state,
+        queue: vec![track()],
+        queue_index: 0,
+        volume: 0.5,
+        sent_at: position_ms,
+    }
+}
+
+// ── 被控端:遥控器发来的命令落到本机播放器上 ──
+
+/// 暂停命令把本机的播放态按下去。
+///
+/// 这一条与控制条上那颗键走的**不是**同一条路:回调入口上有「被遥控时不生效」
+/// 那道闸,而命令正是那道闸放行的唯一来源。绕过去是对的,所以也得单独验。
+#[test]
+fn a_remote_pause_command_stops_the_local_transport() {
+    let (ui, deck) = deck_window();
+    ui.global::<Player>().set_is_playing(true);
+
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Pause,
+    );
+
+    assert!(!ui.global::<Player>().get_is_playing());
+}
+
+/// 继续命令把它抬起来。
+#[test]
+fn a_remote_resume_command_starts_the_local_transport() {
+    let (ui, deck) = deck_window();
+    ui.global::<Player>().set_is_playing(false);
+
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Resume,
+    );
+
+    assert!(ui.global::<Player>().get_is_playing());
+}
+
+/// 音量命令落到滑块上,并且**先夹再落**。
+///
+/// 不夹的话,一个发疯的遥控器能把本机音量设成 8 倍 —— 而那一下是听得见的。
+#[test]
+fn a_remote_volume_command_is_clamped_before_it_lands() {
+    let (ui, deck) = deck_window();
+
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Volume { level: 1.5 },
+    );
+
+    assert_eq!(ui.global::<Player>().get_volume(), 1.0);
+}
+
+/// 播放命令把**整批**装进队列,并从指定那一首开始。
+///
+/// 整批而不是一首:自动续播在被控端发生,它得自己拿着后面那些歌 ——
+/// 只收一首的话,遥控器一锁屏 pc1 放完就停了。
+#[test]
+fn a_remote_play_command_loads_the_whole_batch() {
+    let (ui, deck) = deck_window();
+    let batch = vec![
+        track_with_id("a"),
+        track_with_id("b"),
+        track_with_id("c"),
+    ];
+
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Play {
+            tracks: batch.clone(),
+            index: 1,
+        },
+    );
+
+    assert_eq!(
+        deck.queue.borrow().tracks().len(),
+        3,
+        "后面那些歌也得留在队列里"
+    );
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned()),
+        "该从第 index 首开始"
+    );
+}
+
+/// 下一首命令推进队列。
+#[test]
+fn a_remote_next_command_advances_the_queue() {
+    let (ui, deck) = deck_window();
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Play {
+            tracks: vec![
+                track_with_id("a"),
+                track_with_id("b"),
+            ],
+            index: 0,
+        },
+    );
+
+    apply_remote(&ui, &deck, app_core::RemoteCommand::Next);
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned())
+    );
+}
+
+/// 上一首命令退回去。
+#[test]
+fn a_remote_prev_command_steps_back() {
+    let (ui, deck) = deck_window();
+    apply_remote(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Play {
+            tracks: vec![
+                track_with_id("a"),
+                track_with_id("b"),
+            ],
+            index: 1,
+        },
+    );
+
+    apply_remote(&ui, &deck, app_core::RemoteCommand::Prev);
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("a".to_owned())
+    );
+}
+
+// ── 被控端:锁定态 ──
+
+/// 被遥控期间,这台机器前面的人按播放键不算数(产品规则)。
+///
+/// 少了这道锁,pc1 前面的人随手按一下暂停,手机上的进度条就开始撒谎。
+#[test]
+fn being_controlled_locks_the_local_transport() {
+    let (ui, deck) = deck_window();
+    crate::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+    ui.global::<Player>().set_is_playing(true);
+
+    toggle_play(&ui, &deck);
+
+    assert!(deck.remote.is_controlled(), "该进锁定态");
+    assert!(
+        ui.global::<Player>().get_is_playing(),
+        "锁定期间本机那一下不该改变播放态"
+    );
+}
+
+/// 遥控器发来的命令进收件箱,等 UI 线程来取。
+///
+/// 事件跑在后台线程上,而执行要碰 Deck(全是 Rc)—— 中间这一格队列是必须的。
+#[test]
+fn a_command_from_the_controller_lands_in_the_inbox() {
+    let (_ui, deck) = deck_window();
+
+    crate::remote::handle(
+        &Event::Command {
+            cmd: app_core::RemoteCommand::Next,
+        },
+        &deck.remote,
+    );
+
+    assert_eq!(
+        deck.remote.take_command(),
+        Some(app_core::RemoteCommand::Next)
+    );
+    assert_eq!(
+        deck.remote.take_command(),
+        None,
+        "取过一次就不该再有"
+    );
+}
+
+// ── 遥控器侧:上报与撤权 ──
+
+/// 被控端报来的状态落进镜像,进度与曲名从此读它。
+#[test]
+fn a_report_from_the_target_updates_the_mirror() {
+    let (_ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                7_000,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+
+    let (known, position) =
+        deck.remote.with_view(|view, now| {
+            (view.is_known(), view.position_ms(now))
+        });
+    assert!(known, "该收下这条上报");
+    assert!(
+        position >= 7_000,
+        "位置该从上报那个数起算,实得 {position}"
+    );
+}
+
+/// 不是当前那台设备报来的,一概不收。
+///
+/// 换目标之后上一台的残余还会飘几条过来,收下它进度条就会跳到别人的歌上。
+#[test]
+fn a_report_from_another_device_is_ignored() {
+    let (_ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "另一台".to_owned(),
+            state: report(
+                7_000,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.with_view(|view, _| view.is_known()),
+        "不该收下别人的上报"
+    );
+}
+
+/// 失权就回到本机输出 —— 用户得知道手上这台不再管用了。
+#[test]
+fn revoking_control_returns_the_output_to_local() {
+    let (_ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+    assert!(deck.remote.is_remote(), "先得真的切过去");
+
+    crate::remote::handle(
+        &Event::ControlRevoked {
+            by: "spare".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.is_remote(),
+        "失权之后输出该回到本机"
+    );
+}
