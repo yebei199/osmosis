@@ -193,8 +193,16 @@ fn pump(
         busy.borrow_mut().remove(&id);
         let Some(ui) = weak.upgrade() else { return };
         // 投影归零:下载这个状况结束了,没有计时器会来替它收。
-        ui.global::<Shell>()
-            .set_download_text(slint::SharedString::new());
+        //
+        // **只在一首都不剩时清**:去重只拦同一首,两首不同的歌可以同时在下,
+        // 而这条带子只有一格。无条件清的话,先完成的那一首会把还在走的那一首
+        // 的进度抹掉 —— 字节照流,而界面上什么都没有。留着的那一首下一次
+        // 进度上报(至多 256KB 之后)会把它重新写上。
+        if busy.borrow().is_empty() {
+            ui.global::<Shell>().set_download_text(
+                slint::SharedString::new(),
+            );
+        }
         crate::notice::show(
             &ui,
             outcome.unwrap_or_else(|why| why),
