@@ -9,7 +9,7 @@ description = "后端:与客户端共享 contract,并把 bang-dream 的 gRPC 翻
 contract.workspace = true
 serde.workspace = true
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tower-http = { version = "0.6", features = ["cors"] }
 # gRPC 客户端一侧。生成代码由 build.rs 从 third_party/bang-dream 的 .proto 产出。
 tonic.workspace = true

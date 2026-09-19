@@ -6,11 +6,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// 「在线」没有别的含义:它**等于**此刻与服务端之间存在活跃连接。
 /// 服务端不记忆离线设备,所以名册里出现过就是现在能推流的(见 `docs/adr/0009`)。
+///
+/// **归属不在这里**:设备属于哪个账号由服务端从连接的 token 定,不由设备自报。
+/// 让它自报的话,任何人都能把自己塞进别人的名册,而那不会报任何错。
 #[derive(
     Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
 )]
 pub struct DeviceDto {
-    /// 设备自己生成、本地保存的 id。服务端信任自报,不验证。
+    /// 设备自己生成、本地保存的 id。在**同一个账号的桶内**唯一即可 ——
+    /// 服务端不验证它,重名的后果也只波及自己那一桶。
     pub id: String,
     /// 给人看的名字,如「小米13」。
     pub name: String,

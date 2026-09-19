@@ -13,20 +13,24 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use axum::Router;
-use axum::routing::get;
 use bytes::Bytes;
 use contract::{DeviceDto, ServerSignal};
-use server::signaling::{self, SharedRoster};
+use server::signaling;
 use syncplay::{Envelope, Peer, PeerRole, Signalling};
 use webrtc::media::Sample;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 
+/// 测试路由不鉴权,但 token 仍要是个合法的头值 —— 请求头里放不下的字符,
+/// 连接在发起之前就被本地拒了。
+const TOKEN: &str = "test-token";
+
 /// 起一个只有信令路由的服务端,端口交给系统分配。
 async fn start_signalling_server() -> SocketAddr {
-    let app = Router::new()
-        .route("/signal", get(signaling::handler))
-        .with_state(SharedRoster::default());
+    // 不鉴权的测试路由:本文件验的是同播链路,不是鉴权,起一个真数据库
+    // 只为了造一个 token 是本末倒置。鉴权本身在 server/tests/live_signaling.rs。
+    let app = signaling::unauthenticated_test_router(
+        signaling::Timing::default(),
+    );
 
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -56,6 +60,7 @@ async fn hello_puts_device_in_roster() {
     let mut host = Signalling::connect(
         &format!("ws://{addr}"),
         device("host"),
+        TOKEN,
     )
     .await
     .expect("连不上信令服务器");
