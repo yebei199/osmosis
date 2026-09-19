@@ -42,6 +42,15 @@ RUN cargo build --release -p server --locked --target aarch64-unknown-linux-gnu 
     && aarch64-linux-gnu-strip /src/target/aarch64-unknown-linux-gnu/release/server
 
 FROM debian:bookworm-slim
+# `/download` 把非 mp3 的源转成 mp3,转码器是 ffmpeg。
+#
+# 用 COPY 而不是 `RUN apt-get install ffmpeg`:本阶段是 arm64,在开发机(x86_64)上
+# 执行任何命令都要 binfmt/QEMU,而那没有注册 —— 整个运行阶段因此刻意不含 RUN
+# (见文件开头)。mwader/static-ffmpeg 发的是多架构的**静态**单文件,
+# buildx 会按目标平台挑 arm64 那一份,依赖闭包为零。
+#
+# 版本钉到次版本,与本文件里 rust / debian 两个基础镜像同一档精度。
+COPY --from=mwader/static-ffmpeg:8.1.2 /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /src/target/aarch64-unknown-linux-gnu/release/server /usr/local/bin/osmosis-server
 USER 10001:10001

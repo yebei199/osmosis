@@ -101,8 +101,10 @@ jobs:
       # audio 走 cpal→alsa,syncplay 走 libopus 的 C 绑定。
       # protoc 是 server/build.rs 的 codegen 用的 —— tonic-prost-build 不自带,
       # 要的是系统里那一个。
+      # ffmpeg 是 server 的 /download 转码路要的:那条测试跑真的 ffmpeg,
+      # 再用 ffprobe 确认出来的是合法 mp3(替身证明不了这一点)。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus ffmpeg
 
       # 每条 cargo 都带 `--config profile.dev.package."*".opt-level=0`,把根 Cargo.toml
       # 里那条依赖优化按掉。那条存在的理由是本地 3D 的帧率(见 Cargo.toml 的注释),

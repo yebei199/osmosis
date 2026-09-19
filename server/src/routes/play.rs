@@ -1,4 +1,8 @@
-//! 播放直链。
+//! 播放与下载:同一条上游源的两种交付方式。
+//!
+//! [`play`] 交出一条客户端自己去取的临时直链;[`download`](download::download)
+//! 把字节从上游拉过来、必要时转成 mp3 再交出去。两者共用 [`PLAY_QUALITY`] ——
+//! 各自取各自的档位的话,「听到的」和「存下的」会是两个版本。
 
 use axum::{
     Json,
@@ -14,6 +18,11 @@ use server::bangdream::{
 use server::error::Failure;
 
 use crate::{AppState, fail};
+
+pub(crate) mod download;
+
+#[cfg(test)]
+mod tests;
 
 /// 取播放地址时请求的音质档位。
 ///

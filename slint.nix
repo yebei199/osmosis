@@ -49,6 +49,10 @@ pkgs.mkShell {
     # 自己的会话总线上摆一个假播放器。zbus 本身是纯 Rust,不需要 libdbus ——
     # 这里要的只是那个可执行文件。
     pkgs.dbus
+    # /download 的转码路跑真的 ffmpeg(测试里还用 ffprobe 验产出是不是合法 mp3)。
+    # 不声明的话它只是碰巧在开发机的 PATH 上,而那种依赖坏掉时的现象是
+    # 「换一台机器测试就红」,报错还只说找不到命令。
+    pkgs.ffmpeg
   ];
   buildInputs = runtimeLibs;
 
