@@ -199,7 +199,10 @@ pub(crate) fn detached(ui: &MainWindow) -> Sync {
 }
 
 /// 处理一条同播事件。**在后台线程上**跑。
-fn handle(
+///
+/// `pub(crate)` 只为让 `music::tests` 够得着:它是这一层唯一有分支的函数,
+/// 而建一个测试用主窗口的脚手架在那边(`music::fixtures`)。
+pub(crate) fn handle(
     event: Event,
     weak: &slint::Weak<MainWindow>,
     roster: &Arc<Mutex<Roster>>,

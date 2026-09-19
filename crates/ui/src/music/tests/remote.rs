@@ -290,3 +290,108 @@ fn revoking_control_returns_the_output_to_local() {
         "失权之后输出该回到本机"
     );
 }
+
+// ── 遥控器侧:控制条那一下改发命令,不碰本机播放器 ──
+
+/// 输出设备不是本机时,播放键这一下**不落到本机播放器上**。
+///
+/// 落下去的话两台会同时出声 —— 而用户按的时候看的是手机,听的是 pc1,
+/// 多出来的那一路声音他得回头找半天才知道是哪来的。
+#[test]
+fn a_remote_toggle_does_not_touch_the_local_transport() {
+    let (ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                0,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+    ui.global::<Player>().set_is_playing(true);
+
+    toggle_play(&ui, &deck);
+
+    assert!(
+        deck.remote.is_remote(),
+        "输出该还在那台设备上"
+    );
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "遥控那一下不该在本机起播"
+    );
+}
+
+// ── 同播事件的落地 ──
+
+/// 名册推到界面上,自己那一台被滤掉。
+///
+/// 留着自己的话,设备列表里会出现一行「推给我自己」——它甚至连得成功,
+/// 只是声音绕一圈回到同一个扬声器。
+#[test]
+fn a_roster_event_reaches_the_device_list() {
+    let (ui, deck) = deck_window();
+    let roster =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            syncplay::Roster::new("me".to_owned()),
+        ));
+    let role = std::sync::Arc::new(std::sync::Mutex::new(
+        syncplay::Role::Alone,
+    ));
+
+    crate::syncplay::handle(
+        Event::Roster(vec![device("me"), device("pc")]),
+        &ui.as_weak(),
+        &roster,
+        &role,
+        &deck.player,
+        &deck.remote,
+    );
+
+    assert_eq!(
+        roster.lock().expect("名册锁").others().len(),
+        1,
+        "自己该被滤掉,只剩另一台"
+    );
+}
+
+/// 失败走提示,**不写同播状态行**。
+///
+/// 写进状态行就没人会重算它,那句话会一直挂到角色碰巧变一次为止 ——
+/// 而角色此刻一动没动,那一行依然为真。
+#[test]
+fn a_failure_event_does_not_rewrite_the_role_line() {
+    let (ui, deck) = deck_window();
+    let roster =
+        std::sync::Arc::new(std::sync::Mutex::new(
+            syncplay::Roster::new("me".to_owned()),
+        ));
+    let role = std::sync::Arc::new(std::sync::Mutex::new(
+        syncplay::Role::Alone,
+    ));
+    let before =
+        ui.global::<crate::Shell>().get_sync_text();
+
+    crate::syncplay::handle(
+        Event::Failed("连不上".to_owned()),
+        &ui.as_weak(),
+        &roster,
+        &role,
+        &deck.player,
+        &deck.remote,
+    );
+
+    assert_eq!(
+        ui.global::<crate::Shell>().get_sync_text(),
+        before,
+        "失败是这一刻的事,不该写进角色那一行"
+    );
+    assert_eq!(
+        *role.lock().expect("角色锁"),
+        syncplay::Role::Alone,
+        "角色一动没动"
+    );
+}
