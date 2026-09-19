@@ -383,3 +383,53 @@ async fn an_unreachable_server_is_a_transport_error() {
         "话没传到,不该报成服务端拒绝: {failure:?}"
     );
 }
+
+/// 环境里有代理变量时照样直连。
+///
+/// 集群地址在 tailnet 里,本机代理根本到不了它:v0.1.1 的现象是启动器继承了
+/// 用户会话的 `HTTPS_PROXY`,登录一律「连不上服务端」,而把变量去掉就通。
+/// 关掉 reqwest 的 `system-proxy` 特性挡不住这件事 —— 那个特性只管 macOS 和
+/// Windows 的系统设置,环境变量是 hyper-util 无条件读的。
+///
+/// 代理指向端口 1(特权端口,本机不会有人监听):真去走代理就连不上,
+/// 这条用例于是必然失败。
+#[test]
+fn a_proxy_in_the_environment_is_ignored() {
+    let _guard = crate::session::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这两个变量。
+    // 设完不还原:客户端本来就该无视它们,留着反而覆盖到后面的用例。
+    unsafe {
+        std::env::set_var(
+            "HTTP_PROXY",
+            "http://127.0.0.1:1",
+        );
+        std::env::set_var(
+            "HTTPS_PROXY",
+            "http://127.0.0.1:1",
+        );
+    }
+
+    let (base, requests) = recording_server(http_response(
+        "200 OK",
+        "application/json",
+        "{}",
+    ));
+
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    local
+        .block_on(send::<()>(
+            reqwest::Method::GET,
+            base,
+            None,
+        ))
+        .expect("环境里有代理变量时请求没能直连出去");
+
+    captured(&requests);
+}

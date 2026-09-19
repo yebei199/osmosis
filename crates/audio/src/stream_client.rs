@@ -27,8 +27,17 @@ use stream_download::source::DecodeError;
 ///
 /// 不设整体超时:reqwest 的 timeout 罩住**整个响应体**,而一首歌的边下边读
 /// 本来就要跨几分钟。失联由 loader 的 retry_timeout + on_reconnect 计数兜底。
+///
+/// `.no_proxy()` 与 crates/api 同一个理由:直链和后端同源,都在 tailnet 里,
+/// 本机代理路由不到 —— 而 reqwest 无条件读 `HTTPS_PROXY` 这类环境变量,
+/// 关掉 system-proxy 特性挡不住(那个特性只管 macOS 和 Windows 的系统设置)。
 static CLIENT: LazyLock<reqwest::Client> =
-    LazyLock::new(reqwest::Client::new);
+    LazyLock::new(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("建不出播放流的 HTTP 客户端")
+    });
 
 /// [`Client`] 的本地实现。
 #[derive(Clone)]
@@ -182,5 +191,82 @@ impl Client for StreamClient {
             .send()
             .await
             .map(StreamResponse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use stream_download::http::Client as _;
+
+    use super::StreamClient;
+
+    /// 起一个对任何请求都回 200 的服务,返回它的地址。
+    ///
+    /// 线程与进程同寿 —— 测试进程退出即回收,不值得为它造一套关停。
+    fn always_ok() -> String {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("绑不上本地端口");
+        let addr =
+            listener.local_addr().expect("取不到本地地址");
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(
+                    stream
+                        .try_clone()
+                        .expect("连接复制不了"),
+                );
+                let mut line = String::new();
+                while reader
+                    .read_line(&mut line)
+                    .unwrap_or(0)
+                    > 0
+                {
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    line.clear();
+                }
+                let mut stream = stream;
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Content-Length: 0\r\n\
+                      Connection: close\r\n\r\n",
+                );
+            }
+        });
+
+        format!("http://{addr}")
+    }
+
+    /// 环境里有代理变量时照样直连。
+    ///
+    /// 直链和后端同源,都在 tailnet 里,本机代理路由不到 —— 走代理的现象是
+    /// 每首歌都拉不动,而那时人会先去查音频管线。代理指向端口 1(特权端口,
+    /// 本机不会有人监听):真去走代理就连不上。
+    #[tokio::test]
+    async fn a_proxy_in_the_environment_is_ignored() {
+        // SAFETY: 这个 crate 的测试没有别的用例读写这两个变量
+        unsafe {
+            std::env::set_var(
+                "HTTP_PROXY",
+                "http://127.0.0.1:1",
+            );
+            std::env::set_var(
+                "HTTPS_PROXY",
+                "http://127.0.0.1:1",
+            );
+        }
+
+        let url =
+            always_ok().parse().expect("本地地址解析不了");
+
+        StreamClient::create()
+            .get(&url)
+            .await
+            .expect("环境里有代理变量时请求没能直连出去");
     }
 }

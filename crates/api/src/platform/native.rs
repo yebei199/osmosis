@@ -27,6 +27,23 @@ fn runtime() -> &'static Runtime {
 const REQUEST_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(10);
 
+/// 一个只直连的客户端。
+///
+/// `.no_proxy()` 不能省:集群地址在 tailnet 里(100.64.0.2),本机代理路由不
+/// 到它,握手会被掐断 —— 现象是登录一律「连不上服务端」,而把 `HTTPS_PROXY`
+/// 从环境里去掉就通。启动器起的应用继承的正是用户会话那份环境变量。
+/// 关掉 reqwest 的 `system-proxy` 特性挡不住这件事:那个特性只管 macOS 和
+/// Windows 的系统设置,环境变量是 hyper-util 无条件读的。
+fn client(
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client, ApiError> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .no_proxy()
+        .build()
+        .map_err(|e| ApiError::Transport(e.to_string()))
+}
+
 pub(crate) async fn get_json<
     T: DeserializeOwned + Send + 'static,
 >(
@@ -79,12 +96,7 @@ async fn send<B: serde::Serialize + Send + 'static>(
     // 线程上被 poll —— 包括 slint 的 UI 线程。
     runtime()
         .spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .map_err(|e| {
-                    ApiError::Transport(e.to_string())
-                })?;
+            let client = client(REQUEST_TIMEOUT)?;
 
             let mut request = client.request(method, url);
             if let Some(token) = token {
@@ -375,12 +387,8 @@ pub(crate) async fn get_bytes(
 ) -> Result<Vec<u8>, ApiError> {
     runtime()
         .spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .map_err(|e| {
-                    ApiError::Transport(e.to_string())
-                })?;
+            let client =
+                client(std::time::Duration::from_secs(10))?;
             let response = client
                 .get(url)
                 .send()
