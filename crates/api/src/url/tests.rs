@@ -26,6 +26,16 @@ fn play_url_contains_track_id() {
     );
 }
 
+/// 下载地址与播放地址同构:同一个 id,不同的路由。
+#[test]
+fn download_url_contains_track_id() {
+    assert!(
+        download_url("1375305989")
+            .ends_with("/download/1375305989"),
+        "id 没落在路径末尾"
+    );
+}
+
 /// 歌词地址与播放地址同构,id 一样要落在路径末尾。
 #[test]
 fn lyric_url_contains_track_id() {

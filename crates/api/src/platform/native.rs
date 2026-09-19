@@ -382,6 +382,82 @@ pub(crate) fn write_session(path: &Path, token: &str) {
 /// 带显式超时:这类 URL 指向外部 CDN(封面图),可能整段不可达 ——
 /// 实测网易 CDN 从部分网络直连会**无响应挂死**而不是拒绝。`reqwest::get`
 /// 默认没有超时,不设的话这个 future 永远悬着。
+/// 进度回调至少隔这么多字节才报一次。
+///
+/// 每个 chunk 都报的话,一首歌要发出去几千次 —— 而每一次都要跨回事件循环
+/// 才敢碰界面状态。界面上那条进度条也画不出 8KB 的差别。
+const PROGRESS_STEP: u64 = 256 * 1024;
+
+/// 边收边写。与 [`get_bytes`] 的区别是**不攒在内存里**:一首无损转出来的 mp3
+/// 是几十 MB,在手机上凭空要一块同样大的堆没有必要。
+///
+/// 这里不设整体超时,只卡建连:一首几十 MB 的歌在慢网上本来就要几分钟,
+/// 给整条传输设上限等于给文件大小设一个隐形的上限,而那个上限的现象是
+/// 「大歌下到一半必断」。断网由 reqwest 自己的读超时兜住。
+pub(crate) async fn download(
+    url: String,
+    mut sink: impl std::io::Write + Send + 'static,
+    progress: impl Fn(u64, Option<u64>) + Send + 'static,
+) -> Result<(), ApiError> {
+    let token = crate::session::token();
+
+    runtime()
+        .spawn(async move {
+            let client = reqwest::Client::builder()
+                .connect_timeout(REQUEST_TIMEOUT)
+                .read_timeout(REQUEST_TIMEOUT)
+                .no_proxy()
+                .build()
+                .map_err(|e| {
+                    ApiError::Transport(e.to_string())
+                })?;
+
+            let mut request = client.get(url);
+            if let Some(token) = token {
+                request = request.bearer_auth(token);
+            }
+            let mut response =
+                check(request.send().await.map_err(
+                    |e| ApiError::Transport(e.to_string()),
+                )?)
+                .await?;
+
+            // 转码那一路没有这个头 —— 服务端事前算不出会出多少字节。
+            let total = response.content_length();
+            let mut done: u64 = 0;
+            let mut reported: u64 = 0;
+            progress(0, total);
+
+            while let Some(chunk) =
+                response.chunk().await.map_err(|e| {
+                    ApiError::Transport(e.to_string())
+                })?
+            {
+                sink.write_all(&chunk).map_err(|e| {
+                    ApiError::Transport(e.to_string())
+                })?;
+                done += chunk.len() as u64;
+                if done - reported >= PROGRESS_STEP {
+                    reported = done;
+                    progress(done, total);
+                }
+            }
+
+            sink.flush().map_err(|e| {
+                ApiError::Transport(e.to_string())
+            })?;
+            // 最后一次必报:界面上那条进度条要停在 100%,而上面那一步
+            // 只在跨过整步时才报,末尾那一小段永远跨不过去。
+            progress(done, total);
+
+            Ok(())
+        })
+        .await
+        .map_err(|join_error| {
+            ApiError::Transport(join_error.to_string())
+        })?
+}
+
 pub(crate) async fn get_bytes(
     url: String,
 ) -> Result<Vec<u8>, ApiError> {

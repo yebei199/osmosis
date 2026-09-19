@@ -49,6 +49,15 @@ pub(crate) fn play_url(track_id: &str) -> String {
     )
 }
 
+/// `/download/{track_id}` 的完整地址 —— 整首歌的 mp3 字节。
+pub(crate) fn download_url(track_id: &str) -> String {
+    format!(
+        "{}/download/{}",
+        base_url(),
+        encode_component(track_id)
+    )
+}
+
 /// `/lyric/{track_id}` 的完整地址。id 同样要转义(理由见 [`play_url`])。
 pub(crate) fn lyric_url(track_id: &str) -> String {
     format!(
