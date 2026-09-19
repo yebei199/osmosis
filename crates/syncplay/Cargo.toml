@@ -19,7 +19,13 @@ log.workspace = true
 # 不用 tokio 的 block_on:那要求当前线程属于某个 runtime,而它不属于。
 futures-executor = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
-tokio-tungstenite = "0.28"
+# 不开 native-tls(openssl):理由与 `crates/api/Cargo.toml` 一致 —— rustls-tls
+# 用 ring + 内置 webpki 根证书,安卓上不需要平台胶水。同一条 TLS 栈,一份信任。
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+    "connect",
+    "handshake",
+    "rustls-tls-webpki-roots",
+] }
 futures-util = { version = "0.3", default-features = false }
 
 [dev-dependencies]
