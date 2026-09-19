@@ -47,6 +47,9 @@ pub use catalog::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use download::download;
 
+// 状态目录的显式入口:安卓上环境变量给不出私有目录,由平台入口注入。
+pub use platform::set_state_dir;
+
 pub use error::{ApiError, base_url};
 
 pub(crate) use error::server_error;

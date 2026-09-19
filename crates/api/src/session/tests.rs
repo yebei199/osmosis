@@ -40,10 +40,41 @@ fn the_session_token_has_a_lifecycle() {
     assert_eq!(self::token(), None, "登出后不该还留着");
 }
 
+/// **入口显式给的状态目录压过环境变量。**
+///
+/// 安卓上两个环境变量都没有,私有目录只有平台入口那一层拿得到
+/// (`apps/android` 的 `internal_data_path`),给了它就该用它。
+#[test]
+fn session_path_prefers_the_explicit_state_dir() {
+    let path = platform::session_path_from(
+        Some(std::path::Path::new("/data/user/0/app/files")),
+        Some("/tmp/state"),
+        Some("/home/someone"),
+    )
+    .expect("给了显式目录就该有路径");
+
+    assert!(path.starts_with("/data/user/0/app/files"));
+    assert!(path.ends_with("osmosis/session"));
+}
+
+/// 边界:安卓上除了显式目录什么都没有,那时也要落得下来。
+#[test]
+fn an_explicit_state_dir_works_without_any_env() {
+    let path = platform::session_path_from(
+        Some(std::path::Path::new("/data/user/0/app/files")),
+        None,
+        None,
+    )
+    .expect("只有显式目录也该有路径");
+
+    assert!(path.ends_with("osmosis/session"));
+}
+
 /// 有 XDG_STATE_HOME 就用它 —— 登录态是状态不是配置。
 #[test]
 fn session_path_prefers_state_home() {
     let path = platform::session_path_from(
+        None,
         Some("/tmp/state"),
         Some("/home/someone"),
     )
@@ -58,6 +89,7 @@ fn session_path_prefers_state_home() {
 fn session_path_falls_back_to_home() {
     let path = platform::session_path_from(
         None,
+        None,
         Some("/home/someone"),
     )
     .expect("有 HOME 就该有路径");
@@ -70,11 +102,15 @@ fn session_path_falls_back_to_home() {
 #[test]
 fn session_path_is_none_without_either() {
     assert_eq!(
-        platform::session_path_from(None, None),
+        platform::session_path_from(None, None, None),
         None
     );
     assert_eq!(
-        platform::session_path_from(Some(""), Some("")),
+        platform::session_path_from(
+            None,
+            Some(""),
+            Some("")
+        ),
         None
     );
 }
