@@ -32,10 +32,16 @@ fn signalling_url_handles_a_bare_host() {
 /// 自己的 `OSMOSIS_DEVICE_FILE`。名字仍带进程号,列表里才不是两行一样的。
 #[test]
 fn a_persisted_device_id_outlives_the_process() {
-    let first =
-        identity_from("nixos", 1234, "nixos-1234".to_owned());
-    let second =
-        identity_from("nixos", 5678, "nixos-1234".to_owned());
+    let first = identity_from(
+        "nixos",
+        1234,
+        "nixos-1234".to_owned(),
+    );
+    let second = identity_from(
+        "nixos",
+        5678,
+        "nixos-1234".to_owned(),
+    );
 
     assert_eq!(
         first.id, second.id,

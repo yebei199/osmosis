@@ -47,7 +47,9 @@ fn the_session_token_has_a_lifecycle() {
 #[test]
 fn session_path_prefers_the_explicit_state_dir() {
     let path = platform::session_path_from(
-        Some(std::path::Path::new("/data/user/0/app/files")),
+        Some(std::path::Path::new(
+            "/data/user/0/app/files",
+        )),
         Some("/tmp/state"),
         Some("/home/someone"),
     )
@@ -61,7 +63,9 @@ fn session_path_prefers_the_explicit_state_dir() {
 #[test]
 fn an_explicit_state_dir_works_without_any_env() {
     let path = platform::session_path_from(
-        Some(std::path::Path::new("/data/user/0/app/files")),
+        Some(std::path::Path::new(
+            "/data/user/0/app/files",
+        )),
         None,
         None,
     )
