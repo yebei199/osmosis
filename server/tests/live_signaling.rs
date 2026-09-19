@@ -49,10 +49,19 @@ async fn start_server_with(timing: Timing) -> SocketAddr {
     addr
 }
 
-/// 连上去并自报家门,返回连接。
+/// 连上去并自报家门,返回连接。账号是测试路由的缺省值。
 async fn connect(addr: SocketAddr, id: &str) -> Socket {
+    connect_as(addr, 1, id).await
+}
+
+/// 同上,但指定账号 —— 分桶那几条要两个账号才验得出来。
+async fn connect_as(
+    addr: SocketAddr,
+    account: i64,
+    id: &str,
+) -> Socket {
     let (mut socket, _) = tokio_tungstenite::connect_async(
-        format!("ws://{addr}/signal"),
+        format!("ws://{addr}/signal?account={account}"),
     )
     .await
     .expect("连不上信令端点");
@@ -251,5 +260,95 @@ async fn silent_connection_is_dropped_after_the_hello_timeout()
     assert!(
         closed.is_ok(),
         "沉默的连接没有被断开,它会一直占着"
+    );
+}
+
+/// 两个账号各两台设备:各自的名册只有自己那两台。
+///
+/// 不分桶的话,四台设备互相可见 —— 而设备名多半就是主机名,
+/// 等于把别人机器的名字摆到界面上。
+#[tokio::test]
+async fn each_account_only_sees_its_own_two_devices() {
+    let addr = start_server().await;
+
+    let mut alice1 = connect_as(addr, 1, "a1").await;
+    let mut alice2 = connect_as(addr, 1, "a2").await;
+    // 连着即可,断言看的是 bob2 那份名册 —— 但它得活着,否则 bob 那桶只剩一台。
+    let _bob1 = connect_as(addr, 2, "b1").await;
+    let mut bob2 = connect_as(addr, 2, "b2").await;
+
+    // 各自等到自己那份两台的名册。别人上线不该再推给自己,
+    // 所以这里读到的下一条就该是终态。
+    let ServerSignal::Roster { devices } =
+        next_signal(&mut alice2).await
+    else {
+        panic!("alice2 没收到名册");
+    };
+    let ids: Vec<&str> =
+        devices.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["a1", "a2"], "alice 看到的名册不对");
+
+    let ServerSignal::Roster { devices } =
+        next_signal(&mut bob2).await
+    else {
+        panic!("bob2 没收到名册");
+    };
+    let ids: Vec<&str> =
+        devices.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["b1", "b2"], "bob 看到的名册不对");
+
+    // alice1 那边一路读下来也只该见过自己账号的设备。
+    let ServerSignal::Roster { devices } =
+        next_signal(&mut alice1).await
+    else {
+        panic!("alice1 没收到名册");
+    };
+    assert!(
+        devices.iter().all(|d| d.id.starts_with('a')),
+        "alice1 的名册里混进了别人的设备: {devices:?}"
+    );
+}
+
+/// 跨账号发信令得到 `Error`,而不是被送到对面。
+#[tokio::test]
+async fn signalling_to_another_account_is_refused() {
+    let addr = start_server().await;
+
+    let mut alice = connect_as(addr, 1, "a1").await;
+    let _ = next_signal(&mut alice).await;
+    let mut bob = connect_as(addr, 2, "b1").await;
+    let _ = next_signal(&mut bob).await;
+
+    let signal = ClientSignal::Signal {
+        to: "b1".to_owned(),
+        payload: "v=0".to_owned(),
+    };
+    alice
+        .send(Message::text(
+            serde_json::to_string(&signal)
+                .expect("序列化失败"),
+        ))
+        .await
+        .expect("发不出信令");
+
+    let received = next_signal(&mut alice).await;
+    assert!(
+        matches!(
+            received,
+            ServerSignal::Error { ref code, .. }
+                if code == "device_offline"
+        ),
+        "实得 {received:?}"
+    );
+
+    // bob 那边一个字都不该收到。给它一点时间,再确认收件箱是空的。
+    let leaked = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        next_signal(&mut bob),
+    )
+    .await;
+    assert!(
+        leaked.is_err(),
+        "别人账号的设备收到了不该收到的东西: {leaked:?}"
     );
 }

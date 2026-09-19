@@ -139,8 +139,8 @@ pub async fn serve(
     {
         let mut guard = roster.lock().expect("名册锁中毒");
         // 旧连接的出口交还给我们:丢掉它,那条僵死连接的 pump 会随之退出。
-        drop(guard.join(device, sink));
-        broadcast_roster(&guard);
+        drop(guard.join(account, device, sink));
+        broadcast_roster(&guard, account);
     }
 
     while let Some(Ok(message)) = ws_rx.next().await {
@@ -155,8 +155,9 @@ pub async fn serve(
 
         let guard = roster.lock().expect("名册锁中毒");
         if let Some(reply) =
-            route(&guard, &device_id, parsed)
-            && let Some(own) = guard.sink(&device_id)
+            route(&guard, account, &device_id, parsed)
+            && let Some(own) =
+                guard.sink(account, &device_id)
         {
             // try_send 而非 send:这里握着锁,await 会把整个名册卡住。
             // 发件箱满说明这台设备已经读不动了,丢掉这条应答不比卡住所有人差。
@@ -165,8 +166,8 @@ pub async fn serve(
     }
 
     let mut guard = roster.lock().expect("名册锁中毒");
-    guard.leave(&device_id);
-    broadcast_roster(&guard);
+    guard.leave(account, &device_id);
+    broadcast_roster(&guard, account);
     drop(guard);
     pump.abort();
 }
@@ -229,23 +230,31 @@ async fn accept_hello(
     None
 }
 
-/// 把当前名册推给所有在线设备。
+/// 把某个账号的名册推给它自己的全部在线设备。
 ///
 /// 每次名册变化都推,不让客户端轮询:一台设备下线到别人发现之间的空窗期里,
 /// 推流必然失败,而失败原因看起来会像是 WebRTC 出了问题。
-fn broadcast_roster(roster: &Roster<Sink>) {
+fn broadcast_roster(
+    roster: &Roster<Sink>,
+    account: AccountId,
+) {
     let message = ServerSignal::Roster {
-        devices: roster.devices(),
+        devices: roster.devices(account),
     };
-    for sink in roster.sinks() {
+    for sink in roster.sinks(account) {
         // 发不进去的连接已经死了,它下一次读失败时会自己出册。
         let _ = sink.try_send(message.clone());
     }
 }
 
 /// 处理一条来自设备的消息。返回要发回给它自己的应答(没有则 `None`)。
+///
+/// 目标只在**同一个账号**的桶里找:找不到就是"不在线",与真的不在线一个说法。
+/// 分两种说法的话,等于告诉发信人"这个 id 存在,只是不归你" —— 那是一条
+/// 白送的枚举信道。
 fn route(
     roster: &Roster<Sink>,
+    account: AccountId,
     from: &str,
     message: ClientSignal,
 ) -> Option<ServerSignal> {
@@ -253,7 +262,8 @@ fn route(
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
         ClientSignal::Signal { to, payload } => {
-            let Some(target) = roster.sink(&to) else {
+            let Some(target) = roster.sink(account, &to)
+            else {
                 return Some(ServerSignal::Error {
                     code: "device_offline".to_owned(),
                     message: format!("设备 {to} 不在线"),
@@ -282,6 +292,10 @@ mod tests {
 
     use super::*;
 
+    /// 两个账号,用来验"信令转不出自己那一桶"。
+    const ALICE: AccountId = 1;
+    const BOB: AccountId = 2;
+
     fn device(id: &str) -> DeviceDto {
         DeviceDto {
             id: id.to_owned(),
@@ -298,8 +312,8 @@ mod tests {
         let (sink_a, rx_a) = mpsc::channel(OUTBOX_CAPACITY);
         let (sink_b, rx_b) = mpsc::channel(OUTBOX_CAPACITY);
         let mut roster = Roster::default();
-        roster.join(device("a"), sink_a);
-        roster.join(device("b"), sink_b);
+        roster.join(ALICE, device("a"), sink_a);
+        roster.join(ALICE, device("b"), sink_b);
         (roster, rx_a, rx_b)
     }
 
@@ -310,6 +324,7 @@ mod tests {
 
         let reply = route(
             &roster,
+            ALICE,
             "a",
             ClientSignal::Signal {
                 to: "b".to_owned(),
@@ -341,6 +356,7 @@ mod tests {
 
         route(
             &roster,
+            ALICE,
             "a",
             ClientSignal::Signal {
                 to: "b".to_owned(),
@@ -367,6 +383,7 @@ mod tests {
 
         let reply = route(
             &roster,
+            ALICE,
             "a",
             ClientSignal::Signal {
                 to: "不在线".to_owned(),
@@ -384,17 +401,67 @@ mod tests {
         );
     }
 
+    /// 发给别人账号下的设备,一律当作不在线 —— 而且真的没送过去。
+    #[test]
+    fn signal_across_accounts_is_refused() {
+        let (mut roster, _rx_a, _rx_b) = two_devices();
+        let (sink_c, mut rx_c) =
+            mpsc::channel(OUTBOX_CAPACITY);
+        roster.join(BOB, device("c"), sink_c);
+
+        let reply = route(
+            &roster,
+            ALICE,
+            "a",
+            ClientSignal::Signal {
+                to: "c".to_owned(),
+                payload: "v=0...".to_owned(),
+            },
+        );
+
+        assert!(
+            matches!(
+                reply,
+                Some(ServerSignal::Error { ref code, .. })
+                    if code == "device_offline"
+            ),
+            "实得 {reply:?}"
+        );
+        assert!(
+            rx_c.try_recv().is_err(),
+            "消息不该落到别人账号的设备上"
+        );
+    }
+
     /// 名册变化推给每一台在线设备,而不是只推给变化的那台。
     #[test]
     fn roster_is_pushed_to_everyone() {
         let (roster, mut rx_a, mut rx_b) = two_devices();
 
-        broadcast_roster(&roster);
+        broadcast_roster(&roster, ALICE);
 
         let expected = ServerSignal::Roster {
             devices: vec![device("a"), device("b")],
         };
         assert_eq!(rx_a.try_recv(), Ok(expected.clone()));
         assert_eq!(rx_b.try_recv(), Ok(expected));
+    }
+
+    /// 广播不外溢到别的账号。
+    ///
+    /// 名册里有谁是设备名,而设备名多半是主机名 —— 那是别人机器的名字。
+    #[test]
+    fn broadcast_does_not_leak_to_other_accounts() {
+        let (mut roster, _rx_a, _rx_b) = two_devices();
+        let (sink_c, mut rx_c) =
+            mpsc::channel(OUTBOX_CAPACITY);
+        roster.join(BOB, device("c"), sink_c);
+
+        broadcast_roster(&roster, ALICE);
+
+        assert!(
+            rx_c.try_recv().is_err(),
+            "别人账号的设备不该收到这份名册"
+        );
     }
 }
