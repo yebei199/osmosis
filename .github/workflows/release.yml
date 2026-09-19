@@ -53,9 +53,14 @@ jobs:
       # OSMOSIS_API_BASE 是 crates/api 的 option_env!,编译期烘进二进制;
       # 不设它默认回退 127.0.0.1:3000,发出去的包连不上线上后端(#90)。
       # 地址与 justfile 的 api_base 默认值一字不差。
-      - run: cargo build --release -p app-desktop
+      #
+      # --features mcp + SLINT_EMIT_DEBUG_INFO=1:开启内嵌 MCP server,让 AI
+      # 助手能连上装机包读元素树、截图、模拟点击。两者缺一不可、代价与安全
+      # 边界见 apps/desktop/Cargo.toml 的 [features] 注释,这里不重复。
+      - run: cargo build --release -p app-desktop --features mcp
         env:
           OSMOSIS_API_BASE: https://music.k3s.cryptorust.uk:32443
+          SLINT_EMIT_DEBUG_INFO: "1"
 
       # option_env! 是编译期常量,上一步漏设环境变量时构建照样成功,只有
       # 产物烘错了地址——这类失败不会在构建阶段报错,必须另开一道门去查
@@ -67,6 +72,18 @@ jobs:
           echo "online_count=$online_count local_count=$local_count"
           if [ "$online_count" -lt 1 ] || [ "$local_count" -ne 0 ]; then
             echo "产物烘的地址不对:期望线上地址 >=1、本机地址 =0" >&2
+            exit 1
+          fi
+
+      # mcp feature 是否真的编进去了,不能只看构建没报错——上一条校验步的教训
+      # 同样适用于它。字符串取自 slint mcp_server 的 run_server(它启动时打印
+      # 的监听行),只有编了 slint/mcp 才会存在这段代码。
+      - name: 校验产物编进了 MCP server
+        run: |
+          mcp_count=$(grep -a -c 'Slint MCP server listening on http://' target/release/osmosis-desktop || true)
+          echo "mcp_count=$mcp_count"
+          if [ "$mcp_count" -lt 1 ]; then
+            echo "产物没有编进 MCP server:--features mcp 没生效" >&2
             exit 1
           fi
 
