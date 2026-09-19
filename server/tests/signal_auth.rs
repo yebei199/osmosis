@@ -12,7 +12,7 @@ use axum::extract::FromRef;
 use axum::routing::get;
 use server::ratelimit::SharedLimiter;
 use server::signaling::{
-    self, AllowedOrigins, SharedRoster,
+    self, AllowedOrigins, SharedControl, SharedRoster,
 };
 use server::{account, db};
 use sqlx::PgPool;
@@ -35,6 +35,7 @@ const INVITE: &str = "let-me-in";
 struct SignalState {
     pool: PgPool,
     roster: SharedRoster,
+    control: SharedControl,
     origins: AllowedOrigins,
     limiter: SharedLimiter,
 }
@@ -48,6 +49,12 @@ impl FromRef<SignalState> for PgPool {
 impl FromRef<SignalState> for SharedRoster {
     fn from_ref(state: &SignalState) -> Self {
         state.roster.clone()
+    }
+}
+
+impl FromRef<SignalState> for SharedControl {
+    fn from_ref(state: &SignalState) -> Self {
+        state.control.clone()
     }
 }
 
@@ -118,6 +125,7 @@ async fn start_server(pool: PgPool) -> SocketAddr {
         .with_state(SignalState {
             pool,
             roster: SharedRoster::default(),
+            control: SharedControl::default(),
             origins: AllowedOrigins::new(vec![
                 ALLOWED_ORIGIN.to_owned(),
             ]),
