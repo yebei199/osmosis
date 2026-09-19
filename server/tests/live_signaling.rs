@@ -442,3 +442,51 @@ async fn reconnecting_the_same_device_keeps_it_in_the_roster()
         "旧连接收工时把重连上来的那条从名册里带走了: {still_there:?}"
     );
 }
+
+/// 超过单条消息上限的帧会让那条连接被关掉,而不是让服务端替它攒下整块内存。
+///
+/// 信令载荷是 SDP 与 ICE 候选,几 KiB 顶天。axum 的默认上限是 64 MiB ——
+/// 那意味着一条连接能让服务端为它单独攒出 64 MiB。
+#[tokio::test]
+async fn an_oversized_message_closes_the_connection() {
+    let addr = start_server().await;
+
+    let mut watcher = connect(addr, "watcher").await;
+    let _ = next_signal(&mut watcher).await;
+    let mut fat = connect(addr, "fat").await;
+    let ServerSignal::Roster { devices } =
+        next_signal(&mut watcher).await
+    else {
+        panic!("watcher 没收到名册");
+    };
+    assert_eq!(devices.len(), 2, "fat 该先在线");
+
+    // 128 KiB 的载荷,是上限的两倍。
+    let signal = ClientSignal::Signal {
+        to: "watcher".to_owned(),
+        payload: "x".repeat(128 * 1024),
+    };
+    fat.send(Message::text(
+        serde_json::to_string(&signal).expect("序列化失败"),
+    ))
+    .await
+    .expect("发不出信令");
+
+    let dropped = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            loop {
+                if let ServerSignal::Roster { devices } =
+                    next_signal(&mut watcher).await
+                    && devices.len() == 1
+                {
+                    return devices;
+                }
+            }
+        },
+    )
+    .await
+    .expect("超大消息之后那条连接没有被关掉");
+
+    assert_eq!(dropped[0].id, "watcher");
+}

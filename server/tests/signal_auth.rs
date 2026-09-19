@@ -10,7 +10,10 @@ use std::net::SocketAddr;
 
 use axum::extract::FromRef;
 use axum::routing::get;
-use server::signaling::{self, SharedRoster};
+use server::ratelimit::SharedLimiter;
+use server::signaling::{
+    self, AllowedOrigins, SharedRoster,
+};
 use server::{account, db};
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite;
@@ -32,6 +35,8 @@ const INVITE: &str = "let-me-in";
 struct SignalState {
     pool: PgPool,
     roster: SharedRoster,
+    origins: AllowedOrigins,
+    limiter: SharedLimiter,
 }
 
 impl FromRef<SignalState> for PgPool {
@@ -43,6 +48,18 @@ impl FromRef<SignalState> for PgPool {
 impl FromRef<SignalState> for SharedRoster {
     fn from_ref(state: &SignalState) -> Self {
         state.roster.clone()
+    }
+}
+
+impl FromRef<SignalState> for AllowedOrigins {
+    fn from_ref(state: &SignalState) -> Self {
+        state.origins.clone()
+    }
+}
+
+impl FromRef<SignalState> for SharedLimiter {
+    fn from_ref(state: &SignalState) -> Self {
+        state.limiter.clone()
     }
 }
 
@@ -91,6 +108,9 @@ async fn token_for(
         .expect("登录失败")
 }
 
+/// 白名单里的那个来源。
+const ALLOWED_ORIGIN: &str = "http://127.0.0.1:8073";
+
 /// 在随机端口上起一个带鉴权的信令服务端。
 async fn start_server(pool: PgPool) -> SocketAddr {
     let app = axum::Router::new()
@@ -98,6 +118,10 @@ async fn start_server(pool: PgPool) -> SocketAddr {
         .with_state(SignalState {
             pool,
             roster: SharedRoster::default(),
+            origins: AllowedOrigins::new(vec![
+                ALLOWED_ORIGIN.to_owned(),
+            ]),
+            limiter: SharedLimiter::default(),
         });
 
     let listener =
@@ -118,6 +142,15 @@ async fn try_connect(
     addr: SocketAddr,
     token: Option<&str>,
 ) -> Result<(), tungstenite::Error> {
+    try_connect_from(addr, token, None).await
+}
+
+/// 同上,外加一个自报的 `Origin` —— 原生端不带,浏览器一定带。
+async fn try_connect_from(
+    addr: SocketAddr,
+    token: Option<&str>,
+    origin: Option<&str>,
+) -> Result<(), tungstenite::Error> {
     let mut request = format!("ws://{addr}/signal")
         .into_client_request()
         .expect("URL 不合法");
@@ -127,6 +160,12 @@ async fn try_connect(
             format!("Bearer {token}")
                 .parse()
                 .expect("头值不合法"),
+        );
+    }
+    if let Some(origin) = origin {
+        request.headers_mut().insert(
+            "Origin",
+            origin.parse().expect("头值不合法"),
         );
     }
 
@@ -182,4 +221,69 @@ async fn a_real_token_gets_in() {
     try_connect(addr, Some(&token))
         .await
         .expect("真 token 该连得上");
+}
+
+/// 白名单之外的浏览器来源连不上。
+///
+/// 同源策略管不到 WebSocket:不校验 Origin 的话,任意网页都能借用户浏览器里的
+/// 登录态连上来 —— 而用户什么都看不到。
+#[tokio::test]
+async fn a_foreign_origin_is_refused() {
+    let pool = pool().await;
+    let token =
+        token_for(&pool, "signal_auth_origin").await;
+    let addr = start_server(pool).await;
+
+    let err = try_connect_from(
+        addr,
+        Some(&token),
+        Some("https://evil.example"),
+    )
+    .await
+    .expect_err("白名单外的来源不该连得上");
+
+    assert_eq!(rejected_status(&err), 403);
+}
+
+/// 白名单里的来源照常放行,原生端(不带 Origin)也照常。
+#[tokio::test]
+async fn an_allowed_origin_still_gets_in() {
+    let pool = pool().await;
+    let token =
+        token_for(&pool, "signal_auth_origin_ok").await;
+    let addr = start_server(pool).await;
+
+    try_connect_from(
+        addr,
+        Some(&token),
+        Some(ALLOWED_ORIGIN),
+    )
+    .await
+    .expect("白名单里的来源该连得上");
+}
+
+/// 同一个账号短时间内反复建连会被限流。
+///
+/// 没有这道闸,一个空转的重连循环就能把服务端的连接槽占满,
+/// 而每一次建连在日志里都长得和正常重连一模一样。
+#[tokio::test]
+async fn hammering_the_endpoint_gets_rate_limited() {
+    let pool = pool().await;
+    let token = token_for(&pool, "signal_auth_flood").await;
+    let addr = start_server(pool).await;
+
+    // 配额是每分钟 30 条。前 30 条都该放行。
+    for attempt in 0..30 {
+        try_connect(addr, Some(&token))
+            .await
+            .unwrap_or_else(|err| {
+                panic!("第 {attempt} 条就被挡了: {err}")
+            });
+    }
+
+    let err = try_connect(addr, Some(&token))
+        .await
+        .expect_err("超出配额之后该被挡下");
+
+    assert_eq!(rejected_status(&err), 429);
 }

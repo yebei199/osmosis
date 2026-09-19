@@ -20,11 +20,15 @@ use axum::extract::State;
 use axum::extract::ws::{
     Message, WebSocket, WebSocketUpgrade,
 };
-use axum::response::Response;
+use axum::http::HeaderMap;
+use axum::http::header::ORIGIN;
+use axum::response::{IntoResponse, Response};
 use contract::{ClientSignal, DeviceDto, ServerSignal};
 use tokio::sync::mpsc;
 
 use crate::account::Account;
+use crate::error;
+use crate::ratelimit::SharedLimiter;
 use crate::roster::Roster;
 
 /// 每条连接的发件箱容量。
@@ -41,6 +45,20 @@ pub type SharedRoster = Arc<Mutex<Roster<Sink>>>;
 
 /// 账号主键。名册按它分桶,一台设备只看得见同账号的设备。
 pub type AccountId = i64;
+
+/// 允许的浏览器来源。原生端不带 `Origin`,这张表只约束浏览器。
+pub type AllowedOrigins = Arc<Vec<String>>;
+
+/// 单条消息的上限。
+///
+/// 信令载荷是 SDP 与 ICE 候选,几 KiB 顶天;64 KiB 已经给得很松。axum 的默认值
+/// 是 64 MiB —— 那意味着一条连接能让服务端为它单独攒出 64 MiB。
+const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// 一个账号一分钟内能建几条信令连接。
+///
+/// 重连有退避,正常客户端一分钟碰不到个位数;这道闸拦的是空转的重连风暴。
+const CONNECTS_PER_MINUTE: u32 = 30;
 
 /// 一条连接的三个时限。
 ///
@@ -68,20 +86,52 @@ impl Default for Timing {
     }
 }
 
-/// `GET /signal` —— 鉴权,然后升级成 WebSocket。
+/// `GET /signal` —— 鉴权、校验来源、限流,然后升级成 WebSocket。
 ///
 /// `Account` 是提取器:没有它这条路由就不鉴权,而"要不要鉴权"写在签名里
 /// 正是 [`crate::auth`] 那套做法的用意。未鉴权连接在升级之前就得到 401。
 pub async fn handler(
     upgrade: WebSocketUpgrade,
     account: Account,
+    headers: HeaderMap,
     State(roster): State<SharedRoster>,
+    State(origins): State<AllowedOrigins>,
+    State(limiter): State<SharedLimiter>,
 ) -> Response {
-    let timing = Timing::default();
+    // 浏览器一定带 `Origin`,原生端不带。带了就必须在白名单里 ——
+    // 同源策略管不到 WebSocket,不校验的话任意网页都能借用户的登录态连上来。
+    if let Some(origin) = headers.get(ORIGIN) {
+        let allowed = origin.to_str().is_ok_and(|origin| {
+            origins.iter().any(|allowed| allowed == origin)
+        });
+        if !allowed {
+            return error::forbidden("来源不在白名单里")
+                .into_response();
+        }
+    }
+
     let account_id = account.id;
-    upgrade.on_upgrade(move |socket| {
-        serve(socket, roster, account_id, timing)
-    })
+    {
+        let mut guard =
+            limiter.lock().expect("限流器锁中毒");
+        if !guard.check(
+            &format!("signal:{account_id}"),
+            CONNECTS_PER_MINUTE,
+        ) {
+            return error::rate_limited().into_response();
+        }
+    }
+
+    upgrade.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(
+        move |socket| {
+            serve(
+                socket,
+                roster,
+                account_id,
+                Timing::default(),
+            )
+        },
+    )
 }
 
 /// 一条连接的一生:等 Hello → 入册 → 转发信令与探活 → 断开时出册。
@@ -227,9 +277,11 @@ pub fn unauthenticated_test_router(
         )>,
     ) -> Response {
         let account = query.account.unwrap_or(1);
-        upgrade.on_upgrade(move |socket| {
-            serve(socket, roster, account, timing)
-        })
+        upgrade
+            .max_message_size(MAX_MESSAGE_BYTES)
+            .on_upgrade(move |socket| {
+                serve(socket, roster, account, timing)
+            })
     }
 
     axum::Router::new()
