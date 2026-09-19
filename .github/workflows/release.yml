@@ -87,6 +87,20 @@ jobs:
             exit 1
           fi
 
+      # 前两条校验步只证明 mcp feature 编进去了,证明不了元素调试信息也编
+      # 进去了(#99):build.rs 若没接上 SLINT_EMIT_DEBUG_INFO,MCP 端口照样
+      # 通、get_element_tree 却只回一个空壳根。"MainWindow" 只有嵌了调试信息
+      # 才会作为元素类型名出现在产物字符串里(crates/ui/slint/app.slint 的
+      # 根组件名),没嵌时这个类型名不会被编译器写进二进制。
+      - name: 校验产物嵌了元素调试信息
+        run: |
+          debug_info_count=$(grep -a -c 'MainWindow' target/release/osmosis-desktop || true)
+          echo "debug_info_count=$debug_info_count"
+          if [ "$debug_info_count" -lt 1 ]; then
+            echo "产物没有嵌元素调试信息:SLINT_EMIT_DEBUG_INFO 没生效" >&2
+            exit 1
+          fi
+
       # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
       # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
       # 桌面入口与图标(assets/io.github.osmosis.desktop、.svg)与平台无关,
