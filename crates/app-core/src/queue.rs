@@ -87,6 +87,22 @@ impl Queue {
         self.tracks.get(*self.order.get(self.cursor)?)
     }
 
+    /// 这一批歌,按**原始顺序**。
+    ///
+    /// 遥控时被控端要把整个队列报给遥控器(`docs/adr/0030`),而报的是这一份
+    /// 而不是界面上那个列表 —— 用户可以一边听着队列一边翻别的歌单,
+    /// 两者那时根本不是一回事。
+    pub fn tracks(&self) -> &[TrackDto] {
+        &self.tracks
+    }
+
+    /// 正在放的那首在 [`Self::tracks`] 里的下标。空批时是 0。
+    ///
+    /// 不是 `cursor`:那是在**播放次序**里的位置,随机开着时与原始顺序对不上。
+    pub fn index(&self) -> usize {
+        self.order.get(self.cursor).copied().unwrap_or(0)
+    }
+
     /// 手动「下一首」。循环关着或单曲循环时**放完即停**:队尾之后是
     /// `None`,位置不动;列表循环时队尾回卷再来一轮,`seed` 供回卷重洗
     /// (没开随机就用不上)。

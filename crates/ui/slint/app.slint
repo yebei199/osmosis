@@ -587,6 +587,69 @@ export component MainWindow inherits Window {
     // 写在状态行等于说给没人在的房间(docs/adr/0013)。一次性提示同理:
     // 它们各自发生在哪一页并不确定,唯有压在所有页之上才一定被看见。
     // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
+    // ── 被遥控横幅:同样压在所有页之上 ──
+    // 它不是一次性提示,是一个**状态** —— 在这台机器前面的人得一眼看出
+    // 「这台正被别人控制着」,以及怎么把它拿回来。所以它自己不会消失,
+    // 只有那颗退出键关得掉它(docs/adr/0030)。
+    //
+    // 摆在 banner 下面一格:两条同时在场时不叠在一起。
+    if Shell.controlled-text != "": controlled := Rectangle {
+        y: root.safe-area-insets.top + (Shell.banner-text != "" ? 62px : 10px);
+        x: (parent.width - self.width) / 2;
+        width: min(parent.width - 32px, 420px);
+        height: 44px;
+        background: Theme.surface.with-alpha(0.96);
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.accent;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 8px;
+            spacing: 8px;
+
+            Text {
+                text: Shell.controlled-text;
+                // 固定部分是硬编码中文,设备名由对端自报 —— 与歌名同理,
+                // 走系统字体回退。
+                font-size: 13px;
+                color: Theme.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: exit-label.preferred-width + 20px;
+                    height: 30px;
+                    border-radius: 15px;
+                    background: exit-touch.has-hover ? Theme.accent : Theme.overlay-weak;
+                    animate background { duration: 140ms; easing: ease-out; }
+
+                    exit-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Shell.exit-controlled(); }
+
+                        accessible-role: button;
+                        accessible-label: "退出被遥控";
+                        accessible-action-default => { Shell.exit-controlled(); }
+                    }
+
+                    exit-label := Text {
+                        text: "退出被遥控";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 12px;
+                        color: exit-touch.has-hover ? Theme.accent-text : Theme.text;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
     if Shell.banner-text != "": banner := Rectangle {
         y: root.safe-area-insets.top + 10px;
         x: (parent.width - self.width) / 2;

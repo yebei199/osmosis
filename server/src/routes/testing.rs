@@ -408,6 +408,8 @@ pub(crate) fn state(
         pool,
         invite: INVITE.to_owned(),
         roster: server::signaling::SharedRoster::default(),
+        control: server::signaling::SharedControl::default(
+        ),
         origins: server::signaling::AllowedOrigins::default(
         ),
         limiter: server::ratelimit::SharedLimiter::default(

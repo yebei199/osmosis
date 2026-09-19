@@ -71,6 +71,9 @@ mod theme;
 // 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
 mod syncplay;
+// 遥控器模式同理:它与同播共用那条信令连接(见 docs/adr/0030)。
+#[cfg(not(target_arch = "wasm32"))]
+mod remote;
 
 use slint::{ComponentHandle, RenderingState};
 

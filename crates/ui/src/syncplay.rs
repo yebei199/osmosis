@@ -128,16 +128,21 @@ impl Sync {
     }
 }
 
-/// 把同播接到音乐页上。返回音乐页要用的把手。
+/// 把同播与遥控接到音乐页上。返回音乐页要用的两个把手。
+///
+/// 两种会话形态共用同一条信令连接(`docs/adr/0030`),所以共用一个 [`Client`] ——
+/// 各建一条的话,同一台设备会在名册里出现两次,而第二条的 id 谁也认不出来。
 pub fn bind(
     ui: &MainWindow,
     player: &SharedPlayer,
-) -> Sync {
+) -> (Sync, crate::remote::Remote) {
     let me = identity();
     // 名册与角色都由后台线程改、UI 线程读,所以是 `Mutex` 而不是 `RefCell`。
     let roster =
         Arc::new(Mutex::new(Roster::new(me.id.clone())));
     let role = Arc::new(Mutex::new(Role::Alone));
+
+    let remote = crate::remote::new(ui);
 
     let weak = ui.as_weak();
     let player = player.clone();
@@ -149,23 +154,30 @@ pub fn bind(
         {
             let roster = roster.clone();
             let role = role.clone();
+            let remote = remote.clone();
             move |event| {
                 handle(
                     event, &weak, &roster, &role, &player,
+                    &remote,
                 )
             }
         },
     ));
+    remote.attach(&client);
 
     bind_push(ui, &client, &role);
+    crate::remote::bind(ui, &remote);
     ui.global::<Shell>()
         .set_sync_text(describe_role(&Role::Alone).into());
 
-    Sync {
-        client,
-        role,
-        weak: ui.as_weak(),
-    }
+    (
+        Sync {
+            client,
+            role,
+            weak: ui.as_weak(),
+        },
+        remote,
+    )
 }
 
 /// 一个谁也不连的把手,给测试用。
@@ -187,13 +199,20 @@ pub(crate) fn detached(ui: &MainWindow) -> Sync {
 }
 
 /// 处理一条同播事件。**在后台线程上**跑。
-fn handle(
+///
+/// `pub(crate)` 只为让 `music::tests` 够得着:它是这一层唯一有分支的函数,
+/// 而建一个测试用主窗口的脚手架在那边(`music::fixtures`)。
+pub(crate) fn handle(
     event: Event,
     weak: &slint::Weak<MainWindow>,
     roster: &Arc<Mutex<Roster>>,
     role: &Arc<Mutex<Role>>,
     player: &SharedPlayer,
+    remote: &crate::remote::Remote,
 ) {
+    // 遥控那几条归 `crate::remote`:同播与遥控共用这条连接,但状态毫无重叠。
+    crate::remote::handle(&event, remote);
+
     match event {
         Event::Roster(devices) => {
             let others = {
@@ -244,6 +263,8 @@ fn handle(
                 );
             });
         }
+        // 遥控那几条上面已经处理过了。
+        _ => {}
     }
 }
 

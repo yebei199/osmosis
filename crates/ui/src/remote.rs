@@ -1,0 +1,373 @@
+//! 遥控器模式的界面接线:输出设备、被控端的锁定态、命令与上报。
+//!
+//! 与 [`crate::syncplay`] 分两个模块,因为它们是两种会话形态(`docs/adr/0030`):
+//! 同播是主控出声、听众收流;遥控器是遥控器**不**出声、被控端自己拉直链自己播。
+//! 两者共用同一条信令连接(所以共用一个 [`Client`]),但状态与界面毫无重叠。
+//!
+//! 事件回调跑在同播自己的后台线程上。命令却必须在 UI 线程上执行 —— 它要碰
+//! `Deck`,而 `Deck` 全是 `Rc`,不是 `Send`。所以走两步:后台线程把命令塞进
+//! 收件箱,再叫一声 UI 线程;真正执行的那段挂在 `Shell.remote-command` 上,
+//! 由音乐页去接(见 `crate::music`)。
+
+mod rules;
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, OnceLock};
+
+use app_core::{
+    Output, RemoteCommand, RemoteStateDto, RemoteView,
+};
+use slint::ComponentHandle;
+use syncplay::{Client, DeviceDto};
+
+pub(crate) use rules::{
+    accepts_control, describe_controlled, describe_output,
+    describe_remote, describe_revoked,
+};
+
+use crate::{MainWindow, Player, Shell};
+
+/// 本机挂钟的毫秒。
+///
+/// `app-core` 不碰时钟(它要编到 wasm,见 `docs/adr/0002`),插值与过期判定
+/// 因此都收一个「现在几点」。这一层是它唯一的出处。
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// 音乐页拿在手里的遥控把手。
+#[derive(Clone)]
+pub struct Remote {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    /// 同播那个客户端,两种会话形态共用一条信令连接。
+    ///
+    /// `OnceLock` 而不是直接持有:事件回调要在 [`Client::start`] **之前**
+    /// 就交出去,而客户端要等它返回才拿得到。这一微秒的空窗里到达的事件
+    /// 发不出东西 —— 那没关系,每秒一次的上报下一拍就把状态补齐了。
+    client: OnceLock<Arc<Client>>,
+    /// 声音从哪台设备出来。
+    output: Mutex<Output>,
+    /// 被控端报来的那份状态 —— 本机作遥控器时才有东西。
+    view: Mutex<RemoteView>,
+    /// 正在遥控本机的那台设备 —— 本机作被控端时才有东西。
+    controlled_by: Mutex<Option<DeviceDto>>,
+    /// 遥控器发来、还没执行的命令。
+    inbox: Mutex<VecDeque<RemoteCommand>>,
+    weak: slint::Weak<MainWindow>,
+}
+
+impl Remote {
+    /// 本机此刻把声音交给别的设备了。
+    pub fn is_remote(&self) -> bool {
+        lock(&self.inner.output).target().is_some()
+    }
+
+    /// 本机此刻正被别的设备遥控(锁定态)。
+    ///
+    /// 锁定期间本机上的播放动作一概不生效,直到用户按「退出被遥控」——
+    /// 少了这道锁,pc1 前面的人随手按一下暂停,手机上的进度条就开始撒谎。
+    pub fn is_controlled(&self) -> bool {
+        lock(&self.inner.controlled_by).is_some()
+    }
+
+    /// 把一条命令发给被控端。
+    ///
+    /// 返回它有没有发出去。调用方据此决定要不要落到本地播放器上 ——
+    /// 本机输出、或者状态已过期时都返回 `false`,那一下该走原路或者干脆不算数。
+    pub fn send(&self, cmd: RemoteCommand) -> bool {
+        let sendable = accepts_control(
+            &lock(&self.inner.output),
+            &lock(&self.inner.view),
+            now_ms(),
+        );
+        if !sendable {
+            return false;
+        }
+        let Some(client) = self.inner.client.get() else {
+            return false;
+        };
+        client.command(cmd);
+        true
+    }
+
+    /// 遥控器发来的下一条命令,没有则 `None`。
+    pub fn take_command(&self) -> Option<RemoteCommand> {
+        lock(&self.inner.inbox).pop_front()
+    }
+
+    /// 被遥控时把本机状态报出去;没被遥控就什么也不做。
+    ///
+    /// 目标由服务端从控制权槽位查(见 `server::control`),这里不指定发给谁。
+    pub fn report(&self, state: RemoteStateDto) {
+        if let Some(client) = self.inner.client.get()
+            && self.is_controlled()
+        {
+            client.report(state);
+        }
+    }
+
+    /// 遥控那一侧的曲目、队列与状态,交给调用方去画。
+    pub fn with_view<T>(
+        &self,
+        read: impl FnOnce(&RemoteView, u64) -> T,
+    ) -> T {
+        read(&lock(&self.inner.view), now_ms())
+    }
+
+    /// 换输出设备。`id` 为空就是选回本机。
+    ///
+    /// 乐观更新:接管要一个来回,而按下去必须立刻有反应。真被拒了会有
+    /// `ControlRevoked` 或一条失败提示把这一行改回去。
+    pub fn select(&self, id: &str, name: &str) {
+        let Some(client) = self.inner.client.get() else {
+            return;
+        };
+        // 换目标前先把镜像清掉,否则下一台设备会先闪一眼上一台的歌名。
+        lock(&self.inner.view).clear();
+        if id.is_empty() {
+            client.release_control();
+            *lock(&self.inner.output) = Output::Local;
+        } else {
+            client.claim(id);
+            *lock(&self.inner.output) =
+                Output::Remote(DeviceDto {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                });
+        }
+        self.refresh();
+    }
+
+    /// 被控端按了「退出被遥控」:解锁本机,并撤掉遥控器的控制权。
+    pub fn exit_controlled(&self) {
+        if let Some(client) = self.inner.client.get() {
+            client.exit_controlled();
+        }
+        *lock(&self.inner.controlled_by) = None;
+        self.refresh();
+    }
+
+    /// 把同播那个客户端交给它。只认第一次 —— 它是启动期的接线,不是状态。
+    pub fn attach(&self, client: &Arc<Client>) {
+        let _ = self.inner.client.set(client.clone());
+    }
+
+    /// 把输出设备与被遥控横幅这两行推到界面上。
+    ///
+    /// 进度与播放状态不走这里 —— 它们搭自动续播那趟每秒轮询的车,
+    /// 免得出现第二套「现在放到哪」的说法(见 `crate::music`)。
+    fn refresh(&self) {
+        let id = lock(&self.inner.output)
+            .target()
+            .unwrap_or_default()
+            .to_owned();
+        let output =
+            describe_output(&lock(&self.inner.output));
+        let controlled = describe_controlled(
+            lock(&self.inner.controlled_by)
+                .as_ref()
+                .map(|device| device.name.as_str()),
+        );
+        let _ = self.inner.weak.upgrade_in_event_loop(
+            move |ui| {
+                ui.global::<Shell>()
+                    .set_output_text(output.into());
+                ui.global::<Shell>()
+                    .set_output_id(id.into());
+                ui.global::<Shell>()
+                    .set_controlled_text(controlled.into());
+            },
+        );
+    }
+}
+
+/// 一个还没接上客户端的把手。
+///
+/// 分两步是因为事件回调要在 [`Client::start`] 之前就交出去,而客户端要等它
+/// 返回 —— 先有这个,再 [`Remote::attach`]。
+pub fn new(ui: &MainWindow) -> Remote {
+    Remote {
+        inner: Arc::new(Inner {
+            client: OnceLock::new(),
+            output: Mutex::new(Output::Local),
+            view: Mutex::new(RemoteView::default()),
+            controlled_by: Mutex::new(None),
+            inbox: Mutex::new(VecDeque::new()),
+            weak: ui.as_weak(),
+        }),
+    }
+}
+
+/// 把遥控接到界面上。
+pub fn bind(ui: &MainWindow, remote: &Remote) {
+    // 输出设备的选择。参数是设备 id,空串是本机;名字从名册那一份里查,
+    // 免得界面上的写法与用户点过的那一行对不上。
+    let selecting = remote.clone();
+    let weak = ui.as_weak();
+    ui.global::<Shell>().on_set_output(move |id| {
+        let id = id.to_string();
+        let name =
+            weak.upgrade().map_or_else(String::new, |ui| {
+                device_name(&ui, &id)
+            });
+        selecting.select(&id, &name);
+    });
+
+    let exiting = remote.clone();
+    ui.global::<Shell>().on_exit_controlled(move || {
+        exiting.exit_controlled();
+    });
+
+    remote.refresh();
+}
+
+/// 一个谁也不连的把手,给测试用。理由同 `syncplay::detached`。
+#[cfg(test)]
+pub(crate) fn detached(ui: &MainWindow) -> Remote {
+    let remote = new(ui);
+    remote.attach(&Arc::new(Client::detached()));
+    remote
+}
+
+/// 名册里这台设备叫什么。查不到就用 id —— 总比一行空白强。
+fn device_name(ui: &MainWindow, id: &str) -> String {
+    use slint::Model as _;
+
+    ui.global::<Shell>()
+        .get_devices()
+        .iter()
+        .find(|row| row.id == id)
+        .map_or_else(
+            || id.to_owned(),
+            |row| row.name.to_string(),
+        )
+}
+
+/// 处理一条遥控事件。**在后台线程上**跑。
+pub fn handle(event: &syncplay::Event, remote: &Remote) {
+    let inner = &remote.inner;
+    match event {
+        // 接管成功。立刻要一次快照 —— 服务端不缓存状态(`docs/adr/0030`),
+        // 「现在是什么样」只能问被控端本人,而不问就得干等一秒。
+        syncplay::Event::ControlGranted { .. } => {
+            if let Some(client) = inner.client.get() {
+                client.request_snapshot();
+            }
+        }
+        // 失权:回到本机输出。不静默 —— 用户得知道自己手上这台不再管用了。
+        syncplay::Event::ControlRevoked { by } => {
+            *lock(&inner.output) = Output::Local;
+            lock(&inner.view).clear();
+            let message = describe_revoked(by);
+            let _ = inner.weak.upgrade_in_event_loop(
+                move |ui| {
+                    crate::notice::show(&ui, message);
+                },
+            );
+            remote.refresh();
+        }
+        syncplay::Event::ControlledBy { device } => {
+            *lock(&inner.controlled_by) =
+                Some(device.clone());
+            remote.refresh();
+        }
+        // 命令进收件箱,再叫一声 UI 线程去执行(见模块头的两步)。
+        syncplay::Event::Command { cmd } => {
+            lock(&inner.inbox).push_back(cmd.clone());
+            let _ =
+                inner.weak.upgrade_in_event_loop(|ui| {
+                    ui.global::<Shell>()
+                        .invoke_remote_command();
+                });
+        }
+        // 只收当前那台设备报来的:换目标之后,上一台的残余还会飘几条过来。
+        syncplay::Event::RemoteState { from, state } => {
+            if lock(&inner.output).target()
+                != Some(from.as_str())
+            {
+                return;
+            }
+            lock(&inner.view)
+                .accept(state.clone(), now_ms());
+        }
+        // 遥控器要一次完整状态。立刻回 —— 那一份由音乐页凑,所以叫它一声。
+        syncplay::Event::SnapshotRequest => {
+            let _ =
+                inner.weak.upgrade_in_event_loop(|ui| {
+                    ui.global::<Shell>()
+                        .invoke_remote_snapshot();
+                });
+        }
+        _ => {}
+    }
+}
+
+/// 遥控时把播放那几行改成被控端的状态。
+///
+/// 与本机路径共用同一批 Slint 属性:界面只认「输出设备」这一个抽象,
+/// 不该为两种输出各画一套控制条(`docs/adr/0030`)。
+pub fn push_playback(ui: &MainWindow, remote: &Remote) {
+    let (text, playing, track, position, stale) = remote
+        .with_view(|view, now| {
+            (
+                describe_remote(view, now),
+                view.state()
+                    == app_core::RemotePlayState::Playing,
+                view.track().cloned(),
+                view.position_ms(now),
+                view.is_stale(now),
+            )
+        });
+
+    ui.global::<Player>().set_playback_text(text.into());
+    ui.global::<Player>().set_is_playing(playing);
+    ui.global::<Shell>().set_output_stale(stale);
+    ui.global::<Player>().set_buffering(remote.with_view(
+        |view, _| {
+            view.state()
+                == app_core::RemotePlayState::Buffering
+        },
+    ));
+
+    let Some(track) = track else {
+        ui.global::<Player>().set_has_track(false);
+        return;
+    };
+    // 播放页那两行也跟着换。封面不跟:取它要发一次 HTTP,而这一趟是每秒一次的
+    // 轮询,按它的频率取图等于每秒一次下载。
+    // ponytail: 遥控时播放页没有封面与点云。要它的话,得在曲目 id 变化那一拍
+    // 单独取一次,而那是另一条与本机取封面并行的路径。
+    ui.global::<crate::Viz>()
+        .set_now_title(track.title.clone().into());
+    ui.global::<crate::Viz>().set_now_artists(
+        crate::music::join_artists(&track.artists).into(),
+    );
+
+    let seconds = position as f64 / 1_000.0;
+    ui.global::<Player>().set_has_track(true);
+    ui.global::<Player>()
+        .set_now_id(track.id.clone().into());
+    ui.global::<Player>().set_progress_ratio(
+        crate::progress::ratio(seconds, track.duration_ms),
+    );
+    ui.global::<Player>().set_progress_text(
+        crate::progress::progress_text(
+            seconds,
+            track.duration_ms,
+        )
+        .into(),
+    );
+}
+
+/// 取锁。锁里只有赋值和克隆,中毒了就是别处出了大问题。
+fn lock<T>(
+    value: &Mutex<T>,
+) -> std::sync::MutexGuard<'_, T> {
+    value.lock().expect("遥控状态锁中毒")
+}

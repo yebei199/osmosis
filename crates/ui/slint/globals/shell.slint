@@ -45,6 +45,25 @@ export global Shell {
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
     in property <string> sync-text;
 
+    // ── 遥控器模式(docs/adr/0030)。「输出设备 = 谁」就是它的全部状态。 ──
+    // 输出设备那一行,如「输出: 本机」。由 Rust 渲染后推送。
+    in property <string> output-text;
+    // 当前输出设备的 id。空串 = 本机 —— 芯片按它决定谁被选中。
+    in property <string> output-id;
+    // 本机正被谁遥控,如「正被 小米13 遥控」。空串 = 没被遥控,横幅不出现。
+    in property <string> controlled-text;
+    // 遥控的状态已过期(连着三秒没收到上报)。控制此刻发不出去。
+    in property <bool> output-stale: false;
+    // 把输出设备换成这一台。参数是 DeviceRow 的 id,**空串是本机**。
+    callback set-output(string);
+    // 被控端按了「退出被遥控」。
+    callback exit-controlled();
+    // 遥控器发来的命令到了,去收件箱里取(见 ui/src/remote.rs 模块头)。
+    // 由 Rust 自己 invoke,界面不碰它。
+    callback remote-command();
+    // 遥控器要一次完整状态。同样由 Rust invoke。
+    callback remote-snapshot();
+
     in-out property <bool> aurora-buttons-on: true;
     callback aurora-buttons-toggled();
     in property <image> home-slot-bg;

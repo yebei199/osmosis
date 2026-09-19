@@ -84,21 +84,25 @@ impl<Sink> Roster<Sink> {
     }
 
     /// 设备下线。**只删代次相同的那一条**,已经被重连顶替掉的留着不动。
+    ///
+    /// 返回这次有没有真的删掉。调用方要据此决定要不要顺手清掉别处以它为
+    /// 主语的状态(遥控的控制权槽位就是一处)—— 被顶替的那次清理什么都
+    /// 不该动,否则一次重连会把刚接上的遥控关系带走。
     pub fn leave(
         &mut self,
         account: AccountId,
         device_id: &str,
         generation: Generation,
-    ) {
+    ) -> bool {
         let Some(bucket) = self.buckets.get_mut(&account)
         else {
-            return;
+            return false;
         };
 
         if bucket.get(device_id).is_none_or(|entry| {
             entry.generation != generation
         }) {
-            return;
+            return false;
         }
         bucket.remove(device_id);
 
@@ -106,6 +110,22 @@ impl<Sink> Roster<Sink> {
         if bucket.is_empty() {
             self.buckets.remove(&account);
         }
+        true
+    }
+
+    /// 取某个账号名下某台设备,不在线则 `None`。
+    ///
+    /// 与 [`Self::sink`] 分开:要名字的地方(遥控的「正被 xx 遥控」横幅)
+    /// 不该顺手拿到一个能往里发消息的出口。
+    pub fn device(
+        &self,
+        account: AccountId,
+        device_id: &str,
+    ) -> Option<&DeviceDto> {
+        self.buckets
+            .get(&account)?
+            .get(device_id)
+            .map(|entry| &entry.device)
     }
 
     /// 某个账号当前在线的全部设备。

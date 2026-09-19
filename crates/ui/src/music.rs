@@ -38,7 +38,7 @@ mod rules;
 mod transport;
 
 pub(crate) use feed::{CoverFeed, LyricFeed};
-pub use rules::describe_playback;
+pub use rules::{describe_playback, join_artists};
 
 // 各子模块的条目都引进这一层,子模块的 `use super::*` 因此能互相看见 ——
 // 拆分前它们本就在同一个作用域里,这几行是把那个作用域重新拼起来。
@@ -85,6 +85,9 @@ struct Deck {
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
     sync: crate::syncplay::Sync,
+    /// 输出设备与遥控状态。本机输出时它一概不插手,现有路径一个字节不变
+    /// (见 `crate::remote`)。
+    remote: crate::remote::Remote,
     /// 系统媒体控件的把手。后端由平台入口给,这里只管往里推(见 `crate::media`)。
     media: Rc<crate::media::Bridge>,
     lyrics: LyricFeed,
@@ -151,12 +154,16 @@ pub fn bind(
     };
     let cover = CoverFeed::default();
 
+    // 同播与遥控共用一条信令连接,所以一起接出来(`docs/adr/0030`)。
+    let (sync, remote) = crate::syncplay::bind(ui, &player);
+
     let deck = Deck {
         playback: Rc::new(
             RefCell::new(Playback::default()),
         ),
         queue: Rc::new(RefCell::new(Queue::default())),
-        sync: crate::syncplay::bind(ui, &player),
+        sync,
+        remote,
         media,
         player,
         lyrics: lyrics.clone(),
@@ -200,6 +207,7 @@ pub fn bind(
     bind_list(ui, &deck);
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
+    bind_remote(ui, &deck);
     start_auto_advance(ui, &deck);
     startup_check(ui);
 

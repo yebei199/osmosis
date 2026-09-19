@@ -2,7 +2,10 @@
 //!
 //! 只管**转达**。谁该给谁发 offer 是 [`crate::Peer`] 那边的事,这里不认识 WebRTC。
 
-use contract::{ClientSignal, DeviceDto, ServerSignal};
+use contract::{
+    ClientSignal, DeviceDto, RemoteCommand, RemoteStateDto,
+    ServerSignal,
+};
 use tokio::sync::mpsc;
 
 use crate::{Envelope, SyncError};
@@ -54,6 +57,69 @@ impl SignalSender {
                     "连接已关闭".to_owned(),
                 )
             })
+    }
+
+    // ── 遥控器模式(`docs/adr/0030`)。都只是把一条消息塞进同一个出口。 ──
+
+    /// 接管 `target`。`resume` 是重连时手上那个代次,主动接管时是 `None`。
+    pub async fn claim(
+        &self,
+        target: &str,
+        resume: Option<u64>,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::ClaimControl {
+            target: target.to_owned(),
+            resume,
+        })
+        .await
+    }
+
+    /// 被控端退出被遥控。
+    pub async fn exit_controlled(
+        &self,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::ExitControlled).await
+    }
+
+    /// 把一条命令发给被控端。
+    pub async fn command(
+        &self,
+        to: &str,
+        cmd: RemoteCommand,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::Command {
+            to: to.to_owned(),
+            cmd,
+        })
+        .await
+    }
+
+    /// 把本机状态上报出去。目标由服务端从控制权槽位查。
+    pub async fn report(
+        &self,
+        state: RemoteStateDto,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::State { state }).await
+    }
+
+    /// 向被控端要一次完整状态。
+    pub async fn snapshot(
+        &self,
+        to: &str,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::SnapshotRequest {
+            to: to.to_owned(),
+        })
+        .await
+    }
+
+    async fn push(
+        &self,
+        message: ClientSignal,
+    ) -> Result<(), SyncError> {
+        self.0.send(message).await.map_err(|_| {
+            SyncError::Signalling("连接已关闭".to_owned())
+        })
     }
 }
 

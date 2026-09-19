@@ -11,6 +11,23 @@ use crate::Viz;
 /// (见 [`dispatch_media`])。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn toggle_play(ui: &MainWindow, deck: &Deck) {
+    // 被遥控期间本机上的播放动作不算数,直到按「退出被遥控」(产品规则)。
+    if deck.remote.is_controlled() {
+        return;
+    }
+    // 遥控时这一下是发给那台设备的:按界面当下画的是 ⏸ 还是 ▶ 来定 ——
+    // 那个图标读的正是被控端报来的状态,所以它就是对的那个判据。
+    if deck.remote.is_remote() {
+        let cmd = if ui.global::<Player>().get_is_playing()
+        {
+            app_core::RemoteCommand::Pause
+        } else {
+            app_core::RemoteCommand::Resume
+        };
+        deck.remote.send(cmd);
+        return;
+    }
+
     if deck.sync.is_listening() {
         deck.sync.leave();
         if let Ok(player) = deck.player.as_ref() {
@@ -262,9 +279,27 @@ pub(super) fn start_auto_advance(
             let state = deck.playback.borrow().state().clone();
             let listening = deck.sync.is_listening();
 
+            // 输出设备不是本机:这几行改读被控端的上报,本机的播放器此刻
+            // 是空的。续播、预取与起播上报统统归被控端 —— 那边自己有一趟
+            // 同样的轮询在跑。
+            //
+            // ponytail: 系统媒体控件这一轮不跟着遥控走,锁屏上停在本机
+            // 上一次的状态。要它跟的话,得让 media::push 也认「输出设备」
+            // 这个抽象,而锁屏遥控不在本轮的验收步骤里。
+            if deck.remote.is_remote() {
+                crate::remote::push_playback(
+                    &ui,
+                    &deck.remote,
+                );
+                return;
+            }
+
             // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
             // 而两个定时器意味着两套"现在放到哪"的说法。
             push_progress(&ui, &state, position);
+            // 被遥控时每秒报一次。搭同一趟车的理由相同:另起一个定时器
+            // 就会有两套「现在放到哪」的说法,而遥控器那头看的正是这个数。
+            deck.remote.report(snapshot(&ui, &deck));
             push_seek_state(&ui, &deck);
             // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
             crate::media::push(&ui, &deck.playback, &deck.media);

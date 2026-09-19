@@ -91,10 +91,12 @@ export component PlayerBar inherits Rectangle {
         loop-mode: Player.loop-mode;
         volume: Player.volume;
         devices: Shell.devices;
+        output-current: Shell.output-id;
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
         volume-changed(v) => { Player.volume-changed(v); }
         push-to(id) => { Shell.push-to(id); }
+        set-output(id) => { Shell.set-output(id); }
     }
 
     capsule := Rectangle {

@@ -10,17 +10,21 @@
 mod counter;
 mod health;
 mod lyric;
+mod output;
 mod playback;
 mod queue;
 
 pub use counter::Counter;
 pub use health::{Health, HealthState, refresh};
 pub use lyric::{LyricWindow, current_line, window};
+pub use output::{Output, RemoteView};
 pub use playback::{Playback, PlaybackState, play};
 pub use queue::{LoopMode, Queue};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
-    ArtistDto, HealthDto, LyricDto, LyricLineDto,
-    PlaylistDto, PlaylistSource, TrackDto, TracksDto,
+    ArtistDto, DeviceDto, HealthDto, LyricDto,
+    LyricLineDto, PlaylistDto, PlaylistSource,
+    RemoteCommand, RemotePlayState, RemoteStateDto,
+    TrackDto, TracksDto,
 };

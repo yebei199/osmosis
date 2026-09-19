@@ -106,3 +106,83 @@ export component SyncStrip inherits HorizontalLayout {
         }
     }
 }
+
+// 一颗输出设备芯片。选中的那颗填强调色 —— 与抽屉里的开关同一套表达:
+// 状态由填充底色说,不由文字明暗说。
+component OutputChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    width: chip-label.preferred-width + 24px;
+    height: 30px;
+    border-radius: 15px;
+    background: root.selected
+        ? Theme.accent
+        : (touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak);
+    animate background { duration: 140ms; easing: ease-out; }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        accessible-role: button;
+        // 读屏念得出选中没有 —— 填充底色它看不见。
+        accessible-label: "输出到 " + root.label;
+        accessible-checkable: true;
+        accessible-checked: root.selected;
+        accessible-action-default => { root.clicked(); }
+    }
+
+    // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,不指定 font-family。
+    chip-label := Text {
+        text: root.label;
+        color: root.selected ? Theme.accent-text : Theme.text;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+// 输出设备区:声音从哪台设备出来。第一颗永远是「本机」—— 选本机就是现在的
+// 行为,遥控器模式没有第二个模式开关(docs/adr/0030)。
+//
+// 与同播那一条分开摆:两者都是「点一台设备」,但语义相反 —— 同播是把本机
+// 正在放的推过去,遥控是让那台去放而本机闭嘴。挤在一行里点错了不会报错,
+// 只是声音从另一台机器出来。
+export component OutputStrip inherits HorizontalLayout {
+    in property <[DeviceRow]> devices;
+    // 当前选中的设备 id。空串 = 本机。
+    in property <string> current;
+    callback set-output(string);
+
+    spacing: 8px;
+
+    VerticalLayout {
+        alignment: center;
+        Text {
+            text: "输出";
+            font-family: "Maple Mono NF CN";
+            color: Theme.text-faint;
+            font-size: 12px;
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        OutputChip {
+            label: "本机";
+            selected: root.current == "";
+            clicked => { root.set-output(""); }
+        }
+    }
+
+    for device in root.devices: VerticalLayout {
+        alignment: center;
+        OutputChip {
+            label: device.name;
+            selected: root.current == device.id;
+            clicked => { root.set-output(device.id); }
+        }
+    }
+}
