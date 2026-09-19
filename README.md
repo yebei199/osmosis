@@ -14,7 +14,7 @@ Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device
 |-----------------|-------------------------------------|
 | linux           | 能构建、能运行                      |
 | android         | 能构建、能运行(真机)                |
-| web / iOS       | 能编译(CI 保证),尚未打包            |
+| web / iOS       | 冻结(2026-09-20,#105),解冻条件是用户开始用 |
 | windows / macOS | 复用 `apps/desktop`,只差一个 target |
 
 **功能**(与端正交 —— 安卓能跑不等于安卓上什么都有):
@@ -77,8 +77,8 @@ crates/render3d/   bevy 在共享 wgpu device 上离屏渲染,产出 slint::Imag
 crates/ui/         Slint 界面声明 + 组装点:把 api 注入 app-core
 apps/desktop/      桌面平台入口(linux / windows / macOS)
 apps/android/      Android 平台入口(cdylib)+ gradle/ 打包工程
-apps/ios/          iOS 平台入口(staticlib)。只验证编译,打包需 macOS
-apps/web/          Web 平台入口(cdylib + wasm-bindgen)。只验证编译
+apps/ios/          iOS 平台入口(staticlib)。冻结中(#105),打包需 macOS
+apps/web/          Web 平台入口(cdylib + wasm-bindgen)。冻结中(#105)
 server/            axum 后端:共享 contract,并把 bang-dream 的 gRPC 翻成 HTTP/JSON
 server/proto/      那份 gRPC 契约的副本。上游在 bang-dream,它是独立仓库
 assets/            图标源(一份 svg,三端都从它派生)与桌面的 .desktop
