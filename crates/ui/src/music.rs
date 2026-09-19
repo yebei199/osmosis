@@ -30,6 +30,8 @@ use app_core::Queue;
 
 mod advance;
 mod controls;
+#[cfg(not(target_arch = "wasm32"))]
+mod download;
 mod feed;
 mod list;
 mod notice;
@@ -40,11 +42,18 @@ mod transport;
 pub(crate) use feed::{CoverFeed, LyricFeed};
 pub use rules::{describe_playback, join_artists};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use download::{
+    DownloadCommit, DownloadStore, install_download_store,
+};
+
 // 各子模块的条目都引进这一层,子模块的 `use super::*` 因此能互相看见 ——
 // 拆分前它们本就在同一个作用域里,这几行是把那个作用域重新拼起来。
 use crate::Player;
 use advance::*;
 use controls::*;
+#[cfg(not(target_arch = "wasm32"))]
+use download::bind_download;
 use list::*;
 use notice::*;
 use report::*;
@@ -208,6 +217,7 @@ pub fn bind(
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
     bind_remote(ui, &deck);
+    bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
     startup_check(ui);
 
@@ -238,6 +248,21 @@ pub fn bind(
     // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.global::<Player>()
         .set_playback_text("Web 端暂不支持播放".into());
+
+    // 下载键在这一端点得动却什么都不会发生 —— 那是「界面上不放假东西」
+    // (docs/design.md 硬规则 8)最典型的样子。接一句实话上去。
+    let weak = ui.as_weak();
+    ui.global::<crate::Library>().on_download_track(
+        move |_id| {
+            if let Some(ui) = weak.upgrade() {
+                crate::notice::show(
+                    &ui,
+                    "Web 端暂不支持下载".to_owned(),
+                );
+            }
+        },
+    );
+
     (None, LyricFeed, CoverFeed::default())
 }
 

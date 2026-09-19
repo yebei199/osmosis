@@ -70,6 +70,15 @@ export global Library {
     // 打开某位歌手的热门曲目。带上名字,详情页的标题要它。
     callback open-artist(string, string);
 
+    // ── 曲目行的长按菜单与下载 ──
+    // 菜单指向哪一首。空串 = 菜单没开。存 id 而不是一个布尔:ListView 会把
+    // 滚出去的行复用到新行上,「开着没有」与「开的是哪一行」两个值分开存,
+    // 迟早有对不上的一天。标题另存一份 —— 菜单要显示它,而这一行随时可能被复用走。
+    in-out property <string> track-menu-id: "";
+    in-out property <string> track-menu-title: "";
+    // 把这一首下到本机(统一 mp3)。参数是曲目 id。
+    callback download-track(string);
+
     // 点某一行的红心。参数是曲目 id 与点完之后的状态。
     callback toggle-liked(string, bool);
     // 重拉红心的全量标识。

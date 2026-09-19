@@ -380,6 +380,31 @@ fn playback_copy_only_uses_subset_glyphs() {
     copy.push(QUEUE_DONE.to_owned());
     copy.push(WASM_NOTICE.to_owned());
     copy.push("同播: 没有其他设备".to_owned());
+    // 下载那几句。它们同样进横幅与抽屉,而那两处都用子集字体
+    // (见 `music/download.rs`)。
+    copy.extend([
+        crate::music::download::describe_progress(
+            1,
+            Some(2),
+        ),
+        crate::music::download::describe_progress(1, None),
+        crate::music::download::describe_failure(
+            &api::ApiError::Server {
+                code: api::TRIAL_ONLY.to_owned(),
+                message: String::new(),
+            },
+        ),
+        crate::music::download::describe_failure(
+            &api::ApiError::Transport("refused".to_owned()),
+        ),
+        "下载".to_owned(),
+        "下载这一首".to_owned(),
+        "这一端还不支持下载".to_owned(),
+        "这一首已经在下了".to_owned(),
+        "Web 端暂不支持下载".to_owned(),
+        "已存到 音乐/osmosis".to_owned(),
+        "存不下来: 系统没给出可写的条目".to_owned(),
+    ]);
     // 听众收听时的播放行(见 `syncplay.rs` 的 Listening 分支)。
     copy.push("收听中…".to_owned());
     // 开机自检的两种坏消息。

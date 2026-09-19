@@ -47,6 +47,7 @@ use routes::lyric::lyric;
 use routes::netease::{
     create_qr, qr_state, status as netease_status, unbind,
 };
+use routes::play::download::download;
 use routes::play::play;
 use routes::playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
@@ -285,6 +286,10 @@ async fn main() {
         // 客户端两端都只有 get_json 一种传输(见 routes::netease)。
         .route("/netease/qr/{key}", get(qr_state))
         .route("/play/{track_id}", get(play))
+        // 下载与播放分开两条路由:播放交出一条直链让客户端自己去取,下载把字节
+        // 拉过来并归一成 mp3。挤成一条带 `?download=1` 的话,响应体的**类型**
+        // 会随参数变(JSON 还是音频流),而那是两件事,不是一件事的两个选项。
+        .route("/download/{track_id}", get(download))
         .route("/lyric/{track_id}", get(lyric))
         .route("/played", post(record_play))
         .route("/recent", get(recent))

@@ -30,6 +30,9 @@ export component TrackList inherits ListView {
     callback remove(string);
     // 这一行要它的封面了。由 Rust 去取、缓存、回填(见 ui/src/thumbnail.rs)。
     callback needs-cover(string);
+    // 按住这一行不放。参数是曲目 id 与标题 —— 菜单要显示标题,而这一行随时
+    // 会被 ListView 复用到别的歌上去,菜单开着的时候回头来读就已经不是它了。
+    callback long-press(string, string);
 
     vertical-stretch: 1;
 
@@ -58,8 +61,39 @@ export component TrackList inherits ListView {
         changed wanted => { root.needs-cover(self.wanted); }
         init => { root.needs-cover(self.wanted); }
 
+        // 按住不放 → 菜单。Slint 没有内置的长按:按下起表,松手或取消撤表,
+        // 表响了就把这一次点击算作"开菜单",于是松手时不会顺带把歌放出来。
+        //
+        // 表长在行里而不是列表上:列表只有一个的话,两行先后按下会共用同一个
+        // 计时,后按的那行接管前一行的进度。ListView 只实例化可见的十几行,
+        // 而它们平时 `running: false`,不产生唤醒。
+        property <bool> pressing: false;
+        property <bool> menu-opened: false;
+
         touch := TouchArea {
-            clicked => { root.play(row.id); }
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    parent.pressing = true;
+                    parent.menu-opened = false;
+                }
+                if (event.kind == PointerEventKind.up
+                    || event.kind == PointerEventKind.cancel) {
+                    parent.pressing = false;
+                }
+            }
+            clicked => {
+                if (!parent.menu-opened) { root.play(row.id); }
+            }
+        }
+
+        Timer {
+            interval: 450ms;
+            running: parent.pressing;
+            triggered => {
+                parent.menu-opened = true;
+                parent.pressing = false;
+                root.long-press(row.id, row.title);
+            }
         }
 
         HorizontalLayout {

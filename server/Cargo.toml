@@ -11,8 +11,15 @@ serde.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 # time 有两处要:信令的 Hello 超时与心跳(signaling.rs),以及 routes::netease
 # 给上游那条扫码流的第一条消息套的上限。
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+# process 与 io-util 是 /download 那条转码路要的:起 ffmpeg,并把上游字节喂进它的 stdin。
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "process", "io-util"] }
 tower-http = { version = "0.6", features = ["cors"] }
+# /download 要把平台那条临时直链的字节拉过来。版本与 crates/api 那份对齐,
+# 依赖树里因此只有一份 reqwest。rustls 而不是系统 openssl:运行镜像是
+# debian-slim 且不含任何 RUN,装不了 libssl。
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+# ffmpeg 的 stdout 是 AsyncRead,而响应体要的是一条 Stream —— ReaderStream 就是那层包装。
+tokio-util = { version = "0.7", default-features = false, features = ["io"] }
 # gRPC 客户端一侧。生成代码由 build.rs 从 third_party/bang-dream 的 .proto 产出。
 tonic.workspace = true
 tonic-prost.workspace = true

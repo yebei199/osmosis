@@ -41,6 +41,13 @@ export global Shell {
     // 在四个页签里找(见 ui/src/account.rs 的 report-failure)。
     in-out property <int> banner-tab: -1;
 
+    // 下载在进行到哪一步:「下载中 42%」「已存到 音乐/osmosis」。空串 = 没有下载。
+    //
+    // 它是**投影**不是一次性提示:下载是个持续到结束才消失的状况,该由状况的
+    // 结束来收,不该由计时器来收(见 ui/src/notice.rs 开头那段分法)。
+    // 唯一写者是 ui/src/music/download.rs —— 别处写它就没人知道什么时候该清。
+    in property <string> download-text;
+
     in property <[DeviceRow]> devices: [];
     // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
     in property <string> sync-text;

@@ -52,6 +52,12 @@ mod notice;
 
 mod media;
 mod music;
+// 下载的落点由平台入口注入,与系统媒体控件同一个接缝形状(docs/adr/0020)。
+// 安卓那一份走 MediaStore;没人注入就是这一端不支持下载。
+#[cfg(not(target_arch = "wasm32"))]
+pub use music::{
+    DownloadCommit, DownloadStore, install_download_store,
+};
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
 mod aurora;
 mod aurora_btn;

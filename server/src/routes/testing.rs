@@ -21,11 +21,12 @@ use server::account::{Account, register};
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
+    GetPlaySourceRequest, GetPlaySourceResponse,
     GetPlaylistRequest, GetPlaylistResponse,
     GetTracksRequest, GetTracksResponse,
     ListUserPlaylistsRequest, ListUserPlaylistsResponse,
-    LogoutRequest, LogoutResponse, Platform, Playlist,
-    PlaylistTrackRef, QrLoginEvent, Track,
+    LogoutRequest, LogoutResponse, Platform, PlaySource,
+    Playlist, PlaylistTrackRef, QrLoginEvent, Track,
     WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
     auth_service_server::{AuthService, AuthServiceServer},
@@ -180,6 +181,9 @@ pub(crate) struct FakeUpstream {
     /// 解绑这条路由回的是 204,响应体里什么都没有 —— 除了数它,没有别的
     /// 办法分辨「真的转给上游了」与「什么都没干就回了 204」。
     pub(crate) logouts: Arc<Mutex<usize>>,
+    /// `GetPlaySource` 回的那一条源。`None` 表示上游给不出 —— 与真实平台
+    /// 「这首没有可播放的源」同义,不是一次 RPC 失败。
+    pub(crate) play_source: Option<PlaySource>,
     /// 每一次 `GetTracks` 收到的 id 批次,按到达顺序记下来。
     ///
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
@@ -298,6 +302,16 @@ impl CatalogService for FakeUpstream {
             .collect();
 
         Ok(Response::new(GetTracksResponse { tracks }))
+    }
+
+    async fn get_play_source(
+        &self,
+        _request: Request<GetPlaySourceRequest>,
+    ) -> Result<Response<GetPlaySourceResponse>, Status>
+    {
+        Ok(Response::new(GetPlaySourceResponse {
+            source: self.play_source.clone(),
+        }))
     }
 }
 

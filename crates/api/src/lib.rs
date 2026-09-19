@@ -10,6 +10,9 @@ mod auth;
 
 mod catalog;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod download;
+
 mod error;
 
 mod history;
@@ -39,6 +42,11 @@ pub use catalog::{
     search_tracks,
 };
 
+// wasm 这一期不做:浏览器里"落到本机"是另一套东西(File System Access
+// 或一次 <a download>),与两个原生端共用不了同一个写入口。
+#[cfg(not(target_arch = "wasm32"))]
+pub use download::download;
+
 pub use error::{ApiError, base_url};
 
 pub(crate) use error::server_error;
@@ -63,5 +71,5 @@ pub use playlists::{
 
 pub use contract::{
     NeteaseStatusDto, QrEventDto, QrLoginDto, StatsDto,
-    TopArtistDto,
+    TRIAL_ONLY, TopArtistDto, download_file_name,
 };
