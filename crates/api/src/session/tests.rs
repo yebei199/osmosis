@@ -115,6 +115,43 @@ fn session_path_is_none_without_either() {
     );
 }
 
+/// **同一台设备冷启动后还是同一个 id。**
+///
+/// 遥控器重连靠 `ClaimControl { resume }` 按 id 认人(#95):id 每次启动都变的话
+/// 永远走不到那一支,被控端会一直被一个已经不存在的设备锁着。
+#[test]
+fn the_device_id_survives_a_restart() {
+    // 与别的碰进程环境的测试串起来跑
+    let _guard = super::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    // 指到临时文件,免得动到真实的那一份;上一轮留下的也要清掉
+    let dir =
+        std::env::temp_dir().join("osmosis-device-id");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
+    unsafe {
+        std::env::set_var(
+            "OSMOSIS_DEVICE_FILE",
+            dir.join("device"),
+        );
+    }
+
+    assert_eq!(
+        self::device_id(|| "pc1-1234".to_owned()),
+        "pc1-1234",
+        "第一次启动该用现算的那个"
+    );
+    assert_eq!(
+        // 第二次冷启动:进程号换了
+        self::device_id(|| "pc1-5678".to_owned()),
+        "pc1-1234",
+        "冷启动后该还是同一台设备"
+    );
+}
+
 /// 存了再读,拿回同一个 token —— 这是"下次启动还登着"的全部含义。
 #[test]
 fn session_survives_a_restart() {

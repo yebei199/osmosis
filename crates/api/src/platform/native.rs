@@ -401,6 +401,43 @@ pub(crate) fn write_session(path: &Path, token: &str) {
     }
 }
 
+/// 设备 id 的落盘处,与会话、设置同一个基座。
+/// 可用 `OSMOSIS_DEVICE_FILE` 直接指定 —— 同一台机上跑第二个实例时,
+/// 指一份自己的才能在服务端算作两台设备(见 `ui::syncplay::identity_from`)。
+fn device_file() -> Option<PathBuf> {
+    if let Ok(explicit) =
+        std::env::var("OSMOSIS_DEVICE_FILE")
+    {
+        return Some(PathBuf::from(explicit));
+    }
+
+    session_path_from(
+        state_dir(),
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|path| path.with_file_name("device"))
+}
+
+/// 落盘的设备 id,没有就是这台机器第一次开。
+pub(crate) fn load_device() -> Option<String> {
+    let saved =
+        std::fs::read_to_string(device_file()?).ok()?;
+    let saved = saved.trim();
+
+    (!saved.is_empty()).then(|| saved.to_owned())
+}
+
+/// 存这台设备的 id。建目录与写文件那一套与会话文件逐字相同,故共用
+/// [`write_session`] —— 多出来的 0600 权限对它无害。
+pub(crate) fn save_device(id: &str) {
+    let Some(path) = device_file() else {
+        return;
+    };
+
+    write_session(&path, id);
+}
+
 /// 同 [`get_json`],但不解码,原样给字节。
 ///
 /// 带显式超时:这类 URL 指向外部 CDN(封面图),可能整段不可达 ——

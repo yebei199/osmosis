@@ -42,6 +42,20 @@ pub(crate) fn save_track_artwork(
 /// 没有磁盘缓存也就没什么可清 —— 浏览器自己的 HTTP 缓存在做这件事。
 pub(crate) fn sweep_track_artwork(_budget: u64) {}
 
+/// localStorage 里存设备 id 用的键。与会话分开:登出要删掉会话,
+/// 而这台机器还是这台机器。
+const DEVICE_KEY: &str = "osmosis.device";
+
+pub(crate) fn load_device() -> Option<String> {
+    storage()?.get_item(DEVICE_KEY).ok()?
+}
+
+pub(crate) fn save_device(id: &str) {
+    if let Some(storage) = storage() {
+        let _ = storage.set_item(DEVICE_KEY, id);
+    }
+}
+
 pub(crate) fn save_settings(raw: &str) {
     if let Some(storage) = storage() {
         let _ = storage.set_item(SETTINGS_KEY, raw);
