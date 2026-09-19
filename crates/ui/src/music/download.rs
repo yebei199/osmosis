@@ -84,45 +84,77 @@ pub(super) fn bind_download(ui: &MainWindow, deck: &Deck) {
     );
 }
 
-/// 起一次下载。所有"起不来"的理由在这里就说清楚,不进异步那一段。
+/// 起一次下载。
+///
+/// "起不来"的三种理由在这里就说清楚,一步都不进异步那一段 —— 异步里报出来的
+/// 失败,用户读到时已经离他按的那一下过去好几秒了。
 fn start(
     ui: &MainWindow,
     deck: &Deck,
     busy: &Rc<RefCell<HashSet<String>>>,
     id: String,
 ) {
-    let Some(store) = STORE.get() else {
-        crate::notice::show(
-            ui,
-            "这一端还不支持下载".to_owned(),
-        );
-        return;
-    };
-
-    if !busy.borrow_mut().insert(id.clone()) {
-        crate::notice::show(
-            ui,
-            "这一首已经在下了".to_owned(),
-        );
+    let store = STORE.get();
+    if let Some(why) =
+        refuse(store.is_some(), busy.borrow().contains(&id))
+    {
+        crate::notice::show(ui, why);
         return;
     }
+    let store = store.expect("refuse 刚判过它在");
 
     let (artists, title) = describe_track(deck, &id);
     let file_name =
         api::download_file_name(&artists, &title);
 
-    let (writer, commit) = match store.open(&file_name) {
-        Ok(opened) => opened,
-        Err(err) => {
-            busy.borrow_mut().remove(&id);
-            crate::notice::show(
+    match store.open(&file_name) {
+        Ok((writer, commit)) => {
+            busy.borrow_mut().insert(id.clone());
+            pump(
                 ui,
-                format!("存不下来: {err}"),
+                busy,
+                id,
+                store.location(),
+                writer,
+                commit,
             );
-            return;
         }
-    };
+        Err(err) => crate::notice::show(
+            ui,
+            format!("存不下来: {err}"),
+        ),
+    }
+}
 
+/// 起不来的理由,没有就是 `None`。
+///
+/// 拆出来是为了能单独测:这两句是用户唯一能看见的反馈,而它们上面那一段
+/// 要一个真的落点与一个跑着的事件循环才走得到。
+fn refuse(
+    has_store: bool,
+    already_busy: bool,
+) -> Option<String> {
+    if !has_store {
+        // 桌面与 web 都会走到这里(落点各自的那一期还没做)。
+        return Some("这一端还不支持下载".to_owned());
+    }
+    if already_busy {
+        // 网络一慢用户就会连点,而每一下都会开出一个新的待定条目 ——
+        // 音乐库里于是有两个同名文件,第二个多半还是半截的。
+        return Some("这一首已经在下了".to_owned());
+    }
+    None
+}
+
+/// 把字节从服务端搬到那个写入口,收尾时说一句话。
+fn pump(
+    ui: &MainWindow,
+    busy: &Rc<RefCell<HashSet<String>>>,
+    id: String,
+    location: String,
+    writer: Box<dyn std::io::Write + Send>,
+    commit: Box<dyn DownloadCommit>,
+) {
     let weak = ui.as_weak();
     ui.global::<Shell>().set_download_text(
         describe_progress(0, None).into(),
@@ -141,12 +173,13 @@ fn start(
     };
 
     let busy = Rc::clone(busy);
-    let location = store.location();
     slint::spawn_local(async move {
-        let result =
-            api::download(&id, writer, progress).await;
-        // 提交与丢弃都可能出错,而那一样是"没存下来"。
-        let outcome = match result {
+        let outcome = match api::download(
+            &id, writer, progress,
+        )
+        .await
+        {
+            // 提交也可能失败,而那一样是"没存下来"。
             Ok(()) => commit
                 .commit()
                 .map(|()| format!("已存到 {location}"))
@@ -159,14 +192,12 @@ fn start(
 
         busy.borrow_mut().remove(&id);
         let Some(ui) = weak.upgrade() else { return };
+        // 投影归零:下载这个状况结束了,没有计时器会来替它收。
         ui.global::<Shell>()
             .set_download_text(slint::SharedString::new());
         crate::notice::show(
             &ui,
-            match outcome {
-                Ok(done) => done,
-                Err(why) => why,
-            },
+            outcome.unwrap_or_else(|why| why),
         );
     })
     .expect("event loop must be running");
@@ -276,6 +307,33 @@ mod tests {
             "下载中 0.0 MB",
             "总数是 0 与不知道总数是同一件事,不能拿它当除数"
         );
+    }
+
+    /// 没有落点就直说,不要让用户对着一颗什么都不做的键点第二下。
+    #[test]
+    fn a_platform_without_a_store_says_so() {
+        assert_eq!(
+            refuse(false, false).as_deref(),
+            Some("这一端还不支持下载")
+        );
+    }
+
+    /// 同一首在飞时再点一下要被拦住:每一下都会开出一个新的待定条目,
+    /// 音乐库里于是有两个同名文件,第二个多半还是半截的。
+    #[test]
+    fn the_same_track_is_not_started_twice() {
+        assert_eq!(
+            refuse(true, true).as_deref(),
+            Some("这一首已经在下了")
+        );
+    }
+
+    /// 两个条件都满足就放行 —— 拦错了的现象是这首歌再也下不了,
+    /// 而界面上只有一句「已经在下了」。
+    #[test]
+    fn a_fresh_track_on_a_supported_platform_goes_through()
+    {
+        assert_eq!(refuse(true, false), None);
     }
 
     /// 试听片段要单独说。重试一万次也还是只有 30 秒,而笼统的
