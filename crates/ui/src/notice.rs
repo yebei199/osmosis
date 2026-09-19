@@ -54,6 +54,18 @@ pub fn show_to_profile(ui: &MainWindow, text: String) {
     show_at(ui, text, PROFILE_TAB);
 }
 
+/// 摆一条**持续性状况**的横幅:断流那一类。
+///
+/// 它不自带寿命 —— 那句话描述的是一个仍在成立的条件,该由条件的结束(声音
+/// 回来)来收,不该由计时器来收(见本模块开头)。但它仍然要经过这里:
+/// `banner-tab` 归这个模块管。绕过去直接写 `banner-text` 的话,上一条提示
+/// 留下的去处会挂到这一句上 —— 断流横幅于是成了「点一下跳个人页」,
+/// 而点它还顺手把这句话清掉。
+pub fn banner_without_link(ui: &MainWindow, text: String) {
+    ui.global::<Shell>().set_banner_tab(NOWHERE);
+    ui.global::<Shell>().set_banner_text(text.into());
+}
+
 /// 落一句提示,并说明它点下去去哪一页。
 fn show_at(ui: &MainWindow, text: String, tab: i32) {
     ui.global::<Shell>().set_banner_tab(tab);
@@ -73,6 +85,39 @@ fn show_at(ui: &MainWindow, text: String, tab: i32) {
 
 #[cfg(test)]
 mod tests {
+    use slint::ComponentHandle as _;
+
+    use crate::{MainWindow, Shell};
+
+    /// 上一条提示的去处不能挂到下一条横幅上。
+    ///
+    /// 提示被关掉或过期时清的只有文案,`banner-tab` 还留着 —— 下一条横幅
+    /// 若绕过本模块直接写文案,它就会继承那个去处。断流那句话于是变成
+    /// 「点一下跳个人页」,点它还顺手把断流的提示清掉。
+    #[test]
+    fn a_persistent_banner_never_inherits_the_last_link() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        super::show_to_profile(
+            &ui,
+            "网易云未登录,去个人页扫码绑定".to_owned(),
+        );
+        // 提示被收掉(关闭键只清文案),随后声音断了
+        ui.global::<Shell>()
+            .set_banner_text(slint::SharedString::new());
+        super::banner_without_link(
+            &ui,
+            "声音没了".to_owned(),
+        );
+
+        assert_eq!(
+            ui.global::<Shell>().get_banner_tab(),
+            -1,
+            "断流横幅不该点得动 —— 那会把人送到一个与断流无关的页面"
+        );
+    }
+
     /// 每个投影只有一个模块写得动它。
     ///
     /// 这条规矩本身是拦不住编译器的:往 `playback-text` 里写一句报错照样过编译,
