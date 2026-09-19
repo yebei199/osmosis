@@ -33,6 +33,11 @@ pub use contract::DeviceDto;
 pub enum SyncError {
     /// 连不上信令服务器,或连接中途断了。
     Signalling(String),
+    /// 服务端不认这个 token。
+    ///
+    /// 与 [`Self::Signalling`] 分开:那种失败该重试,这种不该 —— 换一个
+    /// token 之前,再连也只是再得到一个 401。
+    Unauthorized,
     /// WebRTC 那一侧出错:建连、协商、加轨。
     Peer(String),
     /// 收到一段读不懂的载荷。
@@ -47,6 +52,9 @@ impl core::fmt::Display for SyncError {
         match self {
             Self::Signalling(message) => {
                 write!(f, "信令错误: {message}")
+            }
+            Self::Unauthorized => {
+                write!(f, "登录已失效")
             }
             Self::Peer(message) => {
                 write!(f, "连接错误: {message}")

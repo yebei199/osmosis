@@ -17,6 +17,9 @@ const _: () = assert!(INBOX_CAPACITY > 0);
 /// 信令端点的路径。调用方只给主机地址,不必知道服务端把它挂在哪。
 const ENDPOINT: &str = "/signal";
 
+/// 服务端认不出 token 时的状态码。
+const UNAUTHORIZED: u16 = 401;
+
 /// 一条连着信令服务器的连接。
 pub struct Signalling {
     /// 服务端来信。
@@ -54,25 +57,60 @@ impl SignalSender {
     }
 }
 
+/// 握手失败的分类。401 单独拎出来:它是"这个 token 不作数了",
+/// 而不是"网络不好" —— 拿同一个 token 重试只会再得到一个 401。
+fn classify(
+    error: tokio_tungstenite::tungstenite::Error,
+) -> SyncError {
+    if let tokio_tungstenite::tungstenite::Error::Http(
+        response,
+    ) = &error
+        && response.status().as_u16() == UNAUTHORIZED
+    {
+        return SyncError::Unauthorized;
+    }
+    SyncError::Signalling(error.to_string())
+}
+
 impl Signalling {
     /// 连上并自报家门。
     ///
     /// `base_url` 形如 `ws://127.0.0.1:3000` —— 端点路径由本函数补上,
     /// 调用方不必知道服务端把它挂在哪。
+    ///
+    /// `token` 走 `Authorization: Bearer`:**账号由服务端从它定**,设备只自报
+    /// id 与名字。浏览器的 `WebSocket` 构造器设不了请求头,所以这条路径
+    /// 目前只有原生端走得通(服务端那侧同样的说明见 `server::signaling`)。
     pub async fn connect(
         base_url: &str,
         device: DeviceDto,
+        token: &str,
     ) -> Result<Self, SyncError> {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
-        let (socket, _) = tokio_tungstenite::connect_async(
-            format!("{base_url}{ENDPOINT}"),
-        )
-        .await
-        .map_err(|e| {
-            SyncError::Signalling(e.to_string())
-        })?;
+        let mut request = format!("{base_url}{ENDPOINT}")
+            .into_client_request()
+            .map_err(|e| {
+                SyncError::Signalling(e.to_string())
+            })?;
+        let credential = format!("Bearer {token}")
+            .parse()
+            .map_err(|_| {
+                SyncError::Signalling(
+                    "token 放不进请求头".to_owned(),
+                )
+            })?;
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, credential);
+
+        let (socket, _) =
+            tokio_tungstenite::connect_async(request)
+                .await
+                .map_err(classify)?;
         let (mut ws_tx, mut ws_rx) = socket.split();
 
         // 自报家门必须在**任何**其他消息之前:服务端在收到 Hello 之前不入册,

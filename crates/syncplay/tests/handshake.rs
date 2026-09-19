@@ -20,6 +20,10 @@ use syncplay::{Envelope, Peer, PeerRole, Signalling};
 use webrtc::media::Sample;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 
+/// 测试路由不鉴权,但 token 仍要是个合法的头值 —— 请求头里放不下的字符,
+/// 连接在发起之前就被本地拒了。
+const TOKEN: &str = "test-token";
+
 /// 起一个只有信令路由的服务端,端口交给系统分配。
 async fn start_signalling_server() -> SocketAddr {
     // 不鉴权的测试路由:本文件验的是同播链路,不是鉴权,起一个真数据库
@@ -56,6 +60,7 @@ async fn hello_puts_device_in_roster() {
     let mut host = Signalling::connect(
         &format!("ws://{addr}"),
         device("host"),
+        TOKEN,
     )
     .await
     .expect("连不上信令服务器");

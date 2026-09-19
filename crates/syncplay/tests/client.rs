@@ -20,6 +20,10 @@ use syncplay::{Client, DeviceDto, Event};
 /// 等一件事发生的上界。WebRTC 建连在回环上是百毫秒级,给足余量。
 const PATIENCE: Duration = Duration::from_secs(20);
 
+/// 测试路由不鉴权,但 token 仍要是个合法的头值 —— 请求头里放不下的字符,
+/// 连接在发起之前就被本地拒了。
+const TOKEN: &str = "test-token";
+
 /// 起一个只有信令路由的服务端,端口交给系统分配。
 async fn start_signalling_server() -> SocketAddr {
     // 不鉴权的测试路由:本文件验的是同播链路,不是鉴权,起一个真数据库
@@ -59,6 +63,7 @@ fn start_client(
     let client = Client::start(
         &format!("ws://{addr}"),
         device(id),
+        || Some(TOKEN.to_owned()),
         move |event| {
             let _ = events.send(event);
         },

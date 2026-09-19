@@ -166,20 +166,29 @@ pub fn handle_session_expiry(
     );
 
     if expired {
-        // 留下一行:清掉落盘的会话是**不可逆**的,而它此前一声不吭 ——
-        // 「一重启就要重登」这类报告因此无从查起,只知道文件没了,不知道谁删的。
-        // 这一行说出是哪一次请求的答复触发的。
-        log::warn!(
-            "会话被服务端判为失效,已清除本地登录态: {err}"
-        );
-
-        api::session::clear();
-        ui.global::<Session>().set_logged_in(false);
-        ui.global::<Session>()
-            .set_error("登录已失效,请重新登录".into());
+        to_login_page(ui, &format!("{err}"));
     }
 
     expired
+}
+
+/// 清掉登录态,把人送回登录页。
+///
+/// 两条路进来:HTTP 那侧拿到 `unauthorized`(见上),以及同播的信令被服务端
+/// 判为 401。两者是同一件事 —— token 不作数了 —— 所以善后也必须是同一份,
+/// 分两份写的话迟早只改了一处。
+///
+/// `cause` 只进日志:清掉落盘的会话是**不可逆**的,而它此前一声不吭 ——
+/// 「一重启就要重登」这类报告因此无从查起,只知道文件没了,不知道谁删的。
+pub(crate) fn to_login_page(ui: &MainWindow, cause: &str) {
+    log::warn!(
+        "会话被服务端判为失效,已清除本地登录态: {cause}"
+    );
+
+    api::session::clear();
+    ui.global::<Session>().set_logged_in(false);
+    ui.global::<Session>()
+        .set_error("登录已失效,请重新登录".into());
 }
 
 #[cfg(test)]
