@@ -495,3 +495,156 @@ fn a_failure_event_does_not_rewrite_the_role_line() {
         "角色一动没动"
     );
 }
+
+/// **无曲目、从个人页选远端**,被控端退出时遥控器要回本机(#102 F-003)。
+///
+/// 与上一条的差别全在入口:那条直接调 `Remote::select`,这条走用户真正走的路
+/// —— 个人页那张卡上的 `OutputStrip` 芯片,经 `Shell.set-output` 回调进来,
+/// 而且本机一首歌都没放过(`Player.has-track` 为假,控制条与抽屉整个不存在)。
+/// 现场报的正是这条路径上收不到撤权,所以入口不能省成直调。
+#[test]
+fn a_revoke_comes_home_even_when_nothing_ever_played() {
+    use slint::{ModelRc, VecModel};
+
+    let (ui, deck) = deck_window();
+    // 回调只有 `bind` 接得上 —— fixture 里那副 Deck 是 `detached` 的。
+    crate::remote::bind(&ui, &deck.remote);
+    ui.global::<crate::Shell>().set_devices(ModelRc::new(
+        VecModel::from(vec![crate::DeviceRow {
+            id: "pc".into(),
+            name: "pc1".into(),
+        }]),
+    ));
+    ui.global::<crate::Shell>().set_current_tab(2);
+
+    assert!(
+        !ui.global::<Player>().get_has_track(),
+        "这一条测的就是没放过歌的冷启动"
+    );
+
+    // 无头下条件元素惰性实例化,查一次把个人页逼出来。
+    let chip = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &ui, "输出到 pc1",
+    )
+    .next()
+    .expect("个人页上该有 pc1 那颗输出芯片");
+    chip.invoke_accessible_default_action();
+
+    assert!(
+        deck.remote.is_remote(),
+        "点了芯片就该把输出交给那台设备"
+    );
+
+    crate::remote::handle(
+        &Event::ControlRevoked {
+            by: "pc".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.is_remote(),
+        "被控端退出之后输出该回本机,而不是停在「状态已过期」"
+    );
+    assert_eq!(
+        ui.global::<crate::Shell>().get_output_id(),
+        "",
+        "芯片那一行也要跟着回本机 —— 现场看到的正是它还亮在 pc1 上"
+    );
+}
+
+/// 被控端失联十五秒,遥控器自己回本机(#102 F-003 的出口)。
+///
+/// 现场那次撤权丢在路上:服务端删了槽位、`try_send` 一发没送到,而遥控器这条
+/// socket 好好的、不会重连,于是重连那条自愈也走不到。它停在「遥控: 状态已过期」
+/// 一分钟,芯片还亮在 pc1 上,本机什么也放不了。这一条是那种情况下唯一的出口。
+///
+/// 时钟由 `give_up_if_lost_at` 收着 —— 十五秒的判断不能靠真的睡十五秒。
+#[test]
+fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
+ {
+    let (ui, deck) = deck_window();
+    crate::remote::bind(&ui, &deck.remote);
+    deck.remote.select("pc", "pc1");
+
+    let now = crate::remote::now_ms();
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                1_000,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+
+    // 轮询每一拍都问一次边沿,这里照它的顺序走一拍 —— 不问的话
+    // `was_remote` 一直是假,下面那条边沿断言测的就不是同一件事了。
+    assert!(
+        !deck.remote.took_local_edge(),
+        "声音还在那台设备上,这不是回本机"
+    );
+
+    assert!(
+        !deck.remote.give_up_if_lost_at(now + 14_000),
+        "才十四秒,抖一下不该把声音抢回本机"
+    );
+    assert!(
+        deck.remote.is_remote(),
+        "没失联就该还在那台设备上"
+    );
+
+    assert!(
+        deck.remote.give_up_if_lost_at(now + 16_000),
+        "十五秒过了就该收回来"
+    );
+    assert!(
+        !deck.remote.is_remote(),
+        "输出该回本机 —— 这正是现场卡住的那一步"
+    );
+    assert_eq!(
+        ui.global::<crate::Shell>().get_output_id(),
+        "",
+        "芯片也要跟着灭 —— 现场看到的是它还亮着"
+    );
+    assert!(
+        deck.remote.took_local_edge(),
+        "回本机那一拍要认得出来,自动续播才不会顺手起播"
+    );
+    assert!(
+        !deck.remote.give_up_if_lost_at(now + 99_000),
+        "已经回本机了就不该再收一次,否则每秒弹一条提示"
+    );
+}
+
+/// 服务端说没人在遥控本机,横幅与锁定态就该立刻撤掉(#102 F-004)。
+///
+/// 锁定态此前只有用户按「退出被遥控」才清,于是槽位一旦在本机不知情时没了,
+/// 这台就挂着假横幅、锁着本地播放,而横幅上那台设备早就不管它了。
+#[test]
+fn being_told_nobody_is_in_control_unlocks_the_local_transport()
+ {
+    let (ui, deck) = deck_window();
+    crate::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+    assert!(
+        deck.remote.is_controlled(),
+        "接管之后本机该是锁定的"
+    );
+
+    crate::remote::handle(
+        &Event::NotControlled,
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.is_controlled(),
+        "服务端都说没人遥控了,还锁着就是把本机白白废掉"
+    );
+    let _ = &ui;
+}

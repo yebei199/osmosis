@@ -26,11 +26,20 @@ const TOKEN: &str = "test-token";
 
 /// 起一个只有信令路由的服务端,端口交给系统分配。
 async fn start_signalling_server() -> SocketAddr {
+    start_signalling_server_with(
+        signaling::Timing::default(),
+    )
+    .await
+}
+
+/// 同上,但探活的时限由调用方给 —— 判死那条测试要一个不 Ping 的服务端。
+async fn start_signalling_server_with(
+    timing: signaling::Timing,
+) -> SocketAddr {
     // 不鉴权的测试路由:本文件验的是同播链路,不是鉴权,起一个真数据库
     // 只为了造一个 token 是本末倒置。鉴权本身在 server/tests/live_signaling.rs。
-    let app = signaling::unauthenticated_test_router(
-        signaling::Timing::default(),
-    );
+    let app =
+        signaling::unauthenticated_test_router(timing);
 
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -392,5 +401,49 @@ async fn pcm_survives_the_whole_syncplay_path() {
     assert!(
         energy > 0.001,
         "解出来的信号能量塌了({energy}):多半是采样率或声道数在某一环对不上"
+    );
+}
+
+/// 一帧都不来时,客户端自己判死这条连接 —— 不等 TCP 发现(#102 F-005)。
+///
+/// 移动网络上半开的 socket 不会有 FIN,`ws_rx.next()` 于是永远等下去:重连不
+/// 触发,重连时那条 resume claim 的自愈也就走不到,遥控器永久停在一个早就没了
+/// 的会话上。这里让服务端干脆不 Ping,再把判死的时限压到几百毫秒 —— 75 秒的
+/// 判断不能靠真的等 75 秒。
+#[tokio::test]
+async fn a_silent_connection_is_declared_dead() {
+    use std::time::Duration;
+
+    // Ping 间隔调到远大于本条测试的寿命 = 服务端一帧都不会主动发。
+    let addr =
+        start_signalling_server_with(signaling::Timing {
+            hello: Duration::from_secs(10),
+            ping_every: Duration::from_secs(3_600),
+            misses: 2,
+        })
+        .await;
+
+    let mut signalling = Signalling::connect_with_idle(
+        &format!("ws://{addr}"),
+        device("lonely"),
+        TOKEN,
+        Duration::from_millis(300),
+    )
+    .await
+    .expect("该连得上");
+
+    // 入册之后服务端会推一条名册,先把它读掉 —— 那一帧是正常流量。
+    let _ = signalling.next().await;
+
+    let verdict = tokio::time::timeout(
+        Duration::from_secs(5),
+        signalling.next(),
+    )
+    .await
+    .expect("判死不该拖过五秒 —— 拖过就是那道超时没接上");
+
+    assert!(
+        verdict.is_none(),
+        "静默超过时限就该判死,让编排循环去重连"
     );
 }

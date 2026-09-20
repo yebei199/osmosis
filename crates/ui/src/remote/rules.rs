@@ -92,6 +92,29 @@ pub fn describe_revoked(
     format!("遥控已被 {by} 接管")
 }
 
+/// 被控端失联了、该把输出收回本机吗。
+///
+/// 撤权是服务端尽力而为的一发,丢了之后没有第二次(`server::control` 的
+/// `send`)。遥控器这头的 socket 还好好的,不会重连,也就走不到重连那条
+/// 自愈;于是它永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
+/// 而本机什么也放不了(#102 F-003)。这一条是那种情况下唯一的出口。
+pub fn lost_remote(
+    output: &Output,
+    view: &RemoteView,
+    now_ms: u64,
+) -> bool {
+    output.target().is_some() && view.is_lost(now_ms)
+}
+
+/// 自动回本机时那句提示。
+///
+/// 必须说出是哪台设备、以及现在声音在哪儿:不说的话,用户只看到歌换了个
+/// 地方放,会以为是自己按错了。
+pub fn describe_lost(output: &Output) -> String {
+    let name = output.name().unwrap_or("那台设备");
+    format!("{name} 失联,已回到本机")
+}
+
 /// 这一下控制动作该不该发出去。
 ///
 /// 过期时不发:那份状态已经不知道被控端在干什么了,照着它发命令等于蒙 ——
@@ -188,6 +211,40 @@ mod tests {
         assert_eq!(
             describe_revoked(&Output::Local, "pc1"),
             "遥控已被 pc1 接管"
+        );
+    }
+
+    /// 失联要收回输出,而过期不要 —— 两档的去向相反。
+    #[test]
+    fn only_a_lost_device_takes_the_output_back() {
+        let view = view(RemotePlayState::Playing);
+
+        assert!(
+            !lost_remote(&remote(), &view, 10_000),
+            "过期了但没失联,声音该留在那台设备上"
+        );
+        assert!(lost_remote(&remote(), &view, 20_000));
+        assert!(
+            !lost_remote(&Output::Local, &view, 20_000),
+            "输出本来就在本机,没什么可收回的"
+        );
+        assert!(
+            !lost_remote(
+                &remote(),
+                &RemoteView::default(),
+                u64::MAX
+            ),
+            "一条上报都没来过,那是还没开始,不是失联"
+        );
+    }
+
+    /// 自动回本机那句话要说清是哪台设备、声音现在在哪。
+    #[test]
+    fn the_lost_notice_names_the_device_and_where_sound_went()
+     {
+        assert_eq!(
+            describe_lost(&remote()),
+            "pc1 失联,已回到本机"
         );
     }
 
@@ -303,6 +360,8 @@ mod tests {
         copy.push(describe_output(&Output::Local));
         copy.push(describe_controlled(None));
         copy.push(describe_revoked(&Output::Local, "pc1"));
+        copy.push(describe_lost(&remote()));
+        copy.push(describe_lost(&Output::Local));
         copy.push(describe_revoked(&remote(), "pc1"));
         for state in [
             RemotePlayState::Idle,

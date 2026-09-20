@@ -54,6 +54,8 @@ pub enum Event {
     ControlRevoked { by: String },
     /// 本机被这台设备接管了:进锁定态,挂「正被 xx 遥控」。
     ControlledBy { device: DeviceDto },
+    /// 本机其实没有被谁遥控 —— 服务端槽位上查不到。界面该解锁、撤横幅。
+    NotControlled,
     /// 遥控器发来一条命令。本机此刻是被控端。
     Command { cmd: RemoteCommand },
     /// 被控端报来的状态。本机此刻是遥控器。
@@ -358,10 +360,11 @@ async fn serve(
     // 重连之后**先确认还持不持权**,再由界面去要快照(`docs/adr/0030`)。
     // 带着手上那个代次:槽位已经换人时服务端只会回一条撤权,而不是让这台
     // 刚恢复网络的设备把接管者顶掉(产品规则:旧遥控器自动重连不夺回)。
-    if let Some(current) = held.as_ref() {
-        let _ = sender
-            .claim(&current.target, current.generation)
-            .await;
+    if let Some((target, generation)) =
+        resume_claim(held.as_ref())
+    {
+        let _ =
+            sender.claim(&target, Some(generation)).await;
     }
 
     loop {
@@ -392,6 +395,21 @@ async fn serve(
             events(Event::Failed(error.to_string()));
         }
     }
+}
+
+/// 重连时该不该重申控制权,以及带哪个代次。
+///
+/// 只有拿到过代次才续。代次是 `None` 意味着 `ControlGranted` 没回来过 ——
+/// 这一份控制权服务端从没确认过。带着 `resume: None` 去 claim 的话,服务端
+/// 会把它当成用户**主动**按下的接管(见 `server::control` 里 `revoked` 那段
+/// 过滤),于是一台刚恢复网络的设备会静默夺回一台它可能早就失去的设备,
+/// 而接管者那边什么都没做过 —— 产品规则正好相反:旧遥控器自动重连不夺回
+/// (#102 F-005)。
+fn resume_claim(
+    held: Option<&Held>,
+) -> Option<(String, u64)> {
+    let held = held?;
+    Some((held.target.clone(), held.generation?))
 }
 
 /// 处理一条服务端来信。
@@ -466,6 +484,10 @@ async fn accept(
         }
         ServerSignal::ControlledBy { device } => {
             events(Event::ControlledBy { device });
+            Ok(())
+        }
+        ServerSignal::NotControlled => {
+            events(Event::NotControlled);
             Ok(())
         }
     }
@@ -598,6 +620,31 @@ mod tests {
             next_backoff(RETRY_MAX / 2 + RETRY_MIN),
             RETRY_MAX,
             "越过上限要被压回上限"
+        );
+    }
+
+    /// 没拿到过代次就不重申控制权。
+    ///
+    /// 带 `resume: None` 去 claim 会被服务端当成用户主动接管,于是一台刚恢复
+    /// 网络的旧遥控器把接管者顶掉 —— 而那边什么都没做过(#102 F-005)。
+    #[test]
+    fn a_claim_without_a_generation_is_not_resumed() {
+        assert_eq!(resume_claim(None), None);
+        assert_eq!(
+            resume_claim(Some(&Held {
+                target: "pc".to_owned(),
+                generation: None,
+            })),
+            None,
+            "服务端从没确认过这一份权,重连时不许拿它去夺回"
+        );
+        assert_eq!(
+            resume_claim(Some(&Held {
+                target: "pc".to_owned(),
+                generation: Some(7),
+            })),
+            Some(("pc".to_owned(), 7)),
+            "确认过的才续,并且带上代次"
         );
     }
 

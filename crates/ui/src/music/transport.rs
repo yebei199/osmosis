@@ -270,6 +270,10 @@ pub(super) fn start_auto_advance(
         ADVANCE_POLL,
         move || {
             let Some(ui) = weak.upgrade() else { return };
+            // 被控端失联太久:把输出收回本机。排在边沿判断**之前** ——
+            // 同一拍里收回、认边沿、按停,分两拍的话中间那一拍会落到
+            // `should_advance` 上,从 0:00 起一首谁也没点过的歌(#102 之四)。
+            deck.remote.give_up_if_lost();
             // 刚从别的设备回到本机(对方退出被遥控、或者用户自己选回本机):
             // 把本机的状态机按停。它此刻还停在进遥控之前的 `Playing`,而
             // 播放器是空的 —— 直接落到下面那道 `should_advance` 上,就是

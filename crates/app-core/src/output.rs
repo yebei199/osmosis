@@ -47,6 +47,17 @@ impl Output {
 /// 从手机里放出来了,而他要的是让 pc1 放。
 const STALE_AFTER_MS: u64 = 3_000;
 
+/// 连着多久收不到上报就判定「这台设备失联了」,自动回本机。
+///
+/// 与 [`STALE_AFTER_MS`] 是两档,不是一档:过期只是「这几秒的状态不可信」,
+/// 而这一档是「它不会再回来了」。中间隔着十几秒,是留给一次正常的网络抖动 ——
+/// 抖一下就把人踢回本机,比停在过期上更烦人。
+///
+/// 非有不可:撤权是服务端尽力而为的一发(`server::control` 的 `send` 用
+/// `try_send` 且不重发),丢了之后遥控器的 socket 还好好的、不会重连,
+/// 于是它永久停在「遥控: 状态已过期」,谁也不来告诉它一声(#102 F-003)。
+const LOST_AFTER_MS: u64 = 15_000;
+
 /// 遥控器手上那份被控端状态。
 ///
 /// 只是一面镜子:队列、音量、进度全是被控端报过来的,遥控器不持有自己的那一份
@@ -106,6 +117,16 @@ impl RemoteView {
         self.is_known()
             && now_ms.saturating_sub(self.received_at_ms)
                 > STALE_AFTER_MS
+    }
+
+    /// 收到过上报,但连着 [`LOST_AFTER_MS`] 没有新的了 —— 这台设备失联了。
+    ///
+    /// 与 [`Self::is_stale`] 同一个形状、不同的档位与去向:过期只是禁用控制,
+    /// 失联要把输出切回本机。一条都没收到过时不算失联,那是「还没开始」。
+    pub fn is_lost(&self, now_ms: u64) -> bool {
+        self.is_known()
+            && now_ms.saturating_sub(self.received_at_ms)
+                > LOST_AFTER_MS
     }
 
     /// 现在该显示到第几毫秒。
@@ -296,6 +317,35 @@ mod tests {
 
         assert!(!view.is_stale(52_900));
         assert!(view.is_stale(53_100));
+    }
+
+    /// 十五秒收不到上报就算失联 —— 比过期晚得多,中间那段留给网络抖动。
+    ///
+    /// 两档必须分开:三秒就切回本机的话,一次正常的抖动就把声音从 pc1
+    /// 抢回手机里;而只有过期这一档的话,撤权一丢遥控器就永久停在那儿(#102 F-003)。
+    #[test]
+    fn a_view_is_only_lost_long_after_it_goes_stale() {
+        let mut view = RemoteView::default();
+        view.accept(
+            report(0, RemotePlayState::Playing, 1),
+            50_000,
+        );
+
+        assert!(view.is_stale(55_000), "五秒早就过期了");
+        assert!(
+            !view.is_lost(55_000),
+            "但还不算失联 —— 抖一下不该把人踢回本机"
+        );
+        assert!(!view.is_lost(64_900));
+        assert!(view.is_lost(65_100));
+    }
+
+    /// 一条上报都没收到过时不算失联,那是「还没开始」。
+    ///
+    /// 算的话,接管后头十五秒里但凡快照慢一点,就会被自己判死回本机。
+    #[test]
+    fn a_view_without_any_report_is_never_lost() {
+        assert!(!RemoteView::default().is_lost(u64::MAX));
     }
 
     /// 过期之后停止插值:那条进度条已经不知道真相了,别让它接着爬。
