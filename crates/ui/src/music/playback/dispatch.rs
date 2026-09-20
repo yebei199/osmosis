@@ -182,7 +182,10 @@ fn to_remote(
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
-    let Some(cmd) = as_command(ui, deck, &intent) else {
+    // 退出规矩先问,因为下一行就把意图交出去了。它只看变体,不看载荷。
+    let leaving = intent.leaving_rule();
+
+    let Some(cmd) = as_command(ui, deck, intent) else {
         // 翻不出命令只有一种情形:遥控时拖进度,而被控端报来的那份还没有
         // 曲目(刚接管、或者对面没在放)。这一下没有可发的东西。
         return unavailable(ui, deck);
@@ -195,7 +198,7 @@ fn to_remote(
     // 交出去之后才退出收听:一条没送出去的命令不该顺手把用户正在听的那路
     // 流也拆掉。规矩与本机路径同一份 —— 点歌与切歌是「这台不再收流了」,
     // ⏯ 与音量不是。
-    match intent.leaving_rule() {
+    match leaving {
         Leaving::ThenContinue => leave_listening(deck),
         Leaving::AndStop | Leaving::Stay => {}
     }
@@ -218,17 +221,17 @@ fn unavailable(ui: &MainWindow, deck: &Deck) -> Dispatched {
 ///
 /// ⏯ 按界面当下画的是 ⏸ 还是 ▶ 来定 —— 那个图标读的正是被控端报来的状态,
 /// 所以它就是对的那个判据。
+///
+/// 收所有权而不是借用:`Play` 拖着整批曲目,借用就得把它整个克隆一遍,
+/// 而那正是这条链上最大的那份数据。
 fn as_command(
     ui: &MainWindow,
     deck: &Deck,
-    intent: &Intent,
+    intent: Intent,
 ) -> Option<RemoteCommand> {
     Some(match intent {
         Intent::Play { tracks, index } => {
-            RemoteCommand::Play {
-                tracks: tracks.clone(),
-                index: *index,
-            }
+            RemoteCommand::Play { tracks, index }
         }
         Intent::TogglePlay => {
             if ui.global::<Player>().get_is_playing() {
@@ -245,7 +248,7 @@ fn as_command(
                 deck.remote.with_view(|view, _| {
                     view.track().and_then(|track| {
                         crate::progress::seek_target(
-                            *ratio,
+                            ratio,
                             track.duration_ms,
                         )
                     })
@@ -255,7 +258,7 @@ fn as_command(
             }
         }
         Intent::Volume { level } => {
-            RemoteCommand::Volume { level: *level }
+            RemoteCommand::Volume { level }
         }
     })
 }
