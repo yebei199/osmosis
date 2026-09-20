@@ -234,6 +234,21 @@ pub(super) fn play_current(ui: &MainWindow, deck: &Deck) {
     .expect("event loop must be running");
 }
 
+/// 回到本机输出:让本机的播放停在原地,不接着往下放。
+///
+/// 只按停,不清队列 —— 用户按一下播放键就能从这里接着听,而那一下是他自己按的。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn rest_local(ui: &MainWindow, deck: &Deck) {
+    if let Ok(player) = deck.player.as_ref() {
+        player.stop();
+    }
+    deck.playback.borrow_mut().stop();
+    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Player>().set_playback_text(
+        describe_playback(&PlaybackState::Idle).into(),
+    );
+}
+
 /// 自动续播:每秒看一眼,放空了就推进队列。
 ///
 /// rodio 没有"放完了"的回调,轮询是唯一的办法;判据抽在 [`should_advance`],
@@ -255,6 +270,13 @@ pub(super) fn start_auto_advance(
         ADVANCE_POLL,
         move || {
             let Some(ui) = weak.upgrade() else { return };
+            // 刚从别的设备回到本机(对方退出被遥控、或者用户自己选回本机):
+            // 把本机的状态机按停。它此刻还停在进遥控之前的 `Playing`,而
+            // 播放器是空的 —— 直接落到下面那道 `should_advance` 上,就是
+            // 从 0:00 起播一首谁也没点过的歌(#102 之四)。
+            if deck.remote.took_local_edge() {
+                rest_local(&ui, &deck);
+            }
             let (drained, position) =
                 match deck.player.as_ref() {
                     Ok(player) => {

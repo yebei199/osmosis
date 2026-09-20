@@ -61,6 +61,8 @@ struct Inner {
     inbox: Mutex<VecDeque<RemoteCommand>>,
     /// 封面已经取到哪一首了 —— 上报每秒一条,按它的频率取图等于每秒一次下载。
     cover_id: Mutex<String>,
+    /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
+    was_remote: Mutex<bool>,
     weak: slint::Weak<MainWindow>,
 }
 
@@ -101,6 +103,20 @@ impl Remote {
     /// 遥控器发来的下一条命令,没有则 `None`。
     pub fn take_command(&self) -> Option<RemoteCommand> {
         lock(&self.inner.inbox).pop_front()
+    }
+
+    /// 这一拍是不是刚从别的设备回到本机。**只答一次** —— 问过就落回平地。
+    ///
+    /// 遥控期间本机播放器是空的,而本机那台状态机还停在进遥控之前的
+    /// `Playing`。回到本机的那一拍不把它按停,自动续播就会当成「这一首放完了」
+    /// 而接上下一首 —— 用户什么也没点,歌却从 0:00 响起来(#102 之四)。
+    pub fn took_local_edge(&self) -> bool {
+        let now = self.is_remote();
+        let was = core::mem::replace(
+            &mut *lock(&self.inner.was_remote),
+            now,
+        );
+        was && !now
     }
 
     /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
@@ -222,6 +238,7 @@ pub fn new(ui: &MainWindow) -> Remote {
             controlled_by: Mutex::new(None),
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
+            was_remote: Mutex::new(false),
             weak: ui.as_weak(),
         }),
     }

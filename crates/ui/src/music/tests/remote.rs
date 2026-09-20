@@ -373,6 +373,51 @@ fn a_remote_toggle_does_not_touch_the_local_transport() {
     );
 }
 
+/// 被控端退出之后,本机回到停止态 —— 不自动接着放。
+///
+/// 遥控期间本机播放器是空的,而本机那台状态机还停在进遥控之前的 `Playing`:
+/// 回到本机那一拍不按停它,自动续播就当成「这一首放完了」接上下一首,
+/// 于是平板上从 0:00 响起一首谁也没点过的歌(#102 之四)。
+#[test]
+fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
+ {
+    let (ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+    assert!(
+        !deck.remote.took_local_edge(),
+        "声音还在那台设备上,这不是回本机"
+    );
+
+    crate::remote::handle(
+        &Event::ControlRevoked { by: "pc".to_owned() },
+        &deck.remote,
+    );
+
+    assert!(
+        deck.remote.took_local_edge(),
+        "退回本机那一拍该认得出来"
+    );
+    assert!(
+        !deck.remote.took_local_edge(),
+        "只认一次 —— 每拍都认就是每秒把本机按停一次"
+    );
+
+    ui.global::<Player>().set_is_playing(true);
+    rest_local(&ui, &deck);
+
+    assert!(
+        !ui.global::<Player>().get_is_playing(),
+        "回到本机该停着"
+    );
+    assert!(
+        matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Idle
+        ),
+        "状态机也得停 —— 不停的话自动续播每秒都会再撞进来"
+    );
+}
+
 // ── 同播事件的落地 ──
 
 /// 名册推到界面上,自己那一台被滤掉。
