@@ -65,16 +65,30 @@ export component RingControl inherits Rectangle {
 
 // 同播区:有设备列 chips,点一台推过去;一台都没有时写明原因 ——
 // **常驻**,不随名册隐藏。上一版设备区在单实例时整块消失,同播功能等于不存在。
+//
+// 行首那句「同播」也常驻:只在名册为空时才写标题的话,有设备时这一行就是
+// 一排光秃秃的设备名,紧跟在「输出 本机 pc1」下面 —— 看起来正是同一台设备
+// 被画了两遍(#102 之二)。两行都带标题,才分得出哪行是哪个动作。
 export component SyncStrip inherits HorizontalLayout {
     in property <[DeviceRow]> devices;
     callback push-to(string);
 
     spacing: 8px;
 
+    VerticalLayout {
+        alignment: center;
+        sync-label := Text {
+            text: "同播";
+            font-family: "Maple Mono NF CN";
+            color: Theme.text-faint;
+            font-size: 12px;
+        }
+    }
+
     if root.devices.length == 0: VerticalLayout {
         alignment: center;
         sync-empty := Text {
-            text: "同播: 没有其他设备";
+            text: "没有其他设备";
             font-family: "Maple Mono NF CN";
             color: Theme.text-faint;
             font-size: 12px;

@@ -379,7 +379,8 @@ fn playback_copy_only_uses_subset_glyphs() {
     // 不经过 describe_playback 的固定文案,单独列上。
     copy.push(QUEUE_DONE.to_owned());
     copy.push(WASM_NOTICE.to_owned());
-    copy.push("同播: 没有其他设备".to_owned());
+    copy.push("同播".to_owned());
+    copy.push("没有其他设备".to_owned());
     // 下载那几句。它们同样进横幅与抽屉,而那两处都用子集字体
     // (见 `music/download.rs`)。
     copy.extend([
