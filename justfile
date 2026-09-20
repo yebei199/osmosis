@@ -58,10 +58,9 @@ ci-test: pg
     nix-shell slint.nix --run 'cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
+# web / iOS 已冻结(#105),不在此列 —— 解冻前不再为它们付编译税
 [group('ci')]
 ci-cross:
-    nix-shell slint.nix --run 'cargo check -p app-web --target wasm32-unknown-unknown'
-    nix-shell slint.nix --run 'cargo check -p app-ios --target aarch64-apple-ios'
     nix-shell Android.nix --run 'cargo check -p app-android --target aarch64-linux-android'
 
 # 架构边界(docs/adr/0001、0002)。与 CI 调的是同一份 xtask 代码

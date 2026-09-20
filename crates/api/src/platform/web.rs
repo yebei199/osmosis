@@ -10,6 +10,10 @@ const SESSION_KEY: &str = "osmosis.session";
 /// 与会话分成两个键:登出要删掉会话,而音量该留着。
 const SETTINGS_KEY: &str = "osmosis.settings";
 
+/// 浏览器里没有"状态目录"这回事 —— 落盘走 localStorage。
+/// 空实现只为让两侧签名一致,原生那边的入口不必给 wasm 开一条岔路。
+pub fn set_state_dir(_dir: std::path::PathBuf) {}
+
 pub(crate) fn load_settings() -> Option<String> {
     storage()?.get_item(SETTINGS_KEY).ok()?
 }
@@ -37,6 +41,20 @@ pub(crate) fn save_track_artwork(
 
 /// 没有磁盘缓存也就没什么可清 —— 浏览器自己的 HTTP 缓存在做这件事。
 pub(crate) fn sweep_track_artwork(_budget: u64) {}
+
+/// localStorage 里存设备 id 用的键。与会话分开:登出要删掉会话,
+/// 而这台机器还是这台机器。
+const DEVICE_KEY: &str = "osmosis.device";
+
+pub(crate) fn load_device() -> Option<String> {
+    storage()?.get_item(DEVICE_KEY).ok()?
+}
+
+pub(crate) fn save_device(id: &str) {
+    if let Some(storage) = storage() {
+        let _ = storage.set_item(DEVICE_KEY, id);
+    }
+}
 
 pub(crate) fn save_settings(raw: &str) {
     if let Some(storage) = storage() {

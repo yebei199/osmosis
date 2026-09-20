@@ -36,6 +36,17 @@ fn android_main(app: slint::android::AndroidApp) {
     );
     log::info!("{} starting", env!("CARGO_CRATE_NAME"));
 
+    // 会话、设置、封面与设备 id 的落点。安卓上 XDG_STATE_HOME 与 HOME 都没有,
+    // 应用私有目录只有这一层拿得到 —— 不给的话一样都不落盘,现象是每次冷启动
+    // 都回到登录页、设备 id 也跟着换(#100)。必须赶在 ui::run_with_renderers
+    // 之前(登录态在那里恢复),也要赶在 init 之前(它会把 app 吃掉)。
+    match app.internal_data_path() {
+        Some(dir) => ui::set_state_dir(dir),
+        None => log::warn!(
+            "拿不到应用私有目录,登录态与设备 id 存不下来"
+        ),
+    }
+
     // APK 由系统启动,拿不到运行时环境变量(桌面那边是 `SLINT_MCP_PORT=8090 cargo run`)。
     // 故把构建期的端口烧进二进制,再在这里塞回进程环境 —— 必须赶在下面 android::init
     // 之前,后端初始化时才会读到它并起 MCP server。端口真源见 justfile 的 mcp_port。
