@@ -34,11 +34,18 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
+      # ghcr 上 osmosis-server 这个包之前是主路由用个人 PAT 手工推的,没有与
+      # 仓库关联,GITHUB_TOKEN 对陌生包只有 read,推送会报
+      # `denied: permission_denied: read_package`。GHCR_TOKEN 是仓库 secret
+      # 里配的带 write:packages 的 PAT,先用它把包关联上仓库(见下面的
+      # source 标签),下次发版起 GITHUB_TOKEN 就够用,PAT 可以撤。secret 不存在
+      # 时表达式短路成空字符串是假值,`||` 落回 github.token,不会因为没配
+      # GHCR_TOKEN 就整个失败。
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ github.token }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
 
       # tag 是 v0.1.6 这样的 refname,ghcr 的版本号约定不带前导 v;workflow_dispatch
       # 没有 tag,退回 `dispatch` 这个占位版本,与下面 push-only 的 Release 步骤
@@ -53,6 +60,9 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # source 标签把包与本仓库关联起来:ghcr 按这个标签认领包的归属仓库,
+      # 认领之后 GITHUB_TOKEN 对它就有 write 权限,不再依赖 GHCR_TOKEN 这个
+      # PAT。首次推送前包还没关联,这一步本身仍要用上面的 GHCR_TOKEN 登录。
       - uses: docker/build-push-action@v6
         id: build_push
         with:
@@ -63,6 +73,8 @@ jobs:
           tags: |
             ghcr.io/yebei199/osmosis-server:${{ steps.image_tags.outputs.version }}
             ghcr.io/yebei199/osmosis-server:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/yebei199/osmosis
 
       # digest 是 infra 侧钉版本要的唯一凭据(见 issue #101 的教训:空 digest
       # 曾被错误地钉进过 infra 清单)。只有打了 tag 的 push 才有 Release 可写,
@@ -191,7 +203,12 @@ jobs:
     # 只判 ref 不够:对着一个 tag ref 手动发 workflow_dispatch 也会匹配
     # startsWith(ref, 'refs/tags/'),而 issue 明写 workflow_dispatch 那条路径
     # 只能 upload artifact、不许 create release。event_name 把这种误用也挡住。
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    #
+    # `always() && needs.build.result == 'success'`:默认的隐式条件是"所有
+    # needs 都成功",server-image 一失败,整个 release job 会被跳过,连桌面
+    # 那份 Release 也一起丢掉——这次返工的起因就是这个。桌面 Release 只依赖
+    # build,不依赖镜像是否推送成功(AC-3)。
+    if: always() && needs.build.result == 'success' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -200,10 +217,20 @@ jobs:
           name: osmosis-desktop-x86_64-linux
           path: dist
 
-      - uses: actions/download-artifact@v4
+      - name: 下载镜像 digest 说明
+        if: needs.server-image.result == 'success'
+        uses: actions/download-artifact@v4
         with:
           name: server-image-digest
           path: dist
+
+      # server-image 失败时没有上一步的产物可下——digest-note.txt 缺席,
+      # 用一条指向本次 run 的占位说明顶上,Release 本身仍然照发。
+      - name: 镜像作业未成功时写占位说明
+        if: needs.server-image.result != 'success'
+        run: |
+          mkdir -p dist
+          echo "server-image job 本次未成功(${{ needs.server-image.result }}),ghcr 镜像与 digest 缺席,详情见 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > dist/digest-note.txt
 
       # gh 默认从本地 git remote 认仓库;这个 job 没有 actions/checkout,工作
       # 目录不是 git 仓库,所以要显式给 GH_REPO。GITHUB_REPOSITORY 不顶用——
