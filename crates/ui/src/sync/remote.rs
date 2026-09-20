@@ -23,7 +23,7 @@ use syncplay::{Client, DeviceDto};
 pub(crate) use rules::{
     accepts_control, describe_controlled, describe_lost,
     describe_output, describe_remote, describe_revoked,
-    lost_remote,
+    describe_unavailable, lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -64,6 +64,13 @@ struct Inner {
     cover_id: Mutex<String>,
     /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
     was_remote: Mutex<bool>,
+    /// 测试里记下真的交出去了哪些命令。
+    ///
+    /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
+    /// 就不回报结果 —— 于是「这一下到底发没发出去」在测试里根本观察不到,
+    /// 而遥控器侧要钉的恰好就是它(全仓此前没有一条测试走过这条路)。
+    #[cfg(test)]
+    sent: Mutex<Vec<RemoteCommand>>,
     weak: slint::Weak<MainWindow>,
 }
 
@@ -126,8 +133,37 @@ impl Remote {
             "遥控提交: {} -> {target} 已交给客户端",
             cmd.summary()
         );
+        #[cfg(test)]
+        lock(&self.inner.sent).push(cmd.clone());
         client.command(cmd);
         true
+    }
+
+    /// 测试里问:到此为止交出去了哪些命令。
+    #[cfg(test)]
+    pub(crate) fn sent_commands(&self) -> Vec<RemoteCommand> {
+        lock(&self.inner.sent).clone()
+    }
+
+    /// 测试里塞一份**指定到达时刻**的上报。
+    ///
+    /// [`handle`] 那条路把 `now_ms()` 写进去,于是「一份已经过期的上报」在
+    /// 测试里根本造不出来 —— 而过期恰恰是 `docs/adr/0030` 那条「禁用控制但
+    /// 不切回本机」唯一生效的时刻。
+    #[cfg(test)]
+    pub(crate) fn accept_report_at(
+        &self,
+        state: RemoteStateDto,
+        now_ms: u64,
+    ) {
+        lock(&self.inner.view).accept(state, now_ms);
+    }
+
+    /// 目标在别的设备、而这一下没提交出去时,界面该说的那句话。
+    ///
+    /// 文案要点出是哪台设备,所以它得读 `output` —— 那一份不出这个模块。
+    pub fn unavailable_notice(&self) -> String {
+        describe_unavailable(&lock(&self.inner.output))
     }
 
     /// 遥控器发来的下一条命令,没有则 `None`。
@@ -314,6 +350,8 @@ pub fn new(ui: &MainWindow) -> Remote {
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
             was_remote: Mutex::new(false),
+            #[cfg(test)]
+            sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
         }),
     }

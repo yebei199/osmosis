@@ -1,61 +1,12 @@
 //! 传输核心:起播一首、播放状态的每帧推送,以及放完自动接上下一首。
+//!
+//! ⏯ 那一下不在这里:它要先知道这一下落在哪台设备上,归 `dispatch`。
 
 use super::*;
 use crate::Player;
 use crate::Shell;
 use crate::Viz;
 use crate::music::*;
-
-/// ⏯ 这一下:退出收听 / 暂停 / 继续 / 重放。
-///
-/// 从回调里抽出来,是因为系统媒体控件按的也是这一下 —— 那边不该有第二套说法
-/// (见 [`dispatch_media`])。
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn toggle_play(
-    ui: &MainWindow,
-    deck: &Deck,
-) {
-    // 被遥控期间本机上的播放动作不算数,直到按「退出被遥控」(产品规则)。
-    if deck.remote.is_controlled() {
-        return;
-    }
-    // 遥控时这一下是发给那台设备的:按界面当下画的是 ⏸ 还是 ▶ 来定 ——
-    // 那个图标读的正是被控端报来的状态,所以它就是对的那个判据。
-    if deck.remote.is_remote() {
-        let cmd = if ui.global::<Player>().get_is_playing()
-        {
-            app_core::RemoteCommand::Pause
-        } else {
-            app_core::RemoteCommand::Resume
-        };
-        deck.remote.send(cmd);
-        return;
-    }
-
-    if deck.sync.is_listening() {
-        deck.sync.leave();
-        if let Ok(player) = deck.player.as_ref() {
-            player.stop();
-        }
-        ui.global::<Player>().set_is_playing(false);
-        return;
-    }
-
-    let Ok(player) = deck.player.as_ref() else {
-        return;
-    };
-    if ui.global::<Player>().get_is_playing() {
-        player.pause();
-        ui.global::<Player>().set_is_playing(false);
-    } else if !player.empty() {
-        // 暂停中,接着放。
-        player.resume();
-        ui.global::<Player>().set_is_playing(true);
-    } else {
-        // 放空了(队列结束后又按了播放):重放当前这首。
-        play_current(ui, deck);
-    }
-}
 
 /// 放队列的当前曲目:取直链 → 开流 → 解码 → 出声,经 `app_core::play` 记账。
 #[cfg(not(target_arch = "wasm32"))]

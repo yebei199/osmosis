@@ -44,7 +44,7 @@ fn a_remote_pause_command_stops_the_local_transport() {
     let (ui, deck) = deck_window();
     ui.global::<Player>().set_is_playing(true);
 
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Pause,
@@ -59,7 +59,7 @@ fn a_remote_resume_command_starts_the_local_transport() {
     let (ui, deck) = deck_window();
     ui.global::<Player>().set_is_playing(false);
 
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Resume,
@@ -75,7 +75,7 @@ fn a_remote_resume_command_starts_the_local_transport() {
 fn a_remote_volume_command_is_clamped_before_it_lands() {
     let (ui, deck) = deck_window();
 
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Volume { level: 1.5 },
@@ -97,7 +97,7 @@ fn a_remote_play_command_loads_the_whole_batch() {
         track_with_id("c"),
     ];
 
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Play {
@@ -122,7 +122,7 @@ fn a_remote_play_command_loads_the_whole_batch() {
 #[test]
 fn a_remote_next_command_advances_the_queue() {
     let (ui, deck) = deck_window();
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Play {
@@ -134,7 +134,7 @@ fn a_remote_next_command_advances_the_queue() {
         },
     );
 
-    apply_remote(&ui, &deck, app_core::RemoteCommand::Next);
+    execute(&ui, &deck, app_core::RemoteCommand::Next);
 
     assert_eq!(
         deck.queue.borrow().current().map(|t| t.id.clone()),
@@ -146,7 +146,7 @@ fn a_remote_next_command_advances_the_queue() {
 #[test]
 fn a_remote_prev_command_steps_back() {
     let (ui, deck) = deck_window();
-    apply_remote(
+    execute(
         &ui,
         &deck,
         app_core::RemoteCommand::Play {
@@ -158,7 +158,7 @@ fn a_remote_prev_command_steps_back() {
         },
     );
 
-    apply_remote(&ui, &deck, app_core::RemoteCommand::Prev);
+    execute(&ui, &deck, app_core::RemoteCommand::Prev);
 
     assert_eq!(
         deck.queue.borrow().current().map(|t| t.id.clone()),
@@ -182,7 +182,7 @@ fn being_controlled_locks_the_local_transport() {
     );
     ui.global::<Player>().set_is_playing(true);
 
-    toggle_play(&ui, &deck);
+    dispatch(&ui, &deck, Intent::TogglePlay);
 
     assert!(deck.remote.is_controlled(), "该进锁定态");
     assert!(
@@ -366,7 +366,7 @@ fn a_remote_toggle_does_not_touch_the_local_transport() {
     );
     ui.global::<Player>().set_is_playing(true);
 
-    toggle_play(&ui, &deck);
+    dispatch(&ui, &deck, Intent::TogglePlay);
 
     assert!(
         deck.remote.is_remote(),
