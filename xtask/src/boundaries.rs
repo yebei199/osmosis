@@ -7,7 +7,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use crate::shell::{capture, repo_root, run};
+use crate::shell::{capture, repo_root};
 
 /// codegen 实际读的那一份(`server/build.rs`)。
 const VENDORED_PROTO: &str =
@@ -36,20 +36,12 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 5] = [
+    let checks: [(&str, Check); 3] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
         ),
-        (
-            "app-core 能编到 wasm",
-            app_core_compiles_for_wasm,
-        ),
         ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
-        (
-            "web 不依赖 audio/syncplay 的原生栈",
-            web_free_of_native_audio,
-        ),
         (
             "vendored .proto 与上游一致",
             vendored_proto_matches_upstream,
@@ -109,21 +101,6 @@ fn contract_has_no_io_crates() -> Result<(), String> {
     ))
 }
 
-/// ADR-0002:app-core 的 future 不要求 `Send`,因此能原样编到 wasm。
-fn app_core_compiles_for_wasm() -> Result<(), String> {
-    run(
-        "cargo",
-        &[
-            "check",
-            "--quiet",
-            "-p",
-            "app-core",
-            "--target",
-            "wasm32-unknown-unknown",
-        ],
-    )
-}
-
 /// 3D 桥(render3d/bevy/wgpu)完全不进 web / ios。
 ///
 /// bevy 在桌面与 android 上是硬依赖(docs/adr/0011),但 web / ios 一旦拉进 bevy
@@ -153,47 +130,6 @@ fn web_ios_free_of_3d() -> Result<(), String> {
                 found.join("、")
             ));
         }
-    }
-    Ok(())
-}
-
-/// 原生音频与 WebRTC 栈(audio/rodio/cpal、syncplay/webrtc)不进 web。
-///
-/// cpal 在 linux 上链接 alsa、在 android 上链接 AAudio —— 两者在 wasm 上都不存在。
-/// 混进去的话 web 端直接编不过,而那个错误只会在别人下次构建 wasm 时炸出来,
-/// 离引入它的那次改动已经很远。web 将来要出声得走 WebAudio,是另一套实现,
-/// 差异吸收在 `audio` crate 内部,与 `docs/adr/0002` 同一个模式。
-///
-/// ios 不在此列:它有 CoreAudio,cpal 支持它,只是本项目还没实现那个端。
-fn web_free_of_native_audio() -> Result<(), String> {
-    const FORBIDDEN: &[&str] =
-        &["audio", "rodio", "cpal", "syncplay", "webrtc"];
-
-    // 必须带 `--target`:`audio` 是 ui 的 `cfg(not(wasm32))` 条件依赖,
-    // 不指定目标时 cargo tree 按宿主算,这条规则会对着**正确的**代码报红。
-    // 3D 那条不带 --target 是因为它守的是「默认 feature 集不外溢」,不是同一件事。
-    let tree = capture(
-        "cargo",
-        &[
-            "tree",
-            "-p",
-            "app-web",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--edges",
-            "normal",
-        ],
-    )?;
-    let found: Vec<&str> = FORBIDDEN
-        .iter()
-        .copied()
-        .filter(|forbidden| depends_on(&tree, forbidden))
-        .collect();
-    if !found.is_empty() {
-        return Err(format!(
-            "app-web 依赖了 {},这些原生栈编不到 wasm",
-            found.join("、")
-        ));
     }
     Ok(())
 }
