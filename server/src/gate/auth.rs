@@ -12,8 +12,8 @@ use axum::{
 use contract::ErrorDto;
 use sqlx::PgPool;
 
-use crate::store::account::{self, Account};
 use crate::error;
+use crate::store::account::{self, Account};
 
 /// `Authorization: Bearer <token>` 的前缀。
 const BEARER: &str = "Bearer ";

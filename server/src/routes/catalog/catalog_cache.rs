@@ -5,15 +5,15 @@
 use contract::TrackDto;
 use std::collections::HashSet;
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
         GetPlaylistResponse, GetTracksRequest, Platform,
     },
 };
-use server::error::Failure;
 use server::error;
+use server::error::Failure;
+use server::store::account::Account;
 use server::store::cache;
 
 use crate::{AppState, conn, fail};

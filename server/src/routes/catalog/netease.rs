@@ -15,7 +15,6 @@ use contract::{
     NeteaseStatusDto, QR_WAITING, QrEventDto, QrLoginDto,
 };
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -24,6 +23,7 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
+use server::store::account::Account;
 
 use crate::{AppState, fail};
 

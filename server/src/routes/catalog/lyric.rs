@@ -6,12 +6,12 @@ use axum::{
 };
 use contract::LyricDto;
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{GetLyricRequest, Platform},
 };
 use server::error::Failure;
+use server::store::account::Account;
 
 use crate::{AppState, fail};
 

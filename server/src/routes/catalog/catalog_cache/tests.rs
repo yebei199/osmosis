@@ -268,13 +268,14 @@ async fn fill_details_reports_only_the_ids_the_platform_skipped()
     );
 
     // 平台肯给的那首必须落进库里,否则下次还要重问一遍
-    let still_missing = server::store::cache::missing_details(
-        &mut conn,
-        "netease",
-        std::slice::from_ref(&given),
-    )
-    .await
-    .expect("查缺失详情失败");
+    let still_missing =
+        server::store::cache::missing_details(
+            &mut conn,
+            "netease",
+            std::slice::from_ref(&given),
+        )
+        .await
+        .expect("查缺失详情失败");
     assert_eq!(
         still_missing,
         Vec::<String>::new(),

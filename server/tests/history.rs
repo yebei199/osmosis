@@ -2,8 +2,8 @@
 //!
 //! 每个测试在自己的事务里跑完就回滚。起库见 `just pg`。
 
-use server::store::account::{Account, register};
 use server::error::AppError;
+use server::store::account::{Account, register};
 use server::store::playlist::TrackRef;
 use server::store::{db, history};
 use sqlx::{PgPool, Postgres, Transaction};

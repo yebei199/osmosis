@@ -9,9 +9,9 @@ use axum::{
     extract::FromRequestParts, http::Request,
     http::StatusCode,
 };
+use server::error::AppError;
 use server::store::account::{self, Account, register};
 use server::store::db;
-use server::error::AppError;
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// 与 `main.rs` 的默认值一致。那个常量属于进程装配,不在 lib 里,

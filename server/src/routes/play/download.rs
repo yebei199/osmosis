@@ -27,7 +27,6 @@ use contract::{ErrorDto, TRIAL_ONLY, download_file_name};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -36,6 +35,7 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
+use server::store::account::Account;
 
 use crate::routes::play::PLAY_QUALITY;
 use crate::{AppState, fail};

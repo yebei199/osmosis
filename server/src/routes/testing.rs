@@ -17,7 +17,6 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 
-use server::store::account::{Account, register};
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
@@ -40,6 +39,7 @@ use server::bangdream::proto::{
         LibraryService, LibraryServiceServer,
     },
 };
+use server::store::account::{Account, register};
 use server::store::db;
 
 use crate::{AppState, Upstream};

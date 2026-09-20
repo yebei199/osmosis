@@ -9,7 +9,6 @@ use contract::{PlaylistDto, PlaylistsDto, TracksDto};
 use serde::Deserialize;
 use tonic::transport::Channel;
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -19,10 +18,11 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
-use server::error::Failure;
-use server::store::playlist::{self, TrackRef};
 use server::error;
+use server::error::Failure;
+use server::store::account::Account;
 use server::store::cache;
+use server::store::playlist::{self, TrackRef};
 
 use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,

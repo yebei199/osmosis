@@ -10,9 +10,9 @@ use contract::{
     SessionDto,
 };
 
-use server::store::account::{self, Account};
 use server::error;
 use server::error::Failure;
+use server::store::account::{self, Account};
 
 use crate::{AppState, conn};
 

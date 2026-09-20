@@ -9,13 +9,13 @@ use contract::{
     PlayedDto, StatsDto, TopArtistDto, TracksDto,
 };
 
-use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{GetTracksRequest, Platform},
 };
 use server::error;
 use server::error::Failure;
+use server::store::account::Account;
 use server::store::history;
 use server::store::playlist::TrackRef;
 

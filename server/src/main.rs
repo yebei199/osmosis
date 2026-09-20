@@ -28,37 +28,39 @@ use server::bangdream::proto::{
     discover_service_client::DiscoverServiceClient,
     library_service_client::LibraryServiceClient,
 };
+use server::error;
 use server::error::Failure;
 use server::gate::ratelimit::{RateLimiter, SharedLimiter};
+use server::store::db;
 use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
 };
-use server::error;
-use server::store::db;
 
 mod routes;
 
 use routes::auth::{health, login, logout, register};
-use routes::library::history::{recent, record_play, stats};
-use routes::library::likes::{
-    like_track, liked, liked_ids, subscribe_playlist,
-    unlike_track, unsubscribe_playlist,
-};
 use routes::catalog::lyric::lyric;
 use routes::catalog::netease::{
     create_qr, qr_state, status as netease_status, unbind,
-};
-use routes::play::download::download;
-use routes::play::play;
-use routes::library::playlists::{
-    add_playlist_tracks, create_playlist, delete_playlist,
-    platform_playlist_tracks, playlist_tracks, playlists,
-    remove_playlist_tracks, rename_playlist,
 };
 use routes::catalog::search::{
     artist_tracks, daily, search_artists, search_playlists,
     search_tracks,
 };
+use routes::library::history::{
+    recent, record_play, stats,
+};
+use routes::library::likes::{
+    like_track, liked, liked_ids, subscribe_playlist,
+    unlike_track, unsubscribe_playlist,
+};
+use routes::library::playlists::{
+    add_playlist_tracks, create_playlist, delete_playlist,
+    platform_playlist_tracks, playlist_tracks, playlists,
+    remove_playlist_tracks, rename_playlist,
+};
+use routes::play::download::download;
+use routes::play::play;
 
 /// 默认监听地址。
 ///
