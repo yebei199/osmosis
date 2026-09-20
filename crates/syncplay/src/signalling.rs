@@ -23,6 +23,19 @@ const ENDPOINT: &str = "/signal";
 /// 服务端认不出 token 时的状态码。
 const UNAUTHORIZED: u16 = 401;
 
+/// 连着这么久一帧都没收到,就判这条连接死了。
+///
+/// 服务端每 30 秒 Ping 一次、容忍两次不回(`server::signaling` 的 `Timing`),
+/// 所以一条活着的连接最多静默 30 秒 —— 75 秒是它的两倍多,留足了抖动的余地。
+/// Ping 帧照样走 [`Signalling::next`] 底下那个流,所以「没有信令」不算静默。
+///
+/// 非有不可:少了它,客户端这侧**没有任何活性判断**。移动网络上半开的 socket
+/// 不会有 FIN,`ws_rx.next()` 于是永远等下去 —— 重连不触发,重连时那条
+/// resume claim 的自愈也就走不到,遥控器永久停在一个早就没了的会话上
+/// (#102 F-005)。TCP 自己发现要十几分钟。
+const IDLE_LIMIT: std::time::Duration =
+    std::time::Duration::from_secs(75);
+
 /// 一条连着信令服务器的连接。
 pub struct Signalling {
     /// 服务端来信。
@@ -152,6 +165,22 @@ impl Signalling {
         device: DeviceDto,
         token: &str,
     ) -> Result<Self, SyncError> {
+        Self::connect_with_idle(
+            base_url, device, token, IDLE_LIMIT,
+        )
+        .await
+    }
+
+    /// 同上,但判死的时限由调用方给。
+    ///
+    /// 拆出来只为测试:75 秒的判断不能靠真的等 75 秒,而这条判断恰恰是
+    /// 半开 socket 唯一的出口,不测就没人走过。
+    pub async fn connect_with_idle(
+        base_url: &str,
+        device: DeviceDto,
+        token: &str,
+        idle_limit: std::time::Duration,
+    ) -> Result<Self, SyncError> {
         use futures_util::{SinkExt, StreamExt};
         use tokio_tungstenite::tungstenite::Message;
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -200,8 +229,23 @@ impl Signalling {
         // 收发各跑一个任务。合在一起的话,一边在等来信时另一边就发不出去 ——
         // 而 ICE 候选恰恰是在等对端应答的同时源源不断产生的。
         tokio::spawn(async move {
-            while let Some(Ok(message)) = ws_rx.next().await
-            {
+            loop {
+                // 超时 = 判死。跳出去就把收件箱的发送端丢掉,`next` 于是
+                // 返回 `None`,编排循环按「连接断了」处理并重连 ——
+                // 与真的收到 FIN 走的是同一条路。
+                let Ok(incoming) = tokio::time::timeout(
+                    idle_limit,
+                    ws_rx.next(),
+                )
+                .await
+                else {
+                    break;
+                };
+                let Some(Ok(message)) = incoming else {
+                    break;
+                };
+                // Ping/Pong 与二进制帧到不了这里,但它们同样重置上面那个
+                // 计时器 —— 静默指的是「一帧都没有」,不是「没有信令」。
                 let Message::Text(text) = message else {
                     continue;
                 };
