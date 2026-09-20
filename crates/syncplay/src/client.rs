@@ -54,6 +54,8 @@ pub enum Event {
     ControlRevoked { by: String },
     /// 本机被这台设备接管了:进锁定态,挂「正被 xx 遥控」。
     ControlledBy { device: DeviceDto },
+    /// 本机其实没有被谁遥控 —— 服务端槽位上查不到。界面该解锁、撤横幅。
+    NotControlled,
     /// 遥控器发来一条命令。本机此刻是被控端。
     Command { cmd: RemoteCommand },
     /// 被控端报来的状态。本机此刻是遥控器。
@@ -466,6 +468,10 @@ async fn accept(
         }
         ServerSignal::ControlledBy { device } => {
             events(Event::ControlledBy { device });
+            Ok(())
+        }
+        ServerSignal::NotControlled => {
+            events(Event::NotControlled);
             Ok(())
         }
     }

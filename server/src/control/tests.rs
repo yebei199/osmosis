@@ -459,12 +459,17 @@ fn a_report_goes_only_to_the_controller() {
     assert!(rx_spare.try_recv().is_err());
 }
 
-/// 没人持权时的上报就地丢掉,不回错误。
+/// 没人持权时的上报谁也不转,但要回一条 `NotControlled`。
 ///
-/// 回错误的话,一台刚失权的被控端会每秒收到一条它做不了任何事的报错。
+/// 这里曾经是就地丢掉、什么也不回,理由是「一台刚失权的被控端会每秒收到一条
+/// 它做不了任何事的报错」。那条理由对报错成立,对这一条不成立:`NotControlled`
+/// 正是它做得了事的那一条 —— 收到就解锁、撤横幅,而 `Remote::report` 只在
+/// 锁定态下才发上报,于是下一秒它自己就不再报了,这条应答发一次就停(#102 F-004)。
+/// 静默丢掉的代价反而更大:被控端挂着假横幅锁死本机,谁也不来告诉它一声。
 #[test]
-fn a_report_without_a_controller_is_dropped() {
-    let (roster, _rx_phone, _rx_pc, _) = three_devices();
+fn a_report_without_a_controller_frees_the_target() {
+    let (roster, mut rx_phone, _rx_pc, mut rx_spare) =
+        three_devices();
     let mut control = Control::default();
 
     let reply = route(
@@ -475,7 +480,12 @@ fn a_report_without_a_controller_is_dropped() {
         ClientSignal::State { state: report() },
     );
 
-    assert_eq!(reply, None);
+    assert_eq!(reply, Some(ServerSignal::NotControlled));
+    assert!(
+        rx_phone.try_recv().is_err(),
+        "没人持权,这条上报谁也不该收到"
+    );
+    assert!(rx_spare.try_recv().is_err());
 }
 
 /// 要快照同样要持权,转过去的是一条不带参数的请求。
@@ -645,5 +655,61 @@ fn each_account_has_its_own_slot() {
         control.controller_of(ALICE, "pc"),
         Some("phone"),
         "别人账号上的退出把这一桶的槽位清掉了"
+    );
+}
+
+/// 槽位上查不到时,那一下「退出被遥控」也要有回音。
+///
+/// 吞掉的话被控端只是本地撤了横幅,锁定态与服务端的看法从此各说各话。
+#[test]
+fn exiting_without_a_grant_still_gets_an_answer() {
+    let (roster, _rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "pc",
+        ClientSignal::ExitControlled,
+    );
+
+    assert_eq!(reply, Some(ServerSignal::NotControlled));
+}
+
+/// 真的持权时不许回 `NotControlled` —— 回了就是每秒把正常的遥控关系拆一次。
+#[test]
+fn a_report_with_a_grant_is_forwarded_as_before() {
+    let (roster, mut rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    route(
+        &roster,
+        &mut control,
+        ALICE,
+        "phone",
+        ClientSignal::ClaimControl {
+            target: "pc".to_owned(),
+            resume: None,
+        },
+    );
+    while rx_phone.try_recv().is_ok() {}
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "pc",
+        ClientSignal::State { state: report() },
+    );
+
+    assert_eq!(reply, None, "持权时应答走转发,不回给自己");
+    assert!(
+        matches!(
+            rx_phone.try_recv(),
+            Ok(ServerSignal::State { .. })
+        ),
+        "上报该转给遥控器"
     );
 }

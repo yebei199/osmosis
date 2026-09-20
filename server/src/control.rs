@@ -160,9 +160,15 @@ pub fn route(
                 resume,
             )
         }
+        // 查不到槽位时回一条 `NotControlled`,不静默吞掉:被控端的锁定态
+        // 只有它自己清,而槽位可能早就没了(服务端重启、遥控关系被别处撤掉)。
+        // 吞掉的话那一下「退出被遥控」石沉大海,横幅撤了、锁定态却留着(#102 F-004)。
         ClientSignal::ExitControlled => {
-            let controller =
-                control.release(account, from)?;
+            let Some(controller) =
+                control.release(account, from)
+            else {
+                return Some(ServerSignal::NotControlled);
+            };
             send(
                 roster,
                 account,
@@ -184,8 +190,13 @@ pub fn route(
         // 上报的目标由槽位定,不由被控端指定:让它自己写目标的话,
         // 它能把自己的播放位置每秒推给任何一台设备。
         ClientSignal::State { state } => {
-            let controller =
-                control.controller_of(account, from)?;
+            // 没有槽位却还在上报 = 被控端挂着一条假的锁定态。告诉它一声,
+            // 它就能自己解锁 —— 上报每秒一条,所以最迟一秒纠正过来。
+            let Some(controller) =
+                control.controller_of(account, from)
+            else {
+                return Some(ServerSignal::NotControlled);
+            };
             // 借用要在 send 之前还掉 —— roster 与 control 是两个对象,
             // 但这个 &str 借的是 control。
             let controller = controller.to_owned();

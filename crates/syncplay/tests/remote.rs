@@ -290,3 +290,38 @@ async fn the_target_can_take_its_control_back() {
         .await;
     assert_eq!(by, "pc");
 }
+
+/// 槽位上查不到时,被控端的上报换回一条 `NotControlled`。
+///
+/// 走一遍真信令,因为这条自愈的价值全在「被控端**自己**收得到」上:
+/// 服务端槽位可能在它不知情时就没了(重启、关系被别处撤掉),而它的锁定态
+/// 只有用户按「退出被遥控」才清。没有这条,它就挂着假横幅锁死本机(#102 F-004)。
+#[tokio::test]
+async fn a_target_without_a_grant_is_told_it_is_free() {
+    let addr = start_server().await;
+    let (phone, phone_rx) = spawn_client(addr, "phone");
+    let (pc, pc_rx) = spawn_client(addr, "pc");
+    wait_until_both_online(&phone_rx, "pc").await;
+    phone.claim("pc");
+    wait_for(&pc_rx, "ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+
+    // 被控端自己退出:槽位没了,但它此刻并不知道服务端还记不记得这件事。
+    pc.exit_controlled();
+    wait_for(&phone_rx, "ControlRevoked", |event| {
+        matches!(event, Event::ControlRevoked { .. })
+            .then_some(())
+    })
+    .await;
+
+    // 槽位已经空了,这一条上报因此落在「查无槽位」那一支上。
+    pc.report(report(7_000));
+
+    wait_for(&pc_rx, "NotControlled", |event| {
+        matches!(event, Event::NotControlled).then_some(())
+    })
+    .await;
+}

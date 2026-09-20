@@ -617,3 +617,34 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
         "已经回本机了就不该再收一次,否则每秒弹一条提示"
     );
 }
+
+/// 服务端说没人在遥控本机,横幅与锁定态就该立刻撤掉(#102 F-004)。
+///
+/// 锁定态此前只有用户按「退出被遥控」才清,于是槽位一旦在本机不知情时没了,
+/// 这台就挂着假横幅、锁着本地播放,而横幅上那台设备早就不管它了。
+#[test]
+fn being_told_nobody_is_in_control_unlocks_the_local_transport()
+ {
+    let (ui, deck) = deck_window();
+    crate::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+    assert!(
+        deck.remote.is_controlled(),
+        "接管之后本机该是锁定的"
+    );
+
+    crate::remote::handle(
+        &Event::NotControlled,
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.is_controlled(),
+        "服务端都说没人遥控了,还锁着就是把本机白白废掉"
+    );
+    let _ = &ui;
+}

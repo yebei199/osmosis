@@ -367,6 +367,15 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                 Some(device.clone());
             remote.refresh();
         }
+        // 服务端说没人在遥控本机:解锁、撤横幅。锁定态此前只有用户自己按
+        // 「退出被遥控」才清,于是槽位一旦在本机不知情时没了(服务端重启、
+        // 遥控关系被别处撤掉),这台就挂着假横幅、锁着本地播放,而横幅上
+        // 那台设备早就不管它了(#102 F-004)。
+        syncplay::Event::NotControlled => {
+            if lock(&inner.controlled_by).take().is_some() {
+                remote.refresh();
+            }
+        }
         // 命令进收件箱,再叫一声 UI 线程去执行(见模块头的两步)。
         syncplay::Event::Command { cmd } => {
             lock(&inner.inbox).push_back(cmd.clone());
