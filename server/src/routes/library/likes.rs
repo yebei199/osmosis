@@ -23,7 +23,7 @@ use server::bangdream::{
 use server::store::cache;
 use server::error::Failure;
 
-use super::catalog_cache::{
+use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, track_refs_of,
 };
 use crate::{AppState, fail};

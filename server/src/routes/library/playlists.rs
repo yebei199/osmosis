@@ -24,7 +24,7 @@ use server::store::playlist::{self, TrackRef};
 use server::error;
 use server::store::cache;
 
-use super::catalog_cache::{
+use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
     netease_name, track_refs_of,
 };

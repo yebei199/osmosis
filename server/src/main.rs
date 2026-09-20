@@ -39,23 +39,23 @@ use server::store::db;
 mod routes;
 
 use routes::auth::{health, login, logout, register};
-use routes::history::{recent, record_play, stats};
-use routes::likes::{
+use routes::library::history::{recent, record_play, stats};
+use routes::library::likes::{
     like_track, liked, liked_ids, subscribe_playlist,
     unlike_track, unsubscribe_playlist,
 };
-use routes::lyric::lyric;
-use routes::netease::{
+use routes::catalog::lyric::lyric;
+use routes::catalog::netease::{
     create_qr, qr_state, status as netease_status, unbind,
 };
 use routes::play::download::download;
 use routes::play::play;
-use routes::playlists::{
+use routes::library::playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
     platform_playlist_tracks, playlist_tracks, playlists,
     remove_playlist_tracks, rename_playlist,
 };
-use routes::search::{
+use routes::catalog::search::{
     artist_tracks, daily, search_artists, search_playlists,
     search_tracks,
 };
