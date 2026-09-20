@@ -201,7 +201,7 @@ fn report(
     if crate::account::handle_session_expiry(ui, err) {
         return;
     }
-    crate::notice::show(ui, format!("{what}: {err}"));
+    crate::account::report_failure(ui, what, err);
 }
 
 #[cfg(test)]
@@ -234,5 +234,31 @@ mod tests {
         assert_eq!(artist_subtitle(0), "暂无专辑");
         // 平台偶尔给负数(字段缺失时的默认值),按没有算
         assert_eq!(artist_subtitle(-1), "暂无专辑");
+    }
+
+    /// 搜索页撞到网易云没绑,得说「去个人页扫码」,不是上游原话。
+    #[test]
+    fn netease_unbound_search_failure_points_at_profile() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+
+        report(
+            &ui,
+            &api::ApiError::Server {
+                code: "netease_not_logged_in".to_owned(),
+                message: "netease: 未登录".to_owned(),
+            },
+            "搜歌手失败",
+        );
+
+        assert_eq!(
+            ui.global::<crate::Shell>().get_banner_text(),
+            crate::account::NETEASE_UNBOUND_TEXT
+        );
+        assert_eq!(
+            ui.global::<crate::Shell>().get_banner_tab(),
+            2,
+            "这一句该能点进个人页"
+        );
     }
 }
