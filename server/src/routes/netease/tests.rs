@@ -22,7 +22,7 @@ use server::bangdream::proto::{
 async fn fixture(
     case: &str,
     fake: FakeUpstream,
-) -> (crate::AppState, server::account::Account) {
+) -> (crate::AppState, server::store::account::Account) {
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
     let state =

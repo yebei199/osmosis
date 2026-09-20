@@ -4,15 +4,15 @@
 //! 以及照着这条记录把消息转到对的那一端。`RemoteCommand` 与 `RemoteStateDto`
 //! 从这里原样穿过去,和同播的 SDP 载荷一个待遇(`docs/adr/0008`)。
 //!
-//! 单独成模块而不是塞进 [`crate::signaling`]:那个文件已经五百多行,而"谁能
+//! 单独成模块而不是塞进 [`crate::syncplay::signaling`]:那个文件已经五百多行,而"谁能
 //! 控制谁"是纯逻辑 —— 恰恰也是会出错的地方,值得离开 WebSocket 被测。
 
 use std::collections::HashMap;
 
 use contract::{ClientSignal, ServerSignal};
 
-use crate::roster::Roster;
-use crate::signaling::{AccountId, Sink};
+use crate::syncplay::roster::Roster;
+use crate::syncplay::signaling::{AccountId, Sink};
 
 /// 一次控制权的代次。
 ///
@@ -143,7 +143,7 @@ impl Control {
 
 /// 处理一条遥控相关的消息。返回要发回给发信人自己的应答(没有则 `None`)。
 ///
-/// 与 [`crate::signaling::route`] 同一个形状、同一条纪律:**同步**函数,
+/// 与 [`crate::syncplay::signaling::route`] 同一个形状、同一条纪律:**同步**函数,
 /// 发往别人的消息就地 `try_send`,发回自己的走返回值。握着名册的锁 await
 /// 会把所有人的名册一起卡住。
 pub fn route(

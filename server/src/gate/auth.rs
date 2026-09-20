@@ -12,7 +12,7 @@ use axum::{
 use contract::ErrorDto;
 use sqlx::PgPool;
 
-use crate::account::{self, Account};
+use crate::store::account::{self, Account};
 use crate::error;
 
 /// `Authorization: Bearer <token>` 的前缀。

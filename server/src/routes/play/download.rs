@@ -27,7 +27,7 @@ use contract::{ErrorDto, TRIAL_ONLY, download_file_name};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{

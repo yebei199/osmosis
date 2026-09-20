@@ -13,7 +13,7 @@ use crate::routes::testing::{
 
 use super::{DETAIL_BATCH, cached_tracks, fill_details};
 
-use server::cache::TrackRef;
+use server::store::cache::TrackRef;
 
 /// 歌单详情随手带回来的那一批够全时,一次补拉都不该发。
 ///
@@ -204,7 +204,7 @@ async fn fill_details_skips_the_upstream_when_everything_is_cached()
         .expect("取不到数据库连接");
 
     let id = track_id(case, 1);
-    server::cache::put_details(
+    server::store::cache::put_details(
         &mut conn,
         &[expected_dto(&id, "甲")],
     )
@@ -268,7 +268,7 @@ async fn fill_details_reports_only_the_ids_the_platform_skipped()
     );
 
     // 平台肯给的那首必须落进库里,否则下次还要重问一遍
-    let still_missing = server::cache::missing_details(
+    let still_missing = server::store::cache::missing_details(
         &mut conn,
         "netease",
         std::slice::from_ref(&given),

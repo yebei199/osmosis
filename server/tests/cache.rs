@@ -7,8 +7,8 @@
 //! 平台没有的东西要留着」—— 那正是它与镜像的分界线。
 
 use contract::TrackDto;
-use server::account::{Account, register};
-use server::db;
+use server::store::account::{Account, register};
+use server::store::db;
 use sqlx::{PgPool, Postgres, Transaction};
 
 // 集成测试的 crate 根按**所在目录**找子模块,不按同名目录 —— 而 tests/ 下的

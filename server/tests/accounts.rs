@@ -9,8 +9,8 @@ use axum::{
     extract::FromRequestParts, http::Request,
     http::StatusCode,
 };
-use server::account::{self, Account, register};
-use server::db;
+use server::store::account::{self, Account, register};
+use server::store::db;
 use server::error::AppError;
 use sqlx::{PgPool, Postgres, Transaction};
 

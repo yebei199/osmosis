@@ -1,4 +1,4 @@
-use server::cache;
+use server::store::cache;
 
 use super::*;
 

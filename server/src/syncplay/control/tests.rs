@@ -11,8 +11,8 @@ use similar_asserts::assert_eq;
 use tokio::sync::mpsc;
 
 use super::*;
-use crate::roster::Roster;
-use crate::signaling::{AccountId, Sink};
+use crate::syncplay::roster::Roster;
+use crate::syncplay::signaling::{AccountId, Sink};
 
 const ALICE: AccountId = 1;
 const BOB: AccountId = 2;

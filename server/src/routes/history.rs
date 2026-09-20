@@ -9,15 +9,15 @@ use contract::{
     PlayedDto, StatsDto, TopArtistDto, TracksDto,
 };
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{GetTracksRequest, Platform},
 };
 use server::error;
 use server::error::Failure;
-use server::history;
-use server::playlist::TrackRef;
+use server::store::history;
+use server::store::playlist::TrackRef;
 
 use super::likes::PageQuery;
 use crate::{AppState, conn, fail};

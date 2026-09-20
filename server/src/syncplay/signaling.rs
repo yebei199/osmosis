@@ -26,11 +26,11 @@ use axum::response::{IntoResponse, Response};
 use contract::{ClientSignal, DeviceDto, ServerSignal};
 use tokio::sync::mpsc;
 
-use crate::account::Account;
-use crate::control::Control;
+use crate::store::account::Account;
+use crate::syncplay::control::Control;
 use crate::error;
-use crate::ratelimit::SharedLimiter;
-use crate::roster::Roster;
+use crate::gate::ratelimit::SharedLimiter;
+use crate::syncplay::roster::Roster;
 
 /// 每条连接的发件箱容量。
 ///
@@ -96,7 +96,7 @@ impl Default for Timing {
 /// `GET /signal` —— 鉴权、校验来源、限流,然后升级成 WebSocket。
 ///
 /// `Account` 是提取器:没有它这条路由就不鉴权,而"要不要鉴权"写在签名里
-/// 正是 [`crate::auth`] 那套做法的用意。未鉴权连接在升级之前就得到 401。
+/// 正是 [`crate::gate::auth`] 那套做法的用意。未鉴权连接在升级之前就得到 401。
 pub async fn handler(
     upgrade: WebSocketUpgrade,
     account: Account,
@@ -392,14 +392,14 @@ fn route(
     match message {
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
-        // 遥控器模式那几条归 `crate::control`:这里只管同播的转发。
+        // 遥控器模式那几条归 `crate::syncplay::control`:这里只管同播的转发。
         remote @ (ClientSignal::ClaimControl { .. }
         | ClientSignal::ExitControlled
         | ClientSignal::Command { .. }
         | ClientSignal::State { .. }
         | ClientSignal::SnapshotRequest {
             ..
-        }) => crate::control::route(
+        }) => crate::syncplay::control::route(
             roster, control, account, from, remote,
         ),
         ClientSignal::Signal { to, payload } => {

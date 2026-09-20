@@ -9,7 +9,7 @@ use contract::{TrackIdsDto, TracksDto};
 use serde::Deserialize;
 use tonic::transport::Channel;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -20,7 +20,7 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
-use server::cache;
+use server::store::cache;
 use server::error::Failure;
 
 use super::catalog_cache::{

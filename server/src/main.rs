@@ -29,11 +29,12 @@ use server::bangdream::proto::{
     library_service_client::LibraryServiceClient,
 };
 use server::error::Failure;
-use server::ratelimit::{RateLimiter, SharedLimiter};
-use server::signaling::{
+use server::gate::ratelimit::{RateLimiter, SharedLimiter};
+use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
 };
-use server::{db, error};
+use server::error;
+use server::store::db;
 
 mod routes;
 
@@ -114,7 +115,7 @@ pub(crate) struct AppState {
     limiter: SharedLimiter,
 }
 
-// 鉴权提取器只要池,不该认识别的东西 —— 见 server::auth。
+// 鉴权提取器只要池,不该认识别的东西 —— 见 server::gate::auth。
 impl FromRef<AppState> for PgPool {
     fn from_ref(state: &AppState) -> Self {
         state.pool.clone()

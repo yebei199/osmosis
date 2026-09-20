@@ -6,7 +6,7 @@ use axum::{
 };
 use contract::LyricDto;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{GetLyricRequest, Platform},

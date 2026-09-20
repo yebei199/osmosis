@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use contract::TrackDto;
 
-use crate::cache::TrackRef;
+use crate::store::cache::TrackRef;
 
 /// 上游的歌单详情少给了哪些曲目的详情。
 ///

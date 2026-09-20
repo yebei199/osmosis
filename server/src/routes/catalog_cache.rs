@@ -5,7 +5,7 @@
 use contract::TrackDto;
 use std::collections::HashSet;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -13,7 +13,8 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
-use server::{cache, error};
+use server::error;
+use server::store::cache;
 
 use crate::{AppState, conn, fail};
 

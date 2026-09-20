@@ -15,7 +15,7 @@
 
 use tonic::transport::Channel;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{

@@ -9,7 +9,7 @@
 use sqlx::PgConnection;
 
 use crate::error::AppError;
-use crate::playlist::TrackRef;
+use crate::store::playlist::TrackRef;
 
 /// 记一次起播。
 pub async fn record(

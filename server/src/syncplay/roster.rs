@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use contract::DeviceDto;
 
-use crate::signaling::AccountId;
+use crate::syncplay::signaling::AccountId;
 
 /// 一条连接在名册里的代次。
 ///

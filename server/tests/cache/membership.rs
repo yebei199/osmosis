@@ -1,4 +1,4 @@
-use server::cache::{self, LIKED_PLAYLIST_ID};
+use server::store::cache::{self, LIKED_PLAYLIST_ID};
 
 use super::*;
 

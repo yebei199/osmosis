@@ -4,7 +4,7 @@
 //! (见 `docs/adr/0017`)。它与「设备」正交:设备回答的是「同播里推给哪台」。
 //!
 //! 本模块不认识 HTTP。错误到状态码的映射在 [`crate::error`],鉴权提取器在
-//! [`crate::auth`] —— 这里只有规则本身,可以脱离 axum 单独测。
+//! [`crate::gate::auth`] —— 这里只有规则本身,可以脱离 axum 单独测。
 
 use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,

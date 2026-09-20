@@ -15,7 +15,7 @@ use contract::{
     NeteaseStatusDto, QR_WAITING, QrEventDto, QrLoginDto,
 };
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{

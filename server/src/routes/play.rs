@@ -10,7 +10,7 @@ use axum::{
 };
 use contract::PlaySourceDto;
 
-use server::account::Account;
+use server::store::account::Account;
 use server::bangdream::{
     self,
     proto::{GetPlaySourceRequest, Platform, QualityLevel},
