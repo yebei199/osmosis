@@ -44,26 +44,38 @@ pub fn signalling_url(api_base: &str) -> String {
 /// 本机在同播里的身份。
 ///
 /// 只是**这台设备叫什么**,不是"我是谁":归属由服务端从连接的 token 定
-/// (见 `server::signaling`)。所以它不落盘、不校验,每次启动重新生成即可,
-/// 而且只需要在自己账号那一桶里分得开。
+/// (见 `server::signaling`)。
+///
+/// id 落盘(#100):遥控器断线重连靠 `ClaimControl { resume }` 按 id 认人(#95),
+/// 每次启动换一个的话永远走不到那一支,被控端会一直被一个已经不存在的设备锁着。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)
         .map(|name| name.trim().to_owned())
         .ok()
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| UNKNOWN_HOST.to_owned());
+    let pid = std::process::id();
 
-    identity_from(&host, std::process::id())
+    identity_from(
+        &host,
+        pid,
+        api::session::device_id(|| format!("{host}-{pid}")),
+    )
 }
 
-/// 主机名加进程号 —— 拆出来是为了能在测试里给定两个进程号。
+/// 落盘的 id 配上带进程号的名字 —— 拆出来是为了能在测试里给定两次启动。
 ///
-/// 带上进程号是因为**同一台机器上跑两个实例**是最常见的调试方式。都叫主机名的话,
-/// 界面上两行一模一样,点哪一行都说不清推给了谁;更糟的是服务端按 id 入册,
-/// 两个同 id 的实例会互相顶掉。
-fn identity_from(host: &str, pid: u32) -> DeviceDto {
+/// 名字里仍带进程号:**同一台机器上跑两个实例**是最常见的调试方式,而两个实例
+/// 共用同一个状态目录,拿到的是同一个 id,界面上只剩名字分得开。真要让它们在
+/// 服务端也算两台设备(服务端按 id 入册,同 id 会互相顶掉),给第二个实例指一份
+/// 自己的 `OSMOSIS_DEVICE_FILE`。
+fn identity_from(
+    host: &str,
+    pid: u32,
+    id: String,
+) -> DeviceDto {
     DeviceDto {
-        id: format!("{host}-{pid}"),
+        id,
         name: format!("{host} #{pid}"),
     }
 }

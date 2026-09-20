@@ -164,6 +164,16 @@ fn build_ui(
     (ui, viz_source, lyrics, cover)
 }
 
+/// 会话、设置、封面与设备 id 的落点。与下载落点同一个接缝形状:
+/// 安卓的应用私有目录只有平台入口那一层拿得到(`android_main` 的
+/// `internal_data_path`),环境变量在那里给不出(#100)。
+///
+/// 必须赶在 [`run`] / [`run_with_renderers`] 之前 —— 登录态正是在那里恢复的。
+/// 不调的端(桌面、web)照旧按 `XDG_STATE_HOME` / `HOME` / localStorage 走。
+pub fn set_state_dir(dir: std::path::PathBuf) {
+    api::set_state_dir(dir);
+}
+
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
 ///
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
