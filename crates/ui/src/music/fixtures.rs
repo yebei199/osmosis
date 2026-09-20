@@ -189,17 +189,20 @@ fn deck_window_with(
         queue: Rc::new(RefCell::new(
             app_core::Queue::default(),
         )),
-        sync: crate::syncplay::detached(&ui),
-        remote: crate::remote::detached(&ui),
+        sync: crate::sync::syncplay::detached(&ui),
+        remote: crate::sync::remote::detached(&ui),
         media,
         player,
         lyrics,
         cover: super::CoverFeed::default(),
         tracks: Rc::new(RefCell::new(Vec::new())),
-        liked: crate::liked::LikedSet::default(),
-        editing: crate::playlist::Editing::default(),
-        artwork: crate::artwork::Artwork::default(),
-        thumbnails: crate::thumbnail::Thumbnails::default(),
+        liked: crate::library::liked::LikedSet::default(),
+        editing: crate::library::playlist::Editing::default(
+        ),
+        artwork: crate::imagery::artwork::Artwork::default(
+        ),
+        thumbnails:
+            crate::imagery::thumbnail::Thumbnails::default(),
         last_daily: Rc::new(Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),

@@ -59,6 +59,8 @@ impl WallLayout {
 
 mod anim;
 mod camera;
+// 每帧驱动与 slint 绑定，seam 类型也在这。
+pub mod drive;
 
 pub use anim::{Collapse, DollyRun};
 pub use camera::{WallCam, hit_test, project, world_pose};

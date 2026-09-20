@@ -20,7 +20,8 @@ pub(super) fn reload_open_playlist(
     };
     let weak = ui.as_weak();
     fetch_into(&weak, deck, async move {
-        crate::playlist::tracks_of(source, &id).await
+        crate::library::playlist::tracks_of(source, &id)
+            .await
     });
 }
 
@@ -56,13 +57,13 @@ pub(super) fn playlist_name(
 
 /// 搜索:关键词 → 三条路由之一 → 对应的一列结果。
 ///
-/// 页签与关键词的记账在 [`crate::search`],这里只交出「搜歌」那一路 ——
+/// 页签与关键词的记账在 [`crate::pages::search`],这里只交出「搜歌」那一路 ——
 /// 它要往播放队列里塞东西,而队列归这个模块。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
 
-    crate::search::bind(ui, move |ui, keyword| {
+    crate::pages::search::bind(ui, move |ui, keyword| {
         let deck = deck.clone();
         let weak = ui.as_weak();
         let keyword = keyword.to_owned();
@@ -148,7 +149,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 .set_open_playlist_name(name);
 
             let source =
-                crate::playlist::Source::from_index(source);
+                crate::library::playlist::Source::from_index(source);
             let id = id.to_string();
 
             // 存下**现在**列表里那一批 —— 下一行就要把它换成这个歌单自己的歌了,
@@ -158,7 +159,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             opened.editing.opened(source, &id, previous);
 
             let editable =
-                crate::playlist::is_editable(source);
+                crate::library::playlist::is_editable(source);
             ui.global::<Library>()
                 .set_open_playlist_local(editable);
             // 详情页那张封面按标识索引 —— 名字会重复,两个歌单可以同名
@@ -169,14 +170,14 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             );
             ui.global::<Library>().set_add_batch_text(
                 if editable {
-                    crate::playlist::add_batch_text(count)
+                    crate::library::playlist::add_batch_text(count)
                 } else {
                     String::new()
                 }
                 .into(),
             );
             fetch_into(&weak, &opened, async move {
-                crate::playlist::tracks_of(source, &id)
+                crate::library::playlist::tracks_of(source, &id)
                     .await
             });
         },
@@ -274,7 +275,7 @@ pub(super) fn load_section(
         // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
         Section::Playlists => {
             if let Some(ui) = weak.upgrade() {
-                crate::playlist::refresh(
+                crate::library::playlist::refresh(
                     &ui,
                     &deck.artwork,
                 );
@@ -326,12 +327,12 @@ pub(super) fn fetch_into<Fut>(
             // 会话失效要把人送回登录页,而不是在音乐页上写一句"失败" ——
             // 那句话解释不了为什么什么都拉不出来。已经送回去了就不再报错。
             Err(error)
-                if crate::account::handle_session_expiry(
+                if crate::pages::account::handle_session_expiry(
                     &ui, &error,
                 ) => {}
             // 网易云没绑那一种会走能点进个人页的通知 —— 那正是用户要去
-            // 绑的地方(见 crate::account::report_failure)。
-            Err(error) => crate::account::report_failure(
+            // 绑的地方(见 crate::pages::account::report_failure)。
+            Err(error) => crate::pages::account::report_failure(
                 &ui,
                 "取曲目失败",
                 &error,
@@ -350,7 +351,7 @@ pub(super) fn show(
 ) {
     // 平台给不出详情的那些没能进这一批。说一声,否则歌单静默变短
     ui.global::<Library>().set_unavailable_note(
-        crate::playlist::unavailable_text(
+        crate::library::playlist::unavailable_text(
             found.unavailable,
         )
         .into(),
@@ -376,7 +377,7 @@ pub(super) fn push_rows(
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
     // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
-    crate::liked::remark(&deck.liked, ui);
+    crate::library::liked::remark(&deck.liked, ui);
     // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
     // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。
     deck.thumbnails.apply(ui);

@@ -7,7 +7,7 @@
 //! 结构禁止照抄。每颗按钮一张自己的纹理:尺寸互不相同,拼图集省不了
 //! 什么,反而让 Slint 侧多一套裁剪坐标。
 //!
-//! 省电门在 ui 侧(`ui::aurora_btn`):hover 动画收敛后根本不会调到这里。
+//! 省电门在 ui 侧(`ui::shader::aurora_btn`):hover 动画收敛后根本不会调到这里。
 
 use slint::wgpu_29::wgpu;
 
