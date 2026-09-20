@@ -7,13 +7,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 协议版本。客户端与服务端就线上格式达成的约定的版本号。
-///
-/// 任何对本 crate 中类型的**不兼容**改动都必须让它加一:改字段名、删字段、
-/// 改字段语义。新增可选字段是兼容的,不必加一。
-///
-/// 2:音乐相关的路由开始要求登录态(既有路由多了一个必需的请求头,老客户端会
-/// 整片 401),`/search` 拆成 `/search/tracks`、`/search/artists`、
 mod account;
 mod catalog;
 mod download;

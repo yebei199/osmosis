@@ -17,7 +17,6 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 
-use server::account::{Account, register};
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
@@ -40,7 +39,8 @@ use server::bangdream::proto::{
         LibraryService, LibraryServiceServer,
     },
 };
-use server::db;
+use server::store::account::{Account, register};
+use server::store::db;
 
 use crate::{AppState, Upstream};
 
@@ -421,12 +421,12 @@ pub(crate) fn state(
         upstream,
         pool,
         invite: INVITE.to_owned(),
-        roster: server::signaling::SharedRoster::default(),
-        control: server::signaling::SharedControl::default(
+        roster: server::syncplay::signaling::SharedRoster::default(),
+        control: server::syncplay::signaling::SharedControl::default(
         ),
-        origins: server::signaling::AllowedOrigins::default(
+        origins: server::syncplay::signaling::AllowedOrigins::default(
         ),
-        limiter: server::ratelimit::SharedLimiter::default(
+        limiter: server::gate::ratelimit::SharedLimiter::default(
         ),
     }
 }

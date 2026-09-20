@@ -5,10 +5,10 @@
 //! 打真实网易云的部分归 `live_bangdream.rs`。
 
 use contract::PlaylistSource;
-use server::account::{Account, register};
-use server::db;
 use server::error::AppError;
-use server::playlist::{self, TrackRef};
+use server::store::account::{Account, register};
+use server::store::db;
+use server::store::playlist::{self, TrackRef};
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// 与 `main.rs` 的默认值一致。

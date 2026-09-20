@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 
 use contract::{ClientSignal, DeviceDto, ServerSignal};
 use futures_util::{SinkExt, StreamExt};
-use server::signaling::{self, Timing};
+use server::syncplay::signaling::{self, Timing};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};

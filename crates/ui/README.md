@@ -7,6 +7,9 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
 
 ## 文件与子目录
 
+src/ 下按职责分成六个目录,哪一组负责什么见 `src/README.md`;下面按话题记的是
+各处**为什么这么做**,不是目录索引。
+
 - `slint/app.slint`:整个界面的声明。两个 tab(卡片主页、音乐页)、宽/紧凑
   两种版式(由宽度决定,`docs/adr/0007`)、**壳级那一根控制条**(四个页签共用一个
   实例,有歌就在),以及从控制条封面展开的播放页覆层(CONTEXT.md「播放页」),
@@ -91,33 +94,33 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   总长排成一行字与一个比例,`seek_target` 是 `ratio` 的逆 —— 总长不知道或比例
   非有限时给 `None` 而不是 0 秒:前者是"倒回开头",后者会让
   `Duration::from_secs_f64` 直接 panic。
-- `src/account.rs`:登录页绑定,以及"这次失败该说哪句话"。会话失效由
+- `src/pages/account.rs`:登录页绑定,以及"这次失败该说哪句话"。会话失效由
   `handle_session_expiry` 统一处理,任何一条路由拿到 `unauthorized` 都走它。
-- `src/cover.rs`:封面字节 → `slint::Image`。`decode` 出原分辨率(播放页那张大图
+- `src/imagery/cover.rs`:封面字节 → `slint::Image`。`decode` 出原分辨率(播放页那张大图
   要它),`decode_thumbnail` 出 96px 的小图(列表一屏要几十张,只能出小的)。
   封面 CDN 会过期给回 HTML 页,失败路径按常态处理,返回 `None` 不 panic。仅原生编译。
-- `src/artwork.rs`:歌单封面表。内存 → 磁盘 → CDN 三级,键取歌单 id 而不是
+- `src/imagery/artwork.rs`:歌单封面表。内存 → 磁盘 → CDN 三级,键取歌单 id 而不是
   URL(CDN 会换 URL,按 URL 键整个缓存跟着作废)。回填按 id 重扫模型,
   不按下标 —— 图回来时列表可能已经换了一批。
-- `src/thumbnail.rs`:曲目行的缩略图。与 `artwork` 是**两套**,差别在键:这边按
+- `src/imagery/thumbnail.rs`:曲目行的缩略图。与 `artwork` 是**两套**,差别在键:这边按
   封面 URL 存,因而一张专辑封面被十几首歌共用时只取一次、只占一份。行滑进可见区
   才取(信号来自 `tracklist.slint` 的 `changed wanted`,ListView 复用实例不重跑
   `init`),滚动停 150ms 才发请求且只发最后一批,内存 512 张 LRU。磁盘那一层按 URL
   的 blake3 存在 `covers/tracks/`,由 `api::sweep_track_artwork` 在启动时按 mtime
   削回上限 —— URL 会换,不削就只涨不减。仅原生编译。
-- `src/liked.rs`:红心集合。服务端的曲目不带"喜不喜欢",取一次全量标识
+- `src/library/liked.rs`:红心集合。服务端的曲目不带"喜不喜欢",取一次全量标识
   存成集合,推行时本地比对。
-- `src/playlist.rs`:歌单的读与写绑定 —— 建、改名、删、批量加、移除。
+- `src/library/playlist.rs`:歌单的读与写绑定 —— 建、改名、删、批量加、移除。
   哪些歌单可写由 `is_editable` 判(平台歌单只读)。
-- `src/search.rs`:搜索的三个页签(单曲/歌手/歌单)。关键词记在 Rust 侧,
+- `src/pages/search.rs`:搜索的三个页签(单曲/歌手/歌单)。关键词记在 Rust 侧,
   因为输入框长在一个 `if` 里,Rust 引用不到它。
-- `src/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
-- `src/nav_glass.rs`:导航水滴选中器的 seam 数据与转场判定(静止时不重算纹理的
+- `src/sync/syncplay.rs`:同播绑定(仅原生)。设备名册、推流/收听的 UI 状态。
+- `src/shader/nav_glass.rs`:导航水滴选中器的 seam 数据与转场判定(静止时不重算纹理的
   工作量缓存,不是会冻住动画的门)。宽版式侧栏与紧凑版式底栏共用一套:三球位置
   只带移动轴坐标,`horizontal` 说明那是 x 还是 y(#70),几何真相在 `app.slint`。
   `ball` 是三球的整体缩放:侧栏底部两颗自 #71 起是 glass 圆钮、不在轨道上,
   选中它们时水滴化掉,免得上面还亮着一格而人在别的页。
-- `src/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
+- `src/shader/aurora_btn.rs`:光带按钮的 seam 数据、设置开关存取,以及每颗按钮的
   hover 振幅收敛数学。按钮每帧重渲,没有冻结态。五个变体编号在这里有名字
   (ribbon / nebula / fluid / glass / progress,数学见 handoff-shaders.md §10);
   `fluid_or_progress` 定播放页主控条底这一帧走哪个:平时 fluid,缓冲时换
@@ -127,13 +130,13 @@ UI 层:界面的声明,以及界面与客户端领域(`app-core`)之间的双向
   环面回绕(必须发生在屏幕外,姿态角因此只转卡片朝向)、塌回插值、投影与命中测试,外加
   把封面烘成卡面(圆角 + 描边 + 一圈柔和投影)的 `bake_card`。纯数学,
   无 GPU 可测;render3d 只摆这里算出的世界位姿,点击与画面不会各说各话。
-- `src/wall_drive.rs`:卡墙的每帧驱动与 slint 绑定。指针/滚轮/双击变成
+- `src/wall/drive.rs`:卡墙的每帧驱动与 slint 绑定。指针/滚轮/双击变成
   相机与动画状态,封面缩略图取出像素、烘成卡面后经 seam 上传;还没有封面的
   格子先挂一张空白卡面,免得露出没圆角没投影的方块。哪一格在放(`Player.now-id`)
   也在这里定,只有它走闪卡材质。起播挂在普通点按上(点中已浮起的那张)而不是
   双击 —— 触摸屏收不到双击,理由写在 `should_play` 的文档里。动画收敛只是插值到位,不再衍生冻结门 ——
   前台恒满帧,墙每帧照渲(change_log 2026-08-11 always-on-rendering)。
-- `src/fps.rs`(lib.rs 内模块):诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
+- `src/runtime/frame_stats.rs`:诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
 - `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
   `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件
   (Caprasimo / Figtree / DM Mono),族名统一从 `theme.slint` 的 `Type`

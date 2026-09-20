@@ -29,7 +29,7 @@ pub fn artist_to_dto(artist: proto::Artist) -> ArtistDto {
 /// 把上游的一个歌单翻成契约里的 [`PlaylistDto`]。
 ///
 /// `source` 一律是 `Platform`:能走到这个函数的都来自音乐平台。本地歌单
-/// 由 [`crate::playlist`] 那侧翻,两条路各自打标,不共用一个带参数的函数 ——
+/// 由 [`crate::store::playlist`] 那侧翻,两条路各自打标,不共用一个带参数的函数 ——
 /// 那样标错了不会有任何编译错误。
 pub fn playlist_to_dto(
     list: proto::Playlist,
@@ -54,7 +54,7 @@ const LIKED_SPECIAL_TYPE: i32 = 5;
 /// 把上游的歌单列表翻成平台那半张,顺带把红心歌单摘出去。
 ///
 /// 摘它是因为「我喜欢的」在客户端是**另一个来源**([`PlaylistSource::Liked`]),
-/// 由 [`crate::playlist::merged`] 单独置顶。不摘的话列表里会并排站着两个
+/// 由 [`crate::store::playlist::merged`] 单独置顶。不摘的话列表里会并排站着两个
 /// 「我喜欢的」,而它们连 id 都不一样 —— 去重的活没人干得对。
 pub fn platform_playlists_to_dto(
     lists: Vec<proto::Playlist>,

@@ -197,7 +197,7 @@ vignette 收边,把注意力拢回中心。
 | 音乐页 | 卡墙主视图,列表是塌回 | `app.slint`、`tracklist.slint`、`render3d` |
 | 我的歌单 | 4 列网格,平台歌单带只读徽标(`is_editable`,[`adr/0016`](adr/0016-playlist-split-by-data-ownership.md)) | `playlists.slint` |
 | 搜索 | 胶囊输入框 + 计数页签,关键词记在 Rust 侧 | `search.rs` |
-| 最近播放 | 竖线时间轴,最新条目 accent 光晕,顶部周统计 | `server/src/history.rs` |
+| 最近播放 | 竖线时间轴,最新条目 accent 光晕,顶部周统计 | `server/src/store/history.rs` |
 | 播放页 | 沉浸层 + 同一根控制条 | `playpage.slint`、`cloud.rs` |
 | 歌词页 | 横向滑出,景深歌词,可拖浏览 | `lyrics.slint`、`app-core` 的 `lyric::window` |
 | 空状态 | 点云待机 + 三个动作,未登录不拦人 | `app.slint` |

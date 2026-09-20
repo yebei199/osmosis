@@ -2,10 +2,10 @@
 //!
 //! 每个测试在自己的事务里跑完就回滚。起库见 `just pg`。
 
-use server::account::{Account, register};
 use server::error::AppError;
-use server::playlist::TrackRef;
-use server::{db, history};
+use server::store::account::{Account, register};
+use server::store::playlist::TrackRef;
+use server::store::{db, history};
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// 与 `main.rs` 的默认值一致。

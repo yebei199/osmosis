@@ -314,14 +314,14 @@ Osmosis 现有 UI 的一次整体改版。范围：**壳的首页（应用启动
 | --- | --- |
 | 3a Home | `crates/ui/slint/app.slint`（tab 结构）、壳层导航 |
 | 3b 音乐页卡墙 | `app.slint` + `tracklist.slint`、`src/music.rs`、`crates/render3d`（卡墙场景） |
-| 3c 我的歌单 | `playlists.slint`、`src/playlist.rs`（`is_editable`） |
-| 3d 搜索 | `src/search.rs` + 搜索页 `.slint` |
-| 3e 最近播放 | `server/src/history.rs`、`play_events` 表 |
+| 3c 我的歌单 | `playlists.slint`、`src/library/playlist.rs`（`is_editable`） |
+| 3d 搜索 | `src/pages/search.rs` + 搜索页 `.slint` |
+| 3e 最近播放 | `server/src/store/history.rs`、`play_events` 表 |
 | 3f 播放页 | `app.slint` 覆层、`crates/render3d/src/cloud.rs`、`src/viz.rs` |
 | 3g 歌词页 | `src/music.rs` 的 `LyricFeed` |
 | 3h 空状态 | `app.slint` |
-| 3i 设置 | `src/theme.rs`、`api::settings`、`src/account.rs` |
-| 3j 个人主页 | `src/account.rs`、`server` 新增聚合查询 |
+| 3i 设置 | `src/theme.rs`、`api::settings`、`src/pages/account.rs` |
+| 3j 个人主页 | `src/pages/account.rs`、`server` 新增聚合查询 |
 | 3k 移动端 | `app.slint` 的 `compact: root.width < 600px` |
 | 播放条 | `app.slint` 的 ControlCluster、`src/progress.rs` |
 | 色板 | `crates/ui/slint/theme.slint`、`crates/ui/tests/theme.rs` |

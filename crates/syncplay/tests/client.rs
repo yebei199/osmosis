@@ -14,7 +14,7 @@ use audio::codec::{
     BRANCH_CAPACITY, SYNC_CHANNELS, SYNC_SAMPLE_RATE,
 };
 use rodio::Sample;
-use server::signaling;
+use server::syncplay::signaling;
 use syncplay::{Client, DeviceDto, Event};
 
 /// 等一件事发生的上界。WebRTC 建连在回环上是百毫秒级,给足余量。

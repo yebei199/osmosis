@@ -28,8 +28,6 @@ use crate::{MainWindow, TrackRow};
 #[cfg(not(target_arch = "wasm32"))]
 use app_core::Queue;
 
-mod advance;
-mod controls;
 #[cfg(not(target_arch = "wasm32"))]
 mod download;
 mod feed;
@@ -37,7 +35,8 @@ mod list;
 mod notice;
 mod report;
 mod rules;
-mod transport;
+// 放哪一首:控制条、传输层、自动续播。
+mod playback;
 
 pub(crate) use feed::{CoverFeed, LyricFeed};
 pub use rules::{describe_playback, join_artists};
@@ -50,15 +49,13 @@ pub use download::{
 // 各子模块的条目都引进这一层,子模块的 `use super::*` 因此能互相看见 ——
 // 拆分前它们本就在同一个作用域里,这几行是把那个作用域重新拼起来。
 use crate::Player;
-use advance::*;
-use controls::*;
 #[cfg(not(target_arch = "wasm32"))]
 use download::bind_download;
 use list::*;
 use notice::*;
+use playback::*;
 use report::*;
 use rules::*;
-use transport::*;
 
 /// 洗牌与循环回卷重洗的种子。`app-core` 不引 `rand`(要编到 wasm),
 /// 种子由这里造:`RandomState` 每次实例化都带进程级随机,当种子够用。
@@ -93,10 +90,10 @@ struct Deck {
     playback: Rc<RefCell<Playback>>,
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
-    sync: crate::syncplay::Sync,
+    sync: crate::sync::syncplay::Sync,
     /// 输出设备与遥控状态。本机输出时它一概不插手,现有路径一个字节不变
-    /// (见 `crate::remote`)。
-    remote: crate::remote::Remote,
+    /// (见 `crate::sync::remote`)。
+    remote: crate::sync::remote::Remote,
     /// 系统媒体控件的把手。后端由平台入口给,这里只管往里推(见 `crate::media`)。
     media: Rc<crate::media::Bridge>,
     lyrics: LyricFeed,
@@ -105,17 +102,17 @@ struct Deck {
     /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
     tracks: Rc<RefCell<Vec<TrackDto>>>,
     /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
-    /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::liked)。
-    liked: crate::liked::LikedSet,
+    /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::library::liked)。
+    liked: crate::library::liked::LikedSet,
     /// 正在编辑哪个歌单,以及打开它之前列表里摆的那一批歌。
     /// 后者是「把刚才那批加进来」的唯一来源 —— 进歌单那一刻 `tracks`
-    /// 就被换掉了(见 crate::playlist::Editing)。
-    editing: crate::playlist::Editing,
-    /// 歌单封面表。取一次、记住、下次直接给(见 crate::artwork)。
-    artwork: crate::artwork::Artwork,
+    /// 就被换掉了(见 crate::library::playlist::Editing)。
+    editing: crate::library::playlist::Editing,
+    /// 歌单封面表。取一次、记住、下次直接给(见 crate::imagery::artwork)。
+    artwork: crate::imagery::artwork::Artwork,
     /// 曲目行的缩略图。与 `artwork` 是两套:那边按歌单 id 存全量取,
-    /// 这边按封面 URL 存、只取滑进可见区的那些(见 crate::thumbnail)。
-    thumbnails: crate::thumbnail::Thumbnails,
+    /// 这边按封面 URL 存、只取滑进可见区的那些(见 crate::imagery::thumbnail)。
+    thumbnails: crate::imagery::thumbnail::Thumbnails,
     /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
@@ -164,7 +161,8 @@ pub fn bind(
     let cover = CoverFeed::default();
 
     // 同播与遥控共用一条信令连接,所以一起接出来(`docs/adr/0030`)。
-    let (sync, remote) = crate::syncplay::bind(ui, &player);
+    let (sync, remote) =
+        crate::sync::syncplay::bind(ui, &player);
 
     let deck = Deck {
         playback: Rc::new(
@@ -178,10 +176,13 @@ pub fn bind(
         lyrics: lyrics.clone(),
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
-        liked: crate::liked::LikedSet::default(),
-        editing: crate::playlist::Editing::default(),
-        artwork: crate::artwork::Artwork::default(),
-        thumbnails: crate::thumbnail::Thumbnails::default(),
+        liked: crate::library::liked::LikedSet::default(),
+        editing: crate::library::playlist::Editing::default(
+        ),
+        artwork: crate::imagery::artwork::Artwork::default(
+        ),
+        thumbnails:
+            crate::imagery::thumbnail::Thumbnails::default(),
         last_daily: Rc::new(std::cell::Cell::new(None)),
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
@@ -191,13 +192,13 @@ pub fn bind(
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
     // 真正生效的是之后每次 push_rows 里的那次重标。
-    crate::liked::bind(ui, &deck.liked);
-    crate::liked::refresh(&deck.liked, ui);
+    crate::library::liked::bind(ui, &deck.liked);
+    crate::library::liked::refresh(&deck.liked, ui);
 
     // 本地歌单的写操作。改完要把当前歌单的曲目重取一遍,而那要用播放队列 ——
     // 队列归这里,所以重取那一步由这边交出去。
     let reloading = deck.clone();
-    crate::playlist::bind_edit(
+    crate::library::playlist::bind_edit(
         ui,
         &deck.editing,
         &deck.artwork,

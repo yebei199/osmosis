@@ -10,12 +10,12 @@ use axum::{
 };
 use contract::PlaySourceDto;
 
-use server::account::Account;
 use server::bangdream::{
     self,
     proto::{GetPlaySourceRequest, Platform, QualityLevel},
 };
 use server::error::Failure;
+use server::store::account::Account;
 
 use crate::{AppState, fail};
 

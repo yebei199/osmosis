@@ -5,7 +5,7 @@
 //! 与 bevy 无关 —— 所以这里在同一块**共享 device** 上自起一个全屏片元 pass,画进一张离屏
 //! 纹理,导入 Slint 当侧栏背景。shader 见 `navglass.wgsl`,思路见架构文档第八节。
 //!
-//! 只在切 tab 的转场期间被 UI 侧调用(省电门在 `ui::nav_glass`),静止时 Slint 复用上一帧纹理。
+//! 只在切 tab 的转场期间被 UI 侧调用(省电门在 `ui::shader::nav_glass`),静止时 Slint 复用上一帧纹理。
 
 use slint::wgpu_29::wgpu;
 

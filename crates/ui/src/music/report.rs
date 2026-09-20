@@ -42,7 +42,7 @@ pub(super) fn play_to_report(
 #[cfg(not(target_arch = "wasm32"))]
 ///
 /// `notice` 是要不要把失败说给用户听:点播给一个窗口句柄,预取给 `None`
-/// —— 预取失败不声张(见 [`super::advance::start_prefetch`])。
+/// —— 预取失败不声张(见 [`super::playback::advance::start_prefetch`])。
 pub(super) async fn prepare(
     player: Arc<Result<audio::Player, audio::AudioError>>,
     notice: Option<slint::Weak<MainWindow>>,
@@ -59,11 +59,12 @@ pub(super) async fn prepare(
             // 状态行那句话点不了,而这一种失败的解法是去个人页扫码 ——
             // 所以额外弹一条带去处的通知。别的失败不弹:状态行已经说过
             // 一遍,再弹一条只是同一件事说两次。
-            if crate::account::netease_unbound(&error)
-                && let Some(ui) =
-                    notice.and_then(|weak| weak.upgrade())
+            if crate::pages::account::netease_unbound(
+                &error,
+            ) && let Some(ui) =
+                notice.and_then(|weak| weak.upgrade())
             {
-                crate::account::report_failure(
+                crate::pages::account::report_failure(
                     &ui,
                     "点播失败",
                     &error,
@@ -71,7 +72,7 @@ pub(super) async fn prepare(
             }
 
             return Err(
-                crate::account::request_failure_text(
+                crate::pages::account::request_failure_text(
                     &error,
                 ),
             );
@@ -93,7 +94,7 @@ pub(super) async fn prepare(
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn emit(
     player: &Arc<Result<audio::Player, audio::AudioError>>,
-    sync: &crate::syncplay::Sync,
+    sync: &crate::sync::syncplay::Sync,
     stream: &Rc<RefCell<Option<audio::StreamHealth>>>,
     seeking: &Rc<RefCell<Option<audio::SeekState>>>,
     decoded: audio::Loaded,

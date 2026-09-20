@@ -6,14 +6,12 @@
 
 slint::include_modules!();
 
-mod nav_glass;
 pub use media::{
     MediaCommand, MediaControls, MediaHooks, MediaStatus,
     NoControls, NowPlaying,
 };
 // 循环三态过 seam 原样透传:平台层(MPRIS/安卓)拿它翻成各自的方言。
 pub use app_core::LoopMode;
-pub use nav_glass::NavGlassControls;
 
 mod viz;
 pub use viz::{
@@ -21,31 +19,17 @@ pub use viz::{
     VizImages, VizPointer,
 };
 
-// 封面解码用到 image,是原生 target 的依赖(web 的封面等播放链路通了一起做)。
+// 封面的解码与两套缓存。只在原生 target 上编,理由见模块开头。
 #[cfg(not(target_arch = "wasm32"))]
-mod cover;
+mod imagery;
 
-// 登录页的绑定。所有端都要 —— 音乐相关的路由一律要登录态。
-mod account;
-// 歌单列表与详情。与 music 分开:那边管的是「一批歌」,这边管的是「哪一批」。
-// 与 artwork 同一道门:歌单封面要它,而它是原生 target 的依赖。用它的地方
-// (music 的 Deck、search)本来就都在门里。
-#[cfg(not(target_arch = "wasm32"))]
-mod playlist;
-// 歌单封面:取一次、记住、下次直接给。
-#[cfg(not(target_arch = "wasm32"))]
-mod artwork;
-// 曲目行的缩略图。与 artwork 分开是因为键不同(封面 URL vs 歌单 id),
-// 因而缓存、去重与淘汰的规则全都不同。
-#[cfg(not(target_arch = "wasm32"))]
-mod thumbnail;
-// 红心:哪些歌在红心里,以及点一下之后发生什么。
-mod liked;
+// 整页的绑定:登录、个人主页、搜索。
+mod pages;
+// 「我的库」:红心与歌单。
+mod library;
+
 // 播放进度的格式化。与列表里的时长同一条规矩:算在 Rust 侧,`.slint` 里只摆。
 mod progress;
-// 搜索的三个页签。歌曲那一路借 music 的队列,歌手与歌单各自成列。
-#[cfg(not(target_arch = "wasm32"))]
-mod search;
 
 // 一次性提示的唯一出口。所有端都要 —— 报错的路各端都有。
 mod notice;
@@ -58,36 +42,34 @@ mod music;
 pub use music::{
     DownloadCommit, DownloadStore, install_download_store,
 };
-// 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
-mod aurora;
-mod aurora_btn;
-pub use aurora_btn::{
+
+// 喂给 GPU 装饰层的 seam 数据与数学。
+mod shader;
+pub use shader::aurora_btn::{
     AuroraBtnControls, AuroraBtnSlotControls,
 };
-// 卡墙的几何与交互动力学,纯数学、无 GPU 可测(adr/0025)。
+pub use shader::nav_glass::NavGlassControls;
+
+// 卡墙的几何与交互动力学,纯数学、无 GPU 可测(adr/0025);
+// 每帧驱动与 slint 绑定在 `wall::drive`,seam 类型也在那。
 pub mod wall;
-// 卡墙的每帧驱动与 slint 绑定,seam 类型也在这。
-mod wall_drive;
-pub use wall_drive::{
+pub use wall::drive::{
     WallCardControls, WallControls, WallCoverControls,
     WallDrive,
 };
-mod profile;
+
+// 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
 mod theme;
-// 同播只在原生上有:wasm 没有 WebRTC 之外的音频栈可推(见 `Cargo.toml` 的条件依赖)。
+// 同播与遥控。只在原生上有(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
-mod syncplay;
-// 遥控器模式同理:它与同播共用那条信令连接(见 docs/adr/0030)。
-#[cfg(not(target_arch = "wasm32"))]
-mod remote;
+mod sync;
 
 use slint::{ComponentHandle, RenderingState};
 
-mod frame_stats;
-mod lyric_push;
-mod render_loop;
+// 帧循环这一侧。
+mod runtime;
 
-pub use render_loop::run_with_renderers;
+pub use runtime::render_loop::run_with_renderers;
 
 /// 帧率读数开不开。`OSMOSIS_FPS` 设成任意值即开,与 `OSMOSIS_TAB` 同属调试开关。
 ///
@@ -130,13 +112,13 @@ fn build_ui(
     // 恢复出来的 token 可能已被服务端吊销,那要等第一次请求 401 才知道。
     api::session::restore();
     // 接登录页。它按恢复出来的会话决定开局是登录页还是主界面。
-    account::bind(&ui);
+    pages::account::bind(&ui);
 
     // 主题要在别的绑定之前恢复:颜色是全局的,晚一步会让开局那一帧
     // 用错配色闪一下。
     theme::bind(&ui);
-    profile::bind(&ui);
-    aurora_btn::bind(&ui);
+    pages::profile::bind(&ui);
+    shader::aurora_btn::bind(&ui);
 
     let (viz_source, lyrics, cover) =
         music::bind(&ui, media);
@@ -185,7 +167,8 @@ pub fn run() {
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
     let _fps_timer = fps_enabled().then(|| {
-        let (frames, timer) = frame_stats::fps::start(&ui);
+        let (frames, timer) =
+            runtime::frame_stats::fps::start(&ui);
         // 无 bevy 的路径上没人装渲染通知,帧计数在这里自己接。
         ui.window()
             .set_rendering_notifier(move |state, _| {

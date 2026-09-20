@@ -59,7 +59,7 @@ async fn fixture(
     case: &str,
     play_source: PlaySource,
     details: Vec<server::bangdream::proto::Track>,
-) -> (crate::AppState, server::account::Account) {
+) -> (crate::AppState, server::store::account::Account) {
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
     let fake = FakeUpstream {

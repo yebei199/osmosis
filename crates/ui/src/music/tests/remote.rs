@@ -174,7 +174,7 @@ fn a_remote_prev_command_steps_back() {
 #[test]
 fn being_controlled_locks_the_local_transport() {
     let (ui, deck) = deck_window();
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::ControlledBy {
             device: device("phone"),
         },
@@ -198,7 +198,7 @@ fn being_controlled_locks_the_local_transport() {
 fn a_command_from_the_controller_lands_in_the_inbox() {
     let (_ui, deck) = deck_window();
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::Command {
             cmd: app_core::RemoteCommand::Next,
         },
@@ -224,7 +224,7 @@ fn a_report_from_the_target_updates_the_mirror() {
     let (_ui, deck) = deck_window();
     deck.remote.select("pc", "pc");
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
             state: report(
@@ -254,7 +254,7 @@ fn a_report_from_another_device_is_ignored() {
     let (_ui, deck) = deck_window();
     deck.remote.select("pc", "pc");
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::RemoteState {
             from: "另一台".to_owned(),
             state: report(
@@ -278,7 +278,7 @@ fn revoking_control_returns_the_output_to_local() {
     deck.remote.select("pc", "pc");
     assert!(deck.remote.is_remote(), "先得真的切过去");
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::ControlRevoked {
             by: "spare".to_owned(),
         },
@@ -302,7 +302,7 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change()
     let (ui, deck) = deck_window();
     ui.global::<crate::Viz>().set_cover_art(image());
     deck.remote.select("pc", "pc");
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
             state: report(
@@ -313,7 +313,7 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change()
         &deck.remote,
     );
 
-    crate::remote::push_playback(&ui, &deck.remote);
+    crate::sync::remote::push_playback(&ui, &deck.remote);
 
     assert_eq!(
         ui.global::<crate::Viz>()
@@ -325,7 +325,7 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change()
     );
 
     ui.global::<crate::Viz>().set_cover_art(image());
-    crate::remote::push_playback(&ui, &deck.remote);
+    crate::sync::remote::push_playback(&ui, &deck.remote);
 
     assert_eq!(
         ui.global::<crate::Viz>()
@@ -354,7 +354,7 @@ fn image() -> slint::Image {
 fn a_remote_toggle_does_not_touch_the_local_transport() {
     let (ui, deck) = deck_window();
     deck.remote.select("pc", "pc");
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
             state: report(
@@ -393,7 +393,7 @@ fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
         "声音还在那台设备上,这不是回本机"
     );
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::ControlRevoked {
             by: "pc".to_owned(),
         },
@@ -442,7 +442,7 @@ fn a_roster_event_reaches_the_device_list() {
         syncplay::Role::Alone,
     ));
 
-    crate::syncplay::handle(
+    crate::sync::syncplay::handle(
         Event::Roster(vec![device("me"), device("pc")]),
         &ui.as_weak(),
         &roster,
@@ -475,7 +475,7 @@ fn a_failure_event_does_not_rewrite_the_role_line() {
     let before =
         ui.global::<crate::Shell>().get_sync_text();
 
-    crate::syncplay::handle(
+    crate::sync::syncplay::handle(
         Event::Failed("连不上".to_owned()),
         &ui.as_weak(),
         &roster,
@@ -508,7 +508,7 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
 
     let (ui, deck) = deck_window();
     // 回调只有 `bind` 接得上 —— fixture 里那副 Deck 是 `detached` 的。
-    crate::remote::bind(&ui, &deck.remote);
+    crate::sync::remote::bind(&ui, &deck.remote);
     ui.global::<crate::Shell>().set_devices(ModelRc::new(
         VecModel::from(vec![crate::DeviceRow {
             id: "pc".into(),
@@ -535,7 +535,7 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
         "点了芯片就该把输出交给那台设备"
     );
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::ControlRevoked {
             by: "pc".to_owned(),
         },
@@ -564,11 +564,11 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
 fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
  {
     let (ui, deck) = deck_window();
-    crate::remote::bind(&ui, &deck.remote);
+    crate::sync::remote::bind(&ui, &deck.remote);
     deck.remote.select("pc", "pc1");
 
-    let now = crate::remote::now_ms();
-    crate::remote::handle(
+    let now = crate::sync::remote::now_ms();
+    crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
             state: report(
@@ -626,7 +626,7 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
 fn being_told_nobody_is_in_control_unlocks_the_local_transport()
  {
     let (ui, deck) = deck_window();
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::ControlledBy {
             device: device("phone"),
         },
@@ -637,7 +637,7 @@ fn being_told_nobody_is_in_control_unlocks_the_local_transport()
         "接管之后本机该是锁定的"
     );
 
-    crate::remote::handle(
+    crate::sync::remote::handle(
         &Event::NotControlled,
         &deck.remote,
     );

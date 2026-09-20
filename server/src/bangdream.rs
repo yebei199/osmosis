@@ -21,7 +21,7 @@ pub use dto::{
 };
 pub use track_refs::{keep_available, refs_missing_from};
 
-use crate::account::Account;
+use crate::store::account::Account;
 
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {

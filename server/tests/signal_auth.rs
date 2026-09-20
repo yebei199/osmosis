@@ -10,11 +10,11 @@ use std::net::SocketAddr;
 
 use axum::extract::FromRef;
 use axum::routing::get;
-use server::ratelimit::SharedLimiter;
-use server::signaling::{
+use server::gate::ratelimit::SharedLimiter;
+use server::store::{account, db};
+use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
 };
-use server::{account, db};
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite;
 use tungstenite::client::IntoClientRequest;

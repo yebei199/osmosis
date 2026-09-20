@@ -124,7 +124,7 @@ mod tests {
     /// 命令的线上写法就是契约本身:两端各自按 `type` 分支。
     ///
     /// 改一个标签名等于换一条协议,而症状是「按了没反应」—— 对端解不出来时
-    /// 静默丢弃(见 `server::signaling::dispatch`),不会有任何报错。
+    /// 静默丢弃(见 `server::syncplay::signaling::dispatch`),不会有任何报错。
     #[test]
     fn every_command_round_trips_through_its_tag() {
         let commands = [

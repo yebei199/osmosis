@@ -27,7 +27,7 @@ pub enum MediaStatus {
 /// 此刻在放什么。
 ///
 /// 封面给两份是因为两端要的格式不同,而两份 ui 本来都攥在手里:`art_url` 是
-/// 平台给的 CDN 链接,MPRIS 的 `mpris:artUrl` 直接用;`art` 是 `crate::cover`
+/// 平台给的 CDN 链接,MPRIS 的 `mpris:artUrl` 直接用;`art` 是 `crate::imagery::cover`
 /// 解出来喂点云的那份像素,安卓要拿它转 `Bitmap` —— 那边的 `MediaMetadata`
 /// 不接受 http URL,通知栏不会替你去下图。各取一份,谁都不必再下一次。
 #[derive(Clone, Default)]

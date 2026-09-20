@@ -13,7 +13,7 @@ use contract::{
     DeviceDto, RemoteCommand, RemotePlayState,
     RemoteStateDto,
 };
-use server::signaling;
+use server::syncplay::signaling;
 use syncplay::{Client, Event};
 
 /// 测试路由不鉴权,但 token 仍要是个合法的头值。

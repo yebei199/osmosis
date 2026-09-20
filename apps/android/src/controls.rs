@@ -148,7 +148,9 @@ fn argb_pixels(
 
     let packed = art
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|px| {
             i32::from_be_bytes([px[3], px[0], px[1], px[2]])
         })

@@ -15,7 +15,6 @@
 
 use tonic::transport::Channel;
 
-use server::account::Account;
 use server::bangdream::{
     self,
     proto::{
@@ -31,6 +30,7 @@ use server::bangdream::{
         library_service_client::LibraryServiceClient,
     },
 };
+use server::store::account::Account;
 
 /// 与 `main.rs` 的默认上游地址一致。那个常量属于进程装配,不在 lib 里,
 /// 这里重复一次 —— 它写错了下面两条测试立刻连不上,不会静默漂移。
