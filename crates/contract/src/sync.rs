@@ -98,7 +98,7 @@ pub enum ServerSignal {
     /// 接管成功。`generation` 是这一次控制权的代次。
     ///
     /// 带着代次而不是只说一声"成了":旧遥控器重连时会重发 `ClaimControl`,
-    /// 服务端按代次认得出谁才是当前那一个(见 `server::control`)。
+    /// 服务端按代次认得出谁才是当前那一个(见 `server::syncplay::control`)。
     ControlGranted { generation: u64 },
     /// 控制权没了。`by` 是把它拿走的那台设备 —— 另一台遥控器,或者
     /// 按了「退出被遥控」的被控端本人。

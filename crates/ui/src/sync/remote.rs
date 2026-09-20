@@ -122,7 +122,7 @@ impl Remote {
 
     /// 被控端失联太久就把输出收回本机。收回了返回 `true`。
     ///
-    /// 撤权丢了就没有第二次(`server::control` 的 `send` 是 `try_send`
+    /// 撤权丢了就没有第二次(`server::syncplay::control` 的 `send` 是 `try_send`
     /// 且不重发),而本机这条 socket 好好的、不会重连,重连那条自愈也就走不到。
     /// 少了这一条,遥控器永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
     /// 本机也放不了歌 —— 用户唯一的出路是自己去点一下「本机」(#102 F-003)。
@@ -186,7 +186,7 @@ impl Remote {
 
     /// 被遥控时把本机状态报出去;没被遥控就什么也不做。
     ///
-    /// 目标由服务端从控制权槽位查(见 `server::control`),这里不指定发给谁。
+    /// 目标由服务端从控制权槽位查(见 `server::syncplay::control`),这里不指定发给谁。
     pub fn report(&self, state: RemoteStateDto) {
         if let Some(client) = self.inner.client.get()
             && self.is_controlled()

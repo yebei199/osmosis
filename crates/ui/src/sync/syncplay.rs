@@ -44,7 +44,7 @@ pub fn signalling_url(api_base: &str) -> String {
 /// 本机在同播里的身份。
 ///
 /// 只是**这台设备叫什么**,不是"我是谁":归属由服务端从连接的 token 定
-/// (见 `server::signaling`)。
+/// (见 `server::syncplay::signaling`)。
 ///
 /// id 落盘(#100):遥控器断线重连靠 `ClaimControl { resume }` 按 id 认人(#95),
 /// 每次启动换一个的话永远走不到那一支,被控端会一直被一个已经不存在的设备锁着。

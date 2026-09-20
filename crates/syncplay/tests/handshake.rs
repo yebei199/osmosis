@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use contract::{DeviceDto, ServerSignal};
-use server::signaling;
+use server::syncplay::signaling;
 use syncplay::{Envelope, Peer, PeerRole, Signalling};
 use webrtc::media::Sample;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
