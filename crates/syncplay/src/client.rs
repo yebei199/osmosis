@@ -200,7 +200,17 @@ impl Client {
     /// 把一条命令发给正在被本机遥控的那台设备。没有持权就地丢掉 ——
     /// 界面那时本就不该让人按下去。
     pub fn command(&self, cmd: RemoteCommand) {
-        let _ = self.commands.send(Command::Send(cmd));
+        // 入队成不成要说出来。这条通道在编排循环收工之后就关了,而丢在这里的
+        // 命令与「发出去但对面没收到」在界面上长得一模一样 —— 都是按了没反应。
+        let summary = cmd.summary();
+        match self.commands.send(Command::Send(cmd)) {
+            Ok(()) => log::info!(
+                "遥控命令入发送队列: {summary}"
+            ),
+            Err(_) => log::warn!(
+                "遥控命令没能入队: {summary}(发送通道已关)"
+            ),
+        }
     }
 
     /// 把本机的播放状态报给正在遥控本机的那台设备。

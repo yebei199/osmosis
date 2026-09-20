@@ -265,6 +265,20 @@ impl Signalling {
             {
                 let text = serde_json::to_string(&message)
                     .unwrap_or_default();
+                // 帧长要说出来。服务端给每条消息设了上限
+                // (`server::syncplay::signaling` 的 `MAX_MESSAGE_BYTES`),
+                // 而信令里唯一**大小随用户数据增长**的是带整批曲目的
+                // `RemoteCommand::Play` —— 超限时它连解析都到不了,于是
+                // 那一跳的日志是空的,症状与「压根没发」一模一样(#108)。
+                if let ClientSignal::Command { cmd, .. } =
+                    &message
+                {
+                    log::info!(
+                        "遥控命令出栈: {} {} 字节",
+                        cmd.summary(),
+                        text.len()
+                    );
+                }
                 if ws_tx
                     .send(Message::text(text))
                     .await

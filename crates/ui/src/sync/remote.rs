@@ -86,17 +86,46 @@ impl Remote {
     /// 返回它有没有发出去。调用方据此决定要不要落到本地播放器上 ——
     /// 本机输出、或者状态已过期时都返回 `false`,那一下该走原路或者干脆不算数。
     pub fn send(&self, cmd: RemoteCommand) -> bool {
+        let target = lock(&self.inner.output)
+            .target()
+            .unwrap_or("本机")
+            .to_owned();
         let sendable = accepts_control(
             &lock(&self.inner.output),
             &lock(&self.inner.view),
             now_ms(),
         );
         if !sendable {
+            // 两种拦法说的不是一回事:输出本来就在本机(这一下该走本机路径),
+            // 与目标在别的设备但状态已过期(该报「控制暂不可用」)。一条日志
+            // 里不分开的话,现场看到的只是「没发出去」,而出路完全相反。
+            let why = if lock(&self.inner.output)
+                .target()
+                .is_none()
+            {
+                "输出在本机"
+            } else {
+                "状态已过期"
+            };
+            log::info!(
+                "遥控提交: {} -> {target} 未发出({why})",
+                cmd.summary()
+            );
             return false;
         }
         let Some(client) = self.inner.client.get() else {
+            log::info!(
+                "遥控提交: {} -> {target} 未发出(客户端还没接上)",
+                cmd.summary()
+            );
             return false;
         };
+        // 提交成功**只说明本地交出去了**:队列、服务端转发、被控端执行都还在
+        // 后面,任何一跳都可能悄悄丢掉它。真放起来了以被控端的上报为准。
+        log::info!(
+            "遥控提交: {} -> {target} 已交给客户端",
+            cmd.summary()
+        );
         client.command(cmd);
         true
     }
@@ -378,6 +407,10 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         }
         // 命令进收件箱,再叫一声 UI 线程去执行(见模块头的两步)。
         syncplay::Event::Command { cmd } => {
+            log::info!(
+                "收到遥控命令: {} 进收件箱",
+                cmd.summary()
+            );
             lock(&inner.inbox).push_back(cmd.clone());
             let _ =
                 inner.weak.upgrade_in_event_loop(|ui| {
