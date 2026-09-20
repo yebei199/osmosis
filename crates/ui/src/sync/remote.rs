@@ -141,7 +141,9 @@ impl Remote {
 
     /// 测试里问:到此为止交出去了哪些命令。
     #[cfg(test)]
-    pub(crate) fn sent_commands(&self) -> Vec<RemoteCommand> {
+    pub(crate) fn sent_commands(
+        &self,
+    ) -> Vec<RemoteCommand> {
         lock(&self.inner.sent).clone()
     }
 

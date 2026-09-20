@@ -204,9 +204,9 @@ impl Client {
         // 命令与「发出去但对面没收到」在界面上长得一模一样 —— 都是按了没反应。
         let summary = cmd.summary();
         match self.commands.send(Command::Send(cmd)) {
-            Ok(()) => log::info!(
-                "遥控命令入发送队列: {summary}"
-            ),
+            Ok(()) => {
+                log::info!("遥控命令入发送队列: {summary}")
+            }
             Err(_) => log::warn!(
                 "遥控命令没能入队: {summary}(发送通道已关)"
             ),

@@ -247,10 +247,14 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
         "锁定期间本机前面那个人按的不算数"
     );
 
-    execute(&ui, &deck, app_core::RemoteCommand::Play {
-        tracks: batch,
-        index: 1,
-    });
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Play {
+            tracks: batch,
+            index: 1,
+        },
+    );
 
     assert_eq!(
         deck.queue.borrow().current().map(|t| t.id.clone()),
@@ -282,7 +286,10 @@ fn a_toggle_on_a_drained_player_replays_instead_of_resuming()
         LocalToggle::Resume,
         "只是暂停着,接着放就行"
     );
-    assert_eq!(local_toggle(true, false), LocalToggle::Pause);
+    assert_eq!(
+        local_toggle(true, false),
+        LocalToggle::Pause
+    );
 }
 
 /// 差异 2:跳转当场挂上「缓冲中」,不等那趟每秒的轮询。
@@ -296,9 +303,11 @@ fn a_seek_marks_buffering_right_away() {
     wire_transport(&ui, &deck);
     ui.global::<Player>().set_buffering(false);
 
-    execute(&ui, &deck, app_core::RemoteCommand::Seek {
-        ms: 1_000,
-    });
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Seek { ms: 1_000 },
+    );
 
     assert!(
         ui.global::<Player>().get_buffering(),
@@ -313,13 +322,16 @@ fn a_seek_marks_buffering_right_away() {
 /// 还是遥控器的。从前只有本机那条路存,于是遥控器把被控端调小之后,
 /// 被控端一重启就跳回原来的音量。
 #[test]
-fn executing_a_volume_command_remembers_it_for_this_device() {
+fn executing_a_volume_command_remembers_it_for_this_device()
+{
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
-    execute(&ui, &deck, app_core::RemoteCommand::Volume {
-        level: 0.25,
-    });
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Volume { level: 0.25 },
+    );
 
     assert_eq!(
         api::settings::load().volume,
@@ -337,9 +349,11 @@ fn a_volume_command_is_clamped_before_it_lands() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
-    execute(&ui, &deck, app_core::RemoteCommand::Volume {
-        level: 1.5,
-    });
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Volume { level: 1.5 },
+    );
 
     assert_eq!(ui.global::<Player>().get_volume(), 1.0);
 }
@@ -477,10 +491,14 @@ fn each_outcome_says_which_of_the_four_things_happened() {
     let batch = batch_of(&deck, &["a", "b"]);
 
     assert_eq!(
-        dispatch(&ui, &deck, Intent::Play {
-            tracks: batch.clone(),
-            index: 0,
-        }),
+        dispatch(
+            &ui,
+            &deck,
+            Intent::Play {
+                tracks: batch.clone(),
+                index: 0,
+            }
+        ),
         Dispatched::LocalApplied,
         "输出在本机:自己执行"
     );

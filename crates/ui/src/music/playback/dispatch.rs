@@ -206,11 +206,11 @@ fn to_remote(
 ///
 /// 改之前这里是 `if send(..) { return }` 然后径直落到本机 —— 那正是要改掉的
 /// 那一半:状态过期时按下一首,声音会从遥控器自己这台放出来(`docs/adr/0030`)。
-fn unavailable(
-    ui: &MainWindow,
-    deck: &Deck,
-) -> Dispatched {
-    crate::notice::show(ui, deck.remote.unavailable_notice());
+fn unavailable(ui: &MainWindow, deck: &Deck) -> Dispatched {
+    crate::notice::show(
+        ui,
+        deck.remote.unavailable_notice(),
+    );
     Dispatched::Unavailable
 }
 
@@ -241,21 +241,22 @@ fn as_command(
         Intent::Prev => RemoteCommand::Prev,
         Intent::Seek { ratio } => {
             // 按**被控端报来的**曲长算:本机的 playback 此刻是空的。
-            let target = deck.remote.with_view(|view, _| {
-                view.track().and_then(|track| {
-                    crate::progress::seek_target(
-                        *ratio,
-                        track.duration_ms,
-                    )
-                })
-            })?;
+            let target =
+                deck.remote.with_view(|view, _| {
+                    view.track().and_then(|track| {
+                        crate::progress::seek_target(
+                            *ratio,
+                            track.duration_ms,
+                        )
+                    })
+                })?;
             RemoteCommand::Seek {
                 ms: target.as_millis() as u64,
             }
         }
-        Intent::Volume { level } => RemoteCommand::Volume {
-            level: *level,
-        },
+        Intent::Volume { level } => {
+            RemoteCommand::Volume { level: *level }
+        }
     })
 }
 
@@ -300,12 +301,15 @@ fn to_local(
             if redundant {
                 // 不挡的话,连点五下就是五条在途下载,每条回来都往播放器里
                 // 塞一次源,声音从头响五遍。
-                return Dispatched::Blocked("这一下是多余的");
+                return Dispatched::Blocked(
+                    "这一下是多余的",
+                );
             }
-            execute(ui, deck, RemoteCommand::Play {
-                tracks,
-                index,
-            });
+            execute(
+                ui,
+                deck,
+                RemoteCommand::Play { tracks, index },
+            );
         }
         Intent::TogglePlay => {
             let Ok(player) = deck.player.as_ref() else {
@@ -319,7 +323,11 @@ fn to_local(
                     execute(ui, deck, RemoteCommand::Pause);
                 }
                 LocalToggle::Resume => {
-                    execute(ui, deck, RemoteCommand::Resume);
+                    execute(
+                        ui,
+                        deck,
+                        RemoteCommand::Resume,
+                    );
                 }
                 LocalToggle::Replay => {
                     play_current(ui, deck);
@@ -331,8 +339,12 @@ fn to_local(
                 }
             }
         }
-        Intent::Next => execute(ui, deck, RemoteCommand::Next),
-        Intent::Prev => execute(ui, deck, RemoteCommand::Prev),
+        Intent::Next => {
+            execute(ui, deck, RemoteCommand::Next)
+        }
+        Intent::Prev => {
+            execute(ui, deck, RemoteCommand::Prev)
+        }
         Intent::Seek { ratio } => {
             // 按本机正在放的那一首算曲长。手上没歌就没什么可跳的。
             let state =
@@ -346,14 +358,24 @@ fn to_local(
                 ratio,
                 track.duration_ms,
             ) else {
-                return Dispatched::Blocked("这一首没有时长");
+                return Dispatched::Blocked(
+                    "这一首没有时长",
+                );
             };
-            execute(ui, deck, RemoteCommand::Seek {
-                ms: target.as_millis() as u64,
-            });
+            execute(
+                ui,
+                deck,
+                RemoteCommand::Seek {
+                    ms: target.as_millis() as u64,
+                },
+            );
         }
         Intent::Volume { level } => {
-            execute(ui, deck, RemoteCommand::Volume { level });
+            execute(
+                ui,
+                deck,
+                RemoteCommand::Volume { level },
+            );
         }
     }
     Dispatched::LocalApplied

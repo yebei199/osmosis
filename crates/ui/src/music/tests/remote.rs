@@ -44,11 +44,7 @@ fn a_remote_pause_command_stops_the_local_transport() {
     let (ui, deck) = deck_window();
     ui.global::<Player>().set_is_playing(true);
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Pause,
-    );
+    execute(&ui, &deck, app_core::RemoteCommand::Pause);
 
     assert!(!ui.global::<Player>().get_is_playing());
 }
@@ -59,11 +55,7 @@ fn a_remote_resume_command_starts_the_local_transport() {
     let (ui, deck) = deck_window();
     ui.global::<Player>().set_is_playing(false);
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Resume,
-    );
+    execute(&ui, &deck, app_core::RemoteCommand::Resume);
 
     assert!(ui.global::<Player>().get_is_playing());
 }

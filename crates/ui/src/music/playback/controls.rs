@@ -36,7 +36,11 @@ pub(in crate::music) fn bind_play(
             return;
         };
 
-        dispatch(&ui, &deck, Intent::Play { tracks, index });
+        dispatch(
+            &ui,
+            &deck,
+            Intent::Play { tracks, index },
+        );
     });
 }
 

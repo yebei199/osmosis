@@ -270,8 +270,9 @@ impl Signalling {
                 // 而信令里唯一**大小随用户数据增长**的是带整批曲目的
                 // `RemoteCommand::Play` —— 超限时它连解析都到不了,于是
                 // 那一跳的日志是空的,症状与「压根没发」一模一样(#108)。
-                if let ClientSignal::Command { cmd, .. } =
-                    &message
+                if let ClientSignal::Command {
+                    cmd, ..
+                } = &message
                 {
                     log::info!(
                         "遥控命令出栈: {} {} 字节",
