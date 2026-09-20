@@ -141,7 +141,8 @@ fn the_output_device_can_be_picked_without_a_track() {
     });
 
     testing::ElementHandle::find_by_accessible_label(
-        &ui, "输出到 本机",
+        &ui,
+        "输出到 本机",
     )
     .next()
     .expect("本机那颗芯片该在")

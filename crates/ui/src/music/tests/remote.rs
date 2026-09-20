@@ -297,7 +297,8 @@ fn revoking_control_returns_the_output_to_local() {
 /// (#102 之一)。第二次推同一首不再清:上报每秒一条,跟着它取图
 /// 就是每秒一次下载,而界面上会看到封面每秒闪一下。
 #[test]
-fn the_cover_follows_the_remote_track_but_only_on_a_change() {
+fn the_cover_follows_the_remote_track_but_only_on_a_change()
+{
     let (ui, deck) = deck_window();
     ui.global::<crate::Viz>().set_cover_art(image());
     deck.remote.select("pc", "pc");
@@ -315,7 +316,10 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change() {
     crate::remote::push_playback(&ui, &deck.remote);
 
     assert_eq!(
-        ui.global::<crate::Viz>().get_cover_art().size().width,
+        ui.global::<crate::Viz>()
+            .get_cover_art()
+            .size()
+            .width,
         0,
         "换歌那一拍该把上一首的封面清掉"
     );
@@ -324,7 +328,10 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change() {
     crate::remote::push_playback(&ui, &deck.remote);
 
     assert_eq!(
-        ui.global::<crate::Viz>().get_cover_art().size().width,
+        ui.global::<crate::Viz>()
+            .get_cover_art()
+            .size()
+            .width,
         1,
         "同一首歌再推一拍不该再清一次 —— 那是每秒一次的重取"
     );
@@ -332,11 +339,9 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change() {
 
 /// 一张 1×1 的图。有没有图才是被测的东西,画的什么无关紧要。
 fn image() -> slint::Image {
-    slint::Image::from_rgba8(
-        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
-            1, 1,
-        ),
-    )
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+        slint::Rgba8Pixel,
+    >::new(1, 1))
 }
 
 // ── 遥控器侧:控制条那一下改发命令,不碰本机播放器 ──
@@ -389,7 +394,9 @@ fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
     );
 
     crate::remote::handle(
-        &Event::ControlRevoked { by: "pc".to_owned() },
+        &Event::ControlRevoked {
+            by: "pc".to_owned(),
+        },
         &deck.remote,
     );
 

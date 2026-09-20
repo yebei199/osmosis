@@ -81,7 +81,10 @@ pub fn describe_remote(
 ///
 /// 判据是 `by` 就是当前输出的那台设备:抢权的一定是**另一台**,自己退出的
 /// 才会是自己。名字也从输出那份取 —— 信令里带的是 id。
-pub fn describe_revoked(output: &Output, by: &str) -> String {
+pub fn describe_revoked(
+    output: &Output,
+    by: &str,
+) -> String {
     if output.target() == Some(by) {
         let name = output.name().unwrap_or(by);
         return format!("{name} 已退出被遥控");
