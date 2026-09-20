@@ -156,6 +156,67 @@ fn the_device_id_survives_a_restart() {
     );
 }
 
+/// **重启之后还登着。**
+///
+/// 桌面端的回归(用户 2026-09-20 要求两端一并验收):`restore` 是那条唯一把
+/// 盘上的 token 搬回内存的路,而它一直没有测试盯着 —— 安卓这轮改的是它读的
+/// 那个目录,读回来这一步坏了两端一起掉登录。
+///
+/// 两个方向都断言:存过的要回得来,没存过的不能凭空登上(登出之后文件被删掉,
+/// 这时若还能恢复出一个 token,登出就等于没登出)。
+#[test]
+fn a_saved_session_comes_back_after_a_restart() {
+    let _guard = super::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let dir = std::env::temp_dir()
+        .join("osmosis-session-restore");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
+    unsafe {
+        std::env::set_var(
+            "OSMOSIS_SESSION_FILE",
+            dir.join("session"),
+        );
+    }
+
+    self::set("kept-token");
+    // 模拟一次冷启动:进程内存里那份没了,盘上那份还在
+    forget_in_memory();
+    assert_eq!(
+        self::token(),
+        None,
+        "重启的起点是内存里没有"
+    );
+
+    self::restore();
+    assert_eq!(
+        self::token().as_deref(),
+        Some("kept-token"),
+        "重开该还登着 —— 落盘的那份没搬回来"
+    );
+
+    // 登出把文件删掉,那之后的"重启"不该恢复出任何东西
+    self::clear();
+    forget_in_memory();
+    self::restore();
+    assert_eq!(
+        self::token(),
+        None,
+        "登出之后重开不该还登着"
+    );
+}
+
+/// 只清掉内存里那份 token,盘上的不动 —— 进程重启看起来就是这样。
+#[cfg(test)]
+fn forget_in_memory() {
+    if let Ok(mut slot) = super::TOKEN.write() {
+        *slot = None;
+    }
+}
+
 /// 存了再读,拿回同一个 token —— 这是"下次启动还登着"的全部含义。
 #[test]
 fn session_survives_a_restart() {
