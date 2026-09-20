@@ -6,6 +6,7 @@
 
 import { Theme, Type } from "theme.slint";
 import { SectionCard, HoverButton } from "widgets.slint";
+import { OutputStrip } from "controls.slint";
 import { ArtistRankRow, DeviceRow } from "types.slint";
 
 // 一张统计卡:大数字取副色板(硬规则 6 允许的用途),下面一行说明。
@@ -52,6 +53,9 @@ export component ProfilePage inherits Flickable {
     in property <[ArtistRankRow]> top-artists;
     // 与控制条同播条同一份名册。
     in property <[DeviceRow]> devices;
+    // 当前输出设备的 id,空串 = 本机(docs/adr/0030)。
+    in property <string> output-current;
+    callback set-output(string);
 
     // ── 网易云绑定 ──
     in property <bool> netease-bound;
@@ -226,32 +230,27 @@ export component ProfilePage inherits Flickable {
             }
         }
 
+        // 名册这张卡就是输出设备的选择器 —— 芯片本身把在线的那几台列全了,
+        // 再在旁边画一遍名字就是同一份名册说两遍。
+        //
+        // 抽屉里那一行只在有曲目时出得来(控制条挂在 `Player.has-track` 上),
+        // 于是冷启动、还没放过歌时根本选不了被控设备,而产品规则正是
+        // 「点歌之前先选」(#102 之五)。这里是同一个 `OutputStrip`,
+        // 同一个回调,不是第二套说法。
         SectionCard {
-            kicker: "同播设备名册";
+            kicker: "输出设备";
+
+            output-strip := OutputStrip {
+                devices: root.devices;
+                current: root.output-current;
+                set-output(id) => { root.set-output(id); }
+            }
 
             if root.devices.length == 0: Text {
                 text: "没有其他设备";
                 font-family: "Maple Mono NF CN";
                 font-size: 13px;
                 color: Theme.text-faint;
-            }
-            for device in root.devices: HorizontalLayout {
-                spacing: 10px;
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: Theme.accent;
-                    }
-                }
-                // 设备名由对端自报,任意 CJK,走系统字体。
-                Text {
-                    text: device.name;
-                    font-size: 13px;
-                    color: Theme.text;
-                }
             }
         }
     }
