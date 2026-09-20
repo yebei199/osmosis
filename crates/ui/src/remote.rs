@@ -59,6 +59,8 @@ struct Inner {
     controlled_by: Mutex<Option<DeviceDto>>,
     /// 遥控器发来、还没执行的命令。
     inbox: Mutex<VecDeque<RemoteCommand>>,
+    /// 封面已经取到哪一首了 —— 上报每秒一条,按它的频率取图等于每秒一次下载。
+    cover_id: Mutex<String>,
     weak: slint::Weak<MainWindow>,
 }
 
@@ -101,6 +103,25 @@ impl Remote {
         lock(&self.inner.inbox).pop_front()
     }
 
+    /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
+    ///
+    /// 边沿触发,不是每拍触发:上报每秒一条,跟着它取图就是每秒一次下载。
+    /// 问过就算数,所以它同时是「正在取的是哪一首」的那份记录。
+    fn claim_cover(&self, track_id: &str) -> bool {
+        let mut held = lock(&self.inner.cover_id);
+        if *held == track_id {
+            return false;
+        }
+        held.clear();
+        held.push_str(track_id);
+        true
+    }
+
+    /// 封面正在取的是不是这一首。连着切歌时先发的请求可能后回来。
+    fn cover_is_current(&self, track_id: &str) -> bool {
+        *lock(&self.inner.cover_id) == track_id
+    }
+
     /// 被遥控时把本机状态报出去;没被遥控就什么也不做。
     ///
     /// 目标由服务端从控制权槽位查(见 `server::control`),这里不指定发给谁。
@@ -130,6 +151,7 @@ impl Remote {
         };
         // 换目标前先把镜像清掉,否则下一台设备会先闪一眼上一台的歌名。
         lock(&self.inner.view).clear();
+        lock(&self.inner.cover_id).clear();
         if id.is_empty() {
             client.release_control();
             *lock(&self.inner.output) = Output::Local;
@@ -199,6 +221,7 @@ pub fn new(ui: &MainWindow) -> Remote {
             view: Mutex::new(RemoteView::default()),
             controlled_by: Mutex::new(None),
             inbox: Mutex::new(VecDeque::new()),
+            cover_id: Mutex::new(String::new()),
             weak: ui.as_weak(),
         }),
     }
@@ -264,6 +287,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         syncplay::Event::ControlRevoked { by } => {
             *lock(&inner.output) = Output::Local;
             lock(&inner.view).clear();
+            lock(&inner.cover_id).clear();
             let message = describe_revoked(by);
             let _ = inner.weak.upgrade_in_event_loop(
                 move |ui| {
@@ -339,10 +363,10 @@ pub fn push_playback(ui: &MainWindow, remote: &Remote) {
         ui.global::<Player>().set_has_track(false);
         return;
     };
-    // 播放页那两行也跟着换。封面不跟:取它要发一次 HTTP,而这一趟是每秒一次的
-    // 轮询,按它的频率取图等于每秒一次下载。
-    // ponytail: 遥控时播放页没有封面与点云。要它的话,得在曲目 id 变化那一拍
-    // 单独取一次,而那是另一条与本机取封面并行的路径。
+    // 播放页那两行也跟着换,封面跟着走 —— 换歌那一拍取一次。
+    // ponytail: 点云与极光不跟。它们要的是解码出来的裸像素,而遥控时播放页
+    // 本来就没在渲染;要它们的话把 `decode` 的第二个返回值接上去即可。
+    sync_cover(ui, remote, &track);
     ui.global::<crate::Viz>()
         .set_now_title(track.title.clone().into());
     ui.global::<crate::Viz>().set_now_artists(
@@ -370,4 +394,45 @@ fn lock<T>(
     value: &Mutex<T>,
 ) -> std::sync::MutexGuard<'_, T> {
     value.lock().expect("遥控状态锁中毒")
+}
+
+/// 让控制条的封面跟着被控端的曲目走。
+///
+/// 只在换歌那一拍取一次:上报每秒一条,跟着它取图就是每秒一次下载
+/// (边沿由 [`Remote::claim_cover`] 判)。旧封面立刻清掉 —— 新歌配旧图
+/// 比空着更误导,与本机路径同一条规矩(见 `music::transport::play_current`)。
+fn sync_cover(
+    ui: &MainWindow,
+    remote: &Remote,
+    track: &app_core::TrackDto,
+) {
+    if !remote.claim_cover(&track.id) {
+        return;
+    }
+    ui.global::<crate::Viz>()
+        .set_cover_art(slint::Image::default());
+
+    let Some(url) = track.cover.clone() else {
+        return;
+    };
+    let id = track.id.clone();
+    let remote = remote.clone();
+    let weak = ui.as_weak();
+    let _ = slint::spawn_local(async move {
+        // 取不到或解不出就留着空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
+        let Ok(bytes) = api::fetch_bytes(&url).await else {
+            return;
+        };
+        let Some((image, _)) = crate::cover::decode(&bytes)
+        else {
+            return;
+        };
+        // 连着切歌时先发的请求可能后回来,那时它已经不是当前这首。
+        if !remote.cover_is_current(&id) {
+            return;
+        }
+        if let Some(ui) = weak.upgrade() {
+            ui.global::<crate::Viz>().set_cover_art(image);
+        }
+    });
 }
