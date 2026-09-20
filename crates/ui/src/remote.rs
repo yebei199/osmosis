@@ -285,10 +285,13 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         }
         // 失权:回到本机输出。不静默 —— 用户得知道自己手上这台不再管用了。
         syncplay::Event::ControlRevoked { by } => {
+            // 文案先算:它要问「失权前指着的是哪台设备」,而下一行就把
+            // 输出改回本机了(被控端自己退出时 `by` 正是那一台)。
+            let message =
+                describe_revoked(&lock(&inner.output), by);
             *lock(&inner.output) = Output::Local;
             lock(&inner.view).clear();
             lock(&inner.cover_id).clear();
-            let message = describe_revoked(by);
             let _ = inner.weak.upgrade_in_event_loop(
                 move |ui| {
                     crate::notice::show(&ui, message);
