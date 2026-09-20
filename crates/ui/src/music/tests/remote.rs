@@ -495,3 +495,60 @@ fn a_failure_event_does_not_rewrite_the_role_line() {
         "角色一动没动"
     );
 }
+
+/// **无曲目、从个人页选远端**,被控端退出时遥控器要回本机(#102 F-003)。
+///
+/// 与上一条的差别全在入口:那条直接调 `Remote::select`,这条走用户真正走的路
+/// —— 个人页那张卡上的 `OutputStrip` 芯片,经 `Shell.set-output` 回调进来,
+/// 而且本机一首歌都没放过(`Player.has-track` 为假,控制条与抽屉整个不存在)。
+/// 现场报的正是这条路径上收不到撤权,所以入口不能省成直调。
+#[test]
+fn a_revoke_comes_home_even_when_nothing_ever_played() {
+    use slint::{ModelRc, VecModel};
+
+    let (ui, deck) = deck_window();
+    // 回调只有 `bind` 接得上 —— fixture 里那副 Deck 是 `detached` 的。
+    crate::remote::bind(&ui, &deck.remote);
+    ui.global::<crate::Shell>().set_devices(ModelRc::new(
+        VecModel::from(vec![crate::DeviceRow {
+            id: "pc".into(),
+            name: "pc1".into(),
+        }]),
+    ));
+    ui.global::<crate::Shell>().set_current_tab(2);
+
+    assert!(
+        !ui.global::<Player>().get_has_track(),
+        "这一条测的就是没放过歌的冷启动"
+    );
+
+    // 无头下条件元素惰性实例化,查一次把个人页逼出来。
+    let chip = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        &ui, "输出到 pc1",
+    )
+    .next()
+    .expect("个人页上该有 pc1 那颗输出芯片");
+    chip.invoke_accessible_default_action();
+
+    assert!(
+        deck.remote.is_remote(),
+        "点了芯片就该把输出交给那台设备"
+    );
+
+    crate::remote::handle(
+        &Event::ControlRevoked {
+            by: "pc".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        !deck.remote.is_remote(),
+        "被控端退出之后输出该回本机,而不是停在「状态已过期」"
+    );
+    assert_eq!(
+        ui.global::<crate::Shell>().get_output_id(),
+        "",
+        "芯片那一行也要跟着回本机 —— 现场看到的正是它还亮在 pc1 上"
+    );
+}
