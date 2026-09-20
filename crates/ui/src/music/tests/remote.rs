@@ -552,3 +552,68 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
         "芯片那一行也要跟着回本机 —— 现场看到的正是它还亮在 pc1 上"
     );
 }
+
+/// 被控端失联十五秒,遥控器自己回本机(#102 F-003 的出口)。
+///
+/// 现场那次撤权丢在路上:服务端删了槽位、`try_send` 一发没送到,而遥控器这条
+/// socket 好好的、不会重连,于是重连那条自愈也走不到。它停在「遥控: 状态已过期」
+/// 一分钟,芯片还亮在 pc1 上,本机什么也放不了。这一条是那种情况下唯一的出口。
+///
+/// 时钟由 `give_up_if_lost_at` 收着 —— 十五秒的判断不能靠真的睡十五秒。
+#[test]
+fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
+ {
+    let (ui, deck) = deck_window();
+    crate::remote::bind(&ui, &deck.remote);
+    deck.remote.select("pc", "pc1");
+
+    let now = crate::remote::now_ms();
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                1_000,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+
+    // 轮询每一拍都问一次边沿,这里照它的顺序走一拍 —— 不问的话
+    // `was_remote` 一直是假,下面那条边沿断言测的就不是同一件事了。
+    assert!(
+        !deck.remote.took_local_edge(),
+        "声音还在那台设备上,这不是回本机"
+    );
+
+    assert!(
+        !deck.remote.give_up_if_lost_at(now + 14_000),
+        "才十四秒,抖一下不该把声音抢回本机"
+    );
+    assert!(
+        deck.remote.is_remote(),
+        "没失联就该还在那台设备上"
+    );
+
+    assert!(
+        deck.remote.give_up_if_lost_at(now + 16_000),
+        "十五秒过了就该收回来"
+    );
+    assert!(
+        !deck.remote.is_remote(),
+        "输出该回本机 —— 这正是现场卡住的那一步"
+    );
+    assert_eq!(
+        ui.global::<crate::Shell>().get_output_id(),
+        "",
+        "芯片也要跟着灭 —— 现场看到的是它还亮着"
+    );
+    assert!(
+        deck.remote.took_local_edge(),
+        "回本机那一拍要认得出来,自动续播才不会顺手起播"
+    );
+    assert!(
+        !deck.remote.give_up_if_lost_at(now + 99_000),
+        "已经回本机了就不该再收一次,否则每秒弹一条提示"
+    );
+}

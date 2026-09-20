@@ -21,8 +21,9 @@ use slint::ComponentHandle;
 use syncplay::{Client, DeviceDto};
 
 pub(crate) use rules::{
-    accepts_control, describe_controlled, describe_output,
-    describe_remote, describe_revoked,
+    accepts_control, describe_controlled, describe_lost,
+    describe_output, describe_remote, describe_revoked,
+    lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -117,6 +118,51 @@ impl Remote {
             now,
         );
         was && !now
+    }
+
+    /// 被控端失联太久就把输出收回本机。收回了返回 `true`。
+    ///
+    /// 撤权丢了就没有第二次(`server::control` 的 `send` 是 `try_send`
+    /// 且不重发),而本机这条 socket 好好的、不会重连,重连那条自愈也就走不到。
+    /// 少了这一条,遥控器永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
+    /// 本机也放不了歌 —— 用户唯一的出路是自己去点一下「本机」(#102 F-003)。
+    ///
+    /// 走的是与撤权**同一条**收尾:输出回本机、镜像清掉、提示一句。自动续播
+    /// 那趟轮询下一步就会看到 [`Self::took_local_edge`],把本机按停,
+    /// 所以这里不会顺手起播。
+    pub fn give_up_if_lost(&self) -> bool {
+        self.give_up_if_lost_at(now_ms())
+    }
+
+    /// 同上,但时钟由调用方给 —— 测试要在这条十五秒的判断上说话。
+    pub(crate) fn give_up_if_lost_at(
+        &self,
+        now_ms: u64,
+    ) -> bool {
+        {
+            let output = lock(&self.inner.output);
+            if !lost_remote(
+                &output,
+                &lock(&self.inner.view),
+                now_ms,
+            ) {
+                return false;
+            }
+        }
+
+        // 文案先算:它要问「失联前指着的是哪台设备」,而下一行就改回本机了。
+        let message =
+            describe_lost(&lock(&self.inner.output));
+        *lock(&self.inner.output) = Output::Local;
+        lock(&self.inner.view).clear();
+        lock(&self.inner.cover_id).clear();
+        let _ = self.inner.weak.upgrade_in_event_loop(
+            move |ui| {
+                crate::notice::show(&ui, message);
+            },
+        );
+        self.refresh();
+        true
     }
 
     /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
