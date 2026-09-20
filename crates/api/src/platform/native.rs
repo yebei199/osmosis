@@ -136,6 +136,25 @@ async fn check(
     Err(crate::server_error(status.as_u16(), &body))
 }
 
+/// 平台入口显式指定的状态目录。
+///
+/// 安卓上 `XDG_STATE_HOME` 与 `HOME` 都不存在,私有目录只有入口那一层
+/// 拿得到(`apps/android` 的 `internal_data_path`)。不靠 `set_var` 把它
+/// 塞进环境:那要求此刻没有别的线程在读写环境,而入口那里线程已经起来了。
+static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 指定状态目录。各端入口在**碰任何落盘之前**调一次 ——
+/// 晚于第一次读盘就白设了(会话早已按"没有目录"恢复过)。
+pub fn set_state_dir(dir: PathBuf) {
+    if STATE_DIR.set(dir).is_err() {
+        log::warn!("状态目录被指定了第二次,后一次没有生效");
+    }
+}
+
+fn state_dir() -> Option<&'static Path> {
+    STATE_DIR.get().map(PathBuf::as_path)
+}
+
 /// 会话文件的位置。可用 `OSMOSIS_SESSION_FILE` 直接指定。
 ///
 /// 走 `XDG_STATE_HOME` 而不是配置目录:登录态是**状态**不是配置,
@@ -148,6 +167,7 @@ fn session_file() -> Option<PathBuf> {
     }
 
     session_path_from(
+        state_dir(),
         std::env::var("XDG_STATE_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
@@ -156,17 +176,19 @@ fn session_file() -> Option<PathBuf> {
 /// 由环境算出会话文件的路径。抽成纯函数才测得到 ——
 /// 直接读环境变量的话,测试之间会互相干扰。
 ///
-/// 两个变量都没有时返回 `None` 而不是猜一个路径:安卓上就是这种情况,
-/// 那里的私有目录要走 JNI 才拿得到。猜错了写进去,失败还是静默的。
+/// 三样都没有时返回 `None` 而不是猜一个路径:猜错了写进去,失败还是静默的。
+/// 安卓上两个环境变量都没有,走的正是 `explicit` 那一支。
 pub(crate) fn session_path_from(
+    explicit: Option<&Path>,
     state_home: Option<&str>,
     home: Option<&str>,
 ) -> Option<PathBuf> {
-    let base = match (state_home, home) {
-        (Some(state), _) if !state.is_empty() => {
+    let base = match (explicit, state_home, home) {
+        (Some(dir), _, _) => dir.to_path_buf(),
+        (_, Some(state), _) if !state.is_empty() => {
             PathBuf::from(state)
         }
-        (_, Some(home)) if !home.is_empty() => {
+        (_, _, Some(home)) if !home.is_empty() => {
             PathBuf::from(home).join(".local/state")
         }
         _ => return None,
@@ -187,6 +209,7 @@ fn settings_file() -> Option<PathBuf> {
     }
 
     session_path_from(
+        state_dir(),
         std::env::var("XDG_STATE_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
@@ -196,6 +219,7 @@ fn settings_file() -> Option<PathBuf> {
 /// 封面缓存目录,与会话、设置同一个基座。
 fn artwork_dir() -> Option<PathBuf> {
     session_path_from(
+        state_dir(),
         std::env::var("XDG_STATE_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
@@ -375,6 +399,43 @@ pub(crate) fn write_session(path: &Path, token: &str) {
             log::warn!("设置会话文件权限失败: {err}");
         }
     }
+}
+
+/// 设备 id 的落盘处,与会话、设置同一个基座。
+/// 可用 `OSMOSIS_DEVICE_FILE` 直接指定 —— 同一台机上跑第二个实例时,
+/// 指一份自己的才能在服务端算作两台设备(见 `ui::syncplay::identity_from`)。
+fn device_file() -> Option<PathBuf> {
+    if let Ok(explicit) =
+        std::env::var("OSMOSIS_DEVICE_FILE")
+    {
+        return Some(PathBuf::from(explicit));
+    }
+
+    session_path_from(
+        state_dir(),
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|path| path.with_file_name("device"))
+}
+
+/// 落盘的设备 id,没有就是这台机器第一次开。
+pub(crate) fn load_device() -> Option<String> {
+    let saved =
+        std::fs::read_to_string(device_file()?).ok()?;
+    let saved = saved.trim();
+
+    (!saved.is_empty()).then(|| saved.to_owned())
+}
+
+/// 存这台设备的 id。建目录与写文件那一套与会话文件逐字相同,故共用
+/// [`write_session`] —— 多出来的 0600 权限对它无害。
+pub(crate) fn save_device(id: &str) {
+    let Some(path) = device_file() else {
+        return;
+    };
+
+    write_session(&path, id);
 }
 
 /// 同 [`get_json`],但不解码,原样给字节。

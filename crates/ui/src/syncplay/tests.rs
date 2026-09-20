@@ -24,16 +24,29 @@ fn signalling_url_handles_a_bare_host() {
     );
 }
 
-/// **同一台机器上的两个实例必须是两台设备。**
+/// **冷启动后还是同一台设备,而同机两个实例在界面上仍分得开。**
 ///
-/// id 撞了的话服务端会按 id 入册,后连上的顶掉先连上的 —— 而现象是
-/// 「另一台设备时有时无」,离病因极远。
+/// 曾经的规矩是反的:id 带进程号,两个实例因此是两台设备(服务端按 id 入册,
+/// 同 id 会互相顶掉)。#100 之后 id 落盘,换来的是遥控器重连认得出自己
+/// (#95 的 `resume` 分支);两个本机实例要在服务端也分得开,给第二个指一份
+/// 自己的 `OSMOSIS_DEVICE_FILE`。名字仍带进程号,列表里才不是两行一样的。
 #[test]
-fn device_identity_distinguishes_two_instances() {
-    let first = identity_from("nixos", 1234);
-    let second = identity_from("nixos", 5678);
+fn a_persisted_device_id_outlives_the_process() {
+    let first = identity_from(
+        "nixos",
+        1234,
+        "nixos-1234".to_owned(),
+    );
+    let second = identity_from(
+        "nixos",
+        5678,
+        "nixos-1234".to_owned(),
+    );
 
-    assert_ne!(first.id, second.id);
+    assert_eq!(
+        first.id, second.id,
+        "冷启动后该还是同一个 id"
+    );
     assert_ne!(
         first.name, second.name,
         "名字也得能区分,否则界面上两行长得一样"

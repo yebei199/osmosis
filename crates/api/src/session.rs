@@ -52,5 +52,21 @@ pub fn restore() {
     }
 }
 
+/// 这台设备的 id,没有就用 `fresh` 现算一个存下来。
+///
+/// 与 token 同一个目录、同一条规矩,但**登出不删**:它标的是这台机器,
+/// 不是这次登录。落盘的理由见调用方(`ui::syncplay`):遥控器重连按 id 认人。
+///
+/// 存不下来只是下次再换一个 —— 与设置同一条,不该把启动拦在门外。
+pub fn device_id(fresh: impl FnOnce() -> String) -> String {
+    if let Some(saved) = super::platform::load_device() {
+        return saved;
+    }
+
+    let fresh = fresh();
+    super::platform::save_device(&fresh);
+    fresh
+}
+
 #[cfg(test)]
 mod tests;
