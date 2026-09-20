@@ -72,8 +72,23 @@ pub fn describe_remote(
     }
 }
 
-/// 控制权被别人接管时那句提示。
-pub fn describe_revoked(by: &str) -> String {
+/// 失去控制权时那句提示。
+///
+/// 两种失权长得完全不一样,而服务端发来的是同一条信令(`ControlRevoked`):
+/// 别的设备抢了控制权,或者被控端自己按了「退出被遥控」。分不开的话,
+/// pc1 上的人点一下退出,遥控器上写的是「遥控已被 pc1-353238 接管」——
+/// 语义正好反了,而那串 id 用户从没见过。
+///
+/// 判据是 `by` 就是当前输出的那台设备:抢权的一定是**另一台**,自己退出的
+/// 才会是自己。名字也从输出那份取 —— 信令里带的是 id。
+pub fn describe_revoked(
+    output: &Output,
+    by: &str,
+) -> String {
+    if output.target() == Some(by) {
+        let name = output.name().unwrap_or(by);
+        return format!("{name} 已退出被遥控");
+    }
     format!("遥控已被 {by} 接管")
 }
 
@@ -153,6 +168,26 @@ mod tests {
         assert_eq!(
             describe_controlled(Some("小米13")),
             "正被 小米13 遥控"
+        );
+    }
+
+    /// 被控端自己退出,和被别的设备抢走,是两句相反的话。
+    ///
+    /// 服务端两种情况发的是同一条信令,只有 `by` 不同 —— 不比这一下的话,
+    /// pc1 上的人点「退出被遥控」,遥控器上却写「遥控已被 pc1 接管」。
+    #[test]
+    fn a_controlled_device_leaving_is_not_a_takeover() {
+        assert_eq!(
+            describe_revoked(&remote(), "pc1"),
+            "pc1 已退出被遥控"
+        );
+        assert_eq!(
+            describe_revoked(&remote(), "别的设备"),
+            "遥控已被 别的设备 接管"
+        );
+        assert_eq!(
+            describe_revoked(&Output::Local, "pc1"),
+            "遥控已被 pc1 接管"
         );
     }
 
@@ -267,7 +302,8 @@ mod tests {
             .collect();
         copy.push(describe_output(&Output::Local));
         copy.push(describe_controlled(None));
-        copy.push(describe_revoked("pc1"));
+        copy.push(describe_revoked(&Output::Local, "pc1"));
+        copy.push(describe_revoked(&remote(), "pc1"));
         for state in [
             RemotePlayState::Idle,
             RemotePlayState::Buffering,

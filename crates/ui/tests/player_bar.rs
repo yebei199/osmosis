@@ -462,6 +462,37 @@ fn the_drawer_holds_the_modes_and_sync() {
     );
 }
 
+/// 名册里有设备时,同播那一行仍然写着「同播」。
+///
+/// 只在空名册时才写标题的话,有设备的那一行就是一排光秃秃的设备名,紧跟在
+/// 「输出 本机 pc1」下面 —— 看起来正是同一台设备被画了两遍(#102 之二)。
+#[test]
+fn the_sync_row_keeps_its_label_when_devices_are_listed() {
+    use slint::{ModelRc, VecModel};
+
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_devices(ModelRc::new(
+        VecModel::from(vec![ui::DeviceRow {
+            id: "pc1".into(),
+            name: "pc1".into(),
+        }]),
+    ));
+
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+
+    assert!(
+        present(&ui, "SyncStrip::sync-label"),
+        "有设备时也得写着「同播」,否则与上面那行输出设备分不开"
+    );
+    assert!(
+        !present(&ui, "SyncStrip::sync-empty"),
+        "有设备了就不该还说没有设备"
+    );
+}
+
 /// 抽屉向**上**长:开合前后主条纹丝不动,而抽屉整个落在主条上方。
 /// 播放页那根曾经被一层 HorizontalLayout 把高度锁在 84px —— 条身自己算出的
 /// 262px 用不上,于是抽屉从条的位置往下铺,盖住主条、越过窗口下缘。

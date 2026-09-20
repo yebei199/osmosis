@@ -291,6 +291,59 @@ fn revoking_control_returns_the_output_to_local() {
     );
 }
 
+/// 遥控时封面跟着被控端的曲目走 —— 换歌那一拍,上一首那张立刻清掉。
+///
+/// 不清的话遥控器上停着进入遥控前那首的封面,歌名歌手却已经换了
+/// (#102 之一)。第二次推同一首不再清:上报每秒一条,跟着它取图
+/// 就是每秒一次下载,而界面上会看到封面每秒闪一下。
+#[test]
+fn the_cover_follows_the_remote_track_but_only_on_a_change()
+{
+    let (ui, deck) = deck_window();
+    ui.global::<crate::Viz>().set_cover_art(image());
+    deck.remote.select("pc", "pc");
+    crate::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                0,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+
+    crate::remote::push_playback(&ui, &deck.remote);
+
+    assert_eq!(
+        ui.global::<crate::Viz>()
+            .get_cover_art()
+            .size()
+            .width,
+        0,
+        "换歌那一拍该把上一首的封面清掉"
+    );
+
+    ui.global::<crate::Viz>().set_cover_art(image());
+    crate::remote::push_playback(&ui, &deck.remote);
+
+    assert_eq!(
+        ui.global::<crate::Viz>()
+            .get_cover_art()
+            .size()
+            .width,
+        1,
+        "同一首歌再推一拍不该再清一次 —— 那是每秒一次的重取"
+    );
+}
+
+/// 一张 1×1 的图。有没有图才是被测的东西,画的什么无关紧要。
+fn image() -> slint::Image {
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::<
+        slint::Rgba8Pixel,
+    >::new(1, 1))
+}
+
 // ── 遥控器侧:控制条那一下改发命令,不碰本机播放器 ──
 
 /// 输出设备不是本机时,播放键这一下**不落到本机播放器上**。
@@ -322,6 +375,53 @@ fn a_remote_toggle_does_not_touch_the_local_transport() {
     assert!(
         deck.queue.borrow().current().is_none(),
         "遥控那一下不该在本机起播"
+    );
+}
+
+/// 被控端退出之后,本机回到停止态 —— 不自动接着放。
+///
+/// 遥控期间本机播放器是空的,而本机那台状态机还停在进遥控之前的 `Playing`:
+/// 回到本机那一拍不按停它,自动续播就当成「这一首放完了」接上下一首,
+/// 于是平板上从 0:00 响起一首谁也没点过的歌(#102 之四)。
+#[test]
+fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
+ {
+    let (ui, deck) = deck_window();
+    deck.remote.select("pc", "pc");
+    assert!(
+        !deck.remote.took_local_edge(),
+        "声音还在那台设备上,这不是回本机"
+    );
+
+    crate::remote::handle(
+        &Event::ControlRevoked {
+            by: "pc".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        deck.remote.took_local_edge(),
+        "退回本机那一拍该认得出来"
+    );
+    assert!(
+        !deck.remote.took_local_edge(),
+        "只认一次 —— 每拍都认就是每秒把本机按停一次"
+    );
+
+    ui.global::<Player>().set_is_playing(true);
+    rest_local(&ui, &deck);
+
+    assert!(
+        !ui.global::<Player>().get_is_playing(),
+        "回到本机该停着"
+    );
+    assert!(
+        matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Idle
+        ),
+        "状态机也得停 —— 不停的话自动续播每秒都会再撞进来"
     );
 }
 

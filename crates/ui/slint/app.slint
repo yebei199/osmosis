@@ -452,6 +452,8 @@ export component MainWindow inherits Window {
                     streak-days: Profile.streak-days;
                     top-artists: Profile.artists;
                     devices: Shell.devices;
+                    output-current: Shell.output-id;
+                    set-output(id) => { Shell.set-output(id); }
                     netease-bound: Profile.netease-bound;
                     netease-nickname: Profile.netease-nickname;
                     netease-qr: Profile.netease-qr;

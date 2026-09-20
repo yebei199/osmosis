@@ -6,6 +6,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use ui::MainWindow;
+use ui::Player;
 use ui::Profile;
 use ui::Session;
 use ui::Shell;
@@ -112,4 +113,44 @@ fn the_unbind_button_reaches_rust() {
     .invoke_accessible_default_action();
 
     assert_eq!(asked.get(), 1, "按一下该发一次解绑");
+}
+
+/// 没放过歌也能选输出设备。
+///
+/// 控制条挂在 `Player.has-track` 上,抽屉跟着它一起不存在 —— 冷启动时
+/// 「点歌之前先选被控设备」这条产品规则在界面上无路可走(#102 之五)。
+/// 个人主页那张名册卡因此摆同一个选择器。
+#[test]
+fn the_output_device_can_be_picked_without_a_track() {
+    let ui = window();
+    ui.global::<Player>().set_has_track(false);
+    ui.global::<Shell>().set_current_tab(2);
+
+    assert!(
+        present(&ui, "ProfilePage::output-strip"),
+        "没曲目时也得有一条选输出设备的路"
+    );
+
+    // 哨兵值:回调没被叫到时留在这里,否则空串与「选回本机」分不开。
+    let picked = std::rc::Rc::new(std::cell::RefCell::new(
+        "没点过".to_owned(),
+    ));
+    let sink = picked.clone();
+    ui.global::<Shell>().on_set_output(move |id| {
+        *sink.borrow_mut() = id.to_string();
+    });
+
+    testing::ElementHandle::find_by_accessible_label(
+        &ui,
+        "输出到 本机",
+    )
+    .next()
+    .expect("本机那颗芯片该在")
+    .invoke_accessible_default_action();
+
+    assert_eq!(
+        picked.borrow().as_str(),
+        "",
+        "点本机就是把输出选回本机,id 是空串"
+    );
 }
