@@ -24,7 +24,7 @@ pub use queue::{LoopMode, Queue};
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
     ArtistDto, DeviceDto, HealthDto, LyricDto,
-    LyricLineDto, PlaylistDto, PlaylistSource,
-    RemoteCommand, RemotePlayState, RemoteStateDto,
-    TrackDto, TracksDto,
+    LyricLineDto, MAX_SIGNAL_BYTES, PlaylistDto,
+    PlaylistSource, RemoteCommand, RemotePlayState,
+    RemoteStateDto, TrackDto, TracksDto,
 };

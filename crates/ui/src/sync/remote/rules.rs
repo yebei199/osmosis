@@ -127,6 +127,18 @@ pub fn describe_unavailable(output: &Output) -> String {
     )
 }
 
+/// 一条命令大到发不出去时说的那句话。
+///
+/// 必须说得出「为什么」与「现在能怎么办」:它与「控制暂不可用」是两回事 ——
+/// 那个等一等就好了,这个等多久都不会好,得换一个短一点的列表
+/// (根治见 #109)。不说的话,用户会一直点同一首歌。
+pub fn describe_too_large(output: &Output) -> String {
+    output.name().map_or_else(
+        || "队列太长,暂时发不过去".to_owned(),
+        |name| format!("队列太长,暂时发不到 {name}"),
+    )
+}
+
 /// 这一下控制动作该不该发出去。
 ///
 /// 过期时不发:那份状态已经不知道被控端在干什么了,照着它发命令等于蒙 ——
@@ -376,6 +388,8 @@ mod tests {
         copy.push(describe_lost(&Output::Local));
         copy.push(describe_unavailable(&Output::Local));
         copy.push(describe_unavailable(&remote()));
+        copy.push(describe_too_large(&Output::Local));
+        copy.push(describe_too_large(&remote()));
         copy.push(describe_revoked(&remote(), "pc1"));
         for state in [
             RemotePlayState::Idle,

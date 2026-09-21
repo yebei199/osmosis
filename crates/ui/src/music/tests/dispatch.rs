@@ -513,7 +513,7 @@ fn each_outcome_says_which_of_the_four_things_happened() {
     hold_a_stale_view_of_pc(&deck);
     assert_eq!(
         dispatch(&ui, &deck, Intent::Next),
-        Dispatched::Unavailable,
+        Dispatched::Unavailable("目标此刻收不了命令"),
         "过期:不发、也不回落本机"
     );
 
@@ -527,5 +527,73 @@ fn each_outcome_says_which_of_the_four_things_happened() {
         dispatch(&ui, &deck, Intent::Next),
         Dispatched::Blocked("本机正被遥控"),
         "锁拦下的是本机前面那个人按的这一下"
+    );
+}
+
+// ── AC-1b:太大的那一条,在发之前就拒掉 ──
+
+/// 一批歌多到超过信令上限时,**发之前**就拒绝,并说出「队列太长」。
+///
+/// 不截断:少发的那几首在被控端那边就是凭空消失的歌,而用户看不出来。
+/// 不静默:按了没反应正是现场那个故障的症状。
+/// **尤其不能发出去让它失败** —— 服务端读到超长消息会跳出读循环,整条信令
+/// 连接就此断掉,遥控器连自己的控制权都一起丢(见 `contract::MAX_SIGNAL_BYTES`)。
+#[test]
+fn an_oversized_batch_is_refused_before_it_can_break_the_connection()
+ {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    // 撑到超过上限:每首几十字节,几千首稳稳越过 64 KiB。
+    let ids: Vec<String> =
+        (0..4_000).map(|n| n.to_string()).collect();
+    let refs: Vec<&str> =
+        ids.iter().map(String::as_str).collect();
+    batch_of(&deck, &refs);
+    take_control_of_pc(&deck);
+
+    ui.global::<Player>().invoke_play("7".into());
+
+    assert!(
+        deck.remote.sent_commands().is_empty(),
+        "这一条发出去会撞掉整条连接,必须在发之前拒掉"
+    );
+    assert_eq!(
+        ui.global::<Shell>().get_banner_text(),
+        "队列太长,暂时发不到 pc1",
+        "要说得出为什么,以及这不是「等一等就好」的那一类"
+    );
+    assert!(
+        deck.remote.is_remote(),
+        "拒掉这一下不等于放弃那台设备"
+    );
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "更不等于改在本机放 —— 那是 ADR 0030 明令禁止的回落"
+    );
+}
+
+/// 同一批歌**没超限**时照常发出去 —— 那道闸不许顺手把正常的也挡了。
+#[test]
+fn a_batch_under_the_limit_still_goes_out() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let ids: Vec<String> =
+        (0..20).map(|n| n.to_string()).collect();
+    let refs: Vec<&str> =
+        ids.iter().map(String::as_str).collect();
+    batch_of(&deck, &refs);
+    take_control_of_pc(&deck);
+
+    ui.global::<Player>().invoke_play("7".into());
+
+    assert_eq!(
+        deck.remote.sent_commands().len(),
+        1,
+        "没超限的那一批该照常发"
+    );
+    assert_eq!(
+        ui.global::<Shell>().get_banner_text(),
+        "",
+        "没出事就别说话"
     );
 }

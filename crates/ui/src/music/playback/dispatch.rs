@@ -23,6 +23,7 @@ use app_core::{RemoteCommand, TrackDto};
 use super::*;
 use crate::Player;
 use crate::music::*;
+use crate::sync::remote::Submitted;
 
 /// 用户在界面上按下的那一下,还没决定落在哪台设备上。
 ///
@@ -72,7 +73,7 @@ pub(in crate::music) enum Dispatched {
     /// 规则挡下的:本机正被遥控、或者这一下是多余的连点。
     Blocked(&'static str),
     /// 目标在别的设备,但这一下没送出去。**不回落本机**。
-    Unavailable,
+    Unavailable(&'static str),
 }
 
 impl Intent {
@@ -188,11 +189,12 @@ fn to_remote(
     let Some(cmd) = as_command(ui, deck, intent) else {
         // 翻不出命令只有一种情形:遥控时拖进度,而被控端报来的那份还没有
         // 曲目(刚接管、或者对面没在放)。这一下没有可发的东西。
-        return unavailable(ui, deck);
+        return refuse(ui, deck, Submitted::Stale);
     };
 
-    if !deck.remote.send(cmd) {
-        return unavailable(ui, deck);
+    match deck.remote.send(cmd) {
+        Submitted::Ok => {}
+        outcome => return refuse(ui, deck, outcome),
     }
 
     // 交出去之后才退出收听:一条没送出去的命令不该顺手把用户正在听的那路
@@ -205,16 +207,34 @@ fn to_remote(
     Dispatched::RemoteSubmitted
 }
 
-/// 说一句「控制暂不可用」,并**保留**当前目标。
+/// 没发出去:说一句**对得上原因**的话,并**保留**当前目标。
 ///
 /// 改之前这里是 `if send(..) { return }` 然后径直落到本机 —— 那正是要改掉的
 /// 那一半:状态过期时按下一首,声音会从遥控器自己这台放出来(`docs/adr/0030`)。
-fn unavailable(ui: &MainWindow, deck: &Deck) -> Dispatched {
-    crate::notice::show(
-        ui,
-        deck.remote.unavailable_notice(),
-    );
-    Dispatched::Unavailable
+///
+/// 两种原因要说两句话,因为出路相反:「控制暂不可用」等一等就好了,
+/// 「队列太长」等多久都不会好,得换一个短一点的列表(根治见 #109)。
+fn refuse(
+    ui: &MainWindow,
+    deck: &Deck,
+    outcome: Submitted,
+) -> Dispatched {
+    match outcome {
+        Submitted::TooLarge { .. } => {
+            crate::notice::show(
+                ui,
+                deck.remote.too_large_notice(),
+            );
+            Dispatched::Unavailable("这一批太长,发不出去")
+        }
+        _ => {
+            crate::notice::show(
+                ui,
+                deck.remote.unavailable_notice(),
+            );
+            Dispatched::Unavailable("目标此刻收不了命令")
+        }
+    }
 }
 
 /// 把意图翻成一条发给被控端的命令。

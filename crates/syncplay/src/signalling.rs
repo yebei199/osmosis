@@ -136,6 +136,29 @@ impl SignalSender {
     }
 }
 
+/// 这条命令发出去会是多少字节 —— **发之前**就能问。
+///
+/// 量的是真正上线的那一份:`ClientSignal::Command` 连着外层的 `type` 与 `to`
+/// 一起序列化,与 [`Signalling::connect`] 里出栈那一行用的是同一个编码器。
+/// 只量 `cmd` 自己会漏掉外层那几十个字节,而判定就卡在边界上时,漏掉多少都算错。
+///
+/// 为什么非要在发之前问:超限的消息不是「被丢掉」,是让服务端读循环跳出、
+/// **整条连接断掉**(见 `contract::MAX_SIGNAL_BYTES`)。发出去再看结果,
+/// 代价是遥控器连自己的控制权都一起丢了。
+///
+/// 序列化不出来时返回 `usize::MAX`:那一条本来也发不出去,当成"超限"拒掉,
+/// 比当成"没问题"放行安全。
+pub fn command_wire_len(
+    to: &str,
+    cmd: &RemoteCommand,
+) -> usize {
+    serde_json::to_string(&ClientSignal::Command {
+        to: to.to_owned(),
+        cmd: cmd.clone(),
+    })
+    .map_or(usize::MAX, |text| text.len())
+}
+
 /// 握手失败的分类。401 单独拎出来:它是"这个 token 不作数了",
 /// 而不是"网络不好" —— 拿同一个 token 重试只会再得到一个 401。
 fn classify(
@@ -310,5 +333,80 @@ impl Signalling {
         envelope: &Envelope,
     ) -> Result<(), SyncError> {
         self.sender().send(to, envelope).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(id: &str) -> contract::TrackDto {
+        contract::TrackDto {
+            platform: "netease".to_owned(),
+            id: id.to_owned(),
+            title: format!("歌 {id}"),
+            alias: None,
+            artists: vec!["LiSA".to_owned()],
+            cover: None,
+            duration_ms: 200_000,
+        }
+    }
+
+    /// 量的是**连外层一起**的那一份,因为服务端数的就是那一份。
+    ///
+    /// 只量 `cmd` 自己会漏掉 `{"type":"command","to":"…"}` 那几十个字节 ——
+    /// 而判定正卡在边界上时,漏掉多少都算错。
+    #[test]
+    fn the_measured_length_includes_the_envelope() {
+        let cmd = RemoteCommand::Next;
+        let bare = serde_json::to_string(&cmd)
+            .expect("命令该序列化得出来")
+            .len();
+
+        let wire = command_wire_len("pc1", &cmd);
+
+        assert!(
+            wire > bare,
+            "外层的 type 与 to 也要算进去:裸 {bare} 字节,上线 {wire} 字节"
+        );
+    }
+
+    /// 批次越长,量出来的越大 —— 这条链上唯一随用户数据增长的就是它。
+    #[test]
+    fn a_longer_batch_measures_larger() {
+        let short = RemoteCommand::Play {
+            tracks: vec![track("1")],
+            index: 0,
+        };
+        let long = RemoteCommand::Play {
+            tracks: (0..200)
+                .map(|n| track(&n.to_string()))
+                .collect(),
+            index: 0,
+        };
+
+        assert!(
+            command_wire_len("pc1", &long)
+                > command_wire_len("pc1", &short) * 100,
+            "两百首该比一首大两个数量级"
+        );
+    }
+
+    /// 真正的长歌单越得过上限 —— 那正是 #108 现场那条命令。
+    #[test]
+    fn a_thousand_track_batch_exceeds_the_signal_limit() {
+        let cmd = RemoteCommand::Play {
+            tracks: (0..1_000)
+                .map(|n| track(&n.to_string()))
+                .collect(),
+            index: 0,
+        };
+
+        assert!(
+            command_wire_len("pc1", &cmd)
+                > contract::MAX_SIGNAL_BYTES,
+            "现场那一批 977 首实测 224194 字节,上限是 {}",
+            contract::MAX_SIGNAL_BYTES
+        );
     }
 }
