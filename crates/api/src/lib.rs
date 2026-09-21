@@ -20,6 +20,7 @@ mod history;
 mod netease;
 
 mod playlists;
+mod queue;
 mod url;
 
 pub(crate) mod platform;
@@ -59,6 +60,11 @@ pub use history::{recent, record_play, stats};
 pub use netease::{
     QrStep, netease_qr, netease_qr_state, netease_status,
     netease_unbind, qr_poll,
+};
+
+pub use queue::{
+    create_queue, fetch_queue, publish_queue, queue_head,
+    queue_page, report_queue_state, set_queue_intent,
 };
 
 pub use playlists::{
