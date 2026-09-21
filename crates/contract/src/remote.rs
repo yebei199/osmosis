@@ -149,6 +149,129 @@ mod tests {
         }
     }
 
+    /// 现场那一份歌单长什么样 —— 与 #108 真机量到的那一条同等规模、同等形状。
+    ///
+    /// 字段取真实值域:网易云的 21 位数字 id、带日文原名与英文别名的标题、
+    /// 两个歌手、一条 `p2.music.126.net` 的封面直链。上面那个 `track()`
+    /// 是给往返测试用的最小例子,拿它量字节会把现场少算一半。
+    fn field_track(index: usize) -> TrackDto {
+        TrackDto {
+            platform: "netease".to_owned(),
+            id: format!("{}", 2_000_000_000 + index),
+            title: format!("夜に駆ける(第{index}回)"),
+            alias: Some("Racing Into The Night".to_owned()),
+            artists: vec![
+                "YOASOBI".to_owned(),
+                "Ayase".to_owned(),
+            ],
+            cover: Some(format!(
+                "https://p2.music.126.net/{}==/1099511680000{index:05}.jpg",
+                "a".repeat(22)
+            )),
+            duration_ms: 261_000,
+        }
+    }
+
+    /// 一份现场规模的歌单在**两个方向**上都撞穿 64 KiB(#109 Checklist 1、F-002)。
+    ///
+    /// #108 只量到了出站那一半:真机上歌单「我喜欢的」977 首,
+    /// `RemoteCommand::Play` 序列化 **224194 字节**,是上限的 3.4 倍,被控端没反应。
+    /// 入站那一半当时只是推算 —— 要实测得让 pc1 的队列变成那 977 首,
+    /// 而 pc1 是用户自己的实例,#108 那一轮没动它。
+    ///
+    /// 这里用同规模、同形状的曲目把两个方向一起量出来(2026-09-21 实测):
+    ///
+    /// | 方向 | 977 首的字节数 | 对 65536 |
+    /// |---|---|---|
+    /// | 出站 `Command{Play}` | 238350 | 3.6 倍 |
+    /// | 入站 `State` | 238655 | 3.6 倍 |
+    ///
+    /// 出站这个数与真机上那 224194 差 6%(本地这份 fixture 的 id 与别名
+    /// 稍长),同一量级 —— 所以**入站那 23 万字节也是可信的**:它每秒往连接上
+    /// 打一发,而超限在服务端那侧是跳出读循环、整条连接断掉。
+    ///
+    /// 越界点见下一条:两百多首,不是什么极端歌单。
+    ///
+    /// 这一条在 #109 把队列挪出信令通道之后要**翻过来**:那时上报的字节数
+    /// 不再随队列长度增长(AC-2),这个测试改成钉那条平线。
+    #[test]
+    fn a_field_sized_queue_blows_the_limit_in_both_directions()
+     {
+        const FIELD_TRACKS: usize = 977;
+
+        let tracks: Vec<TrackDto> =
+            (0..FIELD_TRACKS).map(field_track).collect();
+
+        let outbound =
+            serde_json::to_string(&ClientSignal::Command {
+                to: "pc1".to_owned(),
+                cmd: RemoteCommand::Play {
+                    tracks: tracks.clone(),
+                    index: 3,
+                },
+            })
+            .expect("命令该能序列化")
+            .len();
+
+        let inbound =
+            serde_json::to_string(&ClientSignal::State {
+                state: RemoteStateDto {
+                    track: tracks.get(3).cloned(),
+                    position_ms: 42_000,
+                    state: RemotePlayState::Playing,
+                    queue: tracks,
+                    queue_index: 3,
+                    volume: 0.8,
+                    sent_at: 1_700_000_000_000,
+                },
+            })
+            .expect("上报该能序列化")
+            .len();
+
+        assert!(
+            outbound > crate::MAX_SIGNAL_BYTES * 3,
+            "出站 {outbound} 字节,该是上限 {} 的三倍以上",
+            crate::MAX_SIGNAL_BYTES
+        );
+        assert!(
+            inbound > crate::MAX_SIGNAL_BYTES * 3,
+            "入站 {inbound} 字节,该是上限 {} 的三倍以上",
+            crate::MAX_SIGNAL_BYTES
+        );
+    }
+
+    /// 越界点在两三百首上,不在几千首上 —— 这条链路的失败源是**用户的歌单长度**。
+    ///
+    /// 2026-09-21 实测越界点 **269 首**。钉一个上界而不是等号:字段值域变了
+    /// 字节数会跟着变,而要说的那句话(「普通歌单就能撞穿」)不会因为它从
+    /// 269 挪到 300 而失效。
+    #[test]
+    fn the_limit_is_crossed_by_an_ordinary_playlist() {
+        let crossing = (1..)
+            .find(|&count| {
+                let tracks: Vec<TrackDto> =
+                    (0..count).map(field_track).collect();
+                serde_json::to_string(
+                    &ClientSignal::Command {
+                        to: "pc1".to_owned(),
+                        cmd: RemoteCommand::Play {
+                            tracks,
+                            index: 0,
+                        },
+                    },
+                )
+                .expect("命令该能序列化")
+                .len()
+                    > crate::MAX_SIGNAL_BYTES
+            })
+            .expect("总有一个首数会越界");
+
+        assert!(
+            crossing < 400,
+            "越界点 {crossing} 首,普通歌单就该撞得到"
+        );
+    }
+
     /// 命令的线上写法就是契约本身:两端各自按 `type` 分支。
     ///
     /// 改一个标签名等于换一条协议,而症状是「按了没反应」—— 对端解不出来时
