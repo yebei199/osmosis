@@ -617,6 +617,15 @@ pub fn push_playback(ui: &MainWindow, remote: &Remote) {
     ui.global::<Player>().set_playback_text(text.into());
     ui.global::<Player>().set_is_playing(playing);
     ui.global::<Shell>().set_output_stale(stale);
+    // 「新版本待应用」与「状态已过期」是两件事,各占一位:过期说的是
+    // **这份报告旧了**(连着三秒没来),待应用说的是**报告是新的,而它报的
+    // 就是「我还没换上」**。混成一个的话,取数失败会被显示成掉线,
+    // 而用户会去检查网络(`docs/adr/0031` 一)。
+    ui.global::<Shell>().set_queue_pending(
+        remote.with_view(|view, _| {
+            view.has_pending_revision()
+        }),
+    );
     ui.global::<Player>().set_buffering(remote.with_view(
         |view, _| {
             view.state()
