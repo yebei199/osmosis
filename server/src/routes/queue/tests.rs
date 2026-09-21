@@ -276,12 +276,23 @@ async fn publishing_against_a_stale_revision_answers_revision_conflict()
     assert_eq!(body.code, "revision_conflict");
 }
 
-/// 两次并发发布只有一个赢,而且赢的那个把版本推到 2,不是两个都写成 2。
+/// 两次并发发布只有一个赢,而且 revision 2 里**只有赢家那一条**。
 ///
-/// 这一条是 `FOR UPDATE` 唯一的门:少了它,两边都读到 revision 1、各自 +1,
-/// 后写的那份把前一份的条目覆盖成同一个版本号 —— 而两次请求都会回成功。
-/// 单事务的测试造不出这个,所以走两条真连接。
-#[tokio::test]
+/// 这条测试的上一版没有判别力(#109 F-R2):它建队列时只放一首,两次并发
+/// 各发一首**新**曲目,于是两边都拿到同一个 `entry_id = 2`,都要插入
+/// `(queue_id, 2, 2)` —— `play_queue_entries` 的主键把其中一个挡了下来。
+/// 无论 `FOR UPDATE` 有没有生效,它都看得到「只有一个赢」,分不清是锁挡的
+/// 还是主键挡的。而当时实际生效的正是后者:路由那时用的是自动提交的连接,
+/// 行锁在 `SELECT` 返回那一刻就还回去了(#109 F-R1)。
+///
+/// 这一版让两次发布**撞不上主键**:队列先放两首,两边各自沿用其中一首
+/// 已有的 `entry_id`(走 carry-forward 分支),于是锁一旦失效,两边都能
+/// 成功写进 revision 2 —— 断言这才红得起来。
+///
+/// 两个断言各管一半:「只有一个赢」管请求的回答,「revision 2 只有一条」
+/// 管库里的事实。后者更硬 —— 即便时序碰巧让一方先跑完,两条都写进去了
+/// 也逃不掉。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_concurrent_publishes_leave_exactly_one_winner()
 {
     let (state, account) =
@@ -292,32 +303,53 @@ async fn two_concurrent_publishes_leave_exactly_one_winner()
         account.clone(),
         Json(CreateQueueDto {
             device_id: PC1.to_owned(),
-            tracks: vec![track("a")],
+            tracks: vec![track("a"), track("b")],
         }),
     )
     .await
     .expect("建队列应该成功")
     .0;
 
-    let left = publish_queue(
+    // 第一次发布故意**大**:两次请求必须真的在时间上重叠,否则先发的那次
+    // 早就跑完了,后发的那次读到的本来就是新版本 —— 那时无论有没有锁,
+    // 看到的都是「一个赢」。
+    //
+    // 三千首在本机库上是几十毫秒,而下面那一下只等两毫秒 —— 第二次因此
+    // 必定落在第一次的事务还开着的那段里。撤掉 `FOR UPDATE` 复验时,
+    // 这个窗口决定 RED 出不出得来:八百首配十五毫秒试过,三次里有一次
+    // 第一批已经跑完了,于是假绿。
+    //
+    // 两边的 entry_id 也不能撞:大的那批全是**新**曲目(拿 3 以后的号),
+    // 小的那批沿用已有的 `a`(号 1)。撞上的话挡住第二次的会是
+    // `play_queue_entries` 的主键而不是锁 —— 上一版正是栽在这里(#109 F-R2)。
+    let bulk: Vec<TrackDto> = (0..3_000)
+        .map(|index| track(&format!("new-{index}")))
+        .collect();
+    let left = tokio::spawn(publish_queue(
         State(state.clone()),
         account.clone(),
         Path(first.queue_id),
         Json(PublishQueueDto {
             expected_revision: first.revision,
-            tracks: vec![track("left")],
+            tracks: bulk,
         }),
-    );
-    let right = publish_queue(
+    ));
+    // 让大的那次先进到事务里去。没有这一下,两个任务可能一前一后跑完,
+    // 而这条测试要验的恰恰是「重叠时会怎样」。
+    tokio::time::sleep(std::time::Duration::from_millis(2))
+        .await;
+    let right = tokio::spawn(publish_queue(
         State(state.clone()),
         account.clone(),
         Path(first.queue_id),
         Json(PublishQueueDto {
             expected_revision: first.revision,
-            tracks: vec![track("right")],
+            tracks: vec![track("a")],
         }),
-    );
+    ));
     let (left, right) = tokio::join!(left, right);
+    let left = left.expect("发布任务不该 panic");
+    let right = right.expect("发布任务不该 panic");
 
     let winners = [&left, &right]
         .iter()
@@ -326,15 +358,34 @@ async fn two_concurrent_publishes_leave_exactly_one_winner()
     assert_eq!(winners, 1, "两次并发发布只该有一个赢");
 
     let head = queue_head(
-        State(state),
-        account,
+        State(state.clone()),
+        account.clone(),
         Path(first.queue_id),
     )
     .await
     .expect("读队列头应该成功")
     .0;
     assert_eq!(head.revision, 2, "版本该正好推进一格");
-    assert_eq!(head.total, 1);
+
+    let page = queue_page(
+        State(state),
+        account,
+        Path(first.queue_id),
+        Query(PageQuery {
+            revision: 2,
+            offset: None,
+            limit: None,
+        }),
+    )
+    .await
+    .expect("读 revision 2 应该成功")
+    .0;
+    assert_eq!(
+        page.total,
+        if left.is_ok() { 3_000 } else { 1 },
+        "revision 2 里该只有赢家写的那一批 —— 两批都在,\
+         说明两次发布都写进去了"
+    );
 }
 
 /// 别的账号的队列一律 404,不是 403 —— 回 403 等于确认这个 id 存在。

@@ -30,6 +30,8 @@ use contract::{
 };
 use serde::Deserialize;
 
+use sqlx::{PgPool, Postgres, Transaction};
+
 use server::error;
 use server::error::Failure;
 use server::store::account::Account;
@@ -37,7 +39,36 @@ use server::store::queue::{
     self, Entry, EntryInput, Intent, QueueRef, Report,
 };
 
-use crate::{AppState, conn};
+use crate::AppState;
+
+/// 开一条真事务。
+///
+/// 写队列的这几条路由**必须**整段跑在事务里,不能用 `crate::conn` 那条自动
+/// 提交的连接。自动提交下每条语句各自是一个事务,于是两件事都不成立
+/// (#109 F-R1):
+///
+/// - `create` 先写队列头、再写条目。中途失败会留下一个**没有任何条目的
+///   队列头**,而它已经占掉将来那条按账号的队列数配额。
+/// - `publish` 的 `SELECT ... FOR UPDATE` 想让两次并发发布排队,而 PostgreSQL
+///   的行锁随持有它的事务结束而释放 —— 自动提交下那条 SELECT 自己就是一整个
+///   事务,**锁在它返回那一刻就没了**,后面读旧条目、写新条目、改版本号、
+///   回收四步全程无保护。
+async fn begin(
+    pool: &PgPool,
+) -> Result<Transaction<'static, Postgres>, Failure> {
+    pool.begin()
+        .await
+        .map_err(|err| error::map_error(&err.into()))
+}
+
+/// 提交,失败翻成 HTTP 失败。
+async fn commit(
+    tx: Transaction<'static, Postgres>,
+) -> Result<(), Failure> {
+    tx.commit()
+        .await
+        .map_err(|err| error::map_error(&err.into()))
+}
 
 /// `GET /queues/{id}` 的查询参数。
 ///
@@ -60,18 +91,20 @@ pub(crate) async fn create_queue(
     account: Account,
     Json(body): Json<CreateQueueDto>,
 ) -> Result<Json<QueueRefDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    let mut tx = begin(&state.pool).await?;
     let entries = inputs(&body.tracks);
 
-    queue::create(
-        &mut conn,
+    let published = queue::create(
+        &mut tx,
         account.id,
         &body.device_id,
         &entries,
     )
     .await
-    .map(as_ref)
-    .map_err(|err| error::map_error(&err))
+    .map_err(|err| error::map_error(&err))?;
+    commit(tx).await?;
+
+    Ok(as_ref(published))
 }
 
 /// `POST /queues/{id}/revisions` —— 改一个队列,原子产生新版本。
@@ -85,19 +118,22 @@ pub(crate) async fn publish_queue(
     Path(queue_id): Path<i64>,
     Json(body): Json<PublishQueueDto>,
 ) -> Result<Json<QueueRefDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    // 整段一个事务:`FOR UPDATE` 要落在它里面才排得了队(见 [`begin`])。
+    let mut tx = begin(&state.pool).await?;
     let entries = inputs(&body.tracks);
 
-    queue::publish(
-        &mut conn,
+    let published = queue::publish(
+        &mut tx,
         account.id,
         queue_id,
         body.expected_revision,
         &entries,
     )
     .await
-    .map(as_ref)
-    .map_err(|err| error::map_error(&err))
+    .map_err(|err| error::map_error(&err))?;
+    commit(tx).await?;
+
+    Ok(as_ref(published))
 }
 
 /// `GET /queues/{id}?revision=&offset=&limit=` —— 读一页,固定在给定版本上。
@@ -107,7 +143,7 @@ pub(crate) async fn queue_page(
     Path(queue_id): Path<i64>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<QueuePageDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    let mut conn = crate::conn(&state.pool).await?;
     let offset = query.offset.unwrap_or(0).max(0);
     // 不给就给满一页。夹在上限内那一步在 store 里 —— 两处各夹一次的话,
     // 迟早只改了一处。
@@ -148,7 +184,7 @@ pub(crate) async fn queue_head(
     account: Account,
     Path(queue_id): Path<i64>,
 ) -> Result<Json<QueueHeadDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    let mut conn = crate::conn(&state.pool).await?;
 
     let head = queue::head(&mut conn, account.id, queue_id)
         .await
@@ -173,10 +209,10 @@ pub(crate) async fn set_queue_intent(
     Path(queue_id): Path<i64>,
     Json(body): Json<SetQueueIntentDto>,
 ) -> Result<StatusCode, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    let mut tx = begin(&state.pool).await?;
 
     queue::set_intent(
-        &mut conn,
+        &mut tx,
         account.id,
         queue_id,
         &body.device_id,
@@ -186,6 +222,7 @@ pub(crate) async fn set_queue_intent(
     )
     .await
     .map_err(|err| error::map_error(&err))?;
+    commit(tx).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -204,10 +241,13 @@ pub(crate) async fn report_queue_state(
     Path(queue_id): Path<i64>,
     Json(body): Json<QueueReportDto>,
 ) -> Result<Json<QueueReportAckDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
+    // 报告与它带的那条操作下场要**一起**落地:分两次写的话,进程在中间
+    // 挂掉会留下「报告收了、意图还挂在 pending」,而界面正是照着这两样
+    // 决定还挂不挂「待应用」。
+    let mut tx = begin(&state.pool).await?;
 
     let accepted = queue::record_report(
-        &mut conn,
+        &mut tx,
         account.id,
         queue_id,
         &Report {
@@ -230,7 +270,7 @@ pub(crate) async fn report_queue_state(
     // 让它去改当前意图的状态,等于让一条已经不作数的汇报改写现在的事实。
     if accepted && let Some(outcome) = body.operation {
         queue::finish_intent(
-            &mut conn,
+            &mut tx,
             account.id,
             queue_id,
             &outcome.operation_id,
@@ -240,6 +280,8 @@ pub(crate) async fn report_queue_state(
         .await
         .map_err(|err| error::map_error(&err))?;
     }
+
+    commit(tx).await?;
 
     Ok(Json(QueueReportAckDto { accepted }))
 }

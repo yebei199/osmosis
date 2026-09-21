@@ -14,9 +14,25 @@
 
 use std::collections::HashMap;
 
-use sqlx::PgConnection;
+use sqlx::{PgConnection, Postgres, Transaction};
 
 use crate::error::AppError;
+
+/// 写队列的函数收的是**事务**,不是连接。
+///
+/// 这一条是类型上的门,不是约定(#109 F-R1)。这个模块里每个写函数都跑好几条
+/// SQL,而池里那条连接是自动提交的 —— 每条语句各自一个事务,于是:
+///
+/// - 中途失败留下半份数据(建队列写了头、没写条目);
+/// - `SELECT ... FOR UPDATE` 拿的行锁在那条 SELECT 返回时就还回去了,
+///   后面几步全程无保护,而注释里写着「两次并发发布必须排队」。
+///
+/// 收 `&mut PgConnection` 的话,这两种错都得靠调用方记得开事务,而忘了开
+/// **没有任何症状**:测试照样绿,并发照样偶尔对。收这个类型之后,忘了开是
+/// 一个编译错误。
+///
+/// 读函数不收它:单条 SELECT 本来就是原子的,多要一个事务只是噪音。
+pub type Tx<'c> = Transaction<'c, Postgres>;
 
 /// 回收旧版本时至少留几版。
 ///
@@ -146,7 +162,7 @@ type ReportRow = (
 
 /// 新建一个队列,条目成为它的第一版。
 pub async fn create(
-    conn: &mut PgConnection,
+    tx: &mut Tx<'_>,
     account_id: i64,
     device_id: &str,
     entries: &[EntryInput],
@@ -161,12 +177,12 @@ pub async fn create(
     .bind(account_id)
     .bind(device_id)
     .bind(entries.len() as i64 + 1)
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut **tx)
     .await?;
 
     let entry_ids: Vec<i64> =
         (1..=entries.len() as i64).collect();
-    insert_entries(conn, queue_id, 1, entries, &entry_ids)
+    insert_entries(tx, queue_id, 1, entries, &entry_ids)
         .await?;
 
     Ok(QueueRef {
@@ -180,7 +196,7 @@ pub async fn create(
 /// `expected_revision` 对不上就整次拒绝 —— 两台设备同时改时,后到的那次不能
 /// 凭「我也有一份完整列表」把别人的新版本盖掉。
 pub async fn publish(
-    conn: &mut PgConnection,
+    tx: &mut Tx<'_>,
     account_id: i64,
     queue_id: i64,
     expected_revision: i64,
@@ -197,7 +213,7 @@ pub async fn publish(
         )
         .bind(queue_id)
         .bind(account_id)
-        .fetch_optional(&mut *conn)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or(AppError::NotFound)?;
 
@@ -206,7 +222,7 @@ pub async fn publish(
     }
 
     let mut carried = occurrences(
-        &previous_entries(conn, queue_id, revision).await?,
+        &previous_entries(tx, queue_id, revision).await?,
     );
     let entry_ids: Vec<i64> = entries
         .iter()
@@ -233,10 +249,8 @@ pub async fn publish(
         .collect();
 
     let next = revision + 1;
-    insert_entries(
-        conn, queue_id, next, entries, &entry_ids,
-    )
-    .await?;
+    insert_entries(tx, queue_id, next, entries, &entry_ids)
+        .await?;
 
     sqlx::query(
         "UPDATE play_queues
@@ -246,10 +260,10 @@ pub async fn publish(
     .bind(queue_id)
     .bind(next)
     .bind(next_entry_id)
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await?;
 
-    reclaim(conn, queue_id, next).await?;
+    reclaim(tx, queue_id, next).await?;
 
     Ok(QueueRef {
         queue_id,
@@ -423,7 +437,7 @@ pub async fn head(
 /// 一个队列同时只有一条:连点 A、B 时 B 覆盖 A,迟到的 A 因此再也应用不上 ——
 /// 它带的 `operation_id` 已经不是当前这一条了。
 pub async fn set_intent(
-    conn: &mut PgConnection,
+    tx: &mut Tx<'_>,
     account_id: i64,
     queue_id: i64,
     device_id: &str,
@@ -431,7 +445,7 @@ pub async fn set_intent(
     entry_id: i64,
     operation_id: &str,
 ) -> Result<(), AppError> {
-    owned(conn, account_id, queue_id).await?;
+    owned(tx, account_id, queue_id).await?;
 
     sqlx::query(
         "INSERT INTO play_queue_intents
@@ -451,7 +465,7 @@ pub async fn set_intent(
     .bind(revision)
     .bind(entry_id)
     .bind(operation_id)
-    .execute(conn)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
@@ -462,14 +476,14 @@ pub async fn set_intent(
 /// `operation_id` 对不上就什么也不做并返回 `false` —— 那是一条已经被顶掉的
 /// 旧操作在迟到汇报,收下它会把当前那条的状态改错。
 pub async fn finish_intent(
-    conn: &mut PgConnection,
+    tx: &mut Tx<'_>,
     account_id: i64,
     queue_id: i64,
     operation_id: &str,
     applied: bool,
     reason: Option<&str>,
 ) -> Result<bool, AppError> {
-    owned(conn, account_id, queue_id).await?;
+    owned(tx, account_id, queue_id).await?;
 
     let done = sqlx::query(
         "UPDATE play_queue_intents
@@ -480,7 +494,7 @@ pub async fn finish_intent(
     .bind(operation_id)
     .bind(if applied { "applied" } else { "failed" })
     .bind(reason)
-    .execute(conn)
+    .execute(&mut **tx)
     .await?;
 
     Ok(done.rows_affected() > 0)
@@ -492,12 +506,12 @@ pub async fn finish_intent(
 /// epoch 内序号递增。少了它,上一条连接上飘过来的残余报告会把新进程的状态盖掉,
 /// 而症状是遥控器上的进度条倒退一次。
 pub async fn record_report(
-    conn: &mut PgConnection,
+    tx: &mut Tx<'_>,
     account_id: i64,
     queue_id: i64,
     report: &Report,
 ) -> Result<bool, AppError> {
-    owned(conn, account_id, queue_id).await?;
+    owned(tx, account_id, queue_id).await?;
 
     let done = sqlx::query(
         "INSERT INTO play_queue_reports
@@ -529,7 +543,7 @@ pub async fn record_report(
     .bind(report.round)
     .bind(report.position_ms)
     .bind(&report.play_state)
-    .execute(conn)
+    .execute(&mut **tx)
     .await?;
 
     Ok(done.rows_affected() > 0)
