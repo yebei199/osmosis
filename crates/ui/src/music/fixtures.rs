@@ -230,6 +230,7 @@ fn deck_window_with(
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(Cell::new(false)),
         seeking: Rc::new(RefCell::new(None)),
+        execution: crate::music::Execution::default(),
     };
 
     (ui, deck)

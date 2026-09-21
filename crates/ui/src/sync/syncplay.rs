@@ -41,13 +41,16 @@ pub fn signalling_url(api_base: &str) -> String {
     }
 }
 
-/// 本机在同播里的身份。
+/// 本机这台设备的 id。
 ///
-/// 只是**这台设备叫什么**,不是"我是谁":归属由服务端从连接的 token 定
-/// (见 `server::syncplay::signaling`)。
-///
-/// id 落盘(#100):遥控器断线重连靠 `ClaimControl { resume }` 按 id 认人(#95),
-/// 每次启动换一个的话永远走不到那一支,被控端会一直被一个已经不存在的设备锁着。
+/// 队列归**播放会话 / 输出设备**,不是账号(`docs/adr/0031` 二)—— 同账号
+/// 两台设备各自本机播放不该互相覆盖,所以本机发布队列时拿的是这个。
+/// 与同播入册用的是同一个 id,两处不能各算各的。
+pub(crate) fn local_device_id() -> String {
+    identity().id
+}
+
+/// 本机在同播里的身份(正身)。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)
         .map(|name| name.trim().to_owned())

@@ -303,21 +303,24 @@ pub(in crate::music) fn snapshot(
     };
     let queue = deck.queue.borrow();
     let (epoch, state_seq) = deck.remote.stamp();
+    let (queue_id, revision, applied_revision) =
+        deck.execution.identity();
 
     app_core::RemoteStateDto {
         track: queue.current().cloned(),
         position_ms: position.as_millis() as u64,
         state,
         volume: ui.global::<Player>().get_volume(),
-        // 队列标识那几样还没有来源:把本机队列注册到服务端上是 #109 第 4 段
-        // 的活。在那之前一律 `None` —— 那正是「这个队列还没同步上去」的意思
-        // (`docs/adr/0031` 八),遥控器据此知道自己拉不到列表,
-        // 而不是拉了个空的。
-        queue_id: None,
-        revision: None,
-        applied_revision: None,
-        entry_id: None,
-        // 长度现在就报得出来:它是一个标量,不随内容增长。
+        // 三样都可能是 `None`,而那是**正常状态**:这一批还没同步到服务端
+        // 去(`docs/adr/0031` 八)。遥控器据此知道自己拉不到列表,而不是
+        // 拉了个空的。
+        queue_id,
+        revision,
+        applied_revision,
+        // 正在放的是哪一条。按位置查 `entry_id` 而不是报下标:队列允许同一
+        // 首歌出现多次,下标随插入删除整体挪位。
+        entry_id: deck.execution.entry_at(queue.index()),
+        // 长度是一个标量,不随内容增长。
         queue_len: queue.tracks().len() as u32,
         epoch,
         state_seq,

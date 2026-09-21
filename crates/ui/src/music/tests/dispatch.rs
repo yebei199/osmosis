@@ -117,14 +117,16 @@ fn tapping_a_track_while_remote_sends_the_whole_batch() {
 
     ui.global::<Player>().invoke_play("b".into());
 
-    // 契约切换之后(`docs/adr/0031`)这一下发不出命令:点播要先把这一批
-    // 发布成服务端队列、拿到 queue_id/revision。发布那一段是 #109 第 4 段,
-    // 在那之前它**明确拒绝**而不是静默 —— 原来的断言是「该变成一条带整批
-    // 的 Play」,那条命令已经不存在了。
+    // 队列挪进服务端之后(`docs/adr/0031`),这一下走的是「先把这一批发布
+    // 成服务端队列,拿到 queue_id/revision 再发命令」。发布是一次 HTTP 往返,
+    // 测试环境里没有服务端,所以命令发不出去 —— 但**这一下确实走到了远端
+    // 分支**,而那正是这条测试的主语。原来的断言是「该变成一条带整批的
+    // Play」,那条命令已经不存在了。
     let _ = batch;
-    assert!(
-        deck.remote.sent_commands().is_empty(),
-        "点播还没接上服务端队列,这一下不该发出任何命令"
+    assert_eq!(
+        deck.remote.play_submits(),
+        1,
+        "遥控时点一首歌,该走远端那条路"
     );
     assert!(
         deck.queue.borrow().current().is_none(),
@@ -411,11 +413,9 @@ fn a_leftover_local_loading_state_does_not_swallow_a_remote_tap()
 
     ui.global::<Player>().invoke_play("b".into());
 
-    // 同上:主语是「本机的连点去重有没有拦下一条发给别的设备的意图」,
-    // 而横幅说明它走到了远端分支、被那里的改造闸拒掉,不是被去重吞掉。
     assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "远端点播正在改造中,这一版还发不出去(#109)",
+        deck.remote.play_submits(),
+        1,
         "去重是本机那条路的事,不该拦下发给别的设备的意图"
     );
 }
@@ -473,13 +473,9 @@ fn a_just_claimed_target_accepts_the_first_tap() {
 
     ui.global::<Player>().invoke_play("a".into());
 
-    // 第 4 段接上取数之前,点播走到远端分支就会被明确拒绝(见
-    // `dispatch::to_remote`)。这条测试的主语没变 —— 它问的是「快照还在
-    // 路上时,这一下有没有被**本机那侧**的规则吞掉」,而横幅上那句话
-    // 正说明它走到了远端分支。接上之后这里改回断言发出了命令。
     assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "远端点播正在改造中,这一版还发不出去(#109)",
+        deck.remote.play_submits(),
+        1,
         "快照还在路上,不是丢掉用户这一下的理由"
     );
 }
@@ -576,7 +572,7 @@ fn the_batch_size_no_longer_decides_a_remote_tap() {
         ui.global::<Player>().invoke_play("7".into());
 
         outcomes.push((
-            deck.remote.sent_commands().len(),
+            deck.remote.play_submits(),
             ui.global::<Shell>()
                 .get_banner_text()
                 .to_string(),
@@ -584,12 +580,58 @@ fn the_batch_size_no_longer_decides_a_remote_tap() {
     }
 
     assert_eq!(
-        outcomes[0], outcomes[1],
+        outcomes[0].1, outcomes[1].1,
         "二十首与四千首该走到同一个下场 —— 批次大小已经不在这条链上了"
     );
+    assert_eq!(
+        outcomes[1].0, 2,
+        "两下都该走到远端分支,而不是被哪一道按字节的闸拦下"
+    );
     assert!(
-        !outcomes[0].1.contains("队列太长"),
-        "「队列太长」说的是一条已经不存在的失败,实得 {}",
-        outcomes[0].1
+        !outcomes[1].1.contains("太长"),
+        "两种规模都在配额之内,不该说太长,实得 {}",
+        outcomes[1].1
+    );
+}
+
+/// 超出**配额**的那一批仍然当场拒绝,而且立刻说得出话(AC-6)。
+///
+/// 与上一条不是一回事:那条说的是「字节数不再是判据」,这条说的是「条数
+/// 仍然有上限」。上限从 64 KiB 那条线换成了 `MAX_QUEUE_ENTRIES`,而拒绝的
+/// 规矩没变 —— **不截断、不静默**,而且不等那次 HTTP 往返回来:用户要的是
+/// 一句立刻出现的话,而这一条等多久都不会好。
+#[test]
+fn a_batch_past_the_quota_is_refused_on_the_spot() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let ids: Vec<String> = (0..api::MAX_QUEUE_ENTRIES + 1)
+        .map(|n| n.to_string())
+        .collect();
+    let refs: Vec<&str> =
+        ids.iter().map(String::as_str).collect();
+    batch_of(&deck, &refs);
+    take_control_of_pc(&deck);
+
+    ui.global::<Player>().invoke_play("7".into());
+
+    assert_eq!(
+        deck.remote.play_submits(),
+        0,
+        "超出配额的那一批不该发出去"
+    );
+    assert!(
+        ui.global::<Shell>()
+            .get_banner_text()
+            .contains("太长"),
+        "要说得出为什么,实得 {}",
+        ui.global::<Shell>().get_banner_text()
+    );
+    assert!(
+        deck.remote.is_remote(),
+        "拒掉这一下不等于放弃那台设备"
+    );
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "更不等于改在本机放 —— 那是 ADR 0030 明令禁止的回落"
     );
 }

@@ -131,6 +131,12 @@ struct Deck {
     /// 真正取字节在解码线程上,成没成要问这里(见 `audio::SeekState`)。
     /// 每首歌一个,换歌时跟着换。
     seeking: Rc<RefCell<Option<audio::SeekState>>>,
+    /// 手上这份执行副本是服务端哪个队列的哪一版(见 `playback::execution`)。
+    ///
+    /// 与 `queue` 并排而不是塞进它:`app_core::Queue` 管的是「放哪一首、
+    /// 下一首是谁」,它一个字节都不该知道服务端的存在 —— 断网时自动续播
+    /// 照样要走(`docs/adr/0031` 四)。
+    execution: Execution,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -188,6 +194,7 @@ pub fn bind(
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(std::cell::Cell::new(false)),
         seeking: Rc::new(RefCell::new(None)),
+        execution: Execution::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,

@@ -95,6 +95,9 @@ struct Inner {
     epoch: i64,
     /// 本次会话里已经报到第几条。每报一次加一。
     state_seq: AtomicU64,
+    /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
+    #[cfg(test)]
+    play_submits: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -117,6 +120,33 @@ impl Remote {
     /// 少了这道锁,pc1 前面的人随手按一下暂停,手机上的进度条就开始撒谎。
     pub fn is_controlled(&self) -> bool {
         lock(&self.inner.controlled_by).is_some()
+    }
+
+    /// 输出指着哪台设备。本机输出时是 `None`。
+    ///
+    /// 点播要拿它当**队列的归属** —— 队列归播放会话 / 输出设备,不是遥控器
+    /// 自己这台,也不是账号(`docs/adr/0031` 二)。
+    pub fn target_id(&self) -> Option<String> {
+        lock(&self.inner.output).target().map(str::to_owned)
+    }
+
+    /// 记一次「点播交出去了」。
+    ///
+    /// 点播与别的命令不同:它要先经 HTTP 把队列发布出去,命令是那次往返之后
+    /// 才发的。于是「这一下有没有走到远端分支」在测试里再也不能靠
+    /// [`Self::sent_commands`] 观察 —— 那里要等一个测试环境里不存在的服务端。
+    /// 这个计数器记的正是那件事,而且是**同步**记的。
+    pub fn note_play_submitted(&self) {
+        #[cfg(test)]
+        self.inner
+            .play_submits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 测试里问:到此为止有几下点播走到了远端分支。
+    #[cfg(test)]
+    pub(crate) fn play_submits(&self) -> u64 {
+        self.inner.play_submits.load(Ordering::Relaxed)
     }
 
     /// 把一条命令发给被控端。
@@ -422,6 +452,8 @@ pub fn new(ui: &MainWindow) -> Remote {
             was_remote: Mutex::new(false),
             epoch: now_ms() as i64,
             state_seq: AtomicU64::new(1),
+            #[cfg(test)]
+            play_submits: AtomicU64::new(0),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),

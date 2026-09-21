@@ -131,3 +131,45 @@ fn replacing_the_batch_resets_the_queue() {
         "next 该走新批,不是旧批"
     );
 }
+
+/// 列表循环回卷一次,轮次加一。
+///
+/// 轮次与那一轮的排列要一起报给服务端:随机开着时每一轮重新洗
+/// (`docs/adr/0031` 六),只报排列的话服务端分不清「又洗了一次」与
+/// 「还没动」—— 两轮洗出同一个排列虽然少见,但不是不可能。
+#[test]
+fn rewinding_counts_a_new_round() {
+    let mut queue = Queue::new(vec![track(1), track(2)], 0);
+    queue.set_loop_mode(LoopMode::All);
+
+    assert_eq!(queue.round(), 0, "还没回卷过");
+    queue.next(1);
+    queue.next(1);
+
+    assert_eq!(queue.round(), 1, "回卷一次就是第二轮");
+}
+
+/// 换一批把轮次清零 —— 它是这一批的属性,不是用户意图。
+#[test]
+fn replacing_the_batch_resets_the_round() {
+    let mut queue = Queue::new(vec![track(1), track(2)], 0);
+    queue.set_loop_mode(LoopMode::All);
+    queue.next(1);
+    queue.next(1);
+
+    queue.replace(vec![track(3)], 0);
+
+    assert_eq!(queue.round(), 0);
+}
+
+/// 播放次序读得出来,而且**关随机时就是原序**。
+///
+/// 报给服务端的是这一份(`docs/adr/0031` 六:显式保存排列,不靠 seed 猜)。
+#[test]
+fn the_play_order_is_readable_and_starts_as_the_batch_order()
+ {
+    let queue =
+        Queue::new(vec![track(1), track(2), track(3)], 0);
+
+    assert_eq!(queue.order(), [0, 1, 2]);
+}

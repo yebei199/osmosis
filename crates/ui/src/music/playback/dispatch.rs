@@ -22,6 +22,7 @@ use app_core::{RemoteCommand, TrackDto};
 
 use super::*;
 use crate::Player;
+use crate::Shell;
 use crate::music::*;
 use crate::sync::remote::Submitted;
 
@@ -183,19 +184,11 @@ fn to_remote(
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
-    // 点播要先把这一批发布成服务端队列、拿到 queue_id/revision 才发得出
-    // 命令(`docs/adr/0031`)。契约这一轮切完,发布那一段是 #109 第 4 段。
-    // 在这里明确拒绝而不是让它默默失败:静默的话用户按下去毫无反应,
-    // 而那与「队列太长」「控制暂不可用」在界面上分不开。
-    if matches!(intent, Intent::Play { .. }) {
-        crate::notice::show(
-            ui,
-            "远端点播正在改造中,这一版还发不出去(#109)"
-                .to_owned(),
-        );
-        return Dispatched::Unavailable(
-            "队列还没接上服务端",
-        );
+    // 点播要先把这一批**发布成服务端队列**,拿到 queue_id/revision 才发得出
+    // 命令(`docs/adr/0031`)—— 曲目不再随命令走信令。发布是一次 HTTP 往返,
+    // 所以这一条与别的命令不同,不在这里当场发完。
+    if let Intent::Play { tracks, index } = intent {
+        return submit_remote_play(ui, deck, tracks, index);
     }
 
     // 退出规矩先问,因为下一行就把意图交出去了。它只看变体,不看载荷。
@@ -220,6 +213,148 @@ fn to_remote(
         Leaving::AndStop | Leaving::Stay => {}
     }
     Dispatched::RemoteSubmitted
+}
+
+/// 遥控器侧的点播:把用户眼前这一批冻结成服务端队列,再发一条只带标识的命令。
+///
+/// 三步都在一次 `spawn_local` 里,因为它们是一件事的三段,中间断在哪里都
+/// 不该留下「队列建了但没人播」:
+///
+/// 1. `POST /queues` —— 冻结的是**用户实际看到并选择的有序条目**,不是一个
+///    会被重跑的查询(`docs/adr/0031` 五)。队列归**目标设备**的播放会话,
+///    不是遥控器自己这台。
+/// 2. `POST /queues/{id}/intent` —— 让这一下**先落库**。WebSocket 那条通知
+///    丢了、或者服务端随后重启,播放端恢复时读 head 仍然对得上账
+///    (`docs/adr/0031` 七)。
+/// 3. 发 `RemoteCommand::Play` —— 只是把播放端叫醒,不是唯一的送达手段。
+///
+/// 返回 [`Dispatched::RemoteSubmitted`] 的时机与别的命令一致:它说的一直都是
+/// 「**本地**交出去了」,后面每一跳都可能丢掉它,真放起来了以被控端的上报为准。
+#[cfg(not(target_arch = "wasm32"))]
+fn submit_remote_play(
+    ui: &MainWindow,
+    deck: &Deck,
+    tracks: Vec<TrackDto>,
+    index: usize,
+) -> Dispatched {
+    let Some(target) = deck.remote.target_id() else {
+        return refuse(ui, deck, Submitted::NotRemote);
+    };
+    // 超出约定规模**当场**拒绝,不等那次 HTTP 往返回来:用户要的是一句立刻
+    // 出现的话,而这一条等多久都不会好(AC-6)。
+    if tracks.len() > api::MAX_QUEUE_ENTRIES {
+        crate::notice::show(
+            ui,
+            deck.remote.too_large_notice(),
+        );
+        return Dispatched::Unavailable("这一批太长");
+    }
+
+    deck.remote.note_play_submitted();
+
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    let _ = slint::spawn_local(async move {
+        let outcome = publish_and_command(
+            &deck, &target, tracks, index,
+        )
+        .await;
+        if let Err(why) = outcome
+            && let Some(ui) = weak.upgrade()
+        {
+            crate::notice::show(&ui, why);
+        }
+    });
+
+    Dispatched::RemoteSubmitted
+}
+
+/// 上面那三步的正身。失败给一句**给人看的**话。
+#[cfg(not(target_arch = "wasm32"))]
+async fn publish_and_command(
+    deck: &Deck,
+    target: &str,
+    tracks: Vec<TrackDto>,
+    index: usize,
+) -> Result<(), String> {
+    let published = api::create_queue(target, tracks)
+        .await
+        .map_err(describe_publish_failure)?;
+
+    // 条目号要从服务端读回来:发布那一刻服务端才给号,而队列允许同一首歌
+    // 出现多次 —— 拿下标去猜会在重复项上指错一条。
+    let entries = api::fetch_queue(
+        published.queue_id,
+        published.revision,
+    )
+    .await
+    .map_err(describe_publish_failure)?;
+    let entry_id = entries
+        .get(index)
+        .map(|entry| entry.entry_id)
+        .ok_or_else(|| {
+            "服务端收下的队列里没有点的那一首".to_owned()
+        })?;
+
+    let operation_id = fresh_operation_id();
+    api::set_queue_intent(
+        published.queue_id,
+        api::SetQueueIntentDto {
+            device_id: target.to_owned(),
+            revision: published.revision,
+            entry_id,
+            operation_id: operation_id.clone(),
+        },
+    )
+    .await
+    .map_err(describe_publish_failure)?;
+
+    match deck.remote.send(RemoteCommand::Play {
+        queue_id: published.queue_id,
+        revision: published.revision,
+        entry_id,
+        operation_id,
+    }) {
+        Submitted::Ok => Ok(()),
+        // 命令没送出去**不等于**这一下白点了:意图已经落库,播放端下一次
+        // 读 head 就会看到它。所以这里只说一句,不回滚队列。
+        _ => Err(deck.remote.unavailable_notice()),
+    }
+}
+
+/// 发布失败时给人看的那句话。
+///
+/// 两种分开说,因为出路相反:超限要换一个短点的列表,别的等一等再来。
+#[cfg(not(target_arch = "wasm32"))]
+fn describe_publish_failure(
+    error: api::ApiError,
+) -> String {
+    match &error {
+        api::ApiError::Server { code, .. }
+            if code == "queue_too_large" =>
+        {
+            format!(
+                "这一批太长,最多 {} 首",
+                api::MAX_QUEUE_ENTRIES
+            )
+        }
+        _ => format!("队列没能同步到服务端: {error}"),
+    }
+}
+
+/// 一次操作的标识。
+///
+/// 时间加一个进程内自增数:要的只是「这一次与上一次不是同一次」,而重试同
+/// 一次点播时调用方会把同一个值再用一遍。不引 uuid —— 换不来更少的代码。
+#[cfg(not(target_arch = "wasm32"))]
+fn fresh_operation_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    format!(
+        "{}-{}",
+        crate::sync::remote::now_ms(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// 没发出去:说一句**对得上原因**的话,并**保留**当前目标。
@@ -342,7 +477,11 @@ fn to_local(
                     "这一下是多余的",
                 );
             }
-            play_batch(ui, deck, tracks, index);
+            // 先起播,再异步把这一批发布到服务端(`docs/adr/0031` 八):
+            // 「所有播放都持久化」是目标,不是放歌的前置门槛 —— 服务端
+            // 不可达时点不动歌是重大回退。
+            play_batch(ui, deck, tracks.clone(), index);
+            publish_local_queue(ui, deck, tracks, index);
         }
         Intent::TogglePlay => {
             let Ok(player) = deck.player.as_ref() else {
@@ -421,6 +560,252 @@ fn leave_listening(deck: &Deck) {
     }
 }
 
+/// 本机点播之后,把这一批异步发布成服务端队列。
+///
+/// **不挡播放**:声音已经出来了,这一趟只是给它安一个 `queue_id`。失败就把
+/// 执行副本标成「还没同步上去」,界面据此说一句,恢复之后下一次点播再对账
+/// (`docs/adr/0031` 八)。
+///
+/// 这条路径与**被接管时把本机队列注册上去**(AC-9)是**同一条** —— 接管那一刻
+/// 本机手上这批要么早就有 `queue_id`(这里发布成功过),要么没有(这里失败过),
+/// 后者补发一次走的还是这个函数。不写成两套。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn publish_local_queue(
+    ui: &MainWindow,
+    deck: &Deck,
+    tracks: Vec<TrackDto>,
+    index: usize,
+) {
+    // 超出配额的不必往返一次才知道 —— 而且它照样在本机放着,只是同步不上去。
+    if tracks.len() > api::MAX_QUEUE_ENTRIES {
+        deck.execution.detach();
+        mark_sync(ui, deck);
+        return;
+    }
+
+    let device = crate::sync::syncplay::local_device_id();
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    let _ = slint::spawn_local(async move {
+        let published =
+            api::create_queue(&device, tracks).await;
+        let Some(ui) = weak.upgrade() else { return };
+
+        match published {
+            Ok(reference) => {
+                // 条目号要读回来:服务端发号,而队列允许重复项,拿下标猜
+                // 会在重复的那几条上指错一条。
+                let entries = api::fetch_queue(
+                    reference.queue_id,
+                    reference.revision,
+                )
+                .await;
+                match entries {
+                    Ok(entries) => {
+                        deck.execution.adopt(
+                            reference.queue_id,
+                            reference.revision,
+                            entries
+                                .iter()
+                                .map(|entry| entry.entry_id)
+                                .collect(),
+                        );
+                        checkpoint(&deck, index);
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "队列发布了但条目号没读回来: {error}"
+                        );
+                        deck.execution.detach();
+                    }
+                }
+            }
+            Err(error) => {
+                // 不挡播放,只记一笔。
+                log::warn!("本机队列没同步上去: {error}");
+                deck.execution.detach();
+            }
+        }
+        mark_sync(&ui, &deck);
+    });
+}
+
+/// 把「这一批同步上去没有」推到界面上。
+#[cfg(not(target_arch = "wasm32"))]
+fn mark_sync(ui: &MainWindow, deck: &Deck) {
+    let (queue_id, ..) = deck.execution.identity();
+    ui.global::<Shell>()
+        .set_queue_unsynced(queue_id.is_none());
+}
+
+/// 把这一刻的执行状态作为检查点存到服务端。
+///
+/// **不是每秒一次**:每秒那条走信令给遥控器看(小状态),这一条是给服务端
+/// 留的恢复检查点,只在事件上发 —— 换了批、换了歌、洗了牌、回卷。排列只在
+/// 它真的变了时才带(见 `Execution::order_to_report`),否则每秒就是几千个
+/// bigint 的重写,而线上字节数并不会涨。
+///
+/// **自动下一首不等它落库**(`docs/adr/0031` 四):这里发出去就不管了,
+/// 失败只留一行日志 —— 断连时后端那份本来就是旧的,而它被标成过期。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn checkpoint(
+    deck: &Deck,
+    index: usize,
+) {
+    let (Some(queue_id), _, Some(applied_revision)) =
+        deck.execution.identity()
+    else {
+        // 还没同步上去的那一批没有检查点可存,这是正常状态。
+        return;
+    };
+
+    let (order, round, position_ms) = {
+        let queue = deck.queue.borrow();
+        let order: Vec<i64> = queue
+            .order()
+            .iter()
+            .filter_map(|at| deck.execution.entry_at(*at))
+            .collect();
+        (order, queue.round(), 0)
+    };
+    let play_order = deck.execution.order_to_report(&order);
+    let (epoch, state_seq) = deck.remote.stamp();
+    let report = api::QueueReportDto {
+        device_id: crate::sync::syncplay::local_device_id(),
+        epoch,
+        state_seq: state_seq as i64,
+        applied_revision,
+        entry_id: deck.execution.entry_at(index),
+        play_order,
+        round: round as i64,
+        position_ms,
+        state: app_core::RemotePlayState::Playing,
+        operation: deck.execution.take_outcome().map(
+            |outcome| api::QueueOperationOutcomeDto {
+                operation_id: outcome.operation_id,
+                applied: outcome.applied,
+                reason: outcome.reason,
+            },
+        ),
+    };
+
+    let _ = slint::spawn_local(async move {
+        if let Err(error) =
+            api::report_queue_state(queue_id, report).await
+        {
+            // 丢一条检查点不影响放歌:它只是让服务端手上那份新一点。
+            log::debug!("检查点没送到,下一次再说: {error}");
+        }
+    });
+}
+
+/// 被控端收到一条 `Play`:按标识把执行副本取下来,**取全了**再换上。
+///
+/// 三条规矩都在这一段里(`docs/adr/0031` 七):
+///
+/// - **取失败保留旧副本,不执行半份列表。** 半份拿去放,用户听到的是一个他
+///   没点过的队列;而旧副本至少还是他上一次点的那个。
+/// - **换上是原子的**:曲目、队列、条目号三样一起换。中间空一拍的话,
+///   那一拍里的自动续播会去读一个刚被清空的队列。
+/// - **下场要回报**:成没成都记一笔,搭下一条报告捎给服务端。谎报已应用的话,
+///   遥控器会把「新版本待应用」那个标记撤掉,而音箱里还是上一批。
+///
+/// 先把 `desired` 记下再去取:取的这几秒里,遥控器那头看到的应该是
+/// 「新版本待应用」,而不是「什么都没发生」。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn adopt_remote_queue(
+    ui: &MainWindow,
+    deck: &Deck,
+    queue_id: i64,
+    revision: i64,
+    entry_id: i64,
+    operation_id: String,
+) {
+    log::info!(
+        "开始取执行副本: 队列 {queue_id}@{revision}, 条目 {entry_id}, \
+         操作 {operation_id}"
+    );
+    deck.execution.want(queue_id, revision);
+
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    let _ = slint::spawn_local(async move {
+        let fetched =
+            api::fetch_queue(queue_id, revision).await;
+        let Some(ui) = weak.upgrade() else { return };
+
+        let entries = match fetched {
+            Ok(entries) => entries,
+            Err(error) => {
+                // 保留旧副本。这里**不动** `applied_revision` ——
+                // 它说的是「手上这份是哪一版」,而手上这份没换。
+                log::warn!(
+                    "取执行副本失败,保留旧的那一份: {error}"
+                );
+                deck.execution.note(Outcome {
+                    operation_id,
+                    applied: false,
+                    reason: Some(error.to_string()),
+                });
+                crate::notice::show(
+                    &ui,
+                    format!("队列没取下来: {error}"),
+                );
+                // 下场要报出去,否则服务端那条意图永远挂在 pending 上,
+                // 而遥控器会一直显示「新版本待应用」。
+                checkpoint(
+                    &deck,
+                    deck.queue.borrow().index(),
+                );
+                return;
+            }
+        };
+
+        let Some(index) = entries
+            .iter()
+            .position(|entry| entry.entry_id == entry_id)
+        else {
+            // 取回来的那一版里没有要播的那一条。别猜第一首 —— 放一首没点过
+            // 的歌比不出声更糟。
+            deck.execution.note(Outcome {
+                operation_id,
+                applied: false,
+                reason: Some(format!(
+                    "第 {revision} 版里没有条目 {entry_id}"
+                )),
+            });
+            crate::notice::show(
+                &ui,
+                "要播的那一条不在这一版队列里".to_owned(),
+            );
+            checkpoint(&deck, deck.queue.borrow().index());
+            return;
+        };
+
+        let entry_ids: Vec<i64> = entries
+            .iter()
+            .map(|entry| entry.entry_id)
+            .collect();
+        let tracks: Vec<TrackDto> = entries
+            .into_iter()
+            .map(|entry| entry.track)
+            .collect();
+
+        // 记账与换批之间不留空档:先记上,紧接着换,两步之间没有 await。
+        deck.execution.adopt(queue_id, revision, entry_ids);
+        deck.execution.note(Outcome {
+            operation_id,
+            applied: true,
+            reason: None,
+        });
+        play_batch(&ui, &deck, tracks, index);
+        // 换批之后立刻留一个检查点:遥控器那头正等着「待应用」那个标记消失,
+        // 而它读的是服务端记下的 applied_revision。
+        checkpoint(&deck, index);
+        mark_sync(&ui, &deck);
+    });
+}
+
 /// 把一整批曲目装进队列并起播。
 ///
 /// 从 [`execute`] 里拆出来,因为**曲目不再随命令过来**(`docs/adr/0031`):
@@ -469,16 +854,13 @@ pub(in crate::music) fn execute(
             entry_id,
             operation_id,
         } => {
-            // 曲目不再随命令过来(`docs/adr/0031`):这一条只说「播服务端
-            // 那个队列的这一条」,执行副本要按 queue_id/revision 经 HTTP
-            // 自己去取,校验完再原子替换。
-            //
-            // 取数那一段是 #109 第 4 段的活。契约这一轮先切,两端的取数与
-            // 原子替换在下一段接上 —— 在那之前遥控点播是不通的,而不通时
-            // 出声比不出声更糟(会放出一首没点过的歌)。
-            log::warn!(
-                "收到 play(队列 {queue_id}@{revision}, 条目 {entry_id}, \
-                 操作 {operation_id}),但取数那一段还没接上(#109 第 4 段)"
+            adopt_remote_queue(
+                ui,
+                deck,
+                queue_id,
+                revision,
+                entry_id,
+                operation_id,
             );
         }
         RemoteCommand::Pause => {
