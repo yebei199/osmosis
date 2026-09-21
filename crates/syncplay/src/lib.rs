@@ -41,6 +41,15 @@ pub enum SyncError {
     /// 与 [`Self::Signalling`] 分开:那种失败该重试,这种不该 —— 换一个
     /// token 之前,再连也只是再得到一个 401。
     Unauthorized,
+    /// 建连额度被限住了(429)。`retry_after` 是服务端说的秒数。
+    ///
+    /// 与 [`Self::Signalling`] 分开有两个用处。一是**退避照它的数来**:
+    /// 服务端算得出还欠多少额度,客户端算不出,按自己的节奏重连只会把
+    /// 闸撞得更死。二是**说得清**:用户看到的是「服务端限流,请等 N 秒」,
+    /// 而不是一句 `HTTP error: 429`(#109 F-R3 现场那句横幅)。
+    Throttled {
+        retry_after: Option<core::time::Duration>,
+    },
     /// WebRTC 那一侧出错:建连、协商、加轨。
     Peer(String),
     /// 收到一段读不懂的载荷。
@@ -58,6 +67,18 @@ impl core::fmt::Display for SyncError {
             }
             Self::Unauthorized => {
                 write!(f, "登录已失效")
+            }
+            Self::Throttled { retry_after } => {
+                match retry_after {
+                    Some(wait) => write!(
+                        f,
+                        "服务端限流,请等 {} 秒再试",
+                        wait.as_secs()
+                    ),
+                    None => {
+                        write!(f, "服务端限流,稍后再试")
+                    }
+                }
             }
             Self::Peer(message) => {
                 write!(f, "连接错误: {message}")
