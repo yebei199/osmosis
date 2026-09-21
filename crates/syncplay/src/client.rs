@@ -11,6 +11,7 @@
 //! UI 线程,那里没有 tokio 反应堆,也一秒钟都不能被阻塞。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as blocking;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -62,6 +63,14 @@ pub enum Event {
     RemoteState { from: String, state: RemoteStateDto },
     /// 遥控器要一次完整状态,立刻回一条 [`Client::report`]。
     SnapshotRequest,
+    /// 对端讲的不是同一版协议。
+    ///
+    /// 与 [`Self::Failed`] 分开是整条协商的意义所在:掉线等一等会自己好,
+    /// 版本不对等多久都不会好,得去升级其中一端 —— 两者在界面上说同一句话
+    /// 的话,用户照着那句话做不了任何事(`docs/adr/0031`)。
+    ///
+    /// `theirs` 为 `None` 表示对端旧到根本不报版本。
+    Incompatible { ours: u32, theirs: Option<u32> },
 }
 
 /// 界面发给编排循环的指令。
@@ -103,6 +112,11 @@ struct Held {
 /// 丢掉它,编排循环随之结束(指令通道断开),所有连接跟着关。
 pub struct Client {
     commands: mpsc::UnboundedSender<Command>,
+    /// 对端讲的不是同一版协议。置上之后,[`Self::claim`] 一律空转。
+    ///
+    /// 共享给编排循环:判定发生在收到下行消息的那一刻,而挡住接管要在
+    /// 调用方那一刻(`docs/adr/0031`)。
+    incompatible: Arc<AtomicBool>,
 }
 
 impl Client {
@@ -128,11 +142,21 @@ impl Client {
             dyn Fn() -> Option<String> + Send + Sync,
         > = Arc::new(token);
 
+        let incompatible = Arc::new(AtomicBool::new(false));
+
         runtime().spawn(run(
-            base_url, device, token, events, inbox,
+            base_url,
+            device,
+            token,
+            events,
+            inbox,
+            Arc::clone(&incompatible),
         ));
 
-        Self { commands }
+        Self {
+            commands,
+            incompatible,
+        }
     }
 
     /// 一个谁也不连的客户端:通道建了,编排循环没起。
@@ -146,7 +170,10 @@ impl Client {
     /// `ui::syncplay::detached`),那个属性在这里对它们不生效。
     pub fn detached() -> Self {
         let (commands, _) = mpsc::unbounded_channel();
-        Self { commands }
+        Self {
+            commands,
+            incompatible: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// 告诉客户端本机正在放的是这路采样。
@@ -182,9 +209,24 @@ impl Client {
     /// 这是用户**主动**按下的那一次,顶掉当前的遥控器。重连之后的自动重发
     /// 由编排循环自己做,走的是另一条路(见 [`Held`])。
     pub fn claim(&self, target: &str) {
+        // 对端讲的不是同一版协议就不接管 —— **拒绝要落在取得控制权之前**
+        // (`docs/adr/0031`)。新服务端会在入册前把旧客户端挡下,但反过来
+        // 不成立:旧服务端根本不认识版本这回事,照样让新客户端接管,
+        // 然后两边对着一堆解不出来的 JSON 静默丢弃,症状是「按了没反应」。
+        if self.incompatible.load(Ordering::Relaxed) {
+            log::warn!(
+                "不接管 {target}:对端协议版本对不上"
+            );
+            return;
+        }
         let _ = self
             .commands
             .send(Command::Claim(target.to_owned()));
+    }
+
+    /// 对端讲的是不是同一版协议。界面据此把这一种失败与普通掉线分开说。
+    pub fn is_incompatible(&self) -> bool {
+        self.incompatible.load(Ordering::Relaxed)
     }
 
     /// 输出设备选回本机:忘掉持权记录,不知会任何人。
@@ -291,6 +333,7 @@ async fn run(
     token: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     events: Arc<dyn Fn(Event) + Send + Sync>,
     mut commands: mpsc::UnboundedReceiver<Command>,
+    incompatible: Arc<AtomicBool>,
 ) {
     // 轨在重连之间**保持不变**:WebRTC 是点对点的,信令断了不影响已经建好的连接,
     // 而重建一条轨会让还在推的那条泵写进一个没人订阅的地方。
@@ -345,6 +388,7 @@ async fn run(
             &events,
             &mut commands,
             &mut held,
+            &incompatible,
         )
         .await
         {
@@ -362,10 +406,15 @@ async fn serve(
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     held: &mut Option<Held>,
+    incompatible: &AtomicBool,
 ) -> bool {
     let sender = signalling.sender();
     // 连接是每条信令各自的,不跨重连保留:重连之后对端会重新邀请。
     let mut peers: HashMap<String, Peer> = HashMap::new();
+    // 这条连接上还没见过握手应答。见到 `Roster` 时它要是还立着,对端就是
+    // 一个不认识版本协商的旧服务端 —— 判据是**谁先到**:新服务端在入册之前
+    // 发 `Welcome`,而 `Roster` 是入册之后的第一条下行(`docs/adr/0031`)。
+    let mut awaiting_welcome = true;
 
     // 重连之后**先确认还持不持权**,再由界面去要快照(`docs/adr/0030`)。
     // 带着手上那个代次:槽位已经换人时服务端只会回一条撤权,而不是让这台
@@ -383,6 +432,12 @@ async fn serve(
                 let Some(message) = incoming else {
                     return true;
                 };
+                verify_handshake(
+                    &message,
+                    &mut awaiting_welcome,
+                    incompatible,
+                    events,
+                );
                 accept(
                     message, &mut peers, &sender, events, held,
                 )
@@ -422,6 +477,53 @@ fn resume_claim(
     Some((held.target.clone(), held.generation?))
 }
 
+/// 握手协商的客户端这一半:看这条下行是不是把版本这件事定下来了。
+///
+/// 两条判据,对应两种对端:
+///
+/// - 收到 `Welcome`:对端是新服务端,直接比版本号。
+/// - 在见到 `Welcome` **之前**先收到 `Roster`:对端是旧服务端 —— 它不认识
+///   版本协商,也就永远不会发那一条,而 `Roster` 是入册后的第一条下行。
+///
+/// 判定只做一次(`awaiting_welcome` 落下就不再抬起):重连会新起一条连接、
+/// 新起一个判定,而同一条连接上 `Roster` 会来很多次。
+fn verify_handshake(
+    message: &ServerSignal,
+    awaiting_welcome: &mut bool,
+    incompatible: &AtomicBool,
+    events: &Arc<dyn Fn(Event) + Send + Sync>,
+) {
+    if !*awaiting_welcome {
+        return;
+    }
+    let server_version = match message {
+        ServerSignal::Welcome { protocol_version } => {
+            Some(*protocol_version)
+        }
+        // 旧服务端:它压根不会发 Welcome,而名册已经到了。
+        ServerSignal::Roster { .. } => None,
+        _ => return,
+    };
+    *awaiting_welcome = false;
+
+    if server_version == Some(contract::PROTOCOL_VERSION) {
+        return;
+    }
+    log::warn!(
+        "协议版本对不上:本机 {},对端 {}",
+        contract::PROTOCOL_VERSION,
+        server_version.map_or_else(
+            || "太旧,不报版本".to_owned(),
+            |version| version.to_string()
+        )
+    );
+    incompatible.store(true, Ordering::Relaxed);
+    events(Event::Incompatible {
+        ours: contract::PROTOCOL_VERSION,
+        theirs: server_version,
+    });
+}
+
 /// 处理一条服务端来信。
 async fn accept(
     message: ServerSignal,
@@ -435,6 +537,8 @@ async fn accept(
             events(Event::Roster(devices));
             Ok(())
         }
+        // 握手应答在 `verify_handshake` 里已经读过了,到这里没有别的事要做。
+        ServerSignal::Welcome { .. } => Ok(()),
         ServerSignal::Signal { from, payload } => {
             let envelope = Envelope::decode(&payload)?;
 
@@ -485,7 +589,13 @@ async fn accept(
             Ok(())
         }
         ServerSignal::State { from, state } => {
-            events(Event::RemoteState { from, state });
+            // 拆箱在这里:装箱是为了线上那个枚举别让小变体跟着变大
+            // (见 `contract::ServerSignal::State`),而 `Event` 是本地的,
+            // 每条事件都要走一次回调,再多一层间接没有好处。
+            events(Event::RemoteState {
+                from,
+                state: *state,
+            });
             Ok(())
         }
         ServerSignal::SnapshotRequest => {
@@ -673,5 +783,151 @@ mod tests {
                 "抖动出界: {actual:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // 握手协商的客户端这一半(#109 AC-7)
+    //
+    // 这一半在**新客户端撞上旧服务端**时才起作用,而那一组没法靠一个
+    // 进程内的新服务端演出来 —— 新服务端永远发 `Welcome`。判据只有一条:
+    // 先到的是 `Roster` 就说明对端不认识版本协商。
+    // -----------------------------------------------------------------
+
+    /// 事件回调与它收下的那一摞,写成别名 —— 直接写出来会撞
+    /// `clippy::type_complexity`。
+    type Events = Arc<dyn Fn(Event) + Send + Sync>;
+    type Seen = Arc<std::sync::Mutex<Vec<Event>>>;
+
+    /// 收集 `verify_handshake` 报出来的事件。
+    fn spy() -> (Events, Seen) {
+        let seen: Seen =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let events: Events = Arc::new(move |event| {
+            sink.lock().expect("锁中毒").push(event);
+        });
+        (events, seen)
+    }
+
+    /// 版本对得上:一声不吭。
+    #[test]
+    fn a_matching_welcome_says_nothing() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version:
+                    contract::PROTOCOL_VERSION,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        assert!(seen.lock().expect("锁中毒").is_empty());
+        assert!(!incompatible.load(Ordering::Relaxed));
+        assert!(!awaiting, "判定只做一次,做完就落下");
+    }
+
+    /// 对端报了个别的版本:标不兼容,并把两个号都带出去。
+    ///
+    /// 带号是为了界面上那句话能说清该升哪一端 —— 少了它,用户看到的
+    /// 与「网络不好」一样只能干等。
+    #[test]
+    fn a_mismatched_welcome_reports_both_versions() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+        let theirs = contract::PROTOCOL_VERSION + 1;
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version: theirs,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        // `Event` 不派生 `PartialEq`(它装得下一路音频源),只能逐条比。
+        let seen = seen.lock().expect("锁中毒");
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [Event::Incompatible { ours, theirs: Some(reported) }]
+                    if *ours == contract::PROTOCOL_VERSION
+                        && *reported == theirs
+            ),
+            "该报一条带两个版本号的不兼容"
+        );
+        assert!(incompatible.load(Ordering::Relaxed));
+    }
+
+    /// 旧服务端:它压根不发 `Welcome`,名册直接就来了。
+    ///
+    /// 这一组是 AC-7 里唯一「新客户端 + 旧服务端」的判据。少了它,新客户端
+    /// 连上旧服务端会一切看着正常,直到第一次遥控时队列 404。
+    #[test]
+    fn a_roster_before_any_welcome_means_an_old_server() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Roster {
+                devices: Vec::new(),
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        let seen = seen.lock().expect("锁中毒");
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [Event::Incompatible { ours, theirs: None }]
+                    if *ours == contract::PROTOCOL_VERSION
+            ),
+            "旧服务端报不出版本,theirs 该是 None,实得 {} 条",
+            seen.len()
+        );
+        assert!(incompatible.load(Ordering::Relaxed));
+    }
+
+    /// 判定只做一次:同一条连接上 `Roster` 会来很多次。
+    ///
+    /// 每次都判的话,一台正常连着的新客户端会在第二条名册到达时
+    /// 突然自称版本不对。
+    #[test]
+    fn the_verdict_is_reached_only_once_per_connection() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version:
+                    contract::PROTOCOL_VERSION,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+        verify_handshake(
+            &ServerSignal::Roster {
+                devices: Vec::new(),
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        assert!(
+            seen.lock().expect("锁中毒").is_empty(),
+            "对上之后再来名册不该翻案"
+        );
     }
 }

@@ -44,6 +44,12 @@ pub struct Queue {
     /// 循环模式。与 `shuffled` 不同,它是用户意图而不是批的属性:
     /// 换批([`Self::replace`])保留它,跟人不跟批。
     loop_mode: LoopMode,
+    /// 列表循环回卷过几次。
+    ///
+    /// 随机开着时**每一轮重新洗**,所以「第几轮」与那一轮的排列要一起看:
+    /// 只报排列的话,服务端分不清「又洗了一次」与「还没动」
+    /// (`docs/adr/0031` 六)。换批清零 —— 它是这一批的属性。
+    round: u64,
 }
 
 impl Queue {
@@ -64,6 +70,7 @@ impl Queue {
             cursor,
             shuffled: false,
             loop_mode: LoopMode::Off,
+            round: 0,
         }
     }
 
@@ -144,6 +151,7 @@ impl Queue {
     /// 的"只洗未放段"。
     fn rewind(&mut self, seed: u64) {
         self.cursor = 0;
+        self.round += 1;
         if !self.shuffled {
             return;
         }
@@ -236,6 +244,39 @@ impl Queue {
     /// 这一批洗过没有。界面上那个开关与系统媒体控件上的都读它。
     pub fn is_shuffled(&self) -> bool {
         self.shuffled
+    }
+
+    /// 跳到批里的第 `index` 首,**不动排列**。
+    ///
+    /// 与 [`Self::replace`] 的区别正是这一句:`replace` 会重建整批、把随机
+    /// 清掉再重洗,于是从队列页点一行会顺带换掉播放次序 —— 用户点的是
+    /// 「放这一首」,不是「重洗一次」。
+    ///
+    /// 找的是这一首在 `order` 里的位置,所以随机开着时也对得上。
+    /// 越界或不在排列里就什么都不做并返回 `None`。
+    pub fn jump_to(
+        &mut self,
+        index: usize,
+    ) -> Option<&TrackDto> {
+        let at = self
+            .order
+            .iter()
+            .position(|slot| *slot == index)?;
+        self.cursor = at;
+        self.current()
+    }
+
+    /// 播放次序:存的是 [`Self::tracks`] 的下标。
+    ///
+    /// 只读出去,不让改 —— 它是这个类型自己算出来的东西,外面拿它去**报告**
+    /// (`docs/adr/0031` 六:显式保存排列,不让两端凭 seed 猜),不是去改。
+    pub fn order(&self) -> &[usize] {
+        &self.order
+    }
+
+    /// 列表循环回卷过几次。见 [`Self::round`] 的说明。
+    pub const fn round(&self) -> u64 {
+        self.round
     }
 }
 

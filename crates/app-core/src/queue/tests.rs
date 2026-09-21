@@ -131,3 +131,86 @@ fn replacing_the_batch_resets_the_queue() {
         "next 该走新批,不是旧批"
     );
 }
+
+/// 列表循环回卷一次,轮次加一。
+///
+/// 轮次与那一轮的排列要一起报给服务端:随机开着时每一轮重新洗
+/// (`docs/adr/0031` 六),只报排列的话服务端分不清「又洗了一次」与
+/// 「还没动」—— 两轮洗出同一个排列虽然少见,但不是不可能。
+#[test]
+fn rewinding_counts_a_new_round() {
+    let mut queue = Queue::new(vec![track(1), track(2)], 0);
+    queue.set_loop_mode(LoopMode::All);
+
+    assert_eq!(queue.round(), 0, "还没回卷过");
+    queue.next(1);
+    queue.next(1);
+
+    assert_eq!(queue.round(), 1, "回卷一次就是第二轮");
+}
+
+/// 换一批把轮次清零 —— 它是这一批的属性,不是用户意图。
+#[test]
+fn replacing_the_batch_resets_the_round() {
+    let mut queue = Queue::new(vec![track(1), track(2)], 0);
+    queue.set_loop_mode(LoopMode::All);
+    queue.next(1);
+    queue.next(1);
+
+    queue.replace(vec![track(3)], 0);
+
+    assert_eq!(queue.round(), 0);
+}
+
+/// 播放次序读得出来,而且**关随机时就是原序**。
+///
+/// 报给服务端的是这一份(`docs/adr/0031` 六:显式保存排列,不靠 seed 猜)。
+#[test]
+fn the_play_order_is_readable_and_starts_as_the_batch_order()
+ {
+    let queue =
+        Queue::new(vec![track(1), track(2), track(3)], 0);
+
+    assert_eq!(queue.order(), [0, 1, 2]);
+}
+
+/// 从队列页点一行:跳过去,而**排列一动不动**。
+///
+/// 走 `replace` 的话会把随机清掉再重洗,于是点一行顺带换掉了播放次序 ——
+/// 用户点的是「放这一首」,不是「重洗一次」。
+#[test]
+fn jumping_keeps_the_shuffled_order() {
+    let mut queue = Queue::new(
+        vec![track(1), track(2), track(3), track(4)],
+        0,
+    );
+    queue.shuffle(7);
+    let before: Vec<usize> = queue.order().to_vec();
+
+    let landed = queue.jump_to(2).map(|t| t.id.clone());
+
+    assert_eq!(landed, Some(track(3).id));
+    assert_eq!(queue.order(), &before[..], "排列不该被动");
+    assert!(queue.is_shuffled(), "随机也不该被关掉");
+}
+
+/// 随机开着时也跳得准:找的是它在排列里的位置,不是批序下标。
+#[test]
+fn jumping_finds_the_track_inside_the_shuffled_order() {
+    let mut queue =
+        Queue::new(vec![track(1), track(2), track(3)], 0);
+    queue.shuffle(42);
+
+    queue.jump_to(1);
+
+    assert_eq!(queue.index(), 1, "跳到的就是批里第 1 首");
+}
+
+/// 越界不动,也不 panic —— 那一下来自界面上的一次点击,而列表随时会被换掉。
+#[test]
+fn jumping_past_the_end_does_nothing() {
+    let mut queue = Queue::new(vec![track(1)], 0);
+
+    assert!(queue.jump_to(9).is_none());
+    assert_eq!(queue.index(), 0);
+}

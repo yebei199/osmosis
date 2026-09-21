@@ -14,12 +14,13 @@
 
 use axum::{
     Json, Router,
-    extract::FromRef,
+    extract::{DefaultBodyLimit, FromRef},
     http::HeaderValue,
     routing::{get, post},
 };
 use sqlx::PgPool;
 use tonic::transport::Channel;
+use tower_governor::GovernorLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 use server::bangdream::proto::{
@@ -30,7 +31,7 @@ use server::bangdream::proto::{
 };
 use server::error;
 use server::error::Failure;
-use server::gate::ratelimit::{RateLimiter, SharedLimiter};
+use server::gate::ratelimit::{self, Policies};
 use server::store::db;
 use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
@@ -61,6 +62,10 @@ use routes::library::playlists::{
 };
 use routes::play::download::download;
 use routes::play::play;
+use routes::queue::{
+    create_queue, publish_queue, queue_head, queue_page,
+    report_queue_state, set_queue_intent,
+};
 
 /// 默认监听地址。
 ///
@@ -113,8 +118,8 @@ pub(crate) struct AppState {
     /// 浏览器来源白名单。CORS 与 WebSocket 的 Origin 校验共用这一张表 ——
     /// 配两份的话,迟早只改了一处,而那时 web 端会在其中一道门上莫名其妙地失败。
     origins: AllowedOrigins,
-    /// 登录、注册与建连的限流。共用一张表,键各自带前缀。
-    limiter: SharedLimiter,
+    /// 六条限流策略,构造一次共享 `Arc`(见 `gate::ratelimit`)。
+    policies: Policies,
 }
 
 // 鉴权提取器只要池,不该认识别的东西 —— 见 server::gate::auth。
@@ -143,9 +148,9 @@ impl FromRef<AppState> for AllowedOrigins {
     }
 }
 
-impl FromRef<AppState> for SharedLimiter {
+impl FromRef<AppState> for Policies {
     fn from_ref(state: &AppState) -> Self {
-        state.limiter.clone()
+        state.policies.clone()
     }
 }
 
@@ -176,6 +181,146 @@ pub(crate) async fn conn(
     pool.acquire()
         .await
         .map_err(|err| error::map_error(&err.into()))
+}
+
+/// 一次队列上传最多多大。
+///
+/// 现场那份 977 首的 `/liked` 响应体是 224142 字节,合每首约 229 字节;
+/// 五千首(`MAX_QUEUE_ENTRIES`)按这个密度约 1.1 MB,标题与歌手长一些的
+/// 翻一倍也就 2 MB 出头。axum 默认 2 MiB **正好卡在这个量级上** ——
+/// 默认值不是产品预算,所以显式给 8 MiB,留够余量而不是留够刚好。
+const QUEUE_UPLOAD_LIMIT: usize = 8 * 1024 * 1024;
+
+/// 执行报告最多多大。
+///
+/// 它带一个 `play_order`:五千个 `entry_id` 的 JSON 约 30 KB。256 KiB 绰绰有余,
+/// 而把它与上传分开的理由是**小操作不该接受大 body** —— 一条本该几百字节的
+/// 请求收下 8 MB,那是一条白送的放大路径。
+const REPORT_BODY_LIMIT: usize = 256 * 1024;
+
+/// 小操作的 body 上限:意图、登录、注册。
+const SMALL_BODY_LIMIT: usize = 16 * 1024;
+
+/// 队列那六条,按**策略分组**挂限流。
+///
+/// 每组 `route_layer` 两层,顺序要紧:鉴权在外、限流在内。反过来的话限流
+/// 先跑,而那时 extensions 里还没有账号,`AccountKey` 取不到键。
+///
+/// 用 `route_layer` 而不是 `layer`:后者会套到**没匹配上的请求**上,于是
+/// 一个打错的 URL 也要先过一遍限流,404 变成 429。
+fn queue_routes(state: &AppState) -> Router {
+    let write = Router::new()
+        .route("/queues", post(create_queue))
+        .route(
+            "/queues/{id}/revisions",
+            post(publish_queue),
+        )
+        .layer(DefaultBodyLimit::max(QUEUE_UPLOAD_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_write.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let intent = Router::new()
+        .route(
+            "/queues/{id}/intent",
+            post(set_queue_intent),
+        )
+        .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_intent.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let report = Router::new()
+        .route(
+            "/queues/{id}/report",
+            post(report_queue_state),
+        )
+        .layer(DefaultBodyLimit::max(REPORT_BODY_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_report.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let read = Router::new()
+        .route("/queues/{id}", get(queue_page))
+        .route("/queues/{id}/head", get(queue_head))
+        .route_layer(guard(
+            state.policies.queue_read.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    Router::new()
+        .merge(write)
+        .merge(intent)
+        .merge(report)
+        .merge(read)
+        .with_state(state.clone())
+}
+
+/// 信令建连。
+///
+/// **这一层只拦升级请求本身**,拦不到升级之后那条 WebSocket 上的消息 ——
+/// 那一侧的上限仍是 `signaling::MAX_MESSAGE_BYTES`,两道闸各管各的。
+fn signal_routes(state: &AppState) -> Router {
+    Router::new()
+        .route("/signal", get(signaling::handler))
+        .route_layer(guard(
+            state.policies.signal_connect.clone(),
+        ))
+        .route_layer(authenticated(state))
+        .with_state(state.clone())
+}
+
+/// 登录与注册。**按来源 IP** —— 它们正是用来取得登录态的,那时还没有账号,
+/// 所以这一组不挂鉴权前置。
+fn auth_routes(state: &AppState) -> Router {
+    Router::new()
+        .route("/register", post(register))
+        .route("/login", post(login))
+        .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
+        .route_layer(
+            GovernorLayer::new(
+                state.policies.auth_attempt.clone(),
+            )
+            .error_handler(ratelimit::too_many_requests),
+        )
+        .with_state(state.clone())
+}
+
+/// 按账号分桶的那道闸,配上本仓自己的错误形状。
+fn guard(
+    policy: std::sync::Arc<
+        tower_governor::governor::GovernorConfig<
+            ratelimit::AccountKey,
+            governor::middleware::NoOpMiddleware,
+        >,
+    >,
+) -> GovernorLayer<
+    ratelimit::AccountKey,
+    governor::middleware::NoOpMiddleware,
+    axum::body::Body,
+> {
+    GovernorLayer::new(policy)
+        .error_handler(ratelimit::too_many_requests)
+}
+
+/// 前置鉴权:跑一遍 `Account` 提取器,把认下来的账号放进 extensions。
+///
+/// 限流在中间件层跑、拿不到提取器的返回值,所以只能这样把账号递给它。
+/// handler 上那个 `Account` 参数会读到同一份(见 `gate::auth`),不会再打
+/// 一次库。
+fn authenticated(
+    state: &AppState,
+) -> axum::middleware::FromExtractorLayer<
+    server::store::account::Account,
+    AppState,
+> {
+    axum::middleware::from_extractor_with_state::<
+        server::store::account::Account,
+        AppState,
+    >(state.clone())
 }
 
 #[tokio::main]
@@ -222,16 +367,13 @@ async fn main() {
         roster: SharedRoster::default(),
         control: SharedControl::default(),
         origins: AllowedOrigins::new(allowed_origins()),
-        limiter: SharedLimiter::new(
-            RateLimiter::default().into(),
-        ),
+        policies: Policies::tuned(),
     };
+    // 久未出现的键要定期清掉,否则这几张表只涨不落。
+    state.policies.spawn_cleanup();
 
     let app = Router::new()
         .route("/health", get(health))
-        // 账号三条不需要登录态 —— 它们正是用来取得登录态的
-        .route("/register", post(register))
-        .route("/login", post(login))
         // 登出要 token:它删的就是那一条会话
         .route("/logout", post(logout))
         // 三类搜索各一条路由:URL 与响应形状是同一个决定,不是两个要彼此对上的决定
@@ -297,10 +439,11 @@ async fn main() {
         .route("/played", post(record_play))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
-        // 同播信令。与音乐那几条路由毫无关系(信令不碰 bang-dream,音乐不碰
-        // WebRTC),但它一样要登录态,而鉴权提取器要的池就在这份 state 里。
-        .route("/signal", get(signaling::handler))
         .with_state(state.clone())
+        // 队列与信令各自成组,好把限流挂在组上(见下面那几个构造函数)。
+        .merge(queue_routes(&state))
+        .merge(signal_routes(&state))
+        .merge(auth_routes(&state))
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // 白名单而不是 permissive:后者允许任意来源,等于任何网页都能拿着
         // 用户的登录态调这些路由。方法与请求头仍然放开 —— 没开 credentials,

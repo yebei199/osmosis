@@ -12,6 +12,7 @@
 mod rules;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use app_core::{
@@ -83,6 +84,20 @@ struct Inner {
     cover_id: Mutex<String>,
     /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
     was_remote: Mutex<bool>,
+    /// 这一次执行会话的标识:进程启动时的毫秒挂钟。
+    ///
+    /// 与服务端 `play_queue_reports.epoch` 是同一个数。跨重启比大小要靠它 ——
+    /// 只比序号的话,重启之后的第 1 条永远排在重启前的第 900 条后面
+    /// (见 `app_core::RemoteView::accept`)。
+    ///
+    // ponytail: 挂钟倒退时新进程会拿到更小的 epoch,那一次的上报会被对端
+    // 全丢掉。真出现再换单调时钟加持久计数器
+    epoch: i64,
+    /// 本次会话里已经报到第几条。每报一次加一。
+    state_seq: AtomicU64,
+    /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
+    #[cfg(test)]
+    play_submits: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -105,6 +120,33 @@ impl Remote {
     /// 少了这道锁,pc1 前面的人随手按一下暂停,手机上的进度条就开始撒谎。
     pub fn is_controlled(&self) -> bool {
         lock(&self.inner.controlled_by).is_some()
+    }
+
+    /// 输出指着哪台设备。本机输出时是 `None`。
+    ///
+    /// 点播要拿它当**队列的归属** —— 队列归播放会话 / 输出设备,不是遥控器
+    /// 自己这台,也不是账号(`docs/adr/0031` 二)。
+    pub fn target_id(&self) -> Option<String> {
+        lock(&self.inner.output).target().map(str::to_owned)
+    }
+
+    /// 记一次「点播交出去了」。
+    ///
+    /// 点播与别的命令不同:它要先经 HTTP 把队列发布出去,命令是那次往返之后
+    /// 才发的。于是「这一下有没有走到远端分支」在测试里再也不能靠
+    /// [`Self::sent_commands`] 观察 —— 那里要等一个测试环境里不存在的服务端。
+    /// 这个计数器记的正是那件事,而且是**同步**记的。
+    pub fn note_play_submitted(&self) {
+        #[cfg(test)]
+        self.inner
+            .play_submits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 测试里问:到此为止有几下点播走到了远端分支。
+    #[cfg(test)]
+    pub(crate) fn play_submits(&self) -> u64 {
+        self.inner.play_submits.load(Ordering::Relaxed)
     }
 
     /// 把一条命令发给被控端。
@@ -293,10 +335,39 @@ impl Remote {
         *lock(&self.inner.cover_id) == track_id
     }
 
+    /// 这一条上报的顺序键:`(epoch, state_seq)`,序号取完即加一。
+    ///
+    /// 由报的这一端发号,而不是由凑快照的那一段:序号是**这条连接上报了
+    /// 几次**,与快照里有什么无关。放到 `snapshot` 里的话,每加一个凑快照的
+    /// 入口就多一个能把序号弄乱的地方。
+    pub fn stamp(&self) -> (i64, u64) {
+        (
+            self.inner.epoch,
+            self.inner
+                .state_seq
+                .fetch_add(1, Ordering::Relaxed),
+        )
+    }
+
     /// 被遥控时把本机状态报出去;没被遥控就什么也不做。
     ///
     /// 目标由服务端从控制权槽位查(见 `server::syncplay::control`),这里不指定发给谁。
     pub fn report(&self, state: RemoteStateDto) {
+        // 量一下再决定发不发。**量的是每一条,不只是发出去的那些** ——
+        // 这一行是 #109 F-002 那个洞唯一的哨兵:上报曾经拖着整个队列,
+        // 977 首时 23 万字节,而超限的后果是整条连接断掉。现在它定长了,
+        // 留着这行是为了哪天有人往小状态里塞回一个随用户数据增长的字段时,
+        // 日志里先变的是它,而不是某台设备的连接开始莫名其妙地断。
+        //
+        // debug 级:每秒一条,info 会把日志淹掉。要读它就
+        // `RUST_LOG=ui::sync::remote=debug`。
+        let bytes = syncplay::report_wire_len(&state);
+        log::debug!(
+            "上报出栈: {bytes} 字节(队列 {} 首, 上限 {})",
+            state.queue_len,
+            app_core::MAX_SIGNAL_BYTES
+        );
+
         if let Some(client) = self.inner.client.get()
             && self.is_controlled()
         {
@@ -338,6 +409,9 @@ impl Remote {
     }
 
     /// 被控端按了「退出被遥控」:解锁本机,并撤掉遥控器的控制权。
+    ///
+    /// 在途的取数由调用方作废(见 `music::bind_remote`):这一层碰不到
+    /// `Deck`,而那份执行副本住在那边。
     pub fn exit_controlled(&self) {
         if let Some(client) = self.inner.client.get() {
             client.exit_controlled();
@@ -394,6 +468,10 @@ pub fn new(ui: &MainWindow) -> Remote {
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
             was_remote: Mutex::new(false),
+            epoch: now_ms() as i64,
+            state_seq: AtomicU64::new(1),
+            #[cfg(test)]
+            play_submits: AtomicU64::new(0),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
@@ -542,6 +620,15 @@ pub fn push_playback(ui: &MainWindow, remote: &Remote) {
     ui.global::<Player>().set_playback_text(text.into());
     ui.global::<Player>().set_is_playing(playing);
     ui.global::<Shell>().set_output_stale(stale);
+    // 「新版本待应用」与「状态已过期」是两件事,各占一位:过期说的是
+    // **这份报告旧了**(连着三秒没来),待应用说的是**报告是新的,而它报的
+    // 就是「我还没换上」**。混成一个的话,取数失败会被显示成掉线,
+    // 而用户会去检查网络(`docs/adr/0031` 一)。
+    ui.global::<Shell>().set_queue_pending(
+        remote.with_view(|view, _| {
+            view.has_pending_revision()
+        }),
+    );
     ui.global::<Player>().set_buffering(remote.with_view(
         |view, _| {
             view.state()

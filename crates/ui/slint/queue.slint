@@ -1,0 +1,103 @@
+// 队列页:从播放页横向滑出的一整份当前队列(#109 AC-15)。
+//
+// 照歌词页那一套做(`lyrics.slint`):同一种覆层、同一种进出、同一块暗底。
+// 不另开顶层分区,也不塞进控制条的抽屉 —— 播放页摆的本来就是「现在在放的
+// 那一首」,它的队列自然也摆在这里。
+//
+// **摆的是当前执行副本的那一份**:本机播放时是本机的,遥控时是被控端那份
+// (按 `queue_id`/`revision` 从服务端拉)。一条路径两种情形,Rust 那侧不写
+// 成两套(见 `music::queuepage`)。
+
+import { Theme, Type } from "theme.slint";
+import { TrackRow } from "types.slint";
+import { TrackList } from "tracklist.slint";
+import { BarMetrics } from "playerbar.slint";
+import { Shell } from "globals/shell.slint";
+
+export component QueuePage inherits Rectangle {
+    // 与歌词页同一层暗底,理由相同:亮封面的点云会把整页字吃掉。
+    background: Theme.immersive.with-alpha(0.72);
+
+    in property <[TrackRow]> rows;
+    // 正在放的那一条的 `entry-id`(队列页里 `TrackRow.id` 装的就是它)。
+    in property <string> current;
+    // 队列一共几首。不从 `rows.length` 读:遥控时列表可能还在下载,
+    // 而「共 N 首」那个数小状态里早就报过来了。
+    in property <int> total;
+    // 列表还在下载。与「队列是空的」是两回事 —— 后者该说「队列是空的」,
+    // 前者该说「正在取」,而两种在界面上长得一样的话,用户会以为歌没了。
+    in property <bool> loading;
+    // 手机底部那条手势条。**桌面上恒 0**,所以这一段只有真机上看得见
+    // (AGENTS.md「有一类界面 bug 桌面必然看不见」)。
+    in property <length> safe-bottom;
+
+    callback pick(string);
+    callback needs-cover(string);
+    callback dismiss();
+
+    // 空白区点一下收回。压在最底,列表本身照常吃自己的事件。
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.dismiss(); }
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 14px;
+        // 底部两段都要让,少一段都会把末尾几行变成看得见、点不着:
+        //
+        // - **手势条**(`safe-bottom`)。桌面上恒 0,只有真机上看得见,
+        //   所以**不要拿整页高度反推可用厚度**;
+        // - **控制条**(`BarMetrics.page-reserve`)。控制簇按 `docs/adr/0010`
+        //   永远排在覆层之后、压在最上层,要让开的是这一页。歌词页不必让 ——
+        //   它把几行居中摆,根本够不着下缘;队列是一整份可滚的列表,滚到底
+        //   就顶在下缘上,而被盖住的正是最难注意到的**末尾**那几行。
+        padding-bottom: root.safe-bottom
+            + BarMetrics.page-reserve;
+        spacing: 10px;
+
+        HorizontalLayout {
+            height: 24px;
+            spacing: 8px;
+
+            Text {
+                text: "播放队列";
+                color: Theme.immersive-text;
+                font-family: "Maple Mono NF CN";
+                font-size: Shell.compact ? 15px : 17px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.loading
+                    ? "正在取…"
+                    : "共 " + root.total + " 首";
+                color: Theme.immersive-text-dim;
+                font-family: "Maple Mono NF CN";
+                font-size: 13px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+
+        // 空队列与「还在取」分开说:两种在界面上长得一样的话,
+        // 用户会以为自己的歌没了。
+        if root.rows.length == 0: queue-empty := Text {
+            text: root.loading ? "正在取队列…" : "队列是空的";
+            color: Theme.immersive-text-dim;
+            font-family: "Maple Mono NF CN";
+            font-size: 14px;
+            horizontal-alignment: center;
+            vertical-stretch: 1;
+            vertical-alignment: center;
+        }
+
+        if root.rows.length > 0: queue-list := TrackList {
+            tracks: root.rows;
+            current: root.current;
+            play(id) => { root.pick(id); }
+            needs-cover(url) => { root.needs-cover(url); }
+        }
+    }
+}

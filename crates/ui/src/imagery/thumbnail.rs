@@ -184,6 +184,18 @@ impl Thumbnails {
     pub fn apply(&self, ui: &MainWindow) {
         apply(ui, &self.cache);
     }
+
+    /// 手上有这张就给,没有就 `None`。
+    ///
+    /// 给**自己造行**的那些页用(队列页):`apply` 只认列表页那一个模型,
+    /// 而队列页的模型每一轮都重建,填进去的图下一秒就被新行盖掉。造行的
+    /// 时候顺手查一次,取回来的下一轮自然就摆上了。
+    pub fn cached(
+        &self,
+        url: &str,
+    ) -> Option<slint::Image> {
+        self.cache.borrow_mut().get(url)
+    }
 }
 
 /// 防抖到点:把待办表里最后一批取回来。

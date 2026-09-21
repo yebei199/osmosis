@@ -20,6 +20,7 @@ mod history;
 mod netease;
 
 mod playlists;
+mod queue;
 mod url;
 
 pub(crate) mod platform;
@@ -61,6 +62,11 @@ pub use netease::{
     netease_unbind, qr_poll,
 };
 
+pub use queue::{
+    create_queue, fetch_queue, publish_queue, queue_head,
+    queue_page, report_queue_state, set_queue_intent,
+};
+
 pub use playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
     liked_ids, platform_playlist_tracks, playlist_tracks,
@@ -75,4 +81,13 @@ pub use playlists::{
 pub use contract::{
     NeteaseStatusDto, QrEventDto, QrLoginDto, StatsDto,
     TRIAL_ONLY, TopArtistDto, download_file_name,
+};
+
+// 队列那一组同理:ui 要发的请求体、要读的响应体,以及两侧共用的那两个上限,
+// 都从取数的这一层见到(`docs/adr/0031`)。
+pub use contract::{
+    MAX_QUEUE_ENTRIES, QUEUE_PAGE_LIMIT, QueueEntryDto,
+    QueueHeadDto, QueueIntentDto, QueueIntentState,
+    QueueOperationOutcomeDto, QueuePageDto, QueueRefDto,
+    QueueReportAckDto, QueueReportDto, SetQueueIntentDto,
 };

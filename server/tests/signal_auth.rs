@@ -10,13 +10,15 @@ use std::net::SocketAddr;
 
 use axum::extract::FromRef;
 use axum::routing::get;
-use server::gate::ratelimit::SharedLimiter;
+use server::gate::ratelimit::{self, Policies};
+use server::store::account::Account;
 use server::store::{account, db};
 use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
 };
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite;
+use tower_governor::GovernorLayer;
 use tungstenite::client::IntoClientRequest;
 
 /// 与 `main.rs` 的默认值一致。那个常量属于进程装配,不在 lib 里,
@@ -29,15 +31,16 @@ const INVITE: &str = "let-me-in";
 
 /// 服务端的 state:鉴权提取器要池,信令 handler 要名册。
 ///
-/// 与 `AppState` 同形但只有这两样 —— 那个结构在二进制 crate 里,
-/// 集成测试引不到,而信令这条路由本来也只用得上这两个。
+/// 与 `AppState` 同形但只有这几样 —— 那个结构在二进制 crate 里,集成测试
+/// 引不到。**限流不在这里**:它挂在路由组上(`main::signal_routes`),
+/// 而这一组测的是鉴权与来源校验,两件事各测各的。
 #[derive(Clone)]
 struct SignalState {
     pool: PgPool,
     roster: SharedRoster,
     control: SharedControl,
     origins: AllowedOrigins,
-    limiter: SharedLimiter,
+    policies: Policies,
 }
 
 impl FromRef<SignalState> for PgPool {
@@ -64,9 +67,9 @@ impl FromRef<SignalState> for AllowedOrigins {
     }
 }
 
-impl FromRef<SignalState> for SharedLimiter {
+impl FromRef<SignalState> for Policies {
     fn from_ref(state: &SignalState) -> Self {
-        state.limiter.clone()
+        state.policies.clone()
     }
 }
 
@@ -120,17 +123,36 @@ const ALLOWED_ORIGIN: &str = "http://127.0.0.1:8073";
 
 /// 在随机端口上起一个带鉴权的信令服务端。
 async fn start_server(pool: PgPool) -> SocketAddr {
+    let state = SignalState {
+        pool,
+        roster: SharedRoster::default(),
+        control: SharedControl::default(),
+        origins: AllowedOrigins::new(vec![
+            ALLOWED_ORIGIN.to_owned(),
+        ]),
+        policies: Policies::tuned(),
+    };
+
+    // 与 `main::signal_routes` 同一个装配:鉴权在外、限流在内。
+    //
+    // 这里重搭一遍而不是引生产那个函数 —— 它在二进制 crate 里,集成测试
+    // 引不到(与 `SignalState` 同一个原因)。重搭的这一份仍然测得到真正
+    // 会错的那几样:策略的数、`AccountKey` 从 extensions 取键、两层的顺序。
     let app = axum::Router::new()
         .route("/signal", get(signaling::handler))
-        .with_state(SignalState {
-            pool,
-            roster: SharedRoster::default(),
-            control: SharedControl::default(),
-            origins: AllowedOrigins::new(vec![
-                ALLOWED_ORIGIN.to_owned(),
-            ]),
-            limiter: SharedLimiter::default(),
-        });
+        .route_layer(
+            GovernorLayer::new(
+                state.policies.signal_connect.clone(),
+            )
+            .error_handler(ratelimit::too_many_requests),
+        )
+        .route_layer(
+            axum::middleware::from_extractor_with_state::<
+                Account,
+                SignalState,
+            >(state.clone()),
+        )
+        .with_state(state);
 
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -280,7 +302,8 @@ async fn hammering_the_endpoint_gets_rate_limited() {
     let token = token_for(&pool, "signal_auth_flood").await;
     let addr = start_server(pool).await;
 
-    // 配额是每分钟 30 条。前 30 条都该放行。
+    // 桶装得下 30 个(`Policies::tuned` 的 `signal_connect`),而恢复速度是
+    // 每两秒一个 —— 一口气打完这 30 个,第 31 个必被挡。
     for attempt in 0..30 {
         try_connect(addr, Some(&token))
             .await

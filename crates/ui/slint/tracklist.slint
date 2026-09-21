@@ -20,6 +20,11 @@ export component TrackList inherits ListView {
     // 时间轴档:最近播放用。左侧一条竖线,每行一个圆点,最新那条
     // (第一行)是 accent 实心加光晕 —— 列表还是同一个列表,只多一列装饰。
     in property <bool> timeline: false;
+    // 正在放的是哪一行,按 `TrackRow.id` 认。空串 = 不标(别的页面都不标)。
+    //
+    // 与 `loading` 分开:那一位说的是「点下去了、正在办」,这一位说的是
+    // 「就是它在响」。共用一位的话,队列页上会出现一首永远在加载的歌。
+    in property <string> current: "";
 
     callback play(string);
     // 点红心。参数是曲目 id 与**点完之后**的状态 —— 让 Rust 再去读一遍当前
@@ -47,9 +52,12 @@ export component TrackList inherits ListView {
             y: 2px;
             height: 52px;
             background: row.loading ? Theme.accent.with-alpha(0.15)
-                : (touch.has-hover ? Theme.overlay : Theme.overlay-weak);
+                : (root.current != "" && row.id == root.current
+                    ? Theme.accent.with-alpha(0.22)
+                    : (touch.has-hover ? Theme.overlay : Theme.overlay-weak));
             border-radius: 8px;
-            border-width: row.loading ? 1px : 0;
+            border-width: row.loading
+                || (root.current != "" && row.id == root.current) ? 1px : 0;
             border-color: Theme.accent.with-alpha(0.4);
             animate background { duration: 160ms; easing: ease-out; }
         }

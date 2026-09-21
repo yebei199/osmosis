@@ -150,3 +150,46 @@ fn sync_copy_only_uses_subset_glyphs() {
         }
     }
 }
+
+/// 版本对不上那句话要把**两个**版本号都说出来。
+///
+/// 少了它,用户只知道"用不了",不知道该升哪一端 —— 而这正是这道协商
+/// 与「等一等就好」的掉线唯一分得开的地方(#109 AC-7)。
+#[test]
+fn the_version_message_names_both_sides() {
+    let told = describe_incompatible(3, Some(2));
+
+    assert!(told.contains('3'), "少了本机的版本号: {told}");
+    assert!(told.contains('2'), "少了对端的版本号: {told}");
+    assert!(told.contains("升级"), "没说该做什么: {told}");
+}
+
+/// 旧到根本不报版本的对端:说「太旧」,不要编一个号出来。
+///
+/// 编一个(比如 0)的话,用户会拿着那个号去找一个不存在的版本。
+#[test]
+fn a_server_too_old_to_report_is_said_so() {
+    let told = describe_incompatible(3, None);
+
+    assert!(told.contains("太旧"), "{told}");
+    assert!(
+        !told.contains('0'),
+        "对端报不出版本时不该编一个号: {told}"
+    );
+}
+
+/// 「版本不对」与「普通掉线」不是同一句话。
+///
+/// 同一句的话,一个等多久都不会好的状态会被说成一个等一等就好的状态。
+/// 落点也不同(横幅 vs 几秒就消失的提示),那一半在 `handle` 的两条分支里。
+#[test]
+fn a_version_clash_does_not_read_like_a_disconnect() {
+    let clash = describe_incompatible(3, Some(2));
+    let dropped = describe_sync_failure("连接已关闭");
+
+    assert_ne!(clash, dropped);
+    assert!(
+        !dropped.contains("升级"),
+        "普通掉线不该叫人去升级: {dropped}"
+    );
+}

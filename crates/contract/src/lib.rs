@@ -12,6 +12,7 @@ mod catalog;
 mod download;
 mod netease;
 mod playlist;
+mod queue;
 mod remote;
 mod sync;
 
@@ -20,6 +21,7 @@ pub use catalog::*;
 pub use download::*;
 pub use netease::*;
 pub use playlist::*;
+pub use queue::*;
 pub use remote::*;
 pub use sync::*;
 
@@ -31,7 +33,19 @@ pub use sync::*;
 /// 2:音乐相关的路由开始要求登录态(既有路由多了一个必需的请求头,老客户端会
 /// 整片 401),`/search` 拆成 `/search/tracks`、`/search/artists`、
 /// `/search/playlists` 三条。
-pub const PROTOCOL_VERSION: u32 = 2;
+///
+/// 3:播放队列挪进服务端(`docs/adr/0031`)。`RemoteCommand::Play` 不再拖着
+/// 整批曲目,改带 `queue_id`/`revision`/`entry_id`/`operation_id`;
+/// `RemoteStateDto` 删掉 `queue`、`queue_index` 与 `sent_at`,换成小状态
+/// (队列标识、两个 revision、`entry_id`、长度,以及 `epoch` + `state_seq`
+/// 这一对顺序键)。两样都是删字段改语义,不兼容。
+///
+/// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
+/// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
+/// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
+/// [`ClientSignal::Hello`] 的 `protocol_version` 与
+/// [`ServerSignal::Incompatible`]。
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// `GET /health` 的响应体。
 #[derive(

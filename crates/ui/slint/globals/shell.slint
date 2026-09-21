@@ -61,6 +61,18 @@ export global Shell {
     in property <string> controlled-text;
     // 遥控的状态已过期(连着三秒没收到上报)。控制此刻发不出去。
     in property <bool> output-stale: false;
+    // 被控端手上那份还不是服务端上最新的那一版(docs/adr/0031 一)。
+    //
+    // **数据库里写了不等于音箱在响。** 点了歌、队列也提交了,但被控端还没把
+    // 那一版取下来换上 —— 这两件事之间可能是几秒,也可能因为取数失败而一直
+    // 停在这里。不标出来的话,用户看到的是「一切正常,只是放的还是上一首」。
+    in property <bool> queue-pending: false;
+    // 手上这批歌还没同步到服务端的队列里(docs/adr/0031 八)。
+    //
+    // **不是错误**:服务端不可达时本机照常起播,只是这一份还没拿到 queue_id
+    // —— 遥控器因此拉不到它的列表,而本机播放一切照旧。恢复之后下一次点播
+    // 会把它补上。
+    in property <bool> queue-unsynced: false;
     // 把输出设备换成这一台。参数是 DeviceRow 的 id,**空串是本机**。
     callback set-output(string);
     // 被控端按了「退出被遥控」。

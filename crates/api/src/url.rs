@@ -132,3 +132,39 @@ pub(crate) fn subscription_url(
 
 #[cfg(test)]
 mod tests;
+
+/// 队列那几条地址。
+///
+/// id 是服务端给的整数主键,不经用户输入,所以不必转义 —— 但路径拼接仍然
+/// 集中在这里,免得六个调用点各写一遍 `format!`,而其中一个少个斜杠。
+pub(crate) fn queues_url() -> String {
+    format!("{}/queues", base_url())
+}
+
+pub(crate) fn queue_revisions_url(queue_id: i64) -> String {
+    format!("{}/queues/{queue_id}/revisions", base_url())
+}
+
+pub(crate) fn queue_head_url(queue_id: i64) -> String {
+    format!("{}/queues/{queue_id}/head", base_url())
+}
+
+pub(crate) fn queue_intent_url(queue_id: i64) -> String {
+    format!("{}/queues/{queue_id}/intent", base_url())
+}
+
+pub(crate) fn queue_report_url(queue_id: i64) -> String {
+    format!("{}/queues/{queue_id}/report", base_url())
+}
+
+pub(crate) fn queue_page_url(
+    queue_id: i64,
+    revision: i64,
+    offset: i64,
+    limit: i64,
+) -> String {
+    format!(
+        "{}/queues/{queue_id}?revision={revision}&offset={offset}&limit={limit}",
+        base_url()
+    )
+}

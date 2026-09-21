@@ -262,10 +262,15 @@ pub(in crate::music) fn bind_remote(
     });
 }
 
-/// 本机此刻的完整状态,报给遥控它的那台设备。
+/// 本机此刻的**小状态**,报给遥控它的那台设备。
 ///
-/// 队列报的是**队列**那一份,不是界面上那个列表:用户可以一边听着队列
-/// 一边翻别的歌单,两者那时根本不是一回事。
+/// 「小」是要点:这里没有一个字段随用户的数据增长(`docs/adr/0031` 三)。
+/// 从前它把整个队列抄进去,977 首时每秒往信令连接上打 23 万字节,而上限是
+/// 64 KiB —— 超限在服务端那侧是跳出读循环、整条连接断掉,于是被控端每秒
+/// 把自己踢下线一次(#109 F-002)。队列本身按 `queue_id`/`revision` 走 HTTP。
+///
+/// 报的仍然是**队列**那一份的长度与位置,不是界面上那个列表:用户可以一边
+/// 听着队列一边翻别的歌单,两者那时根本不是一回事。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn snapshot(
     ui: &MainWindow,
@@ -297,14 +302,27 @@ pub(in crate::music) fn snapshot(
         }
     };
     let queue = deck.queue.borrow();
+    let (epoch, state_seq) = deck.remote.stamp();
+    let (queue_id, revision, applied_revision) =
+        deck.execution.identity();
 
     app_core::RemoteStateDto {
         track: queue.current().cloned(),
         position_ms: position.as_millis() as u64,
         state,
-        queue: queue.tracks().to_vec(),
-        queue_index: queue.index(),
         volume: ui.global::<Player>().get_volume(),
-        sent_at: crate::sync::remote::now_ms(),
+        // 三样都可能是 `None`,而那是**正常状态**:这一批还没同步到服务端
+        // 去(`docs/adr/0031` 八)。遥控器据此知道自己拉不到列表,而不是
+        // 拉了个空的。
+        queue_id,
+        revision,
+        applied_revision,
+        // 正在放的是哪一条。按位置查 `entry_id` 而不是报下标:队列允许同一
+        // 首歌出现多次,下标随插入删除整体挪位。
+        entry_id: deck.execution.entry_at(queue.index()),
+        // 长度是一个标量,不随内容增长。
+        queue_len: queue.tracks().len() as u32,
+        epoch,
+        state_seq,
     }
 }

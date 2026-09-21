@@ -66,10 +66,14 @@ fn report() -> app_core::RemoteStateDto {
         track: Some(track()),
         position_ms: 0,
         state: app_core::RemotePlayState::Playing,
-        queue: vec![track()],
-        queue_index: 0,
         volume: 0.5,
-        sent_at: 1,
+        queue_id: Some(7),
+        revision: Some(1),
+        applied_revision: Some(1),
+        entry_id: Some(12),
+        queue_len: 1,
+        epoch: 1_700_000_000_000,
+        state_seq: 1,
     }
 }
 
@@ -113,13 +117,16 @@ fn tapping_a_track_while_remote_sends_the_whole_batch() {
 
     ui.global::<Player>().invoke_play("b".into());
 
+    // 队列挪进服务端之后(`docs/adr/0031`),这一下走的是「先把这一批发布
+    // 成服务端队列,拿到 queue_id/revision 再发命令」。发布是一次 HTTP 往返,
+    // 测试环境里没有服务端,所以命令发不出去 —— 但**这一下确实走到了远端
+    // 分支**,而那正是这条测试的主语。原来的断言是「该变成一条带整批的
+    // Play」,那条命令已经不存在了。
+    let _ = batch;
     assert_eq!(
-        deck.remote.sent_commands(),
-        vec![app_core::RemoteCommand::Play {
-            tracks: batch,
-            index: 1,
-        }],
-        "遥控时这一下该变成一条带整批的 Play"
+        deck.remote.play_submits(),
+        1,
+        "遥控时点一首歌,该走远端那条路"
     );
     assert!(
         deck.queue.borrow().current().is_none(),
@@ -247,14 +254,10 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
         "锁定期间本机前面那个人按的不算数"
     );
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Play {
-            tracks: batch,
-            index: 1,
-        },
-    );
+    // 遥控器发来的 Play 现在只带队列标识,曲目要另取(#109 第 4 段)。
+    // 这条测试钉的是「锁不拦遥控器发来的命令」,所以直接走拿到曲目之后
+    // 那一段 —— 它正是取数成功时会落到的地方。
+    play_batch(&ui, &deck, batch, 1);
 
     assert_eq!(
         deck.queue.borrow().current().map(|t| t.id.clone()),
@@ -411,7 +414,7 @@ fn a_leftover_local_loading_state_does_not_swallow_a_remote_tap()
     ui.global::<Player>().invoke_play("b".into());
 
     assert_eq!(
-        deck.remote.sent_commands().len(),
+        deck.remote.play_submits(),
         1,
         "去重是本机那条路的事,不该拦下发给别的设备的意图"
     );
@@ -471,7 +474,7 @@ fn a_just_claimed_target_accepts_the_first_tap() {
     ui.global::<Player>().invoke_play("a".into());
 
     assert_eq!(
-        deck.remote.sent_commands().len(),
+        deck.remote.play_submits(),
         1,
         "快照还在路上,不是丢掉用户这一下的理由"
     );
@@ -530,22 +533,80 @@ fn each_outcome_says_which_of_the_four_things_happened() {
     );
 }
 
-// ── AC-1b:太大的那一条,在发之前就拒掉 ──
+// ── AC-2:批次大小不再进这条链 ──
 
-/// 一批歌多到超过信令上限时,**发之前**就拒绝,并说出「队列太长」。
+/// **批次大小不再决定这一下能不能发出去**(AC-2、AC-6)。
 ///
-/// 不截断:少发的那几首在被控端那边就是凭空消失的歌,而用户看不出来。
-/// 不静默:按了没反应正是现场那个故障的症状。
-/// **尤其不能发出去让它失败** —— 服务端读到超长消息会跳出读循环,整条信令
-/// 连接就此断掉,遥控器连自己的控制权都一起丢(见 `contract::MAX_SIGNAL_BYTES`)。
+/// 这里原本是两条相反的测试:`a_batch_under_the_limit_still_goes_out` 断言
+/// 二十首照常发,`an_oversized_batch_is_refused_before_it_can_break_the_connection`
+/// 断言四千首在发之前被拒、横幅说「队列太长」。两条的前提都是
+/// **`Play` 拖着整批曲目**,于是它的字节数随用户的歌单长度增长,而超限会撞掉
+/// 整条连接(#108)。
+///
+/// 本轮把曲目挪去了 HTTP(`docs/adr/0031`),`Play` 只带
+/// `queue_id/revision/entry_id/operation_id`,定长 —— 那道按字节的闸对它
+/// 永远不再触发,两条断言的前提都没了。
+///
+/// 留下的这条钉的是那个前提消失之后**仍然成立**的事:两种规模走到同一个
+/// 下场。第 4 段把取数接上之后它照样成立,只是那个下场从「还发不出去」
+/// 变成「发出去了」。
+///
+/// 按字节的自检本身没删,它仍是发之前唯一一道闸,由
+/// `syncplay` 的 `no_command_grows_with_user_data` 守着。
 #[test]
-fn an_oversized_batch_is_refused_before_it_can_break_the_connection()
- {
+fn the_batch_size_no_longer_decides_a_remote_tap() {
+    // 同一个窗口里换两次批:Slint 的后端一个线程只装得下一个,
+    // 起两个窗口会撞 `AlreadySet`。
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
-    // 撑到超过上限:每首几十字节,几千首稳稳越过 64 KiB。
-    let ids: Vec<String> =
-        (0..4_000).map(|n| n.to_string()).collect();
+    take_control_of_pc(&deck);
+
+    let mut outcomes = Vec::new();
+    for count in [20_usize, 4_000] {
+        let ids: Vec<String> =
+            (0..count).map(|n| n.to_string()).collect();
+        let refs: Vec<&str> =
+            ids.iter().map(String::as_str).collect();
+        batch_of(&deck, &refs);
+
+        ui.global::<Player>().invoke_play("7".into());
+
+        outcomes.push((
+            deck.remote.play_submits(),
+            ui.global::<Shell>()
+                .get_banner_text()
+                .to_string(),
+        ));
+    }
+
+    assert_eq!(
+        outcomes[0].1, outcomes[1].1,
+        "二十首与四千首该走到同一个下场 —— 批次大小已经不在这条链上了"
+    );
+    assert_eq!(
+        outcomes[1].0, 2,
+        "两下都该走到远端分支,而不是被哪一道按字节的闸拦下"
+    );
+    assert!(
+        !outcomes[1].1.contains("太长"),
+        "两种规模都在配额之内,不该说太长,实得 {}",
+        outcomes[1].1
+    );
+}
+
+/// 超出**配额**的那一批仍然当场拒绝,而且立刻说得出话(AC-6)。
+///
+/// 与上一条不是一回事:那条说的是「字节数不再是判据」,这条说的是「条数
+/// 仍然有上限」。上限从 64 KiB 那条线换成了 `MAX_QUEUE_ENTRIES`,而拒绝的
+/// 规矩没变 —— **不截断、不静默**,而且不等那次 HTTP 往返回来:用户要的是
+/// 一句立刻出现的话,而这一条等多久都不会好。
+#[test]
+fn a_batch_past_the_quota_is_refused_on_the_spot() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let ids: Vec<String> = (0..api::MAX_QUEUE_ENTRIES + 1)
+        .map(|n| n.to_string())
+        .collect();
     let refs: Vec<&str> =
         ids.iter().map(String::as_str).collect();
     batch_of(&deck, &refs);
@@ -553,14 +614,17 @@ fn an_oversized_batch_is_refused_before_it_can_break_the_connection()
 
     ui.global::<Player>().invoke_play("7".into());
 
-    assert!(
-        deck.remote.sent_commands().is_empty(),
-        "这一条发出去会撞掉整条连接,必须在发之前拒掉"
-    );
     assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "队列太长,暂时发不到 pc1",
-        "要说得出为什么,以及这不是「等一等就好」的那一类"
+        deck.remote.play_submits(),
+        0,
+        "超出配额的那一批不该发出去"
+    );
+    assert!(
+        ui.global::<Shell>()
+            .get_banner_text()
+            .contains("太长"),
+        "要说得出为什么,实得 {}",
+        ui.global::<Shell>().get_banner_text()
     );
     assert!(
         deck.remote.is_remote(),
@@ -569,31 +633,5 @@ fn an_oversized_batch_is_refused_before_it_can_break_the_connection()
     assert!(
         deck.queue.borrow().current().is_none(),
         "更不等于改在本机放 —— 那是 ADR 0030 明令禁止的回落"
-    );
-}
-
-/// 同一批歌**没超限**时照常发出去 —— 那道闸不许顺手把正常的也挡了。
-#[test]
-fn a_batch_under_the_limit_still_goes_out() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let ids: Vec<String> =
-        (0..20).map(|n| n.to_string()).collect();
-    let refs: Vec<&str> =
-        ids.iter().map(String::as_str).collect();
-    batch_of(&deck, &refs);
-    take_control_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play("7".into());
-
-    assert_eq!(
-        deck.remote.sent_commands().len(),
-        1,
-        "没超限的那一批该照常发"
-    );
-    assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "",
-        "没出事就别说话"
     );
 }

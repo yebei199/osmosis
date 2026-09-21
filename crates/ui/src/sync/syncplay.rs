@@ -41,13 +41,16 @@ pub fn signalling_url(api_base: &str) -> String {
     }
 }
 
-/// 本机在同播里的身份。
+/// 本机这台设备的 id。
 ///
-/// 只是**这台设备叫什么**,不是"我是谁":归属由服务端从连接的 token 定
-/// (见 `server::syncplay::signaling`)。
-///
-/// id 落盘(#100):遥控器断线重连靠 `ClaimControl { resume }` 按 id 认人(#95),
-/// 每次启动换一个的话永远走不到那一支,被控端会一直被一个已经不存在的设备锁着。
+/// 队列归**播放会话 / 输出设备**,不是账号(`docs/adr/0031` 二)—— 同账号
+/// 两台设备各自本机播放不该互相覆盖,所以本机发布队列时拿的是这个。
+/// 与同播入册用的是同一个 id,两处不能各算各的。
+pub(crate) fn local_device_id() -> String {
+    identity().id
+}
+
+/// 本机在同播里的身份(正身)。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)
         .map(|name| name.trim().to_owned())
@@ -260,9 +263,24 @@ pub(crate) fn handle(
             // 走提示,不写角色那一行:连不上的时候角色一动没动,那一行此刻
             // 依然为真,而失败是**这一刻**的事。写进去就没人会重算它,那句话
             // 会一直挂到角色碰巧变一次为止(见 `crate::notice`)。
-            let message = format!("同播失败: {message}");
+            let message = describe_sync_failure(&message);
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 crate::notice::show(&ui, message);
+            });
+        }
+        // 版本不对与掉线**分开说**,这正是那道握手协商的意义(`docs/adr/0031`)。
+        //
+        // 混成 `Event::Failed` 那一句「同播失败: …」的话,用户看到的是一句
+        // 等一等就好了的话,而实际上等多久都不会好 —— 得去升级其中一端。
+        // 走横幅不走提示:提示几秒就没了,而这是一个**持续为真**的状态,
+        // 升级之前它一直成立。
+        Event::Incompatible { ours, theirs } => {
+            let message =
+                describe_incompatible(ours, theirs);
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                crate::notice::banner_without_link(
+                    &ui, message,
+                );
             });
         }
         // 与 HTTP 那侧拿到 401 是同一件事,善后也走同一处。
@@ -369,6 +387,29 @@ fn lock<T>(
     value: &Arc<Mutex<T>>,
 ) -> std::sync::MutexGuard<'_, T> {
     value.lock().expect("同播状态锁中毒")
+}
+
+/// 一次普通失败怎么说。**等一等会自己好**,所以不叫人去做任何事。
+fn describe_sync_failure(message: &str) -> String {
+    format!("同播失败: {message}")
+}
+
+/// 版本对不上怎么说。
+///
+/// 两个版本号都要在里面:少了它,用户只知道用不了,不知道该升哪一端。
+/// 对端旧到不报版本时说「太旧」而不是编一个号 —— 编出来的号会被拿去
+/// 找一个不存在的版本。
+fn describe_incompatible(
+    ours: u32,
+    theirs: Option<u32>,
+) -> String {
+    format!(
+        "版本对不上,遥控与同播都用不了:本机协议 {ours},服务端 {}。升级其中一端。",
+        theirs.map_or_else(
+            || "太旧,报不出版本".to_owned(),
+            |version| version.to_string()
+        )
+    )
 }
 
 #[cfg(test)]

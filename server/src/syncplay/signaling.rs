@@ -27,7 +27,6 @@ use contract::{ClientSignal, DeviceDto, ServerSignal};
 use tokio::sync::mpsc;
 
 use crate::error;
-use crate::gate::ratelimit::SharedLimiter;
 use crate::store::account::Account;
 use crate::syncplay::control::Control;
 use crate::syncplay::roster::Roster;
@@ -62,11 +61,6 @@ pub type AllowedOrigins = Arc<Vec<String>>;
 /// 拦住自己,而超限在这一侧的后果是整条连接断掉,不是丢一条消息(见那里的说明)。
 /// 两边各写一个字面量的话,客户端那道自检迟早与这里对不上。
 const MAX_MESSAGE_BYTES: usize = contract::MAX_SIGNAL_BYTES;
-
-/// 一个账号一分钟内能建几条信令连接。
-///
-/// 重连有退避,正常客户端一分钟碰不到个位数;这道闸拦的是空转的重连风暴。
-const CONNECTS_PER_MINUTE: u32 = 30;
 
 /// 一条连接的三个时限。
 ///
@@ -105,7 +99,6 @@ pub async fn handler(
     State(roster): State<SharedRoster>,
     State(control): State<SharedControl>,
     State(origins): State<AllowedOrigins>,
-    State(limiter): State<SharedLimiter>,
 ) -> Response {
     // 浏览器一定带 `Origin`,原生端不带。带了就必须在白名单里 ——
     // 同源策略管不到 WebSocket,不校验的话任意网页都能借用户的登录态连上来。
@@ -119,17 +112,11 @@ pub async fn handler(
         }
     }
 
+    // 建连限流不在这里了:它挂在路由上(`gate::ratelimit` 的
+    // `signal_connect`)。**层只拦升级请求本身**,拦不到升级之后那条
+    // WebSocket 上的消息 —— 那一侧的上限仍是 `MAX_MESSAGE_BYTES`,
+    // 两道闸各管各的。
     let account_id = account.id;
-    {
-        let mut guard =
-            limiter.lock().expect("限流器锁中毒");
-        if !guard.check(
-            &format!("signal:{account_id}"),
-            CONNECTS_PER_MINUTE,
-        ) {
-            return error::rate_limited().into_response();
-        }
-    }
 
     upgrade.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(
         move |socket| {
@@ -165,7 +152,7 @@ pub async fn serve(
 
     // 第一句必须是 Hello。不自报家门就不入册,也就不出现在任何人的名册里。
     // 超时是必要的:鉴权只保证对端有账号,不保证它还打算说话。
-    let Ok(Some(device)) = tokio::time::timeout(
+    let Ok(Some((device, spoken))) = tokio::time::timeout(
         timing.hello,
         accept_hello(&mut ws_rx),
     )
@@ -174,6 +161,43 @@ pub async fn serve(
         return;
     };
     let device_id = device.id.clone();
+
+    // 版本协商,**在入册之前**。入册是取得控制权的前提,所以讲不同协议的
+    // 那一端在能遥控任何设备之前就被挡住了(`docs/adr/0031`)。
+    //
+    // 应答无论对错都发:对得上时它是新客户端确认「对端也是新的」的唯一凭据
+    // (旧服务端永远不发这条,客户端据此认出它)。对不上就发完即关,
+    // 不入册、不进任何人的名册。
+    let welcome = ServerSignal::Welcome {
+        protocol_version: contract::PROTOCOL_VERSION,
+    };
+    if let Ok(text) = serde_json::to_string(&welcome)
+        && ws_tx.send(Message::text(text)).await.is_err()
+    {
+        return;
+    }
+    if spoken != contract::PROTOCOL_VERSION {
+        tracing::info!(
+            account,
+            device = %device_id,
+            spoken,
+            ours = contract::PROTOCOL_VERSION,
+            "协议版本对不上,拒绝入册"
+        );
+        // 好好地关,不要一走了之:直接 return 会把 socket 丢掉,对端收到的是
+        // 一个没有关闭握手的 reset —— 而那与「网线被拔了」长得一模一样,
+        // 正是这道协商要分开的两件事。带上原因码,日志里也看得出来。
+        let _ = ws_tx
+            .send(Message::Close(Some(
+                axum::extract::ws::CloseFrame {
+                    code: axum::extract::ws::close_code::POLICY,
+                    reason: "protocol version mismatch"
+                        .into(),
+                },
+            )))
+            .await;
+        return;
+    }
 
     let generation = {
         let mut guard = roster.lock().expect("名册锁中毒");
@@ -340,22 +364,28 @@ pub struct TestQuery {
     account: Option<AccountId>,
 }
 
-/// 读到第一条 `Hello` 为止。连接先断或格式不对就放弃这条连接。
+/// 读到第一条 `Hello` 为止,连同它自报的协议版本。
+///
+/// 连接先断或格式不对就放弃这条连接。旧客户端的 `Hello` 里没有版本字段,
+/// 那一侧由契约里的 `#[serde(default)]` 兜成 0 —— 解不出来的话这里只会静默
+/// 丢掉它,而连接会挂在超时上,「版本不对」就此与「网络不好」长得一样。
 async fn accept_hello(
     ws_rx: &mut futures_util::stream::SplitStream<
         WebSocket,
     >,
-) -> Option<DeviceDto> {
+) -> Option<(DeviceDto, u32)> {
     use futures_util::StreamExt;
 
     while let Some(Ok(message)) = ws_rx.next().await {
         let Message::Text(text) = message else {
             continue;
         };
-        if let Ok(ClientSignal::Hello { device }) =
-            serde_json::from_str::<ClientSignal>(&text)
+        if let Ok(ClientSignal::Hello {
+            device,
+            protocol_version,
+        }) = serde_json::from_str::<ClientSignal>(&text)
         {
-            return Some(device);
+            return Some((device, protocol_version));
         }
     }
     None

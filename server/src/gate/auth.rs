@@ -29,6 +29,22 @@ where
         parts: &mut Parts,
         state: &S,
     ) -> Result<Self, Self::Rejection> {
+        // 这一条请求上已经认过了就直接用那一份。
+        //
+        // 限流按账号分桶,而它在中间件层跑、拿不到提取器的返回值 ——
+        // 所以前置一个 `from_extractor_with_state::<Account, _>` 把账号放进
+        // extensions,限流从那里读(见 `crate::gate::ratelimit`)。handler 上
+        // 那个 `Account` 参数于是会认证第二遍:同一条请求打两次库,而且两次
+        // 之间 token 若正好过期,前后还会不一致。
+        //
+        // **只在这一条请求内复用**,不跨请求缓存 —— 那就成了一份没人负责
+        // 失效的会话副本。
+        if let Some(account) =
+            parts.extensions.get::<Self>()
+        {
+            return Ok(account.clone());
+        }
+
         let token = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
@@ -44,8 +60,11 @@ where
             .await
             .map_err(|err| error::map_error(&err.into()))?;
 
-        account::authenticate(&mut conn, token)
-            .await
-            .map_err(|err| error::map_error(&err))
+        let account =
+            account::authenticate(&mut conn, token)
+                .await
+                .map_err(|err| error::map_error(&err))?;
+        parts.extensions.insert(account.clone());
+        Ok(account)
     }
 }

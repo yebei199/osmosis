@@ -45,6 +45,22 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # 会话 token 落库前先过一次哈希。token 是高熵随机串,不需要 argon2 那种慢哈希,
 # sha256 足够 —— 目的只是让库泄露不等于会话被接管。
 sha2 = "0.10"
+# 限流。按账号/来源分桶的 GCRA,套在路由组上(见 gate::ratelimit)。
+#
+# `default-features = false` 关掉 tracing 那一份:本仓用 `tracing` 自己打日志,
+# 多一层它的埋点只会让同一件事出现两种写法。
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
+tower = { version = "0.5", default-features = false }
+# `tower_governor` 的公开签名里带着 `governor::middleware::NoOpMiddleware`,
+# 却没有把它再导出 —— 要给配置起一个类型别名就只能直接依赖 `governor`。
+governor = { version = "0.10", default-features = false, features = ["std", "quanta"] }
+# **不是直接用它**,是为了把 `governor` 底下那条 `getrandom` 钉在 0.3.3 以上。
+#
+# 0.3.0 在 wasm 上要 `js-sys ^0.3.77`,而那条链会把 `wasm-bindgen` 拽回 0.2.100;
+# 本仓的 `apps/web` 用的是 0.2.126,两个版本都 `links = "wasm_bindgen"`,
+# 于是整个 workspace 解不出来。0.3.3 起改走 `wasm_js`,不再碰 js-sys。
+# web 端冻结中(#105)不代表它不在依赖图里 —— 它仍是 workspace 成员。
+getrandom = "0.3.3"
 
 [build-dependencies]
 tonic-prost-build.workspace = true

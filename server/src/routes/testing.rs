@@ -426,7 +426,7 @@ pub(crate) fn state(
         ),
         origins: server::syncplay::signaling::AllowedOrigins::default(
         ),
-        limiter: server::gate::ratelimit::SharedLimiter::default(
-        ),
+        policies:
+            server::gate::ratelimit::Policies::tuned(),
     }
 }

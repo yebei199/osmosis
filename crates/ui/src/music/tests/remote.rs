@@ -26,10 +26,14 @@ fn report(
         track: Some(track()),
         position_ms,
         state,
-        queue: vec![track()],
-        queue_index: 0,
         volume: 0.5,
-        sent_at: position_ms,
+        queue_id: Some(7),
+        revision: Some(1),
+        applied_revision: Some(1),
+        entry_id: Some(12),
+        queue_len: 1,
+        epoch: 1_700_000_000_000,
+        state_seq: position_ms,
     }
 }
 
@@ -89,14 +93,11 @@ fn a_remote_play_command_loads_the_whole_batch() {
         track_with_id("c"),
     ];
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Play {
-            tracks: batch.clone(),
-            index: 1,
-        },
-    );
+    // 线上那条 `Play` 现在只带队列标识,曲目由被控端按 queue_id/revision
+    // 自己取(`docs/adr/0031`)。取数那一段是 #109 第 4 段;这条测试钉的是
+    // 「拿到整批之后,后面那些歌留在队列里、从第 index 首开始放」——
+    // 那正是取数成功之后会落到的地方,也是自动续播得以在这一端发生的原因。
+    play_batch(&ui, &deck, batch.clone(), 1);
 
     assert_eq!(
         deck.queue.borrow().tracks().len(),
@@ -114,16 +115,11 @@ fn a_remote_play_command_loads_the_whole_batch() {
 #[test]
 fn a_remote_next_command_advances_the_queue() {
     let (ui, deck) = deck_window();
-    execute(
+    play_batch(
         &ui,
         &deck,
-        app_core::RemoteCommand::Play {
-            tracks: vec![
-                track_with_id("a"),
-                track_with_id("b"),
-            ],
-            index: 0,
-        },
+        vec![track_with_id("a"), track_with_id("b")],
+        0,
     );
 
     execute(&ui, &deck, app_core::RemoteCommand::Next);
@@ -138,16 +134,11 @@ fn a_remote_next_command_advances_the_queue() {
 #[test]
 fn a_remote_prev_command_steps_back() {
     let (ui, deck) = deck_window();
-    execute(
+    play_batch(
         &ui,
         &deck,
-        app_core::RemoteCommand::Play {
-            tracks: vec![
-                track_with_id("a"),
-                track_with_id("b"),
-            ],
-            index: 1,
-        },
+        vec![track_with_id("a"), track_with_id("b")],
+        1,
     );
 
     execute(&ui, &deck, app_core::RemoteCommand::Prev);
