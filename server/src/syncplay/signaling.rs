@@ -74,14 +74,6 @@ pub struct Timing {
     pub ping_every: Duration,
     /// 连续几次 Ping 没有回音就判死。
     pub misses: u32,
-    /// 版本对不上时,关掉这条连接**之前**先拖多久。
-    ///
-    /// 不是为了礼貌,是为了给一个改不了的旧端设一个建连频率上限。旧端是
-    /// 等服务端关了才重连的(而 0.1.9 那一版断开之后**立刻**就回来,没有
-    /// 任何等待),所以关闭拖多久,它的建连就最快多久一次 —— 与它自己有没有
-    /// 退避无关。`signal_connect` 那个桶按**账号**分,同账号别的设备共用它,
-    /// 所以这件事不是那个旧端自己的事(#109 F-R3)。
-    pub reject_hold: Duration,
 }
 
 impl Default for Timing {
@@ -92,11 +84,6 @@ impl Default for Timing {
             // 移动网络上一次正常的短暂卡顿就会把人踢下线。
             ping_every: Duration::from_secs(30),
             misses: 2,
-            // 上界由客户端的 `IDLE_LIMIT`(75 秒)定:拖过头它会先自己判死、
-            // 断开重连,这道闸就白设了。二十秒离那个上界还远,而按
-            // `signal_connect` 每两秒一个额度算,一个永远连不上的端最多吃掉
-            // 这个账号十分之一的建连预算。
-            reject_hold: Duration::from_secs(20),
         }
     }
 }
@@ -181,13 +168,6 @@ pub async fn serve(
     // 应答无论对错都发:对得上时它是新客户端确认「对端也是新的」的唯一凭据
     // (旧服务端永远不发这条,客户端据此认出它)。对不上就发完即关,
     // 不入册、不进任何人的名册。
-    // 版本对不上的那一条要先拖一会儿再答。拖在**发 Welcome 之前**:
-    // 旧端读到一条它解不出来的消息可能就地收工,那样关闭拖得再久也白拖
-    // (`Timing::reject_hold`)。
-    if spoken != contract::PROTOCOL_VERSION {
-        tokio::time::sleep(timing.reject_hold).await;
-    }
-
     let welcome = ServerSignal::Welcome {
         protocol_version: contract::PROTOCOL_VERSION,
     };
