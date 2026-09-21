@@ -593,3 +593,35 @@ fn a_good_fetch_adopts_the_whole_revision() {
         })
     );
 }
+
+/// 发布失败之后重来一次,补同步那只钟**不许被清零**。
+///
+/// 2026-09-21 真机上量到的:服务端不可达时失败路径调 `detach`,而它把整个
+/// State 换成 default,`last_sync_try_ms` 一起归零,于是下一轮又到点 ——
+/// 三十秒的节流形同虚设,日志里每秒一条「补提交一次 / 没同步上去」。
+/// 它记的是「上一次试是什么时候」,与「手上这份是服务端哪一版」无关。
+#[test]
+fn a_failed_publish_does_not_reset_the_resync_clock() {
+    let execution = Execution::default();
+
+    assert!(
+        execution.due_for_resync(60_000),
+        "第一次该到点"
+    );
+    assert!(
+        !execution.due_for_resync(70_000),
+        "十秒之后不该再试"
+    );
+
+    // 失败路径:忘掉服务端身份,重新开始。
+    execution.detach();
+
+    assert!(
+        !execution.due_for_resync(70_001),
+        "detach 把钟也清了,于是下一轮立刻又试一次"
+    );
+    assert!(
+        execution.due_for_resync(100_001),
+        "真过了三十秒就该再试"
+    );
+}

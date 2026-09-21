@@ -88,41 +88,48 @@ pub(in crate::music) fn bind(ui: &MainWindow, deck: &Deck) {
     });
 }
 
-/// 每秒那趟轮询叫一次:队列页开着才算账。
+/// 每秒那趟轮询叫一次。
 ///
-/// 关着的时候一行都不建 —— 五千首的模型每秒重建一次,而用户根本没在看。
+/// **总数每一轮都报,行只在页开着时才建。** 两件事不能一起跳过:那颗
+/// 「队列 · N」药丸是打开这一页的唯一入口,而它的显示条件就是这个总数
+/// 大于零 —— 只在页开着时才算总数的话,总数恒为 0、药丸永远不出现、
+/// 这一页于是永远打不开。2026-09-21 真机上就是这么撞见的。
+///
+/// 行则确实该省:五千首的模型每秒重建一次,而用户根本没在看。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn refresh(
     ui: &MainWindow,
     deck: &Deck,
 ) {
-    if !ui.global::<Viz>().get_queue_page_open() {
-        return;
-    }
-
+    let open = ui.global::<Viz>().get_queue_page_open();
     if deck.remote.is_remote() {
-        refresh_remote(ui, deck);
+        refresh_remote(ui, deck, open);
     } else {
-        refresh_local(ui, deck);
+        refresh_local(ui, deck, open);
     }
 }
 
 /// 本机:队列就在手上。
 #[cfg(not(target_arch = "wasm32"))]
-fn refresh_local(ui: &MainWindow, deck: &Deck) {
+fn refresh_local(ui: &MainWindow, deck: &Deck, open: bool) {
     let queue = deck.queue.borrow();
+    ui.global::<Viz>()
+        .set_queue_total(queue.tracks().len() as i32);
+    ui.global::<Viz>().set_queue_loading(false);
+    if !open {
+        return;
+    }
+
     let current = queue.index();
     let rows: Vec<TrackRow> = queue
         .tracks()
         .iter()
         .enumerate()
         .map(|(at, track)| {
-            row(entry_id_at(deck, at), track)
+            row(deck, entry_id_at(deck, at), track)
         })
         .collect();
 
-    ui.global::<Viz>().set_queue_total(rows.len() as i32);
-    ui.global::<Viz>().set_queue_loading(false);
     ui.global::<Viz>().set_queue_current(
         entry_id_at(deck, current).to_string().into(),
     );
@@ -131,7 +138,11 @@ fn refresh_local(ui: &MainWindow, deck: &Deck) {
 
 /// 遥控:按被控端报来的标识拉一份只读缓存。
 #[cfg(not(target_arch = "wasm32"))]
-fn refresh_remote(ui: &MainWindow, deck: &Deck) {
+fn refresh_remote(
+    ui: &MainWindow,
+    deck: &Deck,
+    open: bool,
+) {
     let (queue_id, revision, current, len) =
         deck.remote.with_view(|view, _| {
             (
@@ -143,6 +154,11 @@ fn refresh_remote(ui: &MainWindow, deck: &Deck) {
         });
 
     ui.global::<Viz>().set_queue_total(len as i32);
+    if !open {
+        // 药丸只要那个总数。整份列表等用户真的打开这一页再去取 ——
+        // 不然每换一版就白拉一趟几千条。
+        return;
+    }
     ui.global::<Viz>().set_queue_current(
         current
             .map(|entry| entry.to_string())
@@ -166,7 +182,7 @@ fn refresh_remote(ui: &MainWindow, deck: &Deck) {
             .queue_mirror
             .rows()
             .iter()
-            .map(|(entry, track)| row(*entry, track))
+            .map(|(entry, track)| row(deck, *entry, track))
             .collect();
         push(ui, rows);
         return;
@@ -309,7 +325,11 @@ fn index_of(deck: &Deck, entry_id: i64) -> Option<usize> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn row(entry_id: i64, track: &TrackDto) -> TrackRow {
+fn row(
+    deck: &Deck,
+    entry_id: i64,
+    track: &TrackDto,
+) -> TrackRow {
     TrackRow {
         // **装的是 `entry_id`**,不是曲目 id:同一首歌可以出现多次,
         // 按曲目认的话点第二次出现的那一条会放到第一条上去。
@@ -324,9 +344,14 @@ fn row(entry_id: i64, track: &TrackDto) -> TrackRow {
             .clone()
             .unwrap_or_default()
             .into(),
-        // 图由 `thumbnails` 在行滑进可见区之后回填(`Thumbnails::apply`),
-        // 与列表页同一条路 —— 这里不预先查,查也查不到还没取的那些。
-        cover: slint::Image::default(),
+        // 图**这里就查**,不等 `Thumbnails::apply` 回填:那一条只认列表页
+        // 那个模型,而这一页的模型每一轮都整份重建,填进去的图下一秒就被
+        // 新行盖掉。没取过的仍然是空的,`needs-cover` 报上去、下一轮摆上。
+        cover: track
+            .cover
+            .as_deref()
+            .and_then(|url| deck.thumbnails.cached(url))
+            .unwrap_or_default(),
     }
 }
 

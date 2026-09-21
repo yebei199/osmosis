@@ -206,7 +206,7 @@ export component PlayPage inherits FocusScope {
             height: 100%;
         }
 
-        TouchArea {
+        queue-entry-touch := TouchArea {
             clicked => { Viz.queue-page-open = true; }
         }
     }
@@ -324,7 +324,7 @@ export component PlayPage inherits FocusScope {
     // 会拿自己那一格的高度把它焊死;条内所有摆位都按 parent.height 算,于是抽屉
     // 从条的位置往下铺、盖住主条、越过窗口下缘。按下缘定位、高度让组件自己说,
     // 抽屉才向上长 —— 壳里那根(app.slint)一直是这么摆的。
-    PlayerBar {
+    player-bar := PlayerBar {
         immersive: true;
         x: (parent.width - self.width) / 2;
         y: parent.height - self.height - root.safe-bottom - 24px;

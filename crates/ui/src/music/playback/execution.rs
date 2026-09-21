@@ -114,8 +114,16 @@ impl Execution {
     /// 这一批是本机自己攒的,还没同步到服务端去。
     ///
     /// 不是错误状态:服务端不可达时本机照常起播,界面标一句「未同步」即可。
+    ///
+    /// **补同步那只钟不跟着清。** 它记的是「上一次试是什么时候」,与
+    /// 「手上这份是服务端哪一版」无关。清掉的话下一轮又到点,
+    /// [`RESYNC_EVERY_MS`] 那道节流就形同虚设 —— 而发布失败正好走这里,
+    /// 于是服务端不可达时反倒变成每秒打一发(2026-09-21 小米 13 上量到)。
     pub(in crate::music) fn detach(&self) {
-        *self.inner.borrow_mut() = State::default();
+        let mut state = self.inner.borrow_mut();
+        let last_sync_try_ms = state.last_sync_try_ms;
+        *state = State::default();
+        state.last_sync_try_ms = last_sync_try_ms;
     }
 
     /// 手上这份的身份,报给遥控它的那台设备。

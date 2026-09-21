@@ -11,6 +11,7 @@
 import { Theme, Type } from "theme.slint";
 import { TrackRow } from "types.slint";
 import { TrackList } from "tracklist.slint";
+import { BarMetrics } from "playerbar.slint";
 import { Shell } from "globals/shell.slint";
 
 export component QueuePage inherits Rectangle {
@@ -45,9 +46,16 @@ export component QueuePage inherits Rectangle {
         padding-left: 12px;
         padding-right: 12px;
         padding-top: 14px;
-        // 底部留出手势条那一段。**不要拿整页高度反推可用厚度** ——
-        // 桌面上这个数恒 0,反推出来的几何在真机上正好压到手势条上。
-        padding-bottom: root.safe-bottom + 12px;
+        // 底部两段都要让,少一段都会把末尾几行变成看得见、点不着:
+        //
+        // - **手势条**(`safe-bottom`)。桌面上恒 0,只有真机上看得见,
+        //   所以**不要拿整页高度反推可用厚度**;
+        // - **控制条**(`BarMetrics.page-reserve`)。控制簇按 `docs/adr/0010`
+        //   永远排在覆层之后、压在最上层,要让开的是这一页。歌词页不必让 ——
+        //   它把几行居中摆,根本够不着下缘;队列是一整份可滚的列表,滚到底
+        //   就顶在下缘上,而被盖住的正是最难注意到的**末尾**那几行。
+        padding-bottom: root.safe-bottom
+            + BarMetrics.page-reserve;
         spacing: 10px;
 
         HorizontalLayout {
@@ -75,7 +83,7 @@ export component QueuePage inherits Rectangle {
 
         // 空队列与「还在取」分开说:两种在界面上长得一样的话,
         // 用户会以为自己的歌没了。
-        if root.rows.length == 0: Text {
+        if root.rows.length == 0: queue-empty := Text {
             text: root.loading ? "正在取队列…" : "队列是空的";
             color: Theme.immersive-text-dim;
             font-family: "Maple Mono NF CN";
@@ -85,7 +93,7 @@ export component QueuePage inherits Rectangle {
             vertical-alignment: center;
         }
 
-        if root.rows.length > 0: TrackList {
+        if root.rows.length > 0: queue-list := TrackList {
             tracks: root.rows;
             current: root.current;
             play(id) => { root.pick(id); }
