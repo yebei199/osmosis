@@ -55,6 +55,9 @@ async fn connect(addr: SocketAddr, id: &str) -> Socket {
 }
 
 /// 同上,但指定账号 —— 分桶那几条要两个账号才验得出来。
+///
+/// 握手走完才返回:服务端在入册之前先回一条 `Welcome`(`docs/adr/0031`),
+/// 这个 helper 把它吃掉,于是后面每条测试看到的第一条仍然是它关心的那条。
 async fn connect_as(
     addr: SocketAddr,
     account: i64,
@@ -71,6 +74,7 @@ async fn connect_as(
             id: id.to_owned(),
             name: format!("设备 {id}"),
         },
+        protocol_version: contract::PROTOCOL_VERSION,
     };
     socket
         .send(Message::text(
@@ -80,7 +84,85 @@ async fn connect_as(
         .await
         .expect("发不出 Hello");
 
+    // 握手应答先来,入册的名册在它后面。吃掉它,后面每条测试看到的第一条
+    // 仍然是它自己关心的那条。
+    let welcome = next_signal(&mut socket).await;
+    assert!(
+        matches!(
+            welcome,
+            ServerSignal::Welcome { protocol_version }
+                if protocol_version == contract::PROTOCOL_VERSION
+        ),
+        "握手第一条该是 Welcome,收到的是 {welcome:?}"
+    );
+
     socket
+}
+
+/// 讲旧协议的客户端在**入册之前**就被拒(AC-7)。
+///
+/// 判据不是「它收到了一条错误」—— 旧端根本解不出新消息。判据是**它没进
+/// 任何人的名册**:入册是取得控制权的前提,所以它连遥控的机会都没有。
+///
+/// 旧客户端的 `Hello` 里压根没有 `protocol_version` 字段,所以这里发的是
+/// 一份手搓的旧格式 JSON,不是把常量改小 —— 后者测不到契约那个
+/// `#[serde(default)]`,而少了它服务端会把整条消息静默丢掉,连接挂在
+/// 超时上,「版本不对」就此与「网络不好」长得一模一样。
+#[tokio::test]
+async fn an_old_client_is_refused_before_it_joins_the_roster()
+ {
+    let addr = start_server().await;
+
+    // 先放一台新客户端进去,它是观察名册的那双眼睛。
+    let mut watcher = connect(addr, "watcher").await;
+    assert!(matches!(
+        next_signal(&mut watcher).await,
+        ServerSignal::Roster { ref devices } if devices.len() == 1
+    ));
+
+    let (mut old, _) = tokio_tungstenite::connect_async(
+        format!("ws://{addr}/signal?account=1"),
+    )
+    .await
+    .expect("连不上信令端点");
+    old.send(Message::text(
+        r#"{"type":"hello","device":{"id":"old","name":"旧端"}}"#,
+    ))
+    .await
+    .expect("发不出旧格式 Hello");
+
+    // 旧端这一侧:收到一条它读不懂的应答,然后连接就关了。
+    let answered = next_signal(&mut old).await;
+    assert!(
+        matches!(answered, ServerSignal::Welcome { .. }),
+        "该先回一条 Welcome,收到的是 {answered:?}"
+    );
+    let closed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        old.next(),
+    )
+    .await
+    .expect("等连接关闭超时");
+    assert!(
+        closed.is_none()
+            || matches!(
+                closed,
+                Some(Ok(Message::Close(_)))
+            ),
+        "版本对不上该关掉连接,却还能收到 {closed:?}"
+    );
+
+    // 观察者这一侧:名册**从头到尾没有变过**。旧端要是入了册,
+    // 这里会收到一条两台设备的 Roster。
+    let quiet = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        watcher.next(),
+    )
+    .await;
+    assert!(
+        quiet.is_err(),
+        "旧端不该入册,而名册动了:{quiet:?}"
+    );
 }
 
 /// 读下一条服务端消息。

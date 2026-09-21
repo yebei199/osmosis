@@ -183,6 +183,21 @@ fn to_remote(
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
+    // 点播要先把这一批发布成服务端队列、拿到 queue_id/revision 才发得出
+    // 命令(`docs/adr/0031`)。契约这一轮切完,发布那一段是 #109 第 4 段。
+    // 在这里明确拒绝而不是让它默默失败:静默的话用户按下去毫无反应,
+    // 而那与「队列太长」「控制暂不可用」在界面上分不开。
+    if matches!(intent, Intent::Play { .. }) {
+        crate::notice::show(
+            ui,
+            "远端点播正在改造中,这一版还发不出去(#109)"
+                .to_owned(),
+        );
+        return Dispatched::Unavailable(
+            "队列还没接上服务端",
+        );
+    }
+
     // 退出规矩先问,因为下一行就把意图交出去了。它只看变体,不看载荷。
     let leaving = intent.leaving_rule();
 
@@ -250,9 +265,8 @@ fn as_command(
     intent: Intent,
 ) -> Option<RemoteCommand> {
     Some(match intent {
-        Intent::Play { tracks, index } => {
-            RemoteCommand::Play { tracks, index }
-        }
+        // 点播在 `to_remote` 的入口就被挡下了(见那里):它要先发布队列。
+        Intent::Play { .. } => return None,
         Intent::TogglePlay => {
             if ui.global::<Player>().get_is_playing() {
                 RemoteCommand::Pause
@@ -328,11 +342,7 @@ fn to_local(
                     "这一下是多余的",
                 );
             }
-            execute(
-                ui,
-                deck,
-                RemoteCommand::Play { tracks, index },
-            );
+            play_batch(ui, deck, tracks, index);
         }
         Intent::TogglePlay => {
             let Ok(player) = deck.player.as_ref() else {
@@ -411,6 +421,32 @@ fn leave_listening(deck: &Deck) {
     }
 }
 
+/// 把一整批曲目装进队列并起播。
+///
+/// 从 [`execute`] 里拆出来,因为**曲目不再随命令过来**(`docs/adr/0031`):
+/// 线上那条 `Play` 只带队列标识,而这一段是「拿到了曲目之后做什么」。
+/// 两个来源共用它 —— 本机点播手上本来就有这一批;遥控点播要先按
+/// `queue_id`/`revision` 把执行副本取下来(#109 第 4 段),取到之后落到这里。
+///
+/// 自动续播仍然在这一端发生:装进来的是整批,发命令的那头锁屏、断线都不该
+/// 让这边停在一首上。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn play_batch(
+    ui: &MainWindow,
+    deck: &Deck,
+    tracks: Vec<TrackDto>,
+    index: usize,
+) {
+    deck.tracks.borrow_mut().clone_from(&tracks);
+    deck.queue.borrow_mut().replace(tracks, index);
+    // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
+    if ui.global::<Player>().get_shuffle_on() {
+        deck.queue.borrow_mut().shuffle(shuffle_seed());
+    }
+    play_current(ui, deck);
+    crate::media::push(ui, &deck.playback, &deck.media);
+}
+
 /// 执行一条命令,**不问它是从哪来的**。
 ///
 /// 三个来源共用这一段:遥控器发来的命令(`bind_remote`)、本机用户动作
@@ -427,18 +463,23 @@ pub(in crate::music) fn execute(
     cmd: RemoteCommand,
 ) {
     match cmd {
-        RemoteCommand::Play { tracks, index } => {
-            // 整批装进队列:自动续播在**执行这一端**发生,发命令的那头
-            // 只发了这一次,它锁屏、断线都不该让这边停在一首上。
-            deck.tracks.borrow_mut().clone_from(&tracks);
-            deck.queue.borrow_mut().replace(tracks, index);
-            // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
-            if ui.global::<Player>().get_shuffle_on() {
-                deck.queue
-                    .borrow_mut()
-                    .shuffle(shuffle_seed());
-            }
-            play_current(ui, deck);
+        RemoteCommand::Play {
+            queue_id,
+            revision,
+            entry_id,
+            operation_id,
+        } => {
+            // 曲目不再随命令过来(`docs/adr/0031`):这一条只说「播服务端
+            // 那个队列的这一条」,执行副本要按 queue_id/revision 经 HTTP
+            // 自己去取,校验完再原子替换。
+            //
+            // 取数那一段是 #109 第 4 段的活。契约这一轮先切,两端的取数与
+            // 原子替换在下一段接上 —— 在那之前遥控点播是不通的,而不通时
+            // 出声比不出声更糟(会放出一首没点过的歌)。
+            log::warn!(
+                "收到 play(队列 {queue_id}@{revision}, 条目 {entry_id}, \
+                 操作 {operation_id}),但取数那一段还没接上(#109 第 4 段)"
+            );
         }
         RemoteCommand::Pause => {
             if let Ok(player) = deck.player.as_ref() {

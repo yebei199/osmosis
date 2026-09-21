@@ -74,6 +74,23 @@ async fn hello_puts_device_in_roster() {
     .await
     .expect("连不上信令服务器");
 
+    // 握手应答排在入册之前(`docs/adr/0031`),名册在它后面。
+    let welcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        host.next(),
+    )
+    .await
+    .expect("等握手应答超时")
+    .expect("连接已关闭");
+    assert!(
+        matches!(
+            welcome,
+            ServerSignal::Welcome { protocol_version }
+                if protocol_version == contract::PROTOCOL_VERSION
+        ),
+        "第一条该是 Welcome,实得 {welcome:?}"
+    );
+
     let first = tokio::time::timeout(
         Duration::from_secs(5),
         host.next(),
@@ -432,7 +449,9 @@ async fn a_silent_connection_is_declared_dead() {
     .await
     .expect("该连得上");
 
-    // 入册之后服务端会推一条名册,先把它读掉 —— 那一帧是正常流量。
+    // 握手应答与入册后的那条名册都是正常流量,先读掉 —— 判死说的是
+    // 「此后一帧都没有」。
+    let _ = signalling.next().await;
     let _ = signalling.next().await;
 
     let verdict = tokio::time::timeout(

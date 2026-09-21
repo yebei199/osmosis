@@ -49,8 +49,20 @@ pub const MAX_SIGNAL_BYTES: usize = 64 * 1024;
 )]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientSignal {
-    /// 连上后的第一句:自报家门。不发这句就不会出现在任何人的名册里。
-    Hello { device: DeviceDto },
+    /// 连上后的第一句:自报家门,顺带说自己讲的是哪一版协议。
+    ///
+    /// 不发这句就不会出现在任何人的名册里。
+    ///
+    /// `protocol_version` 带 `#[serde(default)]`,**这一条是有意的**:旧客户端
+    /// 发的 `Hello` 里没有它,而解不出来的话服务端只会静默丢掉整条消息,
+    /// 那条连接就挂在「等 Hello」上直到十秒超时 —— 于是「版本不对」与
+    /// 「网络不好」在两边都长得一模一样。默认成 0 才能让服务端**认出**
+    /// 它是个旧端,并且明确地拒绝它(见 [`ServerSignal::Welcome`])。
+    Hello {
+        device: DeviceDto,
+        #[serde(default)]
+        protocol_version: u32,
+    },
     /// 转给另一台设备。`payload` 是 SDP 或 ICE 候选。
     Signal {
         /// 目标设备 id。**只发给它一台** —— 广播会让每台设备都以为自己被邀请。
@@ -102,6 +114,23 @@ pub enum ClientSignal {
 )]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerSignal {
+    /// 握手应答:服务端说自己讲的是哪一版协议。
+    ///
+    /// **在入册之前发**,而入册是取得控制权的前提 —— 所以版本不对的那一端
+    /// 在能够遥控任何设备之前就被挡住了(`docs/adr/0031`)。
+    ///
+    /// 一条变体覆盖四种组合:
+    ///
+    /// | 客户端 | 服务端 | 发生什么 |
+    /// |---|---|---|
+    /// | 新 | 新 | 收到 `Welcome{3}`,对得上,照常入册 |
+    /// | 旧 | 新 | 服务端认出 `protocol_version` 缺省的 0,发一条 `Welcome` 就关掉连接、**不入册**;旧端解不出这条消息,但它启动时的 `/health` 自检已经说过话了 |
+    /// | 新 | 旧 | 这条**永远不来**。客户端在收到第一条 `Roster` 时还没见过它,据此判定对端太旧 —— 名册到得了,控制权申请由客户端自己挡下 |
+    /// | 旧 | 旧 | 谁也不认识它,照旧 |
+    ///
+    /// 第三种是它非得在入册前发不可的原因:`Roster` 是入册后的第一条下行,
+    /// 拿「先来的是谁」当判据才成立。
+    Welcome { protocol_version: u32 },
     /// 当前在线的全部设备,含收信者自己 —— 谁该被过滤掉是显示问题,归客户端。
     ///
     /// 由服务端**主动推送**,每次名册变化都推。让客户端轮询的话,
@@ -125,7 +154,17 @@ pub enum ServerSignal {
     /// 遥控器发来的一条命令,`cmd` 原样。
     Command { cmd: RemoteCommand },
     /// 被控端上报的状态,转给持权的遥控器。
-    State { from: String, state: RemoteStateDto },
+    ///
+    /// 装箱不是为了省内存,是为了别让**别的变体**跟着它一起变大:枚举按最大
+    /// 的那个变体占位,而 `Roster`、`SnapshotRequest` 这些小家伙与它共用一条
+    /// 通道(`OUTBOX_CAPACITY = 32`)。上报里那份曲目展示摘要让这个变体比其余
+    /// 的大出两百多字节,clippy 的 `large_enum_variant` 正是为此。
+    ///
+    /// 线上写法一个字节没变:`Box` 在 serde 那里是透明的。
+    State {
+        from: String,
+        state: Box<RemoteStateDto>,
+    },
     /// 持权的遥控器要一次完整状态,立刻回一条 [`ClientSignal::State`]。
     ///
     /// 不带发信人:服务端只会把它从持权的那台转过来,被控端答复的去向

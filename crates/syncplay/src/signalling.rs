@@ -233,7 +233,13 @@ impl Signalling {
 
         // 自报家门必须在**任何**其他消息之前:服务端在收到 Hello 之前不入册,
         // 之后发的信令会被它当作还没握手的连接丢掉。
-        let hello = ClientSignal::Hello { device };
+        // 自报家门顺带说自己讲哪一版协议。新服务端据此在**入册之前**决定
+        // 收不收这条连接(`docs/adr/0031`);旧服务端不认识这个字段,
+        // 会原样忽略它,那一侧由客户端自己判(见 `client::verify_handshake`)。
+        let hello = ClientSignal::Hello {
+            device,
+            protocol_version: contract::PROTOCOL_VERSION,
+        };
         ws_tx
             .send(Message::text(
                 serde_json::to_string(&hello)
@@ -340,18 +346,6 @@ impl Signalling {
 mod tests {
     use super::*;
 
-    fn track(id: &str) -> contract::TrackDto {
-        contract::TrackDto {
-            platform: "netease".to_owned(),
-            id: id.to_owned(),
-            title: format!("歌 {id}"),
-            alias: None,
-            artists: vec!["LiSA".to_owned()],
-            cover: None,
-            duration_ms: 200_000,
-        }
-    }
-
     /// 量的是**连外层一起**的那一份,因为服务端数的就是那一份。
     ///
     /// 只量 `cmd` 自己会漏掉 `{"type":"command","to":"…"}` 那几十个字节 ——
@@ -371,42 +365,43 @@ mod tests {
         );
     }
 
-    /// 批次越长,量出来的越大 —— 这条链上唯一随用户数据增长的就是它。
+    /// **没有一条命令随用户的数据增长了**(#109 AC-2)。
+    ///
+    /// 这里原本有两条相反的测试,它们钉的是当时的事实:`a_longer_batch_measures_larger`
+    /// 断言两百首比一首大两个数量级,`a_thousand_track_batch_exceeds_the_signal_limit`
+    /// 断言一千首越得过 64 KiB —— 那正是 #108 在真机上撞到的那条命令
+    /// (977 首实测 224194 字节)。两条的前提都是「`Play` 拖着整批曲目」,
+    /// 而本轮把曲目挪去了 HTTP(`docs/adr/0031`),前提没了,断言跟着翻过来。
+    ///
+    /// 上限那道自检**没有跟着删**:`Play` 现在是定长的,但 `command_wire_len`
+    /// 仍是发之前唯一一道闸,而超限的后果仍然是整条连接断掉。哪天有人往
+    /// 某条命令里塞回一个长字段,拦住它的还是这一道。
     #[test]
-    fn a_longer_batch_measures_larger() {
-        let short = RemoteCommand::Play {
-            tracks: vec![track("1")],
-            index: 0,
-        };
-        let long = RemoteCommand::Play {
-            tracks: (0..200)
-                .map(|n| track(&n.to_string()))
-                .collect(),
-            index: 0,
-        };
+    fn no_command_grows_with_user_data() {
+        let commands = [
+            RemoteCommand::Play {
+                queue_id: 7,
+                revision: 3,
+                entry_id: 12,
+                operation_id:
+                    "8f1c2e0a-0000-4000-8000-000000000000"
+                        .to_owned(),
+            },
+            RemoteCommand::Pause,
+            RemoteCommand::Resume,
+            RemoteCommand::Next,
+            RemoteCommand::Prev,
+            RemoteCommand::Seek { ms: 42_000 },
+            RemoteCommand::Volume { level: 0.35 },
+        ];
 
-        assert!(
-            command_wire_len("pc1", &long)
-                > command_wire_len("pc1", &short) * 100,
-            "两百首该比一首大两个数量级"
-        );
-    }
-
-    /// 真正的长歌单越得过上限 —— 那正是 #108 现场那条命令。
-    #[test]
-    fn a_thousand_track_batch_exceeds_the_signal_limit() {
-        let cmd = RemoteCommand::Play {
-            tracks: (0..1_000)
-                .map(|n| track(&n.to_string()))
-                .collect(),
-            index: 0,
-        };
-
-        assert!(
-            command_wire_len("pc1", &cmd)
-                > contract::MAX_SIGNAL_BYTES,
-            "现场那一批 977 首实测 224194 字节,上限是 {}",
-            contract::MAX_SIGNAL_BYTES
-        );
+        for cmd in commands {
+            let wire = command_wire_len("pc1", &cmd);
+            assert!(
+                wire < 512,
+                "{} 上线 {wire} 字节 —— 命令该是定长的",
+                cmd.summary()
+            );
+        }
     }
 }

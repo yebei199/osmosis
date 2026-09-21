@@ -265,6 +265,26 @@ pub(crate) fn handle(
                 crate::notice::show(&ui, message);
             });
         }
+        // 版本不对与掉线**分开说**,这正是那道握手协商的意义(`docs/adr/0031`)。
+        //
+        // 混成 `Event::Failed` 那一句「同播失败: …」的话,用户看到的是一句
+        // 等一等就好了的话,而实际上等多久都不会好 —— 得去升级其中一端。
+        // 走横幅不走提示:提示几秒就没了,而这是一个**持续为真**的状态,
+        // 升级之前它一直成立。
+        Event::Incompatible { ours, theirs } => {
+            let message = format!(
+                "版本对不上,遥控与同播都用不了:本机协议 {ours},服务端 {}。升级其中一端。",
+                theirs.map_or_else(
+                    || "太旧,报不出版本".to_owned(),
+                    |version| version.to_string()
+                )
+            );
+            let _ = weak.upgrade_in_event_loop(move |ui| {
+                crate::notice::banner_without_link(
+                    &ui, message,
+                );
+            });
+        }
         // 与 HTTP 那侧拿到 401 是同一件事,善后也走同一处。
         // 同播自己不会重试,下一个 token 到位时它会自己接上。
         Event::Unauthorized => {

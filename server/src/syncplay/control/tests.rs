@@ -30,10 +30,14 @@ fn report() -> RemoteStateDto {
         track: None,
         position_ms: 1_000,
         state: RemotePlayState::Playing,
-        queue: Vec::new(),
-        queue_index: 0,
+        queue_id: None,
+        revision: None,
+        applied_revision: None,
+        entry_id: None,
+        queue_len: 0,
         volume: 1.0,
-        sent_at: 42,
+        epoch: 1_700_000_000_000,
+        state_seq: 42,
     }
 }
 
@@ -453,7 +457,7 @@ fn a_report_goes_only_to_the_controller() {
         rx_phone.try_recv(),
         Ok(ServerSignal::State {
             from: "pc".to_owned(),
-            state: report(),
+            state: Box::new(report()),
         })
     );
     assert!(rx_spare.try_recv().is_err());

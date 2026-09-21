@@ -108,15 +108,20 @@ async fn wait_until_both_online(
     .await;
 }
 
+/// 一份最小的小状态。序号跟着位置走,免得每个调用点再造一个。
 fn report(position_ms: u64) -> RemoteStateDto {
     RemoteStateDto {
         track: None,
         position_ms,
         state: RemotePlayState::Playing,
-        queue: Vec::new(),
-        queue_index: 0,
         volume: 1.0,
-        sent_at: position_ms,
+        queue_id: None,
+        revision: None,
+        applied_revision: None,
+        entry_id: None,
+        queue_len: 0,
+        epoch: 1_700_000_000_000,
+        state_seq: position_ms,
     }
 }
 

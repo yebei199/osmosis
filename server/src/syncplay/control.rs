@@ -233,7 +233,7 @@ pub fn route(
                 &controller,
                 ServerSignal::State {
                     from: from.to_owned(),
-                    state,
+                    state: Box::new(state),
                 },
             );
             None

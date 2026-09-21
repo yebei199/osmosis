@@ -25,13 +25,28 @@ use crate::TrackDto;
 )]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteCommand {
-    /// 播这份列表,从第 `index` 首开始。
+    /// 播服务端上那个队列的这一条。
     ///
-    /// 整批发过去而不是只发一首 id:自动续播在被控端发生(见 `docs/adr/0030`),
-    /// 它得自己拿着后面那些歌 —— 遥控器锁屏、断线都不该让 pc1 停在一首上。
+    /// **只带标识,不带曲目**(`docs/adr/0031`)。从前这里拖着整批
+    /// `Vec<TrackDto>`,977 首序列化 22 万字节,是信令上限的三倍多,
+    /// 而超限不是丢一条消息、是整条连接断掉(见 [`crate::MAX_SIGNAL_BYTES`])。
+    /// 曲目数据现在走 HTTP,被控端按 `queue_id`/`revision` 自己去取。
+    ///
+    /// 自动续播仍然在被控端发生:它取到的是**整个**执行副本,遥控器锁屏、
+    /// 断线都不该让 pc1 停在一首上 —— 这一条与改之前一样,变的只是那批歌
+    /// 从哪条路过来。
     Play {
-        tracks: Vec<TrackDto>,
-        index: usize,
+        queue_id: i64,
+        /// 要播的是哪一版。带上它,被控端才知道自己手上那份够不够新。
+        revision: i64,
+        /// 队列里的哪一条。**不是下标** —— 队列允许同一首歌出现多次,
+        /// 而下标会随插入删除整体挪位。
+        entry_id: i64,
+        /// 这一次操作的标识,由遥控器生成。
+        ///
+        /// 重试同一次点播不该再次重置播放,连点 A、B 时迟到的 A 也不能覆盖
+        /// B —— 两件事都靠比对它(`docs/adr/0031` 七)。
+        operation_id: String,
     },
     Pause,
     Resume,
@@ -55,14 +70,18 @@ impl RemoteCommand {
     /// 客户端入队、服务端转发、被控端收到),四条日志说的必须是同一件事,
     /// 否则拿 `grep` 把一次点歌串起来时对不上。
     ///
-    /// `Play` 报**批次长度**而不是曲名:一条命令拖着整批歌,而那个数正是
-    /// 它与别的命令唯一的区别 —— 别的变体大小固定,只有它随用户手上那个
-    /// 列表增长(见 `Self::Play` 的说明)。
+    /// `Play` 报的是队列标识那一组:一次点播在日志里要能与服务端那边的
+    /// 队列版本、以及后面那条执行报告对上,而 `operation_id` 正是把重试、
+    /// 连点与迟到三种情形区分开的那个键。
     pub fn summary(&self) -> String {
         match self {
-            Self::Play { tracks, index } => format!(
-                "play(批次 {} 首, 第 {index} 首)",
-                tracks.len()
+            Self::Play {
+                queue_id,
+                revision,
+                entry_id,
+                operation_id,
+            } => format!(
+                "play(队列 {queue_id}@{revision}, 条目 {entry_id}, 操作 {operation_id})"
             ),
             Self::Pause => "pause".to_owned(),
             Self::Resume => "resume".to_owned(),
@@ -100,11 +119,20 @@ pub enum RemotePlayState {
     Paused,
 }
 
-/// 被控端每秒上报一次的全部状态。
+/// 被控端每秒上报一次的**小状态**。
 ///
 /// **进度靠上报,不靠遥控器推算**(`docs/adr/0030`):各设备网速不同,
 /// 「点了播」到「真出声」之间的延迟不可知,遥控器推算出来的位置必然与
 /// 音箱里的声音对不上,而且不会有任何报错。
+///
+/// 「小」是本轮的重点:这里**没有一个字段随用户的数据增长**
+/// (`docs/adr/0031` 三)。从前它带着被控端的整个队列,977 首时每秒往连接上
+/// 打 23 万字节,而信令上限是 64 KiB —— 超限在服务端那侧是跳出读循环、
+/// 整条连接断掉,于是被控端每秒把自己踢下线一次(#109 F-002)。队列本身
+/// 现在按 `queue_id`/`revision` 经 HTTP 取,变了才取一次。
+///
+/// 当前曲目仍然整条带着:它是**一首**,大小有界,而少了它遥控器在拉到队列
+/// 之前连歌名都显示不出来 —— 状态新鲜度与队列加载状态是两件事。
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize,
 )]
@@ -115,19 +143,41 @@ pub struct RemoteStateDto {
     /// 播放位置,毫秒。
     pub position_ms: u64,
     pub state: RemotePlayState,
-    /// 被控端手上的整个队列。遥控器只显示它,不持有自己的那一份。
-    pub queue: Vec<TrackDto>,
-    /// 在 [`Self::queue`] 里的位置。
-    pub queue_index: usize,
     /// 被控端的音量,0..=1 —— 遥控器上的滑块读的是这个数。
     pub volume: f32,
-    /// 被控端发出这条时它自己的挂钟毫秒。
+
+    /// 被控端手上那个队列在服务端的 id。
     ///
-    /// **不用来对时**:两台设备的钟本来就不一样,拿它算延迟只会算出负数。
-    /// 它只回答「这条比那条新吗」—— 重连之后旧连接上的残余上报可能后到,
-    /// 拿它盖掉新的,进度条就会倒退一次。过期与否由收信方按自己的钟判
+    /// `None` 是「这个队列还没同步上去」:服务端不可达时本机照常起播,
+    /// 只是标成未同步(`docs/adr/0031` 八)。遥控器见到 `None` 就知道
+    /// 自己拉不到列表,而不是拉了个空的。
+    pub queue_id: Option<i64>,
+    /// 被控端所知的、服务端上已提交的那一版。
+    pub revision: Option<i64>,
+    /// 被控端**实际应用**的那一版。
+    ///
+    /// 与 [`Self::revision`] 分开:两者不等就是「新版本待应用」,界面要标出来。
+    /// 合成一个的话,下载失败时被控端只能在「谎报已应用」和「谎报没收到」
+    /// 之间挑一个(`docs/adr/0031` 一)。
+    pub applied_revision: Option<i64>,
+    /// 正在放的是队列里的哪一条。下标会随插入删除挪位,`entry_id` 不会。
+    pub entry_id: Option<i64>,
+    /// 队列一共几首。遥控器拉列表之前先拿它画「共 N 首」。
+    pub queue_len: u32,
+
+    /// 执行会话标识:被控端进程启动时的毫秒挂钟,重启换一个。
+    ///
+    /// 与服务端 `play_queue_reports.epoch` 是同一个数 —— 同一份执行状态
+    /// 走两条路(WebSocket 的小状态、HTTP 的检查点)上报,两条必须能互相
+    /// 排序,各用各的序号就排不了。
+    pub epoch: i64,
+    /// 这一条在本次执行会话里的序号,每报一次加一。
+    ///
+    /// 取代了从前那个 `sent_at`:挂钟跨进程重启不可比,而「哪条更新」正是
+    /// 它唯一的用处。重连之后旧连接上的残余上报仍会后到,拿它盖掉新的,
+    /// 进度条就会倒退一次。过期与否仍由收信方按自己的钟判
     /// (见 `app_core::Output`)。
-    pub sent_at: u64,
+    pub state_seq: u64,
 }
 
 #[cfg(test)]
@@ -172,103 +222,140 @@ mod tests {
         }
     }
 
-    /// 一份现场规模的歌单在**两个方向**上都撞穿 64 KiB(#109 Checklist 1、F-002)。
-    ///
-    /// #108 只量到了出站那一半:真机上歌单「我喜欢的」977 首,
-    /// `RemoteCommand::Play` 序列化 **224194 字节**,是上限的 3.4 倍,被控端没反应。
-    /// 入站那一半当时只是推算 —— 要实测得让 pc1 的队列变成那 977 首,
-    /// 而 pc1 是用户自己的实例,#108 那一轮没动它。
-    ///
-    /// 这里用同规模、同形状的曲目把两个方向一起量出来(2026-09-21 实测):
-    ///
-    /// | 方向 | 977 首的字节数 | 对 65536 |
-    /// |---|---|---|
-    /// | 出站 `Command{Play}` | 238350 | 3.6 倍 |
-    /// | 入站 `State` | 238655 | 3.6 倍 |
-    ///
-    /// 出站这个数与真机上那 224194 差 6%(本地这份 fixture 的 id 与别名
-    /// 稍长),同一量级 —— 所以**入站那 23 万字节也是可信的**:它每秒往连接上
-    /// 打一发,而超限在服务端那侧是跳出读循环、整条连接断掉。
-    ///
-    /// 越界点见下一条:两百多首,不是什么极端歌单。
-    ///
-    /// 这一条在 #109 把队列挪出信令通道之后要**翻过来**:那时上报的字节数
-    /// 不再随队列长度增长(AC-2),这个测试改成钉那条平线。
-    #[test]
-    fn a_field_sized_queue_blows_the_limit_in_both_directions()
-     {
-        const FIELD_TRACKS: usize = 977;
+    /// 现场规模那份歌单,长什么样。
+    const FIELD_TRACKS: usize = 977;
 
-        let tracks: Vec<TrackDto> =
+    /// 被控端在放这一批时,它每秒那条上报的线上写法。
+    ///
+    /// 收整批而不是收一个长度:这个 helper 的**形状**就是本轮改的那件事 ——
+    /// 从前它得把整批抄进 `queue`,现在它只抄得动一个长度与当前那一首。
+    /// 下面两条断言一个字没改,变的只有它。
+    fn report_for(tracks: &[TrackDto]) -> ClientSignal {
+        ClientSignal::State {
+            state: RemoteStateDto {
+                track: tracks.first().cloned(),
+                position_ms: 42_000,
+                state: RemotePlayState::Playing,
+                volume: 0.8,
+                queue_id: Some(7),
+                revision: Some(3),
+                applied_revision: Some(3),
+                entry_id: Some(12),
+                queue_len: tracks.len() as u32,
+                epoch: 1_700_000_000_000,
+                state_seq: 42,
+            },
+        }
+    }
+
+    /// 在这一批上点第一首时,发出去的那条命令的线上写法。
+    fn command_for(tracks: &[TrackDto]) -> ClientSignal {
+        ClientSignal::Command {
+            to: "pc1".to_owned(),
+            cmd: RemoteCommand::Play {
+                queue_id: 7,
+                revision: 3,
+                entry_id: tracks.first().map_or(0, |_| 12),
+                operation_id: "8f1c2e0a-play".to_owned(),
+            },
+        }
+    }
+
+    /// 一份最小的小状态,只把要断言的那几样填上。
+    ///
+    /// 有了它,往 `RemoteStateDto` 里加一个标量字段不必回来改六处 fixture ——
+    /// 而那六处每一处都只关心其中一两个字段。
+    fn idle_state() -> RemoteStateDto {
+        RemoteStateDto {
+            track: None,
+            position_ms: 0,
+            state: RemotePlayState::Idle,
+            volume: 1.0,
+            queue_id: None,
+            revision: None,
+            applied_revision: None,
+            entry_id: None,
+            queue_len: 0,
+            epoch: 1_700_000_000_000,
+            state_seq: 1,
+        }
+    }
+
+    fn wire_len(message: &ClientSignal) -> usize {
+        serde_json::to_string(message)
+            .expect("消息该能序列化")
+            .len()
+    }
+
+    /// **两个方向的字节数都不随队列长度增长**(AC-2)。
+    ///
+    /// 这一条以前是反的。#108 在真机上量到出站:歌单「我喜欢的」977 首,
+    /// `RemoteCommand::Play` 序列化 224194 字节,是 64 KiB 上限的 3.4 倍,
+    /// 被控端没反应。本仓同规模的 fixture 量到出站 238350、入站 238655,
+    /// 都是上限的 3.6 倍,越界点在 269 首 —— 随手一个专辑合集就过了。
+    ///
+    /// 队列挪进服务端之后(`docs/adr/0031`),命令只带
+    /// `queue_id/revision/entry_id/operation_id`,上报只带长度与当前那一首,
+    /// 两条都是定长的。曲目数据走 HTTP。
+    ///
+    /// 断言用相等而不是「小于某个数」:要钉的是**这条线是平的**,而不是
+    /// 「它现在还够低」。哪天有人往上报里塞回一个随用户数据增长的字段,
+    /// 这一条当场红 —— 而 F-002 那个洞正是这么来的。
+    #[test]
+    fn neither_direction_grows_with_the_queue() {
+        let one = [field_track(0)];
+        let hundred: Vec<TrackDto> =
+            (0..100).map(field_track).collect();
+        let field: Vec<TrackDto> =
             (0..FIELD_TRACKS).map(field_track).collect();
 
-        let outbound =
-            serde_json::to_string(&ClientSignal::Command {
-                to: "pc1".to_owned(),
-                cmd: RemoteCommand::Play {
-                    tracks: tracks.clone(),
-                    index: 3,
-                },
-            })
-            .expect("命令该能序列化")
-            .len();
-
-        let inbound =
-            serde_json::to_string(&ClientSignal::State {
-                state: RemoteStateDto {
-                    track: tracks.get(3).cloned(),
-                    position_ms: 42_000,
-                    state: RemotePlayState::Playing,
-                    queue: tracks,
-                    queue_index: 3,
-                    volume: 0.8,
-                    sent_at: 1_700_000_000_000,
-                },
-            })
-            .expect("上报该能序列化")
-            .len();
-
-        assert!(
-            outbound > crate::MAX_SIGNAL_BYTES * 3,
-            "出站 {outbound} 字节,该是上限 {} 的三倍以上",
-            crate::MAX_SIGNAL_BYTES
+        // 一百首与九百七十七首**逐字节相等**。两者的 `queue_len` 都是三位数,
+        // 所以这一对之间已经没有任何随数据变化的东西 —— 平线就是平线。
+        assert_eq!(
+            wire_len(&report_for(&hundred)),
+            wire_len(&report_for(&field)),
+            "上报的字节数不该随队列长度增长"
         );
+        assert_eq!(
+            wire_len(&command_for(&hundred)),
+            wire_len(&command_for(&field)),
+            "点播命令的字节数不该随队列长度增长"
+        );
+
+        // 一首与九百七十七首之间只差 `queue_len` 那几位十进制数字 ——
+        // 这是 log 而不是线性,而且上限是 u32 的十位。放宽到 16 字节,
+        // 塞回任何一个随曲目数增长的字段都会把它撑爆好几个数量级。
+        let spread = wire_len(&report_for(&field))
+            .abs_diff(wire_len(&report_for(&one)));
         assert!(
-            inbound > crate::MAX_SIGNAL_BYTES * 3,
-            "入站 {inbound} 字节,该是上限 {} 的三倍以上",
-            crate::MAX_SIGNAL_BYTES
+            spread <= 16,
+            "一首与 {FIELD_TRACKS} 首之间差了 {spread} 字节,\
+             只该差队列长度那几位数字"
         );
     }
 
-    /// 越界点在两三百首上,不在几千首上 —— 这条链路的失败源是**用户的歌单长度**。
+    /// 而且离上限很远 —— 不是「刚好挤进去」。
     ///
-    /// 2026-09-21 实测越界点 **269 首**。钉一个上界而不是等号:字段值域变了
-    /// 字节数会跟着变,而要说的那句话(「普通歌单就能撞穿」)不会因为它从
-    /// 269 挪到 300 而失效。
+    /// 上一条只说这条线是平的,平在 65535 上同样算平。这一条说的是它平在
+    /// 哪:两条都在上限的百分之一以内,于是以后往小状态里加一两个标量字段
+    /// 不必每次重新量。
     #[test]
-    fn the_limit_is_crossed_by_an_ordinary_playlist() {
-        let crossing = (1..)
-            .find(|&count| {
-                let tracks: Vec<TrackDto> =
-                    (0..count).map(field_track).collect();
-                serde_json::to_string(
-                    &ClientSignal::Command {
-                        to: "pc1".to_owned(),
-                        cmd: RemoteCommand::Play {
-                            tracks,
-                            index: 0,
-                        },
-                    },
-                )
-                .expect("命令该能序列化")
-                .len()
-                    > crate::MAX_SIGNAL_BYTES
-            })
-            .expect("总有一个首数会越界");
+    fn a_field_sized_queue_now_fits_far_inside_the_limit() {
+        let field: Vec<TrackDto> =
+            (0..FIELD_TRACKS).map(field_track).collect();
+
+        let inbound = wire_len(&report_for(&field));
+        let outbound = wire_len(&command_for(&field));
 
         assert!(
-            crossing < 400,
-            "越界点 {crossing} 首,普通歌单就该撞得到"
+            inbound < crate::MAX_SIGNAL_BYTES / 100,
+            "上报 {inbound} 字节,该远在上限 {} 之内",
+            crate::MAX_SIGNAL_BYTES
+        );
+        assert!(
+            outbound < crate::MAX_SIGNAL_BYTES / 100,
+            "命令 {outbound} 字节,该远在上限 {} 之内",
+            crate::MAX_SIGNAL_BYTES
         );
     }
 
@@ -280,8 +367,10 @@ mod tests {
     fn every_command_round_trips_through_its_tag() {
         let commands = [
             RemoteCommand::Play {
-                tracks: vec![track("1"), track("2")],
-                index: 1,
+                queue_id: 7,
+                revision: 3,
+                entry_id: 12,
+                operation_id: "op-1".to_owned(),
             },
             RemoteCommand::Pause,
             RemoteCommand::Resume,
@@ -319,18 +408,22 @@ mod tests {
 
     /// 上报的整份状态能原样解回来,含队列。
     ///
-    /// 队列归被控端(见 `docs/adr/0030`),遥控器显示的就是这一份 ——
-    /// 掉了它,手机上的列表会是空的而 pc1 照常续播。
+    /// 队列本身不在上报里了(`docs/adr/0031`),但**指向它的那几个标识在** ——
+    /// 掉了任何一个,遥控器就不知道该去 HTTP 上取哪一版,列表会一直空着
+    /// 而 pc1 照常续播。
     #[test]
-    fn a_report_round_trips_with_its_queue() {
+    fn a_report_round_trips_with_its_queue_identity() {
         let report = RemoteStateDto {
             track: Some(track("1")),
             position_ms: 12_345,
             state: RemotePlayState::Playing,
-            queue: vec![track("1"), track("2")],
-            queue_index: 0,
             volume: 0.8,
-            sent_at: 1_700_000_000_000,
+            queue_id: Some(7),
+            revision: Some(4),
+            applied_revision: Some(3),
+            entry_id: Some(12),
+            queue_len: 2,
+            ..idle_state()
         };
 
         let text = serde_json::to_string(&report)
@@ -348,15 +441,7 @@ mod tests {
     /// 而那和「这首歌的标题拿不到」看起来一模一样。
     #[test]
     fn an_idle_report_has_no_track() {
-        let report = RemoteStateDto {
-            track: None,
-            position_ms: 0,
-            state: RemotePlayState::Idle,
-            queue: Vec::new(),
-            queue_index: 0,
-            volume: 1.0,
-            sent_at: 1,
-        };
+        let report = idle_state();
 
         let back: RemoteStateDto = serde_json::from_str(
             &serde_json::to_string(&report)
@@ -387,13 +472,9 @@ mod tests {
             },
             ClientSignal::State {
                 state: RemoteStateDto {
-                    track: None,
-                    position_ms: 0,
                     state: RemotePlayState::Paused,
-                    queue: Vec::new(),
-                    queue_index: 0,
                     volume: 0.5,
-                    sent_at: 7,
+                    ..idle_state()
                 },
             },
             ClientSignal::SnapshotRequest {
@@ -428,15 +509,10 @@ mod tests {
             },
             ServerSignal::State {
                 from: "pc1".to_owned(),
-                state: RemoteStateDto {
-                    track: None,
-                    position_ms: 0,
+                state: Box::new(RemoteStateDto {
                     state: RemotePlayState::Buffering,
-                    queue: Vec::new(),
-                    queue_index: 0,
-                    volume: 1.0,
-                    sent_at: 9,
-                },
+                    ..idle_state()
+                }),
             },
             ServerSignal::SnapshotRequest,
             ServerSignal::ControlledBy { device },

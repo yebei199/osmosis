@@ -77,13 +77,23 @@ impl RemoteView {
     ///
     /// 迟到的旧上报必须丢:重连之后旧连接上的残余可能后到,收下它进度条就会
     /// 倒退一次,而那看起来正好像是「拖进度失败了」。
+    ///
+    /// 排序键是 `(epoch, state_seq)` 这一对,不是任何一个单独拿出来:
+    ///
+    /// - 只比 `state_seq`:被控端一重启序号从头数,新进程报来的一切都排在
+    ///   旧进程后面,于是全被丢掉,界面停在旧状态上看起来像「对面没反应」。
+    /// - 只比 `epoch`:同一次会话里的所有上报不可比,乱序的残余照收不误。
+    ///
+    /// 这一对与服务端 `play_queue_reports` 收报告时用的是同一个序 ——
+    /// 同一份执行状态走 WebSocket 与 HTTP 两条路上报,两条得排得到一起。
     pub fn accept(
         &mut self,
         report: RemoteStateDto,
         now_ms: u64,
     ) -> bool {
         if self.report.as_ref().is_some_and(|held| {
-            report.sent_at < held.sent_at
+            (report.epoch, report.state_seq)
+                < (held.epoch, held.state_seq)
         }) {
             return false;
         }
@@ -170,18 +180,50 @@ impl RemoteView {
         self.report.as_ref()?.track.as_ref()
     }
 
-    /// 被控端手上的队列。
-    pub fn queue(&self) -> &[TrackDto] {
-        self.report
-            .as_ref()
-            .map_or(&[], |report| &report.queue)
+    /// 被控端手上那个队列在服务端的 id。
+    ///
+    /// `None` 有两种意思,调用方要分得开:一条上报都没收到过,或者被控端
+    /// 那个队列**还没同步到服务端**(服务端不可达时本机照常起播)。
+    /// 前一种由 [`Self::is_known`] 答,这里只答后一种。
+    pub fn queue_id(&self) -> Option<i64> {
+        self.report.as_ref()?.queue_id
     }
 
-    /// 在队列里的位置。
-    pub fn queue_index(&self) -> usize {
+    /// 服务端上已提交的那一版(被控端所知)。
+    pub fn revision(&self) -> Option<i64> {
+        self.report.as_ref()?.revision
+    }
+
+    /// 被控端**实际应用**的那一版。
+    pub fn applied_revision(&self) -> Option<i64> {
+        self.report.as_ref()?.applied_revision
+    }
+
+    /// 服务端上有一版,而被控端还没应用上。
+    ///
+    /// 界面据此标「新版本待应用」——**数据库里写了不等于音箱在响**
+    /// (`docs/adr/0031` 一)。两者都没有时不算待应用:那是「还没开始」,
+    /// 不是「卡住了」。
+    pub fn has_pending_revision(&self) -> bool {
+        match (self.revision(), self.applied_revision()) {
+            (Some(wanted), Some(applied)) => {
+                wanted > applied
+            }
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }
+
+    /// 正在放的是队列里的哪一条。
+    pub fn entry_id(&self) -> Option<i64> {
+        self.report.as_ref()?.entry_id
+    }
+
+    /// 队列一共几首。拉到列表之前先拿它画「共 N 首」。
+    pub fn queue_len(&self) -> u32 {
         self.report
             .as_ref()
-            .map_or(0, |report| report.queue_index)
+            .map_or(0, |report| report.queue_len)
     }
 
     /// 被控端的音量。没有上报时按满音量算 —— 滑块总得停在某处。
@@ -217,19 +259,36 @@ mod tests {
         }
     }
 
+    /// 同一次执行会话里的第 `state_seq` 条上报。
     fn report(
         position_ms: u64,
         state: RemotePlayState,
-        sent_at: u64,
+        state_seq: u64,
+    ) -> RemoteStateDto {
+        report_from(EPOCH, position_ms, state, state_seq)
+    }
+
+    /// 这台被控端这一次启动的标识。跨重启才会变的那个数。
+    const EPOCH: i64 = 1_700_000_000_000;
+
+    fn report_from(
+        epoch: i64,
+        position_ms: u64,
+        state: RemotePlayState,
+        state_seq: u64,
     ) -> RemoteStateDto {
         RemoteStateDto {
             track: Some(track()),
             position_ms,
             state,
-            queue: vec![track()],
-            queue_index: 0,
             volume: 0.7,
-            sent_at,
+            queue_id: Some(7),
+            revision: Some(3),
+            applied_revision: Some(3),
+            entry_id: Some(12),
+            queue_len: 1,
+            epoch,
+            state_seq,
         }
     }
 
@@ -416,19 +475,108 @@ mod tests {
         assert_eq!(view.position_ms(50_000), 20_000);
     }
 
-    /// 队列、音量与曲目都从上报里读 —— 遥控器不持有自己的那一份。
+    /// 被控端重启之后,序号从头数,而那一条仍然是**新**的。
+    ///
+    /// 只比 `state_seq` 的话,重启后的第 1 条永远排在重启前的第 900 条后面,
+    /// 于是遥控器把新进程报来的一切全丢掉 —— 界面停在旧状态上,而它看起来
+    /// 就是「对面没反应」。`epoch` 是跨重启那一维,少了它这条链路排不了序,
+    /// 而这正是从前那个挂钟 `sent_at` 唯一还算管用的地方。
     #[test]
-    fn the_view_mirrors_the_reported_queue_and_volume() {
+    fn a_report_from_a_newer_epoch_wins_despite_a_lower_seq()
+     {
+        let mut view = RemoteView::default();
+        view.accept(
+            report(20_000, RemotePlayState::Playing, 900),
+            50_000,
+        );
+
+        let restarted = view.accept(
+            report_from(
+                EPOCH + 1,
+                0,
+                RemotePlayState::Playing,
+                1,
+            ),
+            50_100,
+        );
+
+        assert!(
+            restarted,
+            "新一次执行会话的第一条该被收下"
+        );
+        assert_eq!(view.position_ms(50_100), 0);
+    }
+
+    /// 反过来,旧 epoch 的残余无论序号多大都丢掉。
+    #[test]
+    fn a_report_from_an_older_epoch_is_ignored() {
+        let mut view = RemoteView::default();
+        view.accept(
+            report_from(
+                EPOCH + 1,
+                20_000,
+                RemotePlayState::Playing,
+                1,
+            ),
+            50_000,
+        );
+
+        let stale = view.accept(
+            report(0, RemotePlayState::Playing, 900),
+            50_100,
+        );
+
+        assert!(!stale, "上一次执行会话的残余不该被收下");
+        assert_eq!(view.position_ms(50_000), 20_000);
+    }
+
+    /// 队列的**标识**、音量与曲目都从上报里读。
+    ///
+    /// 队列本身不在上报里了(`docs/adr/0031`):遥控器按这几个标识去 HTTP 上
+    /// 取,取到的是只读显示缓存,不是第二份真相。
+    #[test]
+    fn the_view_mirrors_the_queue_identity_and_volume() {
         let mut view = RemoteView::default();
         view.accept(
             report(0, RemotePlayState::Playing, 1),
             0,
         );
 
-        assert_eq!(view.queue(), [track()]);
-        assert_eq!(view.queue_index(), 0);
+        assert_eq!(view.queue_id(), Some(7));
+        assert_eq!(view.revision(), Some(3));
+        assert_eq!(view.applied_revision(), Some(3));
+        assert_eq!(view.entry_id(), Some(12));
+        assert_eq!(view.queue_len(), 1);
         assert_eq!(view.volume(), 0.7);
         assert_eq!(view.track(), Some(&track()));
+    }
+
+    /// 服务端那一版比被控端应用的新 —— 界面该标「新版本待应用」。
+    ///
+    /// 不标的话,用户点了歌、库里也写下了,而音箱还在放上一首,
+    /// 界面却一切正常 —— 那正是三层裁决要防的那种错。
+    #[test]
+    fn a_revision_ahead_of_the_applied_one_is_pending() {
+        let mut view = RemoteView::default();
+        let mut ahead =
+            report(0, RemotePlayState::Playing, 1);
+        ahead.revision = Some(5);
+        ahead.applied_revision = Some(3);
+        view.accept(ahead, 0);
+
+        assert!(view.has_pending_revision());
+    }
+
+    /// 两版对齐就不是待应用。
+    #[test]
+    fn a_report_caught_up_with_the_server_is_not_pending() {
+        let mut view = RemoteView::default();
+        view.accept(
+            report(0, RemotePlayState::Playing, 1),
+            0,
+        );
+
+        assert!(!view.has_pending_revision());
     }
 
     /// 切回本机时把镜像清掉。

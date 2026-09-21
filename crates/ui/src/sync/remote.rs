@@ -12,6 +12,7 @@
 mod rules;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use app_core::{
@@ -83,6 +84,17 @@ struct Inner {
     cover_id: Mutex<String>,
     /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
     was_remote: Mutex<bool>,
+    /// 这一次执行会话的标识:进程启动时的毫秒挂钟。
+    ///
+    /// 与服务端 `play_queue_reports.epoch` 是同一个数。跨重启比大小要靠它 ——
+    /// 只比序号的话,重启之后的第 1 条永远排在重启前的第 900 条后面
+    /// (见 `app_core::RemoteView::accept`)。
+    ///
+    // ponytail: 挂钟倒退时新进程会拿到更小的 epoch,那一次的上报会被对端
+    // 全丢掉。真出现再换单调时钟加持久计数器
+    epoch: i64,
+    /// 本次会话里已经报到第几条。每报一次加一。
+    state_seq: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -293,6 +305,20 @@ impl Remote {
         *lock(&self.inner.cover_id) == track_id
     }
 
+    /// 这一条上报的顺序键:`(epoch, state_seq)`,序号取完即加一。
+    ///
+    /// 由报的这一端发号,而不是由凑快照的那一段:序号是**这条连接上报了
+    /// 几次**,与快照里有什么无关。放到 `snapshot` 里的话,每加一个凑快照的
+    /// 入口就多一个能把序号弄乱的地方。
+    pub fn stamp(&self) -> (i64, u64) {
+        (
+            self.inner.epoch,
+            self.inner
+                .state_seq
+                .fetch_add(1, Ordering::Relaxed),
+        )
+    }
+
     /// 被遥控时把本机状态报出去;没被遥控就什么也不做。
     ///
     /// 目标由服务端从控制权槽位查(见 `server::syncplay::control`),这里不指定发给谁。
@@ -394,6 +420,8 @@ pub fn new(ui: &MainWindow) -> Remote {
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
             was_remote: Mutex::new(false),
+            epoch: now_ms() as i64,
+            state_seq: AtomicU64::new(1),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
