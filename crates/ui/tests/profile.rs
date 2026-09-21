@@ -154,3 +154,82 @@ fn the_output_device_can_be_picked_without_a_track() {
         "点本机就是把输出选回本机,id 是空串"
     );
 }
+
+// ── AC-8:输出芯片不许被控制条压住 ──
+
+/// 控制条一出现,个人页底部就为它多留出一块。
+///
+/// 「输出设备」是这一页的最后一行,而那两颗芯片是**进遥控器模式的唯一入口**。
+/// 不留空的话它们压在条底下:看得见、点不着,而 Flickable 也救不回来 ——
+/// 可滚的余量比条身还矮时,那一段永远滚不出来。真机上为此只能绕道控制条的
+/// 抽屉,而一首歌都没放过的时候连抽屉都不存在(#108 F-002)。
+#[test]
+fn the_player_bar_does_not_eat_the_bottom_of_the_profile() {
+    let ui = window();
+    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Profile>().set_loaded(true);
+
+    ui.global::<Player>().set_has_track(false);
+    let without = column_height(&ui);
+
+    ui.global::<Player>().set_has_track(true);
+    let with = column_height(&ui);
+
+    let reserved = with - without;
+    assert!(
+        reserved >= 62.0,
+        "控制条 62px 高,底部至少要为它留这么多,实留 {reserved}"
+    );
+}
+
+/// 留空还要盖住**条底到页面底那段间隙** —— 那一段同样压着内容。
+///
+/// 只按条身高度留的话,最后一行仍有一截在条下面。
+#[test]
+fn the_reserved_space_clears_the_gap_under_the_bar_too() {
+    let ui = window();
+    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Profile>().set_loaded(true);
+
+    ui.global::<Player>().set_has_track(false);
+    let without = column_height(&ui);
+    ui.global::<Player>().set_has_track(true);
+    let reserved = column_height(&ui) - without;
+
+    assert!(
+        reserved > 62.0,
+        "条底到页面底那段间隙也压着内容,留空要比条身高,实留 {reserved}"
+    );
+}
+
+/// 没有控制条的时候一分不留 —— 凭空的空白在页尾看起来就是渲染坏了。
+#[test]
+fn nothing_is_reserved_when_no_track_is_playing() {
+    let ui = window();
+    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Profile>().set_loaded(true);
+    ui.global::<Player>().set_has_track(false);
+
+    let bare = column_height(&ui);
+    ui.global::<Player>().set_has_track(false);
+
+    assert_eq!(
+        column_height(&ui),
+        bare,
+        "条不在就不该留空"
+    );
+}
+
+/// 个人页那一列此刻有多高。底部留空算在它的 padding 里,所以高度会跟着变。
+fn column_height(ui: &MainWindow) -> f32 {
+    // 查一次把条件元素逼出来 —— 无头下它们惰性实例化。
+    let _ = present(ui, "ProfilePage::output-strip");
+    testing::ElementHandle::find_by_element_id(
+        ui,
+        "ProfilePage::column",
+    )
+    .next()
+    .expect("个人页那一列该在")
+    .size()
+    .height
+}

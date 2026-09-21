@@ -25,6 +25,22 @@ import { Shell } from "globals/shell.slint";
 import { Library } from "globals/library.slint";
 import { Viz } from "globals/viz.slint";
 
+// 控制条占掉页面底部多少 —— 给**页面**用,不给条自己用。
+//
+// 条长在一个 `if` 里,而条件子元素在 slint 里既引用不到、也不给父元素贡献
+// preferred 尺寸(与 DrawerMetrics 同一个理由,ADR 0028 栽过一次)。页面要
+// 在底部留出这么多,否则最后一行内容就压在条底下 —— 看得见、点不着,而
+// Flickable 也滚不出来:能滚的余量少于条身高度时,那一段永远够不到(#108 AC-8)。
+export global BarMetrics {
+    // 条身高度。**唯一的一份** —— PlayerBar 自己的 `bar-h` 也读这里,
+    // 免得页面按一个数留空、条按另一个数画。
+    out property <length> bar-h: 62px;
+    // 条底到页面底的间隙,与 app.slint 摆条那一行的 22px 是同一个数。
+    out property <length> bottom-gap: 22px;
+    // 页面底部该留的空:条身 + 上下两头的空气。
+    out property <length> page-reserve: self.bar-h + self.bottom-gap * 2;
+}
+
 export component PlayerBar inherits Rectangle {
     // 覆层里那份。只影响:回写哪一槽、抽屉里有没有视觉预设。不碰几何。
     in property <bool> immersive: false;
@@ -35,7 +51,7 @@ export component PlayerBar inherits Rectangle {
     property <bool> drawer-open: false;
 
     // ── 唯一的一套尺寸 ──
-    property <length> bar-h: 62px;
+    property <length> bar-h: BarMetrics.bar-h;
     property <length> cover-size: 44px;
     property <length> key-size: 40px;
     property <length> ring-size: 48px;

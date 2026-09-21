@@ -7,6 +7,7 @@
 import { Theme, Type } from "theme.slint";
 import { SectionCard, HoverButton } from "widgets.slint";
 import { OutputStrip } from "controls.slint";
+import { BarMetrics } from "playerbar.slint";
 import { ArtistRankRow, DeviceRow } from "types.slint";
 
 // 一张统计卡:大数字取副色板(硬规则 6 允许的用途),下面一行说明。
@@ -66,6 +67,10 @@ export component ProfilePage inherits Flickable {
     in property <bool> on-phone;
     callback unbind-netease();
 
+    // 控制条此刻在不在。在的话页面底部要多留出它那一块,见下面 column 的
+    // padding-bottom。
+    in property <bool> bar-visible;
+
     content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
@@ -74,6 +79,17 @@ export component ProfilePage inherits Flickable {
         width: min(root.width - 52px, 720px);
         alignment: start;
         spacing: 14px;
+        // 控制条压在页面底部,而这一页的最后一行正是「输出设备」——
+        // 那两颗芯片是**进遥控器模式的唯一入口**。不为条留出这一块的话,
+        // 它们看得见、点不着,而 Flickable 也救不回来:可滚的余量比条身
+        // 还矮时,那一段永远滚不出来。真机上为此只能绕道控制条的抽屉,
+        // 而一首歌都没放过的时候连抽屉都不存在(#108 F-002 / AC-8)。
+        //
+        // 留在 padding 而不是 content-height 上:padding 进 preferred-height,
+        // 于是 content-height 那一行不必知道这回事,两处不会各算一遍。
+        padding-bottom: root.bar-visible
+            ? BarMetrics.page-reserve
+            : 0;
 
         // 头像 + 名字。头像是副色板渐变占位:账号没有头像这回事,先不装有。
         HorizontalLayout {

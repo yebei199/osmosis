@@ -34,7 +34,7 @@ import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { NavItem, RoundControl } from "widgets.slint";
-import { PlayerBar } from "playerbar.slint";
+import { PlayerBar, BarMetrics } from "playerbar.slint";
 import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
@@ -443,6 +443,9 @@ export component MainWindow inherits Window {
                 if Shell.current-tab == 2: ProfilePage {
                     width: 100%;
                     height: 100%;
+                    // 与下面摆控制条那一行是同一个条件 —— 条在不在,
+                    // 决定这一页底部要不要多留出它那一块。
+                    bar-visible: Player.has-track && !Shell.play-page-open;
                     init => { Profile.shown(); }
                     username: Profile.username;
                     loaded: Profile.loaded;
@@ -486,7 +489,9 @@ export component MainWindow inherits Window {
                 // 播放页开着时让位:覆层整个盖住这一层,它自己带一根同样的条。
                 if Player.has-track && !Shell.play-page-open: PlayerBar {
                     x: (parent.width - self.width) / 2;
-                    y: parent.height - self.height - 22px;
+                    // 间隙与 BarMetrics.bottom-gap 是同一个数:页面按它留空,
+                    // 条按它落位,两边对不上就会差出一条缝或者压住一行。
+                    y: parent.height - self.height - BarMetrics.bottom-gap;
                     width-cap: parent.width - root.bar-inset * 2;
                 }
 
