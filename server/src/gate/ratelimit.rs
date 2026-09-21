@@ -210,6 +210,12 @@ pub fn too_many_requests(error: GovernorError) -> Response {
             wait_time,
             ..
         } => {
+            // **落一行日志。** 少了它,额度耗尽在服务端这侧完全无声:
+            // 客户端只看到一句 429,而「谁在消耗、消耗到什么程度」没有
+            // 任何地方答得上来 —— 2026-09-21 生产上那次就是这么查不下去的
+            // (#109 F-R3)。`wait_time` 是最有用的那个数:它不是「还要等
+            // 两秒」,而是**欠了多少**,几百秒就说明刚才有过一场风暴。
+            tracing::warn!(wait_time, "限流挡下一条请求");
             let mut response = crate::error::rate_limited()
                 .into_response();
             if let Ok(value) = wait_time.to_string().parse()

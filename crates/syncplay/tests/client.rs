@@ -340,3 +340,86 @@ async fn push_survives_a_listener_that_left() {
         "前任听众退出后,推给下一个必须仍有声音(能量 {energy})"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 重连的节奏(#109 F-R3)
+//
+// 服务端那道 `signal_connect` 限流按**账号**分桶,而账号底下可能有好几台
+// 设备。所以一台设备烧额度的速度不是它自己的事:烧干了,同账号另一台
+// 设备连不上,报出来的却是那一台的 429。
+//
+// 「连上过」这件事不能只看 `connect()` 返回 Ok —— 服务端接完就关时那一步
+// 照样成功。把退避按这个判据清零,循环就以网络往返的速度空转,而**客户端
+// 日志里一行都不会有**:成功建连不打日志,`serve` 返回也不打日志。
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicUsize, Ordering as AtomicOrdering,
+};
+
+/// 一个「接完就关」的信令服务端,顺便数一数它被连了多少次。
+///
+/// 真实世界里有好几条路会走到这个形状:同 id 的第二个实例把前一个顶掉、
+/// 版本协商拒掉一个旧端、消息超过 `MAX_SIGNAL_BYTES` 让读循环跳出、
+/// 滚动发布时 pod 换人。它们的共同点是**连接建得起来,随即就没了**。
+async fn start_slamming_door()
+-> (SocketAddr, Arc<AtomicUsize>) {
+    use axum::extract::WebSocketUpgrade;
+    use axum::response::Response;
+    use axum::routing::get;
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&hits);
+
+    let app = axum::Router::new().route(
+        "/signal",
+        get(move |upgrade: WebSocketUpgrade| {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter
+                    .fetch_add(1, AtomicOrdering::Relaxed);
+                let response: Response = upgrade
+                    .on_upgrade(|socket| async move {
+                        drop(socket);
+                    });
+                response
+            }
+        }),
+    );
+
+    let listener =
+        tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("绑不上端口");
+    let addr = listener.local_addr().expect("取不到地址");
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .await
+            .expect("服务端挂了");
+    });
+    (addr, hits)
+}
+
+/// 服务端接完就关时,客户端**不许**拿额度当柴烧。
+///
+/// 服务端那个桶装得下 30 个、每两秒恢复一个。五秒里连上十几次就已经把
+/// 一个正常账号的建连额度吃掉一半,而这种空转可以持续几分钟 —— 期间
+/// 同账号的另一台设备只会看到 429,并且在两边的日志里都找不到原因。
+///
+/// 上界给 6:退避从一秒起翻倍(1、2、4…),五秒里最多是第 0、1、3 这几拍,
+/// 加上 ±25% 的抖动也超不过这个数。
+#[tokio::test]
+async fn a_door_slamming_server_is_not_hammered() {
+    let (addr, hits) = start_slamming_door().await;
+
+    let (_client, _events) = start_client(addr, "slammed");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let count = hits.load(AtomicOrdering::Relaxed);
+    assert!(
+        count <= 6,
+        "五秒里建了 {count} 次连接 —— 服务端那个桶只有 30 个额度,\
+         每两秒恢复一个,这个速度几秒就能把同账号所有设备锁在门外"
+    );
+}

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as blocking;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use audio::ChannelSource;
 use contract::{
@@ -301,6 +301,32 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 /// 这一段不建连、不发包,只是问一句"登录了吗" —— 所以可以密一点。
 const RELOGIN_POLL: Duration = Duration::from_secs(3);
 
+/// 一条连接活多久才算「真的连上过」。
+///
+/// 只看 `Signalling::connect` 返回 `Ok` 是不够的:**服务端接完就关时那一步
+/// 照样成功**。把退避按那个判据清零,这个循环就以网络往返的速度空转 ——
+/// 回环上实测五秒一万九千次(#109 F-R3),而两端的日志里一行都不会有:
+/// 建连成功不打日志,`serve` 返回也不打日志。
+///
+/// 服务端那道 `signal_connect` 限流按**账号**分桶,所以烧额度的不是自己一台:
+/// 桶里 30 个、每两秒恢复一个,几秒钟就能把同账号的另一台设备锁在门外,
+/// 而它看到的只是一句 429。
+///
+/// 会走到「接完就关」的路不止一条,而且都不是异常情况:同 id 的第二个实例
+/// 把前一个顶掉、版本协商拒掉一个旧端、消息超过 `MAX_SIGNAL_BYTES` 让服务端
+/// 读循环跳出、滚动发布时 pod 换人。十秒是分界:握手加入册在局域网上是几十
+/// 毫秒的事,而一条正常会话以分钟计。
+const HEALTHY_AFTER: Duration = Duration::from_secs(10);
+
+/// 服务端说要等多久就等多久,但不超过这个数。
+///
+/// 照 `Retry-After` 等是对的 —— 还欠多少额度只有服务端算得出来。设上界是
+/// 因为那个数由对端给:配置写错、或者哪天换了个别的中间件,一个离谱的值
+/// 不该让客户端从此不再重连。十分钟远大于任何正常的欠账,又短到用户
+/// 等得起。
+const MAX_THROTTLE_WAIT: Duration =
+    Duration::from_secs(600);
+
 /// 下一次的等待时长:翻倍,到上限为止。
 fn next_backoff(current: Duration) -> Duration {
     (current * 2).min(RETRY_MAX)
@@ -370,6 +396,25 @@ async fn run(
                 events(Event::Unauthorized);
                 continue;
             }
+            // 429:额度用完了。**照服务端给的秒数等**,而不是按自己那套
+            // 退避 —— 它算得出还欠多少,我们算不出,按 1、2、4 秒撞过去
+            // 只会把闸撞得更死(#109 F-R3)。这一拍不推进退避:等的长度
+            // 已经由对端定了,再叠一层就是等两次。
+            Err(SyncError::Throttled { retry_after }) => {
+                let wait = retry_after
+                    .unwrap_or(backoff)
+                    .min(MAX_THROTTLE_WAIT);
+                log::warn!(
+                    "建连被限流,等 {} 秒再试",
+                    wait.as_secs()
+                );
+                events(Event::Failed(
+                    SyncError::Throttled { retry_after }
+                        .to_string(),
+                ));
+                tokio::time::sleep(jittered(wait)).await;
+                continue;
+            }
             Err(error) => {
                 events(Event::Failed(error.to_string()));
                 tokio::time::sleep(jittered(backoff)).await;
@@ -378,9 +423,10 @@ async fn run(
             }
         };
 
-        // 连上了就把退避清零:下一次断开多半是另一回事。
-        backoff = RETRY_MIN;
+        // token 被收下了,下次不必跳过它。**退避不在这里清零** ——
+        // 那要等这条连接证明自己活得下去,见 `HEALTHY_AFTER`。
         rejected = None;
+        let connected_at = Instant::now();
 
         if !serve(
             signalling,
@@ -394,6 +440,20 @@ async fn run(
         {
             return;
         }
+
+        // 活够了才算连上过一次,退避从头来。
+        if connected_at.elapsed() >= HEALTHY_AFTER {
+            backoff = RETRY_MIN;
+        }
+        // 版本对不上不会靠重试变好 —— 得有一端升级。直接退到顶,别拿
+        // 同账号其他设备的建连额度去撞一堵不会开的门。
+        if incompatible.load(Ordering::Relaxed) {
+            backoff = RETRY_MAX;
+        }
+        // **断开之后一定要等**。代价是一次普通掉线要多等一秒才重连,
+        // 换来的是任何一种「接完就关」都不会变成风暴。
+        tokio::time::sleep(jittered(backoff)).await;
+        backoff = next_backoff(backoff);
     }
 }
 
@@ -507,6 +567,9 @@ fn verify_handshake(
     *awaiting_welcome = false;
 
     if server_version == Some(contract::PROTOCOL_VERSION) {
+        // 对端升上来了:把标志落回去,否则接管会一直被自己拒掉,
+        // 而重连也会一直停在最长的那一档退避上。
+        incompatible.store(false, Ordering::Relaxed);
         return;
     }
     log::warn!(

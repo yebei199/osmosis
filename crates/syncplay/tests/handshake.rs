@@ -126,7 +126,14 @@ async fn an_old_client_is_refused_before_it_joins_the_roster()
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-    let addr = start_signalling_server().await;
+    // 拒绝前那段拖延调到最短:这条验的是「拒不拒」,不是「拖多久」,
+    // 那一条在 `a_refused_old_client_is_held_before_the_door_shuts`。
+    let addr =
+        start_signalling_server_with(signaling::Timing {
+            reject_hold: Duration::from_millis(0),
+            ..signaling::Timing::default()
+        })
+        .await;
 
     // 先让一台**正常**的设备连上,它的名册就是判据。
     let mut modern = Signalling::connect(
@@ -215,6 +222,67 @@ async fn an_old_client_is_refused_before_it_joins_the_roster()
     assert!(
         devices.iter().all(|seen| seen.id != "ancient"),
         "讲旧协议的那台不该出现在名册里: {devices:?}"
+    );
+}
+
+/// 拒绝一个旧端之前先**拖一会儿**再关(#109 F-R3)。
+///
+/// 旧客户端改不了 —— 0.1.9 已经发出去了,而它断开之后是**立刻**重连的
+/// (`serve` 返回之后没有等待,回环上实测五秒一万九千次)。新客户端那一侧
+/// 已经改成断开必等,但那只管得住以后出的包。
+///
+/// 服务端这一侧唯一还能用的杠杆是**时间**:旧端是等我们关了才重连的,
+/// 所以把关闭往后拖,它的建连频率就被钉死在「每 `reject_hold` 一次」,
+/// 与它自己有没有退避无关。`signal_connect` 每两秒恢复一个额度,拖二十秒
+/// 就意味着一个永远连不上的端最多吃掉这个账号十分之一的建连预算,
+/// 剩下的仍然归那些连得上的设备。
+///
+/// 拖多久有上界:客户端那侧的 `IDLE_LIMIT` 是 75 秒,拖过头它会先判死、
+/// 自己断开重连,这道闸就白设了。
+#[tokio::test]
+async fn a_refused_old_client_is_held_before_the_door_shuts()
+ {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    let hold = Duration::from_millis(600);
+    let addr =
+        start_signalling_server_with(signaling::Timing {
+            reject_hold: hold,
+            ..signaling::Timing::default()
+        })
+        .await;
+
+    let (mut old, _) = tokio_tungstenite::connect_async(
+        format!("ws://{addr}/signal"),
+    )
+    .await
+    .expect("裸 WebSocket 连不上");
+    let hello = serde_json::to_string(
+        &contract::ClientSignal::Hello {
+            device: device("ancient"),
+            protocol_version: contract::PROTOCOL_VERSION
+                - 1,
+        },
+    )
+    .expect("Hello 序列化失败");
+
+    let started = std::time::Instant::now();
+    old.send(WsMessage::text(hello))
+        .await
+        .expect("发不出 Hello");
+
+    // 读到连接真的结束为止 —— 中间会有 Welcome 与 Close。
+    while let Some(Ok(message)) = old.next().await {
+        if matches!(message, WsMessage::Close(_)) {
+            break;
+        }
+    }
+    let waited = started.elapsed();
+
+    assert!(
+        waited >= hold,
+        "只等了 {waited:?} 就关掉了,旧端会立刻回来再敲一次"
     );
 }
 
@@ -546,9 +614,8 @@ async fn a_silent_connection_is_declared_dead() {
     // Ping 间隔调到远大于本条测试的寿命 = 服务端一帧都不会主动发。
     let addr =
         start_signalling_server_with(signaling::Timing {
-            hello: Duration::from_secs(10),
             ping_every: Duration::from_secs(3_600),
-            misses: 2,
+            ..signaling::Timing::default()
         })
         .await;
 

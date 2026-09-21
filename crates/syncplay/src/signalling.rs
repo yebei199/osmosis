@@ -23,6 +23,9 @@ const ENDPOINT: &str = "/signal";
 /// 服务端认不出 token 时的状态码。
 const UNAUTHORIZED: u16 = 401;
 
+/// 建连额度用完了。
+const TOO_MANY_REQUESTS: u16 = 429;
+
 /// 连着这么久一帧都没收到,就判这条连接死了。
 ///
 /// 服务端每 30 秒 Ping 一次、容忍两次不回(`server::signaling` 的 `Timing`),
@@ -176,19 +179,44 @@ pub fn report_wire_len(state: &RemoteStateDto) -> usize {
     .map_or(usize::MAX, |text| text.len())
 }
 
-/// 握手失败的分类。401 单独拎出来:它是"这个 token 不作数了",
-/// 而不是"网络不好" —— 拿同一个 token 重试只会再得到一个 401。
+/// 握手失败的分类。两种状态码单独拎出来,因为它们各要一种不同的等法:
+///
+/// - **401** 是「这个 token 不作数了」,不是「网络不好」—— 拿同一个 token
+///   重试只会再得到一个 401,要等的是下一个 token;
+/// - **429** 是「额度用完了」,而服务端**算得出还欠多少**,客户端算不出。
+///   按自己的节奏重连只会把闸撞得更死(#109 F-R3)。
 fn classify(
     error: tokio_tungstenite::tungstenite::Error,
 ) -> SyncError {
-    if let tokio_tungstenite::tungstenite::Error::Http(
+    let tokio_tungstenite::tungstenite::Error::Http(
         response,
     ) = &error
-        && response.status().as_u16() == UNAUTHORIZED
-    {
-        return SyncError::Unauthorized;
+    else {
+        return SyncError::Signalling(error.to_string());
+    };
+
+    match response.status().as_u16() {
+        UNAUTHORIZED => SyncError::Unauthorized,
+        TOO_MANY_REQUESTS => SyncError::Throttled {
+            retry_after: retry_after(response),
+        },
+        _ => SyncError::Signalling(error.to_string()),
     }
-    SyncError::Signalling(error.to_string())
+}
+
+/// `Retry-After` 里那个秒数。读不出来就是 `None` —— 那时退避走自己那一套。
+fn retry_after<T>(
+    response: &tokio_tungstenite::tungstenite::http::Response<T>,
+) -> Option<core::time::Duration> {
+    response
+        .headers()
+        .get(tokio_tungstenite::tungstenite::http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(core::time::Duration::from_secs)
 }
 
 impl Signalling {
@@ -361,6 +389,8 @@ impl Signalling {
 
 #[cfg(test)]
 mod tests {
+    use tokio_tungstenite::tungstenite::http;
+
     use super::*;
 
     /// 量的是**连外层一起**的那一份,因为服务端数的就是那一份。
@@ -420,5 +450,78 @@ mod tests {
                 cmd.summary()
             );
         }
+    }
+
+    /// 429 认得出来,而且把服务端给的秒数带出去。
+    ///
+    /// 不认的话它会落进 `Signalling(String)`,退避走客户端自己那套 1、2、4 秒
+    /// —— 而额度欠着几百秒,那就是拿额度去撞一堵还没开的门(#109 F-R3)。
+    #[test]
+    fn a_throttled_upgrade_carries_the_wait_it_was_given() {
+        let response = http::Response::builder()
+            .status(429)
+            .header(http::header::RETRY_AFTER, "340")
+            .body(None::<Vec<u8>>)
+            .map(Box::new)
+            .expect("造不出响应");
+
+        let classified = classify(
+            tokio_tungstenite::tungstenite::Error::Http(
+                response,
+            ),
+        );
+
+        assert!(
+            matches!(
+                classified,
+                SyncError::Throttled {
+                    retry_after: Some(wait)
+                } if wait == core::time::Duration::from_secs(340)
+            ),
+            "该认成限流并带上 340 秒,实得 {classified}"
+        );
+    }
+
+    /// 没有 `Retry-After` 也仍然是限流 —— 只是等多久由客户端自己定。
+    #[test]
+    fn a_throttled_upgrade_without_a_hint_is_still_throttled()
+     {
+        let response = http::Response::builder()
+            .status(429)
+            .body(None::<Vec<u8>>)
+            .map(Box::new)
+            .expect("造不出响应");
+
+        let classified = classify(
+            tokio_tungstenite::tungstenite::Error::Http(
+                response,
+            ),
+        );
+
+        assert!(matches!(
+            classified,
+            SyncError::Throttled { retry_after: None }
+        ));
+    }
+
+    /// 别的状态码仍然是普通信令错误,退避照旧。
+    #[test]
+    fn other_statuses_stay_ordinary_failures() {
+        let response = http::Response::builder()
+            .status(502)
+            .body(None::<Vec<u8>>)
+            .map(Box::new)
+            .expect("造不出响应");
+
+        let classified = classify(
+            tokio_tungstenite::tungstenite::Error::Http(
+                response,
+            ),
+        );
+
+        assert!(matches!(
+            classified,
+            SyncError::Signalling(_)
+        ));
     }
 }
