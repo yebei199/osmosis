@@ -221,10 +221,13 @@ pub async fn create(
     // 所以「一台设备一条当前队列」(`docs/adr/0031` 二)这个不变量只能落在
     // 这里:客户端记不住的东西,服务端替它记。
     if let Some((queue_id, revision)) =
-        current_for_device(tx, account_id, device_id).await?
+        current_for_device(tx, account_id, device_id)
+            .await?
     {
-        drop_superseded(tx, account_id, device_id, queue_id)
-            .await?;
+        drop_superseded(
+            tx, account_id, device_id, queue_id,
+        )
+        .await?;
         return publish(
             tx, account_id, queue_id, revision, entries,
         )
