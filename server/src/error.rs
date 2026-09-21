@@ -28,6 +28,16 @@ pub enum AppError {
     NotFound,
     /// 输入不满足最低要求。
     Invalid(&'static str),
+    /// 拿一个过期的版本号去改队列。
+    ///
+    /// 与 [`Self::Invalid`] 分开:请求本身没毛病,只是有人抢在前面改了 ——
+    /// 出路是重读一次当前版本再来,而不是改请求。客户端要按这个 code 分支。
+    RevisionConflict,
+    /// 一次上传的队列条目超出约定规模([`contract::MAX_QUEUE_ENTRIES`])。
+    ///
+    /// 明确拒绝而不是截断:截了就是悄悄改掉用户点的那一批是什么
+    /// (`docs/adr/0031` 三)。
+    QueueTooLarge,
     /// 数据库出错。
     Db(sqlx::Error),
 }
@@ -113,6 +123,19 @@ pub fn map_error(err: &AppError) -> Failure {
             StatusCode::BAD_REQUEST,
             "invalid_argument",
             (*why).to_owned(),
+        ),
+        AppError::RevisionConflict => (
+            StatusCode::CONFLICT,
+            "revision_conflict",
+            "队列已被改过,请重读当前版本".to_owned(),
+        ),
+        AppError::QueueTooLarge => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "queue_too_large",
+            format!(
+                "一次最多 {} 首",
+                contract::MAX_QUEUE_ENTRIES
+            ),
         ),
         // 数据库出错是本服务这边的问题,细节只进日志 ——
         // 原样抛出去可能带上连接串,而客户端拿它也没办法。

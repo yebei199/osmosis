@@ -12,6 +12,7 @@ mod catalog;
 mod download;
 mod netease;
 mod playlist;
+mod queue;
 mod remote;
 mod sync;
 
@@ -20,6 +21,7 @@ pub use catalog::*;
 pub use download::*;
 pub use netease::*;
 pub use playlist::*;
+pub use queue::*;
 pub use remote::*;
 pub use sync::*;
 
