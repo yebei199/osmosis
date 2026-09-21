@@ -37,9 +37,10 @@ pub type Tx<'c> = Transaction<'c, Postgres>;
 /// 一个账号最多存几个队列。
 ///
 /// 队列按**播放会话 / 输出设备**走,正常用法下一台设备一个 —— 三台设备加
-/// 一点历史,十个绰绰有余。定得住这个数的前提是本机点播**改版本而不是建新
-/// 队列**(见客户端 `publish_local_queue`):每点一次歌建一个的话,这个数
-/// 一天就爆了。
+/// 一点历史,十个绰绰有余。定得住这个数的前提是同一台设备点播**改版本而不是
+/// 建新队列** —— 而这一条现在由 [`create`] 自己保证(按 `device_id` 重用),
+/// 不再指望客户端记住自己的 `queue_id`。曾经指望过,结果是每重启一次漏一个
+/// 槽位,十次就把账号卡死。
 ///
 /// 这道闸与 `gate::ratelimit` 那道**不是一回事**:那道是每实例削峰、进程内
 /// 状态、重启清零;这一道在数据库里,**跨副本严格成立**,而且限的是存量
@@ -208,6 +209,27 @@ pub async fn create(
     .fetch_optional(&mut **tx)
     .await?
     .ok_or(AppError::NotFound)?;
+
+    // 这台设备已经有队列了就**发新版本**,不再插一行。
+    //
+    // 客户端那边也有这个判断(`playback::dispatch` 的 `publish_local_queue`),
+    // 但它靠的是内存里的 `queue_id`,进程一退就没了,而没有任何路由能按设备
+    // 把它找回来。于是每重启一次就多一条;放过歌的队列有报告,
+    // `reclaim_orphans` 又一个都不碰 —— 重启到第十次,账号永久卡在配额上,
+    // 客户端侧没有任何出路。2026-09-21 线上就是这么卡死的。
+    //
+    // 所以「一台设备一条当前队列」(`docs/adr/0031` 二)这个不变量只能落在
+    // 这里:客户端记不住的东西,服务端替它记。
+    if let Some((queue_id, revision)) =
+        current_for_device(tx, account_id, device_id).await?
+    {
+        drop_superseded(tx, account_id, device_id, queue_id)
+            .await?;
+        return publish(
+            tx, account_id, queue_id, revision, entries,
+        )
+        .await;
+    }
 
     reclaim_orphans(tx, account_id).await?;
 
@@ -599,6 +621,59 @@ pub async fn record_report(
     .await?;
 
     Ok(done.rows_affected() > 0)
+}
+
+/// 这台设备当前那条队列,连同它的版本号。没有就是 `None`。
+///
+/// 取最近改过的那条:一台设备本该只有一条,多出来的是修好这个洞之前漏下的
+/// 残留(下面 [`drop_superseded`] 顺手收)。`FOR UPDATE` 是为了挡住读到版本号
+/// 与随后 `publish` 之间的那条缝 —— 别的连接在这中间发一版的话,
+/// `expected_revision` 就过期了,客户端会拿到一个它解释不了的 `RevisionConflict`。
+async fn current_for_device(
+    tx: &mut Tx<'_>,
+    account_id: i64,
+    device_id: &str,
+) -> Result<Option<(i64, i64)>, AppError> {
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT id, revision FROM play_queues
+         WHERE account_id = $1 AND device_id = $2
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1
+         FOR UPDATE",
+    )
+    .bind(account_id)
+    .bind(device_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(row)
+}
+
+/// 收掉这台设备**除当前那条以外**的队列。
+///
+/// 它们是这个洞漏下的残留:每一条都占着账号的配额,而 [`reclaim_orphans`]
+/// 按设计不碰有报告的队列,所以不收在这里就永远收不掉。
+///
+/// 只删同一台设备自己的 —— 别的设备那条归别的设备,哪怕很旧。
+async fn drop_superseded(
+    tx: &mut Tx<'_>,
+    account_id: i64,
+    device_id: &str,
+    keep: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "DELETE FROM play_queues
+         WHERE account_id = $1
+           AND device_id = $2
+           AND id <> $3",
+    )
+    .bind(account_id)
+    .bind(device_id)
+    .bind(keep)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 /// 有界地收掉**从来没有任何执行端认领过**的旧队列。

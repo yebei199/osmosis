@@ -882,3 +882,109 @@ async fn cleanup_collects_queues_nobody_ever_claimed() {
         "没人认领又过期的该被收走,得到的是 {head:?}"
     );
 }
+
+/// 这个账号名下还剩几条队列。
+async fn count_queues(
+    tx: &mut Transaction<'static, Postgres>,
+    account_id: i64,
+) -> i64 {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM play_queues WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut **tx)
+    .await
+    .expect("数队列应该成功");
+    n
+}
+
+/// 应用重启之后再点歌,**不该**再建一个队列。
+///
+/// 客户端那句「已经有这台设备的队列就发新版本」靠的是内存里的 `queue_id`,
+/// 进程一退就没了,而**没有任何路由能按设备找回它**(`head` 要你已经有 id)。
+/// 于是每重启一次就多一条;而放过歌的队列有报告,`reclaim_orphans` 明确
+/// 一个都不碰 —— 重启到第十次,账号就永久卡在配额上,客户端侧没有出路。
+/// 2026-09-21 线上就是这么卡死的:探 `/queues/{id}/head`,id 1–10 全归本账号。
+///
+/// 所以这个不变量只能由服务端保证,不能指望客户端记着:
+/// **一台设备一条当前队列**(`docs/adr/0031` 二)。
+#[tokio::test]
+async fn a_restarted_device_reuses_its_queue_instead_of_burning_a_slot()
+ {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "q_reuse").await;
+
+    let first = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("第一次建队列应该成功");
+    // 放过歌 —— 有报告的队列惰性清理永远不收,正是它让槽位漏掉。
+    queue::record_report(
+        &mut tx,
+        account.id,
+        first.queue_id,
+        &report(200, 1, first.revision),
+    )
+    .await
+    .expect("写报告应该成功");
+
+    // 重启:客户端丢了 queue_id,于是又来建一次。
+    let again = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a"), entry("b")],
+    )
+    .await
+    .expect("重启后再点歌不该被拒");
+
+    assert_eq!(
+        again.queue_id, first.queue_id,
+        "同一台设备该重用自己那条队列,而不是再建一条"
+    );
+    assert!(
+        again.revision > first.revision,
+        "重用要发一个新版本,得到的是 {} → {}",
+        first.revision,
+        again.revision
+    );
+    assert_eq!(
+        count_queues(&mut tx, account.id).await,
+        1,
+        "同一台设备不该多出一条队列"
+    );
+}
+
+/// 一台设备反复重启,烧不掉这个账号的配额。
+///
+/// 上一条测的是「重用」,这一条测的是它的后果:重启次数超过上限也不该被拒。
+#[tokio::test]
+async fn one_device_cannot_exhaust_the_quota_by_restarting()
+{
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "q_reuse_quota").await;
+
+    for round in 0..queue::MAX_QUEUES_PER_ACCOUNT + 5 {
+        queue::create(
+            &mut tx,
+            account.id,
+            PC1,
+            &[entry(&round.to_string())],
+        )
+        .await
+        .unwrap_or_else(|err| {
+            panic!("第 {round} 次重启就被拒了: {err:?}")
+        });
+    }
+
+    assert_eq!(
+        count_queues(&mut tx, account.id).await,
+        1,
+        "十五次重启之后仍然只该有一条队列"
+    );
+}
