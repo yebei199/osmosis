@@ -33,6 +33,7 @@ mod download;
 mod feed;
 mod list;
 mod notice;
+mod queuepage;
 mod report;
 mod rules;
 // 放哪一首:控制条、传输层、自动续播。
@@ -137,6 +138,11 @@ struct Deck {
     /// 下一首是谁」,它一个字节都不该知道服务端的存在 —— 断网时自动续播
     /// 照样要走(`docs/adr/0031` 四)。
     execution: Execution,
+    /// 遥控时拉下来的那份**只读**队列缓存(见 `queuepage`)。
+    ///
+    /// 遥控器持有的不是第二份队列真相:它不拿这份决定下一首,只用来画
+    /// 那一页(`docs/adr/0031` 三)。
+    queue_mirror: queuepage::QueueMirror,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -195,6 +201,7 @@ pub fn bind(
         prefetching: Rc::new(std::cell::Cell::new(false)),
         seeking: Rc::new(RefCell::new(None)),
         execution: Execution::default(),
+        queue_mirror: queuepage::QueueMirror::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -225,6 +232,7 @@ pub fn bind(
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
     bind_remote(ui, &deck);
+    queuepage::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
     startup_check(ui);

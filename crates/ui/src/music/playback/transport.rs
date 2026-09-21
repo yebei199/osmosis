@@ -278,6 +278,10 @@ pub(in crate::music) fn start_auto_advance(
                     &ui,
                     &deck.remote,
                 );
+                // 遥控时那一页画的是被控端那份,同样要跟着上报走。
+                crate::music::queuepage::refresh(
+                    &ui, &deck,
+                );
                 return;
             }
 
@@ -291,6 +295,9 @@ pub(in crate::music) fn start_auto_advance(
             // 对账」)。搭这趟车而不是另起定时器,理由与上面几样相同;
             // `due_for_resync` 自己管节流,不会每秒打一发。
             resync_local_queue(&ui, &deck);
+            // 队列页开着才算账 —— 五千首的模型每秒重建一次,而用户
+            // 多数时候根本没在看那一页。
+            crate::music::queuepage::refresh(&ui, &deck);
             push_seek_state(&ui, &deck);
             // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
             crate::media::push(&ui, &deck.playback, &deck.media);

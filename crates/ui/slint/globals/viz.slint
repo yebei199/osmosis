@@ -1,4 +1,4 @@
-import { LyricRow } from "../types.slint";
+import { LyricRow, TrackRow } from "../types.slint";
 
 // 播放页视觉的状态面:三张每帧推来的纹理、标注卡的锚点、预设与指针。
 //
@@ -54,4 +54,24 @@ export global Viz {
     in property <bool> lyric-has-translation;
     in-out property <bool> lyrics-page-open: false;
     in-out property <int> lyric-browse: 0;
+
+    // 队列页(#109 AC-15):摆当前执行副本的那一份队列。
+    //
+    // 行里那个 `TrackRow.id` 装的是 **`entry-id`**,不是曲目 id ——
+    // 队列允许同一首歌出现多次,按曲目认的话点第二次出现的那一条会放到
+    // 第一条上去。条目号是从服务端读回来的,不是拿下标猜的。
+    in property <[TrackRow]> queue-rows;
+    // 正在放的那一条的 `entry-id`。
+    in property <string> queue-current;
+    // 队列一共几首。不从 `queue-rows.length` 读:遥控时列表可能还在下载,
+    // 而这个数小状态里早就报过来了。
+    in property <int> queue-total;
+    // 列表还在下载。与「队列是空的」分开 —— 两种长得一样的话,
+    // 用户会以为自己的歌没了。
+    in property <bool> queue-loading;
+    in-out property <bool> queue-page-open: false;
+    // 点了某一条。参数是 `entry-id`。
+    callback queue-pick(string);
+    // 这一行要它的封面了。与列表页同一条路。
+    callback queue-needs-cover(string);
 }

@@ -231,6 +231,7 @@ fn deck_window_with(
         prefetching: Rc::new(Cell::new(false)),
         seeking: Rc::new(RefCell::new(None)),
         execution: crate::music::Execution::default(),
+        queue_mirror: Default::default(),
     };
 
     (ui, deck)

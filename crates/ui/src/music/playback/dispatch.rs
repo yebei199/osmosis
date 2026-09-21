@@ -347,7 +347,7 @@ fn describe_publish_failure(
 /// 时间加一个进程内自增数:要的只是「这一次与上一次不是同一次」,而重试同
 /// 一次点播时调用方会把同一个值再用一遍。不引 uuid —— 换不来更少的代码。
 #[cfg(not(target_arch = "wasm32"))]
-fn fresh_operation_id() -> String {
+pub(in crate::music) fn fresh_operation_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
     format!(

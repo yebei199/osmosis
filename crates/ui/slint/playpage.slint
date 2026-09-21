@@ -5,6 +5,7 @@ import { LyricRow } from "types.slint";
 import { OutlinedText } from "widgets.slint";
 import { PlayerBar } from "playerbar.slint";
 import { LyricsPage } from "lyrics.slint";
+import { QueuePage } from "queue.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
 import { Viz } from "globals/viz.slint";
@@ -180,6 +181,36 @@ export component PlayPage inherits FocusScope {
         font-size: 14px;
     }
 
+    // 队列页的入口(#109 AC-15)。与歌名歌手同一条规矩:歌词页或队列页
+    // 打开时整个让位 —— 它们画在同一片区域,留着就是两层字叠在一起。
+    //
+    // 摆在歌手行下面那一档,不进控制条的抽屉:抽屉是「这一首」的操作,
+    // 而队列是「后面还有哪些」。
+    if !Viz.lyrics-page-open && !Viz.queue-page-open
+            && Viz.queue-total > 0: queue-entry := Rectangle {
+        y: root.viz-title-y + 72px;
+        width: 92px;
+        height: 26px;
+        x: (root.width - self.width) / 2;
+        background: Theme.overlay;
+        border-radius: 13px;
+
+        Text {
+            text: "队列 · " + Viz.queue-total;
+            color: Theme.immersive-text-dim;
+            font-family: "Maple Mono NF CN";
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+
+        TouchArea {
+            clicked => { Viz.queue-page-open = true; }
+        }
+    }
+
     // 取直链/开流的那几秒:点下去了、正在办。
     // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
     // 而这一层还压在点云上。文案硬编码中文,走子集字体。
@@ -260,6 +291,25 @@ export component PlayPage inherits FocusScope {
         has-translation: Viz.lyric-has-translation;
         browse <=> Viz.lyric-browse;
         dismiss => { Viz.lyrics-page-open = false; }
+    }
+
+    // 队列页:与歌词页同一种横向滑出。控制簇仍排在它之后,于是照旧压在
+    // 最上层、点得到 —— 队列页上也要能切歌暂停(docs/adr/0010)。
+    QueuePage {
+        x: Viz.queue-page-open ? 0px : root.width;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        animate x { duration: 280ms; easing: ease-out; }
+        rows: Viz.queue-rows;
+        current: Viz.queue-current;
+        total: Viz.queue-total;
+        loading: Viz.queue-loading;
+        // 底部那条手势条。桌面上恒 0,只有真机上看得见。
+        safe-bottom: root.safe-bottom;
+        pick(entry) => { Viz.queue-pick(entry); }
+        needs-cover(url) => { Viz.queue-needs-cover(url); }
+        dismiss => { Viz.queue-page-open = false; }
     }
 
     // 竖向进度滑条与右缘时间读数已退场(docs/adr/0029):同一页两套 seek 面

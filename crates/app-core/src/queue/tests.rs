@@ -173,3 +173,44 @@ fn the_play_order_is_readable_and_starts_as_the_batch_order()
 
     assert_eq!(queue.order(), [0, 1, 2]);
 }
+
+/// 从队列页点一行:跳过去,而**排列一动不动**。
+///
+/// 走 `replace` 的话会把随机清掉再重洗,于是点一行顺带换掉了播放次序 ——
+/// 用户点的是「放这一首」,不是「重洗一次」。
+#[test]
+fn jumping_keeps_the_shuffled_order() {
+    let mut queue = Queue::new(
+        vec![track(1), track(2), track(3), track(4)],
+        0,
+    );
+    queue.shuffle(7);
+    let before: Vec<usize> = queue.order().to_vec();
+
+    let landed = queue.jump_to(2).map(|t| t.id.clone());
+
+    assert_eq!(landed, Some(track(3).id));
+    assert_eq!(queue.order(), &before[..], "排列不该被动");
+    assert!(queue.is_shuffled(), "随机也不该被关掉");
+}
+
+/// 随机开着时也跳得准:找的是它在排列里的位置,不是批序下标。
+#[test]
+fn jumping_finds_the_track_inside_the_shuffled_order() {
+    let mut queue =
+        Queue::new(vec![track(1), track(2), track(3)], 0);
+    queue.shuffle(42);
+
+    queue.jump_to(1);
+
+    assert_eq!(queue.index(), 1, "跳到的就是批里第 1 首");
+}
+
+/// 越界不动,也不 panic —— 那一下来自界面上的一次点击,而列表随时会被换掉。
+#[test]
+fn jumping_past_the_end_does_nothing() {
+    let mut queue = Queue::new(vec![track(1)], 0);
+
+    assert!(queue.jump_to(9).is_none());
+    assert_eq!(queue.index(), 0);
+}
