@@ -353,6 +353,38 @@ docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
 代价是历史里会留下被上游顶掉的死 commit,所以补丁清单以 `Cargo.toml` 里
 `[patch.crates-io]` 上方那段注释为准,不看 `git log`。步骤见 `docs/note/fork-sync.md`。
 
+## 发版与实机:门禁绿不算完
+
+**行为变更必须有一次实机通过的证据才算做完。** 门禁绿、单元测试绿、集成测试绿,
+三样加起来只证明代码自洽,不证明用户按下去有反应 —— 2026-09-21 就是这么发了三个
+版本而用户一首歌都点不出来:store 层 21 条测试全绿、门禁 EXIT=0、tag 都打出去了,
+那一整天**没有任何一次真的点歌**。后来补的「本机端到端」也不算数,那是 `curl` 打
+`POST /queues`,没有界面、没有点击、没有一声响。
+
+所以判据写死三条,缺一条就不算验过:
+
+- **走用户路径**。从用户真会点的那个入口进去(卡墙就是卡墙,列表就是列表),不是
+  从中间状态直接构造,更不是拿 HTTP 请求代替点击。两条路径不互相顶替 —— #109 的
+  AC-1 验的是列表,而用户日常在卡墙上点,那条路从头到尾没人验过。
+- **有真相源**。服务端日志里的 `play(队列 …)`、库里的行、`dumpsys audio` 里
+  `state:started` 的那条 AudioTrack。不看截图,不看「我觉得对」。
+- **在真机上**。桌面必然看不见的那一类见上面那节;而「点了有没有声」这件事,
+  桌面和真机都要各过一次。
+
+### 发版之后装什么档
+
+- **平板与安卓装 release**(`just android-build`,默认只编 arm64-v8a)。开发用的
+  debug 档 857MB,它存在的唯一理由是 MCP 要读元素树,不是拿来日常用的。
+- **桌面端不由 agent 装**。走 `nixos_config` 的
+  `home/features/desktop/osmosis.nix`:agent 只抬 `version` 与那三个 SRI 哈希
+  (`.desktop` 与 `.svg` 内容没变时哈希沿用),**`nixos-rebuild` 由用户本人跑**。
+- 哈希取自 release 的 `sha256sums.txt`,用 `nix hash convert --to sri` 转,写进去
+  之前用 `nix store prefetch-file` 实取核一遍 —— 否则 rebuild 会在半路撞
+  hash mismatch,而那时候人已经在等了。
+
+判断「最新发的是哪一版」要带 `--sort=v:refname`,理由见
+[`docs/lesson/tooling.md`](docs/lesson/tooling.md)。
+
 ## 提交前
 
 `just ci` 逐字复述 `.github/workflows/ci.yml`。`dev` 分支的 push 不触发 CI,这是唯一的防线。
