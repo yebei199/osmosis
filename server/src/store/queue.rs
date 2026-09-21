@@ -97,6 +97,16 @@ pub struct Report {
     pub play_state: String,
 }
 
+/// 一页条目,连同这一版一共有多少条。
+///
+/// `total` 与条目一起回而不是另开一条查询:调用方每次都要它(不然不知道
+/// 还要不要翻下一页),而它本来就要为「这一版还在不在」数一次。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Page {
+    pub total: i64,
+    pub entries: Vec<Entry>,
+}
+
 /// 一个队列此刻的概况:最新版本、条目数,以及另外两层各自的最新一条。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueHead {
@@ -258,7 +268,7 @@ pub async fn page(
     revision: i64,
     offset: i64,
     limit: i64,
-) -> Result<Vec<Entry>, AppError> {
+) -> Result<Page, AppError> {
     owned(conn, account_id, queue_id).await?;
 
     let (total,): (i64,) = sqlx::query_as(
@@ -288,32 +298,35 @@ pub async fn page(
     .fetch_all(conn)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                entry_id,
-                position,
-                platform,
-                track_id,
-                title,
-                alias,
-                artists,
-                cover,
-                duration_ms,
-            )| Entry {
-                entry_id,
-                position,
-                platform,
-                track_id,
-                title,
-                alias,
-                artists,
-                cover,
-                duration_ms,
-            },
-        )
-        .collect())
+    Ok(Page {
+        total,
+        entries: rows
+            .into_iter()
+            .map(
+                |(
+                    entry_id,
+                    position,
+                    platform,
+                    track_id,
+                    title,
+                    alias,
+                    artists,
+                    cover,
+                    duration_ms,
+                )| Entry {
+                    entry_id,
+                    position,
+                    platform,
+                    track_id,
+                    title,
+                    alias,
+                    artists,
+                    cover,
+                    duration_ms,
+                },
+            )
+            .collect(),
+    })
 }
 
 /// 队列此刻的概况:最新版本、条目数,以及意图与报告各自的最新一条。

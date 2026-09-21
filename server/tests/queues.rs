@@ -102,7 +102,8 @@ async fn publishing_a_queue_reads_back_in_the_uploaded_order()
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     assert_eq!(published.revision, 1);
     let ids: Vec<&str> = page
@@ -140,7 +141,8 @@ async fn the_same_track_twice_stays_two_entries() {
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     assert_eq!(page.len(), 3);
     assert_eq!(page[0].track_id, "a");
@@ -178,7 +180,8 @@ async fn republishing_keeps_entry_ids_of_surviving_tracks()
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     // 前面插一首、顺序因此整体后挪一位。
     let second = queue::publish(
@@ -199,7 +202,8 @@ async fn republishing_keeps_entry_ids_of_surviving_tracks()
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     assert_eq!(second.revision, 2);
     assert_eq!(after[1].entry_id, before[0].entry_id);
@@ -246,7 +250,8 @@ async fn a_read_is_pinned_to_the_revision_it_asked_for() {
         100,
     )
     .await
-    .expect("旧版本该还读得到");
+    .expect("旧版本该还读得到")
+    .entries;
 
     let ids: Vec<&str> = old
         .iter()
@@ -385,7 +390,8 @@ async fn clearing_the_platform_cache_leaves_the_queue_intact()
         100,
     )
     .await
-    .expect("清缓存之后队列该还在");
+    .expect("清缓存之后队列该还在")
+    .entries;
 
     let ids: Vec<&str> = page
         .iter()
@@ -417,7 +423,8 @@ async fn a_pending_intent_survives_to_be_read_back() {
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     queue::set_intent(
         &mut tx,
@@ -470,7 +477,8 @@ async fn the_later_intent_replaces_the_earlier_one() {
         100,
     )
     .await
-    .expect("读队列应该成功");
+    .expect("读队列应该成功")
+    .entries;
 
     for (index, operation) in [(0, "op-a"), (1, "op-b")] {
         queue::set_intent(
@@ -707,7 +715,8 @@ async fn the_revision_a_player_still_holds_is_not_reclaimed()
         100,
     )
     .await
-    .expect("播放端手上那一版该还读得到");
+    .expect("播放端手上那一版该还读得到")
+    .entries;
 
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].track_id, "a");

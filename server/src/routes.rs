@@ -4,6 +4,7 @@ pub(crate) mod auth;
 pub(crate) mod catalog;
 pub(crate) mod library;
 pub(crate) mod play;
+pub(crate) mod queue;
 
 #[cfg(test)]
 pub(crate) mod testing;

@@ -61,6 +61,10 @@ use routes::library::playlists::{
 };
 use routes::play::download::download;
 use routes::play::play;
+use routes::queue::{
+    create_queue, publish_queue, queue_head, queue_page,
+    report_queue_state, set_queue_intent,
+};
 
 /// 默认监听地址。
 ///
@@ -297,6 +301,26 @@ async fn main() {
         .route("/played", post(record_play))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
+        // 持久播放队列(docs/adr/0031)。曲目数据走 HTTP 而**不是**信令:
+        // 它的体积随用户的歌单长度增长,而信令那条 64 KiB 一撞就是整条连接
+        // 断掉(见 contract::MAX_SIGNAL_BYTES 与 #109)。三层裁决各有各的
+        // 入口,不合成一条「更新队列」——合了就分不清「库里写了」与
+        // 「音箱在响」。
+        .route("/queues", post(create_queue))
+        .route("/queues/{id}", get(queue_page))
+        // 改队列是在 id 下新增一个版本,所以是 /revisions 的 POST 而不是
+        // /queues/{id} 的 PUT:PUT 的语义是「替换这个资源」,而这里每次
+        // 修改都留下一个仍然读得到的旧版本。
+        .route(
+            "/queues/{id}/revisions",
+            post(publish_queue),
+        )
+        .route("/queues/{id}/head", get(queue_head))
+        .route("/queues/{id}/intent", post(set_queue_intent))
+        .route(
+            "/queues/{id}/report",
+            post(report_queue_state),
+        )
         // 同播信令。与音乐那几条路由毫无关系(信令不碰 bang-dream,音乐不碰
         // WebRTC),但它一样要登录态,而鉴权提取器要的池就在这份 state 里。
         .route("/signal", get(signaling::handler))
