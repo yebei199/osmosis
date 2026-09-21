@@ -784,4 +784,150 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // 握手协商的客户端这一半(#109 AC-7)
+    //
+    // 这一半在**新客户端撞上旧服务端**时才起作用,而那一组没法靠一个
+    // 进程内的新服务端演出来 —— 新服务端永远发 `Welcome`。判据只有一条:
+    // 先到的是 `Roster` 就说明对端不认识版本协商。
+    // -----------------------------------------------------------------
+
+    /// 事件回调与它收下的那一摞,写成别名 —— 直接写出来会撞
+    /// `clippy::type_complexity`。
+    type Events = Arc<dyn Fn(Event) + Send + Sync>;
+    type Seen = Arc<std::sync::Mutex<Vec<Event>>>;
+
+    /// 收集 `verify_handshake` 报出来的事件。
+    fn spy() -> (Events, Seen) {
+        let seen: Seen =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let events: Events = Arc::new(move |event| {
+            sink.lock().expect("锁中毒").push(event);
+        });
+        (events, seen)
+    }
+
+    /// 版本对得上:一声不吭。
+    #[test]
+    fn a_matching_welcome_says_nothing() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version:
+                    contract::PROTOCOL_VERSION,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        assert!(seen.lock().expect("锁中毒").is_empty());
+        assert!(!incompatible.load(Ordering::Relaxed));
+        assert!(!awaiting, "判定只做一次,做完就落下");
+    }
+
+    /// 对端报了个别的版本:标不兼容,并把两个号都带出去。
+    ///
+    /// 带号是为了界面上那句话能说清该升哪一端 —— 少了它,用户看到的
+    /// 与「网络不好」一样只能干等。
+    #[test]
+    fn a_mismatched_welcome_reports_both_versions() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+        let theirs = contract::PROTOCOL_VERSION + 1;
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version: theirs,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        // `Event` 不派生 `PartialEq`(它装得下一路音频源),只能逐条比。
+        let seen = seen.lock().expect("锁中毒");
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [Event::Incompatible { ours, theirs: Some(reported) }]
+                    if *ours == contract::PROTOCOL_VERSION
+                        && *reported == theirs
+            ),
+            "该报一条带两个版本号的不兼容"
+        );
+        assert!(incompatible.load(Ordering::Relaxed));
+    }
+
+    /// 旧服务端:它压根不发 `Welcome`,名册直接就来了。
+    ///
+    /// 这一组是 AC-7 里唯一「新客户端 + 旧服务端」的判据。少了它,新客户端
+    /// 连上旧服务端会一切看着正常,直到第一次遥控时队列 404。
+    #[test]
+    fn a_roster_before_any_welcome_means_an_old_server() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Roster {
+                devices: Vec::new(),
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        let seen = seen.lock().expect("锁中毒");
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [Event::Incompatible { ours, theirs: None }]
+                    if *ours == contract::PROTOCOL_VERSION
+            ),
+            "旧服务端报不出版本,theirs 该是 None,实得 {} 条",
+            seen.len()
+        );
+        assert!(incompatible.load(Ordering::Relaxed));
+    }
+
+    /// 判定只做一次:同一条连接上 `Roster` 会来很多次。
+    ///
+    /// 每次都判的话,一台正常连着的新客户端会在第二条名册到达时
+    /// 突然自称版本不对。
+    #[test]
+    fn the_verdict_is_reached_only_once_per_connection() {
+        let (events, seen) = spy();
+        let mut awaiting = true;
+        let incompatible = AtomicBool::new(false);
+
+        verify_handshake(
+            &ServerSignal::Welcome {
+                protocol_version:
+                    contract::PROTOCOL_VERSION,
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+        verify_handshake(
+            &ServerSignal::Roster {
+                devices: Vec::new(),
+            },
+            &mut awaiting,
+            &incompatible,
+            &events,
+        );
+
+        assert!(
+            seen.lock().expect("锁中毒").is_empty(),
+            "对上之后再来名册不该翻案"
+        );
+    }
 }

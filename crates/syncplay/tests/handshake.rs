@@ -106,6 +106,118 @@ async fn hello_puts_device_in_roster() {
     );
 }
 
+/// 讲旧协议的那一端**入不了册**,而且收到的是一次好好的关闭(#109 AC-7)。
+///
+/// 这一组是 AC-7 里「旧客户端 + 新服务端」那一格。三件事都要成立,少一件
+/// 这道协商就白做:
+///
+/// 1. 先收到 `Welcome`,里面是服务端的版本 —— 少了它,旧端只知道自己被关了,
+///    说不出该升到哪一版;
+/// 2. 紧接着是一帧带 POLICY 原因的 Close,不是把 socket 一丢。丢掉的话对端
+///    收到的是 reset,而那与「网线被拔了」长得一模一样;
+/// 3. 它**不在任何人的名册里**。入册是取得控制权的前提,所以挡在这里等于
+///    挡在它能遥控任何设备之前。
+///
+/// 用裸 WebSocket 而不是 `Signalling::connect`:后者永远报本机编译进去的
+/// 那个版本号,演不出一个旧端。
+#[tokio::test]
+async fn an_old_client_is_refused_before_it_joins_the_roster()
+ {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    let addr = start_signalling_server().await;
+
+    // 先让一台**正常**的设备连上,它的名册就是判据。
+    let mut modern = Signalling::connect(
+        &format!("ws://{addr}"),
+        device("modern"),
+        TOKEN,
+    )
+    .await
+    .expect("连不上信令服务器");
+    let _welcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        modern.next(),
+    )
+    .await
+    .expect("等握手应答超时")
+    .expect("连接已关闭");
+
+    // 再来一个讲上一版协议的。
+    let (mut old, _) = tokio_tungstenite::connect_async(
+        format!("ws://{addr}/signal"),
+    )
+    .await
+    .expect("裸 WebSocket 连不上");
+    let hello = serde_json::to_string(
+        &contract::ClientSignal::Hello {
+            device: device("ancient"),
+            protocol_version: contract::PROTOCOL_VERSION
+                - 1,
+        },
+    )
+    .expect("Hello 序列化失败");
+    old.send(WsMessage::text(hello))
+        .await
+        .expect("发不出 Hello");
+
+    let first = tokio::time::timeout(
+        Duration::from_secs(5),
+        old.next(),
+    )
+    .await
+    .expect("等应答超时")
+    .expect("连接已关闭")
+    .expect("读出错");
+    let WsMessage::Text(text) = first else {
+        panic!("第一条该是文本的 Welcome,实得 {first:?}");
+    };
+    let welcome: ServerSignal = serde_json::from_str(&text)
+        .expect("解不开 Welcome");
+    assert!(
+        matches!(
+            welcome,
+            ServerSignal::Welcome { protocol_version }
+                if protocol_version == contract::PROTOCOL_VERSION
+        ),
+        "旧端也该先拿到服务端的版本号,实得 {welcome:?}"
+    );
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        old.next(),
+    )
+    .await
+    .expect("等关闭帧超时")
+    .expect("连接已关闭")
+    .expect("读出错");
+    assert!(
+        matches!(
+            &second,
+            WsMessage::Close(Some(frame))
+                if frame.reason.contains("protocol version mismatch")
+        ),
+        "该是一帧带原因的 Close,实得 {second:?}"
+    );
+
+    // 正常那台设备的名册里,自始至终只有它自己。
+    let roster = tokio::time::timeout(
+        Duration::from_secs(5),
+        modern.next(),
+    )
+    .await
+    .expect("等名册超时")
+    .expect("连接已关闭");
+    let ServerSignal::Roster { devices } = roster else {
+        panic!("该是名册,实得 {roster:?}");
+    };
+    assert!(
+        devices.iter().all(|seen| seen.id != "ancient"),
+        "讲旧协议的那台不该出现在名册里: {devices:?}"
+    );
+}
+
 /// SDP 一来一回,两端的协商都走完。
 #[tokio::test]
 async fn offer_answer_completes_negotiation() {

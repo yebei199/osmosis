@@ -263,7 +263,7 @@ pub(crate) fn handle(
             // 走提示,不写角色那一行:连不上的时候角色一动没动,那一行此刻
             // 依然为真,而失败是**这一刻**的事。写进去就没人会重算它,那句话
             // 会一直挂到角色碰巧变一次为止(见 `crate::notice`)。
-            let message = format!("同播失败: {message}");
+            let message = describe_sync_failure(&message);
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 crate::notice::show(&ui, message);
             });
@@ -275,13 +275,8 @@ pub(crate) fn handle(
         // 走横幅不走提示:提示几秒就没了,而这是一个**持续为真**的状态,
         // 升级之前它一直成立。
         Event::Incompatible { ours, theirs } => {
-            let message = format!(
-                "版本对不上,遥控与同播都用不了:本机协议 {ours},服务端 {}。升级其中一端。",
-                theirs.map_or_else(
-                    || "太旧,报不出版本".to_owned(),
-                    |version| version.to_string()
-                )
-            );
+            let message =
+                describe_incompatible(ours, theirs);
             let _ = weak.upgrade_in_event_loop(move |ui| {
                 crate::notice::banner_without_link(
                     &ui, message,
@@ -392,6 +387,29 @@ fn lock<T>(
     value: &Arc<Mutex<T>>,
 ) -> std::sync::MutexGuard<'_, T> {
     value.lock().expect("同播状态锁中毒")
+}
+
+/// 一次普通失败怎么说。**等一等会自己好**,所以不叫人去做任何事。
+fn describe_sync_failure(message: &str) -> String {
+    format!("同播失败: {message}")
+}
+
+/// 版本对不上怎么说。
+///
+/// 两个版本号都要在里面:少了它,用户只知道用不了,不知道该升哪一端。
+/// 对端旧到不报版本时说「太旧」而不是编一个号 —— 编出来的号会被拿去
+/// 找一个不存在的版本。
+fn describe_incompatible(
+    ours: u32,
+    theirs: Option<u32>,
+) -> String {
+    format!(
+        "版本对不上,遥控与同播都用不了:本机协议 {ours},服务端 {}。升级其中一端。",
+        theirs.map_or_else(
+            || "太旧,报不出版本".to_owned(),
+            |version| version.to_string()
+        )
+    )
 }
 
 #[cfg(test)]
