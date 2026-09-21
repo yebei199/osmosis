@@ -22,6 +22,7 @@ pub use peer::{Peer, PeerRole, audio_track};
 pub use session::{Role, Roster};
 pub use signalling::{
     SignalSender, Signalling, command_wire_len,
+    report_wire_len,
 };
 
 /// 设备的线上表示。

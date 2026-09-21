@@ -353,6 +353,21 @@ impl Remote {
     ///
     /// 目标由服务端从控制权槽位查(见 `server::syncplay::control`),这里不指定发给谁。
     pub fn report(&self, state: RemoteStateDto) {
+        // 量一下再决定发不发。**量的是每一条,不只是发出去的那些** ——
+        // 这一行是 #109 F-002 那个洞唯一的哨兵:上报曾经拖着整个队列,
+        // 977 首时 23 万字节,而超限的后果是整条连接断掉。现在它定长了,
+        // 留着这行是为了哪天有人往小状态里塞回一个随用户数据增长的字段时,
+        // 日志里先变的是它,而不是某台设备的连接开始莫名其妙地断。
+        //
+        // debug 级:每秒一条,info 会把日志淹掉。要读它就
+        // `RUST_LOG=ui::sync::remote=debug`。
+        let bytes = syncplay::report_wire_len(&state);
+        log::debug!(
+            "上报出栈: {bytes} 字节(队列 {} 首, 上限 {})",
+            state.queue_len,
+            app_core::MAX_SIGNAL_BYTES
+        );
+
         if let Some(client) = self.inner.client.get()
             && self.is_controlled()
         {

@@ -159,6 +159,23 @@ pub fn command_wire_len(
     .map_or(usize::MAX, |text| text.len())
 }
 
+/// 一条状态上报上线之后有多少字节。
+///
+/// 与 [`command_wire_len`] 同一个用处、同一个理由,只是量的是**反方向**那条:
+/// 上报每秒一发,而它曾经拖着被控端的整个队列 —— 977 首时 23 万字节,是
+/// [`contract::MAX_SIGNAL_BYTES`] 的三倍多,于是被控端每秒把自己踢下线一次
+/// (#109 F-002)。
+///
+/// 队列挪走之后这个数是定长的,埋点留着不是为了拦它,是为了**看得见它**:
+/// 哪天有人往小状态里塞回一个随用户数据增长的字段,日志里这一行会先变,
+/// 而不必等到某台设备的连接开始莫名其妙地断。
+pub fn report_wire_len(state: &RemoteStateDto) -> usize {
+    serde_json::to_string(&ClientSignal::State {
+        state: state.clone(),
+    })
+    .map_or(usize::MAX, |text| text.len())
+}
+
 /// 握手失败的分类。401 单独拎出来:它是"这个 token 不作数了",
 /// 而不是"网络不好" —— 拿同一个 token 重试只会再得到一个 401。
 fn classify(
