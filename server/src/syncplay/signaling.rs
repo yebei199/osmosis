@@ -58,9 +58,10 @@ pub type AllowedOrigins = Arc<Vec<String>>;
 
 /// 单条消息的上限。
 ///
-/// 信令载荷是 SDP 与 ICE 候选,几 KiB 顶天;64 KiB 已经给得很松。axum 的默认值
-/// 是 64 MiB —— 那意味着一条连接能让服务端为它单独攒出 64 MiB。
-const MAX_MESSAGE_BYTES: usize = 64 * 1024;
+/// 真源在契约里(`contract::MAX_SIGNAL_BYTES`):发送端要在**发之前**照同一个数
+/// 拦住自己,而超限在这一侧的后果是整条连接断掉,不是丢一条消息(见那里的说明)。
+/// 两边各写一个字面量的话,客户端那道自检迟早与这里对不上。
+const MAX_MESSAGE_BYTES: usize = contract::MAX_SIGNAL_BYTES;
 
 /// 一个账号一分钟内能建几条信令连接。
 ///

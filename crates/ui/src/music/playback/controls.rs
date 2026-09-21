@@ -1,11 +1,10 @@
 //! 传输控件的绑定:播放键、上一首下一首、洗牌循环、音量与跳转。
 //!
-//! 每个控件都过同样两道闸(见 `crate::sync::remote`):本机正被遥控时一概不生效,
-//! 直到用户按「退出被遥控」;输出设备不是本机时这一下变成一条命令,本机不出声。
-//! 两道闸都写在**回调入口**,而不是散在各自的实现里 —— 那样总有一个会被漏掉,
-//! 而漏掉的那个在界面上表现为「别的键都遥控,唯独这个还在本机上放」。
-
-use app_core::RemoteCommand;
+//! 这里只做 **translate**:把用户按下的那一下翻成一条 [`Intent`],交给
+//! [`dispatch`]。谁能按、按给哪台设备、翻成什么命令,一概不在这个文件里 ——
+//! 从前那两道闸(被遥控时不生效 / 输出不在本机时改发命令)在下面六个回调里
+//! 各写了一遍,写法还不一致,于是总有一个被漏掉,而漏掉的那个在界面上表现为
+//! 「别的键都遥控,唯独这个还在本机上放」(#108)。
 
 use crate::Shell;
 
@@ -14,6 +13,9 @@ use crate::Player;
 use crate::music::*;
 
 /// 点一首歌:这一批成为队列、从这首开始放(见 `CONTEXT.md`「队列」)。
+///
+/// 批次取**用户点中的那个列表**,不是被控端回报的队列 —— 遥控时他想听的
+/// 也是眼前这一批的后面那些歌。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn bind_play(
     ui: &MainWindow,
@@ -25,50 +27,20 @@ pub(in crate::music) fn bind_play(
     ui.global::<Player>().on_play(move |id| {
         let Some(ui) = weak.upgrade() else { return };
 
-        // 这一首已经在加载了:这一下是多余的,直接丢掉。不挡的话,连点五下
-        // 就是五条在途下载,每条回来都往播放器里塞一次源,声音从头响五遍。
-        let redundant = is_redundant_tap(
-            deck.playback.borrow().state(),
-            &id,
-        );
-        if redundant {
-            return;
-        }
-
-        // 被遥控期间本机上的播放动作不算数(产品规则)。
-        if deck.remote.is_controlled() {
-            return;
-        }
-
-        // 点歌是播放动作:正在收听的话,先退出(CONTEXT.md「听众」)。
-        if deck.sync.is_listening() {
-            deck.sync.leave();
-        }
-
         let id = id.to_string();
-        let batch = deck.tracks.borrow().clone();
+        let tracks = deck.tracks.borrow().clone();
         let Some(index) =
-            batch.iter().position(|track| track.id == id)
+            tracks.iter().position(|track| track.id == id)
         else {
+            // 点中的那首不在这一批里。翻不出意图,没什么可派发的。
             return;
         };
 
-        // 输出设备不是本机:把整批发过去,让被控端自己拿着后面那些歌 ——
-        // 自动续播在那边发生,遥控器锁屏、断线都不该让它停在一首上。
-        if deck.remote.is_remote() {
-            deck.remote.send(RemoteCommand::Play {
-                tracks: batch,
-                index,
-            });
-            return;
-        }
-
-        // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
-        deck.queue.borrow_mut().replace(batch, index);
-        if ui.global::<Player>().get_shuffle_on() {
-            deck.queue.borrow_mut().shuffle(shuffle_seed());
-        }
-        play_current(&ui, &deck);
+        dispatch(
+            &ui,
+            &deck,
+            Intent::Play { tracks, index },
+        );
     });
 }
 
@@ -86,7 +58,7 @@ pub(in crate::music) fn bind_controls(
     let weak = ui.as_weak();
     ui.global::<Player>().on_toggle_play(move || {
         let Some(ui) = weak.upgrade() else { return };
-        toggle_play(&ui, &toggle);
+        dispatch(&ui, &toggle, Intent::TogglePlay);
         // 暂停图标不该慢一拍 —— 轮询要 1 秒之后才轮到。
         crate::media::push(
             &ui,
@@ -99,35 +71,14 @@ pub(in crate::music) fn bind_controls(
     let weak = ui.as_weak();
     ui.global::<Player>().on_next_track(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if next.remote.is_controlled() {
-            return;
-        }
-        if next.remote.send(RemoteCommand::Next) {
-            return;
-        }
-        if next.sync.is_listening() {
-            next.sync.leave();
-        }
-        advance(&ui, &next);
+        dispatch(&ui, &next, Intent::Next);
     });
 
     let previous = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_prev_track(move || {
         let Some(ui) = weak.upgrade() else { return };
-        if previous.remote.is_controlled() {
-            return;
-        }
-        if previous.remote.send(RemoteCommand::Prev) {
-            return;
-        }
-        if previous.sync.is_listening() {
-            previous.sync.leave();
-        }
-        if previous.queue.borrow_mut().previous().is_some()
-        {
-            play_current(&ui, &previous);
-        }
+        dispatch(&ui, &previous, Intent::Prev);
     });
 
     let shuffle = deck.clone();
@@ -212,31 +163,20 @@ pub(in crate::music) fn bind_volume(
     let weak = ui.as_weak();
     ui.global::<Player>().on_volume_changed(
         move |volume| {
+            let Some(ui) = weak.upgrade() else { return };
+            // 滑块先跟手。这一下最终落到哪台设备上由 `dispatch` 定,但拖着
+            // 不动的滑块看起来就是失灵了。
             let volume = audio::clamped_volume(volume);
-            if let Some(ui) = weak.upgrade() {
-                ui.global::<Player>().set_volume(volume);
-            }
-            // 遥控时拧的是**那台**设备的音量:本机没在出声,改本机的
-            // 播放器等于什么都没发生,而滑块会看着像失灵了。本地设置也不动 ——
-            // 音量跟着设备走,那一份属于本机的耳机。
-            if deck.remote.send(RemoteCommand::Volume {
-                level: volume,
-            }) {
-                return;
-            }
-            if let Ok(player) = deck.player.as_ref() {
-                player.set_volume(volume);
-            }
+            ui.global::<Player>().set_volume(volume);
 
-            // 每动一下就存:调音量是个连续动作,而"什么时候算调完了"没有信号。
-            // 写的是本地一个几十字节的文件,存不下也只是下次回到默认值。
-            //
-            // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被这次
-            // 调音量顺手冲回默认值。
-            api::settings::save(&api::settings::Settings {
-                volume,
-                ..api::settings::load()
-            });
+            // 遥控时拧的是**那台**设备的音量:本机没在出声,改本机的播放器
+            // 等于什么都没发生。存盘也跟着去那一端 —— 音量跟着设备走,
+            // 记住它的该是真正改变了响度的那台(见 `dispatch::execute`)。
+            dispatch(
+                &ui,
+                &deck,
+                Intent::Volume { level: volume },
+            );
         },
     );
 }
@@ -259,55 +199,9 @@ pub(in crate::music) fn bind_seek(
 
     ui.global::<Player>().on_seek(move |at| {
         let Some(ui) = weak.upgrade() else { return };
-        if deck.remote.is_controlled() {
-            return;
-        }
-
-        // 遥控时按被控端报来的曲长算目标位置 —— 本机的 playback 此刻是空的,
-        // 拿它算只会得到 None,而进度条看起来就是拖不动。
-        if deck.remote.is_remote() {
-            let target =
-                deck.remote.with_view(|view, _| {
-                    view.track().and_then(|track| {
-                        crate::progress::seek_target(
-                            at,
-                            track.duration_ms,
-                        )
-                    })
-                });
-            if let Some(target) = target {
-                deck.remote.send(RemoteCommand::Seek {
-                    ms: target.as_millis() as u64,
-                });
-            }
-            return;
-        }
-
-        let state = deck.playback.borrow().state().clone();
-        let (PlaybackState::Playing(track)
-        | PlaybackState::Loading(track)) = state
-        else {
-            return;
-        };
-        let Some(target) = crate::progress::seek_target(
-            at,
-            track.duration_ms,
-        ) else {
-            return;
-        };
-
-        // 立刻挂上,不等轮询:那要慢一秒,而一秒的沉默正好是"点了没反应"
-        ui.global::<Player>().set_buffering(true);
-
-        if let Ok(player) = deck.player.as_ref()
-            && let Err(err) = player.seek(target)
-        {
-            ui.global::<Player>().set_buffering(false);
-            crate::notice::show(
-                &ui,
-                format!("这首跳不了: {err}"),
-            );
-        }
+        // 只带比例:目标毫秒要按**这一下落在哪一端**报的曲长算,而那是
+        // `dispatch` 选完目标才知道的事。
+        dispatch(&ui, &deck, Intent::Seek { ratio: at });
     });
 }
 
@@ -354,7 +248,7 @@ pub(in crate::music) fn bind_remote(
         let Some(ui) = weak.upgrade() else { return };
         while let Some(cmd) = commands.remote.take_command()
         {
-            apply_remote(&ui, &commands, cmd);
+            execute(&ui, &commands, cmd);
         }
     });
 
@@ -366,62 +260,6 @@ pub(in crate::music) fn bind_remote(
         let Some(ui) = weak.upgrade() else { return };
         snap.remote.report(snapshot(&ui, &snap));
     });
-}
-
-/// 执行一条遥控命令。
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn apply_remote(
-    ui: &MainWindow,
-    deck: &Deck,
-    cmd: RemoteCommand,
-) {
-    match cmd {
-        RemoteCommand::Play { tracks, index } => {
-            // 整批装进队列:自动续播在**本机**发生,遥控器只发了这一次。
-            deck.tracks.borrow_mut().clone_from(&tracks);
-            deck.queue.borrow_mut().replace(tracks, index);
-            if ui.global::<Player>().get_shuffle_on() {
-                deck.queue
-                    .borrow_mut()
-                    .shuffle(shuffle_seed());
-            }
-            play_current(ui, deck);
-        }
-        RemoteCommand::Pause => {
-            if let Ok(player) = deck.player.as_ref() {
-                player.pause();
-            }
-            ui.global::<Player>().set_is_playing(false);
-        }
-        RemoteCommand::Resume => {
-            if let Ok(player) = deck.player.as_ref() {
-                player.resume();
-            }
-            ui.global::<Player>().set_is_playing(true);
-        }
-        RemoteCommand::Next => advance(ui, deck),
-        RemoteCommand::Prev => {
-            if deck.queue.borrow_mut().previous().is_some()
-            {
-                play_current(ui, deck);
-            }
-        }
-        RemoteCommand::Seek { ms } => {
-            if let Ok(player) = deck.player.as_ref() {
-                let _ = player.seek(
-                    core::time::Duration::from_millis(ms),
-                );
-            }
-        }
-        RemoteCommand::Volume { level } => {
-            let level = audio::clamped_volume(level);
-            if let Ok(player) = deck.player.as_ref() {
-                player.set_volume(level);
-            }
-            ui.global::<Player>().set_volume(level);
-        }
-    }
-    crate::media::push(ui, &deck.playback, &deck.media);
 }
 
 /// 本机此刻的完整状态,报给遥控它的那台设备。

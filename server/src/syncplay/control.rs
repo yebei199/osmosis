@@ -179,14 +179,41 @@ pub fn route(
             );
             None
         }
-        ClientSignal::Command { to, cmd } => forward(
-            roster,
-            control,
-            account,
-            from,
-            &to,
-            ServerSignal::Command { cmd },
-        ),
+        ClientSignal::Command { to, cmd } => {
+            // 这一跳是遥控链路上唯一能同时看见两端的位置:命令到底有没有
+            // 到过服务端、槽位对不对得上,只有这里答得了。少了它,一次
+            // 点歌失败时「遥控器没发」与「服务端没转」在两边都查不出来。
+            let summary = cmd.summary();
+            let outcome = forward(
+                roster,
+                control,
+                account,
+                from,
+                &to,
+                ServerSignal::Command { cmd },
+            );
+            match &outcome {
+                None => tracing::info!(
+                    account,
+                    from = %from,
+                    to = %to,
+                    cmd = %summary,
+                    "遥控命令已转发"
+                ),
+                Some(ServerSignal::Error {
+                    code, ..
+                }) => tracing::info!(
+                    account,
+                    from = %from,
+                    to = %to,
+                    cmd = %summary,
+                    code = %code,
+                    "遥控命令没转出去"
+                ),
+                Some(_) => {}
+            }
+            outcome
+        }
         // 上报的目标由槽位定,不由被控端指定:让它自己写目标的话,
         // 它能把自己的播放位置每秒推给任何一台设备。
         ClientSignal::State { state } => {

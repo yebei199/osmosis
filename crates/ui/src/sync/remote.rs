@@ -23,7 +23,7 @@ use syncplay::{Client, DeviceDto};
 pub(crate) use rules::{
     accepts_control, describe_controlled, describe_lost,
     describe_output, describe_remote, describe_revoked,
-    lost_remote,
+    describe_too_large, describe_unavailable, lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -37,6 +37,25 @@ pub fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// 一次提交的下场。
+///
+/// 分这么细是因为**出路各不相同**:输出在本机该走本机路径,过期与没接上客户端
+/// 该说「控制暂不可用」,而超限要说「队列太长」—— 混成一个布尔的话,界面只能
+/// 对四种毫不相干的情况说同一句话,而用户照着那句话做不了任何事。
+#[derive(Debug, PartialEq, Eq)]
+pub enum Submitted {
+    /// 交给客户端了。**仅此而已** —— 后面三跳都可能丢掉它。
+    Ok,
+    /// 输出本来就在本机,这一下不该走信令。
+    NotRemote,
+    /// 手上那份被控端状态已经过期,照着它发命令等于蒙(`docs/adr/0030`)。
+    Stale,
+    /// 同播客户端还没接上(启动期那一微秒的空窗)。
+    NoClient,
+    /// 这一条太大,**发出去会撞掉整条连接**,所以在这里拒掉。
+    TooLarge { bytes: usize, limit: usize },
 }
 
 /// 音乐页拿在手里的遥控把手。
@@ -64,6 +83,13 @@ struct Inner {
     cover_id: Mutex<String>,
     /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
     was_remote: Mutex<bool>,
+    /// 测试里记下真的交出去了哪些命令。
+    ///
+    /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
+    /// 就不回报结果 —— 于是「这一下到底发没发出去」在测试里根本观察不到,
+    /// 而遥控器侧要钉的恰好就是它(全仓此前没有一条测试走过这条路)。
+    #[cfg(test)]
+    sent: Mutex<Vec<RemoteCommand>>,
     weak: slint::Weak<MainWindow>,
 }
 
@@ -83,22 +109,105 @@ impl Remote {
 
     /// 把一条命令发给被控端。
     ///
-    /// 返回它有没有发出去。调用方据此决定要不要落到本地播放器上 ——
-    /// 本机输出、或者状态已过期时都返回 `false`,那一下该走原路或者干脆不算数。
-    pub fn send(&self, cmd: RemoteCommand) -> bool {
-        let sendable = accepts_control(
+    /// 返回**为什么**,不是一个布尔:调用方要据此说不同的话 —— 过期是「控制
+    /// 暂不可用」,超限是「队列太长」,而输出在本机根本不该走这条路。
+    pub fn send(&self, cmd: RemoteCommand) -> Submitted {
+        let Some(target) = lock(&self.inner.output)
+            .target()
+            .map(str::to_owned)
+        else {
+            log::info!(
+                "遥控提交: {} 未发出(输出在本机)",
+                cmd.summary()
+            );
+            return Submitted::NotRemote;
+        };
+
+        // 判据仍走 rules 里那一条(它连「刚接管、快照还在路上要放行」
+        // 一起管着,且在那里测得到)。这里只是**先**把「输出在本机」摘出去,
+        // 好让两种拦法各说各的话 —— 目标已经确定存在,所以剩下唯一能让
+        // 它为假的就是过期。
+        if !accepts_control(
             &lock(&self.inner.output),
             &lock(&self.inner.view),
             now_ms(),
-        );
-        if !sendable {
-            return false;
+        ) {
+            log::info!(
+                "遥控提交: {} -> {target} 未发出(状态已过期)",
+                cmd.summary()
+            );
+            return Submitted::Stale;
         }
+
+        // **发之前**量,不发出去让它失败:超限的消息会让服务端读循环跳出,
+        // 整条信令连接断掉,遥控器连自己的控制权都一起丢
+        // (见 `contract::MAX_SIGNAL_BYTES`)。量的是连外层 `to` 一起的那一份,
+        // 因为服务端数的就是那一份。
+        let bytes =
+            syncplay::command_wire_len(&target, &cmd);
+        if bytes > app_core::MAX_SIGNAL_BYTES {
+            log::warn!(
+                "遥控提交: {} -> {target} 拒发({bytes} 字节 > 上限 {} 字节)",
+                cmd.summary(),
+                app_core::MAX_SIGNAL_BYTES
+            );
+            return Submitted::TooLarge {
+                bytes,
+                limit: app_core::MAX_SIGNAL_BYTES,
+            };
+        }
+
         let Some(client) = self.inner.client.get() else {
-            return false;
+            log::info!(
+                "遥控提交: {} -> {target} 未发出(客户端还没接上)",
+                cmd.summary()
+            );
+            return Submitted::NoClient;
         };
+        // 提交成功**只说明本地交出去了**:队列、服务端转发、被控端执行都还在
+        // 后面,任何一跳都可能悄悄丢掉它。真放起来了以被控端的上报为准。
+        log::info!(
+            "遥控提交: {} -> {target} 已交给客户端({bytes} 字节)",
+            cmd.summary()
+        );
+        #[cfg(test)]
+        lock(&self.inner.sent).push(cmd.clone());
         client.command(cmd);
-        true
+        Submitted::Ok
+    }
+
+    /// 测试里问:到此为止交出去了哪些命令。
+    #[cfg(test)]
+    pub(crate) fn sent_commands(
+        &self,
+    ) -> Vec<RemoteCommand> {
+        lock(&self.inner.sent).clone()
+    }
+
+    /// 测试里塞一份**指定到达时刻**的上报。
+    ///
+    /// [`handle`] 那条路把 `now_ms()` 写进去,于是「一份已经过期的上报」在
+    /// 测试里根本造不出来 —— 而过期恰恰是 `docs/adr/0030` 那条「禁用控制但
+    /// 不切回本机」唯一生效的时刻。
+    #[cfg(test)]
+    pub(crate) fn accept_report_at(
+        &self,
+        state: RemoteStateDto,
+        now_ms: u64,
+    ) {
+        lock(&self.inner.view).accept(state, now_ms);
+    }
+
+    /// 目标在别的设备、而这一下没提交出去时,界面该说的那句话。
+    ///
+    /// 文案要点出是哪台设备,所以它得读 `output` —— 那一份不出这个模块。
+    pub fn unavailable_notice(&self) -> String {
+        describe_unavailable(&lock(&self.inner.output))
+    }
+
+    /// 一条命令大到发不出去时,界面该说的那句话。
+    pub fn too_large_notice(&self) -> String {
+        describe_too_large(&lock(&self.inner.output))
     }
 
     /// 遥控器发来的下一条命令,没有则 `None`。
@@ -285,6 +394,8 @@ pub fn new(ui: &MainWindow) -> Remote {
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
             was_remote: Mutex::new(false),
+            #[cfg(test)]
+            sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
         }),
     }
@@ -378,6 +489,10 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         }
         // 命令进收件箱,再叫一声 UI 线程去执行(见模块头的两步)。
         syncplay::Event::Command { cmd } => {
+            log::info!(
+                "收到遥控命令: {} 进收件箱",
+                cmd.summary()
+            );
             lock(&inner.inbox).push_back(cmd.clone());
             let _ =
                 inner.weak.upgrade_in_event_loop(|ui| {

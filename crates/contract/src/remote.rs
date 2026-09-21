@@ -48,6 +48,34 @@ pub enum RemoteCommand {
     },
 }
 
+impl RemoteCommand {
+    /// 一行日志里怎么称呼这条命令。
+    ///
+    /// 定在契约里而不是各端各写一份:遥控链路跨三个进程四跳(遥控器提交、
+    /// 客户端入队、服务端转发、被控端收到),四条日志说的必须是同一件事,
+    /// 否则拿 `grep` 把一次点歌串起来时对不上。
+    ///
+    /// `Play` 报**批次长度**而不是曲名:一条命令拖着整批歌,而那个数正是
+    /// 它与别的命令唯一的区别 —— 别的变体大小固定,只有它随用户手上那个
+    /// 列表增长(见 `Self::Play` 的说明)。
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Play { tracks, index } => format!(
+                "play(批次 {} 首, 第 {index} 首)",
+                tracks.len()
+            ),
+            Self::Pause => "pause".to_owned(),
+            Self::Resume => "resume".to_owned(),
+            Self::Next => "next".to_owned(),
+            Self::Prev => "prev".to_owned(),
+            Self::Seek { ms } => format!("seek({ms}ms)"),
+            Self::Volume { level } => {
+                format!("volume({level:.2})")
+            }
+        }
+    }
+}
+
 /// 被控端此刻在干什么。
 ///
 /// `Buffering` 与 `Playing` 必须分开:遥控器在两次上报之间按本地时钟插值,

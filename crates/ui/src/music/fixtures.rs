@@ -132,6 +132,27 @@ fn init_spawnable_backend(pump: bool) {
     .expect("这条测试线程上还不该有别的后端");
 }
 
+/// 把设置与会话的落点挪进一个本进程专用的临时目录。
+///
+/// 不挪的话,测试读写的是**开发者本人**那份 `settings.json` —— 一条断言
+/// 音量存盘的用例会就地把他的音量改掉,而下一次跑测试读到的又是上一次留下的
+/// 数,断言于是取决于跑过几次。`set_state_dir` 是进程级的 `OnceLock`,
+/// 所以只设一次。
+#[cfg(not(target_arch = "wasm32"))]
+fn isolate_state_dir() {
+    use std::sync::Once;
+
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "osmosis-ui-tests-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        api::set_state_dir(dir);
+    });
+}
+
 /// 一台无头主窗口,外加接在它上面的一副空 [`Deck`]。
 ///
 /// spawn 出去的活一步都不跑,看到的是被测函数**同步**做完的那一段。
@@ -165,6 +186,7 @@ fn deck_window_with(
     use super::Deck;
 
     init_spawnable_backend(pump);
+    isolate_state_dir();
     let ui =
         super::MainWindow::new().expect("建不出主窗口");
     ui.global::<crate::Session>().set_logged_in(true);

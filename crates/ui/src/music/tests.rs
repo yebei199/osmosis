@@ -1,5 +1,6 @@
 use similar_asserts::assert_eq;
 
+mod dispatch;
 mod remote;
 
 use super::fixtures::*;

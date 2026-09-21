@@ -115,6 +115,30 @@ pub fn describe_lost(output: &Output) -> String {
     format!("{name} 失联,已回到本机")
 }
 
+/// 目标在别的设备、但这一下没提交成功时说的那句话。
+///
+/// **不回落本机**是这句话存在的理由(`docs/adr/0030`)。过期时把声音抢回
+/// 遥控器自己这台,用户一低头就发现歌从手机里放出来了 —— 而他要的是让
+/// pc1 放。既然不回落,就必须说一句,否则按下去与坏掉毫无区别。
+pub fn describe_unavailable(output: &Output) -> String {
+    output.name().map_or_else(
+        || "控制暂不可用".to_owned(),
+        |name| format!("{name} 控制暂不可用"),
+    )
+}
+
+/// 一条命令大到发不出去时说的那句话。
+///
+/// 必须说得出「为什么」与「现在能怎么办」:它与「控制暂不可用」是两回事 ——
+/// 那个等一等就好了,这个等多久都不会好,得换一个短一点的列表
+/// (根治见 #109)。不说的话,用户会一直点同一首歌。
+pub fn describe_too_large(output: &Output) -> String {
+    output.name().map_or_else(
+        || "队列太长,暂时发不过去".to_owned(),
+        |name| format!("队列太长,暂时发不到 {name}"),
+    )
+}
+
 /// 这一下控制动作该不该发出去。
 ///
 /// 过期时不发:那份状态已经不知道被控端在干什么了,照着它发命令等于蒙 ——
@@ -362,6 +386,10 @@ mod tests {
         copy.push(describe_revoked(&Output::Local, "pc1"));
         copy.push(describe_lost(&remote()));
         copy.push(describe_lost(&Output::Local));
+        copy.push(describe_unavailable(&Output::Local));
+        copy.push(describe_unavailable(&remote()));
+        copy.push(describe_too_large(&Output::Local));
+        copy.push(describe_too_large(&remote()));
         copy.push(describe_revoked(&remote(), "pc1"));
         for state in [
             RemotePlayState::Idle,

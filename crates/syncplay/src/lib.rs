@@ -20,7 +20,9 @@ pub use client::{Client, Event};
 pub use envelope::Envelope;
 pub use peer::{Peer, PeerRole, audio_track};
 pub use session::{Role, Roster};
-pub use signalling::{SignalSender, Signalling};
+pub use signalling::{
+    SignalSender, Signalling, command_wire_len,
+};
 
 /// 设备的线上表示。
 ///
