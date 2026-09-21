@@ -5,6 +5,7 @@
 //!
 //! 每条测试用完即回滚,与 `playlists.rs` 同一个套路。
 
+use server::error::AppError;
 use server::store::account::{Account, register};
 use server::store::db;
 use server::store::queue::{self, EntryInput, Report};
@@ -720,4 +721,164 @@ async fn the_revision_a_player_still_holds_is_not_reclaimed()
 
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].track_id, "a");
+}
+
+/// 建到上限就**明确拒绝**,而且与「这一批太长」「这一阵太密」分开(F-003)。
+///
+/// 三种拒绝的出路完全不同:太长换个短的、太密等一等、到顶了没得等。
+/// 混成一个 code 的话,客户端会对着一个永远不会好的拒绝无限退避重试。
+#[tokio::test]
+async fn creating_past_the_account_quota_is_refused() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "q_quota_n").await;
+
+    for round in 0..queue::MAX_QUEUES_PER_ACCOUNT {
+        queue::create(
+            &mut tx,
+            account.id,
+            &format!("dev-{round}"),
+            &[entry("a")],
+        )
+        .await
+        .expect("上限之内该建得出来");
+    }
+
+    let refused = queue::create(
+        &mut tx,
+        account.id,
+        "dev-over",
+        &[entry("a")],
+    )
+    .await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(AppError::QueueQuotaExceeded)
+        ),
+        "到上限该回 QueueQuotaExceeded,得到的是 {refused:?}"
+    );
+}
+
+/// 配额是**按账号**算的:别人的队列不占我的额度。
+#[tokio::test]
+async fn the_quota_is_counted_per_account() {
+    let mut tx = tx().await;
+    let mine = make_account(&mut tx, "q_quota_mine").await;
+    let other =
+        make_account(&mut tx, "q_quota_other").await;
+
+    for round in 0..queue::MAX_QUEUES_PER_ACCOUNT {
+        queue::create(
+            &mut tx,
+            other.id,
+            &format!("dev-{round}"),
+            &[entry("a")],
+        )
+        .await
+        .expect("别人建满自己的额度");
+    }
+
+    queue::create(&mut tx, mine.id, PC1, &[entry("a")])
+        .await
+        .expect("别人满了不该占我的额度");
+}
+
+/// 惰性清理只收**没人认领过**的那些,有执行报告的一个都不碰。
+///
+/// 这一条是 F-003 第七点的正身:**别拿 TTL 猜**。没上报不等于孤儿 ——
+/// 设备可能只是离线,而它一回来就要接着放。误删的话,用户下次开机发现
+/// 自己的队列没了,而日志里什么都看不出来。
+#[tokio::test]
+async fn cleanup_spares_queues_a_player_has_claimed() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "q_quota_spare").await;
+
+    let claimed = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("发布队列应该成功");
+    queue::record_report(
+        &mut tx,
+        account.id,
+        claimed.queue_id,
+        &report(200, 1, claimed.revision),
+    )
+    .await
+    .expect("写报告应该成功");
+
+    // 把它推到宽限期之外,让清理有机会看见它。
+    sqlx::query(
+        "UPDATE play_queues SET updated_at = now() - INTERVAL '2 days'
+         WHERE id = $1",
+    )
+    .bind(claimed.queue_id)
+    .execute(&mut *tx)
+    .await
+    .expect("改时间应该成功");
+
+    // 再建一个,顺带触发那次惰性清理。
+    queue::create(
+        &mut tx,
+        account.id,
+        "dev-2",
+        &[entry("b")],
+    )
+    .await
+    .expect("发布队列应该成功");
+
+    let head =
+        queue::head(&mut tx, account.id, claimed.queue_id)
+            .await;
+    assert!(
+        head.is_ok(),
+        "有执行报告的队列不该被当成孤儿收走"
+    );
+}
+
+/// 反过来:从没人认领、又过了宽限期的,该收就收。
+#[tokio::test]
+async fn cleanup_collects_queues_nobody_ever_claimed() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "q_quota_orphan").await;
+
+    let orphan = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("发布队列应该成功");
+    sqlx::query(
+        "UPDATE play_queues SET updated_at = now() - INTERVAL '2 days'
+         WHERE id = $1",
+    )
+    .bind(orphan.queue_id)
+    .execute(&mut *tx)
+    .await
+    .expect("改时间应该成功");
+
+    queue::create(
+        &mut tx,
+        account.id,
+        "dev-2",
+        &[entry("b")],
+    )
+    .await
+    .expect("发布队列应该成功");
+
+    let head =
+        queue::head(&mut tx, account.id, orphan.queue_id)
+            .await;
+    assert!(
+        matches!(head, Err(AppError::NotFound)),
+        "没人认领又过期的该被收走,得到的是 {head:?}"
+    );
 }

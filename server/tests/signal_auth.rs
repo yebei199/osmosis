@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 
 use axum::extract::FromRef;
 use axum::routing::get;
-use server::gate::ratelimit::SharedLimiter;
 use server::store::{account, db};
 use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
@@ -29,15 +28,15 @@ const INVITE: &str = "let-me-in";
 
 /// 服务端的 state:鉴权提取器要池,信令 handler 要名册。
 ///
-/// 与 `AppState` 同形但只有这两样 —— 那个结构在二进制 crate 里,
-/// 集成测试引不到,而信令这条路由本来也只用得上这两个。
+/// 与 `AppState` 同形但只有这几样 —— 那个结构在二进制 crate 里,集成测试
+/// 引不到。**限流不在这里**:它挂在路由组上(`main::signal_routes`),
+/// 而这一组测的是鉴权与来源校验,两件事各测各的。
 #[derive(Clone)]
 struct SignalState {
     pool: PgPool,
     roster: SharedRoster,
     control: SharedControl,
     origins: AllowedOrigins,
-    limiter: SharedLimiter,
 }
 
 impl FromRef<SignalState> for PgPool {
@@ -61,12 +60,6 @@ impl FromRef<SignalState> for SharedControl {
 impl FromRef<SignalState> for AllowedOrigins {
     fn from_ref(state: &SignalState) -> Self {
         state.origins.clone()
-    }
-}
-
-impl FromRef<SignalState> for SharedLimiter {
-    fn from_ref(state: &SignalState) -> Self {
-        state.limiter.clone()
     }
 }
 
@@ -129,7 +122,6 @@ async fn start_server(pool: PgPool) -> SocketAddr {
             origins: AllowedOrigins::new(vec![
                 ALLOWED_ORIGIN.to_owned(),
             ]),
-            limiter: SharedLimiter::default(),
         });
 
     let listener =

@@ -27,7 +27,6 @@ use contract::{ClientSignal, DeviceDto, ServerSignal};
 use tokio::sync::mpsc;
 
 use crate::error;
-use crate::gate::ratelimit::SharedLimiter;
 use crate::store::account::Account;
 use crate::syncplay::control::Control;
 use crate::syncplay::roster::Roster;
@@ -62,11 +61,6 @@ pub type AllowedOrigins = Arc<Vec<String>>;
 /// 拦住自己,而超限在这一侧的后果是整条连接断掉,不是丢一条消息(见那里的说明)。
 /// 两边各写一个字面量的话,客户端那道自检迟早与这里对不上。
 const MAX_MESSAGE_BYTES: usize = contract::MAX_SIGNAL_BYTES;
-
-/// 一个账号一分钟内能建几条信令连接。
-///
-/// 重连有退避,正常客户端一分钟碰不到个位数;这道闸拦的是空转的重连风暴。
-const CONNECTS_PER_MINUTE: u32 = 30;
 
 /// 一条连接的三个时限。
 ///
@@ -105,7 +99,6 @@ pub async fn handler(
     State(roster): State<SharedRoster>,
     State(control): State<SharedControl>,
     State(origins): State<AllowedOrigins>,
-    State(limiter): State<SharedLimiter>,
 ) -> Response {
     // 浏览器一定带 `Origin`,原生端不带。带了就必须在白名单里 ——
     // 同源策略管不到 WebSocket,不校验的话任意网页都能借用户的登录态连上来。
@@ -119,17 +112,11 @@ pub async fn handler(
         }
     }
 
+    // 建连限流不在这里了:它挂在路由上(`gate::ratelimit` 的
+    // `signal_connect`)。**层只拦升级请求本身**,拦不到升级之后那条
+    // WebSocket 上的消息 —— 那一侧的上限仍是 `MAX_MESSAGE_BYTES`,
+    // 两道闸各管各的。
     let account_id = account.id;
-    {
-        let mut guard =
-            limiter.lock().expect("限流器锁中毒");
-        if !guard.check(
-            &format!("signal:{account_id}"),
-            CONNECTS_PER_MINUTE,
-        ) {
-            return error::rate_limited().into_response();
-        }
-    }
 
     upgrade.max_message_size(MAX_MESSAGE_BYTES).on_upgrade(
         move |socket| {

@@ -584,11 +584,42 @@ pub(in crate::music) fn publish_local_queue(
     }
 
     let device = crate::sync::syncplay::local_device_id();
+    // 已经有这台设备的队列就**发新版本**,不是再建一个。
+    //
+    // 每点一次歌建一个的话,一天下来几百个队列,而账号的队列数是有上限的
+    // (`store::queue::MAX_QUEUES_PER_ACCOUNT`)—— 更要紧的是那不对:
+    // 队列归**播放会话 / 输出设备**,这台设备就该只有一个当前队列
+    // (`docs/adr/0031` 二)。
+    let held = deck.execution.identity();
     let deck = deck.clone();
     let weak = ui.as_weak();
     let _ = slint::spawn_local(async move {
-        let published =
-            api::create_queue(&device, tracks).await;
+        let published = match held {
+            (Some(queue_id), _, Some(applied)) => {
+                let outcome = api::publish_queue(
+                    queue_id,
+                    applied,
+                    tracks.clone(),
+                )
+                .await;
+                match outcome {
+                    // 版本被别人推进过:这台设备的队列不该有别人在改,
+                    // 真撞上就重新建一个,而不是拿一个猜的版本号硬覆盖。
+                    Err(api::ApiError::Server {
+                        ref code,
+                        ..
+                    }) if code == "revision_conflict" => {
+                        log::warn!(
+                            "本机队列的版本被改过,另建一个"
+                        );
+                        api::create_queue(&device, tracks)
+                            .await
+                    }
+                    other => other,
+                }
+            }
+            _ => api::create_queue(&device, tracks).await,
+        };
         let Some(ui) = weak.upgrade() else { return };
 
         match published {

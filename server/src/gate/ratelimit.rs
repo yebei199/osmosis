@@ -1,123 +1,249 @@
-//! 固定窗口限流:同一个键在一个窗口里最多放行几次。
+//! 限流:同一个键在一段时间里最多放行几次。
 //!
-//! 登录与注册按来源 IP 限,信令建连按账号限。没有这道闸,一台机器就能
-//! 对着 `/login` 穷举密码,或者反复建连把名册刷成一片噪声。
+//! 用 `tower_governor` 的 GCRA,不再自己写固定窗口 —— 从前那份手写的只有
+//! 登录与建连两个调用点,而本轮新增的队列端点带着一条**无界写入路径**上生产
+//! (#109 F-003)。两套限流并存的话,迟早只改一处。
 //!
-//! 固定窗口而不是令牌桶:窗口边界上最坏能放行两倍的量,而这里防的是
-//! 每秒几百次的自动化,不是精确配额。为这点精度引一个 crate 不值得。
+//! ## 键是账号 id,不是 token
+//!
+//! 同一个账号可以有多个 token(多端登录、重新登录),按 token 分桶等于让总额度
+//! 随 token 数线性放大 —— 而那正是要限的东西。token 也不该进限流的键或日志:
+//! 它是凭据。
+//!
+//! 账号从 **request extensions** 里读,由前置的鉴权提取器放进去
+//! (见 [`crate::gate::auth`])。不自己再解析一遍请求头,更不信任请求体里
+//! 自报的账号 id。
+//!
+//! ## 分组,不是一个桶
+//!
+//! 六组各有各的节奏。混成一个的话,一次长队列上传会把同一账号的交互操作
+//! (暂停、下一首)一起饿死,而那是用户立刻看得见的卡顿。
+//!
+//! ## 这道闸只在**单个进程**里成立
+//!
+//! governor 的状态在进程内存里:N 个副本就是约 N 份预算,重启即清零。所以它
+//! 的定位是**每实例削峰**,不是全局配额。跨副本严格成立的只有数据库那道
+//! 队列数上限(见 `crate::store::queue::create`)。
+//! 真要全局精确,那是 Redis 那一档的事,而本仓现在连第二个副本都没有。
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-/// 键的数量超过这个数就顺手清一遍过期条目。
+use axum::http::{Request, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use governor::middleware::NoOpMiddleware;
+use tower_governor::GovernorError;
+use tower_governor::governor::{
+    GovernorConfig, GovernorConfigBuilder,
+};
+use tower_governor::key_extractor::{
+    KeyExtractor, SmartIpKeyExtractor,
+};
+
+use crate::store::account::Account;
+
+/// 按**账号 id** 分桶。
 ///
-/// IP 是攻击者能随意换的,不清的话这张表只涨不落。清理只在超过阈值时做,
-/// 于是正常流量下一次都不会跑。
-const PRUNE_ABOVE: usize = 4096;
+/// 读的是 extensions 里那份已认证的 [`Account`]。取不到就说取不到 —— 那说明
+/// 这条路由没有前置鉴权,是装配错了,不该悄悄退回按 IP 限。
+#[derive(Clone, Copy, Debug)]
+pub struct AccountKey;
 
-/// 一个共享的限流器。
-pub type SharedLimiter = Arc<Mutex<RateLimiter>>;
+impl KeyExtractor for AccountKey {
+    type Key = i64;
 
-/// 按键计数的固定窗口限流器。
-pub struct RateLimiter {
-    window: Duration,
-    seen: HashMap<String, (Instant, u32)>,
+    fn extract<T>(
+        &self,
+        req: &Request<T>,
+    ) -> Result<Self::Key, GovernorError> {
+        req.extensions()
+            .get::<Account>()
+            .map(|account| account.id)
+            .ok_or(GovernorError::UnableToExtractKey)
+    }
 }
 
-impl RateLimiter {
-    /// 窗口长度由调用方给;每次 [`check`](Self::check) 各自带自己的配额。
-    pub fn new(window: Duration) -> Self {
-        Self {
-            window,
-            seen: HashMap::new(),
-        }
-    }
+/// 一组配置的简写。`NoOpMiddleware` = 不往响应里塞 `x-ratelimit-*` 头。
+type Policy<K> = Arc<GovernorConfig<K, NoOpMiddleware>>;
 
-    /// 记一次并回答放不放行。`allowance` 是这个键在一个窗口里的上限。
+/// 六条策略,各一个桶。
+///
+/// 构造一次、共享 `Arc`:每条路由 new 一份的话,同一个账号在两条路由上各有
+/// 一份额度,而那两条本来就该共用一个桶。
+#[derive(Clone)]
+pub struct Policies {
+    /// 建队列与发新版本。低速:一次点播一发,而人点不了那么快。
+    pub queue_write: Policy<AccountKey>,
+    /// 写播放意图。交互频率,**不能被大上传吃光** —— 所以与上传分开。
+    pub queue_intent: Policy<AccountKey>,
+    /// 执行报告。要容得下设备数乘上报频率,外加事件触发与重连时的补报。
+    pub queue_report: Policy<AccountKey>,
+    /// 读队列。分页读一份长队列本身就是好几发。
+    pub queue_read: Policy<AccountKey>,
+    /// 登录与注册。**按来源 IP**:这两条正是用来取得登录态的,那时还没有账号。
+    pub auth_attempt: Policy<SmartIpKeyExtractor>,
+    /// 建立信令连接。按账号 —— 连上之前已经鉴过权了。
+    pub signal_connect: Policy<AccountKey>,
+}
+
+impl Policies {
+    /// 按当前的正常流量定的一组数,不是库的默认值。
     ///
-    /// 配额写在调用处而不是构造处:登录与建连的合理频率差一个数量级,
-    /// 而它们共用一张表没有坏处 —— 键各自带着前缀。
-    pub fn check(
-        &mut self,
-        key: &str,
-        allowance: u32,
-    ) -> bool {
-        let now = Instant::now();
-
-        if self.seen.len() > PRUNE_ABOVE {
-            let window = self.window;
-            self.seen.retain(|_, (started, _)| {
-                now.duration_since(*started) < window
-            });
+    /// `period` 是「多久**恢复一个**额度」,`burst_size` 是「攒得下几个」。
+    /// 不用 `per_second(n)` —— 那个名字读起来像「每秒 n 次」,实际是
+    /// 「每 n 秒一次」,是这套 API 上最容易写反的一处。
+    pub fn tuned() -> Self {
+        Self {
+            // 一次点播发一条。十个的余量够连点几下与重试,而持续下来
+            // 是每分钟十次 —— 人点不了这么快,机器才点得到。
+            queue_write: policy(
+                AccountKey,
+                Duration::from_secs(6),
+                10,
+            ),
+            // 交互:暂停、下一首、切目标。比上传宽一个档,而且**自己一个桶**,
+            // 不会被一次五千首的上传把额度吃光。
+            queue_intent: policy(
+                AccountKey,
+                Duration::from_secs(2),
+                30,
+            ),
+            // 报告:事件驱动(换批、换歌、洗牌、回卷),不是每秒一发。
+            // 但要容得下几台设备同时在线,外加重连时各补一发,所以桶开大。
+            queue_report: policy(
+                AccountKey,
+                Duration::from_secs(1),
+                120,
+            ),
+            // 读:一份五千首的队列要分十页读完,而换目标、重连都会重读。
+            queue_read: policy(
+                AccountKey,
+                Duration::from_secs(1),
+                60,
+            ),
+            // 与改之前同一个量级(原先是每分钟 20 次每 IP)。
+            auth_attempt: policy(
+                SmartIpKeyExtractor,
+                Duration::from_secs(3),
+                20,
+            ),
+            // 同上(原先每分钟 30 次每账号)。重连有退避,正常客户端碰不到。
+            signal_connect: policy(
+                AccountKey,
+                Duration::from_secs(2),
+                30,
+            ),
         }
+    }
 
-        let (started, count) = self
-            .seen
-            .entry(key.to_owned())
-            .or_insert((now, 0));
-
-        if now.duration_since(*started) >= self.window {
-            *started = now;
-            *count = 0;
-        }
-
-        *count += 1;
-        *count <= allowance
+    /// 定期把久未出现的键清掉。
+    ///
+    /// 不清的话这几张表只涨不落 —— 账号会销号,IP 更是随便换。手写那一版
+    /// 是「超过阈值顺手清一遍」,governor 这边给的是 `retain_recent`,
+    /// 由调用方决定多久跑一次。
+    pub fn spawn_cleanup(&self) {
+        let policies = self.clone();
+        tokio::spawn(async move {
+            let mut tick =
+                tokio::time::interval(CLEANUP_EVERY);
+            loop {
+                tick.tick().await;
+                policies
+                    .queue_write
+                    .limiter()
+                    .retain_recent();
+                policies
+                    .queue_intent
+                    .limiter()
+                    .retain_recent();
+                policies
+                    .queue_report
+                    .limiter()
+                    .retain_recent();
+                policies
+                    .queue_read
+                    .limiter()
+                    .retain_recent();
+                policies
+                    .auth_attempt
+                    .limiter()
+                    .retain_recent();
+                policies
+                    .signal_connect
+                    .limiter()
+                    .retain_recent();
+            }
+        });
     }
 }
 
-impl Default for RateLimiter {
-    /// 一分钟一个窗口。
-    fn default() -> Self {
-        Self::new(Duration::from_secs(60))
-    }
+/// 多久清一次过期的键。
+const CLEANUP_EVERY: Duration = Duration::from_secs(300);
+
+fn policy<K: KeyExtractor>(
+    key: K,
+    period: Duration,
+    burst: u32,
+) -> Policy<K> {
+    Arc::new(
+        GovernorConfigBuilder::default()
+            .period(period)
+            .burst_size(burst)
+            .key_extractor(key)
+            .finish()
+            .expect("限流参数写死在代码里,建不出来是编译期就该发现的错"),
+    )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 配额之内放行,超了就挡。
-    #[test]
-    fn allows_up_to_the_quota_then_blocks() {
-        let mut limiter = RateLimiter::default();
-
-        assert!(limiter.check("ip:1", 2));
-        assert!(limiter.check("ip:1", 2));
-        assert!(
-            !limiter.check("ip:1", 2),
-            "第三次该被挡下"
-        );
-    }
-
-    /// 键之间互不影响 —— 一个人打满了不该把别人一起锁在门外。
-    #[test]
-    fn keys_are_counted_separately() {
-        let mut limiter = RateLimiter::default();
-
-        assert!(limiter.check("ip:1", 1));
-        assert!(!limiter.check("ip:1", 1));
-        assert!(
-            limiter.check("ip:2", 1),
-            "另一个键不该受影响"
-        );
-    }
-
-    /// 窗口过去之后重新开始计。
-    #[test]
-    fn the_window_resets() {
-        let mut limiter =
-            RateLimiter::new(Duration::from_millis(30));
-
-        assert!(limiter.check("ip:1", 1));
-        assert!(!limiter.check("ip:1", 1));
-
-        std::thread::sleep(Duration::from_millis(40));
-
-        assert!(
-            limiter.check("ip:1", 1),
-            "新窗口里该重新放行"
-        );
+/// 被限住时回什么。
+///
+/// 用仓库自己的 [`contract::ErrorDto`] 形状,带 `Retry-After` —— 客户端按
+/// `code` 分支(见 `contract::ErrorDto`),而 `Retry-After` 告诉它等多久,
+/// 免得它立刻重试把闸撞得更死。
+///
+/// **与配额耗尽分开**:那一种回 `queue_quota_exceeded`,永远不会自己好,
+/// 客户端不该重试。混成同一个 code 的话,客户端会对着一个永久性的拒绝
+/// 无限退避重试。
+pub fn too_many_requests(error: GovernorError) -> Response {
+    match error {
+        GovernorError::TooManyRequests {
+            wait_time,
+            ..
+        } => {
+            let mut response = crate::error::rate_limited()
+                .into_response();
+            if let Ok(value) = wait_time.to_string().parse()
+            {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, value);
+            }
+            response
+        }
+        // 取不到键说明这条路由没挂前置鉴权,是装配错了。回 500 而不是放行:
+        // 放行等于这条路由从此不限流,而没有人会发现。
+        GovernorError::UnableToExtractKey => {
+            tracing::error!(
+                "限流取不到账号:这条路由没有前置鉴权,装配错了"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(contract::ErrorDto {
+                    code: "internal".to_owned(),
+                    message: "内部错误".to_owned(),
+                }),
+            )
+                .into_response()
+        }
+        GovernorError::Other { code, msg, .. } => (
+            code,
+            axum::Json(contract::ErrorDto {
+                code: "internal".to_owned(),
+                message: msg.unwrap_or_else(|| {
+                    "内部错误".to_owned()
+                }),
+            }),
+        )
+            .into_response(),
     }
 }

@@ -38,6 +38,13 @@ pub enum AppError {
     /// 明确拒绝而不是截断:截了就是悄悄改掉用户点的那一批是什么
     /// (`docs/adr/0031` 三)。
     QueueTooLarge,
+    /// 这个账号的队列数到顶了。
+    ///
+    /// 与 [`Self::QueueTooLarge`]、与 429 都分开:那两种说的是「这一次太大」
+    /// 与「这一阵太密」,等一等或换小一点就好;这一种是**存量**到顶,
+    /// 等多久都不会好,客户端不该重试。混成 `rate_limited` 的话,客户端会
+    /// 对着一个永久性的拒绝无限退避重试(#109 F-003)。
+    QueueQuotaExceeded,
     /// 数据库出错。
     Db(sqlx::Error),
 }
@@ -128,6 +135,14 @@ pub fn map_error(err: &AppError) -> Failure {
             StatusCode::CONFLICT,
             "revision_conflict",
             "队列已被改过,请重读当前版本".to_owned(),
+        ),
+        AppError::QueueQuotaExceeded => (
+            StatusCode::CONFLICT,
+            "queue_quota_exceeded",
+            format!(
+                "队列数到上限了(最多 {})",
+                crate::store::queue::MAX_QUEUES_PER_ACCOUNT
+            ),
         ),
         AppError::QueueTooLarge => (
             StatusCode::PAYLOAD_TOO_LARGE,

@@ -34,6 +34,33 @@ use crate::error::AppError;
 /// 读函数不收它:单条 SELECT 本来就是原子的,多要一个事务只是噪音。
 pub type Tx<'c> = Transaction<'c, Postgres>;
 
+/// 一个账号最多存几个队列。
+///
+/// 队列按**播放会话 / 输出设备**走,正常用法下一台设备一个 —— 三台设备加
+/// 一点历史,十个绰绰有余。定得住这个数的前提是本机点播**改版本而不是建新
+/// 队列**(见客户端 `publish_local_queue`):每点一次歌建一个的话,这个数
+/// 一天就爆了。
+///
+/// 这道闸与 `gate::ratelimit` 那道**不是一回事**:那道是每实例削峰、进程内
+/// 状态、重启清零;这一道在数据库里,**跨副本严格成立**,而且限的是存量
+/// 不是速率(#109 F-003)。
+pub const MAX_QUEUES_PER_ACCOUNT: i64 = 10;
+
+/// 一次惰性清理最多删几个。
+///
+/// 有界:建队列是用户按下去那一刻等着的操作,不该因为攒了两千个孤儿而卡住。
+/// 删不完下次接着删。
+const CLEANUP_BATCH: i64 = 20;
+
+/// 孤儿队列至少放多久才收。
+///
+/// **不拿 TTL 猜「还在不在用」**:没上报不等于孤儿 —— 设备可能只是离线,
+/// 而 `updated_at` 主要随发布变化,单凭它做 TTL 会误删「长期播放但不编辑」
+/// 的队列(#109 F-003)。所以这里只收**从来没有任何执行端认领过**的那些:
+/// 没有报告、没有待应用意图、而且过了宽限期。那种队列的含义很明确 ——
+/// 建出来之后没有任何播放端用过它。
+const ORPHAN_GRACE: &str = "1 hour";
+
 /// 回收旧版本时至少留几版。
 ///
 /// 留的是「可能有人正在分页读」的那几版:一次读固定在一个 revision 上,而读到
@@ -168,6 +195,31 @@ pub async fn create(
     entries: &[EntryInput],
 ) -> Result<QueueRef, AppError> {
     check_size(entries)?;
+
+    // **先锁账号行,再数**。反过来的话两条并发的建队列都数到 K-1,
+    // 都觉得还有余量,于是一起插进去 —— 配额就成了摆设。锁的是账号那一行,
+    // 所以同一账号的建队列排队,不同账号互不影响。
+    //
+    // 这一段必须在事务里,而签名收的是 `Tx` 就保证了这一点(#109 F-R1)。
+    sqlx::query(
+        "SELECT id FROM accounts WHERE id = $1 FOR UPDATE",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+
+    reclaim_orphans(tx, account_id).await?;
+
+    let (queues,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM play_queues WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if queues >= MAX_QUEUES_PER_ACCOUNT {
+        return Err(AppError::QueueQuotaExceeded);
+    }
 
     let (queue_id,): (i64,) = sqlx::query_as(
         "INSERT INTO play_queues
@@ -547,6 +599,37 @@ pub async fn record_report(
     .await?;
 
     Ok(done.rows_affected() > 0)
+}
+
+/// 有界地收掉**从来没有任何执行端认领过**的旧队列。
+///
+/// 判据不是 TTL(见 [`ORPHAN_GRACE`]):只收没有报告、没有待应用意图、
+/// 而且过了宽限期的那些 —— 那种队列的含义很明确,建出来之后没有播放端
+/// 用过它。有报告的那些**一个都不碰**,哪怕它很旧:设备可能只是离线,
+/// 而它一回来就要接着放。
+async fn reclaim_orphans(
+    tx: &mut Tx<'_>,
+    account_id: i64,
+) -> Result<(), AppError> {
+    sqlx::query(&format!(
+        "DELETE FROM play_queues
+         WHERE id IN (
+             SELECT q.id FROM play_queues q
+             LEFT JOIN play_queue_reports r ON r.queue_id = q.id
+             LEFT JOIN play_queue_intents i ON i.queue_id = q.id
+             WHERE q.account_id = $1
+               AND r.queue_id IS NULL
+               AND i.queue_id IS NULL
+               AND q.updated_at < now() - INTERVAL '{ORPHAN_GRACE}'
+             ORDER BY q.updated_at
+             LIMIT {CLEANUP_BATCH}
+         )"
+    ))
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 /// 队列归不归这个账号,顺带给出它的最新版本。不归就是 [`AppError::NotFound`] ——
