@@ -137,3 +137,107 @@ fn an_unchanged_order_is_not_reported_again() {
         "洗过牌就要报新的那一份"
     );
 }
+
+/// 重试同一次点播**不再重置播放**(AC-5)。
+///
+/// 遥控器重发一遍是常态:命令丢了、重连之后补一次。重新取一遍队列、从头起播
+/// 那一首,在用户那里就是「歌自己跳回开头了」。
+#[test]
+fn retrying_an_applied_operation_is_refused() {
+    let execution = Execution::default();
+    assert!(execution.begin("op-1"), "第一次该放行");
+    execution.adopt(7, 3, vec![11]);
+    execution.note(Outcome {
+        operation_id: "op-1".to_owned(),
+        applied: true,
+        reason: None,
+    });
+
+    assert!(
+        !execution.begin("op-1"),
+        "同一次操作重试不该再动播放"
+    );
+}
+
+/// 失败过的那一次,**重试是应该的**。
+///
+/// 与上一条正相反,而判据只差 `applied` 那一位:没成的操作重来一次正是
+/// 用户要的。分不开的话,一次网络抖动会把这首歌永久锁在「点不动」上。
+#[test]
+fn retrying_a_failed_operation_is_allowed() {
+    let execution = Execution::default();
+    execution.begin("op-1");
+    execution.note(Outcome {
+        operation_id: "op-1".to_owned(),
+        applied: false,
+        reason: Some("断了".to_owned()),
+    });
+
+    assert!(
+        execution.begin("op-1"),
+        "没成的那一次该能重来"
+    );
+}
+
+/// 连点 A、B:取数期间来了 B,**迟到的 A 不作数**(AC-5)。
+#[test]
+fn a_newer_operation_supersedes_the_one_in_flight() {
+    let execution = Execution::default();
+    execution.begin("op-a");
+
+    execution.begin("op-b");
+
+    assert!(
+        !execution.still_current("op-a"),
+        "A 已经被 B 顶掉了"
+    );
+    assert!(execution.still_current("op-b"));
+}
+
+/// 取数期间失权 / 换目标 / 退出被控:这一次作废(AC-5)。
+///
+/// 三种情形共用一个判据。作废的只是**在途那一次**,已经应用的那份副本
+/// 一动不动 —— 失权不等于停止播放。
+#[test]
+fn abandoning_drops_the_operation_but_keeps_the_copy() {
+    let execution = Execution::default();
+    execution.adopt(7, 3, vec![11, 12]);
+    execution.begin("op-1");
+
+    execution.abandon();
+
+    assert!(!execution.still_current("op-1"));
+    assert_eq!(
+        execution.identity(),
+        (Some(7), Some(3), Some(3)),
+        "已经在放的那一份不该被动"
+    );
+}
+
+/// 同步不上去的那一批会**隔一阵再试**,不是每秒一发(AC-12)。
+#[test]
+fn an_unsynced_queue_retries_on_a_cadence() {
+    let execution = Execution::default();
+
+    assert!(
+        execution.due_for_resync(100_000),
+        "第一次该试"
+    );
+    assert!(
+        !execution.due_for_resync(105_000),
+        "五秒之后太密了"
+    );
+    assert!(
+        execution.due_for_resync(140_000),
+        "隔够了就再试一次"
+    );
+}
+
+/// 已经有 `queue_id` 的那一批没什么可对的。
+#[test]
+fn a_synced_queue_is_never_due_for_resync() {
+    let execution = Execution::default();
+    execution.adopt(7, 3, vec![11]);
+
+    assert!(!execution.due_for_resync(1_000_000));
+}

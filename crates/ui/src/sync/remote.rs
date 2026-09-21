@@ -409,6 +409,9 @@ impl Remote {
     }
 
     /// 被控端按了「退出被遥控」:解锁本机,并撤掉遥控器的控制权。
+    ///
+    /// 在途的取数由调用方作废(见 `music::bind_remote`):这一层碰不到
+    /// `Deck`,而那份执行副本住在那边。
     pub fn exit_controlled(&self) {
         if let Some(client) = self.inner.client.get() {
             client.exit_controlled();

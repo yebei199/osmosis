@@ -18,6 +18,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// 两次补同步之间至少隔多久。
+///
+/// 服务端不可达时每秒打一发,日志会被刷满,而它恢复的时刻不由我们决定;
+/// 隔太久又会让用户在服务端回来之后还盯着「未同步」很久。半分钟是拍的
+// ponytail: 真要紧的话该由重连事件触发,而不是轮询问一句
+const RESYNC_EVERY_MS: u64 = 30_000;
+
 /// 一次操作做完之后要捎给服务端的那句话。
 ///
 /// 与报告同一条请求发出去:播放端知道「我到哪了」与「那次操作成没成」是同一刻
@@ -47,6 +54,21 @@ struct State {
     /// 条目是两个。
     entry_ids: Vec<i64>,
     pending: Option<Outcome>,
+    /// 正在取数的那一次操作。
+    ///
+    /// 取数是一次 HTTP 往返,几百毫秒到几秒。这期间可能发生三件事,而它们
+    /// 都该让这一次作废(`docs/adr/0031` 七):遥控器又点了一首(新操作顶掉
+    /// 旧的)、本机失权、用户退出被控。少了它,那几秒之后到货的旧队列会把
+    /// 已经换上的新队列盖掉 —— 而用户看到的是「点了 B,放出来的是 A」。
+    in_flight: Option<String>,
+    /// 最后一次**应用成功**的操作。
+    ///
+    /// 重试同一次点播不该再次重置播放(`docs/adr/0031` 七):遥控器重发一遍
+    /// 是常态(命令丢了、重连之后补一次),而重新取一遍队列、从头起播那一首,
+    /// 在用户那里就是「歌自己跳回开头了」。
+    applied_operation: Option<String>,
+    /// 上一次试着把本机队列同步上去是什么时候。
+    last_sync_try_ms: u64,
     /// 上一次**报出去**的播放次序。
     ///
     /// 留着它才判得出「这一次要不要带排列」:排列只在洗牌或回卷改变它的时候
@@ -133,9 +155,81 @@ impl Execution {
         Some(state.reported_order.clone())
     }
 
+    /// 开始应用一次操作。**返回 `false` 表示这一次已经应用过了,别再动播放。**
+    ///
+    /// 幂等那一半:重试同一个 `operation_id` 不该再次重置播放。
+    pub(in crate::music) fn begin(
+        &self,
+        operation_id: &str,
+    ) -> bool {
+        let mut state = self.inner.borrow_mut();
+        if state.applied_operation.as_deref()
+            == Some(operation_id)
+        {
+            return false;
+        }
+        state.in_flight = Some(operation_id.to_owned());
+        true
+    }
+
+    /// 这一次取数回来时,它还算不算数。
+    ///
+    /// 不算数的三种情形共用这一个判据:被更新的操作顶掉、失权、退出被控 ——
+    /// 后两种由 [`Self::abandon`] 清掉在途那一个。
+    pub(in crate::music) fn still_current(
+        &self,
+        operation_id: &str,
+    ) -> bool {
+        self.inner.borrow().in_flight.as_deref()
+            == Some(operation_id)
+    }
+
+    /// 在途那次操作作废:失权、换目标、退出被控。
+    ///
+    /// 只丢在途的那一个,**不动已经应用的那份副本** —— 失权不等于停止播放
+    /// (`docs/adr/0030`:手机没电不能让 pc1 停)。
+    pub(in crate::music) fn abandon(&self) {
+        self.inner.borrow_mut().in_flight = None;
+    }
+
     /// 记下一次操作的下场,等下一条报告捎走。
+    ///
+    /// 顺带给在途那一位收尾:成了就记住它(下次重试认得出来),没成就只是
+    /// 清掉 —— 失败过的那一次**重试是应该的**。
     pub(in crate::music) fn note(&self, outcome: Outcome) {
-        self.inner.borrow_mut().pending = Some(outcome);
+        let mut state = self.inner.borrow_mut();
+        if state.in_flight.as_deref()
+            == Some(outcome.operation_id.as_str())
+        {
+            state.in_flight = None;
+            if outcome.applied {
+                state.applied_operation =
+                    Some(outcome.operation_id.clone());
+            }
+        }
+        state.pending = Some(outcome);
+    }
+
+    /// 该不该再试一次把本机队列同步上去(AC-12 的「恢复后对账」)。
+    ///
+    /// 问过就算数 —— 它同时记下「这一次问是什么时候」,所以不会每秒都试。
+    /// 服务端不可达时每秒打一发,日志会被刷满,而它恢复的时刻不由我们决定。
+    pub(in crate::music) fn due_for_resync(
+        &self,
+        now_ms: u64,
+    ) -> bool {
+        let mut state = self.inner.borrow_mut();
+        // 已经有 id 了就没什么可对的。
+        if state.queue_id.is_some() {
+            return false;
+        }
+        if now_ms.saturating_sub(state.last_sync_try_ms)
+            < RESYNC_EVERY_MS
+        {
+            return false;
+        }
+        state.last_sync_try_ms = now_ms;
+        true
     }
 
     /// 取走那句话 —— **只捎一次**。

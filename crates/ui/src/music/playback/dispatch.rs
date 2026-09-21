@@ -630,6 +630,41 @@ pub(in crate::music) fn publish_local_queue(
     });
 }
 
+/// 服务端回来了就把没同步上去的那一批补提交(AC-12 的「恢复后对账」)。
+///
+/// 每秒那趟轮询叫它一次,但真正发出去由 `due_for_resync` 节流 —— 服务端
+/// 不可达时每秒打一发,日志会被刷满,而它恢复的时刻不由我们决定。
+///
+/// 只在**输出在本机、手上有歌、而且还没拿到 `queue_id`** 时才动:遥控时
+/// 那份队列归被控端管,本机这边不该去抢着发布。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn resync_local_queue(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
+    if deck.remote.is_remote()
+        || deck.remote.is_controlled()
+    {
+        return;
+    }
+    let (tracks, index) = {
+        let queue = deck.queue.borrow();
+        (queue.tracks().to_vec(), queue.index())
+    };
+    if tracks.is_empty() {
+        return;
+    }
+    if !deck
+        .execution
+        .due_for_resync(crate::sync::remote::now_ms())
+    {
+        return;
+    }
+
+    log::info!("本机队列还没同步上去,补提交一次");
+    publish_local_queue(ui, deck, tracks, index);
+}
+
 /// 把「这一批同步上去没有」推到界面上。
 #[cfg(not(target_arch = "wasm32"))]
 fn mark_sync(ui: &MainWindow, deck: &Deck) {
@@ -721,6 +756,15 @@ pub(in crate::music) fn adopt_remote_queue(
     entry_id: i64,
     operation_id: String,
 ) {
+    // 重试同一次点播不该再次重置播放(`docs/adr/0031` 七)。遥控器重发一遍
+    // 是常态 —— 命令丢了、重连之后补一次 —— 而重新取一遍、从头起播那一首,
+    // 在用户那里就是「歌自己跳回开头了」。
+    if !deck.execution.begin(&operation_id) {
+        log::info!(
+            "操作 {operation_id} 已经应用过,不再重置播放"
+        );
+        return;
+    }
     log::info!(
         "开始取执行副本: 队列 {queue_id}@{revision}, 条目 {entry_id}, \
          操作 {operation_id}"
@@ -733,6 +777,27 @@ pub(in crate::music) fn adopt_remote_queue(
         let fetched =
             api::fetch_queue(queue_id, revision).await;
         let Some(ui) = weak.upgrade() else { return };
+
+        // 这几秒里可能发生三件事,每一件都让这一次作废:遥控器又点了一首、
+        // 本机失权、用户退出被控(`docs/adr/0031` 七)。不查的话,迟到的
+        // 这一份会把已经换上的新队列盖掉 —— 用户看到的是「点了 B,
+        // 放出来的是 A」。
+        if !deck.execution.still_current(&operation_id) {
+            log::info!(
+                "操作 {operation_id} 被更新的一次顶掉了,丢掉这一份"
+            );
+            return;
+        }
+        // 失权、换目标、退出被控:三种都让本机不再被遥控,判据因此是同一个。
+        // 作废在途那一次,**不动已经在放的那份副本** —— 失权不等于停止播放
+        // (`docs/adr/0030`:手机没电不能让 pc1 停)。
+        if !deck.remote.is_controlled() {
+            log::info!(
+                "取数期间本机已不再被遥控,丢掉操作 {operation_id}"
+            );
+            deck.execution.abandon();
+            return;
+        }
 
         let entries = match fetched {
             Ok(entries) => entries,
