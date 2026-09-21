@@ -87,7 +87,10 @@ pub struct Report {
     pub applied_revision: i64,
     pub entry_id: Option<i64>,
     /// 实际播放次序:`entry_id` 的排列。显式存,不让两端凭 seed 猜。
-    pub play_order: Vec<i64>,
+    ///
+    /// `None` 是「这一条不带排列,沿用库里那份」。每秒那条上报走的就是
+    /// `None` —— 带上的话每秒要重写五千个 bigint,而排列一个小时也不变一次。
+    pub play_order: Option<Vec<i64>>,
     /// 列表循环的轮次。随机每轮重洗,排列与轮次要一起看。
     pub round: i64,
     pub position_ms: i64,
@@ -125,7 +128,7 @@ type ReportRow = (
     i64,
     i64,
     Option<i64>,
-    Vec<i64>,
+    Option<Vec<i64>>,
     i64,
     i64,
     String,
@@ -494,7 +497,8 @@ pub async fn record_report(
              state_seq = excluded.state_seq,
              applied_revision = excluded.applied_revision,
              entry_id = excluded.entry_id,
-             play_order = excluded.play_order,
+             play_order = COALESCE(
+                 excluded.play_order, play_queue_reports.play_order),
              round = excluded.round,
              position_ms = excluded.position_ms,
              play_state = excluded.play_state,

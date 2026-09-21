@@ -87,8 +87,13 @@ CREATE TABLE play_queue_reports (
     applied_revision BIGINT NOT NULL,
     entry_id BIGINT,
     -- 实际播放次序:entry_id 的排列。显式存,不让两端凭 seed 猜同一个排列
-    -- (ADR 0031 六)。空数组表示播放端还没报过。
-    play_order BIGINT[] NOT NULL,
+    -- (ADR 0031 六)。
+    --
+    -- **可空,而且报告可以不带它。** 每秒那条上报只报版本、轮次与位置;排列
+    -- 只在洗牌或回卷改变它的时候才带。不这么分的话,每秒一条报告就是每秒重写
+    -- 五千个 bigint —— 线上字节数不涨(AC-2 照过),而写放大全落在库里。
+    -- NULL 表示播放端还没报过排列。
+    play_order BIGINT[],
     -- 列表循环的轮次。随机每轮重洗,所以「第几轮」与排列要一起看。
     round BIGINT NOT NULL,
     position_ms BIGINT NOT NULL,

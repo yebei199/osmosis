@@ -70,7 +70,7 @@ fn report(
         state_seq,
         applied_revision,
         entry_id: None,
-        play_order: Vec::new(),
+        play_order: None,
         round: 0,
         position_ms: 0,
         play_state: "playing".to_owned(),
@@ -594,6 +594,66 @@ async fn a_report_out_of_sequence_is_refused() {
         head.report.expect("该有一份报告").state_seq,
         5
     );
+}
+
+/// 不带排列的报告**沿用库里那份**,不会把它清空。
+///
+/// 每秒那条上报走的就是这条路:排列一个小时也不变一次,而每秒把它一起写回去
+/// 就是每秒重写五千个 bigint。线上字节数不涨(AC-2 照过),写放大全落在库里 ——
+/// 这是个 AC-2 抓不到的洞,所以单独钉住。
+#[tokio::test]
+async fn a_report_without_an_order_keeps_the_stored_one() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "q_order").await;
+
+    let published = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("发布队列应该成功");
+
+    // 洗了一次牌:这一条带着排列。
+    let mut shuffled = report(200, 1, published.revision);
+    shuffled.play_order = Some(vec![3, 1, 2]);
+    queue::record_report(
+        &mut tx,
+        account.id,
+        published.queue_id,
+        &shuffled,
+    )
+    .await
+    .expect("写报告应该成功");
+
+    // 随后每秒那条:只报位置,不带排列。
+    let mut ticking = report(200, 2, published.revision);
+    ticking.position_ms = 1_000;
+    queue::record_report(
+        &mut tx,
+        account.id,
+        published.queue_id,
+        &ticking,
+    )
+    .await
+    .expect("写报告应该成功");
+
+    let head = queue::head(
+        &mut tx,
+        account.id,
+        published.queue_id,
+    )
+    .await
+    .expect("读队列头应该成功");
+    let stored = head.report.expect("该有一份报告");
+
+    assert_eq!(
+        stored.play_order,
+        Some(vec![3, 1, 2]),
+        "不带排列的报告不该把库里那份清掉"
+    );
+    assert_eq!(stored.position_ms, 1_000);
 }
 
 /// 播放端还停在旧版本上时,那个版本不能被回收掉(`docs/adr/0031` 五)。
