@@ -210,6 +210,16 @@ pub async fn create(
     .await?
     .ok_or(AppError::NotFound)?;
 
+    // 先把残留收掉:一台设备只留最新那条。
+    //
+    // 这些残留是下面那个洞漏出来的,每一条都占着配额,而 `reclaim_orphans`
+    // 按设计不碰有报告的队列 —— 不在这里收就永远收不掉。
+    //
+    // **不能只收调用方这一台**:卡死的账号里那些残留多半属于别的设备,而
+    // 新设备(比如刚装上的平板)第一次建队列时得等那些设备各自先来一趟才有
+    // 余量 —— 那个先后顺序用户看不见也控制不了。
+    collapse_per_device(tx, account_id).await?;
+
     // 这台设备已经有队列了就**发新版本**,不再插一行。
     //
     // 客户端那边也有这个判断(`playback::dispatch` 的 `publish_local_queue`),
@@ -224,10 +234,6 @@ pub async fn create(
         current_for_device(tx, account_id, device_id)
             .await?
     {
-        drop_superseded(
-            tx, account_id, device_id, queue_id,
-        )
-        .await?;
         return publish(
             tx, account_id, queue_id, revision, entries,
         )
@@ -652,27 +658,29 @@ async fn current_for_device(
     Ok(row)
 }
 
-/// 收掉这台设备**除当前那条以外**的队列。
+/// 每台设备只留最新那条,其余的收掉。
 ///
-/// 它们是这个洞漏下的残留:每一条都占着账号的配额,而 [`reclaim_orphans`]
-/// 按设计不碰有报告的队列,所以不收在这里就永远收不掉。
+/// 它们是「客户端记不住自己的 `queue_id`」这个洞漏下的残留:每一条都占着
+/// 账号的配额,而 [`reclaim_orphans`] 按设计不碰有报告的队列,所以不收在
+/// 这里就永远收不掉。
 ///
-/// 只删同一台设备自己的 —— 别的设备那条归别的设备,哪怕很旧。
-async fn drop_superseded(
+/// 收的是**所有**设备,不只调用方那一台 —— 见 [`create`] 里的理由。
+async fn collapse_per_device(
     tx: &mut Tx<'_>,
     account_id: i64,
-    device_id: &str,
-    keep: i64,
 ) -> Result<(), AppError> {
     sqlx::query(
-        "DELETE FROM play_queues
-         WHERE account_id = $1
-           AND device_id = $2
-           AND id <> $3",
+        "DELETE FROM play_queues q
+         WHERE q.account_id = $1
+           AND EXISTS (
+               SELECT 1 FROM play_queues newer
+               WHERE newer.account_id = q.account_id
+                 AND newer.device_id = q.device_id
+                 AND (newer.updated_at, newer.id)
+                     > (q.updated_at, q.id)
+           )",
     )
     .bind(account_id)
-    .bind(device_id)
-    .bind(keep)
     .execute(&mut **tx)
     .await?;
 

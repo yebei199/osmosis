@@ -988,3 +988,64 @@ async fn one_device_cannot_exhaust_the_quota_by_restarting()
         "十五次重启之后仍然只该有一条队列"
     );
 }
+
+/// 卡死的账号,新设备一来就该自愈 —— 不必等别的设备先各点一次歌。
+///
+/// 这一条测的是修复的**回收面**:线上那十条残留分属手机和 pc1,而平板是
+/// 一台全新的设备。只收「调用方自己那台」的话,平板第一次建队列照样撞满,
+/// 得等手机和 pc1 各来一趟才有余量 —— 那个先后顺序用户看不见也控制不了。
+#[tokio::test]
+async fn a_brand_new_device_heals_an_account_stuck_at_the_quota()
+ {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "q_heal").await;
+
+    // 造出修复之前的现场:两台设备各漏了五条,而且每条都放过歌
+    // (有报告 —— `reclaim_orphans` 一条都不会碰)。
+    for device in ["phone", "pc1"] {
+        for _ in 0..5 {
+            let (id,): (i64,) = sqlx::query_as(
+                "INSERT INTO play_queues
+                     (account_id, device_id, revision, next_entry_id)
+                 VALUES ($1, $2, 1, 1) RETURNING id",
+            )
+            .bind(account.id)
+            .bind(device)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("造残留应该成功");
+            sqlx::query(
+                "INSERT INTO play_queue_reports
+                     (queue_id, device_id, epoch, state_seq,
+                      applied_revision, round, position_ms, play_state)
+                 VALUES ($1, $2, 1, 1, 1, 0, 0, 'playing')",
+            )
+            .bind(id)
+            .bind(device)
+            .execute(&mut *tx)
+            .await
+            .expect("造报告应该成功");
+        }
+    }
+    assert_eq!(
+        count_queues(&mut tx, account.id).await,
+        queue::MAX_QUEUES_PER_ACCOUNT,
+        "现场该正好卡在上限上"
+    );
+
+    // 平板第一次点歌。
+    queue::create(
+        &mut tx,
+        account.id,
+        "tablet",
+        &[entry("a")],
+    )
+    .await
+    .expect("新设备该能建队列,不必等别的设备先来一趟");
+
+    assert_eq!(
+        count_queues(&mut tx, account.id).await,
+        3,
+        "两台老设备各收成一条,加上平板自己那条"
+    );
+}
