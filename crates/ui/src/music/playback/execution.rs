@@ -243,5 +243,123 @@ impl Execution {
     }
 }
 
+/// 一次取数走完之后的下场。
+///
+/// 六个而不是一个 `Result`:调用方要照着它决定给用户看什么,而「被顶掉」
+/// 与「取失败」在屏幕上是两回事 —— 前者一句话都不该说(用户点的那一首正在
+/// 取),后者必须说。
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::music) enum Adoption {
+    /// 同一次点播重发了一遍,而它已经应用过:连取都不取。
+    AlreadyApplied,
+    /// 取回来时已经被更新的一次顶掉了:账本一个字都不写。
+    Superseded,
+    /// 取数期间本机不再被遥控:作废在途那一次,已经在放的那份不动。
+    Dropped,
+    /// 取不下来。保留旧副本,附上说得出口的原因。
+    Failed(String),
+    /// 取回来了,但这一版里没有要播的那一条。
+    Missing,
+    /// 换上:这一批的第 `index` 首。
+    Adopt {
+        index: usize,
+        tracks: Vec<app_core::TrackDto>,
+    },
+}
+
+/// 取一份执行副本换上,三条闸都过一遍(`docs/adr/0031` 七)。
+///
+/// 只动账本,一个像素都不画 —— 起播、提示、检查点归调用方
+/// (`dispatch::adopt_remote_queue`)。拆开是为了**能测**:要验的东西是
+/// 「取数那几秒里用户又动了一下会怎样」,而那既不需要窗口,也不需要服务端。
+///
+/// 两个闭包而不是两个值,各有各的理由:
+///
+/// - `fetch` 是闭包,所以重发那一次**连请求都不发**;
+/// - `controlled` 是闭包,所以它在 `await` **之后**才求值 —— 先求好的话,
+///   取数期间的失权就查不出来,而那正是这一段存在的理由。
+pub(in crate::music) async fn adopt_with<Fut, E>(
+    execution: &Execution,
+    queue_id: i64,
+    revision: i64,
+    entry_id: i64,
+    operation_id: String,
+    controlled: impl Fn() -> bool,
+    fetch: impl FnOnce() -> Fut,
+) -> Adoption
+where
+    Fut: core::future::Future<
+            Output = Result<Vec<api::QueueEntryDto>, E>,
+        >,
+    E: core::fmt::Display,
+{
+    if !execution.begin(&operation_id) {
+        return Adoption::AlreadyApplied;
+    }
+    // 先记下想要哪一版再去取:这几秒里遥控器那头看到的应该是「新版本待应用」,
+    // 而不是「什么都没发生」。
+    execution.want(queue_id, revision);
+
+    let fetched = fetch().await;
+
+    // 顺序要紧:先问「这一份还算不算数」,再看它成没成。反过来的话,一份
+    // 迟到的失败会把下场记到**新**那一次头上,于是遥控器把正在放的那一首
+    // 标成没应用。
+    if !execution.still_current(&operation_id) {
+        return Adoption::Superseded;
+    }
+    // 失权、换目标、退出被控:三种都让本机不再被遥控,判据因此是同一个。
+    if !controlled() {
+        execution.abandon();
+        return Adoption::Dropped;
+    }
+
+    let entries = match fetched {
+        Ok(entries) => entries,
+        Err(error) => {
+            // 这里**不动** `applied_revision` —— 它说的是「手上这份是哪一版」,
+            // 而手上这份没换。
+            let reason = error.to_string();
+            execution.note(Outcome {
+                operation_id,
+                applied: false,
+                reason: Some(reason.clone()),
+            });
+            return Adoption::Failed(reason);
+        }
+    };
+
+    let Some(index) = entries
+        .iter()
+        .position(|entry| entry.entry_id == entry_id)
+    else {
+        // 别猜第一首:放一首没点过的歌比不出声更糟。
+        execution.note(Outcome {
+            operation_id,
+            applied: false,
+            reason: Some(format!(
+                "第 {revision} 版里没有条目 {entry_id}"
+            )),
+        });
+        return Adoption::Missing;
+    };
+
+    let entry_ids = entries
+        .iter()
+        .map(|entry| entry.entry_id)
+        .collect();
+    let tracks = entries
+        .into_iter()
+        .map(|entry| entry.track)
+        .collect();
+    execution.adopt(queue_id, revision, entry_ids);
+    execution.note(Outcome {
+        operation_id,
+        applied: true,
+        reason: None,
+    });
+    Adoption::Adopt { index, tracks }
+}
+
 #[cfg(test)]
 mod tests;

@@ -787,65 +787,49 @@ pub(in crate::music) fn adopt_remote_queue(
     entry_id: i64,
     operation_id: String,
 ) {
-    // 重试同一次点播不该再次重置播放(`docs/adr/0031` 七)。遥控器重发一遍
-    // 是常态 —— 命令丢了、重连之后补一次 —— 而重新取一遍、从头起播那一首,
-    // 在用户那里就是「歌自己跳回开头了」。
-    if !deck.execution.begin(&operation_id) {
-        log::info!(
-            "操作 {operation_id} 已经应用过,不再重置播放"
-        );
-        return;
-    }
     log::info!(
-        "开始取执行副本: 队列 {queue_id}@{revision}, 条目 {entry_id}, \
+        "收到执行副本请求: 队列 {queue_id}@{revision}, 条目 {entry_id}, \
          操作 {operation_id}"
     );
-    deck.execution.want(queue_id, revision);
 
     let deck = deck.clone();
     let weak = ui.as_weak();
     let _ = slint::spawn_local(async move {
-        let fetched =
-            api::fetch_queue(queue_id, revision).await;
+        // 三条闸与账本都在 `adopt_with` 里,这一段只管它交回来的下场
+        // 落到屏幕上是什么样。
+        let settled = adopt_with(
+            &deck.execution,
+            queue_id,
+            revision,
+            entry_id,
+            operation_id,
+            || deck.remote.is_controlled(),
+            || api::fetch_queue(queue_id, revision),
+        )
+        .await;
+
         let Some(ui) = weak.upgrade() else { return };
-
-        // 这几秒里可能发生三件事,每一件都让这一次作废:遥控器又点了一首、
-        // 本机失权、用户退出被控(`docs/adr/0031` 七)。不查的话,迟到的
-        // 这一份会把已经换上的新队列盖掉 —— 用户看到的是「点了 B,
-        // 放出来的是 A」。
-        if !deck.execution.still_current(&operation_id) {
-            log::info!(
-                "操作 {operation_id} 被更新的一次顶掉了,丢掉这一份"
-            );
-            return;
-        }
-        // 失权、换目标、退出被控:三种都让本机不再被遥控,判据因此是同一个。
-        // 作废在途那一次,**不动已经在放的那份副本** —— 失权不等于停止播放
-        // (`docs/adr/0030`:手机没电不能让 pc1 停)。
-        if !deck.remote.is_controlled() {
-            log::info!(
-                "取数期间本机已不再被遥控,丢掉操作 {operation_id}"
-            );
-            deck.execution.abandon();
-            return;
-        }
-
-        let entries = match fetched {
-            Ok(entries) => entries,
-            Err(error) => {
-                // 保留旧副本。这里**不动** `applied_revision` ——
-                // 它说的是「手上这份是哪一版」,而手上这份没换。
-                log::warn!(
-                    "取执行副本失败,保留旧的那一份: {error}"
+        match settled {
+            Adoption::AlreadyApplied => {
+                log::info!(
+                    "这一次点播已经应用过,不再重置播放"
                 );
-                deck.execution.note(Outcome {
-                    operation_id,
-                    applied: false,
-                    reason: Some(error.to_string()),
-                });
+            }
+            Adoption::Superseded => {
+                log::info!("被更新的一次顶掉了,丢掉这一份");
+            }
+            Adoption::Dropped => {
+                log::info!(
+                    "取数期间本机已不再被遥控,丢掉这一次"
+                );
+            }
+            Adoption::Failed(reason) => {
+                log::warn!(
+                    "取执行副本失败,保留旧的那一份: {reason}"
+                );
                 crate::notice::show(
                     &ui,
-                    format!("队列没取下来: {error}"),
+                    format!("队列没取下来: {reason}"),
                 );
                 // 下场要报出去,否则服务端那条意图永远挂在 pending 上,
                 // 而遥控器会一直显示「新版本待应用」。
@@ -853,52 +837,26 @@ pub(in crate::music) fn adopt_remote_queue(
                     &deck,
                     deck.queue.borrow().index(),
                 );
-                return;
             }
-        };
-
-        let Some(index) = entries
-            .iter()
-            .position(|entry| entry.entry_id == entry_id)
-        else {
-            // 取回来的那一版里没有要播的那一条。别猜第一首 —— 放一首没点过
-            // 的歌比不出声更糟。
-            deck.execution.note(Outcome {
-                operation_id,
-                applied: false,
-                reason: Some(format!(
-                    "第 {revision} 版里没有条目 {entry_id}"
-                )),
-            });
-            crate::notice::show(
-                &ui,
-                "要播的那一条不在这一版队列里".to_owned(),
-            );
-            checkpoint(&deck, deck.queue.borrow().index());
-            return;
-        };
-
-        let entry_ids: Vec<i64> = entries
-            .iter()
-            .map(|entry| entry.entry_id)
-            .collect();
-        let tracks: Vec<TrackDto> = entries
-            .into_iter()
-            .map(|entry| entry.track)
-            .collect();
-
-        // 记账与换批之间不留空档:先记上,紧接着换,两步之间没有 await。
-        deck.execution.adopt(queue_id, revision, entry_ids);
-        deck.execution.note(Outcome {
-            operation_id,
-            applied: true,
-            reason: None,
-        });
-        play_batch(&ui, &deck, tracks, index);
-        // 换批之后立刻留一个检查点:遥控器那头正等着「待应用」那个标记消失,
-        // 而它读的是服务端记下的 applied_revision。
-        checkpoint(&deck, index);
-        mark_sync(&ui, &deck);
+            Adoption::Missing => {
+                crate::notice::show(
+                    &ui,
+                    "要播的那一条不在这一版队列里"
+                        .to_owned(),
+                );
+                checkpoint(
+                    &deck,
+                    deck.queue.borrow().index(),
+                );
+            }
+            Adoption::Adopt { index, tracks } => {
+                play_batch(&ui, &deck, tracks, index);
+                // 换批之后立刻留一个检查点:遥控器那头正等着「待应用」那个
+                // 标记消失,而它读的是服务端记下的 applied_revision。
+                checkpoint(&deck, index);
+                mark_sync(&ui, &deck);
+            }
+        }
     });
 }
 
