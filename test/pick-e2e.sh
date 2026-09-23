@@ -62,14 +62,29 @@ must() {
 
 # 切到要测的那个视图。没有卡墙的构建(非 GPU)只有列表,也就没有开关。
 show_view() {
+  # 卡墙起播后会开播放页,而播放页开着时卡墙不推相机(渲染循环只在墙露着
+  # 时走它),点了也不会起播。用户是按返回/Esc 收起的,这里也一样。
+  call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
+  sleep 1
   local button
   button=$(handle "$toggle")
   if [ -n "$button" ]; then
     act "$button" Default_
-    sleep 2   # 塌回 / 展开动画落地才换视图
   elif [ "$MODE" = wall ]; then
     must "" "$toggle"
   fi
+  # 塌回 / 展开动画在渲染循环里走,落地才换视图。窗口不可见(滚出屏幕、
+  # 最小化、熄屏)时合成器不派发重绘,动画停在半路,视图永远不换 —— 开关
+  # 已经高亮,看着像「点了不切」。所以等目标视图真出现,等不到就说清楚。
+  local want
+  [ "$MODE" = list ] && want="TrackList::touch" || want="WallView::wall-area"
+  # 一秒一帧时(见下面起播那段)塌回要十几秒,等宽一点。
+  for _ in $(seq 1 60); do
+    [ -n "$(handle "$want")" ] && return
+    sleep 1
+  done
+  echo "切到 $MODE 视图 60 秒没落地 —— 窗口可能不可见,动画不走" >&2
+  exit 1
 }
 
 # 连点第 index 首 TAPS 下。
@@ -114,8 +129,10 @@ for index in 0 1; do
   tap "$index"
   echo "$MODE: 第 $((index + 1)) 首连点 $TAPS 下"
 
-  # 卡墙要等相机推完才起播;取直链、开流、解码还要一两秒。
-  for _ in $(seq 1 20); do
+  # 卡墙要等相机推完才起播;取直链、开流、解码还要一两秒。等得宽:窗口
+  # 不在前台(锁屏、熄屏)时合成器一秒只给一帧,相机要推二十多秒 —— 等短了,
+  # 这一轮迟到的起播会漏进下一轮的账。
+  for _ in $(seq 1 60); do
     sleep 1
     [ "$(played)" -gt "$played_before" ] && break
   done
@@ -123,7 +140,11 @@ for index in 0 1; do
     echo "  没起播,换下一首(点中的可能正是在放的那首)"
     continue
   fi
-  # 迟到的第二发要有时间落地,才判得出它有没有。
+  # 发布在起播之后异步做,先等它落地;再多等一会儿,迟到的第二发才判得出来。
+  for _ in $(seq 1 10); do
+    [ "$(published)" -gt "$published_before" ] && break
+    sleep 1
+  done
   sleep 3
   plays=$(( $(played) - played_before ))
   publishes=$(( $(published) - published_before ))
