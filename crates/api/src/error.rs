@@ -13,6 +13,12 @@ pub fn base_url() -> &'static str {
         .unwrap_or("http://127.0.0.1:3000")
 }
 
+/// 发行档还是 debug 档。烘了后端地址的是发行档(`just android-build` /
+/// `just desktop-install`),没烘的连本机后端,即 debug 档(#119)。
+pub fn is_release() -> bool {
+    option_env!("OSMOSIS_API_BASE").is_some()
+}
+
 /// 一次请求可能的失败方式。
 ///
 /// 这些都不是线上格式,因此不属于 `contract`:它们描述的是"没能完成一次往返",
