@@ -24,6 +24,9 @@ mod controls;
 mod downloads;
 
 #[cfg(target_os = "android")]
+mod updater;
+
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     android_logger::init_once(
@@ -79,6 +82,8 @@ fn android_main(app: slint::android::AndroidApp) {
     // 下载落点。与媒体控件同一条理由要提前克隆:`init` 会把 `app` 吃掉,
     // 而这两样都要从它身上取 JavaVM。
     ui::install_download_store(downloads::start(&app));
+    // 应用内升级的安装器(#129)。只有发行档会用上它,debug 档由 ui 自己挡掉。
+    updater::start(&app);
     slint::android::init(app)
         .expect("slint android init failed");
 

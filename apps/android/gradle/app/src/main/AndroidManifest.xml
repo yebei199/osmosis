@@ -20,6 +20,11 @@
          也没有锁屏控件,但 MediaSession 还在 —— 耳机线控与蓝牙按键照常。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 应用内升级(#129,src/main/java/.../Updater.java):PackageInstaller 覆盖安装
+         自己的新版。这是「安装未知应用」那个开关的前提,开关本身仍由用户在系统里打开,
+         第一次升级时系统会引过去。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- roundIcon 指同一份:自适应图标本来就由启动器去裁形状,再给一份圆的
          等于把同一件事说两遍,而两份迟早会不一致。 -->
     <application
@@ -51,5 +56,10 @@
             android:name=".MediaControlsService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- 接 PackageInstaller 回来的安装状态。PendingIntent 显式指向它,不导出。 -->
+        <receiver
+            android:name=".Updater"
+            android:exported="false" />
     </application>
 </manifest>
