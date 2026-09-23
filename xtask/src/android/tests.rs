@@ -288,3 +288,43 @@ fn build_apk_rejects_bad_abis_before_the_toolchain() {
         "报的不是用法错误,说明已经走到工具链那一步:{error}"
     );
 }
+
+/// gradle 拿到的 versionName 就是 workspace 版本,versionCode 由它单调推出。
+/// 设备上 `dumpsys package` 读到的版本号与 #129 的应用内升级都认这两个值。
+#[test]
+fn gradle_args_carry_workspace_version() {
+    let args =
+        gradle_args(&[Abi::Arm64V8a], "0.1.14").unwrap();
+    assert_eq!(
+        args,
+        [
+            "--no-daemon",
+            "-PstudyAbis=arm64-v8a",
+            "-PosmosisVersionName=0.1.14",
+            "-PosmosisVersionCode=1014",
+            "assembleDebug",
+        ]
+    );
+}
+
+/// versionCode 必须随版本单调增:安卓拒绝 versionCode 变小的覆盖安装。
+#[test]
+fn version_code_is_monotonic_across_components() {
+    let code = |v| version_code(v).unwrap();
+    assert!(code("0.2.0") > code("0.1.999"));
+    assert!(code("1.0.0") > code("0.999.999"));
+    assert!(code("0.1.15") > code("0.1.14"));
+}
+
+/// 边界:缺段、预发布后缀、某段溢出 999 都拒绝,而不是算出一个会撞车的码。
+#[test]
+fn version_code_rejects_malformed_versions() {
+    for bad in
+        ["0.1", "0.1.14-rc1", "0.1000.0", "a.b.c", ""]
+    {
+        assert!(
+            version_code(bad).is_err(),
+            "{bad} 应当被拒"
+        );
+    }
+}
