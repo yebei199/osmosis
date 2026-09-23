@@ -44,10 +44,17 @@ done
 sleep 1
 rm -f "$D/ns.ready" "$D/ns.pid" "$D/gate-desk.pid" "$D/desk.log"
 printf 'nameserver 10.0.2.3\n' > "$D/resolv.conf"
-mkdir -p "$D/desk-state"
+mkdir -p "$D/desk-state" "$D/tmp"
 
 # 外层:起 ns、接 slirp、等 MCP。整段 setsid 到后台,本脚本返回后实例照跑。
-env -u OSMOSIS_API_BASE XDG_STATE_HOME="$D/desk-state" SLINT_MCP_PORT=8091 \
+#
+# TMPDIR 换成目录里的一份:本脚本跑在 `nix-shell --run` 里,nix-shell 退出时删掉
+# 它自己的 TMPDIR,实例的音频缓存从此建不了临时文件,点歌只报「音频流错误」(#111)。
+# 代理变量去掉:宿主的代理听在宿主的 127.0.0.1 上,ns 里那个回环上什么都没有,
+# 走代理的直链请求全部失败。
+env -u OSMOSIS_API_BASE -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+  -u https_proxy -u http_proxy -u all_proxy TMPDIR="$D/tmp" \
+  XDG_STATE_HOME="$D/desk-state" SLINT_MCP_PORT=8091 \
   RUST_LOG="${RUST_LOG:-info}" setsid bash -c '
   NS_DESKTOP_INNER=1 unshare --user --map-root-user --net --mount "$0" "$1" "$2" "$3" &
   child=$!
