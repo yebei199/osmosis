@@ -20,6 +20,8 @@ api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 # debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
 # 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
 local_api := "http://127.0.0.1:3000"
+# 生产平板的 ro.product.model。debug 包拒装到它上面,见 android-not-production。
+production_tablet_model := "NP06J"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -241,10 +243,22 @@ dev-adb *args:
     elif [ "$(grep -c . <<< "$online")" -eq 1 ]; then
         serial=$online
     else
-        echo "没设 ANDROID_SERIAL,而在线设备不是正好一台" >&2
+        echo "没设 ANDROID_SERIAL,而在线设备不是正好一台。挑一台:ANDROID_SERIAL=<序列号> just ..." >&2
+        adb devices -l >&2
         exit 1
     fi
     exec adb -s "$serial" "$@"
+
+# debug 包不进生产平板。平板是日常在用的生产端,只在发版时装 release 包;debug 包
+# 连本机后端,装上去就点不了歌。认型号不认序列号:无线 adb 的序列号是 IP:端口,会变。
+[private]
+android-not-production:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    model=$({{just_executable()}} dev-adb shell getprop ro.product.model | tr -d '\r')
+    [ "$model" != "{{production_tablet_model}}" ] && exit 0
+    echo "目标设备是生产平板({{production_tablet_model}}),拒绝装 debug 包。换 ANDROID_SERIAL 指向开发机。" >&2
+    exit 1
 
 # 本机后端没在应答就**编译之前**失败,并说怎么起。形状同下面的 mcp-port-free。
 # debug 构建连的是它(见 local_api),没起的话几分钟的编译之后界面照常出来,
@@ -308,7 +322,7 @@ mcp-forward:
 # 连手机自己,启动即「同播失败:信令错误」。forward 与 reverse 都挂在 adb 连接上,
 # **adb 重连(无线 adb 换端口、拔插线)之后重跑本配方**,或单独补 mcp-forward 与 android-reverse。
 [group('mcp')]
-mcp-android: local-backend-up mcp-forward android-reverse
+mcp-android: local-backend-up android-not-production mcp-forward android-reverse
     env -u OSMOSIS_API_BASE nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     {{just_executable()}} dev-adb install -r {{apk}}
     {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
