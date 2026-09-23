@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # 端到端:歌单列表与歌单详情铺满可用高度,底部只让出控制条那一段(#116)。
 #
-# 驱动走应用内嵌的 MCP(安卓 8090 / 桌面 8091),断言量的是元素几何,不看画面。
+# 驱动走应用内嵌的 MCP(安卓 8090 / 桌面 8091),断言量的是元素几何。
 # 前提:应用起着、已登录(test/mcp-login.sh)、账号里至少有一个歌单。
 # 控制条在不在都能跑:在的时候按 page-reserve 断言,不在的时候按页边距断言。
+#
+# 真机(PORT=8090)还多验一样像素:元素树里有行不等于屏幕上画出来了,所以
+# screencap 截下列表那一块,灰度标准差够高才算有内容。空列表区只有背景渐变。
 set -euo pipefail
 
 PORT="${PORT:-8090}"
 
 exec python3 - "$PORT" <<'PY'
-import json, sys, time, urllib.request
+import json, subprocess, sys, tempfile, time, urllib.request
 
 URL = f"http://127.0.0.1:{sys.argv[1]}/mcp"
 # 页边距 16 + 一格布局间距 12;控制条的 page-reserve = 62 + 22 * 2。
@@ -61,6 +64,31 @@ def expect(id, bare_max):
           f" —— {'通过' if ok else '失败'}")
     return ok
 
+# 空的列表区只剩背景渐变,灰度 sd 实测 0.033;画出行的实测 0.067~0.070。
+# 门槛取两者之间。
+PAINTED_SD = 0.05
+
+def painted(id):
+    p = props(by_id(id)[0])
+    scale = call("get_window_properties", windowHandle=win)["scaleFactor"]
+    x, y = p["absolutePosition"].get("x", 0.0), p["absolutePosition"].get("y", 0.0)
+    w, h = p["size"]["width"], p["size"]["height"]
+    with tempfile.NamedTemporaryFile(suffix=".png") as f:
+        f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"],
+                               check=True, capture_output=True).stdout)
+        f.flush()
+        crop = f"{w * scale:.0f}x{h * scale:.0f}+{x * scale:.0f}+{y * scale:.0f}"
+        sd = float(subprocess.run(
+            ["magick", f.name, "-crop", crop, "+repage", "-colorspace", "Gray",
+             "-format", "%[fx:standard_deviation]", "info:"],
+            check=True, capture_output=True, text=True).stdout)
+    ok = sd >= PAINTED_SD
+    print(f"{id}: 屏幕上列表区灰度 sd {sd:.4f}(≥ {PAINTED_SD} 才算画出来了)"
+          f" —— {'通过' if ok else '失败'}")
+    return ok
+
+on_phone = sys.argv[1] == "8090"
+
 # 音乐页 → 「我的歌单」分区。分段条/竖栏里的格子没有 id,按顺序取;
 # 竖栏第一格是收起键,所以往后挪一格。
 for h in query(root, matchElementAccessibleRole="Button"):
@@ -73,6 +101,8 @@ if by_id("MusicPage::playlist-header"):
     click(by_id("MusicPage::back")[0])
 
 ok = expect("MusicPage::playlist-list", BARE + SPACING)
+if on_phone:
+    ok = painted("MusicPage::playlist-list") and ok
 
 # 点开第一个歌单。详情的曲目要等网络,轮询到列表出现为止。
 click(query(by_id("MusicPage::playlist-list")[0], matchElementTypeNameOrBase="TouchArea")[0])
@@ -83,6 +113,8 @@ for _ in range(20):
 else:
     sys.exit("详情里一直没有曲目列表 —— 歌单是空的,还是没取到?")
 ok = expect("MusicPage::track-list", BARE + SPACING) and ok
+if on_phone:
+    ok = painted("MusicPage::track-list") and ok
 click(by_id("MusicPage::back")[0])
 
 sys.exit(0 if ok else 1)
