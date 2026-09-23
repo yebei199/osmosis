@@ -74,9 +74,7 @@ pub type ThumbnailPixels = SharedPixelBuffer<Rgba8Pixel>;
 /// 与 [`decode`] 的差别只在尺寸和不出点云:那一个供播放页那张大图,要原分辨率;
 /// 这一个一次要出几十上百张,只能出小的。失败路径同样是常态路径 ——
 /// CDN 过期后回的是 HTML 错误页。
-pub fn decode_thumbnail(
-    bytes: &[u8],
-) -> Option<ThumbnailPixels> {
+pub fn decode_thumbnail(bytes: &[u8]) -> Option<Thumbnail> {
     let decoded = image::load_from_memory(bytes).ok()?;
     let (w, h) = (decoded.width(), decoded.height());
 
@@ -97,11 +95,43 @@ pub fn decode_thumbnail(
     };
 
     let (tw, th) = small.dimensions();
-    Some(ThumbnailPixels::clone_from_slice(
-        small.as_raw(),
-        tw,
-        th,
-    ))
+    Some(Thumbnail {
+        pixels: ThumbnailPixels::clone_from_slice(
+            small.as_raw(),
+            tw,
+            th,
+        ),
+        shrunk: long_side > THUMBNAIL_SIZE,
+    })
+}
+
+/// [`decode_thumbnail`] 的结果。
+pub struct Thumbnail {
+    pub pixels: ThumbnailPixels,
+    /// 源图比预算大、被缩过。
+    ///
+    /// 磁盘缓存里读出来的若是这种,那是改存缩略图之前落的原图(#117),
+    /// 该换成缩好的那份 —— 否则每次启动都要再解一遍原图。
+    pub shrunk: bool,
+}
+
+/// 缩略图编成 PNG,落盘用。
+///
+/// 存缩好的而不是网上取回来的原图:一张 96px 的 PNG 解起来比上千像素的
+/// JPEG 快一个量级,而磁盘缓存每次启动都要整批重解(内存那层是空的)。
+pub fn encode_png(
+    pixels: &ThumbnailPixels,
+) -> Option<Vec<u8>> {
+    let image = image::RgbaImage::from_raw(
+        pixels.width(),
+        pixels.height(),
+        pixels.as_bytes().to_vec(),
+    )?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some(out.into_inner())
 }
 
 #[cfg(test)]
@@ -159,7 +189,8 @@ mod tests {
     #[test]
     fn decode_thumbnail_fits_the_thumbnail_budget() {
         let img = decode_thumbnail(&png(1200, 800))
-            .expect("合法 PNG 应能解码");
+            .expect("合法 PNG 应能解码")
+            .pixels;
         assert_eq!(img.width(), THUMBNAIL_SIZE);
         // 1200:800 = 3:2,96 宽对应 64 高
         assert_eq!(img.height(), 64);
@@ -169,7 +200,8 @@ mod tests {
     #[test]
     fn decode_thumbnail_keeps_small_covers_untouched() {
         let img = decode_thumbnail(&png(48, 48))
-            .expect("合法 PNG 应能解码");
+            .expect("合法 PNG 应能解码")
+            .pixels;
         assert_eq!((img.width(), img.height()), (48, 48));
     }
 

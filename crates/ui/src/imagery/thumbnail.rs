@@ -17,6 +17,7 @@ use slint::ComponentHandle;
 
 use crate::MainWindow;
 use crate::Player;
+use crate::imagery::cover::ThumbnailPixels;
 
 /// 内存里最多留几张缩略图。
 ///
@@ -249,9 +250,14 @@ async fn load(
                     cache_name(&url).and_then(|name| {
                         let bytes =
                             api::load_track_artwork(&name)?;
-                        crate::imagery::cover::decode_thumbnail(
-                            &bytes,
-                        )
+                        let (pixels, rewrite) =
+                            from_disk(&bytes)?;
+                        if let Some(png) = rewrite {
+                            api::save_track_artwork(
+                                &name, &png,
+                            );
+                        }
+                        Some(pixels)
                     });
                 (url, pixels)
             })
@@ -306,12 +312,11 @@ async fn fetch(
         Ok(bytes) => {
             let name = cache_name(&url);
             api::off_thread(move || {
-                let pixels =
-                    crate::imagery::cover::decode_thumbnail(
-                        &bytes,
-                    )?;
-                if let Some(name) = name {
-                    api::save_track_artwork(&name, &bytes);
+                let (pixels, store) = from_network(&bytes)?;
+                if let Some(name) = name
+                    && let Some(png) = store
+                {
+                    api::save_track_artwork(&name, &png);
                 }
                 Some(pixels)
             })
@@ -336,6 +341,34 @@ async fn fetch(
     if let Some(ui) = weak.upgrade() {
         apply(&ui, &cache);
     }
+}
+
+/// 磁盘上那一份解出来。存的若还是旧版的原图,顺手给出该换上去的缩略图。
+///
+/// 跑在后台线程上,所以只碰字节与像素,不碰任何 `Rc`。
+fn from_disk(
+    bytes: &[u8],
+) -> Option<(ThumbnailPixels, Option<Vec<u8>>)> {
+    let thumb =
+        crate::imagery::cover::decode_thumbnail(bytes)?;
+    let rewrite = thumb
+        .shrunk
+        .then(|| {
+            crate::imagery::cover::encode_png(&thumb.pixels)
+        })
+        .flatten();
+    Some((thumb.pixels, rewrite))
+}
+
+/// 网上取回来的原图解出来,外加该落盘的那一份。
+fn from_network(
+    bytes: &[u8],
+) -> Option<(ThumbnailPixels, Option<Vec<u8>>)> {
+    let thumb =
+        crate::imagery::cover::decode_thumbnail(bytes)?;
+    let store =
+        crate::imagery::cover::encode_png(&thumb.pixels);
+    Some((thumb.pixels, store))
 }
 
 /// 把手上有的缩略图填进曲目列表里对应的行。
@@ -486,6 +519,94 @@ mod tests {
         pending.push("other".to_owned());
 
         assert_eq!(pending.take_last(BATCH).len(), 2);
+    }
+
+    // ── 落盘的那一份([`from_network`] 与 [`from_disk`])──
+
+    /// 在内存里编一张纯色 PNG。
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(
+            width,
+            height,
+            image::Rgba([10, 20, 30, 255]),
+        )
+        .write_to(&mut out, image::ImageFormat::Png)
+        .expect("内存里编 PNG 不该失败");
+        out.into_inner()
+    }
+
+    /// 一段字节解出来的边长。
+    fn dimensions(bytes: &[u8]) -> (u32, u32) {
+        let decoded = image::load_from_memory(bytes)
+            .expect("落盘的那份该是一张图");
+        (decoded.width(), decoded.height())
+    }
+
+    /// 网上取回来的大图,落盘的是缩好的那份,不是原图。
+    ///
+    /// 存原图的话,每次启动内存那层是空的,磁盘上整批原图要再解一遍 ——
+    /// 进每日推荐那一下的卡就是这么来的。
+    #[test]
+    fn a_fetched_cover_is_stored_as_a_thumbnail() {
+        let (pixels, store) = from_network(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+
+        let stored = store.expect("解得出来就该有一份落盘");
+        assert_eq!(dimensions(&stored), (96, 64));
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
+    }
+
+    /// 网上回来的不是图(CDN 过期的 HTML 页):什么都不落盘。
+    #[test]
+    fn a_fetched_error_page_is_not_stored() {
+        assert!(
+            from_network(b"<html>403</html>").is_none()
+        );
+    }
+
+    /// 磁盘上还是改之前落的原图:解出来的同时给出缩好的那份,换上去。
+    ///
+    /// 不换的话,老用户的缓存目录里全是原图,改存缩略图对他们一张都不生效,
+    /// 直到 64MB 的上限把它们挤出去。
+    #[test]
+    fn a_legacy_original_on_disk_is_rewritten_as_a_thumbnail()
+     {
+        let (pixels, rewrite) = from_disk(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+
+        let rewrite = rewrite.expect("旧的原图该被换掉");
+        assert_eq!(dimensions(&rewrite), (96, 64));
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
+    }
+
+    /// 磁盘上已经是缩略图:原样用,不再写一遍。
+    ///
+    /// 每次命中都写的话,滚一次列表就是几十次写盘,还会把 mtime 刷新到
+    /// 淘汰顺序失真。
+    #[test]
+    fn a_stored_thumbnail_is_not_rewritten() {
+        let (_, store) = from_network(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+        let stored = store.expect("解得出来就该有一份落盘");
+
+        let (pixels, rewrite) = from_disk(&stored)
+            .expect("存下的那份该解得出来");
+
+        assert!(
+            rewrite.is_none(),
+            "已经是缩略图了,不该再写"
+        );
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
     }
 
     // ── 防抖到点那一下([`flush`])──
