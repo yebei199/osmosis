@@ -14,9 +14,15 @@ desktop_mcp_port := "8091"
 # 发行构建烘进二进制的服务端地址(crates/api 的 option_env!,编译期生效)。
 # 两个后端跑在 main-vps 的 k3s 上(infra#67);music.cryptorust.uk 经 Cloudflare Tunnel 公网可达(infra#83),
 # music.k3s.cryptorust.uk:32443 是 tailnet 内的直连入口,两者同一 backend。
-# 要打一个连本机后端的包:OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build。
-# dev 配方(desktop-dev / web-dev)不设它,保持连本机 server-dev 的老习惯。
+# 规则:**debug 连本机后端,release 连这里**,两者不能一样(AGENTS.md「debug 连哪个后端」)。
+# 只有 release 配方(android-build / desktop-install)读它;dev 配方(desktop-dev / mcp-android)
+# 反而把这个变量清掉,落回 crates/api 的缺省 local_api。
 api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
+# debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
+# 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
+local_api := "http://127.0.0.1:3000"
+# 生产平板的 ro.product.model。debug 包拒装到它上面,见 android-not-production。
+production_tablet_model := "NP06J"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -80,10 +86,14 @@ ci-boundaries:
 # 其中调试信息现在由 crates/ui/build.rs 在 debug 档一律打开(元素树少了它就是空的,
 # 且不报错),这里保留显式设置只为把三样凑齐、一眼看得全。
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
+#
+# 连本机后端(local_api),没起就在编译前失败。`env -u OSMOSIS_API_BASE`:shell 里
+# 残留的那个变量会被 option_env! 烘进去,悄悄连到别处;清掉而不是显式设成 local_api,
+# 是为了和 `just shot`、裸 cargo build 共用同一份构建指纹,来回切不重编。
 [group('三端')]
 [group('桌面')]
-desktop-dev extra="": (mcp-port-free desktop_mcp_port)
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+desktop-dev extra="": local-backend-up (mcp-port-free desktop_mcp_port)
+    env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
@@ -193,22 +203,22 @@ android-build:
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
 android-install:
-    adb install -r {{apk}}
+    {{just_executable()}} dev-adb install -r {{apk}}
 
 # 把手机的 127.0.0.1:3000 转发到开发机的 server-dev
 # 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
 # adb 重连后需要重新执行
-# 只有连本机后端的包(OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build)
-# 才需要这条;默认包直连集群,装完即用。
+# 连本机后端的包(mcp-android 出的 debug 包)才需要这条,mcp-android 已自带;
+# release 包直连集群,装完即用。
 [group('安卓')]
 android-reverse:
-    adb reverse tcp:3000 tcp:3000
+    {{just_executable()}} dev-adb reverse tcp:3000 tcp:3000
 
 # 装 APK、接通端口转发,然后看日志。前提:server-dev 已在另一个终端里跑
 [group('安卓')]
 android-run: android-install android-reverse
-    adb shell am start -n io.github.osmosis/.MainActivity
-    adb logcat -s osmosis
+    {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
+    {{just_executable()}} dev-adb logcat -s osmosis
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
@@ -216,6 +226,55 @@ android-run: android-install android-reverse
 [group('安卓')]
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
+
+# 带上设备序列号的 adb。安卓配方一律走它,不裸调 adb:开发机与生产平板常同时连着,
+# 裸 adb 要么报 more than one device,要么装错台。
+# 指定设备用 ANDROID_SERIAL(adb 自己也认这个变量);没指定且只有一台在线时就用那一台。
+# 序列号在这里解析而不是 `adb -s "$(...)"`:命令替换失败不会让外层失败,
+# 空的 -s 会让 adb 退回自己挑设备。
+[private]
+[positional-arguments]
+dev-adb *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    online=$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+    if [ -n "${ANDROID_SERIAL:-}" ]; then
+        grep -qxF "$ANDROID_SERIAL" <<< "$online" || { echo "ANDROID_SERIAL=$ANDROID_SERIAL 不在线" >&2; exit 1; }
+        serial=$ANDROID_SERIAL
+    elif [ "$(grep -c . <<< "$online")" -eq 1 ]; then
+        serial=$online
+    else
+        echo "没设 ANDROID_SERIAL,而在线设备不是正好一台。挑一台:ANDROID_SERIAL=<序列号> just ..." >&2
+        adb devices -l >&2
+        exit 1
+    fi
+    exec adb -s "$serial" "$@"
+
+# debug 包不进生产平板。平板是日常在用的生产端,只在发版时装 release 包;debug 包
+# 连本机后端,装上去就点不了歌。认型号不认序列号:无线 adb 的序列号是 IP:端口,会变。
+[private]
+android-not-production:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    model=$({{just_executable()}} dev-adb shell getprop ro.product.model | tr -d '\r')
+    [ "$model" != "{{production_tablet_model}}" ] && exit 0
+    echo "目标设备是生产平板({{production_tablet_model}}),拒绝装 debug 包。换 ANDROID_SERIAL 指向开发机。" >&2
+    exit 1
+
+# 本机后端没在应答就**编译之前**失败,并说怎么起。形状同下面的 mcp-port-free。
+# debug 构建连的是它(见 local_api),没起的话几分钟的编译之后界面照常出来,
+# 点歌才报「同播失败:信令错误」—— 看着像代码坏了。
+[private]
+local-backend-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if curl -sf -o /dev/null --max-time 2 {{local_api}}/health; then exit 0; fi
+    echo "{{local_api}} 上没有 server 在应答,拒绝构建 —— debug 包连的就是它,起来了也点不了歌。" >&2
+    echo "按顺序起(各占一个终端):" >&2
+    echo "  just bang-dream     # gRPC 聚合层,127.0.0.1:50051。仓库位置取 BANG_DREAM_REPO," >&2
+    echo "                      # 当前 ${BANG_DREAM_REPO:-未设,默认 ../bang-dream};要指向带 data/credentials 的那份 checkout" >&2
+    echo "  just server-dev     # 连带起 Postgres 容器,监听 3000" >&2
+    exit 1
 
 # 传进来的端口被占就**立刻失败**,别让 app 起来。
 #
@@ -248,7 +307,7 @@ mcp-port-free port:
 # adb 重连后需要重新执行
 [group('mcp')]
 mcp-forward:
-    adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
+    {{just_executable()}} dev-adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
 
 # 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。**开发装机走这条**。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
@@ -259,11 +318,15 @@ mcp-forward:
 # 查不到任何元素,点按钮就得从全分辨率截图上量坐标 —— 慢且容易点空。
 # 代价是编译更久、APK 更大,发布件请走 `android-build`(release)。
 # 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
+#
+# 顺带做 android-reverse:debug 包连手机上的 127.0.0.1:3000,不 reverse 到开发机就是
+# 连手机自己,启动即「同播失败:信令错误」。forward 与 reverse 都挂在 adb 连接上,
+# **adb 重连(无线 adb 换端口、拔插线)之后重跑本配方**,或单独补 mcp-forward 与 android-reverse。
 [group('mcp')]
-mcp-android: mcp-forward
-    nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
-    adb install -r {{apk}}
-    adb shell am start -n io.github.osmosis/.MainActivity
+mcp-android: local-backend-up android-not-production mcp-forward android-reverse
+    env -u OSMOSIS_API_BASE nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
+    {{just_executable()}} dev-adb install -r {{apk}}
+    {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
 
 # 杀掉所有跑着的桌面实例。三处静默失败等着:
 #
