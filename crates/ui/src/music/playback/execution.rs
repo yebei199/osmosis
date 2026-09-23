@@ -147,6 +147,7 @@ impl Execution {
     }
 
     /// 发起过几次本机队列发布。
+    #[cfg(test)]
     pub(in crate::music) fn publishes(&self) -> u64 {
         self.inner.borrow().publishes
     }
