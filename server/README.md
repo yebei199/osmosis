@@ -87,6 +87,10 @@ metadata 分片保存平台凭据,不带就一律 `INVALID_ARGUMENT`。忘了包
 库里那份。回源一律 spawn 出去,客户端等不及断开也会跑完并落库。在这边点的心
 当场作废红心那份。「多新」只记在进程内存。
 
+`/playlists` 的平台那半(歌单列表与红心数)同一套时机,只是存在内存里
+(`routes::library::playlists::PlatformLists`):没有那份时最多等 3 秒,等不到
+只给本地那半 —— 与上游失败同一个降级。本地歌单照旧直读库。
+
 本地歌单只借详情那一半:它的成员关系真相在 `local_playlist_tracks`。写进
 `platform_playlist_tracks` 的话,本地歌单的整数 id 会和平台歌单的字符串 id 撞在
 同一个 TEXT 列上。

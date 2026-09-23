@@ -52,7 +52,7 @@ where
         state.playlists.get(account.id, playlist_id);
     let unavailable = record.map_or(0, |(_, n)| n);
     if record
-        .is_some_and(|(at, _)| at.elapsed() < REFRESH_EVERY)
+        .is_some_and(|(at, _)| age_of(at) < REFRESH_EVERY)
     {
         return stored(
             state,
@@ -71,8 +71,7 @@ where
     if stored.tracks.is_empty() {
         return joined(job.await);
     }
-    if record.is_some_and(|(at, _)| at.elapsed() < MAX_AGE)
-    {
+    if record.is_some_and(|(at, _)| age_of(at) < MAX_AGE) {
         return Ok(stored);
     }
 
@@ -181,7 +180,17 @@ pub(crate) const REFRESH_EVERY: Duration =
     Duration::from_secs(30);
 
 /// `(账号, 平台歌单)` → (最近一次回源成功的时刻, 那次给不出详情的曲目数)。
-type Records = HashMap<(i64, String), (Instant, usize)>;
+type Records = HashMap<(i64, String), (FetchedAt, usize)>;
+
+/// 回源成功的时刻。`None` 是「比任何期限都旧」:被作废的,或者测试往回拨
+/// 过了头的 —— `Instant` 减到开机之前会 panic,开机不到一天的机器上
+/// `now - MAX_AGE` 就是这样。
+pub(crate) type FetchedAt = Option<Instant>;
+
+/// 距回源过了多久。
+pub(crate) fn age_of(at: FetchedAt) -> Duration {
+    at.map_or(Duration::MAX, |at| at.elapsed())
+}
 
 /// 每个 `(账号, 平台歌单)` 最近一次回源成功的时刻,和那次平台给不出详情的曲目数。
 ///
@@ -204,7 +213,7 @@ impl Freshness {
         &self,
         account_id: i64,
         playlist_id: &str,
-    ) -> Option<(Instant, usize)> {
+    ) -> Option<(FetchedAt, usize)> {
         self.lock()
             .get(&(account_id, playlist_id.to_owned()))
             .copied()
@@ -218,7 +227,7 @@ impl Freshness {
     ) {
         self.lock().insert(
             (account_id, playlist_id.to_owned()),
-            (Instant::now(), unavailable),
+            (Some(Instant::now()), unavailable),
         );
     }
 
@@ -244,7 +253,7 @@ impl Freshness {
             .lock()
             .get_mut(&(account_id, playlist_id.to_owned()))
         {
-            *at -= by;
+            *at = at.and_then(|at| at.checked_sub(by));
         }
     }
 }

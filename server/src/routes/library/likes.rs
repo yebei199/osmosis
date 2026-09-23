@@ -248,6 +248,8 @@ pub(crate) async fn set_liked(
     state
         .playlists
         .forget(account.id, cache::LIKED_PLAYLIST_ID);
+    // 歌单列表里「我喜欢的」那一行的数目也跟着变
+    state.platform_lists.outdate(account.id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -295,6 +297,8 @@ pub(crate) async fn set_subscribed(
         ))
         .await
         .map_err(|status| fail(&status))?;
+    // 收藏的歌单出现在 /playlists 平台那半里:下一次打开等得到就给新的
+    state.platform_lists.outdate(account.id);
 
     Ok(StatusCode::NO_CONTENT)
 }

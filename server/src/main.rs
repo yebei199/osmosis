@@ -57,6 +57,7 @@ use routes::library::likes::{
     like_track, liked, liked_ids, subscribe_playlist,
     unlike_track, unsubscribe_playlist,
 };
+use routes::library::playlists::PlatformLists;
 use routes::library::playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
     platform_playlist_tracks, playlist_tracks, playlists,
@@ -124,6 +125,8 @@ pub(crate) struct AppState {
     policies: Policies,
     /// 库里每个平台歌单的那份是什么时候回源拿到的(见 `catalog_cache`)。
     playlists: Freshness,
+    /// 每个账号 `/playlists` 平台那半的上一份(见 `routes::library::playlists`)。
+    platform_lists: PlatformLists,
 }
 
 // 鉴权提取器只要池,不该认识别的东西 —— 见 server::gate::auth。
@@ -416,6 +419,7 @@ async fn main() {
         origins: AllowedOrigins::new(allowed_origins()),
         policies: Policies::tuned(),
         playlists: Freshness::default(),
+        platform_lists: PlatformLists::default(),
     };
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
