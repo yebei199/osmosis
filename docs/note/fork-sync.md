@@ -34,15 +34,16 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 上游收下多少就从 `dev` 撤掉多少。PR 一旦合并或关闭,对应分支就该删,内容自然留在上游
 代码或 PR 正文里 —— femtovg fork 走完这条路后整个退役,就是这套规则的终点。
 
-三条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
-2026-08-18 按三点 diff 核对过,`dev` 相对上游独有的改动正好只有这三处代码加一个
-`Cargo.lock`,与那份清单一致:
+各条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
+2026-08-18 按三点 diff 核对过,`dev` 相对上游独有的改动正好只有前三处代码加一个
+`Cargo.lock`,与那份清单一致;第四条是 2026-09-23 加的:
 
 | 文件 | 补丁 | 撤销条件 |
 |---|---|---|
 | `internal/backends/winit/frame_throttle.rs` | wasm 上交给浏览器的 requestAnimationFrame 定帧 | 未提 PR,上游也没自己修 |
 | `internal/core/api.rs` | `Window::is_active()` | 未提 PR,上游无等价物 |
 | `internal/renderers/femtovg/Cargo.toml` | femtovg 走上游 git 而非 crates.io | 上游发出含 femtovg#302 的版本 |
+| `internal/backends/android-activity/androidwindowadapter.rs` | 鼠标滚轮 `ACTION_SCROLL` 转 `PointerScrolled`,上游是 `todo!()`(#120,2026-09-23) | 上游实现同一分支 |
 
 ## 已删除的分支
 
@@ -210,6 +211,9 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-09-23 dev 快进一个补丁 `64d51f145`(安卓鼠标滚轮,#120),不 merge 上游;
+  `backup/dev-2026-09-23` 指上一个 tip `a9eb2c30a`。本仓库跟进时 `cargo update -p slint`
+  会顺手把 femtovg 从 git master 抬到 0.27,用 `--precise` 钉回了原 sha,只动 slint。
 - 2026-08-18 femtovg fork 退役:#302 前一天并入上游 master,slint fork 的 femtovg
   依赖改指 `femtovg/femtovg` git master(最新发布 0.26.0 早于合并,还回不了
   crates.io),`dev` 与 PR 两条分支删除,`dev` 留 tag 归档。slint 侧核对确认 wasm

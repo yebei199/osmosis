@@ -14,6 +14,7 @@ import { Library } from "globals/library.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
 import { Viz } from "globals/viz.slint";
+import { BarMetrics } from "playerbar.slint";
 
 // 音乐页(tab 1):二级导航、搜索、歌单详情、卡墙与列表,以及两套控制条。
 //
@@ -21,6 +22,13 @@ import { Viz } from "globals/viz.slint";
 // 一处转发都不必写(见 docs/adr/0027)。
 export component MusicPage inherits VerticalLayout {
     padding: 16px;
+    // 控制条不在这一页里 —— 它是壳持有的那一根,一个实例管四个页签
+    // (app.slint,docs/adr/0029)。条在时页底让出它那一块,免得列表最后
+    // 几行藏在条底下;条不在就一分不留,凭空的空白看起来就是渲染坏了
+    // (#116)。条件与 app.slint 摆条那一行是同一个。
+    padding-bottom: Player.has-track && !Shell.play-page-open
+        ? BarMetrics.page-reserve
+        : 16px;
     spacing: 12px;
 
     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
@@ -364,12 +372,14 @@ export component MusicPage inherits VerticalLayout {
 
 
             // 它们都是「一批歌」。墙可见时列表让位 ——
-            // 同一批卡的两种摆法,不同时出现。
-            if (Library.open-playlist-name != ""
-                || Shell.music-section == 0
-                || Shell.music-section == 3
-                || (Shell.music-section == 2
-                    && Library.search-tab == 0))
+            // 同一批卡的两种摆法,不同时出现。一首都没有时让位给上面的
+            // 空状态:两个都在的话各分一截,下半页是一张空列表(#116)。
+            if Player.tracks.length > 0
+                && (Library.open-playlist-name != ""
+                    || Shell.music-section == 0
+                    || Shell.music-section == 3
+                    || (Shell.music-section == 2
+                        && Library.search-tab == 0))
                 && !Shell.wall-visible:
             track-list := TrackList {
                 vertical-stretch: 1;
@@ -395,10 +405,4 @@ export component MusicPage inherits VerticalLayout {
             }
         }
     }
-
-
-    // 控制条不在这一页里 —— 它是壳持有的那一根,一个实例管四个页签
-    // (app.slint,docs/adr/0029)。这里只把页尾垫高,免得列表最后几行
-    // 藏在条底下。垫的量 = 条高 + 底边距 + 富余。
-    Rectangle { height: 100px; }
 }

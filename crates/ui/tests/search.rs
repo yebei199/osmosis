@@ -24,6 +24,13 @@ fn search_page() -> MainWindow {
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_current_tab(1);
     ui.global::<Shell>().set_music_section(2);
+    // 摆一首歌:曲目列表只在有歌时出现,一首都没有时让位给空状态(#116)。
+    // 这里问的是「哪一类结果摆在哪」,不是空态。
+    ui.global::<Player>().set_tracks(slint::ModelRc::new(
+        slint::VecModel::from(
+            vec![ui::TrackRow::default()],
+        ),
+    ));
     ui
 }
 
