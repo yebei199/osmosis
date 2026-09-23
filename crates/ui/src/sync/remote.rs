@@ -60,6 +60,12 @@ pub enum Submitted {
     TooLarge { bytes: usize, limit: usize },
 }
 
+/// 一次点播交出去之后,多久内还算「在路上」。
+///
+/// 真机上点下去到对面出声要一两秒(#121),上报一秒一条;十秒还没见对面
+/// 报上这一首,多半是丢了,再点一下该放行。
+const PENDING_PLAY_MS: u64 = 10_000;
+
 /// 音乐页拿在手里的遥控把手。
 #[derive(Clone)]
 pub struct Remote {
@@ -96,6 +102,11 @@ struct Inner {
     epoch: i64,
     /// 本次会话里已经报到第几条。每报一次加一。
     state_seq: AtomicU64,
+    /// 交出去、被控端还没报上来的那次点播:曲目 id 与交出去的时刻。
+    ///
+    /// 连点去重要它:点下去到对面上报「在放这一首」之间有一两秒,这段
+    /// 时间里上报还是上一首,光看上报挡不住第二下(#113)。
+    pending_play: Mutex<Option<(String, u64)>>,
     /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
     #[cfg(test)]
     play_submits: AtomicU64,
@@ -143,11 +154,29 @@ impl Remote {
     /// 才发的。于是「这一下有没有走到远端分支」在测试里再也不能靠
     /// [`Self::sent_commands`] 观察 —— 那里要等一个测试环境里不存在的服务端。
     /// 这个计数器记的正是那件事,而且是**同步**记的。
-    pub fn note_play_submitted(&self) {
+    pub fn note_play_submitted(&self, track_id: &str) {
+        *lock(&self.inner.pending_play) =
+            Some((track_id.to_owned(), now_ms()));
         #[cfg(test)]
         self.inner
             .play_submits
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 那次点播没交到对面(发布失败、命令没发出去):下一下不该被当成多余。
+    pub fn forget_pending_play(&self) {
+        lock(&self.inner.pending_play).take();
+    }
+
+    /// 交出去不满 [`PENDING_PLAY_MS`] 的那次点播点的是哪一首。
+    pub fn pending_play(&self) -> Option<String> {
+        lock(&self.inner.pending_play)
+            .as_ref()
+            .filter(|(_, at)| {
+                now_ms().saturating_sub(*at)
+                    < PENDING_PLAY_MS
+            })
+            .map(|(id, _)| id.clone())
     }
 
     /// 测试里问:到此为止有几下点播走到了远端分支。
@@ -327,6 +356,7 @@ impl Remote {
         *lock(&self.inner.output) = Output::Local;
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
+        lock(&self.inner.pending_play).take();
         let _ = self.inner.weak.upgrade_in_event_loop(
             move |ui| {
                 crate::notice::show(&ui, message);
@@ -428,6 +458,11 @@ impl Remote {
         // 换目标前先把镜像清掉,否则下一台设备会先闪一眼上一台的歌名。
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
+        lock(&self.inner.pending_play).take();
+        log::info!(
+            "输出切到 {}",
+            if id.is_empty() { "本机" } else { name }
+        );
         if id.is_empty() {
             self.release_claim();
             *lock(&self.inner.output) = Output::Local;
@@ -504,6 +539,7 @@ pub fn new(ui: &MainWindow) -> Remote {
             was_remote: Mutex::new(false),
             epoch: now_ms() as i64,
             state_seq: AtomicU64::new(1),
+            pending_play: Mutex::new(None),
             #[cfg(test)]
             play_submits: AtomicU64::new(0),
             #[cfg(test)]
@@ -566,7 +602,10 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
     match event {
         // 接管成功。立刻要一次快照 —— 服务端不缓存状态(`docs/adr/0030`),
         // 「现在是什么样」只能问被控端本人,而不问就得干等一秒。
-        syncplay::Event::ControlGranted { .. } => {
+        syncplay::Event::ControlGranted {
+            target, ..
+        } => {
+            log::info!("接管 {target} 成功");
             if let Some(client) = inner.client.get() {
                 client.request_snapshot();
             }
@@ -574,6 +613,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 失权:回到本机输出。不静默 —— 用户得知道自己手上这台不再管用了。
         // 被控端自己退出时 `by` 正是输出指着的那一台,文案因此要在收回之前算。
         syncplay::Event::ControlRevoked { by } => {
+            log::info!("控制权被 {by} 收走,输出回本机");
             remote.come_home(|output| {
                 describe_revoked(output, by)
             });
@@ -590,6 +630,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
             remote.come_home(describe_claim_failed);
         }
         syncplay::Event::ControlledBy { device } => {
+            log::info!("本机被 {} 遥控", device.name);
             *lock(&inner.controlled_by) =
                 Some(device.clone());
             remote.refresh();

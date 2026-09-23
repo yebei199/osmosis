@@ -68,6 +68,71 @@ fn the_view_toggle_asks_without_flipping() {
     assert_eq!(asked.get(), 1, "卡墙键该报 true");
 }
 
+/// 指针点在切换键的 id 上也要喊得到(#113)。
+///
+/// MCP 的 `click_element` 走的就是这条:按元素中心派一次按下抬起,由窗口
+/// 做命中测试。id 挂在不处理事件的那一层上的话,点击「成功」而视图不切。
+#[test]
+fn a_pointer_click_on_the_view_toggle_asks_too() {
+    let ui = music_page(true);
+
+    let asked =
+        std::rc::Rc::new(std::cell::Cell::new(-1i32));
+    let seen = asked.clone();
+    ui.global::<Shell>().on_set_view_wall(move |to_wall| {
+        seen.set(i32::from(to_wall));
+    });
+
+    for (id, want) in [
+        ("WallView::view-list-btn", 0),
+        ("WallView::view-wall-btn", 1),
+    ] {
+        testing::ElementHandle::find_by_element_id(&ui, id)
+            .next()
+            .unwrap_or_else(|| panic!("找不到 {id}"))
+            .mock_single_click(
+                slint::platform::PointerEventButton::Left,
+            );
+        assert_eq!(asked.get(), want, "{id} 没喊到");
+    }
+}
+
+/// 卡墙不经指针也驱动得了:场区上的无障碍动作挪选中、播选中(#113)。
+///
+/// 读屏用户与 MCP 脚本走这条 —— 指针那条要在 3D 里命中,浮起之后同一坐标
+/// 未必还点得中同一张。
+#[test]
+fn the_wall_area_steps_and_confirms_without_a_pointer() {
+    let ui = music_page(true);
+
+    let steps = std::rc::Rc::new(std::cell::RefCell::new(
+        Vec::new(),
+    ));
+    let seen = steps.clone();
+    ui.global::<Shell>().on_wall_step(move |delta| {
+        seen.borrow_mut().push(delta);
+    });
+    let confirmed =
+        std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = confirmed.clone();
+    ui.global::<Shell>().on_wall_confirm(move || {
+        seen.set(seen.get() + 1);
+    });
+
+    let area = testing::ElementHandle::find_by_element_id(
+        &ui,
+        "WallView::wall-area",
+    )
+    .next()
+    .expect("默认该是卡墙");
+    area.invoke_accessible_increment_action();
+    area.invoke_accessible_decrement_action();
+    area.invoke_accessible_default_action();
+
+    assert_eq!(*steps.borrow(), [1, -1]);
+    assert_eq!(confirmed.get(), 1);
+}
+
 /// 无 GPU 构建(wall-supported 假)整套卡墙控件不存在:
 /// 没有开关、没有场区,列表照常 —— 静默降级,不是报错。
 #[test]

@@ -664,7 +664,9 @@ fn the_batch_size_no_longer_decides_a_remote_tap() {
             ids.iter().map(String::as_str).collect();
         batch_of(&deck, &refs);
 
-        ui.global::<Player>().invoke_play("7".into());
+        // 两轮点不同的两首:同一首连点两下会被当成多余的那一下(#113)。
+        let tapped = if count == 20 { "7" } else { "8" };
+        ui.global::<Player>().invoke_play(tapped.into());
 
         outcomes.push((
             deck.remote.play_submits(),
@@ -839,4 +841,75 @@ fn tapping_another_track_while_loading_switches() {
         "点的是另一首就照常切过去"
     );
     assert_eq!(deck.execution.publishes(), 1);
+}
+
+/// 遥控时连点同一首:只发布一次队列、只发一条 play(#113)。
+///
+/// #125 的连点去重只挂在本机那条路上,遥控这边每点一下都重新发布一次、
+/// 再发一条 play —— 现场两秒十发,同一队列版本号 1→10,操作号 1→10。
+#[test]
+fn tapping_the_same_track_again_while_remote_submits_once()
+{
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    take_control_of_pc(&deck);
+
+    for _ in 0..10 {
+        ui.global::<Player>().invoke_play("b".into());
+    }
+
+    assert_eq!(
+        deck.remote.play_submits(),
+        1,
+        "同一首还在路上,再点是多余的"
+    );
+
+    ui.global::<Player>().invoke_play("c".into());
+    assert_eq!(
+        deck.remote.play_submits(),
+        2,
+        "点的是另一首就照常发出去"
+    );
+}
+
+/// 被控端已经在放这一首,遥控器上再点它不该从头再来一遍。
+#[test]
+fn tapping_the_track_the_target_is_playing_is_ignored() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let playing = report().track.expect("上报里有一首").id;
+    *deck.tracks.borrow_mut() =
+        vec![track_with_id(&playing)];
+    take_control_of_pc(&deck);
+
+    ui.global::<Player>().invoke_play(playing.into());
+
+    assert_eq!(
+        deck.remote.play_submits(),
+        0,
+        "对面已经在放这一首了"
+    );
+}
+
+/// 对面暂停着的那一首再点不算多余 —— 那一下是想让它响。
+#[test]
+fn tapping_the_track_the_target_paused_still_goes_out() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let paused = report().track.expect("上报里有一首").id;
+    *deck.tracks.borrow_mut() =
+        vec![track_with_id(&paused)];
+    deck.remote.select("pc", "pc1");
+    deck.remote.accept_report_at(
+        app_core::RemoteStateDto {
+            state: app_core::RemotePlayState::Paused,
+            ..report()
+        },
+        crate::sync::remote::now_ms(),
+    );
+
+    ui.global::<Player>().invoke_play(paused.into());
+
+    assert_eq!(deck.remote.play_submits(), 1);
 }
