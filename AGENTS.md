@@ -229,6 +229,39 @@ cp apps/web/index.html test/*.html dist/web/
 所有"减少工作量"的实验(降分辨率、关 MSAA、空转)都必然"无效",而那些否定结论全是假的。
 先找瓶颈在哪一层,再拿实验去排除东西。
 
+## debug 连哪个后端
+
+**debug 连本机后端,release 连生产后端,两者不能一样**(用户 2026-09-23 定的,#119)。
+地址烘在编译期(`crates/api` 的 `base_url()`),应用启动时日志第一屏写一行
+`服务端: <地址>`,桌面看 stderr,手机看 `adb logcat -s osmosis`。
+
+| 构建 | 配方 | 连哪 |
+|---|---|---|
+| debug | `just desktop-dev`、`just mcp-android` | `http://127.0.0.1:3000`,本机 `server-dev` |
+| release | `just android-build`、`just desktop-install` | justfile 的 `api_base`,生产 |
+
+**先起本机后端**,两个终端各一条:`just bang-dream` 与 `just server-dev`(自带 Postgres
+容器)。没起的话两条 debug 配方在编译前就失败并照抄这段起法,不会编完几分钟才发现点不了歌。
+
+bang-dream 在开发机上有两份 checkout,`BANG_DREAM_REPO` 的默认值 `../bang-dream` 两份都
+不指:带网易云凭据(`data/credentials/`)、真正该跑的是 `~/projects/bang_dream`,
+`~/RustroverProjects/bang-dream` 只用来读代码,没有 `data/`。所以起它要写成
+`BANG_DREAM_REPO=~/projects/bang_dream just bang-dream`,或者把这个变量写进 `.env`。
+
+守卫与设备选择的逻辑有一份不碰真机的回归检查:`test/dev-recipes.sh`。
+
+**手机经 PC 连本机后端**:手机上的 `127.0.0.1` 是手机自己,`mcp-android` 已自带
+`adb reverse tcp:3000 tcp:3000` 把它接到开发机。reverse 和 forward 都挂在 adb 连接上,
+**无线 adb 换了端口或者拔插过线,就重跑一次 `mcp-android`**(或单补
+`just mcp-forward android-reverse`),否则启动即「同播失败:信令错误」。
+
+**设备选择**:安卓配方的 adb 全都带序列号。开发机与平板常同时在线,不设
+`ANDROID_SERIAL` 又不止一台时配方拒绝并列出设备;debug 包认 `ro.product.model`,
+拒装到生产平板 NP06J 上。
+
+为什么 release 不能也连本机:release 包装在平板和日常手机上,离开这台 PC 就没有
+3000;反过来 debug 连生产,调试时的点歌、登录、测试数据全写进生产库。
+
 ## 界面报「查询失败」时,先看 3000 上跑的是哪天的 server
 
 `server` 不在 default-members 里,裸 `cargo build` 从不编它,于是本机 3000 上那个
