@@ -2,7 +2,7 @@
 
 ## mcp-login.sh —— 把界面登进去
 
-`played-e2e.sh` 把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
+端到端脚本(如 `pick-e2e.sh`)把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
 这份脚本补上那一步,可重复跑(已登录时直接返回)。
 
 ```sh
@@ -37,22 +37,10 @@ nixos_config 换成临时 git 仓库加本地裸远端,断言:签名不对不上
 离线设备进汇总、设备上读回的 APK 哈希要对、nixos_config 不干净或 prefetch 对不上就不动、
 镜像要含 arm64。几秒跑完,改了 `release/` 就跑一遍。
 
-## played-e2e.sh —— 起播真的被记进账本了吗
-
-跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
-(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑。
-
-```sh
-test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
-```
-
-它经**应用内嵌的 MCP** 点进音乐页、切列表、点第一行起播,然后盯 `play_events` 的行数:
-多了一行就通过,20 秒不动就失败退出。驱动按元素 id 找控件、断言查数据库,两头都不靠
-人看画面 —— 这类"要跑起来才知道"的链路(界面 → api → server → 表)就该这么验。
-
 ## pick-e2e.sh —— 点一首歌,真的起播了、只发布了一次吗
 
-前提同上:应用起着、已登录,`just server-dev` 与 `osmosis-pg` 在跑,每日推荐有歌。
+跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
+(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑,每日推荐有歌。
 
 ```sh
 test/pick-e2e.sh list       # 列表那条路

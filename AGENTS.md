@@ -108,8 +108,8 @@ just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600p
   不是截图,也不是"我看着对";
 - 客户端没连上 app(会话启动时 app 没跑)就直接打 JSON-RPC,见上文那段 curl。
 
-现成的一份:[`test/played-e2e.sh`](test/played-e2e.sh) —— 点一首歌,断言 `play_events`
-多了一行。抄它的形状写新的。
+现成的一份:[`test/pick-e2e.sh`](test/pick-e2e.sh) —— 在列表或卡墙上点一首歌,断言
+`play_events` 恰好多一行、队列只发布一次。抄它的形状写新的。
 
 ## 判断遮挡有没有生效:量卡片边框,别看观感
 
