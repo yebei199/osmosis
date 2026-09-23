@@ -122,3 +122,38 @@ pub(crate) mod fps {
         (frames, timer)
     }
 }
+
+/// 主线程卡顿探针。开关是 `OSMOSIS_STALL`,两条路同 [`crate::fps_enabled`]。
+///
+/// 帧记账是 120 帧的均值,一次 300ms 的冻结摊进去只剩几毫秒,看不出来;
+/// 这里量的是**单次**:一个 10ms 的重复定时器,两次触发之间隔得太久,
+/// 就说明中间主线程被别的活占住了,把那段间隔记一行。点一下之后的几行
+/// 加起来就是这一下冻了多久(#117 量封面解码前后就靠它)。
+pub(crate) mod stall {
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    use slint::{Timer, TimerMode};
+
+    const TICK: Duration = Duration::from_millis(10);
+
+    /// 超过它才记。一帧 16ms,再加定时器本身的抖动,50ms 以下不算冻。
+    const REPORT_OVER: Duration = Duration::from_millis(50);
+
+    /// [`Timer`] 必须由调用方持有到事件循环结束。
+    pub(crate) fn start() -> Timer {
+        let last = Cell::new(web_time::Instant::now());
+        let timer = Timer::default();
+        timer.start(TimerMode::Repeated, TICK, move || {
+            let now = web_time::Instant::now();
+            let gap = now - last.replace(now);
+            if gap > REPORT_OVER {
+                log::info!(
+                    "ui: 主线程卡了 {}ms",
+                    gap.as_millis()
+                );
+            }
+        });
+        timer
+    }
+}
