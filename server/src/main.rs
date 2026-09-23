@@ -640,6 +640,16 @@ mod timing_tests {
     {
         let sink = Sink::default();
         let writer = sink.clone();
+        // 再挂一个活着的 dispatcher,只为让进程里的 dispatcher 多于一个。
+        //
+        // 只有一个时,tracing-core 走 `has_just_one` 捷径:别的线程**第一次**碰到
+        // 某个埋点,按那个线程自己的默认(NoSubscriber)算兴趣,把 never 缓存成全局的。
+        // 其余路由测试在别的线程上也走 `Timed`,赶在本测试开着的那一刻首次碰到
+        // "upstream" 那行,本测试就再也收不到它 —— 时灵时不灵,六次里挂两次。
+        // 多于一个时,注册改为问遍登记在册的 dispatcher,其中就有下面这一个。
+        let _second = tracing::Dispatch::new(
+            tracing_subscriber::registry(),
+        );
         let _guard = tracing::subscriber::set_default(
             tracing_subscriber::fmt()
                 .with_ansi(false)
