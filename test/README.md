@@ -59,7 +59,7 @@ test/playlist-fill-e2e.sh   # 安卓默认 8090;桌面用 PORT=8091
 掉到 0.05 上下,先把它们关掉再跑。清过应用数据、或刚用 MCP 往登录框里灌过值之后,
 这两样都常见。
 
-## link-loss-e2e.sh 与 signal-gate.py —— 断线、接管失败、反复重启(#118)
+## link-loss-e2e.sh 与 signal-gate.py —— 断线、接管失败、反复重启(#118),遥控器消失(#111)
 
 `signal-gate.py` 是一道只管 `/signal` 的闸:HTTP 照常放行,信令可以 `kill -USR1` 掐断
 (只掐客户端那一半,服务端要等探活才发现,与移动网络掉线同形)、`kill -USR2` 恢复。
@@ -72,6 +72,8 @@ test/signal-gate.py 3131 3118            # 手机那道:3131 → 本机 3118 那
 CTL=ns:<目录> TGT=android:<闸 pid> SERVER_LOG=<server 日志> test/link-loss-e2e.sh link-loss
 CTL=android:<闸 pid> TGT=ns:<目录> SERVER_LOG=... RESTART_TGT=<拉起命令> test/link-loss-e2e.sh claim-fail
 CTL=... TGT=... SERVER_LOG=... RESTART_CTL=<命令> RESTART_TGT=<命令> test/link-loss-e2e.sh restarts
+CTL=... TGT=... SERVER_LOG=... test/link-loss-e2e.sh vanish   # #111
+CTL=... TGT=... SERVER_LOG=... test/link-loss-e2e.sh blip     # #111
 ```
 
 三条场景各对一条验收:被控端信令断了横幅就撤、本机点歌落账,恢复后遥控端回本机、
@@ -80,7 +82,15 @@ CTL=... TGT=... SERVER_LOG=... RESTART_CTL=<命令> RESTART_TGT=<命令> test/li
 `play_events` 行数与服务端日志(`设备入册`、`限流挡下一条请求`,server 要带
 `RUST_LOG=info,server=debug`),安卓另查 `dumpsys audio` 的 `state:started`。
 
-起播要「点一下选中、再点一下确认」,第一下会让列表重画、句柄作废,第二下重新取。
+#111 的两条对「遥控器消失而被控端连接完好」:`vanish` 让被控端本机放着歌、被接管,
+然后杀掉遥控端(安卓 `force-stop`、ns 实例 `SIGKILL`),断言租约满之前横幅还在、满了
+自己撤掉、服务端记了「遥控器下线满租约」、被控端一直在出声;`blip` 掐断遥控端信令
+几秒再放开,断言服务端记了「遥控器租约内续上」,再过一个租约被控端仍被它遥控。
+`LEASE` 缺省 30,要与服务端 `control::LEASE` 一致。ns 实例的「在出声」看播放器自己的
+位置日志,所以实例要带 `RUST_LOG=info,ui=debug` 起;不看 pipewire —— 应用一直开着
+输出流,不放歌时那条流也是 running。
+
+起播点一下就够。别连点两下:2026-09-23 在 ns 桌面实例上,同一行连点两下什么都没放。
 namespace 实例怎么起、`ns:` 目录里要有什么,见脚本头注释。
 
 ## wheel-scroll-android.sh —— 外接鼠标滚列表还崩不崩(#120)

@@ -7,8 +7,15 @@
 #               → 恢复信令 → 接管失败,CTL 回到「本机」,本机点歌落账。
 #   restarts    两台一起反复重启应用 → 服务端一次限流都没有,每次都重新入册。
 #
-# 真相源:play_events 的行数(本机起播必记一行)、服务端日志(入册、限流),安卓另看
-# dumpsys audio 里有没有 state:started 的 AudioTrack。都不看截图。
+# #111 的两条验收(遥控器消失而被控端连接完好):
+#
+#   vanish      TGT 本机放着歌,CTL 接管它,然后把 CTL 杀掉(安卓 force-stop、ns 实例
+#               SIGKILL)→ 租约满之前横幅还在,满了自己撤掉,TGT 一直在出声。
+#   blip        CTL 遥控 TGT;掐断 CTL 的信令 CUT 秒(缺省 5)再放开 → CTL 带代次续上,
+#               再等过一个租约,TGT 仍被 CTL 遥控,服务端没有清过控制权。
+#
+# 真相源:play_events 的行数(本机起播必记一行)、服务端日志(入册、限流、租约),安卓另看
+# dumpsys audio 里有没有 state:started 的 AudioTrack,ns 实例看播放器自己的位置日志在不在走。都不看截图。
 #
 # 设备用「种类:参数」写:
 #   ns:<目录>       namespace 里的桌面实例,由 test/ns-desktop.sh <目录> 起;目录里有 ns.pid
@@ -20,6 +27,12 @@
 #   CTL=ns:/path/a TGT=android:12345 SERVER_LOG=/path/server.log test/link-loss-e2e.sh link-loss
 #   CTL=android:12345 TGT=ns:/path/a SERVER_LOG=... RESTART_TGT=<重启 TGT 的命令> test/link-loss-e2e.sh claim-fail
 #   CTL=... TGT=... SERVER_LOG=... RESTART_CTL=<命令> RESTART_TGT=<命令> ROUNDS=5 test/link-loss-e2e.sh restarts
+#   CTL=... TGT=... SERVER_LOG=... [LEASE=30] test/link-loss-e2e.sh vanish
+#   CTL=... TGT=... SERVER_LOG=... [LEASE=30] [CUT=5] test/link-loss-e2e.sh blip
+#
+# LEASE 要与服务端的 `control::LEASE` 一致;SERVER_LOG 那份 server 要带
+# `RUST_LOG=info,server=debug`(入册是 debug 级);ns 实例当 TGT 时要带
+# `RUST_LOG=info,ui=debug` 起(`playing` 读播放器的位置日志)。
 #
 # 前提:两台都登录在同一个账号上(test/mcp-login.sh),连的是 SERVER_LOG 那份 server。
 set -euo pipefail
@@ -124,9 +137,8 @@ play_locally() {
   click "$dev" "$(handles "$dev" WallView::view-list-btn | head -1)"; sleep 1.5
   # 同一行正在放时再点是多余的点击,不会重新起播 —— 两行轮着点,见 played-e2e.sh。
   for idx in 1 2; do
-    # 起播是「点一下选中、再点一下确认」(触摸屏没有双击,两端同一套)。第一下会让
-    # 列表重画,手上的句柄随之作废,所以第二下要重新取。
-    click "$dev" "$(handles "$dev" TrackList::touch | sed -n "${idx}p")"; sleep 0.7
+    # 点一下就起播。别连点两下:2026-09-23 在 ns 桌面实例上实测,同一行连点两下
+    # 什么都没放,状态回到「点一首歌开始」(#111 回报里记为待裁决发现)。
     click "$dev" "$(handles "$dev" TrackList::touch | sed -n "${idx}p")"
     for _ in $(seq 20); do
       sleep 1
@@ -147,6 +159,37 @@ audio_started() {
     && echo "  ✓ dumpsys audio 里本应用($pid)的播放器 state:started" \
     || fail "dumpsys audio 里本应用($pid)没有 started 的播放器"
 }
+
+# 本机这个应用此刻在不在出声。只认本应用那个进程 —— 别的应用在放也会有声音。
+playing() {
+  local pid
+  case "$(kind "$1")" in
+    android)
+      pid=$(adb shell pidof io.github.osmosis | tr -d '\r')
+      adb shell dumpsys audio | grep -qE "u/pid:[0-9]+/$pid state:started" ;;
+    ns)
+      # 播放器自己每秒记一行「自动续播轮询: 位置 …, 放空 …」(ui=debug,ns-desktop.sh
+      # 要带 RUST_LOG=info,ui=debug 起)。隔两秒位置变了、且没放空,才算在出声。
+      # 不看 pipewire:应用一直开着输出流,没在放歌时那条流照样是 running。
+      local log a b
+      log="$(arg "$1")/desk.log"
+      a=$(grep "自动续播轮询" "$log" | tail -1)
+      sleep 2
+      b=$(grep "自动续播轮询" "$log" | tail -1)
+      [[ "$b" == *"放空 false"* && "${a#*位置 }" != "${b#*位置 }" ]] ;;
+  esac
+}
+
+# 杀掉应用,模拟崩溃或被系统收走:不给它任何收尾的机会。
+kill_app() {
+  case "$(kind "$1")" in
+    ns) kill -9 "$(cat "$(arg "$1")/ns.pid")" ;;
+    android) adb shell am force-stop io.github.osmosis ;;
+  esac
+}
+
+log_count() { grep -c "$1" "$SERVER_LOG" || true; }
+resumed_since() { [ "$(log_count "遥控器租约内续上")" -gt "$1" ]; }
 
 joins() { grep -c "设备入册" "$SERVER_LOG" || true; }
 joined_since() { [ "$(joins)" -gt "$1" ]; }
@@ -209,6 +252,57 @@ restarts() {
   echo "  ✓ 没有任何一台被限流,每次重启都重新入册"
 }
 
+vanish() {
+  local lease=${LEASE:-30} tgt_name t0 expired
+  tgt_name=$(name_of "$TGT")
+  echo "== vanish:$CTL 遥控正在放歌的 $TGT($tgt_name),然后杀掉 $CTL"
+  play_locally "$TGT"
+  open_profile "$CTL"
+  click "$CTL" "$(chip "$CTL" "$tgt_name")"
+  until_true 10 "TGT 挂上「正被遥控」" controlled "$TGT"
+  playing "$TGT" || fail "接管之后 TGT 不出声了"
+
+  expired=$(log_count "遥控器下线满租约")
+  kill_app "$CTL"
+  t0=$SECONDS
+  # 早于租约撤掉也算错:那说明清锁的不是租约,短暂断网同样会被它清掉。
+  sleep $((lease - 10))
+  controlled "$TGT" || fail "CTL 消失 $((SECONDS - t0)) 秒、租约还没满,横幅就撤了"
+  echo "  ✓ 租约满之前($((SECONDS - t0)) 秒)横幅还在"
+  until_true 30 "满租约后 TGT 横幅自己撤掉" not_controlled "$TGT"
+  echo "  (CTL 消失到横幅撤掉:$((SECONDS - t0)) 秒,租约 $lease 秒)"
+  [ "$(log_count "遥控器下线满租约")" -gt "$expired" ] \
+    || fail "横幅撤了,但服务端没有按租约清控制权"
+  echo "  ✓ 服务端日志:遥控器下线满租约,清掉控制权"
+  playing "$TGT" || fail "横幅撤掉时 TGT 的播放也停了"
+  echo "  ✓ TGT 一直在出声"
+}
+
+blip() {
+  local lease=${LEASE:-30} cut=${CUT:-5} tgt_name j0 r0 e0
+  tgt_name=$(name_of "$TGT")
+  echo "== blip:$CTL 遥控 $TGT($tgt_name),掐 CTL 的信令 $cut 秒再放开"
+  open_profile "$CTL"
+  click "$CTL" "$(chip "$CTL" "$tgt_name")"
+  until_true 10 "TGT 挂上「正被遥控」" controlled "$TGT"
+
+  j0=$(joins); r0=$(log_count "遥控器租约内续上"); e0=$(log_count "遥控器下线满租约")
+  gate "$CTL" cut
+  sleep "$cut"
+  gate "$CTL" heal
+  until_true 30 "CTL 重新入册" joined_since "$j0"
+  until_true 15 "服务端认到 CTL 带代次续上" resumed_since "$r0"
+
+  echo "  (再等过一个租约:$((lease + 10)) 秒)"
+  sleep $((lease + 10))
+  controlled "$TGT" || fail "短暂断网被当成离线,TGT 的横幅被清掉了"
+  open_profile "$CTL"
+  chip_checked "$CTL" "$tgt_name" || fail "CTL 不再指着 TGT"
+  [ "$(log_count "遥控器下线满租约")" -eq "$e0" ] \
+    || fail "服务端按租约清过控制权"
+  echo "  ✓ 过了一个租约,TGT 仍被 CTL 遥控,服务端没清过控制权"
+}
+
 # 半路失败也要把闸放开,不然下一次跑时那台设备一直连不上,报的却是别的错。
 trap 'gate "$CTL" heal 2>/dev/null || true; gate "$TGT" heal 2>/dev/null || true' EXIT
 
@@ -216,6 +310,8 @@ case "${1:-}" in
   link-loss) : "${CTL:?}" "${TGT:?}"; link_loss ;;
   claim-fail) : "${CTL:?}" "${TGT:?}"; claim_fail ;;
   restarts) : "${CTL:?}" "${TGT:?}"; restarts ;;
-  *) sed -n '2,25p' "$0"; exit 2 ;;
+  vanish) : "${CTL:?}" "${TGT:?}"; vanish ;;
+  blip) : "${CTL:?}" "${TGT:?}"; blip ;;
+  *) sed -n '2,37p' "$0"; exit 2 ;;
 esac
 echo "通过"

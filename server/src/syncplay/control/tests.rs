@@ -3,6 +3,8 @@
 //! 单独成文件是因为实现加测试放一个文件就破了七百行那条线(全局协议
 //! 「代码质量」)。测试本身没动过,连顺序都一样。
 
+use std::time::{Duration, Instant};
+
 use contract::{
     ClientSignal, DeviceDto, RemoteCommand,
     RemotePlayState, RemoteStateDto, ServerSignal,
@@ -715,5 +717,127 @@ fn a_report_with_a_grant_is_forwarded_as_before() {
             Ok(ServerSignal::State { .. })
         ),
         "上报该转给遥控器"
+    );
+}
+
+/// 手机接管 pc,交出代次。租约那几条都从这一步开始。
+fn phone_controls_pc(control: &mut Control) -> Generation {
+    let Claim::Granted { generation, .. } =
+        control.claim(ALICE, "phone", "pc", None)
+    else {
+        panic!("主动接管不该被拒");
+    };
+    generation
+}
+
+/// 遥控器下线满一个租约,槽位就清掉 —— 被控端下一次上报拿到 `NotControlled`
+/// 自己解锁(#111)。不清的话 force-stop 过的手机会让 pc1 永远挂着横幅。
+#[test]
+fn a_vanished_controller_loses_the_slot_after_the_lease() {
+    let lease = Duration::from_secs(90);
+    let mut control = Control::with_lease(lease);
+    phone_controls_pc(&mut control);
+    let gone = Instant::now();
+
+    control.controller_left(ALICE, "phone", gone);
+    control.expire(ALICE, gone + lease);
+
+    assert_eq!(control.controller_of(ALICE, "pc"), None);
+}
+
+/// 租约没满之前槽位还在:遥控器只是在重连的路上。
+#[test]
+fn the_slot_survives_until_the_lease_runs_out() {
+    let lease = Duration::from_secs(90);
+    let mut control = Control::with_lease(lease);
+    phone_controls_pc(&mut control);
+    let gone = Instant::now();
+
+    control.controller_left(ALICE, "phone", gone);
+    control.expire(
+        ALICE,
+        gone + lease - Duration::from_millis(1),
+    );
+
+    assert_eq!(
+        control.controller_of(ALICE, "pc"),
+        Some("phone")
+    );
+}
+
+/// 短暂断网:租约内带着代次续上了,之后再久也不清 —— 续上即回到在线。
+#[test]
+fn a_controller_that_resumes_within_the_lease_keeps_the_slot()
+ {
+    let lease = Duration::from_secs(90);
+    let mut control = Control::with_lease(lease);
+    let generation = phone_controls_pc(&mut control);
+    let gone = Instant::now();
+
+    control.controller_left(ALICE, "phone", gone);
+    assert_eq!(
+        control.claim(
+            ALICE,
+            "phone",
+            "pc",
+            Some(generation)
+        ),
+        Claim::Granted {
+            generation,
+            revoked: None
+        }
+    );
+    control.expire(ALICE, gone + lease * 10);
+
+    assert_eq!(
+        control.controller_of(ALICE, "pc"),
+        Some("phone")
+    );
+}
+
+/// 下线的不是遥控器(被控端、旁边一台、别的账号同名设备),租约都不起算。
+///
+/// 被控端下线走的是 `release`,不归租约;把租约挂到它身上,
+/// 就成了另一种写法的「被控端下线不清槽」。
+#[test]
+fn only_the_controller_leaving_starts_the_lease() {
+    let lease = Duration::from_secs(90);
+    let mut control = Control::with_lease(lease);
+    phone_controls_pc(&mut control);
+    let gone = Instant::now();
+
+    control.controller_left(ALICE, "spare", gone);
+    control.controller_left(ALICE, "pc", gone);
+    control.controller_left(BOB, "phone", gone);
+    control.expire(ALICE, gone + lease * 10);
+
+    assert_eq!(
+        control.controller_of(ALICE, "pc"),
+        Some("phone")
+    );
+}
+
+/// 过期由路由自己判,不靠另起定时器:被控端过期后的第一条上报
+/// 就拿到 `NotControlled`,而那条上报谁也不转。
+#[test]
+fn a_report_after_the_lease_gets_not_controlled() {
+    let (roster, mut rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::with_lease(Duration::ZERO);
+    phone_controls_pc(&mut control);
+    control.controller_left(ALICE, "phone", Instant::now());
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "pc",
+        ClientSignal::State { state: report() },
+    );
+
+    assert_eq!(reply, Some(ServerSignal::NotControlled));
+    assert!(
+        rx_phone.try_recv().is_err(),
+        "过期的遥控器不该再收到上报"
     );
 }
