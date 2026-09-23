@@ -86,6 +86,18 @@ export component WallView inherits VerticalLayout {
     wall-area := Rectangle {
         vertical-stretch: 1;
         clip: true;
+        // 卡面画在纹理里,没有逐张的元素可点;挪选中与播放挂在场区上。
+        accessible-role: list;
+        accessible-label: "卡墙";
+        accessible-action-increment => {
+            Shell.wall-step(1);
+        }
+        accessible-action-decrement => {
+            Shell.wall-step(-1);
+        }
+        accessible-action-default => {
+            Shell.wall-confirm();
+        }
         init => {
             Shell.wall-field-w = self.width;
             Shell.wall-field-h = self.height;

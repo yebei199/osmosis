@@ -224,7 +224,9 @@ pub async fn serve(
         broadcast_roster(&guard, account);
         generation
     };
-    tracing::debug!(
+    // info 而不是 debug:「那台设备到底连上没有」是查遥控问题的第一问,
+    // 生产默认 info 下看不见它,grep 零结果就成了假阴性(#113)。
+    tracing::info!(
         account,
         device = %device_id,
         generation,

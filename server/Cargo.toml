@@ -47,9 +47,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 # 限流。按账号/来源分桶的 GCRA,套在路由组上(见 gate::ratelimit)。
 #
-# `default-features = false` 关掉 tracing 那一份:本仓用 `tracing` 自己打日志,
-# 多一层它的埋点只会让同一件事出现两种写法。
-tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
+# 开着它的 `tracing`:拒绝时那一行 info 带着**被拒的键**(账号 id / IP),本仓自己
+# 那行 warn 只拿得到欠了几秒(`error_handler` 见不到请求)。关掉的话 429 查不出是谁
+# 在耗额度,2026-09-21 那次就是这么断的线(#113)。
+tower_governor = { version = "0.8", default-features = false, features = ["axum", "tracing"] }
 tower = { version = "0.5", default-features = false }
 # `tower_governor` 的公开签名里带着 `governor::middleware::NoOpMiddleware`,
 # 却没有把它再导出 —— 要给配置起一个类型别名就只能直接依赖 `governor`。

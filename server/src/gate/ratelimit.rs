@@ -72,6 +72,14 @@ pub struct AccountKey;
 impl KeyExtractor for AccountKey {
     type Key = i64;
 
+    fn name(&self) -> &'static str {
+        "account"
+    }
+
+    fn key_name(&self, key: &Self::Key) -> Option<String> {
+        Some(key.to_string())
+    }
+
     fn extract<T>(
         &self,
         req: &Request<T>,
@@ -313,6 +321,95 @@ mod tests {
                         .expect("额度不为零"),
                 );
         RateLimiter::direct_with_clock(quota, clock.clone())
+    }
+
+    /// 攒日志的地方,与 `main.rs` 那组计时测试同一个形状。
+    #[derive(Clone, Default)]
+    struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(
+            &mut self,
+            bytes: &[u8],
+        ) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| {
+                    poisoned.into_inner()
+                })
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 生产默认 `info` 下,限流挡了**谁**读得出来(#113)。
+    ///
+    /// 本仓自己那行 warn 只有「欠了几秒」:`error_handler` 见不到请求,
+    /// 说不出是哪个账号。2026-09-21 那次 429 就是这么查不下去的。
+    #[tokio::test]
+    async fn a_rejection_names_the_account_at_info() {
+        use axum::body::Body;
+        use axum::middleware::{self, Next};
+        use axum::routing::get;
+        use tower::Service as _;
+        use tower_governor::GovernorLayer;
+
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(move || writer.clone())
+                .finish(),
+        );
+
+        let mut app = axum::Router::new()
+            .route("/probe", get(|| async { "ok" }))
+            .route_layer(
+                GovernorLayer::new(policy(
+                    AccountKey,
+                    Duration::from_secs(3600),
+                    1,
+                ))
+                .error_handler(too_many_requests),
+            )
+            .layer(middleware::from_fn(
+                |mut req: Request<Body>, next: Next| async move {
+                    req.extensions_mut().insert(Account {
+                        id: 4242,
+                        username: "probe".to_owned(),
+                    });
+                    next.run(req).await
+                },
+            ));
+        let mut last = StatusCode::OK;
+        for _ in 0..2 {
+            let request = Request::get("/probe")
+                .body(Body::empty())
+                .expect("拼不出请求");
+            last = app
+                .call(request)
+                .await
+                .expect("路由不会失败")
+                .status();
+        }
+        assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+
+        let log = String::from_utf8_lossy(
+            &sink.0.lock().unwrap_or_else(|poisoned| {
+                poisoned.into_inner()
+            }),
+        )
+        .into_owned();
+        assert!(
+            log.lines().any(|line| line.contains("4242")),
+            "{log}"
+        );
     }
 
     /// 同账号两台设备一起反复重启应用,共用的建连桶也掏不空(#118 验收三)。
