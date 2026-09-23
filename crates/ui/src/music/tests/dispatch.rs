@@ -730,3 +730,25 @@ fn a_batch_past_the_quota_is_refused_on_the_spot() {
         "更不等于改在本机放 —— 那是 ADR 0030 明令禁止的回落"
     );
 }
+
+/// **本机点一次歌,只发布一次队列**(#125)。
+///
+/// 发布还在路上时 `queue_id` 是空的,每秒那一趟 tick 问「要不要补同步」,
+/// 补同步的钟又从没走过,于是紧跟着再 `POST /queues` 一次 —— 真机上看到的
+/// 就是间隔一两百毫秒的两条。
+#[test]
+fn tapping_a_track_locally_publishes_the_queue_once() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+
+    ui.global::<Player>().invoke_play("b".into());
+    // 发布的回包还没到,每秒那一趟先来了。
+    resync_local_queue(&ui, &deck);
+
+    assert_eq!(
+        deck.execution.publishes(),
+        1,
+        "点一次歌只该发布一次队列"
+    );
+}

@@ -583,6 +583,9 @@ pub(in crate::music) fn publish_local_queue(
         return;
     }
 
+    deck.execution
+        .note_publish(crate::sync::remote::now_ms());
+
     let device = crate::sync::syncplay::local_device_id();
     // 已经有这台设备的队列就**发新版本**,不是再建一个。
     //

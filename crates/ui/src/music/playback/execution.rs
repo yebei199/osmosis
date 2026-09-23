@@ -75,6 +75,8 @@ struct State {
     /// 才同步,每秒都带的话服务端那边就是每秒重写几千个 bigint,而线上字节数
     /// 并不会涨 —— 一个 AC-2 抓不到的写放大(`docs/adr/0031` 六)。
     reported_order: Vec<i64>,
+    /// 发起过几次本机队列发布。与补同步那只钟一样不随 `detach` 清零。
+    publishes: u64,
 }
 
 impl Execution {
@@ -121,9 +123,32 @@ impl Execution {
     /// 于是服务端不可达时反倒变成每秒打一发(2026-09-21 小米 13 上量到)。
     pub(in crate::music) fn detach(&self) {
         let mut state = self.inner.borrow_mut();
-        let last_sync_try_ms = state.last_sync_try_ms;
+        let (last_sync_try_ms, publishes) =
+            (state.last_sync_try_ms, state.publishes);
         *state = State::default();
         state.last_sync_try_ms = last_sync_try_ms;
+        state.publishes = publishes;
+    }
+
+    /// 一次本机队列发布发出去了。
+    ///
+    /// **补同步那只钟跟着拨到现在**:发布在路上的那几百毫秒里 `queue_id`
+    /// 还是空的,每秒那一趟 tick 问 [`Self::due_for_resync`] 就会以为这一批
+    /// 没同步过,紧跟着再 `POST /queues` 一次(#125)。
+    // ponytail: 一次发布最多两次请求 × 10 秒超时,小于 RESYNC_EVERY_MS;
+    // 哪天超时加长到逼近它,就该换成显式的「在途」标记。
+    pub(in crate::music) fn note_publish(
+        &self,
+        now_ms: u64,
+    ) {
+        let mut state = self.inner.borrow_mut();
+        state.last_sync_try_ms = now_ms;
+        state.publishes += 1;
+    }
+
+    /// 发起过几次本机队列发布。
+    pub(in crate::music) fn publishes(&self) -> u64 {
+        self.inner.borrow().publishes
     }
 
     /// 手上这份的身份,报给遥控它的那台设备。
