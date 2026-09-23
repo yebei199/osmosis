@@ -85,63 +85,95 @@ impl Artwork {
 
 /// 确保某个歌单的封面在手上,拿到之后把列表里对应那一行填上。
 ///
-/// 三步依次问:内存里有吗 → 磁盘上有吗 → 向 CDN 要。前两步都是同步的,
-/// 所以已经缓存过的封面在这一帧就摆上了,不会先闪一下空白。
+/// 三步依次问:内存里有吗 → 磁盘上有吗 → 向 CDN 要。只有第一步在 UI 线程上
+/// 答;后两步的读盘与解码都在后台(#117 —— 歌单列表一刷新,三十几张封面
+/// 在 UI 线程上逐张按原分辨率解码,界面就冻一下)。
 pub fn ensure(
     ui: &MainWindow,
     art: &Artwork,
     playlist_id: &str,
     url: &str,
 ) {
-    if url.is_empty() || art.get(playlist_id).is_some() {
-        return;
-    }
-
-    // 磁盘上那一份。命中就地解码 —— 一张缩略图,几毫秒的事。
-    if let Some(name) = cache_name(playlist_id)
-        && let Some(bytes) = api::load_artwork(&name)
-        && let Some((image, _)) =
-            crate::imagery::cover::decode(&bytes)
+    if url.is_empty()
+        || art.get(playlist_id).is_some()
+        || !art.claim(playlist_id)
     {
-        art.put(playlist_id, image);
-        apply(ui, art);
         return;
     }
 
-    if !art.claim(playlist_id) {
+    let _ = slint::spawn_local(load(
+        ui.as_weak(),
+        art.clone(),
+        playlist_id.to_owned(),
+        url.to_owned(),
+    ));
+}
+
+/// 先问磁盘,没有再上网;拿到了摆上。
+///
+/// 解成与曲目行同一档的缩略图:列表那格 40px、详情页那张 28px,
+/// 原分辨率解出来一个像素也用不上,只白占内存。
+async fn load(
+    weak: slint::Weak<MainWindow>,
+    art: Artwork,
+    playlist_id: String,
+    url: String,
+) {
+    let name = cache_name(&playlist_id);
+
+    let on_disk = name.clone();
+    let cached = api::off_thread(move || {
+        let name = on_disk?;
+        let bytes = api::load_artwork(&name)?;
+        let (pixels, rewrite) =
+            crate::imagery::cover::from_disk(&bytes)?;
+        if let Some(png) = rewrite {
+            api::save_artwork(&name, &png);
+        }
+        Some(pixels)
+    })
+    .await
+    .flatten();
+
+    let pixels = match cached {
+        Some(pixels) => Some(pixels),
+        None => download(&url, name).await,
+    };
+    art.release(&playlist_id);
+
+    let Some(pixels) = pixels else {
         return;
+    };
+    art.put(&playlist_id, slint::Image::from_rgba8(pixels));
+
+    if let Some(ui) = weak.upgrade() {
+        apply(&ui, &art);
     }
+}
 
-    let art = art.clone();
-    let weak = ui.as_weak();
-    let playlist_id = playlist_id.to_owned();
-    let url = url.to_owned();
+/// 向 CDN 要一张,后台解码并落盘。
+async fn download(
+    url: &str,
+    name: Option<String>,
+) -> Option<crate::imagery::cover::ThumbnailPixels> {
+    let Ok(bytes) = api::fetch_bytes(url).await else {
+        // 封面取不到是常态,不是故障:CDN 会过期,也会挡住不常见的 UA
+        log::debug!("取封面失败: {url}");
+        return None;
+    };
 
-    let _ = slint::spawn_local(async move {
-        let fetched = api::fetch_bytes(&url).await;
-        art.release(&playlist_id);
-
-        let Ok(bytes) = fetched else {
-            // 封面取不到是常态,不是故障:CDN 会过期,也会挡住不常见的 UA
-            log::debug!("取封面失败: {url}");
-            return;
-        };
-        let Some((image, _)) =
-            crate::imagery::cover::decode(&bytes)
-        else {
-            log::debug!("封面不是图: {url}");
-            return;
-        };
-
-        if let Some(name) = cache_name(&playlist_id) {
-            api::save_artwork(&name, &bytes);
+    api::off_thread(move || {
+        let (pixels, store) =
+            crate::imagery::cover::from_network(&bytes)?;
+        if let Some(name) = name
+            && let Some(png) = store
+        {
+            api::save_artwork(&name, &png);
         }
-        art.put(&playlist_id, image);
-
-        if let Some(ui) = weak.upgrade() {
-            apply(&ui, &art);
-        }
-    });
+        Some(pixels)
+    })
+    .await
+    .flatten()
 }
 
 /// 把手上有的封面填进列表里对应的行。

@@ -134,6 +134,30 @@ pub fn encode_png(
     Some(out.into_inner())
 }
 
+/// 磁盘缓存里那一份解成缩略图。存的若还是改前落的原图,顺手给出该换上去的
+/// 那份(第二项),调用方写回去。
+///
+/// 这一组都在后台线程上跑,所以只碰字节与像素。
+pub fn from_disk(
+    bytes: &[u8],
+) -> Option<(ThumbnailPixels, Option<Vec<u8>>)> {
+    let thumb = decode_thumbnail(bytes)?;
+    let rewrite = thumb
+        .shrunk
+        .then(|| encode_png(&thumb.pixels))
+        .flatten();
+    Some((thumb.pixels, rewrite))
+}
+
+/// 网上取回来的原图解成缩略图,外加该落盘的那一份(第二项)—— 缩好的,不是原图。
+pub fn from_network(
+    bytes: &[u8],
+) -> Option<(ThumbnailPixels, Option<Vec<u8>>)> {
+    let thumb = decode_thumbnail(bytes)?;
+    let store = encode_png(&thumb.pixels);
+    Some((thumb.pixels, store))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +235,81 @@ mod tests {
         let html =
             b"<html><body>403 Forbidden</body></html>";
         assert!(decode_thumbnail(html).is_none());
+    }
+
+    // ── 磁盘缓存里的那一份([`from_network`] 与 [`from_disk`])──
+
+    /// 一段字节解出来的边长。
+    fn dimensions(bytes: &[u8]) -> (u32, u32) {
+        let decoded = image::load_from_memory(bytes)
+            .expect("落盘的那份该是一张图");
+        (decoded.width(), decoded.height())
+    }
+
+    /// 网上取回来的大图,落盘的是缩好的那份,不是原图。
+    ///
+    /// 存原图的话,每次启动内存那层是空的,磁盘上整批原图要再解一遍 ——
+    /// 进每日推荐那一下的卡就是这么来的。
+    #[test]
+    fn a_fetched_cover_is_stored_as_a_thumbnail() {
+        let (pixels, store) = from_network(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+
+        let stored = store.expect("解得出来就该有一份落盘");
+        assert_eq!(dimensions(&stored), (96, 64));
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
+    }
+
+    /// 网上回来的不是图(CDN 过期的 HTML 页):什么都不落盘。
+    #[test]
+    fn a_fetched_error_page_is_not_stored() {
+        assert!(
+            from_network(b"<html>403</html>").is_none()
+        );
+    }
+
+    /// 磁盘上还是改之前落的原图:解出来的同时给出缩好的那份,换上去。
+    ///
+    /// 不换的话,老用户的缓存目录里全是原图,改存缩略图对他们一张都不生效,
+    /// 直到 64MB 的上限把它们挤出去。
+    #[test]
+    fn a_legacy_original_on_disk_is_rewritten_as_a_thumbnail()
+     {
+        let (pixels, rewrite) = from_disk(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+
+        let rewrite = rewrite.expect("旧的原图该被换掉");
+        assert_eq!(dimensions(&rewrite), (96, 64));
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
+    }
+
+    /// 磁盘上已经是缩略图:原样用,不再写一遍。
+    ///
+    /// 每次命中都写的话,滚一次列表就是几十次写盘,还会把 mtime 刷新到
+    /// 淘汰顺序失真。
+    #[test]
+    fn a_stored_thumbnail_is_not_rewritten() {
+        let (_, store) = from_network(&png(1200, 800))
+            .expect("合法 PNG 该解得出来");
+        let stored = store.expect("解得出来就该有一份落盘");
+
+        let (pixels, rewrite) = from_disk(&stored)
+            .expect("存下的那份该解得出来");
+
+        assert!(
+            rewrite.is_none(),
+            "已经是缩略图了,不该再写"
+        );
+        assert_eq!(
+            (pixels.width(), pixels.height()),
+            (96, 64)
+        );
     }
 
     /// 在内存里编一张纯色 PNG,免得在测试里贴一段魔法字节。
