@@ -19,6 +19,7 @@ use server::store::account::Account;
 
 use crate::{AppState, fail};
 
+pub(crate) mod archive;
 pub(crate) mod download;
 
 #[cfg(test)]

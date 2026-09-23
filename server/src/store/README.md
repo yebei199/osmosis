@@ -1,7 +1,8 @@
 # store
 
 自家数据的家。连接池与迁移(`db`)、账号(`account`)、本地歌单(`playlist`)、
-播放事件(`history`)、平台曲目的缓存(`cache`)、持久播放队列(`queue`)。
+播放事件(`history`)、平台曲目的缓存(`cache`)、持久播放队列(`queue`)、
+存进对象存储的曲目账目(`archive`,#126;字节在桶里,这里只记账)。
 
 只认 Postgres。不认识 HTTP —— 请求与响应的形状归 `routes/`;也不认识 gRPC ——
 上游的东西归 `bangdream`。
