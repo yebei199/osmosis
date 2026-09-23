@@ -5,6 +5,8 @@ use bevy::prelude::*;
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
 
+use bevy::platform::time::Instant;
+
 use super::Scene;
 use crate::seam::Pointer;
 use crate::wall;
@@ -58,7 +60,53 @@ impl Scene {
             }
         }
         self.wall.apply(&mut self.app, frame);
-        self.app.update();
+        super::probed_update(&mut self.app, "卡墙");
         self.wall.finish(&self.app)
+    }
+
+    /// 预热卡墙(#121):第一次由 [`Scene::new_async`] 在建窗口前调,之后墙还没露面时
+    /// 由 ui 隔一会儿调一次,返回 `true` 表示编完了。
+    ///
+    /// 每次都离屏渲一帧 [`wall::WallFrame::prewarm`] —— 64×64 的小目标、一张闪卡
+    /// 一张普通卡。第一次把卡墙要的管线全部排进异步编译队列;之后几次让
+    /// `process_queue` 把后台编好的收进来,顺带让那些要等前一批就绪才排队的
+    /// 管线也排上。相机开着是必须的:材质管线只为「开着的相机看得见的网格」
+    /// 特化。渲完就关掉卡墙相机,不交纹理给 Slint。
+    pub fn prewarm_wall(&mut self) -> bool {
+        let (started, ready_at_start) =
+            *self.prewarm.get_or_insert_with(|| {
+                log::info!("render3d: 卡墙预热开始");
+                (
+                    Instant::now(),
+                    super::ready_pipelines(&self.app).len(),
+                )
+            });
+        self.wall.set_active(&mut self.app, true);
+        for cam in [self.camera, self.occluder_camera] {
+            if let Some(mut c) =
+                self.app.world_mut().get_mut::<Camera>(cam)
+            {
+                c.is_active = false;
+            }
+        }
+        self.wall.apply(
+            &mut self.app,
+            &wall::WallFrame::prewarm(),
+        );
+        super::probed_update(&mut self.app, "卡墙预热");
+        self.wall.set_active(&mut self.app, false);
+
+        let waiting = super::waiting_pipelines(&self.app);
+        if waiting > 0 {
+            return false;
+        }
+        log::info!(
+            "render3d: 卡墙预热结束 {}ms,期间新建管线 {} 条",
+            started.elapsed().as_millis(),
+            super::ready_pipelines(&self.app)
+                .len()
+                .saturating_sub(ready_at_start),
+        );
+        true
     }
 }

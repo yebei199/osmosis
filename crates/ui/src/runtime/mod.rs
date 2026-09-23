@@ -5,3 +5,4 @@
 pub mod frame_stats;
 pub mod lyric_push;
 pub mod render_loop;
+pub(crate) mod trace;

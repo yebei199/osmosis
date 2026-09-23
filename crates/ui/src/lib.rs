@@ -110,6 +110,7 @@ fn build_ui(
     viz::Source,
     music::LyricFeed,
     music::CoverFeed,
+    runtime::trace::Frames,
 ) {
     let ui = MainWindow::new()
         .expect("failed to create main window");
@@ -126,7 +127,7 @@ fn build_ui(
     pages::profile::bind(&ui);
     shader::aurora_btn::bind(&ui);
 
-    let (viz_source, lyrics, cover) =
+    let (viz_source, lyrics, cover, frames) =
         music::bind(&ui, media);
 
     ui.global::<Shell>().set_show_fps(fps_enabled());
@@ -149,7 +150,7 @@ fn build_ui(
         ui.global::<Shell>()
             .set_current_tab(tab.clamp(0, MAX_TAB));
     }
-    (ui, viz_source, lyrics, cover)
+    (ui, viz_source, lyrics, cover, frames)
 }
 
 /// 会话、设置、封面与设备 id 的落点。与下载落点同一个接缝形状:
@@ -168,7 +169,7 @@ pub fn set_state_dir(dir: std::path::PathBuf) {
 /// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
     // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
-    let (ui, _viz_source, _lyrics, _cover) =
+    let (ui, _viz_source, _lyrics, _cover, _frames) =
         build_ui(|_| Box::new(NoControls));
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。

@@ -7,10 +7,9 @@ use axum::{
 };
 use contract::{TrackIdsDto, TracksDto};
 use serde::Deserialize;
-use tonic::transport::Channel;
 
 use server::bangdream::{
-    self,
+    self, UpstreamChannel,
     proto::{
         GetAccountStatusRequest, GetPlaylistRequest,
         ListLikedTracksRequest, ListUserPlaylistsRequest,
@@ -160,7 +159,7 @@ pub(crate) async fn liked(
 /// 每个账号都有这个歌单,找不到说明上游给的列表不完整,那时回空会被读成
 /// 「一首喜欢的都没有」。
 pub(crate) async fn liked_playlist_id(
-    library: &mut LibraryServiceClient<Channel>,
+    library: &mut LibraryServiceClient<UpstreamChannel>,
     account: &Account,
     netease_user_id: &str,
 ) -> Result<String, Failure> {

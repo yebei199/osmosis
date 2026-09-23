@@ -75,6 +75,41 @@ pub struct WallFrame {
     pub covers: Vec<WallCover>,
 }
 
+impl WallFrame {
+    /// 预热用的一帧(#121):闪卡与带卡面的普通卡各一张,都摆在视野中央。
+    ///
+    /// 卡墙会用到的材质管线只有在「可见的网格 + 开着的相机」下才会排进编译
+    /// 队列,所以两种材质各摆一张。目标图取小:这一帧只为走一遍管线,不给人看。
+    pub(crate) fn prewarm() -> Self {
+        const SIDE: u32 = 64;
+        const CARD: f32 = 16.0;
+        const OFFSET: f32 = 12.0;
+        let card = |x: f32| WallCard {
+            x,
+            y: 0.0,
+            z: 0.0,
+            rot_y: 0.0,
+            rot_x: 0.0,
+            dim: 1.0,
+            size: CARD,
+        };
+        Self {
+            width: SIDE,
+            height: SIDE,
+            cam: WallCamera::default(),
+            foil: Some(0),
+            cards: vec![card(-OFFSET), card(OFFSET)],
+            covers: vec![WallCover {
+                slot: 1,
+                width: 4,
+                height: 4,
+                rgba: vec![u8::MAX; 4 * 4 * 4],
+                blank: true,
+            }],
+        }
+    }
+}
+
 impl Default for WallCamera {
     fn default() -> Self {
         Self {
@@ -420,12 +455,15 @@ impl WallScene {
         };
         let key = (tex.width(), tex.height());
         if self.image_key != Some(key) {
+            let started =
+                bevy::platform::time::Instant::now();
             match slint::Image::try_from(tex) {
                 Ok(img) => {
                     log::info!(
-                        "render3d: 卡墙纹理 {}x{} 已导入 Slint",
+                        "render3d: 卡墙纹理 {}x{} 已导入 Slint({}ms)",
                         key.0,
-                        key.1
+                        key.1,
+                        started.elapsed().as_millis(),
                     );
                     self.image = Some(img);
                     self.image_key = Some(key);

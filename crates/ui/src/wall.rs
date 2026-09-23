@@ -287,5 +287,59 @@ pub fn bake_blank(size: u32) -> (Vec<u8>, u32, u32) {
     bake_card(&white, size, size)
 }
 
+/// 第一帧之后多久才开始预热。开机这段留给登录与首屏。
+pub const PREWARM_AFTER: core::time::Duration =
+    core::time::Duration::from_secs(1);
+
+/// 预热期间隔多久问一次 render3d「编完没有」。
+pub const PREWARM_EVERY: core::time::Duration =
+    core::time::Duration::from_millis(100);
+
+/// 卡墙预热的节拍(#121)。
+///
+/// 墙第一次亮相时 bevy 要编三十多条管线;这里让渲染循环在墙还没露面的时候
+/// 隔一会儿叫一次 render3d 的预热,直到它回话说编完了。墙一旦真的在画,
+/// 剩下的由真墙的帧收尾,预热永久停下。
+///
+/// 按时间而不是按帧数:窗口被挡住时合成器一秒只给一两帧,按帧数数的话
+/// 预热要拖到一分钟以后。
+#[derive(Debug, Default)]
+pub struct Prewarm {
+    started: Option<web_time::Instant>,
+    last: Option<web_time::Instant>,
+    done: bool,
+}
+
+impl Prewarm {
+    /// 这一帧要不要叫预热。每帧调一次;`wall_seen` 是墙这一帧在不在画。
+    pub fn due(
+        &mut self,
+        now: web_time::Instant,
+        wall_seen: bool,
+    ) -> bool {
+        if wall_seen {
+            self.done = true;
+        }
+        if self.done {
+            return false;
+        }
+        let started = *self.started.get_or_insert(now);
+        if now.duration_since(started) < PREWARM_AFTER
+            || self.last.is_some_and(|last| {
+                now.duration_since(last) < PREWARM_EVERY
+            })
+        {
+            return false;
+        }
+        self.last = Some(now);
+        true
+    }
+
+    /// render3d 回话:没有管线还在排队或编译了。
+    pub fn finish(&mut self) {
+        self.done = true;
+    }
+}
+
 #[cfg(test)]
 mod tests;
