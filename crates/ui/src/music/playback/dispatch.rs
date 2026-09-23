@@ -468,11 +468,13 @@ fn to_local(
                 is_redundant_tap(
                     deck.playback.borrow().state(),
                     id,
+                    ui.global::<Player>().get_is_playing(),
                 )
             });
             if redundant {
                 // 不挡的话,连点五下就是五条在途下载,每条回来都往播放器里
-                // 塞一次源,声音从头响五遍。
+                // 塞一次源,声音从头响五遍;已经在响的那首则会被停掉、从头
+                // 再加载一遍,还顺带多发布一次队列(#125)。
                 return Dispatched::Blocked(
                     "这一下是多余的",
                 );

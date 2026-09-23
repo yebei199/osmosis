@@ -752,3 +752,91 @@ fn tapping_a_track_locally_publishes_the_queue_once() {
         "点一次歌只该发布一次队列"
     );
 }
+
+// ── 连点同一首(#125 范围扩展)──
+//
+// 第一下到出声真机上要 1.7~2 秒,这期间用户本能地再点一下。同一首还在
+// 加载或已经在放,再点就忽略:不打断、不重来、不再发布一次队列。加载中
+// 那一种早有 `a_second_tap_on_a_loading_track_is_dropped_locally`。
+
+/// 让本机的播放状态停在「`id` 正在加载」:准备那一步永远不回来。
+fn hold_loading(deck: &Deck, id: &str) {
+    poll_once(app_core::play(
+        &deck.playback,
+        track_with_id(id),
+        |_| std::future::pending::<Result<(), String>>(),
+        |_| {},
+    ));
+}
+
+/// 让本机的播放状态停在「`id` 已经在放」。
+fn hold_playing(deck: &Deck, id: &str) {
+    poll_once(app_core::play(
+        &deck.playback,
+        track_with_id(id),
+        |_| async { Ok::<(), String>(()) },
+        |_| {},
+    ));
+}
+
+fn poll_once(
+    future: impl core::future::Future<Output = ()>,
+) {
+    let mut future = core::pin::pin!(future);
+    let _ = future.as_mut().poll(
+        &mut core::task::Context::from_waker(
+            core::task::Waker::noop(),
+        ),
+    );
+}
+
+/// 用户点过 `id`、它成了本机队列的当前一首。
+fn tapped_before(deck: &Deck, id: &str) {
+    let batch = deck.tracks.borrow().clone();
+    let index = batch
+        .iter()
+        .position(|track| track.id == id)
+        .expect("点的那首在这一批里");
+    deck.queue.borrow_mut().replace(batch, index);
+}
+
+#[test]
+fn tapping_the_playing_track_again_is_ignored() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    tapped_before(&deck, "b");
+    hold_playing(&deck, "b");
+    ui.global::<Player>().set_is_playing(true);
+
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert_eq!(
+        deck.execution.publishes(),
+        0,
+        "已在放的那一首再点,不该再发布一次队列"
+    );
+    assert!(
+        ui.global::<Player>().get_is_playing()
+            && !ui.global::<Player>().get_now_loading(),
+        "已在放的那一首不该被停下来从头再加载"
+    );
+}
+
+#[test]
+fn tapping_another_track_while_loading_switches() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    tapped_before(&deck, "b");
+    hold_loading(&deck, "b");
+
+    ui.global::<Player>().invoke_play("c".into());
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("c".to_owned()),
+        "点的是另一首就照常切过去"
+    );
+    assert_eq!(deck.execution.publishes(), 1);
+}
