@@ -285,7 +285,7 @@ fn assemble_debug(
 }
 
 /// gradle 的命令行。versionName 就是 workspace 版本(xtask 继承它),
-/// versionCode 由它推出 —— 设备上 `dumpsys package` 与 #129 的应用内升级都认这两个值。
+/// versionCode 由它推出 —— 设备上 `dumpsys package` 读到的就是这两个值。
 fn gradle_args(
     abis: &[Abi],
     version: &str,

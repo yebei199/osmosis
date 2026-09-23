@@ -290,7 +290,7 @@ fn build_apk_rejects_bad_abis_before_the_toolchain() {
 }
 
 /// gradle 拿到的 versionName 就是 workspace 版本,versionCode 由它单调推出。
-/// 设备上 `dumpsys package` 读到的版本号与 #129 的应用内升级都认这两个值。
+/// 设备上 `dumpsys package` 读到的就是这两个值。
 #[test]
 fn gradle_args_carry_workspace_version() {
     let args =
