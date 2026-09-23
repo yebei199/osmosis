@@ -12,7 +12,8 @@ fn tapping_the_track_that_is_already_loading_is_redundant()
 {
     assert!(is_redundant_tap(
         &PlaybackState::Loading(track_with_id("1")),
-        "1"
+        "1",
+        false
     ));
 }
 
@@ -22,26 +23,53 @@ fn tapping_a_different_track_while_loading_is_not_redundant()
  {
     assert!(!is_redundant_tap(
         &PlaybackState::Loading(track_with_id("1")),
-        "2"
+        "2",
+        false
     ));
 }
 
-/// 已经在放这一首:再点是「从头听」,照旧生效。
+/// 已经在响的这一首:再点是多余的,不停、不重来(#125)。
 #[test]
-fn tapping_the_playing_track_is_not_redundant() {
+fn tapping_the_sounding_track_is_redundant() {
+    assert!(is_redundant_tap(
+        &PlaybackState::Playing(track_with_id("1")),
+        "1",
+        true
+    ));
+}
+
+/// 暂停着的这一首:再点是想让它响,照常生效。
+#[test]
+fn tapping_the_paused_track_is_not_redundant() {
     assert!(!is_redundant_tap(
         &PlaybackState::Playing(track_with_id("1")),
-        "1"
+        "1",
+        false
+    ));
+}
+
+/// 在放别的歌:这一下该换歌。
+#[test]
+fn tapping_another_track_while_playing_is_not_redundant() {
+    assert!(!is_redundant_tap(
+        &PlaybackState::Playing(track_with_id("1")),
+        "2",
+        true
     ));
 }
 
 /// 空闲与失败态下的点击一律照常 —— 失败之后重试是常见动作。
 #[test]
 fn tapping_while_idle_or_failed_is_not_redundant() {
-    assert!(!is_redundant_tap(&PlaybackState::Idle, "1"));
+    assert!(!is_redundant_tap(
+        &PlaybackState::Idle,
+        "1",
+        true
+    ));
     assert!(!is_redundant_tap(
         &PlaybackState::Failed("直链已过期".to_owned()),
-        "1"
+        "1",
+        true
     ));
 }
 
