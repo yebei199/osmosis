@@ -52,6 +52,14 @@ pub fn refresh(set: &LikedSet, ui: &MainWindow) {
     let weak = ui.as_weak();
 
     let _ = slint::spawn_local(async move {
+        // 本地缓存里上次那份先标上(#123),新的回来再按它改
+        if let Some(dto) = api::cached_liked_ids().await
+            && replace(&set, dto.track_ids)
+            && let Some(ui) = weak.upgrade()
+        {
+            remark(&set, &ui);
+        }
+
         match api::liked_ids().await {
             Ok(dto) => {
                 // 没变就不重标:每次打开歌单都会拉一次,绝大多数时候什么都没变

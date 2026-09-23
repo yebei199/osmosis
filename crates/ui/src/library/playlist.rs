@@ -117,6 +117,8 @@ pub fn fetch_covers(
 }
 
 /// 拉一次歌单列表,填进界面。
+///
+/// 先摆本地缓存里上次那份,新的回来且不同再换(#123)。
 pub fn refresh(
     ui: &MainWindow,
     art: &crate::imagery::artwork::Artwork,
@@ -125,22 +127,19 @@ pub fn refresh(
     let weak = ui.as_weak();
 
     let _ = slint::spawn_local(async move {
+        let stale = api::cached_playlists().await;
+        if let Some(stale) = &stale
+            && let Some(ui) = weak.upgrade()
+        {
+            fill(&ui, &art, &stale.playlists);
+        }
+
         let found = api::playlists().await;
         let Some(ui) = weak.upgrade() else { return };
 
         match found {
-            Ok(dto) => {
-                let rows: Vec<PlaylistRow> =
-                    dto.playlists.iter().map(to_row).collect();
-                ui.global::<Library>().set_playlists(
-                    slint::ModelRc::new(
-                        slint::VecModel::from(rows),
-                    ),
-                );
-                // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
-                // 网络慢时整张列表都是空的。
-                fetch_covers(&ui, &art, &dto.playlists);
-            }
+            Ok(dto) if stale.as_ref() == Some(&dto) => {}
+            Ok(dto) => fill(&ui, &art, &dto.playlists),
             Err(err)
                 if crate::pages::account::handle_session_expiry(
                     &ui, &err,
@@ -148,6 +147,22 @@ pub fn refresh(
             Err(err) => report(&ui, &err, "取歌单失败"),
         }
     });
+}
+
+/// 把一份歌单列表摆进界面。
+fn fill(
+    ui: &MainWindow,
+    art: &crate::imagery::artwork::Artwork,
+    lists: &[PlaylistDto],
+) {
+    let rows: Vec<PlaylistRow> =
+        lists.iter().map(to_row).collect();
+    ui.global::<Library>().set_playlists(
+        slint::ModelRc::new(slint::VecModel::from(rows)),
+    );
+    // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
+    // 网络慢时整张列表都是空的。
+    fetch_covers(ui, art, lists);
 }
 
 /// 报一次失败。走横幅,不走播放状态行(见 `crate::notice`)。
