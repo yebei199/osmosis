@@ -58,7 +58,7 @@ release APK 用的是 gradle 的 debug 构建类型,签名密钥是 pc1 当初�
 - APK 内的 `versionName` = workspace 版本(同 `<ver>`),`versionCode` = `major*1000000 +
   minor*1000 + patch`(0.1.15 → 1015),由 `cargo xtask android` 传给 gradle。v0.1.14 及以前
   的 APK 里仍是 `0.1.0` / `1`。
-- 找「最新版」用 GitHub 的 latest release;某个 release 可能还没补上 APK(构建要一小时),
+- 找「最新版」用 GitHub 的 latest release;某个 release 可能还没补上 APK(pc3 冷编实测约 12 分钟),
   消费方要容忍资产缺席。
 
 ## 配置

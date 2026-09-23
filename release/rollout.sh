@@ -53,7 +53,7 @@ fetch_published_apk() {
 
 build_and_upload_apk() {
     local remote_apk
-    echo "==> 在 $ROLLOUT_BUILD_HOST 上构建 $tag 的 APK(冷编一小时量级)"
+    echo "==> 在 $ROLLOUT_BUILD_HOST 上构建 $tag 的 APK(pc3 冷编实测约 12 分钟)"
     remote_apk=$(ssh "$ROLLOUT_BUILD_HOST" bash -s -- "$tag" "$OSMOSIS_API_BASE" \
         < "$here/remote-build.sh" | tail -1) || return 1
     scp "$ROLLOUT_BUILD_HOST:${remote_apk:-dist/osmosis-debug.apk}" "$apk" || return 1
