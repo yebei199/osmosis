@@ -27,21 +27,31 @@ fn runtime() -> &'static Runtime {
 const REQUEST_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(10);
 
-/// 一个只直连的客户端。
+/// 进程里唯一的客户端。只直连。
+///
+/// 共用一个是为了连接池:每次新建客户端,每条请求都要重做一遍 TCP + TLS
+/// 握手,开发机到生产实测 0.45–0.7s(#122)。超时因此不能挂在客户端上 ——
+/// 下载要的是「卡建连、卡读」而不是整体上限 —— 整体超时由各请求自己设。
 ///
 /// `.no_proxy()` 不能省:集群地址在 tailnet 里(100.64.0.2),本机代理路由不
 /// 到它,握手会被掐断 —— 现象是登录一律「连不上服务端」,而把 `HTTPS_PROXY`
 /// 从环境里去掉就通。启动器起的应用继承的正是用户会话那份环境变量。
 /// 关掉 reqwest 的 `system-proxy` 特性挡不住这件事:那个特性只管 macOS 和
 /// Windows 的系统设置,环境变量是 hyper-util 无条件读的。
-fn client(
-    timeout: std::time::Duration,
-) -> Result<reqwest::Client, ApiError> {
-    reqwest::Client::builder()
-        .timeout(timeout)
+fn client() -> Result<&'static reqwest::Client, ApiError> {
+    static CLIENT: OnceLock<reqwest::Client> =
+        OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let built = reqwest::Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .read_timeout(REQUEST_TIMEOUT)
         .no_proxy()
         .build()
-        .map_err(|e| ApiError::Transport(e.to_string()))
+        .map_err(|e| ApiError::Transport(e.to_string()))?;
+    // 两个线程同时走到这里时各建一个,留下先到的那个;后到的丢掉无害
+    Ok(CLIENT.get_or_init(|| built))
 }
 
 pub(crate) async fn get_json<
@@ -121,9 +131,9 @@ async fn exchange<B: serde::Serialize + Send + 'static>(
     body: Option<B>,
     token: Option<String>,
 ) -> Result<reqwest::Response, ApiError> {
-    let client = client(REQUEST_TIMEOUT)?;
-
-    let mut request = client.request(method, url);
+    let mut request = client()?
+        .request(method, url)
+        .timeout(REQUEST_TIMEOUT);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -497,16 +507,7 @@ pub(crate) async fn download(
 
     runtime()
         .spawn(async move {
-            let client = reqwest::Client::builder()
-                .connect_timeout(REQUEST_TIMEOUT)
-                .read_timeout(REQUEST_TIMEOUT)
-                .no_proxy()
-                .build()
-                .map_err(|e| {
-                    ApiError::Transport(e.to_string())
-                })?;
-
-            let mut request = client.get(url);
+            let mut request = client()?.get(url);
             if let Some(token) = token {
                 request = request.bearer_auth(token);
             }
@@ -557,10 +558,9 @@ pub(crate) async fn get_bytes(
 ) -> Result<Vec<u8>, ApiError> {
     runtime()
         .spawn(async move {
-            let client =
-                client(std::time::Duration::from_secs(10))?;
-            let response = client
+            let response = client()?
                 .get(url)
+                .timeout(REQUEST_TIMEOUT)
                 .send()
                 .await
                 .map_err(|e| {

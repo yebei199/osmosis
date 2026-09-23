@@ -511,3 +511,90 @@ fn the_response_is_decoded_off_the_callers_thread() {
         "响应体还在调用方线程上解"
     );
 }
+
+/// 起一个保持连接的 HTTP 服务,数它一共接了几条连接。
+///
+/// 与 [`recording_server`] 相反,这里**不**回 `Connection: close`:每条连接
+/// 一个线程,在上面一直按序应答,直到客户端关掉它。
+fn keep_alive_server()
+-> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>)
+{
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::Ordering;
+
+    let listener =
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("绑不上本地端口");
+    let addr =
+        listener.local_addr().expect("取不到本地地址");
+    let accepted = std::sync::Arc::new(
+        std::sync::atomic::AtomicUsize::new(0),
+    );
+    let counter = accepted.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(
+                    stream
+                        .try_clone()
+                        .expect("连接复制不了"),
+                );
+                loop {
+                    // 读完一条不带请求体的请求头;对端关了就收工
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if reader
+                            .read_line(&mut line)
+                            .unwrap_or(0)
+                            == 0
+                        {
+                            return;
+                        }
+                        if line.trim_end().is_empty() {
+                            break;
+                        }
+                    }
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 200 OK\r\n\
+                          Content-Type: application/json\r\n\
+                          Content-Length: 2\r\n\r\n{}",
+                    );
+                    let _ = stream.flush();
+                }
+            });
+        }
+    });
+
+    (format!("http://{addr}"), accepted)
+}
+
+/// 同一主机的两次请求走同一条连接。
+///
+/// 每次新建客户端时,每条请求都要重做一遍 TCP + TLS 握手:开发机到生产
+/// 实测 0.45–0.7s,连 36 字节的 `/health` 在手机上也要 1.5s 起(#122)。
+#[tokio::test]
+async fn consecutive_requests_reuse_one_connection() {
+    let (base, accepted) = keep_alive_server();
+
+    for _ in 0..2 {
+        send::<()>(
+            reqwest::Method::GET,
+            base.clone(),
+            None,
+        )
+        .await
+        .expect("本机服务该应答");
+    }
+
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "两次请求各建了一条连接,连接没有复用"
+    );
+}
