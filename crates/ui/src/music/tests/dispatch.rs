@@ -270,6 +270,35 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
     );
 }
 
+/// 信令断了,锁就撤:断网期间本机点歌照常落到本机(#118)。
+///
+/// 锁此前只有服务端的消息才清,而断着的时候消息过不来 —— 被控端断网期间
+/// 连歌都点不了,要等重连、等服务端想起来告诉它一声。
+#[test]
+fn a_dropped_link_lets_the_local_tap_through() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let _ = batch_of(&deck, &["a", "b"]);
+    crate::sync::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+
+    crate::sync::remote::handle(
+        &Event::Disconnected,
+        &deck.remote,
+    );
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned()),
+        "断线之后本机前面那个人按的要算数"
+    );
+}
+
 // ── 五处本机行为差异,各一条 ──
 
 /// 差异 1:本机播放器放空之后按播放是**重播**,不是 resume 一个空播放器。

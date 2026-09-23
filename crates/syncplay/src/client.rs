@@ -71,6 +71,11 @@ pub enum Event {
     ///
     /// `theirs` 为 `None` 表示对端旧到根本不报版本。
     Incompatible { ours: u32, theirs: Option<u32> },
+    /// 信令断了,编排循环正在重连。
+    ///
+    /// 断着的时候服务端的消息过不来,所以靠消息才清的本地状态得在这一刻自己清:
+    /// 「正被遥控」的锁留着的话,本机在断网期间连歌都点不了(#118)。
+    Disconnected,
 }
 
 /// 界面发给编排循环的指令。
@@ -382,6 +387,8 @@ async fn run(
     // 本机遥控着谁。**跨重连保留** —— 断线不该让用户重新挑一次设备
     // (`docs/adr/0030`)。理由与上面那条轨相同:重连的是信令,不是遥控关系。
     let mut held: Option<Held> = None;
+    // 本机断线那一刻是不是正被遥控。同样跨重连保留,理由见 `serve` 开头。
+    let mut controlled = false;
 
     loop {
         // 还没登录,或者手上只有那个已经被拒的 token:等它变,别空转建连。
@@ -444,12 +451,16 @@ async fn run(
             &events,
             &mut commands,
             &mut held,
+            &mut controlled,
             &incompatible,
         )
         .await
         {
             return;
         }
+
+        // 断着的时候服务端的消息过不来,靠消息才清的状态得在这里自己清。
+        events(Event::Disconnected);
 
         // 活够了才算连上过一次,退避从头来。
         if connected_at.elapsed() >= HEALTHY_AFTER {
@@ -476,6 +487,7 @@ async fn serve(
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
     incompatible: &AtomicBool,
 ) -> bool {
     let sender = signalling.sender();
@@ -495,6 +507,13 @@ async fn serve(
         let _ =
             sender.claim(&target, Some(generation)).await;
     }
+    // 断线前正被遥控:回来之后先退出。断线时界面已经解了锁(见
+    // `Event::Disconnected`),断网期间本机可能已经在放别的歌;而服务端未必发现
+    // 过旧连接死了 —— 重连顶替掉它时槽位原样留着。不退的话遥控器接着往一台
+    // 不再听它的设备发命令,两端对「谁在遥控谁」各执一词(#118)。
+    if core::mem::take(controlled) {
+        let _ = sender.exit_controlled().await;
+    }
 
     loop {
         let step = tokio::select! {
@@ -510,6 +529,7 @@ async fn serve(
                 );
                 accept(
                     message, &mut peers, &sender, events, held,
+                    controlled,
                 )
                 .await
             }
@@ -517,6 +537,9 @@ async fn serve(
                 let Some(command) = command else {
                     return false;
                 };
+                if matches!(command, Command::ExitControlled) {
+                    *controlled = false;
+                }
                 dispatch(
                     command, track, &mut peers, &sender, held,
                 )
@@ -604,6 +627,7 @@ async fn accept(
     sender: &SignalSender,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
 ) -> Result<(), SyncError> {
     match message {
         ServerSignal::Roster { devices } => {
@@ -676,10 +700,12 @@ async fn accept(
             Ok(())
         }
         ServerSignal::ControlledBy { device } => {
+            *controlled = true;
             events(Event::ControlledBy { device });
             Ok(())
         }
         ServerSignal::NotControlled => {
+            *controlled = false;
             events(Event::NotControlled);
             Ok(())
         }

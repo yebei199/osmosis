@@ -330,3 +330,206 @@ async fn a_target_without_a_grant_is_told_it_is_free() {
     })
     .await;
 }
+
+// -----------------------------------------------------------------
+// 断线与接管失败(#118)
+//
+// 两端的遥控态此前只有收到服务端消息才清,而断着的时候消息过不来;
+// 接管失败时服务端只回一行报错,遥控器的输出停在那台设备上。
+// -----------------------------------------------------------------
+
+/// 一根可以拔的线:客户端连它,它连服务端。拔过之后照样接新连接,
+/// 客户端要能重连上来。
+///
+/// 拔线时只掐客户端那一半,服务端那一半留着不关 —— 移动网络上掉线就是
+/// 这个样子:服务端要等探活(默认一分钟)才发现,而客户端早就重连上来了。
+struct Cable {
+    addr: SocketAddr,
+    cut: tokio::sync::broadcast::Sender<()>,
+}
+
+impl Cable {
+    /// 拔线:掐掉此刻所有连接的客户端那一半。
+    fn cut(&self) {
+        let _ = self.cut.send(());
+    }
+}
+
+/// 起一根通往 `upstream` 的线。
+async fn cable(upstream: SocketAddr) -> Cable {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑不上端口");
+    let addr = listener.local_addr().expect("取不到地址");
+    let (cut, _) = tokio::sync::broadcast::channel(4);
+    // 拔下来的服务端那一半收在这里,测试结束前都不关:关了服务端就立刻知道
+    // 对端走了,测的就成了「好好地断开」,而不是掉线。
+    let limbo: Arc<std::sync::Mutex<Vec<TcpStream>>> =
+        Arc::default();
+
+    let cutter = cut.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut client, _)) =
+                listener.accept().await
+            else {
+                return;
+            };
+            let Ok(mut server) =
+                TcpStream::connect(upstream).await
+            else {
+                continue;
+            };
+            let mut cut = cutter.subscribe();
+            let limbo = limbo.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                    _ = cut.recv() => {
+                        drop(client);
+                        limbo.lock().expect("锁中毒").push(server);
+                    }
+                }
+            });
+        }
+    });
+
+    Cable { addr, cut }
+}
+
+/// 信令断了要说出来。
+///
+/// 此前断线时客户端一声不吭,界面上的「被遥控」锁停在断线前,直到服务端
+/// 再发一条消息 —— 而断着的时候它发不过来,本机于是连歌都点不了。
+#[tokio::test]
+async fn a_dropped_link_is_reported() {
+    let addr = start_server().await;
+    let line = cable(addr).await;
+    let (_pc, pc_rx) = spawn_client(line.addr, "pc");
+    wait_until_both_online(&pc_rx, "pc").await;
+
+    line.cut();
+
+    wait_for(&pc_rx, "Disconnected", |event| {
+        matches!(event, Event::Disconnected).then_some(())
+    })
+    .await;
+}
+
+/// 被控端掉线又重连上来,遥控关系就此结束,遥控器得到撤权。
+///
+/// 掉线期间被控端已经解锁、可能在本机放着别的歌了;服务端却还没发现旧连接
+/// 死了,重连把它顶替掉,槽位原样留着(被顶替的那次出册不清槽)。不结束的话
+/// 遥控器接着往一台已经不听它的设备发命令,两端对「谁在遥控谁」各执一词。
+#[tokio::test]
+async fn a_target_that_comes_back_is_no_longer_controlled()
+{
+    let addr = start_server().await;
+    let line = cable(addr).await;
+    let (phone, phone_rx) = spawn_client(addr, "phone");
+    let (_pc, pc_rx) = spawn_client(line.addr, "pc");
+    wait_until_both_online(&phone_rx, "pc").await;
+    phone.claim("pc");
+    wait_for(&phone_rx, "ControlGranted", |event| {
+        matches!(event, Event::ControlGranted { .. })
+            .then_some(())
+    })
+    .await;
+    wait_for(&pc_rx, "ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+
+    line.cut();
+
+    let by =
+        wait_for(&phone_rx, "ControlRevoked", |event| {
+            match event {
+                Event::ControlRevoked { by } => {
+                    Some(by.clone())
+                }
+                _ => None,
+            }
+        })
+        .await;
+    assert_eq!(by, "pc", "撤权该说是被控端自己走的");
+}
+
+/// 让 `phone` 经一根线遥控 `pc`,再拔掉 `phone` 的线,等它重连上来。
+///
+/// `release` 为真时,拔线前先交出持权(界面失联回本机时做的就是这一下)。
+/// 返回 `pc` 的事件通道,断言交给调用方:重连之后 `pc` 有没有被重新锁上。
+async fn controller_reconnects(
+    release: bool,
+) -> mpsc::Receiver<Event> {
+    let addr = start_server().await;
+    let line = cable(addr).await;
+    let (phone, phone_rx) =
+        spawn_client(line.addr, "phone");
+    let (pc, pc_rx) = spawn_client(addr, "pc");
+    wait_until_both_online(&phone_rx, "pc").await;
+    phone.claim("pc");
+    wait_for(&phone_rx, "ControlGranted", |event| {
+        matches!(event, Event::ControlGranted { .. })
+            .then_some(())
+    })
+    .await;
+    wait_for(&pc_rx, "ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+
+    if release {
+        phone.release_control();
+    }
+    line.cut();
+    wait_for(&phone_rx, "Disconnected", |event| {
+        matches!(event, Event::Disconnected).then_some(())
+    })
+    .await;
+    // 重连上来的凭据:新连接入册后的第一份名册。
+    wait_until_both_online(&phone_rx, "pc").await;
+    // 客户端与 `pc` 都活到断言结束 —— 丢掉就等于它们下线了。
+    std::mem::forget((phone, pc));
+    pc_rx
+}
+
+/// 对照组:没交出持权的遥控器重连后续上权,被控端重新收到 `ControlledBy`。
+///
+/// 这一条是下一条的前提 —— 续不上的话,下一条「没被重新锁上」什么也说明不了。
+#[tokio::test]
+async fn a_held_claim_is_resumed_after_the_controller_reconnects()
+ {
+    let pc_rx = controller_reconnects(false).await;
+
+    wait_for(&pc_rx, "续权后的 ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+}
+
+/// 交出持权之后遥控器重连,被控端不再被锁(#118)。
+///
+/// 界面失联回本机时若不交出,客户端手上那份带代次的记录会在重连时去续权,
+/// 而服务端槽位没换人就续上了 —— 被控端又挂起「正被遥控」,遥控器那头却
+/// 早已是本机输出,谁也不在遥控它。
+#[tokio::test]
+async fn a_released_claim_is_not_resumed_after_the_controller_reconnects()
+ {
+    let pc_rx = controller_reconnects(true).await;
+
+    // 续权是重连后的第一条上行,回环上毫秒级就到;给一秒足够看出来。
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        !pc_rx.try_iter().any(|event| matches!(
+            event,
+            Event::ControlledBy { .. }
+        )),
+        "交出持权之后重连不该把被控端重新锁上"
+    );
+}
