@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use similar_asserts::assert_eq;
 
-use super::{send, sweep_dir};
+use super::{off_thread, send, sweep_dir};
 use crate::ApiError;
 
 /// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
@@ -432,4 +432,41 @@ fn a_proxy_in_the_environment_is_ignored() {
         .expect("环境里有代理变量时请求没能直连出去");
 
     captured(&requests);
+}
+
+/// 后台活真的跑在别的线程上,结果原样回到调用方。
+///
+/// 在调用方线程上跑也能拿到同一个结果 —— 只有线程号分得出「挪走了」和
+/// 「没挪走」,而没挪走的现象是界面照冻,测试照绿。
+#[test]
+fn off_thread_work_runs_on_another_thread() {
+    let caller = std::thread::current().id();
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    let ran_on = local
+        .block_on(off_thread(|| {
+            std::thread::current().id()
+        }))
+        .expect("活没有 panic,该有结果");
+
+    assert_ne!(ran_on, caller, "活还在调用方线程上跑");
+}
+
+/// 活自己 panic 了,调用方拿到 `None`,而不是跟着一起倒下。
+///
+/// 调用方是 UI 线程:一张解不动的封面不该把整个界面带走。
+#[test]
+fn a_panicking_job_yields_none() {
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    let result: Option<()> =
+        local.block_on(off_thread(|| panic!("解码炸了")));
+
+    assert_eq!(result, None);
 }

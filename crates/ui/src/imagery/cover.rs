@@ -63,6 +63,12 @@ pub fn decode(
 /// 全摆上就是 GB 级常驻。
 pub const THUMBNAIL_SIZE: u32 = 96;
 
+/// 列表行缩略图解出来的像素,还没变成 `slint::Image`。
+///
+/// 分这一步是为了过线程:`slint::Image` 只能待在 UI 线程上,像素缓冲可以跨。
+/// 解码在后台做,UI 线程只剩 [`slint::Image::from_rgba8`] 那一下包装。
+pub type ThumbnailPixels = SharedPixelBuffer<Rgba8Pixel>;
+
 /// 把封面字节解成列表行用的缩略图。
 ///
 /// 与 [`decode`] 的差别只在尺寸和不出点云:那一个供播放页那张大图,要原分辨率;
@@ -70,7 +76,7 @@ pub const THUMBNAIL_SIZE: u32 = 96;
 /// CDN 过期后回的是 HTML 错误页。
 pub fn decode_thumbnail(
     bytes: &[u8],
-) -> Option<slint::Image> {
+) -> Option<ThumbnailPixels> {
     let decoded = image::load_from_memory(bytes).ok()?;
     let (w, h) = (decoded.width(), decoded.height());
 
@@ -91,11 +97,11 @@ pub fn decode_thumbnail(
     };
 
     let (tw, th) = small.dimensions();
-    Some(slint::Image::from_rgba8(SharedPixelBuffer::<
-        Rgba8Pixel,
-    >::clone_from_slice(
-        small.as_raw(), tw, th
-    )))
+    Some(ThumbnailPixels::clone_from_slice(
+        small.as_raw(),
+        tw,
+        th,
+    ))
 }
 
 #[cfg(test)]
@@ -154,9 +160,9 @@ mod tests {
     fn decode_thumbnail_fits_the_thumbnail_budget() {
         let img = decode_thumbnail(&png(1200, 800))
             .expect("合法 PNG 应能解码");
-        assert_eq!(img.size().width, THUMBNAIL_SIZE);
+        assert_eq!(img.width(), THUMBNAIL_SIZE);
         // 1200:800 = 3:2,96 宽对应 64 高
-        assert_eq!(img.size().height, 64);
+        assert_eq!(img.height(), 64);
     }
 
     /// 小于预算的封面原样留着,不放大 —— 与 `decode` 同一条规矩。
@@ -164,10 +170,7 @@ mod tests {
     fn decode_thumbnail_keeps_small_covers_untouched() {
         let img = decode_thumbnail(&png(48, 48))
             .expect("合法 PNG 应能解码");
-        assert_eq!(
-            (img.size().width, img.size().height),
-            (48, 48)
-        );
+        assert_eq!((img.width(), img.height()), (48, 48));
     }
 
     /// 直链过期回的 HTML 错误页解不出图,返回 None 而不是 panic 掉 UI 线程。

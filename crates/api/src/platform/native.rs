@@ -136,6 +136,19 @@ async fn check(
     Err(crate::server_error(status.as_u16(), &body))
 }
 
+/// 把一段 CPU 活丢到后台线程池,在调用方那个线程(UI 线程)上等结果。
+///
+/// 封面解码这类活放在 UI 线程上做,界面就冻在那几十上百毫秒里(#117)。
+/// 走 tokio 的 blocking 池而不是自己起线程:池子本来就在这里,线程数也归它管。
+/// `docs/adr/0002` 说重 CPU 计算要逐调用点显式挪走,挪的入口就是这个。
+///
+/// 活自己 panic 了返回 `None` —— 调用方把它当成「这一张没出来」。
+pub async fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    runtime().spawn_blocking(work).await.ok()
+}
+
 /// 平台入口显式指定的状态目录。
 ///
 /// 安卓上 `XDG_STATE_HOME` 与 `HOME` 都不存在,私有目录只有入口那一层

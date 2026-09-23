@@ -48,6 +48,10 @@ pub use catalog::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use download::download;
 
+// 重 CPU 活的后台入口。wasm 没有线程,web 冻结中(#105),先只给原生。
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform::off_thread;
+
 // 状态目录的显式入口:安卓上环境变量给不出私有目录,由平台入口注入。
 pub use platform::set_state_dir;
 

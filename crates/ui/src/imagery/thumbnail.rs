@@ -199,70 +199,143 @@ impl Thumbnails {
 }
 
 /// 防抖到点:把待办表里最后一批取回来。
+///
+/// 这一步在 UI 线程上,所以只做记账:手上已有的这一帧就摆上,其余的占住
+/// 「在取」的名额,读盘与解码整批丢去后台(#117 —— 一批 40 张同步解码,
+/// 进每日推荐就冻一下)。
 fn flush(
     ui: &MainWindow,
     cache: &Rc<RefCell<Lru>>,
     pending: &Rc<RefCell<Pending>>,
     inflight: &Rc<RefCell<HashSet<String>>>,
 ) {
-    let batch = pending.borrow_mut().take_last(BATCH);
+    let batch: Vec<String> = pending
+        .borrow_mut()
+        .take_last(BATCH)
+        .into_iter()
+        .filter(|url| {
+            !cache.borrow().contains(url)
+                && inflight.borrow_mut().insert(url.clone())
+        })
+        .collect();
 
-    for url in batch {
-        if cache.borrow().contains(&url) {
-            continue;
+    apply(ui, cache);
+
+    if batch.is_empty() {
+        return;
+    }
+    let _ = slint::spawn_local(load(
+        ui.as_weak(),
+        cache.clone(),
+        inflight.clone(),
+        batch,
+    ));
+}
+
+/// 一批 URL:先整批问磁盘,没有的再各自上网。
+async fn load(
+    weak: slint::Weak<MainWindow>,
+    cache: Rc<RefCell<Lru>>,
+    inflight: Rc<RefCell<HashSet<String>>>,
+    batch: Vec<String>,
+) {
+    let urls = batch.clone();
+    // 整批一个后台活而不是一张一个:回来之后只摆一次,整表扫描只做一遍。
+    let from_disk = api::off_thread(move || {
+        batch
+            .into_iter()
+            .map(|url| {
+                let pixels =
+                    cache_name(&url).and_then(|name| {
+                        let bytes =
+                            api::load_track_artwork(&name)?;
+                        crate::imagery::cover::decode_thumbnail(
+                            &bytes,
+                        )
+                    });
+                (url, pixels)
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
+    let Some(from_disk) = from_disk else {
+        // 后台活倒了:放掉名额,下次滑到这些行还能再取
+        let mut inflight = inflight.borrow_mut();
+        for url in &urls {
+            inflight.remove(url);
         }
+        return;
+    };
 
-        // 磁盘上那一份。命中就地解码 —— 一张 96px 的图,几毫秒的事。
-        if let Some(name) = cache_name(&url)
-            && let Some(bytes) =
-                api::load_track_artwork(&name)
-            && let Some(image) =
-                crate::imagery::cover::decode_thumbnail(
-                    &bytes,
-                )
-        {
-            cache.borrow_mut().put(url, image);
-            continue;
-        }
-
-        if !inflight.borrow_mut().insert(url.clone()) {
-            continue;
-        }
-
-        let cache = cache.clone();
-        let inflight = inflight.clone();
-        let weak = ui.as_weak();
-        let _ = slint::spawn_local(async move {
-            let fetched = api::fetch_bytes(&url).await;
-            inflight.borrow_mut().remove(&url);
-
-            let Ok(bytes) = fetched else {
-                // CDN 会过期、也会挡住不常见的 UA:取不到是常态
-                log::debug!("取缩略图失败: {url}");
-                return;
-            };
-            let Some(image) =
-                crate::imagery::cover::decode_thumbnail(
-                    &bytes,
-                )
-            else {
-                log::debug!("缩略图不是图: {url}");
-                return;
-            };
-
-            if let Some(name) = cache_name(&url) {
-                api::save_track_artwork(&name, &bytes);
+    for (url, pixels) in from_disk {
+        match pixels {
+            Some(pixels) => {
+                inflight.borrow_mut().remove(&url);
+                cache.borrow_mut().put(
+                    url,
+                    slint::Image::from_rgba8(pixels),
+                );
             }
-            cache.borrow_mut().put(url, image);
-
-            if let Some(ui) = weak.upgrade() {
-                apply(&ui, &cache);
+            None => {
+                let _ = slint::spawn_local(fetch(
+                    weak.clone(),
+                    cache.clone(),
+                    inflight.clone(),
+                    url,
+                ));
             }
-        });
+        }
     }
 
-    // 磁盘命中的那些这一帧就摆上,不必等网络那一批
-    apply(ui, cache);
+    // 磁盘命中的那些现在就摆上,不必等网络那一批
+    if let Some(ui) = weak.upgrade() {
+        apply(&ui, &cache);
+    }
+}
+
+/// 磁盘上没有的那一张:上网取,后台解码并落盘,回来摆上。
+async fn fetch(
+    weak: slint::Weak<MainWindow>,
+    cache: Rc<RefCell<Lru>>,
+    inflight: Rc<RefCell<HashSet<String>>>,
+    url: String,
+) {
+    let fetched = api::fetch_bytes(&url).await;
+
+    let pixels = match fetched {
+        Ok(bytes) => {
+            let name = cache_name(&url);
+            api::off_thread(move || {
+                let pixels =
+                    crate::imagery::cover::decode_thumbnail(
+                        &bytes,
+                    )?;
+                if let Some(name) = name {
+                    api::save_track_artwork(&name, &bytes);
+                }
+                Some(pixels)
+            })
+            .await
+            .flatten()
+        }
+        Err(_) => {
+            // CDN 会过期、也会挡住不常见的 UA:取不到是常态
+            log::debug!("取缩略图失败: {url}");
+            None
+        }
+    };
+    inflight.borrow_mut().remove(&url);
+
+    let Some(pixels) = pixels else {
+        return;
+    };
+    cache
+        .borrow_mut()
+        .put(url, slint::Image::from_rgba8(pixels));
+
+    if let Some(ui) = weak.upgrade() {
+        apply(&ui, &cache);
+    }
 }
 
 /// 把手上有的缩略图填进曲目列表里对应的行。
