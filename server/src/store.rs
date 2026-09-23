@@ -5,6 +5,7 @@
 //! 三条规矩见 `cache` 模块开头与 `docs/adr/0018`。
 
 pub mod account;
+pub mod archive;
 pub mod cache;
 pub mod db;
 pub mod history;

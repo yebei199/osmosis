@@ -20,6 +20,7 @@ use server::store::history;
 use server::store::playlist::TrackRef;
 
 use super::likes::PageQuery;
+use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
 
 /// 「最近播放」默认给多少首。
@@ -37,17 +38,17 @@ pub(crate) async fn record_play(
     Json(body): Json<PlayedDto>,
 ) -> Result<StatusCode, Failure> {
     let mut conn = conn(&state.pool).await?;
+    let track = TrackRef {
+        platform: body.platform,
+        track_id: body.track_id,
+    };
 
-    history::record(
-        &mut conn,
-        account.id,
-        &TrackRef {
-            platform: body.platform,
-            track_id: body.track_id,
-        },
-    )
-    .await
-    .map_err(|err| error::map_error(&err))?;
+    history::record(&mut conn, account.id, &track)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+
+    // 声音已经出来了,这首值得存:后台去,不等它(#126)
+    archive::spawn_keep(&state, account, track);
 
     Ok(StatusCode::NO_CONTENT)
 }

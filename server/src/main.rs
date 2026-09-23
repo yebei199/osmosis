@@ -33,6 +33,7 @@ use server::bangdream::{Timed, UpstreamChannel};
 use server::error;
 use server::error::Failure;
 use server::gate::ratelimit::{self, Policies};
+use server::objects::{S3, S3Config};
 use server::store::db;
 use server::syncplay::signaling::{
     self, AllowedOrigins, SharedControl, SharedRoster,
@@ -63,6 +64,7 @@ use routes::library::playlists::{
     platform_playlist_tracks, playlist_tracks, playlists,
     remove_playlist_tracks, rename_playlist,
 };
+use routes::play::archive::Archive;
 use routes::play::download::download;
 use routes::play::play;
 use routes::queue::{
@@ -127,6 +129,9 @@ pub(crate) struct AppState {
     playlists: Freshness,
     /// 每个账号 `/playlists` 平台那半的上一份(见 `routes::library::playlists`)。
     platform_lists: PlatformLists,
+    /// 听过的歌存到哪(#126)。没配 `S3_ENDPOINT` 就是 `None`,整套归档不启用 ——
+    /// 本机开发不必为它起一个 RustFS。
+    archive: Option<Archive>,
 }
 
 // 鉴权提取器只要池,不该认识别的东西 —— 见 server::gate::auth。
@@ -372,6 +377,17 @@ fn authenticated(
     >(state.clone())
 }
 
+/// 按环境变量装配对象存储(见 `server::objects::S3Config::from_env`)。
+fn archive() -> Option<Archive> {
+    let Some(config) = S3Config::from_env() else {
+        tracing::info!("没设 S3_ENDPOINT,听过的歌不存");
+        return None;
+    };
+    tracing::info!(endpoint = %config.endpoint, bucket = %config.bucket, "听过的歌存进对象存储");
+    let s3 = S3::new(config).expect("S3 配置不对");
+    Some(Archive::new(std::sync::Arc::new(s3)))
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -420,9 +436,17 @@ async fn main() {
         policies: Policies::tuned(),
         playlists: Freshness::default(),
         platform_lists: PlatformLists::default(),
+        archive: archive(),
     };
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
+    // 没人红心、三天没播的存歌同理
+    if let Some(archive) = &state.archive {
+        routes::play::archive::spawn_sweeper(
+            state.pool.clone(),
+            archive,
+        );
+    }
 
     let app = Router::new()
         .route("/health", get(health))
@@ -616,6 +640,16 @@ mod timing_tests {
     {
         let sink = Sink::default();
         let writer = sink.clone();
+        // 再挂一个活着的 dispatcher,只为让进程里的 dispatcher 多于一个。
+        //
+        // 只有一个时,tracing-core 走 `has_just_one` 捷径:别的线程**第一次**碰到
+        // 某个埋点,按那个线程自己的默认(NoSubscriber)算兴趣,把 never 缓存成全局的。
+        // 其余路由测试在别的线程上也走 `Timed`,赶在本测试开着的那一刻首次碰到
+        // "upstream" 那行,本测试就再也收不到它 —— 时灵时不灵,六次里挂两次。
+        // 多于一个时,注册改为问遍登记在册的 dispatcher,其中就有下面这一个。
+        let _second = tracing::Dispatch::new(
+            tracing_subscriber::registry(),
+        );
         let _guard = tracing::subscriber::set_default(
             tracing_subscriber::fmt()
                 .with_ansi(false)

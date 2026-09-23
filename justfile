@@ -58,11 +58,12 @@ ci-fmt:
 # 那是传给最终 crate 的参数,不进依赖指纹,且 clippy 本就涵盖全部 rustc lint。
 #
 # 依赖 pg:server 的集成测试打真库,容器停着这一条整片红,报的还是 PoolTimedOut。
-# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事
+# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事。
+# rustfs 同理:`server/tests/objects.rs` 打的是真 S3
 #
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
-ci-test: pg
+ci-test: pg rustfs
     nix-shell slint.nix --run 'cargo test'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
@@ -177,6 +178,19 @@ pg:
         -p 127.0.0.1:5432:5432 -v osmosis-pgdata:/var/lib/postgresql/data \
         postgres:17-alpine
     @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
+
+# 起本地 RustFS(容器),听过的歌存在这里(#126)。`cargo test -p server` 要它;
+# server-dev 只在设了 S3_ENDPOINT 时才用。镜像与 infra 那份钉同一个 digest,
+# 本地测的与线上跑的是同一个版本。桶由测试自己建,凭据只在本机回环上有效。
+# 绑 9900 而不是 S3 惯用的 9000:ClickHouse 的原生端口也是 9000,开发机上常被它占着。
+rustfs:
+    docker start osmosis-rustfs 2>/dev/null || \
+      docker run -d --name osmosis-rustfs \
+        -e RUSTFS_ACCESS_KEY=devonly -e RUSTFS_SECRET_KEY=devonly-secret \
+        -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 \
+        -p 127.0.0.1:9900:9000 -v osmosis-rustfs:/data \
+        rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    @timeout 60 sh -c 'until curl -sf http://127.0.0.1:9900/health >/dev/null; do sleep 0.2; done'
 
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它。
 # 依赖 pg:容器停着直接跑会连不上库,报 PoolTimedOut。
