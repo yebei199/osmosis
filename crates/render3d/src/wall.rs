@@ -420,12 +420,15 @@ impl WallScene {
         };
         let key = (tex.width(), tex.height());
         if self.image_key != Some(key) {
+            let started =
+                bevy::platform::time::Instant::now();
             match slint::Image::try_from(tex) {
                 Ok(img) => {
                     log::info!(
-                        "render3d: 卡墙纹理 {}x{} 已导入 Slint",
+                        "render3d: 卡墙纹理 {}x{} 已导入 Slint({}ms)",
                         key.0,
-                        key.1
+                        key.1,
+                        started.elapsed().as_millis(),
                     );
                     self.image = Some(img);
                     self.image_key = Some(key);

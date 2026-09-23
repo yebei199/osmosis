@@ -6,10 +6,14 @@ use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
+use bevy::platform::time::Instant;
 use bevy::render::RenderApp;
 use bevy::render::RenderPlugin;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::TextureFormat;
+use bevy::render::render_resource::{
+    CachedPipelineState, PipelineCache, PipelineDescriptor,
+    TextureFormat,
+};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderDevice,
     RenderInstance, RenderQueue, WgpuWrapper,
@@ -143,6 +147,7 @@ impl Scene {
     /// wasm 上 `Backends::PRIMARY` 只含 BrowserWebGpu:浏览器没有 WebGPU 就在
     /// `request_adapter` 处 panic,不做 WebGL 降级(bevy 的渲染管线在 WebGL 下受限,不接)。
     pub async fn new_async() -> Self {
+        let started = Instant::now();
         // 1) 自建一套 wgpu。经 slint 的 wgpu_29 再导出拿到 wgpu,保证和 bevy 是同一份 crate。
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -214,7 +219,8 @@ impl Scene {
                 // 管线编译走同步。默认的异步编译把任务丢进 bevy 的任务池,而 wasm
                 // 是单线程 —— 任务迟迟不完成,渲染就一直画不出东西(纹理有、内容空)。
                 // 原生上同步编译只是把首帧的卡顿提前,代价可接受,故不分平台。
-                synchronous_pipeline_compilation: true,
+                synchronous_pipeline_compilation:
+                    !async_pipelines(),
                 ..default()
             })
             .set(WindowPlugin {
@@ -269,6 +275,15 @@ impl Scene {
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
         app.cleanup();
+        log::info!(
+            "render3d: 初始化 {}ms(管线编译{})",
+            started.elapsed().as_millis(),
+            if async_pipelines() {
+                "异步"
+            } else {
+                "同步"
+            },
+        );
 
         Self {
             app,
@@ -325,6 +340,101 @@ pub(crate) fn make_target(
     app.world_mut()
         .resource_mut::<Assets<Image>>()
         .add(image)
+}
+
+/// 管线要不要挪出主线程编。开关是 `OSMOSIS_ASYNC_PIPELINES`,运行期与构建期
+/// 两条路同 `ui::fps_enabled`(APK 读不到运行期环境变量)。
+///
+/// 卡墙首帧剖析(#121)的对照实验用:默认仍是同步。wasm 恒同步 —— 单线程上
+/// 异步编译的任务迟迟不完成,画面一直是空的(见 [`Scene::new_async`])。
+fn async_pipelines() -> bool {
+    !cfg!(target_arch = "wasm32")
+        && (std::env::var("OSMOSIS_ASYNC_PIPELINES")
+            .is_ok()
+            || option_env!("OSMOSIS_ASYNC_PIPELINES")
+                .is_some())
+}
+
+/// `app.update()` 慢过它才记一行。一帧 16ms,再留些余量。
+const SLOW_UPDATE_MS: u128 = 30;
+
+/// 跑一次 `app.update()`;这一帧慢了、或者新建了渲染管线,就记一行:
+/// 花了多久、新建了哪几条(#121)。
+///
+/// 卡墙首帧那一下冻 200+500ms,疑是同步编着色器 —— 管线建好的那一帧与
+/// 慢的那一帧对不对得上,就看这一行。`what` 是哪一路在渲(卡墙 / 播放页)。
+pub(crate) fn probed_update(
+    app: &mut App,
+    what: &str,
+) -> f64 {
+    let before = ready_pipelines(app);
+    let started = Instant::now();
+    app.update();
+    let took = started.elapsed();
+    let after = ready_pipelines(app);
+    if took.as_millis() > SLOW_UPDATE_MS
+        || after.len() != before.len()
+    {
+        let built: Vec<usize> = after
+            .into_iter()
+            .filter(|id| before.binary_search(id).is_err())
+            .collect();
+        log::info!(
+            "render3d: {what} app.update() {}ms,新建管线 {} 条 {:?}",
+            took.as_millis(),
+            built.len(),
+            pipeline_labels(app, &built),
+        );
+    }
+    took.as_secs_f64() * 1000.0
+}
+
+/// 渲染子世界里已经建好的管线,按编号升序。
+fn ready_pipelines(app: &App) -> Vec<usize> {
+    let Some(cache) = pipeline_cache(app) else {
+        return Vec::new();
+    };
+    cache
+        .pipelines()
+        .enumerate()
+        .filter(|(_, pipeline)| {
+            matches!(
+                pipeline.state,
+                CachedPipelineState::Ok(_)
+            )
+        })
+        .map(|(id, _)| id)
+        .collect()
+}
+
+fn pipeline_labels(
+    app: &App,
+    ids: &[usize],
+) -> Vec<String> {
+    let Some(cache) = pipeline_cache(app) else {
+        return Vec::new();
+    };
+    let pipelines: Vec<_> = cache.pipelines().collect();
+    ids.iter()
+        .filter_map(|&id| pipelines.get(id))
+        .map(|pipeline| {
+            let label = match &pipeline.descriptor {
+                PipelineDescriptor::RenderPipelineDescriptor(d) => {
+                    d.label.as_deref()
+                }
+                PipelineDescriptor::ComputePipelineDescriptor(d) => {
+                    d.label.as_deref()
+                }
+            };
+            label.unwrap_or("?").to_owned()
+        })
+        .collect()
+}
+
+fn pipeline_cache(app: &App) -> Option<&PipelineCache> {
+    app.get_sub_app(RenderApp)?
+        .world()
+        .get_resource::<PipelineCache>()
 }
 
 /// 从 bevy 的渲染子世界里取出某张离屏目标图对应的 `wgpu::Texture`。

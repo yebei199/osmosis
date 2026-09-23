@@ -58,7 +58,7 @@ impl Scene {
             }
         }
         self.wall.apply(&mut self.app, frame);
-        self.app.update();
+        super::probed_update(&mut self.app, "卡墙");
         self.wall.finish(&self.app)
     }
 }
