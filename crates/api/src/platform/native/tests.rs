@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 
 use similar_asserts::assert_eq;
 
-use super::{off_thread, send, sweep_dir};
+use super::{off_thread, send, send_json, sweep_dir};
 use crate::ApiError;
 
 /// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
@@ -469,4 +469,45 @@ fn a_panicking_job_yields_none() {
         local.block_on(off_thread(|| panic!("解码炸了")));
 
     assert_eq!(result, None);
+}
+
+/// 记下自己是在哪个线程上被反序列化出来的。
+struct DecodedOn(std::thread::ThreadId);
+
+impl<'de> serde::Deserialize<'de> for DecodedOn {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(Self(std::thread::current().id()))
+    }
+}
+
+/// 响应体的反序列化也在后台线程上,不在等结果的那个线程上。
+///
+/// 上千首的歌单解一次是实打实的 CPU 活;请求挪走了而解码没挪,
+/// 界面照样冻在那一下(#117)。
+#[test]
+fn the_response_is_decoded_off_the_callers_thread() {
+    let (base, _requests) = recording_server(
+        http_response("200 OK", "application/json", "{}"),
+    );
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    let decoded = local
+        .block_on(send_json::<(), DecodedOn>(
+            reqwest::Method::GET,
+            base,
+            None,
+        ))
+        .expect("该拿到一个解出来的响应");
+
+    assert_ne!(
+        decoded.0,
+        std::thread::current().id(),
+        "响应体还在调用方线程上解"
+    );
 }

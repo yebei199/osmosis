@@ -195,7 +195,7 @@ pub(super) fn to_rows(
             duration: format_duration(track.duration_ms)
                 .into(),
             loading: loading == Some(track.id.as_str()),
-            // 红心状态由 push_rows 之后的 remark 填 —— 这里没有那个集合,
+            // 红心状态由 push_rows 接着用 liked::mark 填 —— 这里没有那个集合,
             // 而把它传进来会让这个纯格式化函数多认识一样东西。
             liked: false,
             // 平台没给封面就是空串,那一行永远画占位色(见 tracklist.slint)。
