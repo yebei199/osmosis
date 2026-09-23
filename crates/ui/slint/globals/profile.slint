@@ -35,4 +35,13 @@ export global Profile {
 
     // 版本与构建信息那一行。
     in property <string> about-line;
+
+    // ── 档位与应用内升级(issue #129)──
+    // 「release · 生产后端」或「debug · 本机后端 …」。
+    in property <string> tier-line;
+    // 升级这一节此刻的一句话。空串不显示。
+    in property <string> update-status;
+    // 升级按钮上的字。空串表示此刻没有按钮:debug 包、桌面、以及查询/下载进行中。
+    in property <string> update-action;
+    callback update-requested();
 }

@@ -40,8 +40,13 @@ component PillToggle inherits Rectangle {
 }
 
 export component SettingsPage inherits Flickable {
-    // 「Osmosis 0.1.0 · Slint + Bevy」,由 Rust 拼好推进来。
+    // 「Osmosis 0.1.16 · Slint + Bevy」,由 Rust 拼好推进来。
     in property <string> about-line;
+    // 档位与升级(#129),语义见 globals/profile.slint。
+    in property <string> tier-line;
+    in property <string> update-status;
+    in property <string> update-action;
+    callback update-requested();
     // 动态极光按钮的开关状态(真相在 api::settings,Rust 写回)。
     in property <bool> aurora-on;
     callback aurora-toggled();
@@ -224,6 +229,53 @@ export component SettingsPage inherits Flickable {
                 font-family: Type.mono;
                 font-size: 12px;
                 color: Theme.text-dim;
+            }
+            Text {
+                text: root.tier-line;
+                font-family: Type.mono;
+                font-size: 12px;
+                color: Theme.text-dim;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: root.update-status;
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
+                }
+                if root.update-action != "": update-button := Rectangle {
+                    width: update-label.preferred-width + 32px;
+                    height: 34px;
+                    border-radius: 999px;
+                    background: update-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    // a11y 在根上,理由同退出登录。
+                    accessible-role: button;
+                    accessible-label: root.update-action;
+                    accessible-action-default => { root.update-requested(); }
+
+                    update-label := Text {
+                        text: root.update-action;
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    update-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.update-requested(); }
+                    }
+                }
             }
         }
     }

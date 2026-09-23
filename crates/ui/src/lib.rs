@@ -60,6 +60,11 @@ pub use wall::drive::{
 
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
 mod theme;
+// 设置页的档位与应用内升级。安装器由平台入口注入,同下载落点的接缝形状。
+#[cfg(not(target_arch = "wasm32"))]
+mod update;
+#[cfg(not(target_arch = "wasm32"))]
+pub use update::{Install, install_updater};
 // 同播与遥控。只在原生上有(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
 mod sync;
@@ -125,6 +130,8 @@ fn build_ui(
     // 用错配色闪一下。
     theme::bind(&ui);
     pages::profile::bind(&ui);
+    #[cfg(not(target_arch = "wasm32"))]
+    update::bind(&ui);
     shader::aurora_btn::bind(&ui);
 
     let (viz_source, lyrics, cover, frames) =
