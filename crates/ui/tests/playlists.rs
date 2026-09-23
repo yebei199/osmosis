@@ -63,7 +63,9 @@ fn opening_a_playlist_shows_its_name() {
     // 详情里摆的是曲目,与别的分区同一个列表组件。曲目到了才摆列表,
     // 一首都没有时是空状态(#116)。
     ui.global::<Player>().set_tracks(slint::ModelRc::new(
-        slint::VecModel::from(vec![ui::TrackRow::default()]),
+        slint::VecModel::from(
+            vec![ui::TrackRow::default()],
+        ),
     ));
     assert!(present(&ui, "MusicPage::track-list"));
 }
@@ -102,17 +104,20 @@ fn the_list_layer_shows_playlists_not_tracks() {
 
 /// 这一格在页面里的底边,离页面底还有多远。
 fn blank_below(ui: &MainWindow, id: &str) -> f32 {
-    let el = testing::ElementHandle::find_by_element_id(ui, id)
+    let el =
+        testing::ElementHandle::find_by_element_id(ui, id)
+            .next()
+            .unwrap_or_else(|| panic!("{id} 该在"));
+    let page =
+        testing::ElementHandle::find_by_element_type_name(
+            ui,
+            "MusicPage",
+        )
         .next()
-        .unwrap_or_else(|| panic!("{id} 该在"));
-    let page = testing::ElementHandle::find_by_element_type_name(
-        ui,
-        "MusicPage",
-    )
-    .next()
-    .expect("音乐页该在");
-    let bottom =
-        |h: &testing::ElementHandle| h.absolute_position().y + h.size().height;
+        .expect("音乐页该在");
+    let bottom = |h: &testing::ElementHandle| {
+        h.absolute_position().y + h.size().height
+    };
     bottom(&page) - bottom(&el)
 }
 
@@ -127,7 +132,8 @@ fn the_playlist_list_reaches_the_bottom_without_a_bar() {
     let ui = playlists_section();
     ui.global::<Player>().set_has_track(false);
 
-    let blank = blank_below(&ui, "MusicPage::playlist-list");
+    let blank =
+        blank_below(&ui, "MusicPage::playlist-list");
     assert!(
         blank <= BARE_BLANK,
         "没有控制条,列表底下却空着 {blank}px"
@@ -140,7 +146,8 @@ fn the_playlist_list_leaves_exactly_the_bar_reserve() {
     let ui = playlists_section();
     ui.global::<Player>().set_has_track(true);
 
-    let blank = blank_below(&ui, "MusicPage::playlist-list");
+    let blank =
+        blank_below(&ui, "MusicPage::playlist-list");
     assert!(
         (BAR_RESERVE..=BAR_RESERVE + 12.0).contains(&blank),
         "控制条要让出 {BAR_RESERVE}px,实际空着 {blank}px"
@@ -174,7 +181,9 @@ fn a_filled_detail_is_all_track_list() {
     ui.global::<Library>()
         .set_open_playlist_name("睡前".into());
     ui.global::<Player>().set_tracks(slint::ModelRc::new(
-        slint::VecModel::from(vec![ui::TrackRow::default()]),
+        slint::VecModel::from(
+            vec![ui::TrackRow::default()],
+        ),
     ));
 
     assert!(!present(&ui, "MusicPage::empty-state"));
