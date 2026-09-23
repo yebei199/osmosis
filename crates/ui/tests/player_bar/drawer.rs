@@ -340,3 +340,87 @@ fn the_main_bar_stays_usable_while_the_drawer_is_open() {
         .invoke_accessible_default_action();
     assert_eq!(asked.get(), 1, "抽屉开着时播放键仍该管用");
 }
+
+// ============ 喜欢(#115)============
+
+/// 开着抽屉、正在放 `id` 这一首。
+fn drawer_playing(id: &str) -> MainWindow {
+    let ui = playing_app();
+    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Player>().set_now_id(id.into());
+    key(&ui, "更多")
+        .expect("找不到抽屉键")
+        .invoke_accessible_default_action();
+    ui
+}
+
+/// 抽屉那一行照着 `now-liked` 报自己亮没亮,读屏念得出来。
+#[test]
+fn the_like_row_reports_the_projected_state() {
+    let ui = drawer_playing("1");
+
+    ui.global::<Player>().set_now_liked(false);
+    let off =
+        key(&ui, "喜欢这一首").expect("抽屉里该有喜欢");
+    assert_eq!(off.accessible_checked(), Some(false));
+
+    ui.global::<Player>().set_now_liked(true);
+    let on =
+        key(&ui, "喜欢这一首").expect("抽屉里该有喜欢");
+    assert_eq!(
+        on.accessible_checked(),
+        Some(true),
+        "已喜欢的歌,那一行该报开着"
+    );
+}
+
+/// 真按一下:喊 toggle-liked,参数是正在放的那首与点完之后的状态。
+/// 值由 Rust 写回,界面不自置位。
+#[test]
+fn a_real_click_on_like_asks_to_flip_the_playing_track() {
+    let ui = drawer_playing("42");
+    ui.global::<Player>().set_now_liked(false);
+
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(
+        Vec::new(),
+    ));
+    let log = asked.clone();
+    ui.global::<ui::Library>().on_toggle_liked(
+        move |id, liked| {
+            log.borrow_mut().push((id.to_string(), liked));
+        },
+    );
+
+    let row =
+        key(&ui, "喜欢这一首").expect("抽屉里该有喜欢");
+    click_at(&ui, &row);
+
+    assert_eq!(
+        *asked.borrow(),
+        vec![("42".to_owned(), true)]
+    );
+    assert!(
+        !ui.global::<Player>().get_now_liked(),
+        "值该纹丝不动 —— 写它是 Rust 的活"
+    );
+}
+
+/// 没在放歌时点它什么也不发生 —— 没有「这一首」可喜欢。
+#[test]
+fn like_does_nothing_without_a_track() {
+    let ui = drawer_playing("");
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<ui::Library>().on_toggle_liked(
+        move |_, _| {
+            counter.set(counter.get() + 1);
+        },
+    );
+
+    key(&ui, "喜欢这一首")
+        .expect("行还在,只是灰着")
+        .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 0, "手上没歌时不该喊");
+}
