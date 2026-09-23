@@ -155,7 +155,7 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 停任务只结束你启动的那条命令,不一定收走它的子进程 —— 再确认一次:
 
 ```sh
-just desktop-kill                                       # 桌面实例(pkill -x osmosis-desktop)
+just desktop-kill                                       # 桌面实例(dev 构建 + 装机版两个名字都杀)
 ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"   # 构建残留
 ```
 
