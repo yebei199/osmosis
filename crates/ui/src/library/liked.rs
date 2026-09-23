@@ -90,6 +90,18 @@ pub fn remark(set: &LikedSet, ui: &MainWindow) {
             rows.set_row_data(i, row);
         }
     }
+    project_now(set, ui);
+}
+
+/// 把「正在放的这首红心没有」投影给抽屉那一行。
+///
+/// 集合变了走 `remark`、换歌走 `now-id-changed`,两处都落到这里。
+pub fn project_now(set: &LikedSet, ui: &MainWindow) {
+    let player = ui.global::<Player>();
+    let id = player.get_now_id();
+    player.set_now_liked(
+        !id.is_empty() && is_liked(set, &id),
+    );
 }
 
 /// 就地把「我喜欢的」那一行的条数加减一个数。
@@ -152,6 +164,13 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
     ui.global::<Library>().on_refresh_liked(move || {
         let Some(ui) = weak.upgrade() else { return };
         refresh(&reloading, &ui);
+    });
+
+    let projecting = set.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_now_id_changed(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        project_now(&projecting, &ui);
     });
 
     let set = set.clone();

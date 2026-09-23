@@ -177,3 +177,68 @@ fn a_failed_toggle_rolls_back() {
         "撤回之后该回到点之前的样子"
     );
 }
+
+fn now_liked(ui: &MainWindow) -> bool {
+    ui.global::<Player>().get_now_liked()
+}
+
+/// 正在放的那首在集合里,抽屉那一行就亮;不在就不亮。
+#[test]
+fn the_playing_track_projects_its_liked_state() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&["1"]);
+
+    ui.global::<Player>().set_now_id("1".into());
+    project_now(&set, &ui);
+    assert!(now_liked(&ui));
+
+    ui.global::<Player>().set_now_id("2".into());
+    project_now(&set, &ui);
+    assert!(!now_liked(&ui));
+}
+
+/// 边界:手上没歌就不算喜欢,哪怕集合里混进了空串。
+#[test]
+fn nothing_playing_is_never_liked() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&[""]);
+
+    project_now(&set, &ui);
+
+    assert!(!now_liked(&ui));
+}
+
+/// 从哪个入口点的红心都一样:集合一变,抽屉那一行当场跟上。
+#[test]
+fn toggling_reprojects_the_playing_track() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&[]);
+    bind(&ui, &set);
+    ui.global::<Player>().set_now_id("1".into());
+
+    ui.global::<Library>()
+        .invoke_toggle_liked("1".into(), true);
+    assert!(now_liked(&ui), "点了喜欢该当场亮");
+
+    ui.global::<Library>()
+        .invoke_toggle_liked("1".into(), false);
+    assert!(!now_liked(&ui), "再点一次该当场灭");
+}
+
+/// 切到一首已喜欢的歌,那一行跟着亮 —— 不必等谁点一下红心。
+///
+/// `changed` 回调在事件循环的下一轮才跑,无头测试里没有循环,手动推一轮。
+#[test]
+fn switching_tracks_reprojects() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&["1"]);
+    bind(&ui, &set);
+
+    ui.global::<Player>().set_now_id("1".into());
+    slint::platform::update_timers_and_animations();
+    assert!(now_liked(&ui), "换到已喜欢的那首该亮");
+
+    ui.global::<Player>().set_now_id("2".into());
+    slint::platform::update_timers_and_animations();
+    assert!(!now_liked(&ui), "换到没喜欢的那首该灭");
+}
