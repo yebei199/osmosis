@@ -76,6 +76,11 @@ pub enum Event {
     /// 断着的时候服务端的消息过不来,所以靠消息才清的本地状态得在这一刻自己清:
     /// 「正被遥控」的锁留着的话,本机在断网期间连歌都点不了(#118)。
     Disconnected,
+    /// 接管 `target` 没成:服务端拒了,或者答复回来之前信令就断了。
+    ///
+    /// 界面按下去时已经把输出乐观地切了过去,这一条让它切回本机 —— 那台设备
+    /// 一条上报都不会发来,过期与失联的判定于是永远不触发(#118)。
+    ClaimFailed { target: String, reason: String },
 }
 
 /// 界面发给编排循环的指令。
@@ -343,6 +348,27 @@ fn throttle_wait(
         .clamp(RETRY_MIN, MAX_THROTTLE_WAIT)
 }
 
+/// 断线时还没等到答复的那次接管:忘掉它,返回它的目标。
+///
+/// 没拿到代次的权重连时不续(见 [`resume_claim`]),留着只会让界面的输出永远
+/// 指着那台设备。拿到过代次的不动 —— 那份要跨重连去续。
+fn abandon_pending(
+    held: &mut Option<Held>,
+) -> Option<String> {
+    if held.as_ref()?.generation.is_some() {
+        return None;
+    }
+    held.take().map(|pending| pending.target)
+}
+
+/// 服务端对 `ClaimControl` 的拒绝码(见 `server::syncplay::control` 的 `claim`)。
+///
+/// 报错不带是哪条请求引起的,所以认法是「手上有一次还没答复的接管,又来了
+/// 一条接管才会回的码」。`device_offline` 转发命令时也会回,但那时持权早就
+/// 拿到代次了,不会被当成接管失败。
+const CLAIM_REJECTIONS: &[&str] =
+    &["device_offline", "cannot_control_self"];
+
 /// 下一次的等待时长:翻倍,到上限为止。
 fn next_backoff(current: Duration) -> Duration {
     (current * 2).min(RETRY_MAX)
@@ -460,6 +486,13 @@ async fn run(
         }
 
         // 断着的时候服务端的消息过不来,靠消息才清的状态得在这里自己清。
+        if let Some(target) = abandon_pending(&mut held) {
+            events(Event::ClaimFailed {
+                target,
+                reason: "信令断开,接管没有等到答复"
+                    .to_owned(),
+            });
+        }
         events(Event::Disconnected);
 
         // 活够了才算连上过一次,退避从头来。
@@ -659,9 +692,17 @@ async fn accept(
             Ok(())
         }
         ServerSignal::Error { code, message } => {
-            Err(SyncError::Signalling(format!(
-                "{code}: {message}"
-            )))
+            let reason = format!("{code}: {message}");
+            if CLAIM_REJECTIONS.contains(&code.as_str())
+                && let Some(target) = abandon_pending(held)
+            {
+                events(Event::ClaimFailed {
+                    target,
+                    reason,
+                });
+                return Ok(());
+            }
+            Err(SyncError::Signalling(reason))
         }
         ServerSignal::ControlGranted { generation } => {
             // 拿到代次才算真的持权。重连时要拿它去续,所以记下来。
@@ -900,6 +941,35 @@ mod tests {
             Duration::from_secs(8),
             "读不出秒数就按自己的退避"
         );
+    }
+
+    /// 断线时答复还没回来的那次接管算失败;已经确认过的留着去续。
+    ///
+    /// 没拿到代次的那份权重连时不续(见 `resume_claim`),留着它只会让界面的
+    /// 输出永远指着那台设备 —— 一条上报都不会来。
+    #[test]
+    fn a_pending_claim_is_abandoned_when_the_link_drops() {
+        let mut pending = Some(Held {
+            target: "pc".to_owned(),
+            generation: None,
+        });
+        assert_eq!(
+            abandon_pending(&mut pending),
+            Some("pc".to_owned())
+        );
+        assert!(pending.is_none(), "放弃了就要忘掉");
+
+        let mut granted = Some(Held {
+            target: "pc".to_owned(),
+            generation: Some(3),
+        });
+        assert_eq!(abandon_pending(&mut granted), None);
+        assert!(
+            granted.is_some(),
+            "确认过的权跨重连保留,重连时拿代次去续"
+        );
+
+        assert_eq!(abandon_pending(&mut None), None);
     }
 
     /// 抖动不会把等待变成 0,也不会离原值太远。

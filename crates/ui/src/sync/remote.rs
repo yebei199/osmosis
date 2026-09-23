@@ -22,7 +22,7 @@ use slint::ComponentHandle;
 use syncplay::{Client, DeviceDto};
 
 pub(crate) use rules::{
-    accepts_control,
+    accepts_control, describe_claim_failed,
     describe_controlled, describe_lost, describe_output,
     describe_remote, describe_revoked, describe_too_large,
     describe_unavailable, lost_remote,
@@ -577,6 +577,17 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
             remote.come_home(|output| {
                 describe_revoked(output, by)
             });
+        }
+        // 接管没成:按下去时输出已经乐观地切了过去,切回来(#118)。
+        // 只认当前那一台 —— 失败的若是上一台,用户已经改选了别的。
+        syncplay::Event::ClaimFailed { target, reason } => {
+            if lock(&inner.output).target()
+                != Some(target.as_str())
+            {
+                return;
+            }
+            log::warn!("接管 {target} 失败: {reason}");
+            remote.come_home(describe_claim_failed);
         }
         syncplay::Event::ControlledBy { device } => {
             *lock(&inner.controlled_by) =

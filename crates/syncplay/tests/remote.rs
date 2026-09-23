@@ -458,6 +458,32 @@ async fn a_target_that_comes_back_is_no_longer_controlled()
     assert_eq!(by, "pc", "撤权该说是被控端自己走的");
 }
 
+/// 接管一台不在线的设备:遥控器得到一条接管失败,而不只是一行报错。
+///
+/// 界面在按下去那一刻就把输出乐观地切到了那台设备。只报错的话输出停在那边,
+/// 一条上报都不会来,过期与失联的判定也就永远不触发 —— 本机点歌全发去
+/// 一台不在线的设备,一声不响。
+#[tokio::test]
+async fn claiming_an_offline_device_fails_the_claim() {
+    let addr = start_server().await;
+    let (phone, phone_rx) = spawn_client(addr, "phone");
+    wait_until_both_online(&phone_rx, "phone").await;
+
+    phone.claim("ghost");
+
+    let target =
+        wait_for(&phone_rx, "ClaimFailed", |event| {
+            match event {
+                Event::ClaimFailed { target, .. } => {
+                    Some(target.clone())
+                }
+                _ => None,
+            }
+        })
+        .await;
+    assert_eq!(target, "ghost");
+}
+
 /// 让 `phone` 经一根线遥控 `pc`,再拔掉 `phone` 的线,等它重连上来。
 ///
 /// `release` 为真时,拔线前先交出持权(界面失联回本机时做的就是这一下)。
