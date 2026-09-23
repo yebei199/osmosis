@@ -23,7 +23,21 @@ test/dev-recipes.sh
 `desktop-dev` / `mcp-android` 的本机后端守卫、`dev-adb` 的序列号解析、生产平板拒装
 (#119)全是 justfile 里的 shell。这份把假的 `adb` 与 `nix-shell` 顶在 PATH 前面驱动
 那几条配方,断言退出码、调用参数,以及守卫失败时**没有进编译**。不碰真设备,几秒跑完。
+`desktop-install` 装的是带库路径的启动脚本而不是软链(#112),也在这里断言。
 改了那几条配方就跑一遍。
+
+## desktop-clean-launch.sh —— 菜单项离开 nix shell 还起得来吗(#112)
+
+```sh
+just desktop-install && test/desktop-clean-launch.sh
+# 隔离目录里验,不碰真实的菜单项:
+HOME=$iso XDG_DATA_HOME=$iso/.local/share XDG_STATE_HOME=$iso/.local/state test/desktop-clean-launch.sh
+```
+
+两条路各起一次:`env -i` 的干净环境直接跑 `~/.local/bin/osmosis-desktop`,以及以用户
+会话管理器的环境(`systemd-run --user`)跑 `gtk-launch io.github.osmosis`(菜单那条路)。
+判据是 niri 报出 Osmosis 窗口、那个进程的 `/proc/<pid>/maps` 里有 libvulkan,不看观感。
+要一个在跑的 niri 会话和显卡,所以不进 `just ci`;装过的二进制要先编好,编译照规矩去编译机。
 
 ## rollout.sh —— 发版推送脚本还守得住吗
 
