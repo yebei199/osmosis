@@ -71,6 +71,16 @@ pub enum Event {
     ///
     /// `theirs` 为 `None` 表示对端旧到根本不报版本。
     Incompatible { ours: u32, theirs: Option<u32> },
+    /// 信令断了,编排循环正在重连。
+    ///
+    /// 断着的时候服务端的消息过不来,所以靠消息才清的本地状态得在这一刻自己清:
+    /// 「正被遥控」的锁留着的话,本机在断网期间连歌都点不了(#118)。
+    Disconnected,
+    /// 接管 `target` 没成:服务端拒了,或者答复回来之前信令就断了。
+    ///
+    /// 界面按下去时已经把输出乐观地切了过去,这一条让它切回本机 —— 那台设备
+    /// 一条上报都不会发来,过期与失联的判定于是永远不触发(#118)。
+    ClaimFailed { target: String, reason: String },
 }
 
 /// 界面发给编排循环的指令。
@@ -321,11 +331,43 @@ const HEALTHY_AFTER: Duration = Duration::from_secs(10);
 /// 服务端说要等多久就等多久,但不超过这个数。
 ///
 /// 照 `Retry-After` 等是对的 —— 还欠多少额度只有服务端算得出来。设上界是
-/// 因为那个数由对端给:配置写错、或者哪天换了个别的中间件,一个离谱的值
-/// 不该让客户端从此不再重连。十分钟远大于任何正常的欠账,又短到用户
-/// 等得起。
-const MAX_THROTTLE_WAIT: Duration =
-    Duration::from_secs(600);
+/// 因为那个数由对端给:配置写错、或者前面那层 CDN 回一个自己的数,一个离谱的值
+/// 不该让一台设备分钟级地连不上。自家服务端的桶两秒回一个额度,正常的欠账
+/// 从不超过两秒,三十秒已经是它的十几倍(#118:原先十分钟)。
+const MAX_THROTTLE_WAIT: Duration = Duration::from_secs(30);
+
+/// 被限流时等多久:照服务端给的秒数,读不出来就按自己的退避,都不超过上界。
+fn throttle_wait(
+    retry_after: Option<Duration>,
+    backoff: Duration,
+) -> Duration {
+    // 0 是 governor 把不到一秒的欠账 `as_secs()` 截出来的,照它等就是以网络
+    // 往返的速度重敲,所以抬到退避下限。
+    retry_after
+        .unwrap_or(backoff)
+        .clamp(RETRY_MIN, MAX_THROTTLE_WAIT)
+}
+
+/// 断线时还没等到答复的那次接管:忘掉它,返回它的目标。
+///
+/// 没拿到代次的权重连时不续(见 [`resume_claim`]),留着只会让界面的输出永远
+/// 指着那台设备。拿到过代次的不动 —— 那份要跨重连去续。
+fn abandon_pending(
+    held: &mut Option<Held>,
+) -> Option<String> {
+    if held.as_ref()?.generation.is_some() {
+        return None;
+    }
+    held.take().map(|pending| pending.target)
+}
+
+/// 服务端对 `ClaimControl` 的拒绝码(见 `server::syncplay::control` 的 `claim`)。
+///
+/// 报错不带是哪条请求引起的,所以认法是「手上有一次还没答复的接管,又来了
+/// 一条接管才会回的码」。`device_offline` 转发命令时也会回,但那时持权早就
+/// 拿到代次了,不会被当成接管失败。
+const CLAIM_REJECTIONS: &[&str] =
+    &["device_offline", "cannot_control_self"];
 
 /// 下一次的等待时长:翻倍,到上限为止。
 fn next_backoff(current: Duration) -> Duration {
@@ -371,6 +413,8 @@ async fn run(
     // 本机遥控着谁。**跨重连保留** —— 断线不该让用户重新挑一次设备
     // (`docs/adr/0030`)。理由与上面那条轨相同:重连的是信令,不是遥控关系。
     let mut held: Option<Held> = None;
+    // 本机断线那一刻是不是正被遥控。同样跨重连保留,理由见 `serve` 开头。
+    let mut controlled = false;
 
     loop {
         // 还没登录,或者手上只有那个已经被拒的 token:等它变,别空转建连。
@@ -401,9 +445,8 @@ async fn run(
             // 只会把闸撞得更死(#109 F-R3)。这一拍不推进退避:等的长度
             // 已经由对端定了,再叠一层就是等两次。
             Err(SyncError::Throttled { retry_after }) => {
-                let wait = retry_after
-                    .unwrap_or(backoff)
-                    .min(MAX_THROTTLE_WAIT);
+                let wait =
+                    throttle_wait(retry_after, backoff);
                 log::warn!(
                     "建连被限流,等 {} 秒再试",
                     wait.as_secs()
@@ -434,12 +477,23 @@ async fn run(
             &events,
             &mut commands,
             &mut held,
+            &mut controlled,
             &incompatible,
         )
         .await
         {
             return;
         }
+
+        // 断着的时候服务端的消息过不来,靠消息才清的状态得在这里自己清。
+        if let Some(target) = abandon_pending(&mut held) {
+            events(Event::ClaimFailed {
+                target,
+                reason: "信令断开,接管没有等到答复"
+                    .to_owned(),
+            });
+        }
+        events(Event::Disconnected);
 
         // 活够了才算连上过一次,退避从头来。
         if connected_at.elapsed() >= HEALTHY_AFTER {
@@ -466,6 +520,7 @@ async fn serve(
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
     incompatible: &AtomicBool,
 ) -> bool {
     let sender = signalling.sender();
@@ -485,6 +540,13 @@ async fn serve(
         let _ =
             sender.claim(&target, Some(generation)).await;
     }
+    // 断线前正被遥控:回来之后先退出。断线时界面已经解了锁(见
+    // `Event::Disconnected`),断网期间本机可能已经在放别的歌;而服务端未必发现
+    // 过旧连接死了 —— 重连顶替掉它时槽位原样留着。不退的话遥控器接着往一台
+    // 不再听它的设备发命令,两端对「谁在遥控谁」各执一词(#118)。
+    if core::mem::take(controlled) {
+        let _ = sender.exit_controlled().await;
+    }
 
     loop {
         let step = tokio::select! {
@@ -500,6 +562,7 @@ async fn serve(
                 );
                 accept(
                     message, &mut peers, &sender, events, held,
+                    controlled,
                 )
                 .await
             }
@@ -507,6 +570,9 @@ async fn serve(
                 let Some(command) = command else {
                     return false;
                 };
+                if matches!(command, Command::ExitControlled) {
+                    *controlled = false;
+                }
                 dispatch(
                     command, track, &mut peers, &sender, held,
                 )
@@ -594,6 +660,7 @@ async fn accept(
     sender: &SignalSender,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
 ) -> Result<(), SyncError> {
     match message {
         ServerSignal::Roster { devices } => {
@@ -625,9 +692,17 @@ async fn accept(
             Ok(())
         }
         ServerSignal::Error { code, message } => {
-            Err(SyncError::Signalling(format!(
-                "{code}: {message}"
-            )))
+            let reason = format!("{code}: {message}");
+            if CLAIM_REJECTIONS.contains(&code.as_str())
+                && let Some(target) = abandon_pending(held)
+            {
+                events(Event::ClaimFailed {
+                    target,
+                    reason,
+                });
+                return Ok(());
+            }
+            Err(SyncError::Signalling(reason))
         }
         ServerSignal::ControlGranted { generation } => {
             // 拿到代次才算真的持权。重连时要拿它去续,所以记下来。
@@ -666,10 +741,12 @@ async fn accept(
             Ok(())
         }
         ServerSignal::ControlledBy { device } => {
+            *controlled = true;
             events(Event::ControlledBy { device });
             Ok(())
         }
         ServerSignal::NotControlled => {
+            *controlled = false;
             events(Event::NotControlled);
             Ok(())
         }
@@ -829,6 +906,70 @@ mod tests {
             Some(("pc".to_owned(), 7)),
             "确认过的才续,并且带上代次"
         );
+    }
+
+    /// 限流时照服务端的秒数等,但不许是 0,也不许到分钟级。
+    ///
+    /// governor 的 `Retry-After` 是 `as_secs()` 截出来的,不到一秒就写 0 ——
+    /// 照 0 等就是以网络往返的速度重敲。上界压在一分钟以内:同账号几台设备
+    /// 共用一个建连桶,哪个中间件回一个离谱的数,都不该让一台设备分钟级地
+    /// 连不上(#118 验收:没有任何一台落进分钟级的 429 退避)。
+    #[test]
+    fn throttle_wait_is_neither_zero_nor_minutes() {
+        assert_eq!(
+            throttle_wait(Some(Duration::ZERO), RETRY_MIN),
+            RETRY_MIN,
+            "0 秒要抬到退避下限"
+        );
+        assert_eq!(
+            throttle_wait(
+                Some(Duration::from_secs(2)),
+                RETRY_MIN
+            ),
+            Duration::from_secs(2),
+            "正常的数照办"
+        );
+        assert!(
+            throttle_wait(
+                Some(Duration::from_secs(600)),
+                RETRY_MIN
+            ) < Duration::from_secs(60),
+            "离谱的数要压到一分钟以内"
+        );
+        assert_eq!(
+            throttle_wait(None, Duration::from_secs(8)),
+            Duration::from_secs(8),
+            "读不出秒数就按自己的退避"
+        );
+    }
+
+    /// 断线时答复还没回来的那次接管算失败;已经确认过的留着去续。
+    ///
+    /// 没拿到代次的那份权重连时不续(见 `resume_claim`),留着它只会让界面的
+    /// 输出永远指着那台设备 —— 一条上报都不会来。
+    #[test]
+    fn a_pending_claim_is_abandoned_when_the_link_drops() {
+        let mut pending = Some(Held {
+            target: "pc".to_owned(),
+            generation: None,
+        });
+        assert_eq!(
+            abandon_pending(&mut pending),
+            Some("pc".to_owned())
+        );
+        assert!(pending.is_none(), "放弃了就要忘掉");
+
+        let mut granted = Some(Held {
+            target: "pc".to_owned(),
+            generation: Some(3),
+        });
+        assert_eq!(abandon_pending(&mut granted), None);
+        assert!(
+            granted.is_some(),
+            "确认过的权跨重连保留,重连时拿代次去续"
+        );
+
+        assert_eq!(abandon_pending(&mut None), None);
     }
 
     /// 抖动不会把等待变成 0,也不会离原值太远。

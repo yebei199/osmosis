@@ -115,6 +115,15 @@ pub fn describe_lost(output: &Output) -> String {
     format!("{name} 失联,已回到本机")
 }
 
+/// 接管没成、回到本机时那句提示。
+///
+/// 与失联那句一样,要说出是哪台设备、以及声音现在在哪儿。原因(不在线、
+/// 信令断了)记日志,不上界面:用户能做的只有一件事 —— 过会儿再选一次。
+pub fn describe_claim_failed(output: &Output) -> String {
+    let name = output.name().unwrap_or("那台设备");
+    format!("没能接管 {name},已回到本机")
+}
+
 /// 目标在别的设备、但这一下没提交成功时说的那句话。
 ///
 /// **不回落本机**是这句话存在的理由(`docs/adr/0030`)。过期时把声音抢回

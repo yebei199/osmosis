@@ -270,6 +270,101 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
     );
 }
 
+/// 信令断了,锁就撤:断网期间本机点歌照常落到本机(#118)。
+///
+/// 锁此前只有服务端的消息才清,而断着的时候消息过不来 —— 被控端断网期间
+/// 连歌都点不了,要等重连、等服务端想起来告诉它一声。
+#[test]
+fn a_dropped_link_lets_the_local_tap_through() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let _ = batch_of(&deck, &["a", "b"]);
+    crate::sync::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+
+    crate::sync::remote::handle(
+        &Event::Disconnected,
+        &deck.remote,
+    );
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned()),
+        "断线之后本机前面那个人按的要算数"
+    );
+}
+
+/// 接管失败,输出回本机:之后点歌落到本机,不再发去那台设备(#118)。
+#[test]
+fn a_failed_claim_sends_the_next_tap_to_the_local_player() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let _ = batch_of(&deck, &["a", "b"]);
+    deck.remote.select("pc", "pc1");
+    assert!(
+        deck.remote.is_remote(),
+        "按下去那一刻先乐观地切过去"
+    );
+
+    crate::sync::remote::handle(
+        &Event::ClaimFailed {
+            target: "pc".to_owned(),
+            reason: "device_offline: 设备 pc 不在线"
+                .to_owned(),
+        },
+        &deck.remote,
+    );
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert!(
+        !deck.remote.is_remote(),
+        "接管没成,输出该回本机"
+    );
+    assert_eq!(
+        ui.global::<Shell>().get_output_id(),
+        "",
+        "芯片也要跟着回本机"
+    );
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned()),
+        "这一下该落到本机播放器上"
+    );
+    assert_eq!(
+        deck.remote.play_submits(),
+        0,
+        "不该再发去那台设备"
+    );
+}
+
+/// 失败的是上一台,用户已经改选了别的:不许把新的选择一起撤掉。
+#[test]
+fn a_failed_claim_on_a_device_no_longer_selected_is_ignored()
+ {
+    let (_ui, deck) = deck_window();
+    deck.remote.select("pc", "pc1");
+    deck.remote.select("tablet", "平板");
+
+    crate::sync::remote::handle(
+        &Event::ClaimFailed {
+            target: "pc".to_owned(),
+            reason: "device_offline".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert_eq!(
+        deck.remote.target_id().as_deref(),
+        Some("tablet"),
+        "失败的那一台早就不是当前的输出了"
+    );
+}
+
 // ── 五处本机行为差异,各一条 ──
 
 /// 差异 1:本机播放器放空之后按播放是**重播**,不是 resume 一个空播放器。

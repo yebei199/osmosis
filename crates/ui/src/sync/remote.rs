@@ -22,9 +22,10 @@ use slint::ComponentHandle;
 use syncplay::{Client, DeviceDto};
 
 pub(crate) use rules::{
-    accepts_control, describe_controlled, describe_lost,
-    describe_output, describe_remote, describe_revoked,
-    describe_too_large, describe_unavailable, lost_remote,
+    accepts_control, describe_claim_failed,
+    describe_controlled, describe_lost, describe_output,
+    describe_remote, describe_revoked, describe_too_large,
+    describe_unavailable, lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -98,6 +99,12 @@ struct Inner {
     /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
     #[cfg(test)]
     play_submits: AtomicU64,
+    /// 交给客户端去忘掉的持权有几次(见 [`Remote::release_claim`])。
+    ///
+    /// [`Client::release_control`] 只往一条通道里塞一条指令,测试里的
+    /// [`Client::detached`] 连接收端都没有 —— 不记下来就观察不到它发没发。
+    #[cfg(test)]
+    releases: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -301,9 +308,22 @@ impl Remote {
             }
         }
 
-        // 文案先算:它要问「失联前指着的是哪台设备」,而下一行就改回本机了。
-        let message =
-            describe_lost(&lock(&self.inner.output));
+        // 持权记录一起交出去:留着的话,遥控器自己的信令哪天重连一次就拿它去
+        // 续权,把被控端重新锁上 —— 而这头已经是本机输出了(#118)。
+        self.release_claim();
+        self.come_home(describe_lost);
+        true
+    }
+
+    /// 输出收回本机:镜像清掉、提示一句。
+    ///
+    /// 文案由调用方按「收回之前指着的是哪台设备」算,所以收的是个函数 ——
+    /// 下一行就把输出改回本机了。撤权、失联、接管失败三条路共用这一段。
+    fn come_home(
+        &self,
+        describe: impl FnOnce(&Output) -> String,
+    ) {
+        let message = describe(&lock(&self.inner.output));
         *lock(&self.inner.output) = Output::Local;
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
@@ -313,7 +333,21 @@ impl Remote {
             },
         );
         self.refresh();
-        true
+    }
+
+    /// 让客户端忘掉本机的持权记录。不发信令 —— 被控端仍然该接着放。
+    fn release_claim(&self) {
+        #[cfg(test)]
+        self.inner.releases.fetch_add(1, Ordering::Relaxed);
+        if let Some(client) = self.inner.client.get() {
+            client.release_control();
+        }
+    }
+
+    /// 测试里问:到此为止交出去几次持权。
+    #[cfg(test)]
+    pub(crate) fn releases(&self) -> u64 {
+        self.inner.releases.load(Ordering::Relaxed)
     }
 
     /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
@@ -395,7 +429,7 @@ impl Remote {
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         if id.is_empty() {
-            client.release_control();
+            self.release_claim();
             *lock(&self.inner.output) = Output::Local;
         } else {
             client.claim(id);
@@ -473,6 +507,8 @@ pub fn new(ui: &MainWindow) -> Remote {
             #[cfg(test)]
             play_submits: AtomicU64::new(0),
             #[cfg(test)]
+            releases: AtomicU64::new(0),
+            #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
         }),
@@ -536,20 +572,22 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
             }
         }
         // 失权:回到本机输出。不静默 —— 用户得知道自己手上这台不再管用了。
+        // 被控端自己退出时 `by` 正是输出指着的那一台,文案因此要在收回之前算。
         syncplay::Event::ControlRevoked { by } => {
-            // 文案先算:它要问「失权前指着的是哪台设备」,而下一行就把
-            // 输出改回本机了(被控端自己退出时 `by` 正是那一台)。
-            let message =
-                describe_revoked(&lock(&inner.output), by);
-            *lock(&inner.output) = Output::Local;
-            lock(&inner.view).clear();
-            lock(&inner.cover_id).clear();
-            let _ = inner.weak.upgrade_in_event_loop(
-                move |ui| {
-                    crate::notice::show(&ui, message);
-                },
-            );
-            remote.refresh();
+            remote.come_home(|output| {
+                describe_revoked(output, by)
+            });
+        }
+        // 接管没成:按下去时输出已经乐观地切了过去,切回来(#118)。
+        // 只认当前那一台 —— 失败的若是上一台,用户已经改选了别的。
+        syncplay::Event::ClaimFailed { target, reason } => {
+            if lock(&inner.output).target()
+                != Some(target.as_str())
+            {
+                return;
+            }
+            log::warn!("接管 {target} 失败: {reason}");
+            remote.come_home(describe_claim_failed);
         }
         syncplay::Event::ControlledBy { device } => {
             *lock(&inner.controlled_by) =
@@ -560,7 +598,12 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 「退出被遥控」才清,于是槽位一旦在本机不知情时没了(服务端重启、
         // 遥控关系被别处撤掉),这台就挂着假横幅、锁着本地播放,而横幅上
         // 那台设备早就不管它了(#102 F-004)。
-        syncplay::Event::NotControlled => {
+        //
+        // 信令断了也一样(#118):断着的时候服务端的消息过不来,锁留着的话
+        // 本机在断网期间连歌都点不了。重连之后客户端自己退出被遥控,两端
+        // 对得上账(见 `syncplay::client` 的 `serve`)。
+        syncplay::Event::NotControlled
+        | syncplay::Event::Disconnected => {
             if lock(&inner.controlled_by).take().is_some() {
                 remote.refresh();
             }

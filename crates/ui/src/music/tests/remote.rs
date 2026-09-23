@@ -601,6 +601,38 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
     );
 }
 
+/// 失联回本机时要把持权记录一起交出去,不然重连时它会把被控端重新锁上(#118)。
+///
+/// 回本机此前只改了界面这一侧:客户端手上那份带代次的持权记录原样留着,
+/// 遥控器自己的信令哪天重连一次,就拿着它去续权 —— 服务端槽位没换人就续上了,
+/// 被控端又挂起「正被遥控」,而遥控器这头早就是本机输出、谁也不在遥控它。
+/// 客户端那一半(交出记录之后重连不再续权)见 `syncplay/tests/remote.rs`。
+#[test]
+fn giving_up_on_a_lost_target_releases_the_claim() {
+    let (_ui, deck) = deck_window();
+    deck.remote.select("pc", "pc1");
+    let now = crate::sync::remote::now_ms();
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: report(
+                1_000,
+                app_core::RemotePlayState::Playing,
+            ),
+        },
+        &deck.remote,
+    );
+    let before = deck.remote.releases();
+
+    assert!(deck.remote.give_up_if_lost_at(now + 16_000));
+
+    assert_eq!(
+        deck.remote.releases(),
+        before + 1,
+        "回本机那一下要把持权交给客户端去忘掉"
+    );
+}
+
 /// 服务端说没人在遥控本机,横幅与锁定态就该立刻撤掉(#102 F-004)。
 ///
 /// 锁定态此前只有用户按「退出被遥控」才清,于是槽位一旦在本机不知情时没了,
