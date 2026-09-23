@@ -14,6 +14,17 @@ test/mcp-login.sh           # 安卓默认 8090;桌面用 PORT=8091 test/mcp-log
 
 它第一次跑就体现了价值:失败信息把责任定在「连不上服务端」,而不是脚本自己。
 
+## dev-recipes.sh —— debug 配方的守卫还拦得住吗
+
+```sh
+test/dev-recipes.sh
+```
+
+`desktop-dev` / `mcp-android` 的本机后端守卫、`dev-adb` 的序列号解析、生产平板拒装
+(#119)全是 justfile 里的 shell。这份把假的 `adb` 与 `nix-shell` 顶在 PATH 前面驱动
+那几条配方,断言退出码、调用参数,以及守卫失败时**没有进编译**。不碰真设备,几秒跑完。
+改了那几条配方就跑一遍。
+
 ## played-e2e.sh —— 起播真的被记进账本了吗
 
 跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
