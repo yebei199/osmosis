@@ -277,18 +277,55 @@ fn assemble_debug(
     abis: &[Abi],
 ) -> Result<(), String> {
     println!("==> Building debug APK");
-    let filter = format!(
-        "-PstudyAbis={}",
-        abis.iter()
-            .map(|a| a.name())
-            .collect::<Vec<_>>()
-            .join(",")
-    );
-    run_in(
-        &root.join(GRADLE_PROJECT),
-        "gradle",
-        &["--no-daemon", &filter, "assembleDebug"],
-    )
+    let args =
+        gradle_args(abis, env!("CARGO_PKG_VERSION"))?;
+    let args: Vec<&str> =
+        args.iter().map(String::as_str).collect();
+    run_in(&root.join(GRADLE_PROJECT), "gradle", &args)
+}
+
+/// gradle 的命令行。versionName 就是 workspace 版本(xtask 继承它),
+/// versionCode 由它推出 —— 设备上 `dumpsys package` 读到的就是这两个值。
+fn gradle_args(
+    abis: &[Abi],
+    version: &str,
+) -> Result<Vec<String>, String> {
+    let abis = abis
+        .iter()
+        .map(|a| a.name())
+        .collect::<Vec<_>>()
+        .join(",");
+    Ok(vec![
+        "--no-daemon".to_owned(),
+        format!("-PstudyAbis={abis}"),
+        format!("-PosmosisVersionName={version}"),
+        format!(
+            "-PosmosisVersionCode={}",
+            version_code(version)?
+        ),
+        "assembleDebug".to_owned(),
+    ])
+}
+
+/// `major.minor.patch` → `major*1_000_000 + minor*1_000 + patch`,随版本单调增。
+/// 安卓拒绝 versionCode 变小的覆盖安装,所以某段超过 999 就报错,而不是悄悄进位撞车。
+fn version_code(version: &str) -> Result<u32, String> {
+    let bad = || {
+        format!(
+            "版本号 {version} 不是 major.minor.patch(每段 0..=999)"
+        )
+    };
+    let parts = version
+        .split('.')
+        .map(|p| {
+            p.parse::<u32>().ok().filter(|n| *n <= 999)
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(bad)?;
+    let [major, minor, patch] = parts[..] else {
+        return Err(bad());
+    };
+    Ok(major * 1_000_000 + minor * 1_000 + patch)
 }
 
 /// 把 gradle 的产物拷到 `dist/`。

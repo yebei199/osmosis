@@ -14,8 +14,10 @@ android {
         // 换来的只是多支持两个 2017 年的系统版本。
         minSdk 29
         targetSdk 34
-        versionCode 1
-        versionName "0.1.0"
+        // 两者由 xtask 按 workspace 版本传进来(见 xtask/src/android.rs 的 version_code)。
+        // 裸跑 gradle 时落回 1 / 0.0.0,那种包本来就不发。
+        versionCode Integer.parseInt((project.findProperty('osmosisVersionCode') ?: '1').toString())
+        versionName((project.findProperty('osmosisVersionName') ?: '0.0.0').toString())
 
         // ABIs are controlled by which jniLibs cargo-ndk produced; this
         // filter just guards against stray folders. `cargo xtask android`
