@@ -14,8 +14,9 @@ desktop_mcp_port := "8091"
 # 发行构建烘进二进制的服务端地址(crates/api 的 option_env!,编译期生效)。
 # 两个后端跑在 main-vps 的 k3s 上(infra#67);music.cryptorust.uk 经 Cloudflare Tunnel 公网可达(infra#83),
 # music.k3s.cryptorust.uk:32443 是 tailnet 内的直连入口,两者同一 backend。
-# 要打一个连本机后端的包:OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build。
-# dev 配方(desktop-dev / web-dev)不设它,保持连本机 server-dev 的老习惯。
+# 规则:**debug 连本机后端,release 连这里**,两者不能一样(AGENTS.md「debug 连哪个后端」)。
+# 只有 release 配方(android-build / desktop-install)读它;dev 配方(desktop-dev / mcp-android)
+# 反而把这个变量清掉,落回 crates/api 的缺省 local_api。
 api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 # debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
 # 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
