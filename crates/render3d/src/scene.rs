@@ -6,10 +6,14 @@ use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
+use bevy::platform::time::Instant;
 use bevy::render::RenderApp;
 use bevy::render::RenderPlugin;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::TextureFormat;
+use bevy::render::render_resource::{
+    CachedPipelineState, PipelineCache, PipelineDescriptor,
+    TextureFormat,
+};
 use bevy::render::renderer::{
     RenderAdapter, RenderAdapterInfo, RenderDevice,
     RenderInstance, RenderQueue, WgpuWrapper,
@@ -126,6 +130,9 @@ pub struct Scene {
     perf: f64,
     /// 卡墙那一摊(自己的相机、目标纹理、卡实体池),见 `wall.rs`。
     wall: wall::WallScene,
+    /// 卡墙预热从什么时候开始、那时已有几条管线(见 `prewarm_wall`)。
+    /// 没开始过为 `None`。
+    prewarm: Option<(Instant, usize)>,
 }
 
 impl Scene {
@@ -143,6 +150,7 @@ impl Scene {
     /// wasm 上 `Backends::PRIMARY` 只含 BrowserWebGpu:浏览器没有 WebGPU 就在
     /// `request_adapter` 处 panic,不做 WebGL 降级(bevy 的渲染管线在 WebGL 下受限,不接)。
     pub async fn new_async() -> Self {
+        let started = Instant::now();
         // 1) 自建一套 wgpu。经 slint 的 wgpu_29 再导出拿到 wgpu,保证和 bevy 是同一份 crate。
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -211,10 +219,16 @@ impl Scene {
         let plugins = DefaultPlugins
             .set(RenderPlugin {
                 render_creation,
-                // 管线编译走同步。默认的异步编译把任务丢进 bevy 的任务池,而 wasm
-                // 是单线程 —— 任务迟迟不完成,渲染就一直画不出东西(纹理有、内容空)。
-                // 原生上同步编译只是把首帧的卡顿提前,代价可接受,故不分平台。
-                synchronous_pipeline_compilation: true,
+                // 管线编译:原生异步,wasm 同步。
+                //
+                // 原生上同步编译的代价是卡墙第一次亮相那一帧在主线程上现编三十多条
+                // 管线,真机冻 200+480ms(#121);异步编译把它们丢进 bevy 的任务池,
+                // 再由 ui 在首页期间调 `prewarm_wall` 提前排进队列。
+                // wasm 是单线程:异步任务迟迟不完成,渲染就一直画不出东西(纹理有、
+                // 内容空),所以那边只能同步。
+                synchronous_pipeline_compilation: cfg!(
+                    target_arch = "wasm32"
+                ),
                 ..default()
             })
             .set(WindowPlugin {
@@ -269,8 +283,7 @@ impl Scene {
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
         app.cleanup();
-
-        Self {
+        let mut scene = Self {
             app,
             device: device.clone(),
             queue: queue.clone(),
@@ -294,7 +307,21 @@ impl Scene {
             perf: 0.0,
             frames: 0,
             wall: wall_scene,
-        }
+            prewarm: None,
+        };
+        // 卡墙预热的第一步放在这里(#121):建窗口之前,不落在任何一页上。
+        // 第一次开着相机渲网格那一帧要建视图纹理、缓冲、绑定组,再加 bevy
+        // 自己第一次 update 的建表,真机上 140–160ms,异步编译也省不掉;
+        // 挪到首页上就是一次看得见的卡顿。其余几步只是把后台编好的管线收进来,
+        // 每步十几毫秒,留给 ui 在首页期间接着调。
+        let warm = Instant::now();
+        scene.prewarm_wall();
+        log::info!(
+            "render3d: 初始化 {}ms(含卡墙预热第一步 {}ms)",
+            started.elapsed().as_millis(),
+            warm.elapsed().as_millis(),
+        );
+        scene
     }
 
     /// 共享 wgpu 的 device 句柄(clone,廉价 Arc)。供导航选中器的 [`NavGlassPass`]
@@ -325,6 +352,95 @@ pub(crate) fn make_target(
     app.world_mut()
         .resource_mut::<Assets<Image>>()
         .add(image)
+}
+
+/// `app.update()` 慢过它才记一行。一帧 16ms,再留些余量。
+const SLOW_UPDATE_MS: u128 = 30;
+
+/// 跑一次 `app.update()`;这一帧慢了、或者新建了渲染管线,就记一行:
+/// 花了多久、新建了哪几条(#121)。
+///
+/// 卡墙首帧那一下冻 200+500ms,疑是同步编着色器 —— 管线建好的那一帧与
+/// 慢的那一帧对不对得上,就看这一行。`what` 是哪一路在渲(卡墙 / 播放页)。
+pub(crate) fn probed_update(
+    app: &mut App,
+    what: &str,
+) -> f64 {
+    let before = ready_pipelines(app);
+    let started = Instant::now();
+    app.update();
+    let took = started.elapsed();
+    let after = ready_pipelines(app);
+    if took.as_millis() > SLOW_UPDATE_MS
+        || after.len() != before.len()
+    {
+        let built: Vec<usize> = after
+            .into_iter()
+            .filter(|id| before.binary_search(id).is_err())
+            .collect();
+        log::info!(
+            "render3d: {what} app.update() {}ms,新建管线 {} 条 {:?}",
+            took.as_millis(),
+            built.len(),
+            pipeline_labels(app, &built),
+        );
+    }
+    took.as_secs_f64() * 1000.0
+}
+
+/// 还在排队或编译中的管线条数。预热靠它判断「编完没有」。
+pub(crate) fn waiting_pipelines(app: &App) -> usize {
+    pipeline_cache(app).map_or(0, |cache| {
+        cache.waiting_pipelines().count()
+    })
+}
+
+/// 渲染子世界里已经建好的管线,按编号升序。
+pub(crate) fn ready_pipelines(app: &App) -> Vec<usize> {
+    let Some(cache) = pipeline_cache(app) else {
+        return Vec::new();
+    };
+    cache
+        .pipelines()
+        .enumerate()
+        .filter(|(_, pipeline)| {
+            matches!(
+                pipeline.state,
+                CachedPipelineState::Ok(_)
+            )
+        })
+        .map(|(id, _)| id)
+        .collect()
+}
+
+fn pipeline_labels(
+    app: &App,
+    ids: &[usize],
+) -> Vec<String> {
+    let Some(cache) = pipeline_cache(app) else {
+        return Vec::new();
+    };
+    let pipelines: Vec<_> = cache.pipelines().collect();
+    ids.iter()
+        .filter_map(|&id| pipelines.get(id))
+        .map(|pipeline| {
+            let label = match &pipeline.descriptor {
+                PipelineDescriptor::RenderPipelineDescriptor(d) => {
+                    d.label.as_deref()
+                }
+                PipelineDescriptor::ComputePipelineDescriptor(d) => {
+                    d.label.as_deref()
+                }
+            };
+            label.unwrap_or("?").to_owned()
+        })
+        .collect()
+}
+
+fn pipeline_cache(app: &App) -> Option<&PipelineCache> {
+    app.get_sub_app(RenderApp)?
+        .world()
+        .get_resource::<PipelineCache>()
 }
 
 /// 从 bevy 的渲染子世界里取出某张离屏目标图对应的 `wgpu::Texture`。

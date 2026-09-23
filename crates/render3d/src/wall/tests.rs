@@ -570,3 +570,65 @@ fn an_overshooting_dolly_is_clamped_in_front_of_the_wall() {
         "推过头的镜头必须夹在墙前面,不能穿到背后",
     );
 }
+
+/// 预热那一帧要把卡墙会用到的两种材质都走一遍:一张闪卡、一张带卡面的普通卡,
+/// 都可见、都在画面里。漏掉哪一种,那一种的管线就还得等真墙第一帧在主线程上
+/// 现编 —— 预热等于白做(#121)。
+#[test]
+fn a_prewarm_frame_exercises_both_card_materials() {
+    let mut app = headless_app();
+    let mut wall = WallScene::new(&mut app);
+    let frame = WallFrame::prewarm();
+
+    wall.apply(&mut app, &frame);
+
+    assert_eq!(wall.cards.len(), 2, "预热要恰好两张卡");
+    assert!(is_foil(&app, wall.cards[0]), "第一张该是闪卡");
+    assert!(
+        is_plain(&app, wall.cards[1]),
+        "第二张该是普通卡"
+    );
+    assert!(
+        wall.textures[1].is_some(),
+        "普通卡要带卡面,带纹理的那条路才会被走到"
+    );
+    for (i, entity) in wall.cards.iter().enumerate() {
+        assert_eq!(
+            app.world().get::<Visibility>(*entity),
+            Some(&Visibility::Visible),
+            "第 {i} 张不可见就不会进渲染队列"
+        );
+    }
+    let half = frame.width as f32 / 2.0;
+    for card in &frame.cards {
+        assert!(
+            card.x.abs() + card.size / 2.0 <= half
+                && card.y.abs() + card.size / 2.0 <= half,
+            "预热卡要整张落在画面里: {card:?}"
+        );
+    }
+}
+
+/// 预热过后的第一帧真墙照常接管:闪卡退回普通材质,多出来的那张藏起来。
+/// 预热的卡是占位,不能在真墙上留下痕迹。
+#[test]
+fn a_real_frame_after_prewarm_takes_the_cards_back() {
+    let mut app = headless_app();
+    let mut wall = WallScene::new(&mut app);
+    wall.apply(&mut app, &WallFrame::prewarm());
+
+    wall.apply(
+        &mut app,
+        &frame_of(vec![card(0.0, 0.0, 0.0, 0.0, 0.0)]),
+    );
+
+    assert!(
+        is_plain(&app, wall.cards[0]),
+        "闪卡没退回普通材质"
+    );
+    assert_eq!(
+        app.world().get::<Visibility>(wall.cards[1]),
+        Some(&Visibility::Hidden),
+        "这一帧只有一张卡,预热多出来的那张该藏起来"
+    );
+}

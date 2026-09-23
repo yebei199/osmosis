@@ -143,6 +143,9 @@ struct Deck {
     /// 遥控器持有的不是第二份队列真相:它不拿这份决定下一首,只用来画
     /// 那一页(`docs/adr/0031` 三)。
     queue_mirror: queuepage::QueueMirror,
+    /// 等下一帧画出来的用户动作(见 `crate::runtime::trace`)。渲染循环也拿着
+    /// 同一份,画完一帧就给它们打 `drawn`。
+    frames: crate::runtime::trace::Frames,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -160,7 +163,12 @@ pub fn bind(
         crate::media::MediaHooks,
     )
         -> Box<dyn crate::media::MediaControls>,
-) -> (crate::viz::Source, LyricFeed, CoverFeed) {
+) -> (
+    crate::viz::Source,
+    LyricFeed,
+    CoverFeed,
+    crate::runtime::trace::Frames,
+) {
     let player = Arc::new(audio::Player::new());
     let media =
         Rc::new(crate::media::bind(ui, &player, media));
@@ -202,6 +210,7 @@ pub fn bind(
         seeking: Rc::new(RefCell::new(None)),
         execution: Execution::default(),
         queue_mirror: queuepage::QueueMirror::default(),
+        frames: crate::runtime::trace::Frames::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -248,7 +257,7 @@ pub fn bind(
         .as_ref()
         .ok()
         .map(audio::Player::visualizer);
-    (viz, lyrics, cover)
+    (viz, lyrics, cover, deck.frames.clone())
 }
 
 /// wasm 上没有原生音频栈(见 `Cargo.toml` 的条件依赖)。界面照常在,
@@ -260,7 +269,12 @@ pub fn bind(
         crate::media::MediaHooks,
     )
         -> Box<dyn crate::media::MediaControls>,
-) -> (crate::viz::Source, LyricFeed, CoverFeed) {
+) -> (
+    crate::viz::Source,
+    LyricFeed,
+    CoverFeed,
+    crate::runtime::trace::Frames,
+) {
     // 状态行而不是提示:wasm 上这句永远为真,它就是这一端的播放状态。
     ui.global::<Player>()
         .set_playback_text("Web 端暂不支持播放".into());
@@ -279,7 +293,12 @@ pub fn bind(
         },
     );
 
-    (None, LyricFeed, CoverFeed::default())
+    (
+        None,
+        LyricFeed,
+        CoverFeed::default(),
+        crate::runtime::trace::Frames::default(),
+    )
 }
 
 /// 「Web 端暂不支持播放」里的中文也得在子集字体里 —— 但它只在 wasm 上出现,

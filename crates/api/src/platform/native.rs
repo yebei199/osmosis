@@ -27,21 +27,31 @@ fn runtime() -> &'static Runtime {
 const REQUEST_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(10);
 
-/// 一个只直连的客户端。
+/// 进程里唯一的客户端。只直连。
+///
+/// 共用一个是为了连接池:每次新建客户端,每条请求都要重做一遍 TCP + TLS
+/// 握手,开发机到生产实测 0.45–0.7s(#122)。超时因此不能挂在客户端上 ——
+/// 下载要的是「卡建连、卡读」而不是整体上限 —— 整体超时由各请求自己设。
 ///
 /// `.no_proxy()` 不能省:集群地址在 tailnet 里(100.64.0.2),本机代理路由不
 /// 到它,握手会被掐断 —— 现象是登录一律「连不上服务端」,而把 `HTTPS_PROXY`
 /// 从环境里去掉就通。启动器起的应用继承的正是用户会话那份环境变量。
 /// 关掉 reqwest 的 `system-proxy` 特性挡不住这件事:那个特性只管 macOS 和
 /// Windows 的系统设置,环境变量是 hyper-util 无条件读的。
-fn client(
-    timeout: std::time::Duration,
-) -> Result<reqwest::Client, ApiError> {
-    reqwest::Client::builder()
-        .timeout(timeout)
+fn client() -> Result<&'static reqwest::Client, ApiError> {
+    static CLIENT: OnceLock<reqwest::Client> =
+        OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let built = reqwest::Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .read_timeout(REQUEST_TIMEOUT)
         .no_proxy()
         .build()
-        .map_err(|e| ApiError::Transport(e.to_string()))
+        .map_err(|e| ApiError::Transport(e.to_string()))?;
+    // 两个线程同时走到这里时各建一个,留下先到的那个;后到的丢掉无害
+    Ok(CLIENT.get_or_init(|| built))
 }
 
 pub(crate) async fn get_json<
@@ -69,11 +79,28 @@ pub(crate) async fn send_json<
     // 就落回 UI 线程上了(#117)。
     let token = crate::session::token();
     in_background(async move {
-        exchange(method, url, body, token)
-            .await?
-            .json::<T>()
-            .await
-            .map_err(|e| ApiError::Decode(e.to_string()))
+        let mut call = Call::start(&method, &url);
+        let result = async {
+            let response = exchange(
+                method, url, body, token, &mut call,
+            )
+            .await?;
+            let bytes =
+                response.bytes().await.map_err(|e| {
+                    ApiError::Transport(e.to_string())
+                })?;
+            call.body_read(bytes.len());
+            let decoded =
+                serde_json::from_slice::<T>(&bytes)
+                    .map_err(|e| {
+                        ApiError::Decode(e.to_string())
+                    });
+            call.decoded();
+            decoded
+        }
+        .await;
+        call.finish(result.as_ref().err());
+        result
     })
     .await
 }
@@ -96,7 +123,15 @@ async fn send<B: serde::Serialize + Send + 'static>(
     body: Option<B>,
 ) -> Result<reqwest::Response, ApiError> {
     let token = crate::session::token();
-    in_background(exchange(method, url, body, token)).await
+    in_background(async move {
+        let mut call = Call::start(&method, &url);
+        let result =
+            exchange(method, url, body, token, &mut call)
+                .await;
+        call.finish(result.as_ref().err());
+        result
+    })
+    .await
 }
 
 /// 把一段往返丢到后台线程池,在调用方线程上等它的结果。
@@ -115,15 +150,17 @@ async fn in_background<T: Send + 'static>(
 /// 发出去、检查状态码。跑在哪个线程上由调用方定。
 ///
 /// `token` 由调用方在发起那一刻读好传进来,与挪进后台之前同一个时点。
+/// 收到响应头的那一刻记进 `call`。
 async fn exchange<B: serde::Serialize + Send + 'static>(
     method: reqwest::Method,
     url: String,
     body: Option<B>,
     token: Option<String>,
+    call: &mut Call,
 ) -> Result<reqwest::Response, ApiError> {
-    let client = client(REQUEST_TIMEOUT)?;
-
-    let mut request = client.request(method, url);
+    let mut request = client()?
+        .request(method, url)
+        .timeout(REQUEST_TIMEOUT);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -135,8 +172,143 @@ async fn exchange<B: serde::Serialize + Send + 'static>(
         .send()
         .await
         .map_err(|e| ApiError::Transport(e.to_string()))?;
+    call.headers_in(response.status().as_u16());
 
     check(response).await
+}
+
+/// 一次接口调用的分段耗时,收尾时打成一行 `api:` 日志(#121)。
+///
+/// 段是首尾相接的增量:`head` 发出到收齐响应头(网络 + 服务端),`body`
+/// 读完响应体,`decode` 反序列化。「这次慢在哪一段」就看哪个数大。
+/// 没走到的段不打,失败时带一个归类。
+struct Call {
+    method: reqwest::Method,
+    route: String,
+    started: std::time::Instant,
+    last: std::time::Instant,
+    status: Option<u16>,
+    bytes: Option<usize>,
+    head: Option<std::time::Duration>,
+    body: Option<std::time::Duration>,
+    decode: Option<std::time::Duration>,
+}
+
+impl Call {
+    fn start(method: &reqwest::Method, url: &str) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            method: method.clone(),
+            route: route_of(url),
+            started: now,
+            last: now,
+            status: None,
+            bytes: None,
+            head: None,
+            body: None,
+            decode: None,
+        }
+    }
+
+    /// 从上一个打点到现在,并把「现在」记成下一段的起点。
+    fn lap(&mut self) -> std::time::Duration {
+        let now = std::time::Instant::now();
+        let lap = now - self.last;
+        self.last = now;
+        lap
+    }
+
+    fn headers_in(&mut self, status: u16) {
+        self.status = Some(status);
+        self.head = Some(self.lap());
+    }
+
+    fn body_read(&mut self, bytes: usize) {
+        self.bytes = Some(bytes);
+        self.body = Some(self.lap());
+    }
+
+    fn decoded(&mut self) {
+        self.decode = Some(self.lap());
+    }
+
+    fn finish(&self, error: Option<&ApiError>) {
+        log::info!("{}", self.line(error));
+    }
+
+    fn line(&self, error: Option<&ApiError>) -> String {
+        use std::fmt::Write as _;
+
+        let ms = |d: std::time::Duration| d.as_millis();
+        let mut line =
+            format!("api: {} {}", self.method, self.route);
+        if let Some(status) = self.status {
+            let _ = write!(line, " status={status}");
+        }
+        if let Some(bytes) = self.bytes {
+            let _ = write!(line, " bytes={bytes}");
+        }
+        for (name, lap) in [
+            ("head", self.head),
+            ("body", self.body),
+            ("decode", self.decode),
+        ] {
+            if let Some(lap) = lap {
+                let _ =
+                    write!(line, " {name}={}ms", ms(lap));
+            }
+        }
+        let _ = write!(
+            line,
+            " total={}ms",
+            ms(self.started.elapsed())
+        );
+        // 只打归类:传输错误的原文里带着整条 URL,查询串会跟着漏出去。
+        if let Some(error) = error {
+            let kind = match error {
+                ApiError::Transport(_) => "transport",
+                ApiError::Decode(_) => "decode",
+                ApiError::Server { .. } => "server",
+                ApiError::VersionMismatch { .. } => {
+                    "version"
+                }
+            };
+            let _ = write!(line, " error={kind}");
+        }
+        line
+    }
+}
+
+/// 地址里能进日志的那部分:路径的形状。
+///
+/// 查询串整个丢掉(搜索词在里面);带数字、大写或转义符的路径段换成 `:id` ——
+/// 曲目 id、歌单 id、二维码 key 都长这样,而固定的路由词全是小写字母。
+/// 同一条路由因此总是同一个写法,日志能直接按它归并。
+pub(crate) fn route_of(url: &str) -> String {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return "?".to_owned();
+    };
+    let Some(segments) = parsed.path_segments() else {
+        return "?".to_owned();
+    };
+    let is_word = |segment: &str| {
+        segment.bytes().all(|b| {
+            b.is_ascii_lowercase() || b == b'-' || b == b'_'
+        })
+    };
+    segments
+        .map(
+            |segment| {
+                if is_word(segment) {
+                    segment
+                } else {
+                    ":id"
+                }
+            },
+        )
+        .fold(String::new(), |route, segment| {
+            route + "/" + segment
+        })
 }
 
 /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。
@@ -497,16 +669,7 @@ pub(crate) async fn download(
 
     runtime()
         .spawn(async move {
-            let client = reqwest::Client::builder()
-                .connect_timeout(REQUEST_TIMEOUT)
-                .read_timeout(REQUEST_TIMEOUT)
-                .no_proxy()
-                .build()
-                .map_err(|e| {
-                    ApiError::Transport(e.to_string())
-                })?;
-
-            let mut request = client.get(url);
+            let mut request = client()?.get(url);
             if let Some(token) = token {
                 request = request.bearer_auth(token);
             }
@@ -557,10 +720,9 @@ pub(crate) async fn get_bytes(
 ) -> Result<Vec<u8>, ApiError> {
     runtime()
         .spawn(async move {
-            let client =
-                client(std::time::Duration::from_secs(10))?;
-            let response = client
+            let response = client()?
                 .get(url)
+                .timeout(REQUEST_TIMEOUT)
                 .send()
                 .await
                 .map_err(|e| {

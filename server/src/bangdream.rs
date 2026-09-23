@@ -23,6 +23,66 @@ pub use track_refs::{keep_available, refs_missing_from};
 
 use crate::store::account::Account;
 
+/// 上游那条 gRPC 通道,包上了每次调用的计时(见 [`Timed`])。
+pub type UpstreamChannel = Timed<tonic::transport::Channel>;
+
+/// 给一条 gRPC 通道包上计时:每次调用在收到响应头时打一行
+/// `upstream method=<gRPC 方法> ms=<毫秒>`(#121)。
+///
+/// 一元调用的响应头要等上游处理完才发,所以这个数就是「bang-dream 连同它
+/// 回源网易云花了多久」。这一行打在调用方当时的 span 里 —— 路由中间件给每个
+/// 请求开了一个带 id 的 span,上游耗时于是能按 id 归到那条路由上。
+#[derive(Clone, Debug)]
+pub struct Timed<S>(pub S);
+
+impl<S, B, R>
+    tower::Service<tonic::codegen::http::Request<B>>
+    for Timed<S>
+where
+    S: tower::Service<
+            tonic::codegen::http::Request<B>,
+            Response = tonic::codegen::http::Response<R>,
+        >,
+    S::Future: Send + 'static,
+    S::Error: std::fmt::Display,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = tonic::codegen::BoxFuture<
+        Self::Response,
+        Self::Error,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(
+        &mut self,
+        request: tonic::codegen::http::Request<B>,
+    ) -> Self::Future {
+        let method = request.uri().path().to_owned();
+        let started = std::time::Instant::now();
+        let future = self.0.call(request);
+        Box::pin(async move {
+            let result = future.await;
+            let ms = started.elapsed().as_millis();
+            match &result {
+                Ok(_) => {
+                    tracing::info!(%method, ms, "upstream")
+                }
+                Err(error) => {
+                    tracing::warn!(%method, ms, %error, "upstream")
+                }
+            }
+            result
+        })
+    }
+}
+
 /// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
 pub mod proto {
     tonic::include_proto!("bangdream.music.v1");

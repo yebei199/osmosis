@@ -7,10 +7,9 @@ use axum::{
 };
 use contract::{PlaylistDto, PlaylistsDto, TracksDto};
 use serde::Deserialize;
-use tonic::transport::Channel;
 
 use server::bangdream::{
-    self,
+    self, UpstreamChannel,
     proto::{
         GetAccountStatusRequest, GetPlaylistRequest,
         ListLikedTracksRequest, ListUserPlaylistsRequest,
@@ -85,7 +84,7 @@ pub(crate) async fn playlists(
 /// 取平台那半:歌单列表与红心数。任一步失败都只记一笔日志、当作空 ——
 /// 见 [`playlists`] 顶上那条理由。
 pub(crate) async fn platform_playlists(
-    library: &mut LibraryServiceClient<Channel>,
+    library: &mut LibraryServiceClient<UpstreamChannel>,
     account: &Account,
     netease_user_id: &str,
 ) -> (Vec<PlaylistDto>, i32) {

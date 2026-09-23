@@ -5,7 +5,6 @@ use bevy::prelude::*;
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
 // 0.19 起相机相关类型拆到 bevy_camera,facade 以 `bevy::camera` 再导出。
 use bevy::camera::Camera3dDepthLoadOp;
-use bevy::platform::time::Instant;
 
 use super::Scene;
 use super::{PERF_WINDOW, extract_texture};
@@ -178,10 +177,8 @@ impl Scene {
         depth: f32,
         needs_occluder: bool,
     ) -> (slint::Image, slint::Image) {
-        let t_update = Instant::now();
-        self.app.update();
         self.perf +=
-            t_update.elapsed().as_secs_f64() * 1000.0;
+            super::probed_update(&mut self.app, "播放页");
         self.frames += 1;
 
         let Some(tex) = self.extract_texture(&self.target)
