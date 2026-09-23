@@ -193,22 +193,22 @@ android-build:
 # USB 直装到手机(推荐:不受移动热点/公司 WiFi 客户端隔离影响)
 [group('安卓')]
 android-install:
-    adb install -r {{apk}}
+    {{just_executable()}} dev-adb install -r {{apk}}
 
 # 把手机的 127.0.0.1:3000 转发到开发机的 server-dev
 # 手机上的 127.0.0.1 指的是手机自己,不转发的话「Check server」永远失败。
 # adb 重连后需要重新执行
-# 只有连本机后端的包(OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build)
-# 才需要这条;默认包直连集群,装完即用。
+# 连本机后端的包(mcp-android 出的 debug 包)才需要这条,mcp-android 已自带;
+# release 包直连集群,装完即用。
 [group('安卓')]
 android-reverse:
-    adb reverse tcp:3000 tcp:3000
+    {{just_executable()}} dev-adb reverse tcp:3000 tcp:3000
 
 # 装 APK、接通端口转发,然后看日志。前提:server-dev 已在另一个终端里跑
 [group('安卓')]
 android-run: android-install android-reverse
-    adb shell am start -n io.github.osmosis/.MainActivity
-    adb logcat -s osmosis
+    {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
+    {{just_executable()}} dev-adb logcat -s osmosis
 
 # 局域网 http 共享,手机扫码下载
 # 可用前提:手机与电脑同一网络且无客户端隔离(如电脑自己开的热点)
@@ -216,6 +216,28 @@ android-run: android-install android-reverse
 [group('安卓')]
 android-serve:
     miniserve dist --interfaces 0.0.0.0 --port 3070 --qrcode
+
+# 带上设备序列号的 adb。安卓配方一律走它,不裸调 adb:开发机与生产平板常同时连着,
+# 裸 adb 要么报 more than one device,要么装错台。
+# 指定设备用 ANDROID_SERIAL(adb 自己也认这个变量);没指定且只有一台在线时就用那一台。
+# 序列号在这里解析而不是 `adb -s "$(...)"`:命令替换失败不会让外层失败,
+# 空的 -s 会让 adb 退回自己挑设备。
+[private]
+[positional-arguments]
+dev-adb *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    online=$(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+    if [ -n "${ANDROID_SERIAL:-}" ]; then
+        grep -qxF "$ANDROID_SERIAL" <<< "$online" || { echo "ANDROID_SERIAL=$ANDROID_SERIAL 不在线" >&2; exit 1; }
+        serial=$ANDROID_SERIAL
+    elif [ "$(grep -c . <<< "$online")" -eq 1 ]; then
+        serial=$online
+    else
+        echo "没设 ANDROID_SERIAL,而在线设备不是正好一台" >&2
+        exit 1
+    fi
+    exec adb -s "$serial" "$@"
 
 # 传进来的端口被占就**立刻失败**,别让 app 起来。
 #
@@ -248,7 +270,7 @@ mcp-port-free port:
 # adb 重连后需要重新执行
 [group('mcp')]
 mcp-forward:
-    adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
+    {{just_executable()}} dev-adb forward tcp:{{mcp_port}} tcp:{{mcp_port}}
 
 # 真机 + MCP:烧入端口重编 APK、装机、接通转发、启动。**开发装机走这条**。
 # 两个变量在这里**都是构建期**的:APK 由系统启动,进程读不到运行时环境变量,
@@ -259,11 +281,15 @@ mcp-forward:
 # 查不到任何元素,点按钮就得从全分辨率截图上量坐标 —— 慢且容易点空。
 # 代价是编译更久、APK 更大,发布件请走 `android-build`(release)。
 # 不带 logcat —— 终端要腾给 AI 会话;要看日志另开一个跑 `adb logcat -s osmosis`
+#
+# 顺带做 android-reverse:debug 包连手机上的 127.0.0.1:3000,不 reverse 到开发机就是
+# 连手机自己,启动即「同播失败:信令错误」。forward 与 reverse 都挂在 adb 连接上,
+# **adb 重连(无线 adb 换端口、拔插线)之后重跑本配方**,或单独补 mcp-forward 与 android-reverse。
 [group('mcp')]
-mcp-android: mcp-forward
+mcp-android: mcp-forward android-reverse
     nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
-    adb install -r {{apk}}
-    adb shell am start -n io.github.osmosis/.MainActivity
+    {{just_executable()}} dev-adb install -r {{apk}}
+    {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
 
 # 杀掉所有跑着的桌面实例。三处静默失败等着:
 #
