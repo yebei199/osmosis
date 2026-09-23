@@ -3,7 +3,9 @@
 //! 装是平台的事(安卓走 PackageInstaller,见 `apps/android`),这一层只交出一个
 //! 核对过的文件。资产名与校验文件的格式由 `release/README.md`「APK 资产约定」定。
 //!
-//! 这几条请求**不带登录态**:目标是 GitHub,把我们的 token 发过去就是泄露。
+//! 版本与 `.sha256` 直接问 GitHub,**不带登录态**(把我们的 token 发过去就是泄露)。
+//! APK 字节从我们自己的服务端取(`/app/android/{ver}.apk`,见 `server/src/routes/apk.rs`):
+//! 国内直连 GitHub 的资产下载只有几十 KB/s。服务端被换了包也没用,哈希是 GitHub 给的。
 
 use std::path::{Path, PathBuf};
 
@@ -37,8 +39,18 @@ pub struct Update {
     /// 不带 `v` 的版本号。
     pub version: String,
     apk_name: String,
-    apk_url: String,
     sha_url: String,
+}
+
+impl Update {
+    /// 字节从哪取:我们的服务端,它去 GitHub 回源。
+    fn apk_url(&self) -> String {
+        format!(
+            "{}/app/android/{}.apk",
+            crate::base_url(),
+            self.version
+        )
+    }
 }
 
 /// 查一次的结论。
@@ -93,11 +105,11 @@ fn select(release: &ReleaseDto, current: &str) -> Check {
         url_of(&apk_name),
         url_of(&format!("{apk_name}.sha256")),
     ) {
-        (Some(apk_url), Some(sha_url)) => {
+        // APK 资产本身不从这里下,但它得在:服务端就是去拉它。
+        (Some(_), Some(sha_url)) => {
             Check::Available(Update {
                 version,
                 apk_name,
-                apk_url,
                 sha_url,
             })
         }
@@ -142,12 +154,9 @@ pub async fn fetch(
     let path = dir.join(&update.apk_name);
     let file = std::fs::File::create(&path)
         .map_err(|e| e.to_string())?;
-    if let Err(e) = platform::download_anonymous(
-        update.apk_url.clone(),
-        file,
-        progress,
-    )
-    .await
+    if let Err(e) =
+        platform::download(update.apk_url(), file, progress)
+            .await
     {
         let _ = std::fs::remove_file(&path);
         return Err(e.to_string());
@@ -234,9 +243,13 @@ mod tests {
             panic!("0.1.17 比 0.1.16 新,该给出更新");
         };
         assert_eq!(update.version, "0.1.17");
+        // 字节走我们的服务端(国内直连 GitHub 资产只有几十 KB/s),哈希仍取 GitHub 的。
         assert_eq!(
-            update.apk_url,
-            "https://example.test/osmosis-android-arm64-0.1.17.apk"
+            update.apk_url(),
+            format!(
+                "{}/app/android/0.1.17.apk",
+                crate::base_url()
+            )
         );
         assert_eq!(
             update.sha_url,

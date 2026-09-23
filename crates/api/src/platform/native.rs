@@ -701,29 +701,11 @@ const PROGRESS_STEP: u64 = 256 * 1024;
 /// 「大歌下到一半必断」。断网由 reqwest 自己的读超时兜住。
 pub(crate) async fn download(
     url: String,
-    sink: impl std::io::Write + Send + 'static,
-    progress: impl Fn(u64, Option<u64>) + Send + 'static,
-) -> Result<(), ApiError> {
-    stream(url, crate::session::token(), sink, progress)
-        .await
-}
-
-/// 同 [`download`],但不带登录态 —— 给发往第三方(GitHub)的下载用,
-/// 我们的 token 不能跟着出门。
-pub(crate) async fn download_anonymous(
-    url: String,
-    sink: impl std::io::Write + Send + 'static,
-    progress: impl Fn(u64, Option<u64>) + Send + 'static,
-) -> Result<(), ApiError> {
-    stream(url, None, sink, progress).await
-}
-
-async fn stream(
-    url: String,
-    token: Option<String>,
     mut sink: impl std::io::Write + Send + 'static,
     progress: impl Fn(u64, Option<u64>) + Send + 'static,
 ) -> Result<(), ApiError> {
+    let token = crate::session::token();
+
     runtime()
         .spawn(async move {
             let mut request = client()?.get(url);
