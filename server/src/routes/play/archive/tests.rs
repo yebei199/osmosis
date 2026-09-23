@@ -1,4 +1,5 @@
-//! 听过的歌存进对象存储:存、不重复存、试听不存、`/played` 真的会触发。
+//! 听过的歌存进对象存储:存、不重复存、试听不存、`/played` 真的会触发;
+//! 再播时从对象存储交付,它出岔子时退回网易云。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -222,4 +223,136 @@ async fn an_upstream_failure_stores_nothing() {
     keep(&state, &f.account, &netease(&id)).await;
 
     assert_eq!(row(&state, &id).await, None);
+}
+
+/// 一个此刻连不上的对象存储:每个动作都失败。
+struct Unreachable;
+
+impl server::objects::Objects for Unreachable {
+    fn put(
+        &self,
+        _key: &str,
+        _bytes: Vec<u8>,
+        _content_type: &'static str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<()>,
+    > {
+        Box::pin(async { Err("连不上".to_owned()) })
+    }
+
+    fn exists(
+        &self,
+        _key: &str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<bool>,
+    > {
+        Box::pin(async { Err("连不上".to_owned()) })
+    }
+
+    fn delete(
+        &self,
+        _key: &str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<()>,
+    > {
+        Box::pin(async { Err("连不上".to_owned()) })
+    }
+
+    fn presign_get(&self, key: &str) -> String {
+        format!("unreachable://{key}")
+    }
+}
+
+/// `/play` 这首时交出的链接。
+async fn play_url(
+    state: &AppState,
+    account: &Account,
+    id: &str,
+) -> String {
+    crate::routes::play::play(
+        State(state.clone()),
+        account.clone(),
+        axum::extract::Path(id.to_owned()),
+    )
+    .await
+    .expect("取播放源应当成功")
+    .0
+    .url
+}
+
+/// 存过的歌从对象存储交付,不找上游 —— 上游此刻连不上也照样放得出来。
+#[tokio::test]
+async fn a_stored_track_plays_from_the_store() {
+    let f = fixture("ar_serve", false).await;
+    let id = testing::track_id("ar_serve", 1);
+    keep(&f.state, &f.account, &netease(&id)).await;
+
+    let offline = testing::with_upstream(
+        &f.state,
+        testing::unreachable_upstream(),
+    );
+    let source = crate::routes::play::play(
+        State(offline),
+        f.account.clone(),
+        axum::extract::Path(id.clone()),
+    )
+    .await
+    .expect("存过的歌不该需要上游")
+    .0;
+
+    assert_eq!(
+        source,
+        contract::PlaySourceDto {
+            url: format!("memory://tracks/{id}/high.flac"),
+            format: "flac".to_owned(),
+            bit_rate: 999_000,
+            trial: false,
+        }
+    );
+}
+
+/// 没存过的歌照旧拿网易云的直链。
+#[tokio::test]
+async fn an_unstored_track_plays_from_upstream() {
+    let f = fixture("ar_fresh", false).await;
+    let id = testing::track_id("ar_fresh", 1);
+
+    let url = play_url(&f.state, &f.account, &id).await;
+
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+}
+
+/// 账上有、桶里没有:退回网易云,并把那一行删掉,好让下一次 `/played` 重新存。
+#[tokio::test]
+async fn a_lost_object_falls_back_and_forgets_the_row() {
+    let f = fixture("ar_lost", false).await;
+    let id = testing::track_id("ar_lost", 1);
+    keep(&f.state, &f.account, &netease(&id)).await;
+    f.objects.lose(&format!("tracks/{id}/high.flac"));
+
+    let url = play_url(&f.state, &f.account, &id).await;
+
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    assert_eq!(row(&f.state, &id).await, None);
+}
+
+/// 对象存储不可用:退回网易云,账留着 —— 它只是此刻问不到,不是丢了。
+#[tokio::test]
+async fn an_unreachable_store_falls_back_and_keeps_the_row()
+{
+    let f = fixture("ar_down", false).await;
+    let id = testing::track_id("ar_down", 1);
+    keep(&f.state, &f.account, &netease(&id)).await;
+    let down = AppState {
+        archive: Some(Archive::new(Arc::new(Unreachable))),
+        ..f.state.clone()
+    };
+
+    let url = play_url(&down, &f.account, &id).await;
+
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+    assert!(row(&down, &id).await.is_some());
 }

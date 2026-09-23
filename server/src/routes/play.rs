@@ -33,12 +33,20 @@ pub(crate) const PLAY_QUALITY: QualityLevel =
 
 /// `GET /play/{track_id}` —— 取一条临时直链。
 ///
-/// 每次都向上游重新要:直链带签名会过期,缓存它只会让客户端拿到放不出声的地址。
+/// 存过的歌给对象存储的签名链接,不再找网易云(#126);没存过、或对象存储
+/// 此刻不可用,就向上游要。上游的直链每次都重新要:它带签名会过期,缓存它
+/// 只会让客户端拿到放不出声的地址。
 pub(crate) async fn play(
     State(state): State<AppState>,
     account: Account,
     Path(track_id): Path<String>,
 ) -> Result<Json<PlaySourceDto>, Failure> {
+    if let Some(stored) =
+        archive::stored_source(&state, &track_id).await
+    {
+        return Ok(Json(stored));
+    }
+
     let mut catalog = state.upstream.catalog;
     let response = catalog
         .get_play_source(bangdream::as_user(

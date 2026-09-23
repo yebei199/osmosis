@@ -5,11 +5,15 @@
 //!
 //! 全程只记日志、不回报:存歌是顺手的事,它失败了用户照样在听,`/played`
 //! 的响应也不等它。
+//!
+//! 再播时 [`stored_source`] 把桶里那份的签名链接交给 `/play`;对象存储出任何
+//! 岔子都只是退回网易云,不让点歌失败。
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
+use contract::PlaySourceDto;
 use tokio::sync::Semaphore;
 
 use server::objects::Objects;
@@ -212,6 +216,64 @@ async fn store(
         "已存进对象存储"
     );
     Ok(())
+}
+
+/// 这首存过、对象也还在,就交出桶里那份的签名链接;否则 `None`,调用方去找网易云。
+///
+/// 每次都先问一句对象在不在(集群内一个 HEAD,毫秒级):账上有、桶里没有时
+/// 交出去的链接必然 404,那就是一首点了没声的歌。账上有、桶里没有的那一行
+/// 当场删掉,下一次 `/played` 会把它重新存回来。
+pub(crate) async fn stored_source(
+    state: &AppState,
+    track_id: &str,
+) -> Option<PlaySourceDto> {
+    let archive = state.archive.as_ref()?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .inspect_err(
+            |err| tracing::warn!(%err, "查不了存歌的账"),
+        )
+        .ok()?;
+    let stored = archive::find(
+        &mut conn,
+        NETEASE,
+        track_id,
+        &quality(),
+    )
+    .await
+    .inspect_err(|err| {
+        tracing::warn!(?err, "查不了存歌的账")
+    })
+    .ok()??;
+
+    match archive.objects.exists(&stored.object_key).await {
+        Ok(true) => {
+            tracing::info!(track_id, "从对象存储交付");
+            Some(PlaySourceDto {
+                url: archive
+                    .objects
+                    .presign_get(&stored.object_key),
+                format: stored.format,
+                bit_rate: stored.bit_rate,
+                trial: false,
+            })
+        }
+        Ok(false) => {
+            tracing::warn!(track_id, key = %stored.object_key, "账上有、桶里没有,删账退回网易云");
+            if let Err(err) =
+                archive::forget(&mut conn, &stored).await
+            {
+                tracing::warn!(?err, "删不掉那一行账");
+            }
+            None
+        }
+        Err(err) => {
+            tracing::warn!(track_id, %err, "对象存储不可用,退回网易云");
+            None
+        }
+    }
 }
 
 /// 上游给的格式进了对象键,也决定交回去的 `Content-Type`。
