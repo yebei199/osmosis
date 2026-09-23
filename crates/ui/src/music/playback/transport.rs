@@ -9,6 +9,11 @@ use crate::Viz;
 use crate::music::*;
 
 /// 放队列的当前曲目:取直链 → 开流 → 解码 → 出声,经 `app_core::play` 记账。
+///
+/// 每次起播记成一个 `play` 动作(#121):`prepared`(直链、开流、解码都好了)、
+/// `sound`(源交给了播放器)、`model`(界面状态写进去),最后由渲染循环打
+/// `drawn`。点一首歌从回调到这里是同步的一串调用,中间没有 await,
+/// 所以 `begin` 就是点下去的那一刻。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn play_current(
     ui: &MainWindow,
@@ -19,6 +24,8 @@ pub(in crate::music) fn play_current(
     else {
         return;
     };
+    let action =
+        crate::runtime::trace::Action::begin("play");
 
     // 备好的那一份先取走 —— 取不到就是走原路。这一步要在停旧歌之前:
     // 备着的话下面那段等待根本不存在,声音接上就换。
@@ -126,13 +133,15 @@ pub(in crate::music) fn play_current(
         let player = deck.player.clone();
         // 取直链失败时 prepare 要能弹一条通知,那需要一个窗口句柄。
         let noticing = weak.clone();
+        let preparing = action.clone();
+        let committing = action.clone();
         app_core::play(
             &deck.playback,
             track,
             move |track| async move {
                 // 备好了就直接交出去 —— 与现取的那份走同一个类型、同一段提交路径,
                 // 差别只有"等不等"。
-                match ready {
+                let prepared = match ready {
                     Some(ready) => Ok(ready),
                     None => {
                         prepare(
@@ -142,7 +151,9 @@ pub(in crate::music) fn play_current(
                         )
                         .await
                     }
-                }
+                };
+                preparing.mark("prepared");
+                prepared
             },
             move |(decoded, health)| {
                 emit(
@@ -153,6 +164,7 @@ pub(in crate::music) fn play_current(
                     decoded,
                     health,
                 );
+                committing.mark("sound");
             },
         )
         .await;
@@ -187,6 +199,8 @@ pub(in crate::music) fn play_current(
                 &deck.playback,
                 &deck.media,
             );
+            action.mark("model");
+            deck.frames.after_next_frame(action);
         }
     })
     .expect("event loop must be running");
