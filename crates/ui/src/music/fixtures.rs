@@ -232,6 +232,7 @@ fn deck_window_with(
         seeking: Rc::new(RefCell::new(None)),
         execution: crate::music::Execution::default(),
         queue_mirror: Default::default(),
+        frames: Default::default(),
     };
 
     (ui, deck)

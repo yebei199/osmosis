@@ -3,7 +3,9 @@ use std::time::{Duration, SystemTime};
 
 use similar_asserts::assert_eq;
 
-use super::{off_thread, send, send_json, sweep_dir};
+use super::{
+    off_thread, route_of, send, send_json, sweep_dir,
+};
 use crate::ApiError;
 
 /// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
@@ -597,4 +599,199 @@ async fn consecutive_requests_reuse_one_connection() {
         1,
         "两次请求各建了一条连接,连接没有复用"
     );
+}
+// ── 每次调用一行分段耗时(#121) ─────────────────────────────────────
+
+/// 把 `log` 的输出接到一个进程级的缓冲里,好断言「打了哪几行」。
+///
+/// `log` 一个进程只认一个 logger,装一次、各用例按自己独有的路径筛自己那几行。
+fn logged_lines(marker: &str) -> Vec<String> {
+    capture_logs();
+    LOG_LINES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .filter(|line| line.contains(marker))
+        .cloned()
+        .collect()
+}
+
+static LOG_LINES: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        LOG_LINES
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                poisoned.into_inner()
+            })
+            .push(record.args().to_string());
+    }
+
+    fn flush(&self) {}
+}
+
+fn capture_logs() {
+    static INSTALL: std::sync::Once =
+        std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let _ = log::set_logger(&Capture);
+        log::set_max_level(log::LevelFilter::Info);
+    });
+}
+
+/// 一次解码成功的调用只打一行,四段耗时与状态码、字节数都在上面。
+///
+/// 这一行是区分「网络慢」和「界面冻」的唯一凭据:少一段,
+/// 那一段的时间就只能靠猜(#121)。
+#[test]
+fn a_decoded_call_logs_one_line_with_every_stage() {
+    capture_logs();
+    let (base, _requests) =
+        recording_server(http_response(
+            "200 OK",
+            "application/json",
+            r#"{"x":1}"#,
+        ));
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    local
+        .block_on(send_json::<(), serde_json::Value>(
+            reqwest::Method::GET,
+            format!("{base}/timing-decoded/42?q=secret"),
+            None,
+        ))
+        .expect("该拿到一个解出来的响应");
+
+    let lines = logged_lines("/timing-decoded/");
+    assert_eq!(
+        lines.len(),
+        1,
+        "一次调用该打恰好一行: {lines:?}"
+    );
+    let line = &lines[0];
+    for field in [
+        "GET",
+        "/timing-decoded/:id",
+        "status=200",
+        "bytes=7",
+        "head=",
+        "body=",
+        "decode=",
+        "total=",
+    ] {
+        assert!(line.contains(field), "缺 {field}: {line}");
+    }
+    assert!(
+        !line.contains("secret") && !line.contains("42"),
+        "查询串与路径里的 id 不该进日志: {line}"
+    );
+}
+
+/// 服务端拒绝了也打一行,带上状态码与失败归类 —— 慢在失败的那次上时,
+/// 没有这一行就看不见它。
+#[test]
+fn a_rejected_call_still_logs_its_line() {
+    capture_logs();
+    let (base, _requests) =
+        recording_server(http_response(
+            "503 Service Unavailable",
+            "application/json",
+            r#"{"code":"upstream","message":"回源失败"}"#,
+        ));
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    local
+        .block_on(send_json::<(), serde_json::Value>(
+            reqwest::Method::GET,
+            format!("{base}/timing-rejected"),
+            None,
+        ))
+        .expect_err("503 却被当成了成功");
+
+    let lines = logged_lines("/timing-rejected");
+    assert_eq!(
+        lines.len(),
+        1,
+        "失败的调用也该打恰好一行: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("status=503"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[0].contains("error=server"),
+        "{}",
+        lines[0]
+    );
+}
+
+/// 不看响应体的写操作同样打一行。
+#[test]
+fn a_no_content_call_logs_one_line() {
+    capture_logs();
+    let (base, _requests) =
+        recording_server(http_response(
+            "204 No Content",
+            "application/json",
+            "",
+        ));
+    let local =
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("起不了测试用的 runtime");
+
+    local
+        .block_on(send::<()>(
+            reqwest::Method::PUT,
+            format!("{base}/timing-write"),
+            None,
+        ))
+        .expect("写操作该发得出去");
+
+    let lines = logged_lines("/timing-write");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("PUT"), "{}", lines[0]);
+    assert!(
+        lines[0].contains("status=204"),
+        "{}",
+        lines[0]
+    );
+}
+
+/// 进日志的是路由的形状,不是具体的那条地址:查询串整个去掉,
+/// 带数字或大写的路径段(id、二维码 key)换成 `:id`。
+#[test]
+fn a_route_keeps_only_the_shape_of_the_path() {
+    let cases = [
+        ("http://h/daily", "/daily"),
+        (
+            "http://h/search/tracks?q=%E5%91%A8",
+            "/search/tracks",
+        ),
+        (
+            "http://h/playlists/platform/123456/tracks",
+            "/playlists/platform/:id/tracks",
+        ),
+        ("http://h/netease/qr/a1B2-c3", "/netease/qr/:id"),
+        ("http://h/queues/7/head", "/queues/:id/head"),
+        ("not a url", "?"),
+    ];
+    for (url, route) in cases {
+        assert_eq!(route_of(url), route, "{url}");
+    }
 }

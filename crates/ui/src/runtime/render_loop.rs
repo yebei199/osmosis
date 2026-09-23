@@ -24,6 +24,9 @@ use crate::*;
 /// **物理像素**尺寸调用,返回的三张图分别推到 `viz-bg` / `viz-scene` / `viz-occluder`。
 /// 暂停与失焦照样调用(前台恒满帧);只有收起播放页才停。
 ///
+/// `wall_prewarm` 在卡墙还没露过面时隔一会儿调一次(见 `render3d::Scene::prewarm_wall`
+/// 与 [`crate::wall::Prewarm`]),返回 `true` 表示管线都编好了,之后不再调。
+///
 /// 调用前平台入口必须已经用**共享的** wgpu device 配好 Slint 后端,否则闭包产出的纹理
 /// 不属于 Slint 的 device,采样不出来。
 ///
@@ -49,12 +52,14 @@ pub fn run_with_renderers(
         &WallControls,
     ) -> Option<slint::Image>
     + 'static,
+    mut wall_prewarm: impl FnMut() -> bool + 'static,
     media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
     // 连的是哪个后端烘在编译期,日志第一屏写明:debug 连本机、release 连生产,
     // 装错包时这一行就能看出来,不必等点歌报错。桌面与安卓都走这里。
     log::info!("服务端: {}", api::base_url());
-    let (ui, viz_source, lyrics, cover) = build_ui(media);
+    let (ui, viz_source, lyrics, cover, frames) =
+        build_ui(media);
     // 卡墙状态:回调(点击/滚轮)与渲染循环共享同一份。
     let wall_state =
         std::rc::Rc::new(std::cell::RefCell::new(
@@ -84,6 +89,7 @@ pub fn run_with_renderers(
     // 上一帧标注卡的视口锚点。既是下一帧遮挡层的开关,也是"锚点消失了"的判据。
     let mut viz_anchor: Option<(f32, f32)> = None;
     let mut lyric = super::lyric_push::LyricPush::default();
+    let mut prewarm = crate::wall::Prewarm::default();
     // 帧驱动挂在**渲染通知**上,不是定时器。理由是 wasm:浏览器主线程唯一,合成、
     // 派发输入、跑 wasm 全挤在上面,固定间隔的 setTimeout 与合成器各跑各的 —— 间隔调小
     // 会把主线程占死(1ms 实测 rAF 掉到 2~8 次/秒,整个界面卡住),调大又硬性设了帧率
@@ -102,6 +108,7 @@ pub fn run_with_renderers(
                 RenderingState::AfterRendering
             ) {
                 frame_acct.end_rendering();
+                frames.drawn();
                 return;
             }
             if !matches!(
@@ -124,10 +131,20 @@ pub fn run_with_renderers(
             // 门:墙可见(wall-visible 已集齐分区/构建/曲目判据)∧ 播放页
             // 没开。前台恒满帧,静墙也每帧照渲;失焦不再是门
             // (可见即前台,见 change_log 2026-08-11 always-on-rendering)。
-            if ui.global::<Shell>().get_wall_visible()
-                && !ui
-                    .global::<Shell>()
-                    .get_play_page_open()
+            let wall_seen =
+                ui.global::<Shell>().get_wall_visible()
+                    && !ui
+                        .global::<Shell>()
+                        .get_play_page_open();
+            // 墙还没露过面时,隔一会儿在后台预热一次(#121):第一次进卡墙
+            // 那一帧就不必在主线程上现编三十多条管线。
+            if prewarm
+                .due(web_time::Instant::now(), wall_seen)
+                && wall_prewarm()
+            {
+                prewarm.finish();
+            }
+            if wall_seen
                 && let Some(controls) =
                     wall_state.borrow_mut().frame(&ui)
                 && let Some(img) = wall_frame(&controls)

@@ -29,6 +29,7 @@ use server::bangdream::proto::{
     discover_service_client::DiscoverServiceClient,
     library_service_client::LibraryServiceClient,
 };
+use server::bangdream::{Timed, UpstreamChannel};
 use server::error;
 use server::error::Failure;
 use server::gate::ratelimit::{self, Policies};
@@ -93,10 +94,10 @@ const DEFAULT_DATABASE_URL: &str =
 /// 一次请求可能横跨其中几个(见 [`liked`])。
 #[derive(Clone)]
 pub(crate) struct Upstream {
-    catalog: CatalogServiceClient<Channel>,
-    library: LibraryServiceClient<Channel>,
-    discover: DiscoverServiceClient<Channel>,
-    auth: AuthServiceClient<Channel>,
+    catalog: CatalogServiceClient<UpstreamChannel>,
+    library: LibraryServiceClient<UpstreamChannel>,
+    discover: DiscoverServiceClient<UpstreamChannel>,
+    auth: AuthServiceClient<UpstreamChannel>,
 }
 
 /// 进程的全部共享状态。
@@ -306,6 +307,48 @@ fn guard(
         .error_handler(ratelimit::too_many_requests)
 }
 
+/// 每个请求一行总耗时,并给它开一个带 id 的 span(#121)。
+///
+/// 请求里发生的上游调用(`bangdream::Timed`)打在这个 span 下,同一个 id 的
+/// 几行就是这一个请求的分段:上游花了多久、总共多久,差额是库与本服务自己。
+/// 路由取匹配上的模板(`/playlists/platform/{id}/tracks`),路径里的 id 与
+/// 查询串都不进日志。
+async fn timed_request(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use tracing::Instrument as _;
+
+    // ponytail: 进程级计数器只用来发号,不承载别的状态
+    static NEXT_ID: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT_ID
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or("?", axum::extract::MatchedPath::as_str)
+        .to_owned();
+    let span = tracing::info_span!(
+        "req",
+        id,
+        method = %request.method(),
+        %route,
+    );
+
+    let started = std::time::Instant::now();
+    let response =
+        next.run(request).instrument(span.clone()).await;
+    span.in_scope(|| {
+        tracing::info!(
+            status = response.status().as_u16(),
+            ms = started.elapsed().as_millis(),
+            "done"
+        );
+    });
+    response
+}
+
 /// 前置鉴权:跑一遍 `Account` 提取器,把认下来的账号放进 extensions。
 ///
 /// 限流在中间件层跑、拿不到提取器的返回值,所以只能这样把账号递给它。
@@ -339,6 +382,7 @@ async fn main() {
     let channel = Channel::from_shared(upstream.clone())
         .expect("BANG_DREAM_ADDR 不是合法 URI")
         .connect_lazy();
+    let channel = Timed(channel);
     let clients = Upstream {
         catalog: CatalogServiceClient::new(channel.clone()),
         library: LibraryServiceClient::new(channel.clone()),
@@ -444,6 +488,9 @@ async fn main() {
         .merge(queue_routes(&state))
         .merge(signal_routes(&state))
         .merge(auth_routes(&state))
+        // 每个请求一行耗时,并给它的上游调用开一个共同的 span(见 timed_request)。
+        // 挂在所有路由组合并之后,队列、信令、登录那几组也一并算进去。
+        .layer(axum::middleware::from_fn(timed_request))
         // 浏览器把 `localhost:3000` 视为跨源,wasm 端不开 CORS 连不上。
         // 白名单而不是 permissive:后者允许任意来源,等于任何网页都能拿着
         // 用户的登录态调这些路由。方法与请求头仍然放开 —— 没开 credentials,
@@ -482,4 +529,157 @@ async fn main() {
     )
     .await
     .expect("server failed");
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::http::{Request, Response};
+    use axum::routing::get;
+    use server::bangdream::Timed;
+    use tower::Service as _;
+
+    use super::timed_request;
+
+    /// 把 tracing 的输出攒进一块共享缓冲。
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(
+            &mut self,
+            bytes: &[u8],
+        ) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| {
+                    poisoned.into_inner()
+                })
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 一个立刻回 200 的假上游,只为让 `Timed` 有东西可包。
+    #[derive(Clone)]
+    struct Answering;
+
+    impl<B> tower::Service<Request<B>> for Answering {
+        type Response = Response<String>;
+        type Error = std::convert::Infallible;
+        type Future = std::future::Ready<
+            Result<Self::Response, Self::Error>,
+        >;
+
+        fn poll_ready(
+            &mut self,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>>
+        {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _: Request<B>) -> Self::Future {
+            std::future::ready(Ok(Response::new(
+                String::new(),
+            )))
+        }
+    }
+
+    /// 行里 `req{id=N` 那一段 —— 同一个请求的几行靠它串起来。
+    fn request_id(line: &str) -> Option<&str> {
+        let start = line.find("req{id=")?;
+        let rest = &line[start..];
+        Some(&rest[..rest.find(' ')?])
+    }
+
+    /// 一个请求打一行总耗时,它发出的上游调用打在同一个 id 下;
+    /// 路径里的 id 与查询串不进日志。
+    ///
+    /// 这是回答「慢在上游还是慢在我们」的那组数:少了 id,并发的几个请求
+    /// 各自的上游耗时就分不开了。
+    #[tokio::test]
+    async fn a_request_and_its_upstream_calls_share_one_id()
+    {
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(move || writer.clone())
+                .finish(),
+        );
+
+        let app = axum::Router::new()
+            .route(
+                "/probe/{id}",
+                get(|| async {
+                    let request = Request::builder()
+                        .uri("http://upstream/bangdream.music.v1.CatalogService/GetTracks")
+                        .body(())
+                        .expect("拼不出假请求");
+                    let _ = Timed(Answering).call(request).await;
+                    "ok"
+                }),
+            )
+            .layer(axum::middleware::from_fn(timed_request));
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("绑不上本地端口");
+        let addr =
+            listener.local_addr().expect("取不到本地地址");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await
+        });
+
+        let status = reqwest::get(format!(
+            "http://{addr}/probe/7?q=secret"
+        ))
+        .await
+        .expect("请求没发出去")
+        .status();
+        assert_eq!(status, 200);
+
+        let log = String::from_utf8_lossy(
+            &sink.0.lock().unwrap_or_else(|poisoned| {
+                poisoned.into_inner()
+            }),
+        )
+        .into_owned();
+        let upstream: Vec<&str> = log
+            .lines()
+            .filter(|line| {
+                line.contains("CatalogService/GetTracks")
+            })
+            .collect();
+        let done: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains("status=200"))
+            .collect();
+        assert_eq!(
+            (upstream.len(), done.len()),
+            (1, 1),
+            "{log}"
+        );
+        assert!(upstream[0].contains("ms="), "{log}");
+        assert!(done[0].contains("ms="), "{log}");
+        assert!(done[0].contains("/probe/{id}"), "{log}");
+        assert!(request_id(done[0]).is_some(), "{log}");
+        assert_eq!(
+            request_id(upstream[0]),
+            request_id(done[0]),
+            "{log}"
+        );
+        assert!(
+            !log.contains("secret")
+                && !log.contains("/probe/7"),
+            "{log}"
+        );
+    }
 }

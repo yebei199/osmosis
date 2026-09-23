@@ -4,6 +4,7 @@ use super::*;
 use crate::Library;
 use crate::Player;
 use crate::Shell;
+use crate::runtime::trace::Action;
 
 /// 把当前打开的那个歌单的曲目重取一遍。
 ///
@@ -19,10 +20,15 @@ pub(super) fn reload_open_playlist(
         return;
     };
     let weak = ui.as_weak();
-    fetch_into(&weak, deck, async move {
-        crate::library::playlist::tracks_of(source, &id)
-            .await
-    });
+    fetch_into(
+        &weak,
+        deck,
+        Action::begin("reload"),
+        async move {
+            crate::library::playlist::tracks_of(source, &id)
+                .await
+        },
+    );
 }
 
 /// 某个歌单叫什么。先找「我的歌单」,再找搜索结果。
@@ -107,9 +113,12 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let liked = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_liked(move || {
-        fetch_into(&weak, &liked, async {
-            api::liked().await
-        });
+        fetch_into(
+            &weak,
+            &liked,
+            Action::begin("liked"),
+            async { api::liked().await },
+        );
     });
 
     // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
@@ -137,6 +146,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.global::<Library>().on_open_playlist(
         move |id, source| {
+            let action = Action::begin("playlist");
             let Some(ui) = weak.upgrade() else { return };
             // 顺手把红心集合重拉一次:在手机官方 App 里改过的红心,这边只有
             // 重启才跟得上 —— 那个集合原本整个进程只拉一次。接口很轻(一次
@@ -176,7 +186,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 }
                 .into(),
             );
-            fetch_into(&weak, &opened, async move {
+            fetch_into(&weak, &opened, action, async move {
                 crate::library::playlist::tracks_of(source, &id)
                     .await
             });
@@ -210,9 +220,12 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 .set_open_playlist_name(name);
 
             let id = id.to_string();
-            fetch_into(&weak, &artist, async move {
-                api::artist_tracks(&id).await
-            });
+            fetch_into(
+                &weak,
+                &artist,
+                Action::begin("artist"),
+                async move { api::artist_tracks(&id).await },
+            );
         },
     );
 
@@ -268,9 +281,12 @@ pub(super) fn load_section(
     match Section::from_index(section) {
         Section::Daily => fetch_daily(weak, deck),
         Section::Recent => {
-            fetch_into(weak, deck, async {
-                api::recent().await
-            });
+            fetch_into(
+                weak,
+                deck,
+                Action::begin("recent"),
+                async { api::recent().await },
+            );
         }
         // 歌单分区摆的是歌单列表,不是一批歌 —— 曲目要等用户点开某一个。
         Section::Playlists => {
@@ -297,7 +313,9 @@ pub(super) fn fetch_daily(
 ) {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
-    fetch_into(weak, deck, async { api::daily().await });
+    fetch_into(weak, deck, Action::begin("daily"), async {
+        api::daily().await
+    });
 }
 
 /// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
@@ -307,10 +325,14 @@ pub(super) fn fetch_daily(
 ///
 /// 三个入口(搜索/推荐/红心)填的是**同一个**列表 ——
 /// 换一个来源就整批换掉,不合并:合并了就说不清列表里这首是哪来的。
+///
+/// `action` 是发起这次加载的那个用户动作,一路打 `request`(协程真正开跑)、
+/// `response`、`model`,最后由渲染循环打 `drawn`(#121)。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn fetch_into<Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
+    action: Rc<Action>,
     request: Fut,
 ) where
     Fut: core::future::Future<
@@ -320,10 +342,16 @@ pub(super) fn fetch_into<Fut>(
     let deck = deck.clone();
     let weak = weak.clone();
     slint::spawn_local(async move {
+        action.mark("request");
         let found = request.await;
+        action.mark("response");
         let Some(ui) = weak.upgrade() else { return };
         match found {
-            Ok(found) => show(&ui, &deck, found),
+            Ok(found) => {
+                show(&ui, &deck, found);
+                action.mark("model");
+                deck.frames.after_next_frame(action);
+            }
             // 会话失效要把人送回登录页,而不是在音乐页上写一句"失败" ——
             // 那句话解释不了为什么什么都拉不出来。已经送回去了就不再报错。
             Err(error)
