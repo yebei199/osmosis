@@ -150,8 +150,8 @@ impl Policies {
             // 同上(原先每分钟 30 次每账号)。重连有退避,正常客户端碰不到。
             signal_connect: policy(
                 AccountKey,
-                Duration::from_secs(2),
-                30,
+                SIGNAL_CONNECT_PERIOD,
+                SIGNAL_CONNECT_BURST,
             ),
         }
     }
@@ -196,6 +196,14 @@ impl Policies {
         });
     }
 }
+
+/// 建连额度多久恢复一个。拎出来是为了让下面那条「同账号几台设备掏不空它」
+/// 的测试与生产用的是同一组数。
+const SIGNAL_CONNECT_PERIOD: Duration =
+    Duration::from_secs(2);
+
+/// 建连额度攒得下几个。
+const SIGNAL_CONNECT_BURST: u32 = 30;
 
 /// 多久清一次过期的键。
 const CLEANUP_EVERY: Duration = Duration::from_secs(300);
@@ -271,5 +279,86 @@ pub fn too_many_requests(error: GovernorError) -> Response {
             }),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU32;
+
+    use governor::clock::{Clock, FakeRelativeClock};
+    use governor::{Quota, RateLimiter};
+
+    use super::*;
+
+    /// 生产那组数建出来的桶,钟由测试拨。
+    ///
+    /// 与 `tower_governor` 里那个同一个 GCRA、同一组参数;按账号分键只是
+    /// 每个键各一个这样的桶,这里只看一个账号。
+    fn signal_bucket(
+        clock: &FakeRelativeClock,
+    ) -> RateLimiter<
+        governor::state::NotKeyed,
+        governor::state::InMemoryState,
+        FakeRelativeClock,
+        NoOpMiddleware<
+            <FakeRelativeClock as Clock>::Instant,
+        >,
+    > {
+        let quota =
+            Quota::with_period(SIGNAL_CONNECT_PERIOD)
+                .expect("周期不为零")
+                .allow_burst(
+                    NonZeroU32::new(SIGNAL_CONNECT_BURST)
+                        .expect("额度不为零"),
+                );
+        RateLimiter::direct_with_clock(quota, clock.clone())
+    }
+
+    /// 同账号两台设备一起反复重启应用,共用的建连桶也掏不空(#118 验收三)。
+    ///
+    /// 建连按账号一个桶,这一层拿不到设备 id(见模块头),所以「会不会一台
+    /// 把另一台锁在门外」只能拿数字答:一次重启花一个额度,两秒回一个。
+    /// 两台**同一时刻**一起重启、每两秒一次 —— 比人能做到的快得多(桌面冷启动
+    /// 与安卓冷启动都要好几秒)—— 连着二十轮,一次都不会被挡。
+    #[test]
+    fn two_devices_restarting_together_never_drain_the_shared_bucket()
+     {
+        const ROUNDS: u32 = 20;
+        let clock = FakeRelativeClock::default();
+        let bucket = signal_bucket(&clock);
+
+        for round in 0..ROUNDS {
+            for device in ["pc", "phone"] {
+                assert!(
+                    bucket.check().is_ok(),
+                    "第 {round} 轮 {device} 重启时被限流"
+                );
+            }
+            clock.advance(SIGNAL_CONNECT_PERIOD);
+        }
+    }
+
+    /// 反过来钉住桶是真的有底的:同样两台,每秒各敲一次,撑不过一分钟。
+    ///
+    /// 少了这一条,上面那条也可能只是因为桶大到挡不住任何东西才过的。
+    #[test]
+    fn a_sustained_storm_from_one_account_is_still_throttled()
+     {
+        let clock = FakeRelativeClock::default();
+        let bucket = signal_bucket(&clock);
+
+        let throttled_at = (0..120).find(|_| {
+            let rejected = ["pc", "phone"]
+                .iter()
+                .any(|_| bucket.check().is_err());
+            clock.advance(Duration::from_secs(1));
+            rejected
+        });
+
+        assert!(
+            throttled_at.is_some_and(|second| second < 60),
+            "每秒两次的风暴该在一分钟内被挡,实得 {throttled_at:?}"
+        );
     }
 }
