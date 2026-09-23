@@ -111,6 +111,8 @@ export component PlayerBar inherits Rectangle {
         output-current: Shell.output-id;
         can-download: Player.now-id != "";
         download-state: Shell.download-text;
+        liked: Player.now-liked;
+        like-toggled => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         download-clicked => { Library.download-track(Player.now-id); }
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
