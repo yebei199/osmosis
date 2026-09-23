@@ -177,3 +177,130 @@ fn a_failed_toggle_rolls_back() {
         "撤回之后该回到点之前的样子"
     );
 }
+
+fn now_liked(ui: &MainWindow) -> bool {
+    ui.global::<Player>().get_now_liked()
+}
+
+/// 正在放的那首在集合里,抽屉那一行就亮;不在就不亮。
+#[test]
+fn the_playing_track_projects_its_liked_state() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&["1"]);
+
+    ui.global::<Player>().set_now_id("1".into());
+    project_now(&set, &ui);
+    assert!(now_liked(&ui));
+
+    ui.global::<Player>().set_now_id("2".into());
+    project_now(&set, &ui);
+    assert!(!now_liked(&ui));
+}
+
+/// 边界:手上没歌就不算喜欢,哪怕集合里混进了空串。
+#[test]
+fn nothing_playing_is_never_liked() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&[""]);
+
+    project_now(&set, &ui);
+
+    assert!(!now_liked(&ui));
+}
+
+/// 从哪个入口点的红心都一样:集合一变,抽屉那一行当场跟上。
+#[test]
+fn toggling_reprojects_the_playing_track() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&[]);
+    bind(&ui, &set);
+    ui.global::<Player>().set_now_id("1".into());
+
+    ui.global::<Library>()
+        .invoke_toggle_liked("1".into(), true);
+    assert!(now_liked(&ui), "点了喜欢该当场亮");
+
+    ui.global::<Library>()
+        .invoke_toggle_liked("1".into(), false);
+    assert!(!now_liked(&ui), "再点一次该当场灭");
+}
+
+/// 切到一首已喜欢的歌,那一行跟着亮 —— 不必等谁点一下红心。
+///
+/// `changed` 回调在事件循环的下一轮才跑,无头测试里没有循环,手动推一轮。
+#[test]
+fn switching_tracks_reprojects() {
+    let ui = window_with(Vec::new());
+    let set = set_of(&["1"]);
+    bind(&ui, &set);
+
+    ui.global::<Player>().set_now_id("1".into());
+    slint::platform::update_timers_and_animations();
+    assert!(now_liked(&ui), "换到已喜欢的那首该亮");
+
+    ui.global::<Player>().set_now_id("2".into());
+    slint::platform::update_timers_and_animations();
+    assert!(!now_liked(&ui), "换到没喜欢的那首该灭");
+}
+
+fn track_row(id: &str) -> crate::TrackRow {
+    crate::TrackRow {
+        id: id.into(),
+        title: "曲".into(),
+        artists: "人".into(),
+        duration: "03:00".into(),
+        loading: false,
+        liked: false,
+        cover_url: String::new().into(),
+        cover: slint::Image::default(),
+    }
+}
+
+fn press(ui: &MainWindow, label: &str) {
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        ui, label,
+    )
+    .next()
+    .unwrap_or_else(|| panic!("找不到「{label}」"))
+    .invoke_accessible_default_action();
+}
+
+/// 抽屉里点「喜欢」,列表里那一行的红心跟着变;再点一次两边一起灭(#115)。
+///
+/// 两处入口读的是同一个集合 —— 抽屉亮了而列表那颗心还空着,
+/// 用户会以为有一边没存上。
+#[test]
+fn liking_from_the_drawer_marks_the_list_row_too() {
+    let ui = window_with(Vec::new());
+    ui.global::<crate::Session>().set_logged_in(true);
+    ui.global::<crate::Shell>().set_current_tab(1);
+    ui.global::<Player>().set_has_track(true);
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![
+            track_row("1"),
+            track_row("2"),
+        ]),
+    ));
+    let set = set_of(&[]);
+    bind(&ui, &set);
+    ui.global::<Player>().set_now_id("1".into());
+    slint::platform::update_timers_and_animations();
+    press(&ui, "更多");
+
+    let row_liked = |i| {
+        ui.global::<Player>()
+            .get_tracks()
+            .row_data(i)
+            .expect("这一行该在")
+            .liked
+    };
+
+    press(&ui, "喜欢这一首");
+    assert!(now_liked(&ui), "抽屉那一行该亮");
+    assert!(row_liked(0), "列表里正在放的那一行该红心");
+    assert!(!row_liked(1), "别的行不该跟着变");
+
+    press(&ui, "喜欢这一首");
+    assert!(!now_liked(&ui), "再点一次该灭");
+    assert!(!row_liked(0), "列表那颗心也该一起灭");
+}

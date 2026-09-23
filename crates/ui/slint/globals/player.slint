@@ -24,6 +24,13 @@ export global Player {
     // 「在播的那一张」走闪卡材质 —— tracks 里的 loading 只在取流那几秒为真,
     // 指不了整段播放。
     in property <string> now-id;
+    // 当前这一首在不在红心里。**只有 Rust 写它** —— 真相是红心集合,
+    // 这里是投影(见 ui/src/library/liked.rs 的 project_now)。
+    in property <bool> now-liked: false;
+    // 换了一首就重投影一次。写 now-id 的地方有三处(本机起播、放完、遥控),
+    // 在这里观察一次,好过三处各记着去喊。
+    callback now-id-changed();
+    changed now-id => { now-id-changed(); }
 
     // ── 进度与音量 ──
     // 手上有没有一首歌。没有时进度条整条不出现 —— 摆一条空槽会让人
