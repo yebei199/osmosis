@@ -190,11 +190,11 @@ pub(crate) struct FakeUpstream {
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
     /// 没有别的办法验证:两种写法给出的曲目列表一模一样,差别只在问了几次。
     pub(crate) asked: Arc<Mutex<Vec<Vec<String>>>>,
-    /// `GetPlaylist` 永远不回。
+    /// `GetPlaylist` 回答前先等这么久。
     ///
-    /// 「先回库」的判据是第二次请求**不等上游**:上游卡死时它照样回来,
-    /// 等了的话测试就卡在超时上。比「慢 N 毫秒」再掐表可靠 —— 不看机器快慢。
-    pub(crate) stall_playlist: bool,
+    /// 「先回库」的判据是请求**不等上游**:上游慢到一小时,等了它的实现会卡在
+    /// 测试的超时上,而不是慢一点照样绿 —— 不看机器快慢。
+    pub(crate) playlist_delay: std::time::Duration,
 }
 
 impl FakeUpstream {
@@ -337,9 +337,7 @@ impl LibraryService for FakeUpstream {
         &self,
         _request: Request<GetPlaylistRequest>,
     ) -> Result<Response<GetPlaylistResponse>, Status> {
-        if self.stall_playlist {
-            std::future::pending::<()>().await;
-        }
+        tokio::time::sleep(self.playlist_delay).await;
         Ok(Response::new(self.playlist.clone()))
     }
 

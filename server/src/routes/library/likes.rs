@@ -242,7 +242,7 @@ pub(crate) async fn set_liked(
         ))
         .await
         .map_err(|status| fail(&status))?;
-    // 刚在这里点的心,下一次打开红心就得看到:不先回库里那份。
+    // 刚在这里点的心,下一次打开红心就得看到:当场回源(最多等 FRESH_WAIT)。
     // ponytail: 点心之前已发出的后台回源若晚于这里落地,会把旧的那份记成新的,
     // 最多晚 REFRESH_EVERY 看到;真撞上再给记录加代数号。
     state

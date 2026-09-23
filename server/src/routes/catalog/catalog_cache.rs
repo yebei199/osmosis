@@ -18,6 +18,7 @@ use server::error::Failure;
 use server::store::account::Account;
 use server::store::cache;
 
+use tokio::task::{JoinError, JoinHandle};
 use tracing::Instrument;
 
 use crate::{AppState, conn, fail};
@@ -25,12 +26,16 @@ use crate::{AppState, conn, fail};
 /// 先回库,到时候了再在后台回源(#124)。
 ///
 /// `fetch` 是这个歌单完整的回源路径,最后一步必须经过 [`cached_tracks`] ——
-/// 「多新」在那里记下。库里没有、或者太旧(见 [`MAX_AGE`])时当场走它,
-/// 与改动前一样;否则答库里那份,距上一次回源超过 [`REFRESH_EVERY`] 才在后台
-/// 再走一次,下一次打开看到结果。
+/// 「多新」在那里记下。按库里那份的新旧分四种:
 ///
-/// 后台那一次失败就忘掉这份,下一次打开当场回源:失败(没登录、上游挂了)
-/// 应该被用户看见,而不是被一份旧的红心盖到过期为止。
+/// - 距上一次回源不到 [`REFRESH_EVERY`]:只答库里那份;
+/// - 不到 [`MAX_AGE`]:答库里那份,后台回源,下一次打开看到结果;
+/// - 更旧,或进程重启过不知道多新:回源最多等 [`FRESH_WAIT`],等不到先答库里那份;
+/// - 库里没有:只能等回源。
+///
+/// 回源一律 spawn 出去:客户端等不及断开、这个请求被丢掉,它照样跑完并落库,
+/// 下一次就命中。生产上一次回源 13 秒多而客户端 10 秒放弃,不这样的话
+/// 库里永远填不上。回源失败就忘掉这份,下一次打开再等一回,让失败被看见。
 pub(crate) async fn store_first<F, Fut>(
     state: &AppState,
     account: &Account,
@@ -43,36 +48,47 @@ where
         + Send
         + 'static,
 {
-    let Some((fetched_at, unavailable)) = state
-        .playlists
-        .get(account.id, playlist_id)
-        .filter(|(at, _)| at.elapsed() < MAX_AGE)
-    else {
-        return fetch(state.clone(), account.clone()).await;
-    };
-
-    if fetched_at.elapsed() >= REFRESH_EVERY {
-        let playlists = state.playlists.clone();
-        let (account_id, playlist_id) =
-            (account.id, playlist_id.to_owned());
-        let refresh = fetch(state.clone(), account.clone());
-        // 带上当前的 req span:后台那次的 upstream ms= 仍记在这个请求名下
-        tokio::spawn(
-            async move {
-                if let Err((status, body)) = refresh.await {
-                    tracing::warn!(
-                        %status,
-                        code = body.code,
-                        "后台回源失败,下一次打开当场回源"
-                    );
-                    playlists
-                        .forget(account_id, &playlist_id);
-                }
-            }
-            .in_current_span(),
-        );
+    let record =
+        state.playlists.get(account.id, playlist_id);
+    let unavailable = record.map_or(0, |(_, n)| n);
+    if record
+        .is_some_and(|(at, _)| at.elapsed() < REFRESH_EVERY)
+    {
+        return stored(
+            state,
+            account,
+            playlist_id,
+            unavailable,
+        )
+        .await;
     }
 
+    let mut job =
+        spawn_fetch(state, account, playlist_id, fetch);
+    let stored =
+        stored(state, account, playlist_id, unavailable)
+            .await?;
+    if stored.tracks.is_empty() {
+        return joined(job.await);
+    }
+    if record.is_some_and(|(at, _)| at.elapsed() < MAX_AGE)
+    {
+        return Ok(stored);
+    }
+
+    match tokio::time::timeout(FRESH_WAIT, &mut job).await {
+        Ok(done) => joined(done),
+        Err(_) => Ok(stored),
+    }
+}
+
+/// 库里这个歌单现有的那份。
+async fn stored(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    unavailable: usize,
+) -> Result<TracksDto, Failure> {
     let mut conn = conn(&state.pool).await?;
     let tracks = cache::tracks_of(
         &mut conn,
@@ -85,6 +101,52 @@ where
     Ok(TracksDto {
         tracks,
         unavailable,
+    })
+}
+
+/// 把回源放进独立任务,不随请求一起被丢掉。
+fn spawn_fetch<F, Fut>(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    fetch: F,
+) -> JoinHandle<Result<TracksDto, Failure>>
+where
+    F: FnOnce(AppState, Account) -> Fut,
+    Fut: Future<Output = Result<TracksDto, Failure>>
+        + Send
+        + 'static,
+{
+    let playlists = state.playlists.clone();
+    let (account_id, playlist_id) =
+        (account.id, playlist_id.to_owned());
+    let refresh = fetch(state.clone(), account.clone());
+
+    // 带上当前的 req span:后台那次的 upstream ms= 仍记在这个请求名下
+    tokio::spawn(
+        async move {
+            let result = refresh.await;
+            if let Err((status, body)) = &result {
+                tracing::warn!(
+                    %status,
+                    code = body.code,
+                    "回源失败,下一次打开再当场回源"
+                );
+                playlists.forget(account_id, &playlist_id);
+            }
+            result
+        }
+        .in_current_span(),
+    )
+}
+
+fn joined(
+    done: Result<Result<TracksDto, Failure>, JoinError>,
+) -> Result<TracksDto, Failure> {
+    done.unwrap_or_else(|err| {
+        Err(fail(&tonic::Status::internal(format!(
+            "回源任务没跑完: {err}"
+        ))))
     })
 }
 
@@ -102,6 +164,13 @@ pub(crate) const DETAIL_BATCH: usize = 200;
 /// 慢一秒也给新的。这也是 `docs/adr/0018` 说的「过期的上界」。
 pub(crate) const MAX_AGE: Duration =
     Duration::from_secs(24 * 60 * 60);
+
+/// 库里那份过期(或进程刚重启、不知道它多新)时,当场回源最多等多久。
+///
+/// 3 秒:本机一次回源约 1.3 秒,等得到就给新的;生产上慢时 13 秒多,
+/// 而客户端 10 秒就放弃 —— 等不到就先给库里那份,回源在后台跑完。
+pub(crate) const FRESH_WAIT: Duration =
+    Duration::from_secs(3);
 
 /// 先回库之后,距上一次回源至少这么久才在后台再回源一次。
 ///
