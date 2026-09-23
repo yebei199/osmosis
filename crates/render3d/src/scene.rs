@@ -130,6 +130,9 @@ pub struct Scene {
     perf: f64,
     /// 卡墙那一摊(自己的相机、目标纹理、卡实体池),见 `wall.rs`。
     wall: wall::WallScene,
+    /// 卡墙预热从什么时候开始、那时已有几条管线(见 `prewarm_wall`)。
+    /// 没开始过为 `None`。
+    prewarm: Option<(Instant, usize)>,
 }
 
 impl Scene {
@@ -216,11 +219,16 @@ impl Scene {
         let plugins = DefaultPlugins
             .set(RenderPlugin {
                 render_creation,
-                // 管线编译走同步。默认的异步编译把任务丢进 bevy 的任务池,而 wasm
-                // 是单线程 —— 任务迟迟不完成,渲染就一直画不出东西(纹理有、内容空)。
-                // 原生上同步编译只是把首帧的卡顿提前,代价可接受,故不分平台。
-                synchronous_pipeline_compilation:
-                    !async_pipelines(),
+                // 管线编译:原生异步,wasm 同步。
+                //
+                // 原生上同步编译的代价是卡墙第一次亮相那一帧在主线程上现编三十多条
+                // 管线,真机冻 200+480ms(#121);异步编译把它们丢进 bevy 的任务池,
+                // 再由 ui 在首页期间调 `prewarm_wall` 提前排进队列。
+                // wasm 是单线程:异步任务迟迟不完成,渲染就一直画不出东西(纹理有、
+                // 内容空),所以那边只能同步。
+                synchronous_pipeline_compilation: cfg!(
+                    target_arch = "wasm32"
+                ),
                 ..default()
             })
             .set(WindowPlugin {
@@ -275,17 +283,7 @@ impl Scene {
         // 手动驱动模式下,首帧前要走完插件的 finish/cleanup(平时由 App::run 的 runner 负责)。
         app.finish();
         app.cleanup();
-        log::info!(
-            "render3d: 初始化 {}ms(管线编译{})",
-            started.elapsed().as_millis(),
-            if async_pipelines() {
-                "异步"
-            } else {
-                "同步"
-            },
-        );
-
-        Self {
+        let mut scene = Self {
             app,
             device: device.clone(),
             queue: queue.clone(),
@@ -309,7 +307,21 @@ impl Scene {
             perf: 0.0,
             frames: 0,
             wall: wall_scene,
-        }
+            prewarm: None,
+        };
+        // 卡墙预热的第一步放在这里(#121):建窗口之前,不落在任何一页上。
+        // 第一次开着相机渲网格那一帧要建视图纹理、缓冲、绑定组,再加 bevy
+        // 自己第一次 update 的建表,真机上 140–160ms,异步编译也省不掉;
+        // 挪到首页上就是一次看得见的卡顿。其余几步只是把后台编好的管线收进来,
+        // 每步十几毫秒,留给 ui 在首页期间接着调。
+        let warm = Instant::now();
+        scene.prewarm_wall();
+        log::info!(
+            "render3d: 初始化 {}ms(含卡墙预热第一步 {}ms)",
+            started.elapsed().as_millis(),
+            warm.elapsed().as_millis(),
+        );
+        scene
     }
 
     /// 共享 wgpu 的 device 句柄(clone,廉价 Arc)。供导航选中器的 [`NavGlassPass`]
@@ -340,19 +352,6 @@ pub(crate) fn make_target(
     app.world_mut()
         .resource_mut::<Assets<Image>>()
         .add(image)
-}
-
-/// 管线要不要挪出主线程编。开关是 `OSMOSIS_ASYNC_PIPELINES`,运行期与构建期
-/// 两条路同 `ui::fps_enabled`(APK 读不到运行期环境变量)。
-///
-/// 卡墙首帧剖析(#121)的对照实验用:默认仍是同步。wasm 恒同步 —— 单线程上
-/// 异步编译的任务迟迟不完成,画面一直是空的(见 [`Scene::new_async`])。
-fn async_pipelines() -> bool {
-    !cfg!(target_arch = "wasm32")
-        && (std::env::var("OSMOSIS_ASYNC_PIPELINES")
-            .is_ok()
-            || option_env!("OSMOSIS_ASYNC_PIPELINES")
-                .is_some())
 }
 
 /// `app.update()` 慢过它才记一行。一帧 16ms,再留些余量。
@@ -389,8 +388,15 @@ pub(crate) fn probed_update(
     took.as_secs_f64() * 1000.0
 }
 
+/// 还在排队或编译中的管线条数。预热靠它判断「编完没有」。
+pub(crate) fn waiting_pipelines(app: &App) -> usize {
+    pipeline_cache(app).map_or(0, |cache| {
+        cache.waiting_pipelines().count()
+    })
+}
+
 /// 渲染子世界里已经建好的管线,按编号升序。
-fn ready_pipelines(app: &App) -> Vec<usize> {
+pub(crate) fn ready_pipelines(app: &App) -> Vec<usize> {
     let Some(cache) = pipeline_cache(app) else {
         return Vec::new();
     };

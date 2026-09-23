@@ -436,3 +436,119 @@ fn blank_card_is_a_white_face() {
     let i = (((oh / 2) * ow + ow / 2) * 4) as usize;
     assert_eq!((out[i], out[i + 3]), (255, 255));
 }
+
+/// 从 `start` 起每 `step` 一帧、一共 `n` 帧,返回叫了预热的那几帧距 `start` 多久。
+fn prewarm_calls(
+    prewarm: &mut Prewarm,
+    start: web_time::Instant,
+    step: core::time::Duration,
+    n: u32,
+    wall_seen: bool,
+) -> Vec<core::time::Duration> {
+    (0..n)
+        .map(|i| step * i)
+        .filter(|&t| prewarm.due(start + t, wall_seen))
+        .collect()
+}
+
+const FRAME: core::time::Duration =
+    core::time::Duration::from_millis(50);
+
+/// 开机头一秒不预热,之后每隔 `PREWARM_EVERY` 叫一次 —— 预热要落在首页
+/// 闲着的时候,不跟登录、首屏抢主线程(#121)。
+#[test]
+fn prewarm_waits_for_startup_then_asks_at_a_steady_pace() {
+    let mut prewarm = Prewarm::default();
+    let start = web_time::Instant::now();
+
+    let calls = prewarm_calls(
+        &mut prewarm,
+        start,
+        FRAME,
+        25,
+        false,
+    );
+
+    assert_eq!(
+        calls,
+        vec![
+            PREWARM_AFTER,
+            PREWARM_AFTER + PREWARM_EVERY,
+            PREWARM_AFTER + 2 * PREWARM_EVERY,
+        ]
+    );
+}
+
+/// 窗口被挡住、一秒只来一帧时,过了开机那一秒的每一帧都叫 —— 不会因为
+/// 帧稀就一直拖着不预热。
+#[test]
+fn prewarm_asks_on_every_sparse_frame_after_startup() {
+    let mut prewarm = Prewarm::default();
+    let start = web_time::Instant::now();
+
+    let calls = prewarm_calls(
+        &mut prewarm,
+        start,
+        core::time::Duration::from_secs(1),
+        4,
+        false,
+    );
+
+    assert_eq!(calls.len(), 3, "{calls:?}");
+}
+
+/// render3d 说编完了就不再叫。
+#[test]
+fn prewarm_stops_once_render3d_says_it_is_done() {
+    let mut prewarm = Prewarm::default();
+    let start = web_time::Instant::now();
+    assert!(
+        !prewarm_calls(
+            &mut prewarm,
+            start,
+            FRAME,
+            25,
+            false
+        )
+        .is_empty()
+    );
+
+    prewarm.finish();
+
+    let later = start + core::time::Duration::from_secs(2);
+    assert!(
+        prewarm_calls(
+            &mut prewarm,
+            later,
+            FRAME,
+            40,
+            false
+        )
+        .is_empty()
+    );
+}
+
+/// 墙已经在画了就永久停:剩下的管线由真墙的帧收进来,再叫预热只会跟它抢那张目标图。
+/// 之后墙藏起来(回首页)也不再重启。
+#[test]
+fn prewarm_stops_for_good_once_the_wall_is_seen() {
+    let mut prewarm = Prewarm::default();
+    let start = web_time::Instant::now();
+
+    assert!(
+        prewarm_calls(&mut prewarm, start, FRAME, 25, true)
+            .is_empty()
+    );
+    let later = start + core::time::Duration::from_secs(2);
+    assert!(
+        prewarm_calls(
+            &mut prewarm,
+            later,
+            FRAME,
+            40,
+            false
+        )
+        .is_empty(),
+        "墙露过面之后,回到首页也不该再预热"
+    );
+}

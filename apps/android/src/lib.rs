@@ -100,10 +100,11 @@ fn android_main(app: slint::android::AndroidApp) {
         scene.device(),
         scene.queue(),
     );
-    // 点云与卡墙两个闭包共用同一个 Scene(同线程,RefCell 即可)。
+    // 点云、卡墙与卡墙预热三个闭包共用同一个 Scene(同线程,RefCell 即可)。
     let scene =
         std::rc::Rc::new(std::cell::RefCell::new(scene));
     let wall_scene = scene.clone();
+    let prewarm_scene = scene.clone();
     // seam:把 ui 的 NavGlassControls / VizControls 平凡拷成 render3d 的镜像参数。
     // 两个闭包分别驱动导航选中器与播放页视觉。
     ui::run_with_renderers(
@@ -242,6 +243,8 @@ fn android_main(app: slint::android::AndroidApp) {
                 ),
             )
         },
+        // 卡墙预热(#121):墙露面之前在后台把管线排进异步编译。
+        move || prewarm_scene.borrow_mut().prewarm_wall(),
         // 系统媒体控件:锁屏与通知栏那条播放条由 SystemUI 画,我们只负责报
         // 状态与接按键(见 docs/adr/0020)。`app` 是 JavaVM 的唯一来源。
         move |hooks| controls::start(&media_app, hooks),
