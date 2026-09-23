@@ -549,6 +549,7 @@ async fn a_silent_connection_is_declared_dead() {
             hello: Duration::from_secs(10),
             ping_every: Duration::from_secs(3_600),
             misses: 2,
+            ..signaling::Timing::default()
         })
         .await;
 
