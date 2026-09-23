@@ -374,6 +374,7 @@ export component MusicPage inherits VerticalLayout {
             track-list := TrackList {
                 vertical-stretch: 1;
                 tracks: Player.tracks;
+                current: Player.now-id;
                 // 最近播放画成时间轴,别的分区还是平列表。
                 timeline: Shell.music-section == 3
                     && Library.open-playlist-name == "";

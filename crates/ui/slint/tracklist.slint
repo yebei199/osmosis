@@ -46,18 +46,22 @@ export component TrackList inherits ListView {
     for row[i] in root.tracks: Rectangle {
         height: 56px;
 
+        // 就是它在响 —— 与 root.current 绑的那一首比对,空串不算(见上面
+        // `current` 的注释)。background/border/无障碍态共用同一个判断,
+        // 别各写一遍。
+        property <bool> is-current: root.current != "" && row.id == root.current;
+
         // ListView 把行贴着排,没有 spacing —— 原来那 4px 的间隔改由卡片
         // 上下各让 2px 让出来,行本身仍占满一整格。先声明所以画在最底下。
         Rectangle {
             y: 2px;
             height: 52px;
             background: row.loading ? Theme.accent.with-alpha(0.15)
-                : (root.current != "" && row.id == root.current
+                : (parent.is-current
                     ? Theme.accent.with-alpha(0.22)
                     : (touch.has-hover ? Theme.overlay : Theme.overlay-weak));
             border-radius: 8px;
-            border-width: row.loading
-                || (root.current != "" && row.id == root.current) ? 1px : 0;
+            border-width: row.loading || parent.is-current ? 1px : 0;
             border-color: Theme.accent.with-alpha(0.4);
             animate background { duration: 160ms; easing: ease-out; }
         }
@@ -79,6 +83,10 @@ export component TrackList inherits ListView {
         property <bool> menu-opened: false;
 
         touch := TouchArea {
+            // 颜色读屏看不见 —— 正在播的那一行额外报一个可查的选中态。
+            accessible-role: button;
+            accessible-checkable: true;
+            accessible-checked: parent.is-current;
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     parent.pressing = true;
