@@ -394,6 +394,7 @@ pub(crate) fn upstream_at(url: &str) -> Upstream {
     let channel = Channel::from_shared(url.to_owned())
         .expect("上游地址不是合法 URI")
         .connect_lazy();
+    let channel = server::bangdream::Timed(channel);
 
     Upstream {
         catalog: CatalogServiceClient::new(channel.clone()),

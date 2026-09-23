@@ -103,6 +103,13 @@ pub(crate) async fn fill_details(
         cache::missing_details(conn, &platform, ids)
             .await
             .map_err(|err| error::map_error(&err))?;
+    // 命中多少决定了这次要不要回源:全中是零次上游调用,冷启动是
+    // ids / DETAIL_BATCH 次(#121)。
+    tracing::info!(
+        ids = ids.len(),
+        missing = missing.len(),
+        "详情缓存"
+    );
 
     let mut catalog = state.upstream.catalog.clone();
     for chunk in missing.chunks(DETAIL_BATCH) {
