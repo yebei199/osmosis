@@ -273,6 +273,22 @@ impl WallDrive {
             && self.dolly.is_none()
     }
 
+    /// 选中往前或往后挪 `delta` 张,夹在 `0..count` 里。没有选中时往后挪
+    /// 从第一张起,往前挪从最后一张起。一张卡都没有就谁也不选。
+    fn step_focus(
+        focus: Option<usize>,
+        delta: i32,
+        count: usize,
+    ) -> Option<usize> {
+        let last = count.checked_sub(1)?;
+        let next = match focus {
+            Some(at) => at as i64 + i64::from(delta),
+            None if delta < 0 => last as i64,
+            None => 0,
+        };
+        Some(next.clamp(0, last as i64) as usize)
+    }
+
     /// 起播第 `index` 张卡:记下曲目,推相机。播放与开页都等 dolly 落位
     /// (设计稿:落位后才起点云),落位处理在 [`Self::frame`] 里。
     fn start_play(
@@ -446,6 +462,31 @@ pub(crate) fn bind(
         d.start_play(&ui, index);
     });
 
+    // 读屏与脚本那条路:挪选中、播选中的那张,不经 3D 命中测试。
+    let weak = ui.as_weak();
+    let d = drive.clone();
+    ui.global::<Shell>().on_wall_step(move |delta| {
+        let Some(ui) = weak.upgrade() else { return };
+        let count =
+            ui.global::<Player>().get_tracks().row_count();
+        let mut d = d.borrow_mut();
+        d.focus =
+            WallDrive::step_focus(d.focus, delta, count);
+    });
+
+    let weak = ui.as_weak();
+    let d = drive.clone();
+    ui.global::<Shell>().on_wall_confirm(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let mut d = d.borrow_mut();
+        let focus = d.focus;
+        if d.should_play(focus)
+            && let Some(index) = focus
+        {
+            d.start_play(&ui, index);
+        }
+    });
+
     // 滚轮 = 竖着划一下,与移动端同一套语义。逻辑像素转物理,
     // 一格滚轮在高分屏上才不是半格。
     let weak = ui.as_weak();
@@ -500,6 +541,35 @@ mod tests {
         assert!(
             !d.should_play(Some(3)),
             "dolly 还在跑就又起播了,同一下点按会放两次"
+        );
+    }
+
+    /// 不经指针挪选中:夹在两头,空墙谁也不选(#113)。
+    #[test]
+    fn stepping_the_focus_stays_on_the_wall() {
+        assert_eq!(
+            WallDrive::step_focus(None, 1, 5),
+            Some(0)
+        );
+        assert_eq!(
+            WallDrive::step_focus(None, -1, 5),
+            Some(4)
+        );
+        assert_eq!(
+            WallDrive::step_focus(Some(2), 1, 5),
+            Some(3)
+        );
+        assert_eq!(
+            WallDrive::step_focus(Some(4), 1, 5),
+            Some(4)
+        );
+        assert_eq!(
+            WallDrive::step_focus(Some(0), -1, 5),
+            Some(0)
+        );
+        assert_eq!(
+            WallDrive::step_focus(Some(1), 1, 0),
+            None
         );
     }
 
