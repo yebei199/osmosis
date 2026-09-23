@@ -4,7 +4,8 @@
 #
 # 覆盖:dev-adb 的序列号解析(指定 / 唯一在线 / 多台拒绝 / 指定的不在线)、
 # android-not-production 认生产平板型号、local-backend-up 探活,以及
-# desktop-dev 与 mcp-android 在守卫失败时**不进编译**(假 nix-shell 没被调用)。
+# desktop-dev 与 mcp-android 在守卫失败时**不进编译**(假 nix-shell 没被调用),
+# 以及 desktop-install 装的是带库路径的启动脚本而不是软链(#112)。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,7 +27,13 @@ if [ "${4:-} ${5:-}" = "getprop ro.product.model" ]; then
 fi
 echo "adb $*" >> "$FAKE_CALLS"
 EOF
-printf '#!/bin/sh\necho "nix-shell $*" >> "$FAKE_CALLS"\n' > "$work/bin/nix-shell"
+# 假 nix-shell:只记账;不编译的 --run(desktop-install 取库路径那条)照跑,库路径取 FAKE_LIBS。
+cat > "$work/bin/nix-shell" <<'EOF'
+#!/bin/sh
+echo "nix-shell $*" >> "$FAKE_CALLS"
+case "$3" in *cargo*|'') ;; *) LD_LIBRARY_PATH=$FAKE_LIBS sh -c "$3" ;; esac
+EOF
+printf '#!/bin/sh\necho "nix-store $*" >> "$FAKE_CALLS"\n' > "$work/bin/nix-store"
 chmod +x "$work/bin/"*
 export PATH="$work/bin:$PATH" FAKE_CALLS="$work/calls" FAKE_MODEL=2211133C
 unset ANDROID_SERIAL
@@ -94,5 +101,18 @@ expect_call "^nix-shell Android.nix"
 if [ "$(grep -nE '^adb -s dev1 reverse' "$FAKE_CALLS" | cut -d: -f1)" -lt "$(grep -n '^nix-shell' "$FAKE_CALLS" | cut -d: -f1)" ]; then
     echo "ok     reverse 在编译之前"
 else echo "FAIL   reverse 不在编译之前"; fails=$((fails + 1)); fi
+
+export FAKE_LIBS=/nix/store/aaa-vulkan-loader/lib:/nix/store/bbb-wayland/lib
+h="$work/home"
+check "desktop-install:装好" 0 -- env -u LD_LIBRARY_PATH HOME="$h" XDG_DATA_HOME="$h/share" just desktop-install
+w="$h/.local/bin/osmosis-desktop"
+if [ -f "$w" ] && [ ! -L "$w" ] && [ -x "$w" ]; then echo "ok     装的是可执行脚本,不是软链"
+else echo "FAIL   $w 不是可执行的普通文件"; ls -la "$w" 2>&1 | sed 's/^/     /'; fails=$((fails + 1)); fi
+for want in "LD_LIBRARY_PATH=\"$FAKE_LIBS" "exec \"$PWD/target/release/osmosis-desktop\""; do
+    if grep -qF "$want" "$w" 2>/dev/null; then echo "ok     脚本含「$want」"
+    else echo "FAIL   脚本不含「$want」"; fails=$((fails + 1)); fi
+done
+expect_call "^nix-store .*/nix/store/aaa-vulkan-loader$"
+expect_call "^nix-store .*/nix/store/bbb-wayland$"
 
 [ $fails -eq 0 ] && echo "==> 全部通过" || { echo "==> $fails 条失败"; exit 1; }
