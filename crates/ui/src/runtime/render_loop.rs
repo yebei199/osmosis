@@ -49,6 +49,9 @@ pub fn run_with_renderers(
     + 'static,
     media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) {
+    // 连的是哪个后端烘在编译期,日志第一屏写明:debug 连本机、release 连生产,
+    // 装错包时这一行就能看出来,不必等点歌报错。桌面与安卓都走这里。
+    log::info!("服务端: {}", api::base_url());
     let (ui, viz_source, lyrics, cover) = build_ui(media);
     // 卡墙状态:回调(点击/滚轮)与渲染循环共享同一份。
     let wall_state =
