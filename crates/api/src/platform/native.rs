@@ -591,6 +591,27 @@ pub(crate) fn save_session(token: Option<&str>) {
     write_session(&path, token);
 }
 
+/// 把会话文件挪成同目录的 `session.bak`,覆盖上一份备份。
+///
+/// 挪不动(比如备份那一侧没有写权限)就退回直接删:留着它的话,下次启动又恢复出
+/// 这个已被拒的 token。
+pub(crate) fn backup_session() {
+    let Some(path) = session_file() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
+
+    let backup = path.with_extension("bak");
+    if let Err(err) = std::fs::rename(&path, &backup) {
+        log::warn!("备份会话失败,直接清掉: {err}");
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    log::warn!("失效的会话已备份到 {}", backup.display());
+}
+
 /// 写会话文件。权限 0600 —— token 等同于密码。
 ///
 /// 失败只记一笔:登录本身已经成功了,存不下来的后果是下次要重登,

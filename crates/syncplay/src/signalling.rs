@@ -23,6 +23,9 @@ const ENDPOINT: &str = "/signal";
 /// 服务端认不出 token 时的状态码。
 const UNAUTHORIZED: u16 = 401;
 
+/// 服务端判 token 无效时 `ErrorDto` 里的 code(`server/src/error.rs`)。
+const TOKEN_REJECTED: &str = "unauthorized";
+
 /// 建连额度用完了。
 const TOO_MANY_REQUESTS: u16 = 429;
 
@@ -181,7 +184,7 @@ pub fn report_wire_len(state: &RemoteStateDto) -> usize {
 
 /// 握手失败的分类。两种状态码单独拎出来,因为它们各要一种不同的等法:
 ///
-/// - **401** 是「这个 token 不作数了」,不是「网络不好」—— 拿同一个 token
+/// - 带 `unauthorized` code 的 **401** 是「这个 token 不作数了」,不是「网络不好」—— 拿同一个 token
 ///   重试只会再得到一个 401,要等的是下一个 token;
 /// - **429** 是「额度用完了」,而服务端**算得出还欠多少**,客户端算不出。
 ///   按自己的节奏重连只会把闸撞得更死(#109 F-R3)。
@@ -196,12 +199,27 @@ fn classify(
     };
 
     match response.status().as_u16() {
-        UNAUTHORIZED => SyncError::Unauthorized,
+        UNAUTHORIZED if rejects_the_token(response.body()) => {
+            SyncError::Unauthorized
+        }
         TOO_MANY_REQUESTS => SyncError::Throttled {
             retry_after: retry_after(response),
         },
         _ => SyncError::Signalling(error.to_string()),
     }
+}
+
+/// 这个 401 是不是我们的服务端在说「token 不作数」(#127)。
+///
+/// 与 HTTP 那侧同一个判据:按 `ErrorDto` 的 code,不按状态码。半路代理回的 401、
+/// 读不到响应体的 401 都不算 —— 算了的话界面会删掉一份好好的会话,而那不可逆;
+/// 不算的代价只是按退避再连几次。
+fn rejects_the_token(body: &Option<Vec<u8>>) -> bool {
+    body.as_deref()
+        .and_then(|body| {
+            serde_json::from_slice::<contract::ErrorDto>(body).ok()
+        })
+        .is_some_and(|error| error.code == TOKEN_REJECTED)
 }
 
 /// `Retry-After` 里那个秒数。读不出来就是 `None` —— 那时退避走自己那一套。

@@ -40,6 +40,37 @@ fn the_session_token_has_a_lifecycle() {
     assert_eq!(self::token(), None, "登出后不该还留着");
 }
 
+/// **被服务端判失效时,会话文件先留一份备份再清**(#127)。
+///
+/// 删会话不可逆:判错一次(比如开发实例拿别的后端的 token 问了一圈),
+/// 用户就得重登,而且事后查不出删掉的是哪一份。登出不走这里,登出就该删。
+#[test]
+fn an_expired_session_is_backed_up_before_it_is_cleared() {
+    let _guard = super::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let dir =
+        std::env::temp_dir().join("osmosis-session-expire");
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join("session");
+    // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
+    unsafe {
+        std::env::set_var("OSMOSIS_SESSION_FILE", &file);
+    }
+
+    self::set("rejected-token");
+    self::expire();
+
+    assert_eq!(self::token(), None, "失效之后不该还带着它");
+    assert!(!file.exists(), "会话文件该清掉,否则重启又恢复出这个坏 token");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("session.bak")).ok().as_deref(),
+        Some("rejected-token"),
+        "清之前该留一份备份"
+    );
+}
+
 /// **入口显式给的状态目录压过环境变量。**
 ///
 /// 安卓上两个环境变量都没有,私有目录只有平台入口那一层拿得到

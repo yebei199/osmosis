@@ -235,12 +235,13 @@ pub fn handle_session_expiry(
 ///
 /// `cause` 只进日志:清掉落盘的会话是**不可逆**的,而它此前一声不吭 ——
 /// 「一重启就要重登」这类报告因此无从查起,只知道文件没了,不知道谁删的。
+/// 所以走 `expire` 而不是 `clear`:落盘那份先留成 `session.bak`(#127)。
 pub(crate) fn to_login_page(ui: &MainWindow, cause: &str) {
     log::warn!(
         "会话被服务端判为失效,已清除本地登录态: {cause}"
     );
 
-    api::session::clear();
+    api::session::expire();
     ui.global::<Session>().set_logged_in(false);
     ui.global::<Session>()
         .set_error("登录已失效,请重新登录".into());
@@ -421,7 +422,7 @@ mod tests {
     /// 把会话落盘处指到临时文件上。
     ///
     /// **少了这一步,跑一次测试就把开发机上真实的登录态删掉** —— `handle_session_expiry`
-    /// 里那句 `session::clear()` 删的是 `~/.local/state/osmosis/session`,而它
+    /// 里那句 `session::expire()` 挪走的是 `~/.local/state/osmosis-dev/session`,而它
     /// 一声不吭。症状是「每次跑完测试再开应用就要重新登录」,而人会去查应用,
     /// 查不到任何线索。`api` 那侧的会话测试早就这么防着了,这边漏了。
     fn redirect_session_to_a_temp_file() {
@@ -480,6 +481,33 @@ mod tests {
             ui.global::<Session>().get_logged_in(),
             "网络抖动不该把人踢下线"
         );
+    }
+
+    /// 只有服务端明确说 token 无效才算失效(#127)。协议版本不对、限流、
+    /// 响应体读不懂,token 都还好好的 —— 删了就得重登,而删会话不可逆。
+    #[test]
+    fn only_an_invalid_token_counts_as_expiry() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        ui.global::<Session>().set_logged_in(true);
+
+        let not_expiry = [
+            api::ApiError::VersionMismatch {
+                expected: 2,
+                actual: 1,
+            },
+            server("rate_limited"),
+            server("bad_credentials"),
+            api::ApiError::Decode("<html>502</html>".to_owned()),
+        ];
+
+        for err in &not_expiry {
+            assert!(
+                !handle_session_expiry(&ui, err),
+                "{err} 不是会话失效"
+            );
+        }
+        assert!(ui.global::<Session>().get_logged_in());
     }
 
     /// 一个把 `refresh-liked` 的调用次数记下来的窗口。
