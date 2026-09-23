@@ -321,11 +321,22 @@ const HEALTHY_AFTER: Duration = Duration::from_secs(10);
 /// 服务端说要等多久就等多久,但不超过这个数。
 ///
 /// 照 `Retry-After` 等是对的 —— 还欠多少额度只有服务端算得出来。设上界是
-/// 因为那个数由对端给:配置写错、或者哪天换了个别的中间件,一个离谱的值
-/// 不该让客户端从此不再重连。十分钟远大于任何正常的欠账,又短到用户
-/// 等得起。
-const MAX_THROTTLE_WAIT: Duration =
-    Duration::from_secs(600);
+/// 因为那个数由对端给:配置写错、或者前面那层 CDN 回一个自己的数,一个离谱的值
+/// 不该让一台设备分钟级地连不上。自家服务端的桶两秒回一个额度,正常的欠账
+/// 从不超过两秒,三十秒已经是它的十几倍(#118:原先十分钟)。
+const MAX_THROTTLE_WAIT: Duration = Duration::from_secs(30);
+
+/// 被限流时等多久:照服务端给的秒数,读不出来就按自己的退避,都不超过上界。
+fn throttle_wait(
+    retry_after: Option<Duration>,
+    backoff: Duration,
+) -> Duration {
+    // 0 是 governor 把不到一秒的欠账 `as_secs()` 截出来的,照它等就是以网络
+    // 往返的速度重敲,所以抬到退避下限。
+    retry_after
+        .unwrap_or(backoff)
+        .clamp(RETRY_MIN, MAX_THROTTLE_WAIT)
+}
 
 /// 下一次的等待时长:翻倍,到上限为止。
 fn next_backoff(current: Duration) -> Duration {
@@ -401,9 +412,8 @@ async fn run(
             // 只会把闸撞得更死(#109 F-R3)。这一拍不推进退避:等的长度
             // 已经由对端定了,再叠一层就是等两次。
             Err(SyncError::Throttled { retry_after }) => {
-                let wait = retry_after
-                    .unwrap_or(backoff)
-                    .min(MAX_THROTTLE_WAIT);
+                let wait =
+                    throttle_wait(retry_after, backoff);
                 log::warn!(
                     "建连被限流,等 {} 秒再试",
                     wait.as_secs()
@@ -828,6 +838,41 @@ mod tests {
             })),
             Some(("pc".to_owned(), 7)),
             "确认过的才续,并且带上代次"
+        );
+    }
+
+    /// 限流时照服务端的秒数等,但不许是 0,也不许到分钟级。
+    ///
+    /// governor 的 `Retry-After` 是 `as_secs()` 截出来的,不到一秒就写 0 ——
+    /// 照 0 等就是以网络往返的速度重敲。上界压在一分钟以内:同账号几台设备
+    /// 共用一个建连桶,哪个中间件回一个离谱的数,都不该让一台设备分钟级地
+    /// 连不上(#118 验收:没有任何一台落进分钟级的 429 退避)。
+    #[test]
+    fn throttle_wait_is_neither_zero_nor_minutes() {
+        assert_eq!(
+            throttle_wait(Some(Duration::ZERO), RETRY_MIN),
+            RETRY_MIN,
+            "0 秒要抬到退避下限"
+        );
+        assert_eq!(
+            throttle_wait(
+                Some(Duration::from_secs(2)),
+                RETRY_MIN
+            ),
+            Duration::from_secs(2),
+            "正常的数照办"
+        );
+        assert!(
+            throttle_wait(
+                Some(Duration::from_secs(600)),
+                RETRY_MIN
+            ) < Duration::from_secs(60),
+            "离谱的数要压到一分钟以内"
+        );
+        assert_eq!(
+            throttle_wait(None, Duration::from_secs(8)),
+            Duration::from_secs(8),
+            "读不出秒数就按自己的退避"
         );
     }
 
