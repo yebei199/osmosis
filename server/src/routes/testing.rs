@@ -23,10 +23,13 @@ use server::bangdream::proto::{
     GetPlaySourceRequest, GetPlaySourceResponse,
     GetPlaylistRequest, GetPlaylistResponse,
     GetTracksRequest, GetTracksResponse,
+    ListLikedTracksRequest, ListLikedTracksResponse,
     ListUserPlaylistsRequest, ListUserPlaylistsResponse,
     LogoutRequest, LogoutResponse, Platform, PlaySource,
-    Playlist, PlaylistTrackRef, QrLoginEvent, Track,
-    WatchQrLoginRequest,
+    Playlist, PlaylistTrackRef, QrLoginEvent,
+    SetPlaylistSubscribedRequest,
+    SetPlaylistSubscribedResponse, SetTrackLikedRequest,
+    SetTrackLikedResponse, Track, WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
     auth_service_server::{AuthService, AuthServiceServer},
     catalog_service_client::CatalogServiceClient,
@@ -189,6 +192,13 @@ pub(crate) struct FakeUpstream {
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
     /// 没有别的办法验证:两种写法给出的曲目列表一模一样,差别只在问了几次。
     pub(crate) asked: Arc<Mutex<Vec<Vec<String>>>>,
+    /// `GetPlaylist` 回答前先等这么久。
+    ///
+    /// 「先回库」的判据是请求**不等上游**:上游慢到一小时,等了它的实现会卡在
+    /// 测试的超时上,而不是慢一点照样绿 —— 不看机器快慢。
+    pub(crate) playlist_delay: std::time::Duration,
+    /// `ListUserPlaylists` 回答前先等这么久。`/playlists` 的「不等上游」靠它验。
+    pub(crate) lists_delay: std::time::Duration,
 }
 
 impl FakeUpstream {
@@ -322,6 +332,7 @@ impl LibraryService for FakeUpstream {
         _request: Request<ListUserPlaylistsRequest>,
     ) -> Result<Response<ListUserPlaylistsResponse>, Status>
     {
+        tokio::time::sleep(self.lists_delay).await;
         Ok(Response::new(ListUserPlaylistsResponse {
             playlists: self.playlists.clone(),
         }))
@@ -331,7 +342,44 @@ impl LibraryService for FakeUpstream {
         &self,
         _request: Request<GetPlaylistRequest>,
     ) -> Result<Response<GetPlaylistResponse>, Status> {
+        tokio::time::sleep(self.playlist_delay).await;
         Ok(Response::new(self.playlist.clone()))
+    }
+
+    /// 红心标识就是 `GetPlaylist` 那份成员关系:两处给同一批,不必各摆一遍。
+    async fn list_liked_tracks(
+        &self,
+        _request: Request<ListLikedTracksRequest>,
+    ) -> Result<Response<ListLikedTracksResponse>, Status>
+    {
+        Ok(Response::new(ListLikedTracksResponse {
+            track_ids: self
+                .playlist
+                .track_refs
+                .iter()
+                .map(|track| track.id.clone())
+                .collect(),
+        }))
+    }
+
+    async fn set_playlist_subscribed(
+        &self,
+        _request: Request<SetPlaylistSubscribedRequest>,
+    ) -> Result<
+        Response<SetPlaylistSubscribedResponse>,
+        Status,
+    > {
+        Ok(Response::new(
+            SetPlaylistSubscribedResponse::default(),
+        ))
+    }
+
+    async fn set_track_liked(
+        &self,
+        _request: Request<SetTrackLikedRequest>,
+    ) -> Result<Response<SetTrackLikedResponse>, Status>
+    {
+        Ok(Response::new(SetTrackLikedResponse::default()))
     }
 }
 
@@ -414,6 +462,20 @@ pub(crate) fn unreachable_upstream() -> Upstream {
     upstream_at("http://127.0.0.1:1")
 }
 
+/// 同一份 state 换一个上游:库与「缓存有多新」的记录都沿用。
+///
+/// 平台那边变了、或者卡住了,在测试里就是换一个假上游 —— 假上游起来之后
+/// 就不能再改,而被测的正是「同一个进程前后两次请求」。
+pub(crate) fn with_upstream(
+    state: &AppState,
+    upstream: Upstream,
+) -> AppState {
+    AppState {
+        upstream,
+        ..state.clone()
+    }
+}
+
 pub(crate) fn state(
     pool: PgPool,
     upstream: Upstream,
@@ -429,5 +491,7 @@ pub(crate) fn state(
         ),
         policies:
             server::gate::ratelimit::Policies::tuned(),
+        playlists: Default::default(),
+        platform_lists: Default::default(),
     }
 }
