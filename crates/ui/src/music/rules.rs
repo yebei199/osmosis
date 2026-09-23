@@ -154,14 +154,24 @@ pub fn should_advance(
 
 /// 这一下点击是不是多余的。
 ///
-/// 判据只认 `Loading`,而且只认**同一首**:网络慢时点了看不出反应,用户就会
-/// 连点,每一下都发一次下载、每条回来都从头出声。已经在放的那一首再点是
-/// 「从头听」,不是多余(见 `CONTEXT.md`「队列」)。
+/// 只认**同一首**,而且它还在加载、或者正出着声(`sounding`):第一下到出声
+/// 真机上要一两秒,这期间用户本能地再点一下(#125)。加载中重来一遍就是又一次
+/// 下载、每条回来都从头出声;已在放的那首重来一遍就是停掉、从头再加载,而
+/// 用户要的只是「它在响」。暂停着的那首再点不算多余 —— 那一下是想让它响。
 pub fn is_redundant_tap(
     state: &PlaybackState,
     id: &str,
+    sounding: bool,
 ) -> bool {
-    matches!(state, PlaybackState::Loading(track) if track.id == id)
+    match state {
+        PlaybackState::Loading(track) => track.id == id,
+        PlaybackState::Playing(track) => {
+            sounding && track.id == id
+        }
+        PlaybackState::Idle | PlaybackState::Failed(_) => {
+            false
+        }
+    }
 }
 
 /// 当日推荐该不该拉。`last` 是上次拉取的日期,`today` 是今天。
