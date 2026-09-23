@@ -27,6 +27,19 @@ test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
 多了一行就通过,20 秒不动就失败退出。驱动按元素 id 找控件、断言查数据库,两头都不靠
 人看画面 —— 这类"要跑起来才知道"的链路(界面 → api → server → 表)就该这么验。
 
+## wheel-scroll-android.sh —— 外接鼠标滚列表还崩不崩(#120)
+
+跑之前:`just mcp-android` 装的 debug 包在跑、已登录,要测的列表已经在屏上。
+
+```sh
+ROW_ID=TrackList::touch test/wheel-scroll-android.sh      # 每日推荐、歌单详情
+ROW_ID=PlaylistList::touch test/wheel-scroll-android.sh   # 我的歌单
+```
+
+`adb shell input mouse scroll` 打出的是 `ACTION_SCROLL`,与真鼠标滚轮同一条路。先正负交替
+滚 20 格,断言 PID 没变、`logcat -b crash` 没有新记录;再往下滚半格,断言首行上移 ——
+整格是 60px,正好一行高,整格滚完首行的 y 看不出区别。
+
 ## 浏览器侧的对照页
 
 本目录下的 `*.html` 是**排查性能问题时用来划定责任范围的最小对照页**。不含 Slint、
