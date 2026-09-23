@@ -242,3 +242,62 @@ fn switching_tracks_reprojects() {
     slint::platform::update_timers_and_animations();
     assert!(!now_liked(&ui), "换到没喜欢的那首该灭");
 }
+
+fn track_row(id: &str) -> crate::TrackRow {
+    crate::TrackRow {
+        id: id.into(),
+        title: "曲".into(),
+        artists: "人".into(),
+        duration: "03:00".into(),
+        loading: false,
+        liked: false,
+        cover_url: String::new().into(),
+        cover: slint::Image::default(),
+    }
+}
+
+fn press(ui: &MainWindow, label: &str) {
+    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+        ui, label,
+    )
+    .next()
+    .unwrap_or_else(|| panic!("找不到「{label}」"))
+    .invoke_accessible_default_action();
+}
+
+/// 抽屉里点「喜欢」,列表里那一行的红心跟着变;再点一次两边一起灭(#115)。
+///
+/// 两处入口读的是同一个集合 —— 抽屉亮了而列表那颗心还空着,
+/// 用户会以为有一边没存上。
+#[test]
+fn liking_from_the_drawer_marks_the_list_row_too() {
+    let ui = window_with(Vec::new());
+    ui.global::<crate::Session>().set_logged_in(true);
+    ui.global::<crate::Shell>().set_current_tab(1);
+    ui.global::<Player>().set_has_track(true);
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![track_row("1"), track_row("2")]),
+    ));
+    let set = set_of(&[]);
+    bind(&ui, &set);
+    ui.global::<Player>().set_now_id("1".into());
+    slint::platform::update_timers_and_animations();
+    press(&ui, "更多");
+
+    let row_liked = |i| {
+        ui.global::<Player>()
+            .get_tracks()
+            .row_data(i)
+            .expect("这一行该在")
+            .liked
+    };
+
+    press(&ui, "喜欢这一首");
+    assert!(now_liked(&ui), "抽屉那一行该亮");
+    assert!(row_liked(0), "列表里正在放的那一行该红心");
+    assert!(!row_liked(1), "别的行不该跟着变");
+
+    press(&ui, "喜欢这一首");
+    assert!(!now_liked(&ui), "再点一次该灭");
+    assert!(!row_liked(0), "列表那颗心也该一起灭");
+}
