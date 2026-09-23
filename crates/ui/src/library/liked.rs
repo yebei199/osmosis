@@ -54,9 +54,10 @@ pub fn refresh(set: &LikedSet, ui: &MainWindow) {
     let _ = slint::spawn_local(async move {
         match api::liked_ids().await {
             Ok(dto) => {
-                *set.borrow_mut() =
-                    dto.track_ids.into_iter().collect();
-                if let Some(ui) = weak.upgrade() {
+                // 没变就不重标:每次打开歌单都会拉一次,绝大多数时候什么都没变
+                if replace(&set, dto.track_ids)
+                    && let Some(ui) = weak.upgrade()
+                {
                     remark(&set, &ui);
                 }
             }
@@ -70,6 +71,28 @@ pub fn refresh(set: &LikedSet, ui: &MainWindow) {
             }
         }
     });
+}
+
+/// 一批还没变成模型的行,按当前集合把心标好。
+///
+/// 换一批歌时走这里而不是 [`remark`]:行还在 Vec 里,标一下是一次赋值;
+/// 换上模型之后再标就是整表的 `row_data` / `set_row_data`。
+pub fn mark(set: &LikedSet, rows: &mut [crate::TrackRow]) {
+    let set = set.borrow();
+    for row in rows {
+        row.liked = set.contains(row.id.as_str());
+    }
+}
+
+/// 换上一份拉回来的红心集合,返回它与手上那份是否不同。
+pub fn replace(set: &LikedSet, ids: Vec<String>) -> bool {
+    let fresh: HashSet<String> = ids.into_iter().collect();
+    let mut set = set.borrow_mut();
+    if *set == fresh {
+        return false;
+    }
+    *set = fresh;
+    true
 }
 
 /// 按当前集合重新标一遍列表里的每一行。

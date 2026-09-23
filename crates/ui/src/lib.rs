@@ -85,6 +85,12 @@ fn fps_enabled() -> bool {
         || option_env!("OSMOSIS_FPS").is_some()
 }
 
+/// 主线程卡顿探针开不开,见 `runtime::frame_stats::stall`。两条路的理由同 [`fps_enabled`]。
+fn stall_enabled() -> bool {
+    std::env::var("OSMOSIS_STALL").is_ok()
+        || option_env!("OSMOSIS_STALL").is_some()
+}
+
 /// 最大页签下标:0=Home、1=Music。
 ///
 /// 与 `app.slint` 里 `Nav.items` 的条数手工对齐 —— Slint 的全局属性不能当 Rust 常量用,

@@ -373,11 +373,13 @@ pub(super) fn push_rows(
     deck: &Deck,
     loading: Option<&str>,
 ) {
-    let rows = to_rows(&deck.tracks.borrow(), loading);
+    let mut rows = to_rows(&deck.tracks.borrow(), loading);
+    // 心在行还是 Vec 的时候就标好 —— 换上模型之后再整表重标,近千行的歌单
+    // 就是近千次 row_data / set_row_data(#117)。
+    crate::library::liked::mark(&deck.liked, &mut rows);
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
-    // 换了一批歌就重标一遍红心 —— 少了这一步,心的状态会停在上一批。
-    crate::library::liked::remark(&deck.liked, ui);
+    crate::library::liked::project_now(&deck.liked, ui);
     // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
     // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。
     deck.thumbnails.apply(ui);

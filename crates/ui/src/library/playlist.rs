@@ -99,7 +99,7 @@ fn refs_of(tracks: &[TrackDto]) -> Vec<(String, String)> {
 
 /// 给这一批歌单挨个把封面取上。
 ///
-/// 已经在内存或磁盘里的那些在这一帧就摆上,剩下的各发一次请求。
+/// 已经在内存里的那些在这一帧就摆上,剩下的去后台问磁盘、再不行上网。
 pub fn fetch_covers(
     ui: &MainWindow,
     art: &crate::imagery::artwork::Artwork,
