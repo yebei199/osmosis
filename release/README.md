@@ -42,7 +42,8 @@ release APK 用的是 gradle 的 debug 构建类型,签名密钥是 pc1 当初�
   把它交给 gradle,任何 tag 都生效,不依赖该 tag 的 gradle 配置。缺这个文件就拒绝构建。
 - 约定证书指纹写在 justfile 的 `release_cert_sha256`。`rollout` 对每个 APK(新编的、
   从 Release 下的)都用 apksigner 核一遍。
-- 这把 key 丢了就再也签不出能覆盖安装的包。pc1 与 pc3 各有一份。
+- 这把 key 丢了就再也签不出能覆盖安装的包。pc1、pc2、pc3 各有一份;另有一份 sops 加密的异地备份在
+  nixos_config 的 `secrets/osmosis-release-keystore.yaml`,恢复命令写在那边 `secrets/README.md`。
 
 ## APK 资产约定(稳定,下载 APK 的一方照此找资产、验哈希)
 
