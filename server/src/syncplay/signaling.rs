@@ -74,6 +74,9 @@ pub struct Timing {
     pub ping_every: Duration,
     /// 连续几次 Ping 没有回音就判死。
     pub misses: u32,
+    /// 遥控器下线之后槽位留多久,见 [`crate::syncplay::control::LEASE`]。
+    /// 它不是连接的时限,放这里是因为测试同样要毫秒级的租约。
+    pub lease: Duration,
 }
 
 impl Default for Timing {
@@ -84,6 +87,7 @@ impl Default for Timing {
             // 移动网络上一次正常的短暂卡顿就会把人踢下线。
             ping_every: Duration::from_secs(30),
             misses: 2,
+            lease: crate::syncplay::control::LEASE,
         }
     }
 }
@@ -206,6 +210,17 @@ pub async fn serve(
         let (generation, stale) =
             guard.join(account, device, sink);
         drop(stale);
+        // 遥控器换了条连接,旧会话就算断过:它的旧连接可能还没被探活发现,
+        // 那条的收尾会被当成「被顶替」而什么都不动。持权的话它紧接着会带代次
+        // 续上、租约作废;回过本机、不再续的,满租约清槽(#111)。
+        control
+            .lock()
+            .expect("控制权锁中毒")
+            .controller_left(
+                account,
+                &device_id,
+                std::time::Instant::now(),
+            );
         broadcast_roster(&guard, account);
         generation
     };
@@ -265,11 +280,16 @@ pub async fn serve(
     // 而顺手清掉控制权会把刚重连上的那条遥控关系带走。
     if guard.leave(account, &device_id, generation) {
         // 下线的若是**被控端**,它身上的遥控关系没了,遥控器得知道。
-        // 下线的若是遥控器,槽位原样留着 —— 手机没电不能让 pc1 停。
-        let freed = control
-            .lock()
-            .expect("控制权锁中毒")
-            .release(account, &device_id);
+        // 下线的若是遥控器,槽位先留一个租约 —— 手机没电不能让 pc1 停,
+        // 但也不能让 pc1 永远挂着横幅(#111)。
+        let mut control =
+            control.lock().expect("控制权锁中毒");
+        control.controller_left(
+            account,
+            &device_id,
+            std::time::Instant::now(),
+        );
+        let freed = control.release(account, &device_id);
         if let Some(controller) = freed
             && let Some(sink) =
                 guard.sink(account, &controller)
@@ -352,7 +372,9 @@ pub fn unauthenticated_test_router(
         .route("/signal", get(upgrade))
         .with_state((
             SharedRoster::default(),
-            SharedControl::default(),
+            Arc::new(Mutex::new(Control::with_lease(
+                timing.lease,
+            ))),
             timing,
         ))
 }
