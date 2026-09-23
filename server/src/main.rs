@@ -440,6 +440,13 @@ async fn main() {
     };
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
+    // 没人红心、三天没播的存歌同理
+    if let Some(archive) = &state.archive {
+        routes::play::archive::spawn_sweeper(
+            state.pool.clone(),
+            archive,
+        );
+    }
 
     let app = Router::new()
         .route("/health", get(health))

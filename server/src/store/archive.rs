@@ -4,9 +4,12 @@
 //! 字节在桶里,这里只记账 —— 对象的增删由 `routes::play::archive` 编排,
 //! 这一层不认识 S3。
 
+use std::time::Duration;
+
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::cache::LIKED_PLAYLIST_ID;
 
 /// 一个存进桶里的对象。
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -101,6 +104,63 @@ pub async fn forget(
         "DELETE FROM stored_tracks
          WHERE platform = $1 AND track_id = $2 AND quality = $3",
     )
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .bind(&track.quality)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
+/// 「过期」的判定,[`expired`] 与 [`forget_if_expired`] 共用同一句 ——
+/// 两处各写一遍的话,挑出来的与真删的迟早是两拨。
+///
+/// 红心集合以自家库里的缓存为准(`platform_playlist_tracks` 里的红心歌单),
+/// 任何一个账号红心了就留着。
+const EXPIRED: &str = "last_played_at < now() - $1::bigint * interval '1 second'
+     AND NOT EXISTS (
+         SELECT 1 FROM platform_playlist_tracks AS liked
+         WHERE liked.playlist_id = $2
+           AND liked.platform = stored_tracks.platform
+           AND liked.track_id = stored_tracks.track_id
+     )";
+
+/// 秒数进 SQL。三天这种量级离 `i64` 的上限远得很,溢出只可能是调用方写错了。
+fn seconds(retain: Duration) -> i64 {
+    i64::try_from(retain.as_secs()).unwrap_or(i64::MAX)
+}
+
+/// 没人红心、且最后一次播放已经早于 `retain` 之前的那些。
+pub async fn expired(
+    conn: &mut PgConnection,
+    retain: Duration,
+) -> Result<Vec<StoredTrack>, AppError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT platform, track_id, quality, object_key, format, bit_rate, bytes
+         FROM stored_tracks WHERE {EXPIRED}"
+    ))
+    .bind(seconds(retain))
+    .bind(LIKED_PLAYLIST_ID)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// 对象删掉之后删那一行 —— **再判一次**过期。
+///
+/// 挑出来到删之间这首可能刚被播过:那时行留着,下一次 `/play` 发现对象不在,
+/// 自己把行删掉并退回网易云,之后的 `/played` 会重新存它。
+pub async fn forget_if_expired(
+    conn: &mut PgConnection,
+    track: &StoredTrack,
+    retain: Duration,
+) -> Result<(), AppError> {
+    sqlx::query(&format!(
+        "DELETE FROM stored_tracks
+         WHERE platform = $3 AND track_id = $4 AND quality = $5 AND {EXPIRED}"
+    ))
+    .bind(seconds(retain))
+    .bind(LIKED_PLAYLIST_ID)
     .bind(&track.platform)
     .bind(&track.track_id)
     .bind(&track.quality)

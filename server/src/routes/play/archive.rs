@@ -8,12 +8,17 @@
 //!
 //! 再播时 [`stored_source`] 把桶里那份的签名链接交给 `/play`;对象存储出任何
 //! 岔子都只是退回网易云,不让点歌失败。
+//!
+//! 只有红心的歌长期留着:[`spawn_sweeper`] 每小时删一轮没人红心、且最后一次
+//! 播放已满 [`RETAIN`] 的。
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::Json;
 use contract::PlaySourceDto;
+use sqlx::{PgConnection, PgPool};
 use tokio::sync::Semaphore;
 
 use server::objects::Objects;
@@ -33,6 +38,16 @@ mod tests;
 /// 每一首整个读进内存再上传(无损的几十 MB),而且和正在播放的那首抢同一条
 /// 出口带宽。两首足够跟上一个人切歌的速度,再多就只是在和播放抢资源。
 const CONCURRENT_STORES: usize = 2;
+
+/// 没人红心的歌,最后一次播放(或取消红心)之后留多久。用户定的三天(#126)。
+pub(crate) const RETAIN: Duration =
+    Duration::from_secs(3 * 24 * 3600);
+
+/// 多久清一轮。
+///
+/// 保留期以天计,晚删一小时只多占三天的 1/72;而一轮只是一条走索引的查询
+/// 加几次 DELETE,一小时一次对库与 RustFS 都可以忽略。
+const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 
 /// 目前唯一的平台。别的平台报上来的起播不存 —— 取源只认网易云。
 const NETEASE: &str = "netease";
@@ -274,6 +289,91 @@ pub(crate) async fn stored_source(
             None
         }
     }
+}
+
+/// 取消红心那一刻起重新数 [`RETAIN`]:不然按很久以前那次播放算,当场就删了。
+///
+/// 失败只记日志 —— 取消红心本身已经在平台那边办成了。
+pub(crate) async fn restart_clock(
+    state: &AppState,
+    track_id: &str,
+) {
+    if state.archive.is_none() {
+        return;
+    }
+    let touched = match state.pool.acquire().await {
+        Ok(mut conn) => archive::touch(
+            &mut conn,
+            NETEASE,
+            track_id,
+            &quality(),
+        )
+        .await
+        .map_err(|err| format!("{err:?}")),
+        Err(err) => Err(err.to_string()),
+    };
+    if let Err(err) = touched {
+        tracing::warn!(track_id, %err, "取消红心后没能重新起算保留期");
+    }
+}
+
+/// 清一轮:先删对象、再删那一行。返回删了几首。
+///
+/// 顺序不能反:先删行的话,对象删失败就再也没有人记得它,桶里多一个孤儿。
+/// 对象删不掉的这一轮跳过,行留着,下一轮再来。
+pub(crate) async fn sweep(
+    conn: &mut PgConnection,
+    objects: &dyn Objects,
+) -> Result<usize, String> {
+    let expired = archive::expired(conn, RETAIN)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+
+    let mut removed = 0;
+    for track in expired {
+        if let Err(err) =
+            objects.delete(&track.object_key).await
+        {
+            tracing::warn!(key = %track.object_key, %err, "删不掉过期的对象,下一轮再来");
+            continue;
+        }
+        archive::forget_if_expired(conn, &track, RETAIN)
+            .await
+            .map_err(|err| format!("{err:?}"))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+/// 启动时清一轮,之后每 [`SWEEP_EVERY`] 一轮。没配对象存储就不起。
+pub(crate) fn spawn_sweeper(
+    pool: PgPool,
+    archive: &Archive,
+) {
+    let objects = archive.objects.clone();
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(SWEEP_EVERY);
+        loop {
+            // 第一次 tick 立刻就绪:进程起来就清一轮,不必先等一小时
+            every.tick().await;
+            let outcome = match pool.acquire().await {
+                Ok(mut conn) => {
+                    sweep(&mut conn, objects.as_ref()).await
+                }
+                Err(err) => Err(err.to_string()),
+            };
+            match outcome {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!(
+                    removed,
+                    "清掉了过期的存歌"
+                ),
+                Err(err) => {
+                    tracing::warn!(%err, "清理存歌失败")
+                }
+            }
+        }
+    });
 }
 
 /// 上游给的格式进了对象键,也决定交回去的 `Content-Type`。

@@ -26,6 +26,7 @@ use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, store_first,
     track_refs_of,
 };
+use crate::routes::play::archive;
 use crate::{AppState, fail};
 
 /// `GET /recent` 的查询参数。
@@ -211,12 +212,22 @@ pub(crate) async fn like_track(
 }
 
 /// `DELETE /liked/{track_id}` —— 取消红心。
+///
+/// 存进对象存储的那份从这一刻起重新数保留期(#126)。
 pub(crate) async fn unlike_track(
     State(state): State<AppState>,
     account: Account,
     Path(track_id): Path<String>,
 ) -> Result<StatusCode, Failure> {
-    set_liked(&state, &account, track_id, false).await
+    let status = set_liked(
+        &state,
+        &account,
+        track_id.clone(),
+        false,
+    )
+    .await?;
+    archive::restart_clock(&state, &track_id).await;
+    Ok(status)
 }
 
 /// 红心的开与关只差一个布尔值,两条路由因此共用这一段。

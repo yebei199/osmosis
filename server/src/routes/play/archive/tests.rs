@@ -1,5 +1,5 @@
 //! 听过的歌存进对象存储:存、不重复存、试听不存、`/played` 真的会触发;
-//! 再播时从对象存储交付,它出岔子时退回网易云。
+//! 再播时从对象存储交付,它出岔子时退回网易云;清理只删没人红心、三天没播的。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -355,4 +355,165 @@ async fn an_unreachable_store_falls_back_and_keeps_the_row()
 
     assert!(url.starts_with("http://127.0.0.1:"), "{url}");
     assert!(row(&down, &id).await.is_some());
+}
+
+/// 在事务里记一首存歌(连同桶里的对象),最后一次播放拨回 `days_ago` 天前。
+async fn stored_days_ago(
+    tx: &mut sqlx::PgConnection,
+    objects: &MemoryObjects,
+    id: &str,
+    days_ago: i32,
+) -> String {
+    use server::objects::Objects as _;
+
+    let key = format!("tracks/{id}/high.mp3");
+    objects.put(&key, audio(), "audio/mpeg").await.unwrap();
+    ledger::record(
+        tx,
+        &ledger::StoredTrack {
+            platform: "netease".to_owned(),
+            track_id: id.to_owned(),
+            quality: quality(),
+            object_key: key.clone(),
+            format: "mp3".to_owned(),
+            bit_rate: 320_000,
+            bytes: 4096,
+        },
+    )
+    .await
+    .expect("记账失败");
+    sqlx::query(
+        "UPDATE stored_tracks
+         SET last_played_at = now() - $2 * interval '1 day'
+         WHERE track_id = $1",
+    )
+    .bind(id)
+    .bind(days_ago)
+    .execute(&mut *tx)
+    .await
+    .expect("拨时间失败");
+    key
+}
+
+/// 把一首放进某个账号的红心(自家库里的那份缓存)。
+async fn liked_by(
+    tx: &mut sqlx::PgConnection,
+    account: &Account,
+    id: &str,
+) {
+    sqlx::query(
+        "INSERT INTO platform_tracks (platform, track_id, title, artists, duration_ms)
+         VALUES ('netease', $1, 't', ARRAY['a'], 1)",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .expect("写详情失败");
+    sqlx::query(
+        "INSERT INTO platform_playlist_tracks
+             (account_id, playlist_id, platform, track_id, position)
+         VALUES ($1, $2, 'netease', $3, 0)",
+    )
+    .bind(account.id)
+    .bind(server::store::cache::LIKED_PLAYLIST_ID)
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .expect("写红心失败");
+}
+
+/// 清理只删「没人红心、且三天没播」的;红心的与三天内播过的都留着。
+#[tokio::test]
+async fn the_sweep_keeps_liked_and_recent_tracks() {
+    let f = fixture("ar_sweep", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let old = testing::track_id("ar_sweep", 1);
+    let liked = testing::track_id("ar_sweep", 2);
+    let recent = testing::track_id("ar_sweep", 3);
+
+    let old_key =
+        stored_days_ago(&mut tx, &f.objects, &old, 4).await;
+    let liked_key =
+        stored_days_ago(&mut tx, &f.objects, &liked, 4)
+            .await;
+    liked_by(&mut tx, &f.account, &liked).await;
+    let recent_key =
+        stored_days_ago(&mut tx, &f.objects, &recent, 2)
+            .await;
+
+    super::sweep(&mut tx, f.objects.as_ref())
+        .await
+        .expect("清理应当成功");
+
+    assert_eq!(f.objects.get(&old_key), None);
+    assert!(f.objects.get(&liked_key).is_some());
+    assert!(f.objects.get(&recent_key).is_some());
+    let left = |id: &str| {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
+        )
+        .bind(id.to_owned())
+    };
+    assert_eq!(
+        left(&old).fetch_one(&mut *tx).await.unwrap(),
+        0
+    );
+    assert_eq!(
+        left(&liked).fetch_one(&mut *tx).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        left(&recent).fetch_one(&mut *tx).await.unwrap(),
+        1
+    );
+}
+
+/// 对象删不掉时那一行留着,下一轮再来 —— 先删行的话桶里就多一个没人记得的孤儿。
+#[tokio::test]
+async fn the_sweep_keeps_the_row_when_the_object_cannot_be_deleted()
+ {
+    let f = fixture("ar_orphan", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let id = testing::track_id("ar_orphan", 1);
+    stored_days_ago(&mut tx, &f.objects, &id, 4).await;
+
+    super::sweep(&mut tx, &Unreachable)
+        .await
+        .expect("删不掉对象不算清理失败");
+
+    let left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(left, 1);
+}
+
+/// 取消红心从那一刻重新数三天,而不是按很久以前那次播放当场就删。
+#[tokio::test]
+async fn unliking_restarts_the_clock() {
+    let f = fixture("ar_unlike", false).await;
+    let id = testing::track_id("ar_unlike", 1);
+    let mut conn = f.state.pool.acquire().await.unwrap();
+    stored_days_ago(&mut conn, &f.objects, &id, 4).await;
+    drop(conn);
+
+    crate::routes::library::likes::unlike_track(
+        State(f.state.clone()),
+        f.account.clone(),
+        axum::extract::Path(id.clone()),
+    )
+    .await
+    .expect("取消红心应当成功");
+
+    let mut conn = f.state.pool.acquire().await.unwrap();
+    let expired = ledger::expired(&mut conn, super::RETAIN)
+        .await
+        .unwrap();
+    assert!(
+        expired.iter().all(|track| track.track_id != id),
+        "刚取消红心的歌不该算过期"
+    );
 }
