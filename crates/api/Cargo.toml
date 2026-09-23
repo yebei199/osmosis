@@ -23,6 +23,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # wasm 上没有线程,也没有 tokio runtime;fetch 由浏览器驱动。
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# 应用内升级(src/update.rs):版本比较要按 semver(0.1.9 < 0.1.10、rc 早于正式版),
+# APK 要按 Release 里的 sha256 核对。两样都已在依赖树里,不新增下载。
+semver = "1"
+sha2 = "0.10"
 
 # 网页上的登录态存在 localStorage 里 —— 不存的话每次刷新都要重登。
 [target.'cfg(target_arch = "wasm32")'.dependencies]

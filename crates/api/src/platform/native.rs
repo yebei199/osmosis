@@ -47,6 +47,8 @@ fn client() -> Result<&'static reqwest::Client, ApiError> {
     let built = reqwest::Client::builder()
         .connect_timeout(REQUEST_TIMEOUT)
         .read_timeout(REQUEST_TIMEOUT)
+        // GitHub 的 API 不收没有 User-Agent 的请求(403),升级检查要走它。
+        .user_agent(concat!("osmosis/", env!("CARGO_PKG_VERSION")))
         .no_proxy()
         .build()
         .map_err(|e| ApiError::Transport(e.to_string()))?;

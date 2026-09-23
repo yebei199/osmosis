@@ -129,6 +129,8 @@ pub(crate) struct AppState {
     playlists: Freshness,
     /// 每个账号 `/playlists` 平台那半的上一份(见 `routes::library::playlists`)。
     platform_lists: PlatformLists,
+    /// 安卓安装包的回源地址(见 `routes::apk`)。
+    apk_releases: String,
     /// 听过的歌存到哪(#126)。没配 `S3_ENDPOINT` 就是 `None`,整套归档不启用 ——
     /// 本机开发不必为它起一个 RustFS。
     archive: Option<Archive>,
@@ -436,6 +438,11 @@ async fn main() {
         policies: Policies::tuned(),
         playlists: Freshness::default(),
         platform_lists: PlatformLists::default(),
+        apk_releases: std::env::var("APK_RELEASES_BASE")
+            .unwrap_or_else(|_| {
+                routes::apk::DEFAULT_RELEASES_BASE
+                    .to_owned()
+            }),
         archive: archive(),
     };
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
@@ -512,6 +519,11 @@ async fn main() {
         // 会随参数变(JSON 还是音频流),而那是两件事,不是一件事的两个选项。
         .route("/download/{track_id}", get(download))
         .route("/lyric/{track_id}", get(lyric))
+        // 应用内升级的安装包(#129)。版本与哈希客户端直接问 GitHub,只有字节从这里过。
+        .route(
+            "/app/android/{file}",
+            get(routes::apk::android_apk),
+        )
         .route("/played", post(record_play))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
