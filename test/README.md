@@ -29,16 +29,20 @@ test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
 
 ## wheel-scroll-android.sh —— 外接鼠标滚列表还崩不崩(#120)
 
-跑之前:`just mcp-android` 装的 debug 包在跑、已登录,要测的列表已经在屏上。
+跑之前:`just mcp-android` 装的 debug 包在跑、已登录,要测的列表已经在屏上、停在顶端。
+多台设备在线时带 `ANDROID_SERIAL`。
 
 ```sh
-ROW_ID=TrackList::touch test/wheel-scroll-android.sh      # 每日推荐、歌单详情
-ROW_ID=PlaylistList::touch test/wheel-scroll-android.sh   # 我的歌单
+test/wheel-scroll-android.sh                                  # 每日推荐、歌单详情
+LIST_ID=MusicPage::playlist-list test/wheel-scroll-android.sh # 我的歌单
 ```
 
-`adb shell input mouse scroll` 打出的是 `ACTION_SCROLL`,与真鼠标滚轮同一条路。先正负交替
-滚 20 格,断言 PID 没变、`logcat -b crash` 没有新记录;再往下滚半格,断言首行上移 ——
-整格是 60px,正好一行高,整格滚完首行的 y 看不出区别。
+滚轮来自系统自带的 `hid` 工具注册的虚拟 USB 鼠标,走的是和真鼠标一样的
+`ACTION_SCROLL`。`input mouse scroll` 在 Android 14 上不存在,报 Unknown command
+退出码却是 0,别换回去。先正负交替滚 20 格,断言 PID 没变、没有新的 crash 记录、
+该 PID 的 logcat 里没有 `RustPanic` —— 输入回调里的 panic 被 android-activity 接住,
+进程不死、界面冻住,只看 PID 认不出来。再往下两格、往上两格,断言列表首行标题
+先换人再换回。
 
 ## 浏览器侧的对照页
 
