@@ -399,7 +399,23 @@ pub(crate) fn session_path_from(
         _ => return None,
     };
 
-    Some(base.join("osmosis/session"))
+    Some(base.join(APP_DIR).join("session"))
+}
+
+/// 状态目录名,按烘进来的后端地址分(#127)。
+pub(crate) const APP_DIR: &str =
+    app_dir(option_env!("OSMOSIS_API_BASE"));
+
+/// 没烘地址的构建连本机后端(见 [`crate::base_url`]),它签发的 token 在生产
+/// 那边不作数、反之亦然。两者共用一份会话的话,开发实例一见 401 就把装机版的
+/// 会话删了。装机版沿用原来的 `osmosis`,更新之后才读得到已有的登录态。
+pub(crate) const fn app_dir(
+    api_base: Option<&str>,
+) -> &'static str {
+    match api_base {
+        Some(_) => "osmosis",
+        None => "osmosis-dev",
+    }
 }
 
 /// 本地设置文件,与会话文件同一个目录。
@@ -575,6 +591,27 @@ pub(crate) fn save_session(token: Option<&str>) {
     };
 
     write_session(&path, token);
+}
+
+/// 把会话文件挪成同目录的 `session.bak`,覆盖上一份备份。
+///
+/// 挪不动(比如备份那一侧没有写权限)就退回直接删:留着它的话,下次启动又恢复出
+/// 这个已被拒的 token。
+pub(crate) fn backup_session() {
+    let Some(path) = session_file() else {
+        return;
+    };
+    if !path.exists() {
+        return;
+    }
+
+    let backup = path.with_extension("bak");
+    if let Err(err) = std::fs::rename(&path, &backup) {
+        log::warn!("备份会话失败,直接清掉: {err}");
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    log::warn!("失效的会话已备份到 {}", backup.display());
 }
 
 /// 写会话文件。权限 0600 —— token 等同于密码。

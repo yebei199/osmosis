@@ -159,6 +159,11 @@ pub(crate) fn save_session(token: Option<&str>) {
     };
 }
 
+// ponytail: web 冻结中(#105),失效时不留备份,直接清
+pub(crate) fn backup_session() {
+    save_session(None);
+}
+
 /// 同 [`get_json`],但不解码,原样给字节。
 pub(crate) async fn get_bytes(
     url: String,

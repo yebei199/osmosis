@@ -40,6 +40,15 @@ pub fn clear() {
     super::platform::save_session(None);
 }
 
+/// 服务端判这个 token 无效时忘掉它:与 [`clear`] 相同,但落盘的那份先挪成
+/// `session.bak` 再清(#127)。删会话不可逆,判错一次就得重登,留一份才查得回来。
+pub fn expire() {
+    if let Ok(mut slot) = TOKEN.write() {
+        *slot = None;
+    }
+    super::platform::backup_session();
+}
+
 /// 从落盘处恢复上次的登录态。各端入口在启动时调一次。
 ///
 /// 恢复出来的 token 可能已经被服务端吊销 —— 那不是这里能知道的事,

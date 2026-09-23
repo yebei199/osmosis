@@ -325,8 +325,8 @@ mod tests {
     /// 把会话落盘处指到临时文件上。
     ///
     /// 少了这一步,跑一次测试就把开发机上真实的登录态删掉 ——
-    /// 下面那条会话失效的用例会走到 `session::clear()`,而它删的是
-    /// `~/.local/state/osmosis/session`,且一声不吭(理由同 account.rs)。
+    /// 下面那条会话失效的用例会走到 `session::expire()`,而它挪走的是
+    /// `~/.local/state/osmosis-dev/session`,且一声不吭(理由同 account.rs)。
     fn redirect_session_to_a_temp_file() {
         let dir = std::env::temp_dir()
             .join("osmosis-netease-session");

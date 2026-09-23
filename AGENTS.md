@@ -235,6 +235,10 @@ cp apps/web/index.html test/*.html dist/web/
 地址烘在编译期(`crates/api` 的 `base_url()`),应用启动时日志第一屏写一行
 `服务端: <地址>`,桌面看 stderr,手机看 `adb logcat -s osmosis`。
 
+登录态、设置、设备 id 跟着后端分目录(#127):没烘地址的构建落在
+`~/.local/state/osmosis-dev/`(安卓是私有目录下的 `osmosis-dev/`),装机版仍是
+`osmosis/`。开发实例因此删不到装机版的会话;要清开发那份登录,只动 `osmosis-dev/`。
+
 | 构建 | 配方 | 连哪 |
 |---|---|---|
 | debug | `just desktop-dev`、`just mcp-android` | `http://127.0.0.1:3000`,本机 `server-dev` |
