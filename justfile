@@ -17,6 +17,9 @@ desktop_mcp_port := "8091"
 # 要打一个连本机后端的包:OSMOSIS_API_BASE=http://127.0.0.1:3000 just android-build。
 # dev 配方(desktop-dev / web-dev)不设它,保持连本机 server-dev 的老习惯。
 api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
+# debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
+# 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
+local_api := "http://127.0.0.1:3000"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -80,10 +83,14 @@ ci-boundaries:
 # 其中调试信息现在由 crates/ui/build.rs 在 debug 档一律打开(元素树少了它就是空的,
 # 且不报错),这里保留显式设置只为把三样凑齐、一眼看得全。
 # 发布产物不受影响:`cargo build --release` 与 APK 都不带 mcp(见 apps/desktop 的 features)。
+#
+# 连本机后端(local_api),没起就在编译前失败。`env -u OSMOSIS_API_BASE`:shell 里
+# 残留的那个变量会被 option_env! 烘进去,悄悄连到别处;清掉而不是显式设成 local_api,
+# 是为了和 `just shot`、裸 cargo build 共用同一份构建指纹,来回切不重编。
 [group('三端')]
 [group('桌面')]
-desktop-dev extra="": (mcp-port-free desktop_mcp_port)
-    SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+desktop-dev extra="": local-backend-up (mcp-port-free desktop_mcp_port)
+    env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
@@ -239,6 +246,21 @@ dev-adb *args:
     fi
     exec adb -s "$serial" "$@"
 
+# 本机后端没在应答就**编译之前**失败,并说怎么起。形状同下面的 mcp-port-free。
+# debug 构建连的是它(见 local_api),没起的话几分钟的编译之后界面照常出来,
+# 点歌才报「同播失败:信令错误」—— 看着像代码坏了。
+[private]
+local-backend-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if curl -sf -o /dev/null --max-time 2 {{local_api}}/health; then exit 0; fi
+    echo "{{local_api}} 上没有 server 在应答,拒绝构建 —— debug 包连的就是它,起来了也点不了歌。" >&2
+    echo "按顺序起(各占一个终端):" >&2
+    echo "  just bang-dream     # gRPC 聚合层,127.0.0.1:50051。仓库位置取 BANG_DREAM_REPO," >&2
+    echo "                      # 当前 ${BANG_DREAM_REPO:-未设,默认 ../bang-dream};要指向带 data/credentials 的那份 checkout" >&2
+    echo "  just server-dev     # 连带起 Postgres 容器,监听 3000" >&2
+    exit 1
+
 # 传进来的端口被占就**立刻失败**,别让 app 起来。
 #
 # 这是在补一个静默失败:slint 绑不上端口时只在日志里留一行 "failed to bind ...
@@ -286,8 +308,8 @@ mcp-forward:
 # 连手机自己,启动即「同播失败:信令错误」。forward 与 reverse 都挂在 adb 连接上,
 # **adb 重连(无线 adb 换端口、拔插线)之后重跑本配方**,或单独补 mcp-forward 与 android-reverse。
 [group('mcp')]
-mcp-android: mcp-forward android-reverse
-    nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
+mcp-android: local-backend-up mcp-forward android-reverse
+    env -u OSMOSIS_API_BASE nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     {{just_executable()}} dev-adb install -r {{apk}}
     {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
 
