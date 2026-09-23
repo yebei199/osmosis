@@ -5,7 +5,9 @@ pub use crate::shader::nav_glass::NavGlassControls;
 
 use crate::Shell;
 use crate::Viz;
-use crate::runtime::frame_stats::{FrameAccounting, fps};
+use crate::runtime::frame_stats::{
+    FrameAccounting, fps, stall,
+};
 use crate::*;
 
 /// 同 [`run`],但额外驱动导航侧栏的液态玻璃选中器与播放页视觉。带 bevy 的端
@@ -62,6 +64,7 @@ pub fn run_with_renderers(
     // 关掉时不建定时器(理由同 [`run`])。整个 Option 搬进下面的通知回调,Timer 随回调
     // 活到事件循环结束。
     let fps = fps_enabled().then(|| fps::start(&ui));
+    let _stall = crate::stall_enabled().then(stall::start);
 
     // 一帧的account:回调里(我们:组装参数 + 驱动渲染器)与回调外(Slint 重绘整个
     // 界面 + 浏览器合成/呈现)各占多少。web 上帧率被砍半时,只有这个比值能说明该往

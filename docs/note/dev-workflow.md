@@ -21,6 +21,11 @@ OSMOSIS_FPS=1 just desktop-dev      # 外加左上角帧率读数
 wasm 与 APK 读不到运行期环境变量(页面由浏览器拉起、APK 由系统拉起),那两端这个开关
 在构建期生效,得带着它重新构建:`OSMOSIS_FPS=1 just web-dev`。
 
+量「点一下冻多久」用 `OSMOSIS_STALL`,开关规矩同上(APK 要构建期带上)。它不看均值:
+一个 10ms 的定时器两次触发之间隔了超过 50ms,就记一行 `ui: 主线程卡了 Nms`,
+点一下之后那几行加起来就是这一下的冻结时长。量要用 release 档 —— debug 档的本地
+crate 是 opt-level 0,数字会失真。
+
 截真实窗口像素:
 
 ```sh

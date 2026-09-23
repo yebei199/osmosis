@@ -53,6 +53,38 @@ fn rows_are_marked_against_the_liked_set() {
     assert!(!is_liked(&set, "2"));
 }
 
+/// 一批新行在变成模型之前就标好心,不必等整表换上之后再扫一遍。
+///
+/// 近千行的歌单,换上之后再逐行 `row_data` / `set_row_data` 是整表的克隆与
+/// 标脏(#117);在 Vec 里标是一次赋值。
+#[test]
+fn fresh_rows_are_marked_before_they_become_a_model() {
+    let set = set_of(&["2"]);
+    let mut rows = vec![track_row("1"), track_row("2")];
+
+    mark(&set, &mut rows);
+
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.liked)
+            .collect::<Vec<_>>(),
+        vec![false, true]
+    );
+}
+
+/// 拉回来的红心集合与手上的一样:说没变,调用方就不必整表重标。
+///
+/// 每次打开歌单都会重拉一次,而绝大多数时候什么都没变 ——
+/// 不认这一步,打开歌单就是把刚标过的近千行再扫一遍。
+#[test]
+fn replacing_with_the_same_ids_reports_no_change() {
+    let set = set_of(&["1", "2"]);
+
+    assert!(!replace(&set, vec!["2".into(), "1".into()]));
+    assert!(replace(&set, vec!["1".into()]));
+    assert!(!is_liked(&set, "2"), "变了的那份该换上");
+}
+
 /// 点红心当场把「我喜欢的 N 首」加一。
 ///
 /// 那个数字来自 `/playlists`,而点红心的成功路径不重拉它 —— 现象是心变红了、
