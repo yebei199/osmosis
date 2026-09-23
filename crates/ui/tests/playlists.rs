@@ -60,7 +60,11 @@ fn opening_a_playlist_shows_its_name() {
         "华语经典"
     );
     assert!(present(&ui, "MusicPage::playlist-header"));
-    // 详情里摆的是曲目,与别的分区同一个列表组件
+    // 详情里摆的是曲目,与别的分区同一个列表组件。曲目到了才摆列表,
+    // 一首都没有时是空状态(#116)。
+    ui.global::<Player>().set_tracks(slint::ModelRc::new(
+        slint::VecModel::from(vec![ui::TrackRow::default()]),
+    ));
     assert!(present(&ui, "MusicPage::track-list"));
 }
 
