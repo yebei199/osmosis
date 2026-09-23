@@ -56,7 +56,7 @@ fn session_path_prefers_the_explicit_state_dir() {
     .expect("给了显式目录就该有路径");
 
     assert!(path.starts_with("/data/user/0/app/files"));
-    assert!(path.ends_with("osmosis/session"));
+    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
 }
 
 /// 边界:安卓上除了显式目录什么都没有,那时也要落得下来。
@@ -71,7 +71,7 @@ fn an_explicit_state_dir_works_without_any_env() {
     )
     .expect("只有显式目录也该有路径");
 
-    assert!(path.ends_with("osmosis/session"));
+    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
 }
 
 /// 有 XDG_STATE_HOME 就用它 —— 登录态是状态不是配置。
@@ -85,7 +85,7 @@ fn session_path_prefers_state_home() {
     .expect("给了 state home 就该有路径");
 
     assert!(path.starts_with("/tmp/state"));
-    assert!(path.ends_with("osmosis/session"));
+    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
 }
 
 /// 没有 XDG_STATE_HOME 就退到 HOME/.local/state。
@@ -99,6 +99,21 @@ fn session_path_falls_back_to_home() {
     .expect("有 HOME 就该有路径");
 
     assert!(path.starts_with("/home/someone/.local/state"));
+}
+
+/// **连本机后端的构建与连生产的构建各用一个目录**(#127)。
+///
+/// 两者共用一份会话时,开发实例拿生产 token 去问本机后端必然 401,
+/// 于是把共用的会话文件删了,装机版跟着掉登录。token 只在签发它的那个
+/// 后端作数,所以按「烘进来的后端地址」分,而不是按构建档分。
+#[test]
+fn the_dev_backend_gets_its_own_state_dir() {
+    assert_eq!(platform::app_dir(None), "osmosis-dev");
+    assert_eq!(
+        platform::app_dir(Some("https://music.cryptorust.uk")),
+        "osmosis",
+        "装机版沿用原来的目录,更新之后才读得到已有的登录态"
+    );
 }
 
 /// 两个都没有时不猜一个路径出来 —— 安卓上就是这种情况,
