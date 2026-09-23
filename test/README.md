@@ -56,6 +56,23 @@ test/playlist-fill-e2e.sh   # 安卓默认 8090;桌面用 PORT=8091
 `adb screencap` 截下列表自己那一块,灰度标准差 ≥ 0.06 才算画出了内容 —— 只剩背景
 渐变的空列表区实测 0.033,画出行的 0.067~0.070。所以要有 `adb` 和 `magick`。
 
+## wheel-scroll-android.sh —— 外接鼠标滚列表还崩不崩(#120)
+
+跑之前:`just mcp-android` 装的 debug 包在跑、已登录,要测的列表已经在屏上、停在顶端。
+多台设备在线时带 `ANDROID_SERIAL`。
+
+```sh
+test/wheel-scroll-android.sh                                  # 每日推荐、歌单详情
+LIST_ID=MusicPage::playlist-list test/wheel-scroll-android.sh # 我的歌单
+```
+
+滚轮来自系统自带的 `hid` 工具注册的虚拟 USB 鼠标,走的是和真鼠标一样的
+`ACTION_SCROLL`。`input mouse scroll` 在 Android 14 上不存在,报 Unknown command
+退出码却是 0,别换回去。先正负交替滚 20 格,断言 PID 没变、没有新的 crash 记录、
+该 PID 的 logcat 里没有 `RustPanic` —— 输入回调里的 panic 被 android-activity 接住,
+进程不死、界面冻住,只看 PID 认不出来。再往下两格、往上两格,断言列表首行标题
+先换人再换回。
+
 ## 浏览器侧的对照页
 
 本目录下的 `*.html` 是**排查性能问题时用来划定责任范围的最小对照页**。不含 Slint、
