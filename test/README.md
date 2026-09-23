@@ -25,6 +25,18 @@ test/dev-recipes.sh
 那几条配方,断言退出码、调用参数,以及守卫失败时**没有进编译**。不碰真设备,几秒跑完。
 改了那几条配方就跑一遍。
 
+## rollout.sh —— 发版推送脚本还守得住吗
+
+```sh
+test/rollout.sh
+```
+
+`release/rollout.sh`(`just rollout`,#128)要连 gh、pc3、真机和 nixos_config,不能拿真的
+去试。这份把假的 `gh` / `ssh` / `scp` / `adb` / `nix` / `docker` / `nmap` 顶在 PATH 前面,
+nixos_config 换成临时 git 仓库加本地裸远端,断言:签名不对不上传不装机、名单外设备不装、
+离线设备进汇总、设备上读回的 APK 哈希要对、nixos_config 不干净或 prefetch 对不上就不动、
+镜像要含 arm64。几秒跑完,改了 `release/` 就跑一遍。
+
 ## played-e2e.sh —— 起播真的被记进账本了吗
 
 跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
