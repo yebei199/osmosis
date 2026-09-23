@@ -21,7 +21,8 @@ fn config(endpoint: &str) -> S3Config {
 async fn s3() -> S3 {
     let endpoint = std::env::var("S3_ENDPOINT")
         .unwrap_or_else(|_| DEFAULT_ENDPOINT.to_owned());
-    let s3 = S3::new(config(&endpoint)).expect("配置应当合法");
+    let s3 =
+        S3::new(config(&endpoint)).expect("配置应当合法");
     s3.ensure_bucket().await.unwrap_or_else(|err| {
         panic!(
             "连不上 RustFS({endpoint}): {err}\n起一个:just rustfs"
