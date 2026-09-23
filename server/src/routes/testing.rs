@@ -25,7 +25,8 @@ use server::bangdream::proto::{
     GetTracksRequest, GetTracksResponse,
     ListUserPlaylistsRequest, ListUserPlaylistsResponse,
     LogoutRequest, LogoutResponse, Platform, PlaySource,
-    Playlist, PlaylistTrackRef, QrLoginEvent, Track,
+    Playlist, PlaylistTrackRef, QrLoginEvent,
+    SetTrackLikedRequest, SetTrackLikedResponse, Track,
     WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
     auth_service_server::{AuthService, AuthServiceServer},
@@ -189,6 +190,11 @@ pub(crate) struct FakeUpstream {
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
     /// 没有别的办法验证:两种写法给出的曲目列表一模一样,差别只在问了几次。
     pub(crate) asked: Arc<Mutex<Vec<Vec<String>>>>,
+    /// `GetPlaylist` 永远不回。
+    ///
+    /// 「先回库」的判据是第二次请求**不等上游**:上游卡死时它照样回来,
+    /// 等了的话测试就卡在超时上。比「慢 N 毫秒」再掐表可靠 —— 不看机器快慢。
+    pub(crate) stall_playlist: bool,
 }
 
 impl FakeUpstream {
@@ -331,7 +337,18 @@ impl LibraryService for FakeUpstream {
         &self,
         _request: Request<GetPlaylistRequest>,
     ) -> Result<Response<GetPlaylistResponse>, Status> {
+        if self.stall_playlist {
+            std::future::pending::<()>().await;
+        }
         Ok(Response::new(self.playlist.clone()))
+    }
+
+    async fn set_track_liked(
+        &self,
+        _request: Request<SetTrackLikedRequest>,
+    ) -> Result<Response<SetTrackLikedResponse>, Status>
+    {
+        Ok(Response::new(SetTrackLikedResponse::default()))
     }
 }
 
@@ -414,6 +431,20 @@ pub(crate) fn unreachable_upstream() -> Upstream {
     upstream_at("http://127.0.0.1:1")
 }
 
+/// 同一份 state 换一个上游:库与「缓存有多新」的记录都沿用。
+///
+/// 平台那边变了、或者卡住了,在测试里就是换一个假上游 —— 假上游起来之后
+/// 就不能再改,而被测的正是「同一个进程前后两次请求」。
+pub(crate) fn with_upstream(
+    state: &AppState,
+    upstream: Upstream,
+) -> AppState {
+    AppState {
+        upstream,
+        ..state.clone()
+    }
+}
+
 pub(crate) fn state(
     pool: PgPool,
     upstream: Upstream,
@@ -429,5 +460,6 @@ pub(crate) fn state(
         ),
         policies:
             server::gate::ratelimit::Policies::tuned(),
+        playlists: Default::default(),
     }
 }

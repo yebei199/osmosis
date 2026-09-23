@@ -25,7 +25,7 @@ use server::store::playlist::{self, TrackRef};
 
 use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
-    netease_name, track_refs_of,
+    netease_name, store_first, track_refs_of,
 };
 use crate::{AppState, conn, fail};
 
@@ -144,6 +144,20 @@ pub(crate) async fn platform_playlist_tracks(
     account: Account,
     Path(id): Path<String>,
 ) -> Result<Json<TracksDto>, Failure> {
+    let playlist_id = id.clone();
+    store_first(&state, &account, &id, |state, account| {
+        fetch_platform_playlist(state, account, playlist_id)
+    })
+    .await
+    .map(Json)
+}
+
+/// 平台歌单的回源路径:取成员关系,回填缓存。
+async fn fetch_platform_playlist(
+    state: AppState,
+    account: Account,
+    id: String,
+) -> Result<TracksDto, Failure> {
     let mut library = state.upstream.library.clone();
     let detail = library
         .get_playlist(bangdream::as_user(
@@ -166,10 +180,10 @@ pub(crate) async fn platform_playlist_tracks(
     )
     .await?;
 
-    Ok(Json(TracksDto {
+    Ok(TracksDto {
         tracks,
         unavailable,
-    }))
+    })
 }
 
 /// `POST /playlists` 的请求体。

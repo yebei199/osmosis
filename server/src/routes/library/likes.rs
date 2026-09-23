@@ -23,7 +23,8 @@ use server::store::account::Account;
 use server::store::cache;
 
 use crate::routes::catalog::catalog_cache::{
-    cached_tracks, detail_tracks_of, track_refs_of,
+    cached_tracks, detail_tracks_of, store_first,
+    track_refs_of,
 };
 use crate::{AppState, fail};
 
@@ -91,6 +92,21 @@ pub(crate) async fn liked(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
+    store_first(
+        &state,
+        &account,
+        cache::LIKED_PLAYLIST_ID,
+        fetch_liked,
+    )
+    .await
+    .map(Json)
+}
+
+/// 红心的回源路径:问账号 → 找红心歌单 → 取成员关系 → 回填缓存。
+async fn fetch_liked(
+    state: AppState,
+    account: Account,
+) -> Result<TracksDto, Failure> {
     let mut auth = state.upstream.auth.clone();
     let mut library = state.upstream.library.clone();
 
@@ -146,10 +162,10 @@ pub(crate) async fn liked(
     )
     .await?;
 
-    Ok(Json(TracksDto {
+    Ok(TracksDto {
         tracks,
         unavailable,
-    }))
+    })
 }
 
 /// 找出这个账号的红心歌单在平台上的 id。
@@ -226,6 +242,12 @@ pub(crate) async fn set_liked(
         ))
         .await
         .map_err(|status| fail(&status))?;
+    // 刚在这里点的心,下一次打开红心就得看到:不先回库里那份。
+    // ponytail: 点心之前已发出的后台回源若晚于这里落地,会把旧的那份记成新的,
+    // 最多晚 REFRESH_EVERY 看到;真撞上再给记录加代数号。
+    state
+        .playlists
+        .forget(account.id, cache::LIKED_PLAYLIST_ID);
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -41,6 +41,7 @@ use server::syncplay::signaling::{
 mod routes;
 
 use routes::auth::{health, login, logout, register};
+use routes::catalog::catalog_cache::Freshness;
 use routes::catalog::lyric::lyric;
 use routes::catalog::netease::{
     create_qr, qr_state, status as netease_status, unbind,
@@ -121,6 +122,8 @@ pub(crate) struct AppState {
     origins: AllowedOrigins,
     /// 六条限流策略,构造一次共享 `Arc`(见 `gate::ratelimit`)。
     policies: Policies,
+    /// 库里每个平台歌单的那份是什么时候回源拿到的(见 `catalog_cache`)。
+    playlists: Freshness,
 }
 
 // 鉴权提取器只要池,不该认识别的东西 —— 见 server::gate::auth。
@@ -412,6 +415,7 @@ async fn main() {
         control: SharedControl::default(),
         origins: AllowedOrigins::new(allowed_origins()),
         policies: Policies::tuned(),
+        playlists: Freshness::default(),
     };
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
