@@ -7,8 +7,10 @@
 //! 这个模块本身因此只有两个动作:**整体覆盖**一个歌单,和**读回来**。没有
 //! 「往缓存里加一首」这种接口 —— 那是写,而写不在这里发生。
 
+use std::collections::HashSet;
+
 use contract::TrackDto;
-use sqlx::{PgConnection, QueryBuilder};
+use sqlx::{Connection, PgConnection, QueryBuilder};
 
 use crate::error::AppError;
 
@@ -29,8 +31,8 @@ const ROWS_PER_STATEMENT: usize = 1000;
 /// 替换而不是追加:平台那边删掉的歌,这边刷新之后也该没有它。追加的话删掉的
 /// 歌会永远留着,而且每刷一次列表就长一截。
 ///
-/// 调用方应当把它和自己的其余写操作放在同一个事务里 —— 成员关系删掉了而新的
-/// 没插进去,那一瞬间的歌单是空的。
+/// 成员关系那一步自带事务(见 [`set_membership`]);详情先写、单独成立,
+/// 成员关系失败了留下的只是几条多余的详情,不是一个空歌单。
 pub async fn set_playlist(
     conn: &mut PgConnection,
     account_id: i64,
@@ -92,6 +94,10 @@ impl TrackRef {
 /// 传进来的 id 必须已经有详情(见 [`missing_details`]),否则外键会拒绝 ——
 /// 那是有意的:悄悄插进去的话它会在读回时的 JOIN 里消失,歌单少一首而没有
 /// 任何人报错。
+///
+/// 与库里那份一样(次序与加入时间都算)就一行不写:后台每次回源的常态是
+/// 平台那边什么都没变,先删后插就是近两千行白写(#124)。要写时先删后插包在
+/// 一个事务里,中途失败库里还是原来那份,不会留下空歌单。
 pub async fn set_membership(
     conn: &mut PgConnection,
     account_id: i64,
@@ -99,13 +105,29 @@ pub async fn set_membership(
     platform: &str,
     refs: &[TrackRef],
 ) -> Result<(), AppError> {
+    let mut tx = conn.begin().await?;
+
+    // 同一首出现两次时插入只留第一次(下面的 ON CONFLICT),比对也照这个来
+    let mut seen = HashSet::new();
+    let wanted: Vec<TrackRef> = refs
+        .iter()
+        .filter(|track| seen.insert(track.id.as_str()))
+        .cloned()
+        .collect();
+    if stored_membership(&mut tx, account_id, playlist_id)
+        .await?
+        == wanted
+    {
+        return Ok(());
+    }
+
     sqlx::query(
         "DELETE FROM platform_playlist_tracks
          WHERE account_id = $1 AND playlist_id = $2",
     )
     .bind(account_id)
     .bind(playlist_id)
-    .execute(&mut *conn)
+    .execute(&mut *tx)
     .await?;
 
     for (offset, chunk) in
@@ -139,10 +161,41 @@ pub async fn set_membership(
         // 同一首歌在一个歌单里出现两次是平台的事,不该让整次刷新失败
         query.push(" ON CONFLICT DO NOTHING");
 
-        query.build().execute(&mut *conn).await?;
+        query.build().execute(&mut *tx).await?;
     }
 
+    tx.commit().await?;
     Ok(())
+}
+
+/// 库里这个歌单现在的成员关系,按次序。
+///
+/// 只比 id 与加入时间:平台目前只有一个,`platform` 列恒同。
+async fn stored_membership(
+    conn: &mut PgConnection,
+    account_id: i64,
+    playlist_id: &str,
+) -> Result<Vec<TrackRef>, AppError> {
+    // 写进去是 to_timestamp(毫秒 / 1000),读回来乘回去再取整,毫秒不丢
+    let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT track_id,
+                round(extract(epoch FROM added_at) * 1000)::bigint
+         FROM platform_playlist_tracks
+         WHERE account_id = $1 AND playlist_id = $2
+         ORDER BY position",
+    )
+    .bind(account_id)
+    .bind(playlist_id)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, added_at_ms)| TrackRef {
+            id,
+            added_at_ms,
+        })
+        .collect())
 }
 
 /// 这些 id 里哪些还没有详情。

@@ -248,3 +248,157 @@ async fn the_liked_list_is_an_ordinary_playlist() {
 
     assert_eq!(got, tracks);
 }
+
+/// 这个歌单每一行成员关系的物理位置,按 position 排。
+///
+/// 删了重插的行一定换位置,原地没动的行不会 —— 数「写没写」只能看它:
+/// 两种写法读回来的曲目一模一样。
+async fn row_locations(
+    tx: &mut Transaction<'static, Postgres>,
+    account_id: i64,
+    playlist_id: &str,
+) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT ctid::text FROM platform_playlist_tracks
+         WHERE account_id = $1 AND playlist_id = $2
+         ORDER BY position",
+    )
+    .bind(account_id)
+    .bind(playlist_id)
+    .fetch_all(&mut **tx)
+    .await
+    .expect("读行位置失败")
+}
+
+/// 回源拿到的成员关系与库里一样时,一行都不重写。
+///
+/// 978 首的红心,常态是「平台那边什么都没变」。先删后插的话,每次后台刷新
+/// 都是近两千行的写,而读回来的东西毫无变化。
+#[tokio::test]
+async fn an_unchanged_membership_is_not_rewritten() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_unchanged").await;
+    cache::put_details(
+        &mut tx,
+        &[track("1", "甲"), track("2", "乙")],
+    )
+    .await
+    .expect("写详情应该成功");
+    let refs = [
+        cache::TrackRef::new("1", Some(1_700_000_000_123)),
+        cache::TrackRef::new("2", None),
+    ];
+
+    cache::set_membership(
+        &mut tx, account.id, "p1", "netease", &refs,
+    )
+    .await
+    .expect("首次写成员关系应该成功");
+    let before =
+        row_locations(&mut tx, account.id, "p1").await;
+
+    cache::set_membership(
+        &mut tx, account.id, "p1", "netease", &refs,
+    )
+    .await
+    .expect("再写一次应该成功");
+
+    assert_eq!(
+        row_locations(&mut tx, account.id, "p1").await,
+        before,
+        "成员关系没变,却重写了"
+    );
+}
+
+/// 只有加入时间变了,也算变了。
+///
+/// 取消心再点回来,平台给的是同一个 id、新的加入时刻 —— 当成没变的话,
+/// 这首歌停在原来的位置,而用户刚点的心该排在最前。
+#[tokio::test]
+async fn a_new_added_at_counts_as_a_change() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_added_at_change")
+            .await;
+    cache::put_details(
+        &mut tx,
+        &[track("1", "甲"), track("2", "乙")],
+    )
+    .await
+    .expect("写详情应该成功");
+
+    for first_added in [1_000, 3_000] {
+        cache::set_membership(
+            &mut tx,
+            account.id,
+            "p1",
+            "netease",
+            &[
+                cache::TrackRef::new(
+                    "1",
+                    Some(first_added),
+                ),
+                cache::TrackRef::new("2", Some(2_000)),
+            ],
+        )
+        .await
+        .expect("写成员关系应该成功");
+    }
+
+    let got = cache::tracks_of(&mut tx, account.id, "p1")
+        .await
+        .expect("读缓存应该成功");
+    let ids: Vec<&str> =
+        got.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["1", "2"], "重新点的心该排在最前");
+}
+
+/// 重写中途失败,库里还是原来那份,不是空歌单。
+///
+/// 先删后插而不包事务的话,插入那一步失败(这里是一首没有详情的歌撞上外键)
+/// 时旧的已经删了,用户打开的就是一个空歌单。
+#[tokio::test]
+async fn a_failed_rewrite_leaves_the_old_membership() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "cache_failed_rewrite").await;
+    cache::put_details(
+        &mut tx,
+        &[track("1", "甲"), track("2", "乙")],
+    )
+    .await
+    .expect("写详情应该成功");
+    cache::set_membership(
+        &mut tx,
+        account.id,
+        "p1",
+        "netease",
+        &[
+            cache::TrackRef::new("1", None),
+            cache::TrackRef::new("2", None),
+        ],
+    )
+    .await
+    .expect("首次写成员关系应该成功");
+
+    cache::set_membership(
+        &mut tx,
+        account.id,
+        "p1",
+        "netease",
+        &[
+            cache::TrackRef::new("1", None),
+            cache::TrackRef::new("没有详情", None),
+        ],
+    )
+    .await
+    .expect_err("没有详情的曲目该被外键拒绝");
+
+    let got = cache::tracks_of(&mut tx, account.id, "p1")
+        .await
+        .expect("失败之后照样读得出来");
+    let ids: Vec<&str> =
+        got.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, ["1", "2"]);
+}
