@@ -265,19 +265,26 @@ mcp-android: mcp-forward
     adb install -r {{apk}}
     adb shell am start -n io.github.osmosis/.MainActivity
 
-# 杀掉所有跑着的桌面实例。两处静默失败等着:
+# 杀掉所有跑着的桌面实例。三处静默失败等着:
 #
 # 1. 进程名是 `osmosis-desktop`([[bin]] name),不是包名 `app-desktop`。拿包名去
 #    pkill 不报错,只是没杀掉 —— 而你还在对着十几分钟前的老进程截图;
 # 2. 用 `-x`(精确匹配进程名)而不是 `-f`(匹配整条命令行)。`-f` 会把本命令自己的
 #    命令行也算作命中,连调用它的 shell 一起杀掉,留下退出码 144。
+# 3. `desktop-install` 装的那份走的是 nix 的 `wrapProgram`:`/etc/profiles/.../
+#    osmosis-desktop` 只是个转发脚本,真正跑起来的进程是它 `exec` 出来的
+#    `.osmosis-desktop-wrapped`,15 字符的 comm 截断成 `.osmosis-deskto`(前导点
+#    是 wrapper 的命名惯例)。单独 `-x osmosis-desktop` 精确匹配不上它,进程
+#    "杀了又在" —— 其实是从没真的杀掉过(2026-09-23,#114)。两个名字都要列,
+#    dev 构建(`target/debug/osmosis-desktop`)走的是第一个,装机版走第二个。
 #
-# `-x` 能用是因为名字正好 15 个字符,是 Linux comm 存得下的上限;再长一个字就会被
-# 截断,`-x` 于是永远匹配不到,只吐一句 warning 就返回 0(改名前的 `slint-study-desktop`
-# 有 19 个字符,正是这样,只好绕道 `-f` 加方括号)。改 [[bin]] name 时留意这条线。
+# `-x` 对 dev 构建能用是因为名字正好 15 个字符,是 Linux comm 存得下的上限;再长
+# 一个字就会被截断,`-x` 于是永远匹配不到,只吐一句 warning 就返回 0(改名前的
+# `slint-study-desktop` 有 19 个字符,正是这样,只好绕道 `-f` 加方括号)。
+# 改 [[bin]] name 时留意这条线。
 [group('桌面')]
 desktop-kill:
-    -pkill -x osmosis-desktop
+    -pkill -x 'osmosis-desktop|\.osmosis-deskto'
 
 # 把 .desktop 与图标装进本用户的 XDG 目录,顺带把 release 二进制软链到 PATH 上。
 #
