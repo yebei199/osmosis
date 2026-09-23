@@ -66,7 +66,7 @@ def expect(id, bare_max):
 
 # 空的列表区只剩背景渐变,灰度 sd 实测 0.033;画出行的实测 0.067~0.070。
 # 门槛取两者之间。
-PAINTED_SD = 0.05
+PAINTED_SD = 0.06
 
 def painted(id):
     p = props(by_id(id)[0])
