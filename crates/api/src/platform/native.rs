@@ -437,6 +437,15 @@ fn settings_file() -> Option<PathBuf> {
     .map(|path| path.with_file_name("settings.json"))
 }
 
+/// 列表缓存库,与会话文件同一个目录。
+///
+/// 从 [`session_file`] 派生而不是从状态目录:`OSMOSIS_SESSION_FILE` 指到哪,
+/// 它就跟到哪 —— 同机第二个实例与测试因此碰不到真实的那一份。
+pub(crate) fn cache_file() -> Option<PathBuf> {
+    session_file()
+        .map(|path| path.with_file_name("cache.sqlite3"))
+}
+
 /// 封面缓存目录,与会话、设置同一个基座。
 fn artwork_dir() -> Option<PathBuf> {
     session_path_from(
