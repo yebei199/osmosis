@@ -409,7 +409,9 @@ pub(crate) const APP_DIR: &str =
 /// 没烘地址的构建连本机后端(见 [`crate::base_url`]),它签发的 token 在生产
 /// 那边不作数、反之亦然。两者共用一份会话的话,开发实例一见 401 就把装机版的
 /// 会话删了。装机版沿用原来的 `osmosis`,更新之后才读得到已有的登录态。
-pub(crate) const fn app_dir(api_base: Option<&str>) -> &'static str {
+pub(crate) const fn app_dir(
+    api_base: Option<&str>,
+) -> &'static str {
     match api_base {
         Some(_) => "osmosis",
         None => "osmosis-dev",

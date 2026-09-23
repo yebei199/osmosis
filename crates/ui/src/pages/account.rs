@@ -498,7 +498,9 @@ mod tests {
             },
             server("rate_limited"),
             server("bad_credentials"),
-            api::ApiError::Decode("<html>502</html>".to_owned()),
+            api::ApiError::Decode(
+                "<html>502</html>".to_owned(),
+            ),
         ];
 
         for err in &not_expiry {

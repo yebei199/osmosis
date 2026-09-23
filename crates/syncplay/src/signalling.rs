@@ -199,7 +199,9 @@ fn classify(
     };
 
     match response.status().as_u16() {
-        UNAUTHORIZED if rejects_the_token(response.body()) => {
+        UNAUTHORIZED
+            if rejects_the_token(response.body()) =>
+        {
             SyncError::Unauthorized
         }
         TOO_MANY_REQUESTS => SyncError::Throttled {
@@ -217,7 +219,10 @@ fn classify(
 fn rejects_the_token(body: &Option<Vec<u8>>) -> bool {
     body.as_deref()
         .and_then(|body| {
-            serde_json::from_slice::<contract::ErrorDto>(body).ok()
+            serde_json::from_slice::<contract::ErrorDto>(
+                body,
+            )
+            .ok()
         })
         .is_some_and(|error| error.code == TOKEN_REJECTED)
 }

@@ -63,9 +63,14 @@ fn an_expired_session_is_backed_up_before_it_is_cleared() {
     self::expire();
 
     assert_eq!(self::token(), None, "失效之后不该还带着它");
-    assert!(!file.exists(), "会话文件该清掉,否则重启又恢复出这个坏 token");
+    assert!(
+        !file.exists(),
+        "会话文件该清掉,否则重启又恢复出这个坏 token"
+    );
     assert_eq!(
-        std::fs::read_to_string(dir.join("session.bak")).ok().as_deref(),
+        std::fs::read_to_string(dir.join("session.bak"))
+            .ok()
+            .as_deref(),
         Some("rejected-token"),
         "清之前该留一份备份"
     );
@@ -87,7 +92,10 @@ fn session_path_prefers_the_explicit_state_dir() {
     .expect("给了显式目录就该有路径");
 
     assert!(path.starts_with("/data/user/0/app/files"));
-    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
+    assert!(path.ends_with(format!(
+        "{}/session",
+        platform::APP_DIR
+    )));
 }
 
 /// 边界:安卓上除了显式目录什么都没有,那时也要落得下来。
@@ -102,7 +110,10 @@ fn an_explicit_state_dir_works_without_any_env() {
     )
     .expect("只有显式目录也该有路径");
 
-    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
+    assert!(path.ends_with(format!(
+        "{}/session",
+        platform::APP_DIR
+    )));
 }
 
 /// 有 XDG_STATE_HOME 就用它 —— 登录态是状态不是配置。
@@ -116,7 +127,10 @@ fn session_path_prefers_state_home() {
     .expect("给了 state home 就该有路径");
 
     assert!(path.starts_with("/tmp/state"));
-    assert!(path.ends_with(format!("{}/session", platform::APP_DIR)));
+    assert!(path.ends_with(format!(
+        "{}/session",
+        platform::APP_DIR
+    )));
 }
 
 /// 没有 XDG_STATE_HOME 就退到 HOME/.local/state。
@@ -141,7 +155,9 @@ fn session_path_falls_back_to_home() {
 fn the_dev_backend_gets_its_own_state_dir() {
     assert_eq!(platform::app_dir(None), "osmosis-dev");
     assert_eq!(
-        platform::app_dir(Some("https://music.cryptorust.uk")),
+        platform::app_dir(Some(
+            "https://music.cryptorust.uk"
+        )),
         "osmosis",
         "装机版沿用原来的目录,更新之后才读得到已有的登录态"
     );
