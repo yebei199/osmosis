@@ -459,6 +459,10 @@ impl Remote {
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();
+        log::info!(
+            "输出切到 {}",
+            if id.is_empty() { "本机" } else { name }
+        );
         if id.is_empty() {
             self.release_claim();
             *lock(&self.inner.output) = Output::Local;
@@ -598,7 +602,10 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
     match event {
         // 接管成功。立刻要一次快照 —— 服务端不缓存状态(`docs/adr/0030`),
         // 「现在是什么样」只能问被控端本人,而不问就得干等一秒。
-        syncplay::Event::ControlGranted { .. } => {
+        syncplay::Event::ControlGranted {
+            target, ..
+        } => {
+            log::info!("接管 {target} 成功");
             if let Some(client) = inner.client.get() {
                 client.request_snapshot();
             }
@@ -606,6 +613,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 失权:回到本机输出。不静默 —— 用户得知道自己手上这台不再管用了。
         // 被控端自己退出时 `by` 正是输出指着的那一台,文案因此要在收回之前算。
         syncplay::Event::ControlRevoked { by } => {
+            log::info!("控制权被 {by} 收走,输出回本机");
             remote.come_home(|output| {
                 describe_revoked(output, by)
             });
@@ -622,6 +630,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
             remote.come_home(describe_claim_failed);
         }
         syncplay::Event::ControlledBy { device } => {
+            log::info!("本机被 {} 遥控", device.name);
             *lock(&inner.controlled_by) =
                 Some(device.clone());
             remote.refresh();

@@ -459,6 +459,7 @@ async fn run(
                 continue;
             }
             Err(error) => {
+                log::warn!("信令连不上: {error}");
                 events(Event::Failed(error.to_string()));
                 tokio::time::sleep(jittered(backoff)).await;
                 backoff = next_backoff(backoff);
@@ -470,6 +471,9 @@ async fn run(
         // 那要等这条连接证明自己活得下去,见 `HEALTHY_AFTER`。
         rejected = None;
         let connected_at = Instant::now();
+        // 连上、断开各一行 info:「那台设备到底在不在线」是查遥控问题的
+        // 第一问,从前客户端日志里一个字都没有(#113)。
+        log::info!("信令已连上");
 
         if !serve(
             signalling,
@@ -493,6 +497,10 @@ async fn run(
                     .to_owned(),
             });
         }
+        log::info!(
+            "信令断开(连了 {} 秒)",
+            connected_at.elapsed().as_secs()
+        );
         events(Event::Disconnected);
 
         // 活够了才算连上过一次,退避从头来。
