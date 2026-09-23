@@ -12,7 +12,19 @@ use crate::routes::testing::{
     track_id, track_ref, upstream_track,
 };
 
-use super::liked;
+use super::{like_track, liked};
+
+use std::time::Duration;
+
+use axum::extract::Path;
+use server::store::cache::{self, LIKED_PLAYLIST_ID};
+
+use crate::routes::catalog::catalog_cache::{
+    FRESH_WAIT, MAX_AGE, REFRESH_EVERY,
+};
+
+/// 上游「卡死」:比任何一条测试的超时都长得多。
+const STALLED: Duration = Duration::from_secs(3600);
 
 use server::bangdream::proto::{
     GetPlaylistResponse, Playlist,
@@ -150,4 +162,359 @@ async fn liked_maps_an_unreachable_upstream_to_a_gateway_error()
 
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_eq!(body.code, "upstream_unreachable");
+}
+
+/// 红心歌单里摆着这几首,按给出的先后依次加入。
+fn liked_upstream(ids: &[(&str, &str)]) -> FakeUpstream {
+    let mut fake = FakeUpstream::logged_in_with(
+        "42",
+        ids.iter()
+            .map(|(id, title)| upstream_track(id, title))
+            .collect(),
+    );
+    fake.playlists = vec![liked_playlist("liked-1")];
+    fake.playlist = GetPlaylistResponse {
+        playlist: Some(Playlist::default()),
+        track_refs: ids
+            .iter()
+            .zip(1..)
+            .map(|((id, _), at)| track_ref(id, at * 1_000))
+            .collect(),
+        tracks: ids
+            .iter()
+            .map(|(id, title)| upstream_track(id, title))
+            .collect(),
+    };
+    fake
+}
+
+/// 库里有一份时,第二次打开不等上游。
+///
+/// 这是 #124 要的全部:`/liked` 本机约一秒,八成花在上游的 `GetPlaylist` 上。
+/// 上游在这里卡死,等了它的实现会卡在超时上,而不是慢一点照样绿。
+#[tokio::test]
+async fn liked_answers_from_the_store_without_waiting_for_the_upstream()
+ {
+    let case = "lk_store_first";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let only = track_id(case, 1);
+
+    let fake = liked_upstream(&[(&only, "那一首")]);
+    let state = testing::state(
+        pool,
+        testing::serve(fake.clone()).await,
+    );
+    let first =
+        liked(State(state.clone()), account.clone())
+            .await
+            .expect("第一次打开该回源成功")
+            .0;
+
+    // 到了该刷新的时候:后台那一次回源会被发出去,并且卡死
+    state.playlists.age(
+        account.id,
+        LIKED_PLAYLIST_ID,
+        REFRESH_EVERY,
+    );
+    let stalled = testing::with_upstream(
+        &state,
+        testing::serve(FakeUpstream {
+            playlist_delay: STALLED,
+            ..fake
+        })
+        .await,
+    );
+    let second = tokio::time::timeout(
+        Duration::from_secs(5),
+        liked(State(stalled), account),
+    )
+    .await
+    .expect("第二次打开等了上游")
+    .expect("库里有一份,不该失败")
+    .0;
+
+    assert_eq!(second, first);
+}
+
+/// 后台回源拿到的新成员关系写进库,下一次打开就看得到。
+#[tokio::test]
+async fn liked_refreshes_the_store_in_the_background() {
+    let case = "lk_refresh";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let older = track_id(case, 1);
+    let newer = track_id(case, 2);
+
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(liked_upstream(&[(
+            &older,
+            "先点的",
+        )]))
+        .await,
+    );
+    let _ = liked(State(state.clone()), account.clone())
+        .await
+        .expect("第一次打开该回源成功");
+
+    state.playlists.age(
+        account.id,
+        LIKED_PLAYLIST_ID,
+        REFRESH_EVERY,
+    );
+    let changed = testing::with_upstream(
+        &state,
+        testing::serve(liked_upstream(&[
+            (&older, "先点的"),
+            (&newer, "后点的"),
+        ]))
+        .await,
+    );
+    let stale =
+        liked(State(changed.clone()), account.clone())
+            .await
+            .expect("库里有一份,不该失败")
+            .0;
+    assert_eq!(
+        stale.tracks,
+        vec![expected_dto(&older, "先点的")],
+        "这一次答的是库里那份"
+    );
+
+    let mut conn =
+        pool.acquire().await.expect("取不到连接");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cache::tracks_of(
+            &mut conn,
+            account.id,
+            LIKED_PLAYLIST_ID,
+        )
+        .await
+        .expect("读缓存失败")
+        .len()
+            < 2
+        {
+            tokio::time::sleep(Duration::from_millis(20))
+                .await;
+        }
+    })
+    .await
+    .expect("后台回源没把新点的那首写进库");
+
+    let fresh = liked(State(changed), account)
+        .await
+        .expect("库里有一份,不该失败")
+        .0;
+    assert_eq!(
+        fresh.tracks,
+        vec![
+            expected_dto(&newer, "后点的"),
+            expected_dto(&older, "先点的"),
+        ]
+    );
+}
+
+/// 在这边点过心,下一次打开红心当场回源,不先回库里那份。
+///
+/// 先回库只该掩盖**平台那边**的变化(手机官方 App 里点的心,晚一次看到)。
+/// 用户刚在这里点的心不能晚一次:他点完就去看,看不到就是 bug。
+#[tokio::test]
+async fn liking_a_track_here_skips_the_stored_copy_next_time()
+ {
+    let case = "lk_like_invalidates";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let older = track_id(case, 1);
+    let newer = track_id(case, 2);
+
+    let state = testing::state(
+        pool,
+        testing::serve(liked_upstream(&[(
+            &older,
+            "先点的",
+        )]))
+        .await,
+    );
+    let _ = liked(State(state.clone()), account.clone())
+        .await
+        .expect("第一次打开该回源成功");
+
+    let liked_now = testing::with_upstream(
+        &state,
+        testing::serve(liked_upstream(&[
+            (&older, "先点的"),
+            (&newer, "后点的"),
+        ]))
+        .await,
+    );
+    like_track(
+        State(liked_now.clone()),
+        account.clone(),
+        Path(newer.clone()),
+    )
+    .await
+    .expect("点心该转发成功");
+
+    let tracks = liked(State(liked_now), account)
+        .await
+        .expect("该取得到红心列表")
+        .0;
+    assert_eq!(
+        tracks.tracks,
+        vec![
+            expected_dto(&newer, "后点的"),
+            expected_dto(&older, "先点的"),
+        ]
+    );
+}
+
+/// 等库里这个红心歌单有 `n` 首,最多等 5 秒。
+async fn until_stored(
+    pool: &sqlx::PgPool,
+    account_id: i64,
+    n: usize,
+) {
+    let mut conn =
+        pool.acquire().await.expect("取不到连接");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cache::tracks_of(
+            &mut conn,
+            account_id,
+            LIKED_PLAYLIST_ID,
+        )
+        .await
+        .expect("读缓存失败")
+        .len()
+            < n
+        {
+            tokio::time::sleep(Duration::from_millis(20))
+                .await;
+        }
+    })
+    .await
+    .expect("回源没把结果写进库");
+}
+
+/// 服务端重启过(「多新」的记录全忘了),库里有一份就先回它,不等上游。
+///
+/// 生产上一次回源 13 秒多,客户端 10 秒就放弃。部署一次之后第一次打开要是
+/// 当场回源,那一次必然超时 —— 而部署正是这条修复生效的时刻。
+#[tokio::test]
+async fn after_a_restart_liked_still_answers_from_the_store()
+ {
+    let case = "lk_after_restart";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let only = track_id(case, 1);
+
+    let fake = liked_upstream(&[(&only, "那一首")]);
+    let before = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+    let first = liked(State(before), account.clone())
+        .await
+        .expect("第一次打开该回源成功")
+        .0;
+
+    // 新的 state 就是新的进程:库还在,内存里的记录没了
+    let restarted = testing::state(
+        pool,
+        testing::serve(FakeUpstream {
+            playlist_delay: STALLED,
+            ..fake
+        })
+        .await,
+    );
+    let again = tokio::time::timeout(
+        FRESH_WAIT + Duration::from_secs(2),
+        liked(State(restarted), account),
+    )
+    .await
+    .expect("重启后第一次打开等了上游")
+    .expect("库里有一份,不该失败")
+    .0;
+
+    assert_eq!(again.tracks, first.tracks);
+}
+
+/// 第一次打开(库里还没有)时客户端等不及断开,回源照样跑完、写进库。
+///
+/// 否则生产上那 13 秒永远跑不完:客户端 10 秒断开,处理函数随之被丢掉,
+/// 库里永远没有这一份,下一次还是当场回源、还是超时。
+#[tokio::test]
+async fn a_first_fetch_finishes_even_when_the_client_gives_up()
+ {
+    let case = "lk_client_gave_up";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let only = track_id(case, 1);
+
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(FakeUpstream {
+            playlist_delay: Duration::from_millis(300),
+            ..liked_upstream(&[(&only, "那一首")])
+        })
+        .await,
+    );
+    tokio::time::timeout(
+        Duration::from_millis(50),
+        liked(State(state), account.clone()),
+    )
+    .await
+    .expect_err("上游要 300ms,50ms 内不该回来");
+
+    until_stored(&pool, account.id, 1).await;
+}
+
+/// 库里那份过期了而上游答得快,就等它、给新的。
+#[tokio::test]
+async fn an_expired_copy_is_replaced_when_the_upstream_is_quick()
+ {
+    let case = "lk_expired";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let older = track_id(case, 1);
+    let newer = track_id(case, 2);
+
+    let state = testing::state(
+        pool,
+        testing::serve(liked_upstream(&[(
+            &older,
+            "先点的",
+        )]))
+        .await,
+    );
+    let _ = liked(State(state.clone()), account.clone())
+        .await
+        .expect("第一次打开该回源成功");
+
+    state.playlists.age(
+        account.id,
+        LIKED_PLAYLIST_ID,
+        MAX_AGE,
+    );
+    let changed = testing::with_upstream(
+        &state,
+        testing::serve(liked_upstream(&[
+            (&older, "先点的"),
+            (&newer, "后点的"),
+        ]))
+        .await,
+    );
+    let tracks = liked(State(changed), account)
+        .await
+        .expect("该取得到红心列表")
+        .0;
+
+    assert_eq!(
+        tracks.tracks,
+        vec![
+            expected_dto(&newer, "后点的"),
+            expected_dto(&older, "先点的"),
+        ],
+        "过期了该给新的"
+    );
 }

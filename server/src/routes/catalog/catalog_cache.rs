@@ -2,8 +2,10 @@
 //!
 //! 红心与歌单两条路都要用它,所以它不跟着任何一条走。
 
-use contract::TrackDto;
-use std::collections::HashSet;
+use contract::{TrackDto, TracksDto};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use server::bangdream::{
     self,
@@ -16,7 +18,136 @@ use server::error::Failure;
 use server::store::account::Account;
 use server::store::cache;
 
+use tokio::task::{JoinError, JoinHandle};
+use tracing::Instrument;
+
 use crate::{AppState, conn, fail};
+
+/// 先回库,到时候了再在后台回源(#124)。
+///
+/// `fetch` 是这个歌单完整的回源路径,最后一步必须经过 [`cached_tracks`] ——
+/// 「多新」在那里记下。按库里那份的新旧分四种:
+///
+/// - 距上一次回源不到 [`REFRESH_EVERY`]:只答库里那份;
+/// - 不到 [`MAX_AGE`]:答库里那份,后台回源,下一次打开看到结果;
+/// - 更旧,或进程重启过不知道多新:回源最多等 [`FRESH_WAIT`],等不到先答库里那份;
+/// - 库里没有:只能等回源。
+///
+/// 回源一律 spawn 出去:客户端等不及断开、这个请求被丢掉,它照样跑完并落库,
+/// 下一次就命中。生产上一次回源 13 秒多而客户端 10 秒放弃,不这样的话
+/// 库里永远填不上。回源失败就忘掉这份,下一次打开再等一回,让失败被看见。
+pub(crate) async fn store_first<F, Fut>(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    fetch: F,
+) -> Result<TracksDto, Failure>
+where
+    F: FnOnce(AppState, Account) -> Fut,
+    Fut: Future<Output = Result<TracksDto, Failure>>
+        + Send
+        + 'static,
+{
+    let record =
+        state.playlists.get(account.id, playlist_id);
+    let unavailable = record.map_or(0, |(_, n)| n);
+    if record
+        .is_some_and(|(at, _)| age_of(at) < REFRESH_EVERY)
+    {
+        return stored(
+            state,
+            account,
+            playlist_id,
+            unavailable,
+        )
+        .await;
+    }
+
+    let mut job =
+        spawn_fetch(state, account, playlist_id, fetch);
+    let stored =
+        stored(state, account, playlist_id, unavailable)
+            .await?;
+    if stored.tracks.is_empty() {
+        return joined(job.await);
+    }
+    if record.is_some_and(|(at, _)| age_of(at) < MAX_AGE) {
+        return Ok(stored);
+    }
+
+    match tokio::time::timeout(FRESH_WAIT, &mut job).await {
+        Ok(done) => joined(done),
+        Err(_) => Ok(stored),
+    }
+}
+
+/// 库里这个歌单现有的那份。
+async fn stored(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    unavailable: usize,
+) -> Result<TracksDto, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    let tracks = cache::tracks_of(
+        &mut conn,
+        account.id,
+        playlist_id,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+
+    Ok(TracksDto {
+        tracks,
+        unavailable,
+    })
+}
+
+/// 把回源放进独立任务,不随请求一起被丢掉。
+fn spawn_fetch<F, Fut>(
+    state: &AppState,
+    account: &Account,
+    playlist_id: &str,
+    fetch: F,
+) -> JoinHandle<Result<TracksDto, Failure>>
+where
+    F: FnOnce(AppState, Account) -> Fut,
+    Fut: Future<Output = Result<TracksDto, Failure>>
+        + Send
+        + 'static,
+{
+    let playlists = state.playlists.clone();
+    let (account_id, playlist_id) =
+        (account.id, playlist_id.to_owned());
+    let refresh = fetch(state.clone(), account.clone());
+
+    // 带上当前的 req span:后台那次的 upstream ms= 仍记在这个请求名下
+    tokio::spawn(
+        async move {
+            let result = refresh.await;
+            if let Err((status, body)) = &result {
+                tracing::warn!(
+                    %status,
+                    code = body.code,
+                    "回源失败,下一次打开再当场回源"
+                );
+                playlists.forget(account_id, &playlist_id);
+            }
+            result
+        }
+        .in_current_span(),
+    )
+}
+
+fn joined(
+    done: Result<Result<TracksDto, Failure>, JoinError>,
+) -> Result<TracksDto, Failure> {
+    done.unwrap_or_else(|err| {
+        Err(fail(&tonic::Status::internal(format!(
+            "回源任务没跑完: {err}"
+        ))))
+    })
+}
 
 /// 一次向上游要多少首曲目详情。
 ///
@@ -24,6 +155,108 @@ use crate::{AppState, conn, fail};
 /// 请求大小有自己的想法。分批只在**冷启动**发生:详情缓存下来之后,常态是
 /// 一批都不用要。
 pub(crate) const DETAIL_BATCH: usize = 200;
+
+/// 库里那份多久以内先回库、不等上游。
+///
+/// 24 小时:天天开的人永远走快的那条路;隔了一天以上再开,平台那边多半已经
+/// 变了不少(在手机官方 App 里点的心、别人往收藏歌单里加的歌),那一次宁可
+/// 慢一秒也给新的。这也是 `docs/adr/0018` 说的「过期的上界」。
+pub(crate) const MAX_AGE: Duration =
+    Duration::from_secs(24 * 60 * 60);
+
+/// 库里那份过期(或进程刚重启、不知道它多新)时,当场回源最多等多久。
+///
+/// 3 秒:本机一次回源约 1.3 秒,等得到就给新的;生产上慢时 13 秒多,
+/// 而客户端 10 秒就放弃 —— 等不到就先给库里那份,回源在后台跑完。
+pub(crate) const FRESH_WAIT: Duration =
+    Duration::from_secs(3);
+
+/// 先回库之后,距上一次回源至少这么久才在后台再回源一次。
+///
+/// 30 秒:进出同一个歌单、来回切页是秒级的动作,每一下都回源的话 978 首的
+/// 红心每次是一秒的上游调用加一次比对,而这期间平台那边几乎不会变。
+/// 比这长则手机上刚点的心要多等 —— 进出一次歌单超过 30 秒就能看到。
+pub(crate) const REFRESH_EVERY: Duration =
+    Duration::from_secs(30);
+
+/// `(账号, 平台歌单)` → (最近一次回源成功的时刻, 那次给不出详情的曲目数)。
+type Records = HashMap<(i64, String), (FetchedAt, usize)>;
+
+/// 回源成功的时刻。`None` 是「比任何期限都旧」:被作废的,或者测试往回拨
+/// 过了头的 —— `Instant` 减到开机之前会 panic,开机不到一天的机器上
+/// `now - MAX_AGE` 就是这样。
+pub(crate) type FetchedAt = Option<Instant>;
+
+/// 距回源过了多久。
+pub(crate) fn age_of(at: FetchedAt) -> Duration {
+    at.map_or(Duration::MAX, |at| at.elapsed())
+}
+
+/// 每个 `(账号, 平台歌单)` 最近一次回源成功的时刻,和那次平台给不出详情的曲目数。
+///
+/// 只在内存里:进程重启就全忘,每个歌单第一次打开当场回源 —— 缓存整张删掉
+/// 只是慢一次(`docs/adr/0018` 第 3 条),忘掉「多新」同理。放进库里就要
+/// 加迁移,而本机开发库是几棵 worktree 共用的:旧代码的服务端遇到没见过的
+/// 迁移会拒绝启动。
+///
+/// 「有没有缓存」也以这里为准,而不是库里有没有行:空歌单在库里同样是零行。
+#[derive(Clone, Default)]
+pub(crate) struct Freshness(Arc<Mutex<Records>>);
+
+impl Freshness {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Records> {
+        // 锁里只有 HashMap 的一次读写,不会在持锁时 panic;真毒化了也照用
+        self.0.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    fn get(
+        &self,
+        account_id: i64,
+        playlist_id: &str,
+    ) -> Option<(FetchedAt, usize)> {
+        self.lock()
+            .get(&(account_id, playlist_id.to_owned()))
+            .copied()
+    }
+
+    fn record(
+        &self,
+        account_id: i64,
+        playlist_id: &str,
+        unavailable: usize,
+    ) {
+        self.lock().insert(
+            (account_id, playlist_id.to_owned()),
+            (Some(Instant::now()), unavailable),
+        );
+    }
+
+    /// 忘掉这一份:下一次打开当场回源。
+    pub(crate) fn forget(
+        &self,
+        account_id: i64,
+        playlist_id: &str,
+    ) {
+        self.lock()
+            .remove(&(account_id, playlist_id.to_owned()));
+    }
+
+    /// 把记录往回拨 `by`,测试用来模拟「过了这么久」。
+    #[cfg(test)]
+    pub(crate) fn age(
+        &self,
+        account_id: i64,
+        playlist_id: &str,
+        by: Duration,
+    ) {
+        if let Some((at, _)) = self
+            .lock()
+            .get_mut(&(account_id, playlist_id.to_owned()))
+        {
+            *at = at.and_then(|at| at.checked_sub(by));
+        }
+    }
+}
 
 /// 把一个平台歌单的曲目备齐,并按平台给的次序读出来。
 ///
@@ -82,6 +315,11 @@ pub(crate) async fn cached_tracks(
     )
     .await
     .map_err(|err| error::map_error(&err))?;
+    state.playlists.record(
+        account.id,
+        playlist_id,
+        dropped,
+    );
 
     Ok((tracks, dropped))
 }
