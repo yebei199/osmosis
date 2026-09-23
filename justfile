@@ -58,11 +58,12 @@ ci-fmt:
 # 那是传给最终 crate 的参数,不进依赖指纹,且 clippy 本就涵盖全部 rustc lint。
 #
 # 依赖 pg:server 的集成测试打真库,容器停着这一条整片红,报的还是 PoolTimedOut。
-# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事
+# CI 那边给 test job 挂了同款 Postgres service,两边因此测的是同一件事。
+# rustfs 同理:`server/tests/objects.rs` 打的是真 S3
 #
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
-ci-test: pg
+ci-test: pg rustfs
     nix-shell slint.nix --run 'cargo test'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
@@ -177,6 +178,19 @@ pg:
         -p 127.0.0.1:5432:5432 -v osmosis-pgdata:/var/lib/postgresql/data \
         postgres:17-alpine
     @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
+
+# 起本地 RustFS(容器),听过的歌存在这里(#126)。`cargo test -p server` 要它;
+# server-dev 只在设了 S3_ENDPOINT 时才用。镜像与 infra 那份钉同一个 digest,
+# 本地测的与线上跑的是同一个版本。桶由测试自己建,凭据只在本机回环上有效。
+# 绑 9900 而不是 S3 惯用的 9000:ClickHouse 的原生端口也是 9000,开发机上常被它占着。
+rustfs:
+    docker start osmosis-rustfs 2>/dev/null || \
+      docker run -d --name osmosis-rustfs \
+        -e RUSTFS_ACCESS_KEY=devonly -e RUSTFS_SECRET_KEY=devonly-secret \
+        -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 \
+        -p 127.0.0.1:9900:9000 -v osmosis-rustfs:/data \
+        rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+    @timeout 60 sh -c 'until curl -sf http://127.0.0.1:9900/health >/dev/null; do sleep 0.2; done'
 
 # 开发服务端,监听 127.0.0.1:3000。「Check server」按钮打的就是它。
 # 依赖 pg:容器停着直接跑会连不上库,报 PoolTimedOut。
@@ -350,7 +364,7 @@ mcp-android: local-backend-up android-not-production mcp-forward android-reverse
 #    pkill 不报错,只是没杀掉 —— 而你还在对着十几分钟前的老进程截图;
 # 2. 用 `-x`(精确匹配进程名)而不是 `-f`(匹配整条命令行)。`-f` 会把本命令自己的
 #    命令行也算作命中,连调用它的 shell 一起杀掉,留下退出码 144。
-# 3. `desktop-install` 装的那份走的是 nix 的 `wrapProgram`:`/etc/profiles/.../
+# 3. NixOS 装机版(osmosis.nix)走的是 nix 的 `wrapProgram`:`/etc/profiles/.../
 #    osmosis-desktop` 只是个转发脚本,真正跑起来的进程是它 `exec` 出来的
 #    `.osmosis-desktop-wrapped`,15 字符的 comm 截断成 `.osmosis-deskto`(前导点
 #    是 wrapper 的命名惯例)。单独 `-x osmosis-desktop` 精确匹配不上它,进程
@@ -365,15 +379,23 @@ mcp-android: local-backend-up android-not-production mcp-forward android-reverse
 desktop-kill:
     -pkill -x 'osmosis-desktop|\.osmosis-deskto'
 
-# 把 .desktop 与图标装进本用户的 XDG 目录,顺带把 release 二进制软链到 PATH 上。
+# 把 .desktop 与图标装进本用户的 XDG 目录,顺带在 PATH 上放一个启动 release 二进制的脚本。
 #
 # 装了才看得见的是桌面菜单、启动器、dock 那一类地方 —— 它们读 `.desktop` 的
 # `Icon=` 再去 hicolor 取图。**媒体卡片上的图标不在此列**:本机这条 DMS bar
 # 把那个图标写死成 Material 的 `music_note`,装不装都一样(见 mpris.rs 的
 # `desktop_entry`)。
 #
-# 软链而不是拷贝:开发机上重编一次就该是新的,拷过去的那份会悄悄变成旧版本。
-# 因此这条 recipe 属于开发机自用,不是发行安装 —— 真正打包是另一件事(#44 之后)。
+# 放脚本而不是软链(#112):wgpu 在运行期 dlopen libvulkan.so.1,winit 同样 dlopen
+# wayland / libxkbcommon,而 NixOS 上它们不在 ld.so 的搜索路径里,只在 slint.nix 的
+# LD_LIBRARY_PATH 上。菜单与干净登录 shell 都没有这个变量,裸二进制当场报「找不到可用的
+# wgpu adapter」退出。脚本在安装时把那份库路径抄下来,exec 前设好。
+# 不改 `.desktop` 的 `Exec=`:库路径是本机的 nix store 路径,不能写进版本库里的文件;
+# 命令行直接跑 osmosis-desktop 也要同一份环境,放在脚本里两条路一起修好。
+# 抄下来的 store 路径各挂一个 GC root,否则一次 nix-collect-garbage 菜单项就又起不来。
+#
+# 脚本 exec 的仍是仓库里的 target/release:开发机上重编一次就该是新的,拷过去的那份会
+# 悄悄变成旧版本。因此这条 recipe 属于开发机自用,不是发行安装 —— 发行走 NixOS 包。
 [group('桌面')]
 desktop-install:
     #!/usr/bin/env bash
@@ -383,7 +405,20 @@ desktop-install:
     bin="$HOME/.local/bin"
     mkdir -p "$apps" "$icons" "$bin"
     OSMOSIS_API_BASE={{api_base}} nix-shell slint.nix --run 'cargo build -p app-desktop --release'
-    ln -sfn "$PWD/target/release/osmosis-desktop" "$bin/osmosis-desktop"
+    # 先把外面继承来的清掉:在 nix-shell 窗格里跑 install 时它会混进来。
+    libs=$(env -u LD_LIBRARY_PATH nix-shell slint.nix --run 'printf %s "$LD_LIBRARY_PATH"')
+    roots="${XDG_STATE_HOME:-$HOME/.local/state}/osmosis-desktop-install/gcroots"
+    rm -rf "$roots" && mkdir -p "$roots"
+    i=0
+    for dir in ${libs//:/ }; do
+        i=$((i + 1))
+        nix-store --add-root "$roots/$i" --realise "${dir%/lib}" > /dev/null
+    done
+    # 旧版装的是指向二进制的软链,不先删的话 cat > 会顺着它把二进制本身覆盖掉。
+    rm -f "$bin/osmosis-desktop"
+    printf '#!/bin/sh\n# just desktop-install 生成(#112),重跑它会覆盖这个文件。\nexport LD_LIBRARY_PATH="%s${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "%s" "$@"\n' \
+        "$libs" "$PWD/target/release/osmosis-desktop" > "$bin/osmosis-desktop"
+    chmod 755 "$bin/osmosis-desktop"
     install -m 644 assets/io.github.osmosis.desktop "$apps/"
     install -m 644 assets/io.github.osmosis.svg "$icons/"
     # 不刷新缓存的话,菜单里那一项要等下次登录才出现。两条命令都可能不在,

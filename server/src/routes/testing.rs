@@ -495,5 +495,77 @@ pub(crate) fn state(
         platform_lists: Default::default(),
         apk_releases: crate::routes::apk::DEFAULT_RELEASES_BASE
             .to_owned(),
+        archive: None,
+    }
+}
+
+/// 内存里的对象存储,替掉 S3 —— 路由测试不必起 RustFS。
+///
+/// 签出来的「链接」是 `memory://键`:客户端不会真去取它,测试只看交出的是不是它。
+#[derive(Default)]
+pub(crate) struct MemoryObjects {
+    objects: Mutex<HashMap<String, Vec<u8>>>,
+}
+
+impl MemoryObjects {
+    /// 这个键下存的字节。
+    pub(crate) fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.objects
+            .lock()
+            .expect("对象表的锁被毒化了")
+            .get(key)
+            .cloned()
+    }
+
+    /// 从背后删掉一个对象,模拟桶里的东西丢了。
+    pub(crate) fn lose(&self, key: &str) {
+        self.objects
+            .lock()
+            .expect("对象表的锁被毒化了")
+            .remove(key);
+    }
+}
+
+impl server::objects::Objects for MemoryObjects {
+    fn put(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        _content_type: &'static str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<()>,
+    > {
+        self.objects
+            .lock()
+            .expect("对象表的锁被毒化了")
+            .insert(key.to_owned(), bytes);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn exists(
+        &self,
+        key: &str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<bool>,
+    > {
+        let found = self.get(key).is_some();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn delete(
+        &self,
+        key: &str,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        server::objects::ObjectResult<()>,
+    > {
+        self.lose(key);
+        Box::pin(async { Ok(()) })
+    }
+
+    fn presign_get(&self, key: &str) -> String {
+        format!("memory://{key}")
     }
 }

@@ -104,7 +104,8 @@ export component MusicBar inherits Rectangle {
             background: root.current == i ? Theme.accent.with-alpha(0.2) : transparent;
             animate background { duration: 140ms; easing: ease-out; }
 
-            TouchArea {
+            // 有 id 才能被 MCP 脚本按 id 找到(#113),与宽版式那个同名。
+            item-touch := TouchArea {
                 clicked => { root.selected(i); }
             }
 

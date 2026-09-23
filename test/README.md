@@ -2,7 +2,7 @@
 
 ## mcp-login.sh —— 把界面登进去
 
-`played-e2e.sh` 把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
+端到端脚本(如 `pick-e2e.sh`)把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
 这份脚本补上那一步,可重复跑(已登录时直接返回)。
 
 ```sh
@@ -23,7 +23,21 @@ test/dev-recipes.sh
 `desktop-dev` / `mcp-android` 的本机后端守卫、`dev-adb` 的序列号解析、生产平板拒装
 (#119)全是 justfile 里的 shell。这份把假的 `adb` 与 `nix-shell` 顶在 PATH 前面驱动
 那几条配方,断言退出码、调用参数,以及守卫失败时**没有进编译**。不碰真设备,几秒跑完。
+`desktop-install` 装的是带库路径的启动脚本而不是软链(#112),也在这里断言。
 改了那几条配方就跑一遍。
+
+## desktop-clean-launch.sh —— 菜单项离开 nix shell 还起得来吗(#112)
+
+```sh
+just desktop-install && test/desktop-clean-launch.sh
+# 隔离目录里验,不碰真实的菜单项:
+HOME=$iso XDG_DATA_HOME=$iso/.local/share XDG_STATE_HOME=$iso/.local/state test/desktop-clean-launch.sh
+```
+
+两条路各起一次:`env -i` 的干净环境直接跑 `~/.local/bin/osmosis-desktop`,以及以用户
+会话管理器的环境(`systemd-run --user`)跑 `gtk-launch io.github.osmosis`(菜单那条路)。
+判据是 niri 报出 Osmosis 窗口、那个进程的 `/proc/<pid>/maps` 里有 libvulkan,不看观感。
+要一个在跑的 niri 会话和显卡,所以不进 `just ci`;装过的二进制要先编好,编译照规矩去编译机。
 
 ## rollout.sh —— 发版推送脚本还守得住吗
 
@@ -37,18 +51,26 @@ nixos_config 换成临时 git 仓库加本地裸远端,断言:签名不对不上
 离线设备进汇总、设备上读回的 APK 哈希要对、nixos_config 不干净或 prefetch 对不上就不动、
 镜像要含 arm64。几秒跑完,改了 `release/` 就跑一遍。
 
-## played-e2e.sh —— 起播真的被记进账本了吗
+## pick-e2e.sh —— 点一首歌,真的起播了、只发布了一次吗
 
 跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
-(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑。
+(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑,每日推荐有歌。
 
 ```sh
-test/played-e2e.sh          # 端口不是 8091 就 PORT=xxxx test/played-e2e.sh
+test/pick-e2e.sh list       # 列表那条路
+test/pick-e2e.sh wall       # 卡墙那条路(要 GPU 构建)
 ```
 
-它经**应用内嵌的 MCP** 点进音乐页、切列表、点第一行起播,然后盯 `play_events` 的行数:
-多了一行就通过,20 秒不动就失败退出。驱动按元素 id 找控件、断言查数据库,两头都不靠
-人看画面 —— 这类"要跑起来才知道"的链路(界面 → api → server → 表)就该这么验。
+两条用户路径各跑一遍,每条都把同一首**连点三下**。判据两样,都查库:`play_events`
+恰好多一行(有设备真的起播了),各设备队列的 `revision` 之和恰好涨 1(三下只发布了
+一次)。输出在本机还是遥控别的设备都适用。
+
+卡墙的卡画在 3D 纹理里,按坐标点第二下未必还命中同一张;脚本走场区上的无障碍动作
+(`Increment` 挪选中、`Default_` 播选中的那张),读屏用户走的也是这条。
+
+「起播 +1、发布 +0」先看应用日志里是不是 `队列数到上限了`:每台新设备(包括每个隔离的
+测试实例)占账号一个队列槽,满 10 个就发布不上去。脚本判失败是对的,那是真问题。
+窗口在锁屏或屏外时合成器一秒只给一帧,动画与相机慢到几十秒,脚本的等待按这个放宽过。
 
 ## playlist-fill-e2e.sh —— 歌单页铺满了吗
 
