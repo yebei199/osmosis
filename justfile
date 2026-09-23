@@ -23,6 +23,13 @@ api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 local_api := "http://127.0.0.1:3000"
 # 生产平板的 ro.product.model。debug 包拒装到它上面,见 android-not-production。
 production_tablet_model := "NP06J"
+# rollout 要装 release 的设备(ro.product.model):努比亚平板、三星手机。开发机不在名单上。
+rollout_models := env('ROLLOUT_MODELS', production_tablet_model + " SM-A376B")
+# 上面那几台的无线 adb 主机。掉线时 rollout 扫端口重连(连接端口会变,IP 在路由器上固定)。
+rollout_adb_hosts := env('ROLLOUT_ADB_HOSTS', "192.168.31.51 192.168.31.248")
+# release APK 签名证书的 SHA-256,即设备上已装那把 key(pc1 的 debug keystore,#127 评论)。
+# 证书指纹是公开信息;密钥文件本身不进版本库,见 release/README.md「签名」。
+release_cert_sha256 := "030e9bc786079d54952b0f7f4cafacb6af6417776db69b2378921ca641717e72"
 # web-dev 静态服务器的端口。刻意避开 8080/8000 这类烂大街的号:那些常年被别的项目
 # 的 dev server 占着,撞上了只会得到一句 Address already in use。
 web_port := "8073"
@@ -188,6 +195,15 @@ bang-dream repo=env('BANG_DREAM_REPO', '../bang-dream'):
 [group('服务端')]
 bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
     cd {{repo}} && go run ./cmd/qrlogin
+
+# 把一个已发布的 release 推到所有设备:pc3 编 APK 并补进 Release 资产、覆盖安装到
+# rollout_models、抬 nixos_config、打印给 infra 的镜像引用。不给 tag 就取最新 release。
+# 见 release/README.md。只装 release、只 -r 覆盖,不卸载;nixos-rebuild 由用户自己跑。
+[group('安卓')]
+rollout tag="":
+    RELEASE_CERT_SHA256={{release_cert_sha256}} ROLLOUT_MODELS="{{rollout_models}}" \
+        ROLLOUT_ADB_HOSTS="{{rollout_adb_hosts}}" OSMOSIS_API_BASE={{api_base}} \
+        release/rollout.sh {{tag}}
 
 # NixOS 本机原生编译 dist APK(更快、无镜像开销)。前提:已 `rustup default stable`
 # ABIS 可选:ABIS="x86_64" just android-build
