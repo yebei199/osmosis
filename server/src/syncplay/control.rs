@@ -8,6 +8,7 @@
 //! 控制谁"是纯逻辑 —— 恰恰也是会出错的地方,值得离开 WebSocket 被测。
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use contract::{ClientSignal, ServerSignal};
 
@@ -20,6 +21,14 @@ use crate::syncplay::signaling::{AccountId, Sink};
 /// 这个数回来,服务端据此认得出它早就被顶替了(见 [`Control::claim`])。
 pub type Generation = u64;
 
+/// 遥控器下线之后,槽位替它留多久(#111)。
+///
+/// 下限由重连定:遥控器重连的退避封顶一分钟、带 ±25% 抖动(`syncplay::client`
+/// 的 `RETRY_MAX`),短暂断网的遥控器最迟 75 秒敲一次门,再加握手的余量。
+/// 短于它,断网一分钟回来的手机会发现被控端已经自己解了锁。上限由用户定:
+/// force-stop 之后服务端当场看到连接关闭,横幅在这个数加一秒之内撤掉。
+pub const LEASE: Duration = Duration::from_secs(90);
+
 /// 账号上当前那一条遥控关系。
 struct Grant {
     /// 遥控器的设备 id。
@@ -27,13 +36,25 @@ struct Grant {
     /// 被控端的设备 id。
     target: String,
     generation: Generation,
+    /// 遥控器的会话断掉的时刻。`None` 是在线;满一个租约就清槽。
+    left_at: Option<Instant>,
 }
 
 /// 每个账号至多一台遥控器(产品规则),所以是**一个槽位**而不是一张表。
-#[derive(Default)]
+///
+/// 遥控器下线不解锁被控端,但也不永远锁着:槽位替它留一个租约,租约内续上
+/// 就当没断过,满了就清 —— 被控端下一条上报拿到 `NotControlled` 自己解锁。
+/// 清的只是锁,被控端的播放不动(#109 AC-10 的续播)。
 pub struct Control {
     slots: HashMap<AccountId, Grant>,
     next_generation: Generation,
+    lease: Duration,
+}
+
+impl Default for Control {
+    fn default() -> Self {
+        Self::with_lease(LEASE)
+    }
 }
 
 /// [`Control::claim`] 的下场。
@@ -49,6 +70,66 @@ pub enum Claim {
 }
 
 impl Control {
+    /// 自定租约长度。测试要毫秒级的,生产用 [`LEASE`]。
+    pub fn with_lease(lease: Duration) -> Self {
+        Self {
+            slots: HashMap::new(),
+            next_generation: 0,
+            lease,
+        }
+    }
+
+    /// 一台设备的会话断了:出册,或者以新连接重新入册。它若正是这个账号的
+    /// 遥控器,租约从 `now` 起算;已经在算的不重算。
+    ///
+    /// 被控端出册不归这里,走 [`Control::release`]。
+    pub fn controller_left(
+        &mut self,
+        account: AccountId,
+        device: &str,
+        now: Instant,
+    ) {
+        if let Some(grant) = self.slots.get_mut(&account)
+            && grant.controller == device
+            && grant.left_at.is_none()
+        {
+            grant.left_at = Some(now);
+            tracing::info!(
+                account,
+                controller = %device,
+                target = %grant.target,
+                "遥控器会话断过,控制权租约起算"
+            );
+        }
+    }
+
+    /// 遥控器下线满一个租约的,清掉它的槽位。
+    ///
+    /// 惰性判,不另起定时器:被控端每秒上报,每条消息进来先过这一道,
+    /// 于是过期最迟一秒被发现,而服务端不必为每个下线的遥控器挂一个任务。
+    pub fn expire(
+        &mut self,
+        account: AccountId,
+        now: Instant,
+    ) {
+        let expired =
+            self.slots.get(&account).is_some_and(|grant| {
+                grant.left_at.is_some_and(|left| {
+                    now.duration_since(left) >= self.lease
+                })
+            });
+        if expired
+            && let Some(grant) = self.slots.remove(&account)
+        {
+            tracing::info!(
+                account,
+                controller = %grant.controller,
+                target = %grant.target,
+                "遥控器下线满租约,清掉控制权"
+            );
+        }
+    }
+
     /// 接管 `target`。
     ///
     /// `resume` 是重连时自动重发的那一次带回来的旧代次:对得上就原样续,
@@ -62,16 +143,22 @@ impl Control {
         target: &str,
         resume: Option<Generation>,
     ) -> Claim {
-        let current = self.slots.get(&account);
-
         if let Some(generation) = resume {
-            return match current {
+            return match self.slots.get_mut(&account) {
                 Some(grant)
                     if grant.generation == generation
                         && grant.controller
                             == controller
                         && grant.target == target =>
                 {
+                    // 续上了就是回来了,租约作废。
+                    if grant.left_at.take().is_some() {
+                        tracing::info!(
+                            account,
+                            controller = %controller,
+                            "遥控器租约内续上"
+                        );
+                    }
                     Claim::Granted {
                         generation,
                         revoked: None,
@@ -89,7 +176,9 @@ impl Control {
         }
 
         // 自己顶自己不算换人 —— 给自己发一条撤权,遥控器会把自己降级回本机。
-        let revoked = current
+        let revoked = self
+            .slots
+            .get(&account)
             .map(|grant| grant.controller.clone())
             .filter(|old| old != controller);
 
@@ -101,6 +190,7 @@ impl Control {
                 controller: controller.to_owned(),
                 target: target.to_owned(),
                 generation,
+                left_at: None,
             },
         );
 
@@ -153,6 +243,7 @@ pub fn route(
     from: &str,
     message: ClientSignal,
 ) -> Option<ServerSignal> {
+    control.expire(account, Instant::now());
     match message {
         ClientSignal::ClaimControl { target, resume } => {
             claim(
