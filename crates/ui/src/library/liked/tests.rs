@@ -276,7 +276,10 @@ fn liking_from_the_drawer_marks_the_list_row_too() {
     ui.global::<crate::Shell>().set_current_tab(1);
     ui.global::<Player>().set_has_track(true);
     ui.global::<Player>().set_tracks(ModelRc::new(
-        VecModel::from(vec![track_row("1"), track_row("2")]),
+        VecModel::from(vec![
+            track_row("1"),
+            track_row("2"),
+        ]),
     ));
     let set = set_of(&[]);
     bind(&ui, &set);
