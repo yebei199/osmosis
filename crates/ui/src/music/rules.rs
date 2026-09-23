@@ -174,6 +174,25 @@ pub fn is_redundant_tap(
     }
 }
 
+/// 遥控时这一下点击是不是多余的 —— [`is_redundant_tap`] 的遥控版。
+///
+/// 对面报上来的正是这一首,就只看它的状态:在缓冲或在放算多余,暂停着
+/// 不算(那一下是想让它响)。还没报上来,就看是不是刚交出去的那一首 ——
+/// 点下去到对面上报之间有一两秒,这段时间里上报还是上一首(#113:两秒十发)。
+pub fn is_redundant_remote_tap(
+    reported: Option<(&str, app_core::RemotePlayState)>,
+    pending: Option<&str>,
+    id: &str,
+) -> bool {
+    use app_core::RemotePlayState::{Buffering, Playing};
+    match reported {
+        Some((track, state)) if track == id => {
+            matches!(state, Buffering | Playing)
+        }
+        _ => pending == Some(id),
+    }
+}
+
 /// 当日推荐该不该拉。`last` 是上次拉取的日期,`today` 是今天。
 ///
 /// 相等就不拉,于是搜完歌切出去再回来,搜索结果不会被推荐冲掉 —— 三个入口
