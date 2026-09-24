@@ -213,6 +213,10 @@ export component MusicPage inherits VerticalLayout {
             if Library.open-playlist-local
                 && Library.add-batch-text != "":
             add-batch-row := HoverButton {
+                // 不写宽度就是 HoverButton 默认的定宽 220px,而列里
+                // 一个定宽子元素会把整列的宽度上限锁成 220 —— 横屏下
+                // 曲目标题全被挤成「…」(#130)。
+                width: 100%;
                 height: 30px;
                 text: Library.add-batch-text;
                 clicked => { Library.add-batch(); }

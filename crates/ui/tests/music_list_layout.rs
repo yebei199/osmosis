@@ -6,7 +6,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
-use ui::{MainWindow, Player, Session, Shell, TrackRow};
+use ui::{Library, MainWindow, Player, Session, Shell, TrackRow};
 
 /// 宽版式音乐页,窗口给定逻辑尺寸。版式直接给定:无头后端里宽度推不出它
 /// (见 music_nav.rs)。
@@ -51,6 +51,10 @@ fn bottom(e: &testing::ElementHandle) -> f32 {
     e.absolute_position().y + e.size().height
 }
 
+fn right(e: &testing::ElementHandle) -> f32 {
+    e.absolute_position().x + e.size().width
+}
+
 /// 新建行装得下它的输入框,输入框也不伸进下面的列表。
 ///
 /// 行高写死 32px 时,56px 的 LineEdit 溢出 24px,列表首行和滚动条
@@ -89,4 +93,29 @@ fn the_list_layer_reaches_the_bottom_outside_the_daily_section() {
     one_track(&ui);
     let list = element(&ui, "MusicPage::track-list");
     assert_eq!(bottom(&list), bottom(&rail), "最近播放列表底下多了一条缝");
+}
+
+/// 手机横屏(小米 13 横放约 873×393)打开本地歌单,曲目列表占满内容列宽。
+///
+/// 「把刚才那批加进来」那颗键没给宽度时取 HoverButton 的默认 220px,
+/// 定宽的一个子元素把整列的宽度上限锁在 220,曲目标题被挤成「…」。
+#[test]
+fn the_track_list_spans_the_column_in_landscape() {
+    let ui = music_page(873.0, 393.0, 1);
+    ui.global::<Library>()
+        .set_open_playlist_name("睡前".into());
+    ui.global::<Library>().set_open_playlist_local(true);
+    ui.global::<Library>()
+        .set_add_batch_text("把刚才那批 20 首加进来".into());
+    one_track(&ui);
+
+    let content = element(&ui, "MainWindow::content");
+    let list = element(&ui, "MusicPage::track-list");
+    // 页面右 padding 16px,列表的右边就是内容区右边往里 16px。
+    assert_eq!(
+        right(&list),
+        right(&content) - 16.0,
+        "曲目列表宽 {},没铺满内容列",
+        list.size().width
+    );
 }
