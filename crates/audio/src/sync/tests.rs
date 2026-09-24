@@ -151,7 +151,7 @@ fn a_small_error_nudges_the_rate_within_bounds() {
     };
     assert!(!muted, "已经对齐过了，小误差不该静音");
     assert!(
-        step < 1.0 && step >= 1.0 - MAX_CORR,
+        (1.0 - MAX_CORR..1.0).contains(&step),
         "超前 2ms 该放慢: {step}"
     );
 
