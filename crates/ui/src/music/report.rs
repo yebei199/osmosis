@@ -110,7 +110,7 @@ pub(super) fn emit(
     // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
     seeking.borrow_mut().replace(source.seek_state());
     match start {
-        None => player.play(source),
+        None => player.play_feed(source),
         // 迁移过来的那一首从锚点接着放(#137 ③)。跳不动就停在暂停上、说一句,
         // 不从 0:00 放起来 —— 那会让用户把整首从头再听一遍,还以为是迁移成功了。
         Some(start) => {

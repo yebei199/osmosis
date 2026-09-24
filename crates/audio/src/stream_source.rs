@@ -273,5 +273,32 @@ impl Source for ChannelSource {
     }
 }
 
+/// 当同步源底下的媒体用(#137 ⑤)。
+///
+/// 与 [`Iterator::next`] 的差别只在「通道暂时空了」:那里给静音(rodio 不许源停下来),这里
+/// 如实说「欠载」—— 同步源据此不让媒体位置往前走，欠载那段时间一帧媒体都没放。
+impl crate::sync::Feed for ChannelSource {
+    fn pull(&mut self) -> crate::sync::Pulled {
+        use crate::sync::Pulled;
+        match self.samples.try_recv() {
+            Ok(sample) => Pulled::Sample(sample),
+            Err(mpsc::TryRecvError::Empty) => Pulled::Starved,
+            Err(mpsc::TryRecvError::Disconnected) => Pulled::End,
+        }
+    }
+
+    fn seek(&mut self, to: Duration) -> Result<(), SeekError> {
+        Source::try_seek(self, to)
+    }
+
+    fn channels(&self) -> ChannelCount {
+        Source::channels(self)
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        Source::sample_rate(self)
+    }
+}
+
 #[cfg(test)]
 mod tests;

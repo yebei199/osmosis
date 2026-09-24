@@ -46,10 +46,10 @@ fn starting_from_a_position_never_plays_the_beginning() {
         NonZero::new(RATE).expect("采样率"),
         ramp,
     );
+    let shared = SyncShared::new();
     let (player, output) = rodio::Player::new();
 
-    // 拉采样的那一头就是声卡。跳转要等它拉到新源的第一个采样才生效,所以
-    // 它得在另一条线程上一直拉着。
+    // 拉采样的那一头就是声卡,得在另一条线程上一直拉着。
     let first_sound = std::thread::spawn(move || {
         let deadline =
             Instant::now() + Duration::from_secs(5);
@@ -66,13 +66,15 @@ fn starting_from_a_position_never_plays_the_beginning() {
         None
     });
 
-    start_from(
-        &player,
-        source,
+    let source = start_from(
+        SyncSource::new(SourceFeed(source), shared.clone()),
+        &shared,
         Duration::from_millis(1_000),
         true,
     )
     .expect("跳到曲中该成功");
+    player.append(source);
+    player.play();
 
     let first = first_sound
         .join()
@@ -95,6 +97,7 @@ fn a_paused_start_stays_silent() {
         NonZero::new(1_000).expect("采样率"),
         vec![0.25_f32; 2_000],
     );
+    let shared = SyncShared::new();
     let (player, output) = rodio::Player::new();
     let heard = std::thread::spawn(move || {
         let deadline =
@@ -111,17 +114,19 @@ fn a_paused_start_stays_silent() {
         false
     });
 
-    start_from(
-        &player,
-        source,
+    let source = start_from(
+        SyncSource::new(SourceFeed(source), shared.clone()),
+        &shared,
         Duration::from_millis(500),
         false,
     )
     .expect("跳到曲中该成功");
+    player.append(source);
+    player.play();
 
     assert!(
         !heard.join().expect("拉采样的线程不该崩"),
         "暂停着交进去的不该出声"
     );
-    assert!(player.is_paused());
+    assert!(shared.is_paused(), "暂停归同步源,播放器本身一直在放");
 }

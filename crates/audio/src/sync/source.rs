@@ -200,6 +200,10 @@ impl<F: Feed> SyncSource<F> {
     pub fn new(feed: F, shared: Arc<SyncShared>) -> Self {
         let channels = usize::from(feed.channels().get());
         let rate = f64::from(feed.sample_rate().get());
+        // 换了一路新媒体：上一路的位置与没来得及执行的跳转都不属于它。
+        shared.position_ns.store(0, Ordering::Relaxed);
+        shared.seek_pending.store(false, Ordering::Relaxed);
+        lock(&shared.seek).take();
         Self {
             feed,
             shared,
