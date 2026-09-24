@@ -96,7 +96,10 @@ impl SignalSender {
         &self,
         state: RemoteStateDto,
     ) -> Result<(), SyncError> {
-        self.push(ClientSignal::State { state }).await
+        self.push(ClientSignal::State {
+            state: Box::new(state),
+        })
+        .await
     }
 
     /// 向被控端要一次完整状态。
@@ -106,6 +109,41 @@ impl SignalSender {
     ) -> Result<(), SyncError> {
         self.push(ClientSignal::SnapshotRequest {
             to: to.to_owned(),
+        })
+        .await
+    }
+
+    /// 开始一次换输出。
+    pub async fn begin_outputs(
+        &self,
+        operation_id: &str,
+        outputs: Vec<String>,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::BeginOutputs {
+            operation_id: operation_id.to_owned(),
+            outputs,
+        })
+        .await
+    }
+
+    /// 提交那一次换输出。
+    pub async fn commit_outputs(
+        &self,
+        operation_id: &str,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::CommitOutputs {
+            operation_id: operation_id.to_owned(),
+        })
+        .await
+    }
+
+    /// 放弃那一次换输出。
+    pub async fn abort_outputs(
+        &self,
+        operation_id: &str,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::AbortOutputs {
+            operation_id: operation_id.to_owned(),
         })
         .await
     }
@@ -155,7 +193,7 @@ pub fn command_wire_len(
 /// 而不必等到某台设备的连接开始莫名其妙地断。
 pub fn report_wire_len(state: &RemoteStateDto) -> usize {
     serde_json::to_string(&ClientSignal::State {
-        state: state.clone(),
+        state: Box::new(state.clone()),
     })
     .map_or(usize::MAX, |text| text.len())
 }

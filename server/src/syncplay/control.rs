@@ -31,24 +31,97 @@ pub type Generation = u64;
 /// 两次不回,即 60~90 秒),再加这 30 秒。
 pub const LEASE: Duration = Duration::from_secs(30);
 
-/// 账号上当前那一条遥控关系。
-struct Grant {
-    /// 遥控器的设备 id。
-    controller: String,
-    /// 被控端的设备 id。
-    target: String,
+/// 账号上的播放组:谁在遥控、哪几台在出声、进行中的换输出操作(#137 ③)。
+///
+/// 三种身份分开记:遥控器(`controller`)、组的成员(`members`,本轮至多一台,
+/// 它也就是主端)、以及一次操作里新来的设备(`pending`)。从前这里只有一条
+/// 「谁遥控谁」,于是选别的设备只能把旧目标直接顶掉 —— 它不知道自己该停,
+/// 横幅也一直挂着(#137 ① F5)。
+struct Group {
+    /// 遥控器。满租约清成 `None`,**组不散**:成员照旧在放,下一位遥控器
+    /// 接上时它们还在组里。
+    controller: Option<Controller>,
+    /// 已确认的输出。
+    members: Vec<String>,
+    /// 主端任期:成员集合每提交一次加一。
+    term: u64,
+    /// 进行中的那一次:它确认之后的输出集合。
+    pending: Option<Pending>,
+}
+
+struct Controller {
+    device: String,
     generation: Generation,
-    /// 遥控器的会话断掉的时刻。`None` 是在线;满一个租约就清槽。
+    /// 遥控器的会话断掉的时刻。`None` 是在线;满一个租约就清掉遥控器。
     left_at: Option<Instant>,
 }
 
-/// 每个账号至多一台遥控器(产品规则),所以是**一个槽位**而不是一张表。
+struct Pending {
+    operation_id: String,
+    outputs: Vec<String>,
+}
+
+impl Group {
+    fn empty() -> Self {
+        Self {
+            controller: None,
+            members: Vec::new(),
+            term: 0,
+            pending: None,
+        }
+    }
+
+    /// 这台设备在不在组里 —— 已确认的成员,或者正被一次操作拉进来。
+    fn includes(&self, device: &str) -> bool {
+        self.members.iter().any(|id| id == device)
+            || self.pending.as_ref().is_some_and(
+                |pending| {
+                    pending
+                        .outputs
+                        .iter()
+                        .any(|id| id == device)
+                },
+            )
+    }
+
+    /// 没有成员、也没有进行中的操作:这个组已经不存在了。
+    fn is_vacant(&self) -> bool {
+        self.members.is_empty() && self.pending.is_none()
+    }
+
+    fn controlled_by(&self, device: &str) -> bool {
+        self.controller.as_ref().is_some_and(|controller| {
+            controller.device == device
+        })
+    }
+
+    /// 进行中那一次拉进来、却不会留下的设备 —— 它们要撤锁。
+    fn stranded(&self, keep: &[String]) -> Vec<String> {
+        self.pending
+            .as_ref()
+            .map(|pending| {
+                pending
+                    .outputs
+                    .iter()
+                    .filter(|id| {
+                        !self.members.contains(id)
+                            && !keep.contains(id)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// 每个账号至多一个受控组(产品规则:不做多个并发的受控组),所以是一张
+/// 按账号的表,每格一个组。
 ///
-/// 遥控器下线不解锁被控端,但也不永远锁着:槽位替它留一个租约,租约内续上
-/// 就当没断过,满了就清 —— 被控端下一条上报拿到 `NotControlled` 自己解锁。
-/// 清的只是锁,被控端的播放不动(#109 AC-10 的续播)。
+/// 遥控器下线不解锁成员,但也不永远锁着:替它留一个租约,租约内续上就当没断过,
+/// 满了就清掉遥控器 —— 成员下一条上报拿到 `NotControlled` 自己解锁。清的只是锁,
+/// 成员的播放不动(#109 AC-10 的续播),组也不散。
 pub struct Control {
-    slots: HashMap<AccountId, Grant>,
+    groups: HashMap<AccountId, Group>,
     next_generation: Generation,
     lease: Duration,
 }
@@ -71,71 +144,119 @@ pub enum Claim {
     Stale { by: String },
 }
 
+/// [`Control::begin`] 的下场。
+#[derive(Debug, PartialEq, Eq)]
+pub struct Begun {
+    pub generation: Generation,
+    /// 被这一次接管顶掉的遥控器。
+    pub revoked: Option<String>,
+    /// 上一次操作拉进来、这一次不要了的设备 —— 要撤锁。
+    pub dropped: Vec<String>,
+}
+
+/// [`Control::commit`] 的下场。
+#[derive(Debug, PartialEq, Eq)]
+pub enum Committed {
+    Done {
+        term: u64,
+        /// 换下来的成员 —— 要撤锁。
+        removed: Vec<String>,
+    },
+    NotController,
+    /// 进行中的不是这一次(或者根本没有进行中的)。
+    Mismatch,
+}
+
 impl Control {
     /// 自定租约长度。测试要毫秒级的,生产用 [`LEASE`]。
     pub fn with_lease(lease: Duration) -> Self {
         Self {
-            slots: HashMap::new(),
+            groups: HashMap::new(),
             next_generation: 0,
             lease,
         }
     }
 
+    fn fresh_generation(&mut self) -> Generation {
+        let generation = self.next_generation;
+        self.next_generation += 1;
+        generation
+    }
+
     /// 一台设备的会话断了:出册,或者以新连接重新入册。它若正是这个账号的
     /// 遥控器,租约从 `now` 起算;已经在算的不重算。
     ///
-    /// 被控端出册不归这里,走 [`Control::release`]。
+    /// 成员出册不归这里,走 [`Control::release`]。
     pub fn controller_left(
         &mut self,
         account: AccountId,
         device: &str,
         now: Instant,
     ) {
-        if let Some(grant) = self.slots.get_mut(&account)
-            && grant.controller == device
-            && grant.left_at.is_none()
+        if let Some(group) = self.groups.get_mut(&account)
+            && let Some(controller) =
+                group.controller.as_mut()
+            && controller.device == device
+            && controller.left_at.is_none()
         {
-            grant.left_at = Some(now);
+            controller.left_at = Some(now);
             tracing::info!(
                 account,
                 controller = %device,
-                target = %grant.target,
+                members = ?group.members,
                 "遥控器会话断过,控制权租约起算"
             );
         }
     }
 
-    /// 遥控器下线满一个租约的,清掉它的槽位。
+    /// 遥控器下线满一个租约的,清掉遥控器 —— **组不散**。
     ///
-    /// 惰性判,不另起定时器:被控端每秒上报,每条消息进来先过这一道,
+    /// 进行中的操作一并作罢:没有遥控器,它永远等不到提交。被它拉进来的设备
+    /// 下一条上报拿到 `NotControlled` 自己撤锁。
+    ///
+    /// 惰性判,不另起定时器:成员每秒上报,每条消息进来先过这一道,
     /// 于是过期最迟一秒被发现,而服务端不必为每个下线的遥控器挂一个任务。
     pub fn expire(
         &mut self,
         account: AccountId,
         now: Instant,
     ) {
-        let expired =
-            self.slots.get(&account).is_some_and(|grant| {
-                grant.left_at.is_some_and(|left| {
-                    now.duration_since(left) >= self.lease
+        let lease = self.lease;
+        let Some(group) = self.groups.get_mut(&account)
+        else {
+            return;
+        };
+        let expired = group
+            .controller
+            .as_ref()
+            .is_some_and(|controller| {
+                controller.left_at.is_some_and(|left| {
+                    now.duration_since(left) >= lease
                 })
             });
-        if expired
-            && let Some(grant) = self.slots.remove(&account)
-        {
+        if !expired {
+            return;
+        }
+        if let Some(controller) = group.controller.take() {
             tracing::info!(
                 account,
-                controller = %grant.controller,
-                target = %grant.target,
-                "遥控器下线满租约,清掉控制权"
+                controller = %controller.device,
+                members = ?group.members,
+                "遥控器下线满租约,清掉遥控器(组不散)"
             );
+        }
+        group.pending = None;
+        if group.is_vacant() {
+            self.groups.remove(&account);
         }
     }
 
     /// 接管 `target`。
     ///
     /// `resume` 是重连时自动重发的那一次带回来的旧代次:对得上就原样续,
-    /// 对不上只能认输。`None` 是用户**主动**按下的那一次,顶掉任何人。
+    /// 对不上只能认输。`None` 是用户**主动**按下的那一次,顶掉任何人,
+    /// 组的成员直接换成 `target`(不经迁移;协议 5 的遥控器改走
+    /// `BeginOutputs`,这一条留给续权与旧测试)。
     /// 不分这两种的话,断线的手机一恢复网络就把接管者顶掉了 ——
     /// 而接管者那边什么都没做过(产品规则:旧遥控器自动重连不夺回)。
     pub fn claim(
@@ -146,15 +267,21 @@ impl Control {
         resume: Option<Generation>,
     ) -> Claim {
         if let Some(generation) = resume {
-            return match self.slots.get_mut(&account) {
-                Some(grant)
-                    if grant.generation == generation
-                        && grant.controller
-                            == controller
-                        && grant.target == target =>
+            let Some(group) = self.groups.get_mut(&account)
+            else {
+                return Claim::Stale {
+                    by: target.to_owned(),
+                };
+            };
+            let includes = group.includes(target);
+            return match group.controller.as_mut() {
+                Some(held)
+                    if held.generation == generation
+                        && held.device == controller
+                        && includes =>
                 {
                     // 续上了就是回来了,租约作废。
-                    if grant.left_at.take().is_some() {
+                    if held.left_at.take().is_some() {
                         tracing::info!(
                             account,
                             controller = %controller,
@@ -166,10 +293,11 @@ impl Control {
                         revoked: None,
                     }
                 }
-                // 槽位空着也算续不上:被控端期间退出过,遥控权是它撤的。
-                // 谎报一个"续上了"会让遥控器对着一台已经解锁的设备发命令。
-                Some(grant) => Claim::Stale {
-                    by: grant.controller.clone(),
+                // 组还在、遥控器却不是它:续不上。组里没有 `target` 也算续不上 ——
+                // 期间它退出过,遥控权是它撤的。谎报一个「续上了」会让遥控器对着
+                // 一台已经解锁的设备发命令。
+                Some(held) => Claim::Stale {
+                    by: held.device.clone(),
                 },
                 None => Claim::Stale {
                     by: target.to_owned(),
@@ -177,24 +305,27 @@ impl Control {
             };
         }
 
+        let generation = self.fresh_generation();
+        let group = self
+            .groups
+            .entry(account)
+            .or_insert_with(Group::empty);
         // 自己顶自己不算换人 —— 给自己发一条撤权,遥控器会把自己降级回本机。
-        let revoked = self
-            .slots
-            .get(&account)
-            .map(|grant| grant.controller.clone())
+        let revoked = group
+            .controller
+            .as_ref()
+            .map(|held| held.device.clone())
             .filter(|old| old != controller);
-
-        let generation = self.next_generation;
-        self.next_generation += 1;
-        self.slots.insert(
-            account,
-            Grant {
-                controller: controller.to_owned(),
-                target: target.to_owned(),
-                generation,
-                left_at: None,
-            },
-        );
+        group.controller = Some(Controller {
+            device: controller.to_owned(),
+            generation,
+            left_at: None,
+        });
+        if group.members != [target] {
+            group.members = vec![target.to_owned()];
+            group.term += 1;
+        }
+        group.pending = None;
 
         Claim::Granted {
             generation,
@@ -202,34 +333,181 @@ impl Control {
         }
     }
 
-    /// 被控端撤销这条遥控关系:自己按了退出,或者它下线了。
+    /// 遥控器开始一次「改在这些设备播放」。只登记,不换成员。
+    ///
+    /// 不是当前遥控器的那台发来,就是接管:旧遥控器被顶掉(与主动接管同一条
+    /// 产品规则)。当前遥控器自己发来,代次不变。
+    pub fn begin(
+        &mut self,
+        account: AccountId,
+        controller: &str,
+        operation_id: &str,
+        outputs: Vec<String>,
+    ) -> Begun {
+        let fresh = self.fresh_generation();
+        let group = self
+            .groups
+            .entry(account)
+            .or_insert_with(Group::empty);
+
+        let (generation, revoked) =
+            match group.controller.as_mut() {
+                Some(held) if held.device == controller => {
+                    held.left_at = None;
+                    (held.generation, None)
+                }
+                _ => {
+                    let revoked = group
+                        .controller
+                        .replace(Controller {
+                            device: controller.to_owned(),
+                            generation: fresh,
+                            left_at: None,
+                        })
+                        .map(|old| old.device);
+                    (fresh, revoked)
+                }
+            };
+
+        let dropped = group.stranded(&outputs);
+        group.pending = Some(Pending {
+            operation_id: operation_id.to_owned(),
+            outputs,
+        });
+
+        Begun {
+            generation,
+            revoked,
+            dropped,
+        }
+    }
+
+    /// 进行中那一次确认完了:成员换成它的输出集合,任期加一。
+    ///
+    /// 成员集合变空就是组散了(改回本机):整格清掉。
+    pub fn commit(
+        &mut self,
+        account: AccountId,
+        controller: &str,
+        operation_id: &str,
+    ) -> Committed {
+        let Some(group) = self.groups.get_mut(&account)
+        else {
+            return Committed::NotController;
+        };
+        if !group.controlled_by(controller) {
+            return Committed::NotController;
+        }
+        let Some(pending) =
+            group.pending.take_if(|pending| {
+                pending.operation_id == operation_id
+            })
+        else {
+            return Committed::Mismatch;
+        };
+
+        let removed = group
+            .members
+            .iter()
+            .filter(|id| !pending.outputs.contains(id))
+            .cloned()
+            .collect();
+        group.members = pending.outputs;
+        group.term += 1;
+        let term = group.term;
+        if group.is_vacant() {
+            self.groups.remove(&account);
+        }
+        Committed::Done { term, removed }
+    }
+
+    /// 放弃进行中那一次:返回它拉进来、要撤锁的设备。对不上就什么都不动。
+    pub fn abort(
+        &mut self,
+        account: AccountId,
+        controller: &str,
+        operation_id: &str,
+    ) -> Vec<String> {
+        let Some(group) = self.groups.get_mut(&account)
+        else {
+            return Vec::new();
+        };
+        let matches = group.controlled_by(controller)
+            && group.pending.as_ref().is_some_and(
+                |pending| {
+                    pending.operation_id == operation_id
+                },
+            );
+        if !matches {
+            return Vec::new();
+        }
+        let dropped = group.stranded(&[]);
+        group.pending = None;
+        if group.is_vacant() {
+            self.groups.remove(&account);
+        }
+        dropped
+    }
+
+    /// 一台设备离开组:自己按了退出,或者它下线了。组因此空了的话,
     /// 返回失权的那个遥控器,由调用方去通知。
     ///
-    /// **只认被控端那一侧**。遥控器下线不解锁被控端 —— 手机没电不能让 pc1 停
+    /// **只认成员那一侧**。遥控器下线不解锁成员 —— 手机没电不能让 pc1 停
     /// (产品规则)。这两条最容易写反,写反的症状是手机一锁屏 pc1 就自己解锁了。
     pub fn release(
         &mut self,
         account: AccountId,
-        target: &str,
+        device: &str,
     ) -> Option<String> {
-        let grant = self.slots.get(&account)?;
-        if grant.target != target {
+        let group = self.groups.get_mut(&account)?;
+        if !group.includes(device) {
             return None;
         }
-        self.slots
+        group.members.retain(|id| id != device);
+        if let Some(pending) = group.pending.as_mut() {
+            pending.outputs.retain(|id| id != device);
+        }
+        if !group.members.is_empty() {
+            return None;
+        }
+        self.groups
             .remove(&account)
-            .map(|grant| grant.controller)
+            .and_then(|group| group.controller)
+            .map(|controller| controller.device)
     }
 
-    /// 这台设备现在被谁遥控。没人遥控则 `None`。
+    /// 这台设备现在被谁遥控。不在组里、或者组此刻没有遥控器则 `None`。
     pub fn controller_of(
         &self,
         account: AccountId,
         target: &str,
     ) -> Option<&str> {
-        let grant = self.slots.get(&account)?;
-        (grant.target == target)
-            .then_some(grant.controller.as_str())
+        let group = self.groups.get(&account)?;
+        if !group.includes(target) {
+            return None;
+        }
+        group
+            .controller
+            .as_ref()
+            .map(|controller| controller.device.as_str())
+    }
+
+    /// 这个账号的组此刻的成员(已确认的输出)。
+    pub fn members(
+        &self,
+        account: AccountId,
+    ) -> Vec<String> {
+        self.groups
+            .get(&account)
+            .map(|group| group.members.clone())
+            .unwrap_or_default()
+    }
+
+    /// 这个账号的组的主端任期。没有组时是 0。
+    pub fn term(&self, account: AccountId) -> u64 {
+        self.groups
+            .get(&account)
+            .map_or(0, |group| group.term)
     }
 }
 
@@ -326,7 +604,7 @@ pub fn route(
                 &controller,
                 ServerSignal::State {
                     from: from.to_owned(),
-                    state: Box::new(state),
+                    state,
                 },
             );
             None
@@ -341,6 +619,46 @@ pub fn route(
         ),
         // 握手归 `signaling::route`,到不了这里。
         ClientSignal::Hello { .. } => None,
+        ClientSignal::BeginOutputs {
+            operation_id,
+            outputs,
+        } => begin_outputs(
+            roster,
+            control,
+            account,
+            from,
+            &operation_id,
+            outputs,
+        ),
+        ClientSignal::CommitOutputs { operation_id } => {
+            commit_outputs(
+                roster,
+                control,
+                account,
+                from,
+                &operation_id,
+            )
+        }
+        ClientSignal::AbortOutputs { operation_id } => {
+            let dropped =
+                control.abort(account, from, &operation_id);
+            tracing::info!(
+                account,
+                from = %from,
+                operation = %operation_id,
+                dropped = ?dropped,
+                "换输出作罢"
+            );
+            for device in dropped {
+                send(
+                    roster,
+                    account,
+                    &device,
+                    ServerSignal::NotControlled,
+                );
+            }
+            None
+        }
     }
 }
 
@@ -413,6 +731,137 @@ fn claim(
 ///
 /// 不查这一条的话,同账号下任意一台设备都能让 pc1 切歌 ——
 /// 而 pc1 前面的人只会看到歌自己跳了。
+/// 开始一次换输出:先查输出都用得上,再登记,再锁上新来的、撤掉被顶掉的。
+fn begin_outputs(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+    account: AccountId,
+    from: &str,
+    operation_id: &str,
+    outputs: Vec<String>,
+) -> Option<ServerSignal> {
+    // 整次校验在先:锁上一半再发现另一半不在线,就得回头一台台撤。
+    for output in &outputs {
+        if output == from {
+            return Some(ServerSignal::Error {
+                code: "cannot_control_self".to_owned(),
+                message: "本机输出不必经过服务端"
+                    .to_owned(),
+            });
+        }
+        // 跨账号一律取不到,于是与真的不在线一个说法(理由同 `claim`)。
+        if roster.device(account, output).is_none() {
+            return Some(ServerSignal::Error {
+                code: "device_offline".to_owned(),
+                message: format!("设备 {output} 不在线"),
+            });
+        }
+    }
+
+    let begun = control.begin(
+        account,
+        from,
+        operation_id,
+        outputs.clone(),
+    );
+    tracing::info!(
+        account,
+        from = %from,
+        operation = %operation_id,
+        outputs = ?outputs,
+        generation = begun.generation,
+        "换输出开始"
+    );
+    let me = roster
+        .device(account, from)
+        .cloned()
+        .unwrap_or(contract::DeviceDto {
+            id: from.to_owned(),
+            name: from.to_owned(),
+        });
+    // 集合里每一台都(重新)锁上:原本就在组里、却在遥控器离线满租约时撤过锁的
+    // 那台,也得重新开始听命令、开始上报。
+    for output in &outputs {
+        send(
+            roster,
+            account,
+            output,
+            ServerSignal::ControlledBy {
+                device: me.clone(),
+            },
+        );
+    }
+    for device in begun.dropped {
+        send(
+            roster,
+            account,
+            &device,
+            ServerSignal::NotControlled,
+        );
+    }
+    if let Some(old) = begun.revoked {
+        send(
+            roster,
+            account,
+            &old,
+            ServerSignal::ControlRevoked {
+                by: from.to_owned(),
+            },
+        );
+    }
+    Some(ServerSignal::OutputsBegun {
+        operation_id: operation_id.to_owned(),
+        generation: begun.generation,
+    })
+}
+
+/// 提交一次换输出:成员换过去,换下来的撤锁。
+fn commit_outputs(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+    account: AccountId,
+    from: &str,
+    operation_id: &str,
+) -> Option<ServerSignal> {
+    match control.commit(account, from, operation_id) {
+        Committed::Done { term, removed } => {
+            tracing::info!(
+                account,
+                from = %from,
+                operation = %operation_id,
+                term,
+                removed = ?removed,
+                "换输出提交"
+            );
+            for device in removed {
+                send(
+                    roster,
+                    account,
+                    &device,
+                    ServerSignal::NotControlled,
+                );
+            }
+            Some(ServerSignal::OutputsCommitted {
+                operation_id: operation_id.to_owned(),
+                term,
+            })
+        }
+        Committed::NotController => {
+            Some(ServerSignal::Error {
+                code: "not_controller".to_owned(),
+                message: "没有这个播放组的控制权"
+                    .to_owned(),
+            })
+        }
+        Committed::Mismatch => Some(ServerSignal::Error {
+            code: "operation_mismatch".to_owned(),
+            message: format!(
+                "进行中的不是操作 {operation_id}"
+            ),
+        }),
+    }
+}
+
 fn forward(
     roster: &Roster<Sink>,
     control: &Control,

@@ -263,7 +263,8 @@ fn pick_remote(
         return;
     };
 
-    let operation_id = crate::music::fresh_operation_id();
+    let operation_id =
+        crate::sync::link::fresh_operation_id();
     let deck = deck.clone();
     let weak = ui.as_weak();
     let _ = slint::spawn_local(async move {

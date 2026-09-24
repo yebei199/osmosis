@@ -251,10 +251,8 @@ pub(in crate::music) fn bind_remote(
     // 要快照就立刻报一次,不等下一趟轮询 —— 那要一秒,而遥控器那边
     // 正停在「状态已过期」上等着。
     let snap = deck.clone();
-    let weak = ui.as_weak();
     ui.global::<Shell>().on_remote_snapshot(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        snap.remote.report(snapshot(&ui, &snap));
+        snap.remote.report(snapshot(&snap));
     });
 }
 
@@ -269,18 +267,17 @@ pub(in crate::music) fn bind_remote(
 /// 听着队列一边翻别的歌单,两者那时根本不是一回事。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn snapshot(
-    ui: &MainWindow,
     deck: &Deck,
 ) -> app_core::RemoteStateDto {
     use app_core::RemotePlayState;
 
-    let position = deck
-        .player
-        .as_ref()
-        .as_ref()
+    // 位置、在不在放、音量都问播放器本身,不回读界面(#137 ③):界面是投影,
+    // 回读它就等于让投影反过来当真相 —— 而这一份正是报给别人看的真相。
+    let player = deck.player.as_ref().as_ref().ok();
+    let position = player
         .map(audio::Player::position)
         .unwrap_or_default();
-    let playing = ui.global::<Player>().get_is_playing();
+    let playing = player.is_some_and(is_sounding);
     let state = match deck.playback.borrow().state() {
         // 取直链、开流、解码都还没出声 —— 报 Playing 的话,遥控器会从
         // 这个位置开始插值,而那几秒里进度根本没动。
@@ -306,7 +303,10 @@ pub(in crate::music) fn snapshot(
         track: queue.current().cloned(),
         position_ms: position.as_millis() as u64,
         state,
-        volume: ui.global::<Player>().get_volume(),
+        volume: player.map_or_else(
+            || api::settings::load().volume,
+            audio::Player::volume,
+        ),
         // 三样都可能是 `None`,而那是**正常状态**:这一批还没同步到服务端
         // 去(`docs/adr/0031` 八)。遥控器据此知道自己拉不到列表,而不是
         // 拉了个空的。
@@ -320,5 +320,7 @@ pub(in crate::music) fn snapshot(
         queue_len: queue.tracks().len() as u32,
         epoch,
         state_seq,
+        // 最近一次迁移步骤的回话:每条都带着,丢一条下一秒就补回来。
+        operation: deck.member.ack(),
     }
 }

@@ -44,7 +44,7 @@ fn batch_of(deck: &Deck, ids: &[&str]) -> Vec<TrackDto> {
 
 /// 把输出交给 `pc`,并让它报一条**新鲜**的状态 —— 控制因此发得出去。
 fn take_control_of_pc(deck: &Deck) {
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
     deck.remote.accept_report_at(
         report(),
         crate::sync::remote::now_ms(),
@@ -53,7 +53,7 @@ fn take_control_of_pc(deck: &Deck) {
 
 /// 把输出交给 `pc`,但手上那份上报已经过期(`STALE_AFTER_MS` 是三秒)。
 fn hold_a_stale_view_of_pc(deck: &Deck) {
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
     deck.remote.accept_report_at(
         report(),
         crate::sync::remote::now_ms() - 10_000,
@@ -74,6 +74,7 @@ fn report() -> app_core::RemoteStateDto {
         queue_len: 1,
         epoch: 1_700_000_000_000,
         state_seq: 1,
+        operation: None,
     }
 }
 
@@ -305,7 +306,7 @@ fn a_failed_claim_sends_the_next_tap_to_the_local_player() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     let _ = batch_of(&deck, &["a", "b"]);
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
     assert!(
         deck.remote.is_remote(),
         "按下去那一刻先乐观地切过去"
@@ -347,8 +348,8 @@ fn a_failed_claim_sends_the_next_tap_to_the_local_player() {
 fn a_failed_claim_on_a_device_no_longer_selected_is_ignored()
  {
     let (_ui, deck) = deck_window();
-    deck.remote.select("pc", "pc1");
-    deck.remote.select("tablet", "平板");
+    deck.remote.assume_output("pc", "pc1");
+    deck.remote.assume_output("tablet", "平板");
 
     crate::sync::remote::handle(
         &Event::ClaimFailed {
@@ -560,7 +561,7 @@ fn a_just_claimed_target_accepts_the_first_tap() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     batch_of(&deck, &["a"]);
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
 
     ui.global::<Player>().invoke_play("a".into());
 
@@ -767,16 +768,6 @@ fn hold_loading(deck: &Deck, id: &str) {
     ));
 }
 
-/// 让本机的播放状态停在「`id` 已经在放」。
-fn hold_playing(deck: &Deck, id: &str) {
-    poll_once(app_core::play(
-        &deck.playback,
-        track_with_id(id),
-        |_| async { Ok::<(), String>(()) },
-        |_| {},
-    ));
-}
-
 fn poll_once(
     future: impl core::future::Future<Output = ()>,
 ) {
@@ -798,26 +789,40 @@ fn tapped_before(deck: &Deck, id: &str) {
     deck.queue.borrow_mut().replace(batch, index);
 }
 
+/// 还在加载的那一首再点一下:经回调入口走到去重那道闸,被挡下 —— 不发布、
+/// 不重新加载。
+///
+/// 这一条原先测的是「已在**响**的那一首」,拿界面上的 `is-playing` 当「在响」
+/// 的输入。#137 ③ 起播放逻辑不回读界面属性(界面是投影),「在响」问播放器
+/// 本身,而测试里没有声卡 —— 那个前提在这里造不出来。「在响的那首再点是多余的」
+/// 这条规则本身由 `rules::tests::tapping_the_sounding_track_is_redundant` 钉着;
+/// 这里改用加载中那一档,验的仍是**回调入口确实经过了去重那道闸**。
 #[test]
-fn tapping_the_playing_track_again_is_ignored() {
+fn tapping_the_loading_track_again_is_ignored() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     batch_of(&deck, &["a", "b", "c"]);
     tapped_before(&deck, "b");
-    hold_playing(&deck, "b");
-    ui.global::<Player>().set_is_playing(true);
+    poll_once(app_core::play(
+        &deck.playback,
+        track_with_id("b"),
+        |_| core::future::pending::<Result<(), String>>(),
+        |()| {},
+    ));
 
     ui.global::<Player>().invoke_play("b".into());
 
     assert_eq!(
         deck.execution.publishes(),
         0,
-        "已在放的那一首再点,不该再发布一次队列"
+        "加载中的那一首再点,不该再发布一次队列"
     );
     assert!(
-        ui.global::<Player>().get_is_playing()
-            && !ui.global::<Player>().get_now_loading(),
-        "已在放的那一首不该被停下来从头再加载"
+        matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Loading(track) if track.id == "b"
+        ),
+        "加载中的那一首不该被停下来从头再加载"
     );
 }
 
@@ -896,7 +901,7 @@ fn tapping_the_track_the_target_paused_still_goes_out() {
     let paused = report().track.expect("上报里有一首").id;
     *deck.tracks.borrow_mut() =
         vec![track_with_id(&paused)];
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
     deck.remote.accept_report_at(
         app_core::RemoteStateDto {
             state: app_core::RemotePlayState::Paused,

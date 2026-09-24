@@ -230,6 +230,8 @@ fn deck_window_with(
         execution: crate::music::Execution::default(),
         queue_mirror: Default::default(),
         frames: Default::default(),
+        start_at: Rc::new(Cell::new(None)),
+        member: Default::default(),
     };
 
     (ui, deck)

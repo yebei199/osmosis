@@ -78,8 +78,9 @@ pub enum ClientSignal {
     },
     /// 被控端按了「退出被遥控」:清掉自己身上的控制权。
     ///
-    /// 只有**被控端**发得出这一条。遥控器想放手就选回本机,不必知会服务端 ——
-    /// 它一走了之,被控端仍然该接着放(手机没电不能让 pc1 停)。
+    /// 只有**被控端**发得出这一条。遥控器选回本机是一次迁移(`BeginOutputs`
+    /// 到 `CommitOutputs`,#137 ③),被控端在迁移里被叫停;遥控器一走了之(下线)
+    /// 则什么都不发,被控端仍然该接着放(手机没电不能让 pc1 停)。
     ExitControlled,
     /// 遥控器发给被控端的一条命令。
     Command {
@@ -90,12 +91,34 @@ pub enum ClientSignal {
     },
     /// 被控端每秒一次的状态上报。发给谁由服务端从控制权槽位查,不由这里指定:
     /// 让被控端自己写目标的话,它能把状态推给任何一台设备。
-    State { state: RemoteStateDto },
+    ///
+    /// 装箱的理由同 [`ServerSignal::State`]:上报带着当前曲目与迁移回话,比别的
+    /// 变体大出几百字节,不装箱的话每条上行消息都按它占位。线上写法不变。
+    State { state: Box<RemoteStateDto> },
     /// 向被控端要一次完整状态。
     ///
     /// 取得控制权、切换目标、重连之后各要一次。服务端不缓存状态
     /// (`docs/adr/0030`),所以「现在是什么样」只能问被控端本人。
     SnapshotRequest { to: String },
+    /// 遥控器开始一次「改在这些设备播放」:`outputs` 是**换上之后**的输出集合。
+    ///
+    /// 这一步只登记,不换人:集合里新来的设备收到 [`ServerSignal::ControlledBy`]
+    /// 开始听命令、开始上报,原来的成员照旧 —— 源停没停、目标起没起都还没
+    /// 确认,这时候就把源从组里摘掉,就再也没有人能叫它停了(#137 ③)。
+    ///
+    /// 空集合是「改回本机」:本机输出不经服务端,组里只剩要被停掉的那些。
+    /// 本轮集合最多一台;字段从第一天就是集合,多成员(#137 ⑤)不用再改形状。
+    BeginOutputs {
+        operation_id: String,
+        outputs: Vec<String>,
+    },
+    /// 那一次操作确认完了:输出集合正式换成 `BeginOutputs` 里那一份。
+    ///
+    /// 被换下来的成员收到 [`ServerSignal::NotControlled`] 解锁 —— 它们此前已经
+    /// 各自确认停了声音,这一条只是撤锁,不是叫停。
+    CommitOutputs { operation_id: String },
+    /// 放弃那一次操作:新来的设备撤锁,组的成员集合不变。
+    AbortOutputs { operation_id: String },
 }
 
 /// 服务端发给设备的信令消息。
@@ -115,7 +138,7 @@ pub enum ServerSignal {
     ///
     /// | 客户端 | 服务端 | 发生什么 |
     /// |---|---|---|
-    /// | 新 | 新 | 收到 `Welcome{4}`,对得上,照常入册 |
+    /// | 新 | 新 | 收到 `Welcome{N}`,与本端的 [`crate::PROTOCOL_VERSION`] 对得上,照常入册 |
     /// | 旧 | 新 | 服务端认出 `protocol_version` 缺省的 0,发一条 `Welcome` 就关掉连接、**不入册**;旧端解不出这条消息,但它启动时的 `/health` 自检已经说过话了 |
     /// | 新 | 旧 | 这条**永远不来**。客户端在收到第一条 `Roster` 时还没见过它,据此判定对端太旧 —— 名册到得了,控制权申请由客户端自己挡下 |
     /// | 旧 | 旧 | 谁也不认识它,照旧 |
@@ -180,6 +203,15 @@ pub enum ServerSignal {
     /// 带整个 `DeviceDto` 而不只是 id:横幅上要写的是人看得懂的名字,
     /// 而 id 是「主机名-进程号」。
     ControlledBy { device: DeviceDto },
+    /// `BeginOutputs` 登记上了。`generation` 是这一位遥控器的控制代次 ——
+    /// 与 [`Self::ControlGranted`] 同一个数,重连续权用它。
+    OutputsBegun {
+        operation_id: String,
+        generation: u64,
+    },
+    /// `CommitOutputs` 生效了。`term` 是换人之后的主端任期:成员集合每换
+    /// 一次加一,旧任期里迟到的一切都不再作数。
+    OutputsCommitted { operation_id: String, term: u64 },
 }
 
 #[cfg(test)]
@@ -207,5 +239,53 @@ mod tests {
             downstream.is_err(),
             "下行 signal 还解得出来: {downstream:?}"
         );
+    }
+
+    /// 换输出那三条上行与两条下行都解得回来。
+    #[test]
+    fn output_membership_signals_round_trip() {
+        let upstream = [
+            ClientSignal::BeginOutputs {
+                operation_id: "op-1".to_owned(),
+                outputs: vec!["pc1".to_owned()],
+            },
+            ClientSignal::BeginOutputs {
+                operation_id: "op-2".to_owned(),
+                outputs: Vec::new(),
+            },
+            ClientSignal::CommitOutputs {
+                operation_id: "op-1".to_owned(),
+            },
+            ClientSignal::AbortOutputs {
+                operation_id: "op-1".to_owned(),
+            },
+        ];
+        for message in upstream {
+            let back: ClientSignal = serde_json::from_str(
+                &serde_json::to_string(&message)
+                    .expect("消息该能序列化"),
+            )
+            .expect("消息该能解回来");
+            assert_eq!(back, message);
+        }
+
+        let downstream = [
+            ServerSignal::OutputsBegun {
+                operation_id: "op-1".to_owned(),
+                generation: 4,
+            },
+            ServerSignal::OutputsCommitted {
+                operation_id: "op-1".to_owned(),
+                term: 2,
+            },
+        ];
+        for message in downstream {
+            let back: ServerSignal = serde_json::from_str(
+                &serde_json::to_string(&message)
+                    .expect("消息该能序列化"),
+            )
+            .expect("消息该能解回来");
+            assert_eq!(back, message);
+        }
     }
 }

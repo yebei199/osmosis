@@ -126,6 +126,10 @@ pub(in crate::music) fn play_current(
         .expect("event loop must be running");
     }
 
+    // 迁移过来的那一首不从头放(见 `migrate`)。当场取走:这一份只属于这一次起播,
+    // 留到下一首就会让一首新点的歌从半路开始。
+    let start = deck.start_at.take();
+
     let deck = deck.clone();
     let weak = ui.as_weak();
     slint::spawn_local(async move {
@@ -162,6 +166,7 @@ pub(in crate::music) fn play_current(
                     &commit.seeking,
                     decoded,
                     health,
+                    start,
                 );
                 committing.mark("sound");
             },
@@ -172,10 +177,18 @@ pub(in crate::music) fn play_current(
             let (playing, text) = {
                 let state = deck.playback.borrow();
                 (
+                    // 迁移过来、按要求停在锚点上的那一首也是 `Playing` 态 ——
+                    // 在不在出声问播放器本身,不猜(#137 ③)。
                     matches!(
                         state.state(),
                         PlaybackState::Playing(_)
-                    ),
+                    ) && deck
+                        .player
+                        .as_ref()
+                        .as_ref()
+                        .is_ok_and(|player| {
+                            !player.is_paused()
+                        }),
                     describe_playback(state.state()),
                 )
             };
@@ -254,6 +267,18 @@ pub(in crate::music) fn start_auto_advance(
             if deck.remote.took_local_edge() {
                 rest_local(&ui, &deck);
             }
+            // 迁移等过了头没有(准备超时放弃、停止与开始超时进「待确认」)。
+            deck.remote.tick();
+            // 不再被遥控、自己也没在迁移:备好的那一份没人会叫它开始了。
+            if !deck.remote.is_controlled() && !deck.remote.is_moving() {
+                deck.member.forget_staged();
+            }
+            // 迁移那几秒控制条画迁过去的那一首,本机这边的续播、上报一概停一拍 ——
+            // 输出还没定下来,照本机的状态画或推进都是在猜(#137 ③)。
+            if deck.remote.is_moving() {
+                crate::sync::remote::push_moving(&ui, &deck.remote);
+                return;
+            }
             let (drained, position) =
                 match deck.player.as_ref() {
                     Ok(player) => {
@@ -301,7 +326,7 @@ pub(in crate::music) fn start_auto_advance(
             push_progress(&ui, &state, position);
             // 被遥控时每秒报一次。搭同一趟车的理由相同:另起一个定时器
             // 就会有两套「现在放到哪」的说法,而遥控器那头看的正是这个数。
-            deck.remote.report(snapshot(&ui, &deck));
+            deck.remote.report(snapshot(&deck));
             // 服务端回来了就把没同步上去的那一批补提交(AC-12 的「恢复后
             // 对账」)。搭这趟车而不是另起定时器,理由与上面几样相同;
             // `due_for_resync` 自己管节流,不会每秒打一发。
