@@ -107,7 +107,8 @@ struct State {
 impl State {
     /// 换了账号:上一个人的视图全部扔掉,当前视图也作废。
     fn forget_other_accounts(&mut self, account: u64) {
-        self.entries.retain(|entry| entry.key.account == account);
+        self.entries
+            .retain(|entry| entry.key.account == account);
         if self
             .current
             .as_ref()
@@ -118,7 +119,9 @@ impl State {
     }
 
     fn find(&self, key: &ViewKey) -> Option<usize> {
-        self.entries.iter().position(|entry| &entry.key == key)
+        self.entries
+            .iter()
+            .position(|entry| &entry.key == key)
     }
 
     /// 取出(没有就新建)这个视图,挪到「最近进过」那一端。
@@ -143,9 +146,12 @@ impl State {
     /// 超了容量就从最久没进过的那头扔,跳过当前视图。
     fn evict(&mut self) {
         while self.entries.len() > CAPACITY {
-            let Some(index) = self.entries.iter().position(|entry| {
-                Some(&entry.key) != self.current.as_ref()
-            }) else {
+            let Some(index) =
+                self.entries.iter().position(|entry| {
+                    Some(&entry.key)
+                        != self.current.as_ref()
+                })
+            else {
                 return;
             };
             self.entries.remove(index);
@@ -153,14 +159,19 @@ impl State {
     }
 
     /// 这张凭据还算不算数:账号没换、而且是它那个视图最近的一次。
-    fn live(&mut self, ticket: &Ticket, account: u64) -> Option<&mut Entry> {
+    fn live(
+        &mut self,
+        ticket: &Ticket,
+        account: u64,
+    ) -> Option<&mut Entry> {
         self.forget_other_accounts(account);
         if ticket.key.account != account {
             return None;
         }
         let index = self.find(&ticket.key)?;
         let entry = &mut self.entries[index];
-        (entry.generation == ticket.generation).then_some(entry)
+        (entry.generation == ticket.generation)
+            .then_some(entry)
     }
 }
 
@@ -203,7 +214,10 @@ impl Views {
     /// 进一个视图,并为它发一次取数:它成为当前视图,拿到一个新代号。
     ///
     /// 同一个视图此前在路上的那次随之作废 —— 它的响应回来时代号对不上。
-    pub(crate) fn begin(&self, source: ViewSource) -> (Ticket, Shown) {
+    pub(crate) fn begin(
+        &self,
+        source: ViewSource,
+    ) -> (Ticket, Shown) {
         let account = self.account();
         let mut state = self.state.borrow_mut();
         state.forget_other_accounts(account);
@@ -251,7 +265,9 @@ impl Views {
     }
 
     /// 最近进过的那次搜索。回到搜索页时摆它。
-    pub(crate) fn latest_search(&self) -> Option<ViewSource> {
+    pub(crate) fn latest_search(
+        &self,
+    ) -> Option<ViewSource> {
         let account = self.account();
         self.state
             .borrow()
@@ -261,7 +277,10 @@ impl Views {
             .map(|entry| &entry.key)
             .find(|key| {
                 key.account == account
-                    && matches!(key.source, ViewSource::Search(_))
+                    && matches!(
+                        key.source,
+                        ViewSource::Search(_)
+                    )
             })
             .map(|key| key.source.clone())
     }
@@ -275,7 +294,8 @@ impl Views {
     ) -> Landing {
         let account = self.account();
         let mut state = self.state.borrow_mut();
-        let Some(entry) = state.live(ticket, account) else {
+        let Some(entry) = state.live(ticket, account)
+        else {
             return Landing::Dropped;
         };
         entry.tracks = Some(tracks);
@@ -289,7 +309,8 @@ impl Views {
     pub(crate) fn fail(&self, ticket: &Ticket) -> Landing {
         let account = self.account();
         let mut state = self.state.borrow_mut();
-        let Some(entry) = state.live(ticket, account) else {
+        let Some(entry) = state.live(ticket, account)
+        else {
             return Landing::Dropped;
         };
         entry.status = Status::Failed;
@@ -347,18 +368,28 @@ mod tests {
     fn the_oldest_view_is_evicted_past_the_capacity() {
         let views = signed_in();
         for index in 0..=CAPACITY {
-            let (ticket, _) =
-                views.begin(ViewSource::Artist(index.to_string()));
+            let (ticket, _) = views.begin(
+                ViewSource::Artist(index.to_string()),
+            );
             views.accept(&ticket, tracks(), true);
         }
 
-        assert_eq!(views.state.borrow().entries.len(), CAPACITY);
+        assert_eq!(
+            views.state.borrow().entries.len(),
+            CAPACITY
+        );
         assert!(
-            views.show(ViewSource::Artist("0".to_owned())).tracks.is_none(),
+            views
+                .show(ViewSource::Artist("0".to_owned()))
+                .tracks
+                .is_none(),
             "最早进的那个该已经被扔掉"
         );
         assert!(
-            views.show(ViewSource::Artist("2".to_owned())).tracks.is_some()
+            views
+                .show(ViewSource::Artist("2".to_owned()))
+                .tracks
+                .is_some()
         );
     }
 
@@ -376,7 +407,9 @@ mod tests {
                 state.entries.push_back(Entry {
                     key: ViewKey {
                         account: 1,
-                        source: ViewSource::Artist(index.to_string()),
+                        source: ViewSource::Artist(
+                            index.to_string(),
+                        ),
                     },
                     tracks: None,
                     status: Status::Ready,

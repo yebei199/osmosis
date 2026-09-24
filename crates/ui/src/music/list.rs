@@ -81,12 +81,12 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
             ViewSource::Search(keyword.clone()),
             async move {
                 // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
-                api::search_tracks(&keyword).await.map(|dto| {
-                    TracksDto {
+                api::search_tracks(&keyword).await.map(
+                    |dto| TracksDto {
                         tracks: dto.tracks,
                         unavailable: 0,
-                    }
-                })
+                    },
+                )
             },
         );
     });
@@ -364,8 +364,9 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
             request,
         );
     } else {
-        let ticket =
-            deck.views.begin_in_background(ViewSource::Daily);
+        let ticket = deck
+            .views
+            .begin_in_background(ViewSource::Daily);
         land(weak, deck, action, ticket, cached, request);
     }
 }

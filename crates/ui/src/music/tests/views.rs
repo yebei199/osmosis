@@ -95,7 +95,8 @@ fn a_late_daily_does_not_overwrite_liked() {
 
 /// 进一个从没取过的视图:同一步列表就空出来、标成加载中,上一个视图的歌一帧都不留。
 #[test]
-fn entering_a_new_view_shows_loading_not_the_previous_list() {
+fn entering_a_new_view_shows_loading_not_the_previous_list()
+{
     let (ui, deck) = deck_window_pumped();
     visit(&ui, &deck, ViewSource::Daily)
         .send(Ok(batch(&["d1"])));
@@ -206,9 +207,11 @@ fn an_answer_arriving_after_logout_is_dropped() {
 /// 眼前这页列表不跟着变成队列。点播时冻结的是用户那一刻看到的那批,
 /// 反过来,队列换批也不该改写用户正在看的视图。
 #[test]
-fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone() {
+fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone()
+ {
     let (ui, deck) = deck_window_pumped();
-    visit(&ui, &deck, liked()).send(Ok(batch(&["l1", "l2"])));
+    visit(&ui, &deck, liked())
+        .send(Ok(batch(&["l1", "l2"])));
 
     play_batch(
         &ui,
@@ -236,7 +239,8 @@ fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone() {
 /// 进 Music 页时替用户补拉的推荐,在用户正看着「我喜欢的」时只进推荐自己那份,
 /// 不把列表切走 —— 这正是「进我喜欢的先看到每日推荐」那条路。
 #[test]
-fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist() {
+fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist()
+ {
     let (ui, deck) = deck_window_pumped();
     ui.global::<crate::Shell>().set_music_section(1);
     ui.global::<crate::Library>()
@@ -244,7 +248,12 @@ fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist() {
     visit(&ui, &deck, liked()).send(Ok(batch(&["l1"])));
 
     let (daily, answer) = late();
-    fetch_daily_from(&ui.as_weak(), &deck, async { None }, answer);
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
     assert_eq!(
         shown_ids(&ui),
         ids(&["l1"]),
@@ -266,7 +275,12 @@ fn a_daily_pulled_while_on_the_daily_section_is_shown() {
     ui.global::<crate::Shell>().set_music_section(0);
 
     let (daily, answer) = late();
-    fetch_daily_from(&ui.as_weak(), &deck, async { None }, answer);
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
     daily.send(Ok(batch(&["d1"])));
 
     assert_eq!(shown_ids(&ui), ids(&["d1"]));
