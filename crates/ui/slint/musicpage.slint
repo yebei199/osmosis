@@ -231,11 +231,12 @@ export component MusicPage inherits VerticalLayout {
             // 新建歌单。摆在列表那一层的顶上 ——
             // 名字由回调带出来,因为这个输入框在 `if` 里,
             // Rust 引用不到它。
+            // 行高不写死,跟着 LineEdit 走:它实际 56px 高,钉成 32px
+            // 就溢出来压住列表首行(#130)。
             if Shell.music-section == 1
                 && Library.open-playlist-name == "":
             new-playlist-row := HorizontalLayout {
                 spacing: 8px;
-                height: 32px;
 
                 new-name := LineEdit {
                     horizontal-stretch: 1;
