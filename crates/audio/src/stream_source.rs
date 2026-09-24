@@ -110,6 +110,8 @@ where
     let reported = state.clone();
 
     std::thread::spawn(move || {
+        // 这一帧里已经取走了几个采样。跳转要从帧边界上起跳，见 [`apply_seek`]。
+        let mut phase = 0;
         loop {
             // 跳转比手上这个采样急:抢在取下一个之前看一眼有没有人在等
             if let Ok(request) = requests.try_recv() {
@@ -117,13 +119,16 @@ where
                     &mut source,
                     request,
                     &reported,
+                    phase,
                 );
+                phase = 0;
                 continue;
             }
 
             let Some(sample) = source.next() else {
                 return;
             };
+            phase = (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
             if tx.send(sample).is_ok() {
                 continue;
@@ -135,8 +140,13 @@ where
             let Ok(request) = requests.recv() else {
                 return;
             };
-            tx =
-                apply_seek(&mut source, request, &reported);
+            tx = apply_seek(
+                &mut source,
+                request,
+                &reported,
+                phase,
+            );
+            phase = 0;
         }
     });
 

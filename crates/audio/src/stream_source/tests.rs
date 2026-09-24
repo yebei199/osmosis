@@ -103,3 +103,33 @@ fn channel_source_ends_when_channel_closes() {
     );
     assert_eq!(source.next(), None);
 }
+
+/// 跳完之后新通道的第一个采样必须是左声道(#137 ⑤)。
+///
+/// rodio 的源跳转时保留当前声道相位:跳之前吐到了右声道,跳完接着吐右声道。解码线程
+/// 跳转那一刻已经取走奇数个采样(通道容量 2,再加手上那个没送出去的)的话，新通道就从
+/// 右声道开头，而下游按「通道第一个采样是左声道」拼帧 —— 左右对调，一直错到换歌。
+#[test]
+fn a_seek_starts_the_new_channel_on_the_left_channel() {
+    const LEFT: Sample = 0.25;
+    const RIGHT: Sample = -0.25;
+    let frames = OUTPUT_SAMPLE_RATE as usize * 10;
+    let data: Vec<Sample> = (0..frames)
+        .flat_map(|_| [LEFT, RIGHT])
+        .collect();
+    let buffer = rodio::buffer::SamplesBuffer::new(
+        ChannelCount::new(OUTPUT_CHANNELS).expect("非零"),
+        SampleRate::new(OUTPUT_SAMPLE_RATE).expect("非零"),
+        data,
+    );
+    let mut source = buffered_with(buffer, 2);
+    // 让解码线程把通道塞满、手上再攥一个:取走的正好是奇数个
+    std::thread::sleep(Duration::from_millis(100));
+
+    source
+        .try_seek(Duration::from_secs(5))
+        .expect("内存里的源跳得动");
+
+    let first = first_real_sample(&mut source);
+    assert_eq!(first, Some(LEFT));
+}
