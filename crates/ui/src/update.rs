@@ -197,8 +197,9 @@ pub fn install_failed(status: i32, message: String) {
         });
     });
     if posted.is_err() {
+        // 消息 Java 那边已经打进 logcat 了。
         log::warn!(
-            "事件循环已经没了,升级失败没法显示: {status} {message}"
+            "事件循环已经没了,升级失败没法显示: {status}"
         );
     }
 }
