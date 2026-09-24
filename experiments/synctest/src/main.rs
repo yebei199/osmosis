@@ -125,12 +125,13 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
         segments,
         end_ns: plan.end_ns,
     });
-    let output = start_output(media, rate, shared.clone(), gain)?;
+    let output = start_output(media.clone(), rate, shared.clone(), gain)?;
     eprintln!(
         "serve: 端口 {port},媒体 {id:016x},{start_in}s 后起播,放 {secs}s,输出 {}",
         describe(&output)
     );
-    status_loop(&dev, &shared, start, plan.end_ns, output, None, |_| (0.0, 0.0));
+    // 服务端这台也会换路由(连上/断开蓝牙),同样要重开输出流。
+    status_loop(&dev, &shared, start, plan.end_ns, output, Some((media, rate, gain)), |_| (0.0, 0.0));
     Ok(())
 }
 
