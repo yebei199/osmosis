@@ -459,13 +459,15 @@ shot width="" tab="0":
     just desktop-kill
     # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > /tmp/slint-shot.log 2>&1 &
+    # 日志与 marker 放 mktemp 出的目录:固定的 /tmp 路径会被同机并行的另一次 shot 覆盖(#136)
+    tmp=$(mktemp -d)
+    OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
     for _ in $(seq 30); do
         id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break
         sleep 1
     done
-    [ -n "${id:-}" ] || { echo "窗口没起来,见 /tmp/slint-shot.log" >&2; exit 1; }
+    [ -n "${id:-}" ] || { echo "窗口没起来,见 $tmp/shot.log" >&2; exit 1; }
     if [ -n "{{width}}" ]; then
         niri msg action set-window-width --id "$id" {{width}}
         sleep 1
@@ -478,10 +480,10 @@ shot width="" tab="0":
     mkdir -p dist
     # niri 是**异步**落盘的:紧跟着 `ls -t` 会挑到上一张旧图,于是你以为改动没生效,
     # 实际是在看历史。用一个 marker 文件卡住时间,只接受比它新的 png。
-    touch /tmp/slint-shot.marker
+    touch "$tmp/marker"
     niri msg action screenshot-window --id "$id"
     for _ in $(seq 20); do
-        shot=$(find ~/Pictures/Screenshots -name '*.png' -newer /tmp/slint-shot.marker | head -1)
+        shot=$(find ~/Pictures/Screenshots -name '*.png' -newer "$tmp/marker" | head -1)
         [ -n "$shot" ] && break
         sleep 0.5
     done
