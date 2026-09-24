@@ -369,6 +369,11 @@ export component MusicPage inherits VerticalLayout {
                 }
             }
 
+            // 墙只在每日推荐分区才有东西可摆。别处也实例化的话,
+            // 空的它仍占一格 12px 间距,列表底下凭空多一条缝(#130)。
+            if Shell.wall-supported
+                && Shell.music-section == 0
+                && Library.open-playlist-name == "":
             WallView { }
 
 

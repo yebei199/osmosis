@@ -5,7 +5,8 @@
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
-use ui::{MainWindow, Session, Shell};
+use slint::{ModelRc, VecModel};
+use ui::{MainWindow, Player, Session, Shell, TrackRow};
 
 /// 宽版式音乐页,窗口给定逻辑尺寸。版式直接给定:无头后端里宽度推不出它
 /// (见 music_nav.rs)。
@@ -19,6 +20,21 @@ fn music_page(width: f32, height: f32, section: i32) -> MainWindow {
     ui.global::<Shell>().set_current_tab(1);
     ui.global::<Shell>().set_music_section(section);
     ui
+}
+
+fn one_track(ui: &MainWindow) {
+    ui.global::<Player>().set_tracks(ModelRc::new(
+        VecModel::from(vec![TrackRow {
+            id: "1".into(),
+            title: "甜甜的".into(),
+            artists: "本兮".into(),
+            duration: "3:41".into(),
+            loading: false,
+            liked: false,
+            cover_url: String::new().into(),
+            cover: slint::Image::default(),
+        }]),
+    ));
 }
 
 fn element(ui: &MainWindow, id: &str) -> testing::ElementHandle {
@@ -58,4 +74,19 @@ fn the_new_playlist_row_holds_its_input() {
         bottom(&input),
         top(&list)
     );
+}
+
+/// 非每日推荐分区,列表一直铺到竖栏底 —— 中间没有卡墙那格空占位
+/// 多吃的 12px 间距。
+#[test]
+fn the_list_layer_reaches_the_bottom_outside_the_daily_section() {
+    let ui = music_page(1000.0, 700.0, 1);
+    let rail = element(&ui, "MusicPage::music-rail");
+    let list = element(&ui, "MusicPage::playlist-list");
+    assert_eq!(bottom(&list), bottom(&rail), "歌单列表底下多了一条缝");
+
+    ui.global::<Shell>().set_music_section(3);
+    one_track(&ui);
+    let list = element(&ui, "MusicPage::track-list");
+    assert_eq!(bottom(&list), bottom(&rail), "最近播放列表底下多了一条缝");
 }
