@@ -1,25 +1,16 @@
-//! 同播能力层:让另一台设备听到本机正在放的声音。
+//! 设备之间的信令客户端:同账号的在线名册,以及遥控器模式(`docs/adr/0030`)。
 //!
 //! 与 `api`、`audio`、`render3d` 平行 —— `app-core` 不认识本 crate,由 `ui` 注入。
 //!
-//! 两件事:接上信令服务器([`Signalling`]),以及与另一台设备建立 WebRTC 连接([`Peer`])。
-//! 音频**不经过服务器**:主控与听众之间是 P2P,服务器只负责让它们找到彼此
-//! (`docs/adr/0008`)。
-//!
-//! 服务端把信令载荷当作不透明文本,所以载荷内部的结构由本层定义 —— 见 [`Envelope`]。
-//! 这个分工是刻意的:改动 offer/answer/candidate 的编码方式不必动服务端一行。
+//! 接上服务端的 `/signal`([`Signalling`]),由 [`Client`] 编排重连、接管与命令。
+//! 同播(WebRTC 推流)已删(#137,`docs/adr/0008` 废止),crate 名是它留下的。
 
 mod client;
-mod envelope;
-mod peer;
-pub mod pump;
 mod session;
 mod signalling;
 
 pub use client::{Client, Event};
-pub use envelope::Envelope;
-pub use peer::{Peer, PeerRole, audio_track};
-pub use session::{Role, Roster};
+pub use session::Roster;
 pub use signalling::{
     SignalSender, Signalling, command_wire_len,
     report_wire_len,
@@ -31,7 +22,7 @@ pub use signalling::{
 /// 又必须收一个设备身份 —— 由本层转达,调用方不必多引一个依赖。
 pub use contract::DeviceDto;
 
-/// 同播链路可能的失败方式。
+/// 信令链路可能的失败方式。
 #[derive(Debug)]
 pub enum SyncError {
     /// 连不上信令服务器,或连接中途断了。
@@ -50,10 +41,6 @@ pub enum SyncError {
     Throttled {
         retry_after: Option<core::time::Duration>,
     },
-    /// WebRTC 那一侧出错:建连、协商、加轨。
-    Peer(String),
-    /// 收到一段读不懂的载荷。
-    Envelope(String),
 }
 
 impl core::fmt::Display for SyncError {
@@ -79,12 +66,6 @@ impl core::fmt::Display for SyncError {
                         write!(f, "服务端限流,稍后再试")
                     }
                 }
-            }
-            Self::Peer(message) => {
-                write!(f, "连接错误: {message}")
-            }
-            Self::Envelope(message) => {
-                write!(f, "信令载荷错误: {message}")
             }
         }
     }

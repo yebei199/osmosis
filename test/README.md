@@ -95,6 +95,33 @@ test/pick-e2e.sh wall       # 卡墙那条路(要 GPU 构建)
 测试实例)占账号一个队列槽,满 10 个就发布不上去。脚本判失败是对的,那是真问题。
 窗口在锁屏或屏外时合成器一秒只给一帧,动画与相机慢到几十秒,脚本的等待按这个放宽过。
 
+## pick-bench.py —— 点一首歌到出声花了多久(#137)
+
+前提同 `pick-e2e.sh`。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。
+
+```sh
+osmosis-desktop 2>&1 | test/pick-bench.py stamp > app.log     # 桌面日志每行加 epoch 秒
+adb logcat -v epoch -s osmosis > app.log                       # 安卓自带
+test/pick-bench.py drive --mode list --picks 0,1,2,3,0,1 --out list.jsonl
+test/pick-bench.py drive --section 1 --playlist 0 --out bigq.jsonl   # 大队列:「我喜欢的」
+test/pick-bench.py drive --output device --out remote.jsonl          # 遥控名字带 device 的那台
+test/pick-bench.py report --picks list.jsonl --log app.log [--clock-offset 秒]
+```
+
+`drive` 每点一下等 `play_events` 多一行再静置几秒,记下点击时刻;`report` 按点击时刻
+去日志里找这一下的 `act#… play` 各段与 `ui: 主线程卡了` 行,打成一行一下的表。遥控时
+点的是控制端,日志读出声的那一端;跨机器时 `--clock-offset` 是日志时钟减本机时钟。
+下标重复的那几下是「缓存命中」:同一首第二次点。
+
+三个会让数字作废的现场条件,都踩过:
+
+- **窗口拿不到帧**。锁屏会话里的嵌套 niri 一秒一帧,`drawn` 与卡顿全被帧间隔吞掉,卡墙
+  动画走不完。编译机上用 `Xvfb :7` 加 `DISPLAY=:7`(去掉 `WAYLAND_DISPLAY`)能跑到
+  三四十帧,核对日志里 `近 120 帧` 那行的 fps 再采。
+- **队列槽满了**。`队列数到上限了` 时发布当场 409,大队列那组等于没发布,数字偏低。
+- **被控端还锁着**。遥控器选回本机不通知被控端,那台仍挂着「正被 xx 遥控」,它自己的
+  点歌全被锁挡掉(`played` 为 null)。先在它上面按「退出被遥控」。
+
 ## playlist-fill-e2e.sh —— 歌单页铺满了吗
 
 跑之前:应用起着、已登录(`test/mcp-login.sh`),账号里至少有一个歌单。

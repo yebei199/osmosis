@@ -49,7 +49,7 @@ fn device(id: &str) -> DeviceDto {
 
 /// 起一个客户端,并把它抛出的事件汇进一条通道。
 ///
-/// 事件回调跑在同播自己的后台线程上,所以这里用 `std::sync::mpsc`
+/// 事件回调跑在信令自己的后台线程上,所以这里用 `std::sync::mpsc`
 /// 而不是 tokio 的 —— 测试在 tokio 上等,但发的那一头不是。
 fn spawn_client(
     addr: SocketAddr,

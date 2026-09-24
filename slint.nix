@@ -30,9 +30,6 @@ let
     libxcb
     # rodio 走 cpal,linux 上构建期要 pkg-config 找到 alsa,运行期还要 dlopen 它。
     alsa-lib
-    # opus crate 链接 libopus。同播的主控要把 PCM 重编码成 Opus 才能推上媒体轨,
-    # 听众反向解回来 —— 没有纯 Rust 的编码器,这个 C 库绕不开。
-    libopus
     # 开了 unstable-wgpu-29 后 Slint 与 bevy 都走 wgpu,运行期要 dlopen libvulkan.so;
     # ICD 由系统的 /run/opengl-driver 提供。构建期不需要它(那是运行期 dlopen)。
     vulkan-loader

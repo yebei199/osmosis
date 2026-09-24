@@ -158,7 +158,6 @@ pub(in crate::music) fn play_current(
             move |(decoded, health)| {
                 emit(
                     &commit.player,
-                    &commit.sync,
                     &commit.stream,
                     &commit.seeking,
                     decoded,
@@ -226,8 +225,7 @@ pub(in crate::music) fn rest_local(
 
 /// 自动续播:每秒看一眼,放空了就推进队列。
 ///
-/// rodio 没有"放完了"的回调,轮询是唯一的办法;判据抽在 [`should_advance`],
-/// 收听同播时它恒为假 —— 那时切歌会把对面推来的声音捣掉。
+/// rodio 没有"放完了"的回调,轮询是唯一的办法;判据抽在 [`should_advance`]。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn start_auto_advance(
     ui: &MainWindow,
@@ -278,7 +276,6 @@ pub(in crate::music) fn start_auto_advance(
                 .as_ref()
                 .is_some_and(audio::StreamHealth::gave_up);
             let state = deck.playback.borrow().state().clone();
-            let listening = deck.sync.is_listening();
 
             // 输出设备不是本机:这几行改读被控端的上报,本机的播放器此刻
             // 是空的。续播、预取与起播上报统统归被控端 —— 那边自己有一趟
@@ -333,12 +330,9 @@ pub(in crate::music) fn start_auto_advance(
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
-            if should_report_loss(
-                &state, drained, listening, gave_up,
-            ) {
+            if should_report_loss(&state, drained, gave_up) {
                 report_stream_loss(&ui, &deck);
-            } else if should_advance(&state, drained, listening)
-            {
+            } else if should_advance(&state, drained) {
                 advance_auto(&ui, &deck);
             }
 
@@ -350,7 +344,6 @@ pub(in crate::music) fn start_auto_advance(
             if should_prefetch(
                 &state,
                 position,
-                listening,
                 already_have,
                 has_next,
             ) {

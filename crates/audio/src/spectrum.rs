@@ -1,7 +1,7 @@
 //! 播放页可视化的数据源:把播出路径上分来的 PCM 变成一帧帧频谱与波形。
 //!
-//! 挖点在 [`crate::Player::play`]:每换一路源就用 [`crate::codec::Tee`] 分一支
-//! 采样接到这里,单机、主控、听众三种角色因此天然一致(设计见 `docs/adr/0010`
+//! 挖点在 [`crate::Player::play`]:每换一路源就用 [`crate::pcm::Tee`] 分一支
+//! 采样接到这里,任何来源的源因此天然一致(设计见 `docs/adr/0010`
 //! 与 `docs/note/visualization-surface-and-audio.md`)。频谱不进网络、不进契约。
 //!
 //! 布局照抄 Shadertoy 的音频纹理约定:512 点频谱 + 512 点波形,两行 u8。

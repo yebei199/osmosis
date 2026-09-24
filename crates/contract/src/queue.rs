@@ -2,7 +2,7 @@
 //!
 //! 与 [`crate::remote`] 的分工:那边是遥控器与被控端之间的小消息,走 WebSocket;
 //! 这边是队列本身,走 HTTP —— 曲目数据的体积随用户的歌单长度增长,而信令通道
-//! 是按 SDP 与 ICE 设计的(见 [`crate::MAX_SIGNAL_BYTES`])。
+//! 是按几百字节的小消息设计的(见 [`crate::MAX_SIGNAL_BYTES`])。
 
 /// 一个队列版本最多几条。
 ///

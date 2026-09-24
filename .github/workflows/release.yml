@@ -119,11 +119,11 @@ jobs:
     timeout-minutes: 90
     steps:
       # apt 依赖表逐字照抄 ci.yml test job:libfontconfig1-dev 是 femtovg 后端
-      # 链接期要的,libasound2-dev 是 cpal→alsa,libopus-dev 是 syncplay 的 C
-      # 绑定,protobuf-compiler 是 server/build.rs 的 codegen,dbus 是 MPRIS。
+      # 链接期要的,libasound2-dev 是 cpal→alsa,protobuf-compiler 是
+      # server/build.rs 的 codegen,dbus 是 MPRIS。
       # 这次只编 app-desktop,若某一项实际编译时发现根本用不上,再删。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev protobuf-compiler dbus
 
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

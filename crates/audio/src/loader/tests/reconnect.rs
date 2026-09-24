@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::stall::{CALLBACK_BUDGET, CALLBACK_FRAMES};
-use crate::codec;
+use crate::pcm;
 use crate::stream_source::buffered_with;
 
 use super::super::*;
@@ -244,9 +244,9 @@ fn the_buffer_keeps_playing_after_the_stream_is_gone() {
 
     // 1 秒的缓冲:比放弃所需的 0.4 秒厚,不然"藏住了"这件事无从观察。
     let mut source = buffered_with(
-        codec::normalize(decoder),
-        codec::SYNC_SAMPLE_RATE as usize
-            * codec::SYNC_CHANNELS as usize,
+        pcm::normalize(decoder),
+        pcm::OUTPUT_SAMPLE_RATE as usize
+            * pcm::OUTPUT_CHANNELS as usize,
     );
 
     let mut audible_after_give_up = 0;
@@ -255,7 +255,7 @@ fn the_buffer_keeps_playing_after_the_stream_is_gone() {
     'playing: loop {
         let mut audible = false;
         for _ in 0..CALLBACK_FRAMES
-            * codec::SYNC_CHANNELS as usize
+            * pcm::OUTPUT_CHANNELS as usize
         {
             match source.next() {
                 Some(sample) => {

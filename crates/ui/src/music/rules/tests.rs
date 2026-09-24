@@ -173,30 +173,17 @@ fn track_row_handles_zero_duration() {
     assert_eq!(format_duration(0), "0:00");
 }
 
-/// 自动续播只在「本机在放 && 放空了 && 不是听众」时才动手。
-///
-/// 第二行是本条真正要守的:**收听同播时绝不切歌**,即使声源看起来空了 ——
-/// 切了就是把对面推来的声音捣掉。
+/// 自动续播只在「本机在放 && 放空了」时才动手。
 #[test]
-fn advances_only_when_playing_and_drained_and_not_listening()
- {
+fn advances_only_when_playing_and_drained() {
     let playing = PlaybackState::Playing(track());
 
-    assert!(should_advance(&playing, true, false));
-    assert!(
-        !should_advance(&playing, true, true),
-        "收听中不许自动切歌"
-    );
-    assert!(!should_advance(&playing, false, false));
-    assert!(!should_advance(
-        &PlaybackState::Idle,
-        true,
-        false
-    ));
+    assert!(should_advance(&playing, true));
+    assert!(!should_advance(&playing, false));
+    assert!(!should_advance(&PlaybackState::Idle, true));
     assert!(!should_advance(
         &PlaybackState::Loading(track()),
-        true,
-        false
+        true
     ));
 }
 
@@ -210,33 +197,26 @@ fn a_drained_source_reports_a_loss_only_when_it_gave_up() {
     let playing = PlaybackState::Playing(track());
 
     assert!(
-        should_report_loss(&playing, true, false, true),
+        should_report_loss(&playing, true, true),
         "放空了且流放弃过,这就是断流"
     );
     assert!(
-        !should_report_loss(&playing, true, false, false),
+        !should_report_loss(&playing, true, false),
         "放空了但流没放弃,那是正常放完,该切下一首"
     );
     // 两个出口必须互斥,否则同一刻既报错又切歌。
     assert!(
-        !should_advance(&playing, true, false)
-            || !should_report_loss(
-                &playing, true, false, false
-            )
+        !should_advance(&playing, true)
+            || !should_report_loss(&playing, true, false)
     );
     assert!(
-        !should_report_loss(&playing, false, false, true),
+        !should_report_loss(&playing, false, true),
         "还没放空就报断流,声音还在放呢"
-    );
-    assert!(
-        !should_report_loss(&playing, true, true, true),
-        "收听同播时本机没有自己的流,那是上一次留下的旧证据"
     );
     assert!(
         !should_report_loss(
             &PlaybackState::Loading(track()),
             true,
-            false,
             true
         ),
         "正在加载下一首时不许被上一首的证据打断"
@@ -254,28 +234,23 @@ fn prefetch_starts_once_the_current_track_is_under_way() {
     let just_started = core::time::Duration::ZERO;
 
     assert!(should_prefetch(
-        &playing, under_way, false, false, true
+        &playing, under_way, false, true
     ));
     assert!(
         !should_prefetch(
             &playing,
             just_started,
             false,
-            false,
             true
         ),
         "刚起播就备下一首会和它自己抢带宽"
     );
     assert!(
-        !should_prefetch(
-            &playing, under_way, false, true, true
-        ),
+        !should_prefetch(&playing, under_way, true, true),
         "手里已经有备好的了,别再起一条"
     );
     assert!(
-        !should_prefetch(
-            &playing, under_way, false, false, false
-        ),
+        !should_prefetch(&playing, under_way, false, false),
         "队尾之后没有下一首可备"
     );
     assert!(
@@ -283,23 +258,10 @@ fn prefetch_starts_once_the_current_track_is_under_way() {
             &PlaybackState::Loading(track()),
             under_way,
             false,
-            false,
             true
         ),
         "这一首自己还没放起来,轮不到备下一首"
     );
-}
-
-/// 收听同播时不预取:切歌的决定权不在本机,备了也用不上,白占一条下载。
-#[test]
-fn a_listener_never_prefetches() {
-    assert!(!should_prefetch(
-        &PlaybackState::Playing(track()),
-        PREFETCH_AFTER,
-        true,
-        false,
-        true
-    ));
 }
 
 /// 横幅先说发生了什么,探明之后再说是哪一种。
@@ -407,7 +369,6 @@ fn playback_copy_only_uses_subset_glyphs() {
     // 不经过 describe_playback 的固定文案,单独列上。
     copy.push(QUEUE_DONE.to_owned());
     copy.push(WASM_NOTICE.to_owned());
-    copy.push("同播".to_owned());
     copy.push("没有其他设备".to_owned());
     // 下载那几句。它们同样进横幅与抽屉,而那两处都用子集字体
     // (见 `music/download.rs`)。
@@ -434,8 +395,6 @@ fn playback_copy_only_uses_subset_glyphs() {
         "已存到 音乐/osmosis".to_owned(),
         "存不下来: 系统没给出可写的条目".to_owned(),
     ]);
-    // 听众收听时的播放行(见 `syncplay.rs` 的 Listening 分支)。
-    copy.push("收听中…".to_owned());
     // 开机自检的两种坏消息。
     copy.extend(
         [

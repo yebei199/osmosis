@@ -45,10 +45,6 @@ pub(in crate::music) fn bind_play(
 }
 
 /// 控制条:播放/暂停、上一首/下一首、随机开关。
-///
-/// 收听中的任何一键都先退出收听;⏯ 到此为止(退出即静音,再按才操作自己的
-/// 队列),切歌键退出后紧接着作用于本机队列 —— 点了"下一首"的人想听的是
-/// 自己的下一首,不是单纯安静下来。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn bind_controls(
     ui: &MainWindow,

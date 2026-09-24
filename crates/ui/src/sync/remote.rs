@@ -1,10 +1,9 @@
 //! 遥控器模式的界面接线:输出设备、被控端的锁定态、命令与上报。
 //!
-//! 与 [`crate::sync::syncplay`] 分两个模块,因为它们是两种会话形态(`docs/adr/0030`):
-//! 同播是主控出声、听众收流;遥控器是遥控器**不**出声、被控端自己拉直链自己播。
-//! 两者共用同一条信令连接(所以共用一个 [`Client`]),但状态与界面毫无重叠。
+//! 遥控器**不**出声、被控端自己拉直链自己播(`docs/adr/0030`)。信令连接、名册与
+//! 本机身份在 [`crate::sync::link`],这里只管遥控自己的状态。
 //!
-//! 事件回调跑在同播自己的后台线程上。命令却必须在 UI 线程上执行 —— 它要碰
+//! 事件回调跑在信令自己的后台线程上。命令却必须在 UI 线程上执行 —— 它要碰
 //! `Deck`,而 `Deck` 全是 `Rc`,不是 `Send`。所以走两步:后台线程把命令塞进
 //! 收件箱,再叫一声 UI 线程;真正执行的那段挂在 `Shell.remote-command` 上,
 //! 由音乐页去接(见 `crate::music`)。
@@ -54,7 +53,7 @@ pub enum Submitted {
     NotRemote,
     /// 手上那份被控端状态已经过期,照着它发命令等于蒙(`docs/adr/0030`)。
     Stale,
-    /// 同播客户端还没接上(启动期那一微秒的空窗)。
+    /// 信令客户端还没接上(启动期那一微秒的空窗)。
     NoClient,
     /// 这一条太大,**发出去会撞掉整条连接**,所以在这里拒掉。
     TooLarge { bytes: usize, limit: usize },
@@ -73,7 +72,7 @@ pub struct Remote {
 }
 
 struct Inner {
-    /// 同播那个客户端,两种会话形态共用一条信令连接。
+    /// 信令客户端,由 `crate::sync::link` 建好交过来。
     ///
     /// `OnceLock` 而不是直接持有:事件回调要在 [`Client::start`] **之前**
     /// 就交出去,而客户端要等它返回才拿得到。这一微秒的空窗里到达的事件
@@ -489,7 +488,7 @@ impl Remote {
         self.refresh();
     }
 
-    /// 把同播那个客户端交给它。只认第一次 —— 它是启动期的接线,不是状态。
+    /// 把信令客户端交给它。只认第一次 —— 它是启动期的接线,不是状态。
     pub fn attach(&self, client: &Arc<Client>) {
         let _ = self.inner.client.set(client.clone());
     }
@@ -574,7 +573,12 @@ pub fn bind(ui: &MainWindow, remote: &Remote) {
     remote.refresh();
 }
 
-/// 一个谁也不连的把手,给测试用。理由同 `syncplay::detached`。
+/// 一个谁也不连的把手,给测试用。
+///
+/// 真的 [`crate::sync::link::bind`] 会当场把客户端连去 `api::base_url()` 的信令地址,
+/// 而那个地址是**编译期**决定的:不设 `OSMOSIS_API_BASE` 时是本机 3000 —— 开发服务器
+/// 正好在那儿,测试于是会因为本机有没有开 server-dev 而表现不同;设成集群地址跑一次
+/// `cargo test`,那就是拿生产环境当测试靶子。
 #[cfg(test)]
 pub(crate) fn detached(ui: &MainWindow) -> Remote {
     let remote = new(ui);
@@ -670,7 +674,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                 return;
             }
             lock(&inner.view)
-                .accept(state.clone(), now_ms());
+                .accept((**state).clone(), now_ms());
         }
         // 遥控器要一次完整状态。立刻回 —— 那一份由音乐页凑,所以叫它一声。
         syncplay::Event::SnapshotRequest => {

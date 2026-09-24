@@ -2,7 +2,7 @@
 //!
 //! **服务端仍然不解释命令**(`docs/adr/0030`)。它只做两件事:记住"谁在遥控谁",
 //! 以及照着这条记录把消息转到对的那一端。`RemoteCommand` 与 `RemoteStateDto`
-//! 从这里原样穿过去,和同播的 SDP 载荷一个待遇(`docs/adr/0008`)。
+//! 从这里原样穿过去,服务端不读它们。
 //!
 //! 单独成模块而不是塞进 [`crate::syncplay::signaling`]:那个文件已经五百多行,而"谁能
 //! 控制谁"是纯逻辑 —— 恰恰也是会出错的地方,值得离开 WebSocket 被测。
@@ -339,9 +339,8 @@ pub fn route(
             &to,
             ServerSignal::SnapshotRequest,
         ),
-        // 握手与同播的信令归 `signaling::route`,到不了这里。
-        ClientSignal::Hello { .. }
-        | ClientSignal::Signal { .. } => None,
+        // 握手归 `signaling::route`,到不了这里。
+        ClientSignal::Hello { .. } => None,
     }
 }
 

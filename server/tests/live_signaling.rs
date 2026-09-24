@@ -1,4 +1,4 @@
-//! 同播信令的端到端测试:真的开 WebSocket 连接,真的收发。
+//! 信令的端到端测试:真的开 WebSocket 连接,真的收发。
 //!
 //! 与 `live_bangdream.rs` 不同,这些**不需要外部进程** —— 服务端在测试进程里起,
 //! 端口交给系统分配。所以它们不带 `#[ignore]`,每次 `cargo test` 都跑。
@@ -165,6 +165,80 @@ async fn an_old_client_is_refused_before_it_joins_the_roster()
     );
 }
 
+/// 同播时代(协议 3)的客户端同样在入册之前被拒(#137)。
+///
+/// 删同播是删变体,不兼容:协议 3 的客户端还会发 SDP 转发,新服务端一律不认。
+/// 升版本号之后,老端看到的是一次明确的版本拒绝,而不是「推给某台设备没反应」。
+/// 版本号手写成 3,不写 `PROTOCOL_VERSION - 1`:要钉住的是「最后一个带同播的
+/// 版本」这件具体的事,下一次升版本不该让这条测试悄悄改测别的东西。
+#[tokio::test]
+async fn a_client_from_the_syncplay_era_is_refused() {
+    let addr = start_server().await;
+
+    let mut watcher = connect(addr, "watcher").await;
+    let _ = next_signal(&mut watcher).await;
+
+    let (mut old, _) = tokio_tungstenite::connect_async(
+        format!("ws://{addr}/signal?account=1"),
+    )
+    .await
+    .expect("连不上信令端点");
+    old.send(Message::text(
+        r#"{"type":"hello","device":{"id":"v3","name":"同播时代的端"},"protocol_version":3}"#,
+    ))
+    .await
+    .expect("发不出 Hello");
+
+    let answered = next_signal(&mut old).await;
+    assert!(
+        matches!(
+            answered,
+            ServerSignal::Welcome { protocol_version }
+                if protocol_version != 3
+        ),
+        "该回一条报新版本号的 Welcome,收到的是 {answered:?}"
+    );
+    let quiet = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        watcher.next(),
+    )
+    .await;
+    assert!(
+        quiet.is_err(),
+        "协议 3 的端不该入册,而名册动了:{quiet:?}"
+    );
+}
+
+/// 一条 SDP 转发送到服务端,哪里也去不了(#137)。
+///
+/// 服务端对解不出来的消息一律丢弃,所以判据是目标那一侧什么都没收到。
+#[tokio::test]
+async fn a_webrtc_relay_message_reaches_nobody() {
+    let addr = start_server().await;
+
+    let mut a = connect(addr, "a").await;
+    let _ = next_signal(&mut a).await;
+    let mut b = connect(addr, "b").await;
+    let _ = next_signal(&mut a).await;
+    let _ = next_signal(&mut b).await;
+
+    a.send(Message::text(
+        r#"{"type":"signal","to":"b","payload":"v=0"}"#,
+    ))
+    .await
+    .expect("发不出消息");
+
+    let leaked = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        next_signal(&mut b),
+    )
+    .await;
+    assert!(
+        leaked.is_err(),
+        "SDP 转发还被送到了目标设备: {leaked:?}"
+    );
+}
+
 /// 读下一条服务端消息。
 async fn next_signal(socket: &mut Socket) -> ServerSignal {
     loop {
@@ -219,7 +293,7 @@ async fn two_devices_see_each_other() {
 /// 一台设备断开,另一台**被主动推**新名册。
 ///
 /// 关键是"主动" —— 让客户端轮询的话,下线到被发现之间有一段空窗,
-/// 而那段时间里往它推流必然失败,看起来却像 WebRTC 的问题。
+/// 而那段时间里去遥控它必然失败,看起来却像「按了没反应」。
 #[tokio::test]
 async fn disconnect_updates_the_other_device() {
     let addr = start_server().await;
@@ -242,68 +316,6 @@ async fn disconnect_updates_the_other_device() {
         "b 断开后名册里不该还有它"
     );
     assert_eq!(devices[0].id, "a");
-}
-
-/// 信令穿过两条真实连接后**一个字节都没变**。
-#[tokio::test]
-async fn payload_crosses_unmodified() {
-    let addr = start_server().await;
-
-    let mut a = connect(addr, "a").await;
-    let _ = next_signal(&mut a).await;
-    let mut b = connect(addr, "b").await;
-    let _ = next_signal(&mut a).await;
-    let _ = next_signal(&mut b).await;
-
-    // 带 CRLF、带非 ASCII、带前后空白:任何"顺手清理"都会在这里露馅。
-    let payload = "  v=0\r\na=ice-ufrag:紅蓮華\r\n\r\n  ";
-    let signal = ClientSignal::Signal {
-        to: "b".to_owned(),
-        payload: payload.to_owned(),
-    };
-    a.send(Message::text(
-        serde_json::to_string(&signal).expect("序列化失败"),
-    ))
-    .await
-    .expect("发不出信令");
-
-    let received = next_signal(&mut b).await;
-    assert_eq!(
-        received,
-        ServerSignal::Signal {
-            from: "a".to_owned(),
-            payload: payload.to_owned(),
-        }
-    );
-}
-
-/// 目标不在线时,发信人收到错误 —— 而不是石沉大海。
-#[tokio::test]
-async fn signal_to_offline_device_reports_error() {
-    let addr = start_server().await;
-
-    let mut a = connect(addr, "a").await;
-    let _ = next_signal(&mut a).await;
-
-    let signal = ClientSignal::Signal {
-        to: "从来没上线过".to_owned(),
-        payload: "v=0".to_owned(),
-    };
-    a.send(Message::text(
-        serde_json::to_string(&signal).expect("序列化失败"),
-    ))
-    .await
-    .expect("发不出信令");
-
-    let received = next_signal(&mut a).await;
-    assert!(
-        matches!(
-            received,
-            ServerSignal::Error { ref code, .. }
-                if code == "device_offline"
-        ),
-        "实得 {received:?}"
-    );
 }
 
 /// 连上了却一直不自报家门,会被断开。
@@ -391,9 +403,12 @@ async fn each_account_only_sees_its_own_two_devices() {
     );
 }
 
-/// 跨账号发信令得到 `Error`,而不是被送到对面。
+/// 跨账号接管得到 `Error`,而不是把控制请求送到对面。
+///
+/// 当初拿同播的 SDP 转发验这件事;转发删掉之后(#137),账号桶的边界靠遥控
+/// 这条仍会点名目标设备的消息来验。
 #[tokio::test]
-async fn signalling_to_another_account_is_refused() {
+async fn claiming_a_device_of_another_account_is_refused() {
     let addr = start_server().await;
 
     let mut alice = connect_as(addr, 1, "a1").await;
@@ -401,17 +416,14 @@ async fn signalling_to_another_account_is_refused() {
     let mut bob = connect_as(addr, 2, "b1").await;
     let _ = next_signal(&mut bob).await;
 
-    let signal = ClientSignal::Signal {
-        to: "b1".to_owned(),
-        payload: "v=0".to_owned(),
-    };
-    alice
-        .send(Message::text(
-            serde_json::to_string(&signal)
-                .expect("序列化失败"),
-        ))
-        .await
-        .expect("发不出信令");
+    say(
+        &mut alice,
+        &ClientSignal::ClaimControl {
+            target: "b1".to_owned(),
+            resume: None,
+        },
+    )
+    .await;
 
     let received = next_signal(&mut alice).await;
     assert!(
@@ -438,7 +450,7 @@ async fn signalling_to_another_account_is_refused() {
 /// 不回 Pong 的连接会被清出名册,而且别人**被推到**这个变化。
 ///
 /// 没有这道探活,一条被路由器悄悄丢掉的连接要等 TCP 自己发现 —— 十几分钟里
-/// 名册一直说它在线,谁往它推流谁卡在那儿。
+/// 名册一直说它在线,谁去遥控它谁卡在那儿。
 #[tokio::test]
 async fn a_device_that_stops_answering_pings_is_dropped() {
     let addr = start_server_with(Timing {
@@ -527,7 +539,7 @@ async fn reconnecting_the_same_device_keeps_it_in_the_roster()
 
 /// 超过单条消息上限的帧会让那条连接被关掉,而不是让服务端替它攒下整块内存。
 ///
-/// 信令载荷是 SDP 与 ICE 候选,几 KiB 顶天。axum 的默认上限是 64 MiB ——
+/// 遥控的命令与上报都是几百字节。axum 的默认上限是 64 MiB ——
 /// 那意味着一条连接能让服务端为它单独攒出 64 MiB。
 #[tokio::test]
 async fn an_oversized_message_closes_the_connection() {
@@ -543,16 +555,11 @@ async fn an_oversized_message_closes_the_connection() {
     };
     assert_eq!(devices.len(), 2, "fat 该先在线");
 
-    // 128 KiB 的载荷,是上限的两倍。
-    let signal = ClientSignal::Signal {
-        to: "watcher".to_owned(),
-        payload: "x".repeat(128 * 1024),
-    };
-    fat.send(Message::text(
-        serde_json::to_string(&signal).expect("序列化失败"),
-    ))
-    .await
-    .expect("发不出信令");
+    // 128 KiB,是上限的两倍。上限在解析之前就起作用,所以内容是不是一条
+    // 合法的信令无关紧要。
+    fat.send(Message::text("x".repeat(128 * 1024)))
+        .await
+        .expect("发不出超大消息");
 
     let dropped = tokio::time::timeout(
         std::time::Duration::from_secs(5),

@@ -90,7 +90,7 @@ export component MainWindow inherits Window {
     // 帧率,由 Rust 测量并推送。仅在 `Shell.show-fps` 为真时被推送。
     // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
     // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
-    // 同播名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
+    // 名册里除本机之外的在线设备,由信令服务端主动推送(见 crates/syncplay)。
 
     // 当前选中的导航页:0=Home、1=Music。由左侧导航栏点击设置。
     // 版式(Layout Mode):窄→紧凑(底部导航),宽→侧栏。**由运行时窗口宽度决定,不由端决定**

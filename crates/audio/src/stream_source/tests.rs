@@ -3,11 +3,11 @@ use similar_asserts::assert_eq;
 use super::fixtures::*;
 use super::*;
 
-/// 听同播时没有解码器可跳,`try_seek` 必须报错而不是假装跳了。
+/// 背后没有解码线程时,`try_seek` 必须报错而不是假装跳了。
 ///
 /// 假装跳了的话进度条会跳走,而声音还在原地 —— 两个说法对不上。
 #[test]
-fn a_listener_channel_cannot_be_seeked() {
+fn a_channel_without_a_decoder_cannot_be_seeked() {
     let (_tx, rx) = mpsc::channel::<Sample>();
     let mut source = ChannelSource::new(rx);
 
@@ -68,7 +68,7 @@ fn channel_source_yields_what_was_sent() {
 /// **通道暂时空时给静音,不能结束。**
 ///
 /// 返回 `None` 对 rodio 就是"这首放完了",它会把源丢掉 ——
-/// 于是一次几十毫秒的网络抖动会让听众**永久**没声,而连接一切正常。
+/// 于是一次几十毫秒的网络抖动会让这一首**永久**没声,而连接一切正常。
 #[test]
 fn channel_source_fills_underrun_with_silence() {
     let (tx, rx) = mpsc::channel();

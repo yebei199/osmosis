@@ -3,7 +3,7 @@ import { DeviceRow } from "../types.slint";
 import { Library } from "library.slint";
 import { Player } from "player.slint";
 
-// 壳级的状态面:调试读数、GPU 纹理槽、同播名册、卡墙、封面取色与横幅。
+// 壳级的状态面:调试读数、GPU 纹理槽、设备名册、卡墙、封面取色与横幅。
 //
 // **不含版式与导航几何**(compact、nav-* 那一整簇、current-tab) —— 它们要读
 // root.width / root.height / safe-area-insets,global 拿不到窗口上下文,
@@ -49,8 +49,6 @@ export global Shell {
     in property <string> download-text;
 
     in property <[DeviceRow]> devices: [];
-    // 同播状态的一行文案,由 Rust 根据 syncplay 的 Role 渲染后推送。
-    in property <string> sync-text;
 
     // ── 遥控器模式(docs/adr/0030)。「输出设备 = 谁」就是它的全部状态。 ──
     // 输出设备那一行,如「输出: 本机」。由 Rust 渲染后推送。
@@ -146,8 +144,6 @@ export global Shell {
     // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
     out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
     changed system-prefers-dark => { system-scheme-changed(); }
-    // 把正在放的这首推给某台设备。参数是 DeviceRow 的 id。
-    callback push-to(string);
 
     in-out property <bool> compact;
 }

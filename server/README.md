@@ -14,7 +14,7 @@ axum 后端。两个职责:与客户端共享 `contract`(线上格式的一致�
 | `src/main.rs`    | 进程装配:状态、路由表、监听。路由留在这里,它们是装配方式不是可复用的库   |
 | `src/gate/`      | 请求进门那一道:token 换账号的提取器、限流                                |
 | `src/store/`     | 自家数据:连接池与迁移、账号、本地歌单、播放事件、平台曲目缓存            |
-| `src/syncplay/`  | 同播与遥控的信令。与音乐那半毫无关系,state 也不共用                      |
+| `src/syncplay/`  | 遥控的信令。与音乐那半毫无关系,state 也不共用(目录名是已删的同播留下的) |
 | `src/routes/`    | HTTP 处理函数,按资源分:`catalog/` 平台那边的、`library/` 我的库、其余在根 |
 | `src/bangdream.rs` | 唯一认识 gRPC 的地方;上游领域模型到 `contract` 的翻译                  |
 | `src/error.rs`   | `AppError` 与两条映射:自家的失败、上游 gRPC 的失败                       |

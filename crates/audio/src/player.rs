@@ -2,7 +2,7 @@
 
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 
-use crate::{AudioError, codec, spectrum};
+use crate::{AudioError, pcm, spectrum};
 
 /// 出声的那一头。持有音频设备,活多久声音就能放多久。
 pub struct Player {
@@ -32,14 +32,14 @@ impl Player {
 
     /// 放一路音频,替换掉当前正在放的。
     ///
-    /// 收任意 `rodio::Source` 而不只收解码器:听众放的是 [`ChannelSource`] ——
-    /// 网络推来的 PCM,从没经过本机的解码器。
+    /// 收任意 `rodio::Source` 而不只收解码器:本机放的是 [`crate::buffered`]
+    /// 交出的 [`crate::ChannelSource`],解码在另一条线程上。
     ///
     /// 先清空:队列语义在这里是错的 —— 用户点第二首歌是"改放这首",
     /// 不是"放完上一首再放这首"。
     ///
     /// 这里也是可视化的**统一挖点**:任何要出声的源都从本方法进,分一支采样
-    /// 给 [`spectrum::Analyzer`],单机、主控、听众的可视化因此天然一致,
+    /// 给 [`spectrum::Analyzer`],任何来源的可视化因此天然一致,
     /// 频谱不进网络(见 `CONTEXT.md`「可视化」)。
     pub fn play<S>(&self, source: S)
     where
@@ -47,7 +47,7 @@ impl Player {
     {
         let channels = source.channels().get();
         let (tap, rx) =
-            codec::Tee::new(source, spectrum::TAP_CAPACITY);
+            pcm::Tee::new(source, spectrum::TAP_CAPACITY);
         self.viz.attach(rx, channels);
         self.player.clear();
         self.player.append(tap);
@@ -94,7 +94,7 @@ impl Player {
     /// 跳到某个时间点。**下场有两种,别只看返回值。**
     ///
     /// `Err`:当场就知道跳不动 —— 格式不支持、这条流只进不退、或者压根没有
-    /// 可跳的东西(正在听同播)。这一侧是**确定的**:rodio 的 `TrackPosition`
+    /// 可跳的东西(解码线程已经收工)。这一侧是**确定的**:rodio 的 `TrackPosition`
     /// 只在 `Ok` 时挪位置,所以位置计数器纹丝不动,进度条不会显示一个声音
     /// 没去过的时刻。
     ///
