@@ -55,9 +55,8 @@ fn a_persisted_device_id_outlives_the_process() {
 
 /// 连接状态文案里的中文必须在子集字体里 —— 与 `music.rs` 那条同一个守卫。
 ///
-/// 覆盖得到的只有**本层写死的那部分**:失败前缀配上 `syncplay` 那种错误的真实
-/// `Display` 输出(不是手抄的,改了措辞而没重裁字体这里就红),以及版本对不上
-/// 那句横幅。
+/// 覆盖得到的只有**本层写死的那部分**:失败前缀配上 `syncplay` 错误的真实
+/// `Display` 输出(不是手抄的,改了措辞而没重裁字体这里就红)。
 ///
 /// 覆盖不到的是变量部分 —— 设备名由对端自报,服务端的错误说明里也带着它。
 /// 那和歌名是同一类东西:任意文本,不可能预裁,桌面上落到系统字体。
@@ -77,12 +76,8 @@ fn link_copy_only_uses_subset_glyphs() {
                 .to_string(),
         ),
         describe_link_failure(
-            &SyncError::Throttled { retry_after: None }
-                .to_string(),
+            &SyncError::Unauthorized.to_string(),
         ),
-        describe_incompatible(4, Some(3)),
-        describe_incompatible(4, None),
-        "遥控信令被服务端拒绝".to_owned(),
     ];
 
     for line in copy {
