@@ -55,13 +55,6 @@ tower = { version = "0.5", default-features = false }
 # `tower_governor` 的公开签名里带着 `governor::middleware::NoOpMiddleware`,
 # 却没有把它再导出 —— 要给配置起一个类型别名就只能直接依赖 `governor`。
 governor = { version = "0.10", default-features = false, features = ["std", "quanta"] }
-# **不是直接用它**,是为了把 `governor` 底下那条 `getrandom` 钉在 0.3.3 以上。
-#
-# 0.3.0 在 wasm 上要 `js-sys ^0.3.77`,而那条链会把 `wasm-bindgen` 拽回 0.2.100;
-# 本仓的 `apps/web` 用的是 0.2.126,两个版本都 `links = "wasm_bindgen"`,
-# 于是整个 workspace 解不出来。0.3.3 起改走 `wasm_js`,不再碰 js-sys。
-# web 端冻结中(#105)不代表它不在依赖图里 —— 它仍是 workspace 成员。
-getrandom = "0.3.3"
 # 听过的歌存进 RustFS(#126,见 `objects`)。只要它签名的那一半:HTTP 仍走上面
 # 那份 reqwest,xml 与 full 两组特性管的是列桶、批删这些用不上的动作。
 rusty-s3 = { version = "0.10", default-features = false, features = ["rustcrypto"] }

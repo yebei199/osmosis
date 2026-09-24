@@ -7,8 +7,8 @@ profile = "default"
 targets = [
     "x86_64-unknown-linux-musl",
     "aarch64-linux-android",  # apps/android
-    "wasm32-unknown-unknown", # apps/web
-    "aarch64-apple-ios",      # apps/ios(只验证编译,打包需 macOS)
+    # apps/web(wasm32-unknown-unknown)与 apps/ios(aarch64-apple-ios)已废弃(#110),
+    # 不再预装它们的 target;复活时加回。
 ]
 
 # 必备组件:确保团队成员的 IDE 都能正常工作。
