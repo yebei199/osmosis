@@ -3,8 +3,8 @@
 //! 只管**转达**。什么时候接管、发哪条命令是 [`crate::Client`] 那边的事。
 
 use contract::{
-    ClientSignal, DeviceDto, RemoteCommand, RemoteStateDto,
-    ServerSignal,
+    ClientSignal, DeviceDto, GroupPlanDto, RemoteCommand,
+    RemoteStateDto, ServerSignal,
 };
 use tokio::sync::mpsc;
 
@@ -113,27 +113,48 @@ impl SignalSender {
         .await
     }
 
-    /// 开始一次换输出。
+    /// 开始一次换输出。`master` 是换过去之后的主端。
     pub async fn begin_outputs(
         &self,
         operation_id: &str,
         outputs: Vec<String>,
+        master: Option<String>,
     ) -> Result<(), SyncError> {
         self.push(ClientSignal::BeginOutputs {
             operation_id: operation_id.to_owned(),
             outputs,
-            master: None,
+            master,
         })
         .await
     }
 
-    /// 提交那一次换输出。
+    /// 提交那一次换输出。`outputs` 是真正跟上的那几台,`None` 是登记的整份。
     pub async fn commit_outputs(
         &self,
         operation_id: &str,
+        outputs: Option<Vec<String>>,
     ) -> Result<(), SyncError> {
         self.push(ClientSignal::CommitOutputs {
             operation_id: operation_id.to_owned(),
+            outputs,
+        })
+        .await
+    }
+
+    /// 校时的一次往返：发出去，等 `TimePong`。
+    pub async fn time_ping(&self, id: u64) -> Result<(), SyncError> {
+        self.push(ClientSignal::TimePing { id }).await
+    }
+
+    /// 主端发布共同计划。
+    pub async fn publish_plan(
+        &self,
+        term: u64,
+        plan: GroupPlanDto,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::GroupPlan {
+            term,
+            plan: Box::new(plan),
         })
         .await
     }

@@ -6,18 +6,28 @@
 //! 全部跑在自己的后台 runtime 上,与 `api`、`audio` 同一个模式:调用方是 Slint 的
 //! UI 线程,那里没有 tokio 反应堆,也一秒钟都不能被阻塞。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use contract::{
-    DeviceDto, RemoteCommand, RemoteStateDto, ServerSignal,
+    DeviceDto, GroupPlanDto, RemoteCommand, RemoteStateDto,
+    ServerSignal,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
+use crate::clock::{Clock, monotonic_ns};
 use crate::signalling::SignalSender;
 use crate::{Signalling, SyncError};
+
+/// 校时的结论，编排循环写、界面读(把共同计划里的服务端时刻换算到本机)。
+pub type SharedClock = Arc<Mutex<Clock>>;
+
+/// 多久校一次时。半秒一次往返：一分钟的拟合窗口里有一百二十个样本，挑得出最短的那些;
+/// 一次往返是两条几十字节的消息，服务端不必为此记任何状态。
+const PING_EVERY: Duration = Duration::from_millis(500);
 
 /// 客户端向外抛出的事件。
 ///
@@ -81,6 +91,19 @@ pub enum Event {
         operation_id: String,
         reason: String,
     },
+    /// 服务端通告的播放组(#137 ⑤):任期、主端、成员。本机在不在成员里、是不是主端，
+    /// 由收的那一侧自己看。
+    Group {
+        term: u64,
+        master: Option<String>,
+        members: Vec<String>,
+    },
+    /// 主端发来的共同计划。
+    GroupPlan {
+        from: String,
+        term: u64,
+        plan: Box<GroupPlanDto>,
+    },
 }
 
 /// 界面发给编排循环的指令。
@@ -107,9 +130,12 @@ enum Command {
     BeginOutputs {
         operation_id: String,
         outputs: Vec<String>,
+        master: Option<String>,
     },
-    CommitOutputs(String),
+    CommitOutputs(String, Option<Vec<String>>),
     AbortOutputs(String),
+    /// 主端发布共同计划。
+    PublishPlan { term: u64, plan: Box<GroupPlanDto> },
 }
 
 /// 本机作为**遥控器**持有的那份控制权。
@@ -129,6 +155,7 @@ struct Held {
 /// 丢掉它,编排循环随之结束(指令通道断开),所有连接跟着关。
 pub struct Client {
     commands: mpsc::UnboundedSender<Command>,
+    clock: SharedClock,
     /// 对端讲的不是同一版协议。置上之后,[`Self::claim`] 一律空转。
     ///
     /// 共享给编排循环:判定发生在收到下行消息的那一刻,而挡住接管要在
@@ -160,6 +187,7 @@ impl Client {
         > = Arc::new(token);
 
         let incompatible = Arc::new(AtomicBool::new(false));
+        let clock = SharedClock::default();
 
         runtime().spawn(run(
             base_url,
@@ -168,10 +196,12 @@ impl Client {
             events,
             inbox,
             Arc::clone(&incompatible),
+            Arc::clone(&clock),
         ));
 
         Self {
             commands,
+            clock,
             incompatible,
         }
     }
@@ -189,6 +219,7 @@ impl Client {
         let (commands, _) = mpsc::unbounded_channel();
         Self {
             commands,
+            clock: SharedClock::default(),
             incompatible: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -275,11 +306,13 @@ impl Client {
         }
     }
 
-    /// 开始一次换输出:`outputs` 是换上之后的输出集合,空集合是改回本机。
+    /// 开始一次换输出:`outputs` 是换上之后的输出集合,空集合是改回本机;`master` 是换过去
+    /// 之后的主端。
     pub fn begin_outputs(
         &self,
         operation_id: &str,
         outputs: Vec<String>,
+        master: Option<String>,
     ) {
         if self.incompatible.load(Ordering::Relaxed) {
             log::warn!(
@@ -290,14 +323,33 @@ impl Client {
         let _ = self.commands.send(Command::BeginOutputs {
             operation_id: operation_id.to_owned(),
             outputs,
+            master,
         });
     }
 
-    /// 提交那一次换输出。
-    pub fn commit_outputs(&self, operation_id: &str) {
+    /// 提交那一次换输出。`outputs` 是真正跟上的那几台,`None` 是登记的整份。
+    pub fn commit_outputs(
+        &self,
+        operation_id: &str,
+        outputs: Option<Vec<String>>,
+    ) {
         let _ = self.commands.send(Command::CommitOutputs(
             operation_id.to_owned(),
+            outputs,
         ));
+    }
+
+    /// 主端发布一份共同计划(#137 ⑤)。
+    pub fn publish_plan(&self, term: u64, plan: GroupPlanDto) {
+        let _ = self.commands.send(Command::PublishPlan {
+            term,
+            plan: Box::new(plan),
+        });
+    }
+
+    /// 校时的结论。界面拿它把计划里的服务端时刻换算成本机单调时钟。
+    pub fn clock(&self) -> SharedClock {
+        Arc::clone(&self.clock)
     }
 
     /// 放弃那一次换输出。
@@ -444,6 +496,7 @@ async fn run(
     events: Arc<dyn Fn(Event) + Send + Sync>,
     mut commands: mpsc::UnboundedReceiver<Command>,
     incompatible: Arc<AtomicBool>,
+    clock: SharedClock,
 ) {
     let mut backoff = RETRY_MIN;
     // 上一个被服务端拒掉的 token。它没换之前不必再试 —— 结果只会一样。
@@ -520,6 +573,7 @@ async fn run(
             &mut held,
             &mut controlled,
             &incompatible,
+            (&device.id, &clock),
         )
         .await
         {
@@ -575,8 +629,16 @@ async fn serve(
     held: &mut Option<Held>,
     controlled: &mut bool,
     incompatible: &AtomicBool,
+    (me, clock): (&str, &SharedClock),
 ) -> bool {
     let sender = signalling.sender();
+    // 发出去还没回的校时：id → 本机发出时刻。连接断了就作废(新连接从头校)。
+    let mut pings: HashMap<u64, i64> = HashMap::new();
+    let mut next_ping: u64 = 0;
+    let mut ticker = tokio::time::interval(PING_EVERY);
+    ticker.set_missed_tick_behavior(
+        tokio::time::MissedTickBehavior::Delay,
+    );
     // 这条连接上还没见过握手应答。见到 `Roster` 时它要是还立着,对端就是
     // 一个不认识版本协商的旧服务端 —— 判据是**谁先到**:新服务端在入册之前
     // 发 `Welcome`,而 `Roster` 是入册之后的第一条下行(`docs/adr/0031`)。
@@ -611,7 +673,24 @@ async fn serve(
                     incompatible,
                     events,
                 );
-                accept(message, events, held, controlled)
+                if let ServerSignal::TimePong { id, server_us, epoch } = message {
+                    // 收到的那一刻先读钟，再做别的:慢一步都算进往返里。
+                    let received = monotonic_ns();
+                    if let Some(sent) = pings.remove(&id) {
+                        lock(clock).add(epoch, sent, server_us, received);
+                    }
+                    Ok(())
+                } else {
+                    accept(message, events, held, controlled)
+                }
+            }
+            _ = ticker.tick() => {
+                // 丢了的往返不会再回:超过两秒的一并忘掉，表不会越攒越大。
+                let now = monotonic_ns();
+                pings.retain(|_, sent| now - *sent < 2_000_000_000);
+                next_ping += 1;
+                pings.insert(next_ping, monotonic_ns());
+                sender.time_ping(next_ping).await
             }
             command = commands.recv() => {
                 let Some(command) = command else {
@@ -620,7 +699,7 @@ async fn serve(
                 if matches!(command, Command::ExitControlled) {
                     *controlled = false;
                 }
-                dispatch(command, &sender, held).await
+                dispatch(command, &sender, held, me).await
             }
         };
 
@@ -798,11 +877,49 @@ fn accept(
             });
             Ok(())
         }
-        // 多成员(#137 ⑤)的三条,客户端这一侧随后接上。
-        ServerSignal::TimePong { .. }
-        | ServerSignal::Group { .. }
-        | ServerSignal::GroupPlan { .. } => Ok(()),
+        // 校时的回话在 `serve` 里就地收下(要读收到那一刻的钟),到不了这里。
+        ServerSignal::TimePong { .. } => Ok(()),
+        ServerSignal::Group {
+            term,
+            master,
+            members,
+        } => {
+            events(Event::Group {
+                term,
+                master,
+                members,
+            });
+            Ok(())
+        }
+        ServerSignal::GroupPlan { from, term, plan } => {
+            events(Event::GroupPlan { from, term, plan });
+            Ok(())
+        }
     }
+}
+
+/// 持权记录该认组里哪一台：命令发给主端，所以主端排第一;本机自己不算(本机是主端时
+/// 命令走本机那条路，续权要认一台远端成员)。
+fn remote_first(
+    outputs: &[String],
+    master: Option<&str>,
+    me: &str,
+) -> Vec<String> {
+    let mut remote: Vec<String> = outputs
+        .iter()
+        .filter(|id| *id != me)
+        .cloned()
+        .collect();
+    if let Some(at) = remote.iter().position(|id| Some(id.as_str()) == master) {
+        let master = remote.remove(at);
+        remote.insert(0, master);
+    }
+    remote
+}
+
+/// 取锁。锁里只有校时样本的增删，中毒了就是别处出了大问题。
+fn lock(clock: &SharedClock) -> std::sync::MutexGuard<'_, Clock> {
+    clock.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// 那一次换输出提交了:持权记录跟着换到新集合;新集合是空的(改回本机)就
@@ -831,6 +948,7 @@ async fn dispatch(
     command: Command,
     sender: &SignalSender,
     held: &mut Option<Held>,
+    me: &str,
 ) -> Result<(), SyncError> {
     match command {
         // 主动接管:先记下目标,代次等服务端的 ControlGranted 回来再填。
@@ -873,33 +991,45 @@ async fn dispatch(
         Command::BeginOutputs {
             operation_id,
             outputs,
+            master,
         } => {
+            let remote = remote_first(&outputs, master.as_deref(), me);
             match held.as_mut() {
                 Some(current) => {
                     current.changing = Some((
                         operation_id.clone(),
-                        outputs.clone(),
+                        remote,
                     ));
                 }
                 None => {
-                    if let Some(first) = outputs.first() {
+                    if let Some(first) = remote.first() {
                         *held = Some(Held {
                             target: first.clone(),
                             generation: None,
                             changing: Some((
                                 operation_id.clone(),
-                                outputs.clone(),
+                                remote.clone(),
                             )),
                         });
                     }
                 }
             }
             sender
-                .begin_outputs(&operation_id, outputs)
+                .begin_outputs(&operation_id, outputs, master)
                 .await
         }
-        Command::CommitOutputs(operation_id) => {
-            sender.commit_outputs(&operation_id).await
+        Command::CommitOutputs(operation_id, outputs) => {
+            // 真正跟上的那一份比登记的少：持权记录按它换。
+            if let (Some(current), Some(kept)) = (held.as_mut(), outputs.as_ref())
+                && let Some((pending, remote)) = current.changing.as_mut()
+                && *pending == operation_id
+            {
+                remote.retain(|id| kept.contains(id));
+            }
+            sender.commit_outputs(&operation_id, outputs).await
+        }
+        Command::PublishPlan { term, plan } => {
+            sender.publish_plan(term, *plan).await
         }
         Command::AbortOutputs(operation_id) => {
             // 作罢之后这一次就不再算进行中:之前就持着权的留着权,
@@ -913,6 +1043,24 @@ async fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn owned(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    /// 持权认主端(命令发给它);本机自己是主端时认一台远端成员，重连续权才有对象。
+    #[test]
+    fn the_held_target_is_the_remote_master_or_another_remote_member() {
+        assert_eq!(
+            remote_first(&owned(&["pc", "pad"]), Some("pad"), "phone"),
+            owned(&["pad", "pc"])
+        );
+        assert_eq!(
+            remote_first(&owned(&["phone", "pc"]), Some("phone"), "phone"),
+            owned(&["pc"])
+        );
+        assert!(remote_first(&[], None, "phone").is_empty());
+    }
 
     /// 退避翻倍,并停在上限上 —— 不会一路涨到几小时。
     #[test]

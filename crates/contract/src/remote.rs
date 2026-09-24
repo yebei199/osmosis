@@ -243,6 +243,14 @@ pub struct RemoteStateDto {
     /// 一种 —— 这台设备整个不报了,而那正是遥控器该显示「待确认」的时候。
     #[serde(default)]
     pub operation: Option<OperationAckDto>,
+    /// 作为播放组成员时的故障(#137 ⑤):取不到组计划要的那一首、跳不到要的位置。
+    /// 这台照样不自己从头放、不换下一首;遥控器按成员逐台列出。好了就不再带。
+    #[serde(default)]
+    pub fault: Option<String>,
+    /// 此刻从哪条路由出声(#137 ⑤)。同步合同只校准过扬声器;蓝牙、有线的成员遥控器标成
+    /// 「该路由未校准,不保证同步」。查不出来就不带。
+    #[serde(default)]
+    pub route: Option<OutputRouteDto>,
 }
 
 /// 迁移里的一步做到了哪。
@@ -265,6 +273,17 @@ pub enum OperationPhase {
     Stopped,
     /// 这一步没做成,`reason` 说为什么。**确定的**失败 —— 与「没回音」不同。
     Failed,
+}
+
+/// 输出路由。
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputRouteDto {
+    Speaker,
+    Bluetooth,
+    Wired,
 }
 
 /// 一台设备对一次迁移操作的回话。
@@ -344,6 +363,8 @@ mod tests {
                 epoch: 1_700_000_000_000,
                 state_seq: 42,
                 operation: None,
+                fault: None,
+                route: None,
             }),
         }
     }
@@ -379,6 +400,8 @@ mod tests {
             epoch: 1_700_000_000_000,
             state_seq: 1,
             operation: None,
+            fault: None,
+            route: None,
         }
     }
 
@@ -720,6 +743,8 @@ mod tests {
                 position_ms: Some(63_000),
                 reason: None,
             }),
+            fault: None,
+            route: None,
             ..idle_state()
         };
 

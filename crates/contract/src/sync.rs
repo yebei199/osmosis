@@ -107,7 +107,8 @@ pub enum ClientSignal {
     /// 确认,这时候就把源从组里摘掉,就再也没有人能叫它停了(#137 ③)。
     ///
     /// 空集合是「改回本机」:本机输出不经服务端,组里只剩要被停掉的那些。
-    /// 本轮集合最多一台;字段从第一天就是集合,多成员(#137 ⑤)不用再改形状。
+    /// 遥控器本机也可以在集合里(本机在放时加入别的设备,#137 ⑤),但集合只有它自己时
+    /// 仍是单机输出，不经服务端。
     BeginOutputs {
         operation_id: String,
         outputs: Vec<String>,
@@ -123,7 +124,13 @@ pub enum ClientSignal {
     ///
     /// 被换下来的成员收到 [`ServerSignal::NotControlled`] 解锁 —— 它们此前已经
     /// 各自确认停了声音,这一条只是撤锁,不是叫停。
-    CommitOutputs { operation_id: String },
+    CommitOutputs {
+        operation_id: String,
+        /// 真正跟上的那几台(#137 ⑤):新来的里准备不了、开始失败的不进组，撤锁。
+        /// 必须是 `BeginOutputs` 那一份的子集;缺省就是整份。
+        #[serde(default)]
+        outputs: Option<Vec<String>>,
+    },
     /// 放弃那一次操作:新来的设备撤锁,组的成员集合不变。
     AbortOutputs { operation_id: String },
     /// 校时:服务端立刻回一条 [`ServerSignal::TimePong`],带上它此刻的单调时钟。
@@ -297,6 +304,7 @@ mod tests {
             },
             ClientSignal::CommitOutputs {
                 operation_id: "op-1".to_owned(),
+                outputs: Some(vec!["pc1".to_owned()]),
             },
             ClientSignal::AbortOutputs {
                 operation_id: "op-1".to_owned(),
