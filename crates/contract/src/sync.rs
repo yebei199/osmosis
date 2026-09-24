@@ -288,10 +288,12 @@ mod tests {
             ClientSignal::BeginOutputs {
                 operation_id: "op-1".to_owned(),
                 outputs: vec!["pc1".to_owned()],
+                master: Some("pc1".to_owned()),
             },
             ClientSignal::BeginOutputs {
                 operation_id: "op-2".to_owned(),
                 outputs: Vec::new(),
+                master: None,
             },
             ClientSignal::CommitOutputs {
                 operation_id: "op-1".to_owned(),
