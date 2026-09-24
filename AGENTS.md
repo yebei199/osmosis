@@ -20,7 +20,7 @@ docs_synced_at: fba905d
 | 这是什么 | 见上节;完整版在 [`README.md`](README.md) |
 | 结构在哪 | [`README.md`](README.md)「目录结构」:cargo workspace,依赖方向严格单向 |
 | 什么不能碰 | 依赖方向反向永久禁止;`[patch.crates-io]` 只写远程地址;`ANDROID_DEVICE_PIN` 不进任何进版本库的文件;UI 硬规则在 [`docs/design.md`](docs/design.md) |
-| web / iOS 怎么办 | 冻结中(2026-09-20,#105),解冻条件是用户开始用。这两端不做兼容,新代码遇到它们可以直接 `cfg(not(target_arch = "wasm32"))` 跳过,不必为它们设计接口 |
+| web / iOS 怎么办 | 废弃(2026-09-21 用户定,#110),已摘出 workspace,代码留着备复活。这两端不做兼容,新代码遇到它们可以直接 `cfg(not(target_arch = "wasm32"))` 跳过,不必为它们设计接口 |
 | 待办在哪 | [`docs/TODO.md`](docs/TODO.md) |
 | 怎么验 | `just ci` 逐字复述 CI,`dev` 分支的 push 不触发 CI,它是唯一防线;UI 改动用 `just shot` 与 MCP,贴屏幕边/随窗口变形的几何还要真机复核(`just mcp-android`),见下文 |
 

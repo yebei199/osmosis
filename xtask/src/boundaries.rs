@@ -36,12 +36,11 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 3] = [
+    let checks: [(&str, Check); 2] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
         ),
-        ("web/ios 不依赖 bevy/wgpu", web_ios_free_of_3d),
         (
             "vendored .proto 与上游一致",
             vendored_proto_matches_upstream,
@@ -99,39 +98,6 @@ fn contract_has_no_io_crates() -> Result<(), String> {
         "contract 依赖了 {},违反 docs/adr/0001",
         found.join("、")
     ))
-}
-
-/// 3D 桥(render3d/bevy/wgpu)完全不进 web / ios。
-///
-/// bevy 在桌面与 android 上是硬依赖(docs/adr/0011),但 web / ios 一旦拉进 bevy
-/// 或 wgpu,体积爆炸;这两端按「余端 graceful 缺省」退回无 3D 形态 —— 空图缺省、
-/// 锚点恒无,`.slint` 里零平台判断。曾经三端各有一个 opt-in 的 `bevy-3d` feature,
-/// 随 0011 一并拆除(可关性只剩一个没人验证过的降级形态);哪天要给 web / ios
-/// 开 3D,是把 render3d 接进它们的入口 crate,而不是复活那个 feature。
-fn web_ios_free_of_3d() -> Result<(), String> {
-    const FORBIDDEN: &[&str] =
-        &["render3d", "bevy", "wgpu"];
-
-    for pkg in ["app-web", "app-ios"] {
-        let tree = capture(
-            "cargo",
-            &["tree", "-p", pkg, "--edges", "normal"],
-        )?;
-        let found: Vec<&str> = FORBIDDEN
-            .iter()
-            .copied()
-            .filter(|forbidden| {
-                depends_on(&tree, forbidden)
-            })
-            .collect();
-        if !found.is_empty() {
-            return Err(format!(
-                "{pkg} 依赖了 {},3D 桥不该进 web/ios",
-                found.join("、")
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// 契约的上游是 bang-dream,那是一个独立仓库,不以任何形式挂在本仓库里。

@@ -335,25 +335,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "app-ios"
-version = "0.1.18"
-dependencies = [
- "slint",
- "ui",
-]
-
-[[package]]
-name = "app-web"
-version = "0.1.18"
-dependencies = [
- "console_error_panic_hook",
- "console_log",
- "slint",
- "ui",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2315,16 +2296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "console_log"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86919cef3e37b9356ccf54d4421208c17ecfda01beae61393e7ffd72916c0ef1"
-dependencies = [
- "log",
- "web-sys",
-]
-
-[[package]]
 name = "const-field-offset"
 version = "0.2.1"
 source = "git+https://github.com/yebei199/slint?branch=dev#64d51f14535e702bf7d21cc5ffe7c2e243cbd58d"
@@ -3348,25 +3319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "femtovg"
-version = "0.26.0"
-source = "git+https://github.com/femtovg/femtovg#e89e0e1494731aa7d29f9551791570300d5ffd53"
-dependencies = [
- "bitflags 2.13.0",
- "bytemuck",
- "fnv",
- "glow",
- "imgref",
- "itertools 0.15.0",
- "log",
- "rgb",
- "slotmap",
- "swash",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4355,7 +4307,6 @@ dependencies = [
  "glutin",
  "i-slint-common",
  "i-slint-core",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "input",
@@ -4379,7 +4330,6 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
 ]
 
@@ -4427,7 +4377,6 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "imgref",
@@ -4563,27 +4512,6 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "i-slint-renderer-femtovg"
-version = "1.18.0"
-source = "git+https://github.com/yebei199/slint?branch=dev#64d51f14535e702bf7d21cc5ffe7c2e243cbd58d"
-dependencies = [
- "cfg-if",
- "const-field-offset",
- "derive_more",
- "femtovg",
- "glow",
- "i-slint-common",
- "i-slint-core",
- "i-slint-core-macros",
- "imgref",
- "lyon_path",
- "pin-weak",
- "rgb",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -8045,7 +7973,6 @@ dependencies = [
  "axum",
  "contract",
  "futures-util",
- "getrandom 0.3.4",
  "governor",
  "prost",
  "reqwest",
@@ -8274,7 +8201,6 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
- "i-slint-renderer-femtovg",
  "i-slint-renderer-skia",
  "i-slint-renderer-software",
  "num-traits",
