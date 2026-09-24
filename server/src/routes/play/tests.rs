@@ -131,7 +131,7 @@ async fn an_mp3_source_is_passed_through_byte_for_byte() {
     let response = download(
         State(state),
         account,
-        Path("dl_mp3-1".to_owned()),
+        Path(testing::track_id("dl_mp3", 1)),
     )
     .await
     .expect("mp3 源应当直接给得出来");
@@ -161,7 +161,7 @@ async fn a_non_mp3_source_comes_back_as_real_mp3() {
     let response = download(
         State(state),
         account,
-        Path("dl_wav-1".to_owned()),
+        Path(testing::track_id("dl_wav", 1)),
     )
     .await
     .expect("转码路不该失败");
@@ -213,7 +213,7 @@ async fn a_trial_only_source_is_refused_with_its_own_code()
     let (code, body) = download(
         State(state),
         account,
-        Path("dl_trial-1".to_owned()),
+        Path(testing::track_id("dl_trial", 1)),
     )
     .await
     .expect_err("试听片段不该下得下来");
@@ -228,8 +228,10 @@ async fn a_trial_only_source_is_refused_with_its_own_code()
 async fn the_file_name_follows_the_track_detail() {
     let url =
         serve_bytes(vec![0xFF, 0xFB, 0x90, 0x00]).await;
-    let mut track =
-        testing::upstream_track("dl_name-1", "残響散歌");
+    let mut track = testing::upstream_track(
+        &testing::track_id("dl_name", 1),
+        "残響散歌",
+    );
     track.artists[0].name = "Aimer".to_owned();
     let (state, account) =
         fixture("dl_name", source(url, "mp3"), vec![track])
@@ -238,7 +240,7 @@ async fn the_file_name_follows_the_track_detail() {
     let response = download(
         State(state),
         account,
-        Path("dl_name-1".to_owned()),
+        Path(testing::track_id("dl_name", 1)),
     )
     .await
     .expect("mp3 源应当直接给得出来");
@@ -297,7 +299,7 @@ async fn an_upstream_error_page_is_not_served_as_audio() {
     let (code, _) = download(
         State(state),
         account,
-        Path("dl_expired-1".to_owned()),
+        Path(testing::track_id("dl_expired", 1)),
     )
     .await
     .expect_err("平台的错误页不该被当成音频");
