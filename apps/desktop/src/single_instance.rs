@@ -13,8 +13,17 @@
 use std::io;
 
 /// 锁的名字。抽象地址不占文件系统,但仍然是全局的,所以取一个不会撞的名字。
+///
+/// 按档分开(#135),判据与状态目录同一条([`api::is_release`]):装机版沿用老名字,
+/// 开发实例另用一把,于是日常开着的装机版挡不住调试;同档里仍然只许一个。
 #[cfg(target_os = "linux")]
-const LOCK_NAME: &str = "osmosis-desktop.lock";
+const fn lock_name(release: bool) -> &'static str {
+    if release {
+        "osmosis-desktop.lock"
+    } else {
+        "osmosis-desktop-dev.lock"
+    }
+}
 
 /// 拿到的锁。**活多久,锁多久** —— 丢掉它就等于开门,所以调用方要把它一直留着。
 ///
@@ -28,7 +37,7 @@ pub struct InstanceLock {
 /// 占住这台机器上的"桌面实例"这个位置。已经有人占着就返回 `Err`。
 #[cfg(target_os = "linux")]
 pub fn claim() -> io::Result<InstanceLock> {
-    claim_named(LOCK_NAME)
+    claim_named(lock_name(api::is_release()))
 }
 
 /// 按名字占锁。名字单独拎出来是给测试用的:测试若用正式名字,就在跟机器上
@@ -84,5 +93,12 @@ mod tests {
             claim_named(&name).is_ok(),
             "上一个实例退了,新的该起得来"
         );
+    }
+
+    /// 装机版沿用老名字,开发实例另起一个,两档才能同时开着(#135)。
+    #[test]
+    fn release_and_dev_builds_use_different_locks() {
+        assert_eq!(lock_name(true), "osmosis-desktop.lock");
+        assert_ne!(lock_name(false), lock_name(true));
     }
 }
