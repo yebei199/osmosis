@@ -64,7 +64,9 @@ mod theme;
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
 #[cfg(not(target_arch = "wasm32"))]
-pub use update::{Install, install_updater};
+pub use update::{
+    Install, install_failed, install_updater,
+};
 // 同播与遥控。只在原生上有(见 `Cargo.toml` 的条件依赖)。
 #[cfg(not(target_arch = "wasm32"))]
 mod sync;

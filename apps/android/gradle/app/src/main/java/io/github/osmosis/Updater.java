@@ -95,15 +95,26 @@ public final class Updater extends BroadcastReceiver {
             }
             return;
         }
-        if (status != PackageInstaller.STATUS_SUCCESS) {
-            Log.w(
-                    TAG,
-                    "升级没装上: "
-                            + status
-                            + " "
-                            + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
+        if (status == PackageInstaller.STATUS_SUCCESS) {
+            return;
+        }
+        String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+        Log.w(TAG, "升级没装上: " + status + " " + message);
+        try {
+            nativeInstallFailed(status, message == null ? "" : message);
+        } catch (UnsatisfiedLinkError missing) {
+            // 进程是被这条广播拉起来的、应用本体没在跑:没有界面可报,日志里已经有了。
+            Log.w(TAG, "升级失败没法交给界面", missing);
         }
     }
+
+    /**
+     * 把失败交给 Rust(apps/android/src/updater.rs),设置页据此换掉状态文字(#134)。
+     *
+     * <p>库已由 {@link MediaControls} 的静态块登记到本类加载器:{@link #install} 调
+     * {@code MediaControls.appContext()} 时它就初始化过了。符号名与包名、类名、方法名绑死。
+     */
+    private static native void nativeInstallFailed(int status, String message);
 
     @SuppressWarnings("deprecation")
     private static Intent legacyConfirm(Intent intent) {
