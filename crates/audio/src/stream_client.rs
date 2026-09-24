@@ -31,13 +31,19 @@ use stream_download::source::DecodeError;
 /// `.no_proxy()` 与 crates/api 同一个理由:直链和后端同源,都在 tailnet 里,
 /// 本机代理路由不到 —— 而 reqwest 无条件读 `HTTPS_PROXY` 这类环境变量,
 /// 关掉 system-proxy 特性挡不住(那个特性只管 macOS 和 Windows 的系统设置)。
-static CLIENT: LazyLock<reqwest::Client> =
-    LazyLock::new(|| {
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(
+    || {
         reqwest::Client::builder()
             .no_proxy()
+            // 开流的分段计时(见 crate::open_timing):量 DNS 与建连
+            .dns_resolver(std::sync::Arc::new(
+                crate::open_timing::TimedResolver,
+            ))
+            .connector_layer(crate::open_timing::TimeConnect)
             .build()
             .expect("建不出播放流的 HTTP 客户端")
-    });
+    },
+);
 
 /// [`Client`] 的本地实现。
 #[derive(Clone)]

@@ -40,12 +40,42 @@ pub struct Laps {
 impl Laps {
     /// 连接是新建的还是复用的。
     pub fn connection(&self) -> Connection {
-        Connection::Reused
+        if self.connect.is_some() {
+            Connection::New
+        } else {
+            Connection::Reused
+        }
     }
 
     /// 日志里的那一行。
     pub fn line(&self) -> String {
-        String::new()
+        use std::fmt::Write as _;
+
+        let conn = match self.connection() {
+            Connection::New => "new",
+            Connection::Reused => "reused",
+        };
+        let mut line = format!(
+            "stream: host={} conn={conn}",
+            self.host
+        );
+        for (name, lap) in [
+            ("dns", self.dns),
+            ("connect", self.connect),
+            ("head", self.head),
+            ("prefetch", self.prefetch),
+            ("decode", self.decode),
+            ("total", self.total),
+        ] {
+            if let Some(lap) = lap {
+                let _ = write!(
+                    line,
+                    " {name}={}ms",
+                    lap.as_millis()
+                );
+            }
+        }
+        line
     }
 }
 
@@ -74,8 +104,94 @@ pub(crate) async fn scope<F: Future>(
     (output, handshake)
 }
 
-/// 解析器量到一次 DNS。
-pub(crate) fn note_dns(_took: Duration) {}
+/// 解析器量到一次 DNS。不在计时范围里(比如池子在后台替别人建连)就不记。
+pub(crate) fn note_dns(took: Duration) {
+    note(|handshake| handshake.dns = Some(took));
+}
 
 /// 连接器量到一次建连(含它内部的 DNS)。
-pub(crate) fn note_connect(_took: Duration) {}
+pub(crate) fn note_connect(took: Duration) {
+    note(|handshake| handshake.connect = Some(took));
+}
+
+fn note(write: impl FnOnce(&mut Handshake)) {
+    let _ = CURRENT.try_with(|cell| {
+        write(
+            &mut cell
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+    });
+}
+
+/// 量 DNS 的解析器。和 reqwest 默认的一样走系统的 getaddrinfo(tokio 的 `lookup_host`)。
+pub(crate) struct TimedResolver;
+
+impl reqwest::dns::Resolve for TimedResolver {
+    fn resolve(
+        &self,
+        name: reqwest::dns::Name,
+    ) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let started = std::time::Instant::now();
+            let found =
+                tokio::net::lookup_host((name.as_str(), 0))
+                    .await?;
+            note_dns(started.elapsed());
+            let addrs: reqwest::dns::Addrs = Box::new(
+                found.collect::<Vec<_>>().into_iter(),
+            );
+            Ok(addrs)
+        })
+    }
+}
+
+/// 量建连(DNS + TCP + TLS)的连接器层。
+#[derive(Clone)]
+pub(crate) struct TimeConnect;
+
+impl<S> tower_layer::Layer<S> for TimeConnect {
+    type Service = TimedConnect<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        TimedConnect(inner)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct TimedConnect<S>(S);
+
+impl<S, R> tower_service::Service<R> for TimedConnect<S>
+where
+    S: tower_service::Service<R>,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = std::pin::Pin<
+        Box<
+            dyn Future<
+                    Output = Result<S::Response, S::Error>,
+                > + Send,
+        >,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), S::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: R) -> Self::Future {
+        let started = std::time::Instant::now();
+        let connecting = self.0.call(request);
+        Box::pin(async move {
+            let connected = connecting.await;
+            if connected.is_ok() {
+                note_connect(started.elapsed());
+            }
+            connected
+        })
+    }
+}
