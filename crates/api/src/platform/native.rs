@@ -444,6 +444,22 @@ fn settings_file() -> Option<PathBuf> {
     .map(|path| path.with_file_name("settings.json"))
 }
 
+/// 声学验收用的测试媒体(#137 ⑤)。
+///
+/// debug 档里设置文件旁有一个 `test-media-url`(一行地址)时，每一首都改从那条地址取：两台设备
+/// 各放一份只在不同频段带标记的测试音频，录音里才分得开是谁的声音(做法同 ② 的
+/// `experiments/synctest`)。地址里的 `{duration_ms}` 换成这一首的元数据时长,
+/// 标记音频照它的长度生成。放在文件里而不是环境变量：安卓的应用进程拿不到 shell 设的环境，
+/// 而 `run-as` 写得进私有目录。release 档一概不认 —— 装机版不会因为谁留了个文件就放错歌。
+pub fn test_media_url() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let path = settings_file()?.with_file_name("test-media-url");
+    let url = std::fs::read_to_string(path).ok()?.trim().to_owned();
+    (!url.is_empty()).then_some(url)
+}
+
 /// 列表缓存库,与会话文件同一个目录。
 ///
 /// 从 [`session_file`] 派生而不是从状态目录:`OSMOSIS_SESSION_FILE` 指到哪,
