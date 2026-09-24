@@ -5,8 +5,9 @@
 #
 # 每个模式起一个实例、等 Osmosis 窗口出现、按模式摆好窗口,再用 niri 的 close-window
 # 关掉它,断言进程 5 秒内退出且退出码为 0(134 是 #15 那个 TLS 析构 abort)。
-# unfocused 先把窗口挪到一个空工作区、焦点留在原地 —— #132 是在这种摆法下发现的。
+# unfocused 先把窗口挪到一个空工作区、焦点留在原地 —— #132 曾怀疑只在这种摆法下不退。
 # 超时没退就打出各线程名与它们睡在哪个内核函数上,再 kill 掉接着验下一个。
+# 退出码:0 全过;1 有一条没退或退出码不对;2 用法错,或 niri 不执行 action(见 niri_obeys)。
 #
 # 二进制要能直接跑,库路径由调用方给(just desktop-exit-check 在 nix-shell 里调它)。
 # 要一个在跑的 niri 会话,从 ssh 进来也行(NIRI_SOCKET 默认取运行目录里那个)。
@@ -40,9 +41,17 @@ dump_threads() {
     done
 }
 
+# 会话锁着时 niri 把 IPC 来的 action 全部丢掉(只放行 quit、切 VT 之类),`niri msg`
+# 照样退 0。close-window 被丢掉,进程当然不走 —— #132 就是这么把锁屏误报成了 bug。
+# 所以先拿 focus-window 探一下:焦点没过来,niri 就不在执行 action,后面的结论不可信。
+niri_obeys() { # niri_obeys <窗口 id>
+    niri msg action focus-window --id "$1"
+    [ "$(niri msg --json focused-window | jq -r '.id // empty')" = "$1" ]
+}
+
 place() { # place <mode> <窗口 id>
     case $1 in
-    focused) niri msg action focus-window --id "$2" ;;
+    focused) ;;
     unfocused)
         # 最后一个工作区总是空的;挪过去、焦点不跟。
         local last
@@ -65,6 +74,10 @@ check() { # check <mode>
     done
     if [ -z "$id" ]; then
         echo "FAIL $mode:没等到窗口"; sed 's/^/     /' "$log"; kill -9 "$app" 2>/dev/null; wait "$app"; return 1
+    fi
+    if ! niri_obeys "$id"; then
+        echo "niri 不执行 action(会话锁着?),判不了。解锁,或在嵌套 niri 里跑(见 test/README.md)" >&2
+        kill -9 "$app"; wait "$app"; exit 2
     fi
     place "$mode" "$id"
     sleep 3 # 让它在这个摆法下跑几帧

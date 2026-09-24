@@ -427,34 +427,16 @@ desktop-install:
     gtk-update-icon-cache -f -t "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" 2>/dev/null || true
     echo "==> 装好了。$bin 不在 PATH 上的话,菜单项能用但命令行调不到。"
 
-# 关窗后进程是不是干净地走了(issue #15)。开一个实例、关掉、看退出码,要 0 不要 134。
+# 关窗后进程是不是干净地走了(#15、#132):焦点与非焦点工作区各关一次,5 秒内要退、
+# 退出码要 0 不要 134。判据在 test/desktop-close-exit.sh,会话锁着时它拒绝下结论。
 #
 # 这条不进 `just ci`:它要合成器给窗口、要显卡给 wgpu adapter,CI 里两样都没有。
-# 但凡动过 apps/desktop 的收尾路径、或者升过 wgpu / slint,就在本机跑一次。
+# 但凡动过 apps/desktop 的收尾路径、或者升过 wgpu / slint,就跑一次(在哪跑见 test/README.md)。
 [group('桌面')]
 desktop-exit-check:
-    #!/usr/bin/env bash
-    set -uo pipefail
     just desktop-kill
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    nix-shell slint.nix --run 'target/debug/osmosis-desktop' > /tmp/slint-exit-check.log 2>&1 &
-    app=$!
-    for _ in $(seq 60); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
-        [ -n "$id" ] && break
-        sleep 1
-    done
-    [ -n "${id:-}" ] || { echo "窗口没起来,见 /tmp/slint-exit-check.log" >&2; exit 1; }
-    sleep 3
-    niri msg action close-window --id "$id"
-    wait $app
-    code=$?
-    if [ $code -eq 0 ]; then
-        echo "==> 退出码 0,收尾干净"
-    else
-        echo "==> 退出码 $code(134 = abort),见 /tmp/slint-exit-check.log" >&2
-        exit 1
-    fi
+    nix-shell slint.nix --run 'test/desktop-close-exit.sh target/debug/osmosis-desktop focused unfocused'
 
 # 起一个干净的桌面实例,截下**真实窗口像素**,存到 dist/shot.png。
 #
