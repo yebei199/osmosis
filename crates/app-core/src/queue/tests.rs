@@ -214,3 +214,18 @@ fn jumping_past_the_end_does_nothing() {
     assert!(queue.jump_to(9).is_none());
     assert_eq!(queue.index(), 0);
 }
+
+/// 换批才算新的一批;洗牌、跳转、推进都还是这一批(#137 ⑥:队列页凭它决定要不要重建行)。
+#[test]
+fn only_replacing_starts_a_new_batch() {
+    let mut queue = Queue::new(batch(3), 0);
+    let first = queue.batch();
+
+    queue.shuffle(7);
+    let _ = queue.jump_to(2);
+    let _ = queue.next(7);
+    assert_eq!(queue.batch(), first, "同一批里挪动不算换批");
+
+    queue.replace(batch(3), 0);
+    assert_ne!(queue.batch(), first, "换一批(哪怕内容一样)就是新的一批");
+}
