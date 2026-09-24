@@ -466,7 +466,11 @@ pub(super) fn project(
     shown: Shown,
 ) {
     ui.global::<Player>().set_tracks_loading(shown.loading);
-    show(ui, deck, shown.tracks.unwrap_or_default());
+    let empty = || TracksDto {
+        tracks: Vec::new(),
+        unavailable: 0,
+    };
+    show(ui, deck, shown.tracks.unwrap_or_else(empty));
 }
 
 /// 切到某个分区的曲目视图,不发请求:回到分区时摆它手上那份。
