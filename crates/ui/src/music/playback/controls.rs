@@ -324,6 +324,7 @@ pub(in crate::music) fn snapshot(
         operation: deck.member.ack(),
         // 作为播放组成员时取不到计划要的那一首、跳不到位置:遥控器按成员逐台列出。
         fault: deck.alignment.fault(),
-        route: audio::route().map(crate::sync::remote::route_dto),
+        route: audio::route()
+            .map(crate::sync::remote::route_dto),
     }
 }

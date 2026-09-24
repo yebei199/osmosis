@@ -239,11 +239,7 @@ pub enum ServerSignal {
     OutputsCommitted { operation_id: String, term: u64 },
     /// 校时的回话。`server_us` 是服务端单调时钟(微秒);`epoch` 是这个钟的纪元,
     /// 服务端每次启动换一个 —— 换了就说明旧的偏移估计与旧计划里的时刻全都作废。
-    TimePong {
-        id: u64,
-        server_us: u64,
-        epoch: u64,
-    },
+    TimePong { id: u64, server_us: u64, epoch: u64 },
     /// 组现在的样子:任期、主端、成员(含进行中那一次拉进来的)。
     ///
     /// 发给组里每一台与遥控器。成员凭它知道该听谁的计划;主端看见新成员就把手上的计划

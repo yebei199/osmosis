@@ -26,7 +26,9 @@ pub fn monotonic_ns() -> i64 {
         tv_nsec: 0,
     };
     // SAFETY: 传入的是栈上一个有效的 timespec。
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts)
+    };
     ts.tv_sec * 1_000_000_000 + ts.tv_nsec
 }
 
@@ -61,7 +63,8 @@ impl Clock {
             self.epoch = Some(epoch);
             self.samples.clear();
         }
-        let local_mid = sent_ns + (received_ns - sent_ns) / 2;
+        let local_mid =
+            sent_ns + (received_ns - sent_ns) / 2;
         self.samples.push_back(Sample {
             local_mid,
             offset: server_us as i64 * 1_000 - local_mid,
@@ -79,19 +82,24 @@ impl Clock {
 
     /// 本机时刻 `local_ns` 上的偏移估计(纳秒)。
     fn offset_at(&self, local_ns: i64) -> Option<f64> {
-        let min_rtt = self.samples.iter().map(|s| s.rtt).min()?;
+        let min_rtt =
+            self.samples.iter().map(|s| s.rtt).min()?;
         let good: Vec<&Sample> = self
             .samples
             .iter()
             .filter(|s| !too_slow(s.rtt, min_rtt))
             .collect();
         if good.len() < 3 {
-            let best = self.samples.iter().min_by_key(|s| s.rtt)?;
+            let best = self
+                .samples
+                .iter()
+                .min_by_key(|s| s.rtt)?;
             return Some(best.offset as f64);
         }
         let x0 = good[0].local_mid as f64;
         let n = good.len() as f64;
-        let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+        let (mut sx, mut sy, mut sxx, mut sxy) =
+            (0.0, 0.0, 0.0, 0.0);
         for s in &good {
             let x = s.local_mid as f64 - x0;
             let y = s.offset as f64;
@@ -122,13 +130,18 @@ impl Clock {
         }
         let server_ns = server_us as i64 * 1_000;
         // 偏移本身随时间变：先粗换一次，再在那一刻重取偏移。
-        let rough = server_ns - self.offset_at(server_ns)? as i64;
+        let rough =
+            server_ns - self.offset_at(server_ns)? as i64;
         Some(server_ns - self.offset_at(rough)? as i64)
     }
 
     /// 本机时刻换算成服务端时钟(微秒)。主端据此把「此刻」写进计划。
-    pub fn to_server_us(&self, local_ns: i64) -> Option<u64> {
-        let server_ns = local_ns + self.offset_at(local_ns)? as i64;
+    pub fn to_server_us(
+        &self,
+        local_ns: i64,
+    ) -> Option<u64> {
+        let server_ns =
+            local_ns + self.offset_at(local_ns)? as i64;
         u64::try_from(server_ns / 1_000).ok()
     }
 }
@@ -144,10 +157,21 @@ mod tests {
     fn one_round_trip_gives_the_offset() {
         let mut clock = Clock::default();
         // 本机 10s 发、10.002s 收，服务端答 15.001s:偏移 +5s。
-        clock.add(1, 10 * S, 15_001_000, 10 * S + 2_000_000);
+        clock.add(
+            1,
+            10 * S,
+            15_001_000,
+            10 * S + 2_000_000,
+        );
 
-        assert_eq!(clock.to_local_ns(1, 20_000_000), Some(15 * S));
-        assert_eq!(clock.to_server_us(15 * S), Some(20_000_000));
+        assert_eq!(
+            clock.to_local_ns(1, 20_000_000),
+            Some(15 * S)
+        );
+        assert_eq!(
+            clock.to_server_us(15 * S),
+            Some(20_000_000)
+        );
     }
 
     /// 偏移线性漂移(50ppm)时，拟合要把漂移跟上，而不是只取平均。
@@ -159,11 +183,18 @@ mod tests {
             let received = sent + 1_000_000;
             let mid = sent + 500_000;
             let offset = S + i * 50_000;
-            clock.add(7, sent, ((mid + offset) / 1_000) as u64, received);
+            clock.add(
+                7,
+                sent,
+                ((mid + offset) / 1_000) as u64,
+                received,
+            );
         }
         // 本机 40s 那一刻偏移该是 1s + 2ms。
-        let server_us = ((40 * S + S + 2_000_000) / 1_000) as u64;
-        let local = clock.to_local_ns(7, server_us).unwrap();
+        let server_us =
+            ((40 * S + S + 2_000_000) / 1_000) as u64;
+        let local =
+            clock.to_local_ns(7, server_us).unwrap();
         assert!((local - 40 * S).abs() < 5_000, "{local}");
     }
 
@@ -173,13 +204,30 @@ mod tests {
         let mut clock = Clock::default();
         for i in 0..10 {
             let sent = i * S;
-            clock.add(1, sent, ((sent + 500_000 + 5_000_000) / 1_000) as u64, sent + S / 1_000);
+            clock.add(
+                1,
+                sent,
+                ((sent + 500_000 + 5_000_000) / 1_000)
+                    as u64,
+                sent + S / 1_000,
+            );
         }
         // 一次 80ms 的往返，服务端读数偏了 40ms。
         let sent = 10 * S;
-        clock.add(1, sent, ((sent + 40_000_000 + 45_000_000) / 1_000) as u64, sent + 80_000_000);
+        clock.add(
+            1,
+            sent,
+            ((sent + 40_000_000 + 45_000_000) / 1_000)
+                as u64,
+            sent + 80_000_000,
+        );
 
-        let local = clock.to_local_ns(1, ((11 * S + 5_000_000) / 1_000) as u64).unwrap();
+        let local = clock
+            .to_local_ns(
+                1,
+                ((11 * S + 5_000_000) / 1_000) as u64,
+            )
+            .unwrap();
         assert!((local - 11 * S).abs() < 5_000, "{local}");
     }
 
@@ -191,9 +239,16 @@ mod tests {
         clock.add(2, 10 * S, 3_000_000, 10 * S + 2_000_000);
 
         assert_eq!(clock.epoch(), Some(2));
-        assert_eq!(clock.to_local_ns(1, 6_000_000), None, "旧纪元的计划作废");
+        assert_eq!(
+            clock.to_local_ns(1, 6_000_000),
+            None,
+            "旧纪元的计划作废"
+        );
         // 新纪元只剩那一次：偏移 3.000s − 10.001s。
-        assert_eq!(clock.to_local_ns(2, 3_000_000), Some(10 * S + 1_000_000));
+        assert_eq!(
+            clock.to_local_ns(2, 3_000_000),
+            Some(10 * S + 1_000_000)
+        );
     }
 
     /// 一次往返都没有时什么都换算不了;收到早于发出的(时钟错乱)不收。

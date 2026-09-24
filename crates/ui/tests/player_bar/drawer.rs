@@ -90,8 +90,14 @@ fn listed_devices_show_up_only_as_outputs() {
         "名册里的设备该列成输出设备"
     );
     // 每台设备旁那颗小键把它加进 / 移出播放组(#137 ⑤),本机也有一颗。
-    assert!(key(&ui, "加入 pc1").is_some(), "不在组里的显示「加入」");
-    assert!(key(&ui, "移出 本机").is_some(), "本机默认就是那一台输出");
+    assert!(
+        key(&ui, "加入 pc1").is_some(),
+        "不在组里的显示「加入」"
+    );
+    assert!(
+        key(&ui, "移出 本机").is_some(),
+        "本机默认就是那一台输出"
+    );
     assert!(
         !present(&ui, "SyncStrip::sync-label"),
         "同播那一行不该还在"

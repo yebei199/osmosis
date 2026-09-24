@@ -39,14 +39,18 @@ impl Target {
                 playing: true,
                 start_ns,
             } if present_ns >= start_ns => Some(
-                anchor.media_ns + (present_ns - anchor.at_ns),
+                anchor.media_ns
+                    + (present_ns - anchor.at_ns),
             ),
             _ => None,
         }
     }
 
     /// 离起播还有多少纳秒。已经开始、暂停着或者不跟时间线，都给 `None`。
-    pub fn until_start(&self, present_ns: i64) -> Option<i64> {
+    pub fn until_start(
+        &self,
+        present_ns: i64,
+    ) -> Option<i64> {
         match *self {
             Self::Follow {
                 playing: true,

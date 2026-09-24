@@ -17,7 +17,12 @@ const MS: i64 = 1_000_000;
 
 // ── 时间线 ──
 
-fn follow(at_ns: i64, media_ns: i64, playing: bool, start_ns: i64) -> Target {
+fn follow(
+    at_ns: i64,
+    media_ns: i64,
+    playing: bool,
+    start_ns: i64,
+) -> Target {
     Target::Follow {
         anchor: Anchor { at_ns, media_ns },
         playing,
@@ -28,9 +33,17 @@ fn follow(at_ns: i64, media_ns: i64, playing: bool, start_ns: i64) -> Target {
 /// 起播之后按锚点线性往前走;起播之前、暂停着、不跟时间线，都是「不该出声」。
 #[test]
 fn the_timeline_maps_a_moment_to_a_media_position() {
-    let target = follow(10_000 * MS, 5_000 * MS, true, 10_000 * MS);
-    assert_eq!(target.desired(10_500 * MS), Some(5_500 * MS));
-    assert_eq!(target.desired(9_900 * MS), None, "还没到起播");
+    let target =
+        follow(10_000 * MS, 5_000 * MS, true, 10_000 * MS);
+    assert_eq!(
+        target.desired(10_500 * MS),
+        Some(5_500 * MS)
+    );
+    assert_eq!(
+        target.desired(9_900 * MS),
+        None,
+        "还没到起播"
+    );
 
     let paused = follow(10_000 * MS, 5_000 * MS, false, 0);
     assert_eq!(paused.desired(10_500 * MS), None, "暂停着");
@@ -39,17 +52,29 @@ fn the_timeline_maps_a_moment_to_a_media_position() {
 
 /// 校时微调锚点时，起播那一刻不跟着动：早已开始的，锚点挪到未来也还是在放。
 #[test]
-fn a_later_anchor_does_not_undo_a_start_that_already_happened() {
-    let target = follow(20_000 * MS, 15_000 * MS, true, 10_000 * MS);
-    assert_eq!(target.desired(19_000 * MS), Some(14_000 * MS));
+fn a_later_anchor_does_not_undo_a_start_that_already_happened()
+ {
+    let target =
+        follow(20_000 * MS, 15_000 * MS, true, 10_000 * MS);
+    assert_eq!(
+        target.desired(19_000 * MS),
+        Some(14_000 * MS)
+    );
 }
 
 #[test]
 fn until_start_counts_down_only_before_the_start() {
     let target = follow(10_000 * MS, 0, true, 10_000 * MS);
-    assert_eq!(target.until_start(9_000 * MS), Some(1_000 * MS));
+    assert_eq!(
+        target.until_start(9_000 * MS),
+        Some(1_000 * MS)
+    );
     assert_eq!(target.until_start(10_000 * MS), None);
-    assert_eq!(follow(10_000 * MS, 0, false, 10_000 * MS).until_start(9_000 * MS), None);
+    assert_eq!(
+        follow(10_000 * MS, 0, false, 10_000 * MS)
+            .until_start(9_000 * MS),
+        None
+    );
     assert_eq!(Target::Free.until_start(0), None);
 }
 
@@ -58,9 +83,14 @@ fn until_start_counts_down_only_before_the_start() {
 /// 已经跟上时间线的跟随器:第一块对齐之后才算在跟。
 fn running(target: &Target, present_ns: i64) -> Follower {
     let mut follower = Follower::default();
-    let want = target.desired(present_ns).expect("在放") as f64 * RATE / 1e9;
-    let _ = follower.decide(target, present_ns, want, RATE, 10);
-    let _ = follower.decide(target, present_ns, want, RATE, 10);
+    let want = target.desired(present_ns).expect("在放")
+        as f64
+        * RATE
+        / 1e9;
+    let _ =
+        follower.decide(target, present_ns, want, RATE, 10);
+    let _ =
+        follower.decide(target, present_ns, want, RATE, 10);
     follower
 }
 
@@ -70,7 +100,10 @@ fn free_playback_just_plays() {
     let mut follower = Follower::default();
     assert_eq!(
         follower.decide(&Target::Free, 0, 123.0, RATE, 10),
-        Decision::Play { step: 1.0, muted: false }
+        Decision::Play {
+            step: 1.0,
+            muted: false
+        }
     );
 }
 
@@ -82,20 +115,25 @@ fn a_large_error_skips_or_seeks() {
 
     let mut behind_a_little = Follower::default();
     assert_eq!(
-        behind_a_little.decide(&target, now, 9_000.0, RATE, 10),
+        behind_a_little
+            .decide(&target, now, 9_000.0, RATE, 10),
         Decision::Skip { frames: 1_000 }
     );
 
     let mut behind_a_lot = Follower::default();
     assert_eq!(
         behind_a_lot.decide(&target, now, 0.0, RATE, 10),
-        Decision::Seek { to_frames: 10_000.0 }
+        Decision::Seek {
+            to_frames: 10_000.0
+        }
     );
 
     let mut ahead = Follower::default();
     assert_eq!(
         ahead.decide(&target, now, 10_100.0, RATE, 10),
-        Decision::Seek { to_frames: 10_000.0 }
+        Decision::Seek {
+            to_frames: 10_000.0
+        }
     );
 }
 
@@ -106,16 +144,26 @@ fn a_small_error_nudges_the_rate_within_bounds() {
     let now = 10_000 * MS;
     let mut follower = running(&target, now);
 
-    let Decision::Play { step, muted } = follower.decide(&target, now, 10_002.0, RATE, 10) else {
+    let Decision::Play { step, muted } =
+        follower.decide(&target, now, 10_002.0, RATE, 10)
+    else {
         panic!("小误差该照放");
     };
     assert!(!muted, "已经对齐过了，小误差不该静音");
-    assert!(step < 1.0 && step >= 1.0 - MAX_CORR, "超前 2ms 该放慢: {step}");
+    assert!(
+        step < 1.0 && step >= 1.0 - MAX_CORR,
+        "超前 2ms 该放慢: {step}"
+    );
 
-    let Decision::Play { step, .. } = follower.decide(&target, now, 9_998.0, RATE, 10) else {
+    let Decision::Play { step, .. } =
+        follower.decide(&target, now, 9_998.0, RATE, 10)
+    else {
         panic!("小误差该照放");
     };
-    assert!(step > 1.0 && step <= 1.0 + MAX_CORR, "落后 2ms 该加快: {step}");
+    assert!(
+        step > 1.0 && step <= 1.0 + MAX_CORR,
+        "落后 2ms 该加快: {step}"
+    );
 }
 
 /// 跳过之后先静音，误差回到对齐判据以内才出声：不放出一段错位的声音。
@@ -124,29 +172,53 @@ fn after_a_jump_it_stays_muted_until_aligned() {
     let target = follow(0, 0, true, 0);
     let now = 10_000 * MS;
     let mut follower = Follower::default();
-    let _ = follower.decide(&target, now, 9_000.0, RATE, 10); // 丢帧
+    let _ =
+        follower.decide(&target, now, 9_000.0, RATE, 10); // 丢帧
 
-    assert!(matches!(
-        follower.decide(&target, now, 10_003.0, RATE, 10),
-        Decision::Play { muted: true, .. }
-    ), "误差 3ms,还没对齐");
-    assert!(matches!(
-        follower.decide(&target, now, 10_001.0, RATE, 10),
-        Decision::Play { muted: false, .. }
-    ), "误差 1ms,对齐了");
+    assert!(
+        matches!(
+            follower
+                .decide(&target, now, 10_003.0, RATE, 10),
+            Decision::Play { muted: true, .. }
+        ),
+        "误差 3ms,还没对齐"
+    );
+    assert!(
+        matches!(
+            follower
+                .decide(&target, now, 10_001.0, RATE, 10),
+            Decision::Play { muted: false, .. }
+        ),
+        "误差 1ms,对齐了"
+    );
 }
 
 /// 起播那一刻落在这一块里：先出这么多帧静音，下一帧就从起播位置开始。
 #[test]
 fn a_start_inside_the_block_holds_for_the_lead_frames() {
-    let target = follow(10_004 * MS, 500 * MS, true, 10_004 * MS);
+    let target =
+        follow(10_004 * MS, 500 * MS, true, 10_004 * MS);
     let mut follower = Follower::default();
     assert_eq!(
-        follower.decide(&target, 10_000 * MS, 500.0, RATE, 10),
-        Decision::Hold { lead_frames: Some(4) }
+        follower.decide(
+            &target,
+            10_000 * MS,
+            500.0,
+            RATE,
+            10
+        ),
+        Decision::Hold {
+            lead_frames: Some(4)
+        }
     );
     assert_eq!(
-        Follower::default().decide(&target, 9_000 * MS, 500.0, RATE, 10),
+        Follower::default().decide(
+            &target,
+            9_000 * MS,
+            500.0,
+            RATE,
+            10
+        ),
         Decision::Hold { lead_frames: None },
         "起播还远，这一块整块静音"
     );
@@ -155,9 +227,16 @@ fn a_start_inside_the_block_holds_for_the_lead_frames() {
 /// 还没起播，但手上不在起播位置：先 seek 过去备着。
 #[test]
 fn before_the_start_it_prepares_at_the_start_position() {
-    let target = follow(10_000 * MS, 500 * MS, true, 10_000 * MS);
+    let target =
+        follow(10_000 * MS, 500 * MS, true, 10_000 * MS);
     assert_eq!(
-        Follower::default().decide(&target, 9_000 * MS, 0.0, RATE, 10),
+        Follower::default().decide(
+            &target,
+            9_000 * MS,
+            0.0,
+            RATE,
+            10
+        ),
         Decision::Seek { to_frames: 500.0 }
     );
 }
@@ -167,11 +246,23 @@ fn before_the_start_it_prepares_at_the_start_position() {
 fn paused_it_holds_at_the_anchor() {
     let target = follow(10_000 * MS, 500 * MS, false, 0);
     assert_eq!(
-        Follower::default().decide(&target, 12_000 * MS, 500.0, RATE, 10),
+        Follower::default().decide(
+            &target,
+            12_000 * MS,
+            500.0,
+            RATE,
+            10
+        ),
         Decision::Hold { lead_frames: None }
     );
     assert_eq!(
-        Follower::default().decide(&target, 12_000 * MS, 90.0, RATE, 10),
+        Follower::default().decide(
+            &target,
+            12_000 * MS,
+            90.0,
+            RATE,
+            10
+        ),
         Decision::Seek { to_frames: 500.0 }
     );
 }
@@ -207,7 +298,8 @@ impl Feed for FakeFeed {
         if self.starve_on.contains(&self.pulls) {
             return Pulled::Starved;
         }
-        let frame = self.cursor / usize::from(self.channels);
+        let frame =
+            self.cursor / usize::from(self.channels);
         if frame >= self.frames {
             return Pulled::End;
         }
@@ -215,9 +307,13 @@ impl Feed for FakeFeed {
         Pulled::Sample(frame as f32)
     }
 
-    fn seek(&mut self, to: Duration) -> Result<(), SeekError> {
+    fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
         self.seeks.lock().unwrap().push(to);
-        let frame = (to.as_secs_f64() * RATE).round() as usize;
+        let frame =
+            (to.as_secs_f64() * RATE).round() as usize;
         self.cursor = frame * usize::from(self.channels);
         Ok(())
     }
@@ -231,8 +327,13 @@ impl Feed for FakeFeed {
     }
 }
 
-fn take(source: &mut impl Iterator<Item = f32>, n: usize) -> Vec<f32> {
-    (0..n).map(|_| source.next().expect("还没放完")).collect()
+fn take(
+    source: &mut impl Iterator<Item = f32>,
+    n: usize,
+) -> Vec<f32> {
+    (0..n)
+        .map(|_| source.next().expect("还没放完"))
+        .collect()
 }
 
 fn values(from: usize, n: usize) -> Vec<f32> {
@@ -243,7 +344,10 @@ fn values(from: usize, n: usize) -> Vec<f32> {
 #[test]
 fn free_playback_passes_the_media_through() {
     let shared = SyncShared::new();
-    let mut source = SyncSource::new(FakeFeed::mono(100), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(100),
+        shared.clone(),
+    );
 
     assert_eq!(take(&mut source, 10), values(0, 10));
     assert_eq!(shared.position(), Duration::from_millis(9));
@@ -253,29 +357,48 @@ fn free_playback_passes_the_media_through() {
 #[test]
 fn channels_stay_interleaved() {
     let shared = SyncShared::new();
-    let feed = FakeFeed { channels: 2, ..FakeFeed::mono(100) };
+    let feed = FakeFeed {
+        channels: 2,
+        ..FakeFeed::mono(100)
+    };
     let mut source = SyncSource::new(feed, shared);
 
-    assert_eq!(take(&mut source, 6), vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0]);
+    assert_eq!(
+        take(&mut source, 6),
+        vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0]
+    );
 }
 
 /// 欠载时吐静音，但位置不往前走：那段时间媒体一帧都没放。
 #[test]
 fn a_starved_feed_does_not_advance_the_position() {
     let shared = SyncShared::new();
-    let feed = FakeFeed { starve_on: vec![4, 5], ..FakeFeed::mono(100) };
+    let feed = FakeFeed {
+        starve_on: vec![4, 5],
+        ..FakeFeed::mono(100)
+    };
     let mut source = SyncSource::new(feed, shared.clone());
 
-    assert_eq!(take(&mut source, 7), vec![0.0, 1.0, 2.0, 0.0, 0.0, 3.0, 4.0]);
+    assert_eq!(
+        take(&mut source, 7),
+        vec![0.0, 1.0, 2.0, 0.0, 0.0, 3.0, 4.0]
+    );
     assert_eq!(shared.position(), Duration::from_millis(4));
-    assert_eq!(shared.report().starves, 1, "连着两次拉不到算一次欠载");
+    assert_eq!(
+        shared.report().starves,
+        1,
+        "连着两次拉不到算一次欠载"
+    );
 }
 
 /// 暂停：不出声、不消耗媒体;继续之后从停下的地方接着放。
 #[test]
 fn pausing_holds_the_media_in_place() {
     let shared = SyncShared::new();
-    let mut source = SyncSource::new(FakeFeed::mono(100), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(100),
+        shared.clone(),
+    );
     take(&mut source, 3);
 
     shared.pause();
@@ -295,20 +418,35 @@ fn a_seek_request_is_carried_out_on_the_next_pull() {
     let mut source = SyncSource::new(feed, shared.clone());
     take(&mut source, 3);
 
-    let verdict = shared.request_seek(Duration::from_millis(50));
+    let verdict =
+        shared.request_seek(Duration::from_millis(50));
     assert_eq!(take(&mut source, 2), values(50, 2));
     assert!(verdict.try_recv().expect("该有裁决").is_ok());
-    assert_eq!(*seeks.lock().unwrap(), vec![Duration::from_millis(50)]);
-    assert_eq!(shared.position(), Duration::from_millis(51));
+    assert_eq!(
+        *seeks.lock().unwrap(),
+        vec![Duration::from_millis(50)]
+    );
+    assert_eq!(
+        shared.position(),
+        Duration::from_millis(51)
+    );
 }
 
 /// 预定起播：先备到起播位置，起播那一刻之前全是静音，起播那一帧正好是起播位置。
 #[test]
 fn a_scheduled_start_begins_on_the_exact_frame() {
     let shared = SyncShared::new();
-    let mut source = SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(1_000),
+        shared.clone(),
+    );
     let present = 5_000 * MS;
-    shared.set_target(follow(present + 10 * MS, 20 * MS, true, present + 10 * MS));
+    shared.set_target(follow(
+        present + 10 * MS,
+        20 * MS,
+        true,
+        present + 10 * MS,
+    ));
     shared.block(present, 32);
 
     let mut expected = vec![0.0; 10];
@@ -318,17 +456,29 @@ fn a_scheduled_start_begins_on_the_exact_frame() {
 
 /// 已经开始的时间线上落后了:往前丢帧追上，追上之前静音，对齐之后照常出声。
 #[test]
-fn falling_behind_a_running_timeline_skips_ahead_silently() {
+fn falling_behind_a_running_timeline_skips_ahead_silently()
+{
     let shared = SyncShared::new();
-    let mut source = SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(1_000),
+        shared.clone(),
+    );
     let present = 5_000 * MS;
     // 该在媒体第 100 帧,手上在第 0 帧
     shared.set_target(follow(present, 100 * MS, true, 0));
     shared.block(present, 5);
-    assert_eq!(take(&mut source, 5), vec![0.0; 5], "丢帧之后还在对齐，不出声");
+    assert_eq!(
+        take(&mut source, 5),
+        vec![0.0; 5],
+        "丢帧之后还在对齐，不出声"
+    );
 
     shared.block(present + 5 * MS, 5);
-    assert_eq!(take(&mut source, 3), values(105, 3), "对齐了，照常出声");
+    assert_eq!(
+        take(&mut source, 3),
+        values(105, 3),
+        "对齐了，照常出声"
+    );
 }
 
 /// 小误差靠速率修正：超前时读得慢一点，一千帧少读一帧。
@@ -343,19 +493,31 @@ fn a_small_lead_is_absorbed_by_reading_slower() {
     shared.block(present, 1_000);
     take(&mut source, 1_000);
     // 过了一秒，时间线说该在第 998 帧,手上在第 1000 帧:超前 2ms
-    shared.set_target(follow(present, -2 * MS, true, present));
+    shared.set_target(follow(
+        present,
+        -2 * MS,
+        true,
+        present,
+    ));
     shared.block(present + 1_000 * MS, 1_000);
     take(&mut source, 1_000);
 
     let at = shared.position().as_secs_f64() * RATE;
-    assert!(at < 1_999.5, "该读得慢一点,实际读到第 {at} 帧");
+    assert!(
+        at < 1_999.5,
+        "该读得慢一点,实际读到第 {at} 帧"
+    );
 }
 
 /// 每一块记下「这一块第一帧的呈现时刻 ↔ 它是媒体的第几纳秒」:主端据此把实际播放写成计划。
 #[test]
-fn each_block_pairs_its_presentation_time_with_the_media_position() {
+fn each_block_pairs_its_presentation_time_with_the_media_position()
+ {
     let shared = SyncShared::new();
-    let mut source = SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(1_000),
+        shared.clone(),
+    );
     assert_eq!(shared.pairing(), None, "还没有块");
 
     shared.block(5_000 * MS, 4);
@@ -364,7 +526,10 @@ fn each_block_pairs_its_presentation_time_with_the_media_position() {
 
     shared.block(5_004 * MS, 4);
     take(&mut source, 1);
-    assert_eq!(shared.pairing(), Some((5_004 * MS, 4 * MS)));
+    assert_eq!(
+        shared.pairing(),
+        Some((5_004 * MS, 4 * MS))
+    );
 }
 
 /// 跳到两帧之间(跟随器按时间线算出来的位置几乎都带小数):从那一帧插值往下放，不越界。
@@ -378,11 +543,16 @@ fn a_seek_between_two_frames_plays_on_from_there() {
     let mut source = SyncSource::new(feed, shared.clone());
     take(&mut source, 3);
 
-    let verdict = shared.request_seek(Duration::from_secs_f64(0.0507));
+    let verdict = shared
+        .request_seek(Duration::from_secs_f64(0.0507));
     let got = take(&mut source, 2);
 
     assert!(verdict.try_recv().expect("该有裁决").is_ok());
-    assert_eq!(*seeks.lock().unwrap(), vec![Duration::from_millis(50)], "媒体跳到那一帧的开头");
+    assert_eq!(
+        *seeks.lock().unwrap(),
+        vec![Duration::from_millis(50)],
+        "媒体跳到那一帧的开头"
+    );
     assert!((got[0] - 50.7).abs() < 1e-3, "{got:?}");
     assert!((got[1] - 51.7).abs() < 1e-3, "{got:?}");
 }

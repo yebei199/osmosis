@@ -4,7 +4,8 @@
 //! 所以这里测的全是身份与去向，不看计划的内容。
 
 use contract::{
-    ClientSignal, DeviceDto, GroupPlanDto, LoopModeDto, ServerSignal, TrackDto,
+    ClientSignal, DeviceDto, GroupPlanDto, LoopModeDto,
+    ServerSignal, TrackDto,
 };
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc;
@@ -53,7 +54,9 @@ fn ids(list: &[&str]) -> Vec<String> {
     list.iter().map(|id| (*id).to_owned()).collect()
 }
 
-fn inbox(rx: &mut mpsc::Receiver<ServerSignal>) -> Vec<ServerSignal> {
+fn inbox(
+    rx: &mut mpsc::Receiver<ServerSignal>,
+) -> Vec<ServerSignal> {
     let mut got = Vec::new();
     while let Ok(message) = rx.try_recv() {
         got.push(message);
@@ -61,7 +64,9 @@ fn inbox(rx: &mut mpsc::Receiver<ServerSignal>) -> Vec<ServerSignal> {
     got
 }
 
-fn groups(messages: &[ServerSignal]) -> Vec<(u64, Option<String>, Vec<String>)> {
+fn groups(
+    messages: &[ServerSignal],
+) -> Vec<(u64, Option<String>, Vec<String>)> {
     messages
         .iter()
         .filter_map(|message| match message {
@@ -69,30 +74,53 @@ fn groups(messages: &[ServerSignal]) -> Vec<(u64, Option<String>, Vec<String>)> 
                 term,
                 master,
                 members,
-            } => Some((*term, master.clone(), members.clone())),
+            } => Some((
+                *term,
+                master.clone(),
+                members.clone(),
+            )),
             _ => None,
         })
         .collect()
 }
 
-fn plans(messages: &[ServerSignal]) -> Vec<(String, u64, u64)> {
+fn plans(
+    messages: &[ServerSignal],
+) -> Vec<(String, u64, u64)> {
     messages
         .iter()
         .filter_map(|message| match message {
-            ServerSignal::GroupPlan { from, term, plan } => {
-                Some((from.clone(), *term, plan.seq))
-            }
+            ServerSignal::GroupPlan {
+                from,
+                term,
+                plan,
+            } => Some((from.clone(), *term, plan.seq)),
             _ => None,
         })
         .collect()
 }
 
 impl Room {
-    fn send(&mut self, from: &str, message: ClientSignal) -> Option<ServerSignal> {
-        route(&self.roster, &mut self.control, ALICE, from, message)
+    fn send(
+        &mut self,
+        from: &str,
+        message: ClientSignal,
+    ) -> Option<ServerSignal> {
+        route(
+            &self.roster,
+            &mut self.control,
+            ALICE,
+            from,
+            message,
+        )
     }
 
-    fn begin(&mut self, op: &str, outputs: &[&str], master: Option<&str>) -> Option<ServerSignal> {
+    fn begin(
+        &mut self,
+        op: &str,
+        outputs: &[&str],
+        master: Option<&str>,
+    ) -> Option<ServerSignal> {
         self.send(
             "phone",
             ClientSignal::BeginOutputs {
@@ -114,7 +142,11 @@ impl Room {
     }
 
     /// 只提交真正跟上的那几台。
-    fn commit_only(&mut self, op: &str, outputs: &[&str]) -> Option<ServerSignal> {
+    fn commit_only(
+        &mut self,
+        op: &str,
+        outputs: &[&str],
+    ) -> Option<ServerSignal> {
         self.send(
             "phone",
             ClientSignal::CommitOutputs {
@@ -124,7 +156,12 @@ impl Room {
         )
     }
 
-    fn plan(&mut self, from: &str, term: u64, seq: u64) -> Option<ServerSignal> {
+    fn plan(
+        &mut self,
+        from: &str,
+        term: u64,
+        seq: u64,
+    ) -> Option<ServerSignal> {
         self.send(
             from,
             ClientSignal::GroupPlan {
@@ -179,32 +216,46 @@ fn plan(seq: u64) -> GroupPlanDto {
 
 /// 提交之后，组里每一台与遥控器都收到组的新样子：任期、谁是主端、成员。
 #[test]
-fn committing_announces_the_group_to_every_member_and_the_controller() {
+fn committing_announces_the_group_to_every_member_and_the_controller()
+ {
     let mut room = room();
     room.begin("op1", &["pc", "pad"], Some("pc"));
     room.drain();
 
     room.commit("op1");
 
-    let want = vec![(1, Some("pc".to_owned()), ids(&["pc", "pad"]))];
+    let want = vec![(
+        1,
+        Some("pc".to_owned()),
+        ids(&["pc", "pad"]),
+    )];
     assert_eq!(groups(&inbox(&mut room.pc)), want);
     assert_eq!(groups(&inbox(&mut room.pad)), want);
-    assert_eq!(groups(&inbox(&mut room.phone)), want, "遥控器也要知道谁是主端");
+    assert_eq!(
+        groups(&inbox(&mut room.phone)),
+        want,
+        "遥控器也要知道谁是主端"
+    );
 }
 
 /// 指定的主端不在输出集合里：取集合的第一台，不留一个没有主端的组。
 #[test]
-fn a_master_outside_the_outputs_falls_back_to_the_first_output() {
+fn a_master_outside_the_outputs_falls_back_to_the_first_output()
+ {
     let mut room = room();
     room.begin("op1", &["pad", "pc"], Some("phone"));
     room.commit("op1");
 
-    assert_eq!(room.control.master(ALICE), Some("pad".to_owned()));
+    assert_eq!(
+        room.control.master(ALICE),
+        Some("pad".to_owned())
+    );
 }
 
 /// 加入一台：进行中这一次就告诉现任主端与新来的，主端据此把计划再发一遍，新来的就跟得上。
 #[test]
-fn beginning_to_add_a_member_tells_the_current_master_and_the_newcomer() {
+fn beginning_to_add_a_member_tells_the_current_master_and_the_newcomer()
+ {
     let mut room = room();
     room.begin("op1", &["pc"], Some("pc"));
     room.commit("op1");
@@ -212,23 +263,46 @@ fn beginning_to_add_a_member_tells_the_current_master_and_the_newcomer() {
 
     room.begin("op2", &["pc", "pad"], Some("pc"));
 
-    let want = vec![(1, Some("pc".to_owned()), ids(&["pc", "pad"]))];
-    assert_eq!(groups(&inbox(&mut room.pc)), want, "主端要知道有人要进来");
-    assert_eq!(groups(&inbox(&mut room.pad)), want, "新来的要知道该听谁的");
+    let want = vec![(
+        1,
+        Some("pc".to_owned()),
+        ids(&["pc", "pad"]),
+    )];
+    assert_eq!(
+        groups(&inbox(&mut room.pc)),
+        want,
+        "主端要知道有人要进来"
+    );
+    assert_eq!(
+        groups(&inbox(&mut room.pad)),
+        want,
+        "新来的要知道该听谁的"
+    );
 }
 
 /// 当前主端、当前任期发的计划转给组里其余成员与遥控器，不回给主端自己。
 #[test]
-fn the_masters_plan_reaches_the_other_members_and_the_controller() {
+fn the_masters_plan_reaches_the_other_members_and_the_controller()
+ {
     let mut room = room();
     room.playing_on_pc_and_pad();
 
     let reply = room.plan("pc", 1, 7);
 
     assert_eq!(reply, None);
-    assert_eq!(plans(&inbox(&mut room.pad)), vec![("pc".to_owned(), 1, 7)]);
-    assert_eq!(plans(&inbox(&mut room.phone)), vec![("pc".to_owned(), 1, 7)]);
-    assert_eq!(plans(&inbox(&mut room.pc)), vec![], "不回给主端自己");
+    assert_eq!(
+        plans(&inbox(&mut room.pad)),
+        vec![("pc".to_owned(), 1, 7)]
+    );
+    assert_eq!(
+        plans(&inbox(&mut room.phone)),
+        vec![("pc".to_owned(), 1, 7)]
+    );
+    assert_eq!(
+        plans(&inbox(&mut room.pc)),
+        vec![],
+        "不回给主端自己"
+    );
 }
 
 /// 不是主端的成员发来的计划不转：共同计划只有当前主端有权推进。
@@ -239,7 +313,10 @@ fn a_plan_from_a_non_master_is_refused() {
 
     let reply = room.plan("pad", 1, 7);
 
-    assert!(matches!(reply, Some(ServerSignal::Error { .. })), "{reply:?}");
+    assert!(
+        matches!(reply, Some(ServerSignal::Error { .. })),
+        "{reply:?}"
+    );
     assert_eq!(plans(&inbox(&mut room.pc)), vec![]);
     assert_eq!(plans(&inbox(&mut room.phone)), vec![]);
 }
@@ -255,7 +332,10 @@ fn a_plan_from_an_old_term_is_refused() {
 
     let reply = room.plan("pc", 1, 9);
 
-    assert!(matches!(reply, Some(ServerSignal::Error { .. })), "{reply:?}");
+    assert!(
+        matches!(reply, Some(ServerSignal::Error { .. })),
+        "{reply:?}"
+    );
     assert_eq!(plans(&inbox(&mut room.pad)), vec![]);
 }
 
@@ -269,7 +349,10 @@ fn handing_over_the_master_moves_the_right_to_publish() {
     room.commit("op2");
     let pc_inbox = inbox(&mut room.pc);
     assert!(
-        pc_inbox.iter().any(|m| matches!(m, ServerSignal::NotControlled)),
+        pc_inbox.iter().any(|m| matches!(
+            m,
+            ServerSignal::NotControlled
+        )),
         "被换下的旧主端要撤锁: {pc_inbox:?}"
     );
     assert_eq!(
@@ -277,9 +360,15 @@ fn handing_over_the_master_moves_the_right_to_publish() {
         vec![(2, Some("pad".to_owned()), ids(&["pad"]))]
     );
 
-    assert!(matches!(room.plan("pc", 2, 1), Some(ServerSignal::Error { .. })));
+    assert!(matches!(
+        room.plan("pc", 2, 1),
+        Some(ServerSignal::Error { .. })
+    ));
     assert_eq!(room.plan("pad", 2, 1), None);
-    assert_eq!(plans(&inbox(&mut room.phone)), vec![("pad".to_owned(), 2, 1)]);
+    assert_eq!(
+        plans(&inbox(&mut room.phone)),
+        vec![("pad".to_owned(), 2, 1)]
+    );
 }
 
 /// 主端下线不自动另选主端:组还在，主端还是它(跟随端把已确认的计划放完再停)。
@@ -288,10 +377,20 @@ fn a_master_dropping_offline_does_not_elect_a_new_one() {
     let mut room = room();
     room.playing_on_pc_and_pad();
 
-    room.control.controller_left(ALICE, "pc", std::time::Instant::now());
+    room.control.controller_left(
+        ALICE,
+        "pc",
+        std::time::Instant::now(),
+    );
 
-    assert_eq!(room.control.master(ALICE), Some("pc".to_owned()));
-    assert_eq!(room.control.members(ALICE), ids(&["pc", "pad"]));
+    assert_eq!(
+        room.control.master(ALICE),
+        Some("pc".to_owned())
+    );
+    assert_eq!(
+        room.control.members(ALICE),
+        ids(&["pc", "pad"])
+    );
 }
 
 /// 遥控器本机也可以是组员(本机在放时「加入一起播放」pc):登记得上，本机不给自己上锁、
@@ -300,26 +399,54 @@ fn a_master_dropping_offline_does_not_elect_a_new_one() {
 fn the_controller_can_be_a_member_of_its_own_group() {
     let mut room = room();
 
-    let reply = room.begin("op1", &["phone", "pc"], Some("phone"));
-    assert!(matches!(reply, Some(ServerSignal::OutputsBegun { .. })), "{reply:?}");
+    let reply =
+        room.begin("op1", &["phone", "pc"], Some("phone"));
+    assert!(
+        matches!(
+            reply,
+            Some(ServerSignal::OutputsBegun { .. })
+        ),
+        "{reply:?}"
+    );
     let phone = inbox(&mut room.phone);
     assert!(
-        !phone.iter().any(|m| matches!(m, ServerSignal::ControlledBy { .. })),
+        !phone.iter().any(|m| matches!(
+            m,
+            ServerSignal::ControlledBy { .. }
+        )),
         "遥控器不锁自己: {phone:?}"
     );
     room.commit("op1");
-    assert_eq!(room.control.master(ALICE), Some("phone".to_owned()));
-    assert_eq!(room.control.members(ALICE), ids(&["phone", "pc"]));
-    assert_eq!(room.plan("phone", 1, 1), None, "本机主端发的计划照转");
-    assert_eq!(plans(&inbox(&mut room.pc)), vec![("phone".to_owned(), 1, 1)]);
+    assert_eq!(
+        room.control.master(ALICE),
+        Some("phone".to_owned())
+    );
+    assert_eq!(
+        room.control.members(ALICE),
+        ids(&["phone", "pc"])
+    );
+    assert_eq!(
+        room.plan("phone", 1, 1),
+        None,
+        "本机主端发的计划照转"
+    );
+    assert_eq!(
+        plans(&inbox(&mut room.pc)),
+        vec![("phone".to_owned(), 1, 1)]
+    );
 
-    let alone = room.begin("op2", &["phone"], Some("phone"));
-    assert!(matches!(alone, Some(ServerSignal::Error { .. })), "只剩本机不经服务端: {alone:?}");
+    let alone =
+        room.begin("op2", &["phone"], Some("phone"));
+    assert!(
+        matches!(alone, Some(ServerSignal::Error { .. })),
+        "只剩本机不经服务端: {alone:?}"
+    );
 }
 
 /// 把遥控器本机移出组时，不给自己发撤锁。
 #[test]
-fn removing_the_controller_from_the_group_does_not_unlock_itself() {
+fn removing_the_controller_from_the_group_does_not_unlock_itself()
+ {
     let mut room = room();
     room.begin("op1", &["phone", "pc"], Some("phone"));
     room.commit("op1");
@@ -330,25 +457,41 @@ fn removing_the_controller_from_the_group_does_not_unlock_itself() {
 
     let phone = inbox(&mut room.phone);
     assert!(
-        !phone.iter().any(|m| matches!(m, ServerSignal::NotControlled)),
+        !phone.iter().any(|m| matches!(
+            m,
+            ServerSignal::NotControlled
+        )),
         "{phone:?}"
     );
-    assert_eq!(room.control.master(ALICE), Some("pc".to_owned()));
+    assert_eq!(
+        room.control.master(ALICE),
+        Some("pc".to_owned())
+    );
 }
 
 /// 提交时只登记真正跟上的那几台：准备不了、开始失败的撤锁，不进组;主端跟着留下的走。
 #[test]
-fn committing_a_subset_leaves_out_the_members_that_failed() {
+fn committing_a_subset_leaves_out_the_members_that_failed()
+{
     let mut room = room();
     room.begin("op1", &["pc", "pad"], Some("pc"));
     room.drain();
 
     let reply = room.commit_only("op1", &["pc"]);
 
-    assert!(matches!(reply, Some(ServerSignal::OutputsCommitted { .. })), "{reply:?}");
+    assert!(
+        matches!(
+            reply,
+            Some(ServerSignal::OutputsCommitted { .. })
+        ),
+        "{reply:?}"
+    );
     assert_eq!(room.control.members(ALICE), ids(&["pc"]));
     assert!(
-        inbox(&mut room.pad).iter().any(|m| matches!(m, ServerSignal::NotControlled)),
+        inbox(&mut room.pad).iter().any(|m| matches!(
+            m,
+            ServerSignal::NotControlled
+        )),
         "没跟上的那台撤锁"
     );
 }
@@ -361,8 +504,17 @@ fn committing_outputs_that_were_never_begun_is_refused() {
 
     let reply = room.commit_only("op1", &["pc", "pad"]);
 
-    assert!(matches!(reply, Some(ServerSignal::Error { .. })), "{reply:?}");
-    assert_eq!(room.commit("op1").map(|m| matches!(m, ServerSignal::OutputsCommitted { .. })), Some(true));
+    assert!(
+        matches!(reply, Some(ServerSignal::Error { .. })),
+        "{reply:?}"
+    );
+    assert_eq!(
+        room.commit("op1").map(|m| matches!(
+            m,
+            ServerSignal::OutputsCommitted { .. }
+        )),
+        Some(true)
+    );
 }
 
 /// 被移出的成员也收到组的新样子:它据此看出自己不在里面、离组 —— 撤锁(`NotControlled`)只是

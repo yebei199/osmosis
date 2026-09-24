@@ -114,9 +114,8 @@ fn a_seek_starts_the_new_channel_on_the_left_channel() {
     const LEFT: Sample = 0.25;
     const RIGHT: Sample = -0.25;
     let frames = OUTPUT_SAMPLE_RATE as usize * 10;
-    let data: Vec<Sample> = (0..frames)
-        .flat_map(|_| [LEFT, RIGHT])
-        .collect();
+    let data: Vec<Sample> =
+        (0..frames).flat_map(|_| [LEFT, RIGHT]).collect();
     let buffer = rodio::buffer::SamplesBuffer::new(
         ChannelCount::new(OUTPUT_CHANNELS).expect("非零"),
         SampleRate::new(OUTPUT_SAMPLE_RATE).expect("非零"),

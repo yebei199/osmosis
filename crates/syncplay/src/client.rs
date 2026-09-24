@@ -135,7 +135,10 @@ enum Command {
     CommitOutputs(String, Option<Vec<String>>),
     AbortOutputs(String),
     /// 主端发布共同计划。
-    PublishPlan { term: u64, plan: Box<GroupPlanDto> },
+    PublishPlan {
+        term: u64,
+        plan: Box<GroupPlanDto>,
+    },
 }
 
 /// 本机作为**遥控器**持有的那份控制权。
@@ -340,7 +343,11 @@ impl Client {
     }
 
     /// 主端发布一份共同计划(#137 ⑤)。
-    pub fn publish_plan(&self, term: u64, plan: GroupPlanDto) {
+    pub fn publish_plan(
+        &self,
+        term: u64,
+        plan: GroupPlanDto,
+    ) {
         let _ = self.commands.send(Command::PublishPlan {
             term,
             plan: Box::new(plan),
@@ -910,7 +917,10 @@ fn remote_first(
         .filter(|id| *id != me)
         .cloned()
         .collect();
-    if let Some(at) = remote.iter().position(|id| Some(id.as_str()) == master) {
+    if let Some(at) = remote
+        .iter()
+        .position(|id| Some(id.as_str()) == master)
+    {
         let master = remote.remove(at);
         remote.insert(0, master);
     }
@@ -918,8 +928,12 @@ fn remote_first(
 }
 
 /// 取锁。锁里只有校时样本的增删，中毒了就是别处出了大问题。
-fn lock(clock: &SharedClock) -> std::sync::MutexGuard<'_, Clock> {
-    clock.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+fn lock(
+    clock: &SharedClock,
+) -> std::sync::MutexGuard<'_, Clock> {
+    clock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// 那一次换输出提交了:持权记录跟着换到新集合;新集合是空的(改回本机)就
@@ -993,7 +1007,11 @@ async fn dispatch(
             outputs,
             master,
         } => {
-            let remote = remote_first(&outputs, master.as_deref(), me);
+            let remote = remote_first(
+                &outputs,
+                master.as_deref(),
+                me,
+            );
             match held.as_mut() {
                 Some(current) => {
                     current.changing = Some((
@@ -1015,18 +1033,26 @@ async fn dispatch(
                 }
             }
             sender
-                .begin_outputs(&operation_id, outputs, master)
+                .begin_outputs(
+                    &operation_id,
+                    outputs,
+                    master,
+                )
                 .await
         }
         Command::CommitOutputs(operation_id, outputs) => {
             // 真正跟上的那一份比登记的少：持权记录按它换。
-            if let (Some(current), Some(kept)) = (held.as_mut(), outputs.as_ref())
-                && let Some((pending, remote)) = current.changing.as_mut()
+            if let (Some(current), Some(kept)) =
+                (held.as_mut(), outputs.as_ref())
+                && let Some((pending, remote)) =
+                    current.changing.as_mut()
                 && *pending == operation_id
             {
                 remote.retain(|id| kept.contains(id));
             }
-            sender.commit_outputs(&operation_id, outputs).await
+            sender
+                .commit_outputs(&operation_id, outputs)
+                .await
         }
         Command::PublishPlan { term, plan } => {
             sender.publish_plan(term, *plan).await
@@ -1050,16 +1076,27 @@ mod tests {
 
     /// 持权认主端(命令发给它);本机自己是主端时认一台远端成员，重连续权才有对象。
     #[test]
-    fn the_held_target_is_the_remote_master_or_another_remote_member() {
+    fn the_held_target_is_the_remote_master_or_another_remote_member()
+     {
         assert_eq!(
-            remote_first(&owned(&["pc", "pad"]), Some("pad"), "phone"),
+            remote_first(
+                &owned(&["pc", "pad"]),
+                Some("pad"),
+                "phone"
+            ),
             owned(&["pad", "pc"])
         );
         assert_eq!(
-            remote_first(&owned(&["phone", "pc"]), Some("phone"), "phone"),
+            remote_first(
+                &owned(&["phone", "pc"]),
+                Some("phone"),
+                "phone"
+            ),
             owned(&["pc"])
         );
-        assert!(remote_first(&[], None, "phone").is_empty());
+        assert!(
+            remote_first(&[], None, "phone").is_empty()
+        );
     }
 
     /// 退避翻倍,并停在上限上 —— 不会一路涨到几小时。

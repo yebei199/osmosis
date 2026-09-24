@@ -6,7 +6,9 @@
 //!
 //! 所以 `Player` 这边始终是「放着」的，出不出声、从媒体哪里取都由这里决定。
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI64, AtomicU64, Ordering,
+};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -30,7 +32,10 @@ pub enum Pulled {
 pub trait Feed: Send + 'static {
     fn pull(&mut self) -> Pulled;
     /// 跳到媒体的 `to` 处。之后拉出来的第一个采样就是那一刻的。
-    fn seek(&mut self, to: Duration) -> Result<(), SeekError>;
+    fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError>;
     fn channels(&self) -> ChannelCount;
     fn sample_rate(&self) -> SampleRate;
 }
@@ -46,7 +51,10 @@ impl<S: Source + Send + 'static> Feed for SourceFeed<S> {
         }
     }
 
-    fn seek(&mut self, to: Duration) -> Result<(), SeekError> {
+    fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
         self.0.try_seek(to)
     }
 
@@ -60,7 +68,8 @@ impl<S: Source + Send + 'static> Feed for SourceFeed<S> {
 }
 
 /// 一次跳转请求：跳到哪、裁决往哪回。
-type SeekRequest = (Duration, mpsc::Sender<Result<(), SeekError>>);
+type SeekRequest =
+    (Duration, mpsc::Sender<Result<(), SeekError>>);
 
 /// 同步源与外面共用的那一份：时间线、输出后端报来的呈现时刻、当前位置。
 ///
@@ -168,7 +177,9 @@ impl SyncShared {
 }
 
 /// 锁中毒了照样拿：里面只有纯数据，前一个持有者 panic 不会让它处于半截状态。
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+fn lock<T>(
+    mutex: &Mutex<T>,
+) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -238,15 +249,20 @@ impl<F: Feed> SyncSource<F> {
 
     /// 新的一块来了：按时间线决定这一块怎么放。
     fn on_block(&mut self) {
-        let seq = self.shared.block_seq.load(Ordering::Acquire);
+        let seq =
+            self.shared.block_seq.load(Ordering::Acquire);
         if seq == self.seen_block {
             return;
         }
         self.seen_block = seq;
-        let present =
-            self.shared.block_present_ns.load(Ordering::Relaxed);
-        let frames =
-            self.shared.block_frames.load(Ordering::Relaxed);
+        let present = self
+            .shared
+            .block_present_ns
+            .load(Ordering::Relaxed);
+        let frames = self
+            .shared
+            .block_frames
+            .load(Ordering::Relaxed);
         let target = self.shared.target();
         let decision = self.follower.decide(
             &target, present, self.pos, self.rate, frames,
@@ -256,12 +272,15 @@ impl<F: Feed> SyncSource<F> {
         // 已经开始的时间线上跳过之后不重新决定，同一个呈现时刻量出来的误差恒为零，不是真的对齐了。
         if jumped && target.desired(present).is_none() {
             let decision = self.follower.decide(
-                &target, present, self.pos, self.rate, frames,
+                &target, present, self.pos, self.rate,
+                frames,
             );
             self.apply(decision);
         }
-        *lock(&self.shared.pairing) =
-            Some((present, (self.pos * 1e9 / self.rate) as i64));
+        *lock(&self.shared.pairing) = Some((
+            present,
+            (self.pos * 1e9 / self.rate) as i64,
+        ));
         let mut stats = lock(&self.shared.stats);
         stats.follower = self.follower.stats;
     }
@@ -300,10 +319,15 @@ impl<F: Feed> SyncSource<F> {
     ///
     /// 媒体跳到 `to` 所在那一帧的**开头**,读指针停在帧内的小数处 —— 手上的起点与读指针
     /// 得按同一种取整算:一个四舍五入、一个向下取整的话，差出的那一帧让下标成负数。
-    fn seek_to(&mut self, to: f64) -> Result<(), SeekError> {
+    fn seek_to(
+        &mut self,
+        to: f64,
+    ) -> Result<(), SeekError> {
         let to = to.max(0.0);
         let frame = to.floor();
-        self.feed.seek(Duration::from_secs_f64(frame / self.rate))?;
+        self.feed.seek(Duration::from_secs_f64(
+            frame / self.rate,
+        ))?;
         self.frames.clear();
         self.partial.clear();
         self.front = frame as i64;
@@ -316,7 +340,9 @@ impl<F: Feed> SyncSource<F> {
     fn pull_frame(&mut self) -> Frame {
         while self.partial.len() < self.channels {
             match self.feed.pull() {
-                Pulled::Sample(sample) => self.partial.push(sample),
+                Pulled::Sample(sample) => {
+                    self.partial.push(sample)
+                }
                 Pulled::Starved => return Frame::Starved,
                 Pulled::End => return Frame::End,
             }
@@ -343,7 +369,9 @@ impl<F: Feed> SyncSource<F> {
             }
             self.front += 1;
         }
-        while (self.frames.len() as i64) <= index - self.front {
+        while (self.frames.len() as i64)
+            <= index - self.front
+        {
             match self.pull_frame() {
                 Frame::Ready => {}
                 other => return other,
@@ -413,10 +441,13 @@ impl<F: Feed> SyncSource<F> {
         self.starving = false;
         let at = (index - self.front) as usize;
         let a = &self.frames[at];
-        let b = self.frames.get(at + 1).filter(|_| need_next);
+        let b =
+            self.frames.get(at + 1).filter(|_| need_next);
         for (c, out) in self.out.iter_mut().enumerate() {
             *out = match b {
-                Some(b) => a[c] * (1.0 - frac) + b[c] * frac,
+                Some(b) => {
+                    a[c] * (1.0 - frac) + b[c] * frac
+                }
                 None => a[c],
             };
         }
@@ -435,7 +466,9 @@ impl<F: Feed> SyncSource<F> {
 
     /// 手上备齐第 `index + 1` 帧(插值要用)。
     fn ensure_next(&mut self, index: i64) -> Frame {
-        while (self.frames.len() as i64) <= index + 1 - self.front {
+        while (self.frames.len() as i64)
+            <= index + 1 - self.front
+        {
             match self.pull_frame() {
                 Frame::Ready => {}
                 other => return other,
@@ -455,14 +488,20 @@ impl<F: Feed> SyncSource<F> {
 
     /// 外面要求的跳转(不跟时间线时用户拖进度条):在帧边界上执行，裁决回给请求方。
     fn take_seek_request(&mut self) {
-        if !self.shared.seek_pending.swap(false, Ordering::Acquire) {
+        if !self
+            .shared
+            .seek_pending
+            .swap(false, Ordering::Acquire)
+        {
             return;
         }
-        let Some((to, verdict)) = lock(&self.shared.seek).take()
+        let Some((to, verdict)) =
+            lock(&self.shared.seek).take()
         else {
             return;
         };
-        let result = self.seek_to(to.as_secs_f64() * self.rate);
+        let result =
+            self.seek_to(to.as_secs_f64() * self.rate);
         if result.is_ok() {
             self.muted = false;
             self.step = 1.0;
@@ -504,8 +543,12 @@ impl<F: Feed> Source for SyncSource<F> {
         None
     }
 
-    fn try_seek(&mut self, to: Duration) -> Result<(), SeekError> {
-        let result = self.seek_to(to.as_secs_f64() * self.rate);
+    fn try_seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
+        let result =
+            self.seek_to(to.as_secs_f64() * self.rate);
         if result.is_ok() {
             self.muted = false;
             self.step = 1.0;

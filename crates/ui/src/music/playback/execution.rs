@@ -194,13 +194,17 @@ impl Execution {
         order: &[i64],
     ) -> Option<Vec<usize>> {
         let state = self.inner.borrow();
-        let table: std::collections::HashMap<i64, usize> = state
-            .entry_ids
+        let table: std::collections::HashMap<i64, usize> =
+            state
+                .entry_ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| (*id, index))
+                .collect();
+        order
             .iter()
-            .enumerate()
-            .map(|(index, id)| (*id, index))
-            .collect();
-        order.iter().map(|id| table.get(id).copied()).collect()
+            .map(|id| table.get(id).copied())
+            .collect()
     }
 
     /// 这一次要报的排列:与上次报过的一样就给 `None`,让服务端沿用。

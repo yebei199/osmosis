@@ -81,9 +81,9 @@ impl Group {
     /// 指定的主端 —— 迁移的第三步就要它开始发计划，等不到提交。
     fn publisher(&self) -> Option<&str> {
         self.master.as_deref().or_else(|| {
-            self.pending
-                .as_ref()
-                .and_then(|pending| pending.master.as_deref())
+            self.pending.as_ref().and_then(|pending| {
+                pending.master.as_deref()
+            })
         })
     }
 
@@ -440,24 +440,35 @@ impl Control {
         if !group.controlled_by(controller) {
             return Committed::NotController;
         }
-        let matches = group.pending.as_ref().is_some_and(|pending| {
-            pending.operation_id == operation_id
-                && outputs.as_ref().is_none_or(|subset| {
-                    subset.iter().all(|id| pending.outputs.contains(id))
-                })
-        });
-        let Some(pending) = group.pending.take_if(|_| matches) else {
+        let matches =
+            group.pending.as_ref().is_some_and(|pending| {
+                pending.operation_id == operation_id
+                    && outputs.as_ref().is_none_or(
+                        |subset| {
+                            subset.iter().all(|id| {
+                                pending.outputs.contains(id)
+                            })
+                        },
+                    )
+            });
+        let Some(pending) =
+            group.pending.take_if(|_| matches)
+        else {
             return Committed::Mismatch;
         };
-        let kept = outputs.unwrap_or_else(|| pending.outputs.clone());
+        let kept = outputs
+            .unwrap_or_else(|| pending.outputs.clone());
 
-        let removed = group
-            .members
-            .iter()
-            .chain(pending.outputs.iter().filter(|id| !group.members.contains(id)))
-            .filter(|id| !kept.contains(id))
-            .cloned()
-            .collect();
+        let removed =
+            group
+                .members
+                .iter()
+                .chain(pending.outputs.iter().filter(
+                    |id| !group.members.contains(id),
+                ))
+                .filter(|id| !kept.contains(id))
+                .cloned()
+                .collect();
         group.master = pending
             .master
             .filter(|id| kept.contains(id))
@@ -524,7 +535,8 @@ impl Control {
         if let Some(pending) = group.pending.as_mut() {
             pending.outputs.retain(|id| id != device);
             if pending.master.as_deref() == Some(device) {
-                pending.master = pending.outputs.first().cloned();
+                pending.master =
+                    pending.outputs.first().cloned();
             }
         }
         // 主端自己按了退出：它不再往下发计划。这是它主动走的，不是失联，但同样不替谁另选。
@@ -568,7 +580,10 @@ impl Control {
     }
 
     /// 这个账号的组此刻的主端。
-    pub fn master(&self, account: AccountId) -> Option<String> {
+    pub fn master(
+        &self,
+        account: AccountId,
+    ) -> Option<String> {
         self.groups.get(&account)?.master.clone()
     }
 
@@ -734,7 +749,9 @@ pub fn route(
         ClientSignal::Hello { .. }
         | ClientSignal::TimePing { .. } => None,
         ClientSignal::GroupPlan { term, plan } => {
-            match control.plan_recipients(account, from, term) {
+            match control
+                .plan_recipients(account, from, term)
+            {
                 Ok(to) => {
                     for device in to {
                         send(
@@ -805,7 +822,9 @@ pub fn route(
             let (term, master, members) = control
                 .shape(account)
                 .unwrap_or((0, None, Vec::new()));
-            for device in dropped.iter().filter(|id| *id != from) {
+            for device in
+                dropped.iter().filter(|id| *id != from)
+            {
                 send(
                     roster,
                     account,
@@ -964,7 +983,9 @@ fn begin_outputs(
             },
         );
     }
-    for device in begun.dropped.iter().filter(|id| *id != from) {
+    for device in
+        begun.dropped.iter().filter(|id| *id != from)
+    {
         send(
             roster,
             account,
@@ -984,11 +1005,16 @@ fn begin_outputs(
     }
     // 告诉有权发计划的那一台与新来的：组要变成这样了。主端据此把计划再发一遍，新来的
     // 据此知道该听谁的(#137 ⑤)。原来就在的普通成员不必知道，提交时一起通告。
-    if let Some((term, publisher, everyone)) = control.shape(account) {
+    if let Some((term, publisher, everyone)) =
+        control.shape(account)
+    {
         let members = control.members(account);
         for device in &everyone {
             let newcomer = !members.contains(device);
-            if newcomer || publisher.as_deref() == Some(device.as_str()) {
+            if newcomer
+                || publisher.as_deref()
+                    == Some(device.as_str())
+            {
                 send(
                     roster,
                     account,
@@ -1017,7 +1043,12 @@ fn commit_outputs(
     operation_id: &str,
     outputs: Option<Vec<String>>,
 ) -> Option<ServerSignal> {
-    match control.commit(account, from, operation_id, outputs) {
+    match control.commit(
+        account,
+        from,
+        operation_id,
+        outputs,
+    ) {
         Committed::Done {
             term,
             removed,
@@ -1033,7 +1064,9 @@ fn commit_outputs(
                 "换输出提交"
             );
             // 遥控器本机被移出组时不给自己撤锁：它从来没锁过自己。
-            for device in removed.iter().filter(|id| *id != from) {
+            for device in
+                removed.iter().filter(|id| *id != from)
+            {
                 send(
                     roster,
                     account,
@@ -1050,13 +1083,21 @@ fn commit_outputs(
                 members: members.clone(),
             };
             let mut told = members.clone();
-            for id in removed.iter().chain(std::iter::once(&from.to_owned())) {
+            for id in removed
+                .iter()
+                .chain(std::iter::once(&from.to_owned()))
+            {
                 if !told.contains(id) {
                     told.push(id.clone());
                 }
             }
             for device in &told {
-                send(roster, account, device, announcement.clone());
+                send(
+                    roster,
+                    account,
+                    device,
+                    announcement.clone(),
+                );
             }
             Some(ServerSignal::OutputsCommitted {
                 operation_id: operation_id.to_owned(),

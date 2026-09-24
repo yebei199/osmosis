@@ -25,7 +25,8 @@ fn draft(entry_id: i64, next: Option<i64>) -> Draft {
         revision: 2,
         entry_id,
         track: track(&format!("t{entry_id}"), 200),
-        next: next.map(|id| (id, track(&format!("t{id}"), 100))),
+        next: next
+            .map(|id| (id, track(&format!("t{id}"), 100))),
         play_order: None,
         round: 0,
         shuffled: false,
@@ -39,7 +40,11 @@ fn in_group(master: &str) -> Group {
     group.on_group(
         4,
         Some(master.to_owned()),
-        vec!["a".to_owned(), "me".to_owned(), "b".to_owned()],
+        vec![
+            "a".to_owned(),
+            "me".to_owned(),
+            "b".to_owned(),
+        ],
         0,
     );
     group.join();
@@ -72,25 +77,43 @@ fn plan(seq: u64) -> GroupPlanDto {
 
 /// 不在组里、组里只有自己：照本机自己的放。
 #[test]
-fn outside_a_multi_member_group_the_device_plays_on_its_own() {
+fn outside_a_multi_member_group_the_device_plays_on_its_own()
+ {
     let mut group = Group::new("me");
     assert_eq!(group.role(), GroupRole::Solo);
     assert_eq!(group.verdict(0, 0), Verdict::Solo);
 
-    group.on_group(1, Some("me".to_owned()), vec!["me".to_owned()], 0);
-    assert_eq!(group.role(), GroupRole::Solo, "一台的组不必同步");
+    group.on_group(
+        1,
+        Some("me".to_owned()),
+        vec!["me".to_owned()],
+        0,
+    );
+    assert_eq!(
+        group.role(),
+        GroupRole::Solo,
+        "一台的组不必同步"
+    );
 }
 
 /// 还在准备、没被叫开始：手上原来在放的不动，计划先收着。
 #[test]
 fn a_member_that_has_not_started_keeps_its_own_playback() {
     let mut group = Group::new("me");
-    group.on_group(4, Some("a".to_owned()), vec!["a".to_owned(), "me".to_owned()], 0);
+    group.on_group(
+        4,
+        Some("a".to_owned()),
+        vec!["a".to_owned(), "me".to_owned()],
+        0,
+    );
     assert!(group.on_plan(4, plan(1), 0), "计划照收");
 
     assert_eq!(group.verdict(11 * S, 0), Verdict::Solo);
     group.join();
-    assert!(matches!(group.verdict(11 * S, 0), Verdict::Follow(_)));
+    assert!(matches!(
+        group.verdict(11 * S, 0),
+        Verdict::Follow(_)
+    ));
 }
 
 /// 通告里没有本机：离组，手上的计划一并忘掉。
@@ -99,7 +122,12 @@ fn a_group_without_this_device_is_a_leave() {
     let mut group = in_group("a");
     assert!(group.on_plan(4, plan(1), 0));
 
-    group.on_group(5, Some("a".to_owned()), vec!["a".to_owned(), "b".to_owned()], 10);
+    group.on_group(
+        5,
+        Some("a".to_owned()),
+        vec!["a".to_owned(), "b".to_owned()],
+        10,
+    );
 
     assert_eq!(group.role(), GroupRole::Solo);
     assert_eq!(group.plan(), None);
@@ -109,7 +137,12 @@ fn a_group_without_this_device_is_a_leave() {
 #[test]
 fn a_late_announcement_of_an_old_term_is_ignored() {
     let mut group = in_group("a");
-    group.on_group(3, Some("me".to_owned()), vec!["me".to_owned(), "x".to_owned()], 10);
+    group.on_group(
+        3,
+        Some("me".to_owned()),
+        vec!["me".to_owned(), "x".to_owned()],
+        10,
+    );
 
     assert_eq!(group.role(), GroupRole::Follower);
     assert_eq!(group.term(), Some(4));
@@ -125,10 +158,14 @@ fn a_follower_waits_for_a_plan_then_follows_it() {
 
     assert!(group.on_plan(4, plan(1), 0));
 
-    let Verdict::Follow(now) = group.verdict(11 * S, 0) else {
+    let Verdict::Follow(now) = group.verdict(11 * S, 0)
+    else {
         panic!("该照计划放");
     };
-    assert_eq!((now.entry_id, now.anchor_us, now.position_us), (11, 10 * S, 5 * S));
+    assert_eq!(
+        (now.entry_id, now.anchor_us, now.position_us),
+        (11, 10 * S, 5 * S)
+    );
 }
 
 /// 旧任期、旧序号的迟到计划不生效;一模一样的那份是心跳，不算新的。
@@ -141,19 +178,38 @@ fn stale_plans_are_refused_and_repeats_are_heartbeats() {
     assert!(!group.on_plan(4, plan(1), 10), "旧序号");
     assert!(!group.on_plan(4, plan(2), 10), "心跳");
     assert_eq!(group.plan().map(|plan| plan.seq), Some(2));
-    assert!(group.on_plan(5, plan(1), 20), "新任期的第一份照收");
+    assert!(
+        group.on_plan(5, plan(1), 20),
+        "新任期的第一份照收"
+    );
 }
 
 /// 次序只在变了的时候带;没带的沿用手上那份(交接时新主端照它接着放)。
 #[test]
 fn a_plan_without_an_order_keeps_the_last_one() {
     let mut group = in_group("a");
-    group.on_plan(4, GroupPlanDto { play_order: Some(vec![11, 13, 12]), ..plan(1) }, 0);
+    group.on_plan(
+        4,
+        GroupPlanDto {
+            play_order: Some(vec![11, 13, 12]),
+            ..plan(1)
+        },
+        0,
+    );
 
-    group.on_plan(4, GroupPlanDto { position_us: 9 * S, ..plan(2) }, 10);
+    group.on_plan(
+        4,
+        GroupPlanDto {
+            position_us: 9 * S,
+            ..plan(2)
+        },
+        10,
+    );
 
     assert_eq!(
-        group.plan().and_then(|plan| plan.play_order.clone()),
+        group
+            .plan()
+            .and_then(|plan| plan.play_order.clone()),
         Some(vec![11, 13, 12])
     );
 }
@@ -171,15 +227,22 @@ fn the_announced_next_entry_takes_over_at_its_moment() {
     announced.valid_until_us = 305 * S;
     group.on_plan(4, announced, 0);
 
-    let Verdict::Follow(before) = group.verdict(204 * S, 0) else {
+    let Verdict::Follow(before) = group.verdict(204 * S, 0)
+    else {
         panic!("该照计划放");
     };
     assert_eq!(before.entry_id, 11);
-    let Verdict::Follow(after) = group.verdict(206 * S, 0) else {
+    let Verdict::Follow(after) = group.verdict(206 * S, 0)
+    else {
         panic!("该照计划放");
     };
     assert_eq!(
-        (after.entry_id, after.anchor_us, after.position_us, after.start_us),
+        (
+            after.entry_id,
+            after.anchor_us,
+            after.position_us,
+            after.start_us
+        ),
         (12, 205 * S, 0, 205 * S)
     );
 }
@@ -188,37 +251,60 @@ fn the_announced_next_entry_takes_over_at_its_moment() {
 
 /// 主端三秒没动静算失联，但照旧按计划放;放到有效期末尾停下，并说明是主端失联。
 #[test]
-fn after_the_master_goes_silent_the_plan_runs_out_then_stops() {
+fn after_the_master_goes_silent_the_plan_runs_out_then_stops()
+ {
     let mut group = in_group("a");
     group.on_plan(4, plan(1), 1_000);
 
     assert!(!group.master_silent(1_000 + MASTER_SILENT_MS));
-    assert!(group.master_silent(1_000 + MASTER_SILENT_MS + 1));
     assert!(
-        matches!(group.verdict(100 * S, 10_000), Verdict::Follow(_)),
+        group.master_silent(1_000 + MASTER_SILENT_MS + 1)
+    );
+    assert!(
+        matches!(
+            group.verdict(100 * S, 10_000),
+            Verdict::Follow(_)
+        ),
         "失联了也把已确认的放完"
     );
-    assert_eq!(group.verdict(205 * S, 10_000), Verdict::Expired);
+    assert_eq!(
+        group.verdict(205 * S, 10_000),
+        Verdict::Expired
+    );
 }
 
 /// 主端的心跳一直在：过了名义上的有效期也接着照计划放(元数据时长与真实媒体常差一两秒),
 /// 不比主端先停。
 #[test]
-fn a_live_master_keeps_the_plan_going_past_its_nominal_end() {
+fn a_live_master_keeps_the_plan_going_past_its_nominal_end()
+{
     let mut group = in_group("a");
     group.on_plan(4, plan(1), 1_000);
     group.on_plan(4, plan(1), 200_000);
 
-    assert!(matches!(group.verdict(206 * S, 200_500), Verdict::Follow(_)));
+    assert!(matches!(
+        group.verdict(206 * S, 200_500),
+        Verdict::Follow(_)
+    ));
 }
 
 /// 暂停着的计划没有「到头」:停在锚点那个位置等着。
 #[test]
 fn a_paused_plan_never_runs_out() {
     let mut group = in_group("a");
-    group.on_plan(4, GroupPlanDto { playing: false, valid_until_us: 10 * S, ..plan(1) }, 0);
+    group.on_plan(
+        4,
+        GroupPlanDto {
+            playing: false,
+            valid_until_us: 10 * S,
+            ..plan(1)
+        },
+        0,
+    );
 
-    assert!(matches!(group.verdict(999 * S, 0), Verdict::Follow(ref now) if !now.playing));
+    assert!(
+        matches!(group.verdict(999 * S, 0), Verdict::Follow(ref now) if !now.playing)
+    );
 }
 
 // ── 主端写计划 ──
@@ -228,7 +314,12 @@ fn a_paused_plan_never_runs_out() {
 fn only_the_master_publishes() {
     let mut group = in_group("a");
     assert_eq!(
-        group.publish(draft(11, None), Cue::Start { position_us: 0 }, 0, 0),
+        group.publish(
+            draft(11, None),
+            Cue::Start { position_us: 0 },
+            0,
+            0
+        ),
         None
     );
 }
@@ -239,16 +330,31 @@ fn a_start_anchors_the_timeline_a_little_ahead() {
     let mut group = in_group("me");
 
     let (term, plan) = group
-        .publish(draft(11, Some(12)), Cue::Start { position_us: 5 * S }, 100 * S, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Start { position_us: 5 * S },
+            100 * S,
+            0,
+        )
         .expect("主端该写得出计划");
 
     assert_eq!(term, 4);
     assert_eq!(plan.seq, 1);
-    assert_eq!((plan.anchor_us, plan.start_us), (100 * S + LEAD_US, 100 * S + LEAD_US));
+    assert_eq!(
+        (plan.anchor_us, plan.start_us),
+        (100 * S + LEAD_US, 100 * S + LEAD_US)
+    );
     assert_eq!(plan.position_us, 5 * S);
     assert_eq!(plan.next, None, "还剩三分多钟，不预告");
-    assert_eq!(plan.valid_until_us, 100 * S + LEAD_US + 195 * S, "管到这一首放完");
-    assert!(matches!(group.verdict(101 * S, 0), Verdict::Follow(_)));
+    assert_eq!(
+        plan.valid_until_us,
+        100 * S + LEAD_US + 195 * S,
+        "管到这一首放完"
+    );
+    assert!(matches!(
+        group.verdict(101 * S, 0),
+        Verdict::Follow(_)
+    ));
 }
 
 /// 本机实际播放离计划不到 REANCHOR_US:沿用原来的锚点，序号不变(跟随端不必重新对准)。
@@ -256,14 +362,22 @@ fn a_start_anchors_the_timeline_a_little_ahead() {
 fn playing_close_to_the_plan_keeps_the_anchor() {
     let mut group = in_group("me");
     let (_, first) = group
-        .publish(draft(11, Some(12)), Cue::Start { position_us: 0 }, 0, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Start { position_us: 0 },
+            0,
+            0,
+        )
         .unwrap();
 
     let at = LEAD_US + 30 * S;
     let (_, kept) = group
         .publish(
             draft(11, Some(12)),
-            Cue::Playing { at_us: at, position_us: 30 * S + REANCHOR_US },
+            Cue::Playing {
+                at_us: at,
+                position_us: 30 * S + REANCHOR_US,
+            },
             at,
             30_000,
         )
@@ -277,61 +391,110 @@ fn playing_close_to_the_plan_keeps_the_anchor() {
 fn playing_off_the_plan_reanchors_it() {
     let mut group = in_group("me");
     group
-        .publish(draft(11, Some(12)), Cue::Start { position_us: 0 }, 0, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Start { position_us: 0 },
+            0,
+            0,
+        )
         .unwrap();
 
     let at = LEAD_US + 30 * S;
     let (_, moved) = group
         .publish(
             draft(11, Some(12)),
-            Cue::Playing { at_us: at, position_us: 90 * S },
+            Cue::Playing {
+                at_us: at,
+                position_us: 90 * S,
+            },
             at,
             30_000,
         )
         .unwrap();
 
     assert_eq!(moved.seq, 2);
-    assert_eq!((moved.anchor_us, moved.position_us), (at, 90 * S));
+    assert_eq!(
+        (moved.anchor_us, moved.position_us),
+        (at, 90 * S)
+    );
 }
 
 /// 心跳原样再发(序号不变);暂停是一份新的，同一位置再报暂停还是那一份。
 #[test]
-fn a_heartbeat_repeats_the_plan_and_a_pause_bumps_the_sequence() {
+fn a_heartbeat_repeats_the_plan_and_a_pause_bumps_the_sequence()
+ {
     let mut group = in_group("me");
     let (_, first) = group
-        .publish(draft(11, Some(12)), Cue::Start { position_us: 0 }, 0, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Start { position_us: 0 },
+            0,
+            0,
+        )
         .unwrap();
 
-    let (_, beat) = group.publish(draft(11, Some(12)), Cue::Keep, S, 1_000).unwrap();
+    let (_, beat) = group
+        .publish(draft(11, Some(12)), Cue::Keep, S, 1_000)
+        .unwrap();
     assert_eq!(beat, first);
 
     let paused = |group: &mut Group, now| {
         group
-            .publish(draft(11, Some(12)), Cue::Paused { position_us: 30 * S }, now, 0)
+            .publish(
+                draft(11, Some(12)),
+                Cue::Paused {
+                    position_us: 30 * S,
+                },
+                now,
+                0,
+            )
             .unwrap()
             .1
     };
     let once = paused(&mut group, 31 * S);
-    assert_eq!((once.seq, once.playing, once.position_us), (2, false, 30 * S));
-    assert_eq!(paused(&mut group, 32 * S), once, "停着没动就是同一份");
+    assert_eq!(
+        (once.seq, once.playing, once.position_us),
+        (2, false, 30 * S)
+    );
+    assert_eq!(
+        paused(&mut group, 32 * S),
+        once,
+        "停着没动就是同一份"
+    );
 }
 
 /// 快放完时预告下一首，有效期跟着延到下一首末尾;主端切过去时离预告那一刻不远就沿用它。
 #[test]
-fn the_next_entry_is_announced_near_the_end_and_taken_at_that_moment() {
+fn the_next_entry_is_announced_near_the_end_and_taken_at_that_moment()
+ {
     let mut group = in_group("me");
     group
-        .publish(draft(11, Some(12)), Cue::Start { position_us: 0 }, 0, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Start { position_us: 0 },
+            0,
+            0,
+        )
         .unwrap();
     let end = LEAD_US + 200 * S;
 
     let (_, early) = group
-        .publish(draft(11, Some(12)), Cue::Keep, end - PREANNOUNCE_US - S, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Keep,
+            end - PREANNOUNCE_US - S,
+            0,
+        )
         .unwrap();
     assert_eq!(early.next, None);
 
     let (_, near) = group
-        .publish(draft(11, Some(12)), Cue::Keep, end - PREANNOUNCE_US, 0)
+        .publish(
+            draft(11, Some(12)),
+            Cue::Keep,
+            end - PREANNOUNCE_US,
+            0,
+        )
         .unwrap();
     let next = near.next.clone().expect("该预告下一首了");
     assert_eq!((next.entry_id, next.at_us), (12, end));
@@ -340,13 +503,20 @@ fn the_next_entry_is_announced_near_the_end_and_taken_at_that_moment() {
     let (_, switched) = group
         .publish(
             draft(12, None),
-            Cue::Playing { at_us: end + S, position_us: S + 1_000 },
+            Cue::Playing {
+                at_us: end + S,
+                position_us: S + 1_000,
+            },
             end + S,
             0,
         )
         .unwrap();
     assert_eq!(
-        (switched.entry_id, switched.anchor_us, switched.position_us),
+        (
+            switched.entry_id,
+            switched.anchor_us,
+            switched.position_us
+        ),
         (12, end, 0),
         "主端晚一点点换过去，仍沿用预告的那一刻"
     );
@@ -363,10 +533,17 @@ fn intercepts_take_the_median_of_recent_measurements() {
     let mut last = 0;
     for (i, n) in noise.iter().enumerate() {
         let at = 200 * S + i as u64 * 200_000;
-        last = intercepts.push(at, (at as i64 - 100 * S as i64 + n) as u64);
+        last = intercepts.push(
+            at,
+            (at as i64 - 100 * S as i64 + n) as u64,
+        );
     }
     let at = 200 * S + 6 * 200_000;
-    assert_eq!(last, at - 100 * S, "中位数把噪声与离群值都滤掉了");
+    assert_eq!(
+        last,
+        at - 100 * S,
+        "中位数把噪声与离群值都滤掉了"
+    );
 }
 
 /// 截距一下子变了很多(跳转、换歌、缓冲之后):旧的作废，从这一个重新攒。
@@ -394,17 +571,30 @@ fn a_new_master_carries_on_the_old_timeline() {
     held.shuffled = true;
     group.on_plan(4, held, 0);
 
-    group.on_group(5, Some("me".to_owned()), vec!["me".to_owned(), "b".to_owned()], 50);
+    group.on_group(
+        5,
+        Some("me".to_owned()),
+        vec!["me".to_owned(), "b".to_owned()],
+        50,
+    );
     assert_eq!(group.role(), GroupRole::Master);
     assert!(!group.master_silent(10_000), "自己就是主端");
 
-    let order = group.plan().and_then(|plan| plan.play_order.clone());
+    let order = group
+        .plan()
+        .and_then(|plan| plan.play_order.clone());
     let mut carried = draft(11, Some(13));
     carried.play_order = order;
     carried.shuffled = true;
-    let (term, plan) = group.publish(carried, Cue::Keep, 20 * S, 60).unwrap();
+    let (term, plan) = group
+        .publish(carried, Cue::Keep, 20 * S, 60)
+        .unwrap();
 
     assert_eq!((term, plan.seq), (5, 1));
-    assert_eq!((plan.anchor_us, plan.position_us), (10 * S, 5 * S), "不重新定锚");
+    assert_eq!(
+        (plan.anchor_us, plan.position_us),
+        (10 * S, 5 * S),
+        "不重新定锚"
+    );
     assert_eq!(plan.play_order, Some(vec![11, 13, 12]));
 }

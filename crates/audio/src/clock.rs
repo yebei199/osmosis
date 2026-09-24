@@ -11,8 +11,11 @@ pub fn monotonic_ns() -> i64 {
         tv_nsec: 0,
     };
     // SAFETY: 传入的是栈上一个有效的 timespec,clock_gettime 只往里写。
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    i64::from(ts.tv_sec) * 1_000_000_000 + i64::from(ts.tv_nsec)
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts)
+    };
+    i64::from(ts.tv_sec) * 1_000_000_000
+        + i64::from(ts.tv_nsec)
 }
 
 #[cfg(test)]
@@ -23,8 +26,13 @@ mod tests {
     #[test]
     fn it_moves_forward() {
         let first = monotonic_ns();
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(
+            std::time::Duration::from_millis(2),
+        );
         let second = monotonic_ns();
-        assert!(second - first >= 1_000_000, "{first} → {second}");
+        assert!(
+            second - first >= 1_000_000,
+            "{first} → {second}"
+        );
     }
 }

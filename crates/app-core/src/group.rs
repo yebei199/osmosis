@@ -15,7 +15,9 @@
 //!
 //! 与 `session.rs` 一样只有规则：时间由调用方传进来，不碰播放器、不发网络。
 
-use contract::{GroupPlanDto, LoopModeDto, NextEntryDto, TrackDto};
+use contract::{
+    GroupPlanDto, LoopModeDto, NextEntryDto, TrackDto,
+};
 
 /// 起播、跳转、恢复时，计划的锚点定在「现在」之后多久。
 ///
@@ -139,12 +141,15 @@ const INTERCEPT_JUMP_US: i64 = 20_000;
 
 impl Intercepts {
     /// 记一个实测:服务端时刻 `at_us` 这一刻媒体在 `position_us`。返回平滑过的那一刻的位置。
-    pub fn push(&mut self, at_us: u64, position_us: u64) -> u64 {
+    pub fn push(
+        &mut self,
+        at_us: u64,
+        position_us: u64,
+    ) -> u64 {
         let intercept = at_us as i64 - position_us as i64;
-        if self
-            .median()
-            .is_some_and(|median| (intercept - median).abs() > INTERCEPT_JUMP_US)
-        {
+        if self.median().is_some_and(|median| {
+            (intercept - median).abs() > INTERCEPT_JUMP_US
+        }) {
             self.samples.clear();
         }
         self.samples.push_back(intercept);
@@ -161,7 +166,8 @@ impl Intercepts {
     }
 
     fn median(&self) -> Option<i64> {
-        let mut sorted: Vec<i64> = self.samples.iter().copied().collect();
+        let mut sorted: Vec<i64> =
+            self.samples.iter().copied().collect();
         sorted.sort_unstable();
         sorted.get(sorted.len() / 2).copied()
     }
@@ -243,7 +249,9 @@ impl Group {
         if membership.members.len() < 2 {
             return GroupRole::Solo;
         }
-        if membership.master.as_deref() == Some(self.me.as_str()) {
+        if membership.master.as_deref()
+            == Some(self.me.as_str())
+        {
             GroupRole::Master
         } else {
             GroupRole::Follower
@@ -279,7 +287,8 @@ impl Group {
             return false;
         }
         if let Some((held_term, held)) = &self.plan {
-            let (incoming, current) = ((term, plan.seq), (*held_term, held.seq));
+            let (incoming, current) =
+                ((term, plan.seq), (*held_term, held.seq));
             if incoming < current {
                 return false;
             }
@@ -289,10 +298,10 @@ impl Group {
             }
         }
         if plan.play_order.is_none() {
-            plan.play_order = self
-                .plan
-                .as_ref()
-                .and_then(|(_, held)| held.play_order.clone());
+            plan.play_order =
+                self.plan.as_ref().and_then(|(_, held)| {
+                    held.play_order.clone()
+                });
         }
         self.heard_ms = Some(now_ms);
         self.plan = Some((term, plan));
@@ -304,12 +313,17 @@ impl Group {
         if self.role() != GroupRole::Follower {
             return false;
         }
-        self.heard_ms
-            .is_none_or(|heard| now_ms.saturating_sub(heard) > MASTER_SILENT_MS)
+        self.heard_ms.is_none_or(|heard| {
+            now_ms.saturating_sub(heard) > MASTER_SILENT_MS
+        })
     }
 
     /// 服务端时钟 `now_us` 这一刻该怎么出声。
-    pub fn verdict(&self, now_us: u64, now_ms: u64) -> Verdict {
+    pub fn verdict(
+        &self,
+        now_us: u64,
+        now_ms: u64,
+    ) -> Verdict {
         if self.role() == GroupRole::Solo || !self.joined {
             return Verdict::Solo;
         }
@@ -344,29 +358,52 @@ impl Group {
         }
         let term = self.term()?;
         let held = self.plan.as_ref();
-        let line = held.and_then(|(_, held)| timeline_of(held, draft.entry_id));
+        let line = held.and_then(|(_, held)| {
+            timeline_of(held, draft.entry_id)
+        });
         let (anchor_us, position_us, playing) = match cue {
-            Cue::Start { position_us } => (now_us + LEAD_US, position_us, true),
+            Cue::Start { position_us } => {
+                (now_us + LEAD_US, position_us, true)
+            }
             Cue::Paused { position_us } => match line {
-                Some((anchor, at, false)) if at == position_us => (anchor, at, false),
+                Some((anchor, at, false))
+                    if at == position_us =>
+                {
+                    (anchor, at, false)
+                }
                 _ => (now_us, position_us, false),
             },
-            Cue::Playing { at_us, position_us } => match line {
-                Some((anchor, at, true))
-                    if drift(anchor, at, at_us, position_us) <= REANCHOR_US =>
-                {
-                    (anchor, at, true)
+            Cue::Playing { at_us, position_us } => {
+                match line {
+                    Some((anchor, at, true))
+                        if drift(
+                            anchor,
+                            at,
+                            at_us,
+                            position_us,
+                        ) <= REANCHOR_US =>
+                    {
+                        (anchor, at, true)
+                    }
+                    _ => (at_us, position_us, true),
                 }
-                _ => (at_us, position_us, true),
-            },
+            }
             Cue::Keep => line?,
         };
-        let duration_us = u64::try_from(draft.track.duration_ms).unwrap_or(0) * 1_000;
-        let end_us = anchor_us + duration_us.saturating_sub(position_us);
+        let duration_us =
+            u64::try_from(draft.track.duration_ms)
+                .unwrap_or(0)
+                * 1_000;
+        let end_us = anchor_us
+            + duration_us.saturating_sub(position_us);
         let next = draft
             .next
             .as_ref()
-            .filter(|_| playing && end_us.saturating_sub(now_us) <= PREANNOUNCE_US)
+            .filter(|_| {
+                playing
+                    && end_us.saturating_sub(now_us)
+                        <= PREANNOUNCE_US
+            })
             .map(|(entry_id, track)| NextEntryDto {
                 entry_id: *entry_id,
                 track: track.clone(),
@@ -375,7 +412,9 @@ impl Group {
         let valid_until_us = if playing {
             end_us
                 + next.as_ref().map_or(0, |next| {
-                    u64::try_from(next.track.duration_ms).unwrap_or(0) * 1_000
+                    u64::try_from(next.track.duration_ms)
+                        .unwrap_or(0)
+                        * 1_000
                 })
         } else {
             anchor_us
@@ -399,12 +438,18 @@ impl Group {
             loop_mode: draft.loop_mode,
         };
         plan.seq = match held {
-            Some((held_term, held)) if *held_term == term => {
+            Some((held_term, held))
+                if *held_term == term =>
+            {
                 let unchanged = GroupPlanDto {
                     seq: held.seq,
                     ..plan.clone()
                 } == *held;
-                if unchanged { held.seq } else { held.seq + 1 }
+                if unchanged {
+                    held.seq
+                } else {
+                    held.seq + 1
+                }
             }
             _ => 1,
         };
@@ -416,9 +461,16 @@ impl Group {
 
 /// 手上那份计划里，条目 `entry_id` 的时间线(锚点、那一刻的位置、在不在放):当前这一条，
 /// 或者预告过的下一首(锚在预告的那一刻、从头放)。都不是就没有可接的。
-fn timeline_of(plan: &GroupPlanDto, entry_id: i64) -> Option<(u64, u64, bool)> {
+fn timeline_of(
+    plan: &GroupPlanDto,
+    entry_id: i64,
+) -> Option<(u64, u64, bool)> {
     if plan.entry_id == entry_id {
-        return Some((plan.anchor_us, plan.position_us, plan.playing));
+        return Some((
+            plan.anchor_us,
+            plan.position_us,
+            plan.playing,
+        ));
     }
     plan.next
         .as_ref()
@@ -428,13 +480,22 @@ fn timeline_of(plan: &GroupPlanDto, entry_id: i64) -> Option<(u64, u64, bool)> {
 
 /// 实测(服务端时刻 `at_us` 媒体在 `position_us`)离「锚点 `anchor_us` 时在 `anchored_us`」
 /// 那条线差多少微秒。
-fn drift(anchor_us: u64, anchored_us: u64, at_us: u64, position_us: u64) -> u64 {
-    let expected = anchored_us as i64 + (at_us as i64 - anchor_us as i64);
+fn drift(
+    anchor_us: u64,
+    anchored_us: u64,
+    at_us: u64,
+    position_us: u64,
+) -> u64 {
+    let expected = anchored_us as i64
+        + (at_us as i64 - anchor_us as i64);
     (expected - position_us as i64).unsigned_abs()
 }
 
 /// 计划在 `now_us` 这一刻的那一条：预告的下一首到点了就是它。
-fn effective(plan: &GroupPlanDto, now_us: u64) -> Effective {
+fn effective(
+    plan: &GroupPlanDto,
+    now_us: u64,
+) -> Effective {
     let current = Effective {
         clock_epoch: plan.clock_epoch,
         queue_id: plan.queue_id,
@@ -447,14 +508,18 @@ fn effective(plan: &GroupPlanDto, now_us: u64) -> Effective {
         start_us: plan.start_us,
     };
     match &plan.next {
-        Some(next) if plan.playing && now_us >= next.at_us => Effective {
-            entry_id: next.entry_id,
-            track: next.track.clone(),
-            anchor_us: next.at_us,
-            position_us: 0,
-            start_us: next.at_us,
-            ..current
-        },
+        Some(next)
+            if plan.playing && now_us >= next.at_us =>
+        {
+            Effective {
+                entry_id: next.entry_id,
+                track: next.track.clone(),
+                anchor_us: next.at_us,
+                position_us: 0,
+                start_us: next.at_us,
+                ..current
+            }
+        }
         _ => current,
     }
 }

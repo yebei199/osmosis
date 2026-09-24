@@ -128,7 +128,8 @@ where
             let Some(sample) = source.next() else {
                 return;
             };
-            phase = (phase + 1) % usize::from(OUTPUT_CHANNELS);
+            phase =
+                (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
             if tx.send(sample).is_ok() {
                 continue;
@@ -292,12 +293,19 @@ impl crate::sync::Feed for ChannelSource {
         use crate::sync::Pulled;
         match self.samples.try_recv() {
             Ok(sample) => Pulled::Sample(sample),
-            Err(mpsc::TryRecvError::Empty) => Pulled::Starved,
-            Err(mpsc::TryRecvError::Disconnected) => Pulled::End,
+            Err(mpsc::TryRecvError::Empty) => {
+                Pulled::Starved
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Pulled::End
+            }
         }
     }
 
-    fn seek(&mut self, to: Duration) -> Result<(), SeekError> {
+    fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
         Source::try_seek(self, to)
     }
 

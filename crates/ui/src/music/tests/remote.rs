@@ -204,7 +204,10 @@ fn losing_the_controller_does_not_leave_the_group() {
     let (_ui, deck) = deck_window();
     following_pc(&deck);
 
-    crate::sync::remote::handle(&Event::NotControlled, &deck.remote);
+    crate::sync::remote::handle(
+        &Event::NotControlled,
+        &deck.remote,
+    );
 
     assert!(!deck.remote.is_controlled(), "撤锁照撤");
     assert_eq!(
@@ -229,7 +232,10 @@ fn a_group_announcement_without_this_device_leaves_it() {
         &deck.remote,
     );
 
-    assert_eq!(deck.remote.group_role(), app_core::GroupRole::Solo);
+    assert_eq!(
+        deck.remote.group_role(),
+        app_core::GroupRole::Solo
+    );
 }
 
 /// 本机自己按了「退出被遥控」:同时离开组,不再跟着谁放。
@@ -240,7 +246,10 @@ fn exiting_control_leaves_the_group() {
 
     deck.remote.exit_controlled();
 
-    assert_eq!(deck.remote.group_role(), app_core::GroupRole::Solo);
+    assert_eq!(
+        deck.remote.group_role(),
+        app_core::GroupRole::Solo
+    );
 }
 
 /// 遥控器发来的命令进收件箱,等 UI 线程来取。

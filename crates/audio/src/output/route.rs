@@ -18,11 +18,14 @@ pub enum Route {
 /// 结论记多久。插拔耳机、连蓝牙之后最迟这么久界面就跟上。
 const REFRESH: Duration = Duration::from_secs(5);
 
-static CACHE: Mutex<Option<(Instant, Option<Route>)>> = Mutex::new(None);
+static CACHE: Mutex<Option<(Instant, Option<Route>)>> =
+    Mutex::new(None);
 
 /// 此刻的输出路由。
 pub fn current() -> Option<Route> {
-    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     if let Some((at, route)) = *cache
         && at.elapsed() < REFRESH
     {
@@ -40,9 +43,11 @@ fn detect() -> Option<Route> {
         .arg("get-default-sink")
         .output()
         .ok()?;
-    out.status
-        .success()
-        .then(|| classify_sink(String::from_utf8_lossy(&out.stdout).trim()))
+    out.status.success().then(|| {
+        classify_sink(
+            String::from_utf8_lossy(&out.stdout).trim(),
+        )
+    })
 }
 
 /// 从 sink 名认路由：`bluez_output.*` 是蓝牙，名字里带 `usb` 的是 USB 声卡;板载模拟口与 HDMI
@@ -65,7 +70,9 @@ fn detect() -> Option<Route> {
 
     let context = ndk_context::android_context();
     // SAFETY:android-activity 在进程起来时把 JavaVM 登记进 ndk-context,进程存续期间一直有效。
-    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
+    let vm = unsafe {
+        jni::JavaVM::from_raw(context.vm().cast())
+    };
     vm.attach_current_thread(|env| -> jni::errors::Result<Route> {
         // SAFETY:同上登记的 Activity 全局引用，活得比这次调用长;`JObject` drop 时不删它。
         let activity = unsafe { JObject::from_raw(env, context.context().cast()) };
@@ -113,13 +120,20 @@ mod tests {
     /// 蓝牙、USB 各认得出;板载口按扬声器算。
     #[test]
     fn sink_names_map_to_routes() {
-        assert_eq!(classify_sink("bluez_output.AA_BB_CC.1"), Route::Bluetooth);
         assert_eq!(
-            classify_sink("alsa_output.usb-Focusrite_Scarlett-00.analog-stereo"),
+            classify_sink("bluez_output.AA_BB_CC.1"),
+            Route::Bluetooth
+        );
+        assert_eq!(
+            classify_sink(
+                "alsa_output.usb-Focusrite_Scarlett-00.analog-stereo"
+            ),
             Route::Wired
         );
         assert_eq!(
-            classify_sink("alsa_output.pci-0000_0c_00.4.analog-stereo"),
+            classify_sink(
+                "alsa_output.pci-0000_0c_00.4.analog-stereo"
+            ),
             Route::Speaker
         );
     }

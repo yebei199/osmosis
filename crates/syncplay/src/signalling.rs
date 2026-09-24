@@ -142,7 +142,10 @@ impl SignalSender {
     }
 
     /// 校时的一次往返：发出去，等 `TimePong`。
-    pub async fn time_ping(&self, id: u64) -> Result<(), SyncError> {
+    pub async fn time_ping(
+        &self,
+        id: u64,
+    ) -> Result<(), SyncError> {
         self.push(ClientSignal::TimePing { id }).await
     }
 

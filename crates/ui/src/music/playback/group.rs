@@ -74,7 +74,10 @@ impl Alignment {
 }
 
 /// 组或计划一变就对准一次，另起一拍兜底。
-pub(in crate::music) fn bind_group(ui: &MainWindow, deck: &Deck) {
+pub(in crate::music) fn bind_group(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
     let aligning = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Shell>().on_group_changed(move || {
@@ -85,16 +88,23 @@ pub(in crate::music) fn bind_group(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
     let weak = ui.as_weak();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, ALIGN_EVERY, move || {
-        let Some(ui) = weak.upgrade() else { return };
-        align(&ui, &deck);
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        ALIGN_EVERY,
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            align(&ui, &deck);
+        },
+    );
     // ponytail: 与自动续播那只定时器一样与进程同寿。
     Box::leak(Box::new(timer));
 }
 
 /// 按本机此刻在组里的身份对准一次。
-pub(in crate::music) fn align(ui: &MainWindow, deck: &Deck) {
+pub(in crate::music) fn align(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
     let Ok(player) = deck.player.as_ref() else {
         return;
     };
@@ -139,12 +149,18 @@ pub(in crate::music) fn begin_as_master(
         Cue::Paused { position_us }
     };
     deck.remote.publish_group(draft, cue);
-    let Some(plan) = deck.remote.group_plan().filter(|plan| plan.playing) else {
+    let Some(plan) = deck
+        .remote
+        .group_plan()
+        .filter(|plan| plan.playing)
+    else {
         return;
     };
     let (Some(at_ns), Some(start_ns)) = (
-        deck.remote.to_local_ns(plan.clock_epoch, plan.anchor_us),
-        deck.remote.to_local_ns(plan.clock_epoch, plan.start_us),
+        deck.remote
+            .to_local_ns(plan.clock_epoch, plan.anchor_us),
+        deck.remote
+            .to_local_ns(plan.clock_epoch, plan.start_us),
     ) else {
         return;
     };
@@ -157,7 +173,8 @@ pub(in crate::music) fn begin_as_master(
             playing: true,
             start_ns,
         });
-        deck.alignment.inner.borrow_mut().holding_until = Some(start_ns);
+        deck.alignment.inner.borrow_mut().holding_until =
+            Some(start_ns);
     }
 }
 
@@ -169,10 +186,10 @@ fn free_after_start(deck: &Deck, player: &audio::Player) {
         player.follow(Target::Free);
         state.following = false;
     }
-    if state
-        .holding_until
-        .is_some_and(|until| audio::clock::monotonic_ns() > until + RELEASE_AFTER_START_NS)
-    {
+    if state.holding_until.is_some_and(|until| {
+        audio::clock::monotonic_ns()
+            > until + RELEASE_AFTER_START_NS
+    }) {
         player.follow(Target::Free);
         state.holding_until = None;
     }
@@ -183,7 +200,13 @@ fn mirror(deck: &Deck, player: &audio::Player) {
     let Some(draft) = draft(deck) else {
         return;
     };
-    let cue = if deck.alignment.inner.borrow().holding_until.is_some() {
+    let cue = if deck
+        .alignment
+        .inner
+        .borrow()
+        .holding_until
+        .is_some()
+    {
         Cue::Keep
     } else {
         cue(deck, player)
@@ -198,17 +221,25 @@ fn draft(deck: &Deck) -> Option<Draft> {
     let queue = deck.queue.borrow();
     let track = queue.current()?.clone();
     let (queue_id, _, applied) = deck.execution.identity();
-    let entry_id = deck.execution.entry_at(queue.index())?;
+    let entry_id =
+        deck.execution.entry_at(queue.index())?;
     let next = queue.peek_next_index().and_then(|index| {
-        Some((deck.execution.entry_at(index)?, queue.tracks().get(index)?.clone()))
+        Some((
+            deck.execution.entry_at(index)?,
+            queue.tracks().get(index)?.clone(),
+        ))
     });
-    let play_order = (queue.order().len() <= PLAY_ORDER_MAX).then(|| {
-        queue
-            .order()
-            .iter()
-            .filter_map(|index| deck.execution.entry_at(*index))
-            .collect()
-    });
+    let play_order = (queue.order().len()
+        <= PLAY_ORDER_MAX)
+        .then(|| {
+            queue
+                .order()
+                .iter()
+                .filter_map(|index| {
+                    deck.execution.entry_at(*index)
+                })
+                .collect()
+        });
     Some(Draft {
         clock_epoch,
         queue_id: queue_id?,
@@ -238,7 +269,9 @@ fn cue(deck: &Deck, player: &audio::Player) -> Cue {
             alignment.intercepts.clear();
             Cue::Keep
         }
-        PlaybackState::Playing(_) if !player.is_paused() => {
+        PlaybackState::Playing(_)
+            if !player.is_paused() =>
+        {
             let report = player.sync_report();
             // 缓冲(拉不到数据)时组时间线发布暂停，恢复时重新定锚(产品规则)。
             if !report.sounding {
@@ -251,15 +284,18 @@ fn cue(deck: &Deck, player: &audio::Player) -> Cue {
                 alignment.starves = report.starves;
                 alignment.intercepts.clear();
             }
-            let Some((present_ns, media)) = player.pairing() else {
+            let Some((present_ns, media)) =
+                player.pairing()
+            else {
                 return Cue::Keep;
             };
             match deck.remote.to_server_us(present_ns) {
                 Some(at_us) => Cue::Playing {
                     at_us,
-                    position_us: alignment
-                        .intercepts
-                        .push(at_us, media.as_micros() as u64),
+                    position_us: alignment.intercepts.push(
+                        at_us,
+                        media.as_micros() as u64,
+                    ),
                 },
                 None => Cue::Keep,
             }
@@ -273,25 +309,34 @@ fn cue(deck: &Deck, player: &audio::Player) -> Cue {
 
 // ── 跟随端 ──
 
-fn follow(ui: &MainWindow, deck: &Deck, player: &audio::Player) {
+fn follow(
+    ui: &MainWindow,
+    deck: &Deck,
+    player: &audio::Player,
+) {
     match deck.remote.group_verdict() {
         // 在成员里但还没被叫开始：手上原来在放的不动。
         Verdict::Solo => release(deck, player),
         Verdict::Waiting => hold(deck, player),
         Verdict::Expired => {
             hold(deck, player);
-            let mut state = deck.alignment.inner.borrow_mut();
+            let mut state =
+                deck.alignment.inner.borrow_mut();
             if !state.told_silent {
                 state.told_silent = true;
                 drop(state);
-                log::warn!("主端失联,已确认的计划放到头了:停下");
+                log::warn!(
+                    "主端失联,已确认的计划放到头了:停下"
+                );
                 crate::notice::show(
                     ui,
                     crate::sync::remote::describe_master_lost(),
                 );
             }
         }
-        Verdict::Follow(now) => track(ui, deck, player, &now),
+        Verdict::Follow(now) => {
+            track(ui, deck, player, &now)
+        }
     }
 }
 
@@ -311,39 +356,57 @@ fn hold(deck: &Deck, player: &audio::Player) {
 }
 
 /// 照这一条放：媒体对上，再把时间线交给跟随器。
-fn track(ui: &MainWindow, deck: &Deck, player: &audio::Player, now: &Effective) {
+fn track(
+    ui: &MainWindow,
+    deck: &Deck,
+    player: &audio::Player,
+    now: &Effective,
+) {
     let (queue_id, _, applied) = deck.execution.identity();
-    if (queue_id, applied) != (Some(now.queue_id), Some(now.revision)) {
+    if (queue_id, applied)
+        != (Some(now.queue_id), Some(now.revision))
+    {
         fetch_copy(ui, deck, now.queue_id, now.revision);
         hold(deck, player);
         return;
     }
     let want = (now.queue_id, now.revision, now.entry_id);
     if deck.alignment.inner.borrow().entry != Some(want) {
-        let Some(index) = deck.execution.index_of(now.entry_id) else {
+        let Some(index) =
+            deck.execution.index_of(now.entry_id)
+        else {
             deck.alignment.inner.borrow_mut().fault = Some(
-                crate::sync::remote::describe_missing_entry(now.revision, now.entry_id),
+                crate::sync::remote::describe_missing_entry(
+                    now.revision,
+                    now.entry_id,
+                ),
             );
             hold(deck, player);
             return;
         };
         {
-            let mut state = deck.alignment.inner.borrow_mut();
+            let mut state =
+                deck.alignment.inner.borrow_mut();
             state.entry = Some(want);
             state.fault = None;
         }
         start_entry(ui, deck, index, now);
     }
-    if let PlaybackState::Failed(why) = deck.playback.borrow().state().clone() {
-        deck.alignment.inner.borrow_mut().fault =
-            Some(crate::sync::remote::describe_media_fault(&why));
+    if let PlaybackState::Failed(why) =
+        deck.playback.borrow().state().clone()
+    {
+        deck.alignment.inner.borrow_mut().fault = Some(
+            crate::sync::remote::describe_media_fault(&why),
+        );
         hold(deck, player);
         return;
     }
     apply_order(deck);
     let (Some(at_ns), Some(start_ns)) = (
-        deck.remote.to_local_ns(now.clock_epoch, now.anchor_us),
-        deck.remote.to_local_ns(now.clock_epoch, now.start_us),
+        deck.remote
+            .to_local_ns(now.clock_epoch, now.anchor_us),
+        deck.remote
+            .to_local_ns(now.clock_epoch, now.start_us),
     ) else {
         // 校时还没结论、或者计划是服务端上一次启动时写的：换算不了就不出声。
         hold(deck, player);
@@ -362,22 +425,34 @@ fn track(ui: &MainWindow, deck: &Deck, player: &audio::Player, now: &Effective) 
 }
 
 /// 起播计划要的那一条，从它此刻该在的位置起。手上已经在放(或在取)这一条就不重起。
-fn start_entry(ui: &MainWindow, deck: &Deck, index: usize, now: &Effective) {
-    let current = deck.execution.entry_at(deck.queue.borrow().index());
+fn start_entry(
+    ui: &MainWindow,
+    deck: &Deck,
+    index: usize,
+    now: &Effective,
+) {
+    let current = deck
+        .execution
+        .entry_at(deck.queue.borrow().index());
     let busy = matches!(
         deck.playback.borrow().state(),
-        PlaybackState::Playing(_) | PlaybackState::Loading(_)
+        PlaybackState::Playing(_)
+            | PlaybackState::Loading(_)
     );
     if current == Some(now.entry_id) && busy {
         return;
     }
-    let at_us = deck.remote.server_now_us().map_or(now.position_us, |now_us| {
-        if now.playing && now_us >= now.start_us {
-            now.position_us + (now_us - now.anchor_us.min(now_us))
-        } else {
-            now.position_us
-        }
-    });
+    let at_us = deck.remote.server_now_us().map_or(
+        now.position_us,
+        |now_us| {
+            if now.playing && now_us >= now.start_us {
+                now.position_us
+                    + (now_us - now.anchor_us.min(now_us))
+            } else {
+                now.position_us
+            }
+        },
+    );
     let _ = deck.queue.borrow_mut().jump_to(index);
     deck.start_at.set(Some(Start {
         at: Duration::from_micros(at_us),
@@ -387,7 +462,12 @@ fn start_entry(ui: &MainWindow, deck: &Deck, index: usize, now: &Effective) {
 }
 
 /// 取计划那一版的执行副本。正在放的那一条若也在新副本里，停在它上面，不打断。
-fn fetch_copy(ui: &MainWindow, deck: &Deck, queue_id: i64, revision: i64) {
+fn fetch_copy(
+    ui: &MainWindow,
+    deck: &Deck,
+    queue_id: i64,
+    revision: i64,
+) {
     {
         let mut state = deck.alignment.inner.borrow_mut();
         if state.fetching == Some((queue_id, revision)) {
@@ -398,7 +478,8 @@ fn fetch_copy(ui: &MainWindow, deck: &Deck, queue_id: i64, revision: i64) {
     let deck = deck.clone();
     let weak = ui.as_weak();
     let _ = slint::spawn_local(async move {
-        let fetched = api::fetch_queue(queue_id, revision).await;
+        let fetched =
+            api::fetch_queue(queue_id, revision).await;
         deck.alignment.inner.borrow_mut().fetching = None;
         let entries = match fetched {
             Ok(entries) => entries,
@@ -409,16 +490,29 @@ fn fetch_copy(ui: &MainWindow, deck: &Deck, queue_id: i64, revision: i64) {
                 return;
             }
         };
-        let playing = deck.execution.entry_at(deck.queue.borrow().index());
-        let entry_ids: Vec<i64> = entries.iter().map(|entry| entry.entry_id).collect();
+        let playing = deck
+            .execution
+            .entry_at(deck.queue.borrow().index());
+        let entry_ids: Vec<i64> = entries
+            .iter()
+            .map(|entry| entry.entry_id)
+            .collect();
         let index = playing
-            .and_then(|id| entry_ids.iter().position(|entry| *entry == id))
+            .and_then(|id| {
+                entry_ids
+                    .iter()
+                    .position(|entry| *entry == id)
+            })
             .unwrap_or(0);
-        let tracks = entries.into_iter().map(|entry| entry.track).collect();
+        let tracks = entries
+            .into_iter()
+            .map(|entry| entry.track)
+            .collect();
         deck.queue.borrow_mut().replace(tracks, index);
         deck.execution.adopt(queue_id, revision, entry_ids);
         {
-            let mut state = deck.alignment.inner.borrow_mut();
+            let mut state =
+                deck.alignment.inner.borrow_mut();
             state.entry = None;
             state.order = None;
         }
@@ -433,27 +527,39 @@ fn apply_order(deck: &Deck) {
     let Some(plan) = deck.remote.group_plan() else {
         return;
     };
-    deck.queue.borrow_mut().set_loop_mode(match plan.loop_mode {
-        LoopModeDto::Off => LoopMode::Off,
-        LoopModeDto::All => LoopMode::All,
-        LoopModeDto::One => LoopMode::One,
-    });
+    deck.queue.borrow_mut().set_loop_mode(
+        match plan.loop_mode {
+            LoopModeDto::Off => LoopMode::Off,
+            LoopModeDto::All => LoopMode::All,
+            LoopModeDto::One => LoopMode::One,
+        },
+    );
     let Some(order) = plan.play_order else {
         return;
     };
-    if deck.alignment.inner.borrow().order.as_ref() == Some(&order) {
+    if deck.alignment.inner.borrow().order.as_ref()
+        == Some(&order)
+    {
         return;
     }
-    let Some(indices) = deck.execution.indices_of(&order) else {
+    let Some(indices) = deck.execution.indices_of(&order)
+    else {
         return;
     };
-    if deck.queue.borrow_mut().restore_order(indices, plan.shuffled) {
-        deck.alignment.inner.borrow_mut().order = Some(order);
+    if deck
+        .queue
+        .borrow_mut()
+        .restore_order(indices, plan.shuffled)
+    {
+        deck.alignment.inner.borrow_mut().order =
+            Some(order);
     }
 }
 
 /// 跟随端只放计划说的那一首：本机自己的自动续播、断流切歌、起播上报都停。
-pub(in crate::music) fn follows_the_group(deck: &Deck) -> bool {
+pub(in crate::music) fn follows_the_group(
+    deck: &Deck,
+) -> bool {
     deck.remote.group_role() == GroupRole::Follower
         && deck.alignment.inner.borrow().following
 }

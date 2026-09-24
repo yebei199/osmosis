@@ -172,7 +172,8 @@ fn different_seeds_give_different_orders() {
 
 /// 照别处给的次序接着放：当前这一首不动，下一首按给的次序走。
 #[test]
-fn a_restored_order_keeps_the_current_track_and_decides_the_next() {
+fn a_restored_order_keeps_the_current_track_and_decides_the_next()
+ {
     let mut queue = Queue::new(batch(3), 1);
 
     assert!(queue.restore_order(vec![2, 1, 0], true));
@@ -191,7 +192,8 @@ fn a_restored_order_keeps_the_current_track_and_decides_the_next() {
 fn an_order_that_is_not_a_permutation_is_refused() {
     let mut queue = Queue::new(batch(3), 0);
 
-    for broken in [vec![0, 1], vec![0, 0, 1], vec![0, 1, 7]] {
+    for broken in [vec![0, 1], vec![0, 0, 1], vec![0, 1, 7]]
+    {
         assert!(!queue.restore_order(broken, true));
     }
     assert_eq!(queue.order(), &[0, 1, 2]);

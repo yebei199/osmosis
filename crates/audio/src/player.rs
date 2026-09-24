@@ -7,7 +7,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::sync::{Feed, SourceFeed, SyncShared, SyncSource, Target};
+use crate::sync::{
+    Feed, SourceFeed, SyncShared, SyncSource, Target,
+};
 use crate::{AudioError, output, pcm, spectrum};
 
 /// 等同步源给跳转裁决最多等多久。
@@ -33,7 +35,8 @@ impl Player {
     pub fn new() -> Result<Self, AudioError> {
         let shared = SyncShared::new();
         let output = output::open(shared.clone())?;
-        let player = rodio::Player::connect_new(&output.mixer);
+        let player =
+            rodio::Player::connect_new(&output.mixer);
         player.play();
 
         Ok(Self {
@@ -65,14 +68,16 @@ impl Player {
     /// 同 [`Self::play`],但底下是能说出「欠载」的媒体(见 [`Feed`]):
     /// 本机流式播放用 `ChannelSource` 走这里,同步播放时欠载那段不算媒体时间。
     pub fn play_feed<F: Feed>(&self, feed: F) {
-        let source = SyncSource::new(feed, self.shared.clone());
+        let source =
+            SyncSource::new(feed, self.shared.clone());
         self.shared.resume();
         self.attach(source);
     }
 
     /// 把一路同步源接到播放器上:分一支给可视化,替换掉正在放的。
     fn attach<F: Feed>(&self, source: SyncSource<F>) {
-        let channels = rodio::Source::channels(&source).get();
+        let channels =
+            rodio::Source::channels(&source).get();
         let (tap, rx) =
             pcm::Tee::new(source, spectrum::TAP_CAPACITY);
         self.viz.attach(rx, channels);
@@ -113,9 +118,16 @@ impl Player {
     }
 
     /// 最近一块第一帧的呈现时刻(本机单调时钟纳秒)与那一刻的媒体位置(见 `SyncShared::pairing`)。
-    pub fn pairing(&self) -> Option<(i64, core::time::Duration)> {
+    pub fn pairing(
+        &self,
+    ) -> Option<(i64, core::time::Duration)> {
         self.shared.pairing().map(|(present, media)| {
-            (present, core::time::Duration::from_nanos(media.max(0) as u64))
+            (
+                present,
+                core::time::Duration::from_nanos(
+                    media.max(0) as u64,
+                ),
+            )
         })
     }
 
@@ -186,7 +198,10 @@ impl Player {
         &self,
         to: core::time::Duration,
     ) -> Result<(), AudioError> {
-        match self.shared.request_seek(to).recv_timeout(SEEK_VERDICT)
+        match self
+            .shared
+            .request_seek(to)
+            .recv_timeout(SEEK_VERDICT)
         {
             Ok(verdict) => verdict.map_err(|err| {
                 AudioError::Device(err.to_string())
@@ -216,8 +231,9 @@ fn start_from<F: Feed>(
     at: core::time::Duration,
     playing: bool,
 ) -> Result<SyncSource<F>, AudioError> {
-    rodio::Source::try_seek(&mut source, at)
-        .map_err(|err| AudioError::Device(err.to_string()))?;
+    rodio::Source::try_seek(&mut source, at).map_err(
+        |err| AudioError::Device(err.to_string()),
+    )?;
     if playing {
         shared.resume();
     } else {

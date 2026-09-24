@@ -40,11 +40,13 @@ pub(super) fn run(
         )));
         return;
     };
-    let (mixer, source) = rodio::mixer::mixer(channels, rate);
+    let (mixer, source) =
+        rodio::mixer::mixer(channels, rate);
     let source: SharedMixer = Arc::new(Mutex::new(source));
     let broken = Arc::new(AtomicBool::new(false));
 
-    let mut stream = match start(&source, &shared, &broken) {
+    let mut stream = match start(&source, &shared, &broken)
+    {
         Ok(stream) => stream,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -60,7 +62,9 @@ pub(super) fn run(
         match start(&source, &shared, &broken) {
             Ok(fresh) => stream = fresh,
             Err(error) => {
-                log::warn!("重开 AAudio 输出失败，稍后再试: {error}");
+                log::warn!(
+                    "重开 AAudio 输出失败，稍后再试: {error}"
+                );
                 broken.store(true, Ordering::Relaxed);
             }
         }
@@ -78,7 +82,9 @@ fn start(
     let shared = shared.clone();
     let flag = broken.clone();
     let mut written: i64 = 0;
-    let device = |e: ndk::audio::AudioError| AudioError::Device(e.to_string());
+    let device = |e: ndk::audio::AudioError| {
+        AudioError::Device(e.to_string())
+    };
     let stream = AudioStreamBuilder::new()
         .map_err(device)?
         .direction(AudioDirection::Output)

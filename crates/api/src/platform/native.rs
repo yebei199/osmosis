@@ -455,8 +455,12 @@ pub fn test_media_url() -> Option<String> {
     if !cfg!(debug_assertions) {
         return None;
     }
-    let path = settings_file()?.with_file_name("test-media-url");
-    let url = std::fs::read_to_string(path).ok()?.trim().to_owned();
+    let path =
+        settings_file()?.with_file_name("test-media-url");
+    let url = std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .to_owned();
     (!url.is_empty()).then_some(url)
 }
 

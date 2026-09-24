@@ -29,7 +29,9 @@ pub(super) fn run(
     let config = match device.default_output_config() {
         Ok(config) => config,
         Err(error) => {
-            let _ = ready.send(Err(AudioError::Device(error.to_string())));
+            let _ = ready.send(Err(AudioError::Device(
+                error.to_string(),
+            )));
             return;
         }
     };
@@ -42,11 +44,18 @@ pub(super) fn run(
         )));
         return;
     };
-    let (mixer, source) = rodio::mixer::mixer(channels, rate);
+    let (mixer, source) =
+        rodio::mixer::mixer(channels, rate);
     let source: SharedMixer = Arc::new(Mutex::new(source));
     let broken = Arc::new(AtomicBool::new(false));
 
-    let mut stream = match start(&device, &config.into(), &source, &shared, &broken) {
+    let mut stream = match start(
+        &device,
+        &config.into(),
+        &source,
+        &shared,
+        &broken,
+    ) {
         Ok(stream) => stream,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -58,16 +67,27 @@ pub(super) fn run(
     watch(stop, &|| broken.load(Ordering::Relaxed), || {
         log::warn!("输出流断了，重开默认设备");
         broken.store(false, Ordering::Relaxed);
-        let reopened = default_device().and_then(|device| {
-            let config = device
-                .default_output_config()
-                .map_err(|e| AudioError::Device(e.to_string()))?;
-            start(&device, &config.into(), &source, &shared, &broken)
-        });
+        let reopened =
+            default_device().and_then(|device| {
+                let config = device
+                    .default_output_config()
+                    .map_err(|e| {
+                        AudioError::Device(e.to_string())
+                    })?;
+                start(
+                    &device,
+                    &config.into(),
+                    &source,
+                    &shared,
+                    &broken,
+                )
+            });
         match reopened {
             Ok(fresh) => stream = fresh,
             Err(error) => {
-                log::warn!("重开输出失败，稍后再试: {error}");
+                log::warn!(
+                    "重开输出失败，稍后再试: {error}"
+                );
                 broken.store(true, Ordering::Relaxed);
             }
         }
@@ -78,7 +98,11 @@ pub(super) fn run(
 fn default_device() -> Result<::cpal::Device, AudioError> {
     ::cpal::default_host()
         .default_output_device()
-        .ok_or_else(|| AudioError::Device("没有默认输出设备".to_owned()))
+        .ok_or_else(|| {
+            AudioError::Device(
+                "没有默认输出设备".to_owned(),
+            )
+        })
 }
 
 fn start(

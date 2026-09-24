@@ -447,11 +447,13 @@ fn route(
         ClientSignal::Hello { .. } => None,
         // 校时:立刻回服务端此刻的单调时钟。在这里就答，不进遥控那一套 —— 多绕一层锁，
         // 就多一段不对称的排队，偏移估计跟着偏(#137 ⑤)。
-        ClientSignal::TimePing { id } => Some(ServerSignal::TimePong {
-            id,
-            server_us: crate::syncplay::clock::now_us(),
-            epoch: crate::syncplay::clock::epoch(),
-        }),
+        ClientSignal::TimePing { id } => {
+            Some(ServerSignal::TimePong {
+                id,
+                server_us: crate::syncplay::clock::now_us(),
+                epoch: crate::syncplay::clock::epoch(),
+            })
+        }
         // 其余几条都是遥控器模式的,归 `crate::syncplay::control`。
         remote @ (ClientSignal::ClaimControl { .. }
         | ClientSignal::ExitControlled
@@ -494,7 +496,12 @@ mod tests {
             ClientSignal::TimePing { id: 42 },
         );
 
-        let Some(ServerSignal::TimePong { id, server_us, epoch }) = reply else {
+        let Some(ServerSignal::TimePong {
+            id,
+            server_us,
+            epoch,
+        }) = reply
+        else {
             panic!("该回 TimePong: {reply:?}");
         };
         assert_eq!(id, 42);

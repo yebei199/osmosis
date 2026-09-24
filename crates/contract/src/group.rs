@@ -89,7 +89,8 @@ impl GroupPlanDto {
             return None;
         }
         let elapsed = at_us as i64 - self.anchor_us as i64;
-        Some((self.position_us as i64 + elapsed).max(0) as u64)
+        Some((self.position_us as i64 + elapsed).max(0)
+            as u64)
     }
 }
 
@@ -134,20 +135,34 @@ mod tests {
     #[test]
     fn a_plan_says_where_the_media_should_be() {
         let plan = plan();
-        assert_eq!(plan.position_at(12_000_000), Some(7_000_000));
-        assert_eq!(plan.position_at(9_000_000), None, "还没起播");
-        let paused = GroupPlanDto { playing: false, ..plan };
+        assert_eq!(
+            plan.position_at(12_000_000),
+            Some(7_000_000)
+        );
+        assert_eq!(
+            plan.position_at(9_000_000),
+            None,
+            "还没起播"
+        );
+        let paused = GroupPlanDto {
+            playing: false,
+            ..plan
+        };
         assert_eq!(paused.position_at(12_000_000), None);
     }
 
     /// 老报文没有次序与循环字段也解得出来(新增字段都有缺省)。
     #[test]
     fn optional_fields_default_when_absent() {
-        let mut value = serde_json::to_value(plan()).unwrap();
-        for key in ["play_order", "round", "shuffled", "loop_mode"] {
+        let mut value =
+            serde_json::to_value(plan()).unwrap();
+        for key in
+            ["play_order", "round", "shuffled", "loop_mode"]
+        {
             value.as_object_mut().unwrap().remove(key);
         }
-        let back: GroupPlanDto = serde_json::from_value(value).unwrap();
+        let back: GroupPlanDto =
+            serde_json::from_value(value).unwrap();
         assert_eq!(back.loop_mode, LoopModeDto::Off);
         assert_eq!(back.play_order, None);
     }

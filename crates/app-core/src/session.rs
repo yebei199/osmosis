@@ -133,7 +133,9 @@ impl Progress {
     fn is_settled(&self) -> bool {
         matches!(
             self,
-            Self::Started | Self::Failed(_) | Self::Unconfirmed
+            Self::Started
+                | Self::Failed(_)
+                | Self::Unconfirmed
         )
     }
 }
@@ -195,9 +197,9 @@ impl Move {
     /// 组里有留下的主端、只是加人减人时不压 —— 它一直在响，暂停、切歌照常发给它。
     pub fn holds_transport(&self) -> bool {
         if self.kept.is_empty() {
-            return self
-                .essential()
-                .is_some_and(|party| party.progress != Progress::Started);
+            return self.essential().is_some_and(|party| {
+                party.progress != Progress::Started
+            });
         }
         !same(&self.from, &self.to)
     }
@@ -300,7 +302,8 @@ fn contains(set: &[Output], output: &Output) -> bool {
 }
 
 fn same_set(a: &[Output], b: &[Output]) -> bool {
-    a.len() == b.len() && a.iter().all(|output| contains(b, output))
+    a.len() == b.len()
+        && a.iter().all(|output| contains(b, output))
 }
 
 impl Session {
@@ -343,7 +346,9 @@ impl Session {
 
     /// 控制命令该不该先压着(见 [`Move::holds_transport`])。
     pub fn holds_transport(&self) -> bool {
-        self.moving.as_ref().is_some_and(Move::holds_transport)
+        self.moving
+            .as_ref()
+            .is_some_and(Move::holds_transport)
     }
 
     /// 改在 `to` 这一台播放(③ 的选设备)。
@@ -393,7 +398,9 @@ impl Session {
         self.failure = None;
         let kept: Vec<Output> = set
             .iter()
-            .filter(|output| contains(&self.members, output))
+            .filter(|output| {
+                contains(&self.members, output)
+            })
             .cloned()
             .collect();
         let master = if contains(&set, &self.master) {
@@ -412,7 +419,9 @@ impl Session {
         };
         let mut parties: Vec<Party> = set
             .iter()
-            .filter(|output| !contains(&self.members, output))
+            .filter(|output| {
+                !contains(&self.members, output)
+            })
             .map(|output| Party {
                 output: output.clone(),
                 role: Role::Join,
@@ -455,7 +464,9 @@ impl Session {
             for party in &moving.parties {
                 if party.role == Role::Join {
                     effects.push(Effect::Prepare {
-                        operation_id: moving.operation_id.clone(),
+                        operation_id: moving
+                            .operation_id
+                            .clone(),
                         to: party.output.clone(),
                         plan: plan.clone(),
                     });
@@ -497,7 +508,11 @@ impl Session {
                 .clone()
                 .unwrap_or_else(|| "没说原因".to_owned())
         };
-        let next = match (party.role, &party.progress, ack.phase) {
+        let next = match (
+            party.role,
+            &party.progress,
+            ack.phase,
+        ) {
             (
                 Role::Join,
                 Progress::Preparing,
@@ -573,7 +588,10 @@ impl Session {
         moving.deadline_ms = now_ms + wait;
         let mut effects = Vec::new();
         let anchor = moving.anchor_ms().unwrap_or(0);
-        let playing = moving.plan.as_ref().is_some_and(|plan| plan.playing);
+        let playing = moving
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.playing);
         for party in &mut moving.parties {
             if party.role != role
                 || !matches!(
@@ -589,11 +607,15 @@ impl Session {
             party.deadline_ms = now_ms + wait;
             effects.push(match role {
                 Role::Leave => Effect::Stop {
-                    operation_id: moving.operation_id.clone(),
+                    operation_id: moving
+                        .operation_id
+                        .clone(),
                     from: party.output.clone(),
                 },
                 Role::Join => Effect::Start {
-                    operation_id: moving.operation_id.clone(),
+                    operation_id: moving
+                        .operation_id
+                        .clone(),
                     to: party.output.clone(),
                     position_ms: anchor,
                     playing,
@@ -634,7 +656,9 @@ impl Session {
                             )
                     })
                     .map(|party| Effect::Stop {
-                        operation_id: moving.operation_id.clone(),
+                        operation_id: moving
+                            .operation_id
+                            .clone(),
                         from: party.output.clone(),
                     })
                     .collect();
@@ -686,7 +710,9 @@ impl Session {
             .parties
             .iter()
             .map(|party| &party.output)
-            .find(|output| output.target() == Some(device_id))
+            .find(|output| {
+                output.target() == Some(device_id)
+            })
             .cloned()
     }
 
@@ -695,12 +721,17 @@ impl Session {
     ///
     /// 回话随每条上报一直带着，提交之后才到的也有 —— 那正是解开逐台「待确认」的正路,
     /// 所以不能只在进行中那一次里找(见 [`Self::party`])。
-    pub fn output_of(&self, device_id: &str) -> Option<Output> {
+    pub fn output_of(
+        &self,
+        device_id: &str,
+    ) -> Option<Output> {
         self.party(device_id).or_else(|| {
             self.unconfirmed()
                 .iter()
                 .chain(&self.members)
-                .find(|output| output.target() == Some(device_id))
+                .find(|output| {
+                    output.target() == Some(device_id)
+                })
                 .cloned()
         })
     }
@@ -715,7 +746,10 @@ impl Session {
 
     /// 集合的登记形式：远端按 id,本机按本机 id;只剩本机(或者一台不剩)时不经服务端。
     fn encode(&self, set: &[Output]) -> Vec<String> {
-        if set.iter().all(|output| output.target().is_none()) {
+        if set
+            .iter()
+            .all(|output| output.target().is_none())
+        {
             return Vec::new();
         }
         set.iter()
@@ -728,7 +762,8 @@ impl Session {
         set: &[Output],
         master: &Output,
     ) -> Option<String> {
-        (!self.encode(set).is_empty()).then(|| self.id_of(master))
+        (!self.encode(set).is_empty())
+            .then(|| self.id_of(master))
     }
 
     fn id_of(&self, output: &Output) -> String {
@@ -745,7 +780,8 @@ impl Session {
         from: &Output,
         ack: &OperationAckDto,
     ) {
-        let Some((operation_id, outputs)) = self.unconfirmed.as_mut()
+        let Some((operation_id, outputs)) =
+            self.unconfirmed.as_mut()
         else {
             return;
         };
@@ -754,7 +790,8 @@ impl Session {
         }
         if matches!(
             ack.phase,
-            OperationPhase::Started | OperationPhase::Failed
+            OperationPhase::Started
+                | OperationPhase::Failed
         ) {
             outputs.retain(|output| !same(output, from));
         }
@@ -817,7 +854,8 @@ impl Session {
                         same(&party.output, output)
                             && matches!(
                                 party.progress,
-                                Progress::Started | Progress::Unconfirmed
+                                Progress::Started
+                                    | Progress::Unconfirmed
                             )
                     })
             })
@@ -827,10 +865,17 @@ impl Session {
             .parties
             .iter()
             .filter_map(|party| match &party.progress {
-                Progress::Failed(why) if party.role == Role::Join => Some(format!(
-                    "{} 没能加入: {why}",
-                    party.output.name().unwrap_or("本机")
-                )),
+                Progress::Failed(why)
+                    if party.role == Role::Join =>
+                {
+                    Some(format!(
+                        "{} 没能加入: {why}",
+                        party
+                            .output
+                            .name()
+                            .unwrap_or("本机")
+                    ))
+                }
                 _ => None,
             })
             .collect();
@@ -842,12 +887,15 @@ impl Session {
             .iter()
             .filter(|party| {
                 party.role == Role::Join
-                    && party.progress == Progress::Unconfirmed
+                    && party.progress
+                        == Progress::Unconfirmed
             })
             .map(|party| party.output.clone())
             .collect();
-        self.unconfirmed = (!doubted.is_empty())
-            .then(|| (moving.operation_id.clone(), doubted));
+        self.unconfirmed =
+            (!doubted.is_empty()).then(|| {
+                (moving.operation_id.clone(), doubted)
+            });
         let outputs = (committed.len() != moving.set.len())
             .then(|| self.encode(&committed));
         self.master = if committed.is_empty() {
@@ -891,12 +939,15 @@ impl Move {
             return None;
         }
         self.parties.iter().find(|party| {
-            party.role == Role::Join && same(&party.output, &self.to)
+            party.role == Role::Join
+                && same(&party.output, &self.to)
         })
     }
 
     fn joiners(&self) -> impl Iterator<Item = &Party> {
-        self.parties.iter().filter(|party| party.role == Role::Join)
+        self.parties
+            .iter()
+            .filter(|party| party.role == Role::Join)
     }
 
     /// 准备：新主端备好后最多再等一会儿其余的;组里有人在响时，谁备好谁就可以往下走。
@@ -905,10 +956,15 @@ impl Move {
             return self.enter_stopping(now_ms);
         }
         if let Some(essential) = self.essential() {
-            let name = essential.output.name().unwrap_or("本机").to_owned();
+            let name = essential
+                .output
+                .name()
+                .unwrap_or("本机")
+                .to_owned();
             match &essential.progress {
                 Progress::Failed(why) => {
-                    let why = format!("{name} 准备不了: {why}");
+                    let why =
+                        format!("{name} 准备不了: {why}");
                     return Outcome {
                         effects: withdraw(self),
                         done: Some(Done::Fail(why)),
@@ -928,24 +984,29 @@ impl Move {
                 }
                 _ => return Outcome::default(),
             }
-            let ready_at = *self.ready_at_ms.get_or_insert(now_ms);
+            let ready_at =
+                *self.ready_at_ms.get_or_insert(now_ms);
             let everyone = self.joiners().all(|party| {
                 matches!(
                     party.progress,
-                    Progress::Prepared | Progress::Failed(_)
+                    Progress::Prepared
+                        | Progress::Failed(_)
                 )
             });
-            if everyone || now_ms >= ready_at + READY_GRACE_MS {
+            if everyone
+                || now_ms >= ready_at + READY_GRACE_MS
+            {
                 return self.enter_stopping(now_ms);
             }
             return Outcome::default();
         }
         let mut outcome = self.expire_preparing(now_ms);
-        let any_ready = self
-            .joiners()
-            .any(|party| party.progress == Progress::Prepared);
+        let any_ready = self.joiners().any(|party| {
+            party.progress == Progress::Prepared
+        });
         let everyone = self.joiners().all(|party| {
-            matches!(party.progress, Progress::Prepared) || party.progress.is_settled()
+            matches!(party.progress, Progress::Prepared)
+                || party.progress.is_settled()
         });
         if any_ready || everyone {
             let next = self.enter_stopping(now_ms);
@@ -966,8 +1027,9 @@ impl Move {
             if party.role == Role::Join
                 && party.progress == Progress::Preparing
             {
-                party.progress =
-                    Progress::Failed("没能及时准备好".to_owned());
+                party.progress = Progress::Failed(
+                    "没能及时准备好".to_owned(),
+                );
                 outcome.effects.push(Effect::Cancel {
                     operation_id: self.operation_id.clone(),
                     to: party.output.clone(),
@@ -983,7 +1045,8 @@ impl Move {
         for party in &mut self.parties {
             if party.role == Role::Leave {
                 party.progress = Progress::Stopping;
-                party.deadline_ms = now_ms + STOP_TIMEOUT_MS;
+                party.deadline_ms =
+                    now_ms + STOP_TIMEOUT_MS;
                 effects.push(Effect::Stop {
                     operation_id: self.operation_id.clone(),
                     from: party.output.clone(),
@@ -1001,13 +1064,23 @@ impl Move {
 
     /// 停止：走的都停了才开始新来的;有一台明说停不下来就整次撤回;等过了头进「待确认」。
     fn stopping(&mut self, now_ms: u64) -> Outcome {
-        let failed = self.parties.iter().find_map(|party| match &party.progress {
-            Progress::Failed(why) if party.role == Role::Leave => Some(format!(
-                "{} 停不下来: {why}",
-                party.output.name().unwrap_or("本机")
-            )),
-            _ => None,
-        });
+        let failed =
+            self.parties.iter().find_map(|party| {
+                match &party.progress {
+                    Progress::Failed(why)
+                        if party.role == Role::Leave =>
+                    {
+                        Some(format!(
+                            "{} 停不下来: {why}",
+                            party
+                                .output
+                                .name()
+                                .unwrap_or("本机")
+                        ))
+                    }
+                    _ => None,
+                }
+            });
         if let Some(why) = failed {
             return Outcome {
                 effects: withdraw(self),
@@ -1019,14 +1092,17 @@ impl Move {
             .parties
             .iter()
             .filter(|party| party.role == Role::Leave)
-            .all(|party| party.progress == Progress::Stopped);
+            .all(|party| {
+                party.progress == Progress::Stopped
+            });
         if all_stopped {
             return self.enter_starting(now_ms);
         }
         if self.phase == Phase::Running(Step::Stopping)
             && now_ms > self.deadline_ms
         {
-            self.phase = Phase::Unconfirmed(Doubt::SourceStop);
+            self.phase =
+                Phase::Unconfirmed(Doubt::SourceStop);
             for party in &mut self.parties {
                 if party.role == Role::Leave
                     && party.progress == Progress::Stopping
@@ -1054,16 +1130,23 @@ impl Move {
     }
 
     /// 叫已经备好、还没叫过的新来者开始。
-    fn start_prepared(&mut self, now_ms: u64) -> Vec<Effect> {
+    fn start_prepared(
+        &mut self,
+        now_ms: u64,
+    ) -> Vec<Effect> {
         let position_ms = self.anchor_ms().unwrap_or(0);
-        let playing = self.plan.as_ref().is_some_and(|plan| plan.playing);
+        let playing = self
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.playing);
         let mut effects = Vec::new();
         for party in &mut self.parties {
             if party.role == Role::Join
                 && party.progress == Progress::Prepared
             {
                 party.progress = Progress::Starting;
-                party.deadline_ms = now_ms + START_TIMEOUT_MS;
+                party.deadline_ms =
+                    now_ms + START_TIMEOUT_MS;
                 effects.push(Effect::Start {
                     operation_id: self.operation_id.clone(),
                     to: party.output.clone(),
@@ -1082,13 +1165,15 @@ impl Move {
         outcome.moved |= !late.is_empty();
         outcome.effects.extend(late);
 
-        let essential = self
-            .essential()
-            .map(|party| (party.output.clone(), party.progress.clone()));
+        let essential = self.essential().map(|party| {
+            (party.output.clone(), party.progress.clone())
+        });
         for party in &mut self.parties {
             let is_essential = essential
                 .as_ref()
-                .is_some_and(|(output, _)| same(output, &party.output));
+                .is_some_and(|(output, _)| {
+                    same(output, &party.output)
+                });
             if party.role == Role::Join
                 && party.progress == Progress::Starting
                 && !is_essential
@@ -1124,23 +1209,31 @@ impl Move {
                         .collect();
                     effects.push(self.abort());
                     outcome.effects.extend(effects);
-                    outcome.done = Some(Done::Fail(format!(
-                        "目标没能开始播放: {why};原来那台已经停在原处"
-                    )));
+                    outcome.done = Some(Done::Fail(
+                        format!(
+                            "目标没能开始播放: {why};原来那台已经停在原处"
+                        ),
+                    ));
                     return outcome;
                 }
                 Progress::Started => {}
                 _ => {
-                    if self.phase == Phase::Running(Step::Starting)
+                    if self.phase
+                        == Phase::Running(Step::Starting)
                         && now_ms > self.deadline_ms
                     {
-                        self.phase = Phase::Unconfirmed(Doubt::TargetStart);
+                        self.phase = Phase::Unconfirmed(
+                            Doubt::TargetStart,
+                        );
                         if let Some(party) = self
                             .parties
                             .iter_mut()
-                            .find(|party| same(&party.output, &output))
+                            .find(|party| {
+                                same(&party.output, &output)
+                            })
                         {
-                            party.progress = Progress::Unconfirmed;
+                            party.progress =
+                                Progress::Unconfirmed;
                         }
                         outcome.moved = true;
                     }
@@ -1148,7 +1241,10 @@ impl Move {
                 }
             }
         }
-        if self.joiners().all(|party| party.progress.is_settled()) {
+        if self
+            .joiners()
+            .all(|party| party.progress.is_settled())
+        {
             outcome.done = Some(Done::Commit);
         }
         outcome
@@ -1172,7 +1268,8 @@ fn withdraw(moving: &Move) -> Vec<Effect> {
             party.role == Role::Join
                 && matches!(
                     party.progress,
-                    Progress::Preparing | Progress::Prepared
+                    Progress::Preparing
+                        | Progress::Prepared
                 )
         })
         .map(|party| Effect::Cancel {

@@ -128,5 +128,8 @@ fn a_paused_start_stays_silent() {
         !heard.join().expect("拉采样的线程不该崩"),
         "暂停着交进去的不该出声"
     );
-    assert!(shared.is_paused(), "暂停归同步源,播放器本身一直在放");
+    assert!(
+        shared.is_paused(),
+        "暂停归同步源,播放器本身一直在放"
+    );
 }

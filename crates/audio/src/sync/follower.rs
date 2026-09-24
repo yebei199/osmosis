@@ -78,7 +78,8 @@ impl Follower {
         block_frames: u64,
     ) -> Decision {
         let frames = |ns: i64| ns as f64 * rate / 1e9;
-        let nanos = |frames: f64| (frames * 1e9 / rate) as i64;
+        let nanos =
+            |frames: f64| (frames * 1e9 / rate) as i64;
 
         if *target == Target::Free {
             self.running = false;
@@ -89,7 +90,8 @@ impl Follower {
             };
         }
 
-        let Some(want_ns) = target.desired(present_ns) else {
+        let Some(want_ns) = target.desired(present_ns)
+        else {
             return self.hold(
                 target,
                 present_ns,
@@ -152,7 +154,9 @@ impl Follower {
         }
         let lead = target
             .until_start(present_ns)
-            .map(|ns| (ns as f64 * rate / 1e9).round() as u64)
+            .map(|ns| {
+                (ns as f64 * rate / 1e9).round() as u64
+            })
             .filter(|lead| *lead < block_frames);
         if lead.is_some() {
             // 起播就在这一块里:前导帧放完，下一帧正好是起播位置，已经对齐。

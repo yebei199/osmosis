@@ -100,7 +100,8 @@ struct Inner {
     /// 组里各成员报上来的故障(取不到媒体、跳不到位置),按设备 id。报好了就划掉。
     faults: Mutex<HashMap<String, String>>,
     /// 各成员报上来的输出路由，按设备 id。蓝牙、有线的标「未校准」。
-    routes: Mutex<HashMap<String, app_core::OutputRouteDto>>,
+    routes:
+        Mutex<HashMap<String, app_core::OutputRouteDto>>,
     /// 上一次推到界面上的组那一行 —— 变了才记一笔日志。
     group_text: Mutex<String>,
     /// 会话交回来、要在 UI 线程上做的本机那一步(准备 / 停止 / 开始 / 取消)。
@@ -218,7 +219,12 @@ impl Remote {
         lock(&self.inner.session)
             .members()
             .iter()
-            .map(|output| output.target().unwrap_or_default().to_owned())
+            .map(|output| {
+                output
+                    .target()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
             .collect()
     }
 
@@ -257,8 +263,8 @@ impl Remote {
             return;
         };
         let now = now_ms();
-        let Some((term, plan)) =
-            lock(&self.inner.group).publish(draft, cue, now_us, now)
+        let Some((term, plan)) = lock(&self.inner.group)
+            .publish(draft, cue, now_us, now)
         else {
             return;
         };
@@ -267,7 +273,8 @@ impl Remote {
             Some((held_term, seq, at)) => {
                 held_term != term
                     || seq != plan.seq
-                    || now.saturating_sub(at) >= HEARTBEAT_MS
+                    || now.saturating_sub(at)
+                        >= HEARTBEAT_MS
             }
             None => true,
         };
@@ -298,7 +305,10 @@ impl Remote {
     }
 
     /// 本机单调时刻换算成服务端时钟(微秒)。
-    pub fn to_server_us(&self, local_ns: i64) -> Option<u64> {
+    pub fn to_server_us(
+        &self,
+        local_ns: i64,
+    ) -> Option<u64> {
         let client = self.inner.client.get()?;
         let clock = client.clock();
         let clock = clock.lock().ok()?;
@@ -306,7 +316,11 @@ impl Remote {
     }
 
     /// 服务端纪元 `epoch` 上的时刻换算成本机单调时钟(纳秒)。纪元对不上就是 `None`。
-    pub fn to_local_ns(&self, epoch: u64, server_us: u64) -> Option<i64> {
+    pub fn to_local_ns(
+        &self,
+        epoch: u64,
+        server_us: u64,
+    ) -> Option<i64> {
         let client = self.inner.client.get()?;
         let clock = client.clock();
         let clock = clock.lock().ok()?;
@@ -666,7 +680,9 @@ impl Remote {
         log::info!(
             "换输出开始: 操作 {operation_id} -> [{}]{}",
             set.iter()
-                .map(|output| output.name().unwrap_or("本机"))
+                .map(|output| output
+                    .name()
+                    .unwrap_or("本机"))
                 .collect::<Vec<_>>()
                 .join(", "),
             plan.as_ref()
@@ -795,7 +811,10 @@ impl Remote {
                     },
                     Some(client),
                 ) => {
-                    client.commit_outputs(&operation_id, outputs);
+                    client.commit_outputs(
+                        &operation_id,
+                        outputs,
+                    );
                     self.settle();
                 }
                 (
@@ -987,9 +1006,10 @@ impl Remote {
 
     /// 组或计划变了：叫 UI 线程按新的样子重新对准本机播放(见 `music::playback::group`)。
     fn group_changed(&self) {
-        let _ = self.inner.weak.upgrade_in_event_loop(|ui| {
-            ui.global::<Shell>().invoke_group_changed();
-        });
+        let _ =
+            self.inner.weak.upgrade_in_event_loop(|ui| {
+                ui.global::<Shell>().invoke_group_changed();
+            });
     }
 
     /// 把输出设备与被遥控横幅这两行推到界面上。
@@ -1018,10 +1038,14 @@ impl Remote {
         let (group_text, member_ids) = {
             let session = lock(&self.inner.session);
             let faults = lock(&self.inner.faults);
-            let mut routes = lock(&self.inner.routes).clone();
+            let mut routes =
+                lock(&self.inner.routes).clone();
             // 本机也在组里时，本机的路由自己查(本机不给自己上报)。
             if let Some(route) = audio::route() {
-                routes.insert(String::new(), route_dto(route));
+                routes.insert(
+                    String::new(),
+                    route_dto(route),
+                );
             }
             (
                 describe_group(&session, &faults, &routes),
@@ -1029,7 +1053,10 @@ impl Remote {
                     .members()
                     .iter()
                     .map(|output| {
-                        output.target().unwrap_or_default().to_owned()
+                        output
+                            .target()
+                            .unwrap_or_default()
+                            .to_owned()
                     })
                     .collect::<Vec<_>>(),
             )
@@ -1063,7 +1090,10 @@ impl Remote {
 }
 
 /// 名册那一排芯片上标出谁在组里(空串是本机)。「加入 / 移出」那颗小键照它显示。
-pub(crate) fn mark_members(ui: &MainWindow, member_ids: &[String]) {
+pub(crate) fn mark_members(
+    ui: &MainWindow,
+    member_ids: &[String],
+) {
     use slint::Model as _;
 
     let rows = ui.global::<Shell>().get_devices();
@@ -1071,7 +1101,9 @@ pub(crate) fn mark_members(ui: &MainWindow, member_ids: &[String]) {
         let Some(mut row) = rows.row_data(index) else {
             continue;
         };
-        let member = member_ids.iter().any(|id| *id == row.id.as_str());
+        let member = member_ids
+            .iter()
+            .any(|id| *id == row.id.as_str());
         if row.member != member {
             row.member = member;
             rows.set_row_data(index, row);
@@ -1256,7 +1288,11 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                     plan.entry_id,
                     plan.position_us,
                     plan.anchor_us,
-                    if plan.playing { "播放" } else { "暂停" }
+                    if plan.playing {
+                        "播放"
+                    } else {
+                        "暂停"
+                    }
                 );
                 remote.group_changed();
             }
@@ -1283,14 +1319,25 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
             let fault_changed = {
                 let mut faults = lock(&inner.faults);
                 match &state.fault {
-                    Some(why) => faults.insert(from.clone(), why.clone()).as_ref() != Some(why),
+                    Some(why) => {
+                        faults
+                            .insert(
+                                from.clone(),
+                                why.clone(),
+                            )
+                            .as_ref()
+                            != Some(why)
+                    }
                     None => faults.remove(from).is_some(),
                 }
             };
             let route_changed = {
                 let mut routes = lock(&inner.routes);
                 match state.route {
-                    Some(route) => routes.insert(from.clone(), route) != Some(route),
+                    Some(route) => {
+                        routes.insert(from.clone(), route)
+                            != Some(route)
+                    }
                     None => routes.remove(from).is_some(),
                 }
             };
@@ -1614,10 +1661,18 @@ fn sync_cover(
 }
 
 /// 音频层查到的输出路由换成线上格式(#137 ⑤)。
-pub(crate) fn route_dto(route: audio::Route) -> app_core::OutputRouteDto {
+pub(crate) fn route_dto(
+    route: audio::Route,
+) -> app_core::OutputRouteDto {
     match route {
-        audio::Route::Speaker => app_core::OutputRouteDto::Speaker,
-        audio::Route::Bluetooth => app_core::OutputRouteDto::Bluetooth,
-        audio::Route::Wired => app_core::OutputRouteDto::Wired,
+        audio::Route::Speaker => {
+            app_core::OutputRouteDto::Speaker
+        }
+        audio::Route::Bluetooth => {
+            app_core::OutputRouteDto::Bluetooth
+        }
+        audio::Route::Wired => {
+            app_core::OutputRouteDto::Wired
+        }
     }
 }

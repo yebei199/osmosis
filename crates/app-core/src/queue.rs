@@ -297,7 +297,10 @@ impl Queue {
         let permutation = order.len() == seen.len()
             && order.iter().all(|&index| {
                 index < seen.len()
-                    && !std::mem::replace(&mut seen[index], true)
+                    && !std::mem::replace(
+                        &mut seen[index],
+                        true,
+                    )
             });
         if !permutation {
             return false;
@@ -306,7 +309,9 @@ impl Queue {
         self.order = order;
         self.cursor = current
             .and_then(|current| {
-                self.order.iter().position(|&index| index == current)
+                self.order
+                    .iter()
+                    .position(|&index| index == current)
             })
             .unwrap_or(0);
         self.shuffled = shuffled;

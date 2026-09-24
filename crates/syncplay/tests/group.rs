@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use contract::{DeviceDto, GroupPlanDto, LoopModeDto, TrackDto};
+use contract::{
+    DeviceDto, GroupPlanDto, LoopModeDto, TrackDto,
+};
 use server::syncplay::signaling;
 use syncplay::clock::monotonic_ns;
 use syncplay::{Client, Event};
@@ -14,18 +16,26 @@ const TOKEN: &str = "test-token";
 const PATIENCE: Duration = Duration::from_secs(5);
 
 async fn start_server() -> SocketAddr {
-    let app = signaling::unauthenticated_test_router(signaling::Timing::default());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("绑不上端口");
+    let app = signaling::unauthenticated_test_router(
+        signaling::Timing::default(),
+    );
+    let listener =
+        tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("绑不上端口");
     let addr = listener.local_addr().expect("取不到地址");
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("服务端挂了");
+        axum::serve(listener, app)
+            .await
+            .expect("服务端挂了");
     });
     addr
 }
 
-fn spawn_client(addr: SocketAddr, id: &str) -> (Client, mpsc::Receiver<Event>) {
+fn spawn_client(
+    addr: SocketAddr,
+    id: &str,
+) -> (Client, mpsc::Receiver<Event>) {
     let (tx, rx) = mpsc::channel();
     let tx = Arc::new(std::sync::Mutex::new(tx));
     let client = Client::start(
@@ -36,7 +46,10 @@ fn spawn_client(addr: SocketAddr, id: &str) -> (Client, mpsc::Receiver<Event>) {
         },
         || Some(TOKEN.to_owned()),
         move |event| {
-            let _ = tx.lock().expect("事件通道锁中毒").send(event);
+            let _ = tx
+                .lock()
+                .expect("事件通道锁中毒")
+                .send(event);
         },
     );
     (client, rx)
@@ -54,7 +67,10 @@ async fn wait_for<T>(
         {
             return picked;
         }
-        assert!(tokio::time::Instant::now() < deadline, "等 {what} 超时");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "等 {what} 超时"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -101,7 +117,9 @@ async fn the_clock_converges_against_the_server() {
     assert_eq!(epoch, server::syncplay::clock::epoch());
     let server_us = server::syncplay::clock::now_us();
     let local = monotonic_ns();
-    let converted = clock.to_local_ns(epoch, server_us).expect("纪元对得上就换算得了");
+    let converted = clock
+        .to_local_ns(epoch, server_us)
+        .expect("纪元对得上就换算得了");
     assert!(
         (converted - local).abs() < 2_000_000,
         "换算差了 {}µs",
@@ -116,7 +134,10 @@ async fn the_masters_plan_reaches_the_follower() {
     let (phone, phone_rx) = spawn_client(addr, "phone");
     let (_pc, pc_rx) = spawn_client(addr, "pc");
     wait_for(&phone_rx, "名册", |event| match event {
-        Event::Roster(devices) => devices.iter().any(|d| d.id == "pc").then_some(()),
+        Event::Roster(devices) => devices
+            .iter()
+            .any(|d| d.id == "pc")
+            .then_some(()),
         _ => None,
     })
     .await;
@@ -127,26 +148,36 @@ async fn the_masters_plan_reaches_the_follower() {
         Some("phone".to_owned()),
     );
     wait_for(&phone_rx, "OutputsBegun", |event| {
-        matches!(event, Event::OutputsBegun { .. }).then_some(())
+        matches!(event, Event::OutputsBegun { .. })
+            .then_some(())
     })
     .await;
     phone.commit_outputs("op", None);
 
-    let (term, master) = wait_for(&pc_rx, "组通告", |event| match event {
-        Event::Group { term, master, members } if members.len() == 2 && *term == 1 => {
-            Some((*term, master.clone()))
-        }
-        _ => None,
-    })
-    .await;
+    let (term, master) =
+        wait_for(&pc_rx, "组通告", |event| match event {
+            Event::Group {
+                term,
+                master,
+                members,
+            } if members.len() == 2 && *term == 1 => {
+                Some((*term, master.clone()))
+            }
+            _ => None,
+        })
+        .await;
     assert_eq!(master.as_deref(), Some("phone"));
 
     phone.publish_plan(term, plan(1));
 
-    let (from, seq) = wait_for(&pc_rx, "共同计划", |event| match event {
-        Event::GroupPlan { from, plan, .. } => Some((from.clone(), plan.seq)),
-        _ => None,
-    })
-    .await;
+    let (from, seq) =
+        wait_for(&pc_rx, "共同计划", |event| match event
+        {
+            Event::GroupPlan { from, plan, .. } => {
+                Some((from.clone(), plan.seq))
+            }
+            _ => None,
+        })
+        .await;
     assert_eq!((from.as_str(), seq), ("phone", 1));
 }

@@ -68,13 +68,11 @@ pub(crate) fn open(
             backend::run(shared, &ready_tx, &stop_rx)
         })
         .map_err(|e| AudioError::Device(e.to_string()))?;
-    let mixer = ready_rx
-        .recv()
-        .map_err(|_| {
-            AudioError::Device(
-                "输出线程没开出设备就退出了".to_owned(),
-            )
-        })??;
+    let mixer = ready_rx.recv().map_err(|_| {
+        AudioError::Device(
+            "输出线程没开出设备就退出了".to_owned(),
+        )
+    })??;
     Ok(Output {
         mixer,
         stop: stop_tx,
@@ -90,7 +88,8 @@ pub(crate) fn watch(
 ) {
     loop {
         match stop.recv_timeout(WATCH_EVERY) {
-            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Ok(())
+            | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {

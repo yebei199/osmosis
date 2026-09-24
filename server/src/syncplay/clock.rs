@@ -39,7 +39,9 @@ mod tests {
     #[test]
     fn the_clock_moves_and_the_epoch_holds() {
         let (first, epoch) = (now_us(), epoch());
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(
+            std::time::Duration::from_millis(2),
+        );
         assert!(now_us() >= first + 1_000);
         assert_eq!(super::epoch(), epoch);
     }

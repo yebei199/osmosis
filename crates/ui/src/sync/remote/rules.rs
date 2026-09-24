@@ -206,7 +206,8 @@ pub fn describe_move(moving: &Move) -> String {
 
 /// 跟随端照已确认的计划放完、主端还是没动静：停下时说的那一句(#137 ⑤)。
 pub fn describe_master_lost() -> String {
-    "主端失联:已按确认的计划放完,停在这里。重新选择设备继续".to_owned()
+    "主端失联:已按确认的计划放完,停在这里。重新选择设备继续"
+        .to_owned()
 }
 
 /// 跟随端取不到组计划要的那一首时报的故障。它不自己从头放、不换下一首。
@@ -215,7 +216,10 @@ pub fn describe_media_fault(why: &str) -> String {
 }
 
 /// 跟随端手上那一版队列里没有计划要的那一条。
-pub fn describe_missing_entry(revision: i64, entry_id: i64) -> String {
+pub fn describe_missing_entry(
+    revision: i64,
+    entry_id: i64,
+) -> String {
     format!("第 {revision} 版里没有条目 {entry_id}")
 }
 
@@ -230,7 +234,8 @@ fn describe_parties(moving: &Move) -> String {
         .parties
         .iter()
         .map(|party| {
-            let name = party.output.name().unwrap_or("本机");
+            let name =
+                party.output.name().unwrap_or("本机");
             let verb = match party.role {
                 Role::Join => "加入",
                 Role::Leave => "移出",
@@ -250,8 +255,12 @@ fn describe_parties(moving: &Move) -> String {
         })
         .collect();
     let head = match moving.phase {
-        Phase::Unconfirmed(Doubt::SourceStop) => "待确认:有设备停没停不知道,新加入的先不放",
-        Phase::Unconfirmed(Doubt::TargetStart) => "待确认:新主端起没起不知道,原来的不自动恢复",
+        Phase::Unconfirmed(Doubt::SourceStop) => {
+            "待确认:有设备停没停不知道,新加入的先不放"
+        }
+        Phase::Unconfirmed(Doubt::TargetStart) => {
+            "待确认:新主端起没起不知道,原来的不自动恢复"
+        }
         Phase::Running(_) => "正在调整一起播放的设备",
     };
     format!("{head}:{}", parts.join("、"))
@@ -268,38 +277,57 @@ pub fn describe_group(
     faults: &HashMap<String, String>,
     routes: &HashMap<String, OutputRouteDto>,
 ) -> String {
-    let name = |output: &Output| output.name().unwrap_or("本机").to_owned();
+    let name = |output: &Output| {
+        output.name().unwrap_or("本机").to_owned()
+    };
     let members = session.members();
     let mut parts = Vec::new();
     if members.len() > 1 {
         let listed: Vec<String> = members
             .iter()
             .map(|member| {
-                if member.target() == session.output().target() {
+                if member.target()
+                    == session.output().target()
+                {
                     format!("{}(主端)", name(member))
                 } else {
                     name(member)
                 }
             })
             .collect();
-        parts.push(format!("一起播放: {}", listed.join("、")));
+        parts.push(format!(
+            "一起播放: {}",
+            listed.join("、")
+        ));
     }
     for member in session.unconfirmed() {
-        parts.push(format!("{} 待确认:开始了没有不知道", name(member)));
+        parts.push(format!(
+            "{} 待确认:开始了没有不知道",
+            name(member)
+        ));
     }
     for member in members {
-        if let Some(why) = member.target().and_then(|id| faults.get(id)) {
+        if let Some(why) =
+            member.target().and_then(|id| faults.get(id))
+        {
             parts.push(format!("{}: {why}", name(member)));
         }
     }
     if members.len() > 1 {
         for member in members {
-            let route = routes.get(member.target().unwrap_or_default());
+            let route = routes
+                .get(member.target().unwrap_or_default());
             if matches!(
                 route,
-                Some(OutputRouteDto::Bluetooth | OutputRouteDto::Wired)
+                Some(
+                    OutputRouteDto::Bluetooth
+                        | OutputRouteDto::Wired
+                )
             ) {
-                parts.push(format!("{}: {UNCALIBRATED}", name(member)));
+                parts.push(format!(
+                    "{}: {UNCALIBRATED}",
+                    name(member)
+                ));
             }
         }
     }
@@ -577,8 +605,14 @@ mod tests {
         );
         copy.push(describe_group(
             &grouped,
-            &HashMap::from([("pc1".to_owned(), "x".to_owned())]),
-            &HashMap::from([("pc1".to_owned(), OutputRouteDto::Bluetooth)]),
+            &HashMap::from([(
+                "pc1".to_owned(),
+                "x".to_owned(),
+            )]),
+            &HashMap::from([(
+                "pc1".to_owned(),
+                OutputRouteDto::Bluetooth,
+            )]),
         ));
         copy.push("待确认:开始了没有不知道".to_owned());
         for head in [
@@ -691,7 +725,11 @@ mod tests {
     fn the_group_row_names_the_members_and_the_master() {
         let session = Session::with_me("me");
         assert_eq!(
-            describe_group(&session, &HashMap::new(), &HashMap::new()),
+            describe_group(
+                &session,
+                &HashMap::new(),
+                &HashMap::new()
+            ),
             ""
         );
 
@@ -703,7 +741,11 @@ mod tests {
             0,
         );
         assert_eq!(
-            describe_group(&grouped, &HashMap::new(), &HashMap::new()),
+            describe_group(
+                &grouped,
+                &HashMap::new(),
+                &HashMap::new()
+            ),
             "一起播放: 本机(主端)、pc1"
         );
     }
@@ -714,16 +756,30 @@ mod tests {
         let mut grouped = Session::with_me("me");
         let _ = grouped.change(
             "op".to_owned(),
-            vec![Output::Local, device("pc1"), device("tv")],
+            vec![
+                Output::Local,
+                device("pc1"),
+                device("tv"),
+            ],
             None,
             0,
         );
-        let faults = HashMap::from([("tv".to_owned(), "取不到媒体".to_owned())]);
+        let faults = HashMap::from([(
+            "tv".to_owned(),
+            "取不到媒体".to_owned(),
+        )]);
 
-        let row = describe_group(&grouped, &faults, &HashMap::new());
+        let row = describe_group(
+            &grouped,
+            &faults,
+            &HashMap::new(),
+        );
 
         assert!(row.contains("tv: 取不到媒体"), "{row}");
-        assert!(!row.contains("pc1:"), "没报故障的不点名: {row}");
+        assert!(
+            !row.contains("pc1:"),
+            "没报故障的不点名: {row}"
+        );
     }
 
     /// 加入一台时状态行说的是「加入 pc1」,不是「切到本机」。
@@ -737,9 +793,14 @@ mod tests {
             0,
         );
 
-        let text = describe_move(session.moving().expect("该在进行"));
+        let text = describe_move(
+            session.moving().expect("该在进行"),
+        );
 
-        assert!(text.contains("加入 pc1(准备中)"), "{text}");
+        assert!(
+            text.contains("加入 pc1(准备中)"),
+            "{text}"
+        );
     }
 
     /// 蓝牙、有线的成员标「该路由未校准」;扬声器与查不出来的不标(查不出来不替它下结论)。
@@ -748,7 +809,11 @@ mod tests {
         let mut grouped = Session::with_me("me");
         let _ = grouped.change(
             "op".to_owned(),
-            vec![Output::Local, device("pc1"), device("tv")],
+            vec![
+                Output::Local,
+                device("pc1"),
+                device("tv"),
+            ],
             None,
             0,
         );
@@ -757,10 +822,23 @@ mod tests {
             ("pc1".to_owned(), OutputRouteDto::Bluetooth),
         ]);
 
-        let row = describe_group(&grouped, &HashMap::new(), &routes);
+        let row = describe_group(
+            &grouped,
+            &HashMap::new(),
+            &routes,
+        );
 
-        assert!(row.contains(&format!("pc1: {UNCALIBRATED}")), "{row}");
-        assert!(!row.contains(&format!("本机: {UNCALIBRATED}")), "{row}");
-        assert!(!row.contains(&format!("tv: {UNCALIBRATED}")), "查不出来不下结论: {row}");
+        assert!(
+            row.contains(&format!("pc1: {UNCALIBRATED}")),
+            "{row}"
+        );
+        assert!(
+            !row.contains(&format!("本机: {UNCALIBRATED}")),
+            "{row}"
+        );
+        assert!(
+            !row.contains(&format!("tv: {UNCALIBRATED}")),
+            "查不出来不下结论: {row}"
+        );
     }
 }

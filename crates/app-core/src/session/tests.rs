@@ -92,11 +92,7 @@ fn starting_local_to_pc1() -> Session {
     let mut session = stopping_local_to_pc1();
     session.on_ack(
         &Output::Local,
-        &ack(
-            "op",
-            OperationPhase::Stopped,
-            Some(63_000),
-        ),
+        &ack("op", OperationPhase::Stopped, Some(63_000)),
         NOW + 200,
     );
     session
@@ -177,11 +173,7 @@ fn a_move_walks_prepare_stop_start_commit_from_the_stop_anchor()
 
     let after_stopped = session.on_ack(
         &Output::Local,
-        &ack(
-            "op",
-            OperationPhase::Stopped,
-            Some(63_000),
-        ),
+        &ack("op", OperationPhase::Stopped, Some(63_000)),
         NOW + 200,
     );
     assert_eq!(
@@ -201,11 +193,7 @@ fn a_move_walks_prepare_stop_start_commit_from_the_stop_anchor()
 
     let after_started = session.on_ack(
         &device("pc1"),
-        &ack(
-            "op",
-            OperationPhase::Started,
-            Some(63_000),
-        ),
+        &ack("op", OperationPhase::Started, Some(63_000)),
         NOW + 300,
     );
     assert_eq!(
@@ -221,8 +209,7 @@ fn a_move_walks_prepare_stop_start_commit_from_the_stop_anchor()
 
 /// 源停下时没报位置,就按发起那一刻的位置开始 —— 总比从 0:00 强。
 #[test]
-fn a_stop_without_a_position_starts_from_the_planned_one()
- {
+fn a_stop_without_a_position_starts_from_the_planned_one() {
     let mut session = stopping_local_to_pc1();
 
     let effects = session.on_ack(
@@ -266,11 +253,7 @@ fn a_paused_source_starts_the_target_paused() {
 
     let effects = session.on_ack(
         &Output::Local,
-        &ack(
-            "op",
-            OperationPhase::Stopped,
-            Some(61_500),
-        ),
+        &ack("op", OperationPhase::Stopped, Some(61_500)),
         NOW + 200,
     );
 
@@ -330,11 +313,7 @@ fn a_remote_to_remote_move_stops_the_old_device_and_starts_the_new_one()
 
     let start = session.on_ack(
         &device("a"),
-        &ack(
-            "op",
-            OperationPhase::Stopped,
-            Some(63_000),
-        ),
+        &ack("op", OperationPhase::Stopped, Some(63_000)),
         NOW + 200,
     );
     assert_eq!(
@@ -389,12 +368,7 @@ fn a_move_with_nothing_playing_only_stops_the_source() {
     let mut session = session_at(device("a"));
 
     let begun = session
-        .begin(
-            "op".to_owned(),
-            Output::Local,
-            None,
-            NOW,
-        )
+        .begin("op".to_owned(), Output::Local, None, NOW)
         .expect("迁移该开得起来");
     assert_eq!(
         begun,
@@ -437,11 +411,7 @@ fn the_term_comes_only_from_the_committed_operation() {
     );
 
     session.committed("older", 9);
-    assert_eq!(
-        session.term(),
-        0,
-        "别的操作回的任期不算数"
-    );
+    assert_eq!(session.term(), 0, "别的操作回的任期不算数");
 
     session.committed("op", 4);
     assert_eq!(session.term(), 4);
@@ -468,8 +438,7 @@ fn selecting_the_current_output_is_refused() {
 
 /// 源已经在停了:不许半路换目标。
 #[test]
-fn a_new_target_is_refused_once_the_source_is_stopping()
-{
+fn a_new_target_is_refused_once_the_source_is_stopping() {
     let mut session = stopping_local_to_pc1();
 
     assert_eq!(
@@ -482,9 +451,7 @@ fn a_new_target_is_refused_once_the_source_is_stopping()
         Err(Refused::Busy)
     );
     assert_eq!(
-        session
-            .moving()
-            .map(|m| m.operation_id.clone()),
+        session.moving().map(|m| m.operation_id.clone()),
         Some("op".to_owned()),
         "进行中的那一次原样留着"
     );
@@ -494,8 +461,7 @@ fn a_new_target_is_refused_once_the_source_is_stopping()
 
 /// 准备途中换目标:旧目标撤掉(取消 + 作罢),新目标重新登记、准备。
 #[test]
-fn a_new_target_during_prepare_supersedes_the_old_one()
-{
+fn a_new_target_during_prepare_supersedes_the_old_one() {
     let mut session = Session::default();
     session
         .begin(
@@ -626,22 +592,13 @@ fn acks_after_a_finished_move_change_nothing() {
 #[test]
 fn a_duplicate_stop_starts_the_target_only_once() {
     let mut session = stopping_local_to_pc1();
-    let stopped = ack(
-        "op",
-        OperationPhase::Stopped,
-        Some(63_000),
-    );
+    let stopped =
+        ack("op", OperationPhase::Stopped, Some(63_000));
 
-    let first = session.on_ack(
-        &Output::Local,
-        &stopped,
-        NOW + 200,
-    );
-    let second = session.on_ack(
-        &Output::Local,
-        &stopped,
-        NOW + 210,
-    );
+    let first =
+        session.on_ack(&Output::Local, &stopped, NOW + 200);
+    let second =
+        session.on_ack(&Output::Local, &stopped, NOW + 210);
 
     assert_eq!(first.len(), 1);
     assert_eq!(
@@ -673,15 +630,11 @@ fn an_unconfirmed_stop_never_starts_the_target() {
 
 /// 停止的确认迟到了:照收,目标这才开始 —— 而且只开始一次。
 #[test]
-fn a_late_stop_after_the_doubt_starts_the_target_once()
-{
+fn a_late_stop_after_the_doubt_starts_the_target_once() {
     let mut session = stopping_local_to_pc1();
     session.tick(NOW + 100 + STOP_TIMEOUT_MS + 1);
-    let stopped = ack(
-        "op",
-        OperationPhase::Stopped,
-        Some(63_000),
-    );
+    let stopped =
+        ack("op", OperationPhase::Stopped, Some(63_000));
 
     let first = session.on_ack(
         &Output::Local,
@@ -728,11 +681,8 @@ fn an_unconfirmed_start_never_resumes_the_source() {
 fn a_late_start_after_the_doubt_commits_once() {
     let mut session = starting_local_to_pc1();
     session.tick(NOW + 200 + START_TIMEOUT_MS + 1);
-    let started = ack(
-        "op",
-        OperationPhase::Started,
-        Some(63_000),
-    );
+    let started =
+        ack("op", OperationPhase::Started, Some(63_000));
 
     let first = session.on_ack(
         &device("pc1"),
@@ -758,8 +708,7 @@ fn a_late_start_after_the_doubt_commits_once() {
 
 /// 在「源停止待确认」上重试:同一个操作号再叫源停一次。
 #[test]
-fn retrying_an_unconfirmed_stop_resends_the_same_stop()
-{
+fn retrying_an_unconfirmed_stop_resends_the_same_stop() {
     let mut session = stopping_local_to_pc1();
     session.tick(NOW + 100 + STOP_TIMEOUT_MS + 1);
 
@@ -782,8 +731,7 @@ fn retrying_an_unconfirmed_stop_resends_the_same_stop()
 ///
 /// 目标那头按操作号去重,已经开始过的不会再从锚点起一遍。
 #[test]
-fn retrying_an_unconfirmed_start_resends_the_same_start()
- {
+fn retrying_an_unconfirmed_start_resends_the_same_start() {
     let mut session = starting_local_to_pc1();
     session.tick(NOW + 200 + START_TIMEOUT_MS + 1);
 
@@ -822,10 +770,7 @@ fn abandoning_an_unconfirmed_stop_cancels_the_target() {
     );
     assert_eq!(session.output(), &Output::Local);
     assert_eq!(session.moving(), None);
-    assert!(
-        session.failure().is_some(),
-        "放弃了要说一句"
-    );
+    assert!(session.failure().is_some(), "放弃了要说一句");
 }
 
 /// 在「目标开始待确认」上放弃:叫目标停,**不恢复源**。
@@ -872,7 +817,7 @@ fn abandoning_an_unconfirmed_start_stops_the_target_and_never_resumes_the_source
 /// 还在正常推进时按不了重试也按不了放弃 —— 那两颗键只在「待确认」上出现。
 #[test]
 fn retry_and_abandon_do_nothing_while_the_move_is_running()
- {
+{
     let mut session = stopping_local_to_pc1();
 
     assert_eq!(session.retry(NOW + 150), Vec::new());
@@ -956,7 +901,7 @@ fn a_failed_prepare_keeps_the_reason() {
 /// 目标明确说开始失败了:作罢,输出仍是(已经停了的)源,**不自动恢复源**。
 #[test]
 fn a_failed_start_leaves_the_stopped_source_as_the_output()
- {
+{
     let mut session = starting_local_to_pc1();
 
     let effects = session.on_ack(
@@ -1030,10 +975,8 @@ fn a_move_the_server_rejects_is_dropped() {
         "别的操作的拒绝不算"
     );
 
-    session.rejected(
-        "op",
-        "device_offline: 设备 pc1 不在线",
-    );
+    session
+        .rejected("op", "device_offline: 设备 pc1 不在线");
     assert_eq!(session.moving(), None);
     assert!(
         session

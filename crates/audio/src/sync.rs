@@ -9,7 +9,8 @@ pub use follower::{
     SKIP_MAX_NS, Stats,
 };
 pub use source::{
-    Feed, Pulled, Report, SourceFeed, SyncShared, SyncSource,
+    Feed, Pulled, Report, SourceFeed, SyncShared,
+    SyncSource,
 };
 pub use timeline::{Anchor, Target};
 
