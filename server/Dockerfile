@@ -15,6 +15,9 @@
 # 所以不需要 .sqlx 离线目录。迁移由进程自己在启动时跑(server/src/db.rs)。
 #
 # 运行期环境变量:BIND、BANG_DREAM_ADDR、DATABASE_URL、INVITE_CODE。
+# 可选的一组(#126,听过的歌存进 RustFS):S3_ENDPOINT(集群内端点,不设则整套不启用)、
+# S3_PUBLIC_ENDPOINT(签给客户端的链接用,默认同上)、S3_BUCKET、S3_ACCESS_KEY_ID、
+# S3_SECRET_ACCESS_KEY、S3_REGION(默认 us-east-1)。设了 S3_ENDPOINT 却缺桶或凭据,启动即失败。
 
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS builder
 # protoc 生成 bang-dream 的 gRPC 客户端(server/build.rs);gcc-aarch64-linux-gnu 既是

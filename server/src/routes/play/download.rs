@@ -86,7 +86,7 @@ pub(crate) async fn download(
 
 /// 向上游要这一首的播放源。与 [`super::play`] 同一个档位 ——
 /// 下载与播放拿到的必须是同一条源,否则「听到的」和「存下的」会是两个版本。
-async fn play_source(
+pub(crate) async fn play_source(
     state: &AppState,
     account: &Account,
     track_id: &str,
@@ -148,7 +148,7 @@ async fn file_name_of(
 ///
 /// 不检查状态码的话,平台的 403 错误页会被当成音频原样转出去 —— 落到手机上是
 /// 一个几百字节、播不出声的 "mp3",而没有任何一层报过错。
-async fn fetch(
+pub(crate) async fn fetch(
     url: &str,
 ) -> Result<reqwest::Response, Failure> {
     let client = reqwest::Client::builder()

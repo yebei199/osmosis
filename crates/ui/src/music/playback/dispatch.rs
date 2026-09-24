@@ -250,7 +250,31 @@ fn submit_remote_play(
         return Dispatched::Unavailable("这一批太长");
     }
 
-    deck.remote.note_play_submitted();
+    let Some(tapped) =
+        tracks.get(index).map(|t| t.id.clone())
+    else {
+        return Dispatched::Unavailable(
+            "点的那首不在这一批里",
+        );
+    };
+    let redundant = deck.remote.with_view(|view, _| {
+        is_redundant_remote_tap(
+            view.track()
+                .map(|t| (t.id.as_str(), view.state())),
+            deck.remote.pending_play().as_deref(),
+            &tapped,
+        )
+    });
+    if redundant {
+        // 不挡的话每一下都是一次发布加一条 play:同一队列的版本号一路往上
+        // 推,对面每收一条都从头再放一遍(#113)。
+        log::info!(
+            "遥控点播: {tapped} 还在路上或已在放,这一下丢掉"
+        );
+        return Dispatched::Blocked("这一下是多余的");
+    }
+
+    deck.remote.note_play_submitted(&tapped);
 
     let deck = deck.clone();
     let weak = ui.as_weak();
@@ -259,10 +283,12 @@ fn submit_remote_play(
             &deck, &target, tracks, index,
         )
         .await;
-        if let Err(why) = outcome
-            && let Some(ui) = weak.upgrade()
-        {
-            crate::notice::show(&ui, why);
+        if let Err(why) = outcome {
+            log::warn!("遥控点播没交出去: {why}");
+            deck.remote.forget_pending_play();
+            if let Some(ui) = weak.upgrade() {
+                crate::notice::show(&ui, why);
+            }
         }
     });
 

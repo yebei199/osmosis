@@ -12,7 +12,8 @@
 - `library/`:我的库 —— 红心与歌单。
 - `sync/`:同播与遥控的界面状态。仅原生 target。
 - 根下:`music`(音乐页,最大的一块)、`media`(系统媒体控件的接缝)、
-  `wall`(卡墙的几何真相与每帧驱动)、`viz`、`progress`、`notice`、`theme`。
+  `wall`(卡墙的几何真相与每帧驱动)、`viz`、`progress`、`notice`、`theme`、
+  `update`(设置页的档位行与应用内升级,安装器由平台入口注入)。
 
 不负责领域规则(那在 `app-core`)、不负责请求(那在 `api`)、不负责渲染
 (那在 `render3d`)。依赖方向单向,反向永久禁止(`docs/adr/0003`)。

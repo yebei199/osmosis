@@ -124,3 +124,35 @@ fn logging_out_asks_without_flipping_the_state() {
         "登录态该纹丝不动 —— 清会话是 Rust 的活"
     );
 }
+
+/// 升级按钮(#129)只在有字时上屏:debug 包与桌面给空串,查询、下载进行中也给空串。
+/// 有字时点它报 `update-requested`,下一步做什么由 Rust 按状态定。
+#[test]
+fn the_update_button_shows_only_with_an_action() {
+    let ui = settings_page();
+    // 「关于」在页底。视口外被裁掉的元素遍历不到,窗口拉高让整页都在视口里。
+    ui.window()
+        .set_size(slint::LogicalSize::new(704.0, 2000.0));
+    let profile = ui.global::<ui::Profile>();
+    let button = |ui: &MainWindow| {
+        testing::ElementHandle::find_by_element_id(
+            ui,
+            "SettingsPage::update-button",
+        )
+        .next()
+    };
+
+    profile.set_update_action("".into());
+    assert!(button(&ui).is_none(), "没有动作时不该有按钮");
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = asked.clone();
+    profile.on_update_requested(move || {
+        seen.set(seen.get() + 1)
+    });
+    profile.set_update_action("检查更新".into());
+    button(&ui)
+        .expect("有动作时该有按钮")
+        .invoke_accessible_default_action();
+    assert_eq!(asked.get(), 1, "点升级按钮该报一次");
+}

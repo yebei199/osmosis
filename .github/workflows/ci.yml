@@ -106,6 +106,18 @@ jobs:
       - name: 安装 native 依赖
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev libopus-dev protobuf-compiler dbus ffmpeg
 
+      # server/tests/objects.rs 打的是真 S3。参数与 justfile 的 `rustfs` 配方逐字相同
+      # (改一处就改两处),测试里的默认端点与凭据两边都连得上。不写成 service:
+      # 那里的健康检查要在容器里跑 curl,而这个镜像不保证带它。
+      - name: 起 RustFS
+        run: |
+          docker run -d --name osmosis-rustfs \
+            -e RUSTFS_ACCESS_KEY=devonly -e RUSTFS_SECRET_KEY=devonly-secret \
+            -e RUSTFS_VOLUMES=/data -e RUSTFS_ADDRESS=:9000 \
+            -p 127.0.0.1:9900:9000 -v osmosis-rustfs:/data \
+            rustfs/rustfs@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+          timeout 120 sh -c 'until curl -sf http://127.0.0.1:9900/health >/dev/null; do sleep 1; done'
+
       # 每条 cargo 都带 `--config profile.dev.package."*".opt-level=0`,把根 Cargo.toml
       # 里那条依赖优化按掉。那条存在的理由是本地 3D 的帧率(见 Cargo.toml 的注释),
       # 而 CI 一帧都不画 —— 实测把依赖树按 -O3 编掉了三十多分钟,买到的东西这里用不上。

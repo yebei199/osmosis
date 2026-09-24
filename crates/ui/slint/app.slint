@@ -471,6 +471,10 @@ export component MainWindow inherits Window {
                     width: 100%;
                     height: 100%;
                     about-line: Profile.about-line;
+                    tier-line: Profile.tier-line;
+                    update-status: Profile.update-status;
+                    update-action: Profile.update-action;
+                    update-requested => { Profile.update-requested(); }
                     aurora-on: Shell.aurora-buttons-on;
                     aurora-toggled => { Shell.aurora-buttons-toggled(); }
                     theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }

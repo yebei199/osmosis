@@ -116,6 +116,10 @@ export global Shell {
     callback wall-tap(length, length);
     callback wall-double(length, length);
     callback wall-wheel(length);
+    // 不经指针的那条路:挪选中、播选中的那张。读屏与 MCP 脚本走它 ——
+    // 指针那条要在 3D 里命中,浮起后同一坐标未必还点得中同一张(#113)。
+    callback wall-step(int);
+    callback wall-confirm();
     // 列表 ⇄ 卡墙。目标由 Rust 记,塌回插值走完才真正换视图。
     callback set-view-wall(bool);
     // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
