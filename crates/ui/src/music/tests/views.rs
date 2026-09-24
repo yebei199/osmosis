@@ -201,3 +201,34 @@ fn an_answer_arriving_after_logout_is_dropped() {
         "登出后回来的响应不该留在缓存里"
     );
 }
+
+/// 队列与浏览视图分开:遥控发来的那一批(或迁移过来的那一批)装进队列起播,
+/// 眼前这页列表不跟着变成队列。点播时冻结的是用户那一刻看到的那批,
+/// 反过来,队列换批也不该改写用户正在看的视图。
+#[test]
+fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone() {
+    let (ui, deck) = deck_window_pumped();
+    visit(&ui, &deck, liked()).send(Ok(batch(&["l1", "l2"])));
+
+    play_batch(
+        &ui,
+        &deck,
+        vec![track_with_id("q1"), track_with_id("q2")],
+        0,
+    );
+
+    assert_eq!(
+        shown_ids(&ui),
+        ids(&["l1", "l2"]),
+        "队列换批改写了用户正在看的列表"
+    );
+    assert_eq!(
+        deck.tracks
+            .borrow()
+            .iter()
+            .map(|track| track.id.clone())
+            .collect::<Vec<_>>(),
+        ids(&["l1", "l2"]),
+        "点击时换回曲目用的那份副本也不该变成队列"
+    );
+}
