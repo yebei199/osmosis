@@ -445,7 +445,7 @@ fn executing_a_volume_command_remembers_it_for_this_device()
 /// 让音量的节流存盘到点。
 fn settle_volume_save() {
     i_slint_backend_testing::mock_elapsed_time(
-        VOLUME_SAVE_DELAY.as_millis() as u64 + 50,
+        VOLUME_SAVE_DELAY + core::time::Duration::from_millis(50),
     );
     slint::platform::update_timers_and_animations();
 }
