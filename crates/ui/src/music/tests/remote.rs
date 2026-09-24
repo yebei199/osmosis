@@ -1023,3 +1023,16 @@ fn the_same_batch_for_the_same_device_reuses_its_revision()
         "换一批就得重新发布"
     );
 }
+
+/// 遥控着的那台一条上报都还没来:不迁 —— 当成「什么都没在放」只会把它停掉,
+/// 它正在放的那一首就丢了。
+#[test]
+fn a_remote_that_has_not_reported_yet_is_not_moved() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+
+    select_output(&ui, &deck, "");
+
+    assert!(!deck.remote.is_moving());
+    assert_eq!(deck.remote.take_local_effect(), None);
+}

@@ -539,6 +539,13 @@ fn remote_plan(
 ) -> Result<Option<Plan>, String> {
     use app_core::RemotePlayState;
 
+    // 一条上报都还没收到:那台在放什么不知道。当成「什么都没在放」的话,
+    // 迁移只会把它停掉,而它正在放的那一首就这么丢了。
+    if !view.is_known() {
+        return Err(
+            "还不知道那台在放什么,等它报上来再切".to_owned(),
+        );
+    }
     let Some(track) = view.track().cloned() else {
         return Ok(None);
     };
