@@ -5,6 +5,8 @@
 //! 的绝对读数,得在同一个钟上比。
 
 /// `CLOCK_MONOTONIC`,纳秒。
+// 64 位目标上 `time_t` 就是 i64,32 位(armv7)上是 i32:转换得留着。
+#[allow(clippy::useless_conversion)]
 pub fn monotonic_ns() -> i64 {
     let mut ts = libc::timespec {
         tv_sec: 0,
