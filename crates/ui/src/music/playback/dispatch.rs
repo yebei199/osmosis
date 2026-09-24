@@ -880,7 +880,8 @@ pub(in crate::music) fn play_batch(
 }
 
 /// 音量停手多久之后才写盘(#137 ⑥)。
-pub(in crate::music) const VOLUME_SAVE_DELAY: core::time::Duration =
+pub(in crate::music) const VOLUME_SAVE_DELAY:
+    core::time::Duration =
     core::time::Duration::from_millis(400);
 
 /// 音量的节流存盘:拖滑块是一串连着的命令,每动一下都同步读写一次设置文件
@@ -904,10 +905,12 @@ impl VolumeSave {
             move || {
                 // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被
                 // 这次调音量顺手冲回默认值。
-                api::settings::save(&api::settings::Settings {
-                    volume: level.get(),
-                    ..api::settings::load()
-                });
+                api::settings::save(
+                    &api::settings::Settings {
+                        volume: level.get(),
+                        ..api::settings::load()
+                    },
+                );
             },
         );
     }

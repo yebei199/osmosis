@@ -224,8 +224,16 @@ fn only_replacing_starts_a_new_batch() {
     queue.shuffle(7);
     let _ = queue.jump_to(2);
     let _ = queue.next(7);
-    assert_eq!(queue.batch(), first, "同一批里挪动不算换批");
+    assert_eq!(
+        queue.batch(),
+        first,
+        "同一批里挪动不算换批"
+    );
 
     queue.replace(batch(3), 0);
-    assert_ne!(queue.batch(), first, "换一批(哪怕内容一样)就是新的一批");
+    assert_ne!(
+        queue.batch(),
+        first,
+        "换一批(哪怕内容一样)就是新的一批"
+    );
 }

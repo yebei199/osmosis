@@ -83,7 +83,10 @@ impl Playback {
     }
 
     /// 给当前这一代的准备挂上取消把手。
-    fn watch(&mut self, generation: u64) -> Option<Rc<Cancel>> {
+    fn watch(
+        &mut self,
+        generation: u64,
+    ) -> Option<Rc<Cancel>> {
         if generation != self.generation {
             return None;
         }
@@ -174,16 +177,20 @@ pub async fn play<Prepare, Fut, Commit, Ready, Error>(
             return Poll::Ready(None);
         }
         match preparing.as_mut().poll(cx) {
-            Poll::Ready(result) => Poll::Ready(Some(result)),
+            Poll::Ready(result) => {
+                Poll::Ready(Some(result))
+            }
             Poll::Pending => {
-                *cancel.waker.borrow_mut() = Some(cx.waker().clone());
+                *cancel.waker.borrow_mut() =
+                    Some(cx.waker().clone());
                 Poll::Pending
             }
         }
     })
     .await;
     let Some(prepared) = prepared else { return };
-    let prepared = prepared.map_err(|error| error.to_string());
+    let prepared =
+        prepared.map_err(|error| error.to_string());
 
     // 准备期间用户可能又点了别的歌。过期的这次连播放器都不许碰,
     // 备好的源就地丢掉。
@@ -407,7 +414,10 @@ mod tests {
 
     impl std::task::Wake for Flag {
         fn wake(self: std::sync::Arc<Self>) {
-            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.0.store(
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+            );
         }
     }
 
@@ -437,7 +447,9 @@ mod tests {
             },
             |()| committed.set(committed.get() + 1),
         ));
-        assert!(first.as_mut().poll(&mut context).is_pending());
+        assert!(
+            first.as_mut().poll(&mut context).is_pending()
+        );
 
         // 用户点了另一首
         block_on(play(
@@ -448,7 +460,8 @@ mod tests {
         ));
 
         assert!(
-            flag.0.load(std::sync::atomic::Ordering::SeqCst),
+            flag.0
+                .load(std::sync::atomic::Ordering::SeqCst),
             "被顶掉的那次该被唤醒,好让它当场结束"
         );
         assert!(
@@ -456,7 +469,11 @@ mod tests {
             "被顶掉的那次再被轮询就该结束,不等下载跑完"
         );
         assert!(dropped.get(), "它的准备工作该被丢弃");
-        assert_eq!(committed.get(), 1, "只有后点的那首出声");
+        assert_eq!(
+            committed.get(),
+            1,
+            "只有后点的那首出声"
+        );
         assert_eq!(
             playback.borrow().state(),
             &PlaybackState::Playing(track("2"))
@@ -484,12 +501,22 @@ mod tests {
             },
             |()| {},
         ));
-        assert!(loading.as_mut().poll(&mut context).is_pending());
+        assert!(
+            loading
+                .as_mut()
+                .poll(&mut context)
+                .is_pending()
+        );
 
         playback.borrow_mut().stop();
 
-        assert!(loading.as_mut().poll(&mut context).is_ready());
+        assert!(
+            loading.as_mut().poll(&mut context).is_ready()
+        );
         assert!(dropped.get());
-        assert_eq!(playback.borrow().state(), &PlaybackState::Idle);
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Idle
+        );
     }
 }

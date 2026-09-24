@@ -1070,9 +1070,14 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
 /// 进度的快档那一趟用它(#137 ⑥):上报每秒一次,两次之间靠
 /// `RemoteView::position_ms` 按本地时钟推 —— 只在 Playing 且上报新鲜时往前走。
 pub fn push_progress(ui: &MainWindow, remote: &Remote) {
-    let Some((track, position)) = remote.with_view(|view, now| {
-        Some((view.track()?.clone(), view.position_ms(now)))
-    }) else {
+    let Some((track, position)) =
+        remote.with_view(|view, now| {
+            Some((
+                view.track()?.clone(),
+                view.position_ms(now),
+            ))
+        })
+    else {
         return;
     };
     let seconds = position as f64 / 1_000.0;
@@ -1080,8 +1085,11 @@ pub fn push_progress(ui: &MainWindow, remote: &Remote) {
         crate::progress::ratio(seconds, track.duration_ms),
     );
     ui.global::<Player>().set_progress_text(
-        crate::progress::progress_text(seconds, track.duration_ms)
-            .into(),
+        crate::progress::progress_text(
+            seconds,
+            track.duration_ms,
+        )
+        .into(),
     );
 }
 
@@ -1303,7 +1311,10 @@ fn sync_cover(
             move || remote.cover_is_current(&id)
         };
         let Some(decoded) =
-            crate::imagery::cover::decode_off_thread(bytes, wanted).await
+            crate::imagery::cover::decode_off_thread(
+                bytes, wanted,
+            )
+            .await
         else {
             return;
         };

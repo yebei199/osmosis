@@ -423,7 +423,9 @@ fn a_seek_marks_buffering_right_away() {
 #[test]
 fn executing_a_volume_command_remembers_it_for_this_device()
 {
-    let _file = SETTINGS_FILE.lock().unwrap_or_else(|e| e.into_inner());
+    let _file = SETTINGS_FILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
@@ -445,12 +447,14 @@ fn executing_a_volume_command_remembers_it_for_this_device()
 
 /// 设置文件是进程级的一份,测试并行跑。会真写它的测试(让节流存盘到点的那几条)
 /// 先拿这把锁,否则一条断言到的是另一条刚写进去的数。
-static SETTINGS_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static SETTINGS_FILE: std::sync::Mutex<()> =
+    std::sync::Mutex::new(());
 
 /// 让音量的节流存盘到点。
 fn settle_volume_save() {
     i_slint_backend_testing::mock_elapsed_time(
-        VOLUME_SAVE_DELAY + core::time::Duration::from_millis(50),
+        VOLUME_SAVE_DELAY
+            + core::time::Duration::from_millis(50),
     );
     slint::platform::update_timers_and_animations();
 }
@@ -459,7 +463,9 @@ fn settle_volume_save() {
 /// 就是每帧一次磁盘 IO(#137 ⑥)。停手之后只写一次,写的是最后那个值。
 #[test]
 fn a_volume_drag_is_saved_once_it_settles() {
-    let _file = SETTINGS_FILE.lock().unwrap_or_else(|e| e.into_inner());
+    let _file = SETTINGS_FILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
@@ -1012,5 +1018,8 @@ fn remote_progress_holds_while_paused() {
 
     let duration = track().duration_ms as f32;
     let ratio = ui.global::<Player>().get_progress_ratio();
-    assert!((ratio - 10_000.0 / duration).abs() < 1e-6, "暂停时进度走了: {ratio}");
+    assert!(
+        (ratio - 10_000.0 / duration).abs() < 1e-6,
+        "暂停时进度走了: {ratio}"
+    );
 }

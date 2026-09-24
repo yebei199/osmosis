@@ -166,7 +166,9 @@ fn fill(
     {
         Some(shown) => update_in_place(shown, rows),
         None => ui.global::<Library>().set_playlists(
-            slint::ModelRc::new(slint::VecModel::from(rows)),
+            slint::ModelRc::new(slint::VecModel::from(
+                rows,
+            )),
         ),
     }
     // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
@@ -185,7 +187,8 @@ fn update_in_place(
 ) {
     use slint::Model as _;
 
-    for (index, mut row) in rows.iter().cloned().enumerate() {
+    for (index, mut row) in rows.iter().cloned().enumerate()
+    {
         let Some(old) = shown.row_data(index) else {
             shown.push(row);
             continue;
@@ -266,17 +269,32 @@ mod tests {
 
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
-        let art = crate::imagery::artwork::Artwork::default();
+        let art =
+            crate::imagery::artwork::Artwork::default();
 
-        fill(&ui, &art, &[list("1", "甲"), list("2", "乙")]);
+        fill(
+            &ui,
+            &art,
+            &[list("1", "甲"), list("2", "乙")],
+        );
         let model = ui.global::<Library>().get_playlists();
 
-        fill(&ui, &art, &[list("1", "甲"), list("2", "乙改"), list("3", "丙")]);
+        fill(
+            &ui,
+            &art,
+            &[
+                list("1", "甲"),
+                list("2", "乙改"),
+                list("3", "丙"),
+            ],
+        );
 
         let now = ui.global::<Library>().get_playlists();
         assert!(now == model, "歌单列表整张换了模型");
-        let names: Vec<String> =
-            now.iter().map(|row| row.name.to_string()).collect();
+        let names: Vec<String> = now
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
         assert_eq!(names, ["甲", "乙改", "丙"]);
 
         fill(&ui, &art, &[list("3", "丙")]);

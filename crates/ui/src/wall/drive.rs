@@ -556,13 +556,17 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        ui.global::<Player>().set_tracks(slint::ModelRc::new(
-            slint::VecModel::from(rows),
-        ));
-        let asked = Rc::new(RefCell::new(Vec::<String>::new()));
+        ui.global::<Player>().set_tracks(
+            slint::ModelRc::new(slint::VecModel::from(
+                rows,
+            )),
+        );
+        let asked =
+            Rc::new(RefCell::new(Vec::<String>::new()));
         let seen = asked.clone();
-        ui.global::<Player>()
-            .on_play(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.global::<Player>().on_play(move |id| {
+            seen.borrow_mut().push(id.to_string())
+        });
 
         let mut d = WallDrive::new();
         d.start_play(&ui, 1);
@@ -573,7 +577,10 @@ mod tests {
             "该在点下去那一刻就起播"
         );
         assert!(d.dolly.is_some(), "镜头照推");
-        assert_eq!(ui.global::<Player>().get_tracks().row_count(), 2);
+        assert_eq!(
+            ui.global::<Player>().get_tracks().row_count(),
+            2
+        );
     }
 
     /// 不经指针挪选中:夹在两头,空墙谁也不选(#113)。

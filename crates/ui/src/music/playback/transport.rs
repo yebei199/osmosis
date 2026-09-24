@@ -416,21 +416,31 @@ pub(in crate::music) fn start_progress_tick(
     let deck = deck.clone();
     let weak = ui.as_weak();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, PROGRESS_TICK, move || {
-        let Some(ui) = weak.upgrade() else { return };
-        if ui.global::<Player>().get_is_playing() {
-            tick_progress(&ui, &deck);
-        }
-    });
+    timer.start(
+        slint::TimerMode::Repeated,
+        PROGRESS_TICK,
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.global::<Player>().get_is_playing() {
+                tick_progress(&ui, &deck);
+            }
+        },
+    );
     // ponytail: 与自动续播那趟一样与进程同寿,leak 掉省一条回收通道。
     Box::leak(Box::new(timer));
 }
 
 /// 进度快档的一拍。
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn tick_progress(ui: &MainWindow, deck: &Deck) {
+pub(in crate::music) fn tick_progress(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
     if deck.remote.is_remote() {
-        crate::sync::remote::push_progress(ui, &deck.remote);
+        crate::sync::remote::push_progress(
+            ui,
+            &deck.remote,
+        );
         return;
     }
     let Ok(player) = deck.player.as_ref() else {

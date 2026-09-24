@@ -626,7 +626,10 @@ pub(super) fn mark_loading(
 ) {
     let model = ui.global::<Player>().get_tracks();
     if model.row_count() != deck.tracks.borrow().len()
-        || model.as_any().downcast_ref::<VecModel<TrackRow>>().is_none()
+        || model
+            .as_any()
+            .downcast_ref::<VecModel<TrackRow>>()
+            .is_none()
     {
         push_rows(ui, deck, loading);
         return;

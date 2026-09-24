@@ -37,7 +37,11 @@ fn an_unchanged_local_queue_is_not_rebuilt_every_second() {
 
     let (ui, deck) = deck_window();
     deck.queue.borrow_mut().replace(
-        vec![track_with_id("a"), track_with_id("b"), track_with_id("c")],
+        vec![
+            track_with_id("a"),
+            track_with_id("b"),
+            track_with_id("c"),
+        ],
         0,
     );
     ui.global::<Viz>().set_queue_page_open(true);
@@ -64,9 +68,10 @@ fn an_unchanged_local_queue_is_not_rebuilt_every_second() {
     );
 
     // 换了一批才重建
-    deck.queue
-        .borrow_mut()
-        .replace(vec![track_with_id("x"), track_with_id("y")], 0);
+    deck.queue.borrow_mut().replace(
+        vec![track_with_id("x"), track_with_id("y")],
+        0,
+    );
     refresh(&ui, &deck);
     let titles: Vec<String> = ui
         .global::<Viz>()
@@ -83,12 +88,21 @@ fn a_queue_fetch_in_flight_is_not_sent_again() {
     let mirror = QueueMirror::default();
 
     assert!(mirror.begin_fetch(7, 1), "第一次照发");
-    assert!(!mirror.begin_fetch(7, 1), "同一版还在路上,不再发一次");
+    assert!(
+        !mirror.begin_fetch(7, 1),
+        "同一版还在路上,不再发一次"
+    );
     assert!(mirror.begin_fetch(7, 2), "新的一版照发");
 
     mirror.put(7, 2, Vec::new());
-    assert!(!mirror.begin_fetch(7, 2), "已经拿到的这一版不再取");
+    assert!(
+        !mirror.begin_fetch(7, 2),
+        "已经拿到的这一版不再取"
+    );
     assert!(mirror.begin_fetch(7, 3));
     mirror.fetch_failed(7, 3);
-    assert!(mirror.begin_fetch(7, 3), "取失败了下一秒可以重来");
+    assert!(
+        mirror.begin_fetch(7, 3),
+        "取失败了下一秒可以重来"
+    );
 }

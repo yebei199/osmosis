@@ -64,7 +64,11 @@ pub struct Slot<'a>(&'a DecodeGate);
 
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
-        let mut free = self.0.free.lock().unwrap_or_else(|e| e.into_inner());
+        let mut free = self
+            .0
+            .free
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *free += 1;
         self.0.freed.notify_one();
     }
@@ -80,9 +84,15 @@ impl DecodeGate {
 
     /// 等到有空名额再进去。只在后台线程上调 —— 它会阻塞。
     pub fn enter(&self) -> Slot<'_> {
-        let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
+        let mut free = self
+            .free
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         while *free == 0 {
-            free = self.freed.wait(free).unwrap_or_else(|e| e.into_inner());
+            free = self
+                .freed
+                .wait(free)
+                .unwrap_or_else(|e| e.into_inner());
         }
         *free -= 1;
         Slot(self)
@@ -248,8 +258,8 @@ mod tests {
     /// 最小合法 PNG 解出 1×1 图:bytes → 像素缓冲 → slint::Image 全链可用。
     #[test]
     fn decodes_minimal_png() {
-        let decoded =
-            decode_detached(&png(1, 1)).expect("合法 PNG 应能解码");
+        let decoded = decode_detached(&png(1, 1))
+            .expect("合法 PNG 应能解码");
         let img = slint::Image::from_rgba8(decoded.full);
         let pixels = decoded.pixels;
         assert_eq!(img.size().width, 1);
@@ -261,7 +271,8 @@ mod tests {
     /// 上千像素的原图原样搬进 GPU 只是白费内存 —— 点云只有 183×183 个采样点。
     #[test]
     fn decode_shrinks_large_covers_to_the_texture_budget() {
-        let pixels = decode_detached(&png(1200, 800)).map(|d| d.pixels)
+        let pixels = decode_detached(&png(1200, 800))
+            .map(|d| d.pixels)
             .expect("合法 PNG 应能解码");
         assert_eq!(pixels.width, COVER_TEXTURE_SIZE);
         // 1200:800 = 3:2,512 宽对应 341 高(四舍五入)。
@@ -276,7 +287,8 @@ mod tests {
     /// 小于预算的封面原样留着,不放大 —— 放大只会糊,一个格点也多不出来。
     #[test]
     fn decode_keeps_small_covers_untouched() {
-        let pixels = decode_detached(&png(300, 300)).map(|d| d.pixels)
+        let pixels = decode_detached(&png(300, 300))
+            .map(|d| d.pixels)
             .expect("合法 PNG 应能解码");
         assert_eq!(
             (pixels.width, pixels.height),
@@ -405,13 +417,18 @@ mod tests {
     // ── 离开 UI 线程解码(#137 ⑥)──
 
     /// 忙等着把一个 future 跑完。解码在后台线程上,这里只管轮询到它回来。
-    fn block_on<F: core::future::Future>(future: F) -> F::Output {
+    fn block_on<F: core::future::Future>(
+        future: F,
+    ) -> F::Output {
         use core::task::{Context, Poll};
 
-        let mut cx = Context::from_waker(core::task::Waker::noop());
+        let mut cx =
+            Context::from_waker(core::task::Waker::noop());
         let mut future = Box::pin(future);
         loop {
-            if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+            if let Poll::Ready(value) =
+                future.as_mut().poll(&mut cx)
+            {
                 return value;
             }
             std::thread::yield_now();
@@ -424,16 +441,25 @@ mod tests {
         fn must_cross_threads<T: Send>(_: &T) {}
 
         let caller = std::thread::current().id();
-        let ran_on = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let ran_on = std::sync::Arc::new(
+            std::sync::Mutex::new(None),
+        );
         let probe = ran_on.clone();
-        let decoded = block_on(decode_off_thread(png(8, 8), move || {
-            *probe.lock().unwrap() = Some(std::thread::current().id());
-            true
-        }))
+        let decoded = block_on(decode_off_thread(
+            png(8, 8),
+            move || {
+                *probe.lock().unwrap() =
+                    Some(std::thread::current().id());
+                true
+            },
+        ))
         .expect("合法 PNG 应能解码");
 
         must_cross_threads(&decoded);
-        assert_eq!((decoded.pixels.width, decoded.pixels.height), (8, 8));
+        assert_eq!(
+            (decoded.pixels.width, decoded.pixels.height),
+            (8, 8)
+        );
         assert_ne!(
             *ran_on.lock().unwrap(),
             Some(caller),
@@ -444,7 +470,12 @@ mod tests {
     /// 轮到它解码时已经不是当前这首了:直接放弃,不白解一张兆级的图。
     #[test]
     fn a_cover_no_longer_wanted_is_not_decoded() {
-        assert!(block_on(decode_off_thread(png(8, 8), || false)).is_none());
+        assert!(
+            block_on(decode_off_thread(png(8, 8), || {
+                false
+            }))
+            .is_none()
+        );
     }
 
     /// 同时在解的封面有上限:第二个要等第一个让出名额。
@@ -453,22 +484,34 @@ mod tests {
         let gate = std::sync::Arc::new(DecodeGate::new(1));
         let held = gate.enter();
 
-        let entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let entered = std::sync::Arc::new(
+            std::sync::atomic::AtomicBool::new(false),
+        );
         let waiting = {
-            let (gate, entered) = (gate.clone(), entered.clone());
+            let (gate, entered) =
+                (gate.clone(), entered.clone());
             std::thread::spawn(move || {
                 let _slot = gate.enter();
-                entered.store(true, std::sync::atomic::Ordering::SeqCst);
+                entered.store(
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
             })
         };
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(
+            std::time::Duration::from_millis(50),
+        );
         assert!(
-            !entered.load(std::sync::atomic::Ordering::SeqCst),
+            !entered
+                .load(std::sync::atomic::Ordering::SeqCst),
             "名额满了还是进去了"
         );
         drop(held);
         waiting.join().unwrap();
-        assert!(entered.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            entered
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
     }
 }

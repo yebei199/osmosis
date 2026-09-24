@@ -82,9 +82,15 @@ impl QueueMirror {
     }
 
     /// 要不要为这一版发一次取数:手上已有、或者同一版正在路上,都不发。
-    fn begin_fetch(&self, queue_id: i64, revision: i64) -> bool {
+    fn begin_fetch(
+        &self,
+        queue_id: i64,
+        revision: i64,
+    ) -> bool {
         let wanted = Some((queue_id, revision));
-        if self.holds(queue_id, revision) || self.fetching.get() == wanted {
+        if self.holds(queue_id, revision)
+            || self.fetching.get() == wanted
+        {
             return false;
         }
         self.fetching.set(wanted);
@@ -93,7 +99,8 @@ impl QueueMirror {
 
     /// 这一版的取数结束了(成败都算),下一秒可以再来。
     fn fetch_failed(&self, queue_id: i64, revision: i64) {
-        if self.fetching.get() == Some((queue_id, revision)) {
+        if self.fetching.get() == Some((queue_id, revision))
+        {
             self.fetching.set(None);
         }
     }
@@ -234,10 +241,10 @@ fn refresh_remote(
 
     if deck.queue_mirror.holds(queue_id, revision) {
         ui.global::<Viz>().set_queue_loading(false);
-        if !deck
-            .queue_mirror
-            .needs_rows(Shown::Remote { queue_id, revision })
-        {
+        if !deck.queue_mirror.needs_rows(Shown::Remote {
+            queue_id,
+            revision,
+        }) {
             fill_covers(ui, deck);
             return;
         }
@@ -437,10 +444,14 @@ fn fill_covers(ui: &MainWindow, deck: &Deck) {
         let Some(mut row) = model.row_data(index) else {
             continue;
         };
-        if row.cover.size().width > 0 || row.cover_url.is_empty() {
+        if row.cover.size().width > 0
+            || row.cover_url.is_empty()
+        {
             continue;
         }
-        if let Some(cover) = deck.thumbnails.cached(&row.cover_url) {
+        if let Some(cover) =
+            deck.thumbnails.cached(&row.cover_url)
+        {
             row.cover = cover;
             model.set_row_data(index, row);
         }

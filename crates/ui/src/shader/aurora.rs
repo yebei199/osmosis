@@ -24,7 +24,9 @@ const MIN_SATURATION: f32 = 0.25;
 const MIN_COLORFUL_RATIO: f32 = 0.05;
 
 /// 一张封面的三个主色。纯计算,可以在后台线程上做(见 `imagery::cover`)。
-pub(crate) fn colors_of(cover: &CoverPixels) -> Option<[[u8; 3]; 3]> {
+pub(crate) fn colors_of(
+    cover: &CoverPixels,
+) -> Option<[[u8; 3]; 3]> {
     dominant_colors(cover.width, cover.height, &cover.rgba)
 }
 
