@@ -28,11 +28,17 @@ pub struct InstanceLock {
 /// 占住这台机器上的"桌面实例"这个位置。已经有人占着就返回 `Err`。
 #[cfg(target_os = "linux")]
 pub fn claim() -> io::Result<InstanceLock> {
+    claim_named(LOCK_NAME)
+}
+
+/// 按名字占锁。名字单独拎出来是给测试用的:测试若用正式名字,就在跟机器上
+/// 并行跑的另一份测试、或开着的桌面实例抢同一把锁(#135)。
+#[cfg(target_os = "linux")]
+fn claim_named(name: &str) -> io::Result<InstanceLock> {
     use std::os::linux::net::SocketAddrExt;
     use std::os::unix::net::{SocketAddr, UnixListener};
 
-    let address =
-        SocketAddr::from_abstract_name(LOCK_NAME)?;
+    let address = SocketAddr::from_abstract_name(name)?;
     // bind 失败(AddrInUse)就是"已经有一个在跑"。不去连它、不去问它是谁 ——
     // 这里只回答"能不能起",唤醒已有窗口是另一件事(眼下没有那个需求)。
     let socket = UnixListener::bind_addr(&address)?;
