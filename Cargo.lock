@@ -606,6 +606,8 @@ dependencies = [
  "similar-asserts",
  "stream-download",
  "tokio",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]
