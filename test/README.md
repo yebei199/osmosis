@@ -122,6 +122,24 @@ test/pick-bench.py report --picks list.jsonl --log app.log [--clock-offset 秒]
 - **被控端还锁着**。遥控器选回本机不通知被控端,那台仍挂着「正被 xx 遥控」,它自己的
   点歌全被锁挡掉(`played` 为 null)。先在它上面按「退出被遥控」。
 
+## move-e2e.py —— 选设备时控制条还在、接着放了吗(#137 ③)
+
+```sh
+test/move-e2e.py --port 8091 --to 小米 --out move.jsonl          # 遥控器是桌面
+test/move-e2e.py --ns-pid $(cat d1/ns.pid) --to 本机 --out back.jsonl  # ns-desktop 起的实例
+```
+
+选设备是一次迁移(目标准备 → 源停 → 目标从源停下的位置开始 → 确认)。脚本在遥控器上
+按抽屉里的输出芯片,之后每 100ms 采一次:控制条(`PlayerBar::title`)在不在、曲名变没变、
+状态行(`MainWindow::move-label`)走到哪、那颗芯片选中没有。判据:控制条全程在、曲名全程是
+选之前那一首、芯片最后被选中且状态行清空(确认了;快的时候整个迁移不到半秒,状态行未必
+采得到,所以只记不判)、确认之后进度读数不早于选之前 —— 是接着放,不是从 0:00 起。
+每次采样写一行 JSON 到 `--out`。
+
+它只看遥控器这一侧。源真的停了、目标真的响了,要另取两端的实际输出证据(桌面 PipeWire
+流的 corked、安卓 `dumpsys audio` 的 AudioTrack 状态),以及两端日志里同一个操作号的
+`迁移回话`(带位置)。
+
 ## playlist-fill-e2e.sh —— 歌单页铺满了吗
 
 跑之前:应用起着、已登录(`test/mcp-login.sh`),账号里至少有一个歌单。

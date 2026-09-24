@@ -34,6 +34,7 @@ fn report(
         queue_len: 1,
         epoch: 1_700_000_000_000,
         state_seq: position_ms,
+        operation: None,
     }
 }
 
@@ -205,7 +206,7 @@ fn a_command_from_the_controller_lands_in_the_inbox() {
 #[test]
 fn a_report_from_the_target_updates_the_mirror() {
     let (_ui, deck) = deck_window();
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
 
     crate::sync::remote::handle(
         &Event::RemoteState {
@@ -235,7 +236,7 @@ fn a_report_from_the_target_updates_the_mirror() {
 #[test]
 fn a_report_from_another_device_is_ignored() {
     let (_ui, deck) = deck_window();
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
 
     crate::sync::remote::handle(
         &Event::RemoteState {
@@ -258,7 +259,7 @@ fn a_report_from_another_device_is_ignored() {
 #[test]
 fn revoking_control_returns_the_output_to_local() {
     let (_ui, deck) = deck_window();
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
     assert!(deck.remote.is_remote(), "先得真的切过去");
 
     crate::sync::remote::handle(
@@ -284,7 +285,7 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change()
 {
     let (ui, deck) = deck_window();
     ui.global::<crate::Viz>().set_cover_art(image());
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
@@ -336,7 +337,7 @@ fn image() -> slint::Image {
 #[test]
 fn a_remote_toggle_does_not_touch_the_local_transport() {
     let (ui, deck) = deck_window();
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
@@ -370,7 +371,7 @@ fn a_remote_toggle_does_not_touch_the_local_transport() {
 fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
  {
     let (ui, deck) = deck_window();
-    deck.remote.select("pc", "pc");
+    deck.remote.assume_output("pc", "pc");
     assert!(
         !deck.remote.took_local_edge(),
         "声音还在那台设备上,这不是回本机"
@@ -448,7 +449,9 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
 
     let (ui, deck) = deck_window();
     // 回调只有 `bind` 接得上 —— fixture 里那副 Deck 是 `detached` 的。
+    // 输出芯片接在音乐页(选设备 = 迁移,要从 `Deck` 里凑迁过去的那一份)。
     crate::sync::remote::bind(&ui, &deck.remote);
+    bind_session(&ui, &deck);
     ui.global::<crate::Shell>().set_devices(ModelRc::new(
         VecModel::from(vec![crate::DeviceRow {
             id: "pc".into(),
@@ -469,10 +472,17 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
     .next()
     .expect("个人页上该有 pc1 那颗输出芯片");
     chip.invoke_accessible_default_action();
+    // 选设备是一次迁移(#137 ③):本机什么都没在放,没有东西可迁,只剩「停源、
+    // 确认」两步。停源是本机那一步,交给 UI 线程执行 —— 无头测试里事件循环
+    // 不转,这里替它把收件箱倒一遍。
+    while let Some(effect) = deck.remote.take_local_effect()
+    {
+        run_local(&ui, &deck, effect);
+    }
 
     assert!(
         deck.remote.is_remote(),
-        "点了芯片就该把输出交给那台设备"
+        "点了芯片、本机停源确认之后,输出该交给那台设备"
     );
 
     crate::sync::remote::handle(
@@ -505,7 +515,7 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
  {
     let (ui, deck) = deck_window();
     crate::sync::remote::bind(&ui, &deck.remote);
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
 
     let now = crate::sync::remote::now_ms();
     crate::sync::remote::handle(
@@ -567,7 +577,7 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
 #[test]
 fn giving_up_on_a_lost_target_releases_the_claim() {
     let (_ui, deck) = deck_window();
-    deck.remote.select("pc", "pc1");
+    deck.remote.assume_output("pc", "pc1");
     let now = crate::sync::remote::now_ms();
     crate::sync::remote::handle(
         &Event::RemoteState {
@@ -619,4 +629,448 @@ fn being_told_nobody_is_in_control_unlocks_the_local_transport()
         "服务端都说没人遥控了,还锁着就是把本机白白废掉"
     );
     let _ = &ui;
+}
+
+// ── 选设备 = 迁移当前播放(#137 ③)──
+
+/// 把一个 future 跑到底。这里的 future 不会真的挂起(准备闭包是现成的值)。
+fn run<F: core::future::Future>(future: F) -> F::Output {
+    use core::task::{Context, Poll};
+
+    let mut cx =
+        Context::from_waker(core::task::Waker::noop());
+    let mut future = Box::pin(future);
+    loop {
+        if let Poll::Ready(value) =
+            future.as_mut().poll(&mut cx)
+        {
+            return value;
+        }
+    }
+}
+
+/// 本机正在放 `track()`:队列、执行副本(服务端队列 7 的第 3 版、条目 12)、
+/// 播放状态机都在 Playing 上。
+fn playing_locally(deck: &Deck) {
+    deck.queue.borrow_mut().replace(vec![track()], 0);
+    deck.execution.adopt(7, 3, vec![12]);
+    run(app_core::play(
+        &deck.playback,
+        track(),
+        |_| async { Ok::<(), String>(()) },
+        |()| {},
+    ));
+}
+
+/// 这一次迁移的操作号:从发给目标的那条准备命令里读。
+fn operation_of(deck: &Deck) -> String {
+    deck.remote
+        .routed()
+        .into_iter()
+        .find_map(|(_, cmd)| match cmd {
+            app_core::RemoteCommand::Prepare {
+                operation_id,
+                ..
+            } => Some(operation_id),
+            _ => None,
+        })
+        .expect("该有一条准备命令")
+}
+
+/// 一条带迁移回话的上报。
+fn acking(
+    operation_id: &str,
+    phase: app_core::OperationPhase,
+) -> app_core::RemoteStateDto {
+    app_core::RemoteStateDto {
+        operation: Some(app_core::OperationAckDto {
+            operation_id: operation_id.to_owned(),
+            phase,
+            position_ms: None,
+            reason: None,
+        }),
+        ..report(0, app_core::RemotePlayState::Idle)
+    }
+}
+
+/// 本机在放时选 pc:先向服务端登记、叫 pc 准备当前这一条 —— 本机一个字节都不动,
+/// 输出也还没换(目标没确认之前不换)。
+#[test]
+fn selecting_a_device_prepares_it_and_leaves_local_playback_alone()
+ {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+
+    select_output(&ui, &deck, "pc");
+
+    assert_eq!(
+        deck.remote.group_ops().len(),
+        1,
+        "该先登记一次: {:?}",
+        deck.remote.group_ops()
+    );
+    let routed = deck.remote.routed();
+    assert!(
+        matches!(
+            routed.as_slice(),
+            [(to, app_core::RemoteCommand::Prepare {
+                queue_id: 7,
+                revision: 3,
+                entry_id: 12,
+                ..
+            })] if to == "pc"
+        ),
+        "该叫 pc 准备队列 7@3 的条目 12: {routed:?}"
+    );
+    assert!(
+        !deck.remote.is_remote(),
+        "目标没确认之前输出不换"
+    );
+    assert!(deck.remote.is_moving());
+    assert!(
+        matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Playing(_)
+        ),
+        "准备阶段本机照旧在放"
+    );
+}
+
+/// 迁移那几秒控制条**不消失**,一直是迁过去的那一首。
+///
+/// 从前选完设备镜像一清,下一拍 `has-track` 就被置假,控制条连同抽屉里刚点的
+/// 芯片一起销毁(#137 已核实的结构问题 2)。
+#[test]
+fn the_control_bar_stays_on_the_moving_track() {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+    select_output(&ui, &deck, "pc");
+    ui.global::<Player>().set_has_track(false);
+
+    crate::sync::remote::push_moving(&ui, &deck.remote);
+
+    assert!(ui.global::<Player>().get_has_track());
+    assert_eq!(
+        ui.global::<Player>().get_now_id(),
+        track().id
+    );
+    assert!(
+        ui.global::<Player>()
+            .get_playback_text()
+            .contains("正在切到"),
+        "{}",
+        ui.global::<Player>().get_playback_text()
+    );
+}
+
+/// 整条路走一遍:pc 准备好 → 本机停下 → 叫 pc 从本机停下的位置开始 → pc 确认
+/// → 提交,输出这才换到 pc。本机停下之后不再出声,也不会自己接着放。
+#[test]
+fn a_ready_target_stops_local_playback_then_starts_from_there()
+ {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+    select_output(&ui, &deck, "pc");
+    let op = operation_of(&deck);
+
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(acking(
+                &op,
+                app_core::OperationPhase::Prepared,
+            )),
+        },
+        &deck.remote,
+    );
+    let stop = deck
+        .remote
+        .take_local_effect()
+        .expect("准备好之后该轮到本机停");
+    assert!(
+        matches!(stop, app_core::Effect::Stop { .. }),
+        "{stop:?}"
+    );
+    run_local(&ui, &deck, stop);
+
+    assert!(
+        matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Idle
+        ),
+        "本机该停下"
+    );
+    let start = deck.remote.routed().pop();
+    assert!(
+        matches!(
+            start,
+            Some((ref to, app_core::RemoteCommand::Start {
+                position_ms: 0,
+                ..
+            })) if to == "pc"
+        ),
+        "该叫 pc 从本机停下的位置(测试里没有声卡,是 0)开始: {start:?}"
+    );
+    assert!(
+        !deck.remote.is_remote(),
+        "pc 确认开始之前输出不换"
+    );
+
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(acking(
+                &op,
+                app_core::OperationPhase::Started,
+            )),
+        },
+        &deck.remote,
+    );
+
+    assert!(
+        deck.remote
+            .group_ops()
+            .iter()
+            .any(|op| op.starts_with("commit")),
+        "该提交: {:?}",
+        deck.remote.group_ops()
+    );
+    assert_eq!(
+        deck.remote.target_id().as_deref(),
+        Some("pc")
+    );
+    assert!(!deck.remote.is_moving());
+}
+
+/// 迁移那几秒按下一首不落在任何一台上。
+#[test]
+fn transport_is_held_while_the_output_is_moving() {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+    select_output(&ui, &deck, "pc");
+
+    let outcome = dispatch(&ui, &deck, Intent::Next);
+
+    assert_eq!(
+        outcome,
+        Dispatched::Blocked("正在切换输出")
+    );
+}
+
+/// 本机这一批还没同步到服务端:不迁 —— 目标只能按服务端的标识取执行副本。
+#[test]
+fn an_unsynced_local_queue_is_not_moved() {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+    deck.execution.detach();
+
+    select_output(&ui, &deck, "pc");
+
+    assert!(!deck.remote.is_moving());
+    assert_eq!(deck.remote.routed(), Vec::new());
+}
+
+/// 遥控着 pc 时选回本机:本机准备,pc 先不停 —— 本机没备好之前停 pc 就是一段空白。
+#[test]
+fn moving_back_home_prepares_locally_before_stopping_the_remote()
+ {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(report(
+                30_000,
+                app_core::RemotePlayState::Playing,
+            )),
+        },
+        &deck.remote,
+    );
+
+    select_output(&ui, &deck, "");
+
+    assert!(
+        matches!(
+            deck.remote.take_local_effect(),
+            Some(app_core::Effect::Prepare { .. })
+        ),
+        "该先在本机准备"
+    );
+    assert!(
+        !deck.remote.routed().iter().any(
+            |(_, cmd)| matches!(
+                cmd,
+                app_core::RemoteCommand::Stop { .. }
+            )
+        ),
+        "本机没备好之前不该叫 pc 停"
+    );
+}
+
+// ── 被叫去迁移的那一端 ──
+
+/// 没备过的那一次开始不了:报失败,不临时现取 —— 重启过的设备收到旧的开始就该这样。
+#[test]
+fn a_start_that_was_never_prepared_is_answered_with_a_failure()
+ {
+    let (ui, deck) = deck_window();
+
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Start {
+            operation_id: "op".to_owned(),
+            position_ms: 1_000,
+            playing: true,
+        },
+    );
+
+    let answer = deck.member.ack().expect("该回一句");
+    assert_eq!(
+        answer.phase,
+        app_core::OperationPhase::Failed
+    );
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "没备过就不该起播"
+    );
+}
+
+/// 叫停:本机停下,回话里带停下的位置;重发的停止照报同一个位置。
+#[test]
+fn a_stop_command_stops_the_local_output_and_says_where() {
+    let (ui, deck) = deck_window();
+    playing_locally(&deck);
+
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Stop {
+            operation_id: "op".to_owned(),
+        },
+    );
+    let first = deck.member.ack().expect("该回一句");
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Stop {
+            operation_id: "op".to_owned(),
+        },
+    );
+
+    assert_eq!(
+        first.phase,
+        app_core::OperationPhase::Stopped
+    );
+    assert!(first.position_ms.is_some());
+    assert_eq!(deck.member.ack(), Some(first));
+    assert!(matches!(
+        deck.playback.borrow().state(),
+        PlaybackState::Idle
+    ));
+}
+
+/// 上报里带着最近一次迁移步骤的回话 —— 遥控器靠它往下走。
+#[test]
+fn the_report_carries_the_last_migration_answer() {
+    let (ui, deck) = deck_window();
+    execute(
+        &ui,
+        &deck,
+        app_core::RemoteCommand::Stop {
+            operation_id: "op".to_owned(),
+        },
+    );
+
+    let snap = snapshot(&deck);
+
+    assert_eq!(
+        snap.operation.map(|answer| answer.operation_id),
+        Some("op".to_owned())
+    );
+}
+
+/// 同一台同一批再点一首:原样用上一次发布的那一版,不再发一个新版本。
+#[test]
+fn the_same_batch_for_the_same_device_reuses_its_revision()
+{
+    let (_ui, deck) = deck_window();
+    let batch =
+        vec![track_with_id("a"), track_with_id("b")];
+    let published = api::QueueRefDto {
+        queue_id: 7,
+        revision: 3,
+        entry_ids: vec![1, 2],
+    };
+    deck.remote.note_published(
+        "pc",
+        &batch,
+        published.clone(),
+    );
+
+    assert_eq!(
+        deck.remote.published_for("pc", &batch),
+        Some(published)
+    );
+    assert_eq!(
+        deck.remote.published_for("tablet", &batch),
+        None,
+        "换一台就不是同一个队列"
+    );
+    assert_eq!(
+        deck.remote.published_for("pc", &batch[..1]),
+        None,
+        "换一批就得重新发布"
+    );
+}
+
+/// 遥控着的那台一条上报都还没来:不迁 —— 当成「什么都没在放」只会把它停掉,
+/// 它正在放的那一首就丢了。
+#[test]
+fn a_remote_that_has_not_reported_yet_is_not_moved() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+
+    select_output(&ui, &deck, "");
+
+    assert!(!deck.remote.is_moving());
+    assert_eq!(deck.remote.take_local_effect(), None);
+}
+
+/// 迁移停在「待确认」上时,源那台再久没上报也**不**按失联收回本机。
+///
+/// 真机上撞到过:源被冻住,十五秒没上报,失联那条收尾把进行中的迁移一并丢掉 ——
+/// 「待确认」与两颗键凭空消失,新目标还被锁着,用户连处理的入口都没了。
+/// 迁移进行中由迁移自己的超时与「待确认」管,不归失联管。
+#[test]
+fn a_move_waiting_for_confirmation_is_not_dropped_as_lost()
+{
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    let now = crate::sync::remote::now_ms();
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(report(
+                30_000,
+                app_core::RemotePlayState::Playing,
+            )),
+        },
+        &deck.remote,
+    );
+    select_output(&ui, &deck, "tablet");
+    assert!(deck.remote.is_moving(), "迁移该开始了");
+
+    let gave_up =
+        deck.remote.give_up_if_lost_at(now + 60_000);
+
+    assert!(!gave_up, "迁移进行中不该按失联收回本机");
+    assert!(
+        deck.remote.is_moving(),
+        "进行中的迁移不该被丢掉"
+    );
+    assert_eq!(
+        deck.remote.target_id().as_deref(),
+        Some("pc")
+    );
 }

@@ -15,16 +15,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use app_core::{
-    Output, RemoteCommand, RemoteStateDto, RemoteView,
+    Effect, OperationAckDto, Output, Plan, Refused,
+    RemoteCommand, RemoteStateDto, RemoteView, Session,
 };
 use slint::ComponentHandle;
 use syncplay::{Client, DeviceDto};
 
 pub(crate) use rules::{
     accepts_control, describe_claim_failed,
-    describe_controlled, describe_lost, describe_output,
-    describe_remote, describe_revoked, describe_too_large,
-    describe_unavailable, lost_remote,
+    describe_controlled, describe_lost, describe_move,
+    describe_output, describe_remote, describe_revoked,
+    describe_too_large, describe_unavailable, lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -78,8 +79,21 @@ struct Inner {
     /// 就交出去,而客户端要等它返回才拿得到。这一微秒的空窗里到达的事件
     /// 发不出东西 —— 那没关系,每秒一次的上报下一拍就把状态补齐了。
     client: OnceLock<Arc<Client>>,
-    /// 声音从哪台设备出来。
-    output: Mutex<Output>,
+    /// 播放组会话:声音此刻从哪台设备出来,以及进行中的迁移(#137 ③)。
+    ///
+    /// 「输出」不再是一个随手改的标志:改它要走一次迁移,确认之前它不动。
+    session: Mutex<Session>,
+    /// 会话交回来、要在 UI 线程上做的本机那一步(准备 / 停止 / 开始 / 取消)。
+    ///
+    /// 走收件箱而不是当场做,理由同 [`Self::inbox`]:回话可能在信令的后台线程上
+    /// 到,而本机那一步要碰 `Deck`。
+    local_effects: Mutex<VecDeque<Effect>>,
+    /// 上一次发给远端的那一批:发给谁、是哪些歌、服务端给的那一版。
+    ///
+    /// 同一台同一批再点一首,原样用这一版,不再发一个一模一样的新版本(#137 ③)。
+    published: Mutex<Option<Published>>,
+    /// 上一次失败说明已经说过的那一句 —— 同一句只弹一次。
+    told: Mutex<Option<String>>,
     /// 被控端报来的那份状态 —— 本机作遥控器时才有东西。
     view: Mutex<RemoteView>,
     /// 正在遥控本机的那台设备 —— 本机作被控端时才有东西。
@@ -88,8 +102,11 @@ struct Inner {
     inbox: Mutex<VecDeque<RemoteCommand>>,
     /// 封面已经取到哪一首了 —— 上报每秒一条,按它的频率取图等于每秒一次下载。
     cover_id: Mutex<String>,
-    /// 上一拍轮询看到的是不是「输出在别的设备上」,用来认出回到本机那一下。
-    was_remote: Mutex<bool>,
+    /// 输出刚被收回本机(失权、失联、接管失败),本机播放还没按停。
+    ///
+    /// 只由收回那一条路置位:迁移回本机时本机是**被叫去开始**的,按停它
+    /// 就等于把刚迁过来的那一首掐掉。
+    rest_pending: std::sync::atomic::AtomicBool,
     /// 这一次执行会话的标识:进程启动时的毫秒挂钟。
     ///
     /// 与服务端 `play_queue_reports.epoch` 是同一个数。跨重启比大小要靠它 ——
@@ -122,13 +139,23 @@ struct Inner {
     /// 而遥控器侧要钉的恰好就是它(全仓此前没有一条测试走过这条路)。
     #[cfg(test)]
     sent: Mutex<Vec<RemoteCommand>>,
+    /// 测试里记下迁移发给了哪台设备什么命令、对服务端做了哪几样组操作。
+    ///
+    /// 理由同 `sent`:空壳客户端当场丢掉通道,不记下来就看不到迁移走到了哪一步。
+    #[cfg(test)]
+    routed: Mutex<Vec<(String, RemoteCommand)>>,
+    #[cfg(test)]
+    group_ops: Mutex<Vec<String>>,
     weak: slint::Weak<MainWindow>,
 }
 
 impl Remote {
     /// 本机此刻把声音交给别的设备了。
     pub fn is_remote(&self) -> bool {
-        lock(&self.inner.output).target().is_some()
+        lock(&self.inner.session)
+            .output()
+            .target()
+            .is_some()
     }
 
     /// 本机此刻正被别的设备遥控(锁定态)。
@@ -144,7 +171,15 @@ impl Remote {
     /// 点播要拿它当**队列的归属** —— 队列归播放会话 / 输出设备,不是遥控器
     /// 自己这台,也不是账号(`docs/adr/0031` 二)。
     pub fn target_id(&self) -> Option<String> {
-        lock(&self.inner.output).target().map(str::to_owned)
+        lock(&self.inner.session)
+            .output()
+            .target()
+            .map(str::to_owned)
+    }
+
+    /// 正在迁移:输出还没定下来。
+    pub fn is_moving(&self) -> bool {
+        lock(&self.inner.session).moving().is_some()
     }
 
     /// 记一次「点播交出去了」。
@@ -189,7 +224,8 @@ impl Remote {
     /// 返回**为什么**,不是一个布尔:调用方要据此说不同的话 —— 过期是「控制
     /// 暂不可用」,超限是「队列太长」,而输出在本机根本不该走这条路。
     pub fn send(&self, cmd: RemoteCommand) -> Submitted {
-        let Some(target) = lock(&self.inner.output)
+        let Some(target) = lock(&self.inner.session)
+            .output()
             .target()
             .map(str::to_owned)
         else {
@@ -205,7 +241,7 @@ impl Remote {
         // 好让两种拦法各说各的话 —— 目标已经确定存在,所以剩下唯一能让
         // 它为假的就是过期。
         if !accepts_control(
-            &lock(&self.inner.output),
+            lock(&self.inner.session).output(),
             &lock(&self.inner.view),
             now_ms(),
         ) {
@@ -279,12 +315,16 @@ impl Remote {
     ///
     /// 文案要点出是哪台设备,所以它得读 `output` —— 那一份不出这个模块。
     pub fn unavailable_notice(&self) -> String {
-        describe_unavailable(&lock(&self.inner.output))
+        describe_unavailable(
+            lock(&self.inner.session).output(),
+        )
     }
 
     /// 一条命令大到发不出去时,界面该说的那句话。
     pub fn too_large_notice(&self) -> String {
-        describe_too_large(&lock(&self.inner.output))
+        describe_too_large(
+            lock(&self.inner.session).output(),
+        )
     }
 
     /// 遥控器发来的下一条命令,没有则 `None`。
@@ -298,12 +338,9 @@ impl Remote {
     /// `Playing`。回到本机的那一拍不把它按停,自动续播就会当成「这一首放完了」
     /// 而接上下一首 —— 用户什么也没点,歌却从 0:00 响起来(#102 之四)。
     pub fn took_local_edge(&self) -> bool {
-        let now = self.is_remote();
-        let was = core::mem::replace(
-            &mut *lock(&self.inner.was_remote),
-            now,
-        );
-        was && !now
+        self.inner
+            .rest_pending
+            .swap(false, Ordering::Relaxed)
     }
 
     /// 被控端失联太久就把输出收回本机。收回了返回 `true`。
@@ -326,9 +363,15 @@ impl Remote {
         now_ms: u64,
     ) -> bool {
         {
-            let output = lock(&self.inner.output);
+            let session = lock(&self.inner.session);
+            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。源被冻住或断网时
+            // 这里本来会按失联收回本机,把「待确认」与处理入口一并丢掉 —— 而那正是
+            // 该交给用户处理的时候。
+            if session.moving().is_some() {
+                return false;
+            }
             if !lost_remote(
-                &output,
+                session.output(),
                 &lock(&self.inner.view),
                 now_ms,
             ) {
@@ -351,8 +394,22 @@ impl Remote {
         &self,
         describe: impl FnOnce(&Output) -> String,
     ) {
-        let message = describe(&lock(&self.inner.output));
-        *lock(&self.inner.output) = Output::Local;
+        let message =
+            describe(lock(&self.inner.session).output());
+        let abandoned = lock(&self.inner.session)
+            .moving()
+            .map(|moving| moving.operation_id.clone());
+        lock(&self.inner.session).come_home();
+        // 收回本机时若正在迁移,把服务端那一次也作罢:不然被拉进来的那台一直锁着。
+        // 已经失权的话服务端会拒掉这一条,无害。
+        if let (Some(operation_id), Some(client)) =
+            (abandoned, self.inner.client.get())
+        {
+            client.abort_outputs(&operation_id);
+        }
+        self.inner
+            .rest_pending
+            .store(true, Ordering::Relaxed);
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();
@@ -446,34 +503,307 @@ impl Remote {
         read(&lock(&self.inner.view), now_ms())
     }
 
-    /// 换输出设备。`id` 为空就是选回本机。
+    /// 把当前播放迁到 `to`(#137 ③)。`plan` 是要迁过去的那一份,什么都没在放
+    /// 时是 `None`。
     ///
-    /// 乐观更新:接管要一个来回,而按下去必须立刻有反应。真被拒了会有
-    /// `ControlRevoked` 或一条失败提示把这一行改回去。
-    pub fn select(&self, id: &str, name: &str) {
-        let Some(client) = self.inner.client.get() else {
-            return;
-        };
-        // 换目标前先把镜像清掉,否则下一台设备会先闪一眼上一台的歌名。
+    /// 不再是乐观地改一个标志:输出要等目标确认开始之后才换过去,这几秒里
+    /// 控制条照旧显示迁过去的那一首,状态行说「正在切到 xx」。
+    pub fn begin_move(
+        &self,
+        to: Output,
+        plan: Option<Plan>,
+    ) {
+        let operation_id =
+            crate::sync::link::fresh_operation_id();
+        log::info!(
+            "迁移开始: 操作 {operation_id} -> {}{}",
+            to.name().unwrap_or("本机"),
+            plan.as_ref()
+                .map(|plan| format!(
+                    "(队列 {}@{}, 条目 {}, {}ms)",
+                    plan.queue_id,
+                    plan.revision,
+                    plan.entry_id,
+                    plan.position_ms
+                ))
+                .unwrap_or_else(
+                    || "(没有在放的,只停源)".to_owned()
+                )
+        );
+        let outcome = lock(&self.inner.session).begin(
+            operation_id,
+            to,
+            plan,
+            now_ms(),
+        );
+        match outcome {
+            Ok(effects) => self.apply(effects),
+            Err(Refused::AlreadyThere) => {}
+            Err(Refused::Busy) => {
+                let _ = self
+                    .inner
+                    .weak
+                    .upgrade_in_event_loop(|ui| {
+                        crate::notice::show(
+                            &ui,
+                            "上一次切换还没确认完"
+                                .to_owned(),
+                        );
+                    });
+            }
+        }
+    }
+
+    /// 本机那一步做完了的回话,交还会话。
+    pub fn local_ack(&self, ack: OperationAckDto) {
+        let effects = lock(&self.inner.session).on_ack(
+            &Output::Local,
+            &ack,
+            now_ms(),
+        );
+        self.apply(effects);
+    }
+
+    /// 每秒一拍:迁移等过了头没有。
+    pub fn tick(&self) {
+        let effects =
+            lock(&self.inner.session).tick(now_ms());
+        self.apply(effects);
+    }
+
+    /// 「待确认」上的重试。
+    pub fn retry(&self) {
+        let effects =
+            lock(&self.inner.session).retry(now_ms());
+        self.apply(effects);
+    }
+
+    /// 「待确认」上的放弃。
+    pub fn abandon(&self) {
+        let effects = lock(&self.inner.session).abandon();
+        self.apply(effects);
+    }
+
+    /// 会话交回来的本机那一步,UI 线程上取。
+    pub fn take_local_effect(&self) -> Option<Effect> {
+        lock(&self.inner.local_effects).pop_front()
+    }
+
+    /// 迁移那几秒控制条上画什么:迁过去的那一首、状态行那句话、要不要出
+    /// 「待确认」那两颗键。没在迁移时是 `None`。
+    pub fn moving_view(
+        &self,
+    ) -> Option<(
+        Option<app_core::TrackDto>,
+        u64,
+        String,
+        bool,
+    )> {
+        let session = lock(&self.inner.session);
+        let moving = session.moving()?;
+        Some((
+            moving
+                .plan
+                .as_ref()
+                .map(|plan| plan.track.clone()),
+            moving.anchor_ms().unwrap_or(0),
+            describe_move(moving),
+            matches!(
+                moving.phase,
+                app_core::Phase::Unconfirmed(_)
+            ),
+        ))
+    }
+
+    /// 执行会话交回来的一串动作:发给服务端的、发给远端设备的,当场发;本机那一步
+    /// 进收件箱交给 UI 线程。
+    fn apply(&self, effects: Vec<Effect>) {
+        let client = self.inner.client.get();
+        let mut local = false;
+        for effect in effects {
+            log::info!("迁移动作: {effect:?}");
+            #[cfg(test)]
+            self.record(&effect);
+            match (effect, client) {
+                (
+                    Effect::Begin {
+                        operation_id,
+                        outputs,
+                    },
+                    Some(client),
+                ) => client
+                    .begin_outputs(&operation_id, outputs),
+                (
+                    Effect::Commit { operation_id },
+                    Some(client),
+                ) => {
+                    client.commit_outputs(&operation_id);
+                    self.settle();
+                }
+                (
+                    Effect::Abort { operation_id },
+                    Some(client),
+                ) => {
+                    client.abort_outputs(&operation_id);
+                }
+                (effect, client) => {
+                    match remote_command(&effect) {
+                        Some((to, cmd)) => {
+                            if let Some(client) = client {
+                                client.command_to(&to, cmd);
+                            }
+                        }
+                        None => {
+                            lock(&self.inner.local_effects)
+                                .push_back(effect);
+                            local = true;
+                        }
+                    }
+                }
+            }
+        }
+        if local {
+            let _ = self.inner.weak.upgrade_in_event_loop(
+                |ui| {
+                    ui.global::<Shell>()
+                        .invoke_session_effects();
+                },
+            );
+        }
+        self.tell_failure();
+        self.refresh();
+    }
+
+    #[cfg(test)]
+    fn record(&self, effect: &Effect) {
+        match effect {
+            Effect::Begin {
+                operation_id,
+                outputs,
+            } => lock(&self.inner.group_ops).push(format!(
+                "begin {operation_id} {outputs:?}"
+            )),
+            Effect::Commit { operation_id } => {
+                lock(&self.inner.group_ops)
+                    .push(format!("commit {operation_id}"));
+            }
+            Effect::Abort { operation_id } => {
+                lock(&self.inner.group_ops)
+                    .push(format!("abort {operation_id}"));
+            }
+            other => {
+                if let Some(routed) = remote_command(other)
+                {
+                    lock(&self.inner.routed).push(routed);
+                }
+            }
+        }
+    }
+
+    /// 测试里问:迁移发给了哪台设备什么命令。
+    #[cfg(test)]
+    pub(crate) fn routed(
+        &self,
+    ) -> Vec<(String, RemoteCommand)> {
+        lock(&self.inner.routed).clone()
+    }
+
+    /// 测试里问:对服务端做了哪几样组操作。
+    #[cfg(test)]
+    pub(crate) fn group_ops(&self) -> Vec<String> {
+        lock(&self.inner.group_ops).clone()
+    }
+
+    /// 迁移提交了:输出已经换过去,镜像与封面清掉(那是上一台的)。
+    ///
+    /// 不另要快照:新输出此刻已经被锁上、每秒都在报;而持权记录要等服务端回了
+    /// 提交才换到新那台,这时候要的快照会发给刚被换下来的那台、换回一句
+    /// `not_controller`。
+    fn settle(&self) {
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();
-        log::info!(
-            "输出切到 {}",
-            if id.is_empty() { "本机" } else { name }
-        );
-        if id.is_empty() {
-            self.release_claim();
-            *lock(&self.inner.output) = Output::Local;
-        } else {
-            client.claim(id);
-            *lock(&self.inner.output) =
+    }
+
+    /// 迁移没成的那句话,说一次。
+    fn tell_failure(&self) {
+        let failure = lock(&self.inner.session)
+            .failure()
+            .map(str::to_owned);
+        let mut told = lock(&self.inner.told);
+        if failure == *told {
+            return;
+        }
+        told.clone_from(&failure);
+        if let Some(message) = failure {
+            let _ = self.inner.weak.upgrade_in_event_loop(
+                move |ui| crate::notice::show(&ui, message),
+            );
+        }
+    }
+
+    /// 测试里直接把输出放到这台设备上,当作一次已经确认过的迁移。
+    ///
+    /// 走的是会话自己的路(没有东西可迁的那种:停源、确认),不另开后门。
+    #[cfg(test)]
+    pub(crate) fn assume_output(
+        &self,
+        id: &str,
+        name: &str,
+    ) {
+        {
+            let mut session = lock(&self.inner.session);
+            let from = session.output().clone();
+            let _ = session.begin(
+                "test-assume".to_owned(),
                 Output::Remote(DeviceDto {
                     id: id.to_owned(),
                     name: name.to_owned(),
-                });
+                }),
+                None,
+                0,
+            );
+            let _ = session.on_ack(
+                &from,
+                &OperationAckDto {
+                    operation_id: "test-assume".to_owned(),
+                    phase:
+                        app_core::OperationPhase::Stopped,
+                    position_ms: None,
+                    reason: None,
+                },
+                0,
+            );
         }
+        lock(&self.inner.view).clear();
         self.refresh();
+    }
+
+    /// 同一台、同一批上一次发布的那一版。
+    pub fn published_for(
+        &self,
+        target: &str,
+        tracks: &[app_core::TrackDto],
+    ) -> Option<api::QueueRefDto> {
+        let held = lock(&self.inner.published);
+        let held = held.as_ref()?;
+        (held.target == target
+            && held.keys == keys_of(tracks))
+        .then(|| held.queue.clone())
+    }
+
+    /// 记下这一次发布,下一次同一台同一批直接用。
+    pub fn note_published(
+        &self,
+        target: &str,
+        tracks: &[app_core::TrackDto],
+        queue: api::QueueRefDto,
+    ) {
+        *lock(&self.inner.published) = Some(Published {
+            target: target.to_owned(),
+            keys: keys_of(tracks),
+            queue,
+        });
     }
 
     /// 被控端按了「退出被遥控」:解锁本机,并撤掉遥控器的控制权。
@@ -498,19 +828,30 @@ impl Remote {
     /// 进度与播放状态不走这里 —— 它们搭自动续播那趟每秒轮询的车,
     /// 免得出现第二套「现在放到哪」的说法(见 `crate::music`)。
     fn refresh(&self) {
-        let id = lock(&self.inner.output)
+        let id = lock(&self.inner.session)
+            .output()
             .target()
             .unwrap_or_default()
             .to_owned();
-        let output =
-            describe_output(&lock(&self.inner.output));
+        let output = describe_output(
+            lock(&self.inner.session).output(),
+        );
         let controlled = describe_controlled(
             lock(&self.inner.controlled_by)
                 .as_ref()
                 .map(|device| device.name.as_str()),
         );
+        let (move_text, move_doubt) =
+            self.moving_view().map_or(
+                (String::new(), false),
+                |(_, _, text, doubt)| (text, doubt),
+            );
         let _ = self.inner.weak.upgrade_in_event_loop(
             move |ui| {
+                ui.global::<Shell>()
+                    .set_move_text(move_text.into());
+                ui.global::<Shell>()
+                    .set_move_doubt(move_doubt);
                 ui.global::<Shell>()
                     .set_output_text(output.into());
                 ui.global::<Shell>()
@@ -530,12 +871,16 @@ pub fn new(ui: &MainWindow) -> Remote {
     Remote {
         inner: Arc::new(Inner {
             client: OnceLock::new(),
-            output: Mutex::new(Output::Local),
+            session: Mutex::new(Session::default()),
+            local_effects: Mutex::new(VecDeque::new()),
+            published: Mutex::new(None),
+            told: Mutex::new(None),
             view: Mutex::new(RemoteView::default()),
             controlled_by: Mutex::new(None),
             inbox: Mutex::new(VecDeque::new()),
             cover_id: Mutex::new(String::new()),
-            was_remote: Mutex::new(false),
+            rest_pending:
+                std::sync::atomic::AtomicBool::new(false),
             epoch: now_ms() as i64,
             state_seq: AtomicU64::new(1),
             pending_play: Mutex::new(None),
@@ -545,6 +890,10 @@ pub fn new(ui: &MainWindow) -> Remote {
             releases: AtomicU64::new(0),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            routed: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            group_ops: Mutex::new(Vec::new()),
             weak: ui.as_weak(),
         }),
     }
@@ -552,18 +901,8 @@ pub fn new(ui: &MainWindow) -> Remote {
 
 /// 把遥控接到界面上。
 pub fn bind(ui: &MainWindow, remote: &Remote) {
-    // 输出设备的选择。参数是设备 id,空串是本机;名字从名册那一份里查,
-    // 免得界面上的写法与用户点过的那一行对不上。
-    let selecting = remote.clone();
-    let weak = ui.as_weak();
-    ui.global::<Shell>().on_set_output(move |id| {
-        let id = id.to_string();
-        let name =
-            weak.upgrade().map_or_else(String::new, |ui| {
-                device_name(&ui, &id)
-            });
-        selecting.select(&id, &name);
-    });
+    // 输出设备的选择接在音乐页(`music::playback::migrate`):选设备等于迁移
+    // 当前播放,要从本机的播放里凑出迁过去的那一份,而那一份住在 `Deck` 里。
 
     let exiting = remote.clone();
     ui.global::<Shell>().on_exit_controlled(move || {
@@ -587,7 +926,10 @@ pub(crate) fn detached(ui: &MainWindow) -> Remote {
 }
 
 /// 名册里这台设备叫什么。查不到就用 id —— 总比一行空白强。
-fn device_name(ui: &MainWindow, id: &str) -> String {
+pub(crate) fn device_name(
+    ui: &MainWindow,
+    id: &str,
+) -> String {
     use slint::Model as _;
 
     ui.global::<Shell>()
@@ -625,7 +967,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 接管没成:按下去时输出已经乐观地切了过去,切回来(#118)。
         // 只认当前那一台 —— 失败的若是上一台,用户已经改选了别的。
         syncplay::Event::ClaimFailed { target, reason } => {
-            if lock(&inner.output).target()
+            if lock(&inner.session).output().target()
                 != Some(target.as_str())
             {
                 return;
@@ -667,14 +1009,49 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                 });
         }
         // 只收当前那台设备报来的:换目标之后,上一台的残余还会飘几条过来。
+        //
+        // 迁移那几秒里,源与目标报来的都要看:它们的回话(`operation`)是迁移
+        // 往前走的唯一依据。镜像仍只收已确认的那一台 —— 目标确认之前,控制条
+        // 上画的是迁过去的那一首,不是目标手上原来那一首。
         syncplay::Event::RemoteState { from, state } => {
-            if lock(&inner.output).target()
+            if let Some(ack) = &state.operation {
+                let party =
+                    lock(&inner.session).party(from);
+                if let Some(party) = party {
+                    let effects = lock(&inner.session)
+                        .on_ack(&party, ack, now_ms());
+                    remote.apply(effects);
+                }
+            }
+            if lock(&inner.session).output().target()
                 != Some(from.as_str())
             {
                 return;
             }
             lock(&inner.view)
                 .accept((**state).clone(), now_ms());
+        }
+        syncplay::Event::OutputsCommitted {
+            operation_id,
+            term,
+        } => {
+            log::info!(
+                "换输出提交: 操作 {operation_id}, 任期 {term}"
+            );
+            lock(&inner.session)
+                .committed(operation_id, *term);
+        }
+        syncplay::Event::OutputsFailed {
+            operation_id,
+            reason,
+        } => {
+            log::warn!(
+                "换输出没登记上: 操作 {operation_id}: {reason}"
+            );
+            lock(&inner.session)
+                .rejected(operation_id, reason);
+            remote.tell_failure();
+            remote.refresh();
         }
         // 遥控器要一次完整状态。立刻回 —— 那一份由音乐页凑,所以叫它一声。
         syncplay::Event::SnapshotRequest => {
@@ -739,6 +1116,118 @@ pub fn push_playback(ui: &MainWindow, remote: &Remote) {
     );
 
     let seconds = position as f64 / 1_000.0;
+    ui.global::<Player>().set_has_track(true);
+    ui.global::<Player>()
+        .set_now_id(track.id.clone().into());
+    ui.global::<Player>().set_progress_ratio(
+        crate::progress::ratio(seconds, track.duration_ms),
+    );
+    ui.global::<Player>().set_progress_text(
+        crate::progress::progress_text(
+            seconds,
+            track.duration_ms,
+        )
+        .into(),
+    );
+}
+
+/// 上一次发给远端的那一批。
+struct Published {
+    target: String,
+    /// 每一首的 `(平台, 曲目 id)`,按顺序 —— 比对「是不是同一批」用。
+    keys: Vec<(String, String)>,
+    queue: api::QueueRefDto,
+}
+
+fn keys_of(
+    tracks: &[app_core::TrackDto],
+) -> Vec<(String, String)> {
+    tracks
+        .iter()
+        .map(|track| {
+            (track.platform.clone(), track.id.clone())
+        })
+        .collect()
+}
+
+/// 会话的一个动作若是发给远端设备的,翻成那条命令;本机那一步与服务端那三样
+/// 返回 `None`。
+fn remote_command(
+    effect: &Effect,
+) -> Option<(String, RemoteCommand)> {
+    let (end, cmd) = match effect {
+        Effect::Prepare {
+            operation_id,
+            to,
+            plan,
+        } => (
+            to,
+            RemoteCommand::Prepare {
+                operation_id: operation_id.clone(),
+                queue_id: plan.queue_id,
+                revision: plan.revision,
+                entry_id: plan.entry_id,
+                position_ms: plan.position_ms,
+            },
+        ),
+        Effect::Stop { operation_id, from } => (
+            from,
+            RemoteCommand::Stop {
+                operation_id: operation_id.clone(),
+            },
+        ),
+        Effect::Start {
+            operation_id,
+            to,
+            position_ms,
+            playing,
+        } => (
+            to,
+            RemoteCommand::Start {
+                operation_id: operation_id.clone(),
+                position_ms: *position_ms,
+                playing: *playing,
+            },
+        ),
+        Effect::Cancel { operation_id, to } => (
+            to,
+            RemoteCommand::Cancel {
+                operation_id: operation_id.clone(),
+            },
+        ),
+        Effect::Begin { .. }
+        | Effect::Commit { .. }
+        | Effect::Abort { .. } => return None,
+    };
+    end.target().map(|id| (id.to_owned(), cmd))
+}
+
+/// 迁移那几秒把控制条画成迁过去的那一首(#137 ③)。
+///
+/// 控制条**不消失**:从前选完设备镜像一清,下一拍 `has-track` 就被置假,
+/// 控制条连同抽屉里刚点的设备芯片一起销毁,要等对面整条链走完才回来。现在
+/// 迁移期间画的是会话里那份计划 —— 用户点下去那一刻听的是哪首,这几秒就一直是
+/// 哪首,进度停在锚点上,状态行说在等谁。
+pub fn push_moving(ui: &MainWindow, remote: &Remote) {
+    let Some((track, anchor_ms, text, _)) =
+        remote.moving_view()
+    else {
+        return;
+    };
+    ui.global::<Player>().set_playback_text(text.into());
+    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Player>().set_buffering(true);
+    let Some(track) = track else {
+        // 没有东西可迁(源本来就没在放):控制条本来就不在,不必凭空变出来。
+        return;
+    };
+    sync_cover(ui, remote, &track);
+    ui.global::<crate::Viz>()
+        .set_now_title(track.title.clone().into());
+    ui.global::<crate::Viz>().set_now_artists(
+        crate::music::join_artists(&track.artists).into(),
+    );
+    let seconds = anchor_ms as f64 / 1_000.0;
     ui.global::<Player>().set_has_track(true);
     ui.global::<Player>()
         .set_now_id(track.id.clone().into());

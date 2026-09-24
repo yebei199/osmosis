@@ -54,6 +54,40 @@ impl Player {
         self.player.play();
     }
 
+    /// 同 [`Self::play`],但从 `at` 开始;`playing` 为假就停在那里等人按播放。
+    ///
+    /// 迁移用(#137 ③):目标要从源停下的那一毫秒接着放。先放再跳的话,
+    /// 跳转生效之前那几毫秒会从 0:00 响出来 —— 同一首歌的开头,正是「全程不出现
+    /// 另一段音频」要排除的那种。所以源是在**暂停着**的时候交进去、跳好,
+    /// 再按要求放起来。
+    ///
+    /// 跳转的下场与 [`Self::seek`] 一样有两种:当场失败原样返回 `Err`(此时
+    /// 播放器停在暂停上,不会从 0:00 响起来);乐观的 `Ok` 由调用方照常从
+    /// `SeekState` 取结论。
+    pub fn play_from<S>(
+        &self,
+        source: S,
+        at: core::time::Duration,
+        playing: bool,
+    ) -> Result<(), AudioError>
+    where
+        S: rodio::Source + Send + 'static,
+    {
+        let channels = source.channels().get();
+        let (tap, rx) =
+            pcm::Tee::new(source, spectrum::TAP_CAPACITY);
+        self.viz.attach(rx, channels);
+        start_from(&self.player, tap, at, playing)
+    }
+
+    /// 播放器此刻是不是按着暂停。清空之后也算暂停(rodio 的约定)。
+    ///
+    /// 播放逻辑问「在不在放」要问这里,不问界面上那个图标 —— 界面是投影,
+    /// 播放逻辑回读它就又有了第二份真相(#137 ③)。
+    pub fn is_paused(&self) -> bool {
+        self.player.is_paused()
+    }
+
     /// 可视化分析器的共享句柄,UI 侧每帧取频谱/波形用。
     pub fn visualizer(&self) -> spectrum::Analyzer {
         self.viz.clone()
@@ -120,6 +154,31 @@ impl Player {
     pub fn set_volume(&self, volume: f32) {
         self.player.set_volume(clamped_volume(volume));
     }
+}
+
+/// [`Player::play_from`] 的正身,拆出来是为了能不开声卡地测。
+///
+/// 成立的前提在 rodio 里:`clear` 把播放器按成暂停;新源的第一个采样出来**之前**
+/// 就先过一遍周期访问(`PeriodicAccess` 的计数从 1 起),暂停与跳转在那一刻一起
+/// 生效。所以暂停着交进去、跳好再放,第一个出声的采样就是 `at` 那一个。
+fn start_from<S>(
+    player: &rodio::Player,
+    source: S,
+    at: core::time::Duration,
+    playing: bool,
+) -> Result<(), AudioError>
+where
+    S: rodio::Source + Send + 'static,
+{
+    player.clear();
+    player.append(source);
+    player.try_seek(at).map_err(|err| {
+        AudioError::Device(err.to_string())
+    })?;
+    if playing {
+        player.play();
+    }
+    Ok(())
 }
 
 /// 把音量夹进 0.0..=1.0。

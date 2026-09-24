@@ -141,6 +141,12 @@ struct Deck {
     /// 等下一帧画出来的用户动作(见 `crate::runtime::trace`)。渲染循环也拿着
     /// 同一份,画完一帧就给它们打 `drawn`。
     frames: crate::runtime::trace::Frames,
+    /// 下一次起播不从头放:从哪、放不放。迁移过来的那一首用它,起播时取走
+    /// (见 `playback::migrate`)。
+    start_at: Rc<std::cell::Cell<Option<report::Start>>>,
+    /// 本机作为迁移的一端:备好的那一份,与最近一次迁移步骤的回话
+    /// (见 `playback::migrate`)。
+    member: Member,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -200,6 +206,8 @@ pub fn bind(
         execution: Execution::default(),
         queue_mirror: queuepage::QueueMirror::default(),
         frames: crate::runtime::trace::Frames::default(),
+        start_at: Rc::new(std::cell::Cell::new(None)),
+        member: Member::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -230,6 +238,7 @@ pub fn bind(
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
     bind_remote(ui, &deck);
+    bind_session(ui, &deck);
     queuepage::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);

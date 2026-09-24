@@ -3,7 +3,10 @@
 //! 与 `music::rules` 同一个用意:界面接线里混着的判断挪出来,能不起窗口
 //! 就测得到。它们是最容易写反、也最难从截图上看出写反了的那部分。
 
-use app_core::{Output, RemotePlayState, RemoteView};
+use app_core::{
+    Doubt, Move, Output, Phase, RemotePlayState,
+    RemoteView, Step,
+};
 
 /// 界面上那几句写死在 `.slint` 里的遥控文案,在这里各留一份。
 ///
@@ -164,6 +167,34 @@ pub fn accepts_control(
     output.target().is_some() && !view.is_stale(now_ms)
 }
 
+/// 迁移那几秒,状态行那一句怎么写(#137 ③)。
+///
+/// 每一步都点出在等谁:用户盯着的是控制条,「正在切换」四个字说不出卡在哪 ——
+/// 而「待确认」要他去处理,就必须说清楚不确定的是哪一台的哪件事。
+pub fn describe_move(moving: &Move) -> String {
+    let name = |end: &Output| {
+        end.name().unwrap_or("本机").to_owned()
+    };
+    let (to, from) = (name(&moving.to), name(&moving.from));
+    match moving.phase {
+        Phase::Running(Step::Preparing) => {
+            format!("正在切到 {to}:等它准备好")
+        }
+        Phase::Running(Step::Stopping) => {
+            format!("正在切到 {to}:停下 {from}")
+        }
+        Phase::Running(Step::Starting) => {
+            format!("正在切到 {to}:等它开始播放")
+        }
+        Phase::Unconfirmed(Doubt::SourceStop) => format!(
+            "切到 {to} 待确认:{from} 停没停不知道,{to} 先不放"
+        ),
+        Phase::Unconfirmed(Doubt::TargetStart) => format!(
+            "切到 {to} 待确认:{to} 起没起不知道,{from} 不自动恢复"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use app_core::{DeviceDto, RemoteStateDto, TrackDto};
@@ -205,6 +236,7 @@ mod tests {
                 queue_len: 1,
                 epoch: 1_700_000_000_000,
                 state_seq: 1,
+                operation: None,
             },
             0,
         );
@@ -430,6 +462,70 @@ mod tests {
         assert!(
             missing.is_empty(),
             "子集字体缺字形:{missing:?} —— 重跑 just font-subset"
+        );
+    }
+
+    /// 迁移的每一步都说出在等谁;「待确认」说清楚不确定的是哪一台的哪件事,
+    /// 以及此刻**不做**什么。
+    #[test]
+    fn a_move_says_who_it_is_waiting_for() {
+        use app_core::{Plan, Session};
+
+        let pc = Output::Remote(app_core::DeviceDto {
+            id: "pc".to_owned(),
+            name: "pc1".to_owned(),
+        });
+        let mut session = Session::default();
+        session
+            .begin(
+                "op".to_owned(),
+                pc.clone(),
+                Some(Plan {
+                    queue_id: 1,
+                    revision: 1,
+                    entry_id: 1,
+                    position_ms: 0,
+                    playing: true,
+                    track: app_core::TrackDto {
+                        platform: "netease".to_owned(),
+                        id: "a".to_owned(),
+                        title: "A".to_owned(),
+                        alias: None,
+                        artists: Vec::new(),
+                        cover: None,
+                        duration_ms: 1,
+                    },
+                }),
+                0,
+            )
+            .expect("迁移该开得起来");
+        let preparing = describe_move(
+            session.moving().expect("该在迁移"),
+        );
+        assert!(preparing.contains("pc1"), "{preparing}");
+
+        session.on_ack(
+            &pc,
+            &app_core::OperationAckDto {
+                operation_id: "op".to_owned(),
+                phase: app_core::OperationPhase::Prepared,
+                position_ms: None,
+                reason: None,
+            },
+            1,
+        );
+        session.tick(1 + app_core::STOP_TIMEOUT_MS + 1);
+        let doubt = describe_move(
+            session.moving().expect("该在待确认"),
+        );
+        assert!(doubt.contains("待确认"), "{doubt}");
+        assert!(
+            doubt.contains("本机"),
+            "要点出是哪台停没停不知道: {doubt}"
+        );
+        assert!(
+            doubt.contains("先不放"),
+            "要说清楚此刻不做什么: {doubt}"
         );
     }
 }

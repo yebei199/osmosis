@@ -100,11 +100,15 @@ pub struct Entry {
     pub duration_ms: i64,
 }
 
-/// 一次发布的产物:这是哪个队列的哪一版。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 一次发布的产物:这是哪个队列的哪一版,以及这一版每一条的 `entry_id`。
+///
+/// 条目号按位置排,与写进去的条目一一对应。发布的那一端拿它直接知道「第 i 条
+/// 是哪个条目」,不必再把整份队列读回来(#137 ③)。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueRef {
     pub queue_id: i64,
     pub revision: i64,
+    pub entry_ids: Vec<i64>,
 }
 
 /// 第二层:待应用的播放意图。
@@ -271,6 +275,7 @@ pub async fn create(
     Ok(QueueRef {
         queue_id,
         revision: 1,
+        entry_ids,
     })
 }
 
@@ -351,6 +356,7 @@ pub async fn publish(
     Ok(QueueRef {
         queue_id,
         revision: next,
+        entry_ids,
     })
 }
 

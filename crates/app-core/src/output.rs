@@ -289,6 +289,7 @@ mod tests {
             queue_len: 1,
             epoch,
             state_seq,
+            operation: None,
         }
     }
 

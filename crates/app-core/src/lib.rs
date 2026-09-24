@@ -14,6 +14,7 @@ mod lyric;
 mod output;
 mod playback;
 mod queue;
+mod session;
 
 pub use counter::Counter;
 pub use health::{Health, HealthState, refresh};
@@ -21,11 +22,17 @@ pub use lyric::{LyricWindow, current_line, window};
 pub use output::{Output, RemoteView};
 pub use playback::{Playback, PlaybackState, play};
 pub use queue::{LoopMode, Queue};
+pub use session::{
+    Doubt, Effect, Move, PREPARE_TIMEOUT_MS, Phase, Plan,
+    Refused, START_TIMEOUT_MS, STOP_TIMEOUT_MS, Session,
+    Step,
+};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
     ArtistDto, DeviceDto, HealthDto, LyricDto,
-    LyricLineDto, MAX_SIGNAL_BYTES, PlaylistDto,
-    PlaylistSource, RemoteCommand, RemotePlayState,
-    RemoteStateDto, TrackDto, TracksDto,
+    LyricLineDto, MAX_SIGNAL_BYTES, OperationAckDto,
+    OperationPhase, PlaylistDto, PlaylistSource,
+    RemoteCommand, RemotePlayState, RemoteStateDto,
+    TrackDto, TracksDto,
 };

@@ -607,7 +607,7 @@ async fn next_where(
 /// 被控端每秒上报的那一条。内容无所谓,服务端不看。
 fn report() -> ClientSignal {
     ClientSignal::State {
-        state: contract::RemoteStateDto {
+        state: Box::new(contract::RemoteStateDto {
             track: None,
             position_ms: 1_000,
             state: contract::RemotePlayState::Playing,
@@ -619,7 +619,8 @@ fn report() -> ClientSignal {
             volume: 1.0,
             epoch: 1,
             state_seq: 1,
-        },
+            operation: None,
+        }),
     }
 }
 

@@ -124,6 +124,11 @@ pub(in crate::music) const fn local_toggle(
     }
 }
 
+/// 本机播放器此刻在不在出声。没有播放器就是不在。
+fn local_sounding(deck: &Deck) -> bool {
+    deck.player.as_ref().as_ref().is_ok_and(is_sounding)
+}
+
 /// 一条用户播放意图的唯一出口。
 pub(in crate::music) fn dispatch(
     ui: &MainWindow,
@@ -138,6 +143,13 @@ pub(in crate::music) fn dispatch(
         && intent.obeys_controlled_lock()
     {
         return Dispatched::Blocked("本机正被遥控");
+    }
+    // 迁移那几秒里输出还没定下来:这一下落在源上还是目标上都不对(#137 ③)。
+    // 音量照放行,理由同被控锁 —— 它不在「放什么、放不放」那条链上。
+    if deck.remote.is_moving()
+        && intent.obeys_controlled_lock()
+    {
+        return Dispatched::Blocked("正在切换输出");
     }
 
     // ── 目标选择 ──
@@ -162,7 +174,7 @@ fn to_remote(
         return submit_remote_play(ui, deck, tracks, index);
     }
 
-    let Some(cmd) = as_command(ui, deck, intent) else {
+    let Some(cmd) = as_command(deck, intent) else {
         // 翻不出命令只有一种情形:遥控时拖进度,而被控端报来的那份还没有
         // 曲目(刚接管、或者对面没在放)。这一下没有可发的东西。
         return refuse(ui, deck, Submitted::Stale);
@@ -262,26 +274,40 @@ async fn publish_and_command(
     tracks: Vec<TrackDto>,
     index: usize,
 ) -> Result<(), String> {
-    let published = api::create_queue(target, tracks)
-        .await
-        .map_err(describe_publish_failure)?;
+    // 同一台、同一批:上一次发布的那一版原样可用,不再发一个一模一样的新版本
+    // (#137 ③)。点同一个列表里的另一首只是换一条条目。
+    let published = match deck
+        .remote
+        .published_for(target, &tracks)
+    {
+        Some(published) => published,
+        None => {
+            let published =
+                api::create_queue(target, tracks.clone())
+                    .await
+                    .map_err(describe_publish_failure)?;
+            deck.remote.note_published(
+                target,
+                &tracks,
+                published.clone(),
+            );
+            published
+        }
+    };
 
-    // 条目号要从服务端读回来:发布那一刻服务端才给号,而队列允许同一首歌
-    // 出现多次 —— 拿下标去猜会在重复项上指错一条。
-    let entries = api::fetch_queue(
-        published.queue_id,
-        published.revision,
-    )
-    .await
-    .map_err(describe_publish_failure)?;
-    let entry_id = entries
+    // 条目号就在发布的应答里,按位置排:发布那一刻服务端才给号,而队列允许
+    // 同一首歌出现多次 —— 拿曲目 id 去猜会在重复项上指错一条。从前这里要把
+    // 整份队列分页读回来(5000 首十次往返)只为取这一列(#137 ③)。
+    let entry_id = published
+        .entry_ids
         .get(index)
-        .map(|entry| entry.entry_id)
+        .copied()
         .ok_or_else(|| {
             "服务端收下的队列里没有点的那一首".to_owned()
         })?;
 
-    let operation_id = fresh_operation_id();
+    let operation_id =
+        crate::sync::link::fresh_operation_id();
     api::set_queue_intent(
         published.queue_id,
         api::SetQueueIntentDto {
@@ -327,21 +353,6 @@ fn describe_publish_failure(
     }
 }
 
-/// 一次操作的标识。
-///
-/// 时间加一个进程内自增数:要的只是「这一次与上一次不是同一次」,而重试同
-/// 一次点播时调用方会把同一个值再用一遍。不引 uuid —— 换不来更少的代码。
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn fresh_operation_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    format!(
-        "{}-{}",
-        crate::sync::remote::now_ms(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
 /// 没发出去:说一句**对得上原因**的话,并**保留**当前目标。
 ///
 /// 改之前这里是 `if send(..) { return }` 然后径直落到本机 —— 那正是要改掉的
@@ -380,15 +391,19 @@ fn refuse(
 /// 收所有权而不是借用:`Play` 拖着整批曲目,借用就得把它整个克隆一遍,
 /// 而那正是这条链上最大的那份数据。
 fn as_command(
-    ui: &MainWindow,
     deck: &Deck,
     intent: Intent,
 ) -> Option<RemoteCommand> {
     Some(match intent {
         // 点播在 `to_remote` 的入口就被挡下了(见那里):它要先发布队列。
         Intent::Play { .. } => return None,
+        // 按被控端**报来的**状态定,不回读界面上那个图标(#137 ③):图标是它的
+        // 投影,回读它就又多了一份真相。
         Intent::TogglePlay => {
-            if ui.global::<Player>().get_is_playing() {
+            let playing = deck.remote.with_view(|view, _| {
+                view.state() == app_core::RemotePlayState::Playing
+            });
+            if playing {
                 RemoteCommand::Pause
             } else {
                 RemoteCommand::Resume
@@ -438,7 +453,7 @@ fn to_local(
                 is_redundant_tap(
                     deck.playback.borrow().state(),
                     id,
-                    ui.global::<Player>().get_is_playing(),
+                    local_sounding(deck),
                 )
             });
             if redundant {
@@ -452,15 +467,27 @@ fn to_local(
             // 先起播,再异步把这一批发布到服务端(`docs/adr/0031` 八):
             // 「所有播放都持久化」是目标,不是放歌的前置门槛 —— 服务端
             // 不可达时点不动歌是重大回退。
+            // 同一批已经同步上去了:服务端那一版原样可用,不再发一个一模一样的
+            // 新版本,只把「现在放到哪一条」记一笔(#137 ③)。
+            let unchanged =
+                deck.execution.identity().0.is_some()
+                    && *deck.queue.borrow().tracks()
+                        == tracks;
             play_batch(ui, deck, tracks.clone(), index);
-            publish_local_queue(ui, deck, tracks, index);
+            if unchanged {
+                checkpoint(deck, index);
+            } else {
+                publish_local_queue(
+                    ui, deck, tracks, index,
+                );
+            }
         }
         Intent::TogglePlay => {
             let Ok(player) = deck.player.as_ref() else {
                 return Dispatched::Blocked("没有播放器");
             };
             match local_toggle(
-                ui.global::<Player>().get_is_playing(),
+                is_sounding(player),
                 player.empty(),
             ) {
                 LocalToggle::Pause => {
@@ -559,6 +586,7 @@ pub(in crate::music) fn publish_local_queue(
     // 队列归**播放会话 / 输出设备**,这台设备就该只有一个当前队列
     // (`docs/adr/0031` 二)。
     let held = deck.execution.identity();
+    let tracks_len = tracks.len();
     let deck = deck.clone();
     let weak = ui.as_weak();
     let _ = slint::spawn_local(async move {
@@ -592,31 +620,20 @@ pub(in crate::music) fn publish_local_queue(
 
         match published {
             Ok(reference) => {
-                // 条目号要读回来:服务端发号,而队列允许重复项,拿下标猜
-                // 会在重复的那几条上指错一条。
-                let entries = api::fetch_queue(
-                    reference.queue_id,
-                    reference.revision,
-                )
-                .await;
-                match entries {
-                    Ok(entries) => {
-                        deck.execution.adopt(
-                            reference.queue_id,
-                            reference.revision,
-                            entries
-                                .iter()
-                                .map(|entry| entry.entry_id)
-                                .collect(),
-                        );
-                        checkpoint(&deck, index);
-                    }
-                    Err(error) => {
-                        log::warn!(
-                            "队列发布了但条目号没读回来: {error}"
-                        );
-                        deck.execution.detach();
-                    }
+                // 条目号就在应答里,按位置排 —— 不再把整份队列读回来(#137 ③)。
+                if reference.entry_ids.len() == tracks_len {
+                    deck.execution.adopt(
+                        reference.queue_id,
+                        reference.revision,
+                        reference.entry_ids,
+                    );
+                    checkpoint(&deck, index);
+                } else {
+                    log::warn!(
+                        "队列发布了,但应答里的条目号是 {} 条、这一批是 {tracks_len} 首",
+                        reference.entry_ids.len()
+                    );
+                    deck.execution.detach();
                 }
             }
             Err(error) => {
@@ -666,7 +683,10 @@ pub(in crate::music) fn resync_local_queue(
 
 /// 把「这一批同步上去没有」推到界面上。
 #[cfg(not(target_arch = "wasm32"))]
-fn mark_sync(ui: &MainWindow, deck: &Deck) {
+pub(in crate::music) fn mark_sync(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
     let (queue_id, ..) = deck.execution.identity();
     ui.global::<Shell>()
         .set_queue_unsynced(queue_id.is_none());
@@ -845,9 +865,11 @@ pub(in crate::music) fn play_batch(
     index: usize,
 ) {
     deck.tracks.borrow_mut().clone_from(&tracks);
-    deck.queue.borrow_mut().replace(tracks, index);
     // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
-    if ui.global::<Player>().get_shuffle_on() {
+    // 开没开问队列自己,不回读界面上那个开关 —— 开关是它的投影。
+    let shuffled = deck.queue.borrow().is_shuffled();
+    deck.queue.borrow_mut().replace(tracks, index);
+    if shuffled {
         deck.queue.borrow_mut().shuffle(shuffle_seed());
     }
     play_current(ui, deck);
@@ -922,6 +944,44 @@ pub(in crate::music) fn execute(
                     format!("这首跳不了: {err}"),
                 );
             }
+        }
+        // 迁移那四步(#137 ③)。回话记进本机的 observed,立刻报给遥控器。
+        RemoteCommand::Prepare {
+            operation_id,
+            queue_id,
+            revision,
+            entry_id,
+            ..
+        } => stage_move(
+            deck,
+            operation_id,
+            queue_id,
+            revision,
+            entry_id,
+            Reply::Remote,
+        ),
+        RemoteCommand::Start {
+            operation_id,
+            position_ms,
+            playing,
+        } => start_move(
+            ui,
+            deck,
+            operation_id,
+            position_ms,
+            playing,
+            Reply::Remote,
+        ),
+        RemoteCommand::Stop { operation_id } => {
+            stop_for_move(
+                ui,
+                deck,
+                operation_id,
+                Reply::Remote,
+            );
+        }
+        RemoteCommand::Cancel { operation_id } => {
+            cancel_move(deck, &operation_id);
         }
         RemoteCommand::Volume { level } => {
             let level = audio::clamped_volume(level);

@@ -452,9 +452,16 @@ fn route(
         | ClientSignal::State { .. }
         | ClientSignal::SnapshotRequest {
             ..
-        }) => crate::syncplay::control::route(
-            roster, control, account, from, remote,
-        ),
+        }
+        | ClientSignal::BeginOutputs { .. }
+        | ClientSignal::CommitOutputs {
+            ..
+        }
+        | ClientSignal::AbortOutputs { .. }) => {
+            crate::syncplay::control::route(
+                roster, control, account, from, remote,
+            )
+        }
     }
 }
 

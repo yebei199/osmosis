@@ -661,6 +661,93 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── 迁移进行中:压在被遥控条下面一格 ──
+    // 它是个**状况**:从选设备到目标确认开始一直在,收它的是迁移本身的结束。
+    // 停在「待确认」上时多出重试 / 放弃两颗键 —— 源停没停、目标起没起不知道,
+    // 这时候替用户选哪一台出声都可能是两台一起响,所以交给他(#137 ③)。
+    // 文字不指定字体:里面有对端自报的设备名,与歌名同理走系统字体回退。
+    if Shell.move-text != "": move-strip := Rectangle {
+        y: root.safe-area-insets.top
+            + (Shell.banner-text != "" ? 62px : 10px)
+            + (Shell.controlled-text != "" ? 52px : 0px);
+        x: (parent.width - self.width) / 2;
+        width: min(parent.width - 32px, 420px);
+        height: 44px;
+        background: Theme.surface.with-alpha(0.96);
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Shell.move-doubt ? Theme.danger-line : Theme.accent;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 8px;
+            spacing: 6px;
+
+            move-label := Text {
+                text: Shell.move-text;
+                font-size: 12px;
+                color: Theme.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+                accessible-role: text;
+                accessible-label: Shell.move-text;
+            }
+
+            if Shell.move-doubt: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: retry-label.preferred-width + 20px;
+                    height: 30px;
+                    border-radius: 15px;
+                    background: retry-touch.has-hover ? Theme.accent : Theme.overlay-weak;
+
+                    retry-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Shell.move-retry(); }
+                        accessible-role: button;
+                        accessible-label: "重试切换";
+                        accessible-action-default => { Shell.move-retry(); }
+                    }
+
+                    retry-label := Text {
+                        text: "重试";
+                        font-size: 12px;
+                        color: retry-touch.has-hover ? Theme.accent-text : Theme.text;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if Shell.move-doubt: VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: abandon-label.preferred-width + 20px;
+                    height: 30px;
+                    border-radius: 15px;
+                    background: abandon-touch.has-hover ? Theme.accent : Theme.overlay-weak;
+
+                    abandon-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Shell.move-abandon(); }
+                        accessible-role: button;
+                        accessible-label: "放弃切换";
+                        accessible-action-default => { Shell.move-abandon(); }
+                    }
+
+                    abandon-label := Text {
+                        text: "放弃";
+                        font-size: 12px;
+                        color: abandon-touch.has-hover ? Theme.accent-text : Theme.text;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
     if Shell.banner-text != "": banner := Rectangle {
         y: root.safe-area-insets.top + 10px;
         x: (parent.width - self.width) / 2;
@@ -721,7 +808,8 @@ export component MainWindow inherits Window {
     if Shell.download-text != "": download-strip := Rectangle {
         y: root.safe-area-insets.top
             + (Shell.banner-text != "" ? 62px : 10px)
-            + (Shell.controlled-text != "" ? 52px : 0px);
+            + (Shell.controlled-text != "" ? 52px : 0px)
+            + (Shell.move-text != "" ? 52px : 0px);
         x: (parent.width - self.width) / 2;
         width: min(parent.width - 32px, 420px);
         height: 40px;

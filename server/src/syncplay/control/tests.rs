@@ -40,6 +40,7 @@ fn report() -> RemoteStateDto {
         volume: 1.0,
         epoch: 1_700_000_000_000,
         state_seq: 42,
+        operation: None,
     }
 }
 
@@ -451,7 +452,9 @@ fn a_report_goes_only_to_the_controller() {
         &mut control,
         ALICE,
         "pc",
-        ClientSignal::State { state: report() },
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
     );
 
     assert_eq!(reply, None);
@@ -483,7 +486,9 @@ fn a_report_without_a_controller_frees_the_target() {
         &mut control,
         ALICE,
         "pc",
-        ClientSignal::State { state: report() },
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
     );
 
     assert_eq!(reply, Some(ServerSignal::NotControlled));
@@ -707,7 +712,9 @@ fn a_report_with_a_grant_is_forwarded_as_before() {
         &mut control,
         ALICE,
         "pc",
-        ClientSignal::State { state: report() },
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
     );
 
     assert_eq!(reply, None, "持权时应答走转发,不回给自己");
@@ -832,12 +839,450 @@ fn a_report_after_the_lease_gets_not_controlled() {
         &mut control,
         ALICE,
         "pc",
-        ClientSignal::State { state: report() },
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
     );
 
     assert_eq!(reply, Some(ServerSignal::NotControlled));
     assert!(
         rx_phone.try_recv().is_err(),
         "过期的遥控器不该再收到上报"
+    );
+}
+
+// ── 播放组:改在这些设备播放(#137 ③)──
+
+/// 手机开始把输出换成 `outputs`,返回服务端给的应答。
+fn begin(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+    op: &str,
+    outputs: &[&str],
+) -> Option<ServerSignal> {
+    route(
+        roster,
+        control,
+        ALICE,
+        "phone",
+        ClientSignal::BeginOutputs {
+            operation_id: op.to_owned(),
+            outputs: outputs
+                .iter()
+                .map(|id| (*id).to_owned())
+                .collect(),
+        },
+    )
+}
+
+fn commit(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+    op: &str,
+) -> Option<ServerSignal> {
+    route(
+        roster,
+        control,
+        ALICE,
+        "phone",
+        ClientSignal::CommitOutputs {
+            operation_id: op.to_owned(),
+        },
+    )
+}
+
+fn command_to(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+    to: &str,
+) -> Option<ServerSignal> {
+    route(
+        roster,
+        control,
+        ALICE,
+        "phone",
+        ClientSignal::Command {
+            to: to.to_owned(),
+            cmd: RemoteCommand::Stop {
+                operation_id: "op".to_owned(),
+            },
+        },
+    )
+}
+
+/// 把收件箱里已有的消息全倒掉,只看之后来的。
+fn drain(rx: &mut mpsc::Receiver<ServerSignal>) {
+    while rx.try_recv().is_ok() {}
+}
+
+/// 手机已经把输出换到 pc 上,组里就 pc 一台。
+fn phone_moved_to_pc(
+    roster: &Roster<Sink>,
+    control: &mut Control,
+) {
+    begin(roster, control, "op-pc", &["pc"]);
+    commit(roster, control, "op-pc");
+}
+
+/// 开始一次换输出:新来的那台被锁上、开始听命令;遥控器拿到代次。
+#[test]
+fn beginning_outputs_locks_the_incoming_device_and_grants_a_generation()
+ {
+    let (roster, _rx_phone, mut rx_pc, _) = three_devices();
+    let mut control = Control::default();
+
+    let reply = begin(&roster, &mut control, "op", &["pc"]);
+
+    assert!(
+        matches!(
+            reply,
+            Some(ServerSignal::OutputsBegun { ref operation_id, .. })
+                if operation_id == "op"
+        ),
+        "{reply:?}"
+    );
+    assert_eq!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::ControlledBy {
+            device: device("phone")
+        })
+    );
+}
+
+/// 操作进行中,旧成员与新来的那台**都**收得到命令 —— 源要能被叫停,
+/// 目标要能被叫准备、叫开始。只认其中一台的话,迁移做不完。
+#[test]
+fn commands_reach_both_the_old_member_and_the_incoming_one()
+{
+    let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    begin(&roster, &mut control, "op-spare", &["spare"]);
+    drain(&mut rx_pc);
+    drain(&mut rx_spare);
+
+    assert_eq!(
+        command_to(&roster, &mut control, "pc"),
+        None
+    );
+    assert_eq!(
+        command_to(&roster, &mut control, "spare"),
+        None
+    );
+    assert!(matches!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::Command { .. })
+    ));
+    assert!(matches!(
+        rx_spare.try_recv(),
+        Ok(ServerSignal::Command { .. })
+    ));
+}
+
+/// 新来的那台的上报转给遥控器 —— 它的「准备好了」就搭在上报里。
+#[test]
+fn reports_from_the_incoming_device_reach_the_controller() {
+    let (roster, mut rx_phone, _rx_pc, _) = three_devices();
+    let mut control = Control::default();
+    begin(&roster, &mut control, "op", &["pc"]);
+    drain(&mut rx_phone);
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "pc",
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
+    );
+
+    assert_eq!(reply, None);
+    assert!(matches!(
+        rx_phone.try_recv(),
+        Ok(ServerSignal::State { ref from, .. }) if from == "pc"
+    ));
+}
+
+/// 提交:成员换过去、任期加一,换下来的那台撤锁,之后命令也到不了它了。
+#[test]
+fn committing_swaps_members_bumps_the_term_and_unlocks_the_removed()
+ {
+    let (roster, _rx_phone, mut rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    let before = control.term(ALICE);
+    begin(&roster, &mut control, "op-spare", &["spare"]);
+    drain(&mut rx_pc);
+
+    let reply = commit(&roster, &mut control, "op-spare");
+
+    assert_eq!(
+        reply,
+        Some(ServerSignal::OutputsCommitted {
+            operation_id: "op-spare".to_owned(),
+            term: before + 1,
+        })
+    );
+    assert_eq!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::NotControlled),
+        "换下来的那台该撤锁"
+    );
+    assert_eq!(
+        control.members(ALICE),
+        vec!["spare".to_owned()]
+    );
+    assert!(matches!(
+        command_to(&roster, &mut control, "pc"),
+        Some(ServerSignal::Error { .. })
+    ));
+}
+
+/// 换下来的那台迟到的上报不再转给遥控器:它已经不是成员了。
+#[test]
+fn a_report_from_a_removed_member_is_not_forwarded() {
+    let (roster, mut rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    begin(&roster, &mut control, "op-spare", &["spare"]);
+    commit(&roster, &mut control, "op-spare");
+    drain(&mut rx_phone);
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "pc",
+        ClientSignal::State {
+            state: Box::new(report()),
+        },
+    );
+
+    assert_eq!(reply, Some(ServerSignal::NotControlled));
+    assert!(rx_phone.try_recv().is_err());
+}
+
+/// 提交的操作号对不上就拒绝,成员集合不动 —— 旧操作迟到的提交不能把新的一次换掉。
+#[test]
+fn committing_the_wrong_operation_is_refused() {
+    let (roster, _rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    begin(&roster, &mut control, "op-new", &["spare"]);
+
+    let reply = commit(&roster, &mut control, "op-old");
+
+    assert!(
+        matches!(
+            reply,
+            Some(ServerSignal::Error { ref code, .. })
+                if code == "operation_mismatch"
+        ),
+        "{reply:?}"
+    );
+    assert_eq!(
+        control.members(ALICE),
+        vec!["pc".to_owned()]
+    );
+}
+
+/// 作罢:新来的那台撤锁,成员集合原样。
+#[test]
+fn aborting_unlocks_the_incoming_device_and_keeps_the_members()
+ {
+    let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    begin(&roster, &mut control, "op-spare", &["spare"]);
+    drain(&mut rx_pc);
+    drain(&mut rx_spare);
+
+    route(
+        &roster,
+        &mut control,
+        ALICE,
+        "phone",
+        ClientSignal::AbortOutputs {
+            operation_id: "op-spare".to_owned(),
+        },
+    );
+
+    assert_eq!(
+        rx_spare.try_recv(),
+        Ok(ServerSignal::NotControlled)
+    );
+    assert!(rx_pc.try_recv().is_err(), "成员不受影响");
+    assert_eq!(
+        control.members(ALICE),
+        vec!["pc".to_owned()]
+    );
+}
+
+/// 准备途中换目标:新的一次顶掉旧的,旧目标撤锁,之后命令到不了它。
+#[test]
+fn a_new_begin_replaces_the_pending_one_and_unlocks_the_dropped_device()
+ {
+    let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    begin(&roster, &mut control, "op1", &["pc"]);
+    drain(&mut rx_pc);
+
+    begin(&roster, &mut control, "op2", &["spare"]);
+
+    assert_eq!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::NotControlled)
+    );
+    assert!(matches!(
+        rx_spare.try_recv(),
+        Ok(ServerSignal::ControlledBy { .. })
+    ));
+    assert!(matches!(
+        command_to(&roster, &mut control, "pc"),
+        Some(ServerSignal::Error { .. })
+    ));
+}
+
+/// 改回本机 = 提交一个空集合:组散掉,原来那台撤锁。
+#[test]
+fn committing_an_empty_set_dissolves_the_group() {
+    let (roster, _rx_phone, mut rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    begin(&roster, &mut control, "op-home", &[]);
+    drain(&mut rx_pc);
+
+    let reply = commit(&roster, &mut control, "op-home");
+
+    assert!(matches!(
+        reply,
+        Some(ServerSignal::OutputsCommitted { .. })
+    ));
+    assert_eq!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::NotControlled)
+    );
+    assert_eq!(
+        control.members(ALICE),
+        Vec::<String>::new()
+    );
+    assert_eq!(control.controller_of(ALICE, "pc"), None);
+}
+
+/// **控制端离线满租约不解散组**:遥控器清掉,成员还在;下一位遥控器接上时
+/// 成员重新被锁上。
+#[test]
+fn the_group_survives_the_controller_lease() {
+    let (roster, _rx_phone, mut rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::with_lease(Duration::ZERO);
+    phone_moved_to_pc(&roster, &mut control);
+    control.controller_left(ALICE, "phone", Instant::now());
+    control.expire(ALICE, Instant::now());
+
+    assert_eq!(control.controller_of(ALICE, "pc"), None);
+    assert_eq!(
+        control.members(ALICE),
+        vec!["pc".to_owned()],
+        "遥控器走了,组不散"
+    );
+
+    drain(&mut rx_pc);
+    begin(&roster, &mut control, "op-again", &["pc"]);
+    assert!(matches!(
+        rx_pc.try_recv(),
+        Ok(ServerSignal::ControlledBy { .. })
+    ));
+}
+
+/// 另一台遥控器开始换输出,等于接管:旧遥控器收到失权。
+#[test]
+fn a_begin_from_another_device_takes_over_and_revokes_the_old_controller()
+ {
+    let (roster, mut rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    phone_moved_to_pc(&roster, &mut control);
+    drain(&mut rx_phone);
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "spare",
+        ClientSignal::BeginOutputs {
+            operation_id: "op".to_owned(),
+            outputs: vec!["pc".to_owned()],
+        },
+    );
+
+    assert!(matches!(
+        reply,
+        Some(ServerSignal::OutputsBegun { .. })
+    ));
+    assert_eq!(
+        rx_phone.try_recv(),
+        Ok(ServerSignal::ControlRevoked {
+            by: "spare".to_owned()
+        })
+    );
+}
+
+/// 输出里有不在线的设备、或者就是自己:整次拒绝,什么都不锁。
+#[test]
+fn a_begin_with_an_unusable_output_is_refused() {
+    let (roster, _rx_phone, mut rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+
+    let offline =
+        begin(&roster, &mut control, "op", &["tv"]);
+    let myself =
+        begin(&roster, &mut control, "op", &["phone"]);
+
+    assert!(matches!(
+        offline,
+        Some(ServerSignal::Error { ref code, .. }) if code == "device_offline"
+    ));
+    assert!(matches!(
+        myself,
+        Some(ServerSignal::Error { ref code, .. }) if code == "cannot_control_self"
+    ));
+    assert!(rx_pc.try_recv().is_err());
+}
+
+/// 不是遥控器的那台提交不了。
+#[test]
+fn only_the_controller_can_commit() {
+    let (roster, _rx_phone, _rx_pc, _rx_spare) =
+        three_devices();
+    let mut control = Control::default();
+    begin(&roster, &mut control, "op", &["pc"]);
+
+    let reply = route(
+        &roster,
+        &mut control,
+        ALICE,
+        "spare",
+        ClientSignal::CommitOutputs {
+            operation_id: "op".to_owned(),
+        },
+    );
+
+    assert!(matches!(
+        reply,
+        Some(ServerSignal::Error { ref code, .. }) if code == "not_controller"
+    ));
+    assert_eq!(
+        control.members(ALICE),
+        Vec::<String>::new()
     );
 }

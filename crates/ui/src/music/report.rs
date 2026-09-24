@@ -95,6 +95,7 @@ pub(super) fn emit(
     seeking: &Rc<RefCell<Option<audio::SeekState>>>,
     decoded: audio::Loaded,
     health: audio::StreamHealth,
+    start: Option<Start>,
 ) {
     use audio::buffered;
     use audio::pcm::normalize;
@@ -108,5 +109,28 @@ pub(super) fn emit(
     let source = buffered(normalize(decoded));
     // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
     seeking.borrow_mut().replace(source.seek_state());
-    player.play(source);
+    match start {
+        None => player.play(source),
+        // 迁移过来的那一首从锚点接着放(#137 ③)。跳不动就停在暂停上、说一句,
+        // 不从 0:00 放起来 —— 那会让用户把整首从头再听一遍,还以为是迁移成功了。
+        Some(start) => {
+            if let Err(error) = player.play_from(
+                source,
+                start.at,
+                start.playing,
+            ) {
+                log::warn!(
+                    "迁移过来的那一首跳不到 {:?}: {error}",
+                    start.at
+                );
+            }
+        }
+    }
+}
+
+/// 一首歌不从头放时,从哪、放不放。迁移过来的那一首用它(#137 ③)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Start {
+    pub(super) at: core::time::Duration,
+    pub(super) playing: bool,
 }

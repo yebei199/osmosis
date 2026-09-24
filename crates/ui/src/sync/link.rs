@@ -45,6 +45,20 @@ pub(crate) fn local_device_id() -> String {
     identity().id
 }
 
+/// 一次操作的标识:点播与迁移都用它。
+///
+/// 时间加一个进程内自增数:要的只是「这一次与上一次不是同一次」,而重试同一次
+/// 操作时调用方会把同一个值再用一遍。不引 uuid —— 换不来更少的代码。
+pub fn fresh_operation_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    format!(
+        "{}-{}",
+        crate::sync::remote::now_ms(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// 本机在名册里的身份。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)

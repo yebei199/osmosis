@@ -122,6 +122,7 @@ fn report(position_ms: u64) -> RemoteStateDto {
         queue_len: 0,
         epoch: 1_700_000_000_000,
         state_seq: position_ms,
+        operation: None,
     }
 }
 

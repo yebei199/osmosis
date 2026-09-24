@@ -59,6 +59,41 @@ pub enum RemoteCommand {
     Volume {
         level: f32,
     },
+    /// 迁移第一步(对目标):按标识取下执行副本,把这一条备到 `position_ms`,
+    /// **不出声**。
+    ///
+    /// 选设备等于把当前播放迁移过去(#137)。目标先备好、源再停、目标才开始,
+    /// 三步各有确认 —— 合成一条「从这里接着放」的话,源停没停与目标起没起就
+    /// 只剩一个结果,而丢了那一个确认时谁都不知道此刻是一台在响、两台在响
+    /// 还是一台都没响。
+    Prepare {
+        operation_id: String,
+        queue_id: i64,
+        revision: i64,
+        entry_id: i64,
+        position_ms: u64,
+    },
+    /// 迁移第三步(对目标):从 `position_ms` 开始出声;`playing` 为假就停在
+    /// 那里等人按播放 —— 源本来就是暂停的,迁过去不该自己响起来。
+    ///
+    /// 只认 [`Self::Prepare`] 备过的那一次:没备过的操作一律报失败,不临时
+    /// 现取 —— 重启过的目标收到一条旧的 `Start` 时,那正是它该有的反应。
+    Start {
+        operation_id: String,
+        position_ms: u64,
+        playing: bool,
+    },
+    /// 迁移第二步(对源):停止**实际音频输出**,报停在哪一毫秒。
+    ///
+    /// 停的是出声,不是队列:执行副本留着,迁移没成的话用户按一下播放就能
+    /// 在源上接着听。
+    Stop {
+        operation_id: String,
+    },
+    /// 放弃这一次准备:备好的那一份丢掉,手上原来在放的不动。
+    Cancel {
+        operation_id: String,
+    },
 }
 
 impl RemoteCommand {
@@ -88,6 +123,30 @@ impl RemoteCommand {
             Self::Seek { ms } => format!("seek({ms}ms)"),
             Self::Volume { level } => {
                 format!("volume({level:.2})")
+            }
+            Self::Prepare {
+                operation_id,
+                queue_id,
+                revision,
+                entry_id,
+                position_ms,
+            } => format!(
+                "prepare(队列 {queue_id}@{revision}, 条目 {entry_id}, \
+                 {position_ms}ms, 操作 {operation_id})"
+            ),
+            Self::Start {
+                operation_id,
+                position_ms,
+                playing,
+            } => format!(
+                "start({position_ms}ms, {}, 操作 {operation_id})",
+                if *playing { "播放" } else { "暂停" }
+            ),
+            Self::Stop { operation_id } => {
+                format!("stop(操作 {operation_id})")
+            }
+            Self::Cancel { operation_id } => {
+                format!("cancel(操作 {operation_id})")
             }
         }
     }
@@ -176,6 +235,48 @@ pub struct RemoteStateDto {
     /// 进度条就会倒退一次。过期与否仍由收信方按自己的钟判
     /// (见 `app_core::Output`)。
     pub state_seq: u64,
+
+    /// 这台设备最近一次做完的迁移步骤 —— 它自己的 observed,不是事件。
+    ///
+    /// 每条上报都带着,直到下一次操作把它换掉:确认搭在「状态」上而不是一条
+    /// 单发的回执上,丢了一条上报下一秒就补回来。真正的「确认丢失」因此只剩
+    /// 一种 —— 这台设备整个不报了,而那正是遥控器该显示「待确认」的时候。
+    #[serde(default)]
+    pub operation: Option<OperationAckDto>,
+}
+
+/// 迁移里的一步做到了哪。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationPhase {
+    /// 备好了,还没出声。
+    Prepared,
+    /// 开始出声(或按要求停在了起点)。
+    Started,
+    /// 实际音频输出已经停了;`position_ms` 是停下的那一刻。
+    Stopped,
+    /// 这一步没做成,`reason` 说为什么。**确定的**失败 —— 与「没回音」不同。
+    Failed,
+}
+
+/// 一台设备对一次迁移操作的回话。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct OperationAckDto {
+    pub operation_id: String,
+    pub phase: OperationPhase,
+    /// 停下时的位置([`OperationPhase::Stopped`]),或者开始时的位置。
+    pub position_ms: Option<u64>,
+    pub reason: Option<String>,
 }
 
 #[cfg(test)]
@@ -230,7 +331,7 @@ mod tests {
     /// 下面两条断言一个字没改,变的只有它。
     fn report_for(tracks: &[TrackDto]) -> ClientSignal {
         ClientSignal::State {
-            state: RemoteStateDto {
+            state: Box::new(RemoteStateDto {
                 track: tracks.first().cloned(),
                 position_ms: 42_000,
                 state: RemotePlayState::Playing,
@@ -242,7 +343,8 @@ mod tests {
                 queue_len: tracks.len() as u32,
                 epoch: 1_700_000_000_000,
                 state_seq: 42,
-            },
+                operation: None,
+            }),
         }
     }
 
@@ -276,6 +378,7 @@ mod tests {
             queue_len: 0,
             epoch: 1_700_000_000_000,
             state_seq: 1,
+            operation: None,
         }
     }
 
@@ -478,11 +581,11 @@ mod tests {
                 cmd: RemoteCommand::Next,
             },
             ClientSignal::State {
-                state: RemoteStateDto {
+                state: Box::new(RemoteStateDto {
                     state: RemotePlayState::Paused,
                     volume: 0.5,
                     ..idle_state()
-                },
+                }),
             },
             ClientSignal::SnapshotRequest {
                 to: "pc1".to_owned(),
@@ -533,5 +636,124 @@ mod tests {
             .expect("消息该能解回来");
             assert_eq!(back, message);
         }
+    }
+
+    /// 迁移那四条命令各自解得回来,标签是蛇形。
+    #[test]
+    fn migration_commands_round_trip() {
+        let commands = [
+            RemoteCommand::Prepare {
+                operation_id: "op-9".to_owned(),
+                queue_id: 7,
+                revision: 3,
+                entry_id: 12,
+                position_ms: 61_500,
+            },
+            RemoteCommand::Start {
+                operation_id: "op-9".to_owned(),
+                position_ms: 63_000,
+                playing: true,
+            },
+            RemoteCommand::Stop {
+                operation_id: "op-9".to_owned(),
+            },
+            RemoteCommand::Cancel {
+                operation_id: "op-9".to_owned(),
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command)
+                .expect("命令该能序列化");
+            let back: RemoteCommand =
+                serde_json::from_str(&text)
+                    .expect("命令该能解回来");
+            assert_eq!(back, command);
+        }
+        assert_eq!(
+            serde_json::to_value(&RemoteCommand::Stop {
+                operation_id: "x".to_owned()
+            })
+            .expect("命令该能序列化"),
+            json!({"type": "stop", "operation_id": "x"})
+        );
+    }
+
+    /// 日志里每条迁移命令都点得出操作号 —— 跨三个进程串起一次迁移靠的就是它。
+    #[test]
+    fn every_migration_summary_names_its_operation() {
+        let commands = [
+            RemoteCommand::Prepare {
+                operation_id: "op-9".to_owned(),
+                queue_id: 7,
+                revision: 3,
+                entry_id: 12,
+                position_ms: 1,
+            },
+            RemoteCommand::Start {
+                operation_id: "op-9".to_owned(),
+                position_ms: 1,
+                playing: false,
+            },
+            RemoteCommand::Stop {
+                operation_id: "op-9".to_owned(),
+            },
+            RemoteCommand::Cancel {
+                operation_id: "op-9".to_owned(),
+            },
+        ];
+        for command in commands {
+            assert!(
+                command.summary().contains("op-9"),
+                "{} 没点出操作号",
+                command.summary()
+            );
+        }
+    }
+
+    /// 上报带着这台设备最近一次迁移步骤的回话,解得回来。
+    #[test]
+    fn a_report_carries_its_operation_ack() {
+        let report = RemoteStateDto {
+            operation: Some(OperationAckDto {
+                operation_id: "op-9".to_owned(),
+                phase: OperationPhase::Stopped,
+                position_ms: Some(63_000),
+                reason: None,
+            }),
+            ..idle_state()
+        };
+
+        let back: RemoteStateDto = serde_json::from_str(
+            &serde_json::to_string(&report)
+                .expect("上报该能序列化"),
+        )
+        .expect("上报该能解回来");
+
+        assert_eq!(back, report);
+    }
+
+    /// 回话是 observed 不是事件,所以它是定长的:带不带它,上报都不随队列增长。
+    #[test]
+    fn an_operation_ack_does_not_grow_with_the_queue() {
+        let field: Vec<TrackDto> =
+            (0..FIELD_TRACKS).map(field_track).collect();
+        let ClientSignal::State { mut state } =
+            report_for(&field)
+        else {
+            unreachable!("report_for 造的就是上报");
+        };
+        state.operation = Some(OperationAckDto {
+            operation_id: "1727000000000-42".to_owned(),
+            phase: OperationPhase::Failed,
+            position_ms: Some(63_000),
+            reason: Some("第 3 版里没有条目 12".to_owned()),
+        });
+
+        let bytes =
+            wire_len(&ClientSignal::State { state });
+        assert!(
+            bytes < crate::MAX_SIGNAL_BYTES / 100,
+            "带回话的上报 {bytes} 字节,该远在上限之内"
+        );
     }
 }

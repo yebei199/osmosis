@@ -44,12 +44,18 @@ pub use sync::*;
 /// 与 `ServerSignal::Signal` 两个变体没了:协议 3 的客户端还会发 SDP 转发,
 /// 新服务端不再认。删变体,不兼容。
 ///
+/// 5:选设备改成迁移当前播放(#137 ③)。遥控器多了 `Prepare`/`Start`/`Stop`/
+/// `Cancel` 四条命令与 `BeginOutputs`/`CommitOutputs`/`AbortOutputs` 三条组操作,
+/// 上报多了迁移回话 `operation`,发布队列的响应多了 `entry_ids`。协议 4 的
+/// 遥控器只会发 `ClaimControl`,选完设备什么都不迁、被控端也等不到停止 ——
+/// 正是 ③ 要修掉的那一套,所以不兼容、成套升级。
+///
 /// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
 /// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
 /// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
 /// [`ClientSignal::Hello`] 的 `protocol_version` 与
 /// [`ServerSignal::Incompatible`]。
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// `GET /health` 的响应体。
 #[derive(

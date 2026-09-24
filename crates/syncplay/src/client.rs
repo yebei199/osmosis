@@ -69,6 +69,18 @@ pub enum Event {
     /// 界面按下去时已经把输出乐观地切了过去,这一条让它切回本机 —— 那台设备
     /// 一条上报都不会发来,过期与失联的判定于是永远不触发(#118)。
     ClaimFailed { target: String, reason: String },
+    /// 服务端登记下了一次换输出(`BeginOutputs`),带回本机的控制代次。
+    OutputsBegun {
+        operation_id: String,
+        generation: u64,
+    },
+    /// 服务端确认输出集合换好了,带回新的主端任期。
+    OutputsCommitted { operation_id: String, term: u64 },
+    /// 换输出没登记上:输出不在线、或者就是本机、或者信令在答复之前断了。
+    OutputsFailed {
+        operation_id: String,
+        reason: String,
+    },
 }
 
 /// 界面发给编排循环的指令。
@@ -86,15 +98,30 @@ enum Command {
     Report(Box<RemoteStateDto>),
     /// 向当前持权的那台设备要一次快照。
     Snapshot,
+    /// 把一条命令发给指定的设备。迁移时要同时叫得动源与目标,不能只认持权那一台。
+    SendTo {
+        to: String,
+        cmd: RemoteCommand,
+    },
+    /// 开始一次换输出。
+    BeginOutputs {
+        operation_id: String,
+        outputs: Vec<String>,
+    },
+    CommitOutputs(String),
+    AbortOutputs(String),
 }
 
 /// 本机作为**遥控器**持有的那份控制权。
 ///
 /// 活在 [`run`] 的作用域里而不是 [`serve`] 里 —— 它要跨重连活下来。
 struct Held {
+    /// 重连续权时报的那台 —— 组里的成员(迁移途中也可以是正被拉进来的那台)。
     target: String,
     /// 服务端给的代次。还没拿到就是 `None`(刚发出去、答复没回来)。
     generation: Option<u64>,
+    /// 进行中的那一次换输出:操作号与换上之后的集合。提交时据此换 `target`。
+    changing: Option<(String, Vec<String>)>,
 }
 
 /// 一个连着信令服务器的遥控客户端。
@@ -231,6 +258,55 @@ impl Client {
     ///
     /// 取得控制权、换目标、重连之后各要一次 —— 服务端不缓存状态
     /// (`docs/adr/0030`),「现在是什么样」只能问被控端本人。
+    /// 把一条命令发给指定的设备(迁移时的源或目标)。服务端只转给遥控器所在
+    /// 组里的设备,不在组里的一律回错。
+    pub fn command_to(&self, to: &str, cmd: RemoteCommand) {
+        let summary = cmd.summary();
+        match self.commands.send(Command::SendTo {
+            to: to.to_owned(),
+            cmd,
+        }) {
+            Ok(()) => log::info!(
+                "遥控命令入发送队列: {summary} -> {to}"
+            ),
+            Err(_) => log::warn!(
+                "遥控命令没能入队: {summary} -> {to}(发送通道已关)"
+            ),
+        }
+    }
+
+    /// 开始一次换输出:`outputs` 是换上之后的输出集合,空集合是改回本机。
+    pub fn begin_outputs(
+        &self,
+        operation_id: &str,
+        outputs: Vec<String>,
+    ) {
+        if self.incompatible.load(Ordering::Relaxed) {
+            log::warn!(
+                "不换输出(操作 {operation_id}):对端协议版本对不上"
+            );
+            return;
+        }
+        let _ = self.commands.send(Command::BeginOutputs {
+            operation_id: operation_id.to_owned(),
+            outputs,
+        });
+    }
+
+    /// 提交那一次换输出。
+    pub fn commit_outputs(&self, operation_id: &str) {
+        let _ = self.commands.send(Command::CommitOutputs(
+            operation_id.to_owned(),
+        ));
+    }
+
+    /// 放弃那一次换输出。
+    pub fn abort_outputs(&self, operation_id: &str) {
+        let _ = self.commands.send(Command::AbortOutputs(
+            operation_id.to_owned(),
+        ));
+    }
+
     pub fn request_snapshot(&self) {
         let _ = self.commands.send(Command::Snapshot);
     }
@@ -310,6 +386,21 @@ fn abandon_pending(
         return None;
     }
     held.take().map(|pending| pending.target)
+}
+
+/// 进行中的那一次换输出被拒了(或者答复之前信令断了):忘掉它,返回它的操作号。
+///
+/// 这一次之前就持着权的,权留着 —— 只是这一次没成;这一次才开始持权的
+/// (从本机第一次换到别的设备),连持权记录一起忘掉。
+fn abandon_change(
+    held: &mut Option<Held>,
+) -> Option<String> {
+    let current = held.as_mut()?;
+    let (operation_id, _) = current.changing.take()?;
+    if current.generation.is_none() {
+        *held = None;
+    }
+    Some(operation_id)
 }
 
 /// 服务端对 `ClaimControl` 的拒绝码(见 `server::syncplay::control` 的 `claim`)。
@@ -436,6 +527,15 @@ async fn run(
         }
 
         // 断着的时候服务端的消息过不来,靠消息才清的状态得在这里自己清。
+        if let Some(operation_id) =
+            abandon_change(&mut held)
+        {
+            events(Event::OutputsFailed {
+                operation_id,
+                reason: "信令断开,换输出没有等到答复"
+                    .to_owned(),
+            });
+        }
         if let Some(target) = abandon_pending(&mut held) {
             events(Event::ClaimFailed {
                 target,
@@ -614,6 +714,16 @@ fn accept(
         ServerSignal::Error { code, message } => {
             let reason = format!("{code}: {message}");
             if CLAIM_REJECTIONS.contains(&code.as_str())
+                && let Some(operation_id) =
+                    abandon_change(held)
+            {
+                events(Event::OutputsFailed {
+                    operation_id,
+                    reason,
+                });
+                return Ok(());
+            }
+            if CLAIM_REJECTIONS.contains(&code.as_str())
                 && let Some(target) = abandon_pending(held)
             {
                 events(Event::ClaimFailed {
@@ -664,6 +774,51 @@ fn accept(
             events(Event::NotControlled);
             Ok(())
         }
+        ServerSignal::OutputsBegun {
+            operation_id,
+            generation,
+        } => {
+            if let Some(current) = held.as_mut() {
+                current.generation = Some(generation);
+            }
+            events(Event::OutputsBegun {
+                operation_id,
+                generation,
+            });
+            Ok(())
+        }
+        ServerSignal::OutputsCommitted {
+            operation_id,
+            term,
+        } => {
+            settle_change(held, &operation_id);
+            events(Event::OutputsCommitted {
+                operation_id,
+                term,
+            });
+            Ok(())
+        }
+    }
+}
+
+/// 那一次换输出提交了:持权记录跟着换到新集合;新集合是空的(改回本机)就
+/// 什么都不再持。
+fn settle_change(
+    held: &mut Option<Held>,
+    operation_id: &str,
+) {
+    let Some(current) = held.as_mut() else {
+        return;
+    };
+    let Some((_, outputs)) = current
+        .changing
+        .take_if(|(pending, _)| pending == operation_id)
+    else {
+        return;
+    };
+    match outputs.into_iter().next() {
+        Some(first) => current.target = first,
+        None => *held = None,
     }
 }
 
@@ -680,6 +835,7 @@ async fn dispatch(
             *held = Some(Held {
                 target: target.clone(),
                 generation: None,
+                changing: None,
             });
             sender.claim(&target, None).await
         }
@@ -707,6 +863,46 @@ async fn dispatch(
             }
             None => Ok(()),
         },
+        Command::SendTo { to, cmd } => {
+            sender.command(&to, cmd).await
+        }
+        Command::BeginOutputs {
+            operation_id,
+            outputs,
+        } => {
+            match held.as_mut() {
+                Some(current) => {
+                    current.changing = Some((
+                        operation_id.clone(),
+                        outputs.clone(),
+                    ));
+                }
+                None => {
+                    if let Some(first) = outputs.first() {
+                        *held = Some(Held {
+                            target: first.clone(),
+                            generation: None,
+                            changing: Some((
+                                operation_id.clone(),
+                                outputs.clone(),
+                            )),
+                        });
+                    }
+                }
+            }
+            sender
+                .begin_outputs(&operation_id, outputs)
+                .await
+        }
+        Command::CommitOutputs(operation_id) => {
+            sender.commit_outputs(&operation_id).await
+        }
+        Command::AbortOutputs(operation_id) => {
+            // 作罢之后这一次就不再算进行中:之前就持着权的留着权,
+            // 这一次才开始持权的连记录一起忘掉。
+            abandon_change(held);
+            sender.abort_outputs(&operation_id).await
+        }
     }
 }
 
@@ -737,6 +933,7 @@ mod tests {
             resume_claim(Some(&Held {
                 target: "pc".to_owned(),
                 generation: None,
+                changing: None,
             })),
             None,
             "服务端从没确认过这一份权,重连时不许拿它去夺回"
@@ -745,6 +942,7 @@ mod tests {
             resume_claim(Some(&Held {
                 target: "pc".to_owned(),
                 generation: Some(7),
+                changing: None,
             })),
             Some(("pc".to_owned(), 7)),
             "确认过的才续,并且带上代次"
@@ -795,6 +993,7 @@ mod tests {
         let mut pending = Some(Held {
             target: "pc".to_owned(),
             generation: None,
+            changing: None,
         });
         assert_eq!(
             abandon_pending(&mut pending),
@@ -805,6 +1004,7 @@ mod tests {
         let mut granted = Some(Held {
             target: "pc".to_owned(),
             generation: Some(3),
+            changing: None,
         });
         assert_eq!(abandon_pending(&mut granted), None);
         assert!(
@@ -813,6 +1013,76 @@ mod tests {
         );
 
         assert_eq!(abandon_pending(&mut None), None);
+    }
+
+    fn changing(
+        target: &str,
+        generation: Option<u64>,
+        outputs: &[&str],
+    ) -> Option<Held> {
+        Some(Held {
+            target: target.to_owned(),
+            generation,
+            changing: Some((
+                "op".to_owned(),
+                outputs
+                    .iter()
+                    .map(|id| (*id).to_owned())
+                    .collect(),
+            )),
+        })
+    }
+
+    /// 换输出提交之后,重连续权报的是新成员;改回本机(空集合)就什么都不再持。
+    #[test]
+    fn a_committed_change_moves_the_held_target() {
+        let mut moved = changing("a", Some(3), &["b"]);
+        settle_change(&mut moved, "op");
+        let moved = moved.expect("换到 b 之后仍持权");
+        assert_eq!(moved.target, "b");
+        assert_eq!(moved.generation, Some(3));
+        assert!(moved.changing.is_none());
+
+        let mut home = changing("a", Some(3), &[]);
+        settle_change(&mut home, "op");
+        assert!(home.is_none(), "改回本机就不再持权");
+    }
+
+    /// 别的操作的提交不动持权记录 —— 迟到的旧提交不能把新的那一次换掉。
+    #[test]
+    fn a_commit_for_another_operation_changes_nothing() {
+        let mut held = changing("a", Some(3), &["b"]);
+
+        settle_change(&mut held, "older");
+
+        let held = held.expect("持权记录该还在");
+        assert_eq!(held.target, "a");
+        assert!(held.changing.is_some());
+    }
+
+    /// 换输出被拒:之前就持着的权留着,这一次才开始持的连记录一起忘掉。
+    #[test]
+    fn a_rejected_change_keeps_only_a_confirmed_hold() {
+        let mut confirmed = changing("a", Some(3), &["b"]);
+        assert_eq!(
+            abandon_change(&mut confirmed),
+            Some("op".to_owned())
+        );
+        let confirmed = confirmed.expect("确认过的权留着");
+        assert_eq!(confirmed.target, "a");
+        assert!(confirmed.changing.is_none());
+
+        let mut fresh = changing("b", None, &["b"]);
+        assert_eq!(
+            abandon_change(&mut fresh),
+            Some("op".to_owned())
+        );
+        assert!(
+            fresh.is_none(),
+            "这一次才开始持的权一起忘掉"
+        );
+
+        assert_eq!(abandon_change(&mut None), None);
     }
 
     /// 抖动不会把等待变成 0,也不会离原值太远。
