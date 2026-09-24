@@ -318,16 +318,31 @@ pub(super) fn fetch_daily(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
 ) {
-    deck.last_daily
-        .set(Some(chrono::Local::now().date_naive()));
-    fetch_cached_into(
+    fetch_daily_from(
         weak,
         deck,
-        Action::begin("daily"),
-        ViewSource::Daily,
         api::cached_daily(),
         async { api::daily().await },
     );
+}
+
+/// [`fetch_daily`] 的本体,请求由调用方给(测试要自己决定它何时回来)。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn fetch_daily_from<Cached, Fut>(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    cached: Cached,
+    request: Fut,
+) where
+    Cached: core::future::Future<Output = Option<TracksDto>>
+        + 'static,
+    Fut: core::future::Future<
+            Output = Result<TracksDto, api::ApiError>,
+        > + 'static,
+{
+    deck.last_daily
+        .set(Some(chrono::Local::now().date_naive()));
+    let _ = (cached, request);
 }
 
 /// 跑一个返回曲目列表的请求,结果填进 `source` 那个视图,失败填进状态行。

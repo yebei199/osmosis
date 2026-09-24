@@ -232,3 +232,42 @@ fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone() {
         "点击时换回曲目用的那份副本也不该变成队列"
     );
 }
+
+/// 进 Music 页时替用户补拉的推荐,在用户正看着「我喜欢的」时只进推荐自己那份,
+/// 不把列表切走 —— 这正是「进我喜欢的先看到每日推荐」那条路。
+#[test]
+fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist() {
+    let (ui, deck) = deck_window_pumped();
+    ui.global::<crate::Shell>().set_music_section(1);
+    ui.global::<crate::Library>()
+        .set_open_playlist_name("我喜欢的".into());
+    visit(&ui, &deck, liked()).send(Ok(batch(&["l1"])));
+
+    let (daily, answer) = late();
+    fetch_daily_from(&ui.as_weak(), &deck, async { None }, answer);
+    assert_eq!(
+        shown_ids(&ui),
+        ids(&["l1"]),
+        "补拉推荐的那一刻就把红心列表切走了"
+    );
+
+    daily.send(Ok(batch(&["d1"])));
+    assert_eq!(shown_ids(&ui), ids(&["l1"]));
+
+    // 回到推荐分区时,补拉的那份已经在推荐自己的缓存里
+    let _pending = visit(&ui, &deck, ViewSource::Daily);
+    assert_eq!(shown_ids(&ui), ids(&["d1"]));
+}
+
+/// 停在推荐分区上时补拉的推荐照常上屏。
+#[test]
+fn a_daily_pulled_while_on_the_daily_section_is_shown() {
+    let (ui, deck) = deck_window_pumped();
+    ui.global::<crate::Shell>().set_music_section(0);
+
+    let (daily, answer) = late();
+    fetch_daily_from(&ui.as_weak(), &deck, async { None }, answer);
+    daily.send(Ok(batch(&["d1"])));
+
+    assert_eq!(shown_ids(&ui), ids(&["d1"]));
+}
