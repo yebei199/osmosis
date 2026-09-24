@@ -8,6 +8,23 @@ mod artwork;
 
 mod auth;
 
+// 列表的本地缓存。web 冻结中(#105),那边是个永远没有存货的空壳 ——
+// 签名相同,调用方因此不必为它分叉。
+#[cfg(not(target_arch = "wasm32"))]
+mod cache;
+#[cfg(target_arch = "wasm32")]
+mod cache {
+    pub(crate) use crate::platform::get_json as fetch;
+
+    pub(crate) async fn recall<T>(
+        _url: String,
+    ) -> Option<T> {
+        None
+    }
+
+    pub(crate) fn forget_all() {}
+}
+
 mod catalog;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -80,6 +97,13 @@ pub use playlists::{
     liked_ids, platform_playlist_tracks, playlist_tracks,
     playlists, remove_playlist_tracks, rename_playlist,
     set_liked, set_subscribed,
+};
+
+// 「先画上次那份」的读端(#123)。
+pub use catalog::{cached_daily, cached_liked};
+pub use playlists::{
+    cached_liked_ids, cached_platform_playlist_tracks,
+    cached_playlist_tracks, cached_playlists,
 };
 
 // 个人主页的统计类型顺着 api 走:ui 不直接依赖 contract,

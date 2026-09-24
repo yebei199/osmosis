@@ -118,6 +118,22 @@ pub async fn tracks_of(
     }
 }
 
+/// 同 [`tracks_of`],但只读本地缓存里上次那份,不碰网络(#123)。
+pub async fn cached_tracks_of(
+    source: Source,
+    id: &str,
+) -> Option<TracksDto> {
+    match source {
+        Source::Liked => api::cached_liked().await,
+        Source::Local => {
+            api::cached_playlist_tracks(id).await
+        }
+        Source::Platform => {
+            api::cached_platform_playlist_tracks(id).await
+        }
+    }
+}
+
 /// 把契约里的歌单翻成界面要的一行。
 ///
 /// 封面留空:它要一趟网络,而这个函数是同步的。图到了之后由

@@ -9,12 +9,17 @@ use crate::url::{
     liked_url, platform_playlist_tracks_url,
     playlist_tracks_url, playlist_url, subscription_url,
 };
-use crate::{ApiError, base_url, platform};
+use crate::{ApiError, base_url, cache, platform};
 
 /// `GET /playlists` —— 两个来源合并后的歌单列表,「我喜欢的」在最前。
+/// 成功的那份记进本地缓存。
 pub async fn playlists() -> Result<PlaylistsDto, ApiError> {
-    platform::get_json(format!("{}/playlists", base_url()))
-        .await
+    cache::fetch(format!("{}/playlists", base_url())).await
+}
+
+/// 上一次 [`playlists`] 取到的那份。不碰网络。
+pub async fn cached_playlists() -> Option<PlaylistsDto> {
+    cache::recall(format!("{}/playlists", base_url())).await
 }
 
 /// `POST /playlists` —— 建一个本地歌单。
@@ -62,7 +67,14 @@ pub async fn delete_playlist(
 pub async fn playlist_tracks(
     id: &str,
 ) -> Result<TracksDto, ApiError> {
-    platform::get_json(playlist_tracks_url(id)).await
+    cache::fetch(playlist_tracks_url(id)).await
+}
+
+/// 上一次 [`playlist_tracks`] 取到的那份。不碰网络。
+pub async fn cached_playlist_tracks(
+    id: &str,
+) -> Option<TracksDto> {
+    cache::recall(playlist_tracks_url(id)).await
 }
 
 /// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。
@@ -73,8 +85,14 @@ pub async fn playlist_tracks(
 pub async fn platform_playlist_tracks(
     id: &str,
 ) -> Result<TracksDto, ApiError> {
-    platform::get_json(platform_playlist_tracks_url(id))
-        .await
+    cache::fetch(platform_playlist_tracks_url(id)).await
+}
+
+/// 上一次 [`platform_playlist_tracks`] 取到的那份。不碰网络。
+pub async fn cached_platform_playlist_tracks(
+    id: &str,
+) -> Option<TracksDto> {
+    cache::recall(platform_playlist_tracks_url(id)).await
 }
 
 /// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。
@@ -108,8 +126,12 @@ pub async fn remove_playlist_tracks(
 /// 界面每一行都要问「这一首红心没有」,而 [`liked`] 给的是一页曲目,
 /// 回答不了这个问题。取一次存成集合,之后本地标。
 pub async fn liked_ids() -> Result<TrackIdsDto, ApiError> {
-    platform::get_json(format!("{}/liked/ids", base_url()))
-        .await
+    cache::fetch(format!("{}/liked/ids", base_url())).await
+}
+
+/// 上一次 [`liked_ids`] 取到的那份。不碰网络。
+pub async fn cached_liked_ids() -> Option<TrackIdsDto> {
+    cache::recall(format!("{}/liked/ids", base_url())).await
 }
 
 /// `PUT|DELETE /liked/{track_id}` —— 点红心或取消。

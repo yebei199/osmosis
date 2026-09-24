@@ -6,7 +6,9 @@
 
 - 每个端点族一个模块(`auth`、`catalog`、`playlists`、`queue`……),地址拼接集中在 `url`。
 - `platform/` 是唯一按 target 分叉的地方;会话、设置、封面缓存的落盘也在那里。
+- `cache` 是列表类响应的本地 SQLite 缓存(#123):每日推荐、歌单、红心上次成功的那份,
+  供界面先画、再等网络;只在原生端,wasm 上是个永远没有存货的空壳。
 - `update` 问的是 GitHub 而不是我们的服务端,请求不带登录态。
 
 不管的:界面状态(归 `ui`)、领域规则(归 `app-core`)、线上格式(归 `contract`)。
-依赖只有 `contract`。
+依赖只有 `contract`(本仓内);原生端的列表缓存另用 `rusqlite`(bundled)。

@@ -25,19 +25,23 @@ pub fn token() -> Option<String> {
 }
 
 /// 记住一个 token(登录成功后),并落盘。
+///
+/// 列表缓存同时清空:换的可能是另一个账号,上一个人的歌单不该先画出来。
 pub fn set(token: &str) {
     if let Ok(mut slot) = TOKEN.write() {
         *slot = Some(token.to_owned());
     }
     super::platform::save_session(Some(token));
+    super::cache::forget_all();
 }
 
-/// 忘掉 token(登出),并清掉落盘的那份。
+/// 忘掉 token(登出),并清掉落盘的那份与列表缓存。
 pub fn clear() {
     if let Ok(mut slot) = TOKEN.write() {
         *slot = None;
     }
     super::platform::save_session(None);
+    super::cache::forget_all();
 }
 
 /// 服务端判这个 token 无效时忘掉它:与 [`clear`] 相同,但落盘的那份先挪成

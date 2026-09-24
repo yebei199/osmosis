@@ -426,3 +426,123 @@ fn a_track_that_fails_to_start_clears_the_loading_state() {
         "行上的转圈也该跟着收"
     );
 }
+
+// ── 先画缓存里上次那份,新的回来再换(#123)──
+//
+// 协程在 pumped 窗口里当场跑完,网络那个 future 被 poll 的那一刻,就是
+// 「缓存已经摆上、网络还没回来」的那一刻 —— 探针就插在那里。
+
+#[cfg(not(target_arch = "wasm32"))]
+fn batch(ids: &[&str]) -> TracksDto {
+    TracksDto {
+        tracks: ids
+            .iter()
+            .map(|id| track_with_id(id))
+            .collect(),
+        unavailable: 0,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn shown_ids(ui: &MainWindow) -> Vec<String> {
+    ui.global::<Player>()
+        .get_tracks()
+        .iter()
+        .map(|row| row.id.to_string())
+        .collect()
+}
+
+/// 网络还没回来时列表里已经是上次那份,回来之后换成新的。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_cached_list_is_shown_before_the_network_answers() {
+    let (ui, deck) = deck_window_pumped();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let probe = seen.clone();
+    let weak = ui.as_weak();
+
+    fetch_cached_into(
+        &ui.as_weak(),
+        &deck,
+        crate::runtime::trace::Action::begin("test-cached"),
+        async { Some(batch(&["a"])) },
+        async move {
+            if let Some(ui) = weak.upgrade() {
+                *probe.borrow_mut() = shown_ids(&ui);
+            }
+            Ok(batch(&["a", "b"]))
+        },
+    );
+
+    assert_eq!(
+        *seen.borrow(),
+        vec!["a".to_owned()],
+        "等网络的那段时间里,该摆着缓存里上次那份"
+    );
+    assert_eq!(
+        shown_ids(&ui),
+        vec!["a".to_owned(), "b".to_owned()],
+        "新的回来之后换成新的"
+    );
+}
+
+/// 新的与上次那份一样就不重建模型:整表重建会把封面与加载态刷一遍。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_unchanged_answer_keeps_the_shown_model() {
+    let (ui, deck) = deck_window_pumped();
+    let seen = Rc::new(RefCell::new(None));
+    let probe = seen.clone();
+    let weak = ui.as_weak();
+
+    fetch_cached_into(
+        &ui.as_weak(),
+        &deck,
+        crate::runtime::trace::Action::begin(
+            "test-unchanged",
+        ),
+        async { Some(batch(&["a"])) },
+        async move {
+            if let Some(ui) = weak.upgrade() {
+                *probe.borrow_mut() = Some(
+                    ui.global::<Player>().get_tracks(),
+                );
+            }
+            Ok(batch(&["a"]))
+        },
+    );
+
+    let cached_model =
+        seen.borrow().clone().expect("网络那一步没被走到");
+    assert!(
+        ui.global::<Player>().get_tracks() == cached_model,
+        "内容没变,摆着的还该是缓存那一份模型"
+    );
+}
+
+/// 断网:刷新失败,缓存里那份留在列表里。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_failed_refresh_keeps_the_cached_list() {
+    let (ui, deck) = deck_window_pumped();
+
+    fetch_cached_into(
+        &ui.as_weak(),
+        &deck,
+        crate::runtime::trace::Action::begin(
+            "test-offline",
+        ),
+        async { Some(batch(&["a"])) },
+        async {
+            Err(api::ApiError::Transport(
+                "断网了".to_owned(),
+            ))
+        },
+    );
+
+    assert_eq!(
+        shown_ids(&ui),
+        vec!["a".to_owned()],
+        "取不到新的,上次那份得还在"
+    );
+}

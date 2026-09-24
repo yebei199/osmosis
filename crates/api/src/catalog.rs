@@ -8,7 +8,7 @@ use contract::{
 use crate::url::{
     artist_tracks_url, lyric_url, play_url, search_url,
 };
-use crate::{ApiError, base_url, platform};
+use crate::{ApiError, base_url, cache, platform};
 
 /// `GET /health`。
 ///
@@ -85,18 +85,35 @@ pub async fn play_source(
     platform::get_json(play_url(track_id)).await
 }
 
-/// `GET /daily` —— 今日推荐。
+/// `GET /daily` —— 今日推荐。成功的那份记进本地缓存。
 pub async fn daily() -> Result<TracksDto, ApiError> {
-    platform::get_json(format!("{}/daily", base_url()))
-        .await
+    cache::fetch(daily_url()).await
+}
+
+/// 上一次 [`daily`] 取到的那份,没有就是 `None`。不碰网络。
+pub async fn cached_daily() -> Option<TracksDto> {
+    cache::recall(daily_url()).await
+}
+
+fn daily_url() -> String {
+    format!("{}/daily", base_url())
 }
 
 /// `GET /liked` —— 我喜欢的音乐,取第一页。
 ///
 /// 服务端不带 limit 时用它自己的默认页大小,客户端不必知道那个数字。
+/// 成功的那份记进本地缓存。
 pub async fn liked() -> Result<TracksDto, ApiError> {
-    platform::get_json(format!("{}/liked", base_url()))
-        .await
+    cache::fetch(liked_page_url()).await
+}
+
+/// 上一次 [`liked`] 取到的那份。不碰网络。
+pub async fn cached_liked() -> Option<TracksDto> {
+    cache::recall(liked_page_url()).await
+}
+
+fn liked_page_url() -> String {
+    format!("{}/liked", base_url())
 }
 
 /// `GET /lyric/{track_id}`。

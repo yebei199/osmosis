@@ -113,10 +113,11 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let liked = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_liked(move || {
-        fetch_into(
+        fetch_cached_into(
             &weak,
             &liked,
             Action::begin("liked"),
+            api::cached_liked(),
             async { api::liked().await },
         );
     });
@@ -186,10 +187,22 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 }
                 .into(),
             );
-            fetch_into(&weak, &opened, action, async move {
-                crate::library::playlist::tracks_of(source, &id)
+            let cached_id = id.clone();
+            fetch_cached_into(
+                &weak,
+                &opened,
+                action,
+                async move {
+                    crate::library::playlist::cached_tracks_of(
+                        source, &cached_id,
+                    )
                     .await
-            });
+                },
+                async move {
+                    crate::library::playlist::tracks_of(source, &id)
+                        .await
+                },
+            );
         },
     );
 
@@ -313,9 +326,13 @@ pub(super) fn fetch_daily(
 ) {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
-    fetch_into(weak, deck, Action::begin("daily"), async {
-        api::daily().await
-    });
+    fetch_cached_into(
+        weak,
+        deck,
+        Action::begin("daily"),
+        api::cached_daily(),
+        async { api::daily().await },
+    );
 }
 
 /// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
@@ -339,14 +356,54 @@ pub(super) fn fetch_into<Fut>(
             Output = Result<TracksDto, api::ApiError>,
         > + 'static,
 {
+    fetch_cached_into(
+        weak,
+        deck,
+        action,
+        async { None },
+        request,
+    );
+}
+
+/// 同 [`fetch_into`],但先摆 `cached` 给的上次那份,新的回来再换(#123)。
+///
+/// 打开「我喜欢的」要等四五秒网络,这段时间里列表不该是空的。新的与上次那份
+/// 相同就不再换:整表重建会把行上的封面与加载态刷一遍,而多数时候什么都没变。
+/// 网络失败时缓存那份留在列表里、照常报错 —— 断网时仍看得到上次的内容。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn fetch_cached_into<Cached, Fut>(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    action: Rc<Action>,
+    cached: Cached,
+    request: Fut,
+) where
+    Cached: core::future::Future<Output = Option<TracksDto>>
+        + 'static,
+    Fut: core::future::Future<
+            Output = Result<TracksDto, api::ApiError>,
+        > + 'static,
+{
     let deck = deck.clone();
     let weak = weak.clone();
     slint::spawn_local(async move {
         action.mark("request");
+        // ponytail: 先读缓存再发请求,网络晚出发几毫秒;要并行时换成 join
+        let stale = cached.await;
+        if let Some(stale) = &stale
+            && let Some(ui) = weak.upgrade()
+        {
+            show(&ui, &deck, stale.clone());
+            action.mark("cached");
+            deck.frames.after_next_frame(action.clone());
+        }
         let found = request.await;
         action.mark("response");
         let Some(ui) = weak.upgrade() else { return };
         match found {
+            Ok(found) if stale.as_ref() == Some(&found) => {
+                action.mark("unchanged");
+            }
             Ok(found) => {
                 show(&ui, &deck, found);
                 action.mark("model");
