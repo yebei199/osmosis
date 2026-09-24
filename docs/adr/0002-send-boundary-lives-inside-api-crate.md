@@ -57,11 +57,22 @@ apps/*  →  ui  →  ┬─ app-core ─┐
 
 这不是额外的设计,而是本 ADR 的直接后果:`Send` 一旦被关进 `api`,`api` 就成了叶子。
 
+## 2026-09-24 修订:web 废弃之后(#110)
+
+上面的推导以 wasm 为前提,而 web 端已经废弃、摘出 workspace。结论不跟着撤:
+`app-core` 的 future 仍不要求 `Send`,仍然不碰时钟、文件系统和线程。换掉的是**理由**。
+
+旧理由是「`app-core` 要编到 wasm」。现在的理由是:`app-core` 是纯规则层,规则层不该有
+隐式的时间源和 IO。「现在几点」由调用方传进来(`Output` 的插值与过期判定收毫秒,
+`Queue` 收 `seed`),网络由调用方注入闭包,于是同一份输入永远得出同一个答案 ——
+单测不必 sleep、不必 mock 时钟,测的就是规则本身。这条好处与 web 在不在无关。
+
+不要把「web 废弃了」读成「`app-core` 里可以写 `SystemTime::now()` 了」。
+
 ## 可验证
 
-这两条断言由命令而非记忆保证,CI 应当固化它们:
-
-```sh
-cargo tree -p api --target wasm32-unknown-unknown | grep tokio   # 必须无输出
-cargo check -p app-core --target wasm32-unknown-unknown          # 必须通过
-```
+web 在 workspace 里时靠两条 wasm 命令守着(`cargo tree -p api --target
+wasm32-unknown-unknown | grep tokio` 无输出、`cargo check -p app-core --target
+wasm32-unknown-unknown` 通过)。废弃之后守门的是
+`cargo xtask boundaries` 里的「app-core 不碰时钟、线程、文件系统」,它逐个源文件扫
+`SystemTime`、`Instant::now`、`thread::spawn`、`std::fs`,`just ci` 每次都跑。
