@@ -36,11 +36,11 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 
 各条补丁分别是什么、各自的上游去向,写在 `Cargo.toml` 的 `[patch.crates-io]` 上方。
 2026-08-18 按三点 diff 核对过,`dev` 相对上游独有的改动正好只有前三处代码加一个
-`Cargo.lock`,与那份清单一致;第四条是 2026-09-23 加的:
+`Cargo.lock`,与那份清单一致;安卓滚轮那条是 2026-09-23 加的。wasm 定帧那条
+(`frame_throttle.rs`)2026-09-24 随 web 废弃撤掉(#110):
 
 | 文件 | 补丁 | 撤销条件 |
 |---|---|---|
-| `internal/backends/winit/frame_throttle.rs` | wasm 上交给浏览器的 requestAnimationFrame 定帧 | 未提 PR,上游也没自己修 |
 | `internal/core/api.rs` | `Window::is_active()` | 未提 PR,上游无等价物 |
 | `internal/renderers/femtovg/Cargo.toml` | femtovg 走上游 git 而非 crates.io | 上游发出含 femtovg#302 的版本 |
 | `internal/backends/android-activity/androidwindowadapter.rs` | 鼠标滚轮 `ACTION_SCROLL` 转 `PointerScrolled`,上游是 `todo!()`(#120,2026-09-23) | 上游实现同一分支 |
@@ -211,6 +211,9 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-09-24 web 废弃(#110),dev 快进一个 revert `e616040a3`,撤掉 wasm 定帧那条
+  (`b72b30f8a`),不 merge 上游;`backup/dev-2026-09-24` 指上一个 tip `64d51f145`。
+  apps/web 摘出 workspace 后 femtovg 不再进本仓库的锁文件。
 - 2026-09-23 dev 快进一个补丁 `64d51f145`(安卓鼠标滚轮,#120),不 merge 上游;
   `backup/dev-2026-09-23` 指上一个 tip `a9eb2c30a`。本仓库跟进时 `cargo update -p slint`
   会顺手把 femtovg 从 git master 抬到 0.27,用 `--precise` 钉回了原 sha,只动 slint。

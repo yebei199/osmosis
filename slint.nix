@@ -1,4 +1,4 @@
-# 本仓库唯一的开发 shell —— 桌面运行、wasm 构建、服务端所需的 native 依赖全在这里。
+# 本仓库唯一的开发 shell —— 桌面运行、服务端所需的 native 依赖全在这里。
 #
 # winit + skia 后端在构建期通过 yeslogic-fontconfig-sys(pkg-config)
 # 链接系统 fontconfig,运行期则 dlopen wayland / libxkbcommon / libGL / X11 / vulkan。
@@ -41,9 +41,8 @@ in
 pkgs.mkShell {
   nativeBuildInputs = [
     pkgs.pkg-config
-    # wasm 链路:版本必须与 Cargo.lock 里的 wasm-bindgen 完全一致,
-    # 否则 CLI 直接拒绝生成胶水代码。python3 只用来起静态服务器。
-    pkgs.wasm-bindgen-cli_0_2_126
+    # web 废弃(#110)后 wasm-bindgen-cli 已撤;复活时加回,版本要与 Cargo.lock 里的
+    # wasm-bindgen 完全一致,否则 CLI 拒绝生成胶水代码。python3 给测试脚本起静态服务器。
     pkgs.python3
     # MPRIS 的测试自己起一条临时总线(`dbus-daemon --session`),免得往用户
     # 自己的会话总线上摆一个假播放器。zbus 本身是纯 Rust,不需要 libdbus ——

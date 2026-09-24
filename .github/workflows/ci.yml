@@ -150,8 +150,7 @@ jobs:
   # 本地跑不动的端,至少保证它们**能编译** —— 否则 app-core/api 会悄悄长出
   # 这些 target 编不过的假设。见 issue #1。
   #
-  # web / iOS 已冻结(#105),不在此列,解冻前不再为它们付编译税。
-  # `架构边界` 里的 web_ios_free_of_3d 仍然覆盖 app-web/app-ios 的依赖形状。
+  # web / iOS 已废弃(#110),不是 workspace 成员,不在此列。
   cross-check:
     name: check ${{ matrix.target }}
     if: ${{ !github.event.pull_request.draft }}

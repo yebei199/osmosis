@@ -19,9 +19,9 @@ serde_json = "1"
 # rustls-tls 用 ring + 内置 webpki 根证书:安卓上不需要任何平台胶水,
 # 集群的 Let's Encrypt 证书(*.k3s.cryptorust.uk)正好在根里。
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# wasm 上没有线程,也没有 tokio runtime;fetch 由浏览器驱动。
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# web 已废弃(#110),依赖只剩一套。src/platform/web.rs 仍留着(复活路径),
+# 复活时要把 `web-sys = { version = "0.3", features = ["Storage", "Window"] }`
+# 加回 wasm32 专属的依赖表。
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # 列表的本地缓存(#123)。bundled:安卓上没有系统 sqlite 可链。版本跟着 lock 里
 # sqlx 那份 libsqlite3-sys(0.30)走 —— 两个版本同时出现会撞 `links = "sqlite3"`。
@@ -31,12 +31,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 semver = "1"
 sha2 = "0.10"
 
-# 网页上的登录态存在 localStorage 里 —— 不存的话每次刷新都要重登。
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = ["Storage", "Window"] }
-
 [dev-dependencies]
 similar-asserts.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

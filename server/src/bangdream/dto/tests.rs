@@ -305,3 +305,40 @@ fn a_playlist_without_a_special_type_is_ordinary() {
 
     assert_eq!(got.len(), 1);
 }
+
+/// 网易云每次给的封面地址随机落在 p1..p4 几台分片主机上,路径不变(#133)。
+/// 翻译时钉成同一台,否则同一份每日推荐每取一次就「变」一次,客户端整表重建。
+#[test]
+fn cover_shard_host_is_pinned() {
+    let covers: Vec<_> = ["p1", "p2", "p3", "p4"]
+        .into_iter()
+        .map(|host| {
+            let mut track = full_track();
+            track.cover = format!(
+                "http://{host}.music.126.net/x==/1.jpg?param=300y300"
+            );
+            track_to_dto(track).cover
+        })
+        .collect();
+
+    assert!(
+        covers.iter().all(|cover| cover == &covers[0]),
+        "{covers:?}"
+    );
+}
+
+/// 不是网易云分片主机的地址原样放过 —— 只动认得出的那一种。
+#[test]
+fn foreign_cover_passes_through() {
+    let mut track = full_track();
+    track.cover =
+        "https://img.example.com/p2.music.126.net.jpg"
+            .to_owned();
+
+    assert_eq!(
+        track_to_dto(track).cover.as_deref(),
+        Some(
+            "https://img.example.com/p2.music.126.net.jpg"
+        )
+    );
+}
