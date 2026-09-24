@@ -33,13 +33,49 @@ impl Target {
     /// `present_ns` 这一刻媒体该在第几纳秒。`None` 表示这一刻不该出声(暂停着，或者还没到起播)。
     /// `Free` 没有「该在哪」,也给 `None`。
     pub fn desired(&self, present_ns: i64) -> Option<i64> {
-        let _ = present_ns;
-        todo!()
+        match *self {
+            Self::Follow {
+                anchor,
+                playing: true,
+                start_ns,
+            } if present_ns >= start_ns => Some(
+                anchor.media_ns + (present_ns - anchor.at_ns),
+            ),
+            _ => None,
+        }
     }
 
     /// 离起播还有多少纳秒。已经开始、暂停着或者不跟时间线，都给 `None`。
     pub fn until_start(&self, present_ns: i64) -> Option<i64> {
-        let _ = present_ns;
-        todo!()
+        match *self {
+            Self::Follow {
+                playing: true,
+                start_ns,
+                ..
+            } if present_ns < start_ns => {
+                Some(start_ns - present_ns)
+            }
+            _ => None,
+        }
+    }
+
+    /// 不出声的时候媒体该停在哪(纳秒):暂停着就是锚点那个位置，还没起播就是起播位置。
+    /// 在放、或者不跟时间线，给 `None`。
+    pub fn hold_at(&self, present_ns: i64) -> Option<i64> {
+        match *self {
+            Self::Follow {
+                anchor,
+                playing: false,
+                ..
+            } => Some(anchor.media_ns),
+            Self::Follow {
+                anchor,
+                playing: true,
+                start_ns,
+            } if present_ns < start_ns => Some(
+                anchor.media_ns + (start_ns - anchor.at_ns),
+            ),
+            _ => None,
+        }
     }
 }

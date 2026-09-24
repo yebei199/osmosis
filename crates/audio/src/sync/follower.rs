@@ -77,7 +77,106 @@ impl Follower {
         rate: f64,
         block_frames: u64,
     ) -> Decision {
-        let _ = (target, present_ns, ptr_frames, rate, block_frames);
-        todo!()
+        let frames = |ns: i64| ns as f64 * rate / 1e9;
+        let nanos = |frames: f64| (frames * 1e9 / rate) as i64;
+
+        if *target == Target::Free {
+            self.running = false;
+            self.aligning = false;
+            return Decision::Play {
+                step: 1.0,
+                muted: false,
+            };
+        }
+
+        let Some(want_ns) = target.desired(present_ns) else {
+            return self.hold(
+                target,
+                present_ns,
+                ptr_frames,
+                rate,
+                block_frames,
+            );
+        };
+
+        let err = ptr_frames - frames(want_ns);
+        let err_ns = nanos(err);
+        self.stats.last_err_ns = err_ns;
+
+        if !self.running {
+            self.running = true;
+            if err_ns.abs() <= ALIGNED_NS {
+                self.aligning = false;
+                return Decision::Play {
+                    step: 1.0,
+                    muted: false,
+                };
+            }
+            return self.jump(err, err_ns, frames(want_ns));
+        }
+        if err_ns.abs() > JUMP_NS {
+            return self.jump(err, err_ns, frames(want_ns));
+        }
+
+        let corr = (-err / (rate * CONVERGE_NS / 1e9))
+            .clamp(-MAX_CORR, MAX_CORR);
+        self.stats.corr = corr;
+        if self.aligning && err_ns.abs() <= ALIGNED_NS {
+            self.aligning = false;
+        }
+        Decision::Play {
+            step: 1.0 + corr,
+            muted: self.aligning,
+        }
+    }
+
+    /// 不该出声的这一块：停在该停的位置，不在就先 seek 过去;起播落在这一块里就给出前导帧数。
+    fn hold(
+        &mut self,
+        target: &Target,
+        present_ns: i64,
+        ptr_frames: f64,
+        rate: f64,
+        block_frames: u64,
+    ) -> Decision {
+        self.running = false;
+        self.aligning = false;
+        self.stats.corr = 0.0;
+        let Some(at_ns) = target.hold_at(present_ns) else {
+            return Decision::Hold { lead_frames: None };
+        };
+        let at = at_ns as f64 * rate / 1e9;
+        if (ptr_frames - at).abs() > 0.5 {
+            self.stats.seeks += 1;
+            return Decision::Seek { to_frames: at };
+        }
+        let lead = target
+            .until_start(present_ns)
+            .map(|ns| (ns as f64 * rate / 1e9).round() as u64)
+            .filter(|lead| *lead < block_frames);
+        if lead.is_some() {
+            // 起播就在这一块里:前导帧放完，下一帧正好是起播位置，已经对齐。
+            self.running = true;
+        }
+        Decision::Hold { lead_frames: lead }
+    }
+
+    /// 差得太多：落后不多就往前丢帧，否则 seek。之后先静音，对齐了再出声。
+    fn jump(
+        &mut self,
+        err: f64,
+        err_ns: i64,
+        want: f64,
+    ) -> Decision {
+        self.aligning = true;
+        self.stats.corr = 0.0;
+        if err < 0.0 && -err_ns <= SKIP_MAX_NS {
+            self.stats.skips += 1;
+            return Decision::Skip {
+                frames: (-err).round() as u64,
+            };
+        }
+        self.stats.seeks += 1;
+        Decision::Seek { to_frames: want }
     }
 }
