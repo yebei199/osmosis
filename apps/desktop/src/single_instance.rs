@@ -61,22 +61,27 @@ mod tests {
     ///
     /// 这条同时钉住了另一半:第一把还活着的时候才算数。锁要是随手就被释放
     /// (比如 `claim` 里没把 socket 留住),第二次照样能成,这个门就是假的。
+    ///
+    /// 锁名带进程号:抽象地址是整机共享的,用正式名字的话,编译机上并行跑的另一份
+    /// 测试会在 `drop` 与再拿之间把锁抢走(#135)。
     #[test]
     fn a_second_instance_cannot_claim_the_lock() {
-        let Ok(first) = claim() else {
-            // 同一台机器上真的有实例在跑时跳过 —— 那时这条测的是别人的锁。
-            return;
-        };
+        let name = format!(
+            "osmosis-desktop-test-{}.lock",
+            std::process::id()
+        );
+        let first = claim_named(&name)
+            .expect("独有的锁名不该被别人占着");
 
         assert!(
-            claim().is_err(),
+            claim_named(&name).is_err(),
             "第一把锁还握着,第二把不该拿得到"
         );
 
         // 放开之后要能再拿到:锁是"活多久锁多久",不是一次性的。
         drop(first);
         assert!(
-            claim().is_ok(),
+            claim_named(&name).is_ok(),
             "上一个实例退了,新的该起得来"
         );
     }
