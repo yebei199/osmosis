@@ -15,6 +15,7 @@ mod range_stream;
 pub mod spectrum;
 mod stream_client;
 mod stream_source;
+pub mod sync;
 
 pub use stream_source::{
     BUFFER_SAMPLES, ChannelSource, SeekState, buffered,
