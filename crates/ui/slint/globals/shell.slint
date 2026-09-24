@@ -84,6 +84,16 @@ export global Shell {
     callback session-effects();
     // 把输出设备换成这一台。参数是 DeviceRow 的 id,**空串是本机**。
     callback set-output(string);
+    // ── 播放组(#137 ⑤):几台一起出声、保持同步。 ──
+    // 加入一起播放 / 移出:在当前成员上加上或去掉这一台。参数同上,空串是本机。
+    callback toggle-member(string);
+    // 本机在不在播放组里。
+    in property <bool> local-member: true;
+    // 组那一行:谁在组里、谁是主端、哪台待确认、哪台报了故障。空串 = 不出现。
+    // 唯一写者是 ui/src/sync/remote.rs。
+    in property <string> group-text;
+    // 组或共同计划变了,去重新对准本机播放。由 Rust 自己 invoke,界面不碰它。
+    callback group-changed();
     // 被控端按了「退出被遥控」。
     callback exit-controlled();
     // 遥控器发来的命令到了,去收件箱里取(见 ui/src/remote.rs 模块头)。

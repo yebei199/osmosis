@@ -174,6 +174,35 @@ impl Execution {
         self.inner.borrow().entry_ids.get(index).copied()
     }
 
+    /// 条目 `entry_id` 在手上这份里是第几首。不在就是 `None`。
+    pub(in crate::music) fn index_of(
+        &self,
+        entry_id: i64,
+    ) -> Option<usize> {
+        self.inner
+            .borrow()
+            .entry_ids
+            .iter()
+            .position(|id| *id == entry_id)
+    }
+
+    /// 一整份次序(条目号)换成下标。有一条不在手上这份里就是 `None`。
+    ///
+    /// 先建一张表再查:五千条逐个线性找就是两千五百万次比较，而这在 UI 线程上。
+    pub(in crate::music) fn indices_of(
+        &self,
+        order: &[i64],
+    ) -> Option<Vec<usize>> {
+        let state = self.inner.borrow();
+        let table: std::collections::HashMap<i64, usize> = state
+            .entry_ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect();
+        order.iter().map(|id| table.get(id).copied()).collect()
+    }
+
     /// 这一次要报的排列:与上次报过的一样就给 `None`,让服务端沿用。
     ///
     /// 问过就算数 —— 它同时是「已经报到哪一版排列」的那份记录。

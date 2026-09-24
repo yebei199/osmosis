@@ -154,6 +154,9 @@ struct Deck {
     /// 本机作为迁移的一端:备好的那一份,与最近一次迁移步骤的回话
     /// (见 `playback::migrate`)。
     member: Member,
+    /// 本机作为播放组成员的那份账:跟没跟着时间线、为哪一条起的播、报给遥控器的故障
+    /// (见 `playback::group`,#137 ⑤)。
+    alignment: Alignment,
     /// 音量的节流存盘(见 `playback::dispatch::VolumeSave`)。
     volume_save: VolumeSave,
     /// 换过几次歌。封面在后台线程上排队解码时拿它判断「还是不是这一首」——
@@ -221,6 +224,7 @@ pub fn bind(
         frames: crate::runtime::trace::Frames::default(),
         start_at: Rc::new(std::cell::Cell::new(None)),
         member: Member::default(),
+        alignment: Alignment::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
     };
@@ -254,6 +258,7 @@ pub fn bind(
     bind_controls(ui, &deck);
     bind_remote(ui, &deck);
     bind_session(ui, &deck);
+    bind_group(ui, &deck);
     queuepage::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);

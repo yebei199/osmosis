@@ -35,6 +35,8 @@ fn report(
         epoch: 1_700_000_000_000,
         state_seq: position_ms,
         operation: None,
+        fault: None,
+        route: None,
     }
 }
 
@@ -173,6 +175,72 @@ fn being_controlled_locks_the_local_transport() {
         ui.global::<Player>().get_is_playing(),
         "锁定期间本机那一下不该改变播放态"
     );
+}
+
+// ── 播放组(#137 ⑤)──
+
+/// 本机在 pc 当主端的组里(跟随端),并正被 phone 遥控。
+fn following_pc(deck: &Deck) {
+    crate::sync::remote::handle(
+        &Event::Group {
+            term: 1,
+            master: Some("pc".to_owned()),
+            members: vec!["pc".to_owned(), "me".to_owned()],
+        },
+        &deck.remote,
+    );
+    crate::sync::remote::handle(
+        &Event::ControlledBy {
+            device: device("phone"),
+        },
+        &deck.remote,
+    );
+}
+
+/// 遥控器满租约时服务端发的撤锁不是离组:组还在,本机照旧跟着组放
+/// (控制端离线不解散播放组)。
+#[test]
+fn losing_the_controller_does_not_leave_the_group() {
+    let (_ui, deck) = deck_window();
+    following_pc(&deck);
+
+    crate::sync::remote::handle(&Event::NotControlled, &deck.remote);
+
+    assert!(!deck.remote.is_controlled(), "撤锁照撤");
+    assert_eq!(
+        deck.remote.group_role(),
+        app_core::GroupRole::Follower,
+        "组还在"
+    );
+}
+
+/// 被移出:新的组通告里没有本机,这才离组。
+#[test]
+fn a_group_announcement_without_this_device_leaves_it() {
+    let (_ui, deck) = deck_window();
+    following_pc(&deck);
+
+    crate::sync::remote::handle(
+        &Event::Group {
+            term: 2,
+            master: Some("pc".to_owned()),
+            members: vec!["pc".to_owned()],
+        },
+        &deck.remote,
+    );
+
+    assert_eq!(deck.remote.group_role(), app_core::GroupRole::Solo);
+}
+
+/// 本机自己按了「退出被遥控」:同时离开组,不再跟着谁放。
+#[test]
+fn exiting_control_leaves_the_group() {
+    let (_ui, deck) = deck_window();
+    following_pc(&deck);
+
+    deck.remote.exit_controlled();
+
+    assert_eq!(deck.remote.group_role(), app_core::GroupRole::Solo);
 }
 
 /// 遥控器发来的命令进收件箱,等 UI 线程来取。
@@ -456,6 +524,7 @@ fn a_revoke_comes_home_even_when_nothing_ever_played() {
         VecModel::from(vec![crate::DeviceRow {
             id: "pc".into(),
             name: "pc1".into(),
+            member: false,
         }]),
     ));
     ui.global::<crate::Shell>().set_current_tab(2);
@@ -689,6 +758,8 @@ fn acking(
             position_ms: None,
             reason: None,
         }),
+        fault: None,
+        route: None,
         ..report(0, app_core::RemotePlayState::Idle)
     }
 }

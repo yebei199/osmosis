@@ -53,6 +53,16 @@ pub(super) async fn prepare(
         return Err(error.to_string());
     }
 
+    // 声学验收(#137 ⑤):debug 档里配了测试媒体就改放它,见 `api::test_media_url`。
+    if let Some(template) = api::test_media_url() {
+        // 标记音频的长度跟曲目元数据一致:主端按元数据时长预告下一首,长短不一就会让
+        // 各台在不同时刻换歌。
+        let url = template.replace("{duration_ms}", &track.duration_ms.to_string());
+        log::warn!("测试媒体钩子生效: {} 改从 {url} 取", track.id);
+        return audio::load(&url)
+            .await
+            .map_err(|error| error.to_string());
+    }
     let source = match api::play_source(&track.id).await {
         Ok(source) => source,
         Err(error) => {

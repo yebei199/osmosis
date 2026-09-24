@@ -322,5 +322,8 @@ pub(in crate::music) fn snapshot(
         state_seq,
         // 最近一次迁移步骤的回话:每条都带着,丢一条下一秒就补回来。
         operation: deck.member.ack(),
+        // 作为播放组成员时取不到计划要的那一首、跳不到位置:遥控器按成员逐台列出。
+        fault: deck.alignment.fault(),
+        route: audio::route().map(crate::sync::remote::route_dto),
     }
 }

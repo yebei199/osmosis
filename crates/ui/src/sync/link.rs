@@ -101,7 +101,7 @@ pub fn bind(
     let roster =
         Arc::new(Mutex::new(Roster::new(me.id.clone())));
 
-    let remote = crate::sync::remote::new(ui);
+    let remote = crate::sync::remote::new(ui, &me.id);
 
     let weak = ui.as_weak();
     let client = Arc::new(Client::start(
@@ -143,7 +143,8 @@ pub(crate) fn handle(
                 roster.update(devices);
                 roster.others().to_vec()
             };
-            show_devices(weak, others);
+            let members = remote.member_ids();
+            show_devices(weak, others, members);
         }
         Event::Failed(message) => {
             // 走提示:失败是**这一刻**的事,写进常驻的状态行就没人会重算它
@@ -191,6 +192,7 @@ pub(crate) fn handle(
 fn show_devices(
     weak: &slint::Weak<MainWindow>,
     devices: Vec<DeviceDto>,
+    members: Vec<String>,
 ) {
     // 转成 Slint 的行是在 UI 线程里做的:`DeviceDto` 是纯字符串,跨线程没问题,
     // 而 Slint 的模型只能在它自己的线程上建。
@@ -200,6 +202,7 @@ fn show_devices(
             .map(|device| DeviceRow {
                 id: device.id.clone().into(),
                 name: device.name.clone().into(),
+                member: members.contains(&device.id),
             })
             .collect();
         ui.global::<Shell>().set_devices(ModelRc::new(

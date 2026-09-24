@@ -10,11 +10,12 @@ pub mod advance;
 pub mod controls;
 pub mod dispatch;
 pub mod execution;
+pub mod group;
 pub mod migrate;
 pub mod transport;
 
 // 互相看得见,music 那一层也看得见它们 —— 与拆分前同一个作用域。
 pub(in crate::music) use self::{
     advance::*, controls::*, dispatch::*, execution::*,
-    migrate::*, transport::*,
+    group::*, migrate::*, transport::*,
 };

@@ -75,6 +75,8 @@ fn report() -> app_core::RemoteStateDto {
         epoch: 1_700_000_000_000,
         state_seq: 1,
         operation: None,
+        fault: None,
+        route: None,
     }
 }
 

@@ -438,6 +438,10 @@ pub(in crate::music) fn start_move(
         at: core::time::Duration::from_millis(position_ms),
         playing,
     }));
+    // 多成员组(#137 ⑤):新主端先写下一起开始的那一刻、自己也照它等;普通成员从这一刻起
+    // 跟着组的计划放 —— 这一下之前,它手上原来在放的一直没动。
+    begin_as_master(deck, position_ms, playing);
+    deck.remote.group_join();
     play_current(ui, deck);
     crate::media::push(ui, &deck.playback, &deck.media);
     checkpoint(deck, staged.index);
@@ -487,6 +491,40 @@ pub(in crate::music) fn select_output(
     };
     match plan {
         Ok(plan) => deck.remote.begin_move(to, plan),
+        Err(why) => crate::notice::show(ui, why),
+    }
+}
+
+/// 加入一起播放 / 移出(#137 ⑤):在当前成员集合上加上或去掉这一台。空串是本机。
+///
+/// 加进来的那台从当前那一份准备、跟上组的时间线;移出的那台停止实际出声。
+/// 移出主端时交给留下的第一台(显式交接);移出最后一台之后没有任何输出。
+pub(in crate::music) fn toggle_member(
+    ui: &MainWindow,
+    deck: &Deck,
+    id: &str,
+) {
+    let output = if id.is_empty() {
+        Output::Local
+    } else {
+        Output::Remote(app_core::DeviceDto {
+            id: id.to_owned(),
+            name: crate::sync::remote::device_name(ui, id),
+        })
+    };
+    let mut set = deck.remote.members();
+    let before = set.len();
+    set.retain(|member| member.target() != output.target());
+    if set.len() == before {
+        set.push(output);
+    }
+    let plan = if deck.remote.is_remote() {
+        deck.remote.with_view(remote_plan)
+    } else {
+        local_plan(ui, deck)
+    };
+    match plan {
+        Ok(plan) => deck.remote.change_outputs(set, plan),
         Err(why) => crate::notice::show(ui, why),
     }
 }
@@ -639,6 +677,13 @@ pub(in crate::music) fn bind_session(
     ui.global::<Shell>().on_set_output(move |id| {
         let Some(ui) = weak.upgrade() else { return };
         select_output(&ui, &selecting, &id);
+    });
+
+    let toggling = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Shell>().on_toggle_member(move |id| {
+        let Some(ui) = weak.upgrade() else { return };
+        toggle_member(&ui, &toggling, &id);
     });
 
     let running = deck.clone();
