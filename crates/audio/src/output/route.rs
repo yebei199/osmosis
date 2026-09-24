@@ -32,6 +32,10 @@ pub fn current() -> Option<Route> {
         return route;
     }
     let route = detect();
+    // 变了才记一行：扬声器在界面上不标注，路由探测有没有在干活只能从日志看
+    if cache.is_none_or(|(_, before)| before != route) {
+        log::info!("输出路由: {route:?}");
+    }
     *cache = Some((Instant::now(), route));
     route
 }
