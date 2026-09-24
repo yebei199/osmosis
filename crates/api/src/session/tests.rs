@@ -86,7 +86,7 @@ fn session_path_prefers_the_explicit_state_dir() {
         Some(std::path::Path::new(
             "/data/user/0/app/files",
         )),
-        Some("/tmp/state"),
+        Some("/xdg/state"),
         Some("/home/someone"),
     )
     .expect("给了显式目录就该有路径");
@@ -121,12 +121,12 @@ fn an_explicit_state_dir_works_without_any_env() {
 fn session_path_prefers_state_home() {
     let path = platform::session_path_from(
         None,
-        Some("/tmp/state"),
+        Some("/xdg/state"),
         Some("/home/someone"),
     )
     .expect("给了 state home 就该有路径");
 
-    assert!(path.starts_with("/tmp/state"));
+    assert!(path.starts_with("/xdg/state"));
     assert!(path.ends_with(format!(
         "{}/session",
         platform::APP_DIR

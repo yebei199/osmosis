@@ -415,7 +415,7 @@ fn tick(now_ms: u64) {}";
     fn temp_dir_lines_detects_calls() {
         let source = "\
 fn scratch() -> PathBuf {
-    let dir = std::env::temp_dir().join(\"x\");
+    let dir = std::env::temp_dir().join(\"x\"); // shared-name: ok
     let other = env::temp_dir();
     dir
 }";
