@@ -20,10 +20,21 @@ const UPSTREAM_PROTO_IN_REPO: &str =
 
 /// `contract` 的依赖白名单之外的东西。
 ///
-/// 只要有一个混进来,web 端就编不过 —— 而且那个错误只会在别人下次构建 wasm 时
-/// 才炸,与引入它的那次提交隔着好几天。见 `docs/adr/0001`。
+/// 只要有一个混进来,客户端就被拖进服务端的 IO 栈 —— 而且服务端自己的 CI 看不出来。
+/// 见 `docs/adr/0001`。
 const FORBIDDEN_IN_CONTRACT: &[&str] =
     &["tokio", "sqlx", "reqwest", "axum", "hyper"];
+
+/// `app-core` 源码里不许出现的调用:时钟、线程、文件系统。
+///
+/// 纯规则层没有隐式的时间源和 IO,「现在几点」由调用方传进来。web 还在时这条由
+/// wasm 编译顺带守着,web 废弃(#110)之后只剩这里。见 `docs/adr/0002`。
+const IMPURE_IN_APP_CORE: &[&str] = &[
+    "SystemTime",
+    "Instant::now",
+    "thread::spawn",
+    "std::fs",
+];
 
 /// 一条边界检查:通过返回 `Ok`,否则给出人话解释。
 type Check = fn() -> Result<(), String>;
@@ -36,10 +47,14 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 2] = [
+    let checks: [(&str, Check); 3] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
+        ),
+        (
+            "app-core 不碰时钟、线程、文件系统",
+            app_core_is_pure,
         ),
         (
             "vendored .proto 与上游一致",
@@ -98,6 +113,55 @@ fn contract_has_no_io_crates() -> Result<(), String> {
         "contract 依赖了 {},违反 docs/adr/0001",
         found.join("、")
     ))
+}
+
+/// ADR-0002:`app-core` 是纯规则层。逐个 `.rs` 文件扫 [`IMPURE_IN_APP_CORE`]。
+fn app_core_is_pure() -> Result<(), String> {
+    let mut found = Vec::new();
+    scan_impure(
+        &repo_root().join("crates/app-core/src"),
+        &mut found,
+    )?;
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(format!("{},违反 docs/adr/0002", found.join("、")))
+}
+
+fn scan_impure(
+    dir: &Path,
+    found: &mut Vec<String>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|error| {
+        format!("读不了 {}: {error}", dir.display())
+    })?;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| {
+                format!("读不了 {}: {error}", dir.display())
+            })?
+            .path();
+        if path.is_dir() {
+            scan_impure(&path, found)?;
+            continue;
+        }
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let source =
+            fs::read_to_string(&path).map_err(|error| {
+                format!(
+                    "读不了 {}: {error}",
+                    path.display()
+                )
+            })?;
+        found.extend(
+            impure_calls(&source).into_iter().map(|call| {
+                format!("{} 调了 {call}", path.display())
+            }),
+        );
+    }
+    Ok(())
 }
 
 /// 契约的上游是 bang-dream,那是一个独立仓库,不以任何形式挂在本仓库里。
@@ -179,6 +243,23 @@ fn first_difference(
         .then(|| left_lines.min(right_lines) + 1)
 }
 
+/// 源码里出现的时钟、线程、文件系统调用,按 [`IMPURE_IN_APP_CORE`] 的顺序列出。
+///
+/// 注释行跳过:文档要能写「不要调 `SystemTime::now()`」。
+fn impure_calls(source: &str) -> Vec<&'static str> {
+    let code: Vec<&str> = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect();
+    IMPURE_IN_APP_CORE
+        .iter()
+        .copied()
+        .filter(|call| {
+            code.iter().any(|line| line.contains(call))
+        })
+        .collect()
+}
+
 /// `cargo tree` 的输出里是否出现了名为 `name` 的 crate。
 ///
 /// 按**词**比较,不是子串:`tokio-util` 不算 `tokio`,`hyper-util` 不算 `hyper`。
@@ -225,6 +306,42 @@ api v0.1.0 (/repo/crates/api)
     fn depends_on_handles_empty_input() {
         assert!(!depends_on("", "tokio"));
         assert!(!depends_on(TREE, "sqlx"));
+    }
+
+    /// 时钟、线程、文件系统的调用都会被认出来。
+    #[test]
+    fn impure_calls_detects_clock_thread_and_fs() {
+        let source = "\
+let now = std::time::SystemTime::now();
+let start = Instant::now();
+std::thread::spawn(|| {});
+let text = std::fs::read_to_string(path);";
+        assert_eq!(
+            impure_calls(source),
+            vec![
+                "SystemTime",
+                "Instant::now",
+                "thread::spawn",
+                "std::fs"
+            ]
+        );
+    }
+
+    /// 边界:注释里提到这些名字不算 —— 文档要能写「不要调 `SystemTime::now()`」。
+    #[test]
+    fn impure_calls_ignores_comments() {
+        let source = "\
+//! 不碰时钟,不要写 SystemTime::now()。
+    /// Instant::now 由调用方传进来。
+    // std::fs 也一样
+fn tick(now_ms: u64) {}";
+        assert!(impure_calls(source).is_empty());
+    }
+
+    /// 边界:空输入。
+    #[test]
+    fn impure_calls_handles_empty_input() {
+        assert!(impure_calls("").is_empty());
     }
 
     const PROTO: &str = "\

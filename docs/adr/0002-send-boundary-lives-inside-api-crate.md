@@ -73,9 +73,6 @@ apps/*  →  ui  →  ┬─ app-core ─┐
 
 web 在 workspace 里时靠两条 wasm 命令守着(`cargo tree -p api --target
 wasm32-unknown-unknown | grep tokio` 无输出、`cargo check -p app-core --target
-wasm32-unknown-unknown` 通过)。废弃之后守门的是:
-
-```sh
-cargo tree -p app-core -e normal                                   # 只有 contract 与 serde
-grep -rnE 'SystemTime|Instant::now|thread::spawn|std::fs' crates/app-core/src   # 必须无输出
-```
+wasm32-unknown-unknown` 通过)。废弃之后守门的是
+`cargo xtask boundaries` 里的「app-core 不碰时钟、线程、文件系统」,它逐个源文件扫
+`SystemTime`、`Instant::now`、`thread::spawn`、`std::fs`,`just ci` 每次都跑。
