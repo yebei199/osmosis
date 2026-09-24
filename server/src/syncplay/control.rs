@@ -424,11 +424,14 @@ impl Control {
     /// 进行中那一次确认完了:成员换成它的输出集合,任期加一。
     ///
     /// 成员集合变空就是组散了(改回本机):整格清掉。
+    /// `outputs` 是真正跟上的那几台(#137 ⑤),必须是登记那一份的子集;`None` 就是整份。
+    /// 登记了却没跟上的新来者与换下来的成员一起撤锁。
     pub fn commit(
         &mut self,
         account: AccountId,
         controller: &str,
         operation_id: &str,
+        outputs: Option<Vec<String>>,
     ) -> Committed {
         let Some(group) = self.groups.get_mut(&account)
         else {
@@ -437,22 +440,29 @@ impl Control {
         if !group.controlled_by(controller) {
             return Committed::NotController;
         }
-        let Some(pending) =
-            group.pending.take_if(|pending| {
-                pending.operation_id == operation_id
-            })
-        else {
+        let matches = group.pending.as_ref().is_some_and(|pending| {
+            pending.operation_id == operation_id
+                && outputs.as_ref().is_none_or(|subset| {
+                    subset.iter().all(|id| pending.outputs.contains(id))
+                })
+        });
+        let Some(pending) = group.pending.take_if(|_| matches) else {
             return Committed::Mismatch;
         };
+        let kept = outputs.unwrap_or_else(|| pending.outputs.clone());
 
         let removed = group
             .members
             .iter()
-            .filter(|id| !pending.outputs.contains(id))
+            .chain(pending.outputs.iter().filter(|id| !group.members.contains(id)))
+            .filter(|id| !kept.contains(id))
             .cloned()
             .collect();
-        group.members = pending.outputs;
-        group.master = pending.master;
+        group.master = pending
+            .master
+            .filter(|id| kept.contains(id))
+            .or_else(|| kept.first().cloned());
+        group.members = kept;
         group.term += 1;
         let term = group.term;
         let members = group.members.clone();
@@ -769,15 +779,17 @@ pub fn route(
             outputs,
             master,
         ),
-        ClientSignal::CommitOutputs { operation_id } => {
-            commit_outputs(
-                roster,
-                control,
-                account,
-                from,
-                &operation_id,
-            )
-        }
+        ClientSignal::CommitOutputs {
+            operation_id,
+            outputs,
+        } => commit_outputs(
+            roster,
+            control,
+            account,
+            from,
+            &operation_id,
+            outputs,
+        ),
         ClientSignal::AbortOutputs { operation_id } => {
             let dropped =
                 control.abort(account, from, &operation_id);
@@ -788,12 +800,27 @@ pub fn route(
                 dropped = ?dropped,
                 "换输出作罢"
             );
-            for device in dropped {
+            // 被拉进来又作罢的:撤锁,再告诉它组现在的样子(里面没有它)—— 它登记时收到过
+            // 一份把自己算在内的通告,不更正的话它一直以为自己在组里(#137 ⑤)。
+            let (term, master, members) = control
+                .shape(account)
+                .unwrap_or((0, None, Vec::new()));
+            for device in dropped.iter().filter(|id| *id != from) {
                 send(
                     roster,
                     account,
-                    &device,
+                    device,
                     ServerSignal::NotControlled,
+                );
+                send(
+                    roster,
+                    account,
+                    device,
+                    ServerSignal::Group {
+                        term,
+                        master: master.clone(),
+                        members: members.clone(),
+                    },
                 );
             }
             None
@@ -881,7 +908,12 @@ fn begin_outputs(
     master: Option<String>,
 ) -> Option<ServerSignal> {
     // 整次校验在先:锁上一半再发现另一半不在线,就得回头一台台撤。
+    // 遥控器本机可以和别的设备一起在集合里(#137 ⑤);只有它自己时是单机输出，不经服务端。
+    let alone = outputs.len() < 2;
     for output in &outputs {
+        if output == from && !alone {
+            continue;
+        }
         if output == from {
             return Some(ServerSignal::Error {
                 code: "cannot_control_self".to_owned(),
@@ -922,7 +954,7 @@ fn begin_outputs(
         });
     // 集合里每一台都(重新)锁上:原本就在组里、却在遥控器离线满租约时撤过锁的
     // 那台,也得重新开始听命令、开始上报。
-    for output in &outputs {
+    for output in outputs.iter().filter(|id| *id != from) {
         send(
             roster,
             account,
@@ -932,11 +964,11 @@ fn begin_outputs(
             },
         );
     }
-    for device in begun.dropped {
+    for device in begun.dropped.iter().filter(|id| *id != from) {
         send(
             roster,
             account,
-            &device,
+            device,
             ServerSignal::NotControlled,
         );
     }
@@ -983,8 +1015,9 @@ fn commit_outputs(
     account: AccountId,
     from: &str,
     operation_id: &str,
+    outputs: Option<Vec<String>>,
 ) -> Option<ServerSignal> {
-    match control.commit(account, from, operation_id) {
+    match control.commit(account, from, operation_id, outputs) {
         Committed::Done {
             term,
             removed,
@@ -999,21 +1032,30 @@ fn commit_outputs(
                 removed = ?removed,
                 "换输出提交"
             );
-            for device in removed {
+            // 遥控器本机被移出组时不给自己撤锁：它从来没锁过自己。
+            for device in removed.iter().filter(|id| *id != from) {
                 send(
                     roster,
                     account,
-                    &device,
+                    device,
                     ServerSignal::NotControlled,
                 );
             }
             // 组的新样子通告给每一台成员与遥控器:新主端从这一刻起有权往下发(#137 ⑤)。
+            // 被换下来的也通告一份:它据此看出自己不在里面、离组。撤锁不能代替这一条 ——
+            // 遥控器满租约时同样撤锁,而那时组不散。
             let announcement = ServerSignal::Group {
                 term,
                 master,
                 members: members.clone(),
             };
-            for device in members.iter().chain(std::iter::once(&from.to_owned())) {
+            let mut told = members.clone();
+            for id in removed.iter().chain(std::iter::once(&from.to_owned())) {
+                if !told.contains(id) {
+                    told.push(id.clone());
+                }
+            }
+            for device in &told {
                 send(roster, account, device, announcement.clone());
             }
             Some(ServerSignal::OutputsCommitted {

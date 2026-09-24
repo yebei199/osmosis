@@ -620,6 +620,8 @@ fn report() -> ClientSignal {
             epoch: 1,
             state_seq: 1,
             operation: None,
+            fault: None,
+            route: None,
         }),
     }
 }

@@ -108,6 +108,18 @@ impl Room {
             "phone",
             ClientSignal::CommitOutputs {
                 operation_id: op.to_owned(),
+                outputs: None,
+            },
+        )
+    }
+
+    /// 只提交真正跟上的那几台。
+    fn commit_only(&mut self, op: &str, outputs: &[&str]) -> Option<ServerSignal> {
+        self.send(
+            "phone",
+            ClientSignal::CommitOutputs {
+                operation_id: op.to_owned(),
+                outputs: Some(ids(outputs)),
             },
         )
     }
@@ -280,4 +292,91 @@ fn a_master_dropping_offline_does_not_elect_a_new_one() {
 
     assert_eq!(room.control.master(ALICE), Some("pc".to_owned()));
     assert_eq!(room.control.members(ALICE), ids(&["pc", "pad"]));
+}
+
+/// 遥控器本机也可以是组员(本机在放时「加入一起播放」pc):登记得上，本机不给自己上锁、
+/// 也收组的通告;只剩本机自己时仍不经服务端(那是单机输出)。
+#[test]
+fn the_controller_can_be_a_member_of_its_own_group() {
+    let mut room = room();
+
+    let reply = room.begin("op1", &["phone", "pc"], Some("phone"));
+    assert!(matches!(reply, Some(ServerSignal::OutputsBegun { .. })), "{reply:?}");
+    let phone = inbox(&mut room.phone);
+    assert!(
+        !phone.iter().any(|m| matches!(m, ServerSignal::ControlledBy { .. })),
+        "遥控器不锁自己: {phone:?}"
+    );
+    room.commit("op1");
+    assert_eq!(room.control.master(ALICE), Some("phone".to_owned()));
+    assert_eq!(room.control.members(ALICE), ids(&["phone", "pc"]));
+    assert_eq!(room.plan("phone", 1, 1), None, "本机主端发的计划照转");
+    assert_eq!(plans(&inbox(&mut room.pc)), vec![("phone".to_owned(), 1, 1)]);
+
+    let alone = room.begin("op2", &["phone"], Some("phone"));
+    assert!(matches!(alone, Some(ServerSignal::Error { .. })), "只剩本机不经服务端: {alone:?}");
+}
+
+/// 把遥控器本机移出组时，不给自己发撤锁。
+#[test]
+fn removing_the_controller_from_the_group_does_not_unlock_itself() {
+    let mut room = room();
+    room.begin("op1", &["phone", "pc"], Some("phone"));
+    room.commit("op1");
+    room.drain();
+
+    room.begin("op2", &["pc"], Some("pc"));
+    room.commit("op2");
+
+    let phone = inbox(&mut room.phone);
+    assert!(
+        !phone.iter().any(|m| matches!(m, ServerSignal::NotControlled)),
+        "{phone:?}"
+    );
+    assert_eq!(room.control.master(ALICE), Some("pc".to_owned()));
+}
+
+/// 提交时只登记真正跟上的那几台：准备不了、开始失败的撤锁，不进组;主端跟着留下的走。
+#[test]
+fn committing_a_subset_leaves_out_the_members_that_failed() {
+    let mut room = room();
+    room.begin("op1", &["pc", "pad"], Some("pc"));
+    room.drain();
+
+    let reply = room.commit_only("op1", &["pc"]);
+
+    assert!(matches!(reply, Some(ServerSignal::OutputsCommitted { .. })), "{reply:?}");
+    assert_eq!(room.control.members(ALICE), ids(&["pc"]));
+    assert!(
+        inbox(&mut room.pad).iter().any(|m| matches!(m, ServerSignal::NotControlled)),
+        "没跟上的那台撤锁"
+    );
+}
+
+/// 提交的集合里有登记之外的设备：不认，进行中那一次原样留着。
+#[test]
+fn committing_outputs_that_were_never_begun_is_refused() {
+    let mut room = room();
+    room.begin("op1", &["pc"], Some("pc"));
+
+    let reply = room.commit_only("op1", &["pc", "pad"]);
+
+    assert!(matches!(reply, Some(ServerSignal::Error { .. })), "{reply:?}");
+    assert_eq!(room.commit("op1").map(|m| matches!(m, ServerSignal::OutputsCommitted { .. })), Some(true));
+}
+
+/// 被移出的成员也收到组的新样子:它据此看出自己不在里面、离组 —— 撤锁(`NotControlled`)只是
+/// 撤锁,遥控器满租约时也发,不能拿它当离组(控制端离线不解散播放组)。
+#[test]
+fn a_removed_member_hears_the_new_group_without_itself() {
+    let mut room = room();
+    room.playing_on_pc_and_pad();
+
+    room.begin("op2", &["pc"], Some("pc"));
+    room.commit("op2");
+
+    assert_eq!(
+        groups(&inbox(&mut room.pad)),
+        vec![(2, Some("pc".to_owned()), ids(&["pc"]))]
+    );
 }

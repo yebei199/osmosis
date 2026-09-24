@@ -41,6 +41,8 @@ fn report() -> RemoteStateDto {
         epoch: 1_700_000_000_000,
         state_seq: 42,
         operation: None,
+        fault: None,
+        route: None,
     }
 }
 
@@ -888,6 +890,7 @@ fn commit(
         "phone",
         ClientSignal::CommitOutputs {
             operation_id: op.to_owned(),
+            outputs: None,
         },
     )
 }
@@ -1276,6 +1279,7 @@ fn only_the_controller_can_commit() {
         "spare",
         ClientSignal::CommitOutputs {
             operation_id: "op".to_owned(),
+            outputs: None,
         },
     );
 
