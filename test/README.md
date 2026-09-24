@@ -140,6 +140,20 @@ test/move-e2e.py --ns-pid $(cat d1/ns.pid) --to 本机 --out back.jsonl  # ns-de
 流的 corked、安卓 `dumpsys audio` 的 AudioTrack 状态),以及两端日志里同一个操作号的
 `迁移回话`(带位置)。
 
+## views-e2e.py —— 进「我喜欢的」时别的视图的歌冒不冒出来(#137 ④)
+
+```sh
+test/views-e2e.py --port 8091 --out views.jsonl                 # 桌面
+test/views-e2e.py --port 8090 --out views.jsonl --steps enter,aba   # 小米
+```
+
+三步:先记下每日推荐那一批再进我的歌单 → 我喜欢的(`enter`);我喜欢的 → 另一个歌单 →
+我喜欢的、中间不等加载(`aba`);设置页退出、`mcp-login.sh` 登回来再进(`relogin`)。
+每一步最后一次点击之后连续采样列表前几行的无障碍标签(曲目行的标签就是歌名),判据是
+每次采样要么是加载态的空列表,要么每一首都属于收尾时那一批 —— 一次越界就失败。
+不点任何一首歌,不出声。首启无缓存与有缓存各跑一遍:前者用全新的状态目录(安卓是
+清掉应用数据),后者原样重启。
+
 ## playlist-fill-e2e.sh —— 歌单页铺满了吗
 
 跑之前:应用起着、已登录(`test/mcp-login.sh`),账号里至少有一个歌单。
