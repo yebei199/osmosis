@@ -3,7 +3,7 @@
 Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device」这条
 多端融合架构立住:一个进程、一块显存、一条类型系统,UI 与 3D 之间什么都不隔,
 一份代码出 desktop / android / web。音乐应用是它的首个载体,搜歌、边下边播、
-多设备同播、封面点云,每一项都在真实产品的压力下检验这套架构;这条更贵的路
+多设备遥控、封面点云,每一项都在真实产品的压力下检验这套架构;这条更贵的路
 买到了什么、还能长成什么,见 [`docs/note/vision.md`](docs/note/vision.md)。
 载体自己的路线(应用内 AI 助手、从听过看过的内容攒生词表、资讯与视频源)
 继续往前走,但项目存在的理由是架构本身。
@@ -22,7 +22,8 @@ Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device
 | 功能                    | 状态                                               |
 |-------------------------|----------------------------------------------------|
 | 音乐播放                | 能用。搜歌、边下边播、上下首、随机                 |
-| 同播                    | 能用。多台设备点对点同放一首                       |
+| 遥控                    | 能用。一台设备选另一台当输出,那台自己拉流出声       |
+| 多设备同步出声          | 重做中(#137)。旧的 WebRTC 同播已删               |
 | 3D 可视化               | 能用(desktop / android)。播放页的封面点云          |
 | AI agent                | 未开工。形态已定:应用内助手,把应用已有能力当工具调 |
 | 背单词                  | 未开工。词从应用内的内容里抽,不做独立词库          |
@@ -72,7 +73,7 @@ crates/contract/   线上格式(响应体、协议版本号)。依赖只允许 s
 crates/app-core/   客户端领域:状态与改变状态的规则。不依赖 slint,不做 IO
 crates/api/        HTTP 客户端。native/wasm 的差异在此吸收,不向上传播
 crates/audio/      把一条直链变成声音,并吸收各端音频后端的差异
-crates/syncplay/   信令客户端与设备之间的 WebRTC 连接
+crates/syncplay/   设备之间的信令客户端:在线名册与遥控(crate 名是已删的同播留下的)
 crates/render3d/   bevy 在共享 wgpu device 上离屏渲染,产出 slint::Image
 crates/ui/         Slint 界面声明 + 组装点:把 api 注入 app-core
 apps/desktop/      桌面平台入口(linux / windows / macOS)
@@ -136,13 +137,14 @@ just desktop-dev             # 终端 3:「Music」页搜歌、点一首出声
 (见 [`docs/adr/0016`](docs/adr/0016-playlist-split-by-data-ownership.md))。gRPC 的价值在 axum↔bang-dream 那一段 ——
 Go 与 Rust 两侧从同一份 `.proto` 生成,改了一边忘了另一边,构建直接失败。
 
-客户端拿到直链后**边下边播**(`crates/audio`,rodio + stream-download),不整曲下载 ——
-同播的主控要边解码边推给听众,等整首下完再开始推是不能接受的
-(见 [`docs/adr/0008`](docs/adr/0008-syncplay-is-webrtc-media-p2p.md))。
+客户端拿到直链后**边下边播**(`crates/audio`,rodio + stream-download),不整曲下载,
+首播不必等整首下完。
 
-同播的音频走 WebRTC 的媒体轨,设备之间**点对点**,axum 只做信令中转,不碰音频。
-角色是行为决定的 —— 界面上点哪台设备,自己就成为主控,对方成为听众,没有「设为主控」
-的开关。设备身份是主机名加进程号,所以同一台机器上开两个实例天然就是两台设备。
+遥控走同账号的信令连接(`/signal`):选另一台设备当输出,本机不出声,那台自己拿直链
+自己放(见 [`docs/adr/0030`](docs/adr/0030-remote-control-is-a-second-session-shape.md))。
+axum 只转控制消息,不碰音频。原先的 WebRTC 同播已删(#137,
+[`docs/adr/0008`](docs/adr/0008-syncplay-is-webrtc-media-p2p.md) 废止),多台设备同步出声
+在 #137 里重做。
 
 装机、调试、打 APK、让 AI 助手看见运行中的界面,都在
 [`docs/note/dev-workflow.md`](docs/note/dev-workflow.md)。
