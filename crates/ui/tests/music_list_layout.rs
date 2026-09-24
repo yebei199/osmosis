@@ -6,11 +6,17 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
 use slint::{ModelRc, VecModel};
-use ui::{Library, MainWindow, Player, Session, Shell, TrackRow};
+use ui::{
+    Library, MainWindow, Player, Session, Shell, TrackRow,
+};
 
 /// 宽版式音乐页,窗口给定逻辑尺寸。版式直接给定:无头后端里宽度推不出它
 /// (见 music_nav.rs)。
-fn music_page(width: f32, height: f32, section: i32) -> MainWindow {
+fn music_page(
+    width: f32,
+    height: f32,
+    section: i32,
+) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.window()
@@ -37,7 +43,10 @@ fn one_track(ui: &MainWindow) {
     ));
 }
 
-fn element(ui: &MainWindow, id: &str) -> testing::ElementHandle {
+fn element(
+    ui: &MainWindow,
+    id: &str,
+) -> testing::ElementHandle {
     testing::ElementHandle::find_by_element_id(ui, id)
         .next()
         .unwrap_or_else(|| panic!("找不到 {id}"))
@@ -83,16 +92,25 @@ fn the_new_playlist_row_holds_its_input() {
 /// 非每日推荐分区,列表一直铺到竖栏底 —— 中间没有卡墙那格空占位
 /// 多吃的 12px 间距。
 #[test]
-fn the_list_layer_reaches_the_bottom_outside_the_daily_section() {
+fn the_list_layer_reaches_the_bottom_outside_the_daily_section()
+ {
     let ui = music_page(1000.0, 700.0, 1);
     let rail = element(&ui, "MusicPage::music-rail");
     let list = element(&ui, "MusicPage::playlist-list");
-    assert_eq!(bottom(&list), bottom(&rail), "歌单列表底下多了一条缝");
+    assert_eq!(
+        bottom(&list),
+        bottom(&rail),
+        "歌单列表底下多了一条缝"
+    );
 
     ui.global::<Shell>().set_music_section(3);
     one_track(&ui);
     let list = element(&ui, "MusicPage::track-list");
-    assert_eq!(bottom(&list), bottom(&rail), "最近播放列表底下多了一条缝");
+    assert_eq!(
+        bottom(&list),
+        bottom(&rail),
+        "最近播放列表底下多了一条缝"
+    );
 }
 
 /// 手机横屏(小米 13 横放约 873×393)打开本地歌单,曲目列表占满内容列宽。
@@ -105,8 +123,9 @@ fn the_track_list_spans_the_column_in_landscape() {
     ui.global::<Library>()
         .set_open_playlist_name("睡前".into());
     ui.global::<Library>().set_open_playlist_local(true);
-    ui.global::<Library>()
-        .set_add_batch_text("把刚才那批 20 首加进来".into());
+    ui.global::<Library>().set_add_batch_text(
+        "把刚才那批 20 首加进来".into(),
+    );
     one_track(&ui);
 
     let content = element(&ui, "MainWindow::content");
