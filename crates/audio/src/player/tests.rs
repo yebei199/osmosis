@@ -26,3 +26,102 @@ fn volume_is_clamped_to_a_sane_range() {
         "NaN 当静音"
     );
 }
+
+/// 从中间开始放的那一路,第一个出声的采样就是那个位置的 —— 开头一个采样都不漏。
+///
+/// 迁移时目标从源停下的那一毫秒接着放(#137 ③)。先放再跳的话,跳转生效前那几
+/// 毫秒会从 0:00 响出来。这里用一段值随下标单调增长的采样(第 i 个就是 i/总数),
+/// 于是「第一个非零采样的值」直接读出它来自哪里。
+#[test]
+fn starting_from_a_position_never_plays_the_beginning() {
+    use std::num::NonZero;
+    use std::time::{Duration, Instant};
+
+    const RATE: u32 = 1_000;
+    const LEN: usize = 2_000;
+    let ramp: Vec<f32> =
+        (0..LEN).map(|i| i as f32 / LEN as f32).collect();
+    let source = rodio::buffer::SamplesBuffer::new(
+        NonZero::new(1).expect("单声道"),
+        NonZero::new(RATE).expect("采样率"),
+        ramp,
+    );
+    let (player, output) = rodio::Player::new();
+
+    // 拉采样的那一头就是声卡。跳转要等它拉到新源的第一个采样才生效,所以
+    // 它得在另一条线程上一直拉着。
+    let first_sound = std::thread::spawn(move || {
+        let deadline =
+            Instant::now() + Duration::from_secs(5);
+        let mut output = output;
+        while Instant::now() < deadline {
+            match output.next() {
+                Some(sample) if sample != 0.0 => {
+                    return Some(sample);
+                }
+                Some(_) => {}
+                None => return None,
+            }
+        }
+        None
+    });
+
+    start_from(
+        &player,
+        source,
+        Duration::from_millis(1_000),
+        true,
+    )
+    .expect("跳到曲中该成功");
+
+    let first = first_sound
+        .join()
+        .expect("拉采样的线程不该崩")
+        .expect("该有声音出来");
+    assert!(
+        (0.499..=0.51).contains(&first),
+        "第一个出声的采样是 {first},该是 1 秒处(0.5)的那一个"
+    );
+}
+
+/// 按「停在那里」交进去的那一路一个采样都不出声,直到有人按播放。
+#[test]
+fn a_paused_start_stays_silent() {
+    use std::num::NonZero;
+    use std::time::{Duration, Instant};
+
+    let source = rodio::buffer::SamplesBuffer::new(
+        NonZero::new(1).expect("单声道"),
+        NonZero::new(1_000).expect("采样率"),
+        vec![0.25_f32; 2_000],
+    );
+    let (player, output) = rodio::Player::new();
+    let heard = std::thread::spawn(move || {
+        let deadline =
+            Instant::now() + Duration::from_millis(300);
+        let mut output = output;
+        while Instant::now() < deadline {
+            if output
+                .next()
+                .is_some_and(|sample| sample != 0.0)
+            {
+                return true;
+            }
+        }
+        false
+    });
+
+    start_from(
+        &player,
+        source,
+        Duration::from_millis(500),
+        false,
+    )
+    .expect("跳到曲中该成功");
+
+    assert!(
+        !heard.join().expect("拉采样的线程不该崩"),
+        "暂停着交进去的不该出声"
+    );
+    assert!(player.is_paused());
+}
