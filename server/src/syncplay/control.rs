@@ -45,6 +45,9 @@ struct Group {
     members: Vec<String>,
     /// 主端任期:成员集合每提交一次加一。
     term: u64,
+    /// 主端:持有组时间线、决定下一首的那一台(#137 ⑤)。只有它发的共同计划才转。
+    /// 它下线时**不**另选(产品规则:跟随端把已确认的计划放完再停)。
+    master: Option<String>,
     /// 进行中的那一次:它确认之后的输出集合。
     pending: Option<Pending>,
 }
@@ -59,6 +62,8 @@ struct Controller {
 struct Pending {
     operation_id: String,
     outputs: Vec<String>,
+    /// 提交之后谁当主端。
+    master: Option<String>,
 }
 
 impl Group {
@@ -67,8 +72,32 @@ impl Group {
             controller: None,
             members: Vec::new(),
             term: 0,
+            master: None,
             pending: None,
         }
+    }
+
+    /// 此刻有权发共同计划的那一台:已确认的主端;还没有主端(组正在成形)时，是进行中那一次
+    /// 指定的主端 —— 迁移的第三步就要它开始发计划，等不到提交。
+    fn publisher(&self) -> Option<&str> {
+        self.master.as_deref().or_else(|| {
+            self.pending
+                .as_ref()
+                .and_then(|pending| pending.master.as_deref())
+        })
+    }
+
+    /// 组里每一台(含进行中那一次拉进来的),按先成员后新来的顺序，不重复。
+    fn everyone(&self) -> Vec<String> {
+        let mut all = self.members.clone();
+        if let Some(pending) = &self.pending {
+            for id in &pending.outputs {
+                if !all.contains(id) {
+                    all.push(id.clone());
+                }
+            }
+        }
+        all
     }
 
     /// 这台设备在不在组里 —— 已确认的成员,或者正被一次操作拉进来。
@@ -161,6 +190,9 @@ pub enum Committed {
         term: u64,
         /// 换下来的成员 —— 要撤锁。
         removed: Vec<String>,
+        /// 换上之后的成员与主端，要通告给组里每一台与遥控器。
+        members: Vec<String>,
+        master: Option<String>,
     },
     NotController,
     /// 进行中的不是这一次(或者根本没有进行中的)。
@@ -325,6 +357,7 @@ impl Control {
             group.members = vec![target.to_owned()];
             group.term += 1;
         }
+        group.master = Some(target.to_owned());
         group.pending = None;
 
         Claim::Granted {
@@ -343,6 +376,7 @@ impl Control {
         controller: &str,
         operation_id: &str,
         outputs: Vec<String>,
+        master: Option<String>,
     ) -> Begun {
         let fresh = self.fresh_generation();
         let group = self
@@ -370,9 +404,14 @@ impl Control {
             };
 
         let dropped = group.stranded(&outputs);
+        // 指定的主端不在集合里就取第一台：不留一个没有主端的组。
+        let master = master
+            .filter(|id| outputs.contains(id))
+            .or_else(|| outputs.first().cloned());
         group.pending = Some(Pending {
             operation_id: operation_id.to_owned(),
             outputs,
+            master,
         });
 
         Begun {
@@ -413,12 +452,20 @@ impl Control {
             .cloned()
             .collect();
         group.members = pending.outputs;
+        group.master = pending.master;
         group.term += 1;
         let term = group.term;
+        let members = group.members.clone();
+        let master = group.master.clone();
         if group.is_vacant() {
             self.groups.remove(&account);
         }
-        Committed::Done { term, removed }
+        Committed::Done {
+            term,
+            removed,
+            members,
+            master,
+        }
     }
 
     /// 放弃进行中那一次:返回它拉进来、要撤锁的设备。对不上就什么都不动。
@@ -466,6 +513,13 @@ impl Control {
         group.members.retain(|id| id != device);
         if let Some(pending) = group.pending.as_mut() {
             pending.outputs.retain(|id| id != device);
+            if pending.master.as_deref() == Some(device) {
+                pending.master = pending.outputs.first().cloned();
+            }
+        }
+        // 主端自己按了退出：它不再往下发计划。这是它主动走的，不是失联，但同样不替谁另选。
+        if group.master.as_deref() == Some(device) {
+            group.master = None;
         }
         if !group.members.is_empty() {
             return None;
@@ -505,8 +559,51 @@ impl Control {
 
     /// 这个账号的组此刻的主端。
     pub fn master(&self, account: AccountId) -> Option<String> {
-        let _ = account;
-        todo!()
+        self.groups.get(&account)?.master.clone()
+    }
+
+    /// 组现在的样子(任期、有权发计划的那一台、全部成员),给通告用。没有组时 `None`。
+    pub fn shape(
+        &self,
+        account: AccountId,
+    ) -> Option<(u64, Option<String>, Vec<String>)> {
+        let group = self.groups.get(&account)?;
+        Some((
+            group.term,
+            group.publisher().map(str::to_owned),
+            group.everyone(),
+        ))
+    }
+
+    /// 一份共同计划该转给谁：发信人得是此刻有权发计划的那一台、任期得是当前任期。
+    /// 对上了返回收件人(组里其余每一台与遥控器),对不上返回错误码。
+    pub fn plan_recipients(
+        &self,
+        account: AccountId,
+        from: &str,
+        term: u64,
+    ) -> Result<Vec<String>, &'static str> {
+        let Some(group) = self.groups.get(&account) else {
+            return Err("not_master");
+        };
+        if group.publisher() != Some(from) {
+            return Err("not_master");
+        }
+        if group.term != term {
+            return Err("stale_term");
+        }
+        let mut to: Vec<String> = group
+            .everyone()
+            .into_iter()
+            .filter(|id| id != from)
+            .collect();
+        if let Some(controller) = &group.controller
+            && controller.device != from
+            && !to.contains(&controller.device)
+        {
+            to.push(controller.device.clone());
+        }
+        Ok(to)
     }
 
     /// 这个账号的组的主端任期。没有组时是 0。
@@ -626,11 +723,43 @@ pub fn route(
         // 握手与校时归 `signaling::route`,到不了这里。
         ClientSignal::Hello { .. }
         | ClientSignal::TimePing { .. } => None,
-        ClientSignal::GroupPlan { .. } => todo!(),
+        ClientSignal::GroupPlan { term, plan } => {
+            match control.plan_recipients(account, from, term) {
+                Ok(to) => {
+                    for device in to {
+                        send(
+                            roster,
+                            account,
+                            &device,
+                            ServerSignal::GroupPlan {
+                                from: from.to_owned(),
+                                term,
+                                plan: plan.clone(),
+                            },
+                        );
+                    }
+                    None
+                }
+                Err(code) => {
+                    tracing::info!(
+                        account,
+                        from = %from,
+                        term,
+                        code,
+                        "共同计划没转:不是当前主端或任期不对"
+                    );
+                    Some(ServerSignal::Error {
+                        code: code.to_owned(),
+                        message: "只有当前主端、当前任期的计划才转"
+                            .to_owned(),
+                    })
+                }
+            }
+        }
         ClientSignal::BeginOutputs {
             operation_id,
             outputs,
-            master: _,
+            master,
         } => begin_outputs(
             roster,
             control,
@@ -638,6 +767,7 @@ pub fn route(
             from,
             &operation_id,
             outputs,
+            master,
         ),
         ClientSignal::CommitOutputs { operation_id } => {
             commit_outputs(
@@ -748,6 +878,7 @@ fn begin_outputs(
     from: &str,
     operation_id: &str,
     outputs: Vec<String>,
+    master: Option<String>,
 ) -> Option<ServerSignal> {
     // 整次校验在先:锁上一半再发现另一半不在线,就得回头一台台撤。
     for output in &outputs {
@@ -772,6 +903,7 @@ fn begin_outputs(
         from,
         operation_id,
         outputs.clone(),
+        master,
     );
     tracing::info!(
         account,
@@ -818,6 +950,26 @@ fn begin_outputs(
             },
         );
     }
+    // 告诉有权发计划的那一台与新来的：组要变成这样了。主端据此把计划再发一遍，新来的
+    // 据此知道该听谁的(#137 ⑤)。原来就在的普通成员不必知道，提交时一起通告。
+    if let Some((term, publisher, everyone)) = control.shape(account) {
+        let members = control.members(account);
+        for device in &everyone {
+            let newcomer = !members.contains(device);
+            if newcomer || publisher.as_deref() == Some(device.as_str()) {
+                send(
+                    roster,
+                    account,
+                    device,
+                    ServerSignal::Group {
+                        term,
+                        master: publisher.clone(),
+                        members: everyone.clone(),
+                    },
+                );
+            }
+        }
+    }
     Some(ServerSignal::OutputsBegun {
         operation_id: operation_id.to_owned(),
         generation: begun.generation,
@@ -833,7 +985,12 @@ fn commit_outputs(
     operation_id: &str,
 ) -> Option<ServerSignal> {
     match control.commit(account, from, operation_id) {
-        Committed::Done { term, removed } => {
+        Committed::Done {
+            term,
+            removed,
+            members,
+            master,
+        } => {
             tracing::info!(
                 account,
                 from = %from,
@@ -849,6 +1006,15 @@ fn commit_outputs(
                     &device,
                     ServerSignal::NotControlled,
                 );
+            }
+            // 组的新样子通告给每一台成员与遥控器:新主端从这一刻起有权往下发(#137 ⑤)。
+            let announcement = ServerSignal::Group {
+                term,
+                master,
+                members: members.clone(),
+            };
+            for device in members.iter().chain(std::iter::once(&from.to_owned())) {
+                send(roster, account, device, announcement.clone());
             }
             Some(ServerSignal::OutputsCommitted {
                 operation_id: operation_id.to_owned(),

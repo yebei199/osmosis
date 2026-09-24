@@ -85,8 +85,11 @@ pub struct GroupPlanDto {
 impl GroupPlanDto {
     /// 服务端时钟 `at_us` 这一刻媒体该在哪(微秒)。暂停或还没起播给 `None`。
     pub fn position_at(&self, at_us: u64) -> Option<u64> {
-        let _ = at_us;
-        todo!()
+        if !self.playing || at_us < self.start_us {
+            return None;
+        }
+        let elapsed = at_us as i64 - self.anchor_us as i64;
+        Some((self.position_us as i64 + elapsed).max(0) as u64)
     }
 }
 
