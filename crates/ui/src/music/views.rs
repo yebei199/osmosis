@@ -317,17 +317,6 @@ impl Views {
         Self::landing(&state, ticket)
     }
 
-    /// 当前视图此刻该摆什么。
-    pub(crate) fn current(&self) -> Option<Shown> {
-        let state = self.state.borrow();
-        let key = state.current.as_ref()?;
-        state
-            .entries
-            .iter()
-            .find(|entry| &entry.key == key)
-            .map(Entry::shown)
-    }
-
     fn landing(state: &State, ticket: &Ticket) -> Landing {
         if state.current.as_ref() == Some(&ticket.key) {
             Landing::Current
