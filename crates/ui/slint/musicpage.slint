@@ -213,6 +213,10 @@ export component MusicPage inherits VerticalLayout {
             if Library.open-playlist-local
                 && Library.add-batch-text != "":
             add-batch-row := HoverButton {
+                // 不写宽度就是 HoverButton 默认的定宽 220px,而列里
+                // 一个定宽子元素会把整列的宽度上限锁成 220 —— 横屏下
+                // 曲目标题全被挤成「…」(#130)。
+                width: 100%;
                 height: 30px;
                 text: Library.add-batch-text;
                 clicked => { Library.add-batch(); }
@@ -231,11 +235,12 @@ export component MusicPage inherits VerticalLayout {
             // 新建歌单。摆在列表那一层的顶上 ——
             // 名字由回调带出来,因为这个输入框在 `if` 里,
             // Rust 引用不到它。
+            // 行高不写死,跟着 LineEdit 走:它实际 56px 高,钉成 32px
+            // 就溢出来压住列表首行(#130)。
             if Shell.music-section == 1
                 && Library.open-playlist-name == "":
             new-playlist-row := HorizontalLayout {
                 spacing: 8px;
-                height: 32px;
 
                 new-name := LineEdit {
                     horizontal-stretch: 1;
@@ -368,6 +373,11 @@ export component MusicPage inherits VerticalLayout {
                 }
             }
 
+            // 墙只在每日推荐分区才有东西可摆。别处也实例化的话,
+            // 空的它仍占一格 12px 间距,列表底下凭空多一条缝(#130)。
+            if Shell.wall-supported
+                && Shell.music-section == 0
+                && Library.open-playlist-name == "":
             WallView { }
 
 
