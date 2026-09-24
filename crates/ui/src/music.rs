@@ -32,6 +32,8 @@ mod notice;
 mod queuepage;
 mod report;
 mod rules;
+#[cfg(not(target_arch = "wasm32"))]
+mod views;
 // 放哪一首:控制条、传输层、自动续播。
 mod playback;
 
@@ -53,6 +55,8 @@ use notice::*;
 use playback::*;
 use report::*;
 use rules::*;
+#[cfg(not(target_arch = "wasm32"))]
+use views::*;
 
 /// 洗牌与循环回卷重洗的种子。`app-core` 不引 `rand`(要编到 wasm),
 /// 种子由这里造:`RandomState` 每次实例化都带进程级随机,当种子够用。
@@ -97,6 +101,9 @@ struct Deck {
     /// 列表里那一批歌的权威副本。Slint 的 model 只存格式化后的字符串,
     /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
     tracks: Rc<RefCell<Vec<TrackDto>>>,
+    /// 各个浏览视图自己那份曲目,以及此刻摆的是哪一个(见 `views`)。
+    /// `tracks` 永远是其中当前那一份的投影。
+    views: Views,
     /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
     /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::library::liked)。
     liked: crate::library::liked::LikedSet,
@@ -191,6 +198,7 @@ pub fn bind(
         lyrics: lyrics.clone(),
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
+        views: Views::default(),
         liked: crate::library::liked::LikedSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),

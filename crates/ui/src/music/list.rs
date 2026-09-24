@@ -24,6 +24,7 @@ pub(super) fn reload_open_playlist(
         &weak,
         deck,
         Action::begin("reload"),
+        ViewSource::Playlist(source, id.clone()),
         async move {
             crate::library::playlist::tracks_of(source, &id)
                 .await
@@ -99,7 +100,7 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
     });
 }
 
-/// 今日推荐与我喜欢的音乐。两者只差调哪个请求函数,其余完全相同。
+/// 今日推荐、分区、歌单与歌手详情的取数入口。
 ///
 /// 外加一个「进了 Music 页」的钩子:那时若当天还没拉过推荐,就替用户拉一次 ——
 /// 空着一页只有一行「点一首歌开始」不是个好开局。
@@ -109,18 +110,6 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.global::<Player>()
         .on_daily(move || fetch_daily(&weak, &daily));
-
-    let liked = deck.clone();
-    let weak = ui.as_weak();
-    ui.global::<Player>().on_liked(move || {
-        fetch_cached_into(
-            &weak,
-            &liked,
-            Action::begin("liked"),
-            api::cached_liked(),
-            async { api::liked().await },
-        );
-    });
 
     // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
     // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
@@ -192,6 +181,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 &weak,
                 &opened,
                 action,
+                ViewSource::Playlist(source, id.clone()),
                 async move {
                     crate::library::playlist::cached_tracks_of(
                         source, &cached_id,
@@ -237,6 +227,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 &weak,
                 &artist,
                 Action::begin("artist"),
+                ViewSource::Artist(id.clone()),
                 async move { api::artist_tracks(&id).await },
             );
         },
@@ -298,6 +289,7 @@ pub(super) fn load_section(
                 weak,
                 deck,
                 Action::begin("recent"),
+                ViewSource::Recent,
                 async { api::recent().await },
             );
         }
@@ -330,6 +322,7 @@ pub(super) fn fetch_daily(
         weak,
         deck,
         Action::begin("daily"),
+        ViewSource::Daily,
         api::cached_daily(),
         async { api::daily().await },
     );
@@ -350,6 +343,7 @@ pub(super) fn fetch_into<Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
     action: Rc<Action>,
+    source: ViewSource,
     request: Fut,
 ) where
     Fut: core::future::Future<
@@ -360,6 +354,7 @@ pub(super) fn fetch_into<Fut>(
         weak,
         deck,
         action,
+        source,
         async { None },
         request,
     );
@@ -375,6 +370,7 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
     action: Rc<Action>,
+    source: ViewSource,
     cached: Cached,
     request: Fut,
 ) where
@@ -384,6 +380,7 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
             Output = Result<TracksDto, api::ApiError>,
         > + 'static,
 {
+    let _ = source;
     let deck = deck.clone();
     let weak = weak.clone();
     slint::spawn_local(async move {
