@@ -1043,7 +1043,8 @@ fn a_remote_that_has_not_reported_yet_is_not_moved() {
 /// 「待确认」与两颗键凭空消失,新目标还被锁着,用户连处理的入口都没了。
 /// 迁移进行中由迁移自己的超时与「待确认」管,不归失联管。
 #[test]
-fn a_move_waiting_for_confirmation_is_not_dropped_as_lost() {
+fn a_move_waiting_for_confirmation_is_not_dropped_as_lost()
+{
     let (ui, deck) = deck_window();
     deck.remote.assume_output("pc", "pc1");
     let now = crate::sync::remote::now_ms();
@@ -1060,9 +1061,16 @@ fn a_move_waiting_for_confirmation_is_not_dropped_as_lost() {
     select_output(&ui, &deck, "tablet");
     assert!(deck.remote.is_moving(), "迁移该开始了");
 
-    let gave_up = deck.remote.give_up_if_lost_at(now + 60_000);
+    let gave_up =
+        deck.remote.give_up_if_lost_at(now + 60_000);
 
     assert!(!gave_up, "迁移进行中不该按失联收回本机");
-    assert!(deck.remote.is_moving(), "进行中的迁移不该被丢掉");
-    assert_eq!(deck.remote.target_id().as_deref(), Some("pc"));
+    assert!(
+        deck.remote.is_moving(),
+        "进行中的迁移不该被丢掉"
+    );
+    assert_eq!(
+        deck.remote.target_id().as_deref(),
+        Some("pc")
+    );
 }
