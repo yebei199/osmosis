@@ -4,6 +4,7 @@
 //!
 //! 与音乐那半毫无关系,state 也不共用 —— 两边唯一的交集是账号。
 
+pub mod clock;
 pub mod control;
 pub mod roster;
 pub mod signaling;

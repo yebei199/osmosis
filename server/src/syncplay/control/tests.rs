@@ -871,6 +871,7 @@ fn begin(
                 .iter()
                 .map(|id| (*id).to_owned())
                 .collect(),
+            master: None,
         },
     )
 }
@@ -1221,6 +1222,7 @@ fn a_begin_from_another_device_takes_over_and_revokes_the_old_controller()
         ClientSignal::BeginOutputs {
             operation_id: "op".to_owned(),
             outputs: vec!["pc".to_owned()],
+            master: None,
         },
     );
 

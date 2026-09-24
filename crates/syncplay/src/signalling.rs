@@ -122,6 +122,7 @@ impl SignalSender {
         self.push(ClientSignal::BeginOutputs {
             operation_id: operation_id.to_owned(),
             outputs,
+            master: None,
         })
         .await
     }

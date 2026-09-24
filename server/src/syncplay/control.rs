@@ -503,6 +503,12 @@ impl Control {
             .unwrap_or_default()
     }
 
+    /// 这个账号的组此刻的主端。
+    pub fn master(&self, account: AccountId) -> Option<String> {
+        let _ = account;
+        todo!()
+    }
+
     /// 这个账号的组的主端任期。没有组时是 0。
     pub fn term(&self, account: AccountId) -> u64 {
         self.groups
@@ -617,11 +623,14 @@ pub fn route(
             &to,
             ServerSignal::SnapshotRequest,
         ),
-        // 握手归 `signaling::route`,到不了这里。
-        ClientSignal::Hello { .. } => None,
+        // 握手与校时归 `signaling::route`,到不了这里。
+        ClientSignal::Hello { .. }
+        | ClientSignal::TimePing { .. } => None,
+        ClientSignal::GroupPlan { .. } => todo!(),
         ClientSignal::BeginOutputs {
             operation_id,
             outputs,
+            master: _,
         } => begin_outputs(
             roster,
             control,
@@ -903,5 +912,7 @@ fn send(
     }
 }
 
+#[cfg(test)]
+mod group_tests;
 #[cfg(test)]
 mod tests;

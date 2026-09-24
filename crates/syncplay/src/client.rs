@@ -798,6 +798,10 @@ fn accept(
             });
             Ok(())
         }
+        // 多成员(#137 ⑤)的三条,客户端这一侧随后接上。
+        ServerSignal::TimePong { .. }
+        | ServerSignal::Group { .. }
+        | ServerSignal::GroupPlan { .. } => Ok(()),
     }
 }
 

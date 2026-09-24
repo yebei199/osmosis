@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 mod account;
 mod catalog;
 mod download;
+mod group;
 mod netease;
 mod playlist;
 mod queue;
@@ -19,6 +20,7 @@ mod sync;
 pub use account::*;
 pub use catalog::*;
 pub use download::*;
+pub use group::*;
 pub use netease::*;
 pub use playlist::*;
 pub use queue::*;
@@ -50,12 +52,17 @@ pub use sync::*;
 /// 遥控器只会发 `ClaimControl`,选完设备什么都不迁、被控端也等不到停止 ——
 /// 正是 ③ 要修掉的那一套,所以不兼容、成套升级。
 ///
+/// 6:多成员同步播放(#137 ⑤)。多了校时(`TimePing`/`TimePong`)、主端发布的共同计划
+/// (`GroupPlan`)与组通告(`Group`);`BeginOutputs` 多了 `master`(显式主端交接)。
+/// 协议 5 的成员不会校时、不认共同计划，进了组只会各放各的，而一起出声正是这一版
+/// 要保证的东西，所以不兼容、成套升级。
+///
 /// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
 /// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
 /// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
 /// [`ClientSignal::Hello`] 的 `protocol_version` 与
 /// [`ServerSignal::Incompatible`]。
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// `GET /health` 的响应体。
 #[derive(
