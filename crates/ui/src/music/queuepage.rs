@@ -60,6 +60,15 @@ impl QueueMirror {
         });
     }
 
+    fn begin_fetch(&self, queue_id: i64, revision: i64) -> bool {
+        let _ = (queue_id, revision);
+        true
+    }
+
+    fn fetch_failed(&self, queue_id: i64, revision: i64) {
+        let _ = (queue_id, revision);
+    }
+
     fn rows(&self) -> Vec<(i64, TrackDto)> {
         self.inner
             .borrow()

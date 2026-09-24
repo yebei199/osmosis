@@ -327,4 +327,104 @@ mod tests {
             &PlaybackState::Idle
         );
     }
+
+    /// 标记自己被丢掉了的 future:放在 prepare 里,看取消有没有真的收走它。
+    struct Dropped<'a>(&'a Cell<bool>);
+
+    impl Drop for Dropped<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    /// 记下自己被唤醒过没有的 waker。
+    struct Flag(std::sync::atomic::AtomicBool);
+
+    impl std::task::Wake for Flag {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// 被新点击顶掉的那次准备立刻收走(#137 ⑥):取直链、开流不必跑完才发现
+    /// 白干了。顶掉的那一刻它被唤醒,再被轮询就结束,prepare 那个 future 随之丢弃。
+    #[test]
+    fn a_superseded_preparation_is_dropped_right_away() {
+        let playback = RefCell::new(Playback::default());
+        let dropped = Cell::new(false);
+        let committed = Cell::new(0);
+        let flag = std::sync::Arc::new(Flag(
+            std::sync::atomic::AtomicBool::new(false),
+        ));
+        let waker = Waker::from(flag.clone());
+        let mut context = Context::from_waker(&waker);
+
+        let mut first = pin!(play(
+            &playback,
+            track("1"),
+            |_| {
+                let guard = Dropped(&dropped);
+                async move {
+                    let _guard = guard;
+                    std::future::pending::<Result<(), &str>>()
+                        .await
+                }
+            },
+            |()| committed.set(committed.get() + 1),
+        ));
+        assert!(first.as_mut().poll(&mut context).is_pending());
+
+        // 用户点了另一首
+        block_on(play(
+            &playback,
+            track("2"),
+            |_| async { Ok::<_, &str>(()) },
+            |()| committed.set(committed.get() + 1),
+        ));
+
+        assert!(
+            flag.0.load(std::sync::atomic::Ordering::SeqCst),
+            "被顶掉的那次该被唤醒,好让它当场结束"
+        );
+        assert!(
+            first.as_mut().poll(&mut context).is_ready(),
+            "被顶掉的那次再被轮询就该结束,不等下载跑完"
+        );
+        assert!(dropped.get(), "它的准备工作该被丢弃");
+        assert_eq!(committed.get(), 1, "只有后点的那首出声");
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Playing(track("2"))
+        );
+    }
+
+    /// 停止同样收走在路上的准备。
+    #[test]
+    fn stopping_drops_the_preparation_in_flight() {
+        let playback = RefCell::new(Playback::default());
+        let dropped = Cell::new(false);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+
+        let mut loading = pin!(play(
+            &playback,
+            track("1"),
+            |_| {
+                let guard = Dropped(&dropped);
+                async move {
+                    let _guard = guard;
+                    std::future::pending::<Result<(), &str>>()
+                        .await
+                }
+            },
+            |()| {},
+        ));
+        assert!(loading.as_mut().poll(&mut context).is_pending());
+
+        playback.borrow_mut().stop();
+
+        assert!(loading.as_mut().poll(&mut context).is_ready());
+        assert!(dropped.get());
+        assert_eq!(playback.borrow().state(), &PlaybackState::Idle);
+    }
 }

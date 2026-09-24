@@ -72,6 +72,28 @@ pub fn seek_target(
     ))
 }
 
+/// 一次确认之后,位置最多按本地时钟往前推多久(毫秒)。
+pub const FRESH_FOR_MS: u64 = 2_000;
+
+/// 进度插值:执行端最近确认的位置 + 本地单调时钟。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProgressClock {
+    anchor_ms: u64,
+    at_ms: u64,
+    advancing: bool,
+}
+
+impl ProgressClock {
+    pub fn confirm(&mut self, position_ms: u64, advancing: bool, now_ms: u64) {
+        let _ = (position_ms, advancing, now_ms);
+    }
+
+    pub fn estimate(&self, now_ms: u64) -> u64 {
+        let _ = now_ms;
+        self.anchor_ms
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +203,59 @@ mod tests {
         assert_eq!(clock(f64::NAN), "0:00");
         assert_eq!(clock(f64::INFINITY), "0:00");
         assert!((ratio(f64::NAN, 200_000)).abs() < 1e-6);
+    }
+
+    // ── 进度插值(#137 ⑥)──
+
+    /// 在放、而且确认是新鲜的:按本地时钟往前走。
+    #[test]
+    fn a_playing_fresh_position_advances_with_the_clock() {
+        let mut clock = ProgressClock::default();
+        clock.confirm(10_000, true, 1_000);
+
+        assert_eq!(clock.estimate(1_000), 10_000);
+        assert_eq!(clock.estimate(1_400), 10_400);
+    }
+
+    /// 暂停、缓冲中:停在确认的那个位置,不自己往前走。
+    #[test]
+    fn a_paused_or_buffering_position_holds_still() {
+        let mut clock = ProgressClock::default();
+        clock.confirm(10_000, false, 1_000);
+
+        assert_eq!(clock.estimate(1_900), 10_000);
+    }
+
+    /// 确认过期了(执行端一直没报新的):推到新鲜窗口的尽头就停,
+    /// 不无限往前推 —— 那边可能早就卡住了。
+    #[test]
+    fn a_stale_position_stops_at_the_edge_of_its_window() {
+        let mut clock = ProgressClock::default();
+        clock.confirm(10_000, true, 1_000);
+
+        let edge = 10_000 + FRESH_FOR_MS;
+        assert_eq!(clock.estimate(1_000 + FRESH_FOR_MS), edge);
+        assert_eq!(
+            clock.estimate(1_000 + FRESH_FOR_MS * 5),
+            edge,
+            "过期之后不该再往前走"
+        );
+    }
+
+    /// 权威位置来了就以它为准,哪怕比推算的靠后(跳转、卡顿都会这样)。
+    #[test]
+    fn a_new_confirmation_replaces_the_estimate() {
+        let mut clock = ProgressClock::default();
+        clock.confirm(10_000, true, 1_000);
+        clock.confirm(5_000, true, 1_500);
+
+        assert_eq!(clock.estimate(1_500), 5_000);
+        assert_eq!(clock.estimate(1_700), 5_200);
+    }
+
+    /// 从没确认过:位置是 0,不往前走。
+    #[test]
+    fn an_unconfirmed_clock_stays_at_zero() {
+        assert_eq!(ProgressClock::default().estimate(99_000), 0);
     }
 }

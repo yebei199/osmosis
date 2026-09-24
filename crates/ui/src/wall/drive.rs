@@ -544,6 +544,41 @@ mod tests {
         );
     }
 
+    /// 点下去那一刻就起播,不等镜头推完(#137 ⑥):dolly 动画几百毫秒,
+    /// 取直链、开流本可以在这段时间里并行跑完。镜头照推,落位只开播放页。
+    #[test]
+    fn a_card_starts_playing_the_moment_it_is_tapped() {
+        use slint::{ComponentHandle as _, Model as _};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        let rows: Vec<crate::TrackRow> = ["a", "b"]
+            .iter()
+            .map(|id| crate::TrackRow {
+                id: (*id).into(),
+                ..Default::default()
+            })
+            .collect();
+        ui.global::<Player>().set_tracks(slint::ModelRc::new(
+            slint::VecModel::from(rows),
+        ));
+        let asked = Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = asked.clone();
+        ui.global::<Player>()
+            .on_play(move |id| seen.borrow_mut().push(id.to_string()));
+
+        let mut d = WallDrive::new();
+        d.start_play(&ui, 1);
+
+        assert_eq!(
+            *asked.borrow(),
+            vec!["b".to_owned()],
+            "该在点下去那一刻就起播"
+        );
+        assert!(d.dolly.is_some(), "镜头照推");
+        assert_eq!(ui.global::<Player>().get_tracks().row_count(), 2);
+    }
+
     /// 不经指针挪选中:夹在两头,空墙谁也不选(#113)。
     #[test]
     fn stepping_the_focus_stays_on_the_wall() {

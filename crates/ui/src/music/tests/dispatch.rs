@@ -431,6 +431,8 @@ fn executing_a_volume_command_remembers_it_for_this_device()
         &deck,
         app_core::RemoteCommand::Volume { level: 0.25 },
     );
+    // 存盘是节流的(#137 ⑥):拖完停一下才写。原断言不变,只是等它落盘
+    settle_volume_save();
 
     assert_eq!(
         api::settings::load().volume,
@@ -438,6 +440,48 @@ fn executing_a_volume_command_remembers_it_for_this_device()
         "执行音量的那一端该把它记住"
     );
     assert_eq!(ui.global::<Player>().get_volume(), 0.25);
+}
+
+/// 让音量的节流存盘到点。
+fn settle_volume_save() {
+    i_slint_backend_testing::mock_elapsed_time(
+        VOLUME_SAVE_DELAY.as_millis() as u64 + 50,
+    );
+    slint::platform::update_timers_and_animations();
+}
+
+/// 拖音量滑块是一串连着的命令:每动一下都同步读写一次设置文件,UI 线程上
+/// 就是每帧一次磁盘 IO(#137 ⑥)。停手之后只写一次,写的是最后那个值。
+#[test]
+fn a_volume_drag_is_saved_once_it_settles() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+
+    for level in [0.31, 0.32, 0.33] {
+        execute(
+            &ui,
+            &deck,
+            app_core::RemoteCommand::Volume { level },
+        );
+    }
+
+    assert_ne!(
+        api::settings::load().volume,
+        0.33,
+        "还在拖的时候不该每动一下就写盘"
+    );
+    assert_eq!(
+        ui.global::<Player>().get_volume(),
+        0.33,
+        "界面与播放器照样当场跟手"
+    );
+
+    settle_volume_save();
+    assert_eq!(
+        api::settings::load().volume,
+        0.33,
+        "停手之后写的是最后那个值"
+    );
 }
 
 /// 同一条命令里,超出 0..=1 的音量**先夹再落**。

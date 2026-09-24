@@ -56,6 +56,41 @@ pub fn decode(
     ))
 }
 
+/// 后台解出来的一张封面:原尺寸像素(UI 线程包成 `slint::Image`)、
+/// 点云用的缩小像素、极光用的三个主色。全都能过线程。
+pub struct DecodedCover {
+    pub full: SharedPixelBuffer<Rgba8Pixel>,
+    pub pixels: CoverPixels,
+    pub colors: Option<[[u8; 3]; 3]>,
+}
+
+/// 同时在解的封面数上限的那道门。
+pub struct DecodeGate;
+
+impl DecodeGate {
+    pub fn new(slots: usize) -> Self {
+        let _ = slots;
+        Self
+    }
+
+    pub fn enter(&self) -> impl Drop + '_ {
+        struct Slot;
+        impl Drop for Slot {
+            fn drop(&mut self) {}
+        }
+        Slot
+    }
+}
+
+/// 在后台线程上解一张封面。
+pub async fn decode_off_thread(
+    bytes: Vec<u8>,
+    wanted: impl Fn() -> bool + Send + 'static,
+) -> Option<DecodedCover> {
+    let _ = (bytes, wanted);
+    None
+}
+
 /// 列表行里那张缩略图的边长上限。
 ///
 /// 行里画的是 40px 逻辑尺寸,2 倍 HiDPI 屏上是 80 物理像素,取 96 留一点余量。
@@ -323,5 +358,75 @@ mod tests {
         .write_to(&mut out, image::ImageFormat::Png)
         .expect("内存里编 PNG 不该失败");
         out.into_inner()
+    }
+
+    // ── 离开 UI 线程解码(#137 ⑥)──
+
+    /// 忙等着把一个 future 跑完。解码在后台线程上,这里只管轮询到它回来。
+    fn block_on<F: core::future::Future>(future: F) -> F::Output {
+        use core::task::{Context, Poll};
+
+        let mut cx = Context::from_waker(core::task::Waker::noop());
+        let mut future = Box::pin(future);
+        loop {
+            if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+                return value;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// 后台解出来的是能过线程的像素与主色,`slint::Image` 留给 UI 线程包一下。
+    #[test]
+    fn a_cover_decodes_off_the_ui_thread() {
+        fn must_cross_threads<T: Send>(_: &T) {}
+
+        let caller = std::thread::current().id();
+        let ran_on = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let probe = ran_on.clone();
+        let decoded = block_on(decode_off_thread(png(8, 8), move || {
+            *probe.lock().unwrap() = Some(std::thread::current().id());
+            true
+        }))
+        .expect("合法 PNG 应能解码");
+
+        must_cross_threads(&decoded);
+        assert_eq!((decoded.pixels.width, decoded.pixels.height), (8, 8));
+        assert_ne!(
+            *ran_on.lock().unwrap(),
+            Some(caller),
+            "解码还在调用方线程上跑"
+        );
+    }
+
+    /// 轮到它解码时已经不是当前这首了:直接放弃,不白解一张兆级的图。
+    #[test]
+    fn a_cover_no_longer_wanted_is_not_decoded() {
+        assert!(block_on(decode_off_thread(png(8, 8), || false)).is_none());
+    }
+
+    /// 同时在解的封面有上限:第二个要等第一个让出名额。
+    #[test]
+    fn decoding_waits_for_a_free_slot() {
+        let gate = std::sync::Arc::new(DecodeGate::new(1));
+        let held = gate.enter();
+
+        let entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let waiting = {
+            let (gate, entered) = (gate.clone(), entered.clone());
+            std::thread::spawn(move || {
+                let _slot = gate.enter();
+                entered.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !entered.load(std::sync::atomic::Ordering::SeqCst),
+            "名额满了还是进去了"
+        );
+        drop(held);
+        waiting.join().unwrap();
+        assert!(entered.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

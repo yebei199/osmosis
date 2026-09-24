@@ -208,4 +208,47 @@ mod tests {
             "这一句该能点进个人页"
         );
     }
+
+    fn list(id: &str, name: &str) -> PlaylistDto {
+        PlaylistDto {
+            source: app_core::PlaylistSource::Platform,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            cover: None,
+            track_count: 3,
+        }
+    }
+
+    /// `/playlists` 回来一份新的:原地改有变化的那几行,不整表换模型(#137 ⑥)。
+    ///
+    /// 换模型会让行元素整批重建,正落在旧行上的那一下点击就被吞了 —— ④ 真机上
+    /// 登录刚回来时点「我喜欢的」就这样丢过一次。
+    #[test]
+    fn a_fresh_playlist_list_updates_rows_in_place() {
+        use slint::Model as _;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        let art = crate::imagery::artwork::Artwork::default();
+
+        fill(&ui, &art, &[list("1", "甲"), list("2", "乙")]);
+        let model = ui.global::<Library>().get_playlists();
+
+        fill(&ui, &art, &[list("1", "甲"), list("2", "乙改"), list("3", "丙")]);
+
+        let now = ui.global::<Library>().get_playlists();
+        assert!(now == model, "歌单列表整张换了模型");
+        let names: Vec<String> =
+            now.iter().map(|row| row.name.to_string()).collect();
+        assert_eq!(names, ["甲", "乙改", "丙"]);
+
+        fill(&ui, &art, &[list("3", "丙")]);
+        let names: Vec<String> = ui
+            .global::<Library>()
+            .get_playlists()
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        assert_eq!(names, ["丙"], "变短了就截掉多出来的行");
+    }
 }

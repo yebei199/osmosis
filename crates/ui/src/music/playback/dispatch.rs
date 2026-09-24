@@ -878,6 +878,10 @@ pub(in crate::music) fn play_batch(
     crate::media::push(ui, &deck.playback, &deck.media);
 }
 
+/// 音量停手多久之后才写盘(#137 ⑥)。
+pub(in crate::music) const VOLUME_SAVE_DELAY: core::time::Duration =
+    core::time::Duration::from_millis(400);
+
 /// 执行一条命令,**不问它是从哪来的**。
 ///
 /// 三个来源共用这一段:遥控器发来的命令(`bind_remote`)、本机用户动作
