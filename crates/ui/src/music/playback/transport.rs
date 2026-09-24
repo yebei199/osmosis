@@ -429,7 +429,17 @@ pub(in crate::music) fn start_progress_tick(
 /// 进度快档的一拍。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn tick_progress(ui: &MainWindow, deck: &Deck) {
-    let _ = (ui, deck);
+    if deck.remote.is_remote() {
+        crate::sync::remote::push_progress(ui, &deck.remote);
+        return;
+    }
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    let state = deck.playback.borrow().state().clone();
+    if matches!(state, PlaybackState::Playing(_)) {
+        push_progress(ui, &state, player.position());
+    }
 }
 
 /// 把当前进度推给界面。
