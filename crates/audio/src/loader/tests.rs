@@ -9,6 +9,7 @@ use super::*;
 
 mod reconnect;
 mod stall;
+mod timing;
 
 /// 解一段内存里的音频,**长度如实传下去**。
 ///

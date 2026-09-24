@@ -27,12 +27,13 @@ pub use stream_source::{
 
 mod error;
 mod loader;
+pub mod open_timing;
 mod player;
 mod runtime;
 
 pub use error::AudioError;
 pub use loader::{
     Loaded, PREFETCH_BYTES, Source, StreamHealth, Tuning,
-    load, load_with,
+    load, load_timed, load_with,
 };
 pub use player::{Player, clamped_volume};

@@ -50,17 +50,37 @@ pub async fn load_with(
     url: &str,
     tuning: Tuning,
 ) -> Result<(Loaded, StreamHealth), AudioError> {
+    let (loaded, health, _) =
+        load_timed(url, tuning).await?;
+    Ok((loaded, health))
+}
+
+/// [`load_with`],同时交回这次开流的分段计时(见 [`crate::open_timing`]),并记一行 `stream:`。
+pub async fn load_timed(
+    url: &str,
+    tuning: Tuning,
+) -> Result<
+    (Loaded, StreamHealth, crate::open_timing::Laps),
+    AudioError,
+> {
+    use std::sync::OnceLock;
     use std::sync::atomic::{
         AtomicU64, AtomicUsize, Ordering,
     };
+    use std::time::Instant;
 
     let url = url.to_owned();
 
     runtime()
         .spawn(async move {
-            let parsed = url.parse().map_err(|e| {
+            let started = Instant::now();
+            let parsed: reqwest::Url = url.parse().map_err(|e| {
                 AudioError::Stream(format!("{e}: {url}"))
             })?;
+            let host = parsed.host_str().unwrap_or("?").to_owned();
+            // 预读攒够的那一刻。回调在下载任务上跑，只记第一次。
+            let prefetched = Arc::new(OnceLock::<Instant>::new());
+            let prefetch_mark = prefetched.clone();
 
             let health = StreamHealth::default();
             let flag = health.0.clone();
@@ -77,6 +97,12 @@ pub async fn load_with(
                 .prefetch_bytes(tuning.prefetch_bytes)
                 .retry_timeout(tuning.retry_timeout)
                 .on_progress(move |_, state, _| {
+                    if !matches!(
+                        state.phase,
+                        stream_download::StreamPhase::Prefetching { .. }
+                    ) {
+                        prefetch_mark.get_or_init(Instant::now);
+                    }
                     recovered.store(0, Ordering::Relaxed);
                     advanced.store(
                         state.current_chunk.end,
@@ -105,17 +131,20 @@ pub async fn load_with(
                     }
                 });
 
-            let stream = StreamDownload::new::<
-                range_stream::RangeStream,
-            >(
-                parsed,
-                TempStorageProvider::default(),
-                settings,
-            )
-            .await
-            .map_err(|e| {
+            // 建连在这一段里发生(若不复用池里的连接);返回时响应头已经到了。
+            let (stream, handshake) =
+                crate::open_timing::scope(StreamDownload::new::<
+                    range_stream::RangeStream,
+                >(
+                    parsed,
+                    TempStorageProvider::default(),
+                    settings,
+                ))
+                .await;
+            let stream = stream.map_err(|e| {
                 AudioError::Stream(e.to_string())
             })?;
+            let headers_at = Instant::now();
 
             // 长度得在流被搬进解码任务之前问 —— 之后它就归解码器了。
             // 拿不到(上游没给 Content-Length)时这一首只能往前跳,见 [`decode`]。
@@ -127,11 +156,50 @@ pub async fn load_with(
             )
             .await
             .map_err(|e| AudioError::Stream(e.to_string()))??;
+            let decoded_at = Instant::now();
 
-            Ok((decoder, health))
+            let laps = laps(
+                host,
+                &handshake,
+                [started, headers_at, decoded_at],
+                prefetched.get().copied(),
+            );
+            log::info!("{}", laps.line());
+            Ok((decoder, health, laps))
         })
         .await
         .map_err(|e| AudioError::Stream(e.to_string()))?
+}
+
+/// 把开流时打下的几个时刻折成各段耗时。三个时刻依次是开流、响应头到、解码器建好。
+fn laps(
+    host: String,
+    handshake: &crate::open_timing::Handshake,
+    [started, headers_at, decoded_at]: [std::time::Instant;
+        3],
+    prefetched: Option<std::time::Instant>,
+) -> crate::open_timing::Laps {
+    // 建连那段含它内部的 DNS;首字节那段是扣掉建连之后的请求往返
+    let dns = handshake.dns;
+    let connect = handshake.connect;
+    let head = (headers_at - started)
+        .saturating_sub(connect.unwrap_or_default());
+    // 解码器要等预读攒够才建得好;万一记下的时刻落在外面，夹回这两个时刻之间
+    let prefetched = prefetched
+        .map(|at| at.clamp(headers_at, decoded_at));
+    crate::open_timing::Laps {
+        host,
+        dns,
+        connect: connect.map(|c| {
+            c.saturating_sub(dns.unwrap_or_default())
+        }),
+        head: Some(head),
+        prefetch: prefetched.map(|at| at - headers_at),
+        decode: Some(
+            decoded_at - prefetched.unwrap_or(headers_at),
+        ),
+        total: Some(decoded_at - started),
+    }
 }
 
 /// 解码一个音频源。失败时不 panic —— 直链过期是常态,不是程序错误。
