@@ -182,6 +182,17 @@ fn fetch(
     .ok();
 }
 
+/// 系统安装器回报装失败(#134)。任意线程可调;界面换成失败原因,按钮回到可重试。
+pub fn install_failed(status: i32, message: String) {
+    let _ = (status, message);
+    unimplemented!()
+}
+
+fn report_failure(ui: &MainWindow, status: i32, message: &str) {
+    let _ = (ui, status, message);
+    unimplemented!()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +225,62 @@ mod tests {
     #[test]
     fn the_release_tier_names_the_production_backend() {
         assert_eq!(tier_line(true), "release · 生产后端");
+    }
+
+    /// 装失败后状态行说清原因、带上系统的码与消息,按钮回到「检查更新」可重试。
+    fn failure_on_screen(status: i32, message: &str) -> (String, String) {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        say(&ui, "已交给系统安装器", CHECK);
+        report_failure(&ui, status, message);
+        let profile = ui.global::<Profile>();
+        (
+            profile.get_update_status().into(),
+            profile.get_update_action().into(),
+        )
+    }
+
+    #[test]
+    fn an_aborted_install_says_cancelled_or_blocked_and_offers_retry() {
+        // MIUI 拦下时回的正是这一条(#129 真机)。
+        let (status, action) = failure_on_screen(3, "INSTALL_FAILED_ABORTED: User rejected permissions");
+        assert!(status.contains("取消") && status.contains("拦"), "{status}");
+        assert!(status.contains("3 INSTALL_FAILED_ABORTED: User rejected permissions"), "{status}");
+        assert_eq!(action, CHECK);
+    }
+
+    #[test]
+    fn a_blocked_install_says_the_system_blocked_it() {
+        let (status, action) = failure_on_screen(2, "blocked by policy");
+        assert!(status.contains("系统拦"), "{status}");
+        assert!(status.contains("2 blocked by policy"), "{status}");
+        assert_eq!(action, CHECK);
+    }
+
+    #[test]
+    fn a_conflicting_install_blames_the_signature() {
+        let (status, _) = failure_on_screen(5, "INSTALL_FAILED_UPDATE_INCOMPATIBLE");
+        assert!(status.contains("签名"), "{status}");
+    }
+
+    #[test]
+    fn a_storage_failure_says_out_of_space() {
+        let (status, _) = failure_on_screen(6, "INSTALL_FAILED_INSUFFICIENT_STORAGE");
+        assert!(status.contains("空间"), "{status}");
+    }
+
+    /// 不认识的码不编说明,原样带上系统的话。
+    #[test]
+    fn an_unknown_status_carries_the_system_message_verbatim() {
+        let (status, action) = failure_on_screen(99, "something odd");
+        assert!(status.contains("99 something odd"), "{status}");
+        assert_eq!(action, CHECK);
+    }
+
+    /// 系统没给消息时不留一个空括号尾巴。
+    #[test]
+    fn a_missing_message_leaves_just_the_code() {
+        let (status, _) = failure_on_screen(1, "");
+        assert!(status.contains("系统: 1)"), "{status}");
     }
 }
