@@ -306,3 +306,72 @@ impl Views {
         *self.account.borrow_mut() = Rc::new(read);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tracks() -> TracksDto {
+        TracksDto {
+            tracks: Vec::new(),
+            unavailable: 0,
+        }
+    }
+
+    fn signed_in() -> Views {
+        let views = Views::default();
+        views.set_account(|| 1);
+        views
+    }
+
+    /// 缓存有上限:进过的视图超过容量,最久没进过的那个先被扔掉。
+    #[test]
+    fn the_oldest_view_is_evicted_past_the_capacity() {
+        let views = signed_in();
+        for index in 0..=CAPACITY {
+            let (ticket, _) =
+                views.begin(ViewSource::Artist(index.to_string()));
+            views.accept(&ticket, tracks(), true);
+        }
+
+        assert_eq!(views.state.borrow().entries.len(), CAPACITY);
+        assert!(
+            views.show(ViewSource::Artist("0".to_owned())).tracks.is_none(),
+            "最早进的那个该已经被扔掉"
+        );
+        assert!(
+            views.show(ViewSource::Artist("2".to_owned())).tracks.is_some()
+        );
+    }
+
+    /// 当前视图不因为容量被扔:它正摆在屏幕上,响应回来还得有处可落。
+    #[test]
+    fn the_current_view_survives_eviction() {
+        let views = signed_in();
+        let (first, _) = views.begin(ViewSource::Daily);
+        views.leave();
+        views.show(ViewSource::Daily);
+        {
+            // 把它压到最旧那一端,其余塞满
+            let mut state = views.state.borrow_mut();
+            for index in 0..CAPACITY {
+                state.entries.push_back(Entry {
+                    key: ViewKey {
+                        account: 1,
+                        source: ViewSource::Artist(index.to_string()),
+                    },
+                    tracks: None,
+                    status: Status::Ready,
+                    generation: 0,
+                });
+            }
+            state.evict();
+        }
+
+        assert_eq!(
+            views.accept(&first, tracks(), true),
+            Landing::Current,
+            "当前视图被容量挤掉了,它自己的响应无处可落"
+        );
+    }
+}
