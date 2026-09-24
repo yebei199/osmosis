@@ -64,7 +64,7 @@ pub(crate) fn bind(ui: &MainWindow) {
     };
 
     profile.set_update_action(CHECK.into());
-    WINDOW.set(Some(ui.as_weak()));
+    let _ = WINDOW.set(ui.as_weak());
     // 查到的那一版,等用户再点一下去装。
     let found: Rc<RefCell<Option<Update>>> = Rc::default();
     let weak = ui.as_weak();
@@ -187,27 +187,21 @@ fn fetch(
 ///
 /// 装成功时应用被替换重启,不会回到这里 —— 所以只有失败这一条路。
 pub fn install_failed(status: i32, message: String) {
-    let posted = slint::invoke_from_event_loop(move || {
-        WINDOW.with_borrow(|weak| {
-            if let Some(ui) =
-                weak.as_ref().and_then(slint::Weak::upgrade)
-            {
-                report_failure(&ui, status, &message);
-            }
-        });
-    });
-    if posted.is_err() {
-        // 消息 Java 那边已经打进 logcat 了。
+    let Some(weak) = WINDOW.get() else {
         log::warn!(
-            "事件循环已经没了,升级失败没法显示: {status}"
+            "升级区还没接上,升级失败没法显示: {status}"
         );
-    }
+        return;
+    };
+    // 消息 Java 那边已经打进 logcat 了,事件循环没了也不必再记一遍。
+    let _ = weak.upgrade_in_event_loop(move |ui| {
+        report_failure(&ui, status, &message)
+    });
 }
 
-thread_local! {
-    // 主窗口,留给 [`install_failed`] 在事件循环上找回来。只在 UI 线程上碰。
-    static WINDOW: RefCell<Option<slint::Weak<MainWindow>>> = const { RefCell::new(None) };
-}
+/// 主窗口,留给 [`install_failed`] 从任意线程找回来。
+static WINDOW: OnceLock<slint::Weak<MainWindow>> =
+    OnceLock::new();
 
 fn report_failure(
     ui: &MainWindow,
