@@ -311,7 +311,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
 `android-build`。
 
 `target-android` 下的产物是按 profile 分开的两棵树,换档不会互相覆盖。仓库改过名的话
-旧树里的 `CMakeCache.txt` 还记着老路径,`audiopus_sys` 会直接编不过 —— 删掉那棵树重来。
+旧树里的 `CMakeCache.txt` 还记着老路径,走 cmake 的 `-sys` crate 会直接编不过(当初撞上的是
+同播的 `audiopus_sys`,#137 已删)—— 删掉那棵树重来。
 
 出包不必带 `ABIS`:默认只编 arm64-v8a。armeabi-v7a 有意不在默认里 —— skia-bindings
 没有 armv7 的预编译产物,回退全量编 skia 还要 `ANDROID_NDK`,而 `Android.nix` 没导出它
