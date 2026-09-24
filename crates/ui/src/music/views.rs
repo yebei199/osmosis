@@ -217,6 +217,24 @@ impl Views {
         (Ticket { key, generation }, entry.shown())
     }
 
+    /// 替一个视图在后台取一次,不切过去:用户眼前那页不动,回来的那份只进它自己的缓存。
+    /// 它恰好就是当前视图时照常上屏。
+    pub(crate) fn begin_in_background(
+        &self,
+        source: ViewSource,
+    ) -> Ticket {
+        let account = self.account();
+        let mut state = self.state.borrow_mut();
+        state.forget_other_accounts(account);
+        state.generation += 1;
+        let generation = state.generation;
+        let key = ViewKey { account, source };
+        let entry = state.touch(key.clone());
+        entry.generation = generation;
+        entry.status = Status::Loading;
+        Ticket { key, generation }
+    }
+
     /// 只切到一个视图,不取:摆它手上那份。它若还有一次取数在路上,那一次照样算数。
     pub(crate) fn show(&self, source: ViewSource) -> Shown {
         let account = self.account();

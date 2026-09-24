@@ -342,7 +342,32 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
 {
     deck.last_daily
         .set(Some(chrono::Local::now().date_naive()));
-    let _ = (cached, request);
+    let action = Action::begin("daily");
+    // 推荐正摆在眼前(推荐分区、没开详情)才切过去;否则是进 Music 页时的
+    // 补拉,在后台进推荐自己那份,不把用户正在看的歌单换掉(#137 ④)。
+    let on_screen = weak.upgrade().is_some_and(|ui| {
+        Section::from_index(
+            ui.global::<Shell>().get_music_section(),
+        ) == Section::Daily
+            && ui
+                .global::<Library>()
+                .get_open_playlist_name()
+                .is_empty()
+    });
+    if on_screen {
+        fetch_cached_into(
+            weak,
+            deck,
+            action,
+            ViewSource::Daily,
+            cached,
+            request,
+        );
+    } else {
+        let ticket =
+            deck.views.begin_in_background(ViewSource::Daily);
+        land(weak, deck, action, ticket, cached, request);
+    }
 }
 
 /// 跑一个返回曲目列表的请求,结果填进 `source` 那个视图,失败填进状态行。
@@ -403,7 +428,25 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
     if let Some(ui) = weak.upgrade() {
         project(&ui, deck, shown);
     }
+    land(weak, deck, action, ticket, cached, request);
+}
 
+/// 等这次取数回来,凭 `ticket` 落账:算数就写进它的视图,是当前视图才上屏。
+#[cfg(not(target_arch = "wasm32"))]
+fn land<Cached, Fut>(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    action: Rc<Action>,
+    ticket: Ticket,
+    cached: Cached,
+    request: Fut,
+) where
+    Cached: core::future::Future<Output = Option<TracksDto>>
+        + 'static,
+    Fut: core::future::Future<
+            Output = Result<TracksDto, api::ApiError>,
+        > + 'static,
+{
     let deck = deck.clone();
     let weak = weak.clone();
     slint::spawn_local(async move {
