@@ -193,17 +193,23 @@ impl Queue {
     /// 是批序第一首;列表循环+随机也是 `None` —— 下一轮的次序回卷时才洗
     /// 出来,预取不假装知道。
     pub fn peek_next(&self) -> Option<&TrackDto> {
+        self.tracks.get(self.peek_next_index()?)
+    }
+
+    /// 同 [`Self::peek_next`],给的是它在 [`Self::tracks`] 里的下标 —— 主端预告下一首时
+    /// 要拿它换成服务端的条目号(#137 ⑤)。
+    pub fn peek_next_index(&self) -> Option<usize> {
         if self.loop_mode == LoopMode::One {
-            return self.current();
+            return self.order.get(self.cursor).copied();
         }
         if let Some(&index) =
             self.order.get(self.cursor + 1)
         {
-            return self.tracks.get(index);
+            return Some(index);
         }
         if self.loop_mode == LoopMode::All && !self.shuffled
         {
-            return self.tracks.get(*self.order.first()?);
+            return self.order.first().copied();
         }
         None
     }
@@ -275,6 +281,36 @@ impl Queue {
             .position(|slot| *slot == index)?;
         self.cursor = at;
         self.current()
+    }
+
+    /// 照别处给的播放次序接着放:主端交接时，新主端照上一任洗好的那一份往下放，不按自己的
+    /// 另起一套(#137 ⑤,次序随共同计划下发)。
+    ///
+    /// `order` 必须是 [`Self::tracks`] 下标的一个排列，不是就什么都不动、返回 `false`。
+    /// 当前这一首在新次序里的位置成为游标 —— 正在放的不被打断。
+    pub fn restore_order(
+        &mut self,
+        order: Vec<usize>,
+        shuffled: bool,
+    ) -> bool {
+        let mut seen = vec![false; self.tracks.len()];
+        let permutation = order.len() == seen.len()
+            && order.iter().all(|&index| {
+                index < seen.len()
+                    && !std::mem::replace(&mut seen[index], true)
+            });
+        if !permutation {
+            return false;
+        }
+        let current = self.order.get(self.cursor).copied();
+        self.order = order;
+        self.cursor = current
+            .and_then(|current| {
+                self.order.iter().position(|&index| index == current)
+            })
+            .unwrap_or(0);
+        self.shuffled = shuffled;
+        true
     }
 
     /// 播放次序:存的是 [`Self::tracks`] 的下标。
