@@ -121,13 +121,13 @@ def open_playlist(args, name=None, index=None):
     就丢了 —— 所以点完要确认换了页,没换就重点(最多三次,次数照实打出来)。
     """
     for attempt in range(3):
-        rows = wait_for("歌单列表", lambda: handles(args, "PlaylistList::touch"))
-        target = rows[index] if index is not None else next(
-            (row for row in rows if label(args, row) == name), None
-        )
-        if target is None:
-            sys.exit(f"歌单列表里没有「{name}」")
-        click(args, target)
+        def find():
+            rows = handles(args, "PlaylistList::touch")
+            if index is not None:
+                return rows[index] if len(rows) > index else None
+            return next((row for row in rows if label(args, row) == name), None)
+
+        click(args, wait_for(f"歌单「{name if index is None else index}」", find))
         deadline = time.time() + 3
         while time.time() < deadline:
             if not handles(args, "PlaylistList::touch"):
@@ -193,7 +193,12 @@ def step_aba(args, out):
 
 
 def step_relogin(args, out):
-    to_settings = wait_for("设置入口", lambda: button(args, "设置"))
+    # 宽版式的设置是侧栏底下那颗带标签的圆钮;紧凑版式是底栏第四格(Nav.items 两项
+    # 之后接着排 bottom-items,设置是其中第二项)
+    tabs = handles(args, "NavItem::touch")
+    to_settings = button(args, "设置") or (tabs[3] if len(tabs) > 3 else None)
+    if to_settings is None:
+        sys.exit("等不到设置入口")
     click(args, to_settings)
     logout = wait_for("退出登录键", lambda: button(args, "退出登录"))
     click(args, logout)
