@@ -200,14 +200,13 @@ mod tests {
 
     use super::{Cache, SCHEMA_VERSION};
 
-    /// 每个用例一个空目录里的库文件路径,名字带用例名免得互相踩。
-    fn scratch(case: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("osmosis-cache-{case}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir)
-            .expect("建不出临时目录");
-        dir.join("cache.sqlite3")
+    /// 每个用例一个独有的空目录,返回它和里面的库文件路径。
+    /// 目录随返回的 `TempDir` 一起删,所以调用方要把它留到用例结束。
+    fn scratch() -> (tempfile::TempDir, PathBuf) {
+        let dir =
+            tempfile::tempdir().expect("建不出临时目录");
+        let path = dir.path().join("cache.sqlite3");
+        (dir, path)
     }
 
     fn version_of(path: &Path) -> i64 {
@@ -222,8 +221,8 @@ mod tests {
     /// 写进去什么,读出来就是什么。
     #[test]
     fn stored_body_reads_back_unchanged() {
-        let cache = Cache::open(&scratch("roundtrip"))
-            .expect("开不了缓存");
+        let (_dir, path) = scratch();
+        let cache = Cache::open(&path).expect("开不了缓存");
 
         cache.put(
             "/liked",
@@ -239,8 +238,8 @@ mod tests {
     /// 没存过的键读出来是没有,而不是空串或报错。
     #[test]
     fn missing_key_reads_as_none() {
-        let cache = Cache::open(&scratch("missing"))
-            .expect("开不了缓存");
+        let (_dir, path) = scratch();
+        let cache = Cache::open(&path).expect("开不了缓存");
 
         assert_eq!(cache.get("/daily"), None);
     }
@@ -248,8 +247,8 @@ mod tests {
     /// 服务端那份变了(比如在别的设备上取消了喜欢),刷新写回来的新响应盖掉旧的。
     #[test]
     fn later_response_overwrites_earlier() {
-        let cache = Cache::open(&scratch("overwrite"))
-            .expect("开不了缓存");
+        let (_dir, path) = scratch();
+        let cache = Cache::open(&path).expect("开不了缓存");
 
         cache.put(
             "/liked/ids",
@@ -266,7 +265,7 @@ mod tests {
     /// 从一个还不存在的文件开始,迁移一路跑到当前版本。
     #[test]
     fn fresh_file_is_migrated_to_current_version() {
-        let path = scratch("migrate");
+        let (_dir, path) = scratch();
 
         let cache = Cache::open(&path).expect("开不了缓存");
         drop(cache);
@@ -277,7 +276,7 @@ mod tests {
     /// 重开一个已经是当前版本的库,里面的东西还在。
     #[test]
     fn reopening_keeps_stored_bodies() {
-        let path = scratch("reopen");
+        let (_dir, path) = scratch();
         Cache::open(&path)
             .expect("开不了缓存")
             .put("/playlists", "old");
@@ -294,7 +293,7 @@ mod tests {
     /// 库文件坏了(这里是一堆不是 sqlite 的字节):丢掉重建,不崩,之后照常能用。
     #[test]
     fn corrupt_file_is_discarded_and_rebuilt() {
-        let path = scratch("corrupt");
+        let (_dir, path) = scratch();
         std::fs::write(
             &path,
             b"not a sqlite database ".repeat(512),
@@ -315,7 +314,7 @@ mod tests {
     /// 版本号比认识的还新(装回了旧版本的包):不猜它的表结构,整库丢掉重建。
     #[test]
     fn unknown_newer_version_is_discarded() {
-        let path = scratch("newer");
+        let (_dir, path) = scratch();
         Cache::open(&path)
             .expect("开不了缓存")
             .put("/daily", "from the future");
@@ -337,8 +336,8 @@ mod tests {
     /// 换账号时清掉:上一个人的红心不该在下一个人的列表里闪一下。
     #[test]
     fn clear_forgets_everything() {
-        let cache = Cache::open(&scratch("clear"))
-            .expect("开不了缓存");
+        let (_dir, path) = scratch();
+        let cache = Cache::open(&path).expect("开不了缓存");
         cache.put("/daily", "a");
         cache.put("/liked", "b");
 

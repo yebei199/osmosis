@@ -397,27 +397,28 @@ mod tests {
         );
     }
 
-    fn temp_apk(tag: &str, body: &[u8]) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "osmosis-update-{tag}-{}.apk",
-            std::process::id()
-        ));
+    /// 独有临时目录里的一个 apk。目录随返回的 `TempDir` 一起删。
+    fn temp_apk(
+        body: &[u8],
+    ) -> (tempfile::TempDir, PathBuf) {
+        let dir =
+            tempfile::tempdir().expect("建不出临时目录");
+        let path = dir.path().join("osmosis.apk");
         std::fs::write(&path, body)
             .expect("写不了临时文件");
-        path
+        (dir, path)
     }
 
     #[test]
     fn a_matching_download_is_kept() {
-        let path = temp_apk("ok", b"test");
+        let (_dir, path) = temp_apk(b"test");
         assert_eq!(verify(&path, SHA), Ok(()));
         assert!(path.exists());
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn a_mismatching_download_is_discarded() {
-        let path = temp_apk("bad", b"tampered");
+        let (_dir, path) = temp_apk(b"tampered");
         assert!(verify(&path, SHA).is_err());
         assert!(!path.exists(), "核不上的包必须删掉");
     }

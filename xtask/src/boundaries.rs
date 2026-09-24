@@ -465,15 +465,20 @@ message Track { string id = 1; }";
         );
     }
 
-    /// 临时目录里写一份 `.proto`,返回它的路径。
-    fn proto_fixture(name: &str, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("xtask-proto-{name}"));
-        fs::create_dir_all(&dir)
-            .expect("建不出临时 fixture 目录");
-        let path = dir.join("music.proto");
+    /// 在 `dir` 里写一份名为 `name` 的 `.proto`,返回它的路径。
+    fn proto_fixture(
+        dir: &tempfile::TempDir,
+        name: &str,
+        body: &str,
+    ) -> PathBuf {
+        let path = dir.path().join(name);
         fs::write(&path, body).expect("写不进 fixture");
         path
+    }
+
+    fn scratch() -> tempfile::TempDir {
+        tempfile::tempdir()
+            .expect("建不出临时 fixture 目录")
     }
 
     /// 两份一模一样时不能报漂移。
@@ -481,8 +486,11 @@ message Track { string id = 1; }";
     /// 误报的代价是这条检查会被当成噪音关掉,而它是副本与上游之间唯一的护栏。
     #[test]
     fn proto_drift_accepts_identical_copies() {
-        let vendored = proto_fixture("same-a", PROTO);
-        let upstream = proto_fixture("same-b", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
+        let upstream =
+            proto_fixture(&dir, "b.proto", PROTO);
 
         assert_eq!(
             proto_drift(&vendored, &upstream),
@@ -498,9 +506,12 @@ message Track { string id = 1; }";
     /// 检查报错时唯一有用的东西。
     #[test]
     fn proto_drift_points_at_the_line_that_diverged() {
-        let vendored = proto_fixture("drift-a", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
         let upstream = proto_fixture(
-            "drift-b",
+            &dir,
+            "b.proto",
             &PROTO
                 .replace("string id = 1;", "int64 id = 1;"),
         );
@@ -527,7 +538,9 @@ message Track { string id = 1; }";
     /// "两份不一致",人会照着提示去 diff 一个根本不存在的文件。
     #[test]
     fn proto_drift_names_the_file_it_could_not_read() {
-        let vendored = proto_fixture("missing-a", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
         let absent =
             vendored.with_file_name("nowhere.proto");
 

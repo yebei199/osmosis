@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use similar_asserts::assert_eq;
@@ -8,13 +8,9 @@ use super::{
 };
 use crate::ApiError;
 
-/// 建一个空的临时目录,名字带上用例名免得两个用例互相踩。
-fn scratch(case: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("osmosis-sweep-{case}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("建不出临时目录");
-    dir
+/// 建一个独有的空临时目录,随返回值一起删。
+fn scratch() -> tempfile::TempDir {
+    tempfile::tempdir().expect("建不出临时目录")
 }
 
 /// 写一个指定大小、指定"有多旧"的文件。
@@ -64,33 +60,36 @@ fn names(dir: &Path) -> Vec<String> {
 /// 删过头的现象是刚看过的那一屏封面下次还要重取 —— 缓存在,却总不命中。
 #[test]
 fn the_sweep_deletes_oldest_first_until_under_budget() {
-    let dir = scratch("oldest-first");
-    file(&dir, "old", 100, 300);
-    file(&dir, "mid", 100, 200);
-    file(&dir, "new", 100, 100);
+    let tmp = scratch();
+    let dir = tmp.path();
+    file(dir, "old", 100, 300);
+    file(dir, "mid", 100, 200);
+    file(dir, "new", 100, 100);
 
     // 预算 250:删掉最旧那一个就到 200,不该再动第二个
-    sweep_dir(&dir, 250);
+    sweep_dir(dir, 250);
 
-    assert_eq!(names(&dir), vec!["mid", "new"]);
+    assert_eq!(names(dir), vec!["mid", "new"]);
 }
 
 /// 没超预算时一个都不删 —— 清理不该在正常情况下动手。
 #[test]
 fn the_sweep_keeps_everything_under_budget() {
-    let dir = scratch("under-budget");
-    file(&dir, "a", 100, 200);
-    file(&dir, "b", 100, 100);
+    let tmp = scratch();
+    let dir = tmp.path();
+    file(dir, "a", 100, 200);
+    file(dir, "b", 100, 100);
 
-    sweep_dir(&dir, 1024);
+    sweep_dir(dir, 1024);
 
-    assert_eq!(names(&dir), vec!["a", "b"]);
+    assert_eq!(names(dir), vec!["a", "b"]);
 }
 
 /// 目录还不存在时安静返回 —— 第一次启动就是这个样子,不是故障。
 #[test]
 fn the_sweep_tolerates_a_missing_directory() {
-    let dir = scratch("missing").join("not-created-yet");
+    let tmp = scratch();
+    let dir = tmp.path().join("not-created-yet");
     sweep_dir(&dir, 0);
     assert!(!dir.exists());
 }
@@ -242,14 +241,12 @@ fn the_authorization_header_follows_the_session() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // 登录态落盘处指到临时目录,免得动到真实的那一份
-    let dir = std::env::temp_dir()
-        .join("osmosis-send-auth-header");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = tempfile::tempdir().expect("建不出临时目录");
     // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
     unsafe {
         std::env::set_var(
             "OSMOSIS_SESSION_FILE",
-            dir.join("session"),
+            dir.path().join("session"),
         );
     }
 

@@ -144,11 +144,10 @@ fn isolate_state_dir() {
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!(
-            "osmosis-ui-tests-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::create_dir_all(&dir);
+        // 留到进程结束:状态目录要活过每一条测试,而进程级的它没有「结束」可挂
+        let dir = tempfile::tempdir()
+            .expect("建不出临时目录")
+            .keep();
         api::set_state_dir(dir);
     });
 }

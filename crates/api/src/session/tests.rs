@@ -12,14 +12,12 @@ fn the_session_token_has_a_lifecycle() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // 用一个临时文件当会话落盘处,免得动到真实的那一份
-    let dir = std::env::temp_dir()
-        .join("osmosis-session-lifecycle");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = tempfile::tempdir().expect("建不出临时目录");
     // SAFETY: 单线程测试起点,此时还没有别的线程在读环境
     unsafe {
         std::env::set_var(
             "OSMOSIS_SESSION_FILE",
-            dir.join("session"),
+            dir.path().join("session"),
         );
     }
 
@@ -50,10 +48,8 @@ fn an_expired_session_is_backed_up_before_it_is_cleared() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let dir =
-        std::env::temp_dir().join("osmosis-session-expire");
-    let _ = std::fs::remove_dir_all(&dir);
-    let file = dir.join("session");
+    let dir = tempfile::tempdir().expect("建不出临时目录");
+    let file = dir.path().join("session");
     // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
     unsafe {
         std::env::set_var("OSMOSIS_SESSION_FILE", &file);
@@ -70,9 +66,11 @@ fn an_expired_session_is_backed_up_before_it_is_cleared() {
         "会话文件该清掉,否则重启又恢复出这个坏 token"
     );
     assert_eq!(
-        std::fs::read_to_string(dir.join("session.bak"))
-            .ok()
-            .as_deref(),
+        std::fs::read_to_string(
+            dir.path().join("session.bak")
+        )
+        .ok()
+        .as_deref(),
         Some("rejected-token"),
         "清之前该留一份备份"
     );
@@ -194,16 +192,13 @@ fn the_device_id_survives_a_restart() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    // 指到临时文件,免得动到真实的那一份;上一轮留下的也要清掉
-    let dir =
-        std::env::temp_dir().join("osmosis-device-id");
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::create_dir_all(&dir);
+    // 指到临时文件,免得动到真实的那一份
+    let dir = tempfile::tempdir().expect("建不出临时目录");
     // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
     unsafe {
         std::env::set_var(
             "OSMOSIS_DEVICE_FILE",
-            dir.join("device"),
+            dir.path().join("device"),
         );
     }
 
@@ -234,15 +229,12 @@ fn a_saved_session_comes_back_after_a_restart() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let dir = std::env::temp_dir()
-        .join("osmosis-session-restore");
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = tempfile::tempdir().expect("建不出临时目录");
     // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
     unsafe {
         std::env::set_var(
             "OSMOSIS_SESSION_FILE",
-            dir.join("session"),
+            dir.path().join("session"),
         );
     }
 
@@ -284,15 +276,14 @@ fn forget_in_memory() {
 /// 存了再读,拿回同一个 token —— 这是"下次启动还登着"的全部含义。
 #[test]
 fn session_survives_a_restart() {
-    let path = std::env::temp_dir()
-        .join("osmosis-session-restart/session");
+    let dir = tempfile::tempdir().expect("建不出临时目录");
+    let path = dir.path().join("session");
     platform::write_session(&path, "kept");
 
     let read = std::fs::read_to_string(&path)
         .expect("刚写的文件该读得到");
 
     assert_eq!(read.trim(), "kept");
-    let _ = std::fs::remove_file(&path);
 }
 
 /// 会话文件权限是 0600 —— token 等同于密码。
@@ -301,8 +292,8 @@ fn session_survives_a_restart() {
 fn session_file_is_owner_only() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let path = std::env::temp_dir()
-        .join("osmosis-session-perm/session");
+    let dir = tempfile::tempdir().expect("建不出临时目录");
+    let path = dir.path().join("session");
     platform::write_session(&path, "secret");
 
     let mode = std::fs::metadata(&path)
@@ -312,7 +303,6 @@ fn session_file_is_owner_only() {
         & 0o777;
 
     assert_eq!(mode, 0o600, "会话文件权限应为 0600");
-    let _ = std::fs::remove_file(&path);
 }
 
 /// 服务端说 token 无效,只在「这次请求带着的就是当前这个 token」时才判会话失效(#131)。
@@ -326,10 +316,8 @@ fn only_a_rejection_of_the_current_token_expires_the_session()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let dir = std::env::temp_dir()
-        .join("osmosis-session-rejected");
-    let _ = std::fs::remove_dir_all(&dir);
-    let file = dir.join("session");
+    let dir = tempfile::tempdir().expect("建不出临时目录");
+    let file = dir.path().join("session");
     // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
     unsafe {
         std::env::set_var("OSMOSIS_SESSION_FILE", &file);

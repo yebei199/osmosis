@@ -59,6 +59,9 @@ prost = "0.14"
 
 # 测试断言。similar-asserts 在值不等时打行级 diff,比 assert_eq! 的一坨 Debug 好读。
 similar-asserts = "2"
+# 测试的临时目录与文件。名字唯一、用完即删 —— 固定名字的临时目录会被同一台机器上
+# 并行的另一份测试删掉或覆盖(#136)。已经在依赖树里,不新增下载。
+tempfile = "3"
 
 # 音频。rodio 解码 + 出声(内部走 cpal,linux 上链接 alsa,见 slint.nix)。
 # stream-download 给 rodio 喂一个边下边读的 Read+Seek —— 不整曲下载:

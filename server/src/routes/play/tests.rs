@@ -309,9 +309,12 @@ async fn an_upstream_error_page_is_not_served_as_audio() {
 fn probe(bytes: &[u8]) -> (String, i64) {
     use std::io::Write as _;
 
-    let mut file = tempfile();
-    file.1.write_all(bytes).expect("写不进临时文件");
-    drop(file.1);
+    // ffprobe 要一个能 seek 的输入,管道给不了。后缀留着给它当格式提示
+    let mut file = tempfile::Builder::new()
+        .suffix(".mp3")
+        .tempfile()
+        .expect("建不出临时文件");
+    file.write_all(bytes).expect("写不进临时文件");
 
     let out = std::process::Command::new("ffprobe")
         .args([
@@ -322,10 +325,9 @@ fn probe(bytes: &[u8]) -> (String, i64) {
             "-of",
             "default=noprint_wrappers=1:nokey=1",
         ])
-        .arg(&file.0)
+        .arg(file.path())
         .output()
         .expect("跑不了 ffprobe —— 转码路要求它在 PATH 上");
-    let _ = std::fs::remove_file(&file.0);
 
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines();
@@ -337,15 +339,4 @@ fn probe(bytes: &[u8]) -> (String, i64) {
             .parse()
             .unwrap_or_default(),
     )
-}
-
-/// 一个自己起名字的临时文件。ffprobe 要一个能 seek 的输入,管道给不了。
-fn tempfile() -> (std::path::PathBuf, std::fs::File) {
-    let path = std::env::temp_dir().join(format!(
-        "osmosis-probe-{}.mp3",
-        std::process::id()
-    ));
-    let file = std::fs::File::create(&path)
-        .expect("建不出临时文件");
-    (path, file)
 }
