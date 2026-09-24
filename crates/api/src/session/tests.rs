@@ -315,3 +315,79 @@ fn session_file_is_owner_only() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 服务端说 token 无效,只在「这次请求带着的就是当前这个 token」时才判会话失效(#131)。
+///
+/// 另外两种都不该动会话:没带 token 的请求被拒(首启、还没登录),以及带着旧 token
+/// 发出去、回来时用户已经登上了新会话 —— 后者判了,刚登上的人就被踢回登录页。
+#[test]
+fn only_a_rejection_of_the_current_token_expires_the_session()
+ {
+    let _guard = super::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let dir = std::env::temp_dir()
+        .join("osmosis-session-rejected");
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join("session");
+    // SAFETY: 拿着 TEST_LOCK,此刻没有别的测试在读写这个变量
+    unsafe {
+        std::env::set_var("OSMOSIS_SESSION_FILE", &file);
+    }
+    let rejected = || crate::ApiError::Server {
+        code: "unauthorized".to_owned(),
+        message: "token 无效".to_owned(),
+    };
+
+    // 没带 token:不失效,也不再报成「会话失效」
+    self::set("current");
+    let error = self::on_rejected(rejected(), None);
+    assert!(
+        matches!(
+            error,
+            crate::ApiError::Unauthenticated(_)
+        ),
+        "没带 token 的 401 不是会话失效,实际 {error:?}"
+    );
+    assert_eq!(self::token().as_deref(), Some("current"));
+
+    // 带旧 token、而当前已是新会话:不动新会话
+    let error = self::on_rejected(rejected(), Some("old"));
+    assert!(
+        matches!(
+            error,
+            crate::ApiError::Unauthenticated(_)
+        ),
+        "旧 token 的 401 不说明新会话失效,实际 {error:?}"
+    );
+    assert_eq!(self::token().as_deref(), Some("current"));
+    assert!(file.exists(), "新会话的落盘不该被挪走");
+
+    // 带当前 token:失效
+    let error =
+        self::on_rejected(rejected(), Some("current"));
+    assert!(
+        matches!(
+            &error,
+            crate::ApiError::Server { code, .. } if code == "unauthorized"
+        ),
+        "当前 token 被拒就是会话失效,实际 {error:?}"
+    );
+    assert_eq!(self::token(), None);
+    assert!(!file.exists(), "失效的会话该挪成备份");
+
+    // 别的失败原样放过,也不动会话
+    self::set("current");
+    let error = self::on_rejected(
+        crate::ApiError::Server {
+            code: "rate_limited".to_owned(),
+            message: String::new(),
+        },
+        Some("current"),
+    );
+    assert!(matches!(
+        error,
+        crate::ApiError::Server { .. }
+    ));
+    assert_eq!(self::token().as_deref(), Some("current"));
+}

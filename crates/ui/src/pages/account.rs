@@ -448,6 +448,38 @@ mod tests {
         );
     }
 
+    /// 没带当前会话 token 的请求被拒(#131):不说「登录已失效」,也不把已经登上的人
+    /// 踢回去,只告诉调用方不必再报。
+    #[test]
+    fn a_rejection_without_the_current_token_is_silent() {
+        i_slint_backend_testing::init_no_event_loop();
+        for logged_in in [false, true] {
+            let ui =
+                MainWindow::new().expect("建不出主窗口");
+            ui.global::<Session>().set_logged_in(logged_in);
+
+            let handled = handle_session_expiry(
+                &ui,
+                &api::ApiError::Unauthenticated(
+                    "缺少 Authorization 头".to_owned(),
+                ),
+            );
+
+            assert!(handled, "不该再报一遍");
+            assert_eq!(
+                ui.global::<Session>().get_logged_in(),
+                logged_in,
+                "登录态不该被动"
+            );
+            assert!(
+                ui.global::<Session>()
+                    .get_error()
+                    .is_empty(),
+                "不该出现「登录已失效」"
+            );
+        }
+    }
+
     /// 别的失败不动登录态 —— 一次网络抖动把人踢下线是更糟的体验。
     #[test]
     fn other_failures_do_not_log_the_user_out() {
