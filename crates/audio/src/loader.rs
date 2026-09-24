@@ -42,6 +42,22 @@ pub async fn load(
     load_with(url, Tuning::PRODUCTION).await
 }
 
+/// [`load_with`],同时交回这次开流的分段计时(见 [`crate::open_timing`])。
+pub async fn load_timed(
+    url: &str,
+    tuning: Tuning,
+) -> Result<
+    (Loaded, StreamHealth, crate::open_timing::Laps),
+    AudioError,
+> {
+    let (loaded, health) = load_with(url, tuning).await?;
+    Ok((
+        loaded,
+        health,
+        crate::open_timing::Laps::default(),
+    ))
+}
+
 /// [`load`] 的可调版本,给测试用。
 ///
 /// 交回的 [`StreamHealth`] 是这条流的死亡证明:放弃时由 `on_reconnect` 里那段

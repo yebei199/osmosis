@@ -25,6 +25,9 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
 - `src/stream_client.rs`:给 stream-download 的 HTTP 客户端,reqwest 0.12 +
   rustls-tls,与 crates/api 同一条栈。不用它自带的 reqwest 0.13:那条的 rustls
   强制 rustls-platform-verifier,安卓要 JNI 胶水才能验证书。
+- `src/open_timing.rs`:开一条流的分段计时 —— DNS、TCP+TLS、首字节、攒够预读、解码器建好，
+  每开一次记一行 `stream:`(写法同 `api:` 那行)。握手两段靠 task-local 认领：复用池里的连接
+  时两段都不出现，这就是冷热连接的判据(#137 ⑥)。
 - `src/pcm.rs`:`normalize` 把任意源统一成 48kHz 立体声,`Tee` 把播放中的采样
   原样传下去、复制一份进有界支路(给频谱)。同播的 Opus 编解码原先也在这里,
   随同播一起删了(#137)。
