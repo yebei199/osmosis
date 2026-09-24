@@ -331,10 +331,14 @@ fn cover_shard_host_is_pinned() {
 #[test]
 fn foreign_cover_passes_through() {
     let mut track = full_track();
-    track.cover = "https://img.example.com/p2.music.126.net.jpg".to_owned();
+    track.cover =
+        "https://img.example.com/p2.music.126.net.jpg"
+            .to_owned();
 
     assert_eq!(
         track_to_dto(track).cover.as_deref(),
-        Some("https://img.example.com/p2.music.126.net.jpg")
+        Some(
+            "https://img.example.com/p2.music.126.net.jpg"
+        )
     );
 }

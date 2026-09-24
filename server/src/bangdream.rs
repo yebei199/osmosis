@@ -136,5 +136,33 @@ fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+/// 网易云图片的分片主机:同一张图随机落在 `p1`..`p4.music.126.net`,路径不变。
+const NETEASE_IMAGE_HOST: &str = ".music.126.net";
+
+/// 图片地址:空串翻成 `None`,网易云的分片主机钉成 `p1`(#133)。
+///
+/// 不钉的话同一份每日推荐每取一次封面地址就换一台主机,客户端判成「内容变了」,
+/// 整表重建。p1..p4 给的是同一张图,钉哪台都一样。认不出的地址原样放过。
+fn stable_image(value: String) -> Option<String> {
+    let value = non_empty(value)?;
+    let Some((scheme, rest)) = value.split_once("://")
+    else {
+        return Some(value);
+    };
+    let (host, path) =
+        rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let is_shard = host
+        .strip_suffix(NETEASE_IMAGE_HOST)
+        .and_then(|shard| shard.strip_prefix('p'))
+        .is_some_and(|n| {
+            !n.is_empty()
+                && n.bytes().all(|b| b.is_ascii_digit())
+        });
+    if !is_shard {
+        return Some(value);
+    }
+    Some(format!("{scheme}://p1{NETEASE_IMAGE_HOST}{path}"))
+}
+
 #[cfg(test)]
 mod tests;
