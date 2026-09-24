@@ -163,7 +163,7 @@ async fn exchange<B: serde::Serialize + Send + 'static>(
     let mut request = client()?
         .request(method, url)
         .timeout(REQUEST_TIMEOUT);
-    if let Some(token) = token {
+    if let Some(token) = &token {
         request = request.bearer_auth(token);
     }
     if let Some(body) = body {
@@ -176,7 +176,9 @@ async fn exchange<B: serde::Serialize + Send + 'static>(
         .map_err(|e| ApiError::Transport(e.to_string()))?;
     call.headers_in(response.status().as_u16());
 
-    check(response).await
+    check(response).await.map_err(|error| {
+        crate::session::on_rejected(error, token.as_deref())
+    })
 }
 
 /// 一次接口调用的分段耗时,收尾时打成一行 `api:` 日志(#121)。
@@ -271,6 +273,9 @@ impl Call {
                 ApiError::Transport(_) => "transport",
                 ApiError::Decode(_) => "decode",
                 ApiError::Server { .. } => "server",
+                ApiError::Unauthenticated(_) => {
+                    "unauthenticated"
+                }
                 ApiError::VersionMismatch { .. } => {
                     "version"
                 }
@@ -718,14 +723,20 @@ pub(crate) async fn download(
     runtime()
         .spawn(async move {
             let mut request = client()?.get(url);
-            if let Some(token) = token {
+            if let Some(token) = &token {
                 request = request.bearer_auth(token);
             }
             let mut response =
                 check(request.send().await.map_err(
                     |e| ApiError::Transport(e.to_string()),
                 )?)
-                .await?;
+                .await
+                .map_err(|error| {
+                    crate::session::on_rejected(
+                        error,
+                        token.as_deref(),
+                    )
+                })?;
 
             // 转码那一路没有这个头 —— 服务端事前算不出会出多少字节。
             let total = response.content_length();
