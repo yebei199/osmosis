@@ -251,7 +251,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "api"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "contract",
  "log",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "app-android"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "android_logger",
  "jni 0.22.4",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "app-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "contract",
  "similar-asserts",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "app-desktop"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "api",
  "env_logger",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "audio"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bytes",
  "cpal",
@@ -2174,7 +2174,7 @@ dependencies = [
 
 [[package]]
 name = "contract"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "serde",
  "serde_json",
@@ -6802,7 +6802,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "render3d"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "bevy",
  "log",
@@ -7272,7 +7272,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "argon2",
  "axum",
@@ -8154,7 +8154,7 @@ dependencies = [
 
 [[package]]
 name = "syncplay"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "axum",
  "contract",
@@ -8880,7 +8880,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "api",
  "app-core",
@@ -10140,7 +10140,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "similar-asserts",
  "tempfile",
