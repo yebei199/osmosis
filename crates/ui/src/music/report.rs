@@ -53,6 +53,22 @@ pub(super) async fn prepare(
         return Err(error.to_string());
     }
 
+    // 声学验收(#137 ⑤):debug 档里配了测试媒体就改放它,见 `api::test_media_url`。
+    if let Some(template) = api::test_media_url() {
+        // 标记音频的长度跟曲目元数据一致:主端按元数据时长预告下一首,长短不一就会让
+        // 各台在不同时刻换歌。
+        let url = template.replace(
+            "{duration_ms}",
+            &track.duration_ms.to_string(),
+        );
+        log::warn!(
+            "测试媒体钩子生效: {} 改从 {url} 取",
+            track.id
+        );
+        return audio::load(&url)
+            .await
+            .map_err(|error| error.to_string());
+    }
     let source = match api::play_source(&track.id).await {
         Ok(source) => source,
         Err(error) => {
@@ -110,7 +126,7 @@ pub(super) fn emit(
     // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
     seeking.borrow_mut().replace(source.seek_state());
     match start {
-        None => player.play(source),
+        None => player.play_feed(source),
         // 迁移过来的那一首从锚点接着放(#137 ③)。跳不动就停在暂停上、说一句,
         // 不从 0:00 放起来 —— 那会让用户把整首从头再听一遍,还以为是迁移成功了。
         Some(start) => {

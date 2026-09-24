@@ -9,6 +9,7 @@
 //! 这既让本 crate 可以脱离网络单测,也让它不必依赖 `api`。
 
 mod counter;
+mod group;
 mod health;
 mod lyric;
 mod output;
@@ -17,22 +18,28 @@ mod queue;
 mod session;
 
 pub use counter::Counter;
+pub use group::{
+    Cue, Draft, Effective, Group, GroupRole, Intercepts,
+    LEAD_US, MASTER_SILENT_MS, PREANNOUNCE_US, REANCHOR_US,
+    Verdict,
+};
 pub use health::{Health, HealthState, refresh};
 pub use lyric::{LyricWindow, current_line, window};
 pub use output::{Output, RemoteView};
 pub use playback::{Playback, PlaybackState, play};
 pub use queue::{LoopMode, Queue};
 pub use session::{
-    Doubt, Effect, Move, PREPARE_TIMEOUT_MS, Phase, Plan,
-    Refused, START_TIMEOUT_MS, STOP_TIMEOUT_MS, Session,
-    Step,
+    Doubt, Effect, Move, PREPARE_TIMEOUT_MS, Party, Phase,
+    Plan, Progress, READY_GRACE_MS, Refused, Role,
+    START_TIMEOUT_MS, STOP_TIMEOUT_MS, Session, Step,
 };
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
-    ArtistDto, DeviceDto, HealthDto, LyricDto,
-    LyricLineDto, MAX_SIGNAL_BYTES, OperationAckDto,
-    OperationPhase, PlaylistDto, PlaylistSource,
+    ArtistDto, DeviceDto, GroupPlanDto, HealthDto,
+    LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
+    NextEntryDto, OperationAckDto, OperationPhase,
+    OutputRouteDto, PlaylistDto, PlaylistSource,
     RemoteCommand, RemotePlayState, RemoteStateDto,
     TrackDto, TracksDto,
 };

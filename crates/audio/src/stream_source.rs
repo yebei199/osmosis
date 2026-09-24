@@ -110,6 +110,8 @@ where
     let reported = state.clone();
 
     std::thread::spawn(move || {
+        // 这一帧里已经取走了几个采样。跳转要从帧边界上起跳，见 [`apply_seek`]。
+        let mut phase = 0;
         loop {
             // 跳转比手上这个采样急:抢在取下一个之前看一眼有没有人在等
             if let Ok(request) = requests.try_recv() {
@@ -117,13 +119,17 @@ where
                     &mut source,
                     request,
                     &reported,
+                    phase,
                 );
+                phase = 0;
                 continue;
             }
 
             let Some(sample) = source.next() else {
                 return;
             };
+            phase =
+                (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
             if tx.send(sample).is_ok() {
                 continue;
@@ -135,8 +141,13 @@ where
             let Ok(request) = requests.recv() else {
                 return;
             };
-            tx =
-                apply_seek(&mut source, request, &reported);
+            tx = apply_seek(
+                &mut source,
+                request,
+                &reported,
+                phase,
+            );
+            phase = 0;
         }
     });
 
@@ -270,6 +281,40 @@ impl Source for ChannelSource {
         answer
             .recv_timeout(SEEK_VERDICT_WINDOW)
             .unwrap_or(Ok(()))
+    }
+}
+
+/// 当同步源底下的媒体用(#137 ⑤)。
+///
+/// 与 [`Iterator::next`] 的差别只在「通道暂时空了」:那里给静音(rodio 不许源停下来),这里
+/// 如实说「欠载」—— 同步源据此不让媒体位置往前走，欠载那段时间一帧媒体都没放。
+impl crate::sync::Feed for ChannelSource {
+    fn pull(&mut self) -> crate::sync::Pulled {
+        use crate::sync::Pulled;
+        match self.samples.try_recv() {
+            Ok(sample) => Pulled::Sample(sample),
+            Err(mpsc::TryRecvError::Empty) => {
+                Pulled::Starved
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Pulled::End
+            }
+        }
+    }
+
+    fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
+        Source::try_seek(self, to)
+    }
+
+    fn channels(&self) -> ChannelCount {
+        Source::channels(self)
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        Source::sample_rate(self)
     }
 }
 

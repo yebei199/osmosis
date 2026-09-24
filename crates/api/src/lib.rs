@@ -76,6 +76,10 @@ pub use platform::off_thread;
 // 状态目录的显式入口:安卓上环境变量给不出私有目录,由平台入口注入。
 pub use platform::set_state_dir;
 
+// 声学验收的测试媒体钩子(#137 ⑤),只有原生 debug 档认。
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform::test_media_url;
+
 pub use error::{ApiError, base_url, is_release};
 
 pub(crate) use error::server_error;

@@ -233,6 +233,7 @@ fn deck_window_with(
         frames: Default::default(),
         start_at: Rc::new(Cell::new(None)),
         member: Default::default(),
+        alignment: Default::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
     };

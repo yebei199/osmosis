@@ -23,7 +23,14 @@ pub(super) fn apply_seek<S: Source>(
     source: &mut S,
     (to, fresh, verdict): SeekRequest,
     state: &SeekState,
+    phase: usize,
 ) -> mpsc::SyncSender<Sample> {
+    // rodio 的源跳转时保留声道相位(停在右声道就接着吐右声道),而新通道的下游按「第一个
+    // 采样是左声道」拼帧。先把这一帧取完，跳完才从左声道开头(#137 ⑤:否则左右对调到换歌)。
+    let channels = usize::from(OUTPUT_CHANNELS);
+    for _ in 0..(channels - phase) % channels {
+        source.next();
+    }
     let outcome = seek_with_retry(source, to);
 
     if let Err(err) = &outcome {
@@ -99,7 +106,11 @@ pub(super) fn discard<S: Source>(
 ) {
     let per_second = f64::from(OUTPUT_SAMPLE_RATE)
         * f64::from(OUTPUT_CHANNELS);
-    let count = (span.as_secs_f64() * per_second) as u64;
+    let channels = u64::from(OUTPUT_CHANNELS);
+    // 整帧地丢：丢半帧同样会把左右声道错开
+    let count = (span.as_secs_f64() * per_second) as u64
+        / channels
+        * channels;
     for _ in 0..count {
         if source.next().is_none() {
             return;

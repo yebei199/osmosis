@@ -6,10 +6,11 @@
 //! 同播(WebRTC 推流)已删(#137,`docs/adr/0008` 废止),crate 名是它留下的。
 
 mod client;
+pub mod clock;
 mod session;
 mod signalling;
 
-pub use client::{Client, Event};
+pub use client::{Client, Event, SharedClock};
 pub use session::Roster;
 pub use signalling::{
     SignalSender, Signalling, command_wire_len,

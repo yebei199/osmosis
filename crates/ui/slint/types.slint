@@ -72,6 +72,8 @@ export struct ArtistRow {
 export struct DeviceRow {
     id: string,
     name: string,
+    // 在不在播放组里(#137 ⑤)。「加入 / 移出」那颗小键照它显示。
+    member: bool,
 }
 
 // 歌词页当前该画的那一段里的一行。窗口由 `app_core::window` 选好,

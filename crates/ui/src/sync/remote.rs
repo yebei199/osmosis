@@ -10,22 +10,26 @@
 
 mod rules;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use app_core::{
-    Effect, OperationAckDto, Output, Plan, Refused,
-    RemoteCommand, RemoteStateDto, RemoteView, Session,
+    Cue, Draft, Effect, Group, GroupPlanDto, GroupRole,
+    OperationAckDto, Output, Plan, Refused, RemoteCommand,
+    RemoteStateDto, RemoteView, Session, Verdict,
 };
 use slint::ComponentHandle;
 use syncplay::{Client, DeviceDto};
 
 pub(crate) use rules::{
     accepts_control, describe_claim_failed,
-    describe_controlled, describe_lost, describe_move,
-    describe_output, describe_remote, describe_revoked,
-    describe_too_large, describe_unavailable, lost_remote,
+    describe_controlled, describe_copy_fault,
+    describe_group, describe_lost, describe_master_lost,
+    describe_media_fault, describe_missing_entry,
+    describe_move, describe_output, describe_remote,
+    describe_revoked, describe_too_large,
+    describe_unavailable, lost_remote,
 };
 
 use crate::{MainWindow, Player, Shell};
@@ -60,6 +64,10 @@ pub enum Submitted {
     TooLarge { bytes: usize, limit: usize },
 }
 
+/// 主端的心跳：计划没变时多久原样再发一次。跟随端三次收不到算主端失联
+/// (`app_core::MASTER_SILENT_MS`)。
+const HEARTBEAT_MS: u64 = 1_000;
+
 /// 一次点播交出去之后,多久内还算「在路上」。
 ///
 /// 真机上点下去到对面出声要一两秒(#121),上报一秒一条;十秒还没见对面
@@ -83,6 +91,19 @@ struct Inner {
     ///
     /// 「输出」不再是一个随手改的标志:改它要走一次迁移,确认之前它不动。
     session: Mutex<Session>,
+    /// 本机作为播放组成员的那一侧(#137 ⑤):组、最近那份共同计划、自己是不是主端。
+    group: Mutex<Group>,
+    /// 主端最近一次真的发出去的计划:任期、序号、发出的时刻 —— 心跳按它节流。
+    published_plan: Mutex<Option<(u64, u64, u64)>>,
+    /// 最近一次随计划发出去的播放次序(与它的任期)。没变就不再带。
+    sent_order: Mutex<Option<(u64, Option<Vec<i64>>)>>,
+    /// 组里各成员报上来的故障(取不到媒体、跳不到位置),按设备 id。报好了就划掉。
+    faults: Mutex<HashMap<String, String>>,
+    /// 各成员报上来的输出路由，按设备 id。蓝牙、有线的标「未校准」。
+    routes:
+        Mutex<HashMap<String, app_core::OutputRouteDto>>,
+    /// 上一次推到界面上的组那一行 —— 变了才记一笔日志。
+    group_text: Mutex<String>,
     /// 会话交回来、要在 UI 线程上做的本机那一步(准备 / 停止 / 开始 / 取消)。
     ///
     /// 走收件箱而不是当场做,理由同 [`Self::inbox`]:回话可能在信令的后台线程上
@@ -180,6 +201,138 @@ impl Remote {
     /// 正在迁移:输出还没定下来。
     pub fn is_moving(&self) -> bool {
         lock(&self.inner.session).moving().is_some()
+    }
+
+    /// 控制命令该不该先压着:新主端还没确认开始、或者主端正在交接(#137 ⑤)。
+    /// 组里有留下的主端、只是加人减人时不压。
+    pub fn holds_transport(&self) -> bool {
+        lock(&self.inner.session).holds_transport()
+    }
+
+    /// 已经确认的成员。只有本机时是 `[Local]`,一台都没有时是空的。
+    pub fn members(&self) -> Vec<Output> {
+        lock(&self.inner.session).members().to_vec()
+    }
+
+    /// 成员的设备 id,本机是空串 —— 名册那一排芯片按它标出谁在组里。
+    pub fn member_ids(&self) -> Vec<String> {
+        lock(&self.inner.session)
+            .members()
+            .iter()
+            .map(|output| {
+                output
+                    .target()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    // ── 本机作为播放组成员(#137 ⑤)──
+
+    /// 本机在组里的身份。
+    pub fn group_role(&self) -> GroupRole {
+        lock(&self.inner.group).role()
+    }
+
+    /// 本机开始跟着组放了(被叫「开始」的那一刻)。
+    pub fn group_join(&self) {
+        lock(&self.inner.group).join();
+    }
+
+    /// 手上最新的共同计划。
+    pub fn group_plan(&self) -> Option<GroupPlanDto> {
+        lock(&self.inner.group).plan().cloned()
+    }
+
+    /// 此刻该怎么出声。校时还没有结论时，服务端时刻算不出来，按「还在等」处理。
+    pub fn group_verdict(&self) -> Verdict {
+        let group = lock(&self.inner.group);
+        match self.server_now_us() {
+            Some(now_us) => group.verdict(now_us, now_ms()),
+            None if group.role() == GroupRole::Solo => {
+                Verdict::Solo
+            }
+            None => Verdict::Waiting,
+        }
+    }
+
+    /// 主端写一份计划，内容变了或者心跳到点了就发出去。
+    pub fn publish_group(&self, draft: Draft, cue: Cue) {
+        let Some(now_us) = self.server_now_us() else {
+            return;
+        };
+        let now = now_ms();
+        let Some((term, plan)) = lock(&self.inner.group)
+            .publish(draft, cue, now_us, now)
+        else {
+            return;
+        };
+        let mut sent = lock(&self.inner.published_plan);
+        let due = match *sent {
+            Some((held_term, seq, at)) => {
+                held_term != term
+                    || seq != plan.seq
+                    || now.saturating_sub(at)
+                        >= HEARTBEAT_MS
+            }
+            None => true,
+        };
+        if !due {
+            return;
+        }
+        *sent = Some((term, plan.seq, now));
+        drop(sent);
+        // 次序只在变了(或换了任期)时带上;跟随端没收到就沿用手上那份。
+        let mut plan = plan;
+        {
+            let mut order = lock(&self.inner.sent_order);
+            let fresh = (term, plan.play_order.clone());
+            if order.as_ref() == Some(&fresh) {
+                plan.play_order = None;
+            } else {
+                *order = Some(fresh);
+            }
+        }
+        if let Some(client) = self.inner.client.get() {
+            client.publish_plan(term, plan);
+        }
+    }
+
+    /// 服务端时钟此刻的读数(微秒),按校时换算。还没校过时是 `None`。
+    pub fn server_now_us(&self) -> Option<u64> {
+        self.to_server_us(audio::clock::monotonic_ns())
+    }
+
+    /// 本机单调时刻换算成服务端时钟(微秒)。
+    pub fn to_server_us(
+        &self,
+        local_ns: i64,
+    ) -> Option<u64> {
+        let client = self.inner.client.get()?;
+        let clock = client.clock();
+        let clock = clock.lock().ok()?;
+        clock.to_server_us(local_ns)
+    }
+
+    /// 服务端纪元 `epoch` 上的时刻换算成本机单调时钟(纳秒)。纪元对不上就是 `None`。
+    pub fn to_local_ns(
+        &self,
+        epoch: u64,
+        server_us: u64,
+    ) -> Option<i64> {
+        let client = self.inner.client.get()?;
+        let clock = client.clock();
+        let clock = clock.lock().ok()?;
+        clock.to_local_ns(epoch, server_us)
+    }
+
+    /// 校时所在的纪元(服务端这一次启动)。主端把它写进计划。
+    pub fn clock_epoch(&self) -> Option<u64> {
+        let client = self.inner.client.get()?;
+        let clock = client.clock();
+        let clock = clock.lock().ok()?;
+        clock.epoch()
     }
 
     /// 记一次「点播交出去了」。
@@ -513,11 +666,25 @@ impl Remote {
         to: Output,
         plan: Option<Plan>,
     ) {
+        self.change_outputs(vec![to], plan);
+    }
+
+    /// 把成员集合换成 `set`(#137 ⑤):改在这些设备播放、加入一台、移出一台都走这里。
+    pub fn change_outputs(
+        &self,
+        set: Vec<Output>,
+        plan: Option<Plan>,
+    ) {
         let operation_id =
             crate::sync::link::fresh_operation_id();
         log::info!(
-            "迁移开始: 操作 {operation_id} -> {}{}",
-            to.name().unwrap_or("本机"),
+            "换输出开始: 操作 {operation_id} -> [{}]{}",
+            set.iter()
+                .map(|output| output
+                    .name()
+                    .unwrap_or("本机"))
+                .collect::<Vec<_>>()
+                .join(", "),
             plan.as_ref()
                 .map(|plan| format!(
                     "(队列 {}@{}, 条目 {}, {}ms)",
@@ -530,9 +697,9 @@ impl Remote {
                     || "(没有在放的,只停源)".to_owned()
                 )
         );
-        let outcome = lock(&self.inner.session).begin(
+        let outcome = lock(&self.inner.session).change(
             operation_id,
-            to,
+            set,
             plan,
             now_ms(),
         );
@@ -629,15 +796,25 @@ impl Remote {
                     Effect::Begin {
                         operation_id,
                         outputs,
+                        master,
                     },
                     Some(client),
-                ) => client
-                    .begin_outputs(&operation_id, outputs),
+                ) => client.begin_outputs(
+                    &operation_id,
+                    outputs,
+                    master,
+                ),
                 (
-                    Effect::Commit { operation_id },
+                    Effect::Commit {
+                        operation_id,
+                        outputs,
+                    },
                     Some(client),
                 ) => {
-                    client.commit_outputs(&operation_id);
+                    client.commit_outputs(
+                        &operation_id,
+                        outputs,
+                    );
                     self.settle();
                 }
                 (
@@ -680,10 +857,11 @@ impl Remote {
             Effect::Begin {
                 operation_id,
                 outputs,
+                ..
             } => lock(&self.inner.group_ops).push(format!(
                 "begin {operation_id} {outputs:?}"
             )),
-            Effect::Commit { operation_id } => {
+            Effect::Commit { operation_id, .. } => {
                 lock(&self.inner.group_ops)
                     .push(format!("commit {operation_id}"));
             }
@@ -815,12 +993,23 @@ impl Remote {
             client.exit_controlled();
         }
         *lock(&self.inner.controlled_by) = None;
+        // 退出被遥控也就退出了播放组:服务端那边把本机从组里摘掉,本机不再跟着谁放。
+        lock(&self.inner.group).leave();
+        self.group_changed();
         self.refresh();
     }
 
     /// 把信令客户端交给它。只认第一次 —— 它是启动期的接线,不是状态。
     pub fn attach(&self, client: &Arc<Client>) {
         let _ = self.inner.client.set(client.clone());
+    }
+
+    /// 组或计划变了：叫 UI 线程按新的样子重新对准本机播放(见 `music::playback::group`)。
+    fn group_changed(&self) {
+        let _ =
+            self.inner.weak.upgrade_in_event_loop(|ui| {
+                ui.global::<Shell>().invoke_group_changed();
+            });
     }
 
     /// 把输出设备与被遥控横幅这两行推到界面上。
@@ -846,6 +1035,40 @@ impl Remote {
                 (String::new(), false),
                 |(_, _, text, doubt)| (text, doubt),
             );
+        let (group_text, member_ids) = {
+            let session = lock(&self.inner.session);
+            let faults = lock(&self.inner.faults);
+            let mut routes =
+                lock(&self.inner.routes).clone();
+            // 本机也在组里时，本机的路由自己查(本机不给自己上报)。
+            if let Some(route) = audio::route() {
+                routes.insert(
+                    String::new(),
+                    route_dto(route),
+                );
+            }
+            (
+                describe_group(&session, &faults, &routes),
+                session
+                    .members()
+                    .iter()
+                    .map(|output| {
+                        output
+                            .target()
+                            .unwrap_or_default()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // 组那一行变了记一笔:谁在组里、哪台待确认、哪台报了故障,事后查得到是哪一刻变的。
+        {
+            let mut told = lock(&self.inner.group_text);
+            if *told != group_text {
+                log::info!("组那一行: {group_text}");
+                told.clone_from(&group_text);
+            }
+        }
         let _ = self.inner.weak.upgrade_in_event_loop(
             move |ui| {
                 ui.global::<Shell>()
@@ -858,20 +1081,54 @@ impl Remote {
                     .set_output_id(id.into());
                 ui.global::<Shell>()
                     .set_controlled_text(controlled.into());
+                ui.global::<Shell>()
+                    .set_group_text(group_text.into());
+                mark_members(&ui, &member_ids);
             },
         );
     }
+}
+
+/// 名册那一排芯片上标出谁在组里(空串是本机)。「加入 / 移出」那颗小键照它显示。
+pub(crate) fn mark_members(
+    ui: &MainWindow,
+    member_ids: &[String],
+) {
+    use slint::Model as _;
+
+    let rows = ui.global::<Shell>().get_devices();
+    for index in 0..rows.row_count() {
+        let Some(mut row) = rows.row_data(index) else {
+            continue;
+        };
+        let member = member_ids
+            .iter()
+            .any(|id| *id == row.id.as_str());
+        if row.member != member {
+            row.member = member;
+            rows.set_row_data(index, row);
+        }
+    }
+    ui.global::<Shell>().set_local_member(
+        member_ids.iter().any(String::is_empty),
+    );
 }
 
 /// 一个还没接上客户端的把手。
 ///
 /// 分两步是因为事件回调要在 [`Client::start`] 之前就交出去,而客户端要等它
 /// 返回 —— 先有这个,再 [`Remote::attach`]。
-pub fn new(ui: &MainWindow) -> Remote {
+pub fn new(ui: &MainWindow, me: &str) -> Remote {
     Remote {
         inner: Arc::new(Inner {
             client: OnceLock::new(),
-            session: Mutex::new(Session::default()),
+            session: Mutex::new(Session::with_me(me)),
+            group: Mutex::new(Group::new(me)),
+            published_plan: Mutex::new(None),
+            sent_order: Mutex::new(None),
+            faults: Mutex::new(HashMap::new()),
+            routes: Mutex::new(HashMap::new()),
+            group_text: Mutex::new(String::new()),
             local_effects: Mutex::new(VecDeque::new()),
             published: Mutex::new(None),
             told: Mutex::new(None),
@@ -920,7 +1177,7 @@ pub fn bind(ui: &MainWindow, remote: &Remote) {
 /// `cargo test`,那就是拿生产环境当测试靶子。
 #[cfg(test)]
 pub(crate) fn detached(ui: &MainWindow) -> Remote {
-    let remote = new(ui);
+    let remote = new(ui, "me");
     remote.attach(&Arc::new(Client::detached()));
     remote
 }
@@ -989,10 +1246,55 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 信令断了也一样(#118):断着的时候服务端的消息过不来,锁留着的话
         // 本机在断网期间连歌都点不了。重连之后客户端自己退出被遥控,两端
         // 对得上账(见 `syncplay::client` 的 `serve`)。
+        // 撤锁**不是**离组(#137 ⑤):遥控器满租约时服务端同样撤锁,而那时组不散、主端照常
+        // 发计划。离组看组的通告里还有没有本机(被移出时服务端也通告一份),或者本机自己按了
+        // 「退出被遥控」。断线也不离组:断着的时候计划过不来,跟随端照已确认的放到有效期末尾。
         syncplay::Event::NotControlled
         | syncplay::Event::Disconnected => {
             if lock(&inner.controlled_by).take().is_some() {
                 remote.refresh();
+            }
+        }
+        syncplay::Event::Group {
+            term,
+            master,
+            members,
+        } => {
+            log::info!(
+                "播放组: 任期 {term}, 主端 {master:?}, 成员 {members:?}"
+            );
+            lock(&inner.group).on_group(
+                *term,
+                master.clone(),
+                members.clone(),
+                now_ms(),
+            );
+            // 组变了(有新来的、换了任期):主端下一份整份再发，次序也带上 —— 新来的手上还没有。
+            *lock(&inner.published_plan) = None;
+            *lock(&inner.sent_order) = None;
+            remote.group_changed();
+            remote.refresh();
+        }
+        syncplay::Event::GroupPlan { from, term, plan } => {
+            let fresh = lock(&inner.group).on_plan(
+                *term,
+                (**plan).clone(),
+                now_ms(),
+            );
+            if fresh {
+                log::info!(
+                    "共同计划: {from} 任期 {term} 第 {} 份(条目 {}, {}µs@{}µs, {})",
+                    plan.seq,
+                    plan.entry_id,
+                    plan.position_us,
+                    plan.anchor_us,
+                    if plan.playing {
+                        "播放"
+                    } else {
+                        "暂停"
+                    }
+                );
+                remote.group_changed();
             }
         }
         // 命令进收件箱,再叫一声 UI 线程去执行(见模块头的两步)。
@@ -1014,9 +1316,38 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 往前走的唯一依据。镜像仍只收已确认的那一台 —— 目标确认之前,控制条
         // 上画的是迁过去的那一首,不是目标手上原来那一首。
         syncplay::Event::RemoteState { from, state } => {
+            let fault_changed = {
+                let mut faults = lock(&inner.faults);
+                match &state.fault {
+                    Some(why) => {
+                        faults
+                            .insert(
+                                from.clone(),
+                                why.clone(),
+                            )
+                            .as_ref()
+                            != Some(why)
+                    }
+                    None => faults.remove(from).is_some(),
+                }
+            };
+            let route_changed = {
+                let mut routes = lock(&inner.routes);
+                match state.route {
+                    Some(route) => {
+                        routes.insert(from.clone(), route)
+                            != Some(route)
+                    }
+                    None => routes.remove(from).is_some(),
+                }
+            };
+            if fault_changed || route_changed {
+                remote.refresh();
+            }
             if let Some(ack) = &state.operation {
+                // 提交之后才到的回话也交给会话:逐台「待确认」靠它划掉。
                 let party =
-                    lock(&inner.session).party(from);
+                    lock(&inner.session).output_of(from);
                 if let Some(party) = party {
                     let effects = lock(&inner.session)
                         .on_ack(&party, ack, now_ms());
@@ -1327,4 +1658,21 @@ fn sync_cover(
             ui.global::<crate::Viz>().set_cover_art(image);
         }
     });
+}
+
+/// 音频层查到的输出路由换成线上格式(#137 ⑤)。
+pub(crate) fn route_dto(
+    route: audio::Route,
+) -> app_core::OutputRouteDto {
+    match route {
+        audio::Route::Speaker => {
+            app_core::OutputRouteDto::Speaker
+        }
+        audio::Route::Bluetooth => {
+            app_core::OutputRouteDto::Bluetooth
+        }
+        audio::Route::Wired => {
+            app_core::OutputRouteDto::Wired
+        }
+    }
 }

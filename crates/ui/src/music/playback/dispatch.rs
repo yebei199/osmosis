@@ -146,7 +146,8 @@ pub(in crate::music) fn dispatch(
     }
     // 迁移那几秒里输出还没定下来:这一下落在源上还是目标上都不对(#137 ③)。
     // 音量照放行,理由同被控锁 —— 它不在「放什么、放不放」那条链上。
-    if deck.remote.is_moving()
+    // 组里有留下的主端、只是加人减人时不压(#137 ⑤):它一直在响。
+    if deck.remote.holds_transport()
         && intent.obeys_controlled_lock()
     {
         return Dispatched::Blocked("正在切换输出");

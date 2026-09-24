@@ -5,6 +5,7 @@
 
 import { DeviceRow } from "types.slint";
 import { Theme } from "theme.slint";
+import { Shell } from "globals/shell.slint";
 import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
 
 import { ProgressBar, VolumeControl } from "progress.slint";
@@ -100,41 +101,102 @@ component OutputChip inherits Rectangle {
     }
 }
 
+// 芯片旁那颗小键:加入一起播放 / 移出(#137 ⑤)。在组里的显示「−」,不在的显示「+」。
+// 点芯片本身仍是「改在这台播放」—— 两个动作分开，不靠长按之类的隐藏手势。
+component MemberToggle inherits Rectangle {
+    in property <string> label;
+    in property <bool> member;
+    callback clicked();
+
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak;
+    animate background { duration: 140ms; easing: ease-out; }
+
+    Text {
+        text: root.member ? "−" : "+";
+        color: root.member ? Theme.accent : Theme.text-faint;
+        font-size: 14px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+
+        accessible-role: button;
+        accessible-label: (root.member ? "移出 " : "加入 ") + root.label;
+        accessible-action-default => { root.clicked(); }
+    }
+}
+
 // 输出设备区:声音从哪台设备出来。第一颗永远是「本机」—— 选本机就是现在的
-// 行为,遥控器模式没有第二个模式开关(docs/adr/0030)。
-export component OutputStrip inherits HorizontalLayout {
+// 行为,遥控器模式没有第二个模式开关(docs/adr/0030)。每颗芯片旁那颗小键把它加进 /
+// 移出播放组，组那一行在芯片下面(#137 ⑤)。
+export component OutputStrip inherits VerticalLayout {
     in property <[DeviceRow]> devices;
     // 当前选中的设备 id。空串 = 本机。
     in property <string> current;
     callback set-output(string);
 
-    spacing: 8px;
+    spacing: 4px;
 
-    VerticalLayout {
-        alignment: center;
-        Text {
-            text: "输出";
-            font-family: "Maple Mono NF CN";
-            color: Theme.text-faint;
-            font-size: 12px;
+    HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Text {
+                text: "输出";
+                font-family: "Maple Mono NF CN";
+                color: Theme.text-faint;
+                font-size: 12px;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 2px;
+            OutputChip {
+                label: "本机";
+                selected: root.current == "";
+                clicked => { root.set-output(""); }
+            }
+            VerticalLayout {
+                alignment: center;
+                MemberToggle {
+                    label: "本机";
+                    member: Shell.local-member;
+                    clicked => { Shell.toggle-member(""); }
+                }
+            }
+        }
+
+        for device in root.devices: HorizontalLayout {
+            alignment: center;
+            spacing: 2px;
+            OutputChip {
+                label: device.name;
+                selected: root.current == device.id;
+                clicked => { root.set-output(device.id); }
+            }
+            VerticalLayout {
+                alignment: center;
+                MemberToggle {
+                    label: device.name;
+                    member: device.member;
+                    clicked => { Shell.toggle-member(device.id); }
+                }
+            }
         }
     }
 
-    VerticalLayout {
-        alignment: center;
-        OutputChip {
-            label: "本机";
-            selected: root.current == "";
-            clicked => { root.set-output(""); }
-        }
-    }
-
-    for device in root.devices: VerticalLayout {
-        alignment: center;
-        OutputChip {
-            label: device.name;
-            selected: root.current == device.id;
-            clicked => { root.set-output(device.id); }
-        }
+    if Shell.group-text != "": group-label := Text {
+        text: Shell.group-text;
+        color: Theme.text-faint;
+        font-size: 12px;
+        wrap: word-wrap;
     }
 }

@@ -3,10 +3,15 @@
 //! 与 `music::rules` 同一个用意:界面接线里混着的判断挪出来,能不起窗口
 //! 就测得到。它们是最容易写反、也最难从截图上看出写反了的那部分。
 
+use std::collections::HashMap;
+
 use app_core::{
-    Doubt, Move, Output, Phase, RemotePlayState,
-    RemoteView, Step,
+    Doubt, Move, Output, OutputRouteDto, Phase, Progress,
+    RemotePlayState, RemoteView, Role, Session, Step,
 };
+
+/// 没做过声学校准的路由(蓝牙、有线/USB)上的成员，组那一行这样标(#137 ⑤ 冻结的合同)。
+pub const UNCALIBRATED: &str = "该路由未校准,不保证同步";
 
 /// 界面上那几句写死在 `.slint` 里的遥控文案,在这里各留一份。
 ///
@@ -17,7 +22,7 @@ use app_core::{
 /// 出处:`slint/drawer.slint` 的输出设备一行,`slint/app.slint` 的被遥控横幅。
 #[cfg(test)]
 pub const SLINT_COPY: &[&str] =
-    &["输出设备", "本机", "退出被遥控"];
+    &["输出设备", "本机", "退出被遥控", "加入", "移出"];
 
 /// 输出设备那一行怎么写。
 ///
@@ -175,6 +180,10 @@ pub fn describe_move(moving: &Move) -> String {
     let name = |end: &Output| {
         end.name().unwrap_or("本机").to_owned()
     };
+    // 加人减人、或者一次换好几台(#137 ⑤):逐台说走到哪了。
+    if moving.keeps_playing() || moving.parties.len() > 2 {
+        return describe_parties(moving);
+    }
     let (to, from) = (name(&moving.to), name(&moving.from));
     match moving.phase {
         Phase::Running(Step::Preparing) => {
@@ -193,6 +202,136 @@ pub fn describe_move(moving: &Move) -> String {
             "切到 {to} 待确认:{to} 起没起不知道,{from} 不自动恢复"
         ),
     }
+}
+
+/// 跟随端照已确认的计划放完、主端还是没动静：停下时说的那一句(#137 ⑤)。
+pub fn describe_master_lost() -> String {
+    "主端失联:已按确认的计划放完,停在这里。重新选择设备继续"
+        .to_owned()
+}
+
+/// 跟随端取不到组计划要的那一首时报的故障。它不自己从头放、不换下一首。
+pub fn describe_media_fault(why: &str) -> String {
+    format!("取不到媒体: {why}")
+}
+
+/// 跟随端手上那一版队列里没有计划要的那一条。
+pub fn describe_missing_entry(
+    revision: i64,
+    entry_id: i64,
+) -> String {
+    format!("第 {revision} 版里没有条目 {entry_id}")
+}
+
+/// 跟随端取不下计划那一版的队列。
+pub fn describe_copy_fault(why: &str) -> String {
+    format!("队列没取下来: {why}")
+}
+
+/// 多台一起换时，状态行逐台说：谁在加入、谁在移出、各自走到哪。「待确认」要说清楚是哪一台。
+fn describe_parties(moving: &Move) -> String {
+    let parts: Vec<String> = moving
+        .parties
+        .iter()
+        .map(|party| {
+            let name =
+                party.output.name().unwrap_or("本机");
+            let verb = match party.role {
+                Role::Join => "加入",
+                Role::Leave => "移出",
+            };
+            let progress = match &party.progress {
+                Progress::Waiting => "排队",
+                Progress::Preparing => "准备中",
+                Progress::Prepared => "已备好",
+                Progress::Stopping => "停止中",
+                Progress::Stopped => "已停",
+                Progress::Starting => "开始中",
+                Progress::Started => "已跟上",
+                Progress::Failed(_) => "失败",
+                Progress::Unconfirmed => "待确认",
+            };
+            format!("{verb} {name}({progress})")
+        })
+        .collect();
+    let head = match moving.phase {
+        Phase::Unconfirmed(Doubt::SourceStop) => {
+            "待确认:有设备停没停不知道,新加入的先不放"
+        }
+        Phase::Unconfirmed(Doubt::TargetStart) => {
+            "待确认:新主端起没起不知道,原来的不自动恢复"
+        }
+        Phase::Running(_) => "正在调整一起播放的设备",
+    };
+    format!("{head}:{}", parts.join("、"))
+}
+
+/// 播放组那一行(#137 ⑤):组里有哪几台、谁是主端，哪几台待确认、哪几台报了故障。
+///
+/// 只有本机(或一台不剩)且没有要说的故障时是空串，那一行不出现。
+///
+/// 蓝牙、有线/USB 的成员标「该路由未校准,不保证同步」:同步合同只对电脑扬声器 + 手机扬声器做过
+/// 声学校准(#137 ⑤)。`routes` 按设备 id,本机是空串。
+pub fn describe_group(
+    session: &Session,
+    faults: &HashMap<String, String>,
+    routes: &HashMap<String, OutputRouteDto>,
+) -> String {
+    let name = |output: &Output| {
+        output.name().unwrap_or("本机").to_owned()
+    };
+    let members = session.members();
+    let mut parts = Vec::new();
+    if members.len() > 1 {
+        let listed: Vec<String> = members
+            .iter()
+            .map(|member| {
+                if member.target()
+                    == session.output().target()
+                {
+                    format!("{}(主端)", name(member))
+                } else {
+                    name(member)
+                }
+            })
+            .collect();
+        parts.push(format!(
+            "一起播放: {}",
+            listed.join("、")
+        ));
+    }
+    for member in session.unconfirmed() {
+        parts.push(format!(
+            "{} 待确认:开始了没有不知道",
+            name(member)
+        ));
+    }
+    for member in members {
+        if let Some(why) =
+            member.target().and_then(|id| faults.get(id))
+        {
+            parts.push(format!("{}: {why}", name(member)));
+        }
+    }
+    if members.len() > 1 {
+        for member in members {
+            let route = routes
+                .get(member.target().unwrap_or_default());
+            if matches!(
+                route,
+                Some(
+                    OutputRouteDto::Bluetooth
+                        | OutputRouteDto::Wired
+                )
+            ) {
+                parts.push(format!(
+                    "{}: {UNCALIBRATED}",
+                    name(member)
+                ));
+            }
+        }
+    }
+    parts.join(" · ")
 }
 
 #[cfg(test)]
@@ -237,6 +376,8 @@ mod tests {
                 epoch: 1_700_000_000_000,
                 state_seq: 1,
                 operation: None,
+                fault: None,
+                route: None,
             },
             0,
         );
@@ -450,6 +591,38 @@ mod tests {
         ));
         // 变量部分喂 ASCII:检查的是文案里的固定字。
         copy.push(describe_controlled(Some("pc1")));
+        // 播放组(#137 ⑤)。
+        copy.push(describe_master_lost());
+        copy.push(describe_media_fault("x"));
+        copy.push(describe_missing_entry(1, 2));
+        copy.push(describe_copy_fault("x"));
+        let mut grouped = Session::with_me("me");
+        let _ = grouped.change(
+            "op".to_owned(),
+            vec![Output::Local, remote()],
+            None,
+            0,
+        );
+        copy.push(describe_group(
+            &grouped,
+            &HashMap::from([(
+                "pc1".to_owned(),
+                "x".to_owned(),
+            )]),
+            &HashMap::from([(
+                "pc1".to_owned(),
+                OutputRouteDto::Bluetooth,
+            )]),
+        ));
+        copy.push("待确认:开始了没有不知道".to_owned());
+        for head in [
+            "待确认:有设备停没停不知道,新加入的先不放",
+            "待确认:新主端起没起不知道,原来的不自动恢复",
+            "正在调整一起播放的设备",
+            "加入移出排队准备中已备好停止中已停开始中已跟上失败",
+        ] {
+            copy.push(head.to_owned());
+        }
 
         let missing: Vec<char> = copy
             .iter()
@@ -526,6 +699,146 @@ mod tests {
         assert!(
             doubt.contains("先不放"),
             "要说清楚此刻不做什么: {doubt}"
+        );
+    }
+
+    fn device(id: &str) -> Output {
+        Output::Remote(DeviceDto {
+            id: id.to_owned(),
+            name: id.to_owned(),
+        })
+    }
+
+    fn plan() -> app_core::Plan {
+        app_core::Plan {
+            queue_id: 1,
+            revision: 1,
+            entry_id: 1,
+            position_ms: 0,
+            playing: true,
+            track: track(),
+        }
+    }
+
+    /// 只有本机时那一行不出现;几台一起放时点名主端。
+    #[test]
+    fn the_group_row_names_the_members_and_the_master() {
+        let session = Session::with_me("me");
+        assert_eq!(
+            describe_group(
+                &session,
+                &HashMap::new(),
+                &HashMap::new()
+            ),
+            ""
+        );
+
+        let mut grouped = Session::with_me("me");
+        let _ = grouped.change(
+            "op".to_owned(),
+            vec![Output::Local, device("pc1")],
+            None,
+            0,
+        );
+        assert_eq!(
+            describe_group(
+                &grouped,
+                &HashMap::new(),
+                &HashMap::new()
+            ),
+            "一起播放: 本机(主端)、pc1"
+        );
+    }
+
+    /// 某台报了故障：逐台点名，说出原因。
+    #[test]
+    fn the_group_row_lists_member_faults_one_by_one() {
+        let mut grouped = Session::with_me("me");
+        let _ = grouped.change(
+            "op".to_owned(),
+            vec![
+                Output::Local,
+                device("pc1"),
+                device("tv"),
+            ],
+            None,
+            0,
+        );
+        let faults = HashMap::from([(
+            "tv".to_owned(),
+            "取不到媒体".to_owned(),
+        )]);
+
+        let row = describe_group(
+            &grouped,
+            &faults,
+            &HashMap::new(),
+        );
+
+        assert!(row.contains("tv: 取不到媒体"), "{row}");
+        assert!(
+            !row.contains("pc1:"),
+            "没报故障的不点名: {row}"
+        );
+    }
+
+    /// 加入一台时状态行说的是「加入 pc1」,不是「切到本机」。
+    #[test]
+    fn adding_a_member_is_described_as_joining() {
+        let mut session = Session::with_me("me");
+        let _ = session.change(
+            "op".to_owned(),
+            vec![Output::Local, device("pc1")],
+            Some(plan()),
+            0,
+        );
+
+        let text = describe_move(
+            session.moving().expect("该在进行"),
+        );
+
+        assert!(
+            text.contains("加入 pc1(准备中)"),
+            "{text}"
+        );
+    }
+
+    /// 蓝牙、有线的成员标「该路由未校准」;扬声器与查不出来的不标(查不出来不替它下结论)。
+    #[test]
+    fn members_on_uncalibrated_routes_are_marked() {
+        let mut grouped = Session::with_me("me");
+        let _ = grouped.change(
+            "op".to_owned(),
+            vec![
+                Output::Local,
+                device("pc1"),
+                device("tv"),
+            ],
+            None,
+            0,
+        );
+        let routes = HashMap::from([
+            (String::new(), OutputRouteDto::Speaker),
+            ("pc1".to_owned(), OutputRouteDto::Bluetooth),
+        ]);
+
+        let row = describe_group(
+            &grouped,
+            &HashMap::new(),
+            &routes,
+        );
+
+        assert!(
+            row.contains(&format!("pc1: {UNCALIBRATED}")),
+            "{row}"
+        );
+        assert!(
+            !row.contains(&format!("本机: {UNCALIBRATED}")),
+            "{row}"
+        );
+        assert!(
+            !row.contains(&format!("tv: {UNCALIBRATED}")),
+            "查不出来不下结论: {row}"
         );
     }
 }

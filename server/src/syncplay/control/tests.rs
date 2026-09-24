@@ -41,6 +41,8 @@ fn report() -> RemoteStateDto {
         epoch: 1_700_000_000_000,
         state_seq: 42,
         operation: None,
+        fault: None,
+        route: None,
     }
 }
 
@@ -871,6 +873,7 @@ fn begin(
                 .iter()
                 .map(|id| (*id).to_owned())
                 .collect(),
+            master: None,
         },
     )
 }
@@ -887,6 +890,7 @@ fn commit(
         "phone",
         ClientSignal::CommitOutputs {
             operation_id: op.to_owned(),
+            outputs: None,
         },
     )
 }
@@ -1221,6 +1225,7 @@ fn a_begin_from_another_device_takes_over_and_revokes_the_old_controller()
         ClientSignal::BeginOutputs {
             operation_id: "op".to_owned(),
             outputs: vec!["pc".to_owned()],
+            master: None,
         },
     );
 
@@ -1274,6 +1279,7 @@ fn only_the_controller_can_commit() {
         "spare",
         ClientSignal::CommitOutputs {
             operation_id: "op".to_owned(),
+            outputs: None,
         },
     );
 

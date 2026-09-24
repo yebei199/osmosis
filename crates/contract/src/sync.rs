@@ -107,18 +107,43 @@ pub enum ClientSignal {
     /// 确认,这时候就把源从组里摘掉,就再也没有人能叫它停了(#137 ③)。
     ///
     /// 空集合是「改回本机」:本机输出不经服务端,组里只剩要被停掉的那些。
-    /// 本轮集合最多一台;字段从第一天就是集合,多成员(#137 ⑤)不用再改形状。
+    /// 遥控器本机也可以在集合里(本机在放时加入别的设备,#137 ⑤),但集合只有它自己时
+    /// 仍是单机输出，不经服务端。
     BeginOutputs {
         operation_id: String,
         outputs: Vec<String>,
+        /// 换上之后谁当主端(持有组时间线、决定下一首的那一台),必须在 `outputs` 里。
+        /// 不在或者缺省就取 `outputs` 的第一台。
+        ///
+        /// 主端被换下时这就是**显式的主端交接**(#137 ⑤):新主端从它手上最近那份共同
+        /// 计划接着往下发，不是服务端替谁另选一个。
+        #[serde(default)]
+        master: Option<String>,
     },
     /// 那一次操作确认完了:输出集合正式换成 `BeginOutputs` 里那一份。
     ///
     /// 被换下来的成员收到 [`ServerSignal::NotControlled`] 解锁 —— 它们此前已经
     /// 各自确认停了声音,这一条只是撤锁,不是叫停。
-    CommitOutputs { operation_id: String },
+    CommitOutputs {
+        operation_id: String,
+        /// 真正跟上的那几台(#137 ⑤):新来的里准备不了、开始失败的不进组，撤锁。
+        /// 必须是 `BeginOutputs` 那一份的子集;缺省就是整份。
+        #[serde(default)]
+        outputs: Option<Vec<String>>,
+    },
     /// 放弃那一次操作:新来的设备撤锁,组的成员集合不变。
     AbortOutputs { operation_id: String },
+    /// 校时:服务端立刻回一条 [`ServerSignal::TimePong`],带上它此刻的单调时钟。
+    ///
+    /// 客户端自己记下发出与收到的本机时刻，取往返最短的那几次估偏移(#137 ⑤)。
+    /// 服务端不参与估计，也不需要知道谁在校时。
+    TimePing { id: u64 },
+    /// 主端发布共同计划。服务端只认当前主端、当前任期发来的，转给组里其余成员与遥控器;
+    /// 别的一律回错，不转。
+    GroupPlan {
+        term: u64,
+        plan: Box<crate::GroupPlanDto>,
+    },
 }
 
 /// 服务端发给设备的信令消息。
@@ -212,6 +237,24 @@ pub enum ServerSignal {
     /// `CommitOutputs` 生效了。`term` 是换人之后的主端任期:成员集合每换
     /// 一次加一,旧任期里迟到的一切都不再作数。
     OutputsCommitted { operation_id: String, term: u64 },
+    /// 校时的回话。`server_us` 是服务端单调时钟(微秒);`epoch` 是这个钟的纪元,
+    /// 服务端每次启动换一个 —— 换了就说明旧的偏移估计与旧计划里的时刻全都作废。
+    TimePong { id: u64, server_us: u64, epoch: u64 },
+    /// 组现在的样子:任期、主端、成员(含进行中那一次拉进来的)。
+    ///
+    /// 发给组里每一台与遥控器。成员凭它知道该听谁的计划;主端看见新成员就把手上的计划
+    /// 再发一遍，让新来的跟上;被指定成主端的那一台从这一刻起负责往下发(#137 ⑤)。
+    Group {
+        term: u64,
+        master: Option<String>,
+        members: Vec<String>,
+    },
+    /// 当前主端发布的共同计划，原样转来。
+    GroupPlan {
+        from: String,
+        term: u64,
+        plan: Box<crate::GroupPlanDto>,
+    },
 }
 
 #[cfg(test)]
@@ -248,13 +291,16 @@ mod tests {
             ClientSignal::BeginOutputs {
                 operation_id: "op-1".to_owned(),
                 outputs: vec!["pc1".to_owned()],
+                master: Some("pc1".to_owned()),
             },
             ClientSignal::BeginOutputs {
                 operation_id: "op-2".to_owned(),
                 outputs: Vec::new(),
+                master: None,
             },
             ClientSignal::CommitOutputs {
                 operation_id: "op-1".to_owned(),
+                outputs: Some(vec!["pc1".to_owned()]),
             },
             ClientSignal::AbortOutputs {
                 operation_id: "op-1".to_owned(),

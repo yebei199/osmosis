@@ -290,6 +290,8 @@ mod tests {
             epoch,
             state_seq,
             operation: None,
+            fault: None,
+            route: None,
         }
     }
 

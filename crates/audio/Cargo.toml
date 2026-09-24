@@ -23,6 +23,21 @@ bytes = "1"
 # bytes_stream 用 —— 边下边读靠它。
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 
+# 自己开声卡流(见 src/output):rodio 的设备把 cpal 回调里的时间戳丢了,而同步播放
+# 要的正是它(#137 ⑤)。与 rodio 用的是同一个 cpal,不多一份。
+cpal = "0.17"
+# CLOCK_MONOTONIC 的原始读数:AAudio 的时间戳用的就是这个钟,`Instant` 不给出纪元。
+libc = "0.2"
+
+# 安卓直接用 NDK 的 AAudio:cpal 的 AAudio 后端给的两个时刻不是同一个钟(#137 ⑤ 调查)。
+# 与 cpal 依赖的是同一个 ndk 0.9。minSdk 是 29,api-level-28 的接口都在。
+[target.'cfg(target_os = "android")'.dependencies]
+ndk = { version = "0.9", default-features = false, features = ["audio", "api-level-28"] }
+# 查输出路由(扬声器/蓝牙/有线)要问 AudioManager(见 src/output/route.rs)。与 apps/android 同一份
+# jni 0.22;JavaVM 与 Activity 从 android-activity 登记的 ndk-context 里取。
+jni = "0.22"
+ndk-context = "0.1"
+
 [dev-dependencies]
 similar-asserts.workspace = true
 tokio = { version = "1", features = ["rt", "macros"] }

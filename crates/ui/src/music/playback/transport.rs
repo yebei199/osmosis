@@ -291,7 +291,7 @@ pub(in crate::music) fn start_auto_advance(
             }
             // 迁移那几秒控制条画迁过去的那一首,本机这边的续播、上报一概停一拍 ——
             // 输出还没定下来,照本机的状态画或推进都是在猜(#137 ③)。
-            if deck.remote.is_moving() {
+            if deck.remote.holds_transport() {
                 crate::sync::remote::push_moving(&ui, &deck.remote);
                 return;
             }
@@ -356,8 +356,14 @@ pub(in crate::music) fn start_auto_advance(
 
             // 起播上报也搭这趟车:个人主页的统计从这条账本查询时聚合
             // (server 的 `play_events`)。报失败只写日志 —— 统计不该打断听歌。
+            //
+            // 播放组里一次播放只记一条(#137 ⑤,AC-5.4):统计的是「我听了什么」,
+            // 几台一起响还是那一次。只有主端报;跟随端照样过一遍判据、记住这一首,
+            // 交接成主端之后才不会把正在放的这一首再记一次。
+            let following = follows_the_group(&deck);
             if let Some((platform, id)) =
                 play_to_report(&state, &mut reported.borrow_mut())
+                && !following
             {
                 slint::spawn_local(async move {
                     if let Err(error) =
@@ -371,10 +377,15 @@ pub(in crate::music) fn start_auto_advance(
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
-            if should_report_loss(&state, drained, gave_up) {
-                report_stream_loss(&ui, &deck);
-            } else if should_advance(&state, drained) {
-                advance_auto(&ui, &deck);
+            //
+            // 跟随端两样都不做:放哪一首只听计划(预告的下一首到点就换),断流了
+            // 跟随器静音追赶、取不到就报故障 —— 不自己换下一首(#137 ⑤)。
+            if !following {
+                if should_report_loss(&state, drained, gave_up) {
+                    report_stream_loss(&ui, &deck);
+                } else if should_advance(&state, drained) {
+                    advance_auto(&ui, &deck);
+                }
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。

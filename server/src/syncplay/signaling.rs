@@ -445,6 +445,15 @@ fn route(
     match message {
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
+        // 校时:立刻回服务端此刻的单调时钟。在这里就答，不进遥控那一套 —— 多绕一层锁，
+        // 就多一段不对称的排队，偏移估计跟着偏(#137 ⑤)。
+        ClientSignal::TimePing { id } => {
+            Some(ServerSignal::TimePong {
+                id,
+                server_us: crate::syncplay::clock::now_us(),
+                epoch: crate::syncplay::clock::epoch(),
+            })
+        }
         // 其余几条都是遥控器模式的,归 `crate::syncplay::control`。
         remote @ (ClientSignal::ClaimControl { .. }
         | ClientSignal::ExitControlled
@@ -457,7 +466,8 @@ fn route(
         | ClientSignal::CommitOutputs {
             ..
         }
-        | ClientSignal::AbortOutputs { .. }) => {
+        | ClientSignal::AbortOutputs { .. }
+        | ClientSignal::GroupPlan { .. }) => {
             crate::syncplay::control::route(
                 roster, control, account, from, remote,
             )
@@ -470,6 +480,34 @@ mod tests {
     use similar_asserts::assert_eq;
 
     use super::*;
+
+    /// 校时:服务端立刻回一条带自己单调时钟与纪元的回话,原样带回 id(#137 ⑤)。
+    #[test]
+    fn a_time_ping_is_answered_with_the_server_clock() {
+        let roster = Roster::default();
+        let mut control = Control::default();
+        let before = crate::syncplay::clock::now_us();
+
+        let reply = route(
+            &roster,
+            &mut control,
+            1,
+            "phone",
+            ClientSignal::TimePing { id: 42 },
+        );
+
+        let Some(ServerSignal::TimePong {
+            id,
+            server_us,
+            epoch,
+        }) = reply
+        else {
+            panic!("该回 TimePong: {reply:?}");
+        };
+        assert_eq!(id, 42);
+        assert!(server_us >= before);
+        assert_eq!(epoch, crate::syncplay::clock::epoch());
+    }
 
     /// 两个账号,用来验"信令转不出自己那一桶"。
     const ALICE: AccountId = 1;

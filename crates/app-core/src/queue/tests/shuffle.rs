@@ -169,3 +169,33 @@ fn different_seeds_give_different_orders() {
         "20 首的批,两个种子洗出同一个排列几乎不可能 —— 多半是 seed 没被用上"
     );
 }
+
+/// 照别处给的次序接着放：当前这一首不动，下一首按给的次序走。
+#[test]
+fn a_restored_order_keeps_the_current_track_and_decides_the_next()
+ {
+    let mut queue = Queue::new(batch(3), 1);
+
+    assert!(queue.restore_order(vec![2, 1, 0], true));
+
+    assert_eq!(queue.index(), 1, "正在放的不被打断");
+    assert!(queue.is_shuffled());
+    assert_eq!(
+        queue.peek_next().map(|track| track.id.clone()),
+        Some(batch(3)[0].id.clone()),
+        "下一首按给的次序走"
+    );
+}
+
+/// 不是排列(缺一首、重复、越界)就不动。
+#[test]
+fn an_order_that_is_not_a_permutation_is_refused() {
+    let mut queue = Queue::new(batch(3), 0);
+
+    for broken in [vec![0, 1], vec![0, 0, 1], vec![0, 1, 7]]
+    {
+        assert!(!queue.restore_order(broken, true));
+    }
+    assert_eq!(queue.order(), &[0, 1, 2]);
+    assert!(!queue.is_shuffled());
+}

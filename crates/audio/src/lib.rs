@@ -10,11 +10,15 @@
 //! 解码与出声刻意分开:出声需要真实声卡,断言不了;而解码才是真会出故障的地方 ——
 //! 直链过期时上游返回的是一个 HTML 页面,不是音频。
 
+pub mod clock;
+mod output;
+pub use output::route::{Route, current as route};
 pub mod pcm;
 mod range_stream;
 pub mod spectrum;
 mod stream_client;
 mod stream_source;
+pub mod sync;
 
 pub use stream_source::{
     BUFFER_SAMPLES, ChannelSource, SeekState, buffered,
