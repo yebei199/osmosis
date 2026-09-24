@@ -61,6 +61,9 @@ release APK 用的是 gradle 的 debug 构建类型,签名密钥是 pc1 当初�
   的 APK 里仍是 `0.1.0` / `1`。
 - 找「最新版」用 GitHub 的 latest release;某个 release 可能还没补上 APK(pc3 冷编实测约 12 分钟),
   消费方要容忍资产缺席。
+- 应用内升级(`crates/api/src/update.rs`)不下 `.sha256` 文件,读的是 latest release JSON 里 APK
+  资产自带的 `digest`(`sha256:<hex>`,GitHub 上传时自己算的):资产下载会跳到 GitHub 的资产 CDN,
+  设备的网络上连不上,api.github.com 能通。两者内容一致,`.sha256` 文件留给人和 `rollout` 用。
 
 ## 配置
 

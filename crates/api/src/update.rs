@@ -3,9 +3,12 @@
 //! 装是平台的事(安卓走 PackageInstaller,见 `apps/android`),这一层只交出一个
 //! 核对过的文件。资产名与校验文件的格式由 `release/README.md`「APK 资产约定」定。
 //!
-//! 版本与 `.sha256` 直接问 GitHub,**不带登录态**(把我们的 token 发过去就是泄露)。
-//! APK 字节从我们自己的服务端取(`/app/android/{ver}.apk`,见 `server/src/routes/apk.rs`):
-//! 国内直连 GitHub 的资产下载只有几十 KB/s。服务端被换了包也没用,哈希是 GitHub 给的。
+//! 版本与哈希都从 api.github.com 那一份 release JSON 里读,**不带登录态**(把我们的 token
+//! 发过去就是泄露)。哈希取 APK 资产自带的 `digest`(GitHub 自己算的 `sha256:<hex>`),不去下
+//! `.sha256` 文件:资产下载会 302 到 GitHub 的资产 CDN,手机网络上连不上(#129 真机实测 60 秒
+//! 超时),而 api.github.com 秒回。
+//! APK 字节从我们自己的服务端取(`/app/android/{ver}.apk`,见 `server/src/routes/apk.rs`)。
+//! 服务端被换了包也没用,哈希是 GitHub 给的。
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +33,8 @@ struct ReleaseDto {
 #[derive(Deserialize)]
 struct AssetDto {
     name: String,
-    browser_download_url: String,
+    /// `sha256:<64 位小写十六进制>`。GitHub 2025 年起给每个资产都算;更早上传的没有。
+    digest: Option<String>,
 }
 
 /// 一个可装的新版。
@@ -39,7 +43,8 @@ pub struct Update {
     /// 不带 `v` 的版本号。
     pub version: String,
     apk_name: String,
-    sha_url: String,
+    /// APK 的 sha256,64 位小写十六进制。
+    sha256: String,
 }
 
 impl Update {
@@ -94,41 +99,31 @@ fn select(release: &ReleaseDto, current: &str) -> Check {
     let version = latest.to_string();
     let apk_name =
         format!("osmosis-android-arm64-{version}.apk");
-    let url_of = |name: &str| {
-        release
-            .assets
-            .iter()
-            .find(|asset| asset.name == name)
-            .map(|asset| asset.browser_download_url.clone())
-    };
-    match (
-        url_of(&apk_name),
-        url_of(&format!("{apk_name}.sha256")),
-    ) {
-        // APK 资产本身不从这里下,但它得在:服务端就是去拉它。
-        (Some(_), Some(sha_url)) => {
-            Check::Available(Update {
-                version,
-                apk_name,
-                sha_url,
-            })
-        }
-        _ => Check::NotReady(version),
+    // APK 资产本身不从这里下,但它得在(服务端就是去拉它),而且得带着能用的哈希。
+    // 缺哈希不退回去下 `.sha256`,也不改成信任服务端:当它还没就绪。
+    let sha256 = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == apk_name)
+        .and_then(|asset| {
+            sha256_of(asset.digest.as_deref()?)
+        });
+    match sha256 {
+        Some(sha256) => Check::Available(Update {
+            version,
+            apk_name,
+            sha256,
+        }),
+        None => Check::NotReady(version),
     }
 }
 
-/// 校验文件里那一行 `<64 位十六进制>  <文件名>`,文件名对得上才认。
-fn expected_digest(
-    sums: &str,
-    apk_name: &str,
-) -> Option<String> {
-    let mut fields = sums.split_whitespace();
-    let (digest, name) = (fields.next()?, fields.next()?);
-    // `*` 是 sha256sum -b 的二进制标记。
-    let valid = digest.len() == 64
-        && digest.bytes().all(|b| b.is_ascii_hexdigit())
-        && name.trim_start_matches('*') == apk_name;
-    valid.then(|| digest.to_ascii_lowercase())
+/// 从 `sha256:<hex>` 里取出 64 位十六进制,统一成小写。别的算法、长度不对、不是十六进制都是 `None`。
+fn sha256_of(digest: &str) -> Option<String> {
+    let hex = digest.strip_prefix("sha256:")?;
+    (hex.len() == 64
+        && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    .then(|| hex.to_ascii_lowercase())
 }
 
 /// 下载到 `dir` 并核对。成功交出 APK 的路径;核不上的文件当场删掉。
@@ -139,15 +134,7 @@ pub async fn fetch(
     dir: &Path,
     progress: impl Fn(u64, Option<u64>) + Send + 'static,
 ) -> Result<PathBuf, String> {
-    let sums = platform::get_bytes(update.sha_url.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-    let expected = expected_digest(
-        &String::from_utf8_lossy(&sums),
-        &update.apk_name,
-    )
-    .ok_or("校验文件读不懂")?;
-
+    let expected = update.sha256.clone();
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir)
         .map_err(|e| e.to_string())?;
@@ -204,9 +191,7 @@ mod tests {
     fn asset(name: &str) -> AssetDto {
         AssetDto {
             name: name.to_owned(),
-            browser_download_url: format!(
-                "https://example.test/{name}"
-            ),
+            digest: Some(format!("sha256:{SHA}")),
         }
     }
 
@@ -235,6 +220,23 @@ mod tests {
         }
     }
 
+    /// 这一版的 APK 资产换上指定的 digest。
+    fn with_apk_digest(
+        tag: &str,
+        digest: Option<&str>,
+    ) -> ReleaseDto {
+        let mut release = release(tag, true);
+        let ver = tag.trim_start_matches('v');
+        let apk =
+            format!("osmosis-android-arm64-{ver}.apk");
+        for asset in &mut release.assets {
+            if asset.name == apk {
+                asset.digest = digest.map(str::to_owned);
+            }
+        }
+        release
+    }
+
     #[test]
     fn a_newer_release_selects_its_own_apk_and_checksum() {
         let Check::Available(update) =
@@ -251,10 +253,89 @@ mod tests {
                 crate::base_url()
             )
         );
-        assert_eq!(
-            update.sha_url,
-            "https://example.test/osmosis-android-arm64-0.1.17.apk.sha256"
+        assert_eq!(update.sha256, SHA);
+    }
+
+    /// api.github.com 真实回包的形状(节选,多余字段照留):哈希从 APK 那个资产的
+    /// `digest` 里取,别的资产的 digest 不能串过来。
+    #[test]
+    fn the_digest_comes_from_the_release_json() {
+        let apk_hex = "a".repeat(64);
+        let json = format!(
+            r#"{{
+                "tag_name": "v0.1.17",
+                "name": "v0.1.17",
+                "assets": [
+                    {{
+                        "name": "osmosis-desktop-x86_64-linux",
+                        "size": 1,
+                        "digest": "sha256:{other}",
+                        "browser_download_url": "https://github.com/x/y"
+                    }},
+                    {{
+                        "name": "osmosis-android-arm64-0.1.17.apk",
+                        "content_type": "application/vnd.android.package-archive",
+                        "size": 58017267,
+                        "digest": "sha256:{apk}",
+                        "browser_download_url": "https://github.com/x/z"
+                    }}
+                ]
+            }}"#,
+            other = "b".repeat(64),
+            apk = apk_hex.to_uppercase(),
         );
+        let release: ReleaseDto =
+            serde_json::from_str(&json)
+                .expect("真实形状的 JSON 该解得出来");
+
+        let Check::Available(update) =
+            select(&release, "0.1.16")
+        else {
+            panic!("APK 带着 digest,该给出更新");
+        };
+        assert_eq!(update.sha256, apk_hex, "统一成小写");
+    }
+
+    #[test]
+    fn an_apk_without_a_digest_is_not_ready() {
+        assert_eq!(
+            select(
+                &with_apk_digest("v0.1.17", None),
+                "0.1.16"
+            ),
+            Check::NotReady("0.1.17".to_owned())
+        );
+        // JSON 里干脆没有这个字段,也是同一个结论。
+        let release: ReleaseDto = serde_json::from_str(
+            r#"{"tag_name":"v0.1.17","assets":[
+                {"name":"osmosis-android-arm64-0.1.17.apk"}]}"#,
+        )
+        .expect("缺 digest 的 JSON 也该解得出来");
+        assert_eq!(
+            select(&release, "0.1.16"),
+            Check::NotReady("0.1.17".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_malformed_digest_is_not_ready() {
+        for bad in [
+            format!("sha512:{SHA}"),
+            SHA.to_owned(),
+            format!("sha256:{}", &SHA[1..]),
+            format!("sha256:{}g", &SHA[1..]),
+            format!("sha256:{SHA}0"),
+            "sha256:".to_owned(),
+        ] {
+            assert_eq!(
+                select(
+                    &with_apk_digest("v0.1.17", Some(&bad)),
+                    "0.1.16"
+                ),
+                Check::NotReady("0.1.17".to_owned()),
+                "{bad} 不该当成能用的哈希"
+            );
+        }
     }
 
     #[test]
@@ -313,52 +394,6 @@ mod tests {
         assert_eq!(
             select(&release("nightly", true), "0.1.16"),
             Check::UpToDate
-        );
-    }
-
-    #[test]
-    fn the_checksum_line_must_name_the_apk() {
-        let name = "osmosis-android-arm64-0.1.17.apk";
-        assert_eq!(
-            expected_digest(
-                &format!("{SHA}  {name}\n"),
-                name
-            ),
-            Some(SHA.to_owned())
-        );
-        // sha256sum -b 的二进制标记。
-        assert_eq!(
-            expected_digest(
-                &format!("{SHA} *{name}"),
-                name
-            ),
-            Some(SHA.to_owned())
-        );
-        assert_eq!(
-            expected_digest(
-                &format!(
-                    "{SHA}  osmosis-android-arm64-0.1.16.apk"
-                ),
-                name
-            ),
-            None,
-            "别的文件的哈希不能拿来核这一个"
-        );
-        assert_eq!(
-            expected_digest(
-                &format!("{}  {name}", &SHA[1..]),
-                name
-            ),
-            None,
-            "不足 64 位"
-        );
-        assert_eq!(
-            expected_digest(
-                &format!("{}g  {name}", &SHA[1..]),
-                name
-            ),
-            None,
-            "不是十六进制"
         );
     }
 
