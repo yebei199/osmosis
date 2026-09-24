@@ -66,6 +66,9 @@ pub fn claim() -> io::Result<InstanceLock> {
 mod tests {
     use super::*;
 
+    /// 子进程里跑 [`lock_can_be_claimed_once_and_again`] 的标记。
+    const ISOLATED: &str = "OSMOSIS_LOCK_TEST_ISOLATED";
+
     /// **第二把锁必须拿不到。**
     ///
     /// 这条同时钉住了另一半:第一把还活着的时候才算数。锁要是随手就被释放
@@ -73,8 +76,41 @@ mod tests {
     ///
     /// 锁名带进程号:抽象地址是整机共享的,用正式名字的话,编译机上并行跑的另一份
     /// 测试会在 `drop` 与再拿之间把锁抢走(#135)。
+    ///
+    /// 断言放在单独的子进程里跑:同一个测试进程里 mpris 的测试会在别的线程上
+    /// spawn dbus-daemon,fork 把这把锁的 fd 也复制过去,要到 exec 才关。这段时间里
+    /// `drop` 只关了自己那一份,地址还挂在子进程手里,再拿就是 AddrInUse。子进程
+    /// 里只跑这一条,没有别的线程会 fork,所以锁只有一份 fd。
     #[test]
     fn a_second_instance_cannot_claim_the_lock() {
+        if std::env::var_os(ISOLATED).is_some() {
+            lock_can_be_claimed_once_and_again();
+            return;
+        }
+
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("找不到测试二进制"),
+        )
+        .args([
+            "single_instance::tests::a_second_instance_cannot_claim_the_lock",
+            "--exact",
+        ])
+        .env(ISOLATED, "1")
+        .output()
+        .expect("起不了子进程");
+        let stdout =
+            String::from_utf8_lossy(&output.stdout);
+
+        // 要认「恰好跑了一条」:测试改了名,过滤器就一条也匹配不上,子进程照样退 0
+        assert!(
+            output.status.success()
+                && stdout.contains("1 passed"),
+            "子进程里的锁测试没过:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn lock_can_be_claimed_once_and_again() {
         let name = format!(
             "osmosis-desktop-test-{}.lock",
             std::process::id()
