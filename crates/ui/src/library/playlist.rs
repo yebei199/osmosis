@@ -155,6 +155,8 @@ fn fill(
     art: &crate::imagery::artwork::Artwork,
     lists: &[PlaylistDto],
 ) {
+    use slint::Model as _;
+
     let rows: Vec<PlaylistRow> =
         lists.iter().map(to_row).collect();
     let model = ui.global::<Library>().get_playlists();
