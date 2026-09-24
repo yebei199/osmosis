@@ -13,9 +13,13 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use jni::JavaVM;
-use jni::objects::{JClass, JObject, LoaderContext};
+use jni::errors::LogErrorAndDefault;
+use jni::objects::{
+    JClass, JObject, JString, LoaderContext,
+};
 use jni::refs::Global;
+use jni::sys::jint;
+use jni::{EnvUnowned, JavaVM};
 
 /// `Updater` 这个类本身。在 `android_main` 线程上解析好,供任意线程使用。
 static CLASS: OnceLock<Global<JClass<'static>>> =
@@ -101,6 +105,27 @@ fn install(apk: &Path) -> Result<(), String> {
     } else {
         Err("系统安装器没收下,详情见 logcat".to_owned())
     }
+}
+
+/// 系统安装器回报失败(`Updater.java` 的 `onReceive`)。符号名与那边的包名、类名、
+/// 方法名绑死,改一边就要改另一边。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_osmosis_Updater_nativeInstallFailed<
+    'caller,
+>(
+    mut env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    status: jint,
+    message: JString<'caller>,
+) {
+    env.with_env(|env| -> jni::errors::Result<()> {
+        ui::install_failed(
+            status,
+            message.try_to_string(env)?,
+        );
+        Ok(())
+    })
+    .resolve::<LogErrorAndDefault>();
 }
 
 /// 从裸指针重建一份 `JavaVM`。
