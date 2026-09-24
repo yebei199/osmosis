@@ -83,19 +83,15 @@ pub fn describe_startup(
 /// (取直链的 CDN 本来就爱停摆,见 `docs/adr/0013`)。等当前这首站稳了再备,
 /// 反正备的是"还有一整首歌的时间"之后才用得上的东西。
 ///
-/// 听众那一条与 [`should_advance`] 同理:收听时切歌的决定权不在本机,
-/// 备了也用不上,白占一条下载。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn should_prefetch(
     state: &PlaybackState,
     position: core::time::Duration,
-    listening: bool,
     already_have: bool,
     has_next: bool,
 ) -> bool {
     matches!(state, PlaybackState::Playing(_))
         && position >= PREFETCH_AFTER
-        && !listening
         && !already_have
         && has_next
 }
@@ -103,20 +99,15 @@ pub fn should_prefetch(
 /// 该不该报断流:本机在放、声源空了、而且这条流留下了放弃的证据。
 ///
 /// 与 [`should_advance`] 是同一刻的两个出口,互斥:声源空下来时,要么是放完了
-/// 该切下一首,要么是断了该停下说话。四个输入一模一样,只多问一句"放弃过没有" ——
+/// 该切下一首,要么是断了该停下说话。输入一模一样,只多问一句"放弃过没有" ——
 /// 那正是两者唯一的分野(见 `docs/adr/0013`)。
-///
-/// 听众那一条与 [`should_advance`] 同理:收听时本机没有自己的流,`gave_up`
-/// 反映的是上一次本机播放留下的旧证据,不能拿它去掐别人推来的声音。
 pub fn should_report_loss(
     state: &PlaybackState,
     drained: bool,
-    listening: bool,
     gave_up: bool,
 ) -> bool {
     matches!(state, PlaybackState::Playing(_))
         && drained
-        && !listening
         && gave_up
 }
 
@@ -137,19 +128,12 @@ pub fn describe_stream_loss(
     }
 }
 
-/// 自动续播的判据:**只有**「本机在放 && 声源放空了 && 不是听众」才推进队列。
-///
-/// 听众那一条是硬约束:听众放的 `ChannelSource` 在没数据时给静音而非结束,
-/// 正常情况下 `drained` 不会为真;但万一将来有人改了那个行为,这里也不许
-/// 在收听时切歌 —— 那会把对面推来的声音捣掉。
+/// 自动续播的判据:**只有**「本机在放 && 声源放空了」才推进队列。
 pub fn should_advance(
     state: &PlaybackState,
     drained: bool,
-    listening: bool,
 ) -> bool {
-    matches!(state, PlaybackState::Playing(_))
-        && drained
-        && !listening
+    matches!(state, PlaybackState::Playing(_)) && drained
 }
 
 /// 这一下点击是不是多余的。

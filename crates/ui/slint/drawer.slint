@@ -10,7 +10,7 @@
 
 import { Theme, Type } from "theme.slint";
 import { DeviceRow } from "types.slint";
-import { OutputStrip, SyncStrip } from "controls.slint";
+import { OutputStrip } from "controls.slint";
 import { VolumeControl } from "progress.slint";
 
 // 抽屉的行度量。抽出成 global 是因为**条身要在抽屉实例化之前就知道它有多高**:
@@ -19,16 +19,16 @@ import { VolumeControl } from "progress.slint";
 // 好过在条身里再抄一遍行高。
 export global DrawerMetrics {
     out property <length> row-h: 44px;
-    out property <length> sync-h: 38px;
+    out property <length> strip-h: 38px;
     out property <length> pad: 8px;
     out property <length> gap: 2px;
 
-    // 模式两行 + 喜欢一行 + 下载一行 + 音量一行 + 输出设备一行 + 同播一行。**到处都是这个数** ——
+    // 模式两行 + 喜欢一行 + 下载一行 + 音量一行 + 输出设备一行。**到处都是这个数** ——
     // 抽屉在播放页里与在别处一样高、一样几行,否则「展开」在两处就不是同一件事了。
     out property <length> total-h: self.pad * 2
         + self.row-h * 5
-        + self.sync-h * 2
-        + self.gap * 6;
+        + self.strip-h
+        + self.gap * 5;
 }
 
 // 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
@@ -143,7 +143,6 @@ export component Drawer inherits Rectangle {
     callback shuffle-toggled();
     callback loop-cycled();
     callback volume-changed(float);
-    callback push-to(string);
     callback set-output(string);
 
     border-radius: 16px;
@@ -238,7 +237,7 @@ export component Drawer inherits Rectangle {
         // 于是它是一个选不动的选择器,还偏偏只长在播放页,成了两处抽屉唯一的差别。
         // 加档时把行与列表一起加回来,并且加在**这里** —— 抽屉到处一样。
 
-        // 输出设备:摆在同播上面。点歌之前先选它,而同播是放起来之后的事。
+        // 输出设备:点歌之前先选它。
         HorizontalLayout {
             padding-left: 8px;
             padding-right: 12px;
@@ -249,19 +248,6 @@ export component Drawer inherits Rectangle {
                 devices: root.devices;
                 current: root.output-current;
                 set-output(id) => { root.set-output(id); }
-            }
-        }
-
-        // 同播:设备为空时那句说明也常驻 —— 名册空不等于功能不存在。
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 12px;
-            padding-top: 4px;
-            padding-bottom: 4px;
-            alignment: start;
-            SyncStrip {
-                devices: root.devices;
-                push-to(id) => { root.push-to(id); }
             }
         }
     }

@@ -78,11 +78,6 @@ tempfile = "3"
 rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
 stream-download = { version = "0.24", default-features = false, features = ["http", "temp-storage"] }
 
-# WebRTC。webrtc-rs 是 Pion 的 Rust 移植,纯 Rust、不拖 C 库 —— 这正是选它
-# 而非 libwebrtc 绑定的原因(见 docs/adr/0008),android 交叉编译不必额外备料。
-# 0.17 是最新稳定版;0.20 还停在 rc。
-webrtc = "0.17"
-
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。
 # 用 0.19 稳定版(crates.io):BSN(next-gen 场景系统)已随 0.19 发布,本项目采用之——
 # 场景用 bsn! 宏声明式构造(见 render3d)。bsn! 藏在 bevy_scene feature 后面(bevy::scene),

@@ -1,7 +1,7 @@
 use std::io::{Cursor, Read, Seek};
 use std::time::Duration;
 
-use crate::codec;
+use crate::pcm;
 
 use super::super::*;
 use super::{decode_cursor, wav};
@@ -165,16 +165,16 @@ where
     S: rodio::Source + Send + 'static,
 {
     let (mixer, out) = rodio::mixer::mixer(
-        rodio::ChannelCount::new(codec::SYNC_CHANNELS)
+        rodio::ChannelCount::new(pcm::OUTPUT_CHANNELS)
             .expect("声道数是编译期常量,非零"),
-        rodio::SampleRate::new(codec::SYNC_SAMPLE_RATE)
+        rodio::SampleRate::new(pcm::OUTPUT_SAMPLE_RATE)
             .expect("采样率是编译期常量,非零"),
     );
     let player = rodio::Player::connect_new(&mixer);
 
-    let (tee, _branch) = codec::Tee::new(
-        codec::normalize(source),
-        codec::BRANCH_CAPACITY,
+    let (tee, _branch) = pcm::Tee::new(
+        pcm::normalize(source),
+        crate::spectrum::TAP_CAPACITY,
     );
     player.append(tee);
     player.play();
@@ -203,7 +203,7 @@ fn longest_callback_block(stalling: bool) -> Duration {
         let started = std::time::Instant::now();
         // Mixer 没源可放时给静音而不是结束,跟真设备一样,所以不必判 None。
         for _ in 0..CALLBACK_FRAMES
-            * codec::SYNC_CHANNELS as usize
+            * pcm::OUTPUT_CHANNELS as usize
         {
             out.next();
         }
@@ -237,7 +237,7 @@ where
     for _ in 0..blocks {
         let started = std::time::Instant::now();
         for _ in 0..CALLBACK_FRAMES
-            * codec::SYNC_CHANNELS as usize
+            * pcm::OUTPUT_CHANNELS as usize
         {
             if out.next().is_some_and(|s| s != 0.0) {
                 audible += 1;
@@ -316,7 +316,7 @@ fn an_unstalled_stream_keeps_the_simulated_callback_on_time()
 #[test]
 fn buffering_carries_the_callback_through_a_stall() {
     let driven = drive_paced(
-        buffered(codec::normalize(stalling_decoder())),
+        buffered(pcm::normalize(stalling_decoder())),
         PACED_BLOCKS,
     );
 
@@ -329,7 +329,7 @@ fn buffering_carries_the_callback_through_a_stall() {
         driven.audible
             > PACED_BLOCKS
                 * CALLBACK_FRAMES
-                * codec::SYNC_CHANNELS as usize
+                * pcm::OUTPUT_CHANNELS as usize
                 / 2,
         "只取到 {} 个非静音采样,缓冲扛住了卡顿却没把声音送出来",
         driven.audible
@@ -349,8 +349,7 @@ fn a_buffered_song_still_ends() {
     let decoder = decode_cursor(wav(4_410))
         .expect("合法 WAV 应能解码");
 
-    let played =
-        buffered(codec::normalize(decoder)).count();
+    let played = buffered(pcm::normalize(decoder)).count();
 
     assert!(
         played >= 9_600,

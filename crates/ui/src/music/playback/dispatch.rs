@@ -91,25 +91,6 @@ impl Intent {
     const fn obeys_controlled_lock(&self) -> bool {
         !matches!(self, Self::Volume { .. })
     }
-
-    /// 这一下之前要不要先退出收听,以及退出之后还做不做后面那段。
-    ///
-    /// 各命令不同,不能一把 `leave()` 盖全部(`CONTEXT.md`「听众」):
-    /// 点歌与切歌退出后**继续**作用于本机队列 —— 点了「下一首」的人想听的是
-    /// 自己的下一首,不是单纯安静下来;⏯ 退出即止(退出即静音,再按才操作
-    /// 自己的队列);音量允许听众一边听一边调自己的响度;拖进度作用在那路
-    /// 收来的流上,不是退出的理由。
-    const fn leaving_rule(&self) -> Leaving {
-        match self {
-            Self::Play { .. } | Self::Next | Self::Prev => {
-                Leaving::ThenContinue
-            }
-            Self::TogglePlay => Leaving::AndStop,
-            Self::Seek { .. } | Self::Volume { .. } => {
-                Leaving::Stay
-            }
-        }
-    }
 }
 
 /// 本机 ⏯ 这一下到底是什么意思。
@@ -141,16 +122,6 @@ pub(in crate::music) const fn local_toggle(
     } else {
         LocalToggle::Resume
     }
-}
-
-/// 收听中按下这一下时,退出收听的三种规矩。
-enum Leaving {
-    /// 先退出,然后照常往下做。
-    ThenContinue,
-    /// 退出即止:按停、不再往下做。
-    AndStop,
-    /// 不退出。
-    Stay,
 }
 
 /// 一条用户播放意图的唯一出口。
@@ -191,9 +162,6 @@ fn to_remote(
         return submit_remote_play(ui, deck, tracks, index);
     }
 
-    // 退出规矩先问,因为下一行就把意图交出去了。它只看变体,不看载荷。
-    let leaving = intent.leaving_rule();
-
     let Some(cmd) = as_command(ui, deck, intent) else {
         // 翻不出命令只有一种情形:遥控时拖进度,而被控端报来的那份还没有
         // 曲目(刚接管、或者对面没在放)。这一下没有可发的东西。
@@ -201,18 +169,9 @@ fn to_remote(
     };
 
     match deck.remote.send(cmd) {
-        Submitted::Ok => {}
-        outcome => return refuse(ui, deck, outcome),
+        Submitted::Ok => Dispatched::RemoteSubmitted,
+        outcome => refuse(ui, deck, outcome),
     }
-
-    // 交出去之后才退出收听:一条没送出去的命令不该顺手把用户正在听的那路
-    // 流也拆掉。规矩与本机路径同一份 —— 点歌与切歌是「这台不再收流了」,
-    // ⏯ 与音量不是。
-    match leaving {
-        Leaving::ThenContinue => leave_listening(deck),
-        Leaving::AndStop | Leaving::Stay => {}
-    }
-    Dispatched::RemoteSubmitted
 }
 
 /// 遥控器侧的点播:把用户眼前这一批冻结成服务端队列,再发一条只带标识的命令。
@@ -468,24 +427,9 @@ fn to_local(
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
-    match intent.leaving_rule() {
-        Leaving::ThenContinue => leave_listening(deck),
-        Leaving::AndStop => {
-            if deck.sync.is_listening() {
-                deck.sync.leave();
-                if let Ok(player) = deck.player.as_ref() {
-                    player.stop();
-                }
-                ui.global::<Player>().set_is_playing(false);
-                return Dispatched::LocalApplied;
-            }
-        }
-        Leaving::Stay => {}
-    }
-
     match intent {
         Intent::Play { tracks, index } => {
-            // 差异 5:连点去重读的是**本机**的 playback,所以只在本机分支上
+            // 差异 4:连点去重读的是**本机**的 playback,所以只在本机分支上
             // 问。早于目标选择去问的话,转为遥控时会拿本机残留的 `Loading`
             // 把一条本该发出去的远端意图丢掉。
             let tapped =
@@ -581,13 +525,6 @@ fn to_local(
     Dispatched::LocalApplied
 }
 
-/// 正在收听同播就退出。点歌与切歌之后还要接着作用于本机队列。
-fn leave_listening(deck: &Deck) {
-    if deck.sync.is_listening() {
-        deck.sync.leave();
-    }
-}
-
 /// 本机点播之后,把这一批异步发布成服务端队列。
 ///
 /// **不挡播放**:声音已经出来了,这一趟只是给它安一个 `queue_id`。失败就把
@@ -614,7 +551,7 @@ pub(in crate::music) fn publish_local_queue(
     deck.execution
         .note_publish(crate::sync::remote::now_ms());
 
-    let device = crate::sync::syncplay::local_device_id();
+    let device = crate::sync::link::local_device_id();
     // 已经有这台设备的队列就**发新版本**,不是再建一个。
     //
     // 每点一次歌建一个的话,一天下来几百个队列,而账号的队列数是有上限的
@@ -768,7 +705,7 @@ pub(in crate::music) fn checkpoint(
     let play_order = deck.execution.order_to_report(&order);
     let (epoch, state_seq) = deck.remote.stamp();
     let report = api::QueueReportDto {
-        device_id: crate::sync::syncplay::local_device_id(),
+        device_id: crate::sync::link::local_device_id(),
         epoch,
         state_seq: state_seq as i64,
         applied_revision,

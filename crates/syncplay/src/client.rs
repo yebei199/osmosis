@@ -1,35 +1,23 @@
-//! 把信令、名册与若干条连接编排成一个能用的同播客户端。
+//! 把信令与名册编排成一个能用的遥控客户端(`docs/adr/0030`)。
 //!
-//! 界面只需要三个动作:开机连上([`Client::start`])、我正在放这路声音
-//! ([`Client::feed`])、把它推给那台设备([`Client::push`])。剩下的 —— 谁发 offer、
-//! 候选往哪转、轨绑在哪条连接上 —— 都关在这里。
-//!
-//! **角色是行为决定的**(`docs/adr/0008`):调 [`Client::push`] 的那一端成为主控,
-//! 收到陌生设备来信的那一端成为听众。没有"设为主控"这样的开关。
+//! 界面开机连上([`Client::start`]),之后只发遥控的几个动作:接管、命令、上报、
+//! 要快照。重连、退避、断线时该清的状态、版本协商,都关在这里。
 //!
 //! 全部跑在自己的后台 runtime 上,与 `api`、`audio` 同一个模式:调用方是 Slint 的
 //! UI 线程,那里没有 tokio 反应堆,也一秒钟都不能被阻塞。
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc as blocking;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use audio::ChannelSource;
 use contract::{
     DeviceDto, RemoteCommand, RemoteStateDto, ServerSignal,
 };
-use rodio::Sample;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 use crate::signalling::SignalSender;
-use crate::{
-    Envelope, Peer, PeerRole, Signalling, SyncError,
-    audio_track, pump,
-};
+use crate::{Signalling, SyncError};
 
 /// 客户端向外抛出的事件。
 ///
@@ -37,19 +25,12 @@ use crate::{
 pub enum Event {
     /// 名册变了。含本机在内,过滤交给 [`crate::Roster`]。
     Roster(Vec<DeviceDto>),
-    /// 本机成了听众:这就是对面推来的声音,送进播放器即可出声。
-    ///
-    /// 交出音频源而不只是通知一声:声音只能从这里取,拿不到它就只知道
-    /// "有人在推",听不到任何东西。
-    Listening { host: String, source: ChannelSource },
     /// 某一步失败了。给界面一行能显示的话,而不是让它停在一个永远不会变的状态上。
     Failed(String),
     /// 服务端不认这个 token(带着的就是被拒的那一个)。它仍是当前会话的话,
-    /// 界面该把人送回登录页 —— 同播不会自己重试,换一个 token 之前再连也只是
+    /// 界面该把人送回登录页 —— 信令不会自己重试,换一个 token 之前再连也只是
     /// 再得到一个 401;已经换过就与当前会话无关(#131)。
     Unauthorized(String),
-
-    // ── 遥控器模式(`docs/adr/0030`)。与上面几条共用同一条信令连接。 ──
     /// 本机拿到了 `target` 的控制权。界面该把输出设备切过去,并要一次快照。
     ControlGranted { target: String, generation: u64 },
     /// 本机的控制权没了 —— 被别的遥控器顶掉,或者被控端自己退出了。
@@ -61,7 +42,13 @@ pub enum Event {
     /// 遥控器发来一条命令。本机此刻是被控端。
     Command { cmd: RemoteCommand },
     /// 被控端报来的状态。本机此刻是遥控器。
-    RemoteState { from: String, state: RemoteStateDto },
+    ///
+    /// 装箱的理由同 `contract::ServerSignal::State`:它比别的变体大出两百多字节,
+    /// 不装箱的话每条事件都按它占位。
+    RemoteState {
+        from: String,
+        state: Box<RemoteStateDto>,
+    },
     /// 遥控器要一次完整状态,立刻回一条 [`Client::report`]。
     SnapshotRequest,
     /// 对端讲的不是同一版协议。
@@ -86,13 +73,6 @@ pub enum Event {
 
 /// 界面发给编排循环的指令。
 enum Command {
-    /// 本机现在正在放这路采样。
-    Feed(blocking::Receiver<Sample>),
-    /// 把当前这路采样推给这台设备。
-    Push(String),
-    /// 关掉所有连接,回到单机。
-    Leave,
-
     /// 接管这台设备(用户主动按下的那一次)。
     Claim(String),
     /// 本机不再遥控谁了。只忘掉本地那份持权记录,**不发信令** ——
@@ -110,15 +90,14 @@ enum Command {
 
 /// 本机作为**遥控器**持有的那份控制权。
 ///
-/// 活在 [`run`] 的作用域里而不是 [`serve`] 里 —— 它要跨重连活下来,
-/// 而 `peers` 那一类是每条信令各自的东西。
+/// 活在 [`run`] 的作用域里而不是 [`serve`] 里 —— 它要跨重连活下来。
 struct Held {
     target: String,
     /// 服务端给的代次。还没拿到就是 `None`(刚发出去、答复没回来)。
     generation: Option<u64>,
 }
 
-/// 一个连着信令服务器、随时可以推流的同播客户端。
+/// 一个连着信令服务器的遥控客户端。
 ///
 /// 丢掉它,编排循环随之结束(指令通道断开),所有连接跟着关。
 pub struct Client {
@@ -172,47 +151,19 @@ impl Client {
 
     /// 一个谁也不连的客户端:通道建了,编排循环没起。
     ///
-    /// 给那些需要一个 `Client` 才装得起来、却与同播毫无关系的调用方用 ——
+    /// 给那些需要一个 `Client` 才装得起来、却与信令毫无关系的调用方用 ——
     /// 主要是测试。所有指令方法都是 `let _ = send`,接收端一开始就没有,
     /// 于是每一个都成了空操作,不会 panic,也不会有后台任务。
     ///
     /// **不要在生产路径上用它。** 真要连的地方走 [`Self::start`];这里之所以
     /// 不是 `#[cfg(test)]`,是因为用它的测试在别的 crate 里(见
-    /// `ui::syncplay::detached`),那个属性在这里对它们不生效。
+    /// `ui::sync::remote::detached`),那个属性在这里对它们不生效。
     pub fn detached() -> Self {
         let (commands, _) = mpsc::unbounded_channel();
         Self {
             commands,
             incompatible: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    /// 告诉客户端本机正在放的是这路采样。
-    ///
-    /// 每换一首歌调一次。已经在推流时换歌,听众听到的会跟着换 ——
-    /// 轨是共用的,换的只是往里灌东西的那条泵。
-    pub fn feed(
-        &self,
-        samples: blocking::Receiver<Sample>,
-    ) {
-        let _ = self.commands.send(Command::Feed(samples));
-    }
-
-    /// 把本机正在放的声音推给这台设备。
-    ///
-    /// 可以对多台设备各调一次:星型拓扑,它们听的是同一路声音。
-    pub fn push(&self, to: &str) {
-        let _ = self
-            .commands
-            .send(Command::Push(to.to_owned()));
-    }
-
-    /// 退出同播:关掉本机的所有连接,回到单机。
-    ///
-    /// 听众按下任何播放键都会走到这里(`CONTEXT.md`「听众」):
-    /// 连接一关,对端的泵在下一次写轨时收到错误,自己收工。
-    pub fn leave(&self) {
-        let _ = self.commands.send(Command::Leave);
     }
 
     /// 接管这台设备:本机当它的遥控器。
@@ -288,8 +239,7 @@ impl Client {
 /// 后台多线程 runtime。
 ///
 /// 与 `api`、`audio` 各自那个同构、同理由(`docs/adr/0002`),但**必须是另一个** ——
-/// 三个 crate 谁也不依赖谁。多线程是硬要求:听众那条泵在 async 里阻塞读 RTP,
-/// 主控那条泵是普通线程,单线程 runtime 上它们会互等。
+/// 三个 crate 谁也不依赖谁。
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
@@ -394,7 +344,7 @@ fn jittered(base: Duration) -> Duration {
 
 /// 编排循环:连上、干活、断了就重连,直到 [`Client`] 被丢掉。
 ///
-/// **断线必须能自愈。** 服务端重启一次就让同播永久失效,是开发时每天都会撞上的事,
+/// **断线必须能自愈。** 服务端重启一次就让遥控永久失效,是开发时每天都会撞上的事,
 /// 而症状只是状态行上一句不再变化的错误 —— 谁都看不出它其实还能救。
 async fn run(
     base_url: String,
@@ -404,15 +354,11 @@ async fn run(
     mut commands: mpsc::UnboundedReceiver<Command>,
     incompatible: Arc<AtomicBool>,
 ) {
-    // 轨在重连之间**保持不变**:WebRTC 是点对点的,信令断了不影响已经建好的连接,
-    // 而重建一条轨会让还在推的那条泵写进一个没人订阅的地方。
-    let track = audio_track();
-
     let mut backoff = RETRY_MIN;
     // 上一个被服务端拒掉的 token。它没换之前不必再试 —— 结果只会一样。
     let mut rejected: Option<String> = None;
     // 本机遥控着谁。**跨重连保留** —— 断线不该让用户重新挑一次设备
-    // (`docs/adr/0030`)。理由与上面那条轨相同:重连的是信令,不是遥控关系。
+    // (`docs/adr/0030`):重连的是信令,不是遥控关系。
     let mut held: Option<Held> = None;
     // 本机断线那一刻是不是正被遥控。同样跨重连保留,理由见 `serve` 开头。
     let mut controlled = false;
@@ -478,7 +424,6 @@ async fn run(
 
         if !serve(
             signalling,
-            &track,
             &events,
             &mut commands,
             &mut held,
@@ -525,7 +470,6 @@ async fn run(
 /// `false` 意味着指令通道断了 —— [`Client`] 被丢掉了,整个客户端该收工。
 async fn serve(
     mut signalling: Signalling,
-    track: &Arc<TrackLocalStaticSample>,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     held: &mut Option<Held>,
@@ -533,8 +477,6 @@ async fn serve(
     incompatible: &AtomicBool,
 ) -> bool {
     let sender = signalling.sender();
-    // 连接是每条信令各自的,不跨重连保留:重连之后对端会重新邀请。
-    let mut peers: HashMap<String, Peer> = HashMap::new();
     // 这条连接上还没见过握手应答。见到 `Roster` 时它要是还立着,对端就是
     // 一个不认识版本协商的旧服务端 —— 判据是**谁先到**:新服务端在入册之前
     // 发 `Welcome`,而 `Roster` 是入册之后的第一条下行(`docs/adr/0031`)。
@@ -569,11 +511,7 @@ async fn serve(
                     incompatible,
                     events,
                 );
-                accept(
-                    message, &mut peers, &sender, events, held,
-                    controlled,
-                )
-                .await
+                accept(message, events, held, controlled)
             }
             command = commands.recv() => {
                 let Some(command) = command else {
@@ -582,15 +520,12 @@ async fn serve(
                 if matches!(command, Command::ExitControlled) {
                     *controlled = false;
                 }
-                dispatch(
-                    command, track, &mut peers, &sender, held,
-                )
-                .await
+                dispatch(command, &sender, held).await
             }
         };
 
-        // 一条信令处理失败不该终止会话:另一台设备版本不对、某条连接建不起来,
-        // 都不影响其余的连接继续工作。报出去,接着跑。
+        // 一条信令处理失败不该终止会话:服务端回一条错误、某条命令发不出去,
+        // 都不影响后面的消息。报出去,接着跑。
         if let Err(error) = step {
             events(Event::Failed(error.to_string()));
         }
@@ -663,10 +598,8 @@ fn verify_handshake(
 }
 
 /// 处理一条服务端来信。
-async fn accept(
+fn accept(
     message: ServerSignal,
-    peers: &mut HashMap<String, Peer>,
-    sender: &SignalSender,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     held: &mut Option<Held>,
     controlled: &mut bool,
@@ -678,28 +611,6 @@ async fn accept(
         }
         // 握手应答在 `verify_handshake` 里已经读过了,到这里没有别的事要做。
         ServerSignal::Welcome { .. } => Ok(()),
-        ServerSignal::Signal { from, payload } => {
-            let envelope = Envelope::decode(&payload)?;
-
-            // 第一次收到某台设备的信令,就是它在邀请本机当听众。
-            //
-            // 主控先发 offer 再发候选,而服务端对同一条连接是先进先出的,
-            // 所以这里第一条必定是 offer。乱序到达的候选会因为找不到远端描述
-            // 而被 webrtc 拒掉,那时报错即可 —— 重发的机制不在本层。
-            if !peers.contains_key(&from) {
-                let peer = listen_to(&from, events).await?;
-                relay_candidates(&peer, &from, sender);
-                peers.insert(from.clone(), peer);
-            }
-
-            let peer = &peers[&from];
-            if let Some(reply) =
-                peer.accept(envelope).await?
-            {
-                sender.send(&from, &reply).await?;
-            }
-            Ok(())
-        }
         ServerSignal::Error { code, message } => {
             let reason = format!("{code}: {message}");
             if CLAIM_REJECTIONS.contains(&code.as_str())
@@ -736,13 +647,7 @@ async fn accept(
             Ok(())
         }
         ServerSignal::State { from, state } => {
-            // 拆箱在这里:装箱是为了线上那个枚举别让小变体跟着变大
-            // (见 `contract::ServerSignal::State`),而 `Event` 是本地的,
-            // 每条事件都要走一次回调,再多一层间接没有好处。
-            events(Event::RemoteState {
-                from,
-                state: *state,
-            });
+            events(Event::RemoteState { from, state });
             Ok(())
         }
         ServerSignal::SnapshotRequest => {
@@ -762,60 +667,13 @@ async fn accept(
     }
 }
 
-/// 建一条听众连接,并把到达的轨接成一路能播的音频。
-async fn listen_to(
-    host: &str,
-    events: &Arc<dyn Fn(Event) + Send + Sync>,
-) -> Result<Peer, SyncError> {
-    let peer = Peer::new(PeerRole::Listener).await?;
-
-    // on_track 必须在协商**之前**挂上:轨是在 set_remote_description 期间到达的。
-    let host = host.to_owned();
-    let events = events.clone();
-    peer.on_track(move |track| {
-        let (samples, received) =
-            blocking::sync_channel(pump::LISTENER_BUFFER);
-        pump::spawn_listener(track, samples);
-        events(Event::Listening {
-            host: host.clone(),
-            source: ChannelSource::new(received),
-        });
-    });
-
-    Ok(peer)
-}
-
 /// 处理一条界面指令。
 async fn dispatch(
     command: Command,
-    track: &Arc<TrackLocalStaticSample>,
-    peers: &mut HashMap<String, Peer>,
     sender: &SignalSender,
     held: &mut Option<Held>,
 ) -> Result<(), SyncError> {
     match command {
-        // 旧泵不用显式停:上一首的支路随播放器换歌而断,它自己就收工了。
-        Command::Feed(samples) => {
-            pump::spawn_host(samples, track.clone());
-            Ok(())
-        }
-        Command::Push(to) => {
-            let peer = Peer::host_on(track.clone()).await?;
-            let offer = peer.create_offer().await?;
-            sender.send(&to, &offer).await?;
-            relay_candidates(&peer, &to, sender);
-            peers.insert(to, peer);
-            Ok(())
-        }
-        // 逐个关而不是只 clear:drop 一个 Peer 不会关连接(它是 Arc 的一份克隆),
-        // 不显式 close 的话对端还以为本机在听,一直白推。
-        Command::Leave => {
-            for (_, peer) in peers.drain() {
-                let _ = peer.close().await;
-            }
-            Ok(())
-        }
-
         // 主动接管:先记下目标,代次等服务端的 ControlGranted 回来再填。
         // 先记是必须的 —— 答复到达时要靠它认出这份权是谁的。
         Command::Claim(target) => {
@@ -850,30 +708,6 @@ async fn dispatch(
             None => Ok(()),
         },
     }
-}
-
-/// 把一条连接产出的 ICE 候选源源不断地转给对端。
-///
-/// 独立任务而非收集完再发(trickle ICE):等候选出完再转,每次建连都要先干等
-/// 几百毫秒到几秒,而那段时间里界面上什么都没发生。
-fn relay_candidates(
-    peer: &Peer,
-    to: &str,
-    sender: &SignalSender,
-) {
-    let peer = peer.clone();
-    let to = to.to_owned();
-    let sender = sender.clone();
-
-    tokio::spawn(async move {
-        while let Some(envelope) =
-            peer.next_outgoing().await
-        {
-            if sender.send(&to, &envelope).await.is_err() {
-                return;
-            }
-        }
-    });
 }
 
 #[cfg(test)]
@@ -1064,7 +898,7 @@ mod tests {
             &events,
         );
 
-        // `Event` 不派生 `PartialEq`(它装得下一路音频源),只能逐条比。
+        // `Event` 不派生 `PartialEq`,只能逐条比。
         let seen = seen.lock().expect("锁中毒");
         assert!(
             matches!(

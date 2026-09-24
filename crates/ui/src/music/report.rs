@@ -35,7 +35,7 @@ pub(super) fn play_to_report(
 /// 把一首歌准备到「随时能出声」为止:取直链 → 开流 → 解码。**慢**的那一半。
 ///
 /// 这是注入给 `app_core::play` 的 `prepare`。`app-core` 只看到"一个返回 Result
-/// 的 future",看不到 HTTP、alsa,也看不到 WebRTC。
+/// 的 future",看不到 HTTP,也看不到 alsa。
 ///
 /// 停在解码,不往下走:再往下就是把源塞进播放器,那一步不可撤销。中间隔着
 /// 一次代际校验 —— 准备期间被顶掉的这一份就地丢掉(见 `app_core::play`)。
@@ -85,39 +85,28 @@ pub(super) async fn prepare(
         .map_err(|error| error.to_string())
 }
 
-/// 把备好的源交给播放器与同播。**不可撤销**的那一半,同步、立刻生效。
-///
-/// 每首歌都分一支给同播,不管当下有没有人在听:支路满了会自己丢采样
-/// (见 `audio::codec::Tee`),而等"确认有人听"再接的话,换歌时听众会掉音。
+/// 把备好的源交给播放器。**不可撤销**的那一半,同步、立刻生效。
 ///
 /// 无声卡时这里什么都不做 —— 那种情况 [`prepare`] 已经先报了错,走不到这里。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn emit(
     player: &Arc<Result<audio::Player, audio::AudioError>>,
-    sync: &crate::sync::syncplay::Sync,
     stream: &Rc<RefCell<Option<audio::StreamHealth>>>,
     seeking: &Rc<RefCell<Option<audio::SeekState>>>,
     decoded: audio::Loaded,
     health: audio::StreamHealth,
 ) {
     use audio::buffered;
-    use audio::codec::{BRANCH_CAPACITY, Tee, normalize};
+    use audio::pcm::normalize;
 
     let Ok(player) = player.as_ref() else { return };
     // 换歌即换证据。上一首的死亡证明留着的话,新歌一放空就会被误报成断流。
     stream.borrow_mut().replace(health);
-    // 先归一再缓冲再分支,三步的顺序都是硬的:
-    //
-    // - 归一在最前:`buffered` 交出的源对外声称 48kHz 立体声,格式得先对上;
-    // - 缓冲在中间:它把解码挪到自己的线程,声卡回调从此不碰网络(见
-    //   `audio::buffered`)。少了这一层,网络抖一下就是设备欠载;
-    // - 分支在最后:本机听到的和推给听众的因此仍是同一批采样。
+    // 先归一再缓冲,顺序是硬的:`buffered` 交出的源对外声称 48kHz 立体声,
+    // 格式得先对上;缓冲把解码挪到自己的线程,声卡回调从此不碰网络(见
+    // `audio::buffered`)。少了这一层,网络抖一下就是设备欠载。
     let source = buffered(normalize(decoded));
     // 跳转状态得在源被交出去之前取走:此后它归 rodio,外面再也够不着。
     seeking.borrow_mut().replace(source.seek_state());
-    let (tee, branch) = Tee::new(source, BRANCH_CAPACITY);
-    // 先换歌再交支路。反过来的话,新泵在上一首还没被丢掉时就起来了,
-    // 两条泵会同时往同一条轨上写,听众听到的是两首歌交错的几十毫秒。
-    player.play(tee);
-    sync.feed(branch);
+    player.play(source);
 }

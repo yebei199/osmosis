@@ -53,64 +53,16 @@ fn a_persisted_device_id_outlives_the_process() {
     );
 }
 
-fn roster_of(
-    devices: Vec<DeviceDto>,
-) -> Arc<Mutex<Roster>> {
-    let roster =
-        Arc::new(Mutex::new(Roster::new("me".to_owned())));
-    lock(&roster).update(devices);
-    roster
-}
-
-/// 状态行上写的是设备名,不是信令里那个 id。
+/// 连接状态文案里的中文必须在子集字体里 —— 与 `music.rs` 那条同一个守卫。
 ///
-/// 用户在列表上点的是名字,状态行换个写法就会让人以为推给了别的设备。
-#[test]
-fn listening_line_uses_the_device_name() {
-    let roster = roster_of(vec![DeviceDto {
-        id: "pc1-42".to_owned(),
-        name: "pc1 #42".to_owned(),
-    }]);
-
-    assert_eq!(display_name(&roster, "pc1-42"), "pc1 #42");
-}
-
-/// 边界:名册还没到就退回 id —— 一行 id 也好过一行空白。
-#[test]
-fn listening_line_falls_back_to_the_id() {
-    let roster = roster_of(Vec::new());
-
-    assert_eq!(display_name(&roster, "pc1-42"), "pc1-42");
-}
-
-/// 三个角色都要有人能读的文案。
-#[test]
-fn describe_role_covers_every_role() {
-    for role in [
-        Role::Alone,
-        Role::Host {
-            listeners: vec!["a".to_owned()],
-        },
-        Role::Listener {
-            host: "a".to_owned(),
-        },
-    ] {
-        assert!(
-            !describe_role(&role).is_empty(),
-            "{role:?} 没有文案"
-        );
-    }
-}
-
-/// 同播文案里的中文必须在子集字体里 —— 与 `music.rs` 那条同一个守卫。
-///
-/// 覆盖得到的只有**本层写死的那部分**:角色文案,加上 `syncplay` 三种错误的
-/// 真实 `Display` 输出(不是手抄的,改了措辞而没重裁字体这里就红)。
+/// 覆盖得到的只有**本层写死的那部分**:失败前缀配上 `syncplay` 那种错误的真实
+/// `Display` 输出(不是手抄的,改了措辞而没重裁字体这里就红),以及版本对不上
+/// 那句横幅。
 ///
 /// 覆盖不到的是变量部分 —— 设备名由对端自报,服务端的错误说明里也带着它。
 /// 那和歌名是同一类东西:任意文本,不可能预裁,桌面上落到系统字体。
 #[test]
-fn sync_copy_only_uses_subset_glyphs() {
+fn link_copy_only_uses_subset_glyphs() {
     use syncplay::SyncError;
 
     const CJK_SUBSET: &[u8] =
@@ -119,33 +71,25 @@ fn sync_copy_only_uses_subset_glyphs() {
     let face = ttf_parser::Face::parse(CJK_SUBSET, 0)
         .expect("子集字体应能被解析");
 
-    let mut copy: Vec<String> = [
-        Role::Alone,
-        Role::Host {
-            listeners: vec!["a".to_owned()],
-        },
-        Role::Listener {
-            host: "a".to_owned(),
-        },
-    ]
-    .iter()
-    .map(describe_role)
-    .collect();
-
-    // 失败那一行:前缀是本模块写死的,后半截取自三种错误的真实输出。
-    for error in [
-        SyncError::Signalling("timed out".to_owned()),
-        SyncError::Peer("no candidates".to_owned()),
-        SyncError::Envelope("expected value".to_owned()),
-    ] {
-        copy.push(format!("同播失败: {error}"));
-    }
+    let copy = [
+        describe_link_failure(
+            &SyncError::Signalling("timed out".to_owned())
+                .to_string(),
+        ),
+        describe_link_failure(
+            &SyncError::Throttled { retry_after: None }
+                .to_string(),
+        ),
+        describe_incompatible(4, Some(3)),
+        describe_incompatible(4, None),
+        "遥控信令被服务端拒绝".to_owned(),
+    ];
 
     for line in copy {
         for ch in line.chars() {
             assert!(
                 face.glyph_index(ch).is_some(),
-                "子集字体缺字 {ch:?}(同播文案 {line:?})—— 重跑 `just font-subset`"
+                "子集字体缺字 {ch:?}(连接文案 {line:?})—— 重跑 `just font-subset`"
             );
         }
     }
@@ -185,7 +129,7 @@ fn a_server_too_old_to_report_is_said_so() {
 #[test]
 fn a_version_clash_does_not_read_like_a_disconnect() {
     let clash = describe_incompatible(3, Some(2));
-    let dropped = describe_sync_failure("连接已关闭");
+    let dropped = describe_link_failure("连接已关闭");
 
     assert_ne!(clash, dropped);
     assert!(

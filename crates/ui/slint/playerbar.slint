@@ -117,7 +117,6 @@ export component PlayerBar inherits Rectangle {
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
         volume-changed(v) => { Player.volume-changed(v); }
-        push-to(id) => { Shell.push-to(id); }
         set-output(id) => { Shell.set-output(id); }
     }
 
@@ -266,7 +265,7 @@ export component PlayerBar inherits Rectangle {
                     clicked => { Player.next-track(); }
                 }
             }
-            // 抽屉键:随机、循环、音量、同播都在里面。
+            // 抽屉键:随机、循环、音量、输出设备都在里面。
             VerticalLayout {
                 alignment: center;
                 RoundControl {

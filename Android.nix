@@ -54,7 +54,7 @@ pkgs.mkShell {
   ANDROID_NDK_ROOT = "${sdk}/ndk/${ndkVersion}";
   JAVA_HOME = "${pkgs.jdk17}";
 
-  # 依赖树里 blake3、audiopus_sys 这类带 C 代码的 crate 由 cc-rs 驱动编译,而 cc-rs 找
+  # 依赖树里 blake3、ring 这类带 C 代码的 crate 由 cc-rs 驱动编译,而 cc-rs 找
   # 交叉编译器的顺序是 CC_<target> → CC → 按三元组猜 `<triple>-clang`。前两条都不设就
   # 落到第三条,可 NDK r23 起不带 API level 的 `aarch64-linux-android-clang` 已经不存在
   # (这里只有 `…android26-clang` 这种)。而外层 devshell 通常导出 CC=gcc,那更糟:cc-rs
@@ -77,24 +77,15 @@ pkgs.mkShell {
   AR_x86_64_linux_android = "${ndkBin}/llvm-ar";
   CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER = "${ndkBin}/x86_64-linux-android${minSdk}-clang";
 
-  # audiopus_sys 内嵌的 libopus 写着 cmake_minimum_required(VERSION <3.5),而本 shell
-  # 里的 cmake 是 4.x,它已经删掉了对 3.5 以下的兼容,配置阶段直接报错退出。桌面端不
-  # 受影响 —— 那边链的是系统 opus,只有交叉编译才会走内嵌的 cmake 构建。
-  # 这个变量是 cmake 4.0 起官方给的过渡开关,等 audiopus_sys 上游修好就能删。
-  CMAKE_POLICY_VERSION_MINIMUM = "3.5";
-
   shellHook = ''
     # `.envrc` 里 direnv 一进目录就加载 slint.nix(桌面工具链),而本 shell 是**叠**在
-    # 那之上的,不是替换。它留下的 PKG_CONFIG_PATH 指着宿主机的 libopus;audiopus_sys
-    # 的 build.rs 会问 pkg-config,于是把宿主机那份 .so 的路径当成链接搜索路径发出去,
-    # aarch64 的链接器报「libopus.so is incompatible with aarch64linux」。
-    #
-    # 交叉编译时宿主机的库路径永远是错的,不是「这次不巧」。清掉之后 audiopus_sys 回落
-    # 到内嵌的 cmake 构建 —— 上面 CMAKE_POLICY_VERSION_MINIMUM 那条注释描述的本来就是
-    # 这条路径,只是它先撞上了宿主机的库,压根没走到。
+    # 那之上的,不是替换。它留下的 PKG_CONFIG_PATH 指着宿主机的库:带 build.rs 的
+    # `-sys` crate 问 pkg-config 时会把宿主机那份 .so 的路径当成链接搜索路径发出去,
+    # aarch64 的链接器报「… is incompatible with aarch64linux」(#45 撞上的是
+    # 同播时代的 libopus)。交叉编译时宿主机的库路径永远是错的,不是「这次不巧」。
     #
     # 这条错误只在**真的打 APK** 时才出现:`ci-cross` 与 CI 跑的都是 `cargo check`,
-    # 而 check 不链接。所以它躲过了每一条自动化路径,直到有人等完三小时的冷编(见 #45)。
+    # 而 check 不链接。所以它躲过了每一条自动化路径,直到有人等完三小时的冷编。
     unset PKG_CONFIG_PATH
 
     # AGP 会从 Maven 拉取预编译的 aapt2,但那个二进制在 NixOS 上跑不了;

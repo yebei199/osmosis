@@ -6,7 +6,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{Sample, Source};
 
-use crate::codec::{SYNC_CHANNELS, SYNC_SAMPLE_RATE};
+use crate::pcm::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 use super::{SEEK_RETRY_BACKOFF, SeekRequest, SeekState};
 
@@ -91,14 +91,14 @@ pub(super) fn seek_with_retry<S: Source>(
 /// 向前解码并丢弃 `span` 这么长的采样。
 ///
 /// 采样率与声道数取本模块的常量而不去问 `source`:[`buffered`] 的前提就是
-/// 它跑在 [`crate::codec::normalize`] 之后,那一层的全部职责就是把这两样
+/// 它跑在 [`crate::pcm::normalize`] 之后,那一层的全部职责就是把这两样
 /// 拉成 48kHz 立体声。
 pub(super) fn discard<S: Source>(
     source: &mut S,
     span: Duration,
 ) {
-    let per_second = f64::from(SYNC_SAMPLE_RATE)
-        * f64::from(SYNC_CHANNELS);
+    let per_second = f64::from(OUTPUT_SAMPLE_RATE)
+        * f64::from(OUTPUT_CHANNELS);
     let count = (span.as_secs_f64() * per_second) as u64;
     for _ in 0..count {
         if source.next().is_none() {

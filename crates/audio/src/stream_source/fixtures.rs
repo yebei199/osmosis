@@ -6,7 +6,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
-use crate::codec::{SYNC_CHANNELS, SYNC_SAMPLE_RATE};
+use crate::pcm::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 use super::*;
 
@@ -38,11 +38,11 @@ impl Source for Marker {
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(SYNC_CHANNELS).expect("非零")
+        ChannelCount::new(OUTPUT_CHANNELS).expect("非零")
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SYNC_SAMPLE_RATE).expect("非零")
+        SampleRate::new(OUTPUT_SAMPLE_RATE).expect("非零")
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -117,7 +117,7 @@ pub(super) fn pull_until(
 /// 一秒有多少个交错采样。位置用**采样序号**存而不是拿 `Duration` 累加:
 /// 浮点走上 96000 步之后就对不上整秒了,而断言要的正是整秒。
 pub(super) const SAMPLES_PER_SECOND: u64 =
-    SYNC_SAMPLE_RATE as u64 * SYNC_CHANNELS as u64;
+    OUTPUT_SAMPLE_RATE as u64 * OUTPUT_CHANNELS as u64;
 
 /// 一条**会走**的假带子:每取一个采样,位置就前进一个采样的时长。
 ///
@@ -153,11 +153,11 @@ impl Source for Tape {
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(SYNC_CHANNELS).expect("非零")
+        ChannelCount::new(OUTPUT_CHANNELS).expect("非零")
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SYNC_SAMPLE_RATE).expect("非零")
+        SampleRate::new(OUTPUT_SAMPLE_RATE).expect("非零")
     }
 
     fn total_duration(&self) -> Option<Duration> {

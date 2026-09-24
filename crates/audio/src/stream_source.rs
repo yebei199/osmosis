@@ -1,7 +1,7 @@
-//! 一条通道喂出来的音频源:听众侧用它把收到的 PCM 交给 rodio。
+//! 一条通道喂出来的音频源:解码挪到自己的线程上,声卡回调只从通道里取。
 //!
-//! 与本 crate 其余部分相反 —— 那些是「拉」(rodio 向解码器要采样),
-//! 这里是「推」(网络什么时候给,就什么时候有)。两者的落差正是本模块存在的理由。
+//! rodio 是「拉」(声卡回调向源要采样),而取字节可能卡在网络上。中间隔一条通道,
+//! 解码线程什么时候给,回调就什么时候有 —— 两者的落差正是本模块存在的理由。
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -9,7 +9,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
-use crate::codec::{SYNC_CHANNELS, SYNC_SAMPLE_RATE};
+use crate::pcm::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 #[cfg(test)]
 mod fixtures;
@@ -29,8 +29,10 @@ const SILENCE_BURST: usize = 64;
 ///
 /// 够盖住常见的网络抖动,而 48 万个 `f32` 不到 2MB —— 比起一首无损几十兆,
 /// 这点内存不值得省。
-pub const BUFFER_SAMPLES: usize =
-    SYNC_SAMPLE_RATE as usize * SYNC_CHANNELS as usize * 5;
+pub const BUFFER_SAMPLES: usize = OUTPUT_SAMPLE_RATE
+    as usize
+    * OUTPUT_CHANNELS as usize
+    * 5;
 
 /// 一次跳转请求:跳到哪、跳完之后往**哪条新通道**送采样、裁决往哪儿回。
 ///
@@ -79,7 +81,7 @@ const SEEK_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 /// 上(它等就是了),回调那头照常有存货;真等空了拿到的是静音,声音有个缺口
 /// 但节奏没断,数据回来接着放。
 ///
-/// **必须在 [`crate::codec::normalize`] 之后调用**:[`ChannelSource`] 对外
+/// **必须在 [`crate::pcm::normalize`] 之后调用**:[`ChannelSource`] 对外
 /// 声称的是 48kHz 立体声,喂进来的采样格式不对,放出来就是变调变速的。
 ///
 /// 收 [`Source`] 而不只收迭代器:跳转要由**这条线程**执行 —— 能跳的解码器
@@ -154,14 +156,17 @@ pub struct ChannelSource {
     silence: usize,
     /// 换通道时新通道开多大。与原来那条一样,不然跳一次缓冲就缩水一次。
     capacity: usize,
-    /// 把跳转请求送去解码线程。听众侧没有解码线程,这条通道生下来就是断的。
+    /// 把跳转请求送去解码线程。解码线程收工之后这条通道就断了。
     seek: mpsc::Sender<SeekRequest>,
     state: SeekState,
 }
 
 impl ChannelSource {
-    /// 直接从一条通道建。听众侧用这条路:PCM 是网络推来的,没有解码器可跳。
-    pub fn new(samples: mpsc::Receiver<Sample>) -> Self {
+    /// 直接从一条通道建,背后没有解码线程。测试用它单独验通道这一侧的行为。
+    #[cfg(test)]
+    pub(crate) fn new(
+        samples: mpsc::Receiver<Sample>,
+    ) -> Self {
         // 接收端当场丢掉,于是 `try_seek` 里那次 send 必然失败 ——
         // 「没有可跳的东西」因此是如实报错,不是靠一个额外的标志位记着。
         let (seek, _) = mpsc::channel();
@@ -213,12 +218,12 @@ impl Source for ChannelSource {
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(SYNC_CHANNELS)
+        ChannelCount::new(OUTPUT_CHANNELS)
             .expect("声道数是编译期常量,非零")
     }
 
     fn sample_rate(&self) -> SampleRate {
-        SampleRate::new(SYNC_SAMPLE_RATE)
+        SampleRate::new(OUTPUT_SAMPLE_RATE)
             .expect("采样率是编译期常量,非零")
     }
 
@@ -247,7 +252,7 @@ impl Source for ChannelSource {
     ) -> Result<(), SeekError> {
         let (tx, rx) = mpsc::sync_channel(self.capacity);
         let (verdict, answer) = mpsc::channel();
-        // 送不进去 = 那一头没有解码线程(听同播),或者它已经收工了。
+        // 送不进去 = 那一头的解码线程已经收工了(或者从来没有)。
         // 这是唯一如实的答复:假装跳了的话进度条会跳走而声音留在原地。
         if self.seek.send((pos, tx, verdict)).is_err() {
             return Err(SeekError::NotSupported {

@@ -102,17 +102,6 @@ export component MusicPage inherits VerticalLayout {
                 overflow: elide;
             }
 
-            // 同播状态行:推给几台 / 正在收听谁 / 出了什么错。
-            Text {
-                text: Shell.sync-text;
-                font-family: "Maple Mono NF CN";
-                color: Theme.text-dim;
-                font-size: 13px;
-                height: 20px;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-
             // 详情那一层的标题行 + 返回。歌单与歌手共用 ——
             // 两者摊开之后都是「一批歌」,再造一套标题行只会
             // 让返回键有两种写法。

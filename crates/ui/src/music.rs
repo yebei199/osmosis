@@ -5,10 +5,6 @@
 //!
 //! 显示层面的决定都落在这里,而不是服务端:歌手用什么符号拼、时长写成什么样,
 //! 换个界面就该换个写法,不该固化进线上格式。
-//!
-//! 收听同播时本机是「听众」:在这台机器上做任何播放动作都视为退出收听
-//! (`CONTEXT.md`「听众」)。自动续播在收听时也必须闭嘴 —— 它要是切了歌,
-//! 会把对面推来的声音捣掉。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -91,7 +87,6 @@ struct Deck {
     playback: Rc<RefCell<Playback>>,
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
-    sync: crate::sync::syncplay::Sync,
     /// 输出设备与遥控状态。本机输出时它一概不插手,现有路径一个字节不变
     /// (见 `crate::sync::remote`)。
     remote: crate::sync::remote::Remote,
@@ -153,9 +148,6 @@ struct Deck {
 /// 音频设备只开一次并常驻:每次播放都重开设备的话,alsa 上会听到明显的咔哒声,
 /// 而且第二次开可能因设备被自己占着而失败。开不出来(无声卡)不是致命错误 ——
 /// 界面照常能搜歌,点播放时才报错。
-///
-/// 播放器是 `Arc` 而非 `Rc`:同播的事件在后台线程上到达,听众收到的声音要在
-/// **那里**直接出声(见 `syncplay::handle`),绕回 UI 线程只会让起播多等一帧。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind(
     ui: &MainWindow,
@@ -180,16 +172,13 @@ pub fn bind(
     };
     let cover = CoverFeed::default();
 
-    // 同播与遥控共用一条信令连接,所以一起接出来(`docs/adr/0030`)。
-    let (sync, remote) =
-        crate::sync::syncplay::bind(ui, &player);
+    let remote = crate::sync::link::bind(ui);
 
     let deck = Deck {
         playback: Rc::new(
             RefCell::new(Playback::default()),
         ),
         queue: Rc::new(RefCell::new(Queue::default())),
-        sync,
         remote,
         media,
         player,

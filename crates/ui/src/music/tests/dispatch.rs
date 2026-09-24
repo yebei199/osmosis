@@ -491,7 +491,7 @@ fn the_controlled_lock_stops_transport_but_not_the_volume_knob()
     );
 }
 
-/// 差异 5:本机残留的 `Loading` 不许把一条**远端**意图丢掉。
+/// 差异 4:本机残留的 `Loading` 不许把一条**远端**意图丢掉。
 ///
 /// 连点去重读的是本机 playback,而它早于目标选择被问的话,刚从本机切到遥控
 /// 时那份残留的 `Loading` 会把用户点的第一首静默吞掉 —— 症状与现场那个故障
@@ -532,13 +532,9 @@ fn a_second_tap_on_a_loading_track_is_dropped_locally() {
     );
 }
 
-/// 差异 4:退出收听的规矩各命令不同,不能一把 `leave()` 盖全部。
-///
-/// 切歌退出后**继续**作用于本机队列 —— 点了「下一首」的人想听的是自己的
-/// 下一首,不是单纯安静下来。⏯ 则退出即止。
+/// 输出在本机时,「下一首」落到本机队列上。
 #[test]
-fn leaving_a_listening_session_still_advances_the_local_queue()
- {
+fn next_track_advances_the_local_queue() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     let batch = batch_of(&deck, &["a", "b"]);

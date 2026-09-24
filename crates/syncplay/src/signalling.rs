@@ -1,6 +1,6 @@
-//! 信令客户端:连上 axum 的 `/signal`,自报家门,收发端到端信令。
+//! 信令客户端:连上 axum 的 `/signal`,自报家门,收发遥控的消息。
 //!
-//! 只管**转达**。谁该给谁发 offer 是 [`crate::Peer`] 那边的事,这里不认识 WebRTC。
+//! 只管**转达**。什么时候接管、发哪条命令是 [`crate::Client`] 那边的事。
 
 use contract::{
     ClientSignal, DeviceDto, RemoteCommand, RemoteStateDto,
@@ -8,7 +8,7 @@ use contract::{
 };
 use tokio::sync::mpsc;
 
-use crate::{Envelope, SyncError};
+use crate::SyncError;
 
 /// 收件箱容量。信令稀疏,这个数只是给突发留的缓冲。
 ///
@@ -53,33 +53,11 @@ pub struct Signalling {
 /// 只能发、不能收的那一半,可以随手 clone。
 ///
 /// 收信要 `&mut self`(独占那个收件箱),发信只要 `&self` —— 两者绑在同一个
-/// 结构上时,谁都不能一边等来信一边发信。而 ICE 候选恰恰是在等对端应答的
-/// **同时**源源不断产生的:每条连接都要有一个能独立发信的把手。
+/// 结构上时,谁都不能一边等来信一边发信。
 #[derive(Clone)]
 pub struct SignalSender(mpsc::Sender<ClientSignal>);
 
 impl SignalSender {
-    /// 把一条端到端信令发给某台设备。
-    pub async fn send(
-        &self,
-        to: &str,
-        envelope: &Envelope,
-    ) -> Result<(), SyncError> {
-        self.0
-            .send(ClientSignal::Signal {
-                to: to.to_owned(),
-                payload: envelope.encode(),
-            })
-            .await
-            .map_err(|_| {
-                SyncError::Signalling(
-                    "连接已关闭".to_owned(),
-                )
-            })
-    }
-
-    // ── 遥控器模式(`docs/adr/0030`)。都只是把一条消息塞进同一个出口。 ──
-
     /// 接管 `target`。`resume` 是重连时手上那个代次,主动接管时是 `None`。
     pub async fn claim(
         &self,
@@ -324,7 +302,7 @@ impl Signalling {
             mpsc::channel::<ClientSignal>(INBOX_CAPACITY);
 
         // 收发各跑一个任务。合在一起的话,一边在等来信时另一边就发不出去 ——
-        // 而 ICE 候选恰恰是在等对端应答的同时源源不断产生的。
+        // 被控端每秒一条的上报不能等一条来信才发得出去。
         tokio::spawn(async move {
             loop {
                 // 超时 = 判死。跳出去就把收件箱的发送端丢掉,`next` 于是
@@ -398,15 +376,6 @@ impl Signalling {
     /// 拿一个能独立发信的把手。
     pub fn sender(&self) -> SignalSender {
         SignalSender(self.outbox.clone())
-    }
-
-    /// 把一条端到端信令发给某台设备。
-    pub async fn send(
-        &self,
-        to: &str,
-        envelope: &Envelope,
-    ) -> Result<(), SyncError> {
-        self.sender().send(to, envelope).await
     }
 }
 

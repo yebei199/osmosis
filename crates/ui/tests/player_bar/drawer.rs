@@ -32,9 +32,9 @@ fn the_drawer_starts_closed_and_toggles() {
     );
 }
 
-/// 随机、循环、音量、同播都住在抽屉里,收起时不占主条。
+/// 随机、循环、音量都住在抽屉里,收起时不占主条。
 #[test]
-fn the_drawer_holds_the_modes_and_sync() {
+fn the_drawer_holds_the_modes() {
     let ui = playing_app();
     ui.global::<Shell>().set_current_tab(1);
 
@@ -58,17 +58,17 @@ fn the_drawer_holds_the_modes_and_sync() {
         "音量滑块在抽屉里常驻,不必再点开一层"
     );
     assert!(
-        present(&ui, "SyncStrip::sync-empty"),
-        "同播区在抽屉里,一台设备都没有时那句说明也常驻"
+        !present(&ui, "SyncStrip::sync-empty"),
+        "同播已删(#137),抽屉里不该还有同播那一行"
     );
 }
 
-/// 名册里有设备时,同播那一行仍然写着「同播」。
+/// 名册里的设备只以输出设备的身份出现(#137)。
 ///
-/// 只在空名册时才写标题的话,有设备的那一行就是一排光秃秃的设备名,紧跟在
-/// 「输出 本机 pc1」下面 —— 看起来正是同一台设备被画了两遍(#102 之二)。
+/// 同播那一行删掉之后,同一台设备在抽屉里只剩一颗「输出到 xx」:点它是遥控
+/// 那台去放。两行并存时点错了不报错,只是声音从另一台机器出来。
 #[test]
-fn the_sync_row_keeps_its_label_when_devices_are_listed() {
+fn listed_devices_show_up_only_as_outputs() {
     use slint::{ModelRc, VecModel};
 
     let ui = playing_app();
@@ -85,12 +85,12 @@ fn the_sync_row_keeps_its_label_when_devices_are_listed() {
         .invoke_accessible_default_action();
 
     assert!(
-        present(&ui, "SyncStrip::sync-label"),
-        "有设备时也得写着「同播」,否则与上面那行输出设备分不开"
+        key(&ui, "输出到 pc1").is_some(),
+        "名册里的设备该列成输出设备"
     );
     assert!(
-        !present(&ui, "SyncStrip::sync-empty"),
-        "有设备了就不该还说没有设备"
+        !present(&ui, "SyncStrip::sync-label"),
+        "同播那一行不该还在"
     );
 }
 

@@ -2,8 +2,8 @@
 //!
 //! 界面上有两类文字,写法完全不同:
 //!
-//! - **状态的投影**:`playback-text` 是 `PlaybackState` 渲染出来的,`sync-text` 是
-//!   同播角色渲染出来的。投影没有「清除」这回事 —— 状态一变就重算,于是它永远
+//! - **状态的投影**:`playback-text` 是 `PlaybackState` 渲染出来的,`download-text`
+//!   是下载进度渲染出来的。投影没有「清除」这回事 —— 状态一变就重算,于是它永远
 //!   等于此刻的真相,过不了期。写它的只该有一处。
 //! - **一次性事件**:某次请求失败了、名字没填、这首跳不了。它们描述的是**那一刻**,
 //!   下一刻就未必还成立,所以必须自带寿命。
@@ -129,19 +129,12 @@ mod tests {
     #[test]
     fn only_the_owner_writes_a_projection() {
         // 分成两截拼,免得这个测试在源码里留下自己要找的字样 —— 它会举报自己。
-        let projections: [(String, &[&str]); 2] = [
-            // 播放状态行:music 渲染 PlaybackState,syncplay 在收听时接管它
-            // (扬声器里是推来的流,本机那首歌名已经不成立了)。
+        let projections: [(String, &[&str]); 1] = [
+            // 播放状态行:music 渲染 PlaybackState;remote.rs 在输出设备不是本机
+            // 时渲染被控端报来的状态,而本机的 playback 此刻是空的。
             (
                 format!("set_{}", "playback_text"),
-                // remote.rs 同理:输出设备不是本机时,那一行渲染的是
-                // 被控端报来的状态,而本机的 playback 此刻是空的。
-                &["music.rs", "syncplay.rs", "remote.rs"],
-            ),
-            // 同播角色行:角色归 syncplay 管,别处没有它的真相。
-            (
-                format!("set_{}", "sync_text"),
-                &["syncplay.rs"],
+                &["music.rs", "remote.rs"],
             ),
         ];
 

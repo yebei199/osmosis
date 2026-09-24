@@ -210,10 +210,10 @@ fn a_report_from_the_target_updates_the_mirror() {
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
-            state: report(
+            state: Box::new(report(
                 7_000,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );
@@ -240,10 +240,10 @@ fn a_report_from_another_device_is_ignored() {
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "另一台".to_owned(),
-            state: report(
+            state: Box::new(report(
                 7_000,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );
@@ -288,10 +288,10 @@ fn the_cover_follows_the_remote_track_but_only_on_a_change()
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
-            state: report(
+            state: Box::new(report(
                 0,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );
@@ -340,10 +340,10 @@ fn a_remote_toggle_does_not_touch_the_local_transport() {
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
-            state: report(
+            state: Box::new(report(
                 0,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );
@@ -408,12 +408,12 @@ fn coming_back_from_a_remote_device_leaves_the_local_transport_at_rest()
     );
 }
 
-// ── 同播事件的落地 ──
+// ── 信令事件的落地 ──
 
 /// 名册推到界面上,自己那一台被滤掉。
 ///
-/// 留着自己的话,设备列表里会出现一行「推给我自己」——它甚至连得成功,
-/// 只是声音绕一圈回到同一个扬声器。
+/// 留着自己的话,输出设备里会多一颗「输出到 我自己」—— 与常驻的「本机」是
+/// 同一台,点下去是遥控自己。
 #[test]
 fn a_roster_event_reaches_the_device_list() {
     let (ui, deck) = deck_window();
@@ -421,16 +421,11 @@ fn a_roster_event_reaches_the_device_list() {
         std::sync::Arc::new(std::sync::Mutex::new(
             syncplay::Roster::new("me".to_owned()),
         ));
-    let role = std::sync::Arc::new(std::sync::Mutex::new(
-        syncplay::Role::Alone,
-    ));
 
-    crate::sync::syncplay::handle(
+    crate::sync::link::handle(
         Event::Roster(vec![device("me"), device("pc")]),
         &ui.as_weak(),
         &roster,
-        &role,
-        &deck.player,
         &deck.remote,
     );
 
@@ -438,44 +433,6 @@ fn a_roster_event_reaches_the_device_list() {
         roster.lock().expect("名册锁").others().len(),
         1,
         "自己该被滤掉,只剩另一台"
-    );
-}
-
-/// 失败走提示,**不写同播状态行**。
-///
-/// 写进状态行就没人会重算它,那句话会一直挂到角色碰巧变一次为止 ——
-/// 而角色此刻一动没动,那一行依然为真。
-#[test]
-fn a_failure_event_does_not_rewrite_the_role_line() {
-    let (ui, deck) = deck_window();
-    let roster =
-        std::sync::Arc::new(std::sync::Mutex::new(
-            syncplay::Roster::new("me".to_owned()),
-        ));
-    let role = std::sync::Arc::new(std::sync::Mutex::new(
-        syncplay::Role::Alone,
-    ));
-    let before =
-        ui.global::<crate::Shell>().get_sync_text();
-
-    crate::sync::syncplay::handle(
-        Event::Failed("连不上".to_owned()),
-        &ui.as_weak(),
-        &roster,
-        &role,
-        &deck.player,
-        &deck.remote,
-    );
-
-    assert_eq!(
-        ui.global::<crate::Shell>().get_sync_text(),
-        before,
-        "失败是这一刻的事,不该写进角色那一行"
-    );
-    assert_eq!(
-        *role.lock().expect("角色锁"),
-        syncplay::Role::Alone,
-        "角色一动没动"
     );
 }
 
@@ -554,10 +511,10 @@ fn a_silent_target_hands_the_output_back_after_fifteen_seconds()
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
-            state: report(
+            state: Box::new(report(
                 1_000,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );
@@ -615,10 +572,10 @@ fn giving_up_on_a_lost_target_releases_the_claim() {
     crate::sync::remote::handle(
         &Event::RemoteState {
             from: "pc".to_owned(),
-            state: report(
+            state: Box::new(report(
                 1_000,
                 app_core::RemotePlayState::Playing,
-            ),
+            )),
         },
         &deck.remote,
     );

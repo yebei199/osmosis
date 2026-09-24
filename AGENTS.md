@@ -257,7 +257,7 @@ bang-dream 在开发机上有两份 checkout,`BANG_DREAM_REPO` 的默认值 `../
 **手机经 PC 连本机后端**:手机上的 `127.0.0.1` 是手机自己,`mcp-android` 已自带
 `adb reverse tcp:3000 tcp:3000` 把它接到开发机。reverse 和 forward 都挂在 adb 连接上,
 **无线 adb 换了端口或者拔插过线,就重跑一次 `mcp-android`**(或单补
-`just mcp-forward android-reverse`),否则启动即「同播失败:信令错误」。
+`just mcp-forward android-reverse`),否则启动即「遥控连接失败:信令错误」。
 
 **设备选择**:安卓配方的 adb 全都带序列号。开发机与平板常同时在线,不设
 `ANDROID_SERIAL` 又不止一台时配方拒绝并列出设备;debug 包认 `ro.product.model`,

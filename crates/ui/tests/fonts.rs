@@ -37,7 +37,6 @@ const CJK_TITLES: &[&str] = &[
     "个人主页",
     "常听歌手",
     "已连接平台",
-    "同播设备名册",
 ];
 
 fn font(path: &str) -> Vec<u8> {
