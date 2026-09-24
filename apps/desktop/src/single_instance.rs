@@ -13,8 +13,17 @@
 use std::io;
 
 /// 锁的名字。抽象地址不占文件系统,但仍然是全局的,所以取一个不会撞的名字。
+///
+/// 按档分开(#135),判据与状态目录同一条([`api::is_release`]):装机版沿用老名字,
+/// 开发实例另用一把,于是日常开着的装机版挡不住调试;同档里仍然只许一个。
 #[cfg(target_os = "linux")]
-const LOCK_NAME: &str = "osmosis-desktop.lock";
+const fn lock_name(release: bool) -> &'static str {
+    if release {
+        "osmosis-desktop.lock"
+    } else {
+        "osmosis-desktop-dev.lock"
+    }
+}
 
 /// 拿到的锁。**活多久,锁多久** —— 丢掉它就等于开门,所以调用方要把它一直留着。
 ///
@@ -28,11 +37,17 @@ pub struct InstanceLock {
 /// 占住这台机器上的"桌面实例"这个位置。已经有人占着就返回 `Err`。
 #[cfg(target_os = "linux")]
 pub fn claim() -> io::Result<InstanceLock> {
+    claim_named(lock_name(api::is_release()))
+}
+
+/// 按名字占锁。名字单独拎出来是给测试用的:测试若用正式名字,就在跟机器上
+/// 并行跑的另一份测试、或开着的桌面实例抢同一把锁(#135)。
+#[cfg(target_os = "linux")]
+fn claim_named(name: &str) -> io::Result<InstanceLock> {
     use std::os::linux::net::SocketAddrExt;
     use std::os::unix::net::{SocketAddr, UnixListener};
 
-    let address =
-        SocketAddr::from_abstract_name(LOCK_NAME)?;
+    let address = SocketAddr::from_abstract_name(name)?;
     // bind 失败(AddrInUse)就是"已经有一个在跑"。不去连它、不去问它是谁 ——
     // 这里只回答"能不能起",唤醒已有窗口是另一件事(眼下没有那个需求)。
     let socket = UnixListener::bind_addr(&address)?;
@@ -51,27 +66,75 @@ pub fn claim() -> io::Result<InstanceLock> {
 mod tests {
     use super::*;
 
+    /// 子进程里跑 [`lock_can_be_claimed_once_and_again`] 的标记。
+    const ISOLATED: &str = "OSMOSIS_LOCK_TEST_ISOLATED";
+
     /// **第二把锁必须拿不到。**
     ///
     /// 这条同时钉住了另一半:第一把还活着的时候才算数。锁要是随手就被释放
     /// (比如 `claim` 里没把 socket 留住),第二次照样能成,这个门就是假的。
+    ///
+    /// 锁名带进程号:抽象地址是整机共享的,用正式名字的话,编译机上并行跑的另一份
+    /// 测试会在 `drop` 与再拿之间把锁抢走(#135)。
+    ///
+    /// 断言放在单独的子进程里跑:同一个测试进程里 mpris 的测试会在别的线程上
+    /// spawn dbus-daemon,fork 把这把锁的 fd 也复制过去,要到 exec 才关。这段时间里
+    /// `drop` 只关了自己那一份,地址还挂在子进程手里,再拿就是 AddrInUse。子进程
+    /// 里只跑这一条,没有别的线程会 fork,所以锁只有一份 fd。
     #[test]
     fn a_second_instance_cannot_claim_the_lock() {
-        let Ok(first) = claim() else {
-            // 同一台机器上真的有实例在跑时跳过 —— 那时这条测的是别人的锁。
+        if std::env::var_os(ISOLATED).is_some() {
+            lock_can_be_claimed_once_and_again();
             return;
-        };
+        }
+
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("找不到测试二进制"),
+        )
+        .args([
+            "single_instance::tests::a_second_instance_cannot_claim_the_lock",
+            "--exact",
+        ])
+        .env(ISOLATED, "1")
+        .output()
+        .expect("起不了子进程");
+        let stdout =
+            String::from_utf8_lossy(&output.stdout);
+
+        // 要认「恰好跑了一条」:测试改了名,过滤器就一条也匹配不上,子进程照样退 0
+        assert!(
+            output.status.success()
+                && stdout.contains("1 passed"),
+            "子进程里的锁测试没过:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn lock_can_be_claimed_once_and_again() {
+        let name = format!(
+            "osmosis-desktop-test-{}.lock",
+            std::process::id()
+        );
+        let first = claim_named(&name)
+            .expect("独有的锁名不该被别人占着");
 
         assert!(
-            claim().is_err(),
+            claim_named(&name).is_err(),
             "第一把锁还握着,第二把不该拿得到"
         );
 
         // 放开之后要能再拿到:锁是"活多久锁多久",不是一次性的。
         drop(first);
         assert!(
-            claim().is_ok(),
+            claim_named(&name).is_ok(),
             "上一个实例退了,新的该起得来"
         );
+    }
+
+    /// 装机版沿用老名字,开发实例另起一个,两档才能同时开着(#135)。
+    #[test]
+    fn release_and_dev_builds_use_different_locks() {
+        assert_eq!(lock_name(true), "osmosis-desktop.lock");
+        assert_ne!(lock_name(false), lock_name(true));
     }
 }

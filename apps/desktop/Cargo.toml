@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 ui.workspace = true
+# 只为单实例锁按档分名时读 `api::is_release`,与状态目录同一条判据(#135)。
+api.workspace = true
 env_logger.workspace = true
 log.workspace = true
 # 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
