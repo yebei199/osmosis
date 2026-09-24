@@ -79,6 +79,8 @@ pub struct SyncShared {
     seek_pending: AtomicBool,
     seek: Mutex<Option<SeekRequest>>,
     stats: Mutex<Report>,
+    /// 最近一块：它第一帧的呈现时刻，与那一帧是媒体的第几纳秒(见 [`SyncShared::pairing`])。
+    pairing: Mutex<Option<(i64, i64)>>,
 }
 
 /// 同步源此刻的状况，给上报与日志用。
@@ -103,6 +105,7 @@ impl SyncShared {
             seek_pending: AtomicBool::new(false),
             seek: Mutex::new(None),
             stats: Mutex::new(Report::default()),
+            pairing: Mutex::new(None),
         })
     }
 
@@ -155,6 +158,13 @@ impl SyncShared {
     pub fn report(&self) -> Report {
         *lock(&self.stats)
     }
+
+    /// 最近一块第一帧的呈现时刻(本机单调时钟),与那一帧是媒体的第几纳秒。
+    ///
+    /// 主端把自己的实际播放写成共同计划靠它(#137 ⑤):两个数取自同一块，不会一个新一个旧。
+    pub fn pairing(&self) -> Option<(i64, i64)> {
+        *lock(&self.pairing)
+    }
 }
 
 /// 锁中毒了照样拿：里面只有纯数据，前一个持有者 panic 不会让它处于半截状态。
@@ -200,8 +210,9 @@ impl<F: Feed> SyncSource<F> {
     pub fn new(feed: F, shared: Arc<SyncShared>) -> Self {
         let channels = usize::from(feed.channels().get());
         let rate = f64::from(feed.sample_rate().get());
-        // 换了一路新媒体：上一路的位置与没来得及执行的跳转都不属于它。
+        // 换了一路新媒体：上一路的位置、配对与没来得及执行的跳转都不属于它。
         shared.position_ns.store(0, Ordering::Relaxed);
+        lock(&shared.pairing).take();
         shared.seek_pending.store(false, Ordering::Relaxed);
         lock(&shared.seek).take();
         Self {
@@ -249,6 +260,8 @@ impl<F: Feed> SyncSource<F> {
             );
             self.apply(decision);
         }
+        *lock(&self.shared.pairing) =
+            Some((present, (self.pos * 1e9 / self.rate) as i64));
         let mut stats = lock(&self.shared.stats);
         stats.follower = self.follower.stats;
     }
@@ -283,14 +296,18 @@ impl<F: Feed> SyncSource<F> {
         }
     }
 
-    /// 让媒体跳到第 `to` 帧。成了，手上的帧全作废，下一帧就从那里取。
+    /// 让媒体跳到第 `to` 帧(可以带小数)。成了，手上的帧全作废，下一帧就从那里取。
+    ///
+    /// 媒体跳到 `to` 所在那一帧的**开头**,读指针停在帧内的小数处 —— 手上的起点与读指针
+    /// 得按同一种取整算:一个四舍五入、一个向下取整的话，差出的那一帧让下标成负数。
     fn seek_to(&mut self, to: f64) -> Result<(), SeekError> {
-        let at = Duration::from_secs_f64(to.max(0.0) / self.rate);
-        self.feed.seek(at)?;
+        let to = to.max(0.0);
+        let frame = to.floor();
+        self.feed.seek(Duration::from_secs_f64(frame / self.rate))?;
         self.frames.clear();
         self.partial.clear();
-        self.front = to.max(0.0).round() as i64;
-        self.pos = to.max(0.0);
+        self.front = frame as i64;
+        self.pos = to;
         self.ended = false;
         Ok(())
     }

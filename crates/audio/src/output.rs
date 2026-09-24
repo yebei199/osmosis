@@ -14,6 +14,8 @@ mod aaudio;
 #[cfg(target_os = "android")]
 use aaudio as backend;
 
+pub mod route;
+
 #[cfg(not(target_os = "android"))]
 mod cpal;
 #[cfg(not(target_os = "android"))]

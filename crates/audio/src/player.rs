@@ -112,6 +112,13 @@ impl Player {
         self.shared.set_target(target);
     }
 
+    /// 最近一块第一帧的呈现时刻(本机单调时钟纳秒)与那一刻的媒体位置(见 `SyncShared::pairing`)。
+    pub fn pairing(&self) -> Option<(i64, core::time::Duration)> {
+        self.shared.pairing().map(|(present, media)| {
+            (present, core::time::Duration::from_nanos(media.max(0) as u64))
+        })
+    }
+
     /// 同步源此刻的状况:误差、跳了几次、在不在出声、欠载几次。
     pub fn sync_report(&self) -> crate::sync::Report {
         self.shared.report()

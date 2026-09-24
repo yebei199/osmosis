@@ -109,7 +109,15 @@ fn start(
             },
             move |error| {
                 log::warn!("cpal 输出出错: {error}");
-                broken.store(true, Ordering::Relaxed);
+                // 欠载/超载(xrun)ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、
+                // 呈现时刻从头估。只有设备没了、或者流的配置作废了才重开。
+                if matches!(
+                    error,
+                    ::cpal::StreamError::DeviceNotAvailable
+                        | ::cpal::StreamError::StreamInvalidated
+                ) {
+                    broken.store(true, Ordering::Relaxed);
+                }
             },
             None,
         )

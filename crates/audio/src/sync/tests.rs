@@ -350,3 +350,39 @@ fn a_small_lead_is_absorbed_by_reading_slower() {
     let at = shared.position().as_secs_f64() * RATE;
     assert!(at < 1_999.5, "该读得慢一点,实际读到第 {at} 帧");
 }
+
+/// 每一块记下「这一块第一帧的呈现时刻 ↔ 它是媒体的第几纳秒」:主端据此把实际播放写成计划。
+#[test]
+fn each_block_pairs_its_presentation_time_with_the_media_position() {
+    let shared = SyncShared::new();
+    let mut source = SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    assert_eq!(shared.pairing(), None, "还没有块");
+
+    shared.block(5_000 * MS, 4);
+    take(&mut source, 4);
+    assert_eq!(shared.pairing(), Some((5_000 * MS, 0)));
+
+    shared.block(5_004 * MS, 4);
+    take(&mut source, 1);
+    assert_eq!(shared.pairing(), Some((5_004 * MS, 4 * MS)));
+}
+
+/// 跳到两帧之间(跟随器按时间线算出来的位置几乎都带小数):从那一帧插值往下放，不越界。
+/// 从前把手上的起点按四舍五入定、读指针按向下取整算，差出的一帧让下标成了负数，
+/// 声卡回调线程当场 panic,那台从此一声不出(⑤ 多实例验证时撞上)。
+#[test]
+fn a_seek_between_two_frames_plays_on_from_there() {
+    let shared = SyncShared::new();
+    let feed = FakeFeed::mono(100);
+    let seeks = feed.seeks.clone();
+    let mut source = SyncSource::new(feed, shared.clone());
+    take(&mut source, 3);
+
+    let verdict = shared.request_seek(Duration::from_secs_f64(0.0507));
+    let got = take(&mut source, 2);
+
+    assert!(verdict.try_recv().expect("该有裁决").is_ok());
+    assert_eq!(*seeks.lock().unwrap(), vec![Duration::from_millis(50)], "媒体跳到那一帧的开头");
+    assert!((got[0] - 50.7).abs() < 1e-3, "{got:?}");
+    assert!((got[1] - 51.7).abs() < 1e-3, "{got:?}");
+}

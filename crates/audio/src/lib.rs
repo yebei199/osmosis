@@ -12,6 +12,7 @@
 
 pub mod clock;
 mod output;
+pub use output::route::{Route, current as route};
 pub mod pcm;
 mod range_stream;
 pub mod spectrum;
