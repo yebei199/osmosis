@@ -104,6 +104,9 @@ desktop-dev extra="": local-backend-up (mcp-port-free desktop_mcp_port)
     env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
+# 已废弃(#110),现在跑不通:apps/web 不是 workspace 成员。配方留着当复活路径 ——
+# 复活要把它加回 Cargo.toml 的 members、wasm32 target 加回 rust-toolchain.toml、
+# wasm-bindgen-cli 加回 slint.nix。
 # 本命令自带服务端,不必另开终端 —— 「Check server」开箱即通。
 # 无热重载(浏览器加载的是打包产物),改完代码重跑本命令并刷新页面。
 # 用 release:debug 的 wasm 有上百 MB,浏览器加载能等到天荒地老。
