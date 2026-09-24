@@ -10,7 +10,8 @@
 判据(不看截图):
   - 控制条(`PlayerBar::title`)在每一次采样里都在,曲名与选设备前一致 —— 从前选完设备
     镜像一清,控制条下一拍就销毁,而且会跳到被控端手上原来那一首;
-  - 状态行出现过「正在切到」,最后消失(迁移确认了);
+  - 那颗输出芯片最后被选中、状态行清空(迁移确认了;状态行出现过没有只记录不判 ——
+    快的时候整个迁移不到半秒);
   - 确认之后 `--settle` 秒,控制条上的时间读数不早于选设备那一刻的读数 —— 是接着放,
     不是从 0:00 起。
 
@@ -92,12 +93,25 @@ def clock_seconds(text):
     return int(match.group(1)) * 60 + int(match.group(2)) if match else None
 
 
-def select(args, win):
+def checked(args, handle):
+    return bool(mcp(args, "get_element_properties", {"elementHandle": handle}).get("accessibleChecked"))
+
+
+def open_drawer(args, win):
     drawer, _ = button(args, win, lambda label: label == "更多")
     if drawer is None:
         sys.exit("找不到抽屉键 —— 控制条不在(本机没在放?)")
     mcp(args, "click_element", {"elementHandle": drawer})
     time.sleep(1)
+
+
+def close_drawer(args, win):
+    close, _ = button(args, win, lambda label: label == "收起更多")
+    if close is not None:
+        mcp(args, "click_element", {"elementHandle": close})
+
+
+def chip_for(args, win):
     if args.to == "本机":
         want = lambda label: label == "输出到 本机"  # noqa: E731
     else:
@@ -105,12 +119,7 @@ def select(args, win):
     chip, label = button(args, win, want)
     if chip is None:
         sys.exit(f"抽屉里没有 {args.to} 那颗输出芯片")
-    clicked = time.time()
-    mcp(args, "click_element", {"elementHandle": chip})
-    close, _ = button(args, win, lambda label: label == "收起更多")
-    if close is not None:
-        mcp(args, "click_element", {"elementHandle": close})
-    return clicked, label
+    return chip, label
 
 
 def main():
@@ -129,37 +138,42 @@ def main():
     if not before_title:
         sys.exit("选设备之前控制条就不在 —— 先在遥控器上放一首")
 
-    clicked, label = select(args, win)
+    open_drawer(args, win)
+    chip, label = chip_for(args, win)
+    if checked(args, chip):
+        sys.exit(f"{label} 已经是当前输出")
+    clicked = time.time()
+    mcp(args, "click_element", {"elementHandle": chip})
     print(f"选了 {label},选之前在放「{before_title}」,读数 {before_clock}s")
 
+    # 抽屉开着盯:它长在控制条上,控制条一消失它也跟着没 —— 那正是要抓的。
+    # 迁移确认的判据是那颗芯片被选中(输出真的换过去了),状态行只是过程记录:
+    # 快的时候整个迁移不到半秒,一次采样都可能落不进去。
     failures = []
-    saw_moving = False
     confirmed_at = None
     with open(args.out, "a") as out:
         while time.time() < clicked + args.watch:
             title = element_text(args, win, "PlayerBar::title")
             status = element_text(args, win, "MainWindow::move-label") or ""
-            row = {"t": time.time(), "bar": title is not None, "title": title, "move": status}
+            done = checked(args, chip) if title is not None else False
+            row = {"t": time.time(), "bar": title is not None, "title": title, "move": status, "done": done}
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
             if title is None:
                 failures.append(f"{row['t']:.2f} 控制条不在")
             elif title != before_title:
                 failures.append(f"{row['t']:.2f} 曲名变成了「{title}」")
-            if status:
-                saw_moving = True
-            elif saw_moving:
-                confirmed_at = time.time()
+            if done and not status:
+                confirmed_at = row["t"]
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
+    close_drawer(args, win)
 
-    if not saw_moving:
-        failures.append("状态行从没出现过「正在切到」—— 迁移没开始,或者一拍就过去了没采到")
     if confirmed_at is None:
-        failures.append(f"{args.watch}s 内迁移没确认")
+        failures.append(f"{args.watch}s 内迁移没确认(那颗芯片没被选中)")
     else:
         time.sleep(args.settle)
         after_clock = clock_seconds(element_text(args, win, "PlayerBar::clock"))
-        print(f"确认用了 {confirmed_at - clicked:.2f}s,之后 {args.settle}s 读数 {after_clock}s")
+        print(f"确认最迟在点下后 {confirmed_at - clicked:.2f}s 采到,之后 {args.settle}s 读数 {after_clock}s")
         if before_clock is not None and after_clock is not None and after_clock < before_clock:
             failures.append(f"进度从 {before_clock}s 退到了 {after_clock}s —— 不是接着放")
 
