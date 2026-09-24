@@ -365,15 +365,29 @@ HoverButton 的标签绑的是属性,塞子 Text 画得出来但读屏念不出,
 
 ## MIUI 装不上
 
-`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,是「开发者
-选项 → USB 安装」这个开关没生效 —— 它联网校验之后会自己悄悄回退。先去手机上把它
-关掉再打开(可能要重新验证小米账号),仍不行就绕:
+`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,**先别叫人去动开关**。
+2026-09-24 实测:「开发者选项 → USB 安装」是开着的(`adb shell getprop persist.security.adbinstall`
+为 `1`),真正的原因是 MIUI 每次 adb 装包都会在屏幕上弹安全中心的确认页
+(`com.miui.securitycenter/com.miui.permcenter.install.AdbInstallActivity`),几秒内没人点
+「继续安装」就按「用户取消」处理。手机边上没人时,装包的同时盯着前台窗口,一出现就用
+uiautomator 找按钮点掉:
 
 ```sh
-adb push dist/osmosis-debug.apk /data/local/tmp/x.apk
-adb shell pm install -i com.android.vending -r /data/local/tmp/x.apk
-adb shell rm /data/local/tmp/x.apk
+X=$ANDROID_SERIAL
+adb -s $X shell input keyevent KEYCODE_WAKEUP
+adb -s $X install -r dist/osmosis-debug.apk & ip=$!
+for i in $(seq 40); do
+  adb -s $X shell dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
+    adb -s $X shell uiautomator dump /sdcard/ui.xml >/dev/null
+    b=$(adb -s $X shell cat /sdcard/ui.xml | grep -oE 'text="(继续安装|安装)"[^>]*bounds="[^"]+"' \
+        | head -1 | grep -oE '[0-9]+' | tr '\n' ' ')
+    set -- $b; adb -s $X shell input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
+  sleep 1
+done; wait $ip
 ```
+
+只有 `getprop` 读出来不是 `1` 时,才是开关真的关了(它联网校验后会自己回退),那时才要人到手机上
+关掉再打开。
 
 ## `[patch.crates-io]` 只写远程地址
 
