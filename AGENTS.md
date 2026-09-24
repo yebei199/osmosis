@@ -20,7 +20,7 @@ docs_synced_at: fba905d
 | 这是什么 | 见上节;完整版在 [`README.md`](README.md) |
 | 结构在哪 | [`README.md`](README.md)「目录结构」:cargo workspace,依赖方向严格单向 |
 | 什么不能碰 | 依赖方向反向永久禁止;`[patch.crates-io]` 只写远程地址;`ANDROID_DEVICE_PIN` 不进任何进版本库的文件;UI 硬规则在 [`docs/design.md`](docs/design.md) |
-| web / iOS 怎么办 | 冻结中(2026-09-20,#105),解冻条件是用户开始用。这两端不做兼容,新代码遇到它们可以直接 `cfg(not(target_arch = "wasm32"))` 跳过,不必为它们设计接口 |
+| web / iOS 怎么办 | 废弃(2026-09-21 用户定,#110),已摘出 workspace,代码留着备复活。这两端不做兼容,新代码遇到它们可以直接 `cfg(not(target_arch = "wasm32"))` 跳过,不必为它们设计接口 |
 | 待办在哪 | [`docs/TODO.md`](docs/TODO.md) |
 | 怎么验 | `just ci` 逐字复述 CI,`dev` 分支的 push 不触发 CI,它是唯一防线;UI 改动用 `just shot` 与 MCP,贴屏幕边/随窗口变形的几何还要真机复核(`just mcp-android`),见下文 |
 
@@ -365,15 +365,29 @@ HoverButton 的标签绑的是属性,塞子 Text 画得出来但读屏念不出,
 
 ## MIUI 装不上
 
-`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,是「开发者
-选项 → USB 安装」这个开关没生效 —— 它联网校验之后会自己悄悄回退。先去手机上把它
-关掉再打开(可能要重新验证小米账号),仍不行就绕:
+`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,**先别叫人去动开关**。
+2026-09-24 实测:「开发者选项 → USB 安装」是开着的(`adb shell getprop persist.security.adbinstall`
+为 `1`),真正的原因是 MIUI 每次 adb 装包都会在屏幕上弹安全中心的确认页
+(`com.miui.securitycenter/com.miui.permcenter.install.AdbInstallActivity`),几秒内没人点
+「继续安装」就按「用户取消」处理。手机边上没人时,装包的同时盯着前台窗口,一出现就用
+uiautomator 找按钮点掉:
 
 ```sh
-adb push dist/osmosis-debug.apk /data/local/tmp/x.apk
-adb shell pm install -i com.android.vending -r /data/local/tmp/x.apk
-adb shell rm /data/local/tmp/x.apk
+X=$ANDROID_SERIAL
+adb -s $X shell input keyevent KEYCODE_WAKEUP
+adb -s $X install -r dist/osmosis-debug.apk & ip=$!
+for i in $(seq 40); do
+  adb -s $X shell dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
+    adb -s $X shell uiautomator dump /sdcard/ui.xml >/dev/null
+    b=$(adb -s $X shell cat /sdcard/ui.xml | grep -oE 'text="(继续安装|安装)"[^>]*bounds="[^"]+"' \
+        | head -1 | grep -oE '[0-9]+' | tr '\n' ' ')
+    set -- $b; adb -s $X shell input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
+  sleep 1
+done; wait $ip
 ```
+
+只有 `getprop` 读出来不是 `1` 时,才是开关真的关了(它联网校验后会自己回退),那时才要人到手机上
+关掉再打开。
 
 ## `[patch.crates-io]` 只写远程地址
 

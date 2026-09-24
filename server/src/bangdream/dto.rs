@@ -11,7 +11,9 @@ use contract::{
 };
 
 use super::lyric_split::split_long_lines;
-use super::{non_empty, platform_name, proto};
+use super::{
+    non_empty, platform_name, proto, stable_image,
+};
 
 /// 把上游的一个歌手翻成契约里的 [`ArtistDto`]。
 ///
@@ -21,7 +23,7 @@ pub fn artist_to_dto(artist: proto::Artist) -> ArtistDto {
     ArtistDto {
         id: artist.id,
         name: artist.name,
-        avatar: non_empty(artist.avatar),
+        avatar: stable_image(artist.avatar),
         album_count: artist.album_count,
     }
 }
@@ -38,7 +40,7 @@ pub fn playlist_to_dto(
         source: PlaylistSource::Platform,
         id: list.id,
         name: list.name,
-        cover: non_empty(list.cover),
+        cover: stable_image(list.cover),
         track_count: list.track_count,
     }
 }
@@ -96,7 +98,7 @@ pub fn track_to_dto(track: proto::Track) -> TrackDto {
             .into_iter()
             .map(|artist| artist.name)
             .collect(),
-        cover: non_empty(track.cover),
+        cover: stable_image(track.cover),
         duration_ms: track.duration_ms,
     }
 }
