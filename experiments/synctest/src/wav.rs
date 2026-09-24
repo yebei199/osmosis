@@ -54,7 +54,10 @@ mod tests {
     /// 写出去再读回来,一个样本不差。
     #[test]
     fn a_written_file_reads_back() {
-        let dir = std::env::temp_dir().join(format!("synctest-wav-{}", std::process::id()));
+        // 落在本 crate 自己的 target/ 下,名字带进程号:不碰整机共享的临时目录。
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("wav-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.wav");
         let path = path.to_str().unwrap();
