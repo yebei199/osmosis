@@ -6,8 +6,13 @@ import { TrackRow } from "../types.slint";
 // 住在 global 而不是 MainWindow 上,是为了让两套控制条与播放页覆层各自直接读它,
 // 不必从窗口根转发三层。取舍见 docs/adr/0027。
 export global Player {
-    // 搜索结果。每个字段都已在 Rust 侧格式化完毕,这里只负责摆。
+    // 当前浏览视图的那一批歌(每日推荐、某个歌单、某次搜索……)。每个视图
+    // 各存各的,这里只摆当前那一份(见 ui/src/music/views.rs)。每个字段都已在
+    // Rust 侧格式化完毕,这里只负责摆。
     in property <[TrackRow]> tracks: [];
+    // 当前视图还没有任何一份曲目,正在取。空列表此时说的是「在路上」,
+    // 不是「一首都没有」。
+    in property <bool> tracks-loading: false;
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     //
     // **只放状态的投影,不放一次性提示**。投影会随状态重算,永远等于此刻的真相;
@@ -57,10 +62,8 @@ export global Player {
     in-out property <int> loop-mode: 0;
 
     callback search(string);
-    // 取今日推荐,结果落进同一个 Player.tracks 列表。
+    // 取今日推荐,切到推荐那个视图。
     callback daily();
-    // 取我喜欢的音乐,同上。
-    callback liked();
     // 进了 Music 页。当天还没拉过推荐时由 Rust 侧补一次 daily —— 判断在那边,
     // 因为「今天」和「上次拉的日期」都不是界面该记的东西。
     callback music-shown();

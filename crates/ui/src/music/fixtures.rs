@@ -215,6 +215,7 @@ fn deck_window_with(
         lyrics,
         cover: super::CoverFeed::default(),
         tracks: Rc::new(RefCell::new(Vec::new())),
+        views: super::Views::default(),
         liked: crate::library::liked::LikedSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),

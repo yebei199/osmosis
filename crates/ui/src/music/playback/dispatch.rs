@@ -864,7 +864,9 @@ pub(in crate::music) fn play_batch(
     tracks: Vec<TrackDto>,
     index: usize,
 ) {
-    deck.tracks.borrow_mut().clone_from(&tracks);
+    // 只动队列,不动浏览视图:眼前那页列表是用户在看的来源,不是队列的镜子
+    // (#137 ④)。点播时那一批本来就取自列表;遥控与迁移送来的那一批则不该
+    // 把用户正在看的歌单换掉。
     // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
     // 开没开问队列自己,不回读界面上那个开关 —— 开关是它的投影。
     let shuffled = deck.queue.borrow().is_shuffled();

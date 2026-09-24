@@ -28,6 +28,9 @@ export component PlaylistList inherits ListView {
         }
 
         touch := TouchArea {
+            accessible-role: button;
+            accessible-label: row.name;
+            accessible-action-default => { root.open(row.id, row.source); }
             clicked => { root.open(row.id, row.source); }
         }
 

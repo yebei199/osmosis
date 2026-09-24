@@ -85,6 +85,8 @@ export component TrackList inherits ListView {
         touch := TouchArea {
             // 颜色读屏看不见 —— 正在播的那一行额外报一个可查的选中态。
             accessible-role: button;
+            // 读屏要念出这一行是哪首;端到端脚本也按它认出列表里摆的是哪一批
+            accessible-label: row.title;
             accessible-checkable: true;
             accessible-checked: parent.is-current;
             pointer-event(event) => {

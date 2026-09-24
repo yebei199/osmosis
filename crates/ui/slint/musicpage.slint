@@ -300,7 +300,19 @@ export component MusicPage inherits VerticalLayout {
                 alignment: center;
                 spacing: 12px;
 
-                Text {
+                // 这个视图还一份都没有、正在取:说「在路上」,不说「一首都没有」,
+                // 也不摆换一批推荐 —— 那会把人从正在进的视图拽走(#137 ④)。
+                if Player.tracks-loading: empty-loading := Text {
+                    text: "正在取这一页的歌…";
+                    accessible-role: text;
+                    accessible-label: self.text;
+                    font-family: "Maple Mono NF CN";
+                    font-size: 14px;
+                    color: Theme.text-dim;
+                    horizontal-alignment: center;
+                }
+
+                if !Player.tracks-loading: Text {
                     text: "点一首歌开始";
                     font-family: Type.display-cjk;
                     font-weight: 900;
@@ -308,14 +320,14 @@ export component MusicPage inherits VerticalLayout {
                     color: Theme.text;
                     horizontal-alignment: center;
                 }
-                Text {
+                if !Player.tracks-loading: Text {
                     text: "点云在待机,选一首它就活过来";
                     font-family: "Maple Mono NF CN";
                     font-size: 13px;
                     color: Theme.text-dim;
                     horizontal-alignment: center;
                 }
-                HorizontalLayout {
+                if !Player.tracks-loading: HorizontalLayout {
                     alignment: center;
                     empty-daily := Rectangle {
                         // 定宽:光带纹理的尺寸在 lib.rs 有一份镜像,跟着 preferred-width

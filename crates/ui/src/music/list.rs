@@ -24,6 +24,7 @@ pub(super) fn reload_open_playlist(
         &weak,
         deck,
         Action::begin("reload"),
+        ViewSource::Playlist(source, id.clone()),
         async move {
             crate::library::playlist::tracks_of(source, &id)
                 .await
@@ -70,36 +71,28 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
     let deck = deck.clone();
 
     crate::pages::search::bind(ui, move |ui, keyword| {
-        let deck = deck.clone();
         let weak = ui.as_weak();
         let keyword = keyword.to_owned();
 
-        slint::spawn_local(async move {
-            let found = api::search_tracks(&keyword).await;
-            let Some(ui) = weak.upgrade() else { return };
-            match found {
+        fetch_into(
+            &weak,
+            &deck,
+            Action::begin("search"),
+            ViewSource::Search(keyword.clone()),
+            async move {
                 // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
-                Ok(dto) => show(
-                    &ui,
-                    &deck,
-                    TracksDto {
+                api::search_tracks(&keyword).await.map(
+                    |dto| TracksDto {
                         tracks: dto.tracks,
                         unavailable: 0,
                     },
-                ),
-                Err(error) => {
-                    crate::notice::show(
-                        &ui,
-                        format!("搜索失败: {error}"),
-                    );
-                }
-            }
-        })
-        .expect("event loop must be running");
+                )
+            },
+        );
     });
 }
 
-/// 今日推荐与我喜欢的音乐。两者只差调哪个请求函数,其余完全相同。
+/// 今日推荐、分区、歌单与歌手详情的取数入口。
 ///
 /// 外加一个「进了 Music 页」的钩子:那时若当天还没拉过推荐,就替用户拉一次 ——
 /// 空着一页只有一行「点一首歌开始」不是个好开局。
@@ -109,18 +102,6 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.global::<Player>()
         .on_daily(move || fetch_daily(&weak, &daily));
-
-    let liked = deck.clone();
-    let weak = ui.as_weak();
-    ui.global::<Player>().on_liked(move || {
-        fetch_cached_into(
-            &weak,
-            &liked,
-            Action::begin("liked"),
-            api::cached_liked(),
-            async { api::liked().await },
-        );
-    });
 
     // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
     // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
@@ -192,6 +173,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 &weak,
                 &opened,
                 action,
+                ViewSource::Playlist(source, id.clone()),
                 async move {
                     crate::library::playlist::cached_tracks_of(
                         source, &cached_id,
@@ -219,6 +201,11 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             ui.global::<Library>().set_add_batch_text(
                 slint::SharedString::new(),
             );
+            show_section(
+                &ui,
+                &closing,
+                ui.global::<Shell>().get_music_section(),
+            );
         }
     });
 
@@ -237,6 +224,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 &weak,
                 &artist,
                 Action::begin("artist"),
+                ViewSource::Artist(id.clone()),
                 async move { api::artist_tracks(&id).await },
             );
         },
@@ -298,6 +286,7 @@ pub(super) fn load_section(
                 weak,
                 deck,
                 Action::begin("recent"),
+                ViewSource::Recent,
                 async { api::recent().await },
             );
         }
@@ -311,7 +300,12 @@ pub(super) fn load_section(
             }
         }
         // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。
-        Section::Search => {}
+        // 摆的是上一次搜到的那批(没搜过就是空的)。
+        Section::Search => {
+            if let Some(ui) = weak.upgrade() {
+                show_section(&ui, deck, section);
+            }
+        }
     }
 }
 
@@ -324,24 +318,63 @@ pub(super) fn fetch_daily(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
 ) {
-    deck.last_daily
-        .set(Some(chrono::Local::now().date_naive()));
-    fetch_cached_into(
+    fetch_daily_from(
         weak,
         deck,
-        Action::begin("daily"),
         api::cached_daily(),
         async { api::daily().await },
     );
 }
 
-/// 跑一个返回曲目列表的请求,结果填进列表,失败填进状态行。
+/// [`fetch_daily`] 的本体,请求由调用方给(测试要自己决定它何时回来)。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn fetch_daily_from<Cached, Fut>(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    cached: Cached,
+    request: Fut,
+) where
+    Cached: core::future::Future<Output = Option<TracksDto>>
+        + 'static,
+    Fut: core::future::Future<
+            Output = Result<TracksDto, api::ApiError>,
+        > + 'static,
+{
+    deck.last_daily
+        .set(Some(chrono::Local::now().date_naive()));
+    let action = Action::begin("daily");
+    // 推荐正摆在眼前(推荐分区、没开详情)才切过去;否则是进 Music 页时的
+    // 补拉,在后台进推荐自己那份,不把用户正在看的歌单换掉(#137 ④)。
+    let on_screen = weak.upgrade().is_some_and(|ui| {
+        Section::from_index(
+            ui.global::<Shell>().get_music_section(),
+        ) == Section::Daily
+            && ui
+                .global::<Library>()
+                .get_open_playlist_name()
+                .is_empty()
+    });
+    if on_screen {
+        fetch_cached_into(
+            weak,
+            deck,
+            action,
+            ViewSource::Daily,
+            cached,
+            request,
+        );
+    } else {
+        let ticket = deck
+            .views
+            .begin_in_background(ViewSource::Daily);
+        land(weak, deck, action, ticket, cached, request);
+    }
+}
+
+/// 跑一个返回曲目列表的请求,结果填进 `source` 那个视图,失败填进状态行。
 ///
 /// 收的是 `Vec<TrackDto>` 而非线上的信封类型:`ui` 按分层不直接依赖 `contract`,
 /// 剥壳在调用处一句 `.map(|dto| dto.tracks)` 完成。
-///
-/// 三个入口(搜索/推荐/红心)填的是**同一个**列表 ——
-/// 换一个来源就整批换掉,不合并:合并了就说不清列表里这首是哪来的。
 ///
 /// `action` 是发起这次加载的那个用户动作,一路打 `request`(协程真正开跑)、
 /// `response`、`model`,最后由渲染循环打 `drawn`(#121)。
@@ -350,6 +383,7 @@ pub(super) fn fetch_into<Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
     action: Rc<Action>,
+    source: ViewSource,
     request: Fut,
 ) where
     Fut: core::future::Future<
@@ -360,12 +394,18 @@ pub(super) fn fetch_into<Fut>(
         weak,
         deck,
         action,
+        source,
         async { None },
         request,
     );
 }
 
 /// 同 [`fetch_into`],但先摆 `cached` 给的上次那份,新的回来再换(#123)。
+///
+/// **同一步**先切到 `source` 那个视图(#137 ④):手上有它上次那份就摆出来,
+/// 没有就是加载态 —— 别的视图的歌一帧都不出现。之后回来的每一份都凭这次的
+/// 凭据落账:被更新的一次顶掉了、或者换了账号,就扔掉;用户已经去了别的视图,
+/// 就只进自己的缓存(见 `views`)。
 ///
 /// 打开「我喜欢的」要等四五秒网络,这段时间里列表不该是空的。新的与上次那份
 /// 相同就不再换:整表重建会把行上的封面与加载态刷一遍,而多数时候什么都没变。
@@ -375,6 +415,30 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
     action: Rc<Action>,
+    source: ViewSource,
+    cached: Cached,
+    request: Fut,
+) where
+    Cached: core::future::Future<Output = Option<TracksDto>>
+        + 'static,
+    Fut: core::future::Future<
+            Output = Result<TracksDto, api::ApiError>,
+        > + 'static,
+{
+    let (ticket, shown) = deck.views.begin(source);
+    if let Some(ui) = weak.upgrade() {
+        project(&ui, deck, shown);
+    }
+    land(weak, deck, action, ticket, cached, request);
+}
+
+/// 等这次取数回来,凭 `ticket` 落账:算数就写进它的视图,是当前视图才上屏。
+#[cfg(not(target_arch = "wasm32"))]
+fn land<Cached, Fut>(
+    weak: &slint::Weak<MainWindow>,
+    deck: &Deck,
+    action: Rc<Action>,
+    ticket: Ticket,
     cached: Cached,
     request: Fut,
 ) where
@@ -392,7 +456,10 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
         let stale = cached.await;
         if let Some(stale) = &stale
             && let Some(ui) = weak.upgrade()
+            && deck.views.accept(&ticket, stale.clone(), false)
+                == Landing::Current
         {
+            ui.global::<Player>().set_tracks_loading(false);
             show(&ui, &deck, stale.clone());
             action.mark("cached");
             deck.frames.after_next_frame(action.clone());
@@ -401,13 +468,21 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
         action.mark("response");
         let Some(ui) = weak.upgrade() else { return };
         match found {
-            Ok(found) if stale.as_ref() == Some(&found) => {
-                action.mark("unchanged");
-            }
             Ok(found) => {
-                show(&ui, &deck, found);
-                action.mark("model");
-                deck.frames.after_next_frame(action);
+                let unchanged = stale.as_ref() == Some(&found);
+                let landing =
+                    deck.views.accept(&ticket, found.clone(), true);
+                if landing != Landing::Current {
+                    action.mark("elsewhere");
+                } else if unchanged {
+                    // 列表本身不必重建;缓存上屏时加载态已经撤了
+                    action.mark("unchanged");
+                } else {
+                    ui.global::<Player>().set_tracks_loading(false);
+                    show(&ui, &deck, found);
+                    action.mark("model");
+                    deck.frames.after_next_frame(action);
+                }
             }
             // 会话失效要把人送回登录页,而不是在音乐页上写一句"失败" ——
             // 那句话解释不了为什么什么都拉不出来。已经送回去了就不再报错。
@@ -415,19 +490,87 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
                 if crate::pages::account::handle_session_expiry(
                     &ui, &error,
                 ) => {}
+            // 用户已经不在这个视图上了:它失败与否,眼前这页不该冒一句错
+            Err(_)
+                if deck.views.fail(&ticket) != Landing::Current => {}
             // 网易云没绑那一种会走能点进个人页的通知 —— 那正是用户要去
             // 绑的地方(见 crate::pages::account::report_failure)。
-            Err(error) => crate::pages::account::report_failure(
-                &ui,
-                "取曲目失败",
-                &error,
-            ),
+            Err(error) => {
+                ui.global::<Player>().set_tracks_loading(false);
+                crate::pages::account::report_failure(
+                    &ui,
+                    failure_label(ticket.source()),
+                    &error,
+                );
+            }
         }
     })
     .expect("event loop must be running");
 }
 
+/// 取数失败时横幅怎么开头。搜索有自己的说法,其余都是取曲目。
+#[cfg(not(target_arch = "wasm32"))]
+fn failure_label(source: &ViewSource) -> &'static str {
+    match source {
+        ViewSource::Search(_) => "搜索失败",
+        _ => "取曲目失败",
+    }
+}
+
+/// 摆出一个视图此刻的样子:手上那份,或者(一份都没有时)空列表加加载态。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn project(
+    ui: &MainWindow,
+    deck: &Deck,
+    shown: Shown,
+) {
+    ui.global::<Player>().set_tracks_loading(shown.loading);
+    let empty = || TracksDto {
+        tracks: Vec::new(),
+        unavailable: 0,
+    };
+    show(ui, deck, shown.tracks.unwrap_or_else(empty));
+}
+
+/// 切到某个分区的曲目视图,不发请求:回到分区时摆它手上那份。
+///
+/// 关掉歌单或歌手详情、换到搜索页时走这里 —— 那一刻列表区换成了分区自己的
+/// 那一批,不能还摆着刚才那个详情页的歌。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn show_section(
+    ui: &MainWindow,
+    deck: &Deck,
+    section: i32,
+) {
+    let source = match Section::from_index(section) {
+        Section::Daily => Some(ViewSource::Daily),
+        Section::Recent => Some(ViewSource::Recent),
+        Section::Search => deck.views.latest_search(),
+        // 歌单分区摆的是歌单列表,曲目区不出现
+        Section::Playlists => return,
+    };
+    match source {
+        Some(source) => {
+            let shown = deck.views.show(source);
+            project(ui, deck, shown);
+        }
+        None => {
+            deck.views.leave();
+            project(
+                ui,
+                deck,
+                Shown {
+                    tracks: None,
+                    loading: false,
+                },
+            );
+        }
+    }
+}
+
 /// 把一批曲目同时装进 Slint 的 model 和 Rust 侧的权威副本。
+///
+/// 只投影,不落账:调用方负责确认这一批属于当前视图。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn show(
     ui: &MainWindow,

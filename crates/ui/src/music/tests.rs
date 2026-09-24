@@ -2,6 +2,7 @@ use similar_asserts::assert_eq;
 
 mod dispatch;
 mod remote;
+mod views;
 
 use super::fixtures::*;
 use super::*;
@@ -465,6 +466,7 @@ fn the_cached_list_is_shown_before_the_network_answers() {
         &ui.as_weak(),
         &deck,
         crate::runtime::trace::Action::begin("test-cached"),
+        ViewSource::Daily,
         async { Some(batch(&["a"])) },
         async move {
             if let Some(ui) = weak.upgrade() {
@@ -501,6 +503,7 @@ fn an_unchanged_answer_keeps_the_shown_model() {
         crate::runtime::trace::Action::begin(
             "test-unchanged",
         ),
+        ViewSource::Daily,
         async { Some(batch(&["a"])) },
         async move {
             if let Some(ui) = weak.upgrade() {
@@ -532,6 +535,7 @@ fn a_failed_refresh_keeps_the_cached_list() {
         crate::runtime::trace::Action::begin(
             "test-offline",
         ),
+        ViewSource::Daily,
         async { Some(batch(&["a"])) },
         async {
             Err(api::ApiError::Transport(
