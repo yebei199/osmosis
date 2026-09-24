@@ -698,16 +698,15 @@ impl Remote {
         lock(&self.inner.group_ops).clone()
     }
 
-    /// 迁移提交了:输出已经换过去,镜像与封面清掉(那是上一台的),要一次新快照。
+    /// 迁移提交了:输出已经换过去,镜像与封面清掉(那是上一台的)。
+    ///
+    /// 不另要快照:新输出此刻已经被锁上、每秒都在报;而持权记录要等服务端回了
+    /// 提交才换到新那台,这时候要的快照会发给刚被换下来的那台、换回一句
+    /// `not_controller`。
     fn settle(&self) {
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();
-        if self.is_remote()
-            && let Some(client) = self.inner.client.get()
-        {
-            client.request_snapshot();
-        }
     }
 
     /// 迁移没成的那句话,说一次。
