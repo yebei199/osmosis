@@ -663,19 +663,20 @@ pub(in crate::music) fn resync_local_queue(
     {
         return;
     }
-    let (tracks, index) = {
-        let queue = deck.queue.borrow();
-        (queue.tracks().to_vec(), queue.index())
-    };
-    if tracks.is_empty() {
+    if deck.queue.borrow().tracks().is_empty() {
         return;
     }
+    // 先判节流再拷队列:这一趟每秒都来,而几千首的整份拷贝多数时候是白拷(#137 ⑥)
     if !deck
         .execution
         .due_for_resync(crate::sync::remote::now_ms())
     {
         return;
     }
+    let (tracks, index) = {
+        let queue = deck.queue.borrow();
+        (queue.tracks().to_vec(), queue.index())
+    };
 
     log::info!("本机队列还没同步上去,补提交一次");
     publish_local_queue(ui, deck, tracks, index);
@@ -882,6 +883,36 @@ pub(in crate::music) fn play_batch(
 pub(in crate::music) const VOLUME_SAVE_DELAY: core::time::Duration =
     core::time::Duration::from_millis(400);
 
+/// 音量的节流存盘:拖滑块是一串连着的命令,每动一下都同步读写一次设置文件
+/// 就是 UI 线程上每帧一次磁盘 IO。每动一下只记住值、把钟往后拨,停手
+/// [`VOLUME_SAVE_DELAY`] 之后写一次最后那个值。
+///
+/// ponytail: 停手不到 0.4 秒就退出进程,最后那一下没写进去;真在意时在退出路径上 flush。
+#[derive(Clone, Default)]
+pub(in crate::music) struct VolumeSave {
+    timer: Rc<slint::Timer>,
+    level: Rc<std::cell::Cell<f32>>,
+}
+
+impl VolumeSave {
+    pub(in crate::music) fn remember(&self, level: f32) {
+        self.level.set(level);
+        let level = self.level.clone();
+        self.timer.start(
+            slint::TimerMode::SingleShot,
+            VOLUME_SAVE_DELAY,
+            move || {
+                // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被
+                // 这次调音量顺手冲回默认值。
+                api::settings::save(&api::settings::Settings {
+                    volume: level.get(),
+                    ..api::settings::load()
+                });
+            },
+        );
+    }
+}
+
 /// 执行一条命令,**不问它是从哪来的**。
 ///
 /// 三个来源共用这一段:遥控器发来的命令(`bind_remote`)、本机用户动作
@@ -1000,13 +1031,7 @@ pub(in crate::music) fn execute(
             // 这台机器的播放器,那么记住这个数的也该是这台机器,不管拧旋钮
             // 的手是本机用户的还是遥控器的。改之前只有本机那条路存,于是
             // 遥控器把被控端调小之后,被控端一重启就跳回原来的音量。
-            //
-            // **先读再改**:整份重造的话,这个文件里别的设置(明暗)会被
-            // 这次调音量顺手冲回默认值。
-            api::settings::save(&api::settings::Settings {
-                volume: level,
-                ..api::settings::load()
-            });
+            deck.volume_save.remember(level);
         }
     }
     crate::media::push(ui, &deck.playback, &deck.media);

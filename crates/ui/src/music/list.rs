@@ -613,6 +613,36 @@ pub(super) fn push_rows(
     deck.thumbnails.apply(ui);
 }
 
+/// 只改加载态变了的那一两行,不换模型(#137 ⑥)。
+///
+/// 起播一首要标一次、收一次,整表重建(见 [`push_rows`])两次就是近千行的
+/// 格式化、重标红心、重摆封面;模型换掉还会让行元素整批重建,正被按着的
+/// 那一行上的点击就没了。模型与权威副本对不上(还没摆过、行数不同)时才退回整表重建。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn mark_loading(
+    ui: &MainWindow,
+    deck: &Deck,
+    loading: Option<&str>,
+) {
+    let model = ui.global::<Player>().get_tracks();
+    if model.row_count() != deck.tracks.borrow().len()
+        || model.as_any().downcast_ref::<VecModel<TrackRow>>().is_none()
+    {
+        push_rows(ui, deck, loading);
+        return;
+    }
+    for index in 0..model.row_count() {
+        let Some(mut row) = model.row_data(index) else {
+            continue;
+        };
+        let wanted = loading == Some(row.id.as_str());
+        if row.loading != wanted {
+            row.loading = wanted;
+            model.set_row_data(index, row);
+        }
+    }
+}
+
 /// 接上「这一行要封面」。
 ///
 /// 行滑进可见区时由 `.slint` 那边报过来 —— 列表虚拟化之后,「哪一行现在是哪一

@@ -23,13 +23,17 @@ const MIN_SATURATION: f32 = 0.25;
 /// 硬选出来的三团颜色只是噪声 —— 退回主题绿更诚实。
 const MIN_COLORFUL_RATIO: f32 = 0.05;
 
-/// 新封面到了:取色并点亮覆盖。取不出三团像样的颜色就回主题绿。
-pub(crate) fn feed(ui: &MainWindow, cover: &CoverPixels) {
-    match dominant_colors(
-        cover.width,
-        cover.height,
-        &cover.rgba,
-    ) {
+/// 一张封面的三个主色。纯计算,可以在后台线程上做(见 `imagery::cover`)。
+pub(crate) fn colors_of(cover: &CoverPixels) -> Option<[[u8; 3]; 3]> {
+    dominant_colors(cover.width, cover.height, &cover.rgba)
+}
+
+/// 新封面的三个主色到了:点亮覆盖。取不出三团像样的颜色(`None`)就回主题绿。
+pub(crate) fn feed_colors(
+    ui: &MainWindow,
+    colors: Option<[[u8; 3]; 3]>,
+) {
+    match colors {
         Some([warm, deep, soft]) => {
             ui.global::<Shell>()
                 .set_aurora_cover_warm(color(warm));

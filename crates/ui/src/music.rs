@@ -154,6 +154,11 @@ struct Deck {
     /// 本机作为迁移的一端:备好的那一份,与最近一次迁移步骤的回话
     /// (见 `playback::migrate`)。
     member: Member,
+    /// 音量的节流存盘(见 `playback::dispatch::VolumeSave`)。
+    volume_save: VolumeSave,
+    /// 换过几次歌。封面在后台线程上排队解码时拿它判断「还是不是这一首」——
+    /// `playback` 是 `Rc`,过不了线程(见 `imagery::cover::decode_off_thread`)。
+    cover_turn: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -216,6 +221,8 @@ pub fn bind(
         frames: crate::runtime::trace::Frames::default(),
         start_at: Rc::new(std::cell::Cell::new(None)),
         member: Member::default(),
+        volume_save: Default::default(),
+        cover_turn: Default::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -250,6 +257,7 @@ pub fn bind(
     queuepage::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
+    start_progress_tick(ui, &deck);
     startup_check(ui);
 
     ui.global::<Player>().set_playback_text(
