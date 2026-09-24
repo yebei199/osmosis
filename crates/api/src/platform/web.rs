@@ -103,7 +103,8 @@ async fn send<B: serde::Serialize>(
     let mut request =
         reqwest::Client::new().request(method, url);
 
-    if let Some(token) = crate::session::token() {
+    let token = crate::session::token();
+    if let Some(token) = &token {
         request = request.bearer_auth(token);
     }
     if let Some(body) = body {
@@ -115,7 +116,9 @@ async fn send<B: serde::Serialize>(
         .await
         .map_err(|e| ApiError::Transport(e.to_string()))?;
 
-    check(response).await
+    check(response).await.map_err(|error| {
+        crate::session::on_rejected(error, token.as_deref())
+    })
 }
 
 /// 非 2xx 时把响应体读出来,好让服务端给的 code 活到调用方手里。

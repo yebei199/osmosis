@@ -39,6 +39,9 @@ pub enum ApiError {
     /// 不带 HTTP 状态码:契约规定客户端按 `code` 分支而不是按状态码
     /// (见 `contract::ErrorDto`),带上它只会诱使人去用错的那个。
     Server { code: String, message: String },
+    /// 服务端说 token 无效,但这次请求带的不是当前会话的 token:没带(还没登录),
+    /// 或者发出去之后会话已经换过。它不说明当前会话失效,不该把人送回登录页(#131)。
+    Unauthenticated(String),
 }
 
 impl core::fmt::Display for ApiError {
@@ -53,7 +56,8 @@ impl core::fmt::Display for ApiError {
             Self::Decode(message) => {
                 write!(f, "响应格式错误: {message}")
             }
-            Self::Server { message, .. } => {
+            Self::Server { message, .. }
+            | Self::Unauthenticated(message) => {
                 write!(f, "{message}")
             }
             Self::VersionMismatch { expected, actual } => {

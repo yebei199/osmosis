@@ -60,7 +60,9 @@ fn an_expired_session_is_backed_up_before_it_is_cleared() {
     }
 
     self::set("rejected-token");
-    self::expire();
+    assert!(self::expire_if_current(Some(
+        "rejected-token"
+    )));
 
     assert_eq!(self::token(), None, "失效之后不该还带着它");
     assert!(
@@ -312,3 +314,4 @@ fn session_file_is_owner_only() {
     assert_eq!(mode, 0o600, "会话文件权限应为 0600");
     let _ = std::fs::remove_file(&path);
 }
+

@@ -44,14 +44,43 @@ pub fn clear() {
     super::cache::forget_all();
 }
 
-/// 服务端判这个 token 无效时忘掉它:与 [`clear`] 相同,但落盘的那份先挪成
-/// `session.bak` 再清(#127)。删会话不可逆,判错一次就得重登,留一份才查得回来。
-pub fn expire() {
-    if let Ok(mut slot) = TOKEN.write() {
-        *slot = None;
+/// 服务端说 token 无效时的判据:这次带的 `sent` 仍是当前会话的 token,才算会话失效(#131)。
+/// 判了就忘掉它,落盘那份先挪成 `session.bak` 再清(#127)—— 与 [`clear`] 不同,
+/// 删会话不可逆,判错一次就得重登,留一份才查得回来。
+///
+/// 比较与清除在同一把写锁里做:比完放锁再清的话,中间登上的新会话会被一并清掉。
+/// HTTP 与同播信令都走这里,判据只有一份。返回是否确实判了失效。
+pub fn expire_if_current(sent: Option<&str>) -> bool {
+    let Ok(mut slot) = TOKEN.write() else {
+        return false;
+    };
+    if sent.is_none() || slot.as_deref() != sent {
+        return false;
     }
+    *slot = None;
     super::platform::backup_session();
+    true
 }
+
+/// 把一次失败按这次请求带的 token 归类:当前 token 被拒就判会话失效,原样返回;
+/// 没带或已被换掉的 token 被拒改报 [`crate::ApiError::Unauthenticated`],会话不动。
+pub(crate) fn on_rejected(
+    error: crate::ApiError,
+    sent: Option<&str>,
+) -> crate::ApiError {
+    match error {
+        crate::ApiError::Server { code, message }
+            if code == TOKEN_REJECTED
+                && !expire_if_current(sent) =>
+        {
+            crate::ApiError::Unauthenticated(message)
+        }
+        other => other,
+    }
+}
+
+/// 服务端判 token 无效时给的 code。
+const TOKEN_REJECTED: &str = "unauthorized";
 
 /// 从落盘处恢复上次的登录态。各端入口在启动时调一次。
 ///

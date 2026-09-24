@@ -285,7 +285,12 @@ pub(crate) fn handle(
         }
         // 与 HTTP 那侧拿到 401 是同一件事,善后也走同一处。
         // 同播自己不会重试,下一个 token 到位时它会自己接上。
-        Event::Unauthorized => {
+        Event::Unauthorized(rejected) => {
+            if !api::session::expire_if_current(Some(
+                &rejected,
+            )) {
+                return;
+            }
             let _ = weak.upgrade_in_event_loop(|ui| {
                 crate::pages::account::to_login_page(
                     &ui,

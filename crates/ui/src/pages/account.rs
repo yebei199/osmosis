@@ -42,6 +42,9 @@ pub fn login_failure_text(err: &api::ApiError) -> String {
         api::ApiError::Decode(_) => {
             "服务端的答复看不懂,可能版本不一致".to_owned()
         }
+        api::ApiError::Unauthenticated(message) => {
+            message.clone()
+        }
     }
 }
 
@@ -214,17 +217,18 @@ pub fn handle_session_expiry(
     ui: &MainWindow,
     err: &api::ApiError,
 ) -> bool {
-    let expired = matches!(
-        err,
+    match err {
         api::ApiError::Server { code, .. }
-            if code == SESSION_EXPIRED
-    );
-
-    if expired {
-        to_login_page(ui, &format!("{err}"));
+            if code == SESSION_EXPIRED =>
+        {
+            to_login_page(ui, &format!("{err}"));
+            true
+        }
+        // 没带当前会话的 token 被拒:还没登录的照常停在登录页,已经登上的不受
+        // 牵连,都不必再报一遍(#131)。
+        api::ApiError::Unauthenticated(_) => true,
+        _ => false,
     }
-
-    expired
 }
 
 /// 清掉登录态,把人送回登录页。
@@ -235,13 +239,15 @@ pub fn handle_session_expiry(
 ///
 /// `cause` 只进日志:清掉落盘的会话是**不可逆**的,而它此前一声不吭 ——
 /// 「一重启就要重登」这类报告因此无从查起,只知道文件没了,不知道谁删的。
-/// 所以走 `expire` 而不是 `clear`:落盘那份先留成 `session.bak`(#127)。
+///
+/// 会话本身在进来之前已经清掉了(`api::session::expire_if_current`,落盘那份
+/// 留成 `session.bak`,#127):那里比对「被拒的是不是当前 token」与清除在同一把
+/// 锁里,这里再清一次就可能清掉中间刚登上的新会话(#131)。
 pub(crate) fn to_login_page(ui: &MainWindow, cause: &str) {
     log::warn!(
         "会话被服务端判为失效,已清除本地登录态: {cause}"
     );
 
-    api::session::expire();
     ui.global::<Session>().set_logged_in(false);
     ui.global::<Session>()
         .set_error("登录已失效,请重新登录".into());
@@ -419,29 +425,9 @@ mod tests {
         );
     }
 
-    /// 把会话落盘处指到临时文件上。
-    ///
-    /// **少了这一步,跑一次测试就把开发机上真实的登录态删掉** —— `handle_session_expiry`
-    /// 里那句 `session::expire()` 挪走的是 `~/.local/state/osmosis-dev/session`,而它
-    /// 一声不吭。症状是「每次跑完测试再开应用就要重新登录」,而人会去查应用,
-    /// 查不到任何线索。`api` 那侧的会话测试早就这么防着了,这边漏了。
-    fn redirect_session_to_a_temp_file() {
-        let dir =
-            std::env::temp_dir().join("osmosis-ui-session");
-        let _ = std::fs::create_dir_all(&dir);
-        // SAFETY: 本 crate 只有这一条测试碰会话,不会与别的线程抢这个变量
-        unsafe {
-            std::env::set_var(
-                "OSMOSIS_SESSION_FILE",
-                dir.join("session"),
-            );
-        }
-    }
-
     /// 会话失效会把人送回登录页,并让调用方知道不必再报一遍错。
     #[test]
     fn an_expired_session_sends_the_user_back() {
-        redirect_session_to_a_temp_file();
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
         ui.global::<Session>().set_logged_in(true);

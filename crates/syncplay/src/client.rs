@@ -44,9 +44,10 @@ pub enum Event {
     Listening { host: String, source: ChannelSource },
     /// 某一步失败了。给界面一行能显示的话,而不是让它停在一个永远不会变的状态上。
     Failed(String),
-    /// 服务端不认这个登录态。界面该把人送回登录页 —— 同播不会自己重试,
-    /// 换一个 token 之前再连也只是再得到一个 401。
-    Unauthorized,
+    /// 服务端不认这个 token(带着的就是被拒的那一个)。它仍是当前会话的话,
+    /// 界面该把人送回登录页 —— 同播不会自己重试,换一个 token 之前再连也只是
+    /// 再得到一个 401;已经换过就与当前会话无关(#131)。
+    Unauthorized(String),
 
     // ── 遥控器模式(`docs/adr/0030`)。与上面几条共用同一条信令连接。 ──
     /// 本机拿到了 `target` 的控制权。界面该把输出设备切过去,并要一次快照。
@@ -436,8 +437,8 @@ async fn run(
             Err(SyncError::Unauthorized) => {
                 // 不重试:界面把人送回登录页,下一个 token 到位时上面那一句
                 // 会自己把它捡起来。
-                rejected = Some(credential);
-                events(Event::Unauthorized);
+                rejected = Some(credential.clone());
+                events(Event::Unauthorized(credential));
                 continue;
             }
             // 429:额度用完了。**照服务端给的秒数等**,而不是按自己那套

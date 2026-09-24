@@ -322,25 +322,6 @@ mod tests {
         }
     }
 
-    /// 把会话落盘处指到临时文件上。
-    ///
-    /// 少了这一步,跑一次测试就把开发机上真实的登录态删掉 ——
-    /// 下面那条会话失效的用例会走到 `session::expire()`,而它挪走的是
-    /// `~/.local/state/osmosis-dev/session`,且一声不吭(理由同 account.rs)。
-    fn redirect_session_to_a_temp_file() {
-        let dir = std::env::temp_dir()
-            .join("osmosis-netease-session");
-        let _ = std::fs::create_dir_all(&dir);
-        // SAFETY: 本 crate 只有这一条与 account.rs 那条碰这个变量,
-        // 两条指的都是临时目录,谁先谁后都不会动到真实的那一份
-        unsafe {
-            std::env::set_var(
-                "OSMOSIS_SESSION_FILE",
-                dir.join("session"),
-            );
-        }
-    }
-
     /// 还没人扫:让用户知道该拿手机来扫这张码。
     #[test]
     fn waiting_tells_the_user_to_scan() {
@@ -454,7 +435,6 @@ mod tests {
     /// 再报一遍只是同一件事说两次。
     #[test]
     fn an_expired_session_goes_back_to_the_login_page() {
-        redirect_session_to_a_temp_file();
         let (ui, scan) = fixture();
         ui.global::<Session>().set_logged_in(true);
 
