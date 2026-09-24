@@ -428,6 +428,46 @@ fn a_track_that_fails_to_start_clears_the_loading_state() {
     );
 }
 
+/// 起播时标加载态只改那一行,不整表重建(#137 ⑥)。
+///
+/// 整表重建一次要把近千行重新格式化、重标红心、重摆封面,而起播一首要建两次
+/// (标上、收掉)。模型换掉还会让行元素整批重建 —— 手指底下那一行正被按着时,
+/// 那一下点击就没了。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn marking_the_loading_row_keeps_the_list_model() {
+    let (ui, deck) = deck_window();
+    show(&ui, &deck, batch(&["a", "b", "c"]));
+    let model = ui.global::<Player>().get_tracks();
+    let queued = deck.tracks.borrow().clone();
+    deck.queue.borrow_mut().replace(queued, 1);
+
+    play_current(&ui, &deck);
+
+    let now = ui.global::<Player>().get_tracks();
+    assert!(now == model, "标加载态把整张列表的模型换掉了");
+    assert!(now.row_data(1).expect("第二行该在").loading);
+    assert!(!now.row_data(0).expect("第一行该在").loading);
+}
+
+/// 收加载态同样只改那一行。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn clearing_the_loading_row_keeps_the_list_model() {
+    let (ui, deck) = deck_window_pumped();
+    show(&ui, &deck, batch(&["a", "b", "c"]));
+    let model = ui.global::<Player>().get_tracks();
+    let queued = deck.tracks.borrow().clone();
+    deck.queue.borrow_mut().replace(queued, 1);
+
+    // 测试里没有声卡,起播当场失败,标上与收掉在这一步里都走完
+    play_current(&ui, &deck);
+
+    let now = ui.global::<Player>().get_tracks();
+    assert!(now == model, "收加载态把整张列表的模型换掉了");
+    assert!(!now.row_data(1).expect("第二行该在").loading);
+}
+
 // ── 先画缓存里上次那份,新的回来再换(#123)──
 //
 // 协程在 pumped 窗口里当场跑完,网络那个 future 被 poll 的那一刻,就是

@@ -50,6 +50,9 @@ pub struct Queue {
     /// 只报排列的话,服务端分不清「又洗了一次」与「还没动」
     /// (`docs/adr/0031` 六)。换批清零 —— 它是这一批的属性。
     round: u64,
+    /// 换过几次批。只增不减,看的人拿它判断「还是不是那一批」,不必把整批
+    /// 比一遍(队列页每秒一趟,#137 ⑥)。
+    batch: u64,
 }
 
 impl Queue {
@@ -71,6 +74,7 @@ impl Queue {
             shuffled: false,
             loop_mode: LoopMode::Off,
             round: 0,
+            batch: 0,
         }
     }
 
@@ -85,8 +89,15 @@ impl Queue {
     ) {
         // 循环模式跟人不跟批:它是用户意图,换批不该把它拨回去。
         let loop_mode = self.loop_mode;
+        let batch = self.batch + 1;
         *self = Self::new(tracks, start);
         self.loop_mode = loop_mode;
+        self.batch = batch;
+    }
+
+    /// 这是第几批。每次 [`Self::replace`] 加一;洗牌、跳转、推进都不动它。
+    pub fn batch(&self) -> u64 {
+        self.batch
     }
 
     /// 正在放的那首。空批时是 `None`。

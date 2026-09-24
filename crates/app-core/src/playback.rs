@@ -7,8 +7,11 @@
 //! 那次请求可能后返回,不许它盖掉后点的那首。
 
 use core::fmt;
-use std::cell::RefCell;
+use core::pin::pin;
+use core::task::{Poll, Waker};
+use std::cell::{Cell, RefCell};
 use std::future::Future;
+use std::rc::Rc;
 
 use contract::TrackDto;
 
@@ -34,6 +37,28 @@ pub enum PlaybackState {
 pub struct Playback {
     state: PlaybackState,
     generation: u64,
+    /// 正在路上的那次准备的取消把手。代际一换就拉它(#137 ⑥)。
+    in_flight: Option<Rc<Cancel>>,
+}
+
+/// 一次准备的取消把手:置位,并叫醒等着它的那个 future。
+///
+/// 独立于 `Playback` 的借用:拉它的人手里正握着 `borrow_mut`,被叫醒的那个
+/// future 若同步被轮询(测试后端就是这样),不能再去借 `Playback`。
+#[derive(Debug, Default)]
+struct Cancel {
+    cancelled: Cell<bool>,
+    waker: RefCell<Option<Waker>>,
+}
+
+impl Cancel {
+    fn fire(&self) {
+        self.cancelled.set(true);
+        let waker = self.waker.borrow_mut().take();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
 }
 
 impl Playback {
@@ -43,9 +68,31 @@ impl Playback {
 
     /// 开始准备一首歌:进入 [`PlaybackState::Loading`],返回本次的代号。
     fn begin(&mut self, track: TrackDto) -> u64 {
-        self.generation += 1;
+        self.supersede();
         self.state = PlaybackState::Loading(track);
         self.generation
+    }
+
+    /// 换代:在路上的那次准备就此作废,并当场收走(只省资源 —— 结果本来
+    /// 就会被代际挡掉)。
+    fn supersede(&mut self) {
+        self.generation += 1;
+        if let Some(cancel) = self.in_flight.take() {
+            cancel.fire();
+        }
+    }
+
+    /// 给当前这一代的准备挂上取消把手。
+    fn watch(
+        &mut self,
+        generation: u64,
+    ) -> Option<Rc<Cancel>> {
+        if generation != self.generation {
+            return None;
+        }
+        let cancel = Rc::new(Cancel::default());
+        self.in_flight = Some(cancel.clone());
+        Some(cancel)
     }
 
     /// 结束一次准备。代号过期则丢弃结果、状态不变,返回 `false`。
@@ -57,6 +104,7 @@ impl Playback {
         if generation != self.generation {
             return false;
         }
+        self.in_flight = None;
         self.state = match result {
             Ok(track) => PlaybackState::Playing(track),
             Err(message) => PlaybackState::Failed(message),
@@ -73,7 +121,7 @@ impl Playback {
     ///
     /// 同时作废当前代际:停止之后,正在路上的那次准备回来了也不该出声。
     pub fn stop(&mut self) {
-        self.generation += 1;
+        self.supersede();
         self.state = PlaybackState::Idle;
     }
 
@@ -84,7 +132,7 @@ impl Playback {
     ///
     /// 同样作废当前代际,理由同 [`Self::stop`]。
     pub fn fail(&mut self, message: String) {
-        self.generation += 1;
+        self.supersede();
         self.state = PlaybackState::Failed(message);
     }
 }
@@ -114,11 +162,35 @@ pub async fn play<Prepare, Fut, Commit, Ready, Error>(
     Error: fmt::Display,
 {
     // 借用必须在 await 之前归还,否则同一时刻的第二次 play 会 panic。
-    let generation =
-        playback.borrow_mut().begin(track.clone());
-    let prepared = prepare(track.clone())
-        .await
-        .map_err(|error| error.to_string());
+    let (generation, cancel) = {
+        let mut playback = playback.borrow_mut();
+        let generation = playback.begin(track.clone());
+        (generation, playback.watch(generation))
+    };
+    let Some(cancel) = cancel else { return };
+
+    // 被新点击或停止顶掉时当场收走准备:取直链、开流没必要跑完才发现白干了。
+    // 丢掉 `preparing` 就是取消 —— 在途的请求随它一起被丢弃。
+    let mut preparing = pin!(prepare(track.clone()));
+    let prepared = std::future::poll_fn(|cx| {
+        if cancel.cancelled.get() {
+            return Poll::Ready(None);
+        }
+        match preparing.as_mut().poll(cx) {
+            Poll::Ready(result) => {
+                Poll::Ready(Some(result))
+            }
+            Poll::Pending => {
+                *cancel.waker.borrow_mut() =
+                    Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    })
+    .await;
+    let Some(prepared) = prepared else { return };
+    let prepared =
+        prepared.map_err(|error| error.to_string());
 
     // 准备期间用户可能又点了别的歌。过期的这次连播放器都不许碰,
     // 备好的源就地丢掉。
@@ -322,6 +394,126 @@ mod tests {
             .borrow_mut()
             .finish(generation, Ok(track("1")));
         assert!(!accepted, "停止后到达的结果不该让它出声");
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Idle
+        );
+    }
+
+    /// 标记自己被丢掉了的 future:放在 prepare 里,看取消有没有真的收走它。
+    struct Dropped<'a>(&'a Cell<bool>);
+
+    impl Drop for Dropped<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    /// 记下自己被唤醒过没有的 waker。
+    struct Flag(std::sync::atomic::AtomicBool);
+
+    impl std::task::Wake for Flag {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.store(
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    /// 被新点击顶掉的那次准备立刻收走(#137 ⑥):取直链、开流不必跑完才发现
+    /// 白干了。顶掉的那一刻它被唤醒,再被轮询就结束,prepare 那个 future 随之丢弃。
+    #[test]
+    fn a_superseded_preparation_is_dropped_right_away() {
+        let playback = RefCell::new(Playback::default());
+        let dropped = Cell::new(false);
+        let committed = Cell::new(0);
+        let flag = std::sync::Arc::new(Flag(
+            std::sync::atomic::AtomicBool::new(false),
+        ));
+        let waker = Waker::from(flag.clone());
+        let mut context = Context::from_waker(&waker);
+
+        let mut first = pin!(play(
+            &playback,
+            track("1"),
+            |_| {
+                let guard = Dropped(&dropped);
+                async move {
+                    let _guard = guard;
+                    std::future::pending::<Result<(), &str>>()
+                        .await
+                }
+            },
+            |()| committed.set(committed.get() + 1),
+        ));
+        assert!(
+            first.as_mut().poll(&mut context).is_pending()
+        );
+
+        // 用户点了另一首
+        block_on(play(
+            &playback,
+            track("2"),
+            |_| async { Ok::<_, &str>(()) },
+            |()| committed.set(committed.get() + 1),
+        ));
+
+        assert!(
+            flag.0
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "被顶掉的那次该被唤醒,好让它当场结束"
+        );
+        assert!(
+            first.as_mut().poll(&mut context).is_ready(),
+            "被顶掉的那次再被轮询就该结束,不等下载跑完"
+        );
+        assert!(dropped.get(), "它的准备工作该被丢弃");
+        assert_eq!(
+            committed.get(),
+            1,
+            "只有后点的那首出声"
+        );
+        assert_eq!(
+            playback.borrow().state(),
+            &PlaybackState::Playing(track("2"))
+        );
+    }
+
+    /// 停止同样收走在路上的准备。
+    #[test]
+    fn stopping_drops_the_preparation_in_flight() {
+        let playback = RefCell::new(Playback::default());
+        let dropped = Cell::new(false);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+
+        let mut loading = pin!(play(
+            &playback,
+            track("1"),
+            |_| {
+                let guard = Dropped(&dropped);
+                async move {
+                    let _guard = guard;
+                    std::future::pending::<Result<(), &str>>()
+                        .await
+                }
+            },
+            |()| {},
+        ));
+        assert!(
+            loading
+                .as_mut()
+                .poll(&mut context)
+                .is_pending()
+        );
+
+        playback.borrow_mut().stop();
+
+        assert!(
+            loading.as_mut().poll(&mut context).is_ready()
+        );
+        assert!(dropped.get());
         assert_eq!(
             playback.borrow().state(),
             &PlaybackState::Idle

@@ -66,8 +66,6 @@ pub struct WallDrive {
     cam: wall::WallCam,
     collapse: wall::Collapse,
     dolly: Option<wall::DollyRun>,
-    /// dolly 落位后要播的曲目。
-    pending_play: Option<slint::SharedString>,
     /// 单击浮起的卡。
     focus: Option<usize>,
     last_pointer: Option<(f32, f32)>,
@@ -92,7 +90,6 @@ impl WallDrive {
             cam: wall::WallCam::default(),
             collapse: wall::Collapse::default(),
             dolly: None,
-            pending_play: None,
             focus: None,
             last_pointer: None,
             was_pressed: false,
@@ -199,13 +196,10 @@ impl WallDrive {
             ui.global::<Shell>().set_wall_showing(false);
         }
 
-        // dolly 落位:开播放页、放歌,墙退场。
+        // dolly 落位:开播放页,墙退场。歌在点下去那一刻就已经在起了。
         if let Some(run) = &mut self.dolly {
             let landed = run.step();
             if landed {
-                if let Some(id) = self.pending_play.take() {
-                    ui.global::<Player>().invoke_play(id);
-                }
                 ui.global::<Shell>()
                     .set_play_page_open(true);
                 self.dolly = None;
@@ -289,8 +283,11 @@ impl WallDrive {
         Some(next.clamp(0, last as i64) as usize)
     }
 
-    /// 起播第 `index` 张卡:记下曲目,推相机。播放与开页都等 dolly 落位
+    /// 起播第 `index` 张卡:当场起播,再推相机。开页等 dolly 落位
     /// (设计稿:落位后才起点云),落位处理在 [`Self::frame`] 里。
+    ///
+    /// 起播不等镜头(#137 ⑥):取直链、开流要几百毫秒到几秒,与那段动画
+    /// 并行跑,落位时声音多半已经在路上了。
     fn start_play(
         &mut self,
         ui: &MainWindow,
@@ -309,7 +306,7 @@ impl WallDrive {
             index,
             self.collapse.value,
         );
-        self.pending_play = Some(row.id);
+        ui.global::<Player>().invoke_play(row.id);
         self.dolly = Some(wall::DollyRun {
             t: 0.0,
             target_z: pose.z,
@@ -541,6 +538,48 @@ mod tests {
         assert!(
             !d.should_play(Some(3)),
             "dolly 还在跑就又起播了,同一下点按会放两次"
+        );
+    }
+
+    /// 点下去那一刻就起播,不等镜头推完(#137 ⑥):dolly 动画几百毫秒,
+    /// 取直链、开流本可以在这段时间里并行跑完。镜头照推,落位只开播放页。
+    #[test]
+    fn a_card_starts_playing_the_moment_it_is_tapped() {
+        use slint::{ComponentHandle as _, Model as _};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        let rows: Vec<crate::TrackRow> = ["a", "b"]
+            .iter()
+            .map(|id| crate::TrackRow {
+                id: (*id).into(),
+                ..Default::default()
+            })
+            .collect();
+        ui.global::<Player>().set_tracks(
+            slint::ModelRc::new(slint::VecModel::from(
+                rows,
+            )),
+        );
+        let asked =
+            Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = asked.clone();
+        ui.global::<Player>().on_play(move |id| {
+            seen.borrow_mut().push(id.to_string())
+        });
+
+        let mut d = WallDrive::new();
+        d.start_play(&ui, 1);
+
+        assert_eq!(
+            *asked.borrow(),
+            vec!["b".to_owned()],
+            "该在点下去那一刻就起播"
+        );
+        assert!(d.dolly.is_some(), "镜头照推");
+        assert_eq!(
+            ui.global::<Player>().get_tracks().row_count(),
+            2
         );
     }
 

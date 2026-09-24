@@ -423,6 +423,9 @@ fn a_seek_marks_buffering_right_away() {
 #[test]
 fn executing_a_volume_command_remembers_it_for_this_device()
 {
+    let _file = SETTINGS_FILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
@@ -431,6 +434,8 @@ fn executing_a_volume_command_remembers_it_for_this_device()
         &deck,
         app_core::RemoteCommand::Volume { level: 0.25 },
     );
+    // 存盘是节流的(#137 ⑥):拖完停一下才写。原断言不变,只是等它落盘
+    settle_volume_save();
 
     assert_eq!(
         api::settings::load().volume,
@@ -438,6 +443,57 @@ fn executing_a_volume_command_remembers_it_for_this_device()
         "执行音量的那一端该把它记住"
     );
     assert_eq!(ui.global::<Player>().get_volume(), 0.25);
+}
+
+/// 设置文件是进程级的一份,测试并行跑。会真写它的测试(让节流存盘到点的那几条)
+/// 先拿这把锁,否则一条断言到的是另一条刚写进去的数。
+static SETTINGS_FILE: std::sync::Mutex<()> =
+    std::sync::Mutex::new(());
+
+/// 让音量的节流存盘到点。
+fn settle_volume_save() {
+    i_slint_backend_testing::mock_elapsed_time(
+        VOLUME_SAVE_DELAY
+            + core::time::Duration::from_millis(50),
+    );
+    slint::platform::update_timers_and_animations();
+}
+
+/// 拖音量滑块是一串连着的命令:每动一下都同步读写一次设置文件,UI 线程上
+/// 就是每帧一次磁盘 IO(#137 ⑥)。停手之后只写一次,写的是最后那个值。
+#[test]
+fn a_volume_drag_is_saved_once_it_settles() {
+    let _file = SETTINGS_FILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+
+    for level in [0.31, 0.32, 0.33] {
+        execute(
+            &ui,
+            &deck,
+            app_core::RemoteCommand::Volume { level },
+        );
+    }
+
+    assert_ne!(
+        api::settings::load().volume,
+        0.33,
+        "还在拖的时候不该每动一下就写盘"
+    );
+    assert_eq!(
+        ui.global::<Player>().get_volume(),
+        0.33,
+        "界面与播放器照样当场跟手"
+    );
+
+    settle_volume_save();
+    assert_eq!(
+        api::settings::load().volume,
+        0.33,
+        "停手之后写的是最后那个值"
+    );
 }
 
 /// 同一条命令里,超出 0..=1 的音量**先夹再落**。
@@ -913,4 +969,57 @@ fn tapping_the_track_the_target_paused_still_goes_out() {
     ui.global::<Player>().invoke_play(paused.into());
 
     assert_eq!(deck.remote.play_submits(), 1);
+}
+
+// ── 进度在两次上报之间也走(#137 ⑥)──
+
+/// 被控端每秒报一次位置;两次之间进度条靠快一档的那一趟按本地时钟推,
+/// 不再一秒跳一格。推算的规矩(只在 Playing 且新鲜时走)在
+/// `app_core::RemoteView::position_ms`,这里钉的是「有人按更快的节奏去读它」。
+#[test]
+fn remote_progress_moves_between_reports() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    let now = crate::sync::remote::now_ms();
+    deck.remote.accept_report_at(
+        app_core::RemoteStateDto {
+            position_ms: 10_000,
+            ..report()
+        },
+        now - 1_500,
+    );
+
+    tick_progress(&ui, &deck);
+
+    let duration = track().duration_ms as f32;
+    let ratio = ui.global::<Player>().get_progress_ratio();
+    assert!(
+        ratio > (10_000.0 + 1_000.0) / duration,
+        "一秒半之前报的 0:10,现在该推到 0:11 以后,实际比例 {ratio}"
+    );
+}
+
+/// 暂停着的被控端:进度停在报来的位置,不自己往前走。
+#[test]
+fn remote_progress_holds_while_paused() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    let now = crate::sync::remote::now_ms();
+    deck.remote.accept_report_at(
+        app_core::RemoteStateDto {
+            position_ms: 10_000,
+            state: app_core::RemotePlayState::Paused,
+            ..report()
+        },
+        now - 1_500,
+    );
+
+    tick_progress(&ui, &deck);
+
+    let duration = track().duration_ms as f32;
+    let ratio = ui.global::<Player>().get_progress_ratio();
+    assert!(
+        (ratio - 10_000.0 / duration).abs() < 1e-6,
+        "暂停时进度走了: {ratio}"
+    );
 }

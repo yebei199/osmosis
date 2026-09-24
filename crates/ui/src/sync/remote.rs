@@ -1065,6 +1065,34 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
     }
 }
 
+/// 只推进度那两样(比例与读数),按被控端最近那份上报推算此刻的位置。
+///
+/// 进度的快档那一趟用它(#137 ⑥):上报每秒一次,两次之间靠
+/// `RemoteView::position_ms` 按本地时钟推 —— 只在 Playing 且上报新鲜时往前走。
+pub fn push_progress(ui: &MainWindow, remote: &Remote) {
+    let Some((track, position)) =
+        remote.with_view(|view, now| {
+            Some((
+                view.track()?.clone(),
+                view.position_ms(now),
+            ))
+        })
+    else {
+        return;
+    };
+    let seconds = position as f64 / 1_000.0;
+    ui.global::<Player>().set_progress_ratio(
+        crate::progress::ratio(seconds, track.duration_ms),
+    );
+    ui.global::<Player>().set_progress_text(
+        crate::progress::progress_text(
+            seconds,
+            track.duration_ms,
+        )
+        .into(),
+    );
+}
+
 /// 遥控时把播放那几行改成被控端的状态。
 ///
 /// 与本机路径共用同一批 Slint 属性:界面只认「输出设备」这一个抽象,
@@ -1107,7 +1135,7 @@ pub fn push_playback(ui: &MainWindow, remote: &Remote) {
     };
     // 播放页那两行也跟着换,封面跟着走 —— 换歌那一拍取一次。
     // ponytail: 点云与极光不跟。它们要的是解码出来的裸像素,而遥控时播放页
-    // 本来就没在渲染;要它们的话把 `decode` 的第二个返回值接上去即可。
+    // 本来就没在渲染;要它们的话把 `decode_off_thread` 给的 `pixels` 与 `colors` 接上去即可。
     sync_cover(ui, remote, &track);
     ui.global::<crate::Viz>()
         .set_now_title(track.title.clone().into());
@@ -1277,11 +1305,20 @@ fn sync_cover(
         let Ok(bytes) = api::fetch_bytes(&url).await else {
             return;
         };
-        let Some((image, _)) =
-            crate::imagery::cover::decode(&bytes)
+        // 解码在后台线程上;排队轮到时已经切走就不解(#137 ⑥)
+        let wanted = {
+            let (remote, id) = (remote.clone(), id.clone());
+            move || remote.cover_is_current(&id)
+        };
+        let Some(decoded) =
+            crate::imagery::cover::decode_off_thread(
+                bytes, wanted,
+            )
+            .await
         else {
             return;
         };
+        let image = slint::Image::from_rgba8(decoded.full);
         // 连着切歌时先发的请求可能后回来,那时它已经不是当前这首。
         if !remote.cover_is_current(&id) {
             return;

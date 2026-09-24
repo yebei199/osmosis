@@ -51,7 +51,7 @@ pub(in crate::music) fn play_current(
         ))
         .into(),
     );
-    push_rows(ui, deck, Some(&track.id));
+    mark_loading(ui, deck, Some(&track.id));
 
     // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
     ui.global::<Player>()
@@ -91,18 +91,32 @@ pub(in crate::music) fn play_current(
     // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
     deck.media.clear_art();
 
+    // 这一首的封面轮次:后台解码排队时问它,轮到时已经切走就不解(#137 ⑥)
+    let turn = deck
+        .cover_turn
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     if let Some(url) = track.cover.clone() {
         let weak = ui.as_weak();
         let cover = deck.cover.clone();
         let media = deck.media.clone();
         let playback = deck.playback.clone();
         let id = track.id.clone();
+        let turns = deck.cover_turn.clone();
         slint::spawn_local(async move {
             // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
-            // 同一次解码喂两处:界面的封面卡,以及点云的采样纹理。
+            // 同一次解码喂几处:界面的封面卡、点云的采样纹理、极光的三个主色。
+            // 解码与取色在后台线程上做,UI 线程只剩把像素包成图那一下。
+            let still_this_track = move || {
+                turns.load(std::sync::atomic::Ordering::SeqCst) == turn
+            };
             if let Ok(bytes) = api::fetch_bytes(&url).await
-                && let Some((img, pixels)) =
-                    crate::imagery::cover::decode(&bytes)
+                && let Some(decoded) =
+                    crate::imagery::cover::decode_off_thread(
+                        bytes,
+                        still_this_track,
+                    )
+                    .await
                 && let Some(ui) = weak.upgrade()
             {
                 // 连按下一首时,先发的请求可能后回来。到这时它已经不是当前这首,
@@ -113,11 +127,13 @@ pub(in crate::music) fn play_current(
                 {
                     return;
                 }
-                ui.global::<Viz>().set_cover_art(img);
+                ui.global::<Viz>().set_cover_art(
+                    slint::Image::from_rgba8(decoded.full),
+                );
                 // 一张图四个去处:封面卡、点云、媒体控件,以及极光的三团光斑。
                 // `Arc` 免掉后面几个各拷一份兆级字节。
-                let pixels = Arc::new(pixels);
-                crate::shader::aurora::feed(&ui, &pixels);
+                let pixels = Arc::new(decoded.pixels);
+                crate::shader::aurora::feed_colors(&ui, decoded.colors);
                 cover.replace(pixels.clone());
                 media.set_art(pixels);
                 crate::media::push(&ui, &playback, &media);
@@ -204,7 +220,7 @@ pub(in crate::music) fn play_current(
             }
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
-            push_rows(&ui, &deck, None);
+            mark_loading(&ui, &deck, None);
             // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
             crate::media::push(
                 &ui,
@@ -380,6 +396,60 @@ pub(in crate::music) fn start_auto_advance(
     // ponytail: 定时器与进程同寿,leak 掉省一条把 Timer 递回平台入口的通道;
     // 真要按页开关时再把它挂到 Deck 上管理。
     Box::leak(Box::new(timer));
+}
+
+/// 进度快档的间隔。权威位置仍由每秒那一趟给,这一档只让进度条走得连续。
+#[cfg(not(target_arch = "wasm32"))]
+const PROGRESS_TICK: core::time::Duration =
+    core::time::Duration::from_millis(250);
+
+/// 进度的快档(#137 ⑥):每 [`PROGRESS_TICK`] 读一次此刻的位置推给进度条。
+///
+/// 本机读播放器本身(它就是执行端,位置是准的);遥控读被控端最近那份上报,
+/// 按本地时钟推算(见 `sync::remote::push_progress`)。没在出声时什么都不做 ——
+/// 停着的进度条没有东西可推,也不该为它每秒重绘四次。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn start_progress_tick(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        PROGRESS_TICK,
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.global::<Player>().get_is_playing() {
+                tick_progress(&ui, &deck);
+            }
+        },
+    );
+    // ponytail: 与自动续播那趟一样与进程同寿,leak 掉省一条回收通道。
+    Box::leak(Box::new(timer));
+}
+
+/// 进度快档的一拍。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn tick_progress(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
+    if deck.remote.is_remote() {
+        crate::sync::remote::push_progress(
+            ui,
+            &deck.remote,
+        );
+        return;
+    }
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    let state = deck.playback.borrow().state().clone();
+    if matches!(state, PlaybackState::Playing(_)) {
+        push_progress(ui, &state, player.position());
+    }
 }
 
 /// 把当前进度推给界面。

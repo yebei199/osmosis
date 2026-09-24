@@ -155,14 +155,54 @@ fn fill(
     art: &crate::imagery::artwork::Artwork,
     lists: &[PlaylistDto],
 ) {
+    use slint::Model as _;
+
     let rows: Vec<PlaylistRow> =
         lists.iter().map(to_row).collect();
-    ui.global::<Library>().set_playlists(
-        slint::ModelRc::new(slint::VecModel::from(rows)),
-    );
+    let model = ui.global::<Library>().get_playlists();
+    match model
+        .as_any()
+        .downcast_ref::<slint::VecModel<PlaylistRow>>()
+    {
+        Some(shown) => update_in_place(shown, rows),
+        None => ui.global::<Library>().set_playlists(
+            slint::ModelRc::new(slint::VecModel::from(
+                rows,
+            )),
+        ),
+    }
     // 行先摆上,封面随后回填 —— 等图到齐再摆的话,
     // 网络慢时整张列表都是空的。
     fetch_covers(ui, art, lists);
+}
+
+/// 原地改成 `rows` 那一份:只动有变化的行,多了截掉、少了补上(#137 ⑥)。
+///
+/// 整表换模型会让行元素整批重建,正落在旧行上的那一下点击就被吞了 —— ④ 真机上
+/// 登录刚回来时点「我喜欢的」就这样丢过一次。同一个歌单已经取到的封面留着:
+/// 新行里的封面是空的,拿它去比就每行都「变了」。
+fn update_in_place(
+    shown: &slint::VecModel<PlaylistRow>,
+    rows: Vec<PlaylistRow>,
+) {
+    use slint::Model as _;
+
+    for (index, mut row) in rows.iter().cloned().enumerate()
+    {
+        let Some(old) = shown.row_data(index) else {
+            shown.push(row);
+            continue;
+        };
+        if old.id == row.id && old.source == row.source {
+            row.cover = old.cover.clone();
+        }
+        if old != row {
+            shown.set_row_data(index, row);
+        }
+    }
+    while shown.row_count() > rows.len() {
+        shown.remove(shown.row_count() - 1);
+    }
 }
 
 /// 报一次失败。走横幅,不走播放状态行(见 `crate::notice`)。
@@ -207,5 +247,63 @@ mod tests {
             2,
             "这一句该能点进个人页"
         );
+    }
+
+    fn list(id: &str, name: &str) -> PlaylistDto {
+        PlaylistDto {
+            source: app_core::PlaylistSource::Platform,
+            id: id.to_owned(),
+            name: name.to_owned(),
+            cover: None,
+            track_count: 3,
+        }
+    }
+
+    /// `/playlists` 回来一份新的:原地改有变化的那几行,不整表换模型(#137 ⑥)。
+    ///
+    /// 换模型会让行元素整批重建,正落在旧行上的那一下点击就被吞了 —— ④ 真机上
+    /// 登录刚回来时点「我喜欢的」就这样丢过一次。
+    #[test]
+    fn a_fresh_playlist_list_updates_rows_in_place() {
+        use slint::Model as _;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = MainWindow::new().expect("建不出主窗口");
+        let art =
+            crate::imagery::artwork::Artwork::default();
+
+        fill(
+            &ui,
+            &art,
+            &[list("1", "甲"), list("2", "乙")],
+        );
+        let model = ui.global::<Library>().get_playlists();
+
+        fill(
+            &ui,
+            &art,
+            &[
+                list("1", "甲"),
+                list("2", "乙改"),
+                list("3", "丙"),
+            ],
+        );
+
+        let now = ui.global::<Library>().get_playlists();
+        assert!(now == model, "歌单列表整张换了模型");
+        let names: Vec<String> = now
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        assert_eq!(names, ["甲", "乙改", "丙"]);
+
+        fill(&ui, &art, &[list("3", "丙")]);
+        let names: Vec<String> = ui
+            .global::<Library>()
+            .get_playlists()
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        assert_eq!(names, ["丙"], "变短了就截掉多出来的行");
     }
 }
