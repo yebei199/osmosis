@@ -61,6 +61,9 @@ def handles(args, win, element_id):
 
 def text_of(args, handle):
     props = mcp(args, "get_element_properties", {"elementHandle": handle})
+    if not isinstance(props, dict):
+        # 句柄在两次调用之间失效了(元素被重建),回的是一句报错。
+        return ""
     return props.get("accessibleLabel") or props.get("text") or props.get("accessibleValue") or ""
 
 
@@ -94,12 +97,15 @@ def clock_seconds(text):
 
 
 def checked(args, handle):
-    return bool(mcp(args, "get_element_properties", {"elementHandle": handle}).get("accessibleChecked"))
+    props = mcp(args, "get_element_properties", {"elementHandle": handle})
+    return isinstance(props, dict) and bool(props.get("accessibleChecked"))
 
 
 def open_drawer(args, win):
     drawer, _ = button(args, win, lambda label: label == "更多")
     if drawer is None:
+        if button(args, win, lambda label: label == "收起更多")[0] is not None:
+            return  # 已经开着
         sys.exit("找不到抽屉键 —— 控制条不在(本机没在放?)")
     mcp(args, "click_element", {"elementHandle": drawer})
     time.sleep(1)
@@ -122,6 +128,15 @@ def chip_for(args, win):
     return chip, label
 
 
+def clock_at(args, port, win):
+    """那台控制条上的时间读数,秒。`port` 为空就读遥控器自己。"""
+    if port is None:
+        return clock_seconds(element_text(args, win, "PlayerBar::clock"))
+    other = argparse.Namespace(port=port, ns_pid=None)
+    other_win = mcp(other, "list_windows", {})["windowHandles"][0]
+    return clock_seconds(element_text(other, other_win, "PlayerBar::clock"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8091)
@@ -130,11 +145,13 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--watch", type=float, default=20.0, help="最多盯多少秒等迁移确认")
     parser.add_argument("--settle", type=float, default=4.0, help="确认之后再等几秒读进度")
+    parser.add_argument("--before-port", type=int, help="选之前的进度读哪台(缺省读遥控器自己;手机竖屏的控制条没有时间读数)")
+    parser.add_argument("--after-port", type=int, help="确认之后的进度读哪台(比如目标自己的控制条)")
     args = parser.parse_args()
 
     win = mcp(args, "list_windows", {})["windowHandles"][0]
     before_title = element_text(args, win, "PlayerBar::title")
-    before_clock = clock_seconds(element_text(args, win, "PlayerBar::clock"))
+    before_clock = clock_at(args, args.before_port, win)
     if not before_title:
         sys.exit("选设备之前控制条就不在 —— 先在遥控器上放一首")
 
@@ -172,7 +189,7 @@ def main():
         failures.append(f"{args.watch}s 内迁移没确认(那颗芯片没被选中)")
     else:
         time.sleep(args.settle)
-        after_clock = clock_seconds(element_text(args, win, "PlayerBar::clock"))
+        after_clock = clock_at(args, args.after_port, win)
         print(f"确认最迟在点下后 {confirmed_at - clicked:.2f}s 采到,之后 {args.settle}s 读数 {after_clock}s")
         if before_clock is not None and after_clock is not None and after_clock < before_clock:
             failures.append(f"进度从 {before_clock}s 退到了 {after_clock}s —— 不是接着放")

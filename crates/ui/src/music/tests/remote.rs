@@ -1036,3 +1036,33 @@ fn a_remote_that_has_not_reported_yet_is_not_moved() {
     assert!(!deck.remote.is_moving());
     assert_eq!(deck.remote.take_local_effect(), None);
 }
+
+/// 迁移停在「待确认」上时,源那台再久没上报也**不**按失联收回本机。
+///
+/// 真机上撞到过:源被冻住,十五秒没上报,失联那条收尾把进行中的迁移一并丢掉 ——
+/// 「待确认」与两颗键凭空消失,新目标还被锁着,用户连处理的入口都没了。
+/// 迁移进行中由迁移自己的超时与「待确认」管,不归失联管。
+#[test]
+fn a_move_waiting_for_confirmation_is_not_dropped_as_lost() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    let now = crate::sync::remote::now_ms();
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(report(
+                30_000,
+                app_core::RemotePlayState::Playing,
+            )),
+        },
+        &deck.remote,
+    );
+    select_output(&ui, &deck, "tablet");
+    assert!(deck.remote.is_moving(), "迁移该开始了");
+
+    let gave_up = deck.remote.give_up_if_lost_at(now + 60_000);
+
+    assert!(!gave_up, "迁移进行中不该按失联收回本机");
+    assert!(deck.remote.is_moving(), "进行中的迁移不该被丢掉");
+    assert_eq!(deck.remote.target_id().as_deref(), Some("pc"));
+}

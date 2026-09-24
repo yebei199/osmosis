@@ -364,6 +364,12 @@ impl Remote {
     ) -> bool {
         {
             let session = lock(&self.inner.session);
+            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。源被冻住或断网时
+            // 这里本来会按失联收回本机,把「待确认」与处理入口一并丢掉 —— 而那正是
+            // 该交给用户处理的时候。
+            if session.moving().is_some() {
+                return false;
+            }
             if !lost_remote(
                 session.output(),
                 &lock(&self.inner.view),
@@ -390,7 +396,17 @@ impl Remote {
     ) {
         let message =
             describe(lock(&self.inner.session).output());
+        let abandoned = lock(&self.inner.session)
+            .moving()
+            .map(|moving| moving.operation_id.clone());
         lock(&self.inner.session).come_home();
+        // 收回本机时若正在迁移,把服务端那一次也作罢:不然被拉进来的那台一直锁着。
+        // 已经失权的话服务端会拒掉这一条,无害。
+        if let (Some(operation_id), Some(client)) =
+            (abandoned, self.inner.client.get())
+        {
+            client.abort_outputs(&operation_id);
+        }
         self.inner
             .rest_pending
             .store(true, Ordering::Relaxed);
