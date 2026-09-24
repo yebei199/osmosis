@@ -107,14 +107,14 @@ pub(crate) struct Upstream {
 /// 进程的全部共享状态。
 ///
 /// 四样东西凑在一起只是因为 handler 需要它们,彼此之间没有关系:
-/// 上游连接、自家的库、注册用的邀请码,以及同播的在线名册。
+/// 上游连接、自家的库、注册用的邀请码,以及信令的在线名册。
 #[derive(Clone)]
 pub(crate) struct AppState {
     upstream: Upstream,
     pool: PgPool,
     /// 注册时必须对上的邀请码,由环境变量 `INVITE_CODE` 给。
     invite: String,
-    /// 同播的在线名册。与音乐那几条路由毫无关系,只是同住一个进程 ——
+    /// 信令的在线名册。与音乐那几条路由毫无关系,只是同住一个进程 ——
     /// 但 `/signal` 要鉴权,而鉴权提取器要池,两者因此必须在同一份 state 里。
     roster: SharedRoster,
     /// 遥控器模式的控制权槽位。与名册同住一个进程、同样只在内存里 ——

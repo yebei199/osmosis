@@ -1,4 +1,4 @@
-//! 同播的线上格式:设备名册与双向信令。
+//! 信令的线上格式:设备名册、握手与遥控的双向消息。
 
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,7 @@ use crate::{RemoteCommand, RemoteStateDto};
 /// 一台在线设备。
 ///
 /// 「在线」没有别的含义:它**等于**此刻与服务端之间存在活跃连接。
-/// 服务端不记忆离线设备,所以名册里出现过就是现在能推流的(见 `docs/adr/0009`)。
+/// 服务端不记忆离线设备,所以名册里出现过就是现在能遥控的(见 `docs/adr/0009`)。
 ///
 /// **归属不在这里**:设备属于哪个账号由服务端从连接的 token 定,不由设备自报。
 /// 让它自报的话,任何人都能把自己塞进别人的名册,而那不会报任何错。
@@ -36,8 +36,9 @@ pub struct DeviceDto {
 /// 限的是**完整的 WebSocket message**,不是单个 frame:原生分帧在末尾仍然合并
 /// 计数,拆帧绕不过去。
 ///
-/// 数值本身:信令原本只有 SDP 与 ICE 候选,几 KiB 顶天,64 KiB 已经给得很松,
-/// 而放大它意味着一条连接能让服务端为它单独攒出这么多内存。真正大的载荷
+/// 数值本身:遥控的命令与上报都是几百字节(当初按同播的 SDP 与 ICE 候选定的,
+/// 那些也不过几 KiB),64 KiB 已经给得很松,而放大它意味着一条连接能让服务端
+/// 为它单独攒出这么多内存。真正大的载荷
 /// (整批曲目)该换一条路走,不该靠抬高这个数(见 #109)。
 pub const MAX_SIGNAL_BYTES: usize = 64 * 1024;
 
@@ -63,15 +64,6 @@ pub enum ClientSignal {
         #[serde(default)]
         protocol_version: u32,
     },
-    /// 转给另一台设备。`payload` 是 SDP 或 ICE 候选。
-    Signal {
-        /// 目标设备 id。**只发给它一台** —— 广播会让每台设备都以为自己被邀请。
-        to: String,
-        /// 对服务端**不透明**的一段文本。它是信令服务器,不是 WebRTC 的参与方,
-        /// 解析这里等于把上游协议的演化绑到服务端上。
-        payload: String,
-    },
-
     /// 接管这台设备:本机要当它的遥控器。
     ClaimControl {
         target: String,
@@ -123,7 +115,7 @@ pub enum ServerSignal {
     ///
     /// | 客户端 | 服务端 | 发生什么 |
     /// |---|---|---|
-    /// | 新 | 新 | 收到 `Welcome{3}`,对得上,照常入册 |
+    /// | 新 | 新 | 收到 `Welcome{4}`,对得上,照常入册 |
     /// | 旧 | 新 | 服务端认出 `protocol_version` 缺省的 0,发一条 `Welcome` 就关掉连接、**不入册**;旧端解不出这条消息,但它启动时的 `/health` 自检已经说过话了 |
     /// | 新 | 旧 | 这条**永远不来**。客户端在收到第一条 `Roster` 时还没见过它,据此判定对端太旧 —— 名册到得了,控制权申请由客户端自己挡下 |
     /// | 旧 | 旧 | 谁也不认识它,照旧 |
@@ -134,13 +126,11 @@ pub enum ServerSignal {
     /// 当前在线的全部设备,含收信者自己 —— 谁该被过滤掉是显示问题,归客户端。
     ///
     /// 由服务端**主动推送**,每次名册变化都推。让客户端轮询的话,
-    /// 一台设备下线到别人发现之间会有一段空窗,而那段时间里推流必然失败。
+    /// 一台设备下线到别人发现之间会有一段空窗,而那段时间里接管必然失败。
     Roster { devices: Vec<DeviceDto> },
-    /// 另一台设备转来的信令,`payload` 原样。
-    Signal { from: String, payload: String },
     /// 这条消息没能送到。
     ///
-    /// 必须回,不能静默丢弃:主控发了 offer 就会等应答,丢了它会一直等下去。
+    /// 必须回,不能静默丢弃:遥控器发了接管就会等答复,丢了它会一直等下去。
     Error { code: String, message: String },
 
     /// 接管成功。`generation` 是这一次控制权的代次。
@@ -190,4 +180,32 @@ pub enum ServerSignal {
     /// 带整个 `DeviceDto` 而不只是 id:横幅上要写的是人看得懂的名字,
     /// 而 id 是「主机名-进程号」。
     ControlledBy { device: DeviceDto },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 同播的 SDP/ICE 转发已经从协议里拿掉(#137):两个方向的 `signal`
+    /// 都解不出来。解得出来的话,服务端仍会替一个早已不存在的功能转发
+    /// 不透明载荷,那是一条谁都能用、谁都不再检查的通道。
+    #[test]
+    fn a_webrtc_relay_message_is_no_longer_part_of_the_protocol()
+     {
+        let upstream = serde_json::from_str::<ClientSignal>(
+            r#"{"type":"signal","to":"b","payload":"v=0"}"#,
+        );
+        let downstream = serde_json::from_str::<ServerSignal>(
+            r#"{"type":"signal","from":"a","payload":"v=0"}"#,
+        );
+
+        assert!(
+            upstream.is_err(),
+            "上行 signal 还解得出来: {upstream:?}"
+        );
+        assert!(
+            downstream.is_err(),
+            "下行 signal 还解得出来: {downstream:?}"
+        );
+    }
 }

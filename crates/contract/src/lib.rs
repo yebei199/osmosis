@@ -40,12 +40,16 @@ pub use sync::*;
 /// (队列标识、两个 revision、`entry_id`、长度,以及 `epoch` + `state_seq`
 /// 这一对顺序键)。两样都是删字段改语义,不兼容。
 ///
+/// 4:同播(WebRTC 推流)删除(#137,`docs/adr/0008` 废止)。`ClientSignal::Signal`
+/// 与 `ServerSignal::Signal` 两个变体没了:协议 3 的客户端还会发 SDP 转发,
+/// 新服务端不再认。删变体,不兼容。
+///
 /// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
 /// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
 /// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
 /// [`ClientSignal::Hello`] 的 `protocol_version` 与
 /// [`ServerSignal::Incompatible`]。
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// `GET /health` 的响应体。
 #[derive(

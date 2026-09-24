@@ -1,9 +1,7 @@
-//! 同播的信令端点:`GET /signal` 的 WebSocket 升级。
+//! 信令端点:`GET /signal` 的 WebSocket 升级。
 //!
-//! 服务端在同播里只干一件事 —— 把一台设备的 SDP/ICE 转给另一台。**载荷不解析**:
-//! 它不是 WebRTC 的参与方,解析等于把上游协议的演化绑到自己身上(`docs/adr/0008`)。
-//!
-//! 音频不经过这里。主控与听众之间是 P2P,服务端只负责让它们找到彼此。
+//! 这里管接入:握手与版本协商、入册出册、探活。消息进来之后交给遥控器模式的
+//! [`crate::syncplay::control`] 去转。当初同播的 SDP/ICE 转发也在这里,已删(#137)。
 //!
 //! 建连必须带 `Authorization: Bearer <token>`:**账号由服务端从 token 定**,
 //! 设备只自报 id 与名字(`DeviceDto`)。归属自报的话,任何人都能把自己塞进
@@ -235,7 +233,7 @@ pub async fn serve(
 
     // 探活:每 `ping_every` 发一次 Ping,连着 `misses` 次没有任何回音就判死。
     // 没有它的话,一条被路由器悄悄丢掉的连接要等 TCP 自己发现 —— 那是十几分钟,
-    // 而这段时间里名册一直说这台设备在线,谁往它推流谁卡住。
+    // 而这段时间里名册一直说这台设备在线,谁去遥控它谁卡住。
     let mut ping = tokio::time::interval(timing.ping_every);
     // interval 的第一次 tick 立刻就绪,先把它吃掉,免得刚连上就发一次 Ping。
     ping.tick().await;
@@ -418,7 +416,7 @@ async fn accept_hello(
 /// 把某个账号的名册推给它自己的全部在线设备。
 ///
 /// 每次名册变化都推,不让客户端轮询:一台设备下线到别人发现之间的空窗期里,
-/// 推流必然失败,而失败原因看起来会像是 WebRTC 出了问题。
+/// 接管必然失败,而界面上只看得到「按了没反应」。
 fn broadcast_roster(
     roster: &Roster<Sink>,
     account: AccountId,
@@ -447,7 +445,7 @@ fn route(
     match message {
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
-        // 遥控器模式那几条归 `crate::syncplay::control`:这里只管同播的转发。
+        // 其余几条都是遥控器模式的,归 `crate::syncplay::control`。
         remote @ (ClientSignal::ClaimControl { .. }
         | ClientSignal::ExitControlled
         | ClientSignal::Command { .. }
@@ -457,31 +455,9 @@ fn route(
         }) => crate::syncplay::control::route(
             roster, control, account, from, remote,
         ),
-        ClientSignal::Signal { to, payload } => {
-            let Some(target) = roster.sink(account, &to)
-            else {
-                return Some(ServerSignal::Error {
-                    code: "device_offline".to_owned(),
-                    message: format!("设备 {to} 不在线"),
-                });
-            };
-            // payload 原样转发 —— 不解析、不规范化、不裁剪空白。
-            let forwarded = ServerSignal::Signal {
-                from: from.to_owned(),
-                payload,
-            };
-            match target.try_send(forwarded) {
-                Ok(()) => None,
-                Err(_) => Some(ServerSignal::Error {
-                    code: "device_unreachable".to_owned(),
-                    message: format!(
-                        "设备 {to} 收不下消息"
-                    ),
-                }),
-            }
-        }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
@@ -511,126 +487,6 @@ mod tests {
         roster.join(ALICE, device("a"), sink_a);
         roster.join(ALICE, device("b"), sink_b);
         (roster, rx_a, rx_b)
-    }
-
-    /// 信令进了目标的收件箱,发信人自己的收件箱是空的。
-    #[test]
-    fn signal_reaches_only_the_target() {
-        let (roster, mut rx_a, mut rx_b) = two_devices();
-
-        let reply = route(
-            &roster,
-            &mut Control::default(),
-            ALICE,
-            "a",
-            ClientSignal::Signal {
-                to: "b".to_owned(),
-                payload: "v=0...".to_owned(),
-            },
-        );
-
-        assert!(reply.is_none(), "转发成功时不该有应答");
-        assert_eq!(
-            rx_b.try_recv(),
-            Ok(ServerSignal::Signal {
-                from: "a".to_owned(),
-                payload: "v=0...".to_owned(),
-            })
-        );
-        assert!(
-            rx_a.try_recv().is_err(),
-            "发信人不该收到自己的信令"
-        );
-    }
-
-    /// 载荷一个字节都不许改 —— 服务端不解析它,也就没有理由规范化它。
-    #[test]
-    fn payload_crosses_unmodified() {
-        let (roster, _rx_a, mut rx_b) = two_devices();
-        // 一段带换行、带非 ASCII、带前后空白的载荷:任何"顺手清理"都会露馅。
-        let payload = "  v=0\r\na=ice-ufrag:红蓮\r\n\r\n  "
-            .to_owned();
-
-        route(
-            &roster,
-            &mut Control::default(),
-            ALICE,
-            "a",
-            ClientSignal::Signal {
-                to: "b".to_owned(),
-                payload: payload.clone(),
-            },
-        );
-
-        assert_eq!(
-            rx_b.try_recv(),
-            Ok(ServerSignal::Signal {
-                from: "a".to_owned(),
-                payload,
-            })
-        );
-    }
-
-    /// 目标不在线要回错误。
-    ///
-    /// 静默丢弃的话主控发完 offer 就一直等应答,界面上表现为"卡住",
-    /// 而真实原因是对方早就下线了。
-    #[test]
-    fn signal_to_offline_device_reports_error() {
-        let (roster, _rx_a, _rx_b) = two_devices();
-
-        let reply = route(
-            &roster,
-            &mut Control::default(),
-            ALICE,
-            "a",
-            ClientSignal::Signal {
-                to: "不在线".to_owned(),
-                payload: "v=0...".to_owned(),
-            },
-        );
-
-        assert!(
-            matches!(
-                reply,
-                Some(ServerSignal::Error { ref code, .. })
-                    if code == "device_offline"
-            ),
-            "实得 {reply:?}"
-        );
-    }
-
-    /// 发给别人账号下的设备,一律当作不在线 —— 而且真的没送过去。
-    #[test]
-    fn signal_across_accounts_is_refused() {
-        let (mut roster, _rx_a, _rx_b) = two_devices();
-        let (sink_c, mut rx_c) =
-            mpsc::channel(OUTBOX_CAPACITY);
-        roster.join(BOB, device("c"), sink_c);
-
-        let reply = route(
-            &roster,
-            &mut Control::default(),
-            ALICE,
-            "a",
-            ClientSignal::Signal {
-                to: "c".to_owned(),
-                payload: "v=0...".to_owned(),
-            },
-        );
-
-        assert!(
-            matches!(
-                reply,
-                Some(ServerSignal::Error { ref code, .. })
-                    if code == "device_offline"
-            ),
-            "实得 {reply:?}"
-        );
-        assert!(
-            rx_c.try_recv().is_err(),
-            "消息不该落到别人账号的设备上"
-        );
     }
 
     /// 名册变化推给每一台在线设备,而不是只推给变化的那台。
