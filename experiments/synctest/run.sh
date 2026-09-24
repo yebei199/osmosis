@@ -35,6 +35,20 @@ python_() {
     -c python3 "$@"
 }
 
+# 出声的轮次开跑前读一次小米的媒体音量(STREAM_MUSIC)。是 0 就录不到任何东西,而跑完
+# 分析照样出一张像模像样的表 —— 2026-09-24 的轮 0 就是这样作废的。读不出也按不能跑算。
+check_volume() {
+  local out=$1 volume
+  [ "$GAIN" = 0 ] && return
+  volume=$(adb_ shell cmd media_session volume --stream 3 --get 2>/dev/null \
+    | grep -oE 'volume is [0-9]+' | grep -oE '[0-9]+' || true)
+  if [ -z "$volume" ] || [ "$volume" -eq 0 ]; then
+    echo "小米媒体音量是 ${volume:-读不出},录到的会是静音。调好音量再跑。" >&2
+    exit 3
+  fi
+  echo "小米媒体音量 $volume" | tee "$out/volume.txt"
+}
+
 seek_args() {
   [ -n "$SEEK_AT" ] && echo "--seek-at $SEEK_AT --seek-by $SEEK_BY" || true
 }
@@ -77,6 +91,7 @@ analyze() {
 cmd_self() {
   local out=$1 secs=${2:-180}
   mkdir -p "$out"
+  check_volume "$out"
   local rec_secs=$(( secs + START_IN + 8 ))
   phone_bg "$out/record.log" ./synctest record --out rec.wav --secs "$rec_secs"
   sleep 1
@@ -112,6 +127,7 @@ pc_prepare() {
 cmd_pair() {
   local out=$1 secs=${2:-300}
   mkdir -p "$out"
+  check_volume "$out"
   pc_prepare
   # 小米当服务端:电脑的防火墙挡入站,而电脑连出去、收回包都放行。计划的权威在哪一端
   # 不影响测的东西。无线 adb 的序列号就是小米的 IP:端口。
