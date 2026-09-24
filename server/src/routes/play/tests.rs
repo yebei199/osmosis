@@ -131,7 +131,7 @@ async fn an_mp3_source_is_passed_through_byte_for_byte() {
     let response = download(
         State(state),
         account,
-        Path("dl_mp3-1".to_owned()),
+        Path(testing::track_id("dl_mp3", 1)),
     )
     .await
     .expect("mp3 源应当直接给得出来");
@@ -161,7 +161,7 @@ async fn a_non_mp3_source_comes_back_as_real_mp3() {
     let response = download(
         State(state),
         account,
-        Path("dl_wav-1".to_owned()),
+        Path(testing::track_id("dl_wav", 1)),
     )
     .await
     .expect("转码路不该失败");
@@ -213,7 +213,7 @@ async fn a_trial_only_source_is_refused_with_its_own_code()
     let (code, body) = download(
         State(state),
         account,
-        Path("dl_trial-1".to_owned()),
+        Path(testing::track_id("dl_trial", 1)),
     )
     .await
     .expect_err("试听片段不该下得下来");
@@ -228,8 +228,10 @@ async fn a_trial_only_source_is_refused_with_its_own_code()
 async fn the_file_name_follows_the_track_detail() {
     let url =
         serve_bytes(vec![0xFF, 0xFB, 0x90, 0x00]).await;
-    let mut track =
-        testing::upstream_track("dl_name-1", "残響散歌");
+    let mut track = testing::upstream_track(
+        &testing::track_id("dl_name", 1),
+        "残響散歌",
+    );
     track.artists[0].name = "Aimer".to_owned();
     let (state, account) =
         fixture("dl_name", source(url, "mp3"), vec![track])
@@ -238,7 +240,7 @@ async fn the_file_name_follows_the_track_detail() {
     let response = download(
         State(state),
         account,
-        Path("dl_name-1".to_owned()),
+        Path(testing::track_id("dl_name", 1)),
     )
     .await
     .expect("mp3 源应当直接给得出来");
@@ -297,7 +299,7 @@ async fn an_upstream_error_page_is_not_served_as_audio() {
     let (code, _) = download(
         State(state),
         account,
-        Path("dl_expired-1".to_owned()),
+        Path(testing::track_id("dl_expired", 1)),
     )
     .await
     .expect_err("平台的错误页不该被当成音频");
@@ -309,9 +311,12 @@ async fn an_upstream_error_page_is_not_served_as_audio() {
 fn probe(bytes: &[u8]) -> (String, i64) {
     use std::io::Write as _;
 
-    let mut file = tempfile();
-    file.1.write_all(bytes).expect("写不进临时文件");
-    drop(file.1);
+    // ffprobe 要一个能 seek 的输入,管道给不了。后缀留着给它当格式提示
+    let mut file = tempfile::Builder::new()
+        .suffix(".mp3")
+        .tempfile()
+        .expect("建不出临时文件");
+    file.write_all(bytes).expect("写不进临时文件");
 
     let out = std::process::Command::new("ffprobe")
         .args([
@@ -322,10 +327,9 @@ fn probe(bytes: &[u8]) -> (String, i64) {
             "-of",
             "default=noprint_wrappers=1:nokey=1",
         ])
-        .arg(&file.0)
+        .arg(file.path())
         .output()
         .expect("跑不了 ffprobe —— 转码路要求它在 PATH 上");
-    let _ = std::fs::remove_file(&file.0);
 
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines();
@@ -337,15 +341,4 @@ fn probe(bytes: &[u8]) -> (String, i64) {
             .parse()
             .unwrap_or_default(),
     )
-}
-
-/// 一个自己起名字的临时文件。ffprobe 要一个能 seek 的输入,管道给不了。
-fn tempfile() -> (std::path::PathBuf, std::fs::File) {
-    let path = std::env::temp_dir().join(format!(
-        "osmosis-probe-{}.mp3",
-        std::process::id()
-    ));
-    let file = std::fs::File::create(&path)
-        .expect("建不出临时文件");
-    (path, file)
 }

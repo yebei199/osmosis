@@ -13,3 +13,4 @@ publish = false
 # 只有 `cargo test -p xtask` 才会拉它。
 [dev-dependencies]
 similar-asserts.workspace = true
+tempfile.workspace = true

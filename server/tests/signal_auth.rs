@@ -89,11 +89,16 @@ async fn pool() -> PgPool {
 /// 造一个账号并登录,返回可用的 token。
 ///
 /// 不在事务里跑:服务端从池里另取连接查 token,没提交的那一行它看不见。
-/// 所以每条测试用自己的账号名,开跑先删掉上一轮的残留。
-async fn token_for(
-    pool: &PgPool,
-    username: &str,
-) -> String {
+/// 所以账号名带上本进程独有的前缀,开发库是整机一份,并行的另一份测试删不到
+/// 这边的账号(#136)。前缀与 `src/routes/testing.rs` 的 `RUN` 同一个格式,
+/// 那边清陈旧测试账号时连这里的一起清。
+async fn token_for(pool: &PgPool, case: &str) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("系统时钟早于 1970")
+        .as_secs();
+    let username =
+        &format!("t{secs}p{}-{case}", std::process::id());
     sqlx::query(
         "DELETE FROM accounts WHERE lower(username) = lower($1)",
     )

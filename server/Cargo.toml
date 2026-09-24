@@ -64,6 +64,7 @@ tonic-prost-build.workspace = true
 
 [dev-dependencies]
 similar-asserts.workspace = true
+tempfile.workspace = true
 # 信令测试要当**客户端**连自己的 WebSocket。axum 只提供服务端那一半,
 # 客户端另找一个 —— tungstenite 是 axum 自己底下用的那套,协议实现一致。
 tokio-tungstenite = "0.28"

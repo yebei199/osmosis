@@ -6,10 +6,15 @@
 //! 因此由 `build.rs` 一并生成,见那里的说明。
 //!
 //! 库不回滚。`cached_tracks` 自己从池里取连接,没法把它塞进测试的事务里 ——
-//! 所以每条测试用固定的账号名与 id 前缀,开跑先把上一轮的残留删掉。
+//! 所以账号名与曲目 id 都带上本次测试进程独有的前缀([`scoped`]):开发库是
+//! 整机一份,同一台机器上并行的另一份测试删不到、也覆盖不了这边的行(#136)。
+//! 前缀里带着进程起跑的时刻,早于一天的由 [`sweep_stale_runs`] 清掉,
+//! 开发库因此不会越堆越多。
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use contract::TrackDto;
 use sqlx::PgPool;
@@ -74,22 +79,79 @@ pub(crate) async fn pool() -> PgPool {
     })
 }
 
-/// 造一个干净的账号,并清掉上一轮留下的曲目详情。
+/// 本次测试进程的标签:`t<起跑的 Unix 秒>p<进程号>`。
 ///
-/// 用固定的名字而不是随机名:随机名只会在开发库里越堆越多,而这里要的是
-/// 「重复跑第二遍与第一遍看到的一样」。账号一删,它名下的成员关系跟着
-/// 级联走;详情不挂账号,按 id 前缀单独删。
+/// 进程号保证同一时刻活着的两份测试不撞名;起跑时刻让 [`sweep_stale_runs`]
+/// 认得出哪些是早已结束的进程留下的。两段都是数字,格式由那里的正则认。
+static RUN: LazyLock<String> = LazyLock::new(|| {
+    format!("t{}p{}", unix_secs(), std::process::id())
+});
+
+/// 别的进程留下的行,起跑早于这么久才清。远长于一次测试,
+/// 所以清掉的不可能是还在跑的那一份。
+const STALE_AFTER: Duration =
+    Duration::from_secs(24 * 60 * 60);
+
+fn unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("系统时钟早于 1970")
+        .as_secs()
+}
+
+/// 这条测试在共享库里用的名字:本进程的标签加上测试名。
+///
+/// 账号名、曲目 id 前缀都从这里出,调用方只给测试名 —— 整机共享的名字
+/// 传不进来。
+pub(crate) fn scoped(case: &str) -> String {
+    format!("{}-{case}", *RUN)
+}
+
+/// 清掉起跑早于 [`STALE_AFTER`] 的测试进程留下的账号、曲目详情与存档账目。
+///
+/// 每个进程只清一次。账号一删,名下的成员关系、队列跟着级联走;详情与账目不挂
+/// 账号,按 id 前缀单独删。
+async fn sweep_stale_runs(conn: &mut sqlx::PgConnection) {
+    static SWEPT: AtomicBool = AtomicBool::new(false);
+    if SWEPT.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let cutoff = unix_secs() - STALE_AFTER.as_secs();
+    for (table, column) in [
+        ("accounts", "username"),
+        ("platform_tracks", "track_id"),
+        ("stored_tracks", "track_id"),
+    ] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} \
+             WHERE {column} ~ '^t[0-9]+p[0-9]+-' \
+               AND substring({column} from '^t([0-9]+)p')::bigint < $1"
+        ))
+        .bind(i64::try_from(cutoff).expect("时间戳越界"))
+        .execute(&mut *conn)
+        .await
+        .unwrap_or_else(|err| panic!("清 {table} 的陈旧测试行失败: {err}"));
+    }
+}
+
+/// 造一个干净的账号,名字是 [`scoped`] 给的那个,并清掉同名前缀的曲目详情。
+///
+/// 同一进程里同一个测试名只会造一次,那两条删除只是保险;真正防并行互删的
+/// 是名字里的进程标签。
 pub(crate) async fn fresh_account(
     pool: &PgPool,
-    name: &str,
+    case: &str,
 ) -> Account {
+    let name = scoped(case);
     let mut conn =
         pool.acquire().await.expect("取不到数据库连接");
+    sweep_stale_runs(&mut conn).await;
 
     sqlx::query(
         "DELETE FROM accounts WHERE lower(username) = lower($1)",
     )
-    .bind(name)
+    .bind(&name)
     .execute(&mut *conn)
     .await
     .expect("清账号失败");
@@ -104,7 +166,7 @@ pub(crate) async fn fresh_account(
 
     register(
         &mut conn,
-        name,
+        &name,
         "correct horse",
         INVITE,
         INVITE,
@@ -113,10 +175,10 @@ pub(crate) async fn fresh_account(
     .expect("注册应该成功")
 }
 
-/// 这条测试自己的曲目 id。带上测试名,几条测试并行时互不干扰,
-/// 也让 [`fresh_account`] 的前缀删除只删自己那一批。
+/// 这条测试自己的曲目 id,前缀与 [`fresh_account`] 的账号名相同,
+/// 所以那里的前缀删除只删自己那一批。
 pub(crate) fn track_id(case: &str, n: usize) -> String {
-    format!("{case}-{n}")
+    format!("{}-{n}", scoped(case))
 }
 
 /// 上游给的一首歌。

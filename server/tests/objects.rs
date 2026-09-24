@@ -1,6 +1,7 @@
 //! S3 客户端对着真的 RustFS 跑:存、问在不在、签给客户端的链接能取(含 Range)、删。
 //!
-//! 起容器见 `just rustfs`。每条测试用自己的键,并行跑互不相干。
+//! 起容器见 `just rustfs`。每条测试用自己的键,并行跑互不相干;桶是整机一份,
+//! 所以键还带着本进程独有的前缀,同一台机器上另一份测试删不到这边的对象(#136)。
 
 use server::objects::{Objects, S3, S3Config};
 
@@ -31,6 +32,16 @@ async fn s3() -> S3 {
     s3
 }
 
+/// 这条测试在共享桶里的键:进程号保证同时活着的两份测试不撞,
+/// 起跑的纳秒时刻保证进程号被复用时也撞不上前一份留下的对象。
+fn unique_key(name: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("系统时钟早于 1970")
+        .as_nanos();
+    format!("tests/{}-{nanos}/{name}", std::process::id())
+}
+
 /// 一段有模式的字节,切一段出来也认得出是哪一段。
 fn payload() -> Vec<u8> {
     (0..64 * 1024u32).map(|i| (i % 251) as u8).collect()
@@ -40,7 +51,7 @@ fn payload() -> Vec<u8> {
 #[tokio::test]
 async fn put_then_fetch_then_delete() {
     let s3 = s3().await;
-    let key = "tests/roundtrip.mp3";
+    let key = &unique_key("roundtrip.mp3");
     let bytes = payload();
 
     s3.put(key, bytes.clone(), "audio/mpeg")
@@ -69,7 +80,7 @@ async fn put_then_fetch_then_delete() {
 #[tokio::test]
 async fn presigned_link_honours_range() {
     let s3 = s3().await;
-    let key = "tests/range.flac";
+    let key = &unique_key("range.flac");
     let bytes = payload();
     s3.put(key, bytes.clone(), "audio/flac")
         .await
@@ -87,13 +98,15 @@ async fn presigned_link_honours_range() {
         partial.bytes().await.unwrap(),
         bytes[1000..2000]
     );
+
+    s3.delete(key).await.expect("删应当成功");
 }
 
 /// 从来没存过的键答「不在」而不是报错;删它也不报错。
 #[tokio::test]
 async fn a_missing_key_is_absent_not_an_error() {
     let s3 = s3().await;
-    let key = "tests/never-put.mp3";
+    let key = &unique_key("never-put.mp3");
 
     assert!(!s3.exists(key).await.expect("问得到"));
     s3.delete(key).await.expect("删不存在的也算成功");

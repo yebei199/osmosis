@@ -297,6 +297,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "similar-asserts",
+ "tempfile",
  "tokio",
 ]
 
@@ -7982,6 +7983,7 @@ dependencies = [
  "sha2 0.10.9",
  "similar-asserts",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.28.0",
@@ -9683,6 +9685,7 @@ dependencies = [
  "slint",
  "slint-build",
  "syncplay",
+ "tempfile",
  "ttf-parser",
  "web-time",
 ]
@@ -11148,6 +11151,7 @@ name = "xtask"
 version = "0.1.18"
 dependencies = [
  "similar-asserts",
+ "tempfile",
 ]
 
 [[package]]

@@ -2,16 +2,6 @@ use similar_asserts::assert_eq;
 
 use super::*;
 
-/// 在系统临时目录下开一个干净的 fixture 目录,重跑不受上一次残留影响。
-fn fixture_dir(name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("xtask-{name}"));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir)
-        .expect("建不出临时 fixture 目录");
-    dir
-}
-
 /// 三个受支持的 ABI 都能解析,且映射到正确的 target triple。
 #[test]
 fn abi_parses_and_maps_to_triple() {
@@ -45,9 +35,9 @@ fn abis_flag_rejects_malformed_args() {
 /// platform jar 按 API level 的**数值**排序:android-9 不该赢过 android-34。
 #[test]
 fn picks_platform_jar_with_highest_api_level() {
-    let temp = std::env::temp_dir()
-        .join("xtask-newest-android-jar");
-    let _ = fs::remove_dir_all(&temp);
+    let tmp = tempfile::tempdir()
+        .expect("建不出临时 fixture 目录");
+    let temp = tmp.path();
     for level in ["9", "28", "34"] {
         let dir = temp
             .join("platforms")
@@ -56,13 +46,12 @@ fn picks_platform_jar_with_highest_api_level() {
         fs::write(dir.join("android.jar"), b"").unwrap();
     }
 
-    let jar = newest_android_jar(&temp).unwrap();
+    let jar = newest_android_jar(temp).unwrap();
     assert!(
         jar.to_str().unwrap().contains("android-34"),
         "选中了 {}",
         jar.display()
     );
-    let _ = fs::remove_dir_all(&temp);
 }
 
 /// `justfile` 的 `apk :=` 必须与 `OUTPUT_APK` 指同一个文件。
@@ -241,19 +230,20 @@ fn features_are_appended_only_when_asked() {
 /// 包白白变大,里面那份代码还是旧的,而整条流水线一句警告都不会给。
 #[test]
 fn clear_jni_libs_removes_a_previous_abis_libraries() {
-    let root = fixture_dir("clear-jni-libs-stale");
+    let tmp = tempfile::tempdir()
+        .expect("建不出临时 fixture 目录");
+    let root = tmp.path();
     let stale = root.join(JNI_LIBS).join("x86_64");
     fs::create_dir_all(&stale).unwrap();
     fs::write(stale.join("libapp_android.so"), b"old")
         .unwrap();
 
-    clear_jni_libs(&root).expect("清理 jniLibs 不该失败");
+    clear_jni_libs(root).expect("清理 jniLibs 不该失败");
 
     assert!(
         !root.join(JNI_LIBS).exists(),
         "jniLibs 还在,上一轮的 .so 会被打进这次的包"
     );
-    let _ = fs::remove_dir_all(&root);
 }
 
 /// jniLibs 还不存在时清理不算错。
@@ -263,14 +253,15 @@ fn clear_jni_libs_removes_a_previous_abis_libraries() {
 /// 报的还是"无法清理"这种看不出所以然的话。
 #[test]
 fn clear_jni_libs_accepts_a_missing_directory() {
-    let root = fixture_dir("clear-jni-libs-missing");
+    let tmp = tempfile::tempdir()
+        .expect("建不出临时 fixture 目录");
+    let root = tmp.path();
 
     assert_eq!(
-        clear_jni_libs(&root),
+        clear_jni_libs(root),
         Ok(()),
         "目录不存在时不该报错"
     );
-    let _ = fs::remove_dir_all(&root);
 }
 
 /// `--abis` 写坏时必须在碰工具链之前就退出。

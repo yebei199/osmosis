@@ -59,14 +59,14 @@ struct Fixture {
     hits: Arc<AtomicUsize>,
 }
 
-/// 摆好假上游、内存对象存储与账号;上一轮留下的账目按 id 前缀清掉。
+/// 摆好假上游、内存对象存储与账号;同一测试名留下的账目按 id 前缀清掉。
 async fn fixture(case: &str, trial: bool) -> Fixture {
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
     sqlx::query(
         "DELETE FROM stored_tracks WHERE track_id LIKE $1",
     )
-    .bind(format!("{case}-%"))
+    .bind(format!("{}-%", testing::scoped(case)))
     .execute(&pool)
     .await
     .expect("清账目失败");

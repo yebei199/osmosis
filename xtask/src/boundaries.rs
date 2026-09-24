@@ -36,6 +36,16 @@ const IMPURE_IN_APP_CORE: &[&str] = &[
     "std::fs",
 ];
 
+/// 全仓 `.rs` 里不许出现的调用:系统临时目录。
+///
+/// 拿它拼一个固定名字,同一台机器上并行的另一份测试就会删掉、覆盖这边的文件(#136)。
+/// 临时目录一律走 `tempfile`(名字唯一、用完即删)。正式代码眼下一处都不用它;
+/// 真要用时在这里给那个文件开豁免,而不是把检查缩回「只看测试」。
+const SHARED_TEMP_DIR: &str = "temp_dir()";
+
+/// 本文件自己要写出 [`SHARED_TEMP_DIR`] 当检查的目标与单测的输入,扫描跳过它。
+const THIS_FILE: &str = "xtask/src/boundaries.rs";
+
 /// 一条边界检查:通过返回 `Ok`,否则给出人话解释。
 type Check = fn() -> Result<(), String>;
 
@@ -47,10 +57,14 @@ pub fn verify(args: &[String]) -> Result<(), String> {
         );
     }
 
-    let checks: [(&str, Check); 3] = [
+    let checks: [(&str, Check); 4] = [
         (
             "contract 只依赖 serde",
             contract_has_no_io_crates,
+        ),
+        (
+            "临时目录不用整机共享的固定名字",
+            no_shared_temp_dir,
         ),
         (
             "app-core 不碰时钟、线程、文件系统",
@@ -162,6 +176,58 @@ fn scan_impure(
         );
     }
     Ok(())
+}
+
+/// #136:临时目录一律走 `tempfile`。扫仓库里所有未被忽略的 `.rs`,报文件与行号。
+fn no_shared_temp_dir() -> Result<(), String> {
+    let files = capture(
+        "git",
+        &[
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "*.rs",
+        ],
+    )?;
+
+    let mut found = Vec::new();
+    for file in
+        files.lines().filter(|file| *file != THIS_FILE)
+    {
+        let path = repo_root().join(file);
+        // 已删除但还没提交的文件仍在 `--cached` 里,读不到就跳过
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        found.extend(
+            temp_dir_lines(&source)
+                .into_iter()
+                .map(|line| format!("{file}:{line}")),
+        );
+    }
+
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} 调了 std::env::{SHARED_TEMP_DIR},改用 tempfile::tempdir()",
+        found.join("、")
+    ))
+}
+
+/// 源码里调了 [`SHARED_TEMP_DIR`] 的行,1-based。注释行跳过,理由同 [`impure_calls`]。
+fn temp_dir_lines(source: &str) -> Vec<usize> {
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            !line.trim_start().starts_with("//")
+                && line.contains(SHARED_TEMP_DIR)
+        })
+        .map(|(index, _)| index + 1)
+        .collect()
 }
 
 /// 契约的上游是 bang-dream,那是一个独立仓库,不以任何形式挂在本仓库里。
@@ -344,6 +410,35 @@ fn tick(now_ms: u64) {}";
         assert!(impure_calls("").is_empty());
     }
 
+    /// 调用会被认出来,报的是 1-based 行号;`env::temp_dir()` 这种写法也算。
+    #[test]
+    fn temp_dir_lines_detects_calls() {
+        let source = "\
+fn scratch() -> PathBuf {
+    let dir = std::env::temp_dir().join(\"x\"); // shared-name: ok
+    let other = env::temp_dir();
+    dir
+}";
+        assert_eq!(temp_dir_lines(source), vec![2, 3]);
+    }
+
+    /// 边界:注释里提到它不算 —— 文档要能写「别用 `std::env::temp_dir()`」。
+    /// `tempfile::tempdir()` 是推荐的写法,不能被误报。
+    #[test]
+    fn temp_dir_lines_ignores_comments_and_tempfile() {
+        let source = "\
+//! 别用 std::env::temp_dir()。
+    /// temp_dir() 拼固定名字会被并行的测试踩。
+let dir = tempfile::tempdir().unwrap();";
+        assert!(temp_dir_lines(source).is_empty());
+    }
+
+    /// 边界:空输入。
+    #[test]
+    fn temp_dir_lines_handles_empty_input() {
+        assert!(temp_dir_lines("").is_empty());
+    }
+
     const PROTO: &str = "\
 syntax = \"proto3\";
 package bangdream.music.v1;
@@ -465,15 +560,20 @@ message Track { string id = 1; }";
         );
     }
 
-    /// 临时目录里写一份 `.proto`,返回它的路径。
-    fn proto_fixture(name: &str, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("xtask-proto-{name}"));
-        fs::create_dir_all(&dir)
-            .expect("建不出临时 fixture 目录");
-        let path = dir.join("music.proto");
+    /// 在 `dir` 里写一份名为 `name` 的 `.proto`,返回它的路径。
+    fn proto_fixture(
+        dir: &tempfile::TempDir,
+        name: &str,
+        body: &str,
+    ) -> PathBuf {
+        let path = dir.path().join(name);
         fs::write(&path, body).expect("写不进 fixture");
         path
+    }
+
+    fn scratch() -> tempfile::TempDir {
+        tempfile::tempdir()
+            .expect("建不出临时 fixture 目录")
     }
 
     /// 两份一模一样时不能报漂移。
@@ -481,8 +581,11 @@ message Track { string id = 1; }";
     /// 误报的代价是这条检查会被当成噪音关掉,而它是副本与上游之间唯一的护栏。
     #[test]
     fn proto_drift_accepts_identical_copies() {
-        let vendored = proto_fixture("same-a", PROTO);
-        let upstream = proto_fixture("same-b", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
+        let upstream =
+            proto_fixture(&dir, "b.proto", PROTO);
 
         assert_eq!(
             proto_drift(&vendored, &upstream),
@@ -498,9 +601,12 @@ message Track { string id = 1; }";
     /// 检查报错时唯一有用的东西。
     #[test]
     fn proto_drift_points_at_the_line_that_diverged() {
-        let vendored = proto_fixture("drift-a", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
         let upstream = proto_fixture(
-            "drift-b",
+            &dir,
+            "b.proto",
             &PROTO
                 .replace("string id = 1;", "int64 id = 1;"),
         );
@@ -527,7 +633,9 @@ message Track { string id = 1; }";
     /// "两份不一致",人会照着提示去 diff 一个根本不存在的文件。
     #[test]
     fn proto_drift_names_the_file_it_could_not_read() {
-        let vendored = proto_fixture("missing-a", PROTO);
+        let dir = scratch();
+        let vendored =
+            proto_fixture(&dir, "a.proto", PROTO);
         let absent =
             vendored.with_file_name("nowhere.proto");
 

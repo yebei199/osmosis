@@ -45,6 +45,7 @@ slint-build.workspace = true
 [dev-dependencies]
 ttf-parser = "0.25"
 similar-asserts.workspace = true
+tempfile.workspace = true
 # 无头跑界面:软件后端 + 模拟时钟,不要窗口也不要显卡。已经在依赖树里
 # (i-slint-backend-selector 拉着它),所以只是显式声明,不新增下载与编译。
 # 必须与 slint 同源同分支,否则两份 i-slint-core 会在运行期打架。
