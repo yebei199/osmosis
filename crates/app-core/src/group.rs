@@ -77,8 +77,8 @@ pub enum Verdict {
     Solo,
     /// 在组里，还没拿到计划：别出声。
     Waiting,
-    /// 照这一条放。
-    Follow(Effective),
+    /// 照这一条放。装箱：它比其余几种大两百多字节，每拍都要搬。
+    Follow(Box<Effective>),
     /// 主端失联、已确认的计划也放到头了：停下，显示异常。
     Expired,
 }
@@ -339,7 +339,7 @@ impl Group {
         {
             return Verdict::Expired;
         }
-        Verdict::Follow(effective(plan, now_us))
+        Verdict::Follow(Box::new(effective(plan, now_us)))
     }
 
     /// 主端写一份计划。本机不是主端、或者要接着的时间线根本没有，给 `None`。
