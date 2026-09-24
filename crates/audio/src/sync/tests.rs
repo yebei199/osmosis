@@ -297,7 +297,7 @@ fn a_seek_request_is_carried_out_on_the_next_pull() {
 
     let verdict = shared.request_seek(Duration::from_millis(50));
     assert_eq!(take(&mut source, 2), values(50, 2));
-    assert_eq!(verdict.try_recv().expect("该有裁决"), Ok(()));
+    assert!(verdict.try_recv().expect("该有裁决").is_ok());
     assert_eq!(*seeks.lock().unwrap(), vec![Duration::from_millis(50)]);
     assert_eq!(shared.position(), Duration::from_millis(51));
 }
