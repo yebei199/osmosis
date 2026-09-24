@@ -39,6 +39,29 @@ HOME=$iso XDG_DATA_HOME=$iso/.local/share XDG_STATE_HOME=$iso/.local/state test/
 判据是 niri 报出 Osmosis 窗口、那个进程的 `/proc/<pid>/maps` 里有 libvulkan,不看观感。
 要一个在跑的 niri 会话和显卡,所以不进 `just ci`;装过的二进制要先编好,编译照规矩去编译机。
 
+## desktop-close-exit.sh —— 关窗后进程走不走(#15、#132)
+
+```sh
+just desktop-exit-check          # debug 构建,焦点与非焦点工作区各关一次
+```
+
+起实例、用 niri 的 `close-window` 关掉,断言 5 秒内退出且退出码 0。`unfocused` 先把窗口
+挪到空工作区、焦点留在原地再关。直接调脚本时第一个参数是二进制,库路径由 `slint.nix`
+那个 shell 给。
+
+**会话锁着时判不了**:niri 锁屏时丢掉 IPC 来的几乎所有 action,`niri msg` 照样退 0,
+close-window 石沉大海,进程当然不走 —— #132 就是把这个当成了 bug(alacritty 在同一台
+锁着的机器上一样关不掉)。脚本关窗前先拿 `focus-window` 探一下,焦点没过来就退 2,
+不给结论。编译机上用户不在,屏幕多半锁着,这时在它上面起一个嵌套 niri 再跑,不必去解
+用户的锁:
+
+```sh
+niri -c /dev/null &    # 锁着的会话里照样起得来,它的日志报出新的 Wayland 与 IPC socket
+NIRI_SOCKET=$XDG_RUNTIME_DIR/niri.wayland-2.<pid>.sock WAYLAND_DISPLAY=wayland-2 just desktop-exit-check
+```
+
+要合成器与显卡,不进 `just ci`。
+
 ## rollout.sh —— 发版推送脚本还守得住吗
 
 ```sh
