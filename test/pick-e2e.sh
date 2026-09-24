@@ -9,7 +9,8 @@
 #
 # 驱动走应用内嵌的 MCP,断言走数据库,不靠人看画面也不靠人去点:
 #   - play_events 多了**恰好一行**:有一台设备真的起播了;
-#   - 各设备队列的版本号之和只涨了 **1**:这几下只发布了一次队列。
+#   - 各设备队列的版本号之和最多涨 **1**:新的一批发布一次;这一批早已同步上去时
+#     不再发布(#137 ③),那就必须看得见这一下记了检查点(play_queue_reports)。
 # 输出在本机还是遥控别的设备都适用 —— 起播记账的是真在放的那一台,队列归它。
 #
 # 前提:应用起着(桌面 just desktop-dev,安卓 just mcp-android)、已登录
@@ -55,6 +56,9 @@ sql() {
 }
 played() { sql "select count(*) from play_events;"; }
 published() { sql "select coalesce(sum(revision), 0) from play_queues;"; }
+# 最近一次检查点落库的时刻。同一批已经同步过时,点歌不再发布新版本,只记一个
+# 检查点(#137 ③),账本上看得见的就是这一行。
+checkpointed() { sql "select coalesce(max(reported_at)::text, '') from play_queue_reports;"; }
 
 must() {
   [ -n "$1" ] || { echo "找不到 $2 —— 页面不对,或者这个构建没有它" >&2; exit 1; }
@@ -126,6 +130,7 @@ for index in 0 1; do
   show_view
   played_before=$(played)
   published_before=$(published)
+  checkpoint_before=$(checkpointed)
   tap "$index"
   echo "$MODE: 第 $((index + 1)) 首连点 $TAPS 下"
 
@@ -148,12 +153,15 @@ for index in 0 1; do
   sleep 3
   plays=$(( $(played) - played_before ))
   publishes=$(( $(published) - published_before ))
-  echo "  play_events +$plays,队列发布 +$publishes"
-  if [ "$plays" -eq 1 ] && [ "$publishes" -eq 1 ]; then
+  [ "$(checkpointed)" != "$checkpoint_before" ] && checkpoint=有 || checkpoint=无
+  echo "  play_events +$plays,队列发布 +$publishes,检查点$checkpoint"
+  # 发布恰好一次:这一批是新的。发布零次:这一批早已同步上去,那就必须看得见
+  # 这一下记了检查点 —— 否则就是该发布的没发布。两次以上是 #113/#125 回来了。
+  if [ "$plays" -eq 1 ] && { [ "$publishes" -eq 1 ] || { [ "$publishes" -eq 0 ] && [ "$checkpoint" = 有 ]; }; }; then
     echo "$MODE: 通过"
     exit 0
   fi
-  echo "$MODE: 失败 —— 点一次该恰好起播一次、发布一次" >&2
+  echo "$MODE: 失败 —— 点一次该恰好起播一次,并且发布一次(新批)或只记检查点(已同步的批)" >&2
   exit 1
 done
 
