@@ -205,7 +205,7 @@ pub fn install_failed(status: i32, message: String) {
 }
 
 thread_local! {
-    /// 主窗口,留给 [`install_failed`] 在事件循环上找回来。只在 UI 线程上碰。
+    // 主窗口,留给 [`install_failed`] 在事件循环上找回来。只在 UI 线程上碰。
     static WINDOW: RefCell<Option<slint::Weak<MainWindow>>> = const { RefCell::new(None) };
 }
 
