@@ -52,17 +52,18 @@ pub struct PublishQueueDto {
 
 /// 一次发布的产物。
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
 )]
 pub struct QueueRefDto {
     pub queue_id: i64,
     pub revision: i64,
+    /// 这一版每一条的 `entry_id`,按位置排,与发布时的 `tracks` 一一对应。
+    ///
+    /// 条目号由服务端发,而队列允许同一首歌出现多次,所以发布的那一端要知道
+    /// 「我点的第 i 条是哪个条目」只能问服务端。从前的问法是发布完再分页把整份
+    /// 队列读回来(5000 首是十次往返,每页带着全部展示信息),只为取这一列数
+    /// (#137 ③)。一列 i64 在 5000 首时不到四十 KiB,且只在发布这一刻给一次。
+    pub entry_ids: Vec<i64>,
 }
 
 /// 队列里的一条。

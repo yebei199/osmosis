@@ -310,6 +310,7 @@ fn as_ref(published: QueueRef) -> Json<QueueRefDto> {
     Json(QueueRefDto {
         queue_id: published.queue_id,
         revision: published.revision,
+        entry_ids: published.entry_ids,
     })
 }
 

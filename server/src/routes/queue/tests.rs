@@ -115,6 +115,75 @@ async fn creating_a_queue_then_reading_it_back() {
     assert_eq!(ids, vec!["a", "b"]);
 }
 
+/// 发布的应答直接带回这一版每一条的 `entry_id`,与之后读回来的一模一样 ——
+/// 发布的那一端不必再分页把整份队列读回来找「我点的第 i 条是哪个条目」(#137 ③)。
+///
+/// 带一首重复的歌:条目号正是为了区分同一首歌出现的两处,拿曲目 id 猜会指错。
+#[tokio::test]
+async fn publishing_answers_with_the_entry_ids_of_that_revision()
+ {
+    let (state, account) =
+        state_for("q_http_entry_ids").await;
+
+    let created = create_queue(
+        State(state.clone()),
+        account.clone(),
+        Json(CreateQueueDto {
+            device_id: PC1.to_owned(),
+            tracks: vec![
+                track("a"),
+                track("b"),
+                track("a"),
+            ],
+        }),
+    )
+    .await
+    .expect("建队列应该成功")
+    .0;
+    let republished = publish_queue(
+        State(state.clone()),
+        account.clone(),
+        Path(created.queue_id),
+        Json(PublishQueueDto {
+            expected_revision: created.revision,
+            tracks: vec![
+                track("b"),
+                track("c"),
+                track("a"),
+            ],
+        }),
+    )
+    .await
+    .expect("改队列应该成功")
+    .0;
+
+    for published in [&created, &republished] {
+        let page = queue_page(
+            State(state.clone()),
+            account.clone(),
+            Path(published.queue_id),
+            Query(PageQuery {
+                revision: published.revision,
+                offset: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("读队列应该成功")
+        .0;
+        let read_back: Vec<i64> = page
+            .entries
+            .iter()
+            .map(|row| row.entry_id)
+            .collect();
+        assert_eq!(
+            published.entry_ids, read_back,
+            "第 {} 版应答里的条目号与读回来的不一致",
+            published.revision
+        );
+    }
+}
+
 /// 一页读不完时,`total` 说的是整版有多少条,不是这一页有多少条。
 ///
 /// 少了它,客户端没法知道还要不要翻下一页 —— 而"按页数猜"在最后一页
