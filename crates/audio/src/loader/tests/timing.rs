@@ -173,3 +173,30 @@ fn the_timing_line_lists_each_segment() {
          decode=14ms total=142ms"
     );
 }
+
+/// 攒够预读的那一刻，是预读阶段里位置到达门槛的那一次回调，不是之后第一次别的阶段的回调。
+///
+/// stream-download 在预读阶段不放读的一方走：放行只发生在预读之后的第一次写入(或下载完)里，
+/// 而那一次的进度回调排在放行之后。小文件解码只要几百微秒，常常抢在它前面读完，开流计时的
+/// `prefetch` 就成了 `None`(`every_segment_of_a_cold_open_is_measured` 偶发失败的来由，#137 ⑥)。
+/// 到达门槛的那次预读回调则排在任何放行之前。
+#[test]
+fn prefetch_is_reached_when_the_prefetch_phase_hits_its_target()
+ {
+    assert!(
+        prefetch_reached(Some(16_384), 16_384),
+        "到达门槛那一次就算"
+    );
+    assert!(
+        prefetch_reached(Some(16_384), 40_000),
+        "一块跨过门槛也算"
+    );
+    assert!(
+        !prefetch_reached(Some(16_384), 8_192),
+        "还没攒够"
+    );
+    assert!(
+        prefetch_reached(None, 0),
+        "已经不在预读阶段(下载中、下载完)也算"
+    );
+}

@@ -97,10 +97,14 @@ pub async fn load_timed(
                 .prefetch_bytes(tuning.prefetch_bytes)
                 .retry_timeout(tuning.retry_timeout)
                 .on_progress(move |_, state, _| {
-                    if !matches!(
-                        state.phase,
-                        stream_download::StreamPhase::Prefetching { .. }
-                    ) {
+                    let target = match state.phase {
+                        stream_download::StreamPhase::Prefetching {
+                            target,
+                            ..
+                        } => Some(target),
+                        _ => None,
+                    };
+                    if prefetch_reached(target, state.current_position) {
                         prefetch_mark.get_or_init(Instant::now);
                     }
                     recovered.store(0, Ordering::Relaxed);
@@ -226,6 +230,19 @@ pub fn decode<R: Source>(
     };
 
     Ok(builder.build()?)
+}
+
+/// 这一次进度回调是不是已经攒够了预读。`target` 是预读阶段的门槛，别的阶段为 `None`。
+///
+/// 到达门槛就在那一次预读回调里记，不等之后第一次别的阶段的回调：stream-download 在预读阶段
+/// 不放读的一方走，放行发生在预读之后的第一次写入或下载完成里，而那一次的回调排在放行**之后**。
+/// 小文件几百微秒就解完码，常常抢在它前面，量出来的预读就丢了(#137 ⑥)。到达门槛的那次预读回调
+/// 与放行在同一个下载任务里先后执行，一定在放行之前。短于门槛的文件没有这一次，只能等下载完的回调。
+fn prefetch_reached(
+    target: Option<u64>,
+    position: u64,
+) -> bool {
+    target.is_none_or(|target| position >= target)
 }
 
 #[cfg(test)]
