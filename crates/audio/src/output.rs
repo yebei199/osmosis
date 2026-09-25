@@ -1,6 +1,7 @@
 //! 输出后端的门面：开一条声卡流，从混音器拉采样，每块把呈现时刻报给同步层。
 //! 见 `output/README.md`。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -30,7 +31,8 @@ const WATCH_EVERY: Duration = Duration::from_millis(250);
 /// 流开着就得一直送静音，声卡与 PipeWire 图因此不休眠(#138)。关早了也不好：重开要几十到上百
 /// 毫秒，暂停一下马上接着放的那种会多等这一截;组里跟随端重开后还要先静音追赶一下。30 秒远长于
 /// 「切个应用回个消息」那种短暂停，又短到不至于让硬件白白醒着。
-pub(crate) const CLOSE_AFTER_IDLE: Duration = Duration::from_secs(30);
+pub(crate) const CLOSE_AFTER_IDLE: Duration =
+    Duration::from_secs(30);
 
 /// 持流线程这一次醒来该对流做什么。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,20 +61,49 @@ impl Keeper {
         idle: bool,
         broken: bool,
     ) -> Step {
-        Step::Keep
+        if idle {
+            self.idle_since.get_or_insert(now);
+        } else {
+            self.idle_since = None;
+        }
+        let due = self.idle_since.is_some_and(|since| {
+            now.duration_since(since) >= CLOSE_AFTER_IDLE
+        });
+        match (open, idle) {
+            (false, false) => Step::Open,
+            (false, true) => Step::Keep,
+            (true, _) if due => Step::Close,
+            (true, _) if broken => Step::Reopen,
+            (true, _) => Step::Keep,
+        }
     }
+}
+
+/// 发给持流线程的信号。
+pub(crate) enum Signal {
+    /// 收工：关流、线程退出。
+    Stop,
+    /// 状态变了(按了播放、拖了进度条、换了时间线),马上看一眼要不要开流，不等下一次醒。
+    Poke,
 }
 
 /// 一条活着的输出。drop 掉就关流、收线程。
 pub(crate) struct Output {
     pub mixer: Mixer,
-    stop: mpsc::Sender<()>,
+    signals: mpsc::Sender<Signal>,
     thread: Option<JoinHandle<()>>,
+}
+
+impl Output {
+    /// 叫持流线程马上看一眼：暂停久了流是关着的，要出声时别让用户多等一个醒来周期。
+    pub(crate) fn poke(&self) {
+        let _ = self.signals.send(Signal::Poke);
+    }
 }
 
 impl Drop for Output {
     fn drop(&mut self) {
-        let _ = self.stop.send(());
+        let _ = self.signals.send(Signal::Stop);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -113,26 +144,63 @@ pub(crate) fn open(
     })??;
     Ok(Output {
         mixer,
-        stop: stop_tx,
+        signals: stop_tx,
         thread: Some(thread),
     })
 }
 
-/// 持流线程的等待循环：收到关闭就走，流断了就交给 `reopen` 重开。
-pub(crate) fn watch(
-    stop: &mpsc::Receiver<()>,
-    broken: &dyn Fn() -> bool,
-    mut reopen: impl FnMut(),
+/// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开。
+///
+/// `first` 是已经开好的那条流，`open` 开一条新的(桌面每次重新找默认设备)。流 drop 掉就是关了。
+pub(crate) fn watch<S>(
+    signals: &mpsc::Receiver<Signal>,
+    shared: &SyncShared,
+    broken: &AtomicBool,
+    first: S,
+    mut open: impl FnMut() -> Result<S, AudioError>,
 ) {
+    let mut stream = Some(first);
+    let mut keeper = Keeper::default();
     loop {
-        match stop.recv_timeout(WATCH_EVERY) {
-            Ok(())
+        match signals.recv_timeout(WATCH_EVERY) {
+            Ok(Signal::Stop)
             | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if broken() {
-                    reopen();
+            Ok(Signal::Poke)
+            | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        let step = keeper.step(
+            Instant::now(),
+            stream.is_some(),
+            shared.idle(),
+            broken.load(Ordering::Relaxed),
+        );
+        match step {
+            Step::Keep => {}
+            Step::Close => {
+                stream = None;
+                shared.output_closed();
+                log::info!(
+                    "暂停超过 {}s,关掉输出流",
+                    CLOSE_AFTER_IDLE.as_secs()
+                );
+            }
+            Step::Open | Step::Reopen => {
+                if step == Step::Reopen {
+                    log::warn!("输出流断了，重开");
+                } else {
+                    log::info!("要出声了，重开输出流");
+                }
+                // 先关旧的：同一时刻只许一条流拉混音器
+                stream = None;
+                broken.store(false, Ordering::Relaxed);
+                match open() {
+                    Ok(fresh) => stream = Some(fresh),
+                    // 流留在关着：下一次醒来还要出声就再开
+                    Err(error) => log::warn!(
+                        "开输出流失败，稍后再试: {error}"
+                    ),
                 }
             }
         }
@@ -150,8 +218,14 @@ mod tests {
     fn a_playing_output_stays_open() {
         let t0 = Instant::now();
         let mut keeper = Keeper::default();
-        assert_eq!(keeper.step(t0, true, false, false), Step::Keep);
-        assert_eq!(keeper.step(t0 + 600 * SEC, true, false, false), Step::Keep);
+        assert_eq!(
+            keeper.step(t0, true, false, false),
+            Step::Keep
+        );
+        assert_eq!(
+            keeper.step(t0 + 600 * SEC, true, false, false),
+            Step::Keep
+        );
     }
 
     /// 暂停满 30 秒才关，差一点都不关。
@@ -159,13 +233,26 @@ mod tests {
     fn it_closes_only_after_being_idle_long_enough() {
         let t0 = Instant::now();
         let mut keeper = Keeper::default();
-        assert_eq!(keeper.step(t0, true, true, false), Step::Keep);
         assert_eq!(
-            keeper.step(t0 + CLOSE_AFTER_IDLE - SEC, true, true, false),
+            keeper.step(t0, true, true, false),
             Step::Keep
         );
         assert_eq!(
-            keeper.step(t0 + CLOSE_AFTER_IDLE, true, true, false),
+            keeper.step(
+                t0 + CLOSE_AFTER_IDLE - SEC,
+                true,
+                true,
+                false
+            ),
+            Step::Keep
+        );
+        assert_eq!(
+            keeper.step(
+                t0 + CLOSE_AFTER_IDLE,
+                true,
+                true,
+                false
+            ),
             Step::Close
         );
     }
@@ -184,7 +271,12 @@ mod tests {
             "第二段暂停才 19 秒"
         );
         assert_eq!(
-            keeper.step(t0 + 21 * SEC + CLOSE_AFTER_IDLE, true, true, false),
+            keeper.step(
+                t0 + 21 * SEC + CLOSE_AFTER_IDLE,
+                true,
+                true,
+                false
+            ),
             Step::Close
         );
     }
@@ -194,13 +286,19 @@ mod tests {
     fn a_closed_output_opens_as_soon_as_it_is_needed() {
         let t0 = Instant::now();
         let mut keeper = Keeper::default();
-        assert_eq!(keeper.step(t0, false, true, false), Step::Keep);
+        assert_eq!(
+            keeper.step(t0, false, true, false),
+            Step::Keep
+        );
         assert_eq!(
             keeper.step(t0 + 90 * SEC, false, true, false),
             Step::Keep,
             "关着的流不会被当成要关"
         );
-        assert_eq!(keeper.step(t0 + 91 * SEC, false, false, false), Step::Open);
+        assert_eq!(
+            keeper.step(t0 + 91 * SEC, false, false, false),
+            Step::Open
+        );
     }
 
     /// 断了的流：还要出声就重开;已经暂停够久就干脆关掉，不去重开一条马上要关的流。
@@ -208,10 +306,21 @@ mod tests {
     fn a_broken_output_reopens_unless_it_is_due_to_close() {
         let t0 = Instant::now();
         let mut keeper = Keeper::default();
-        assert_eq!(keeper.step(t0, true, false, true), Step::Reopen);
-        assert_eq!(keeper.step(t0 + SEC, true, true, true), Step::Reopen);
         assert_eq!(
-            keeper.step(t0 + SEC + CLOSE_AFTER_IDLE, true, true, true),
+            keeper.step(t0, true, false, true),
+            Step::Reopen
+        );
+        assert_eq!(
+            keeper.step(t0 + SEC, true, true, true),
+            Step::Reopen
+        );
+        assert_eq!(
+            keeper.step(
+                t0 + SEC + CLOSE_AFTER_IDLE,
+                true,
+                true,
+                true
+            ),
             Step::Close
         );
     }

@@ -562,23 +562,34 @@ fn a_seek_between_two_frames_plays_on_from_there() {
 /// 暂停着(不跟时间线)、或者跟着一条暂停着的时间线，声卡就用不着;在放、等着起播、
 /// 有跳转在等执行(它要声卡拉一次才执行),都还用得着。
 #[test]
-fn the_output_is_idle_only_while_nothing_needs_to_be_pulled() {
+fn the_output_is_idle_only_while_nothing_needs_to_be_pulled()
+ {
     let shared = SyncShared::new();
     assert!(!shared.idle(), "在放");
 
     shared.pause();
     assert!(shared.idle(), "按着暂停");
 
-    let _verdict = shared.request_seek(Duration::from_secs(3));
-    assert!(!shared.idle(), "暂停着拖了进度条：跳转要声卡拉一次才执行");
+    let _verdict =
+        shared.request_seek(Duration::from_secs(3));
+    assert!(
+        !shared.idle(),
+        "暂停着拖了进度条：跳转要声卡拉一次才执行"
+    );
 }
 
 /// 跟时间线时本机的暂停键不算数(同步源也不看它),看的是时间线自己放不放。
 #[test]
-fn following_a_timeline_is_idle_only_while_the_timeline_is_paused() {
+fn following_a_timeline_is_idle_only_while_the_timeline_is_paused()
+ {
     let shared = SyncShared::new();
     shared.pause();
-    shared.set_target(follow(10_000 * MS, 0, true, 20_000 * MS));
+    shared.set_target(follow(
+        10_000 * MS,
+        0,
+        true,
+        20_000 * MS,
+    ));
     assert!(!shared.idle(), "等着起播：前导静音要按块数");
 
     shared.resume();
@@ -591,8 +602,10 @@ fn following_a_timeline_is_idle_only_while_the_timeline_is_paused() {
 #[test]
 fn closing_the_output_forgets_the_last_pairing() {
     let shared = SyncShared::new();
-    let mut source =
-        SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    let mut source = SyncSource::new(
+        FakeFeed::mono(1_000),
+        shared.clone(),
+    );
     shared.block(5_000 * MS, 4);
     take(&mut source, 4);
     assert_eq!(shared.pairing(), Some((5_000 * MS, 0)));
