@@ -242,7 +242,7 @@ mod tests {
     fn spawn_watch(
         shared: Arc<SyncShared>,
         opens: Arc<std::sync::atomic::AtomicU64>,
-        mut pull: impl FnMut(Duration) + Send + 'static,
+        pull: impl FnMut(Duration) + Send + 'static,
     ) -> (mpsc::Sender<Signal>, JoinHandle<()>) {
         let (tx, rx) = mpsc::channel();
         let thread = std::thread::spawn(move || {
@@ -256,7 +256,7 @@ mod tests {
                     opens.fetch_add(1, Ordering::Relaxed);
                     Ok(())
                 },
-                |d| pull(d),
+                pull,
             );
         });
         (tx, thread)
