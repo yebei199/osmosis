@@ -249,6 +249,9 @@ pub(crate) struct FakeUpstream {
     /// `GetPlaySource` 回的那一条源。`None` 表示上游给不出 —— 与真实平台
     /// 「这首没有可播放的源」同义,不是一次 RPC 失败。
     pub(crate) play_source: Option<PlaySource>,
+    /// `GetPlaySource` 被问了几次。直链缓存命中与否,响应里看不出来 ——
+    /// 两次拿到的是同一条链接 —— 只能数上游被问了几回。
+    pub(crate) play_asks: Arc<Mutex<usize>>,
     /// 每一次 `GetTracks` 收到的 id 批次,按到达顺序记下来。
     ///
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
@@ -286,6 +289,14 @@ impl FakeUpstream {
             .logouts
             .lock()
             .expect("记解绑次数的锁被毒化了")
+    }
+
+    /// 上游至今被要过几次播放源。
+    pub(crate) fn play_asks(&self) -> usize {
+        *self
+            .play_asks
+            .lock()
+            .expect("记取源次数的锁被毒化了")
     }
 
     /// 至今为止每一批被问到的 id。
@@ -381,6 +392,11 @@ impl CatalogService for FakeUpstream {
         _request: Request<GetPlaySourceRequest>,
     ) -> Result<Response<GetPlaySourceResponse>, Status>
     {
+        *self
+            .play_asks
+            .lock()
+            .expect("记取源次数的锁被毒化了") += 1;
+
         Ok(Response::new(GetPlaySourceResponse {
             source: self.play_source.clone(),
         }))
@@ -555,6 +571,7 @@ pub(crate) fn state(
             server::gate::ratelimit::Policies::tuned(),
         playlists: Default::default(),
         platform_lists: Default::default(),
+        links: Default::default(),
         apk_releases: crate::routes::apk::DEFAULT_RELEASES_BASE
             .to_owned(),
         archive: None,

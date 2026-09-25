@@ -1,4 +1,5 @@
 //! `/download/{id}` 两条路各走一遍:mp3 原样透传,别的格式过 ffmpeg。
+//! 末尾几条是 `/play` 的直链缓存:第二次点同一首不再问上游(#139)。
 //!
 //! 上游那条**临时直链**由本文件在随机端口上起的一个小 HTTP 服务扮演 ——
 //! 假 gRPC 只负责说「源在这个地址」,字节从哪来它管不着,而这条路由的全部
@@ -14,6 +15,7 @@ use similar_asserts::assert_eq;
 use crate::routes::testing::{self, FakeUpstream};
 
 use super::download::download;
+use super::play;
 
 use server::bangdream::proto::PlaySource;
 
@@ -341,4 +343,93 @@ fn probe(bytes: &[u8]) -> (String, i64) {
             .parse()
             .unwrap_or_default(),
     )
+}
+
+/// 摆好假上游与账号,把假上游的一份句柄也交回来 —— 数它被问了几次。
+async fn play_fixture(
+    case: &str,
+    play_source: PlaySource,
+) -> (
+    crate::AppState,
+    server::store::account::Account,
+    FakeUpstream,
+) {
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let fake = FakeUpstream {
+        play_source: Some(play_source),
+        ..FakeUpstream::logged_in_with("42", vec![])
+    };
+    let state = testing::state(
+        pool,
+        testing::serve(fake.clone()).await,
+    );
+
+    (state, account, fake)
+}
+
+/// 一条网易云形状的源:二十分钟有效期,时长由调用方定。
+fn expiring(duration_ms: i64) -> PlaySource {
+    PlaySource {
+        expires_in_seconds: 1200,
+        duration_ms,
+        ..source(
+            "https://m8.music.126.net/x.mp3".to_owned(),
+            "mp3",
+        )
+    }
+}
+
+async fn play_url(
+    state: &crate::AppState,
+    account: &server::store::account::Account,
+    track: &str,
+) -> String {
+    play(
+        State(state.clone()),
+        account.clone(),
+        Path(track.to_owned()),
+    )
+    .await
+    .expect("应当取得到播放源")
+    .0
+    .url
+}
+
+/// 同一首在有效期内再点:给同一条链,上游只问过一次;换个账号点同一首,
+/// 不拿别人的那条,照样去问上游。
+#[tokio::test]
+async fn a_second_play_within_the_links_validity_skips_upstream()
+ {
+    let (state, account, fake) =
+        play_fixture("play_cached", expiring(300_000))
+            .await;
+    let other = testing::fresh_account(
+        &testing::pool().await,
+        "play_cached_other",
+    )
+    .await;
+    let track = testing::track_id("play_cached", 1);
+
+    let first = play_url(&state, &account, &track).await;
+    let second = play_url(&state, &account, &track).await;
+    assert_eq!(first, second);
+    assert_eq!(fake.play_asks(), 1, "第二次不该再问上游");
+
+    play_url(&state, &other, &track).await;
+    assert_eq!(fake.play_asks(), 2, "别的账号不能命中这条");
+}
+
+/// 有效期不够放完整首:每次都问上游。
+#[tokio::test]
+async fn a_link_too_short_for_the_track_is_fetched_every_time()
+ {
+    let (state, account, fake) =
+        play_fixture("play_short", expiring(1_200_000))
+            .await;
+    let track = testing::track_id("play_short", 1);
+
+    play_url(&state, &account, &track).await;
+    play_url(&state, &account, &track).await;
+    assert_eq!(fake.play_asks(), 2);
 }
