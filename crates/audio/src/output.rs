@@ -79,6 +79,14 @@ impl Keeper {
     }
 }
 
+/// 流关着、又用不着声卡的时候，持流线程多久替声卡拉一次混音器。
+///
+/// rodio 的 `Player::clear` 要等拉采样的那一方把旧源摘掉才返回(`sleep_until_end`),流关着没人拉，
+/// 点歌、停止就会把调用线程(界面线程)永远卡住。用不着声卡时同步源只吐静音、不消耗媒体，所以照
+/// 实时节奏空拉是安全的。20ms 让一次 `clear` 最多多等这么久。
+pub(crate) const IDLE_PULL_EVERY: Duration =
+    Duration::from_millis(20);
+
 /// 发给持流线程的信号。
 pub(crate) enum Signal {
     /// 收工：关流、线程退出。
@@ -152,14 +160,16 @@ pub(crate) fn open(
 /// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开。
 ///
 /// `first` 是已经开好的那条流，`open` 开一条新的(桌面每次重新找默认设备)。流 drop 掉就是关了。
+/// `pull` 从混音器拉走这么长一段采样丢掉，见 [`IDLE_PULL_EVERY`]。
 pub(crate) fn watch<S>(
     signals: &mpsc::Receiver<Signal>,
     shared: &SyncShared,
     broken: &AtomicBool,
-    first: S,
+    first: Option<S>,
     mut open: impl FnMut() -> Result<S, AudioError>,
+    mut pull: impl FnMut(Duration),
 ) {
-    let mut stream = Some(first);
+    let mut stream = first;
     let mut keeper = Keeper::default();
     loop {
         match signals.recv_timeout(WATCH_EVERY) {
@@ -212,6 +222,121 @@ mod tests {
     use super::*;
 
     const SEC: Duration = Duration::from_secs(1);
+
+    /// 在另一条线程上跑持流循环，流一开始是关着的(`None`)。返回叫停它的发送端和线程句柄。
+    fn spawn_watch(
+        shared: Arc<SyncShared>,
+        opens: Arc<std::sync::atomic::AtomicU64>,
+        mut pull: impl FnMut(Duration) + Send + 'static,
+    ) -> (mpsc::Sender<Signal>, JoinHandle<()>) {
+        let (tx, rx) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let broken = AtomicBool::new(false);
+            watch(
+                &rx,
+                &shared,
+                &broken,
+                None::<()>,
+                || {
+                    opens.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                },
+                |d| pull(d),
+            );
+        });
+        (tx, thread)
+    }
+
+    /// 流关着、暂停着：持流线程照实时节奏替声卡拉混音器，不开流。
+    #[test]
+    fn a_closed_idle_output_keeps_pulling_the_mixer() {
+        let shared = SyncShared::new();
+        shared.pause();
+        let opens =
+            Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let pulled = Arc::new(Mutex::new(Duration::ZERO));
+        let sink = pulled.clone();
+        let (tx, thread) =
+            spawn_watch(shared, opens.clone(), move |d| {
+                *sink.lock().unwrap() += d;
+            });
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = tx.send(Signal::Stop);
+        thread.join().unwrap();
+        assert_eq!(
+            opens.load(Ordering::Relaxed),
+            0,
+            "用不着声卡就不开流"
+        );
+        assert!(
+            *pulled.lock().unwrap()
+                >= Duration::from_millis(100),
+            "300ms 里至少替声卡拉掉 100ms,实际 {:?}",
+            pulled.lock().unwrap()
+        );
+    }
+
+    /// 流关着、要出声了：开流，不空拉 —— 在放的时候空拉会把媒体白白吃掉。
+    #[test]
+    fn a_closed_output_that_is_needed_opens_instead_of_pulling()
+     {
+        let shared = SyncShared::new();
+        let opens =
+            Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let pulled = Arc::new(Mutex::new(Duration::ZERO));
+        let sink = pulled.clone();
+        let (tx, thread) =
+            spawn_watch(shared, opens.clone(), move |d| {
+                *sink.lock().unwrap() += d;
+            });
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = tx.send(Signal::Stop);
+        thread.join().unwrap();
+        assert_eq!(opens.load(Ordering::Relaxed), 1);
+        assert_eq!(*pulled.lock().unwrap(), Duration::ZERO);
+    }
+
+    /// 回归(#138):暂停久了流关着，这时候换歌(rodio `Player::clear`)不能把调用线程卡死。
+    /// 从前关着的流没人拉混音器，`clear` 等旧源被摘掉，永远等不到，界面就冻住了。
+    #[test]
+    fn clearing_the_player_while_the_output_is_closed_does_not_hang()
+     {
+        let shared = SyncShared::new();
+        shared.pause();
+        let (mixer, source) = rodio::mixer::mixer(
+            rodio::ChannelCount::new(2).unwrap(),
+            rodio::SampleRate::new(48_000).unwrap(),
+        );
+        let source: SharedMixer =
+            Arc::new(Mutex::new(source));
+        let player = rodio::Player::connect_new(&mixer);
+        player.append(crate::sync::SyncSource::new(
+            crate::sync::SourceFeed(
+                rodio::source::SineWave::new(440.0),
+            ),
+            shared.clone(),
+        ));
+        player.play();
+
+        let opens =
+            Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (tx, thread) =
+            spawn_watch(shared, opens, move |d| {
+                let frames =
+                    (d.as_secs_f64() * 48_000.0) as usize;
+                fill(&source, &mut vec![0.0; frames * 2]);
+            });
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            player.clear();
+            let _ = done_tx.send(());
+        });
+        let cleared =
+            done_rx.recv_timeout(Duration::from_secs(2));
+        let _ = tx.send(Signal::Stop);
+        thread.join().unwrap();
+        assert!(cleared.is_ok(), "流关着时 clear 卡住了");
+    }
 
     /// 在放就一直开着。
     #[test]

@@ -64,20 +64,27 @@ pub(super) fn run(
     };
     let _ = ready.send(Ok(mixer));
 
-    watch(signals, &shared, &broken, stream, || {
-        let device = default_device()?;
-        let config =
-            device.default_output_config().map_err(
-                |e| AudioError::Device(e.to_string()),
-            )?;
-        start(
-            &device,
-            &config.into(),
-            &source,
-            &shared,
-            &broken,
-        )
-    });
+    watch(
+        signals,
+        &shared,
+        &broken,
+        Some(stream),
+        || {
+            let device = default_device()?;
+            let config =
+                device.default_output_config().map_err(
+                    |e| AudioError::Device(e.to_string()),
+                )?;
+            start(
+                &device,
+                &config.into(),
+                &source,
+                &shared,
+                &broken,
+            )
+        },
+        |_| {},
+    );
 }
 
 fn default_device() -> Result<::cpal::Device, AudioError> {

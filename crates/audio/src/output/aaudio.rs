@@ -54,9 +54,14 @@ pub(super) fn run(
     };
     let _ = ready.send(Ok(mixer));
 
-    watch(signals, &shared, &broken, stream, || {
-        start(&source, &shared, &broken)
-    });
+    watch(
+        signals,
+        &shared,
+        &broken,
+        Some(stream),
+        || start(&source, &shared, &broken),
+        |_| {},
+    );
 }
 
 /// 开着的 AAudio 流。drop 时先停再关(`AudioStream` 自己 drop 只 close)。
