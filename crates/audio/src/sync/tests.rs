@@ -556,3 +556,48 @@ fn a_seek_between_two_frames_plays_on_from_there() {
     assert!((got[0] - 50.7).abs() < 1e-3, "{got:?}");
     assert!((got[1] - 51.7).abs() < 1e-3, "{got:?}");
 }
+
+// ── 声卡用不用得着(#138) ──
+
+/// 暂停着(不跟时间线)、或者跟着一条暂停着的时间线，声卡就用不着;在放、等着起播、
+/// 有跳转在等执行(它要声卡拉一次才执行),都还用得着。
+#[test]
+fn the_output_is_idle_only_while_nothing_needs_to_be_pulled() {
+    let shared = SyncShared::new();
+    assert!(!shared.idle(), "在放");
+
+    shared.pause();
+    assert!(shared.idle(), "按着暂停");
+
+    let _verdict = shared.request_seek(Duration::from_secs(3));
+    assert!(!shared.idle(), "暂停着拖了进度条：跳转要声卡拉一次才执行");
+}
+
+/// 跟时间线时本机的暂停键不算数(同步源也不看它),看的是时间线自己放不放。
+#[test]
+fn following_a_timeline_is_idle_only_while_the_timeline_is_paused() {
+    let shared = SyncShared::new();
+    shared.pause();
+    shared.set_target(follow(10_000 * MS, 0, true, 20_000 * MS));
+    assert!(!shared.idle(), "等着起播：前导静音要按块数");
+
+    shared.resume();
+    shared.set_target(follow(10_000 * MS, 0, false, 0));
+    assert!(shared.idle(), "时间线暂停着");
+}
+
+/// 流关了，旧配对就作废：主端恢复时不能拿关流之前那一块的「呈现时刻 ↔ 媒体位置」去写计划,
+/// 那一刻离现在可能已经好几十秒。
+#[test]
+fn closing_the_output_forgets_the_last_pairing() {
+    let shared = SyncShared::new();
+    let mut source =
+        SyncSource::new(FakeFeed::mono(1_000), shared.clone());
+    shared.block(5_000 * MS, 4);
+    take(&mut source, 4);
+    assert_eq!(shared.pairing(), Some((5_000 * MS, 0)));
+
+    shared.output_closed();
+    assert_eq!(shared.pairing(), None);
+    assert!(!shared.report().sounding, "流关着就不在出声");
+}

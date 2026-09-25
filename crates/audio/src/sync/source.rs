@@ -168,6 +168,14 @@ impl SyncShared {
         *lock(&self.stats)
     }
 
+    /// 此刻用不着声卡(见 `crate::output` 的关流)。
+    pub fn idle(&self) -> bool {
+        false
+    }
+
+    /// 输出后端关了流。
+    pub fn output_closed(&self) {}
+
     /// 最近一块第一帧的呈现时刻(本机单调时钟),与那一帧是媒体的第几纳秒。
     ///
     /// 主端把自己的实际播放写成共同计划靠它(#137 ⑤):两个数取自同一块，不会一个新一个旧。
