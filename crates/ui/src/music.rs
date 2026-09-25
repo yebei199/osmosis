@@ -183,6 +183,8 @@ pub fn bind(
     crate::runtime::trace::Frames,
 ) {
     let player = Arc::new(audio::Player::new());
+    // 第一次开流前把 CDN 的 DNS 暖好,冷开流不再撞 500ms 的解析(#139)
+    audio::warm_cdn_dns();
     let media =
         Rc::new(crate::media::bind(ui, &player, media));
 

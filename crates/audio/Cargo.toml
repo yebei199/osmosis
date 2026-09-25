@@ -8,7 +8,7 @@ description = "音频播放能力层:把一条直链变成声音,并吸收各端
 [dependencies]
 rodio.workspace = true
 stream-download.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
 rustfft = "6"
 # 只用来记流的失联与重连。各平台入口已各自装好 logger。
 log.workspace = true

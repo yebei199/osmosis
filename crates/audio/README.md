@@ -28,6 +28,8 @@ android 走 AAudio、web 将来走 WebAudio)。与 `api`、`render3d` 平行,`ap
 - `src/open_timing.rs`:开一条流的分段计时 —— DNS、TCP+TLS、首字节、攒够预读、解码器建好，
   每开一次记一行 `stream:`(写法同 `api:` 那行)。握手两段靠 task-local 认领：复用池里的连接
   时两段都不出现，这就是冷热连接的判据(#137 ⑥)。
+- `src/cdn_dns.rs`:启动后在后台解析网易云那几台 CDN 主机,并按 TTL 的一半定期重解,
+  让开流时的 getaddrinfo 总命中系统缓存(#139)。只暖系统 resolver,不在进程里存地址。
 - `src/pcm.rs`:`normalize` 把任意源统一成 48kHz 立体声,`Tee` 把播放中的采样
   原样传下去、复制一份进有界支路(给频谱)。同播的 Opus 编解码原先也在这里,
   随同播一起删了(#137)。
