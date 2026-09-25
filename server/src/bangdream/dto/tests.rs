@@ -199,6 +199,7 @@ fn play_source_maps_url_and_trial_flag() {
         bit_rate: 320_000,
         level: proto::QualityLevel::Standard as i32,
         trial: true,
+        ..proto::PlaySource::default()
     };
 
     let dto = play_source_to_dto(source);

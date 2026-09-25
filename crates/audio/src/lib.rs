@@ -25,6 +25,8 @@ pub use stream_source::{
     buffered_with,
 };
 
+mod cdn_dns;
+pub use cdn_dns::warm_cdn_dns;
 mod error;
 mod loader;
 pub mod open_timing;

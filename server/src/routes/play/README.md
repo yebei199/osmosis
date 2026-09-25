@@ -8,6 +8,8 @@
 - `download.rs`:`GET /download/{id}`,把字节拉过来、归一成 mp3 交出去。
 - `archive.rs`:听过的歌存进对象存储(#126)—— `/played` 之后后台存、
   `/play` 优先从这里交付、定时清掉没人红心且三天没播的。
+- `links.rs`:网易云直链的短期缓存(#139)—— 同一账号同一首,剩余有效期还够
+  放完整首时复用上一次那条,不再问上游。只在内存里。
 
 不负责对象存储怎么连(`server::objects`)和账目怎么落库(`server::store::archive`),
 也不负责起播上报本身(`routes/library/history.rs`,它只是在报完之后调一下这里)。

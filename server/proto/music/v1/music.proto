@@ -87,7 +87,7 @@ message Track {
 // PlaySource 一次取到的可播放源。
 // 这些字段属于"这次取到的源"而非歌曲本身 —— 换个档位请求会得到不同的格式与体积。
 message PlaySource {
-  // url 平台签发的临时直链,带签名会过期,不要缓存
+  // url 平台签发的临时直链,带签名会过期。要缓存就只在 expires_in_seconds 之内
   string url = 1;
   string format = 2;
   int64 size = 3;
@@ -96,6 +96,10 @@ message PlaySource {
   QualityLevel level = 5;
   // trial 仅试听片段,通常 30 秒
   bool trial = 6;
+  // expires_in_seconds 直链从签发起还能用多少秒。0 表示平台没给,当成不能缓存
+  int32 expires_in_seconds = 7;
+  // duration_ms 这条源的时长,试听片段是片段的长度。0 表示平台没给
+  int64 duration_ms = 8;
 }
 
 message Playlist {

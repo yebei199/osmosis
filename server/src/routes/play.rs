@@ -4,6 +4,8 @@
 //! 把字节从上游拉过来、必要时转成 mp3 再交出去。两者共用 [`PLAY_QUALITY`] ——
 //! 各自取各自的档位的话,「听到的」和「存下的」会是两个版本。
 
+use std::time::Instant;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -21,6 +23,7 @@ use crate::{AppState, fail};
 
 pub(crate) mod archive;
 pub(crate) mod download;
+pub(crate) mod links;
 
 #[cfg(test)]
 mod tests;
@@ -34,8 +37,8 @@ pub(crate) const PLAY_QUALITY: QualityLevel =
 /// `GET /play/{track_id}` —— 取一条临时直链。
 ///
 /// 存过的歌给对象存储的签名链接,不再找网易云(#126);没存过、或对象存储
-/// 此刻不可用,就向上游要。上游的直链每次都重新要:它带签名会过期,缓存它
-/// 只会让客户端拿到放不出声的地址。
+/// 此刻不可用,就向上游要。上游的直链带签名会过期,只在剩余有效期还够放完
+/// 整首时复用上一次拿到的那条(#139,见 [`links`])。
 pub(crate) async fn play(
     State(state): State<AppState>,
     account: Account,
@@ -47,13 +50,21 @@ pub(crate) async fn play(
         return Ok(Json(stored));
     }
 
+    let key = (account.id, track_id, PLAY_QUALITY as i32);
+    if let Some(cached) =
+        state.links.get(&key, Instant::now())
+    {
+        return Ok(Json(cached));
+    }
+
+    let issued_at = Instant::now();
     let mut catalog = state.upstream.catalog;
     let response = catalog
         .get_play_source(bangdream::as_user(
             &account,
             GetPlaySourceRequest {
                 platform: Platform::Netease as i32,
-                track_id,
+                track_id: key.1.clone(),
                 level: PLAY_QUALITY as i32,
             },
         ))
@@ -66,5 +77,13 @@ pub(crate) async fn play(
         fail(&tonic::Status::internal("上游没有返回播放源"))
     })?;
 
-    Ok(Json(bangdream::play_source_to_dto(source)))
+    let dto = bangdream::play_source_to_dto(source.clone());
+    state.links.record(
+        key,
+        &source,
+        dto.clone(),
+        issued_at,
+    );
+
+    Ok(Json(dto))
 }

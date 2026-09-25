@@ -66,6 +66,7 @@ use routes::library::playlists::{
 };
 use routes::play::archive::Archive;
 use routes::play::download::download;
+use routes::play::links::SignedLinks;
 use routes::play::play;
 use routes::queue::{
     create_queue, publish_queue, queue_head, queue_page,
@@ -129,6 +130,8 @@ pub(crate) struct AppState {
     playlists: Freshness,
     /// 每个账号 `/playlists` 平台那半的上一份(见 `routes::library::playlists`)。
     platform_lists: PlatformLists,
+    /// 上游直链在有效期内的那一份(见 `routes::play::links`)。
+    links: SignedLinks,
     /// 安卓安装包的回源地址(见 `routes::apk`)。
     apk_releases: String,
     /// 听过的歌存到哪(#126)。没配 `S3_ENDPOINT` 就是 `None`,整套归档不启用 ——
@@ -438,6 +441,7 @@ async fn main() {
         policies: Policies::tuned(),
         playlists: Freshness::default(),
         platform_lists: PlatformLists::default(),
+        links: SignedLinks::default(),
         apk_releases: std::env::var("APK_RELEASES_BASE")
             .unwrap_or_else(|_| {
                 routes::apk::DEFAULT_RELEASES_BASE
