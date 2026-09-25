@@ -35,7 +35,7 @@ pub struct Player {
 impl Player {
     /// 打开默认音频设备。
     pub fn new() -> Result<Self, AudioError> {
-        let shared = SyncShared::new();
+        let shared = fresh_shared();
         let output = output::open(shared.clone())?;
         let player =
             rodio::Player::connect_new(&output.mixer);
@@ -223,6 +223,11 @@ impl Player {
     pub fn set_volume(&self, volume: f32) {
         self.player.set_volume(clamped_volume(volume));
     }
+}
+
+/// 刚开的播放器那一份同步状态。
+fn fresh_shared() -> Arc<SyncShared> {
+    SyncShared::new()
 }
 
 /// [`Player::play_from`] 的正身,拆出来是为了能不开声卡地测。
