@@ -1,7 +1,7 @@
 //! 此刻声音从哪条路由出去：扬声器、蓝牙、有线/USB(#137 ⑤)。
 //!
 //! 多台一起出声的合同只对「电脑扬声器 + 手机扬声器」做过声学校准;蓝牙、有线的输出延迟没测过，
-//! 界面要把这类成员标成「该路由未校准,不保证同步」。查一次要起一个进程(桌面)或走一趟 JNI
+//! 界面要把这类成员标成「该路由未校准,不保证同步」。查一次要起一两个进程(桌面)或走一趟 JNI
 //! (安卓),所以结论记五秒。查不出来就是 `None`,界面不替它下结论。
 
 use std::sync::{Mutex, PoisonError};
@@ -60,13 +60,25 @@ fn detect() -> Option<Route> {
 pub(crate) fn detect_with(
     run: &dyn Fn(&str, &[&str]) -> Option<String>,
 ) -> Option<Route> {
-    None
+    let wpctl = run("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
+        .and_then(|out| wpctl_node_name(&out).map(str::to_owned));
+    let name = wpctl.or_else(|| {
+        run("pactl", &["get-default-sink"])
+            .map(|out| out.trim().to_owned())
+            .filter(|name| !name.is_empty())
+    })?;
+    Some(classify_sink(&name))
 }
 
 /// 从 `wpctl inspect` 的输出里取 `node.name`。
 #[cfg_attr(target_os = "android", allow(dead_code))]
 pub(crate) fn wpctl_node_name(inspect: &str) -> Option<&str> {
-    None
+    inspect.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim_start_matches([' ', '*']).trim() == "node.name")
+            .then(|| value.trim().trim_matches('"'))
+            .filter(|name| !name.is_empty())
+    })
 }
 
 /// 从 sink 名认路由：`bluez_output.*` 是蓝牙，名字里带 `usb` 的是 USB 声卡;板载模拟口与 HDMI
