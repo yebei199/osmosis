@@ -48,9 +48,10 @@ fn detect() -> Option<Route> {
             .args(args)
             .output()
             .ok()?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        out.status.success().then(|| {
+            String::from_utf8_lossy(&out.stdout)
+                .into_owned()
+        })
     })
 }
 
@@ -60,8 +61,11 @@ fn detect() -> Option<Route> {
 pub(crate) fn detect_with(
     run: &dyn Fn(&str, &[&str]) -> Option<String>,
 ) -> Option<Route> {
-    let wpctl = run("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
-        .and_then(|out| wpctl_node_name(&out).map(str::to_owned));
+    let wpctl =
+        run("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
+            .and_then(|out| {
+                wpctl_node_name(&out).map(str::to_owned)
+            });
     let name = wpctl.or_else(|| {
         run("pactl", &["get-default-sink"])
             .map(|out| out.trim().to_owned())
@@ -72,10 +76,13 @@ pub(crate) fn detect_with(
 
 /// 从 `wpctl inspect` 的输出里取 `node.name`。
 #[cfg_attr(target_os = "android", allow(dead_code))]
-pub(crate) fn wpctl_node_name(inspect: &str) -> Option<&str> {
+pub(crate) fn wpctl_node_name(
+    inspect: &str,
+) -> Option<&str> {
     inspect.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
-        (key.trim_start_matches([' ', '*']).trim() == "node.name")
+        (key.trim_start_matches([' ', '*']).trim()
+            == "node.name")
             .then(|| value.trim().trim_matches('"'))
             .filter(|name| !name.is_empty())
     })
@@ -176,14 +183,26 @@ mod tests {
             node.nick = \"ALCS1200A Analog\"\n";
         assert_eq!(
             wpctl_node_name(inspect),
-            Some("alsa_output.pci-0000_07_00.6.analog-stereo")
+            Some(
+                "alsa_output.pci-0000_07_00.6.analog-stereo"
+            )
         );
         assert_eq!(
-            wpctl_node_name("    node.name = \"bluez_output.AA_BB.1\"\n"),
+            wpctl_node_name(
+                "    node.name = \"bluez_output.AA_BB.1\"\n"
+            ),
             Some("bluez_output.AA_BB.1")
         );
-        assert_eq!(wpctl_node_name("id 56, type PipeWire:Interface:Node\n"), None);
-        assert_eq!(wpctl_node_name("    node.name = \"\"\n"), None);
+        assert_eq!(
+            wpctl_node_name(
+                "id 56, type PipeWire:Interface:Node\n"
+            ),
+            None
+        );
+        assert_eq!(
+            wpctl_node_name("    node.name = \"\"\n"),
+            None
+        );
     }
 
     /// 有 wpctl 就用它;没有退到 pactl;两个都没有报未知，不误标成扬声器。
@@ -194,14 +213,20 @@ mod tests {
                 "  * node.name = \"bluez_output.AA.1\"\n".to_owned()
             })
         };
-        assert_eq!(detect_with(&wpctl_only), Some(Route::Bluetooth));
+        assert_eq!(
+            detect_with(&wpctl_only),
+            Some(Route::Bluetooth)
+        );
 
         let pactl_only = |program: &str, _: &[&str]| {
             (program == "pactl").then(|| {
                 "alsa_output.usb-Focusrite-00.analog-stereo\n".to_owned()
             })
         };
-        assert_eq!(detect_with(&pactl_only), Some(Route::Wired));
+        assert_eq!(
+            detect_with(&pactl_only),
+            Some(Route::Wired)
+        );
 
         let neither = |_: &str, _: &[&str]| None;
         assert_eq!(detect_with(&neither), None);
