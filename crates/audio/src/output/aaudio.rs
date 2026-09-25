@@ -60,7 +60,19 @@ pub(super) fn run(
         &broken,
         Some(stream),
         || start(&source, &shared, &broken),
-        |_| {},
+        |elapsed| {
+            let frames = (elapsed.as_secs_f64()
+                * f64::from(OUTPUT_SAMPLE_RATE))
+                as usize;
+            fill(
+                &source,
+                &mut vec![
+                    0.0;
+                    frames
+                        * usize::from(OUTPUT_CHANNELS)
+                ],
+            );
+        },
     );
 }
 

@@ -83,7 +83,19 @@ pub(super) fn run(
                 &broken,
             )
         },
-        |_| {},
+        |elapsed| {
+            let frames = (elapsed.as_secs_f64()
+                * f64::from(rate.get()))
+                as usize;
+            fill(
+                &source,
+                &mut vec![
+                    0.0;
+                    frames
+                        * usize::from(channels.get())
+                ],
+            );
+        },
     );
 }
 

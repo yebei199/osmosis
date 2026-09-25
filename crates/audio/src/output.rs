@@ -171,8 +171,14 @@ pub(crate) fn watch<S>(
 ) {
     let mut stream = first;
     let mut keeper = Keeper::default();
+    let mut pulled_at = Instant::now();
     loop {
-        match signals.recv_timeout(WATCH_EVERY) {
+        let wait = if stream.is_none() && shared.idle() {
+            IDLE_PULL_EVERY
+        } else {
+            WATCH_EVERY
+        };
+        match signals.recv_timeout(wait) {
             Ok(Signal::Stop)
             | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return;
@@ -214,6 +220,15 @@ pub(crate) fn watch<S>(
                 }
             }
         }
+        let now = Instant::now();
+        if stream.is_none() && shared.idle() {
+            // 醒得晚了(系统忙)也只补一小段：拉的是静音，追上实时没有意义
+            pull(
+                now.duration_since(pulled_at)
+                    .min(WATCH_EVERY),
+            );
+        }
+        pulled_at = now;
     }
 }
 

@@ -73,8 +73,9 @@ impl Player {
         let source =
             SyncSource::new(feed, self.shared.clone());
         self.shared.resume();
-        self.attach(source);
+        // 先叫醒：流关着的话马上开，`attach` 里 rodio 换源要等声卡来拉
         self.output.poke();
+        self.attach(source);
     }
 
     /// 把一路同步源接到播放器上:分一支给可视化,替换掉正在放的。
@@ -111,8 +112,8 @@ impl Player {
             at,
             playing,
         )?;
-        self.attach(source);
         self.output.poke();
+        self.attach(source);
         Ok(())
     }
 
