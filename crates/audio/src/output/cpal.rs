@@ -8,7 +8,7 @@ use ::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::mixer::Mixer;
 use rodio::{ChannelCount, SampleRate};
 
-use super::{SharedMixer, fill, watch};
+use super::{SharedMixer, Signal, fill, watch};
 use crate::AudioError;
 use crate::clock::monotonic_ns;
 use crate::sync::SyncShared;
@@ -17,7 +17,7 @@ use crate::sync::SyncShared;
 pub(super) fn run(
     shared: Arc<SyncShared>,
     ready: &mpsc::Sender<Result<Mixer, AudioError>>,
-    stop: &mpsc::Receiver<()>,
+    signals: &mpsc::Receiver<Signal>,
 ) {
     let device = match default_device() {
         Ok(device) => device,
@@ -49,7 +49,7 @@ pub(super) fn run(
     let source: SharedMixer = Arc::new(Mutex::new(source));
     let broken = Arc::new(AtomicBool::new(false));
 
-    let mut stream = match start(
+    let stream = match start(
         &device,
         &config.into(),
         &source,
@@ -64,35 +64,39 @@ pub(super) fn run(
     };
     let _ = ready.send(Ok(mixer));
 
-    watch(stop, &|| broken.load(Ordering::Relaxed), || {
-        log::warn!("输出流断了，重开默认设备");
-        broken.store(false, Ordering::Relaxed);
-        let reopened =
-            default_device().and_then(|device| {
-                let config = device
-                    .default_output_config()
-                    .map_err(|e| {
-                        AudioError::Device(e.to_string())
-                    })?;
-                start(
-                    &device,
-                    &config.into(),
-                    &source,
-                    &shared,
-                    &broken,
-                )
-            });
-        match reopened {
-            Ok(fresh) => stream = fresh,
-            Err(error) => {
-                log::warn!(
-                    "重开输出失败，稍后再试: {error}"
-                );
-                broken.store(true, Ordering::Relaxed);
-            }
-        }
-    });
-    drop(stream);
+    watch(
+        signals,
+        &shared,
+        &broken,
+        Some(stream),
+        || {
+            let device = default_device()?;
+            let config =
+                device.default_output_config().map_err(
+                    |e| AudioError::Device(e.to_string()),
+                )?;
+            start(
+                &device,
+                &config.into(),
+                &source,
+                &shared,
+                &broken,
+            )
+        },
+        |elapsed| {
+            let frames = (elapsed.as_secs_f64()
+                * f64::from(rate.get()))
+                as usize;
+            fill(
+                &source,
+                &mut vec![
+                    0.0;
+                    frames
+                        * usize::from(channels.get())
+                ],
+            );
+        },
+    );
 }
 
 fn default_device() -> Result<::cpal::Device, AudioError> {

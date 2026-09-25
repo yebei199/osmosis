@@ -168,6 +168,25 @@ impl SyncShared {
         *lock(&self.stats)
     }
 
+    /// 此刻用不着声卡(输出后端据此在暂停久了之后关流，#138):不跟时间线时按着暂停，或者跟着
+    /// 一条暂停着的时间线。有跳转在等就还用得着 —— 跳转要等声卡来拉才执行。
+    pub fn idle(&self) -> bool {
+        if self.seek_pending.load(Ordering::Acquire) {
+            return false;
+        }
+        match self.target() {
+            Target::Free => self.is_paused(),
+            Target::Follow { playing, .. } => !playing,
+        }
+    }
+
+    /// 输出后端关了流：最近那一块的配对作废(主端恢复时别拿几十秒前的配对写计划),
+    /// 也不再算在出声。
+    pub fn output_closed(&self) {
+        lock(&self.pairing).take();
+        lock(&self.stats).sounding = false;
+    }
+
     /// 最近一块第一帧的呈现时刻(本机单调时钟),与那一帧是媒体的第几纳秒。
     ///
     /// 主端把自己的实际播放写成共同计划靠它(#137 ⑤):两个数取自同一块，不会一个新一个旧。

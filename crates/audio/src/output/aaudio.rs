@@ -19,7 +19,7 @@ use ndk::audio::{
 use rodio::mixer::Mixer;
 use rodio::{ChannelCount, SampleRate};
 
-use super::{SharedMixer, fill, watch};
+use super::{SharedMixer, Signal, fill, watch};
 use crate::AudioError;
 use crate::clock::monotonic_ns;
 use crate::pcm::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
@@ -29,7 +29,7 @@ use crate::sync::SyncShared;
 pub(super) fn run(
     shared: Arc<SyncShared>,
     ready: &mpsc::Sender<Result<Mixer, AudioError>>,
-    stop: &mpsc::Receiver<()>,
+    signals: &mpsc::Receiver<Signal>,
 ) {
     let (Some(channels), Some(rate)) = (
         ChannelCount::new(OUTPUT_CHANNELS),
@@ -45,8 +45,7 @@ pub(super) fn run(
     let source: SharedMixer = Arc::new(Mutex::new(source));
     let broken = Arc::new(AtomicBool::new(false));
 
-    let mut stream = match start(&source, &shared, &broken)
-    {
+    let stream = match start(&source, &shared, &broken) {
         Ok(stream) => stream,
         Err(error) => {
             let _ = ready.send(Err(error));
@@ -55,28 +54,42 @@ pub(super) fn run(
     };
     let _ = ready.send(Ok(mixer));
 
-    watch(stop, &|| broken.load(Ordering::Relaxed), || {
-        log::warn!("AAudio 输出流断了(换了路由?),重开");
-        broken.store(false, Ordering::Relaxed);
-        let _ = stream.request_stop();
-        match start(&source, &shared, &broken) {
-            Ok(fresh) => stream = fresh,
-            Err(error) => {
-                log::warn!(
-                    "重开 AAudio 输出失败，稍后再试: {error}"
-                );
-                broken.store(true, Ordering::Relaxed);
-            }
-        }
-    });
-    let _ = stream.request_stop();
+    watch(
+        signals,
+        &shared,
+        &broken,
+        Some(stream),
+        || start(&source, &shared, &broken),
+        |elapsed| {
+            let frames = (elapsed.as_secs_f64()
+                * f64::from(OUTPUT_SAMPLE_RATE))
+                as usize;
+            fill(
+                &source,
+                &mut vec![
+                    0.0;
+                    frames
+                        * usize::from(OUTPUT_CHANNELS)
+                ],
+            );
+        },
+    );
+}
+
+/// 开着的 AAudio 流。drop 时先停再关(`AudioStream` 自己 drop 只 close)。
+struct Running(AudioStream);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.request_stop();
+    }
 }
 
 fn start(
     source: &SharedMixer,
     shared: &Arc<SyncShared>,
     broken: &Arc<AtomicBool>,
-) -> Result<AudioStream, AudioError> {
+) -> Result<Running, AudioError> {
     let channels = i32::from(OUTPUT_CHANNELS);
     let source = source.clone();
     let shared = shared.clone();
@@ -127,5 +140,5 @@ fn start(
         .open_stream()
         .map_err(device)?;
     stream.request_start().map_err(device)?;
-    Ok(stream)
+    Ok(Running(stream))
 }

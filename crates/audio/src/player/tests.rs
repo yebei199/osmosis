@@ -133,3 +133,12 @@ fn a_paused_start_stays_silent() {
         "暂停归同步源,播放器本身一直在放"
     );
 }
+
+/// 刚开的播放器手上没有源，算暂停：声卡用不着，暂停满时限就关流(#138)。
+/// 从前初值是「在放」,应用启动后一首没放，输出流就一直开着送静音，直到第一次按暂停。
+#[test]
+fn a_fresh_player_with_nothing_loaded_counts_as_paused() {
+    let shared = fresh_shared();
+    assert!(shared.is_paused(), "手上没有源就是暂停");
+    assert!(shared.idle(), "暂停着，声卡用不着");
+}

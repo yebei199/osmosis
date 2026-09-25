@@ -17,12 +17,14 @@ use crate::{AudioError, output, pcm, spectrum};
 /// 同步源在下一次被声卡拉的时候执行跳转,一块缓冲十几到二十毫秒;底下的
 /// `ChannelSource::try_seek` 自己还要等解码线程最多 10ms。100ms 是两者之和的几倍。
 /// 等不到就乐观地当成跳了,结论照旧由 `SeekState` 补上。
+/// 暂停久了输出流是关着的(#138),这一回还要先重开流,多半等不到,走的就是乐观这条。
 const SEEK_VERDICT: Duration = Duration::from_millis(100);
 
 /// 出声的那一头。持有音频设备,活多久声音就能放多久。
 pub struct Player {
-    /// 声卡流。drop 掉声音就断了,所以必须留着。
-    _output: output::Output,
+    /// 声卡流。drop 掉声音就断了,所以必须留着。暂停久了它自己关流,要出声时靠
+    /// [`output::Output::poke`] 叫它马上重开(#138)。
+    output: output::Output,
     player: rodio::Player,
     /// 可视化的频谱分析器,每次换源在 [`Self::play`] 里接上新支路。
     viz: spectrum::Analyzer,
@@ -33,14 +35,14 @@ pub struct Player {
 impl Player {
     /// 打开默认音频设备。
     pub fn new() -> Result<Self, AudioError> {
-        let shared = SyncShared::new();
+        let shared = fresh_shared();
         let output = output::open(shared.clone())?;
         let player =
             rodio::Player::connect_new(&output.mixer);
         player.play();
 
         Ok(Self {
-            _output: output,
+            output,
             player,
             viz: spectrum::Analyzer::new(),
             shared,
@@ -71,6 +73,8 @@ impl Player {
         let source =
             SyncSource::new(feed, self.shared.clone());
         self.shared.resume();
+        // 先叫醒：流关着的话马上开，`attach` 里 rodio 换源要等声卡来拉
+        self.output.poke();
         self.attach(source);
     }
 
@@ -108,6 +112,7 @@ impl Player {
             at,
             playing,
         )?;
+        self.output.poke();
         self.attach(source);
         Ok(())
     }
@@ -115,6 +120,7 @@ impl Player {
     /// 让当前这一路跟一条时间线(同步播放),或者回到顺序播放([`Target::Free`])。
     pub fn follow(&self, target: Target) {
         self.shared.set_target(target);
+        self.output.poke();
     }
 
     /// 最近一块第一帧的呈现时刻(本机单调时钟纳秒)与那一刻的媒体位置(见 `SyncShared::pairing`)。
@@ -167,6 +173,7 @@ impl Player {
     pub fn resume(&self) {
         self.shared.resume();
         self.player.play();
+        self.output.poke();
     }
 
     /// 当前源放空了没有。控制条靠它区分"暂停中"(false)与"放完了"(true),
@@ -198,11 +205,9 @@ impl Player {
         &self,
         to: core::time::Duration,
     ) -> Result<(), AudioError> {
-        match self
-            .shared
-            .request_seek(to)
-            .recv_timeout(SEEK_VERDICT)
-        {
+        let verdict = self.shared.request_seek(to);
+        self.output.poke();
+        match verdict.recv_timeout(SEEK_VERDICT) {
             Ok(verdict) => verdict.map_err(|err| {
                 AudioError::Device(err.to_string())
             }),
@@ -219,6 +224,15 @@ impl Player {
     pub fn set_volume(&self, volume: f32) {
         self.player.set_volume(clamped_volume(volume));
     }
+}
+
+/// 刚开的播放器那一份同步状态：手上还没有源，算暂停(同 [`Player::is_paused`] 的约定)。
+/// 不这样的话，应用启动后一首没放，输出流就一直开着送静音，暂停满时限关流那条永远轮不到
+/// (#138)。放起来的每条路([`Player::play_feed`]、[`Player::play_from`])都自己定暂停与否。
+fn fresh_shared() -> Arc<SyncShared> {
+    let shared = SyncShared::new();
+    shared.pause();
+    shared
 }
 
 /// [`Player::play_from`] 的正身,拆出来是为了能不开声卡地测。
