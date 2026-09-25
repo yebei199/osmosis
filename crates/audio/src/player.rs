@@ -225,9 +225,13 @@ impl Player {
     }
 }
 
-/// 刚开的播放器那一份同步状态。
+/// 刚开的播放器那一份同步状态：手上还没有源，算暂停(同 [`Player::is_paused`] 的约定)。
+/// 不这样的话，应用启动后一首没放，输出流就一直开着送静音，暂停满时限关流那条永远轮不到
+/// (#138)。放起来的每条路([`Player::play_feed`]、[`Player::play_from`])都自己定暂停与否。
 fn fresh_shared() -> Arc<SyncShared> {
-    SyncShared::new()
+    let shared = SyncShared::new();
+    shared.pause();
+    shared
 }
 
 /// [`Player::play_from`] 的正身,拆出来是为了能不开声卡地测。
