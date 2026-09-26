@@ -23,6 +23,7 @@ use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
     netease_name, store_first, track_refs_of,
 };
+use crate::routes::library::likes::import_once;
 use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
@@ -33,6 +34,7 @@ pub(crate) async fn playlists(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<PlaylistsDto>, Failure> {
+    import_once(&state, &account).await;
     let mut conn = conn(&state.pool).await?;
     let liked_count = liked::count(&mut conn, account.id)
         .await
