@@ -105,7 +105,13 @@ PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,�
 元素一律从窗口根用 `query_element_descendants` 按 id 找:`find_elements_by_id` 找不到 `if` /
 `for` 里长出来的元素(搜索框、分区条、播放页的队列入口),只会返回空。真机上填完搜索框
 软键盘会盖住结果、吃掉第一下点击,脚本在键盘真的开着时(`dumpsys input_method` 的
-`mInputShown=true`)按一次返回收起它;真机端口不是 8090 时设 `ANDROID_MCP_PORT`。
+`mInputShown=true`)按一次返回收起它;真机端口不是 8090 时设 `ANDROID_MCP_PORT`。adb 用哪条
+命令由 `ADB` 给(缺省 `adb`):桌面实例在 namespace 里时够不到宿主的 adb,要写成能够到的
+命令,够不到就直接失败,不静默跳过。
+
+每一项开头都先复位:收起播放页、回到音乐页、选这一项要的分区;队列页那一项看播放页与队列页
+是不是已经开着,开着就直接用。所以连着跑四项(`list → wall → search → queue`)与单独跑
+一项结果一样,不依赖上一项留下的页面。
 
 卡墙的卡画在 3D 纹理里,按坐标点第二下未必还命中同一张;脚本走场区上的无障碍动作
 (`Increment` 挪选中、`Default_` 播选中的那张),读屏用户走的也是这条。

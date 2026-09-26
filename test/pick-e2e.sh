@@ -151,23 +151,64 @@ print(json.dumps(hs[$1]) if len(hs) > $1 else '')
 
 # 真机上填完搜索框,软键盘会盖住结果,第一下点击被它吃掉(#142 F-7)。键盘真的开着才按返回,
 # 否则返回会把页面退掉。桌面(没有 adb 或不是真机那个端口)什么都不做。
+#
+# adb 用哪条命令由 ADB 给(缺省 `adb`):桌面实例跑在 namespace 里时连不到宿主的 adb,
+# 那时要写成能从 ns 里够到宿主的命令(比如 `ADB="ssh 宿主 adb"`)。够不到就直接失败 ——
+# 静默跳过的话键盘还盖着,下一下点击被吃掉,报出来的却是「没起播」(#142 N-3)。
 hide_keyboard() {
-  [ "${CALL_PORT:-$PORT}" = "${ANDROID_MCP_PORT:-8090}" ] && command -v adb >/dev/null || return 0
+  [ "${CALL_PORT:-$PORT}" = "${ANDROID_MCP_PORT:-8090}" ] || return 0
+  local adb=${ADB:-adb}
+  $adb shell true >/dev/null 2>&1 || {
+    echo "收不起真机的软键盘:\`$adb\` 用不了 —— 在 namespace 里跑时设 ADB=<能够到宿主 adb 的命令>" >&2
+    exit 1
+  }
   sleep 1
-  if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
-    adb shell input keyevent KEYCODE_BACK
+  if $adb shell dumpsys input_method | grep -q "mInputShown=true"; then
+    $adb shell input keyevent KEYCODE_BACK
     sleep 1
   fi
 }
 
+# 某类元素在不在树上(按类型名)。
+present() {
+  call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"$1\"}]}" \
+    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("elementHandles") else "")'
+}
+
+# 队列页开着没有:它常驻在播放页里,收起时滑到右边屏外,开着时贴在左边。
+queue_open() {
+  local page
+  page=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"QueuePage\"}]}" \
+    | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")')
+  [ -n "$page" ] || return 1
+  call get_element_properties "{\"elementHandle\":$page}" \
+    | python3 -c 'import json,sys; p=json.load(sys.stdin); sys.exit(0 if p["absolutePosition"].get("x", 0) < 1 else 1)'
+}
+
+# 每一项开头把界面复位到同一个起点:播放页收起、音乐页、这一项要的分区。不依赖上一项
+# 留下的样子 —— 连着跑 list → wall → search → queue 时,卡墙起播会打开播放页,队列页也会
+# 一直开着(收起播放页不关它),下一项就找不到自己的入口(#142 N-3)。
+reset() {
+  local section=$1 music item
+  for _ in 1 2 3; do
+    [ -n "$(present PlayPage)" ] || break
+    call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
+    sleep 1
+  done
+  [ -z "$(present PlayPage)" ] || { echo "收不起播放页" >&2; exit 1; }
+  music=$(handle "NavItem::touch" 1)
+  must "$music" "音乐入口"
+  call click_element "{\"elementHandle\":$music}" >/dev/null
+  item=$(handle "MusicRail::item-touch" "$section")
+  [ -n "$item" ] || item=$(handle "MusicBar::item-touch" "$section")
+  must "$item" "音乐页第 $((section + 1)) 个分区"
+  call click_element "{\"elementHandle\":$item}" >/dev/null
+  sleep 2
+}
+
 # 搜索分区搜 KEYWORD。结果落在列表里,之后与列表那条路一样点。
 search() {
-  local item box
-  item=$(handle "MusicRail::item-touch" 2)
-  [ -n "$item" ] || item=$(handle "MusicBar::item-touch" 2)
-  must "$item" "搜索分区"
-  call click_element "{\"elementHandle\":$item}" >/dev/null
-  sleep 1
+  local box
   box=$(handle "MusicPage::keyword")
   must "$box" "搜索框"
   call click_element "{\"elementHandle\":$box}" >/dev/null
@@ -183,12 +224,17 @@ search() {
 }
 
 # 展开播放页、打开队列页。
+#
+# 可重入:第二轮进来时播放页、队列页可能已经开着。
 open_queue() {
   local cover entry
-  cover=$(handle "PlayerBar::cover-touch")
-  must "$cover" "控制条封面(队列页要已经在放)"
-  call click_element "{\"elementHandle\":$cover}" >/dev/null
-  sleep 2
+  if [ -z "$(present PlayPage)" ]; then
+    cover=$(handle "PlayerBar::cover-touch")
+    must "$cover" "控制条封面(队列页要已经在放)"
+    call click_element "{\"elementHandle\":$cover}" >/dev/null
+    sleep 2
+  fi
+  queue_open && return
   entry=$(handle "PlayPage::queue-entry-touch")
   must "$entry" "播放页的队列入口"
   call click_element "{\"elementHandle\":$entry}" >/dev/null
@@ -226,15 +272,8 @@ tap() {
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
 root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
 
-# 音乐页 → 每日推荐。两种版式的分区条 id 不同,哪个在用哪个。
-music=$(handle "NavItem::touch" 1)
-must "$music" "音乐入口"
-call click_element "{\"elementHandle\":$music}" >/dev/null
-daily=$(handle "MusicRail::item-touch" 0)
-[ -n "$daily" ] || daily=$(handle "MusicBar::item-touch" 0)
-must "$daily" "每日推荐分区"
-call click_element "{\"elementHandle\":$daily}" >/dev/null
-sleep 2
+# 复位:播放页收起 → 音乐页 → 搜索分区(search)或每日推荐(其余)。
+[ "$MODE" = search ] && reset 2 || reset 0
 
 # 点中的若正是在放的那首,界面按多余的点击丢掉它,账本自然不动 ——
 # 所以两个候选轮着试,只固定点一首的话第二次跑必然失败。
