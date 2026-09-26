@@ -110,8 +110,12 @@ fn music_page_reserves_room_for_the_bar() {
     ui.global::<Player>().set_has_track(true);
     let with = blank_below(&ui);
 
+    // 音乐页没条时底部本就留 16px(常规页边距),不是 0 —— 差值因此是
+    // `page-reserve - 16px`,不是整段 `BAR_RESERVE`(见 musicpage.slint
+    // 的 padding-bottom)。这里只钉「条身那 62px 至少留出来了」,
+    // 忘了整段留空(差值退回 0)照样会挂。
     assert!(
-        with - without >= BAR_RESERVE,
+        with - without >= 62.0,
         "音乐页忘了照 BarMetrics.page-reserve 留空"
     );
 }
