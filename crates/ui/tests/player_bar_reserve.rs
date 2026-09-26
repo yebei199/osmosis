@@ -1,13 +1,19 @@
-//! 守卫(#143):控制条浮在四个页签上面,每一页都得**自己记得**在底部
+//! 守卫(#143):控制条浮在页签上面,每一页都得**自己记得**在底部
 //! 留出 `BarMetrics.page-reserve`(条身 62 + 上下间隙各 22 = 106px)。
-//! 个人页、音乐页、设置页各自踩过一次这个坑,这条测试把三页一起钉住 ——
-//! 新加一个页签忘了留空,这里要挂,不必再等真机踩一次。
+//! 个人页、音乐页、设置页各自踩过一次这个坑,前三条测试把这三页钉住。
+//!
+//! 这三条测试本身**认不出**将来新加的第四个页签 —— 新页不在这份清单里,
+//! 没人会为它添一条测试,这三条也不会跑到它。真正兜住「新页忘了留空」的
+//! 是最后那条 `every_tab_is_either_covered_or_exempted`:它从 `Nav`(导航
+//! 真正在用的那份条目表)读出页签总数,与「已覆盖 + 已豁免」的显式清单
+//! 长度比对,对不上就挂 —— 逼着新增页签的人把它加进清单里。
 //!
 //! 卡墙分区(tab 0)豁免:那一页是网格卡墙,本来就不走 Flickable /
 //! 可滚列表,没有「最后一行滚不出条底」这回事。
 
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle as _;
+use slint::Model as _;
 use ui::Library;
 use ui::MainWindow;
 use ui::Player;
@@ -118,5 +124,33 @@ fn music_page_reserves_room_for_the_bar() {
     assert!(
         with - without >= 62.0,
         "音乐页忘了照 BarMetrics.page-reserve 留空"
+    );
+}
+
+/// 绊线:页签总数必须等于「已覆盖 + 已豁免」这份显式清单的长度。
+///
+/// `Nav.items` + `Nav.bottom-items` 是导航栏真正在用的那份条目表 ——
+/// 新加一个页签,这里的行数会跟着涨。清单不会自己跟着涨,于是两边对不上,
+/// 这条测试就挂:提醒把新页纳入上面某条测试,或者显式豁免并写明理由。
+/// 不这样兜底的话,上面三条各自钉一页的测试对第四个页签视而不见 ——
+/// 没人会为它添新测试,这三条也不会跑到它,守卫形同虚设(#143 R-1)。
+#[test]
+fn every_tab_is_either_covered_or_exempted() {
+    let ui = window(0);
+    let nav = ui.global::<ui::Nav>();
+    let total = nav.get_items().row_count()
+        + nav.get_bottom_items().row_count();
+
+    // 覆盖:上面三条测试各自钉住的页签。
+    let covered = ["MusicPage", "ProfilePage", "SettingsPage"];
+    // 豁免:卡墙分区(tab 0),理由见文件头注释。
+    let exempted = ["WallView(卡墙,tab 0)"];
+
+    assert_eq!(
+        total,
+        covered.len() + exempted.len(),
+        "页签总数是 {total},但「覆盖 + 豁免」清单只认领了 {} 个 —— \
+         新加的页签还没被这份清单认领,把它加进 covered 或 exempted(写明理由)",
+        covered.len() + exempted.len()
     );
 }
