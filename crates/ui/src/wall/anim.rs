@@ -40,10 +40,10 @@ pub struct Collapse {
 
 impl Default for Collapse {
     fn default() -> Self {
-        // 每次开局回卡墙(adr/0025:视图选择不持久化)。
+        // 每次开局回列表(#144,adr/0025:视图选择不持久化)。
         Self {
-            value: 1.0,
-            target: 1.0,
+            value: 0.0,
+            target: 0.0,
         }
     }
 }

@@ -60,8 +60,8 @@ fn the_view_toggle_asks_without_flipping() {
     invoke(&ui, "WallView::view-list-btn");
     assert_eq!(asked.get(), 0, "列表键该报 false");
     assert!(
-        ui.global::<Shell>().get_view_wall(),
-        "意图值该由 Rust 写,控件不自己置位"
+        !ui.global::<Shell>().get_view_wall(),
+        "意图值该由 Rust 写,控件不自己置位(默认已是列表,#144)"
     );
 
     invoke(&ui, "WallView::view-wall-btn");
@@ -104,6 +104,9 @@ fn a_pointer_click_on_the_view_toggle_asks_too() {
 #[test]
 fn the_wall_area_steps_and_confirms_without_a_pointer() {
     let ui = music_page(true);
+    // 默认是列表(#144);场区只在卡墙可见时才存在,手动切过去。
+    ui.global::<Shell>().set_view_wall(true);
+    ui.global::<Shell>().set_wall_showing(true);
 
     let steps = std::rc::Rc::new(std::cell::RefCell::new(
         Vec::new(),
@@ -124,7 +127,7 @@ fn the_wall_area_steps_and_confirms_without_a_pointer() {
         "WallView::wall-area",
     )
     .next()
-    .expect("默认该是卡墙");
+    .expect("切到卡墙后场区该在");
     area.invoke_accessible_increment_action();
     area.invoke_accessible_decrement_action();
     area.invoke_accessible_default_action();
@@ -168,10 +171,11 @@ fn unsupported_builds_fall_back_to_the_list() {
     );
 }
 
-/// 支持卡墙时,默认视图就是墙:场区在,列表让位(同一批卡的两种摆法,
-/// 不同时出现)。
+/// 支持卡墙时,默认视图仍是列表(#144,用户 2026-09-26 定):场区不在,
+/// 列表照常;手动切到卡墙、再切回都正常(同一批卡的两种摆法,不同时
+/// 出现)。
 #[test]
-fn the_wall_is_the_default_view_when_supported() {
+fn the_list_is_the_default_view_when_supported() {
     let ui = music_page(true);
 
     assert_eq!(
@@ -180,8 +184,31 @@ fn the_wall_is_the_default_view_when_supported() {
             "WallView::wall-area",
         )
         .count(),
+        0,
+        "默认该是列表,卡墙场区不该在"
+    );
+    assert!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "TrackList::cover-slot",
+        )
+        .count()
+            > 0,
+        "默认列表该照常在"
+    );
+
+    // 没接 wall/drive.rs 的回调,这里直接摆 Rust 那半会写的两个属性
+    // (真实切换见 the_view_toggle_asks_without_flipping)。
+    ui.global::<Shell>().set_view_wall(true);
+    ui.global::<Shell>().set_wall_showing(true);
+    assert_eq!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "WallView::wall-area",
+        )
+        .count(),
         1,
-        "默认该是卡墙"
+        "切到卡墙后场区该出现"
     );
     assert_eq!(
         testing::ElementHandle::find_by_element_id(
@@ -191,6 +218,27 @@ fn the_wall_is_the_default_view_when_supported() {
         .count(),
         0,
         "墙可见时列表该让位"
+    );
+
+    ui.global::<Shell>().set_view_wall(false);
+    ui.global::<Shell>().set_wall_showing(false);
+    assert_eq!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "WallView::wall-area",
+        )
+        .count(),
+        0,
+        "切回列表后场区该消失"
+    );
+    assert!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "TrackList::cover-slot",
+        )
+        .count()
+            > 0,
+        "切回列表后列表该重新出现"
     );
 }
 
