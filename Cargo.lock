@@ -7277,6 +7277,7 @@ version = "0.1.20"
 dependencies = [
  "argon2",
  "axum",
+ "bytes",
  "contract",
  "futures-util",
  "governor",
