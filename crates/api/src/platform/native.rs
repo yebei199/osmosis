@@ -425,6 +425,16 @@ pub(crate) const fn app_dir(
     }
 }
 
+/// 状态目录里的一个文件,与会话、设置同一个基座。桌面的日志文件用它(#145)。
+pub fn state_file(name: &str) -> Option<PathBuf> {
+    session_path_from(
+        state_dir(),
+        std::env::var("XDG_STATE_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|path| path.with_file_name(name))
+}
+
 /// 本地设置文件,与会话文件同一个目录。
 ///
 /// 两者分开放而不是塞进一份:token 是凭据,权限 0600、登出即删;设置是偏好,

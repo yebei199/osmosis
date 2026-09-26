@@ -77,6 +77,10 @@ pub use platform::off_thread;
 // 状态目录的显式入口:安卓上环境变量给不出私有目录,由平台入口注入。
 pub use platform::set_state_dir;
 
+// 状态目录里的文件路径(桌面日志落盘用,#145)。web 没有状态目录。
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform::state_file;
+
 // 声学验收的测试媒体钩子(#137 ⑤),只有原生 debug 档认。
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::test_media_url;
