@@ -620,17 +620,34 @@ impl server::objects::Objects for MemoryObjects {
     fn put(
         &self,
         key: &str,
-        bytes: Vec<u8>,
+        body: server::objects::ObjectBody,
+        length: u64,
         _content_type: &'static str,
     ) -> futures_util::future::BoxFuture<
         '_,
         server::objects::ObjectResult<()>,
     > {
-        self.objects
-            .lock()
-            .expect("对象表的锁被毒化了")
-            .insert(key.to_owned(), bytes);
-        Box::pin(async { Ok(()) })
+        use futures_util::TryStreamExt;
+        let key = key.to_owned();
+        Box::pin(async move {
+            let bytes: Vec<u8> = body
+                .map_ok(|chunk| chunk.to_vec())
+                .try_concat()
+                .await
+                .map_err(|err| err.to_string())?;
+            // 与 S3 同一条规矩:长度对不上就不存
+            if bytes.len() as u64 != length {
+                return Err(format!(
+                    "说好 {length} 字节,来了 {}",
+                    bytes.len()
+                ));
+            }
+            self.objects
+                .lock()
+                .expect("对象表的锁被毒化了")
+                .insert(key, bytes);
+            Ok(())
+        })
     }
 
     fn exists(

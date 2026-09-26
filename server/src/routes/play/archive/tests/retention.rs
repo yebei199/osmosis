@@ -25,7 +25,15 @@ async fn stored_at(
     use server::objects::Objects as _;
 
     let key = format!("tracks/{id}/{quality}.flac");
-    objects.put(&key, audio(), "audio/flac").await.unwrap();
+    objects
+        .put(
+            &key,
+            server::objects::whole(audio()),
+            audio().len() as u64,
+            "audio/flac",
+        )
+        .await
+        .unwrap();
     ledger::record(
         tx,
         &ledger::StoredTrack {

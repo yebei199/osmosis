@@ -3,7 +3,7 @@
 //! 起容器见 `just rustfs`。每条测试用自己的键,并行跑互不相干;桶是整机一份,
 //! 所以键还带着本进程独有的前缀,同一台机器上另一份测试删不到这边的对象(#136)。
 
-use server::objects::{Objects, S3, S3Config};
+use server::objects::{Objects, S3, S3Config, whole};
 
 /// 与 justfile 的 `rustfs` 配方一致。
 const DEFAULT_ENDPOINT: &str = "http://127.0.0.1:9900";
@@ -54,9 +54,14 @@ async fn put_then_fetch_then_delete() {
     let key = &unique_key("roundtrip.mp3");
     let bytes = payload();
 
-    s3.put(key, bytes.clone(), "audio/mpeg")
-        .await
-        .expect("存应当成功");
+    s3.put(
+        key,
+        whole(bytes.clone()),
+        bytes.len() as u64,
+        "audio/mpeg",
+    )
+    .await
+    .expect("存应当成功");
     assert!(s3.exists(key).await.expect("问得到"));
 
     let fetched = reqwest::get(s3.presign_get(key))
@@ -82,9 +87,14 @@ async fn presigned_link_honours_range() {
     let s3 = s3().await;
     let key = &unique_key("range.flac");
     let bytes = payload();
-    s3.put(key, bytes.clone(), "audio/flac")
-        .await
-        .expect("存应当成功");
+    s3.put(
+        key,
+        whole(bytes.clone()),
+        bytes.len() as u64,
+        "audio/flac",
+    )
+    .await
+    .expect("存应当成功");
 
     let partial = reqwest::Client::new()
         .get(s3.presign_get(key))
