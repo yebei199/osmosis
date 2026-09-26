@@ -111,6 +111,8 @@ pub enum Event {
 enum Command {
     /// 接管这台设备(用户主动按下的那一次)。
     Claim(String),
+    /// 拿手上的代次向服务端再确认一次持权(#142):还持着就照旧,早没了服务端回撤权。
+    Verify,
     /// 本机不再遥控谁了。只忘掉本地那份持权记录,**不发信令** ——
     /// 遥控器一走了之,被控端仍然该接着放(手机没电不能让 pc1 停)。
     ReleaseControl,
@@ -251,6 +253,12 @@ impl Client {
     /// 对端讲的是不是同一版协议。界面据此把这一种失败与普通掉线分开说。
     pub fn is_incompatible(&self) -> bool {
         self.incompatible.load(Ordering::Relaxed)
+    }
+
+    /// 被控端久不上报时,向服务端核一次还持不持权(#142)。遥控器自己不判失联 ——
+    /// 断线的被控端有租约,满没满只有服务端知道;满了它回一条撤权。
+    pub fn verify_control(&self) {
+        let _ = self.commands.send(Command::Verify);
     }
 
     /// 输出设备选回本机:忘掉持权记录,不知会任何人。
@@ -1020,6 +1028,12 @@ async fn dispatch(
             *held = None;
             Ok(())
         }
+        Command::Verify => match resume_claim(held.as_ref()) {
+            Some((target, generation)) => {
+                sender.claim(&target, Some(generation)).await
+            }
+            None => Ok(()),
+        },
         Command::ExitControlled => {
             sender.exit_controlled().await
         }

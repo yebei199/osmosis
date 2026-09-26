@@ -25,7 +25,7 @@ use syncplay::{Client, DeviceDto};
 pub(crate) use rules::{
     accepts_control, describe_claim_failed,
     describe_controlled, describe_copy_fault,
-    describe_group, describe_lost, describe_master_lost,
+    describe_group, describe_master_lost,
     describe_media_fault, describe_missing_entry,
     describe_move, describe_output, describe_remote,
     describe_revoked, describe_too_large,
@@ -67,6 +67,9 @@ pub enum Submitted {
 /// 主端的心跳：计划没变时多久原样再发一次。跟随端三次收不到算主端失联
 /// (`app_core::MASTER_SILENT_MS`)。
 const HEARTBEAT_MS: u64 = 1_000;
+
+/// 被控端失联时,多久向服务端核一次持权(#142)。
+const VERIFY_EVERY_MS: u64 = 15_000;
 
 /// 一次点播交出去之后,多久内还算「在路上」。
 ///
@@ -137,6 +140,8 @@ struct Inner {
     // ponytail: 挂钟倒退时新进程会拿到更小的 epoch,那一次的上报会被对端
     // 全丢掉。真出现再换单调时钟加持久计数器
     epoch: i64,
+    /// 上一次因失联向服务端核持权的时刻(毫秒挂钟)。
+    verified_at: AtomicU64,
     /// 本次会话里已经报到第几条。每报一次加一。
     state_seq: AtomicU64,
     /// 交出去、被控端还没报上来的那次点播:曲目 id 与交出去的时刻。
@@ -147,12 +152,9 @@ struct Inner {
     /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
     #[cfg(test)]
     play_submits: AtomicU64,
-    /// 交给客户端去忘掉的持权有几次(见 [`Remote::release_claim`])。
-    ///
-    /// [`Client::release_control`] 只往一条通道里塞一条指令,测试里的
-    /// [`Client::detached`] 连接收端都没有 —— 不记下来就观察不到它发没发。
+    /// 因失联向服务端核持权的次数(见 [`Remote::verify_if_lost`])。
     #[cfg(test)]
-    releases: AtomicU64,
+    verifies: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -496,30 +498,24 @@ impl Remote {
             .swap(false, Ordering::Relaxed)
     }
 
-    /// 被控端失联太久就把输出收回本机。收回了返回 `true`。
+    /// 被控端久不上报,就向服务端核一次还持不持权。核了返回 `true`。
     ///
-    /// 撤权丢了就没有第二次(`server::syncplay::control` 的 `send` 是 `try_send`
-    /// 且不重发),而本机这条 socket 好好的、不会重连,重连那条自愈也就走不到。
-    /// 少了这一条,遥控器永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
-    /// 本机也放不了歌 —— 用户唯一的出路是自己去点一下「本机」(#102 F-003)。
-    ///
-    /// 走的是与撤权**同一条**收尾:输出回本机、镜像清掉、提示一句。自动续播
-    /// 那趟轮询下一步就会看到 [`Self::took_local_edge`],把本机按停,
-    /// 所以这里不会顺手起播。
-    pub fn give_up_if_lost(&self) -> bool {
-        self.give_up_if_lost_at(now_ms())
+    /// 遥控器**不再自己回本机**(#142):从前十五秒收不到上报就回,可断线的被控端有
+    /// 租约、闪断会回来,于是遥控器自己掉回本机而被控端还在放。现在失权以服务端为准:
+    /// 还持着就照旧显示「重连中」,早没了服务端回撤权,走撤权那条收尾回本机。
+    /// 撤权那一发丢了(#102 F-003)也由这一问补上,每 [`VERIFY_EVERY_MS`] 问一次。
+    pub fn verify_if_lost(&self) -> bool {
+        self.verify_if_lost_at(now_ms())
     }
 
     /// 同上,但时钟由调用方给 —— 测试要在这条十五秒的判断上说话。
-    pub(crate) fn give_up_if_lost_at(
+    pub(crate) fn verify_if_lost_at(
         &self,
         now_ms: u64,
     ) -> bool {
         {
             let session = lock(&self.inner.session);
-            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。源被冻住或断网时
-            // 这里本来会按失联收回本机,把「待确认」与处理入口一并丢掉 —— 而那正是
-            // 该交给用户处理的时候。
+            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。
             if session.moving().is_some() {
                 return false;
             }
@@ -531,12 +527,24 @@ impl Remote {
                 return false;
             }
         }
-
-        // 持权记录一起交出去:留着的话,遥控器自己的信令哪天重连一次就拿它去
-        // 续权,把被控端重新锁上 —— 而这头已经是本机输出了(#118)。
-        self.release_claim();
-        self.come_home(describe_lost);
+        let last = self.inner.verified_at.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < VERIFY_EVERY_MS {
+            return false;
+        }
+        self.inner.verified_at.store(now_ms, Ordering::Relaxed);
+        log::info!("被控端久不上报,向服务端核一次持权");
+        #[cfg(test)]
+        self.inner.verifies.fetch_add(1, Ordering::Relaxed);
+        if let Some(client) = self.inner.client.get() {
+            client.verify_control();
+        }
         true
+    }
+
+    /// 测试里问:到此为止向服务端核过几次持权。
+    #[cfg(test)]
+    pub(crate) fn verifies(&self) -> u64 {
+        self.inner.verifies.load(Ordering::Relaxed)
     }
 
     /// 输出收回本机:镜像清掉、提示一句。
@@ -572,21 +580,6 @@ impl Remote {
             },
         );
         self.refresh();
-    }
-
-    /// 让客户端忘掉本机的持权记录。不发信令 —— 被控端仍然该接着放。
-    fn release_claim(&self) {
-        #[cfg(test)]
-        self.inner.releases.fetch_add(1, Ordering::Relaxed);
-        if let Some(client) = self.inner.client.get() {
-            client.release_control();
-        }
-    }
-
-    /// 测试里问:到此为止交出去几次持权。
-    #[cfg(test)]
-    pub(crate) fn releases(&self) -> u64 {
-        self.inner.releases.load(Ordering::Relaxed)
     }
 
     /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
@@ -1140,11 +1133,12 @@ pub fn new(ui: &MainWindow, me: &str) -> Remote {
                 std::sync::atomic::AtomicBool::new(false),
             epoch: now_ms() as i64,
             state_seq: AtomicU64::new(1),
+            verified_at: AtomicU64::new(0),
             pending_play: Mutex::new(None),
             #[cfg(test)]
             play_submits: AtomicU64::new(0),
             #[cfg(test)]
-            releases: AtomicU64::new(0),
+            verifies: AtomicU64::new(0),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             #[cfg(test)]

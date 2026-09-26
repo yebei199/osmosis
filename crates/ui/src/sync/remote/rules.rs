@@ -55,8 +55,10 @@ pub fn describe_remote(
     if !view.is_known() {
         return "遥控: 正在连接".to_owned();
     }
+    // 不说「已过期」、也不自己回本机(#142):被控端多半在重连,服务端替它留着租约。
+    // 真的不回来了,服务端的撤权会把输出收回本机。
     if view.is_stale(now_ms) {
-        return "遥控: 状态已过期".to_owned();
+        return "遥控: 重连中…".to_owned();
     }
     match view.state() {
         RemotePlayState::Idle => "遥控: 没在放".to_owned(),
@@ -100,27 +102,18 @@ pub fn describe_revoked(
     format!("遥控已被 {by} 接管")
 }
 
-/// 被控端失联了、该把输出收回本机吗。
+/// 被控端久不上报,该向服务端核一次还持不持权吗(#142)。
 ///
 /// 撤权是服务端尽力而为的一发,丢了之后没有第二次(`server::syncplay::control` 的
 /// `send`)。遥控器这头的 socket 还好好的,不会重连,也就走不到重连那条
-/// 自愈;于是它永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
-/// 而本机什么也放不了(#102 F-003)。这一条是那种情况下唯一的出口。
+/// 自愈(#102 F-003)。从前这里直接收回本机,可闪断的被控端有租约、还会回来,
+/// 于是遥控器自己掉回本机而被控端还在放。现在只去问服务端,由它裁决。
 pub fn lost_remote(
     output: &Output,
     view: &RemoteView,
     now_ms: u64,
 ) -> bool {
     output.target().is_some() && view.is_lost(now_ms)
-}
-
-/// 自动回本机时那句提示。
-///
-/// 必须说出是哪台设备、以及现在声音在哪儿:不说的话,用户只看到歌换了个
-/// 地方放,会以为是自己按错了。
-pub fn describe_lost(output: &Output) -> String {
-    let name = output.name().unwrap_or("那台设备");
-    format!("{name} 失联,已回到本机")
 }
 
 /// 接管没成、回到本机时那句提示。
@@ -424,9 +417,9 @@ mod tests {
         );
     }
 
-    /// 失联要收回输出,而过期不要 —— 两档的去向相反。
+    /// 失联才去核持权,过期不必 —— 过期只是这几秒没来。
     #[test]
-    fn only_a_lost_device_takes_the_output_back() {
+    fn only_a_lost_device_is_checked_with_the_server() {
         let view = view(RemotePlayState::Playing);
 
         assert!(
@@ -448,16 +441,6 @@ mod tests {
         );
     }
 
-    /// 自动回本机那句话要说清是哪台设备、声音现在在哪。
-    #[test]
-    fn the_lost_notice_names_the_device_and_where_sound_went()
-     {
-        assert_eq!(
-            describe_lost(&remote()),
-            "pc1 失联,已回到本机"
-        );
-    }
-
     /// 过期压过一切:后面那些字段全是旧闻,不许拿它们写「正在播放」。
     #[test]
     fn a_stale_view_says_so_instead_of_reading_out_old_news()
@@ -466,7 +449,7 @@ mod tests {
 
         assert_eq!(
             describe_remote(&view, 10_000),
-            "遥控: 状态已过期"
+            "遥控: 重连中…"
         );
     }
 
@@ -570,8 +553,6 @@ mod tests {
         copy.push(describe_output(&Output::Local));
         copy.push(describe_controlled(None));
         copy.push(describe_revoked(&Output::Local, "pc1"));
-        copy.push(describe_lost(&remote()));
-        copy.push(describe_lost(&Output::Local));
         copy.push(describe_unavailable(&Output::Local));
         copy.push(describe_unavailable(&remote()));
         copy.push(describe_too_large(&Output::Local));
