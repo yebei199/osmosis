@@ -1,42 +1,30 @@
-//! 一条用户播放意图的唯一出口:来源检查 → 目标选择 → 本机执行 / 远端提交。
-//!
-//! 在这一层出现之前,两道闸(被遥控时本机动作不生效 / 输出不在本机时改发命令)
-//! 在六个回调入口各写了一遍,而且写法并不一致 —— 有三处忽略提交结果,另外三处
-//! 拿提交结果决定要不要回落本机,还有一处压根没有第一道闸。漏掉的那个在界面上
-//! 表现为「别的键都遥控,唯独这个还在本机上放」(#108)。
+//! 一条用户播放意图的唯一出口:来源检查 → 目标选择 → 本机执行 / 发给服务端的组意图。
 //!
 //! 分三段,各归各的位置:
 //!
 //! - **translate** 在各个回调自己那里:连点去重、组装整批,产出一条 [`Intent`]。
 //!   它只知道用户按了什么,不知道这一下会落在哪台设备上。
-//! - **dispatch** 只有这一处([`dispatch`]):谁能按、按给谁、翻成什么。
-//! - **execute** 是与来源无关的共享执行体([`execute`]):命令落到本机播放器上。
-//!   遥控器发来的命令**直接**进它,不经过 [`dispatch`] —— 进去的话这台会把
-//!   收到的命令再转发回去。
+//! - **dispatch** 只有这一处([`dispatch`]):本机在组里就发给服务端(#142),不在就本机放。
+//! - **execute** 是本机的执行体([`execute`]):命令落到本机播放器上。
 //!
-//! 路由按**已选目标**([`app_core::Output`])走,不按提交结果的那个布尔值。
-//! 这是与改之前最要紧的一处不同:目标在别的设备而提交失败时,声音不回落本机,
-//! 而是保留目标并说一句「控制暂不可用」(`docs/adr/0030`)。
+//! 组里的设备对等(#142):不管本机出不出声、是不是当初建组的那台,点歌、切歌、暂停、
+//! 拖动都只改服务端的全局状态,出声的设备照状态收敛。没有「转发给哪一台」这条路。
 
-use app_core::{RemoteCommand, TrackDto};
+use app_core::{Standing, TrackDto, TransportOpDto};
 
 use super::*;
 use crate::Player;
 use crate::Shell;
 use crate::music::*;
-use crate::sync::remote::Submitted;
 
-/// 用户在界面上按下的那一下,还没决定落在哪台设备上。
+/// 用户在界面上按下的那一下,还没决定落在本机还是组上。
 ///
-/// 不直接用 [`RemoteCommand`]:线上那个类型表达的是「已经定下来发给被控端的
-/// 一条命令」,而这里有几样它说不了 —— ⏯ 要结合**所选目标**当下的状态才知道
-/// 是暂停还是继续,拖进度要按目标端报的曲长换算,本机播放器已空时按播放是
-/// 重播而不是 `Resume`。翻译发生在 [`dispatch`] 里,线上的契约这一轮不加字段。
+/// ⏯ 要结合当下在放没在放才知道是暂停还是继续,拖进度要按那一首的曲长换算,
+/// 本机播放器已空时按播放是重播而不是继续 —— 翻译发生在 [`dispatch`] 里。
 pub(in crate::music) enum Intent {
     /// 点一首歌:这一批成为队列,从第 `index` 首开始。
     ///
-    /// 批次是**用户点中的那个列表**,不是被控端回报的队列 —— 他想听的是眼前
-    /// 这一批的后面那些歌。
+    /// 批次是**用户点中的那个列表** —— 他想听的是眼前这一批的后面那些歌。
     Play {
         tracks: Vec<TrackDto>,
         index: usize,
@@ -47,8 +35,8 @@ pub(in crate::music) enum Intent {
     Prev,
     /// 拖进度条到这个比例。
     ///
-    /// 带比例而不是毫秒:目标曲长取决于这一下落在哪一端 —— 遥控时本机的
-    /// `playback` 是空的,拿它算只会得到 `None`,而进度条看起来就是拖不动。
+    /// 带比例而不是毫秒:曲长取决于这一下落在哪 —— 只当遥控器时本机的
+    /// `playback` 是空的,要按组里那一首算。
     Seek {
         ratio: f32,
     },
@@ -58,44 +46,30 @@ pub(in crate::music) enum Intent {
 }
 
 /// 一条意图的下场。
-///
-/// 四个而不是一个布尔:调用方要能分清「这一下被规则挡了」与「目标不可用」——
-/// 前者是本该如此,后者要给用户一句话。
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::music) enum Dispatched {
     /// 落到本机播放器上了。
     LocalApplied,
-    /// **本地提交**成功 —— 仅此而已。
-    ///
-    /// 队列、服务端转发、被控端执行都还在后面,任何一跳都可能悄悄丢掉它
-    /// (`Client::command` 只把命令塞进一条通道)。真放起来了以被控端的
-    /// 上报为准,不以这个值为准。
-    RemoteSubmitted,
-    /// 规则挡下的:本机正被遥控、或者这一下是多余的连点。
+    /// 发给服务端了(组意图)。成没成由应答与广播定,不由这个值定。
+    GroupSubmitted,
+    /// 规则挡下的:多余的连点、手上没歌可跳。
     Blocked(&'static str),
-    /// 目标在别的设备,但这一下没送出去。**不回落本机**。
-    Unavailable(&'static str),
 }
 
-impl Intent {
-    /// 这一下受不受「本机正被遥控」那道锁的限制。
-    ///
-    /// 音量不受限(产品裁决,#108 实施计划第 6 条):那道锁拦的是 transport ——
-    /// 放什么、放不放,因为遥控器那头正按着这台报来的进度插值,本机偷偷改一下
-    /// 就会让对面的进度条撒谎。音量不在那条链上:它是这台机器的响度,被控端
-    /// 前面的人伸手拧一下自己音箱是物理动作,而且音量每秒随快照报一次,
-    /// 最迟一秒后遥控器就看见了,谈不上骗谁。
-    ///
-    /// 这也**保持**了改之前的行为:`bind_volume` 本来就没有这道闸。在一次
-    /// 重构里无声地给它加上,等于借收口之名改产品规则。
-    const fn obeys_controlled_lock(&self) -> bool {
-        !matches!(self, Self::Volume { .. })
-    }
+/// 本机执行的一条命令。
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::music) enum Command {
+    Pause,
+    Resume,
+    Next,
+    Prev,
+    Seek { ms: u64 },
+    Volume { level: f32 },
 }
 
 /// 本机 ⏯ 这一下到底是什么意思。
 ///
-/// 抽成纯判断,理由与 `music::rules`、`sync::remote::rules` 相同:它是最容易
+/// 抽成纯判断,理由与 `music::rules` 相同:它是最容易
 /// 写反、也最难从截图上看出写反了的那一类,而起窗口测它还要一张声卡。
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::music) enum LocalToggle {
@@ -135,309 +109,70 @@ pub(in crate::music) fn dispatch(
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
-    // ── 来源检查 ──
-    // 锁只拦**本机用户动作**。遥控器发来的命令走 `bind_remote` 直接进
-    // `execute`,自动续播走 `advance_auto` —— 两者都不经过这里,否则遥控器
-    // 一锁屏,被控端放完一首就再也接不上下一首。
-    if deck.remote.is_controlled()
-        && intent.obeys_controlled_lock()
+    // 音量每台各自调(用户 2026-09-26),不进全局状态,在组里也落在本机。
+    if deck.group.is_member()
+        && !matches!(intent, Intent::Volume { .. })
     {
-        return Dispatched::Blocked("本机正被遥控");
-    }
-    // 迁移那几秒里输出还没定下来:这一下落在源上还是目标上都不对(#137 ③)。
-    // 音量照放行,理由同被控锁 —— 它不在「放什么、放不放」那条链上。
-    // 组里有留下的主端、只是加人减人时不压(#137 ⑤):它一直在响。
-    if deck.remote.holds_transport()
-        && intent.obeys_controlled_lock()
-    {
-        return Dispatched::Blocked("正在切换输出");
-    }
-
-    // ── 目标选择 ──
-    // 判据是**已选目标**,不是提交结果。
-    if deck.remote.is_remote() {
-        to_remote(ui, deck, intent)
+        to_group(ui, deck, intent)
     } else {
         to_local(ui, deck, intent)
     }
 }
 
-/// 目标在别的设备:翻成一条命令交出去,本机一声不出。
-fn to_remote(
+/// 本机在组里:翻成一条组意图发给服务端(#142)。
+fn to_group(
     ui: &MainWindow,
     deck: &Deck,
     intent: Intent,
 ) -> Dispatched {
-    // 点播要先把这一批**发布成服务端队列**,拿到 queue_id/revision 才发得出
-    // 命令(`docs/adr/0031`)—— 曲目不再随命令走信令。发布是一次 HTTP 往返,
-    // 所以这一条与别的命令不同,不在这里当场发完。
-    if let Intent::Play { tracks, index } = intent {
-        return submit_remote_play(ui, deck, tracks, index);
-    }
-
-    let Some(cmd) = as_command(deck, intent) else {
-        // 翻不出命令只有一种情形:遥控时拖进度,而被控端报来的那份还没有
-        // 曲目(刚接管、或者对面没在放)。这一下没有可发的东西。
-        return refuse(ui, deck, Submitted::Stale);
-    };
-
-    match deck.remote.send(cmd) {
-        Submitted::Ok => Dispatched::RemoteSubmitted,
-        outcome => refuse(ui, deck, outcome),
-    }
-}
-
-/// 遥控器侧的点播:把用户眼前这一批冻结成服务端队列,再发一条只带标识的命令。
-///
-/// 三步都在一次 `spawn_local` 里,因为它们是一件事的三段,中间断在哪里都
-/// 不该留下「队列建了但没人播」:
-///
-/// 1. `POST /queues` —— 冻结的是**用户实际看到并选择的有序条目**,不是一个
-///    会被重跑的查询(`docs/adr/0031` 五)。队列归**目标设备**的播放会话,
-///    不是遥控器自己这台。
-/// 2. `POST /queues/{id}/intent` —— 让这一下**先落库**。WebSocket 那条通知
-///    丢了、或者服务端随后重启,播放端恢复时读 head 仍然对得上账
-///    (`docs/adr/0031` 七)。
-/// 3. 发 `RemoteCommand::Play` —— 只是把播放端叫醒,不是唯一的送达手段。
-///
-/// 返回 [`Dispatched::RemoteSubmitted`] 的时机与别的命令一致:它说的一直都是
-/// 「**本地**交出去了」,后面每一跳都可能丢掉它,真放起来了以被控端的上报为准。
-#[cfg(not(target_arch = "wasm32"))]
-fn submit_remote_play(
-    ui: &MainWindow,
-    deck: &Deck,
-    tracks: Vec<TrackDto>,
-    index: usize,
-) -> Dispatched {
-    let Some(target) = deck.remote.target_id() else {
-        return refuse(ui, deck, Submitted::NotRemote);
-    };
-    // 超出约定规模**当场**拒绝,不等那次 HTTP 往返回来:用户要的是一句立刻
-    // 出现的话,而这一条等多久都不会好(AC-6)。
-    if tracks.len() > api::MAX_QUEUE_ENTRIES {
-        crate::notice::show(
-            ui,
-            deck.remote.too_large_notice(),
-        );
-        return Dispatched::Unavailable("这一批太长");
-    }
-
-    let Some(tapped) =
-        tracks.get(index).map(|t| t.id.clone())
-    else {
-        return Dispatched::Unavailable(
-            "点的那首不在这一批里",
-        );
-    };
-    let redundant = deck.remote.with_view(|view, _| {
-        is_redundant_remote_tap(
-            view.track()
-                .map(|t| (t.id.as_str(), view.state())),
-            deck.remote.pending_play().as_deref(),
-            &tapped,
-        )
-    });
-    if redundant {
-        // 不挡的话每一下都是一次发布加一条 play:同一队列的版本号一路往上
-        // 推,对面每收一条都从头再放一遍(#113)。
-        log::info!(
-            "遥控点播: {tapped} 还在路上或已在放,这一下丢掉"
-        );
-        return Dispatched::Blocked("这一下是多余的");
-    }
-
-    deck.remote.note_play_submitted(&tapped);
-
-    let deck = deck.clone();
-    let weak = ui.as_weak();
-    let _ = slint::spawn_local(async move {
-        let outcome = publish_and_command(
-            &deck, &target, tracks, index,
-        )
-        .await;
-        if let Err(why) = outcome {
-            log::warn!("遥控点播没交出去: {why}");
-            deck.remote.forget_pending_play();
-            if let Some(ui) = weak.upgrade() {
-                crate::notice::show(&ui, why);
-            }
+    let now = deck.group.now();
+    let op = match intent {
+        Intent::Play { tracks, index } => {
+            deck.group.play(ui, tracks, index);
+            return Dispatched::GroupSubmitted;
         }
-    });
-
-    Dispatched::RemoteSubmitted
-}
-
-/// 上面那三步的正身。失败给一句**给人看的**话。
-#[cfg(not(target_arch = "wasm32"))]
-async fn publish_and_command(
-    deck: &Deck,
-    target: &str,
-    tracks: Vec<TrackDto>,
-    index: usize,
-) -> Result<(), String> {
-    // 同一台、同一批:上一次发布的那一版原样可用,不再发一个一模一样的新版本
-    // (#137 ③)。点同一个列表里的另一首只是换一条条目。
-    let published = match deck
-        .remote
-        .published_for(target, &tracks)
-    {
-        Some(published) => published,
-        None => {
-            let published =
-                api::create_queue(target, tracks.clone())
-                    .await
-                    .map_err(describe_publish_failure)?;
-            deck.remote.note_published(
-                target,
-                &tracks,
-                published.clone(),
-            );
-            published
-        }
-    };
-
-    // 条目号就在发布的应答里,按位置排:发布那一刻服务端才给号,而队列允许
-    // 同一首歌出现多次 —— 拿曲目 id 去猜会在重复项上指错一条。从前这里要把
-    // 整份队列分页读回来(5000 首十次往返)只为取这一列(#137 ③)。
-    let entry_id = published
-        .entry_ids
-        .get(index)
-        .copied()
-        .ok_or_else(|| {
-            "服务端收下的队列里没有点的那一首".to_owned()
-        })?;
-
-    let operation_id =
-        crate::sync::link::fresh_operation_id();
-    api::set_queue_intent(
-        published.queue_id,
-        api::SetQueueIntentDto {
-            device_id: target.to_owned(),
-            revision: published.revision,
-            entry_id,
-            operation_id: operation_id.clone(),
-        },
-    )
-    .await
-    .map_err(describe_publish_failure)?;
-
-    match deck.remote.send(RemoteCommand::Play {
-        queue_id: published.queue_id,
-        revision: published.revision,
-        entry_id,
-        operation_id,
-    }) {
-        Submitted::Ok => Ok(()),
-        // 命令没送出去**不等于**这一下白点了:意图已经落库,播放端下一次
-        // 读 head 就会看到它。所以这里只说一句,不回滚队列。
-        _ => Err(deck.remote.unavailable_notice()),
-    }
-}
-
-/// 发布失败时给人看的那句话。
-///
-/// 两种分开说,因为出路相反:超限要换一个短点的列表,别的等一等再来。
-#[cfg(not(target_arch = "wasm32"))]
-fn describe_publish_failure(
-    error: api::ApiError,
-) -> String {
-    match &error {
-        api::ApiError::Server { code, .. }
-            if code == "queue_too_large" =>
-        {
-            format!(
-                "这一批太长,最多 {} 首",
-                api::MAX_QUEUE_ENTRIES
-            )
-        }
-        _ => format!("队列没能同步到服务端: {error}"),
-    }
-}
-
-/// 没发出去:说一句**对得上原因**的话,并**保留**当前目标。
-///
-/// 改之前这里是 `if send(..) { return }` 然后径直落到本机 —— 那正是要改掉的
-/// 那一半:状态过期时按下一首,声音会从遥控器自己这台放出来(`docs/adr/0030`)。
-///
-/// 两种原因要说两句话,因为出路相反:「控制暂不可用」等一等就好了,
-/// 「队列太长」等多久都不会好,得换一个短一点的列表(根治见 #109)。
-fn refuse(
-    ui: &MainWindow,
-    deck: &Deck,
-    outcome: Submitted,
-) -> Dispatched {
-    match outcome {
-        Submitted::TooLarge { .. } => {
-            crate::notice::show(
-                ui,
-                deck.remote.too_large_notice(),
-            );
-            Dispatched::Unavailable("这一批太长,发不出去")
-        }
-        _ => {
-            crate::notice::show(
-                ui,
-                deck.remote.unavailable_notice(),
-            );
-            Dispatched::Unavailable("目标此刻收不了命令")
-        }
-    }
-}
-
-/// 把意图翻成一条发给被控端的命令。
-///
-/// ⏯ 按界面当下画的是 ⏸ 还是 ▶ 来定 —— 那个图标读的正是被控端报来的状态,
-/// 所以它就是对的那个判据。
-///
-/// 收所有权而不是借用:`Play` 拖着整批曲目,借用就得把它整个克隆一遍,
-/// 而那正是这条链上最大的那份数据。
-fn as_command(
-    deck: &Deck,
-    intent: Intent,
-) -> Option<RemoteCommand> {
-    Some(match intent {
-        // 点播在 `to_remote` 的入口就被挡下了(见那里):它要先发布队列。
-        Intent::Play { .. } => return None,
-        // 按被控端**报来的**状态定,不回读界面上那个图标(#137 ③):图标是它的
-        // 投影,回读它就又多了一份真相。
         Intent::TogglePlay => {
-            let playing = deck.remote.with_view(|view, _| {
-                view.state() == app_core::RemotePlayState::Playing
-            });
-            if playing {
-                RemoteCommand::Pause
-            } else {
-                RemoteCommand::Resume
+            match now.as_ref().map(|now| now.playing) {
+                Some(true) => TransportOpDto::Pause,
+                Some(false) => TransportOpDto::Resume,
+                None => {
+                    return Dispatched::Blocked(
+                        "组里还没有歌",
+                    );
+                }
             }
         }
-        Intent::Next => RemoteCommand::Next,
-        Intent::Prev => RemoteCommand::Prev,
+        Intent::Next => TransportOpDto::Next,
+        Intent::Prev => TransportOpDto::Prev,
         Intent::Seek { ratio } => {
-            // 按**被控端报来的**曲长算:本机的 playback 此刻是空的。
-            let target =
-                deck.remote.with_view(|view, _| {
-                    view.track().and_then(|track| {
-                        crate::progress::seek_target(
-                            ratio,
-                            track.duration_ms,
-                        )
-                    })
-                })?;
-            RemoteCommand::Seek {
-                ms: target.as_millis() as u64,
+            let Some(target) =
+                now.as_ref().and_then(|now| {
+                    crate::progress::seek_target(
+                        ratio,
+                        now.track.duration_ms,
+                    )
+                })
+            else {
+                return Dispatched::Blocked("没有在放的歌");
+            };
+            TransportOpDto::Seek {
+                position_ms: target.as_millis() as u64,
             }
         }
-        Intent::Volume { level } => {
-            RemoteCommand::Volume { level }
-        }
-    })
+        Intent::Volume { .. } => unreachable!("音量不进组"),
+    };
+    deck.group.transport(ui, op);
+    Dispatched::GroupSubmitted
 }
 
-/// 输出在本机:自己执行,不发信令。
-///
-/// 「本机播放也应该当作自己控制自己」—— 除了下面逐条注明的几处,本机分支与
-/// 收到一条遥控命令走的是同一段 [`execute`]。**不是**全盘等同:那几处差异
-/// 是真实的产品行为,统一掉会悄悄改变用户看得见的东西。
+/// 只当遥控器、不出声的成员:本机播放器停着。
+pub(in crate::music) fn is_silent_member(
+    deck: &Deck,
+) -> bool {
+    deck.group.standing() == Standing::Remote
+}
+
+/// 不在组里(独奏):本机自己执行,行为与没有组时一样。
 fn to_local(
     ui: &MainWindow,
     deck: &Deck,
@@ -445,9 +180,7 @@ fn to_local(
 ) -> Dispatched {
     match intent {
         Intent::Play { tracks, index } => {
-            // 差异 4:连点去重读的是**本机**的 playback,所以只在本机分支上
-            // 问。早于目标选择去问的话,转为遥控时会拿本机残留的 `Loading`
-            // 把一条本该发出去的远端意图丢掉。
+            // 连点去重读的是**本机**的 playback,所以只在本机分支上问。
             let tapped =
                 tracks.get(index).map(|track| &track.id);
             let redundant = tapped.is_some_and(|id| {
@@ -492,14 +225,10 @@ fn to_local(
                 player.empty(),
             ) {
                 LocalToggle::Pause => {
-                    execute(ui, deck, RemoteCommand::Pause);
+                    execute(ui, deck, Command::Pause);
                 }
                 LocalToggle::Resume => {
-                    execute(
-                        ui,
-                        deck,
-                        RemoteCommand::Resume,
-                    );
+                    execute(ui, deck, Command::Resume);
                 }
                 LocalToggle::Replay => {
                     play_current(ui, deck);
@@ -511,12 +240,8 @@ fn to_local(
                 }
             }
         }
-        Intent::Next => {
-            execute(ui, deck, RemoteCommand::Next)
-        }
-        Intent::Prev => {
-            execute(ui, deck, RemoteCommand::Prev)
-        }
+        Intent::Next => execute(ui, deck, Command::Next),
+        Intent::Prev => execute(ui, deck, Command::Prev),
         Intent::Seek { ratio } => {
             // 按本机正在放的那一首算曲长。手上没歌就没什么可跳的。
             let state =
@@ -537,17 +262,13 @@ fn to_local(
             execute(
                 ui,
                 deck,
-                RemoteCommand::Seek {
+                Command::Seek {
                     ms: target.as_millis() as u64,
                 },
             );
         }
         Intent::Volume { level } => {
-            execute(
-                ui,
-                deck,
-                RemoteCommand::Volume { level },
-            );
+            execute(ui, deck, Command::Volume { level });
         }
     }
     Dispatched::LocalApplied
@@ -577,7 +298,7 @@ pub(in crate::music) fn publish_local_queue(
     }
 
     deck.execution
-        .note_publish(crate::sync::remote::now_ms());
+        .note_publish(crate::sync::group::now_ms());
 
     let device = crate::sync::link::local_device_id();
     // 已经有这台设备的队列就**发新版本**,不是再建一个。
@@ -652,16 +373,14 @@ pub(in crate::music) fn publish_local_queue(
 /// 每秒那趟轮询叫它一次,但真正发出去由 `due_for_resync` 节流 —— 服务端
 /// 不可达时每秒打一发,日志会被刷满,而它恢复的时刻不由我们决定。
 ///
-/// 只在**输出在本机、手上有歌、而且还没拿到 `queue_id`** 时才动:遥控时
-/// 那份队列归被控端管,本机这边不该去抢着发布。
+/// 只在**独奏、手上有歌、而且还没拿到 `queue_id`** 时才动:在组里时放的是组队列,
+/// 本机这边不该去抢着发布。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn resync_local_queue(
     ui: &MainWindow,
     deck: &Deck,
 ) {
-    if deck.remote.is_remote()
-        || deck.remote.is_controlled()
-    {
+    if deck.group.is_member() {
         return;
     }
     if deck.queue.borrow().tracks().is_empty() {
@@ -670,7 +389,7 @@ pub(in crate::music) fn resync_local_queue(
     // 先判节流再拷队列:这一趟每秒都来,而几千首的整份拷贝多数时候是白拷(#137 ⑥)
     if !deck
         .execution
-        .due_for_resync(crate::sync::remote::now_ms())
+        .due_for_resync(crate::sync::group::now_ms())
     {
         return;
     }
@@ -725,7 +444,7 @@ pub(in crate::music) fn checkpoint(
         (order, queue.round(), 0)
     };
     let play_order = deck.execution.order_to_report(&order);
-    let (epoch, state_seq) = deck.remote.stamp();
+    let (epoch, state_seq) = deck.execution.stamp();
     let report = api::QueueReportDto {
         device_id: crate::sync::link::local_device_id(),
         epoch,
@@ -736,13 +455,7 @@ pub(in crate::music) fn checkpoint(
         round: round as i64,
         position_ms,
         state: app_core::RemotePlayState::Playing,
-        operation: deck.execution.take_outcome().map(
-            |outcome| api::QueueOperationOutcomeDto {
-                operation_id: outcome.operation_id,
-                applied: outcome.applied,
-                reason: outcome.reason,
-            },
-        ),
+        operation: None,
     };
 
     let _ = slint::spawn_local(async move {
@@ -755,110 +468,9 @@ pub(in crate::music) fn checkpoint(
     });
 }
 
-/// 被控端收到一条 `Play`:按标识把执行副本取下来,**取全了**再换上。
-///
-/// 三条规矩都在这一段里(`docs/adr/0031` 七):
-///
-/// - **取失败保留旧副本,不执行半份列表。** 半份拿去放,用户听到的是一个他
-///   没点过的队列;而旧副本至少还是他上一次点的那个。
-/// - **换上是原子的**:曲目、队列、条目号三样一起换。中间空一拍的话,
-///   那一拍里的自动续播会去读一个刚被清空的队列。
-/// - **下场要回报**:成没成都记一笔,搭下一条报告捎给服务端。谎报已应用的话,
-///   遥控器会把「新版本待应用」那个标记撤掉,而音箱里还是上一批。
-///
-/// 先把 `desired` 记下再去取:取的这几秒里,遥控器那头看到的应该是
-/// 「新版本待应用」,而不是「什么都没发生」。
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn adopt_remote_queue(
-    ui: &MainWindow,
-    deck: &Deck,
-    queue_id: i64,
-    revision: i64,
-    entry_id: i64,
-    operation_id: String,
-) {
-    log::info!(
-        "收到执行副本请求: 队列 {queue_id}@{revision}, 条目 {entry_id}, \
-         操作 {operation_id}"
-    );
-
-    let deck = deck.clone();
-    let weak = ui.as_weak();
-    let _ = slint::spawn_local(async move {
-        // 三条闸与账本都在 `adopt_with` 里,这一段只管它交回来的下场
-        // 落到屏幕上是什么样。
-        let settled = adopt_with(
-            &deck.execution,
-            queue_id,
-            revision,
-            entry_id,
-            operation_id,
-            || deck.remote.is_controlled(),
-            || api::fetch_queue(queue_id, revision),
-        )
-        .await;
-
-        let Some(ui) = weak.upgrade() else { return };
-        match settled {
-            Adoption::AlreadyApplied => {
-                log::info!(
-                    "这一次点播已经应用过,不再重置播放"
-                );
-            }
-            Adoption::Superseded => {
-                log::info!("被更新的一次顶掉了,丢掉这一份");
-            }
-            Adoption::Dropped => {
-                log::info!(
-                    "取数期间本机已不再被遥控,丢掉这一次"
-                );
-            }
-            Adoption::Failed(reason) => {
-                log::warn!(
-                    "取执行副本失败,保留旧的那一份: {reason}"
-                );
-                crate::notice::show(
-                    &ui,
-                    format!("队列没取下来: {reason}"),
-                );
-                // 下场要报出去,否则服务端那条意图永远挂在 pending 上,
-                // 而遥控器会一直显示「新版本待应用」。
-                checkpoint(
-                    &deck,
-                    deck.queue.borrow().index(),
-                );
-            }
-            Adoption::Missing => {
-                crate::notice::show(
-                    &ui,
-                    "要播的那一条不在这一版队列里"
-                        .to_owned(),
-                );
-                checkpoint(
-                    &deck,
-                    deck.queue.borrow().index(),
-                );
-            }
-            Adoption::Adopt { index, tracks } => {
-                play_batch(&ui, &deck, tracks, index);
-                // 换批之后立刻留一个检查点:遥控器那头正等着「待应用」那个
-                // 标记消失,而它读的是服务端记下的 applied_revision。
-                checkpoint(&deck, index);
-                mark_sync(&ui, &deck);
-            }
-        }
-    });
-}
-
 /// 把一整批曲目装进队列并起播。
 ///
-/// 从 [`execute`] 里拆出来,因为**曲目不再随命令过来**(`docs/adr/0031`):
-/// 线上那条 `Play` 只带队列标识,而这一段是「拿到了曲目之后做什么」。
-/// 两个来源共用它 —— 本机点播手上本来就有这一批;遥控点播要先按
-/// `queue_id`/`revision` 把执行副本取下来(#109 第 4 段),取到之后落到这里。
-///
-/// 自动续播仍然在这一端发生:装进来的是整批,发命令的那头锁屏、断线都不该
-/// 让这边停在一首上。
+/// 独奏时本机点播落到这里;自动续播仍在这一端发生。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn play_batch(
     ui: &MainWindow,
@@ -867,8 +479,7 @@ pub(in crate::music) fn play_batch(
     index: usize,
 ) {
     // 只动队列,不动浏览视图:眼前那页列表是用户在看的来源,不是队列的镜子
-    // (#137 ④)。点播时那一批本来就取自列表;遥控与迁移送来的那一批则不该
-    // 把用户正在看的歌单换掉。
+    // (#137 ④)。
     // replace 把随机清掉(新批还没洗过),开着的话补洗一次把它立回去。
     // 开没开问队列自己,不回读界面上那个开关 —— 开关是它的投影。
     let shuffled = deck.queue.borrow().is_shuffled();
@@ -917,62 +528,35 @@ impl VolumeSave {
     }
 }
 
-/// 执行一条命令,**不问它是从哪来的**。
-///
-/// 三个来源共用这一段:遥控器发来的命令(`bind_remote`)、本机用户动作
-/// (经 [`dispatch`] 的本机分支)、以及自动续播。"本机播放也应该当作自己
-/// 控制自己" 指的就是这一层 —— 共用命令执行语义,但本机**不**因此建立一个
-/// 自己遥控自己的 `ControlledBy` 会话。
-///
-/// 改名自 `apply_remote`:名字里带 remote 的话,谁也不好意思从本机那条路
-/// 调它,于是本机那半边又会各写一遍。
+/// 在本机执行一条命令:本机用户动作(经 [`dispatch`] 的独奏分支)与自动续播共用。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn execute(
     ui: &MainWindow,
     deck: &Deck,
-    cmd: RemoteCommand,
+    cmd: Command,
 ) {
     match cmd {
-        RemoteCommand::Play {
-            queue_id,
-            revision,
-            entry_id,
-            operation_id,
-        } => {
-            adopt_remote_queue(
-                ui,
-                deck,
-                queue_id,
-                revision,
-                entry_id,
-                operation_id,
-            );
-        }
-        RemoteCommand::Pause => {
+        Command::Pause => {
             if let Ok(player) = deck.player.as_ref() {
                 player.pause();
             }
             ui.global::<Player>().set_is_playing(false);
         }
-        RemoteCommand::Resume => {
+        Command::Resume => {
             if let Ok(player) = deck.player.as_ref() {
                 player.resume();
             }
             ui.global::<Player>().set_is_playing(true);
         }
-        RemoteCommand::Next => advance(ui, deck),
-        RemoteCommand::Prev => {
+        Command::Next => advance(ui, deck),
+        Command::Prev => {
             if deck.queue.borrow_mut().previous().is_some()
             {
                 play_current(ui, deck);
             }
         }
-        RemoteCommand::Seek { ms } => {
-            // 差异 2:立刻挂上「缓冲中」、当场失败就当场说。改之前只有本机
-            // 那条路这么做,遥控命令这条把 `seek` 的错误丢掉了 —— 于是被控端
-            // 自己的界面上,一次跳不动的跳转要么毫无反应、要么永远停在缓冲上。
-            // 两条路归一之后按**本机那一份**来:执行的是哪台设备,就该由哪台
-            // 设备的界面说话(`docs/adr/0019`:裁决由被控端回)。
+        Command::Seek { ms } => {
+            // 立刻挂上「缓冲中」;当场就知道跳不动的当场说。
             ui.global::<Player>().set_buffering(true);
             if let Ok(player) = deck.player.as_ref()
                 && let Err(err) = player.seek(
@@ -986,55 +570,13 @@ pub(in crate::music) fn execute(
                 );
             }
         }
-        // 迁移那四步(#137 ③)。回话记进本机的 observed,立刻报给遥控器。
-        RemoteCommand::Prepare {
-            operation_id,
-            queue_id,
-            revision,
-            entry_id,
-            ..
-        } => stage_move(
-            deck,
-            operation_id,
-            queue_id,
-            revision,
-            entry_id,
-            Reply::Remote,
-        ),
-        RemoteCommand::Start {
-            operation_id,
-            position_ms,
-            playing,
-        } => start_move(
-            ui,
-            deck,
-            operation_id,
-            position_ms,
-            playing,
-            Reply::Remote,
-        ),
-        RemoteCommand::Stop { operation_id } => {
-            stop_for_move(
-                ui,
-                deck,
-                operation_id,
-                Reply::Remote,
-            );
-        }
-        RemoteCommand::Cancel { operation_id } => {
-            cancel_move(deck, &operation_id);
-        }
-        RemoteCommand::Volume { level } => {
+        Command::Volume { level } => {
             let level = audio::clamped_volume(level);
             if let Ok(player) = deck.player.as_ref() {
                 player.set_volume(level);
             }
             ui.global::<Player>().set_volume(level);
-            // 差异 3:存盘归**设备执行**这一侧,不归「本机用户操作」。
-            // 判据是那句「音量跟着设备走,不跟着账号」—— 真正改变响度的是
-            // 这台机器的播放器,那么记住这个数的也该是这台机器,不管拧旋钮
-            // 的手是本机用户的还是遥控器的。改之前只有本机那条路存,于是
-            // 遥控器把被控端调小之后,被控端一重启就跳回原来的音量。
+            // 音量跟着设备走,不跟着账号:记住这个数的是这台机器。
             deck.volume_save.remember(level);
         }
     }

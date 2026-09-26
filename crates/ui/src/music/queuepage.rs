@@ -36,7 +36,7 @@ pub(in crate::music) struct QueueMirror {
     shown: Rc<Cell<Option<Shown>>>,
 }
 
-/// 队列页那几行是按什么建的:本机是「第几批 + 同步到哪一版」,遥控是被控端那一版。
+/// 队列页那几行是按什么建的:本机是「第几批 + 同步到哪一版」,组里是全局状态那一版。
 /// 两者都不变,行就不必重建 —— 当前是哪一条是另一个标量,单独更新。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shown {
@@ -49,7 +49,6 @@ enum Shown {
         queue_id: i64,
         revision: i64,
     },
-    Unsynced,
 }
 
 struct Mirrored {
@@ -152,8 +151,8 @@ pub(in crate::music) fn refresh(
     deck: &Deck,
 ) {
     let open = ui.global::<Viz>().get_queue_page_open();
-    if deck.remote.is_remote() {
-        refresh_remote(ui, deck, open);
+    if deck.group.is_member() {
+        refresh_group(ui, deck, open);
     } else {
         refresh_local(ui, deck, open);
     }
@@ -197,50 +196,26 @@ fn refresh_local(ui: &MainWindow, deck: &Deck, open: bool) {
     push(ui, rows);
 }
 
-/// 遥控:按被控端报来的标识拉一份只读缓存。
+/// 组里:按全局状态的标识拉一份只读缓存(#142)。出声设备与只当遥控器的看到的是同一份。
 #[cfg(not(target_arch = "wasm32"))]
-fn refresh_remote(
-    ui: &MainWindow,
-    deck: &Deck,
-    open: bool,
-) {
-    let (queue_id, revision, current, len) =
-        deck.remote.with_view(|view, _| {
-            (
-                view.queue_id(),
-                view.applied_revision(),
-                view.entry_id(),
-                view.queue_len(),
-            )
-        });
-
-    ui.global::<Viz>().set_queue_total(len as i32);
-    if !open {
-        // 药丸只要那个总数。整份列表等用户真的打开这一页再去取 ——
-        // 不然每换一版就白拉一趟几千条。
-        return;
-    }
-    ui.global::<Viz>().set_queue_current(
-        current
-            .map(|entry| entry.to_string())
-            .unwrap_or_default()
-            .into(),
-    );
-
-    // 被控端那份还没同步到服务端(`docs/adr/0031` 八):没有可拉的东西,
-    // 而那不是错误。列表空着,标题那行说「共 N 首」——用户至少知道有多少。
-    let (Some(queue_id), Some(revision)) =
-        (queue_id, revision)
-    else {
+fn refresh_group(ui: &MainWindow, deck: &Deck, open: bool) {
+    let Some(now) = deck.group.now() else {
+        ui.global::<Viz>().set_queue_total(0);
         ui.global::<Viz>().set_queue_loading(false);
-        if deck.queue_mirror.needs_rows(Shown::Unsynced) {
-            push(ui, Vec::new());
-        }
         return;
     };
+    let (queue_id, revision) = (now.queue_id, now.revision);
+    ui.global::<Viz>()
+        .set_queue_current(now.entry_id.to_string().into());
 
     if deck.queue_mirror.holds(queue_id, revision) {
+        ui.global::<Viz>().set_queue_total(
+            deck.queue_mirror.rows().len() as i32,
+        );
         ui.global::<Viz>().set_queue_loading(false);
+        if !open {
+            return;
+        }
         if !deck.queue_mirror.needs_rows(Shown::Remote {
             queue_id,
             revision,
@@ -258,9 +233,8 @@ fn refresh_remote(
         return;
     }
 
-    // 还没有这一版:去取。取的这几秒标成「正在取」—— 与「队列是空的」
-    // 分开说,两种长得一样的话用户会以为自己的歌没了。同一版已经在路上
-    // 就等它,不再发第二次。
+    // 还没有这一版:去取 —— 页没开也取,那颗「队列 · N」药丸要这个数,而每版只取一次。
+    // 取的这几秒标成「正在取」,与「队列是空的」分开说。同一版已经在路上就等它。
     ui.global::<Viz>().set_queue_loading(true);
     if !deck.queue_mirror.begin_fetch(queue_id, revision) {
         return;
@@ -301,8 +275,8 @@ fn pick(ui: &MainWindow, deck: &Deck, entry: &str) {
         return;
     };
 
-    if deck.remote.is_remote() {
-        pick_remote(ui, deck, entry_id);
+    if deck.group.is_member() {
+        pick_group(ui, deck, entry_id);
         return;
     }
 
@@ -316,62 +290,18 @@ fn pick(ui: &MainWindow, deck: &Deck, entry: &str) {
     }
 }
 
-/// 遥控:发一条带这个 `entry_id` 的意图,再叫被控端一声。
-///
-/// 队列本来就在服务端上,所以这一下不必重新上传任何曲目 —— 这正是
-/// 「条目号从服务端读回来」那条决定在这里换来的便宜。
+/// 组里:切到组队列里的这一条(#142)。队列本来就在服务端上,不必重新上传任何曲目。
 #[cfg(not(target_arch = "wasm32"))]
-fn pick_remote(
-    ui: &MainWindow,
-    deck: &Deck,
-    entry_id: i64,
-) {
-    let (Some(queue_id), Some(revision)) =
-        deck.remote.with_view(|view, _| {
-            (view.queue_id(), view.applied_revision())
-        })
-    else {
-        crate::notice::show(
-            ui,
-            "那台设备的队列还没同步到服务端".to_owned(),
-        );
+fn pick_group(ui: &MainWindow, deck: &Deck, entry_id: i64) {
+    let Some(now) = deck.group.now() else {
         return;
     };
-
-    let operation_id =
-        crate::sync::link::fresh_operation_id();
-    let deck = deck.clone();
-    let weak = ui.as_weak();
-    let _ = slint::spawn_local(async move {
-        let wrote = api::set_queue_intent(
-            queue_id,
-            api::SetQueueIntentDto {
-                device_id: deck
-                    .remote
-                    .target_id()
-                    .unwrap_or_default(),
-                revision,
-                entry_id,
-                operation_id: operation_id.clone(),
-            },
-        )
-        .await;
-        if let Err(error) = wrote {
-            if let Some(ui) = weak.upgrade() {
-                crate::notice::show(
-                    &ui,
-                    format!("没能切到那一首: {error}"),
-                );
-            }
-            return;
-        }
-        deck.remote.send(app_core::RemoteCommand::Play {
-            queue_id,
-            revision,
-            entry_id,
-            operation_id,
-        });
-    });
+    deck.group.pick(
+        ui,
+        now.queue_id,
+        now.revision,
+        entry_id,
+    );
 }
 
 /// 队列还没同步到服务端时,第 `at` 首用哪个号。

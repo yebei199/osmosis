@@ -39,10 +39,11 @@ pub use session::{
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
     ArtistDto, DeviceDto, DeviceReportDto, GroupNowDto,
-    GroupPickDto, GroupPlanDto, GroupStateDto, HealthDto,
-    LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
-    NextEntryDto, OperationAckDto, OperationPhase,
-    OutputRouteDto, PlaylistDto, PlaylistSource,
-    RemoteCommand, RemotePlayState, RemoteStateDto,
-    TrackDto, TracksDto, TransportOpDto,
+    GroupPickDto, GroupPlanDto, GroupSeedDto,
+    GroupStateDto, HealthDto, LoopModeDto, LyricDto,
+    LyricLineDto, MAX_SIGNAL_BYTES, NextEntryDto,
+    OperationAckDto, OperationPhase, OutputRouteDto,
+    PlaylistDto, PlaylistSource, RemoteCommand,
+    RemotePlayState, RemoteStateDto, TrackDto, TracksDto,
+    TransportOpDto,
 };

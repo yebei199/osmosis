@@ -91,9 +91,9 @@ struct Deck {
     playback: Rc<RefCell<Playback>>,
     queue: Rc<RefCell<Queue>>,
     player: Arc<Result<audio::Player, audio::AudioError>>,
-    /// 输出设备与遥控状态。本机输出时它一概不插手,现有路径一个字节不变
-    /// (见 `crate::sync::remote`)。
-    remote: crate::sync::remote::Remote,
+    /// 播放组:服务端全局播放状态的这一侧(#142,见 `crate::sync::group`)。不在组里时
+    /// 它一概不插手,独奏路径一个字节不变。
+    group: crate::sync::group::Group,
     /// 系统媒体控件的把手。后端由平台入口给,这里只管往里推(见 `crate::media`)。
     media: Rc<crate::media::Bridge>,
     lyrics: LyricFeed,
@@ -148,14 +148,11 @@ struct Deck {
     /// 等下一帧画出来的用户动作(见 `crate::runtime::trace`)。渲染循环也拿着
     /// 同一份,画完一帧就给它们打 `drawn`。
     frames: crate::runtime::trace::Frames,
-    /// 下一次起播不从头放:从哪、放不放。迁移过来的那一首用它,起播时取走
-    /// (见 `playback::migrate`)。
+    /// 下一次起播不从头放:从哪、放不放。跟着组状态起播的那一首用它,起播时取走
+    /// (见 `playback::group`)。
     start_at: Rc<std::cell::Cell<Option<report::Start>>>,
-    /// 本机作为迁移的一端:备好的那一份,与最近一次迁移步骤的回话
-    /// (见 `playback::migrate`)。
-    member: Member,
-    /// 本机作为播放组成员的那份账:跟没跟着时间线、为哪一条起的播、报给遥控器的故障
-    /// (见 `playback::group`,#137 ⑤)。
+    /// 本机作为播放组成员的那份账:跟没跟着时间线、为哪一条起的播、报出去的故障
+    /// (见 `playback::group`)。
     alignment: Alignment,
     /// 音量的节流存盘(见 `playback::dispatch::VolumeSave`)。
     volume_save: VolumeSave,
@@ -195,14 +192,14 @@ pub fn bind(
     };
     let cover = CoverFeed::default();
 
-    let remote = crate::sync::link::bind(ui);
+    let group = crate::sync::link::bind(ui);
 
     let deck = Deck {
         playback: Rc::new(
             RefCell::new(Playback::default()),
         ),
         queue: Rc::new(RefCell::new(Queue::default())),
-        remote,
+        group,
         media,
         player,
         lyrics: lyrics.clone(),
@@ -225,7 +222,6 @@ pub fn bind(
         queue_mirror: queuepage::QueueMirror::default(),
         frames: crate::runtime::trace::Frames::default(),
         start_at: Rc::new(std::cell::Cell::new(None)),
-        member: Member::default(),
         alignment: Alignment::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
@@ -258,8 +254,7 @@ pub fn bind(
     bind_list(ui, &deck);
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
-    bind_remote(ui, &deck);
-    bind_session(ui, &deck);
+    bind_outputs(ui, &deck);
     bind_group(ui, &deck);
     queuepage::bind(ui, &deck);
     bind_download(ui, &deck);
