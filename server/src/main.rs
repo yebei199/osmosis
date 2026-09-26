@@ -55,10 +55,9 @@ use routes::library::history::{
     recent, record_play, stats,
 };
 use routes::library::likes::{
-    like_track, liked, liked_ids, subscribe_playlist,
-    unlike_track, unsubscribe_playlist,
+    import_liked, like_track, liked, liked_ids,
+    subscribe_playlist, unlike_track, unsubscribe_playlist,
 };
-use routes::library::playlists::PlatformLists;
 use routes::library::playlists::{
     add_playlist_tracks, create_playlist, delete_playlist,
     platform_playlist_tracks, playlist_tracks, playlists,
@@ -96,7 +95,7 @@ const DEFAULT_DATABASE_URL: &str =
 /// 四个 gRPC 客户端。共享同一条惰性连接,clone 只是加一份引用。
 ///
 /// 拆成四个是 proto 的分服务结构决定的,不是本服务的设计 ——
-/// 一次请求可能横跨其中几个(见 [`liked`])。
+/// 一次请求可能横跨其中几个(见 [`import_liked`])。
 #[derive(Clone)]
 pub(crate) struct Upstream {
     catalog: CatalogServiceClient<UpstreamChannel>,
@@ -125,8 +124,6 @@ pub(crate) struct AppState {
     policies: Policies,
     /// 库里每个平台歌单的那份是什么时候回源拿到的(见 `catalog_cache`)。
     playlists: Freshness,
-    /// 每个账号 `/playlists` 平台那半的上一份(见 `routes::library::playlists`)。
-    platform_lists: PlatformLists,
     /// 上游直链在有效期内的那一份(见 `routes::play::links`)。
     links: SignedLinks,
     /// 安卓安装包的回源地址(见 `routes::apk`)。
@@ -475,7 +472,6 @@ async fn main() {
         origins: AllowedOrigins::new(allowed_origins()),
         policies: Policies::tuned(),
         playlists: Freshness::default(),
-        platform_lists: PlatformLists::default(),
         links: SignedLinks::default(),
         apk_releases: std::env::var("APK_RELEASES_BASE")
             .unwrap_or_else(|_| {
@@ -514,6 +510,9 @@ async fn main() {
         // 红心的**全量标识**,不分页。/liked 给的是一页曲目,回答不了
         // 「这一首红心没有」—— 而界面每一行都要问这个问题。
         .route("/liked/ids", get(liked_ids))
+        // 把网易云的红心并进「我的喜欢」:只补新增,重跑不重复。界面上没有按钮,
+        // 手动用 curl 打(#146)。静态段优先于 /liked/{track_id},曲目 id 是数字,撞不上
+        .route("/liked/import", post(import_liked))
         // 红心与收藏各用自己的名词,不挂在 /playlists/{id} 下:
         // 那条路径的 id 是本地歌单的整数主键,而收藏的是平台歌单的字符串 id ——
         // 同一个 {id} 指两个 id 空间,迟早有人传错一个

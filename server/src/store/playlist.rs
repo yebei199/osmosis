@@ -1,7 +1,7 @@
-//! 本地歌单:真相在自家 Postgres 的那一半。
+//! 本地歌单:真相在自家 Postgres。
 //!
-//! 平台歌单不在这里 —— 它们直读 bang-dream,不镜像(见 `docs/adr/0016`)。
-//! 两者在契约层由 [`merged`] 合成一张列表,靠 `source` 区分。
+//! 系统自带的「我的喜欢」也住在这两张表里,由 [`crate::store::liked`] 管;这里的
+//! 列表、改名、删除都认不出它(`system IS NOT NULL`),它由 [`merged`] 单独置顶。
 //!
 //! 每个函数都收 `account_id` 并把它写进 WHERE:归属检查不是单独一步,
 //! 而是查询的一部分 —— 分成两步就总有一天会漏掉第一步。
@@ -69,7 +69,8 @@ pub async fn create(
     })
 }
 
-/// 列出这个账号的全部本地歌单,新建的在后。
+/// 列出这个账号的本地歌单,新建的在后。系统歌单(「我的喜欢」)不在其中,
+/// 它由 [`merged`] 单独置顶。
 pub async fn list(
     conn: &mut PgConnection,
     account_id: i64,
@@ -78,7 +79,7 @@ pub async fn list(
         "SELECT p.id, p.name, count(t.track_id)
          FROM local_playlists p
          LEFT JOIN local_playlist_tracks t ON t.playlist_id = p.id
-         WHERE p.account_id = $1
+         WHERE p.account_id = $1 AND p.system IS NULL
          GROUP BY p.id
          ORDER BY p.id",
     )
@@ -99,7 +100,7 @@ pub async fn list(
         .collect())
 }
 
-/// 改名。不是自己的歌单一律 [`AppError::NotFound`]。
+/// 改名。不是自己的歌单、以及系统歌单,一律 [`AppError::NotFound`]。
 pub async fn rename(
     conn: &mut PgConnection,
     account_id: i64,
@@ -113,7 +114,7 @@ pub async fn rename(
 
     let done = sqlx::query(
         "UPDATE local_playlists SET name = $3
-         WHERE id = $2 AND account_id = $1",
+         WHERE id = $2 AND account_id = $1 AND system IS NULL",
     )
     .bind(account_id)
     .bind(playlist_id)
@@ -124,14 +125,16 @@ pub async fn rename(
     found(done.rows_affected())
 }
 
-/// 删除。曲目关联由外键的 ON DELETE CASCADE 一并带走。
+/// 删除。曲目关联由外键的 ON DELETE CASCADE 一并带走。系统歌单删不掉,
+/// 与别人的歌单一样按不存在回答。
 pub async fn delete(
     conn: &mut PgConnection,
     account_id: i64,
     playlist_id: i64,
 ) -> Result<(), AppError> {
     let done = sqlx::query(
-        "DELETE FROM local_playlists WHERE id = $2 AND account_id = $1",
+        "DELETE FROM local_playlists
+         WHERE id = $2 AND account_id = $1 AND system IS NULL",
     )
     .bind(account_id)
     .bind(playlist_id)
@@ -233,28 +236,26 @@ pub async fn remove_tracks(
     Ok(())
 }
 
-/// 把两个来源合成客户端要的那一张列表。
+/// 歌单页的那一张列表:「我的喜欢」置顶,其后是本地歌单。
 ///
-/// 顺序是「我喜欢的」→ 本地 → 平台。「我喜欢的」置顶且不可删,它**就是**平台的
-/// 红心列表,不建本地副本(见 `docs/adr/0016`);本地排在平台前面,因为那是用户
-/// 自己攒的,平台歌单往往有几十个。
+/// 只有我们自己的歌单,网易云歌单不再列出(`docs/adr/0033`)。「我的喜欢」是
+/// 系统歌单,由 `store::liked` 管,契约里用 `Liked` 这个来源标出来:客户端据此
+/// 不给它删除与改名键,并按 `/liked` 读它的曲目。
 pub fn merged(
     liked_count: i32,
-    platform: Vec<PlaylistDto>,
     local: Vec<LocalPlaylist>,
 ) -> Vec<PlaylistDto> {
     let liked = PlaylistDto {
         source: PlaylistSource::Liked,
-        // 它没有平台歌单那样的 id:红心列表是账号的属性,不是一个歌单实体
+        // 客户端按来源走 /liked,不用这个 id
         id: String::new(),
-        name: "我喜欢的".to_owned(),
+        name: "我的喜欢".to_owned(),
         cover: None,
         track_count: liked_count,
     };
 
     std::iter::once(liked)
         .chain(local.iter().map(LocalPlaylist::to_dto))
-        .chain(platform)
         .collect()
 }
 

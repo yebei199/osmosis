@@ -9,7 +9,7 @@ use std::time::Duration;
 use sqlx::PgConnection;
 
 use crate::error::AppError;
-use crate::store::cache::LIKED_PLAYLIST_ID;
+use crate::store::liked;
 
 /// 一个存进桶里的对象。
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -116,12 +116,12 @@ pub async fn forget(
 /// 「过期」的判定,[`expired`] 与 [`forget_if_expired`] 共用同一句 ——
 /// 两处各写一遍的话,挑出来的与真删的迟早是两拨。
 ///
-/// 红心集合以自家库里的缓存为准(`platform_playlist_tracks` 里的红心歌单),
-/// 任何一个账号红心了就留着。
+/// 红心集合以自家的「我的喜欢」为准(`docs/adr/0033`),任何一个账号红心了就留着。
 const EXPIRED: &str = "last_played_at < now() - $1::bigint * interval '1 second'
      AND NOT EXISTS (
-         SELECT 1 FROM platform_playlist_tracks AS liked
-         WHERE liked.playlist_id = $2
+         SELECT 1 FROM local_playlist_tracks AS liked
+         JOIN local_playlists AS list ON list.id = liked.playlist_id
+         WHERE list.system = $2
            AND liked.platform = stored_tracks.platform
            AND liked.track_id = stored_tracks.track_id
      )";
@@ -141,7 +141,7 @@ pub async fn expired(
          FROM stored_tracks WHERE {EXPIRED}"
     ))
     .bind(seconds(retain))
-    .bind(LIKED_PLAYLIST_ID)
+    .bind(liked::SYSTEM)
     .fetch_all(conn)
     .await?)
 }
@@ -160,7 +160,7 @@ pub async fn forget_if_expired(
          WHERE platform = $3 AND track_id = $4 AND quality = $5 AND {EXPIRED}"
     ))
     .bind(seconds(retain))
-    .bind(LIKED_PLAYLIST_ID)
+    .bind(liked::SYSTEM)
     .bind(&track.platform)
     .bind(&track.track_id)
     .bind(&track.quality)

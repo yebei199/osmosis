@@ -10,5 +10,6 @@ pub mod cache;
 pub mod db;
 pub mod group;
 pub mod history;
+pub mod liked;
 pub mod playlist;
 pub mod queue;

@@ -1,4 +1,4 @@
-use server::store::cache::{self, LIKED_PLAYLIST_ID};
+use server::store::cache;
 
 use super::*;
 
@@ -218,35 +218,6 @@ async fn an_uncached_playlist_reads_empty() {
             .expect("读没缓存过的歌单不该是错误");
 
     assert!(got.is_empty());
-}
-
-/// 「我喜欢的」用保留 id,走的是同一张表、同一套代码。
-#[tokio::test]
-async fn the_liked_list_is_an_ordinary_playlist() {
-    let mut tx = tx().await;
-    let account =
-        make_account(&mut tx, "cache_liked").await;
-
-    let tracks = vec![track("1", "红心里的")];
-
-    cache::set_playlist(
-        &mut tx,
-        account.id,
-        LIKED_PLAYLIST_ID,
-        &tracks,
-    )
-    .await
-    .expect("写我喜欢的应该成功");
-
-    let got = cache::tracks_of(
-        &mut tx,
-        account.id,
-        LIKED_PLAYLIST_ID,
-    )
-    .await
-    .expect("读我喜欢的应该成功");
-
-    assert_eq!(got, tracks);
 }
 
 /// 这个歌单每一行成员关系的物理位置,按 position 排。

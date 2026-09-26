@@ -14,12 +14,6 @@ use sqlx::{Connection, PgConnection, QueryBuilder};
 
 use crate::error::AppError;
 
-/// 「我喜欢的」在缓存里的歌单标识。
-///
-/// 取空串:平台的歌单 id 恒非空,撞不上。红心在这张表里就是个普通歌单,
-/// 不单开一套表,也不单写一套代码。
-pub const LIKED_PLAYLIST_ID: &str = "";
-
 /// 一次写多少行。
 ///
 /// Postgres 一条语句最多 65535 个参数,而每首歌占 7 个 —— 973 首的歌单

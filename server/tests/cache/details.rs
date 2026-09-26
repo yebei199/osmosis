@@ -1,4 +1,4 @@
-use server::store::cache::{self, LIKED_PLAYLIST_ID};
+use server::store::cache;
 
 use super::*;
 
@@ -46,15 +46,15 @@ async fn a_playlist_can_reuse_details_cached_elsewhere() {
     let account =
         make_account(&mut tx, "cache_reuse").await;
 
-    // 详情从红心那边进的库
+    // 详情从另一个歌单那边进的库
     cache::set_playlist(
         &mut tx,
         account.id,
-        LIKED_PLAYLIST_ID,
+        "elsewhere",
         &[track("1", "两处都有")],
     )
     .await
-    .expect("写我喜欢的应该成功");
+    .expect("写另一个歌单应该成功");
 
     // 另一个歌单只写成员关系,一条详情都不给
     cache::set_membership(

@@ -1,4 +1,4 @@
-//! 红心与订阅:全量标识、那一页曲目,以及两个开关。
+//! 红心与订阅:「我的喜欢」的读写与导入,以及平台歌单的收藏开关。
 
 use axum::{
     Json,
@@ -6,28 +6,30 @@ use axum::{
     http::StatusCode,
 };
 use contract::{TrackIdsDto, TracksDto};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use server::bangdream::{
     self, UpstreamChannel,
     proto::{
         GetAccountStatusRequest, GetPlaylistRequest,
-        ListLikedTracksRequest, ListUserPlaylistsRequest,
+        GetPlaylistResponse, ListUserPlaylistsRequest,
         Platform, SetPlaylistSubscribedRequest,
-        SetTrackLikedRequest,
         library_service_client::LibraryServiceClient,
     },
 };
+use server::error;
 use server::error::Failure;
 use server::store::account::Account;
 use server::store::cache;
+use server::store::liked;
+use server::store::playlist::TrackRef;
 
 use crate::routes::catalog::catalog_cache::{
-    cached_tracks, detail_tracks_of, store_first,
+    detail_tracks_of, fill_details, netease_name,
     track_refs_of,
 };
 use crate::routes::play::archive;
-use crate::{AppState, fail};
+use crate::{AppState, conn, fail};
 
 /// `GET /recent` 的查询参数。
 ///
@@ -38,82 +40,121 @@ pub(crate) struct PageQuery {
     pub(crate) limit: Option<usize>,
 }
 
-/// `GET /liked` —— 我喜欢的音乐,全量。
+/// `GET /liked/ids` —— 红心的全量标识,最近加入的在前。
 ///
-/// 三步:先问上游当前账号是谁,再拿它**全量**的红心标识列表,把缺详情的那些补齐。
-/// 上游只给标识是刻意的(它的 `docs/adr/0003`):平台返回的曲目列表会被截断,
-/// 标识列表不会。
-///
-/// user_id 不做缓存:重新扫码登录会换一个账号,缓存住的话红心列表会静默停在旧账号上。
-/// 这是一次同机 gRPC,便宜得没必要省。
+/// 读自家的「我的喜欢」(`docs/adr/0033`),不问网易云:网易云没登录、连不上,
+/// 界面上的心照样画得对。
 pub(crate) async fn liked_ids(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TrackIdsDto>, Failure> {
-    let mut auth = state.upstream.auth;
-    let mut library = state.upstream.library;
-
-    let netease_account = auth
-        .get_account_status(bangdream::as_user(
-            &account,
-            GetAccountStatusRequest {
-                platform: Platform::Netease as i32,
-            },
-        ))
+    let mut conn = conn(&state.pool).await?;
+    let refs = liked::refs(&mut conn, account.id)
         .await
-        .map_err(|status| fail(&status))?
-        .into_inner();
-
-    // 没绑网易云是**状态**不是错误:那就是「一首红心都没有」,
-    // 界面据此把所有心画成空的,而不是整页失败。
-    if !netease_account.logged_in {
-        return Ok(Json(TrackIdsDto {
-            track_ids: Vec::new(),
-        }));
-    }
-
-    let found = library
-        .list_liked_tracks(bangdream::as_user(
-            &account,
-            ListLikedTracksRequest {
-                platform: Platform::Netease as i32,
-                user_id: netease_account.user_id,
-            },
-        ))
-        .await
-        .map_err(|status| fail(&status))?
-        .into_inner();
+        .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(TrackIdsDto {
-        track_ids: found.track_ids,
+        track_ids: refs
+            .into_iter()
+            .map(|track| track.track_id)
+            .collect(),
     }))
 }
 
+/// `GET /liked` —— 「我的喜欢」,全量,最近加入的在前。
+///
+/// 成员关系读自家库;详情向缓存借,缓存里没有的才问平台(常态是一次都不问)。
+/// 平台给不出详情的那首(下架、无权限)仍在「我的喜欢」里,只是这一次显示
+/// 不出来,算进 `unavailable` —— 成员关系是我们的,不因为平台一时给不出就删。
 pub(crate) async fn liked(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
-    store_first(
-        &state,
-        &account,
-        cache::LIKED_PLAYLIST_ID,
-        fetch_liked,
-    )
-    .await
-    .map(Json)
+    let mut conn = conn(&state.pool).await?;
+    let ids: Vec<String> =
+        liked::refs(&mut conn, account.id)
+            .await
+            .map_err(|err| error::map_error(&err))?
+            .into_iter()
+            .map(|track| track.track_id)
+            .collect();
+
+    // 目前只有网易云一个平台,与本地歌单那条路同一个前提
+    fill_details(&state, &account, &mut conn, &ids).await?;
+    let tracks =
+        cache::details_of(&mut conn, &netease_name(), &ids)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+
+    Ok(Json(TracksDto {
+        unavailable: ids.len() - tracks.len(),
+        tracks,
+    }))
 }
 
-/// 红心的回源路径:问账号 → 找红心歌单 → 取成员关系 → 回填缓存。
-async fn fetch_liked(
-    state: AppState,
+/// `POST /liked/import` 的响应:这次新加了几首,导完一共几首。
+#[derive(Debug, Serialize)]
+pub(crate) struct LikedImport {
+    pub(crate) added: u64,
+    pub(crate) total: i32,
+}
+
+/// `POST /liked/import` —— 把网易云的红心并进「我的喜欢」。
+///
+/// 用户定的:导一次,之后以我们的为准(#146)。这条既是那「一次」,也是之后
+/// 手动的「再导一次」:只补新增、不删这边已有的,重跑不重复。界面上没有按钮,
+/// 带登录 token 用 curl 打它。
+///
+/// 顺手把详情备进缓存,之后读「我的喜欢」就不必再问平台。平台给不出详情的
+/// 照样导进来(见 [`liked`])。
+pub(crate) async fn import_liked(
+    State(state): State<AppState>,
     account: Account,
-) -> Result<TracksDto, Failure> {
+) -> Result<Json<LikedImport>, Failure> {
+    let detail = netease_liked(&state, &account).await?;
+    let refs = track_refs_of(&detail);
+    let ids: Vec<String> =
+        refs.iter().map(|track| track.id.clone()).collect();
+
+    let mut conn = conn(&state.pool).await?;
+    cache::put_details(
+        &mut conn,
+        &detail_tracks_of(&detail),
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+    fill_details(&state, &account, &mut conn, &ids).await?;
+
+    let added = liked::import(
+        &mut conn,
+        account.id,
+        &netease_name(),
+        &refs,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+    let total = liked::count(&mut conn, account.id)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+    tracing::info!(added, total, "导入网易云红心");
+
+    Ok(Json(LikedImport { added, total }))
+}
+
+/// 网易云红心歌单的详情:问账号 → 找红心歌单 → 取成员关系与加入时刻。
+///
+/// 走红心**歌单**而不是红心接口:后者返回裸数字数组,挂不住加入时刻
+/// (`docs/adr/0021`)。
+async fn netease_liked(
+    state: &AppState,
+    account: &Account,
+) -> Result<GetPlaylistResponse, Failure> {
     let mut auth = state.upstream.auth.clone();
     let mut library = state.upstream.library.clone();
 
     let netease_account = auth
         .get_account_status(bangdream::as_user(
-            &account,
+            account,
             GetAccountStatusRequest {
                 platform: Platform::Netease as i32,
             },
@@ -122,27 +163,24 @@ async fn fetch_liked(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    // 未登录是**状态**不是错误,所以上游用 logged_in 而非错误码回答(它的 `docs/adr/0005`)。
-    // 但对这个请求而言目的没达成 —— 返回空列表会被读成"一首喜欢的都没有",
-    // 那是另一件事,必须区分开。
+    // 未登录是**状态**不是错误(上游的 `docs/adr/0005`),但导入的目的没达成 ——
+    // 当成「导进零首」的话,用户会以为网易云那边一首红心都没有
     if !netease_account.logged_in {
         return Err(fail(&tonic::Status::unauthenticated(
             "netease: 未登录",
         )));
     }
 
-    // 走红心**歌单**而不是 /liked/ids 那条路:红心接口返回的是裸数字数组,
-    // 结构上挂不住加入时间,而次序要按加入时间倒排(见 `docs/adr/0021`)。
     let liked_id = liked_playlist_id(
         &mut library,
-        &account,
+        account,
         &netease_account.user_id,
     )
     .await?;
 
-    let detail = library
+    Ok(library
         .get_playlist(bangdream::as_user(
-            &account,
+            account,
             GetPlaylistRequest {
                 platform: Platform::Netease as i32,
                 playlist_id: liked_id,
@@ -150,32 +188,15 @@ async fn fetch_liked(
         ))
         .await
         .map_err(|status| fail(&status))?
-        .into_inner();
-
-    // 不分页:红心是一整批,不是搜索结果。973 首里只看得到 50 首的话,
-    // 剩下的 923 首没有任何入口 —— 界面上没有翻页,也不该有。
-    let (tracks, unavailable) = cached_tracks(
-        &state,
-        &account,
-        cache::LIKED_PLAYLIST_ID,
-        &track_refs_of(&detail),
-        &detail_tracks_of(&detail),
-    )
-    .await?;
-
-    Ok(TracksDto {
-        tracks,
-        unavailable,
-    })
+        .into_inner())
 }
 
 /// 找出这个账号的红心歌单在平台上的 id。
 ///
 /// 平台把红心也算作一个用户歌单,靠 `special_type` 认;上游只搬运这个值,
 /// 判定归这边(见 `docs/adr/0022`)。找不到是**错误**而不是空列表 ——
-/// 每个账号都有这个歌单,找不到说明上游给的列表不完整,那时回空会被读成
-/// 「一首喜欢的都没有」。
-pub(crate) async fn liked_playlist_id(
+/// 每个账号都有这个歌单,找不到说明上游给的列表不完整。
+async fn liked_playlist_id(
     library: &mut LibraryServiceClient<UpstreamChannel>,
     account: &Account,
     netease_user_id: &str,
@@ -202,7 +223,7 @@ pub(crate) async fn liked_playlist_id(
         })
 }
 
-/// `PUT /liked/{track_id}` —— 给一首歌点红心。
+/// `PUT /liked/{track_id}` —— 点红心。
 pub(crate) async fn like_track(
     State(state): State<AppState>,
     account: Account,
@@ -232,35 +253,22 @@ pub(crate) async fn unlike_track(
 
 /// 红心的开与关只差一个布尔值,两条路由因此共用这一段。
 ///
-/// 「我喜欢的」就是平台的红心列表,不建本地副本(见 `docs/adr/0016`),
-/// 所以这里只转发,自家库一个字都不写。
+/// 只改自家的「我的喜欢」,不写回网易云(`docs/adr/0033`)。路径里只有平台内 id,
+/// 目前唯一的平台是网易云。
 pub(crate) async fn set_liked(
     state: &AppState,
     account: &Account,
     track_id: String,
     liked: bool,
 ) -> Result<StatusCode, Failure> {
-    let mut library = state.upstream.library.clone();
-
-    library
-        .set_track_liked(bangdream::as_user(
-            account,
-            SetTrackLikedRequest {
-                platform: Platform::Netease as i32,
-                track_id,
-                liked,
-            },
-        ))
+    let mut conn = conn(&state.pool).await?;
+    let track = TrackRef {
+        platform: netease_name(),
+        track_id,
+    };
+    liked::set(&mut conn, account.id, &track, liked)
         .await
-        .map_err(|status| fail(&status))?;
-    // 刚在这里点的心,下一次打开红心就得看到:当场回源(最多等 FRESH_WAIT)。
-    // ponytail: 点心之前已发出的后台回源若晚于这里落地,会把旧的那份记成新的,
-    // 最多晚 REFRESH_EVERY 看到;真撞上再给记录加代数号。
-    state
-        .playlists
-        .forget(account.id, cache::LIKED_PLAYLIST_ID);
-    // 歌单列表里「我喜欢的」那一行的数目也跟着变
-    state.platform_lists.outdate(account.id);
+        .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -288,7 +296,8 @@ pub(crate) async fn unsubscribe_playlist(
 /// 收藏的开与关同样只差一个布尔值。
 ///
 /// 只对**平台**歌单有意义:本地歌单是自己建的,没有"收藏"这回事,
-/// 它的对应操作是删除。
+/// 它的对应操作是删除。收藏照旧写网易云;收藏的歌单不再出现在我们的
+/// 歌单页上(`docs/adr/0033`)。
 pub(crate) async fn set_subscribed(
     state: &AppState,
     account: &Account,
@@ -308,8 +317,6 @@ pub(crate) async fn set_subscribed(
         ))
         .await
         .map_err(|status| fail(&status))?;
-    // 收藏的歌单出现在 /playlists 平台那半里:下一次打开等得到就给新的
-    state.platform_lists.outdate(account.id);
 
     Ok(StatusCode::NO_CONTENT)
 }

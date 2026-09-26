@@ -1,8 +1,7 @@
 //! 歌单的集成测试。
 //!
-//! 两类歌单在契约层归一成同一个 `PlaylistDto`,靠 `source` 区分(见 `docs/adr/0016`)。
-//! 平台歌单的真相在网易云,这里只测**本地**那一半与两者的合并规则 ——
-//! 打真实网易云的部分归 `live_bangdream.rs`。
+//! 歌单页只列我们自己的歌单(`docs/adr/0033`):置顶的「我的喜欢」与本地歌单,
+//! 契约层靠 `source` 区分。「我的喜欢」本身的规则在 `liked.rs`。
 
 use contract::PlaylistSource;
 use server::error::AppError;
@@ -262,10 +261,10 @@ async fn deleting_a_playlist_takes_its_tracks_with_it() {
     assert_eq!(orphans.0, 0);
 }
 
-/// 合并后的列表里:「我喜欢的」在最前,本地歌单与平台歌单都带上正确的 source。
-/// 客户端靠 source 决定哪些操作可用,标错了会让删除键出现在平台歌单上。
+/// 合并后的列表里:「我的喜欢」在最前,其后是本地歌单,没有平台歌单(#146)。
+/// 客户端靠 source 决定哪些操作可用,标错了会让删除键出现在「我的喜欢」上。
 #[tokio::test]
-async fn merged_list_puts_liked_first_and_marks_each_source()
+async fn merged_list_puts_liked_first_and_lists_only_our_own()
  {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "pl_merge").await;
@@ -277,30 +276,19 @@ async fn merged_list_puts_liked_first_and_marks_each_source()
     let locals =
         playlist::list(&mut tx, account.id).await.unwrap();
 
-    let platform = vec![contract::PlaylistDto {
-        source: PlaylistSource::Platform,
-        id: "24381616".to_owned(),
-        name: "平台的".to_owned(),
-        cover: None,
-        track_count: 120,
-    }];
-
-    let merged = playlist::merged(7, platform, locals);
+    let merged = playlist::merged(7, locals);
 
     assert_eq!(merged[0].source, PlaylistSource::Liked);
+    assert_eq!(merged[0].name, "我的喜欢");
     assert_eq!(merged[0].track_count, 7);
 
     let by_source: Vec<_> =
         merged.iter().map(|list| list.source).collect();
     assert_eq!(
         by_source,
-        vec![
-            PlaylistSource::Liked,
-            PlaylistSource::Local,
-            PlaylistSource::Platform,
-        ]
+        vec![PlaylistSource::Liked, PlaylistSource::Local]
     );
 
-    // 本地那条带的是本地歌单的 id,不是平台 id —— 混了会让改名打到别人身上
+    // 本地那条带的是本地歌单的 id —— 混了会让改名打到别人身上
     assert_eq!(merged[1].id, local.id.to_string());
 }
