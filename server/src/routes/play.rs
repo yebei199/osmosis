@@ -25,6 +25,7 @@ use crate::{AppState, fail};
 pub(crate) mod archive;
 pub(crate) mod download;
 pub(crate) mod links;
+pub(crate) mod prefetch;
 
 #[cfg(test)]
 mod tests;

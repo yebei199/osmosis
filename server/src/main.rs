@@ -494,6 +494,11 @@ async fn main() {
             archive,
         );
     }
+    // 歌单与日推里的歌以无损预先存进桶(#147)
+    routes::play::prefetch::spawn(
+        &state,
+        routes::play::prefetch::Limits::from_env(),
+    );
 
     let app = Router::new()
         .route("/health", get(health))

@@ -12,4 +12,5 @@ pub mod group;
 pub mod history;
 pub mod liked;
 pub mod playlist;
+pub mod prefetch;
 pub mod queue;

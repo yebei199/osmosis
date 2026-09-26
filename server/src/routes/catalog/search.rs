@@ -20,7 +20,9 @@ use server::bangdream::{
 };
 use server::error::Failure;
 use server::store::account::Account;
+use server::store::playlist::TrackRef;
 
+use crate::routes::play::prefetch;
 use crate::{AppState, fail};
 
 /// 搜索默认返回条数。
@@ -176,12 +178,13 @@ pub(crate) async fn search_playlists(
 
 /// `GET /daily` —— 今日推荐。
 ///
-/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。
+/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。当天的这批排进预取队列
+/// (#147):取到就是日推刷新了,已在桶里的入队时就跳过。
 pub(crate) async fn daily(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut discover = state.upstream.discover;
+    let mut discover = state.upstream.discover.clone();
     let response = discover
         .get_daily_recommendations(bangdream::as_user(
             &account,
@@ -193,12 +196,22 @@ pub(crate) async fn daily(
         .map_err(|status| fail(&status))?
         .into_inner();
 
+    let tracks: Vec<_> = response
+        .tracks
+        .into_iter()
+        .map(bangdream::track_to_dto)
+        .collect();
+    let refs: Vec<TrackRef> = tracks
+        .iter()
+        .map(|track| TrackRef {
+            platform: track.platform.clone(),
+            track_id: track.id.clone(),
+        })
+        .collect();
+    prefetch::enqueue(&state, account.id, &refs).await;
+
     Ok(Json(TracksDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
+        tracks,
         unavailable: 0,
     }))
 }

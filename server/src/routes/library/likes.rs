@@ -28,7 +28,7 @@ use crate::routes::catalog::catalog_cache::{
     detail_tracks_of, fill_details, netease_name,
     track_refs_of,
 };
-use crate::routes::play::archive;
+use crate::routes::play::{archive, prefetch};
 use crate::{AppState, conn, fail};
 
 /// `GET /recent` 的查询参数。
@@ -137,6 +137,15 @@ pub(crate) async fn import_liked(
         .await
         .map_err(|err| error::map_error(&err))?;
     tracing::info!(added, total, "导入网易云红心");
+    drop(conn);
+    let imported: Vec<TrackRef> = ids
+        .into_iter()
+        .map(|track_id| TrackRef {
+            platform: netease_name(),
+            track_id,
+        })
+        .collect();
+    prefetch::enqueue(&state, account.id, &imported).await;
 
     Ok(Json(LikedImport { added, total }))
 }
@@ -223,13 +232,25 @@ async fn liked_playlist_id(
         })
 }
 
-/// `PUT /liked/{track_id}` —— 点红心。
+/// `PUT /liked/{track_id}` —— 点红心。这首排进预取队列(#147)。
 pub(crate) async fn like_track(
     State(state): State<AppState>,
     account: Account,
     Path(track_id): Path<String>,
 ) -> Result<StatusCode, Failure> {
-    set_liked(&state, &account, track_id, true).await
+    let track = TrackRef {
+        platform: netease_name(),
+        track_id: track_id.clone(),
+    };
+    let status =
+        set_liked(&state, &account, track_id, true).await?;
+    prefetch::enqueue(
+        &state,
+        account.id,
+        std::slice::from_ref(&track),
+    )
+    .await;
+    Ok(status)
 }
 
 /// `DELETE /liked/{track_id}` —— 取消红心。

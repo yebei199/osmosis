@@ -1,10 +1,10 @@
 //! 听过的歌存进对象存储(#126)。
 //!
-//! `/played` 报一次起播,这里就在后台把那首的音频按**上游原始格式**存进桶
-//! (不转码)。取源与拉流与 `/download` 是同一条路,档位是 [`CACHE_TIER`]。
+//! 曲目按**上游原始格式**存进桶(不转码),档位是 [`CACHE_TIER`]。取源与拉流与
+//! `/download` 是同一条路。谁该存由预取队列定(#147,见 `prefetch`):我们的歌单、
+//! 当天日推,以及 `/played` 报上来的还没存过的那首。
 //!
-//! 全程只记日志、不回报:存歌是顺手的事,它失败了用户照样在听,`/played`
-//! 的响应也不等它。
+//! 全程只记日志、不回报:存歌是顺手的事,它失败了用户照样在听。
 //!
 //! 再播时 [`stored_source`] 把桶里那份的签名链接交给 `/play`;对象存储出任何
 //! 岔子都只是退回网易云,不让点歌失败。
@@ -14,14 +14,12 @@
 //! 只有红心的歌长期留着:[`spawn_sweeper`] 每小时删一轮没人红心、且最后一次
 //! 播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
 
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use contract::PlaySourceDto;
 use sqlx::{PgConnection, PgPool};
-use tokio::sync::Semaphore;
 
 use server::objects::Objects;
 use server::quality::{
@@ -32,16 +30,10 @@ use server::store::archive::{self, StoredTrack};
 use server::store::playlist::TrackRef;
 
 use crate::AppState;
-use crate::routes::play::download;
+use crate::routes::play::{download, prefetch};
 
 #[cfg(test)]
 mod tests;
-
-/// 同时最多存几首。
-///
-/// 每一首整个读进内存再上传(无损的几十 MB),而且和正在播放的那首抢同一条
-/// 出口带宽。两首足够跟上一个人切歌的速度,再多就只是在和播放抢资源。
-const CONCURRENT_STORES: usize = 2;
 
 /// 没人红心的歌,最后一次播放(或取消红心)之后留多久。用户定的三天(#126)。
 pub(crate) const RETAIN: Duration =
@@ -53,28 +45,18 @@ pub(crate) const RETAIN: Duration =
 /// 加几次 DELETE,一小时一次对库与 RustFS 都可以忽略。
 const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 
-/// 目前唯一的平台。别的平台报上来的起播不存 —— 取源只认网易云。
-const NETEASE: &str = "netease";
+/// 目前唯一的平台。别的平台的曲目不存 —— 取源只认网易云。
+pub(crate) const NETEASE: &str = "netease";
 
-/// 对象存储,连同「同时存几首」「哪几首正在存」这两份进程内的状态。
+/// 对象存储。同时存几首、多快去问音源,由预取队列的 worker 管(见 `prefetch`)。
 #[derive(Clone)]
 pub(crate) struct Archive {
     objects: Arc<dyn Objects>,
-    slots: Arc<Semaphore>,
-    /// 正在存的曲目。同一首连报两次 `/played` 时,第二次看到它在这里就走开,
-    /// 不会同一首下载两遍。
-    storing: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Archive {
     pub(crate) fn new(objects: Arc<dyn Objects>) -> Self {
-        Self {
-            objects,
-            slots: Arc::new(Semaphore::new(
-                CONCURRENT_STORES,
-            )),
-            storing: Arc::default(),
-        }
+        Self { objects }
     }
 }
 
@@ -86,7 +68,18 @@ pub(crate) fn quality() -> String {
     CACHE_TIER.name().to_owned()
 }
 
-/// `/played` 之后调用:后台去存,立刻返回。没配对象存储就什么都不做。
+/// 一次存的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stored {
+    /// 这一次存进去了。
+    Now,
+    /// 早就在桶里,没再下载。
+    Already,
+    /// 音源给不出无损(或只给试听片段),不存。
+    NoLossless,
+}
+
+/// `/played` 之后调用:后台去办,立刻返回。没配对象存储就什么都不做。
 pub(crate) fn spawn_keep(
     state: &AppState,
     account: Account,
@@ -101,50 +94,60 @@ pub(crate) fn spawn_keep(
     });
 }
 
-/// 存一首。已经存过的只把「最后一次播放」拨到现在。
+/// 播过一首:存过的把「最后一次播放」拨到现在,没存过的排进预取队列。
 pub(crate) async fn keep(
     state: &AppState,
     account: &Account,
     track: &TrackRef,
 ) {
-    let Some(archive) = &state.archive else {
+    if state.archive.is_none() || track.platform != NETEASE
+    {
         return;
+    }
+    let touched = match state.pool.acquire().await {
+        Ok(mut conn) => archive::touch(
+            &mut conn,
+            &track.platform,
+            &track.track_id,
+            &quality(),
+        )
+        .await
+        .map_err(|err| format!("{err:?}")),
+        Err(err) => Err(err.to_string()),
     };
+    match touched {
+        Ok(true) => {}
+        Ok(false) => {
+            prefetch::enqueue(
+                state,
+                account.id,
+                std::slice::from_ref(track),
+            )
+            .await;
+        }
+        Err(err) => {
+            tracing::warn!(track_id = %track.track_id, %err, "查不了存歌的账")
+        }
+    }
+}
+
+/// 以这个账号的凭据把一首存进桶。预取 worker 调它;没配对象存储是错误。
+pub(crate) async fn store_track(
+    state: &AppState,
+    account: &Account,
+    track: &TrackRef,
+) -> Result<Stored, String> {
+    let archive = state
+        .archive
+        .as_ref()
+        .ok_or_else(|| "没配对象存储".to_owned())?;
     if track.platform != NETEASE {
-        return;
+        return Err(format!(
+            "取不了 {} 的源",
+            track.platform
+        ));
     }
-    if !claim(archive, &track.track_id) {
-        return;
-    }
-
-    let outcome =
-        store(state, archive, account, track).await;
-    release(archive, &track.track_id);
-
-    if let Err(err) = outcome {
-        tracing::warn!(
-            track_id = %track.track_id,
-            %err,
-            "存进对象存储失败"
-        );
-    }
-}
-
-/// 占住这一首。已经有人在存就返回 `false`。
-fn claim(archive: &Archive, track_id: &str) -> bool {
-    archive
-        .storing
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(track_id.to_owned())
-}
-
-fn release(archive: &Archive, track_id: &str) {
-    archive
-        .storing
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(track_id);
+    store(state, archive, account, track).await
 }
 
 async fn store(
@@ -152,7 +155,7 @@ async fn store(
     archive: &Archive,
     account: &Account,
     track: &TrackRef,
-) -> Result<(), String> {
+) -> Result<Stored, String> {
     let quality_key = quality();
     // 连接只借这一下:下载可能要几十秒,池里一共才五条
     {
@@ -161,7 +164,7 @@ async fn store(
             .acquire()
             .await
             .map_err(|err| err.to_string())?;
-        if archive::touch(
+        if archive::find(
             &mut conn,
             &track.platform,
             &track.track_id,
@@ -169,16 +172,11 @@ async fn store(
         )
         .await
         .map_err(|err| format!("{err:?}"))?
+        .is_some()
         {
-            return Ok(());
+            return Ok(Stored::Already);
         }
     }
-
-    let _slot = archive
-        .slots
-        .acquire()
-        .await
-        .map_err(|err| err.to_string())?;
 
     let source = download::play_source(
         state,
@@ -190,7 +188,7 @@ async fn store(
     .map_err(describe)?;
     // 试听片段只有三十秒,存下来再交出去就是一首永远放不完的歌
     if source.trial {
-        return Ok(());
+        return Ok(Stored::NoLossless);
     }
     let mut quality = netease::quality_of(&source);
     // 给不出无损就不存:桶里只留无损(docs/adr/0034),这首每次播放现取
@@ -200,7 +198,7 @@ async fn store(
             tier = quality.tier.name(),
             "音源给不出无损,不存"
         );
-        return Ok(());
+        return Ok(Stored::NoLossless);
     }
     let content_type = content_type(&quality.format)?;
     let bytes = download::fetch(&source.url)
@@ -252,14 +250,14 @@ async fn store(
         tier = %stored.tier,
         "已存进对象存储"
     );
-    Ok(())
+    Ok(Stored::Now)
 }
 
 /// 这首存过、对象也还在,就交出桶里那份的签名链接;否则 `None`,调用方去找网易云。
 ///
 /// 每次都先问一句对象在不在(集群内一个 HEAD,毫秒级):账上有、桶里没有时
 /// 交出去的链接必然 404,那就是一首点了没声的歌。账上有、桶里没有的那一行
-/// 当场删掉,下一次 `/played` 会把它重新存回来。
+/// 当场删掉,下一次 `/played` 会把它重新排进队列。
 pub(crate) async fn stored_source(
     state: &AppState,
     track_id: &str,

@@ -1,4 +1,4 @@
-//! 听过的歌存进对象存储:存、不重复存、试听不存、`/played` 真的会触发;
+//! 存进对象存储:存、不重复存、试听与有损不存、`/played` 真的会排进队列;
 //! 再播时从对象存储交付,它出岔子时退回网易云;清理只删没人红心、三天没播的。
 
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use crate::routes::testing::{
     self, FakeUpstream, MemoryObjects,
 };
 
-use super::{Archive, keep, quality};
+use super::{Archive, Stored, quality, store_track};
 
 /// 在随机端口上摆一段字节,并数它被取了几次。
 async fn serve_counted(
@@ -150,7 +150,9 @@ async fn a_played_track_is_stored_as_is() {
     let f = fixture("ar_store", false).await;
     let id = testing::track_id("ar_store", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     let key = format!("tracks/{id}/lossless.flac");
     assert_eq!(f.objects.get(&key), Some(audio()));
@@ -195,7 +197,9 @@ async fn a_stored_flac_records_depth_and_rate() {
     .await;
     let id = testing::track_id("ar_hires", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     let stored =
         row(&f.state, &id).await.expect("应当存进去了");
@@ -235,36 +239,31 @@ async fn a_lossy_source_is_not_stored() {
     .await;
     let id = testing::track_id("ar_lossy", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     assert_eq!(f.hits.load(Ordering::SeqCst), 0);
     assert_eq!(row(&f.state, &id).await, None);
 }
 
-/// 同一首第二次播放不再下载。
+/// 同一首第二次不再下载。
 #[tokio::test]
 async fn a_stored_track_is_not_downloaded_again() {
     let f = fixture("ar_twice", false).await;
     let id = testing::track_id("ar_twice", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let first =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+    let second =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
-    assert_eq!(f.hits.load(Ordering::SeqCst), 1);
-}
-
-/// 同一首同时报两次,也只下载一遍。
-#[tokio::test]
-async fn concurrent_plays_download_once() {
-    let f = fixture("ar_race", false).await;
-    let id = testing::track_id("ar_race", 1);
-    let track = netease(&id);
-
-    tokio::join!(
-        keep(&f.state, &f.account, &track),
-        keep(&f.state, &f.account, &track),
+    assert_eq!(
+        (first, second),
+        (Ok(Stored::Now), Ok(Stored::Already))
     );
-
     assert_eq!(f.hits.load(Ordering::SeqCst), 1);
 }
 
@@ -274,15 +273,17 @@ async fn a_trial_clip_is_not_stored() {
     let f = fixture("ar_trial", true).await;
     let id = testing::track_id("ar_trial", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     assert_eq!(f.hits.load(Ordering::SeqCst), 0);
     assert_eq!(row(&f.state, &id).await, None);
 }
 
-/// `/played` 照常 204,并在后台把这首存进去。
+/// `/played` 照常 204,并在后台把没存过的这首排进预取队列(#147)。
 #[tokio::test]
-async fn reporting_a_play_stores_the_track() {
+async fn reporting_a_play_queues_the_track() {
     let f = fixture("ar_played", false).await;
     let id = testing::track_id("ar_played", 1);
 
@@ -299,13 +300,22 @@ async fn reporting_a_play_stores_the_track() {
         .expect("起播上报应当成功");
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
 
-    let key = format!("tracks/{id}/lossless.flac");
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(5);
-    while f.objects.get(&key).is_none() {
+    loop {
+        let owner: Option<i64> = sqlx::query_scalar(
+            "SELECT account_id FROM prefetch_jobs WHERE track_id = $1",
+        )
+        .bind(&id)
+        .fetch_optional(&f.state.pool)
+        .await
+        .expect("查队列失败");
+        if owner == Some(f.account.id) {
+            break;
+        }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "五秒内没存进去"
+            "五秒内没排进队列"
         );
         tokio::time::sleep(
             std::time::Duration::from_millis(20),
@@ -324,8 +334,11 @@ async fn an_upstream_failure_stores_nothing() {
         testing::unreachable_upstream(),
     );
 
-    keep(&state, &f.account, &netease(&id)).await;
+    let outcome =
+        store_track(&state, &f.account, &netease(&id))
+            .await;
 
+    assert!(outcome.is_err(), "{outcome:?}");
     assert_eq!(row(&state, &id).await, None);
 }
 
@@ -392,7 +405,9 @@ async fn play_url(
 async fn a_stored_track_plays_from_the_store() {
     let f = fixture("ar_serve", false).await;
     let id = testing::track_id("ar_serve", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     let offline = testing::with_upstream(
         &f.state,
@@ -443,7 +458,9 @@ async fn an_unstored_track_plays_from_upstream() {
 async fn a_lost_object_falls_back_and_forgets_the_row() {
     let f = fixture("ar_lost", false).await;
     let id = testing::track_id("ar_lost", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
     f.objects.lose(&format!("tracks/{id}/lossless.flac"));
 
     let url = play_url(&f.state, &f.account, &id).await;
@@ -458,7 +475,9 @@ async fn an_unreachable_store_falls_back_and_keeps_the_row()
 {
     let f = fixture("ar_down", false).await;
     let id = testing::track_id("ar_down", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
     let down = AppState {
         archive: Some(Archive::new(Arc::new(Unreachable))),
         ..f.state.clone()
@@ -665,4 +684,83 @@ async fn unliking_restarts_the_clock() {
         expired.iter().all(|track| track.track_id != id),
         "刚取消红心的歌不该算过期"
     );
+}
+
+/// 排进队列的这首,worker 办一次:存进桶,队列里那一行随之删掉。
+#[tokio::test]
+async fn a_queued_job_is_stored_and_leaves_the_queue() {
+    let f = fixture("ar_job", false).await;
+    let id = testing::track_id("ar_job", 1);
+    let job = queued(&f, &id).await;
+
+    crate::routes::play::prefetch::run(&f.state, &job)
+        .await;
+
+    assert!(
+        f.objects
+            .get(&format!("tracks/{id}/lossless.flac"))
+            .is_some()
+    );
+    assert_eq!(job_state(&f, &id).await, None);
+}
+
+/// 给不出无损的这首:不存,行留着记 no_lossless,统计数得到它。
+#[tokio::test]
+async fn a_job_without_lossless_is_marked() {
+    let f = fixture_with(
+        "ar_job_lossy",
+        audio(),
+        PlaySource {
+            format: "mp3".to_owned(),
+            bit_rate: 320_000,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
+        },
+    )
+    .await;
+    let id = testing::track_id("ar_job_lossy", 1);
+    let job = queued(&f, &id).await;
+
+    crate::routes::play::prefetch::run(&f.state, &job)
+        .await;
+
+    assert_eq!(
+        job_state(&f, &id).await,
+        Some("no_lossless".to_owned())
+    );
+}
+
+/// 把这首以夹具账号排进队列,返回 worker 领到它时拿到的那个任务。
+async fn queued(
+    f: &Fixture,
+    id: &str,
+) -> server::store::prefetch::Job {
+    let mut conn = f.state.pool.acquire().await.unwrap();
+    server::store::prefetch::enqueue(
+        &mut conn,
+        f.account.id,
+        &[netease(id)],
+        &quality(),
+    )
+    .await
+    .expect("入队失败");
+    server::store::prefetch::Job {
+        platform: "netease".to_owned(),
+        track_id: id.to_owned(),
+        account_id: f.account.id,
+        attempts: 1,
+    }
+}
+
+async fn job_state(
+    f: &Fixture,
+    id: &str,
+) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT state FROM prefetch_jobs WHERE track_id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&f.state.pool)
+    .await
+    .expect("查队列失败")
 }
