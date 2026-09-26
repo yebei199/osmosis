@@ -737,11 +737,17 @@ impl Session {
     }
 
     /// 输出被收回本机(失权、失联、接管失败):进行中的那一次一并作废。
-    pub fn come_home(&mut self) {
+    ///
+    /// 返回本机此前是不是**不在**组里 —— 不在的话本机播放器是空的、状态机却还停在
+    /// 进遥控之前,调用方要把它按停;本来就在组里一起出声的,不许按停(#142)。
+    #[must_use]
+    pub fn come_home(&mut self) -> bool {
+        let was_silent = !self.members.contains(&Output::Local);
         self.members = vec![Output::Local];
         self.master = Output::Local;
         self.moving = None;
         self.unconfirmed = None;
+        was_silent
     }
 
     /// 集合的登记形式：远端按 id,本机按本机 id;只剩本机(或者一台不剩)时不经服务端。

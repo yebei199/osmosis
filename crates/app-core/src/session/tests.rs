@@ -950,7 +950,7 @@ fn a_source_that_cannot_stop_cancels_the_target() {
 fn coming_home_drops_the_move() {
     let mut session = stopping_local_to_pc1();
 
-    session.come_home();
+    let _ = session.come_home();
 
     assert_eq!(session.output(), &Output::Local);
     assert_eq!(session.moving(), None);

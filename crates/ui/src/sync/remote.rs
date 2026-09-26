@@ -560,7 +560,7 @@ impl Remote {
         let abandoned = lock(&self.inner.session)
             .moving()
             .map(|moving| moving.operation_id.clone());
-        lock(&self.inner.session).come_home();
+        let silent = lock(&self.inner.session).come_home();
         // 收回本机时若正在迁移,把服务端那一次也作罢:不然被拉进来的那台一直锁着。
         // 已经失权的话服务端会拒掉这一条,无害。
         if let (Some(operation_id), Some(client)) =
@@ -568,9 +568,12 @@ impl Remote {
         {
             client.abort_outputs(&operation_id);
         }
-        self.inner
-            .rest_pending
-            .store(true, Ordering::Relaxed);
+        // 本机本来就在组里一起出声的,不按停(#142):「退回本机」不等于「停下本机」。
+        if silent {
+            self.inner
+                .rest_pending
+                .store(true, Ordering::Relaxed);
+        }
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();

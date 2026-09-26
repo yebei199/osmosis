@@ -783,3 +783,26 @@ fn a_second_change_is_refused_once_members_are_leaving() {
         Err(Refused::Busy)
     );
 }
+
+// ── 收回本机(#142)──
+
+/// 本机与 pc1 一起在放时被收回本机:本机一直在出声,调用方不许把它按停。
+#[test]
+fn coming_home_keeps_a_sounding_local_member() {
+    let mut session = grouped(
+        vec![Output::Local, device("pc1")],
+        device("pc1"),
+    );
+
+    assert!(!session.come_home(), "本机本来就在出声");
+    assert_eq!(session.members(), &[Output::Local]);
+}
+
+/// 只有 pc1 在放时被收回本机:本机播放器是空的,要按停那台还停在旧状态上的状态机。
+#[test]
+fn coming_home_from_a_remote_only_group_rests_local() {
+    let mut session =
+        grouped(vec![device("pc1")], device("pc1"));
+
+    assert!(session.come_home());
+}
