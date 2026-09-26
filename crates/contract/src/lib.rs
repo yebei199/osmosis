@@ -63,9 +63,8 @@ pub use sync::*;
 ///
 /// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
 /// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
-/// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
-/// [`ClientSignal::Hello`] 的 `protocol_version` 与
-/// [`ServerSignal::Incompatible`]。
+/// 症状是「按了没反应」。拒绝要落在**入册之前**,见
+/// [`ClientSignal::Hello`] 的 `protocol_version` 与 [`ServerSignal::Welcome`]。
 pub const PROTOCOL_VERSION: u32 = 7;
 
 /// `GET /health` 的响应体。

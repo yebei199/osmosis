@@ -36,7 +36,7 @@ use server::gate::ratelimit::{self, Policies};
 use server::objects::{S3, S3Config};
 use server::store::db;
 use server::syncplay::signaling::{
-    self, AllowedOrigins, SharedControl, SharedRoster,
+    self, AllowedOrigins, SharedRoster,
 };
 
 mod routes;
@@ -118,9 +118,6 @@ pub(crate) struct AppState {
     /// 信令的在线名册。与音乐那几条路由毫无关系,只是同住一个进程 ——
     /// 但 `/signal` 要鉴权,而鉴权提取器要池,两者因此必须在同一份 state 里。
     roster: SharedRoster,
-    /// 遥控器模式的控制权槽位。与名册同住一个进程、同样只在内存里 ——
-    /// 进程重启即清空,而那正是对的:连接都断了,遥控关系也就不存在了。
-    control: SharedControl,
     /// 浏览器来源白名单。CORS 与 WebSocket 的 Origin 校验共用这一张表 ——
     /// 配两份的话,迟早只改了一处,而那时 web 端会在其中一道门上莫名其妙地失败。
     origins: AllowedOrigins,
@@ -150,12 +147,6 @@ impl FromRef<AppState> for PgPool {
 impl FromRef<AppState> for SharedRoster {
     fn from_ref(state: &AppState) -> Self {
         state.roster.clone()
-    }
-}
-
-impl FromRef<AppState> for SharedControl {
-    fn from_ref(state: &AppState) -> Self {
-        state.control.clone()
     }
 }
 
@@ -477,7 +468,6 @@ async fn main() {
             "必须设置 INVITE_CODE —— 没有它任何人都能注册",
         ),
         roster: SharedRoster::default(),
-        control: SharedControl::default(),
         origins: AllowedOrigins::new(allowed_origins()),
         policies: Policies::tuned(),
         playlists: Freshness::default(),

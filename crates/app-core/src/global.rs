@@ -2,14 +2,28 @@
 //!
 //! 状态只由服务端写(`server::syncplay::group`),这里只做三件事:收下更新的那一版、
 //! 认出本机是独奏 / 只当遥控器 / 出声设备、把状态换算成「这一刻该放哪一条的哪个位置」。
-//! 与 `session.rs`、`group.rs` 一样只有规则:时间由调用方传进来,不碰播放器、不发网络。
+//! 只有规则:时间由调用方传进来,不碰播放器、不发网络。
 //!
 //! 掉线规则(用户 2026-09-26):出声设备与服务端断开就立刻暂停自己,不按旧状态往下放;
 //! 重连拿到最新状态再照着放。
 
-use contract::GroupStateDto;
+use contract::{GroupStateDto, TrackDto};
 
-use crate::group::Effective;
+/// 此刻该放的那一条,按全局状态换算好了(时刻都在服务端时钟上)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effective {
+    pub clock_epoch: u64,
+    pub queue_id: i64,
+    pub revision: i64,
+    pub entry_id: i64,
+    pub track: TrackDto,
+    /// 服务端时钟 `anchor_us` 这一刻,媒体该在第 `position_us` 微秒。
+    pub anchor_us: u64,
+    pub position_us: u64,
+    pub playing: bool,
+    /// 一起开始的那一刻,之前不出声。
+    pub start_us: u64,
+}
 
 /// 本机在组里的身份。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

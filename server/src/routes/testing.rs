@@ -563,8 +563,6 @@ pub(crate) fn state(
         pool,
         invite: INVITE.to_owned(),
         roster: server::syncplay::signaling::SharedRoster::default(),
-        control: server::syncplay::signaling::SharedControl::default(
-        ),
         origins: server::syncplay::signaling::AllowedOrigins::default(
         ),
         policies:

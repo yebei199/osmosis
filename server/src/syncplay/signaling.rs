@@ -1,7 +1,8 @@
 //! 信令端点:`GET /signal` 的 WebSocket 升级。
 //!
-//! 这里管接入:握手与版本协商、入册出册、探活。消息进来之后交给遥控器模式的
-//! [`crate::syncplay::control`] 去转。当初同播的 SDP/ICE 转发也在这里,已删(#137)。
+//! 这里管接入:握手与版本协商、入册出册、探活,以及把组的全局状态推给新上线的设备、
+//! 转发出声设备的执行事实(#142)。当初同播的 SDP/ICE 转发、遥控器的控制权槽位也在这里,
+//! 已删(#137、#142)。
 //!
 //! 建连必须带 `Authorization: Bearer <token>`:**账号由服务端从 token 定**,
 //! 设备只自报 id 与名字(`DeviceDto`)。归属自报的话,任何人都能把自己塞进
@@ -26,7 +27,6 @@ use tokio::sync::mpsc;
 
 use crate::error;
 use crate::store::account::Account;
-use crate::syncplay::control::Control;
 use crate::syncplay::roster::Roster;
 
 /// 每条连接的发件箱容量。
@@ -40,12 +40,6 @@ pub type Sink = mpsc::Sender<ServerSignal>;
 
 /// 共享的在线名册。
 pub type SharedRoster = Arc<Mutex<Roster<Sink>>>;
-
-/// 共享的遥控控制权槽位。
-///
-/// 与名册分两把锁,并且**永远先锁名册再锁它** —— 唯一同时用上两者的地方是
-/// [`dispatch`],锁序在那一处定死,别处不许再取第二种顺序。
-pub type SharedControl = Arc<Mutex<Control>>;
 
 /// 账号主键。名册按它分桶,一台设备只看得见同账号的设备。
 pub type AccountId = i64;
@@ -72,9 +66,6 @@ pub struct Timing {
     pub ping_every: Duration,
     /// 连续几次 Ping 没有回音就判死。
     pub misses: u32,
-    /// 遥控器下线之后槽位留多久,见 [`crate::syncplay::control::LEASE`]。
-    /// 它不是连接的时限,放这里是因为测试同样要毫秒级的租约。
-    pub lease: Duration,
 }
 
 impl Default for Timing {
@@ -85,7 +76,6 @@ impl Default for Timing {
             // 移动网络上一次正常的短暂卡顿就会把人踢下线。
             ping_every: Duration::from_secs(30),
             misses: 2,
-            lease: crate::syncplay::control::LEASE,
         }
     }
 }
@@ -99,7 +89,6 @@ pub async fn handler(
     account: Account,
     headers: HeaderMap,
     State(roster): State<SharedRoster>,
-    State(control): State<SharedControl>,
     State(origins): State<AllowedOrigins>,
     State(pool): State<sqlx::PgPool>,
 ) -> Response {
@@ -126,7 +115,6 @@ pub async fn handler(
             serve(
                 socket,
                 roster,
-                control,
                 Some(pool),
                 account_id,
                 Timing::default(),
@@ -145,7 +133,6 @@ pub async fn handler(
 pub async fn serve(
     socket: WebSocket,
     roster: SharedRoster,
-    control: SharedControl,
     pool: Option<sqlx::PgPool>,
     account: AccountId,
     timing: Timing,
@@ -211,17 +198,6 @@ pub async fn serve(
         let (generation, stale) =
             guard.join(account, device, sink);
         drop(stale);
-        // 遥控器换了条连接,旧会话就算断过:它的旧连接可能还没被探活发现,
-        // 那条的收尾会被当成「被顶替」而什么都不动。持权的话它紧接着会带代次
-        // 续上、租约作废;回过本机、不再续的,满租约清槽(#111)。
-        control
-            .lock()
-            .expect("控制权锁中毒")
-            .controller_left(
-                account,
-                &device_id,
-                std::time::Instant::now(),
-            );
         broadcast_roster(&guard, account);
         generation
     };
@@ -268,7 +244,7 @@ pub async fn serve(
                 // 任何一帧都算活着 —— Pong 只是其中最常见的那种。
                 unanswered = 0;
                 if let Message::Text(text) = message {
-                    dispatch(&roster, &control, account, &device_id, &text);
+                    dispatch(&roster, account, &device_id, &text);
                 }
             }
             _ = ping.tick() => {
@@ -291,14 +267,9 @@ pub async fn serve(
         let guard =
             &mut *roster.lock().expect("名册锁中毒");
         // 被顶替掉的那条连接的清理什么都不该动:它的 leave 返回 false,
-        // 而顺手清掉控制权会把刚重连上的那条遥控关系带走。
+        // 而顺手动组状态会把刚重连上的那台设备当成掉线。
         let left =
             guard.leave(account, &device_id, generation);
-        if left {
-            release_control(
-                guard, &control, account, &device_id,
-            );
-        }
         broadcast_roster(guard, account);
         left
     };
@@ -315,38 +286,12 @@ pub async fn serve(
     }
 }
 
-/// 出册时的控制权收尾:下线的若是**被控端**,它身上的遥控关系没了,遥控器得知道;
-/// 下线的若是遥控器,槽位先留一个租约(#111)。
-fn release_control(
-    guard: &Roster<Sink>,
-    control: &SharedControl,
-    account: AccountId,
-    device_id: &str,
-) {
-    let mut control = control.lock().expect("控制权锁中毒");
-    control.controller_left(
-        account,
-        device_id,
-        std::time::Instant::now(),
-    );
-    let freed = control.release(account, device_id);
-    if let Some(controller) = freed
-        && let Some(sink) = guard.sink(account, &controller)
-    {
-        let _ =
-            sink.try_send(ServerSignal::ControlRevoked {
-                by: device_id.to_owned(),
-            });
-    }
-}
-
 /// 处理一条文本帧:解析、路由,应答塞回发信人自己的收件箱。
 ///
 /// 单独一个**同步**函数,是为了让名册的锁不可能被握过一个 await 点 ——
 /// 握着它 await 会把所有人的名册一起卡住,而那种卡是偶发且难查的。
 fn dispatch(
     roster: &SharedRoster,
-    control: &SharedControl,
     account: AccountId,
     device_id: &str,
     text: &str,
@@ -358,14 +303,9 @@ fn dispatch(
     };
 
     let guard = roster.lock().expect("名册锁中毒");
-    let mut control = control.lock().expect("控制权锁中毒");
-    if let Some(reply) = route(
-        &guard,
-        &mut control,
-        account,
-        device_id,
-        parsed,
-    ) && let Some(own) = guard.sink(account, device_id)
+    if let Some(reply) =
+        route(&guard, account, device_id, parsed)
+        && let Some(own) = guard.sink(account, device_id)
     {
         // try_send 而非 send:发件箱满说明这台设备已经读不动了,
         // 丢掉这条应答不比卡住所有人差。
@@ -387,9 +327,8 @@ pub fn unauthenticated_test_router(
     async fn upgrade(
         upgrade: WebSocketUpgrade,
         Query(query): Query<TestQuery>,
-        State((roster, control, timing)): State<(
+        State((roster, timing)): State<(
             SharedRoster,
-            SharedControl,
             Timing,
         )>,
     ) -> Response {
@@ -397,22 +336,13 @@ pub fn unauthenticated_test_router(
         upgrade
             .max_message_size(MAX_MESSAGE_BYTES)
             .on_upgrade(move |socket| {
-                serve(
-                    socket, roster, control, None, account,
-                    timing,
-                )
+                serve(socket, roster, None, account, timing)
             })
     }
 
     axum::Router::new()
         .route("/signal", get(upgrade))
-        .with_state((
-            SharedRoster::default(),
-            Arc::new(Mutex::new(Control::with_lease(
-                timing.lease,
-            ))),
-            timing,
-        ))
+        .with_state((SharedRoster::default(), timing))
 }
 
 /// [`unauthenticated_test_router`] 的查询参数。
@@ -473,7 +403,6 @@ fn broadcast_roster(
 /// 白送的枚举信道。
 fn route(
     roster: &Roster<Sink>,
-    control: &mut Control,
     account: AccountId,
     from: &str,
     message: ClientSignal,
@@ -509,24 +438,6 @@ fn route(
             }
             None
         }
-        // 其余几条都是遥控器模式的,归 `crate::syncplay::control`。
-        remote @ (ClientSignal::ClaimControl { .. }
-        | ClientSignal::ExitControlled
-        | ClientSignal::Command { .. }
-        | ClientSignal::State { .. }
-        | ClientSignal::SnapshotRequest {
-            ..
-        }
-        | ClientSignal::BeginOutputs { .. }
-        | ClientSignal::CommitOutputs {
-            ..
-        }
-        | ClientSignal::AbortOutputs { .. }
-        | ClientSignal::GroupPlan { .. }) => {
-            crate::syncplay::control::route(
-                roster, control, account, from, remote,
-            )
-        }
     }
 }
 
@@ -540,12 +451,10 @@ mod tests {
     #[test]
     fn a_time_ping_is_answered_with_the_server_clock() {
         let roster = Roster::default();
-        let mut control = Control::default();
         let before = crate::syncplay::clock::now_us();
 
         let reply = route(
             &roster,
-            &mut control,
             1,
             "phone",
             ClientSignal::TimePing { id: 42 },

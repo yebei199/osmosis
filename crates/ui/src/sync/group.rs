@@ -500,7 +500,7 @@ impl Group {
         let _ = self.inner.weak.upgrade_in_event_loop(
             move |ui| {
                 let shell = ui.global::<Shell>();
-                shell.set_controlled_text(banner.into());
+                shell.set_group_banner(banner.into());
                 shell.set_output_text(output_text.into());
                 shell.set_output_id(first.into());
                 shell.set_group_text(line.into());
@@ -653,7 +653,7 @@ pub(crate) fn mark_members(
 pub fn bind(ui: &MainWindow, group: &Group) {
     let leaving = group.clone();
     let weak = ui.as_weak();
-    ui.global::<Shell>().on_exit_controlled(move || {
+    ui.global::<Shell>().on_leave_group(move || {
         let Some(ui) = weak.upgrade() else { return };
         leaving.leave(&ui);
     });

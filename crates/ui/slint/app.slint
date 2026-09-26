@@ -603,7 +603,7 @@ export component MainWindow inherits Window {
     // 以及怎么退出组回到独奏(#142)。它自己不会消失,只有那颗退出键关得掉它。
     //
     // 摆在 banner 下面一格:两条同时在场时不叠在一起。
-    if Shell.controlled-text != "": controlled := Rectangle {
+    if Shell.group-banner != "": group-strip := Rectangle {
         y: root.safe-area-insets.top + (Shell.banner-text != "" ? 62px : 10px);
         x: (parent.width - self.width) / 2;
         width: min(parent.width - 32px, 420px);
@@ -619,7 +619,7 @@ export component MainWindow inherits Window {
             spacing: 8px;
 
             Text {
-                text: Shell.controlled-text;
+                text: Shell.group-banner;
                 // 固定部分是硬编码中文,设备名由对端自报 —— 与歌名同理,
                 // 走系统字体回退。
                 font-size: 13px;
@@ -640,11 +640,11 @@ export component MainWindow inherits Window {
 
                     exit-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { Shell.exit-controlled(); }
+                        clicked => { Shell.leave-group(); }
 
                         accessible-role: button;
                         accessible-label: "退出";
-                        accessible-action-default => { Shell.exit-controlled(); }
+                        accessible-action-default => { Shell.leave-group(); }
                     }
 
                     exit-label := Text {
@@ -720,7 +720,7 @@ export component MainWindow inherits Window {
     if Shell.download-text != "": download-strip := Rectangle {
         y: root.safe-area-insets.top
             + (Shell.banner-text != "" ? 62px : 10px)
-            + (Shell.controlled-text != "" ? 52px : 0px);
+            + (Shell.group-banner != "" ? 52px : 0px);
         x: (parent.width - self.width) / 2;
         width: min(parent.width - 32px, 420px);
         height: 40px;

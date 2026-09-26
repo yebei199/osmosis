@@ -10,40 +10,24 @@
 
 mod counter;
 mod global;
-mod group;
 mod health;
 mod lyric;
-mod output;
 mod playback;
 mod queue;
-mod session;
 
 pub use counter::Counter;
-pub use global::{GlobalGroup, Sound, Standing};
-pub use group::{
-    Cue, Draft, Effective, Group, GroupRole, Intercepts,
-    LEAD_US, MASTER_SILENT_MS, PREANNOUNCE_US, REANCHOR_US,
-    Verdict,
-};
+pub use global::{Effective, GlobalGroup, Sound, Standing};
 pub use health::{Health, HealthState, refresh};
 pub use lyric::{LyricWindow, current_line, window};
-pub use output::{Output, RemoteView};
 pub use playback::{Playback, PlaybackState, play};
 pub use queue::{LoopMode, Queue};
-pub use session::{
-    Doubt, Effect, Move, PREPARE_TIMEOUT_MS, Party, Phase,
-    Plan, Progress, READY_GRACE_MS, Refused, Role,
-    START_TIMEOUT_MS, STOP_TIMEOUT_MS, Session, Step,
-};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
     ArtistDto, DeviceDto, DeviceReportDto, GroupNowDto,
-    GroupPickDto, GroupPlanDto, GroupSeedDto,
-    GroupStateDto, HealthDto, LoopModeDto, LyricDto,
-    LyricLineDto, MAX_SIGNAL_BYTES, NextEntryDto,
-    OperationAckDto, OperationPhase, OutputRouteDto,
-    PlaylistDto, PlaylistSource, RemoteCommand,
-    RemotePlayState, RemoteStateDto, TrackDto, TracksDto,
+    GroupPickDto, GroupSeedDto, GroupStateDto, HealthDto,
+    LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
+    NextEntryDto, OutputRouteDto, PlaylistDto,
+    PlaylistSource, RemotePlayState, TrackDto, TracksDto,
     TransportOpDto,
 };

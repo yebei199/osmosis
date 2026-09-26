@@ -403,36 +403,33 @@ async fn each_account_only_sees_its_own_two_devices() {
     );
 }
 
-/// 跨账号接管得到 `Error`,而不是把控制请求送到对面。
+/// 执行事实只转给同账号的设备,转不出自己那一桶。
 ///
-/// 当初拿同播的 SDP 转发验这件事;转发删掉之后(#137),账号桶的边界靠遥控
-/// 这条仍会点名目标设备的消息来验。
+/// 当初拿同播的 SDP 转发、后来拿遥控的接管验这件事;两者都删了(#137、#142),
+/// 账号桶的边界靠出声设备的上报来验。
 #[tokio::test]
-async fn claiming_a_device_of_another_account_is_refused() {
+async fn a_report_stays_within_its_account() {
     let addr = start_server().await;
 
     let mut alice = connect_as(addr, 1, "a1").await;
     let _ = next_signal(&mut alice).await;
     let mut bob = connect_as(addr, 2, "b1").await;
     let _ = next_signal(&mut bob).await;
+    let mut alice2 = connect_as(addr, 1, "a2").await;
+    let _ = next_signal(&mut alice2).await;
 
-    say(
-        &mut alice,
-        &ClientSignal::ClaimControl {
-            target: "b1".to_owned(),
-            resume: None,
-        },
-    )
+    say(&mut alice, &report()).await;
+
+    let relayed = next_where(&mut alice2, |m| {
+        matches!(m, ServerSignal::DeviceReport { .. })
+    })
     .await;
-
-    let received = next_signal(&mut alice).await;
     assert!(
         matches!(
-            received,
-            ServerSignal::Error { ref code, .. }
-                if code == "device_offline"
+            relayed,
+            ServerSignal::DeviceReport { ref from, .. } if from == "a1"
         ),
-        "实得 {received:?}"
+        "实得 {relayed:?}"
     );
 
     // bob 那边一个字都不该收到。给它一点时间,再确认收件箱是空的。
@@ -604,221 +601,13 @@ async fn next_where(
     }
 }
 
-/// 被控端每秒上报的那一条。内容无所谓,服务端不看。
+/// 出声设备每秒上报的那一条。内容无所谓,服务端不看。
 fn report() -> ClientSignal {
-    ClientSignal::State {
-        state: Box::new(contract::RemoteStateDto {
-            track: None,
-            position_ms: 1_000,
-            state: contract::RemotePlayState::Playing,
-            queue_id: None,
-            revision: None,
-            applied_revision: None,
-            entry_id: None,
-            queue_len: 0,
-            volume: 1.0,
-            epoch: 1,
-            state_seq: 1,
-            operation: None,
+    ClientSignal::Report {
+        report: contract::DeviceReportDto {
+            entry_id: Some(1),
             fault: None,
             route: None,
-        }),
+        },
     }
-}
-
-/// phone 接管 pc,等两边都确认,返回代次。
-async fn phone_claims_pc(
-    phone: &mut Socket,
-    pc: &mut Socket,
-) -> u64 {
-    say(
-        phone,
-        &ClientSignal::ClaimControl {
-            target: "pc".to_owned(),
-            resume: None,
-        },
-    )
-    .await;
-    next_where(pc, |m| {
-        matches!(m, ServerSignal::ControlledBy { .. })
-    })
-    .await;
-    let ServerSignal::ControlGranted { generation } =
-        next_where(phone, |m| {
-            matches!(m, ServerSignal::ControlGranted { .. })
-        })
-        .await
-    else {
-        unreachable!()
-    };
-    generation
-}
-
-/// 遥控器消失(#111 的 force-stop):被控端照常每秒上报,满一个租约之后
-/// 拿到 `NotControlled`,而不是在那之前 —— 早了就是把短暂断网当成离线。
-#[tokio::test]
-async fn a_vanished_controller_stops_locking_the_target() {
-    let lease = std::time::Duration::from_millis(300);
-    let addr = start_server_with(Timing {
-        lease,
-        ..Timing::default()
-    })
-    .await;
-    let mut pc = connect(addr, "pc").await;
-    let mut phone = connect(addr, "phone").await;
-    phone_claims_pc(&mut phone, &mut pc).await;
-
-    drop(phone);
-    let gone = std::time::Instant::now();
-
-    let freed = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            loop {
-                say(&mut pc, &report()).await;
-                let answer = tokio::time::timeout(
-                    std::time::Duration::from_millis(50),
-                    next_where(&mut pc, |m| {
-                        matches!(
-                            m,
-                            ServerSignal::NotControlled
-                        )
-                    }),
-                )
-                .await;
-                if answer.is_ok() {
-                    return gone.elapsed();
-                }
-            }
-        },
-    )
-    .await
-    .expect("遥控器消失之后,被控端一直没被放开");
-
-    assert!(
-        freed >= lease,
-        "租约没满就放开了被控端:{freed:?} < {lease:?}"
-    );
-}
-
-/// 遥控器短暂断网:服务端已经把它出册、租约已经起算,它在租约内带着代次
-/// 续上。之后再过好几个租约,被控端的上报照旧转给它,没有一条 `NotControlled`。
-#[tokio::test]
-async fn a_controller_back_within_the_lease_keeps_control()
-{
-    let lease = std::time::Duration::from_millis(300);
-    let addr = start_server_with(Timing {
-        lease,
-        ..Timing::default()
-    })
-    .await;
-    let mut pc = connect(addr, "pc").await;
-    let mut phone = connect(addr, "phone").await;
-    let generation =
-        phone_claims_pc(&mut phone, &mut pc).await;
-
-    drop(phone);
-    // pc 看到 phone 出册,才说明服务端那边租约真的起算了。
-    next_where(&mut pc, |m| {
-        matches!(m, ServerSignal::Roster { devices } if devices.len() == 1)
-    })
-    .await;
-
-    let mut phone = connect(addr, "phone").await;
-    say(
-        &mut phone,
-        &ClientSignal::ClaimControl {
-            target: "pc".to_owned(),
-            resume: Some(generation),
-        },
-    )
-    .await;
-    let resumed = next_where(&mut phone, |m| {
-        !matches!(m, ServerSignal::Roster { .. })
-    })
-    .await;
-    assert_eq!(
-        resumed,
-        ServerSignal::ControlGranted { generation },
-        "租约内回来却没续上"
-    );
-
-    tokio::time::sleep(lease * 3).await;
-    say(&mut pc, &report()).await;
-
-    assert!(
-        matches!(
-            next_where(&mut phone, |m| {
-                !matches!(m, ServerSignal::Roster { .. })
-            })
-            .await,
-            ServerSignal::State { .. }
-        ),
-        "续上之后被控端的上报没转给遥控器"
-    );
-    let unlocked = tokio::time::timeout(
-        std::time::Duration::from_millis(300),
-        next_where(&mut pc, |m| {
-            matches!(m, ServerSignal::NotControlled)
-        }),
-    )
-    .await;
-    assert!(
-        unlocked.is_err(),
-        "续上了的遥控关系被租约清掉了"
-    );
-}
-
-/// 遥控器断网超过十五秒会自己回本机、交出持权(#118),重连时就不再续。
-/// 它若在服务端探活发现旧连接死掉**之前**就连回来,旧连接的收尾被当成
-/// 「被顶替」,什么都不动 —— 于是租约根本没起算,被控端照样永远挂着横幅。
-/// 以新连接重新入册也得算会话断过:不续,满租约就清。
-#[tokio::test]
-async fn a_controller_that_rejoins_without_resuming_loses_control()
- {
-    let lease = std::time::Duration::from_millis(300);
-    let addr = start_server_with(Timing {
-        lease,
-        ..Timing::default()
-    })
-    .await;
-    let mut pc = connect(addr, "pc").await;
-    let mut phone = connect(addr, "phone").await;
-    phone_claims_pc(&mut phone, &mut pc).await;
-
-    // 旧连接不关:服务端还没发现它死了,新连接就把它顶替掉。
-    let _rejoined = connect(addr, "phone").await;
-    let rejoined_at = std::time::Instant::now();
-
-    let freed = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            loop {
-                say(&mut pc, &report()).await;
-                let answer = tokio::time::timeout(
-                    std::time::Duration::from_millis(50),
-                    next_where(&mut pc, |m| {
-                        matches!(
-                            m,
-                            ServerSignal::NotControlled
-                        )
-                    }),
-                )
-                .await;
-                if answer.is_ok() {
-                    return rejoined_at.elapsed();
-                }
-            }
-        },
-    )
-    .await
-    .expect(
-        "遥控器换了条连接、不再续权,被控端却一直没被放开",
-    );
-
-    assert!(
-        freed >= lease,
-        "租约没满就放开了被控端:{freed:?} < {lease:?}"
-    );
-    drop(phone);
 }

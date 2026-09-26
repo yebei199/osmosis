@@ -1,11 +1,8 @@
-//! 信令客户端:连上 axum 的 `/signal`,自报家门,收发遥控的消息。
+//! 信令客户端:连上 axum 的 `/signal`,自报家门,收发名册、校时与组状态。
 //!
-//! 只管**转达**。什么时候接管、发哪条命令是 [`crate::Client`] 那边的事。
+//! 只管**转达**。什么时候发什么是 [`crate::Client`] 那边的事。
 
-use contract::{
-    ClientSignal, DeviceDto, GroupPlanDto, RemoteCommand,
-    RemoteStateDto, ServerSignal,
-};
+use contract::{ClientSignal, DeviceDto, ServerSignal};
 use tokio::sync::mpsc;
 
 use crate::SyncError;
@@ -36,9 +33,8 @@ const TOO_MANY_REQUESTS: u16 = 429;
 /// Ping 帧照样走 [`Signalling::next`] 底下那个流,所以「没有信令」不算静默。
 ///
 /// 非有不可:少了它,客户端这侧**没有任何活性判断**。移动网络上半开的 socket
-/// 不会有 FIN,`ws_rx.next()` 于是永远等下去 —— 重连不触发,重连时那条
-/// resume claim 的自愈也就走不到,遥控器永久停在一个早就没了的会话上
-/// (#102 F-005)。TCP 自己发现要十几分钟。
+/// 不会有 FIN,`ws_rx.next()` 于是永远等下去 —— 重连不触发,组状态也就一直停在
+/// 断之前那一版(#102 F-005)。TCP 自己发现要十几分钟。
 const IDLE_LIMIT: std::time::Duration =
     std::time::Duration::from_secs(75);
 
@@ -58,95 +54,12 @@ pub struct Signalling {
 pub struct SignalSender(mpsc::Sender<ClientSignal>);
 
 impl SignalSender {
-    /// 接管 `target`。`resume` 是重连时手上那个代次,主动接管时是 `None`。
-    pub async fn claim(
-        &self,
-        target: &str,
-        resume: Option<u64>,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::ClaimControl {
-            target: target.to_owned(),
-            resume,
-        })
-        .await
-    }
-
-    /// 被控端退出被遥控。
-    pub async fn exit_controlled(
-        &self,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::ExitControlled).await
-    }
-
-    /// 把一条命令发给被控端。
-    pub async fn command(
-        &self,
-        to: &str,
-        cmd: RemoteCommand,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::Command {
-            to: to.to_owned(),
-            cmd,
-        })
-        .await
-    }
-
-    /// 把本机状态上报出去。目标由服务端从控制权槽位查。
-    pub async fn report(
-        &self,
-        state: RemoteStateDto,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::State {
-            state: Box::new(state),
-        })
-        .await
-    }
-
     /// 出声设备的执行事实(#142),服务端转给组里其他设备。
     pub async fn report_device(
         &self,
         report: contract::DeviceReportDto,
     ) -> Result<(), SyncError> {
         self.push(ClientSignal::Report { report }).await
-    }
-
-    /// 向被控端要一次完整状态。
-    pub async fn snapshot(
-        &self,
-        to: &str,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::SnapshotRequest {
-            to: to.to_owned(),
-        })
-        .await
-    }
-
-    /// 开始一次换输出。`master` 是换过去之后的主端。
-    pub async fn begin_outputs(
-        &self,
-        operation_id: &str,
-        outputs: Vec<String>,
-        master: Option<String>,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::BeginOutputs {
-            operation_id: operation_id.to_owned(),
-            outputs,
-            master,
-        })
-        .await
-    }
-
-    /// 提交那一次换输出。`outputs` 是真正跟上的那几台,`None` 是登记的整份。
-    pub async fn commit_outputs(
-        &self,
-        operation_id: &str,
-        outputs: Option<Vec<String>>,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::CommitOutputs {
-            operation_id: operation_id.to_owned(),
-            outputs,
-        })
-        .await
     }
 
     /// 校时的一次往返：发出去，等 `TimePong`。
@@ -157,30 +70,6 @@ impl SignalSender {
         self.push(ClientSignal::TimePing { id }).await
     }
 
-    /// 主端发布共同计划。
-    pub async fn publish_plan(
-        &self,
-        term: u64,
-        plan: GroupPlanDto,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::GroupPlan {
-            term,
-            plan: Box::new(plan),
-        })
-        .await
-    }
-
-    /// 放弃那一次换输出。
-    pub async fn abort_outputs(
-        &self,
-        operation_id: &str,
-    ) -> Result<(), SyncError> {
-        self.push(ClientSignal::AbortOutputs {
-            operation_id: operation_id.to_owned(),
-        })
-        .await
-    }
-
     async fn push(
         &self,
         message: ClientSignal,
@@ -189,46 +78,6 @@ impl SignalSender {
             SyncError::Signalling("连接已关闭".to_owned())
         })
     }
-}
-
-/// 这条命令发出去会是多少字节 —— **发之前**就能问。
-///
-/// 量的是真正上线的那一份:`ClientSignal::Command` 连着外层的 `type` 与 `to`
-/// 一起序列化,与 [`Signalling::connect`] 里出栈那一行用的是同一个编码器。
-/// 只量 `cmd` 自己会漏掉外层那几十个字节,而判定就卡在边界上时,漏掉多少都算错。
-///
-/// 为什么非要在发之前问:超限的消息不是「被丢掉」,是让服务端读循环跳出、
-/// **整条连接断掉**(见 `contract::MAX_SIGNAL_BYTES`)。发出去再看结果,
-/// 代价是遥控器连自己的控制权都一起丢了。
-///
-/// 序列化不出来时返回 `usize::MAX`:那一条本来也发不出去,当成"超限"拒掉,
-/// 比当成"没问题"放行安全。
-pub fn command_wire_len(
-    to: &str,
-    cmd: &RemoteCommand,
-) -> usize {
-    serde_json::to_string(&ClientSignal::Command {
-        to: to.to_owned(),
-        cmd: cmd.clone(),
-    })
-    .map_or(usize::MAX, |text| text.len())
-}
-
-/// 一条状态上报上线之后有多少字节。
-///
-/// 与 [`command_wire_len`] 同一个用处、同一个理由,只是量的是**反方向**那条:
-/// 上报每秒一发,而它曾经拖着被控端的整个队列 —— 977 首时 23 万字节,是
-/// [`contract::MAX_SIGNAL_BYTES`] 的三倍多,于是被控端每秒把自己踢下线一次
-/// (#109 F-002)。
-///
-/// 队列挪走之后这个数是定长的,埋点留着不是为了拦它,是为了**看得见它**:
-/// 哪天有人往小状态里塞回一个随用户数据增长的字段,日志里这一行会先变,
-/// 而不必等到某台设备的连接开始莫名其妙地断。
-pub fn report_wire_len(state: &RemoteStateDto) -> usize {
-    serde_json::to_string(&ClientSignal::State {
-        state: Box::new(state.clone()),
-    })
-    .map_or(usize::MAX, |text| text.len())
 }
 
 /// 握手失败的分类。两种状态码单独拎出来,因为它们各要一种不同的等法:
@@ -417,21 +266,6 @@ impl Signalling {
             {
                 let text = serde_json::to_string(&message)
                     .unwrap_or_default();
-                // 帧长要说出来。服务端给每条消息设了上限
-                // (`server::syncplay::signaling` 的 `MAX_MESSAGE_BYTES`),
-                // 而信令里唯一**大小随用户数据增长**的是带整批曲目的
-                // `RemoteCommand::Play` —— 超限时它连解析都到不了,于是
-                // 那一跳的日志是空的,症状与「压根没发」一模一样(#108)。
-                if let ClientSignal::Command {
-                    cmd, ..
-                } = &message
-                {
-                    log::info!(
-                        "遥控命令出栈: {} {} 字节",
-                        cmd.summary(),
-                        text.len()
-                    );
-                }
                 if ws_tx
                     .send(Message::text(text))
                     .await
@@ -461,65 +295,6 @@ mod tests {
     use tokio_tungstenite::tungstenite::http;
 
     use super::*;
-
-    /// 量的是**连外层一起**的那一份,因为服务端数的就是那一份。
-    ///
-    /// 只量 `cmd` 自己会漏掉 `{"type":"command","to":"…"}` 那几十个字节 ——
-    /// 而判定正卡在边界上时,漏掉多少都算错。
-    #[test]
-    fn the_measured_length_includes_the_envelope() {
-        let cmd = RemoteCommand::Next;
-        let bare = serde_json::to_string(&cmd)
-            .expect("命令该序列化得出来")
-            .len();
-
-        let wire = command_wire_len("pc1", &cmd);
-
-        assert!(
-            wire > bare,
-            "外层的 type 与 to 也要算进去:裸 {bare} 字节,上线 {wire} 字节"
-        );
-    }
-
-    /// **没有一条命令随用户的数据增长了**(#109 AC-2)。
-    ///
-    /// 这里原本有两条相反的测试,它们钉的是当时的事实:`a_longer_batch_measures_larger`
-    /// 断言两百首比一首大两个数量级,`a_thousand_track_batch_exceeds_the_signal_limit`
-    /// 断言一千首越得过 64 KiB —— 那正是 #108 在真机上撞到的那条命令
-    /// (977 首实测 224194 字节)。两条的前提都是「`Play` 拖着整批曲目」,
-    /// 而本轮把曲目挪去了 HTTP(`docs/adr/0031`),前提没了,断言跟着翻过来。
-    ///
-    /// 上限那道自检**没有跟着删**:`Play` 现在是定长的,但 `command_wire_len`
-    /// 仍是发之前唯一一道闸,而超限的后果仍然是整条连接断掉。哪天有人往
-    /// 某条命令里塞回一个长字段,拦住它的还是这一道。
-    #[test]
-    fn no_command_grows_with_user_data() {
-        let commands = [
-            RemoteCommand::Play {
-                queue_id: 7,
-                revision: 3,
-                entry_id: 12,
-                operation_id:
-                    "8f1c2e0a-0000-4000-8000-000000000000"
-                        .to_owned(),
-            },
-            RemoteCommand::Pause,
-            RemoteCommand::Resume,
-            RemoteCommand::Next,
-            RemoteCommand::Prev,
-            RemoteCommand::Seek { ms: 42_000 },
-            RemoteCommand::Volume { level: 0.35 },
-        ];
-
-        for cmd in commands {
-            let wire = command_wire_len("pc1", &cmd);
-            assert!(
-                wire < 512,
-                "{} 上线 {wire} 字节 —— 命令该是定长的",
-                cmd.summary()
-            );
-        }
-    }
 
     /// 429 认得出来,而且把服务端给的秒数带出去。
     ///

@@ -1,13 +1,13 @@
-//! 播放组走一遍真信令(#137 ⑤):校时收敛、组通告、共同计划经服务端转到跟随端。
+//! 校时走一遍真信令(#137 ⑤):客户端与服务端往返,换算出来的本机时刻对得上。
+//!
+//! 组的全局状态(#142)要落库,对着真库的测试在 `server/tests/groups.rs`。
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use contract::{
-    DeviceDto, GroupPlanDto, LoopModeDto, TrackDto,
-};
+use contract::DeviceDto;
 use server::syncplay::signaling;
 use syncplay::clock::monotonic_ns;
 use syncplay::{Client, Event};
@@ -75,35 +75,6 @@ async fn wait_for<T>(
     }
 }
 
-fn plan(seq: u64) -> GroupPlanDto {
-    GroupPlanDto {
-        seq,
-        clock_epoch: server::syncplay::clock::epoch(),
-        queue_id: 3,
-        revision: 1,
-        entry_id: 10,
-        track: TrackDto {
-            platform: "netease".to_owned(),
-            id: "1".to_owned(),
-            title: "歌".to_owned(),
-            alias: None,
-            artists: vec![],
-            cover: None,
-            duration_ms: 200_000,
-        },
-        anchor_us: 1_000_000,
-        position_us: 0,
-        playing: true,
-        start_us: 1_000_000,
-        next: None,
-        valid_until_us: 201_000_000,
-        play_order: None,
-        round: 0,
-        shuffled: false,
-        loop_mode: LoopModeDto::Off,
-    }
-}
-
 /// 客户端自己与服务端往返校时：同一台机器上，换算出来的本机时刻与真实的差不过一两毫秒。
 #[tokio::test]
 async fn the_clock_converges_against_the_server() {
@@ -125,59 +96,4 @@ async fn the_clock_converges_against_the_server() {
         "换算差了 {}µs",
         (converted - local) / 1_000
     );
-}
-
-/// 本机在放时加入 pc:本机是主端，它发的计划经服务端转到 pc;组的样子两边都知道。
-#[tokio::test]
-async fn the_masters_plan_reaches_the_follower() {
-    let addr = start_server().await;
-    let (phone, phone_rx) = spawn_client(addr, "phone");
-    let (_pc, pc_rx) = spawn_client(addr, "pc");
-    wait_for(&phone_rx, "名册", |event| match event {
-        Event::Roster(devices) => devices
-            .iter()
-            .any(|d| d.id == "pc")
-            .then_some(()),
-        _ => None,
-    })
-    .await;
-
-    phone.begin_outputs(
-        "op",
-        vec!["phone".to_owned(), "pc".to_owned()],
-        Some("phone".to_owned()),
-    );
-    wait_for(&phone_rx, "OutputsBegun", |event| {
-        matches!(event, Event::OutputsBegun { .. })
-            .then_some(())
-    })
-    .await;
-    phone.commit_outputs("op", None);
-
-    let (term, master) =
-        wait_for(&pc_rx, "组通告", |event| match event {
-            Event::Group {
-                term,
-                master,
-                members,
-            } if members.len() == 2 && *term == 1 => {
-                Some((*term, master.clone()))
-            }
-            _ => None,
-        })
-        .await;
-    assert_eq!(master.as_deref(), Some("phone"));
-
-    phone.publish_plan(term, plan(1));
-
-    let (from, seq) =
-        wait_for(&pc_rx, "共同计划", |event| match event
-        {
-            Event::GroupPlan { from, plan, .. } => {
-                Some((from.clone(), plan.seq))
-            }
-            _ => None,
-        })
-        .await;
-    assert_eq!((from.as_str(), seq), ("phone", 1));
 }

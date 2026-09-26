@@ -56,7 +56,7 @@ export global Shell {
     // 正在出声的那台设备的 id(只有一台远端出声时)。空串 = 本机 —— 芯片按它决定谁被选中。
     in property <string> output-id;
     // 组横幅,如「与 小米13 一起播放」「正在遥控 pc1」。空串 = 不在组里,横幅不出现。
-    in property <string> controlled-text;
+    in property <string> group-banner;
     // 本机在组里、却连不上服务端:出声设备已经停下。
     in property <bool> output-stale: false;
     // 手上这批歌还没同步到服务端的队列里(docs/adr/0031 八)。
@@ -76,7 +76,7 @@ export global Shell {
     // 组状态变了,去重新对准本机播放。由 Rust 自己 invoke,界面不碰它。
     callback group-changed();
     // 横幅上的「退出」:本机退出组,回到独奏。
-    callback exit-controlled();
+    callback leave-group();
 
     in-out property <bool> aurora-buttons-on: true;
     callback aurora-buttons-toggled();
