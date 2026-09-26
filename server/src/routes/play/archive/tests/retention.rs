@@ -212,6 +212,90 @@ async fn the_sweep_keeps_the_row_when_the_object_cannot_be_deleted()
     assert_eq!(left, 1);
 }
 
+/// 一个只会回 `status` 的 S3 端点,前面接真的 S3 客户端:删对象走的是生产上那条签名 + HTTP 路。
+async fn s3_answering(
+    status: axum::http::StatusCode,
+) -> server::objects::S3 {
+    let listener =
+        tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("绑不上回环端口");
+    let addr = listener.local_addr().expect("取不到端口");
+    let app = axum::Router::new()
+        .fallback(move || async move { status });
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    server::objects::S3::new(server::objects::S3Config {
+        endpoint: format!("http://{addr}"),
+        public_endpoint: format!("http://{addr}"),
+        bucket: "tracks".to_owned(),
+        region: "us-east-1".to_owned(),
+        access_key_id: "test".to_owned(),
+        secret_access_key: "test".to_owned(),
+    })
+    .expect("S3 配置应当合法")
+}
+
+/// 这首还剩几行账。
+async fn rows_of(
+    tx: &mut sqlx::PgConnection,
+    id: &str,
+) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
+    )
+    .bind(id)
+    .fetch_one(tx)
+    .await
+    .unwrap()
+}
+
+/// 账上有、桶里早没了(RustFS 删不存在的键回 404):清扫当它删掉了,那一行跟着删,
+/// 不会每小时重试一遍、永远留着(#147 R-1)。
+#[tokio::test]
+async fn the_sweep_forgets_a_row_whose_object_is_already_gone()
+ {
+    let f = fixture("ar_gone", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let old = testing::track_id("ar_gone", 1);
+    let legacy = testing::track_id("ar_gone", 2);
+    stored_days_ago(&mut tx, &f.objects, &old, 4).await;
+    stored_at(&mut tx, &f.objects, &legacy, 0, "high")
+        .await;
+    let s3 =
+        s3_answering(axum::http::StatusCode::NOT_FOUND)
+            .await;
+
+    super::super::sweep(&mut tx, &s3)
+        .await
+        .expect("清理应当成功");
+
+    assert_eq!(rows_of(&mut tx, &old).await, 0);
+    assert_eq!(rows_of(&mut tx, &legacy).await, 0);
+}
+
+/// 真的失败(5xx):那一行留着,下一轮再来。
+#[tokio::test]
+async fn the_sweep_keeps_the_row_when_the_store_answers_5xx()
+ {
+    let f = fixture("ar_5xx", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let legacy = testing::track_id("ar_5xx", 1);
+    stored_at(&mut tx, &f.objects, &legacy, 0, "high")
+        .await;
+    let s3 = s3_answering(
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+    )
+    .await;
+
+    super::super::sweep(&mut tx, &s3)
+        .await
+        .expect("删不掉对象不算清理失败");
+
+    assert_eq!(rows_of(&mut tx, &legacy).await, 1);
+}
+
 /// 取消红心从那一刻重新数三天,而不是按很久以前那次播放当场就删。
 #[tokio::test]
 async fn unliking_restarts_the_clock() {
