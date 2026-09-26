@@ -16,12 +16,21 @@ use crate::store::liked;
 pub struct StoredTrack {
     pub platform: String,
     pub track_id: String,
+    /// 向音源要的档位,键的一部分。
     pub quality: String,
     pub object_key: String,
     pub format: String,
     pub bit_rate: i32,
     pub bytes: i64,
+    /// 音源实际给的档位(#147)。
+    pub tier: String,
+    pub bits_per_sample: Option<i32>,
+    pub sample_rate: Option<i32>,
 }
+
+/// [`StoredTrack`] 的列,几条 SELECT 共用。
+const COLUMNS: &str = "platform, track_id, quality, object_key, format, bit_rate, bytes,
+     tier, bits_per_sample, sample_rate";
 
 /// 按「曲目 + 档位」找那一行。
 pub async fn find(
@@ -30,11 +39,10 @@ pub async fn find(
     track_id: &str,
     quality: &str,
 ) -> Result<Option<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(
-        "SELECT platform, track_id, quality, object_key, format, bit_rate, bytes
-         FROM stored_tracks
-         WHERE platform = $1 AND track_id = $2 AND quality = $3",
-    )
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLUMNS} FROM stored_tracks
+         WHERE platform = $1 AND track_id = $2 AND quality = $3"
+    ))
     .bind(platform)
     .bind(track_id)
     .bind(quality)
@@ -72,13 +80,17 @@ pub async fn record(
 ) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO stored_tracks
-             (platform, track_id, quality, object_key, format, bit_rate, bytes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+             (platform, track_id, quality, object_key, format, bit_rate, bytes,
+              tier, bits_per_sample, sample_rate)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (platform, track_id, quality) DO UPDATE SET
              object_key = EXCLUDED.object_key,
              format = EXCLUDED.format,
              bit_rate = EXCLUDED.bit_rate,
              bytes = EXCLUDED.bytes,
+             tier = EXCLUDED.tier,
+             bits_per_sample = EXCLUDED.bits_per_sample,
+             sample_rate = EXCLUDED.sample_rate,
              stored_at = now(),
              last_played_at = now()",
     )
@@ -89,6 +101,9 @@ pub async fn record(
     .bind(&track.format)
     .bind(track.bit_rate)
     .bind(track.bytes)
+    .bind(&track.tier)
+    .bind(track.bits_per_sample)
+    .bind(track.sample_rate)
     .execute(conn)
     .await?;
 
@@ -116,32 +131,35 @@ pub async fn forget(
 /// 「过期」的判定,[`expired`] 与 [`forget_if_expired`] 共用同一句 ——
 /// 两处各写一遍的话,挑出来的与真删的迟早是两拨。
 ///
-/// 红心集合以自家的「我的喜欢」为准(`docs/adr/0033`),任何一个账号红心了就留着。
-const EXPIRED: &str = "last_played_at < now() - $1::bigint * interval '1 second'
+/// 不是按 `$3` 那一档要来的(#147 之前的 320k)一律过期。其余的:红心集合以
+/// 自家的「我的喜欢」为准(`docs/adr/0033`),任何一个账号红心了就留着。
+const EXPIRED: &str = "(quality <> $3 OR last_played_at < now() - $1::bigint * interval '1 second'
      AND NOT EXISTS (
          SELECT 1 FROM local_playlist_tracks AS liked
          JOIN local_playlists AS list ON list.id = liked.playlist_id
          WHERE list.system = $2
            AND liked.platform = stored_tracks.platform
            AND liked.track_id = stored_tracks.track_id
-     )";
+     ))";
 
 /// 秒数进 SQL。三天这种量级离 `i64` 的上限远得很,溢出只可能是调用方写错了。
 fn seconds(retain: Duration) -> i64 {
     i64::try_from(retain.as_secs()).unwrap_or(i64::MAX)
 }
 
-/// 没人红心、且最后一次播放已经早于 `retain` 之前的那些。
+/// 不是按 `quality` 那一档要来的,以及没人红心、且最后一次播放已经早于
+/// `retain` 之前的那些。
 pub async fn expired(
     conn: &mut PgConnection,
     retain: Duration,
+    quality: &str,
 ) -> Result<Vec<StoredTrack>, AppError> {
     Ok(sqlx::query_as(&format!(
-        "SELECT platform, track_id, quality, object_key, format, bit_rate, bytes
-         FROM stored_tracks WHERE {EXPIRED}"
+        "SELECT {COLUMNS} FROM stored_tracks WHERE {EXPIRED}"
     ))
     .bind(seconds(retain))
     .bind(liked::SYSTEM)
+    .bind(quality)
     .fetch_all(conn)
     .await?)
 }
@@ -154,13 +172,15 @@ pub async fn forget_if_expired(
     conn: &mut PgConnection,
     track: &StoredTrack,
     retain: Duration,
+    quality: &str,
 ) -> Result<(), AppError> {
     sqlx::query(&format!(
         "DELETE FROM stored_tracks
-         WHERE platform = $3 AND track_id = $4 AND quality = $5 AND {EXPIRED}"
+         WHERE platform = $4 AND track_id = $5 AND quality = $6 AND {EXPIRED}"
     ))
     .bind(seconds(retain))
     .bind(liked::SYSTEM)
+    .bind(quality)
     .bind(&track.platform)
     .bind(&track.track_id)
     .bind(&track.quality)

@@ -9,7 +9,7 @@ use axum::extract::State;
 use contract::PlayedDto;
 use similar_asserts::assert_eq;
 
-use server::bangdream::proto::PlaySource;
+use server::bangdream::proto::{PlaySource, QualityLevel};
 use server::store::account::Account;
 use server::store::archive as ledger;
 use server::store::playlist::TrackRef;
@@ -47,6 +47,19 @@ async fn serve_counted(
     (format!("http://{addr}/audio"), hits)
 }
 
+/// 一段最小的 FLAC 头:STREAMINFO 里给定采样率、双声道、给定位深。
+fn flac_header(sample_rate: u64, bits: u64) -> Vec<u8> {
+    let mut bytes = b"fLaC".to_vec();
+    bytes.extend([0x80, 0, 0, 34]);
+    bytes.extend([0; 10]);
+    let packed = (sample_rate << 44)
+        | (1 << 41)
+        | ((bits - 1) << 36);
+    bytes.extend(packed.to_be_bytes());
+    bytes.extend([0; 16]);
+    bytes
+}
+
 /// 一首歌的字节,够认得出来就行。
 fn audio() -> Vec<u8> {
     (0..4096u32).map(|i| i as u8).collect()
@@ -62,6 +75,25 @@ struct Fixture {
 
 /// 摆好假上游、内存对象存储与账号;同一测试名留下的账目按 id 前缀清掉。
 async fn fixture(case: &str, trial: bool) -> Fixture {
+    fixture_with(
+        case,
+        audio(),
+        PlaySource {
+            format: "FLAC".to_owned(),
+            bit_rate: 999_000,
+            trial,
+            ..PlaySource::default()
+        },
+    )
+    .await
+}
+
+/// 同上,上游摆出 `body` 这段字节,源的其余字段由 `source` 给(`url` 会被换掉)。
+async fn fixture_with(
+    case: &str,
+    body: Vec<u8>,
+    source: PlaySource,
+) -> Fixture {
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
     sqlx::query(
@@ -72,15 +104,9 @@ async fn fixture(case: &str, trial: bool) -> Fixture {
     .await
     .expect("清账目失败");
 
-    let (url, hits) = serve_counted(audio()).await;
+    let (url, hits) = serve_counted(body).await;
     let fake = FakeUpstream {
-        play_source: Some(PlaySource {
-            url,
-            format: "FLAC".to_owned(),
-            bit_rate: 999_000,
-            trial,
-            ..PlaySource::default()
-        }),
+        play_source: Some(PlaySource { url, ..source }),
         ..FakeUpstream::logged_in_with("42", vec![])
     };
     let objects = Arc::new(MemoryObjects::default());
@@ -146,8 +172,73 @@ async fn a_played_track_is_stored_as_is() {
             format: "flac".to_owned(),
             bit_rate: 999_000,
             bytes: 4096,
+            tier: "lossless".to_owned(),
+            bits_per_sample: None,
+            sample_rate: None,
         })
     );
+}
+
+/// FLAC 的位深与采样率从文件头读出来记进账,`/play` 交出去时带着。
+#[tokio::test]
+async fn a_stored_flac_records_depth_and_rate() {
+    let f = fixture_with(
+        "ar_hires",
+        flac_header(96_000, 24),
+        PlaySource {
+            format: "flac".to_owned(),
+            bit_rate: 2_000_000,
+            level: QualityLevel::Lossless as i32,
+            ..PlaySource::default()
+        },
+    )
+    .await;
+    let id = testing::track_id("ar_hires", 1);
+
+    keep(&f.state, &f.account, &netease(&id)).await;
+
+    let stored =
+        row(&f.state, &id).await.expect("应当存进去了");
+    assert_eq!(
+        (stored.bits_per_sample, stored.sample_rate),
+        (Some(24), Some(96_000))
+    );
+    let quality = crate::routes::play::play(
+        State(f.state.clone()),
+        f.account.clone(),
+        axum::extract::Path(id),
+    )
+    .await
+    .expect("存过的歌应当放得出来")
+    .0
+    .quality
+    .expect("应当带着音质");
+    assert_eq!(
+        (quality.bits_per_sample, quality.sample_rate),
+        (Some(24), Some(96_000))
+    );
+}
+
+/// 音源给不出无损(只给 320k):不下载、不存,桶里不长出 320k(#147)。
+#[tokio::test]
+async fn a_lossy_source_is_not_stored() {
+    let f = fixture_with(
+        "ar_lossy",
+        audio(),
+        PlaySource {
+            format: "mp3".to_owned(),
+            bit_rate: 320_000,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
+        },
+    )
+    .await;
+    let id = testing::track_id("ar_lossy", 1);
+
+    keep(&f.state, &f.account, &netease(&id)).await;
+
+    assert_eq!(f.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(row(&f.state, &id).await, None);
 }
 
 /// 同一首第二次播放不再下载。
@@ -386,20 +477,34 @@ async fn stored_days_ago(
     id: &str,
     days_ago: i32,
 ) -> String {
+    stored_at(tx, objects, id, days_ago, &quality()).await
+}
+
+/// 同上,按 `quality` 那一档记。
+async fn stored_at(
+    tx: &mut sqlx::PgConnection,
+    objects: &MemoryObjects,
+    id: &str,
+    days_ago: i32,
+    quality: &str,
+) -> String {
     use server::objects::Objects as _;
 
-    let key = format!("tracks/{id}/high.mp3");
-    objects.put(&key, audio(), "audio/mpeg").await.unwrap();
+    let key = format!("tracks/{id}/{quality}.flac");
+    objects.put(&key, audio(), "audio/flac").await.unwrap();
     ledger::record(
         tx,
         &ledger::StoredTrack {
             platform: "netease".to_owned(),
             track_id: id.to_owned(),
-            quality: quality(),
+            quality: quality.to_owned(),
             object_key: key.clone(),
-            format: "mp3".to_owned(),
-            bit_rate: 320_000,
+            format: "flac".to_owned(),
+            bit_rate: 999_000,
             bytes: 4096,
+            tier: quality.to_owned(),
+            bits_per_sample: None,
+            sample_rate: None,
         },
     )
     .await
@@ -482,6 +587,32 @@ async fn the_sweep_keeps_liked_and_recent_tracks() {
     );
 }
 
+/// #147 之前按 320k 存的那批不论红心、不论新旧,连对象带账清掉。
+#[tokio::test]
+async fn the_sweep_purges_the_old_high_copies() {
+    let f = fixture("ar_legacy", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let id = testing::track_id("ar_legacy", 1);
+    let key =
+        stored_at(&mut tx, &f.objects, &id, 0, "high")
+            .await;
+    liked_by(&mut tx, &f.account, &id).await;
+
+    super::sweep(&mut tx, f.objects.as_ref())
+        .await
+        .expect("清理应当成功");
+
+    assert_eq!(f.objects.get(&key), None);
+    let left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+}
+
 /// 对象删不掉时那一行留着,下一轮再来 —— 先删行的话桶里就多一个没人记得的孤儿。
 #[tokio::test]
 async fn the_sweep_keeps_the_row_when_the_object_cannot_be_deleted()
@@ -523,9 +654,13 @@ async fn unliking_restarts_the_clock() {
     .expect("取消红心应当成功");
 
     let mut conn = f.state.pool.acquire().await.unwrap();
-    let expired = ledger::expired(&mut conn, super::RETAIN)
-        .await
-        .unwrap();
+    let expired = ledger::expired(
+        &mut conn,
+        super::RETAIN,
+        &quality(),
+    )
+    .await
+    .unwrap();
     assert!(
         expired.iter().all(|track| track.track_id != id),
         "刚取消红心的歌不该算过期"

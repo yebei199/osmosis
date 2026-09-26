@@ -9,8 +9,10 @@
 //! 再播时 [`stored_source`] 把桶里那份的签名链接交给 `/play`;对象存储出任何
 //! 岔子都只是退回网易云,不让点歌失败。
 //!
+//! 只存无损:音源给不出无损的这首不存(`docs/adr/0034`)。
+//!
 //! 只有红心的歌长期留着:[`spawn_sweeper`] 每小时删一轮没人红心、且最后一次
-//! 播放已满 [`RETAIN`] 的。
+//! 播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -22,7 +24,9 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Semaphore;
 
 use server::objects::Objects;
-use server::quality::{Tier, guess_tier};
+use server::quality::{
+    Quality, Tier, flac_stream_info, guess_tier, netease,
+};
 use server::store::account::Account;
 use server::store::archive::{self, StoredTrack};
 use server::store::playlist::TrackRef;
@@ -149,7 +153,7 @@ async fn store(
     account: &Account,
     track: &TrackRef,
 ) -> Result<(), String> {
-    let quality = quality();
+    let quality_key = quality();
     // 连接只借这一下:下载可能要几十秒,池里一共才五条
     {
         let mut conn = state
@@ -161,7 +165,7 @@ async fn store(
             &mut conn,
             &track.platform,
             &track.track_id,
-            &quality,
+            &quality_key,
         )
         .await
         .map_err(|err| format!("{err:?}"))?
@@ -188,8 +192,17 @@ async fn store(
     if source.trial {
         return Ok(());
     }
-    let format = source.format.to_ascii_lowercase();
-    let content_type = content_type(&format)?;
+    let mut quality = netease::quality_of(&source);
+    // 给不出无损就不存:桶里只留无损(docs/adr/0034),这首每次播放现取
+    if !quality.tier.is_lossless() {
+        tracing::info!(
+            track_id = %track.track_id,
+            tier = quality.tier.name(),
+            "音源给不出无损,不存"
+        );
+        return Ok(());
+    }
+    let content_type = content_type(&quality.format)?;
     let bytes = download::fetch(&source.url)
         .await
         .map_err(describe)?
@@ -197,19 +210,26 @@ async fn store(
         .await
         .map_err(|err| err.to_string())?
         .to_vec();
+    if let Some((bits, rate)) = flac_stream_info(&bytes) {
+        quality.bits_per_sample = Some(bits);
+        quality.sample_rate = Some(rate);
+    }
 
     let stored = StoredTrack {
         object_key: format!(
-            "tracks/{}/{quality}.{format}",
-            track.track_id
+            "tracks/{}/{quality_key}.{}",
+            track.track_id, quality.format
         ),
         platform: track.platform.clone(),
         track_id: track.track_id.clone(),
-        quality,
-        format,
-        bit_rate: source.bit_rate,
+        quality: quality_key,
+        format: quality.format,
+        bit_rate: quality.bit_rate,
         bytes: i64::try_from(bytes.len())
             .unwrap_or(i64::MAX),
+        tier: quality.tier.name().to_owned(),
+        bits_per_sample: quality.bits_per_sample,
+        sample_rate: quality.sample_rate,
     };
     archive
         .objects
@@ -229,6 +249,7 @@ async fn store(
         track_id = %stored.track_id,
         bytes = stored.bytes,
         format = %stored.format,
+        tier = %stored.tier,
         "已存进对象存储"
     );
     Ok(())
@@ -267,21 +288,13 @@ pub(crate) async fn stored_source(
     match archive.objects.exists(&stored.object_key).await {
         Ok(true) => {
             tracing::info!(track_id, "从对象存储交付");
-            let quality = server::quality::Quality {
-                tier: guess_tier(
-                    &stored.format,
-                    stored.bit_rate,
-                ),
-                format: stored.format.clone(),
-                bit_rate: stored.bit_rate,
-                bits_per_sample: None,
-                sample_rate: None,
-            };
             Some(PlaySourceDto {
                 url: archive
                     .objects
                     .presign_get(&stored.object_key),
-                quality: Some(quality.to_dto()),
+                quality: Some(
+                    stored_quality(&stored).to_dto(),
+                ),
                 format: stored.format,
                 bit_rate: stored.bit_rate,
                 trial: false,
@@ -300,6 +313,19 @@ pub(crate) async fn stored_source(
             tracing::warn!(track_id, %err, "对象存储不可用,退回网易云");
             None
         }
+    }
+}
+
+/// 账上记的实际音质。档位名认不得(不该发生)时按格式与码率认。
+fn stored_quality(stored: &StoredTrack) -> Quality {
+    Quality {
+        tier: Tier::from_name(&stored.tier).unwrap_or_else(
+            || guess_tier(&stored.format, stored.bit_rate),
+        ),
+        format: stored.format.clone(),
+        bit_rate: stored.bit_rate,
+        bits_per_sample: stored.bits_per_sample,
+        sample_rate: stored.sample_rate,
     }
 }
 
@@ -331,15 +357,18 @@ pub(crate) async fn restart_clock(
 
 /// 清一轮:先删对象、再删那一行。返回删了几首。
 ///
+/// 不是按 [`CACHE_TIER`] 要来的(#147 之前的 320k)不论保留期一并清掉。
+///
 /// 顺序不能反:先删行的话,对象删失败就再也没有人记得它,桶里多一个孤儿。
 /// 对象删不掉的这一轮跳过,行留着,下一轮再来。
 pub(crate) async fn sweep(
     conn: &mut PgConnection,
     objects: &dyn Objects,
 ) -> Result<usize, String> {
-    let expired = archive::expired(conn, RETAIN)
-        .await
-        .map_err(|err| format!("{err:?}"))?;
+    let expired =
+        archive::expired(conn, RETAIN, &quality())
+            .await
+            .map_err(|err| format!("{err:?}"))?;
 
     let mut removed = 0;
     for track in expired {
@@ -349,9 +378,14 @@ pub(crate) async fn sweep(
             tracing::warn!(key = %track.object_key, %err, "删不掉过期的对象,下一轮再来");
             continue;
         }
-        archive::forget_if_expired(conn, &track, RETAIN)
-            .await
-            .map_err(|err| format!("{err:?}"))?;
+        archive::forget_if_expired(
+            conn,
+            &track,
+            RETAIN,
+            &quality(),
+        )
+        .await
+        .map_err(|err| format!("{err:?}"))?;
         removed += 1;
     }
     Ok(removed)
