@@ -42,6 +42,12 @@ public final class MediaControls {
     public static final int STATUS_PLAYING = 0;
     public static final int STATUS_PAUSED = 1;
     public static final int STATUS_STOPPED = 2;
+    /**
+     * 本机在遥控别的设备、那台在放 / 没在放(#142)。服务一直挂在前台 —— 否则遥控端切到
+     * 后台就被冻住,收不到上报也续不上权 —— 但不抢音频焦点:本机并不出声。
+     */
+    public static final int STATUS_REMOTE_PLAYING = 3;
+    public static final int STATUS_REMOTE_PAUSED = 4;
 
     /** 与 Rust 侧 ui::MediaCommand 的顺序一一对应,同上。 */
     public static final int COMMAND_PLAY = 0;

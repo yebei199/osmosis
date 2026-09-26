@@ -136,7 +136,10 @@ public final class MediaControlsService extends Service {
         }
 
         MediaControls.Snapshot now = MediaControls.current();
-        boolean playing = now.status == MediaControls.STATUS_PLAYING;
+        boolean remote = now.status == MediaControls.STATUS_REMOTE_PLAYING
+                || now.status == MediaControls.STATUS_REMOTE_PAUSED;
+        boolean playing = now.status == MediaControls.STATUS_PLAYING
+                || now.status == MediaControls.STATUS_REMOTE_PLAYING;
 
         session.setMetadata(new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, now.title)
@@ -162,7 +165,8 @@ public final class MediaControlsService extends Service {
                         playing ? 1.0f : 0.0f)
                 .build());
 
-        updateFocus(playing);
+        // 遥控时本机不出声,焦点留给别的 app(#142)。
+        updateFocus(playing && !remote);
         Notification notification = buildNotification(now, playing);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // targetSdk 34 下没有这个类型参数会直接被系统拒掉。
@@ -174,8 +178,9 @@ public final class MediaControlsService extends Service {
             startForeground(NOTIFICATION_ID, notification);
         }
 
-        if (!playing) {
-            // 通知留着仍可控,服务降级 —— 见类注释。
+        if (!playing && !remote) {
+            // 通知留着仍可控,服务降级 —— 见类注释。遥控期间不降级:遥控端要一直
+            // 醒着收上报、续控制权,哪怕被控端此刻暂停着(#142)。
             stopForeground(Service.STOP_FOREGROUND_DETACH);
         }
 

@@ -321,13 +321,17 @@ pub(in crate::music) fn start_auto_advance(
             // 是空的。续播、预取与起播上报统统归被控端 —— 那边自己有一趟
             // 同样的轮询在跑。
             //
-            // ponytail: 系统媒体控件这一轮不跟着遥控走,锁屏上停在本机
-            // 上一次的状态。要它跟的话,得让 media::push 也认「输出设备」
-            // 这个抽象,而锁屏遥控不在本轮的验收步骤里。
+            // 系统媒体控件跟着被控端走(#142):安卓靠它在遥控期间挂着前台服务,
+            // 切后台不被冻住。
             if deck.remote.is_remote() {
                 crate::sync::remote::push_playback(
                     &ui,
                     &deck.remote,
+                );
+                crate::media::push_remote(
+                    &ui,
+                    &deck.remote,
+                    &deck.media,
                 );
                 // 遥控时那一页画的是被控端那份,同样要跟着上报走。
                 crate::music::queuepage::refresh(

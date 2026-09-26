@@ -50,6 +50,11 @@ pub struct NowPlaying {
     /// 循环三态。与随机同一个理由:播放器的属性,曲目清空后照旧报。
     /// MPRIS 那边对应 `LoopStatus`,安卓对应 `REPEAT_MODE`。
     pub loop_mode: LoopMode,
+    /// 本机此刻在遥控别的设备:报的是被控端在放什么,本机不出声(#142)。
+    ///
+    /// 安卓据此在遥控期间一直挂着前台服务、却不去抢音频焦点 —— 没有前台服务,
+    /// 遥控端切到后台就被系统冻住,收不到上报也续不上权。
+    pub remote: bool,
 }
 
 // —— 以下到文件末尾是原生那一半 ——
@@ -102,6 +107,7 @@ impl NowPlaying {
             duration_ms: track.duration_ms,
             art_url: track.cover.clone(),
             art,
+            remote: false,
         }
     }
 
@@ -112,7 +118,7 @@ impl NowPlaying {
     /// 不会换第二张图。
     pub(super) fn fingerprint(
         &self,
-    ) -> (MediaStatus, &str, bool, bool, LoopMode) {
+    ) -> (MediaStatus, &str, bool, bool, LoopMode, bool) {
         (
             self.status,
             &self.track_id,
@@ -121,7 +127,36 @@ impl NowPlaying {
             // 去重会把这次变更整个吃掉,外面那个开关就一直停在旧样子。
             self.shuffle,
             self.loop_mode,
+            self.remote,
         )
+    }
+
+    /// 遥控时报被控端那一首(#142)。封面只给链接:像素那份是本机解出来的。
+    pub(crate) fn remote(
+        track: Option<&app_core::TrackDto>,
+        playing: bool,
+    ) -> Self {
+        let Some(track) = track else {
+            return Self {
+                remote: true,
+                status: MediaStatus::Paused,
+                ..Self::default()
+            };
+        };
+        Self {
+            status: if playing {
+                MediaStatus::Playing
+            } else {
+                MediaStatus::Paused
+            },
+            track_id: track.id.clone(),
+            title: track.title.clone(),
+            artists: track.artists.clone(),
+            duration_ms: track.duration_ms,
+            art_url: track.cover.clone(),
+            remote: true,
+            ..Self::default()
+        }
     }
 }
 

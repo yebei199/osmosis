@@ -247,5 +247,19 @@ pub(crate) fn push(
     ));
 }
 
+/// 遥控别的设备时,把被控端在放什么报给系统媒体控件(#142)。
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn push_remote(
+    ui: &MainWindow,
+    remote: &crate::sync::remote::Remote,
+    media: &Bridge,
+) {
+    let track = remote.with_view(|view, _| view.track().cloned());
+    media.publish(NowPlaying::remote(
+        track.as_ref(),
+        ui.global::<Player>().get_is_playing(),
+    ));
+}
+
 #[cfg(test)]
 mod tests;

@@ -21,6 +21,7 @@ pub(super) fn now_playing() -> ui::NowPlaying {
         art: None,
         shuffle: false,
         loop_mode: ui::LoopMode::Off,
+        remote: false,
     }
 }
 
