@@ -6,6 +6,7 @@
 use i_slint_backend_testing as testing;
 use slint::ComponentHandle;
 use ui::MainWindow;
+use ui::Player;
 use ui::Session;
 use ui::Shell;
 
@@ -155,4 +156,51 @@ fn the_update_button_shows_only_with_an_action() {
         .expect("有动作时该有按钮")
         .invoke_accessible_default_action();
     assert_eq!(asked.get(), 1, "点升级按钮该报一次");
+}
+
+// ── #143:控制条不许压住「检查更新」──
+
+/// 控制条一出现,设置页底部就为它多留出一块 —— 照 profile.rs 同名测试。
+#[test]
+fn the_player_bar_does_not_eat_the_bottom_of_settings() {
+    let ui = settings_page();
+
+    ui.global::<Player>().set_has_track(false);
+    let without = column_height(&ui);
+
+    ui.global::<Player>().set_has_track(true);
+    let with = column_height(&ui);
+
+    let reserved = with - without;
+    assert!(
+        reserved >= 62.0,
+        "控制条 62px 高,底部至少要为它留这么多,实留 {reserved}"
+    );
+}
+
+/// 没有控制条的时候一分不留 —— 凭空的空白在页尾看起来就是渲染坏了。
+#[test]
+fn nothing_is_reserved_when_no_track_is_playing_on_settings() {
+    let ui = settings_page();
+    ui.global::<Player>().set_has_track(false);
+    let bare = column_height(&ui);
+
+    ui.global::<Player>().set_has_track(false);
+    assert_eq!(
+        column_height(&ui),
+        bare,
+        "条不在就不该留空"
+    );
+}
+
+/// 设置页那一列此刻有多高。底部留空算在它的 padding 里,所以高度会跟着变。
+fn column_height(ui: &MainWindow) -> f32 {
+    testing::ElementHandle::find_by_element_id(
+        ui,
+        "SettingsPage::column",
+    )
+    .next()
+    .expect("设置页那一列该在")
+    .size()
+    .height
 }
