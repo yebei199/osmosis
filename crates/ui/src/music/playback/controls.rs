@@ -61,6 +61,13 @@ pub(in crate::music) fn bind_controls(
         );
     });
 
+    let focus = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_focus_changed(move |held| {
+        let Some(ui) = weak.upgrade() else { return };
+        focus_changed(&ui, &focus, held);
+    });
+
     let next = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_next_track(move || {

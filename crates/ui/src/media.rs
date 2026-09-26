@@ -179,6 +179,10 @@ fn dispatch(
                 ui.global::<Player>().invoke_toggle_play();
             }
         }
+        MediaCommand::Focus(held) => {
+            ui.global::<Player>()
+                .invoke_focus_changed(held);
+        }
         MediaCommand::SetShuffle(_) => {
             if flips_shuffle(
                 command,

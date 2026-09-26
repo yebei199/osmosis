@@ -210,12 +210,14 @@ public final class MediaControlsService extends Service {
         switch (change) {
             case AudioManager.AUDIOFOCUS_LOSS:
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-                // 短暂丢焦点(来电、导航播报)也暂停而不是压低音量:
+                // 短暂丢焦点(来电、导航播报)也停下而不是压低音量:
                 // 压低音量要有音量控制,而那条线还没接(见 #38 的「本次不做」)。
-                MediaControls.dispatch(MediaControls.COMMAND_PAUSE, 0);
+                // 发的是「焦点」而不是「暂停」键:独奏时 Rust 侧照旧当暂停,在组里
+                // 只停本机的声音、不让全组跟着停(#142 AC-10)。
+                MediaControls.dispatch(MediaControls.COMMAND_FOCUS_LOST, 0);
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
-                MediaControls.dispatch(MediaControls.COMMAND_PLAY, 0);
+                MediaControls.dispatch(MediaControls.COMMAND_FOCUS_GAINED, 0);
                 break;
             default:
                 break;

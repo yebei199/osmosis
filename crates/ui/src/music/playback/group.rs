@@ -43,6 +43,9 @@ struct State {
     /// 断开几十秒后,输出流已经关了、媒体连接多半也被对端掐了,原地追赶会卡死在停下的
     /// 位置(#142 F-5)。
     stale: bool,
+    /// 本机丢了音频焦点(来电、别的应用抢了):只停本机的声音,组照放;拿回来之后照状态
+    /// 重新跟上(#142 AC-10)。
+    focus_lost: bool,
     /// 报给组里其他设备的故障。
     fault: Option<String>,
 }
@@ -120,6 +123,13 @@ pub(in crate::music) fn align(
             }
         }
         Sound::Silent => silence(ui, deck, player),
+        // 丢了焦点:本机不出声,等拿回来再照状态重新起(和断线重连同一条路)。
+        Sound::Follow(_)
+            if deck.alignment.inner.borrow().focus_lost =>
+        {
+            deck.alignment.inner.borrow_mut().stale = true;
+            hold(deck, player);
+        }
         Sound::Hold => {
             if !deck.group.is_online() {
                 deck.alignment.inner.borrow_mut().stale =
@@ -363,6 +373,27 @@ fn fetch_copy(
             align(&ui, &deck);
         }
     });
+}
+
+/// 系统说本机丢了 / 拿回了音频焦点(安卓的 `onAudioFocusChange`)。
+///
+/// 独奏时与从前一样:丢了当暂停、拿回当继续(只在会改变状态时才按那一下)。在组里**不发
+/// 任何意图** —— 用户定的「只停这台自己」(#142 AC-10):丢了本机停下、组照放,拿回了照
+/// 全局状态接着跟。只当遥控器的设备不出声,记下来也不影响什么。
+pub(in crate::music) fn focus_changed(
+    ui: &MainWindow,
+    deck: &Deck,
+    held: bool,
+) {
+    if deck.group.is_member() {
+        deck.alignment.inner.borrow_mut().focus_lost =
+            !held;
+        align(ui, deck);
+        return;
+    }
+    if held != ui.global::<Player>().get_is_playing() {
+        ui.global::<Player>().invoke_toggle_play();
+    }
 }
 
 /// 本机(出声设备)真正放完了全局状态此刻那一首:手上放的就是那一条的那首歌。

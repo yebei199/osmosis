@@ -595,3 +595,26 @@ fn a_relative_seek_starts_from_the_players_position() {
         "往回跳过头该停在开头"
     );
 }
+
+/// 音频焦点走自己的回调,不冒充「暂停」键:在组里那一下要只停本机,而暂停键是全组的
+/// (#142 AC-10)。
+#[test]
+fn audio_focus_reaches_its_own_callback_not_the_toggle() {
+    let routed = Routed::new();
+    routed.ui.global::<Player>().set_is_playing(true);
+    let seen = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let record = seen.clone();
+    routed.ui.global::<Player>().on_focus_changed(
+        move |held| record.borrow_mut().push(held),
+    );
+
+    routed.press(MediaCommand::Focus(false), 0);
+    routed.press(MediaCommand::Focus(true), 0);
+
+    assert_eq!(*seen.borrow(), vec![false, true]);
+    assert_eq!(
+        routed.toggle.get(),
+        0,
+        "焦点不该按到播放键上"
+    );
+}

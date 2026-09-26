@@ -74,6 +74,9 @@ export global Player {
     callback needs-cover(string);
     // 播放/暂停。
     callback toggle-play();
+    // 本机拿回 / 丢了音频焦点(系统给的,不是按键)。独奏时当播放 / 暂停,在组里只停、
+    // 只接回本机的声音(#142 AC-10)。
+    callback focus-changed(bool);
     // 队列内切歌。
     callback next-track();
     callback prev-track();

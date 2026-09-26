@@ -226,6 +226,8 @@ fn decode(
             2 => ui::LoopMode::One,
             _ => ui::LoopMode::Off,
         }),
+        9 => ui::MediaCommand::Focus(false),
+        10 => ui::MediaCommand::Focus(true),
         _ => return None,
     })
 }

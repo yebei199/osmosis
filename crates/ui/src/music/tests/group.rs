@@ -338,3 +338,17 @@ fn picking_the_entry_the_group_is_playing_is_redundant() {
 
     assert!(deck.group.intents().is_empty());
 }
+
+/// 出声设备丢了音频焦点(比如切后台时桌面抢了焦点)、再拿回来:都不向组发意图,组照放
+/// (#142 AC-10)。
+#[test]
+fn losing_audio_focus_in_the_group_sends_nothing() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["me"], true)));
+
+    ui.global::<Player>().invoke_focus_changed(false);
+    ui.global::<Player>().invoke_focus_changed(true);
+
+    assert!(deck.group.intents().is_empty());
+}

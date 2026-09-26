@@ -182,6 +182,9 @@ pub enum MediaCommand {
     SetShuffle(bool),
     /// 循环拨到这个态。同样是绝对值,与现值的比对在 [`wants_loop`] 里做。
     SetLoop(LoopMode),
+    /// 本机拿回(`true`)/ 丢了(`false`)音频焦点(安卓)。不是用户按的键:独奏时当播放 /
+    /// 暂停,在组里只停、只接回本机的声音,不向组发意图(#142 AC-10)。
+    Focus(bool),
 }
 
 /// ui 交给后端的两根线。

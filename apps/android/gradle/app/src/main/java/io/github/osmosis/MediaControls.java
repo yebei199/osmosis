@@ -60,6 +60,9 @@ public final class MediaControls {
     // 7 与 8 曾是随机与循环,2026-08-13 从通知栏撤掉(见 MediaControlsService
     // 里那段理由),这一端不再发它们。Rust 侧 ui::MediaCommand 上仍有对应项 ——
     // 桌面 MPRIS 在用,所以序号留空不复用,免得两端对不上。
+    /** 本机丢了 / 拿回音频焦点。不是用户按的键:在组里只停本机的声音,不动组(#142 AC-10)。 */
+    public static final int COMMAND_FOCUS_LOST = 9;
+    public static final int COMMAND_FOCUS_GAINED = 10;
 
     /** 申请通知权限时用的请求码,只有这一处用它,取什么值都行。 */
     private static final int NOTIFICATION_PERMISSION_REQUEST = 0x05;
