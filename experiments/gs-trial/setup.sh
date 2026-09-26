@@ -26,7 +26,7 @@ python -c 'import torch' 2>/dev/null ||
   env -u HTTPS_PROXY -u HTTP_PROXY uv pip install "${MIRROR[@]}" torch==2.7.0 torchvision==0.22.0
 
 env -u HTTPS_PROXY -u HTTP_PROXY uv pip install "${MIRROR[@]}" setuptools wheel ninja numpy jaxtyping rich 'diffusers<0.30' 'transformers<4.46' 'huggingface_hub<0.26' accelerate safetensors \
-  einops tyro kiui roma plyfile imageio trimesh scipy scikit-image pillow rtree
+  einops tyro 'kiui==0.2.14' opencv-python-headless roma plyfile imageio trimesh scipy scikit-image pillow rtree
 
 # gsplat 官方没有 pt27/cu128 的预编译轮子,从源码编(sm_120)
 python -c 'import gsplat.csrc' 2>/dev/null ||
