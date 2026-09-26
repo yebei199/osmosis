@@ -113,10 +113,7 @@ impl Controls {
 /// 与 `MediaControls.java` 的 `STATUS_*` 常量一一对应。
 ///
 /// 遥控别的设备时另有两个码(#142):服务要一直挂在前台,却不抢音频焦点。
-fn status_code(
-    status: ui::MediaStatus,
-    remote: bool,
-) -> jint {
+fn status_code(status: ui::MediaStatus, remote: bool) -> jint {
     match (status, remote) {
         (ui::MediaStatus::Playing, true) => 3,
         (_, true) => 4,

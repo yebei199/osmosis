@@ -219,11 +219,6 @@ pub async fn serve(
                 &device_id,
                 std::time::Instant::now(),
             );
-        // 成员那一侧反过来:回来了就是回来了,租约作废(#142)。
-        control
-            .lock()
-            .expect("控制权锁中毒")
-            .member_back(account, &device_id);
         broadcast_roster(&guard, account);
         generation
     };
@@ -284,13 +279,27 @@ pub async fn serve(
     // 被顶替掉的那条连接的清理什么都不该动:它的 leave 返回 false,
     // 而顺手清掉控制权会把刚重连上的那条遥控关系带走。
     if guard.leave(account, &device_id, generation) {
-        // 两端对称,都先留一个租约(#111、#142):遥控器下线不能让 pc1 停,被控端
-        // 闪断一下也不该结束遥控。租约满了才清,由 `control::sweep` 通知失权。
+        // 下线的若是**被控端**,它身上的遥控关系没了,遥控器得知道。
+        // 下线的若是遥控器,槽位先留一个租约 —— 手机没电不能让 pc1 停,
+        // 但也不能让 pc1 永远挂着横幅(#111)。
         let mut control =
             control.lock().expect("控制权锁中毒");
-        let now = std::time::Instant::now();
-        control.controller_left(account, &device_id, now);
-        control.member_left(account, &device_id, now);
+        control.controller_left(
+            account,
+            &device_id,
+            std::time::Instant::now(),
+        );
+        let freed = control.release(account, &device_id);
+        if let Some(controller) = freed
+            && let Some(sink) =
+                guard.sink(account, &controller)
+        {
+            let _ = sink.try_send(
+                ServerSignal::ControlRevoked {
+                    by: device_id.clone(),
+                },
+            );
+        }
     }
     broadcast_roster(&guard, account);
 }
@@ -436,13 +445,9 @@ fn route(
     match message {
         // 已经入册的连接再发 Hello 没有意义,忽略。
         ClientSignal::Hello { .. } => None,
-        // 校时:立刻回服务端此刻的单调时钟。顺手过一遍租约:遥控器闲着时只剩校时在跑,
-        // 被控端满租约的失权要靠它及时送到(#142)。在这里就答，不进遥控那一套 —— 多绕一层锁，
+        // 校时:立刻回服务端此刻的单调时钟。在这里就答，不进遥控那一套 —— 多绕一层锁，
         // 就多一段不对称的排队，偏移估计跟着偏(#137 ⑤)。
         ClientSignal::TimePing { id } => {
-            crate::syncplay::control::sweep(
-                roster, control, account,
-            );
             Some(ServerSignal::TimePong {
                 id,
                 server_us: crate::syncplay::clock::now_us(),

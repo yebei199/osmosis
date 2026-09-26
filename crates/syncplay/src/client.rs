@@ -71,9 +71,8 @@ pub enum Event {
     Incompatible { ours: u32, theirs: Option<u32> },
     /// 信令断了,编排循环正在重连。
     ///
-    /// 「正被遥控」的锁**不**在这里清(#142):服务端替断线的被控端留着租约,
-    /// 租约内重连回来还是原来的角色。满了租约的,重连后第一条上报就换回
-    /// [`Self::NotControlled`]。
+    /// 断着的时候服务端的消息过不来,所以靠消息才清的本地状态得在这一刻自己清:
+    /// 「正被遥控」的锁留着的话,本机在断网期间连歌都点不了(#118)。
     Disconnected,
     /// 接管 `target` 没成:服务端拒了,或者答复回来之前信令就断了。
     ///
@@ -111,8 +110,6 @@ pub enum Event {
 enum Command {
     /// 接管这台设备(用户主动按下的那一次)。
     Claim(String),
-    /// 拿手上的代次向服务端再确认一次持权(#142):还持着就照旧,早没了服务端回撤权。
-    Verify,
     /// 本机不再遥控谁了。只忘掉本地那份持权记录,**不发信令** ——
     /// 遥控器一走了之,被控端仍然该接着放(手机没电不能让 pc1 停)。
     ReleaseControl,
@@ -253,12 +250,6 @@ impl Client {
     /// 对端讲的是不是同一版协议。界面据此把这一种失败与普通掉线分开说。
     pub fn is_incompatible(&self) -> bool {
         self.incompatible.load(Ordering::Relaxed)
-    }
-
-    /// 被控端久不上报时,向服务端核一次还持不持权(#142)。遥控器自己不判失联 ——
-    /// 断线的被控端有租约,满没满只有服务端知道;满了它回一条撤权。
-    pub fn verify_control(&self) {
-        let _ = self.commands.send(Command::Verify);
     }
 
     /// 输出设备选回本机:忘掉持权记录,不知会任何人。
@@ -520,6 +511,8 @@ async fn run(
     // 本机遥控着谁。**跨重连保留** —— 断线不该让用户重新挑一次设备
     // (`docs/adr/0030`):重连的是信令,不是遥控关系。
     let mut held: Option<Held> = None;
+    // 本机断线那一刻是不是正被遥控。同样跨重连保留,理由见 `serve` 开头。
+    let mut controlled = false;
 
     loop {
         // 还没登录,或者手上只有那个已经被拒的 token:等它变,别空转建连。
@@ -585,6 +578,7 @@ async fn run(
             &events,
             &mut commands,
             &mut held,
+            &mut controlled,
             &incompatible,
             (&device.id, &clock),
         )
@@ -640,6 +634,7 @@ async fn serve(
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
     incompatible: &AtomicBool,
     (me, clock): (&str, &SharedClock),
 ) -> bool {
@@ -659,20 +654,19 @@ async fn serve(
     // 重连之后**先确认还持不持权**,再由界面去要快照(`docs/adr/0030`)。
     // 带着手上那个代次:槽位已经换人时服务端只会回一条撤权,而不是让这台
     // 刚恢复网络的设备把接管者顶掉(产品规则:旧遥控器自动重连不夺回)。
-    //
-    // 续权撞上 `device_offline`(被控端还没重连回来,服务端重启之后常见)不算完:
-    // 名册里一见到它就再续一次,否则这份权要等下一次断线才有机会续(#142)。
-    let mut resume = Resume::Idle;
     if let Some((target, generation)) =
         resume_claim(held.as_ref())
     {
         let _ =
             sender.claim(&target, Some(generation)).await;
-        resume = Resume::Sent;
     }
-    // 断线前正被遥控的,回来之后**不**退出(#142 推翻 #118 那一条):服务端替断线的
-    // 成员留着租约,租约内回来就是原来的角色。满了租约的,下一条上报会拿到
-    // `NotControlled`,界面照那一条解锁。
+    // 断线前正被遥控:回来之后先退出。断线时界面已经解了锁(见
+    // `Event::Disconnected`),断网期间本机可能已经在放别的歌;而服务端未必发现
+    // 过旧连接死了 —— 重连顶替掉它时槽位原样留着。不退的话遥控器接着往一台
+    // 不再听它的设备发命令,两端对「谁在遥控谁」各执一词(#118)。
+    if core::mem::take(controlled) {
+        let _ = sender.exit_controlled().await;
+    }
 
     loop {
         let step = tokio::select! {
@@ -686,7 +680,6 @@ async fn serve(
                     incompatible,
                     events,
                 );
-                resume = retry_resume(&message, resume, held.as_ref(), &sender).await;
                 if let ServerSignal::TimePong { id, server_us, epoch } = message {
                     // 收到的那一刻先读钟，再做别的:慢一步都算进往返里。
                     let received = monotonic_ns();
@@ -695,7 +688,7 @@ async fn serve(
                     }
                     Ok(())
                 } else {
-                    accept(message, events, held)
+                    accept(message, events, held, controlled)
                 }
             }
             _ = ticker.tick() => {
@@ -710,6 +703,9 @@ async fn serve(
                 let Some(command) = command else {
                     return false;
                 };
+                if matches!(command, Command::ExitControlled) {
+                    *controlled = false;
+                }
                 dispatch(command, &sender, held, me).await
             }
         };
@@ -719,57 +715,6 @@ async fn serve(
         if let Err(error) = step {
             events(Event::Failed(error.to_string()));
         }
-    }
-}
-
-/// 这条连接上那次续权走到哪了。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Resume {
-    /// 没有要续的,或者已经有了答复。
-    Idle,
-    /// 发出去了,还没答复。
-    Sent,
-    /// 被控端不在线,等它出现在名册里再续。
-    AwaitingTarget,
-}
-
-/// 看一条下行对续权意味着什么;被控端回到名册里了就再续一次。
-async fn retry_resume(
-    message: &ServerSignal,
-    resume: Resume,
-    held: Option<&Held>,
-    sender: &SignalSender,
-) -> Resume {
-    match (message, resume) {
-        (
-            ServerSignal::ControlGranted { .. }
-            | ServerSignal::ControlRevoked { .. },
-            _,
-        ) => Resume::Idle,
-        (
-            ServerSignal::Error { code, .. },
-            Resume::Sent,
-        ) if code == "device_offline" => {
-            Resume::AwaitingTarget
-        }
-        (
-            ServerSignal::Roster { devices },
-            Resume::AwaitingTarget,
-        ) => match resume_claim(held) {
-            Some((target, generation))
-                if devices
-                    .iter()
-                    .any(|d| d.id == target) =>
-            {
-                let _ = sender
-                    .claim(&target, Some(generation))
-                    .await;
-                Resume::Sent
-            }
-            Some(_) => Resume::AwaitingTarget,
-            None => Resume::Idle,
-        },
-        _ => resume,
     }
 }
 
@@ -843,6 +788,7 @@ fn accept(
     message: ServerSignal,
     events: &Arc<dyn Fn(Event) + Send + Sync>,
     held: &mut Option<Held>,
+    controlled: &mut bool,
 ) -> Result<(), SyncError> {
     match message {
         ServerSignal::Roster { devices } => {
@@ -905,10 +851,12 @@ fn accept(
             Ok(())
         }
         ServerSignal::ControlledBy { device } => {
+            *controlled = true;
             events(Event::ControlledBy { device });
             Ok(())
         }
         ServerSignal::NotControlled => {
+            *controlled = false;
             events(Event::NotControlled);
             Ok(())
         }
@@ -1030,16 +978,6 @@ async fn dispatch(
         Command::ReleaseControl => {
             *held = None;
             Ok(())
-        }
-        Command::Verify => {
-            match resume_claim(held.as_ref()) {
-                Some((target, generation)) => {
-                    sender
-                        .claim(&target, Some(generation))
-                        .await
-                }
-                None => Ok(()),
-            }
         }
         Command::ExitControlled => {
             sender.exit_controlled().await

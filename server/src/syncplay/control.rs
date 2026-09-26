@@ -19,28 +19,17 @@ use crate::syncplay::signaling::{AccountId, Sink};
 ///
 /// 全局递增,不按账号分 —— 它只需要互不相同。断线的遥控器重连时带着手上
 /// 这个数回来,服务端据此认得出它早就被顶替了(见 [`Control::claim`])。
-///
-/// 从启动那一刻的挂钟微秒数起(见 [`boot_base`]),所以**跨重启也递增**:
-/// 比这次启动的起点小的代次,一定是上一个服务端进程发的(#142)。
 pub type Generation = u64;
 
-/// 遥控器或被控端下线之后,组替它留多久(#111 定 30 秒,#142 放宽并推广到被控端)。
+/// 遥控器下线之后,槽位替它留多久(#111,用户 2026-09-23 定为 30 秒)。
 ///
-/// 要盖住的是「断了又重连回来」那一段。重连退避 1、2、4、8、16 秒,各带 ±25% 抖动,
-/// 第五次重连最迟落在断线后 40 秒上下;60 秒把这几次都盖住。两端对称:从前被控端
-/// 一断就被移出组、遥控器跟着失权,于是任何一次闪断都会结束遥控,而被控端还在放歌。
-/// 代价是真的不回来的那一端,要等满这 60 秒对面才知道。
-pub const LEASE: Duration = Duration::from_secs(60);
-
-/// 这一次启动的代次与任期起点:启动那一刻的挂钟微秒数。
-///
-/// 两样都要跨服务端重启单调递增:客户端不理任期更低的组通告(`app_core::Group`),
-/// 从 0 重新数的话,重启之后新建的组一律被当成迟到的旧通告(#142)。
-fn boot_base() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(1, |since| since.as_micros() as u64)
-}
+/// 要盖住的是「断了又带代次续上」那一段。遥控器连着 15 秒收不到上报就自己回本机、
+/// 交出持权(`app_core::output` 的 `LOST_AFTER_MS`),之后的重连不再续,所以值得
+/// 等的续上都落在断线后二十秒上下:重连退避 1、2、4、8 秒,各带 ±25% 抖动。
+/// 30 秒比它多一半余量。再长保护不到任何一次能续上的重连,只会让横幅挂得更久:
+/// force-stop 之后横幅 30 秒撤;没有 FIN 的半开连接还要先等探活出册(30 秒一次、
+/// 两次不回,即 60~90 秒),再加这 30 秒。
+pub const LEASE: Duration = Duration::from_secs(30);
 
 /// 账号上的播放组:谁在遥控、哪几台在出声、进行中的换输出操作(#137 ③)。
 ///
@@ -61,8 +50,6 @@ struct Group {
     master: Option<String>,
     /// 进行中的那一次:它确认之后的输出集合。
     pending: Option<Pending>,
-    /// 下线了、还在租约里的成员:何时断的。租约内回来就当没断过,满了才移出组(#142)。
-    absent: HashMap<String, Instant>,
 }
 
 struct Controller {
@@ -80,14 +67,13 @@ struct Pending {
 }
 
 impl Group {
-    fn empty(term: u64) -> Self {
+    fn empty() -> Self {
         Self {
             controller: None,
             members: Vec::new(),
-            term,
+            term: 0,
             master: None,
             pending: None,
-            absent: HashMap::new(),
         }
     }
 
@@ -166,10 +152,6 @@ impl Group {
 pub struct Control {
     groups: HashMap<AccountId, Group>,
     next_generation: Generation,
-    /// 发出去的最后一个任期。所有账号共用一个计数,只为单调(见 [`boot_base`])。
-    last_term: u64,
-    /// 这一次启动的代次起点。续权带来的代次比它小,就是上一个进程发的。
-    first_generation: Generation,
     lease: Duration,
 }
 
@@ -220,16 +202,9 @@ pub enum Committed {
 impl Control {
     /// 自定租约长度。测试要毫秒级的,生产用 [`LEASE`]。
     pub fn with_lease(lease: Duration) -> Self {
-        Self::booted_at(lease, boot_base())
-    }
-
-    /// 起点由调用方给:测试要造一次「服务端重启」。
-    pub fn booted_at(lease: Duration, base: u64) -> Self {
         Self {
             groups: HashMap::new(),
-            next_generation: base,
-            last_term: base,
-            first_generation: base,
+            next_generation: 0,
             lease,
         }
     }
@@ -238,62 +213,6 @@ impl Control {
         let generation = self.next_generation;
         self.next_generation += 1;
         generation
-    }
-
-    fn fresh_term(&mut self) -> u64 {
-        self.last_term += 1;
-        self.last_term
-    }
-
-    /// 这个账号的组,没有就新建一个 —— 新组接着最近发出去的任期往下数,不从 0 数。
-    /// 与散掉的旧组同一个任期不要紧:客户端只丢比手上**更低**的通告。
-    fn group_mut(
-        &mut self,
-        account: AccountId,
-    ) -> &mut Group {
-        let term = self.last_term;
-        self.groups
-            .entry(account)
-            .or_insert_with(|| Group::empty(term))
-    }
-
-    /// 组里一台成员的会话断了:不移出,租约从 `now` 起算(#142)。已经在算的不重算。
-    pub fn member_left(
-        &mut self,
-        account: AccountId,
-        device: &str,
-        now: Instant,
-    ) {
-        if let Some(group) = self.groups.get_mut(&account)
-            && group.includes(device)
-        {
-            group
-                .absent
-                .entry(device.to_owned())
-                .or_insert(now);
-            tracing::info!(
-                account,
-                member = %device,
-                "组成员会话断过,租约起算"
-            );
-        }
-    }
-
-    /// 一台设备(重新)入册:它若是租约里的成员,就当没断过。
-    pub fn member_back(
-        &mut self,
-        account: AccountId,
-        device: &str,
-    ) {
-        if let Some(group) = self.groups.get_mut(&account)
-            && group.absent.remove(device).is_some()
-        {
-            tracing::info!(
-                account,
-                member = %device,
-                "组成员租约内回来了"
-            );
-        }
     }
 
     /// 一台设备的会话断了:出册,或者以新连接重新入册。它若正是这个账号的
@@ -329,41 +248,15 @@ impl Control {
     ///
     /// 惰性判,不另起定时器:成员每秒上报,每条消息进来先过这一道,
     /// 于是过期最迟一秒被发现,而服务端不必为每个下线的遥控器挂一个任务。
-    ///
-    /// 下线满租约的成员这时才移出组;组因此空了的话,返回要通知失权的
-    /// `(遥控器, 走掉的那台)`。
     pub fn expire(
         &mut self,
         account: AccountId,
         now: Instant,
-    ) -> Option<(String, String)> {
+    ) {
         let lease = self.lease;
-        let gone: Vec<String> = self
-            .groups
-            .get(&account)?
-            .absent
-            .iter()
-            .filter(|(_, left)| {
-                now.duration_since(**left) >= lease
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut revoked = None;
-        for device in gone {
-            tracing::info!(
-                account,
-                member = %device,
-                "组成员下线满租约,移出组"
-            );
-            if let Some(controller) =
-                self.release(account, &device)
-            {
-                revoked = Some((controller, device));
-            }
-        }
         let Some(group) = self.groups.get_mut(&account)
         else {
-            return revoked;
+            return;
         };
         let expired = group
             .controller
@@ -374,7 +267,7 @@ impl Control {
                 })
             });
         if !expired {
-            return revoked;
+            return;
         }
         if let Some(controller) = group.controller.take() {
             tracing::info!(
@@ -388,7 +281,6 @@ impl Control {
         if group.is_vacant() {
             self.groups.remove(&account);
         }
-        revoked
     }
 
     /// 接管 `target`。
@@ -406,12 +298,6 @@ impl Control {
         target: &str,
         resume: Option<Generation>,
     ) -> Claim {
-        // 上一个服务端进程发的代次:组随进程没了,而这期间谁也不可能在这里接管过它
-        // (那会建一个新组)。当成主动接管重建,遥控就跨过了一次重启(#142)。
-        let resume = resume.filter(|generation| {
-            *generation >= self.first_generation
-                || self.groups.contains_key(&account)
-        });
         if let Some(generation) = resume {
             let Some(group) = self.groups.get_mut(&account)
             else {
@@ -452,8 +338,10 @@ impl Control {
         }
 
         let generation = self.fresh_generation();
-        let term = self.fresh_term();
-        let group = self.group_mut(account);
+        let group = self
+            .groups
+            .entry(account)
+            .or_insert_with(Group::empty);
         // 自己顶自己不算换人 —— 给自己发一条撤权,遥控器会把自己降级回本机。
         let revoked = group
             .controller
@@ -467,7 +355,7 @@ impl Control {
         });
         if group.members != [target] {
             group.members = vec![target.to_owned()];
-            group.term = term;
+            group.term += 1;
         }
         group.master = Some(target.to_owned());
         group.pending = None;
@@ -491,7 +379,10 @@ impl Control {
         master: Option<String>,
     ) -> Begun {
         let fresh = self.fresh_generation();
-        let group = self.group_mut(account);
+        let group = self
+            .groups
+            .entry(account)
+            .or_insert_with(Group::empty);
 
         let (generation, revoked) =
             match group.controller.as_mut() {
@@ -542,7 +433,6 @@ impl Control {
         operation_id: &str,
         outputs: Option<Vec<String>>,
     ) -> Committed {
-        let term = self.fresh_term();
         let Some(group) = self.groups.get_mut(&account)
         else {
             return Committed::NotController;
@@ -584,7 +474,8 @@ impl Control {
             .filter(|id| kept.contains(id))
             .or_else(|| kept.first().cloned());
         group.members = kept;
-        group.term = term;
+        group.term += 1;
+        let term = group.term;
         let members = group.members.clone();
         let master = group.master.clone();
         if group.is_vacant() {
@@ -641,7 +532,6 @@ impl Control {
             return None;
         }
         group.members.retain(|id| id != device);
-        group.absent.remove(device);
         if let Some(pending) = group.pending.as_mut() {
             pending.outputs.retain(|id| id != device);
             if pending.master.as_deref() == Some(device) {
@@ -676,17 +566,6 @@ impl Control {
             .controller
             .as_ref()
             .map(|controller| controller.device.as_str())
-    }
-
-    /// 这台设备在不在这个账号的组里(成员,或者正被拉进来)。
-    pub fn includes(
-        &self,
-        account: AccountId,
-        device: &str,
-    ) -> bool {
-        self.groups
-            .get(&account)
-            .is_some_and(|group| group.includes(device))
     }
 
     /// 这个账号的组此刻的成员(已确认的输出)。
@@ -752,11 +631,11 @@ impl Control {
         Ok(to)
     }
 
-    /// 这个账号的组的主端任期。没有组时是最近发出去的那个任期。
+    /// 这个账号的组的主端任期。没有组时是 0。
     pub fn term(&self, account: AccountId) -> u64 {
         self.groups
             .get(&account)
-            .map_or(self.last_term, |group| group.term)
+            .map_or(0, |group| group.term)
     }
 }
 
@@ -772,7 +651,7 @@ pub fn route(
     from: &str,
     message: ClientSignal,
 ) -> Option<ServerSignal> {
-    sweep(roster, control, account);
+    control.expire(account, Instant::now());
     match message {
         ClientSignal::ClaimControl { target, resume } => {
             claim(
@@ -842,20 +721,6 @@ pub fn route(
             let Some(controller) =
                 control.controller_of(account, from)
             else {
-                // 连组都不在了(服务端重启过、租约满被移出):一并告诉它组现在没有它,
-                // 它才会离开手上那个旧组,不再拿旧任期发计划(#142)。
-                if !control.includes(account, from) {
-                    send(
-                        roster,
-                        account,
-                        from,
-                        ServerSignal::Group {
-                            term: control.term(account),
-                            master: None,
-                            members: Vec::new(),
-                        },
-                    );
-                }
                 return Some(ServerSignal::NotControlled);
             };
             // 借用要在 send 之前还掉 —— roster 与 control 是两个对象,
@@ -982,24 +847,6 @@ pub fn route(
     }
 }
 
-/// 满租约的清掉,因此失权的遥控器通知一声。每条消息进来先过这一道(见 [`Control::expire`])。
-pub fn sweep(
-    roster: &Roster<Sink>,
-    control: &mut Control,
-    account: AccountId,
-) {
-    if let Some((controller, gone)) =
-        control.expire(account, Instant::now())
-    {
-        send(
-            roster,
-            account,
-            &controller,
-            ServerSignal::ControlRevoked { by: gone },
-        );
-    }
-}
-
 /// 接管:校验目标,写槽位,通知被控端与被顶掉的那台。
 fn claim(
     roster: &Roster<Sink>,
@@ -1057,24 +904,6 @@ fn claim(
                         by: from.to_owned(),
                     },
                 );
-            }
-            // 组的样子也通告给成员:重启后重建的组任期是新的,成员手上还是旧组、旧任期,
-            // 不通告的话主端的计划一律被判 `stale_term`(#142)。
-            if let Some((term, master, members)) =
-                control.shape(account)
-            {
-                for device in &members {
-                    send(
-                        roster,
-                        account,
-                        device,
-                        ServerSignal::Group {
-                            term,
-                            master: master.clone(),
-                            members: members.clone(),
-                        },
-                    );
-                }
             }
             Some(ServerSignal::ControlGranted {
                 generation,

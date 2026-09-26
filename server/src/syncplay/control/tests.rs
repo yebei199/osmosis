@@ -70,7 +70,7 @@ fn three_devices() -> (
 fn claiming_grants_control_and_tells_the_target() {
     let (roster, mut rx_phone, mut rx_pc, _) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -107,7 +107,7 @@ fn claiming_grants_control_and_tells_the_target() {
 fn a_second_claim_revokes_the_first_controller() {
     let (roster, mut rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -150,7 +150,7 @@ fn a_second_claim_revokes_the_first_controller() {
 #[test]
 fn reclaiming_as_the_same_controller_revokes_nobody() {
     let (roster, mut rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     let claim = || ClientSignal::ClaimControl {
         target: "pc".to_owned(),
         resume: None,
@@ -175,7 +175,7 @@ fn reclaiming_as_the_same_controller_revokes_nobody() {
 fn a_stale_resume_does_not_steal_control_back() {
     let (roster, mut rx_phone, _rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     let granted = route(
         &roster,
         &mut control,
@@ -237,7 +237,7 @@ fn a_stale_resume_does_not_steal_control_back() {
 fn a_matching_resume_keeps_the_same_generation() {
     let (roster, mut rx_phone, mut rx_pc, _) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     let granted = route(
         &roster,
         &mut control,
@@ -277,7 +277,7 @@ fn a_matching_resume_keeps_the_same_generation() {
 #[test]
 fn the_target_exiting_revokes_its_controller() {
     let (roster, mut rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -314,7 +314,7 @@ fn the_target_exiting_revokes_its_controller() {
 #[test]
 fn a_controller_going_offline_leaves_the_target_locked() {
     let (roster, _rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -340,7 +340,7 @@ fn a_controller_going_offline_leaves_the_target_locked() {
 #[test]
 fn the_target_going_offline_frees_the_slot() {
     let (roster, _rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -365,7 +365,7 @@ fn the_target_going_offline_frees_the_slot() {
 #[test]
 fn a_command_from_a_non_controller_is_refused() {
     let (roster, _rx_phone, mut rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -396,7 +396,7 @@ fn a_command_from_a_non_controller_is_refused() {
 #[test]
 fn a_command_from_the_controller_reaches_the_target() {
     let (roster, _rx_phone, mut rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -436,7 +436,7 @@ fn a_command_from_the_controller_reaches_the_target() {
 fn a_report_goes_only_to_the_controller() {
     let (roster, mut rx_phone, _rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -481,7 +481,7 @@ fn a_report_goes_only_to_the_controller() {
 fn a_report_without_a_controller_frees_the_target() {
     let (roster, mut rx_phone, _rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -505,7 +505,7 @@ fn a_report_without_a_controller_frees_the_target() {
 #[test]
 fn a_snapshot_request_needs_control() {
     let (roster, _rx_phone, mut rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let refused = route(
         &roster,
@@ -556,7 +556,7 @@ fn a_snapshot_request_needs_control() {
 #[test]
 fn claiming_an_offline_device_reports_an_error() {
     let (roster, _rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -583,7 +583,7 @@ fn claiming_an_offline_device_reports_an_error() {
 #[test]
 fn claiming_yourself_is_refused() {
     let (roster, _rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -614,7 +614,7 @@ fn claiming_across_accounts_is_refused() {
         three_devices();
     let (sink, mut rx_bob) = mpsc::channel(CAPACITY);
     roster.join(BOB, device("bobpc"), sink);
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -650,7 +650,7 @@ fn each_account_has_its_own_slot() {
     let (bob_pc, _rx2) = mpsc::channel(CAPACITY);
     roster.join(BOB, device("phone"), bob_phone);
     roster.join(BOB, device("pc"), bob_pc);
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     route(
         &roster,
@@ -678,7 +678,7 @@ fn each_account_has_its_own_slot() {
 fn exiting_without_a_grant_still_gets_an_answer() {
     let (roster, _rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = route(
         &roster,
@@ -696,7 +696,7 @@ fn exiting_without_a_grant_still_gets_an_answer() {
 fn a_report_with_a_grant_is_forwarded_as_before() {
     let (roster, mut rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     route(
         &roster,
         &mut control,
@@ -744,7 +744,7 @@ fn phone_controls_pc(control: &mut Control) -> Generation {
 #[test]
 fn a_vanished_controller_loses_the_slot_after_the_lease() {
     let lease = Duration::from_secs(90);
-    let mut control = Control::booted_at(lease, 0);
+    let mut control = Control::with_lease(lease);
     phone_controls_pc(&mut control);
     let gone = Instant::now();
 
@@ -758,7 +758,7 @@ fn a_vanished_controller_loses_the_slot_after_the_lease() {
 #[test]
 fn the_slot_survives_until_the_lease_runs_out() {
     let lease = Duration::from_secs(90);
-    let mut control = Control::booted_at(lease, 0);
+    let mut control = Control::with_lease(lease);
     phone_controls_pc(&mut control);
     let gone = Instant::now();
 
@@ -779,7 +779,7 @@ fn the_slot_survives_until_the_lease_runs_out() {
 fn a_controller_that_resumes_within_the_lease_keeps_the_slot()
  {
     let lease = Duration::from_secs(90);
-    let mut control = Control::booted_at(lease, 0);
+    let mut control = Control::with_lease(lease);
     let generation = phone_controls_pc(&mut control);
     let gone = Instant::now();
 
@@ -811,7 +811,7 @@ fn a_controller_that_resumes_within_the_lease_keeps_the_slot()
 #[test]
 fn only_the_controller_leaving_starts_the_lease() {
     let lease = Duration::from_secs(90);
-    let mut control = Control::booted_at(lease, 0);
+    let mut control = Control::with_lease(lease);
     phone_controls_pc(&mut control);
     let gone = Instant::now();
 
@@ -832,7 +832,7 @@ fn only_the_controller_leaving_starts_the_lease() {
 fn a_report_after_the_lease_gets_not_controlled() {
     let (roster, mut rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(Duration::ZERO, 0);
+    let mut control = Control::with_lease(Duration::ZERO);
     phone_controls_pc(&mut control);
     control.controller_left(ALICE, "phone", Instant::now());
 
@@ -933,7 +933,7 @@ fn phone_moved_to_pc(
 fn beginning_outputs_locks_the_incoming_device_and_grants_a_generation()
  {
     let (roster, _rx_phone, mut rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let reply = begin(&roster, &mut control, "op", &["pc"]);
 
@@ -960,7 +960,7 @@ fn commands_reach_both_the_old_member_and_the_incoming_one()
 {
     let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     begin(&roster, &mut control, "op-spare", &["spare"]);
     drain(&mut rx_pc);
@@ -988,7 +988,7 @@ fn commands_reach_both_the_old_member_and_the_incoming_one()
 #[test]
 fn reports_from_the_incoming_device_reach_the_controller() {
     let (roster, mut rx_phone, _rx_pc, _) = three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     begin(&roster, &mut control, "op", &["pc"]);
     drain(&mut rx_phone);
 
@@ -1015,7 +1015,7 @@ fn committing_swaps_members_bumps_the_term_and_unlocks_the_removed()
  {
     let (roster, _rx_phone, mut rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     let before = control.term(ALICE);
     begin(&roster, &mut control, "op-spare", &["spare"]);
@@ -1050,7 +1050,7 @@ fn committing_swaps_members_bumps_the_term_and_unlocks_the_removed()
 fn a_report_from_a_removed_member_is_not_forwarded() {
     let (roster, mut rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     begin(&roster, &mut control, "op-spare", &["spare"]);
     commit(&roster, &mut control, "op-spare");
@@ -1075,7 +1075,7 @@ fn a_report_from_a_removed_member_is_not_forwarded() {
 fn committing_the_wrong_operation_is_refused() {
     let (roster, _rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     begin(&roster, &mut control, "op-new", &["spare"]);
 
@@ -1101,7 +1101,7 @@ fn aborting_unlocks_the_incoming_device_and_keeps_the_members()
  {
     let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     begin(&roster, &mut control, "op-spare", &["spare"]);
     drain(&mut rx_pc);
@@ -1134,7 +1134,7 @@ fn a_new_begin_replaces_the_pending_one_and_unlocks_the_dropped_device()
  {
     let (roster, _rx_phone, mut rx_pc, mut rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     begin(&roster, &mut control, "op1", &["pc"]);
     drain(&mut rx_pc);
 
@@ -1159,7 +1159,7 @@ fn a_new_begin_replaces_the_pending_one_and_unlocks_the_dropped_device()
 fn committing_an_empty_set_dissolves_the_group() {
     let (roster, _rx_phone, mut rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     begin(&roster, &mut control, "op-home", &[]);
     drain(&mut rx_pc);
@@ -1187,7 +1187,7 @@ fn committing_an_empty_set_dissolves_the_group() {
 fn the_group_survives_the_controller_lease() {
     let (roster, _rx_phone, mut rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(Duration::ZERO, 0);
+    let mut control = Control::with_lease(Duration::ZERO);
     phone_moved_to_pc(&roster, &mut control);
     control.controller_left(ALICE, "phone", Instant::now());
     control.expire(ALICE, Instant::now());
@@ -1213,7 +1213,7 @@ fn a_begin_from_another_device_takes_over_and_revokes_the_old_controller()
  {
     let (roster, mut rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     phone_moved_to_pc(&roster, &mut control);
     drain(&mut rx_phone);
 
@@ -1246,7 +1246,7 @@ fn a_begin_from_another_device_takes_over_and_revokes_the_old_controller()
 fn a_begin_with_an_unusable_output_is_refused() {
     let (roster, _rx_phone, mut rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
 
     let offline =
         begin(&roster, &mut control, "op", &["tv"]);
@@ -1269,7 +1269,7 @@ fn a_begin_with_an_unusable_output_is_refused() {
 fn only_the_controller_can_commit() {
     let (roster, _rx_phone, _rx_pc, _rx_spare) =
         three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
+    let mut control = Control::default();
     begin(&roster, &mut control, "op", &["pc"]);
 
     let reply = route(
@@ -1291,175 +1291,4 @@ fn only_the_controller_can_commit() {
         control.members(ALICE),
         Vec::<String>::new()
     );
-}
-
-// ── 两端对称的断线租约、跨重启的代次与任期(#142)──
-
-/// 被控端闪断:租约内回来,组与遥控器都还在。
-#[test]
-fn a_member_back_within_the_lease_keeps_the_group() {
-    let lease = Duration::from_secs(60);
-    let mut control = Control::booted_at(lease, 0);
-    phone_controls_pc(&mut control);
-    let gone = Instant::now();
-
-    control.member_left(ALICE, "pc", gone);
-    control.member_back(ALICE, "pc");
-
-    assert_eq!(
-        control.expire(ALICE, gone + lease * 10),
-        None
-    );
-    assert_eq!(
-        control.controller_of(ALICE, "pc"),
-        Some("phone")
-    );
-}
-
-/// 租约没满之前,下线的被控端还在组里:遥控器只是在等它重连。
-#[test]
-fn a_member_stays_in_the_group_until_its_lease_runs_out() {
-    let lease = Duration::from_secs(60);
-    let mut control = Control::booted_at(lease, 0);
-    phone_controls_pc(&mut control);
-    let gone = Instant::now();
-
-    control.member_left(ALICE, "pc", gone);
-
-    assert_eq!(
-        control.expire(
-            ALICE,
-            gone + lease - Duration::from_millis(1)
-        ),
-        None
-    );
-    assert_eq!(
-        control.controller_of(ALICE, "pc"),
-        Some("phone")
-    );
-}
-
-/// 满了租约才移出组;组空了就把失权的遥控器与走掉的那台交给调用方去通知。
-#[test]
-fn a_member_gone_past_the_lease_frees_the_controller() {
-    let lease = Duration::from_secs(60);
-    let mut control = Control::booted_at(lease, 0);
-    phone_controls_pc(&mut control);
-    let gone = Instant::now();
-
-    control.member_left(ALICE, "pc", gone);
-
-    assert_eq!(
-        control.expire(ALICE, gone + lease),
-        Some(("phone".to_owned(), "pc".to_owned()))
-    );
-    assert_eq!(control.controller_of(ALICE, "pc"), None);
-}
-
-/// 路由里过期的那一下把撤权送到遥控器,说是被控端走的。
-#[test]
-fn the_route_tells_the_controller_when_a_member_expires() {
-    let (roster, mut rx_phone, _rx_pc, _rx_spare) =
-        three_devices();
-    let mut control = Control::booted_at(Duration::ZERO, 0);
-    phone_controls_pc(&mut control);
-    control.member_left(ALICE, "pc", Instant::now());
-
-    sweep(&roster, &mut control, ALICE);
-
-    assert_eq!(
-        rx_phone.try_recv(),
-        Ok(ServerSignal::ControlRevoked {
-            by: "pc".to_owned()
-        })
-    );
-}
-
-/// 上一个进程发的代次来续权:组随进程没了,当主动接管重建,不判「早被顶替」。
-#[test]
-fn a_resume_from_before_a_restart_rebuilds_the_group() {
-    let lease = Duration::from_secs(60);
-    let mut before = Control::booted_at(lease, 1_000);
-    let Claim::Granted { generation, .. } =
-        before.claim(ALICE, "phone", "pc", None)
-    else {
-        panic!("主动接管不该被拒");
-    };
-    let old_term = before.term(ALICE);
-
-    let mut after = Control::booted_at(lease, 2_000);
-    let claim =
-        after.claim(ALICE, "phone", "pc", Some(generation));
-
-    assert!(
-        matches!(
-            claim,
-            Claim::Granted { revoked: None, .. }
-        ),
-        "重启前的代次该重建,得到 {claim:?}"
-    );
-    assert_eq!(
-        after.controller_of(ALICE, "pc"),
-        Some("phone")
-    );
-    assert!(
-        after.term(ALICE) > old_term,
-        "重启后的任期必须比重启前的大:{} <= {old_term}",
-        after.term(ALICE)
-    );
-}
-
-/// 本进程发的代次、组却没了(被控端退出过):仍然续不上 —— 重建只给重启那一种。
-#[test]
-fn a_resume_after_the_target_exited_is_still_stale() {
-    let mut control = Control::booted_at(LEASE, 0);
-    let generation = phone_controls_pc(&mut control);
-    control.release(ALICE, "pc");
-
-    assert!(matches!(
-        control.claim(
-            ALICE,
-            "phone",
-            "pc",
-            Some(generation)
-        ),
-        Claim::Stale { .. }
-    ));
-}
-
-/// 组散了再建,新组的任期也比旧组的大:客户端不理任期更低的通告。
-#[test]
-fn a_new_group_never_reuses_a_lower_term() {
-    let mut control = Control::booted_at(LEASE, 0);
-    phone_controls_pc(&mut control);
-    let old_term = control.term(ALICE);
-    control.release(ALICE, "pc");
-
-    phone_controls_pc(&mut control);
-
-    assert!(control.term(ALICE) > old_term);
-}
-
-/// 已经不在任何组里的设备还在上报:除了撤锁,还通告一份没有它的组,让它离开旧组。
-#[test]
-fn a_report_from_outside_any_group_is_told_to_leave() {
-    let (roster, _rx_phone, mut rx_pc, _rx_spare) =
-        three_devices();
-    let mut control = Control::booted_at(LEASE, 0);
-
-    let reply = route(
-        &roster,
-        &mut control,
-        ALICE,
-        "pc",
-        ClientSignal::State {
-            state: Box::new(report()),
-        },
-    );
-
-    assert_eq!(reply, Some(ServerSignal::NotControlled));
-    assert!(matches!(
-        rx_pc.try_recv(),
-        Ok(ServerSignal::Group { members, .. }) if members.is_empty()
-    ));
 }

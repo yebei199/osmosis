@@ -13,17 +13,12 @@
 #     不再发布(#137 ③),那就必须看得见这一下记了检查点(play_queue_reports)。
 # 输出在本机还是遥控别的设备都适用 —— 起播记账的是真在放的那一台,队列归它。
 #
-# 组内(#142):本机是主端、组里还有别的设备时,设 FOLLOWER_PORT 为跟随端那台的
-# MCP 端口(真机经 adb forward 是 8090)。通过之后再断言跟随端控制条上的曲名
-# 跟着换成了主端这一首 —— 主端点歌,组里其他设备要跟着换歌。
-#
 # 前提:应用起着(桌面 just desktop-dev,安卓 just mcp-android)、已登录
 # (test/mcp-login.sh),just server-dev 与 osmosis-pg 在跑,每日推荐有歌。
 set -euo pipefail
 
 MODE="${1:?用法: $0 list|wall}"
 PORT="${PORT:-8091}"
-FOLLOWER_PORT="${FOLLOWER_PORT:-}"
 PG_CONTAINER="${PG_CONTAINER:-osmosis-pg}"
 TAPS=3
 
@@ -34,7 +29,7 @@ case "$MODE" in
 esac
 
 call() {
-  curl -s -X POST "http://127.0.0.1:${CALL_PORT:-$PORT}/mcp" \
+  curl -s -X POST "http://127.0.0.1:$PORT/mcp" \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
@@ -54,30 +49,6 @@ print(json.dumps(hs[${2:-0}]) if len(hs) > ${2:-0} else '')
 # 无障碍动作不过命中测试:卡墙的卡画在 3D 纹理里,按坐标点不稳(#113)。
 act() {
   call invoke_accessibility_action "{\"elementHandle\":$1,\"action\":\"$2\"}" >/dev/null
-}
-
-# 某一台控制条上的曲名(PlayerBar::title 那个 Text)。
-title_on() {
-  local w h
-  w=$(CALL_PORT=$1 call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
-  h=$(CALL_PORT=$1 call find_elements_by_id "{\"windowHandle\":$w,\"elementsId\":\"PlayerBar::title\"}" \
-    | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")')
-  [ -n "$h" ] || return 0
-  CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" \
-    | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("text") or p.get("accessibleLabel") or "")'
-}
-
-# 组内:跟随端的曲名 30 秒内换成主端这一首。
-follower_follows() {
-  [ -n "$FOLLOWER_PORT" ] || return 0
-  local want; want=$(title_on "$PORT")
-  for _ in $(seq 1 30); do
-    [ -n "$want" ] && [ "$(title_on "$FOLLOWER_PORT")" = "$want" ] && {
-      echo "  跟随端跟着换成了「$want」"; return 0; }
-    sleep 1
-  done
-  echo "$MODE: 失败 —— 跟随端 30 秒没跟着换成「$want」(它在放「$(title_on "$FOLLOWER_PORT")」)" >&2
-  exit 1
 }
 
 sql() {
@@ -187,7 +158,6 @@ for index in 0 1; do
   # 发布恰好一次:这一批是新的。发布零次:这一批早已同步上去,那就必须看得见
   # 这一下记了检查点 —— 否则就是该发布的没发布。两次以上是 #113/#125 回来了。
   if [ "$plays" -eq 1 ] && { [ "$publishes" -eq 1 ] || { [ "$publishes" -eq 0 ] && [ "$checkpoint" = 有 ]; }; }; then
-    follower_follows
     echo "$MODE: 通过"
     exit 0
   fi

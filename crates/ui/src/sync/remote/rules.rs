@@ -55,10 +55,8 @@ pub fn describe_remote(
     if !view.is_known() {
         return "遥控: 正在连接".to_owned();
     }
-    // 不说「已过期」、也不自己回本机(#142):被控端多半在重连,服务端替它留着租约。
-    // 真的不回来了,服务端的撤权会把输出收回本机。
     if view.is_stale(now_ms) {
-        return "遥控: 重连中…".to_owned();
+        return "遥控: 状态已过期".to_owned();
     }
     match view.state() {
         RemotePlayState::Idle => "遥控: 没在放".to_owned(),
@@ -102,12 +100,12 @@ pub fn describe_revoked(
     format!("遥控已被 {by} 接管")
 }
 
-/// 被控端久不上报,该向服务端核一次还持不持权吗(#142)。
+/// 被控端失联了、该把输出收回本机吗。
 ///
 /// 撤权是服务端尽力而为的一发,丢了之后没有第二次(`server::syncplay::control` 的
 /// `send`)。遥控器这头的 socket 还好好的,不会重连,也就走不到重连那条
-/// 自愈(#102 F-003)。从前这里直接收回本机,可闪断的被控端有租约、还会回来,
-/// 于是遥控器自己掉回本机而被控端还在放。现在只去问服务端,由它裁决。
+/// 自愈;于是它永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
+/// 而本机什么也放不了(#102 F-003)。这一条是那种情况下唯一的出口。
 pub fn lost_remote(
     output: &Output,
     view: &RemoteView,
@@ -116,26 +114,22 @@ pub fn lost_remote(
     output.target().is_some() && view.is_lost(now_ms)
 }
 
+/// 自动回本机时那句提示。
+///
+/// 必须说出是哪台设备、以及现在声音在哪儿:不说的话,用户只看到歌换了个
+/// 地方放,会以为是自己按错了。
+pub fn describe_lost(output: &Output) -> String {
+    let name = output.name().unwrap_or("那台设备");
+    format!("{name} 失联,已回到本机")
+}
+
 /// 接管没成、回到本机时那句提示。
 ///
-/// 要说出是哪台设备、为什么、以及声音现在在哪儿(#142:重新接管失败要给出看得懂的原因)。
-/// `reason` 是客户端给的那一行(服务端的错误码,或者信令断开),翻成人话;认不出的
-/// 不照抄 —— 那是给日志看的。
-pub fn describe_claim_failed(
-    output: &Output,
-    reason: &str,
-) -> String {
+/// 与失联那句一样,要说出是哪台设备、以及声音现在在哪儿。原因(不在线、
+/// 信令断了)记日志,不上界面:用户能做的只有一件事 —— 过会儿再选一次。
+pub fn describe_claim_failed(output: &Output) -> String {
     let name = output.name().unwrap_or("那台设备");
-    let why = if reason.contains("device_offline") {
-        "它不在线"
-    } else if reason.contains("信令断开") {
-        "本机连不上服务端"
-    } else if reason.contains("cannot_control_self") {
-        "那就是本机"
-    } else {
-        "服务端没有同意"
-    };
-    format!("接管 {name} 失败({why}),已回到本机")
+    format!("没能接管 {name},已回到本机")
 }
 
 /// 目标在别的设备、但这一下没提交成功时说的那句话。
@@ -430,9 +424,9 @@ mod tests {
         );
     }
 
-    /// 失联才去核持权,过期不必 —— 过期只是这几秒没来。
+    /// 失联要收回输出,而过期不要 —— 两档的去向相反。
     #[test]
-    fn only_a_lost_device_is_checked_with_the_server() {
+    fn only_a_lost_device_takes_the_output_back() {
         let view = view(RemotePlayState::Playing);
 
         assert!(
@@ -454,6 +448,16 @@ mod tests {
         );
     }
 
+    /// 自动回本机那句话要说清是哪台设备、声音现在在哪。
+    #[test]
+    fn the_lost_notice_names_the_device_and_where_sound_went()
+     {
+        assert_eq!(
+            describe_lost(&remote()),
+            "pc1 失联,已回到本机"
+        );
+    }
+
     /// 过期压过一切:后面那些字段全是旧闻,不许拿它们写「正在播放」。
     #[test]
     fn a_stale_view_says_so_instead_of_reading_out_old_news()
@@ -462,7 +466,7 @@ mod tests {
 
         assert_eq!(
             describe_remote(&view, 10_000),
-            "遥控: 重连中…"
+            "遥控: 状态已过期"
         );
     }
 
@@ -566,32 +570,13 @@ mod tests {
         copy.push(describe_output(&Output::Local));
         copy.push(describe_controlled(None));
         copy.push(describe_revoked(&Output::Local, "pc1"));
+        copy.push(describe_lost(&remote()));
+        copy.push(describe_lost(&Output::Local));
         copy.push(describe_unavailable(&Output::Local));
         copy.push(describe_unavailable(&remote()));
         copy.push(describe_too_large(&Output::Local));
         copy.push(describe_too_large(&remote()));
         copy.push(describe_revoked(&remote(), "pc1"));
-        // #142 新加的几句。
-        for reason in [
-            "device_offline",
-            "信令断开",
-            "cannot_control_self",
-            "x",
-        ] {
-            copy.push(describe_claim_failed(
-                &remote(),
-                reason,
-            ));
-        }
-        for line in [
-            "这首已经在放或正在切过去",
-            "遥控已结束,刚才那次点歌没有执行",
-            "本机正被遥控",
-            "已经在这些设备上播放",
-            "正在重新接管 pc1",
-        ] {
-            copy.push(line.to_owned());
-        }
         for state in [
             RemotePlayState::Idle,
             RemotePlayState::Buffering,
@@ -650,22 +635,6 @@ mod tests {
         assert!(
             missing.is_empty(),
             "子集字体缺字形:{missing:?} —— 重跑 just font-subset"
-        );
-    }
-
-    /// 接管失败说得出原因,认不出的原因不照抄(#142)。
-    #[test]
-    fn a_failed_claim_says_why_in_plain_words() {
-        assert_eq!(
-            describe_claim_failed(
-                &remote(),
-                "device_offline: 设备 pc 不在线"
-            ),
-            "接管 pc1 失败(它不在线),已回到本机"
-        );
-        assert_eq!(
-            describe_claim_failed(&remote(), "weird: 42"),
-            "接管 pc1 失败(服务端没有同意),已回到本机"
         );
     }
 

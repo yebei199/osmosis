@@ -25,7 +25,7 @@ use syncplay::{Client, DeviceDto};
 pub(crate) use rules::{
     accepts_control, describe_claim_failed,
     describe_controlled, describe_copy_fault,
-    describe_group, describe_master_lost,
+    describe_group, describe_lost, describe_master_lost,
     describe_media_fault, describe_missing_entry,
     describe_move, describe_output, describe_remote,
     describe_revoked, describe_too_large,
@@ -67,9 +67,6 @@ pub enum Submitted {
 /// 主端的心跳：计划没变时多久原样再发一次。跟随端三次收不到算主端失联
 /// (`app_core::MASTER_SILENT_MS`)。
 const HEARTBEAT_MS: u64 = 1_000;
-
-/// 被控端失联时,多久向服务端核一次持权(#142)。
-const VERIFY_EVERY_MS: u64 = 15_000;
 
 /// 一次点播交出去之后,多久内还算「在路上」。
 ///
@@ -140,8 +137,6 @@ struct Inner {
     // ponytail: 挂钟倒退时新进程会拿到更小的 epoch,那一次的上报会被对端
     // 全丢掉。真出现再换单调时钟加持久计数器
     epoch: i64,
-    /// 上一次因失联向服务端核持权的时刻(毫秒挂钟)。
-    verified_at: AtomicU64,
     /// 本次会话里已经报到第几条。每报一次加一。
     state_seq: AtomicU64,
     /// 交出去、被控端还没报上来的那次点播:曲目 id 与交出去的时刻。
@@ -152,9 +147,12 @@ struct Inner {
     /// 走到远端分支的点播有几下(见 [`Remote::note_play_submitted`])。
     #[cfg(test)]
     play_submits: AtomicU64,
-    /// 因失联向服务端核持权的次数(见 [`Remote::verify_if_lost`])。
+    /// 交给客户端去忘掉的持权有几次(见 [`Remote::release_claim`])。
+    ///
+    /// [`Client::release_control`] 只往一条通道里塞一条指令,测试里的
+    /// [`Client::detached`] 连接收端都没有 —— 不记下来就观察不到它发没发。
     #[cfg(test)]
-    verifies: AtomicU64,
+    releases: AtomicU64,
     /// 测试里记下真的交出去了哪些命令。
     ///
     /// [`Client::detached`] 当场丢掉通道的接收端,而 [`Client::command`] 本来
@@ -498,24 +496,30 @@ impl Remote {
             .swap(false, Ordering::Relaxed)
     }
 
-    /// 被控端久不上报,就向服务端核一次还持不持权。核了返回 `true`。
+    /// 被控端失联太久就把输出收回本机。收回了返回 `true`。
     ///
-    /// 遥控器**不再自己回本机**(#142):从前十五秒收不到上报就回,可断线的被控端有
-    /// 租约、闪断会回来,于是遥控器自己掉回本机而被控端还在放。现在失权以服务端为准:
-    /// 还持着就照旧显示「重连中」,早没了服务端回撤权,走撤权那条收尾回本机。
-    /// 撤权那一发丢了(#102 F-003)也由这一问补上,每 [`VERIFY_EVERY_MS`] 问一次。
-    pub fn verify_if_lost(&self) -> bool {
-        self.verify_if_lost_at(now_ms())
+    /// 撤权丢了就没有第二次(`server::syncplay::control` 的 `send` 是 `try_send`
+    /// 且不重发),而本机这条 socket 好好的、不会重连,重连那条自愈也就走不到。
+    /// 少了这一条,遥控器永久停在「遥控: 状态已过期」,芯片还亮在那台设备上,
+    /// 本机也放不了歌 —— 用户唯一的出路是自己去点一下「本机」(#102 F-003)。
+    ///
+    /// 走的是与撤权**同一条**收尾:输出回本机、镜像清掉、提示一句。自动续播
+    /// 那趟轮询下一步就会看到 [`Self::took_local_edge`],把本机按停,
+    /// 所以这里不会顺手起播。
+    pub fn give_up_if_lost(&self) -> bool {
+        self.give_up_if_lost_at(now_ms())
     }
 
     /// 同上,但时钟由调用方给 —— 测试要在这条十五秒的判断上说话。
-    pub(crate) fn verify_if_lost_at(
+    pub(crate) fn give_up_if_lost_at(
         &self,
         now_ms: u64,
     ) -> bool {
         {
             let session = lock(&self.inner.session);
-            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。
+            // 迁移进行中由迁移自己的超时与「待确认」管(#137 ③)。源被冻住或断网时
+            // 这里本来会按失联收回本机,把「待确认」与处理入口一并丢掉 —— 而那正是
+            // 该交给用户处理的时候。
             if session.moving().is_some() {
                 return false;
             }
@@ -527,27 +531,12 @@ impl Remote {
                 return false;
             }
         }
-        let last =
-            self.inner.verified_at.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) < VERIFY_EVERY_MS {
-            return false;
-        }
-        self.inner
-            .verified_at
-            .store(now_ms, Ordering::Relaxed);
-        log::info!("被控端久不上报,向服务端核一次持权");
-        #[cfg(test)]
-        self.inner.verifies.fetch_add(1, Ordering::Relaxed);
-        if let Some(client) = self.inner.client.get() {
-            client.verify_control();
-        }
-        true
-    }
 
-    /// 测试里问:到此为止向服务端核过几次持权。
-    #[cfg(test)]
-    pub(crate) fn verifies(&self) -> u64 {
-        self.inner.verifies.load(Ordering::Relaxed)
+        // 持权记录一起交出去:留着的话,遥控器自己的信令哪天重连一次就拿它去
+        // 续权,把被控端重新锁上 —— 而这头已经是本机输出了(#118)。
+        self.release_claim();
+        self.come_home(describe_lost);
+        true
     }
 
     /// 输出收回本机:镜像清掉、提示一句。
@@ -563,7 +552,7 @@ impl Remote {
         let abandoned = lock(&self.inner.session)
             .moving()
             .map(|moving| moving.operation_id.clone());
-        let silent = lock(&self.inner.session).come_home();
+        lock(&self.inner.session).come_home();
         // 收回本机时若正在迁移,把服务端那一次也作罢:不然被拉进来的那台一直锁着。
         // 已经失权的话服务端会拒掉这一条,无害。
         if let (Some(operation_id), Some(client)) =
@@ -571,12 +560,9 @@ impl Remote {
         {
             client.abort_outputs(&operation_id);
         }
-        // 本机本来就在组里一起出声的,不按停(#142):「退回本机」不等于「停下本机」。
-        if silent {
-            self.inner
-                .rest_pending
-                .store(true, Ordering::Relaxed);
-        }
+        self.inner
+            .rest_pending
+            .store(true, Ordering::Relaxed);
         lock(&self.inner.view).clear();
         lock(&self.inner.cover_id).clear();
         lock(&self.inner.pending_play).take();
@@ -586,6 +572,21 @@ impl Remote {
             },
         );
         self.refresh();
+    }
+
+    /// 让客户端忘掉本机的持权记录。不发信令 —— 被控端仍然该接着放。
+    fn release_claim(&self) {
+        #[cfg(test)]
+        self.inner.releases.fetch_add(1, Ordering::Relaxed);
+        if let Some(client) = self.inner.client.get() {
+            client.release_control();
+        }
+    }
+
+    /// 测试里问:到此为止交出去几次持权。
+    #[cfg(test)]
+    pub(crate) fn releases(&self) -> u64 {
+        self.inner.releases.load(Ordering::Relaxed)
     }
 
     /// 这一拍该不该去取封面 —— 曲目 id 与上次取的那一首不同时才算数。
@@ -704,7 +705,7 @@ impl Remote {
         );
         match outcome {
             Ok(effects) => self.apply(effects),
-            Err(Refused::AlreadyThere) => self.reclaim(),
+            Err(Refused::AlreadyThere) => {}
             Err(Refused::Busy) => {
                 let _ = self
                     .inner
@@ -718,39 +719,6 @@ impl Remote {
                     });
             }
         }
-    }
-
-    /// 点的正是会话认为已经在上面的那台:强制重新认领,不再静默忽略(#142)。
-    ///
-    /// 会话与服务端对不上时(撤权丢了、服务端重启过、被别处顶掉过),用户能做的就是
-    /// 再点一次那台设备 —— 那一下必须真的去服务端要一次权。认领成了照旧遥控,
-    /// 没成走接管失败那条收尾,说清原因、回到本机。
-    fn reclaim(&self) {
-        let members = self.members();
-        let [Output::Remote(device)] = members.as_slice()
-        else {
-            let _ = self.inner.weak.upgrade_in_event_loop(
-                |ui| {
-                    crate::notice::show(
-                        &ui,
-                        "已经在这些设备上播放".to_owned(),
-                    );
-                },
-            );
-            return;
-        };
-        log::info!("重新认领 {}", device.id);
-        #[cfg(test)]
-        lock(&self.inner.group_ops)
-            .push(format!("claim {}", device.id));
-        if let Some(client) = self.inner.client.get() {
-            client.claim(&device.id);
-        }
-        let message =
-            format!("正在重新接管 {}", device.name);
-        let _ = self.inner.weak.upgrade_in_event_loop(
-            move |ui| crate::notice::show(&ui, message),
-        );
     }
 
     /// 本机那一步做完了的回话,交还会话。
@@ -1172,12 +1140,11 @@ pub fn new(ui: &MainWindow, me: &str) -> Remote {
                 std::sync::atomic::AtomicBool::new(false),
             epoch: now_ms() as i64,
             state_seq: AtomicU64::new(1),
-            verified_at: AtomicU64::new(0),
             pending_play: Mutex::new(None),
             #[cfg(test)]
             play_submits: AtomicU64::new(0),
             #[cfg(test)]
-            verifies: AtomicU64::new(0),
+            releases: AtomicU64::new(0),
             #[cfg(test)]
             sent: Mutex::new(Vec::new()),
             #[cfg(test)]
@@ -1263,9 +1230,7 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                 return;
             }
             log::warn!("接管 {target} 失败: {reason}");
-            remote.come_home(|output| {
-                describe_claim_failed(output, reason)
-            });
+            remote.come_home(describe_claim_failed);
         }
         syncplay::Event::ControlledBy { device } => {
             log::info!("本机被 {} 遥控", device.name);
@@ -1278,12 +1243,14 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 遥控关系被别处撤掉),这台就挂着假横幅、锁着本地播放,而横幅上
         // 那台设备早就不管它了(#102 F-004)。
         //
-        // 信令断了**不**撤锁(#142 推翻 #118):服务端替断线的被控端留着租约,
-        // 闪断回来遥控照旧;满了租约的,重连后第一条上报就换回 `NotControlled`。
+        // 信令断了也一样(#118):断着的时候服务端的消息过不来,锁留着的话
+        // 本机在断网期间连歌都点不了。重连之后客户端自己退出被遥控,两端
+        // 对得上账(见 `syncplay::client` 的 `serve`)。
         // 撤锁**不是**离组(#137 ⑤):遥控器满租约时服务端同样撤锁,而那时组不散、主端照常
         // 发计划。离组看组的通告里还有没有本机(被移出时服务端也通告一份),或者本机自己按了
         // 「退出被遥控」。断线也不离组:断着的时候计划过不来,跟随端照已确认的放到有效期末尾。
-        syncplay::Event::NotControlled => {
+        syncplay::Event::NotControlled
+        | syncplay::Event::Disconnected => {
             if lock(&inner.controlled_by).take().is_some() {
                 remote.refresh();
             }

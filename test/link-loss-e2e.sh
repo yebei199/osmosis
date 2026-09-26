@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # #118 的三条验收,走真界面、看真相源:
 #
-#   link-loss   CTL 遥控 TGT;掐断 TGT 的信令 CUT 秒(缺省 5,HTTP 照通)再放开 → TGT 横幅
-#               一直在,重连回来仍被 CTL 遥控,CTL 没有退回本机(#142 推翻了 #118 这一条)。
+#   link-loss   CTL 遥控 TGT;掐断 TGT 的信令(HTTP 照通)→ TGT 横幅撤掉、本机点歌落账;
+#               恢复信令 → CTL 回到「本机」,TGT 不再挂横幅。
 #   claim-fail  掐断 CTL 的信令(它的名册就停在这一刻)→ TGT 下线 → CTL 点 TGT 那颗芯片
 #               → 恢复信令 → 接管失败,CTL 回到「本机」,本机点歌落账。
 #   restarts    两台一起反复重启应用 → 服务端一次限流都没有,每次都重新入册。
@@ -24,11 +24,11 @@
 #                   (adb reverse tcp:3000 指到它)。
 #
 # 用法:
-#   CTL=ns:/path/a TGT=android:12345 SERVER_LOG=/path/server.log [CUT=5] test/link-loss-e2e.sh link-loss
+#   CTL=ns:/path/a TGT=android:12345 SERVER_LOG=/path/server.log test/link-loss-e2e.sh link-loss
 #   CTL=android:12345 TGT=ns:/path/a SERVER_LOG=... RESTART_TGT=<重启 TGT 的命令> test/link-loss-e2e.sh claim-fail
 #   CTL=... TGT=... SERVER_LOG=... RESTART_CTL=<命令> RESTART_TGT=<命令> ROUNDS=5 test/link-loss-e2e.sh restarts
-#   CTL=... TGT=... SERVER_LOG=... [LEASE=60] test/link-loss-e2e.sh vanish
-#   CTL=... TGT=... SERVER_LOG=... [LEASE=60] [CUT=5] test/link-loss-e2e.sh blip
+#   CTL=... TGT=... SERVER_LOG=... [LEASE=30] test/link-loss-e2e.sh vanish
+#   CTL=... TGT=... SERVER_LOG=... [LEASE=30] [CUT=5] test/link-loss-e2e.sh blip
 #
 # LEASE 要与服务端的 `control::LEASE` 一致;SERVER_LOG 那份 server 要带
 # `RUST_LOG=info,server=debug`(入册是 debug 级);ns 实例当 TGT 时要带
@@ -190,32 +190,29 @@ kill_app() {
 
 log_count() { grep -c "$1" "$SERVER_LOG" || true; }
 resumed_since() { [ "$(log_count "遥控器租约内续上")" -gt "$1" ]; }
-member_back_since() { [ "$(log_count "组成员租约内回来了")" -gt "$1" ]; }
 
 joins() { grep -c "设备入册" "$SERVER_LOG" || true; }
 joined_since() { [ "$(joins)" -gt "$1" ]; }
 throttles() { grep -c "限流挡下一条请求" "$SERVER_LOG" || true; }
 
 link_loss() {
-  local cut=${CUT:-5} tgt_name before back
-  tgt_name=$(name_of "$TGT")
-  echo "== link-loss:$CTL 遥控 $TGT($tgt_name),掐 TGT 的信令 $cut 秒再放开"
+  local tgt_name; tgt_name=$(name_of "$TGT")
+  echo "== link-loss:$CTL 遥控 $TGT($tgt_name),掐 TGT 的信令"
   open_profile "$CTL"
   click "$CTL" "$(chip "$CTL" "$tgt_name")"
   until_true 10 "TGT 挂上「正被遥控」" controlled "$TGT"
 
-  before=$(joins); back=$(log_count "组成员租约内回来了")
   gate "$TGT" cut
-  sleep "$cut"
-  controlled "$TGT" || fail "TGT 断线 $cut 秒横幅就撤了:闪断不该结束遥控"
-  echo "  ✓ 断线期间 TGT 横幅还在"
+  until_true 15 "TGT 断线后横幅撤掉" not_controlled "$TGT"
+  play_locally "$TGT"
+
+  local before; before=$(joins)
   gate "$TGT" heal
   until_true 30 "TGT 重新入册" joined_since "$before"
-  until_true 15 "服务端认到 TGT 租约内回来" member_back_since "$back"
-  controlled "$TGT" || fail "TGT 回来之后被解锁了"
   open_profile "$CTL"
-  chip_checked "$CTL" "$tgt_name" || fail "CTL 退回了本机"
-  echo "  ✓ 闪断回来,TGT 仍被 CTL 遥控"
+  until_true 20 "CTL 回到本机输出" chip_checked "$CTL" 本机
+  controlled "$TGT" && fail "TGT 恢复后又挂上了横幅"
+  echo "  ✓ TGT 恢复后没有被锁回去"
 }
 
 claim_fail() {
@@ -256,7 +253,7 @@ restarts() {
 }
 
 vanish() {
-  local lease=${LEASE:-60} tgt_name t0 expired
+  local lease=${LEASE:-30} tgt_name t0 expired
   tgt_name=$(name_of "$TGT")
   echo "== vanish:$CTL 遥控正在放歌的 $TGT($tgt_name),然后杀掉 $CTL"
   play_locally "$TGT"
@@ -282,7 +279,7 @@ vanish() {
 }
 
 blip() {
-  local lease=${LEASE:-60} cut=${CUT:-5} tgt_name j0 r0 e0
+  local lease=${LEASE:-30} cut=${CUT:-5} tgt_name j0 r0 e0
   tgt_name=$(name_of "$TGT")
   echo "== blip:$CTL 遥控 $TGT($tgt_name),掐 CTL 的信令 $cut 秒再放开"
   open_profile "$CTL"
