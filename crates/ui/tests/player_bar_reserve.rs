@@ -87,12 +87,13 @@ fn music_page_reserves_room_for_the_bar() {
         .set_open_playlist_name("".into());
 
     let blank_below = |ui: &MainWindow| -> f32 {
-        let list = testing::ElementHandle::find_by_element_id(
-            ui,
-            "MusicPage::playlist-list",
-        )
-        .next()
-        .expect("歌单列表该在");
+        let list =
+            testing::ElementHandle::find_by_element_id(
+                ui,
+                "MusicPage::playlist-list",
+            )
+            .next()
+            .expect("歌单列表该在");
         let page =
             testing::ElementHandle::find_by_element_type_name(
                 ui, "MusicPage",

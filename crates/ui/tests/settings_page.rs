@@ -180,7 +180,8 @@ fn the_player_bar_does_not_eat_the_bottom_of_settings() {
 
 /// 没有控制条的时候一分不留 —— 凭空的空白在页尾看起来就是渲染坏了。
 #[test]
-fn nothing_is_reserved_when_no_track_is_playing_on_settings() {
+fn nothing_is_reserved_when_no_track_is_playing_on_settings()
+ {
     let ui = settings_page();
     ui.global::<Player>().set_has_track(false);
     let bare = column_height(&ui);
