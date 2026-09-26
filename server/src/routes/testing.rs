@@ -568,7 +568,6 @@ pub(crate) fn state(
         policies:
             server::gate::ratelimit::Policies::tuned(),
         playlists: Default::default(),
-        platform_lists: Default::default(),
         links: Default::default(),
         apk_releases: crate::routes::apk::DEFAULT_RELEASES_BASE
             .to_owned(),

@@ -395,29 +395,21 @@ async fn stored_days_ago(
     key
 }
 
-/// 把一首放进某个账号的红心(自家库里的那份缓存)。
+/// 把一首放进某个账号的「我的喜欢」(#146 起红心归自家库)。
 async fn liked_by(
     tx: &mut sqlx::PgConnection,
     account: &Account,
     id: &str,
 ) {
-    sqlx::query(
-        "INSERT INTO platform_tracks (platform, track_id, title, artists, duration_ms)
-         VALUES ('netease', $1, 't', ARRAY['a'], 1)",
+    server::store::liked::set(
+        tx,
+        account.id,
+        &TrackRef {
+            platform: "netease".to_owned(),
+            track_id: id.to_owned(),
+        },
+        true,
     )
-    .bind(id)
-    .execute(&mut *tx)
-    .await
-    .expect("写详情失败");
-    sqlx::query(
-        "INSERT INTO platform_playlist_tracks
-             (account_id, playlist_id, platform, track_id, position)
-         VALUES ($1, $2, 'netease', $3, 0)",
-    )
-    .bind(account.id)
-    .bind(server::store::cache::LIKED_PLAYLIST_ID)
-    .bind(id)
-    .execute(&mut *tx)
     .await
     .expect("写红心失败");
 }
