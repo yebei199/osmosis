@@ -15,6 +15,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
+use super::diag::{Diag, Why};
 use super::follower::{Decision, Follower, Stats};
 use super::timeline::Target;
 
@@ -231,6 +232,9 @@ pub struct SyncSource<F: Feed> {
     holding: Option<Option<u64>>,
     seen_block: u64,
     starving: bool,
+    /// 这一段欠载已经静音了几帧。
+    starve_frames: u64,
+    diag: Diag,
     ended: bool,
     out: Vec<Sample>,
     out_at: usize,
@@ -260,6 +264,8 @@ impl<F: Feed> SyncSource<F> {
             holding: None,
             seen_block: 0,
             starving: false,
+            starve_frames: 0,
+            diag: Diag::default(),
             ended: false,
             out: vec![0.0; channels],
             out_at: channels,
@@ -283,9 +289,23 @@ impl<F: Feed> SyncSource<F> {
             .block_frames
             .load(Ordering::Relaxed);
         let target = self.shared.target();
+        self.diag.block(match target {
+            Target::Follow { anchor, .. } => {
+                Some(anchor.media_ns - anchor.at_ns)
+            }
+            Target::Free => None,
+        });
+        let why = match target.desired(present) {
+            None => Why::Hold,
+            Some(_) if self.follower.running() => {
+                Why::Drift
+            }
+            Some(_) => Why::Entry,
+        };
         let decision = self.follower.decide(
             &target, present, self.pos, self.rate, frames,
         );
+        self.note(decision, why);
         let jumped = self.apply(decision);
         // 起播之前 seek 过去备着的那一下之后，同一块里还要定出前导帧：起播可能就落在这一块。
         // 已经开始的时间线上跳过之后不重新决定，同一个呈现时刻量出来的误差恒为零，不是真的对齐了。
@@ -294,6 +314,7 @@ impl<F: Feed> SyncSource<F> {
                 &target, present, self.pos, self.rate,
                 frames,
             );
+            self.note(decision, Why::Hold);
             self.apply(decision);
         }
         *lock(&self.shared.pairing) = Some((
@@ -302,6 +323,26 @@ impl<F: Feed> SyncSource<F> {
         ));
         let mut stats = lock(&self.shared.stats);
         stats.follower = self.follower.stats;
+    }
+
+    /// 跳的决定记一行诊断日志(#145),误差按跳之前的读指针算。
+    fn note(&mut self, decision: Decision, why: Why) {
+        let ns =
+            |frames: f64| (frames * 1e9 / self.rate) as i64;
+        match decision {
+            Decision::Skip { frames } => self.diag.jump(
+                true,
+                why,
+                -ns(frames as f64),
+            ),
+            Decision::Seek { to_frames } => self.diag.jump(
+                false,
+                why,
+                ns(self.pos - to_frames),
+            ),
+            Decision::Hold { .. }
+            | Decision::Play { .. } => {}
+        }
     }
 
     /// 照决定办。跳过了(丢帧或 seek)返回真。
@@ -457,7 +498,16 @@ impl<F: Feed> SyncSource<F> {
                 Frame::End | Frame::Ready => {}
             }
         }
-        self.starving = false;
+        if self.starving {
+            self.starving = false;
+            self.diag.starved(
+                (self.starve_frames as f64 * 1e9
+                    / self.rate) as i64,
+                (self.pos * 1e9 / self.rate) as i64,
+                self.muted,
+            );
+            self.starve_frames = 0;
+        }
         let at = (index - self.front) as usize;
         let a = &self.frames[at];
         let b =
@@ -497,6 +547,7 @@ impl<F: Feed> SyncSource<F> {
     }
 
     fn starve(&mut self) {
+        self.starve_frames += 1;
         if !self.starving {
             self.starving = true;
             let mut stats = lock(&self.shared.stats);

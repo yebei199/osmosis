@@ -1,9 +1,12 @@
 //! 同步播放：把媒体位置锁到一条共享时间线上(#137 ⑤)。见 `sync/README.md`。
 
+mod diag;
 mod follower;
 mod source;
 mod timeline;
 
+#[cfg(test)]
+use diag::Throttle;
 pub use follower::{
     ALIGNED_NS, Decision, Follower, JUMP_NS, MAX_CORR,
     SKIP_MAX_NS, Stats,

@@ -6,7 +6,7 @@ mod native;
 pub(crate) use native::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    off_thread, set_state_dir, test_media_url,
+    off_thread, set_state_dir, state_file, test_media_url,
 };
 
 #[cfg(target_arch = "wasm32")]

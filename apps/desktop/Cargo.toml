@@ -66,3 +66,6 @@ default = []
 # 来手动补上游漏接的钩子,而 optional 依赖只能靠本地 feature 门控。两端同名以免记两套。
 # 代价照单收下:**别对本 workspace 跑 --all-features**(just ci 用的是 --all-targets)。
 mcp = ["slint/mcp"]
+
+[dev-dependencies]
+tempfile.workspace = true

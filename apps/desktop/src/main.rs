@@ -7,6 +7,7 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod log_file;
 mod mpris;
 mod single_instance;
 
@@ -16,11 +17,8 @@ fn main() {
     // 两套日志都照常输出:wgpu 的 log:: 记录走 env_logger,bevy 自己的 tracing
     // 事件走 LogPlugin 的 subscriber。别照那条提示去 disable::<LogPlugin>(),
     // 它会把 bevy 的着色器编译与管线创建错误一起弄哑,见 Cargo.toml 里 bevy 那段。
-    env_logger::Builder::from_env(
-        env_logger::Env::default()
-            .default_filter_or("info"),
-    )
-    .init();
+    // 除了 stderr 还写一份进状态目录(#145),见 log_file.rs。
+    log_file::init();
 
     // 启动锁在**一切之前**:两个实例会抢同一块声卡各放各的歌,而 MCP 那个固定
     // 端口只有先起来的抢得到 —— 调试时连上的可能是上次忘了关的那个实例。
@@ -216,7 +214,7 @@ fn main() {
     // 所以要 `_exit`:直接进 `exit_group`,谁的析构都不跑。代价是析构函数不执行 ——
     // 而此刻要还的只有 GPU 与音频设备,内核回收得比我们干净,且全仓没有任何落盘路径
     // (核对过 crates/ 与 apps/,没有 `fs::write` / `File::create`),没有东西要 flush。
-    // 日志也不丢:env_logger 写的是 stderr,不带缓冲。
+    // 日志也不丢:stderr 与日志文件(log_file.rs)都不带缓冲,每条当场就 write 出去了。
     //
     // release 构建其实不受影响(那段递归检测只在 debug 下编进去),但开发全程跑的是
     // debug,core dump 会污染崩溃统计。
