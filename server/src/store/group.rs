@@ -67,7 +67,7 @@ pub async fn lock(
     Ok(from_row(row))
 }
 
-/// 写回。`boundary` 是这一首放完的挂钟时刻(只在播放时有),续播任务按它挑组。
+/// 写回。`boundary` 是兜底推进的挂钟时刻(只在播放时有),续播任务按它挑组。
 pub async fn save(
     tx: &mut Tx<'_>,
     account_id: i64,
@@ -105,7 +105,33 @@ pub async fn save(
     Ok(())
 }
 
-/// 在放、而这一首在挂钟 `at` 之前已经放完的那些组。
+/// 在放的组记一笔「服务端此刻还活着」。重启后 [`stranded`] 按它把组暂停在断开的那一刻。
+pub async fn beat(
+    conn: &mut PgConnection,
+    at: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE play_groups SET alive_wall_us = $1 WHERE playing",
+    )
+    .bind(at)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// 还在放的组,与服务端最近一次确认还活着的那一刻。启动时叫:这时一台设备都还没连上,
+/// 它们全在服务端挂掉那一刻断开了。
+pub async fn stranded(
+    conn: &mut PgConnection,
+) -> Result<Vec<(i64, Option<i64>)>, AppError> {
+    Ok(sqlx::query_as(
+        "SELECT account_id, alive_wall_us FROM play_groups WHERE playing",
+    )
+    .fetch_all(conn)
+    .await?)
+}
+
+/// 在放、而兜底推进的时刻已经过了挂钟 `at` 的那些组。
 pub async fn due(
     conn: &mut PgConnection,
     at: i64,

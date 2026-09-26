@@ -288,6 +288,10 @@ fn group_routes(state: &AppState) -> Router {
             post(routes::group::outputs),
         )
         .route("/group/leave", post(routes::group::leave))
+        .route(
+            "/group/advance",
+            post(routes::group::advance),
+        )
         .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
         .route_layer(guard(
             state.policies.queue_intent.clone(),

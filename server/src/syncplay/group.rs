@@ -32,9 +32,13 @@ use timeline::{Group, Playlist, Refusal};
 /// 独奏时的队列分开 —— 否则某台退出组后独奏发布的新版本,会把组还在放的那一版挤掉。
 pub const GROUP_QUEUE_DEVICE: &str = "group";
 
-/// 放完自动续播多久看一次。每一首的换歌时刻各台设备自己按状态里预告的下一首掐,
-/// 这一拍只负责把服务端的状态推到下一首、再广播,晚几百毫秒不影响出声。
+/// 兜底续播多久看一次。平常是出声设备真正放完时报上来推进([`advance`]),这一拍只接
+/// 没人报的那种(都卡住了、报丢了),晚几百毫秒不要紧。
 const ROLL_EVERY: Duration = Duration::from_millis(500);
+
+/// 在放的组多久记一次「服务端还活着」(见 `store::group::beat`)。服务端挂掉时暂停的
+/// 位置就差在这一拍之内。
+const BEAT_EVERY: u32 = 4;
 
 /// 一条意图。
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +156,45 @@ pub async fn apply(
     Ok(state)
 }
 
+/// 出声设备报它真正放完了第 `entry_id` 条,手上那一版是 `version`(#142 AC-9)。
+///
+/// 最先报的那台推进;同一份报告迟到的(别的出声设备也放完了)按 `(version, entry_id)` 作废,
+/// 不改状态、不加版本、不广播。返回此刻组的样子。
+pub async fn advance(
+    pool: &PgPool,
+    roster: &SharedRoster,
+    account: AccountId,
+    device: &str,
+    entry_id: i64,
+    version: i64,
+) -> Result<Option<GroupStateDto>, AppError> {
+    let mut tx = pool.begin().await?;
+    let mut group = rows::lock(&mut tx, account).await?;
+    let at = wall_now_us();
+    let entries =
+        current_entries(&mut tx, account, &group).await?;
+    let list = playlist(&entries);
+    let before = started(&group);
+    let rolled = group.roll(&list, at);
+    let advanced = group
+        .advance(device, &list, entry_id, version, at)
+        .map_err(refused)?;
+    if !rolled && !advanced {
+        return Ok(dto(&group, &entries));
+    }
+    tracing::info!(
+        account,
+        device = %device,
+        entry_id,
+        "出声设备放完,组推进到下一首"
+    );
+    let state =
+        commit(tx, account, before, group, &entries)
+            .await?;
+    broadcast(roster, account, &state);
+    Ok(state)
+}
+
 /// 设备出册:它若是出声设备、而组里再没有一台出声设备在线,立刻暂停,位置记在这一刻
 /// (掉线规则,用户 2026-09-26)。只当遥控器的设备走了什么都不动。
 pub async fn device_left(
@@ -229,12 +272,25 @@ pub async fn current(
     Ok(dto(&group, &entries))
 }
 
-/// 起一个后台任务:放完的组往下推一首,再广播。与进程同寿。
+/// 起一个后台任务:先把服务端挂掉时还在放的组补暂停,之后兜底续播、记心跳。与进程同寿。
 pub fn spawn_roller(pool: PgPool, roster: SharedRoster) {
     tokio::spawn(async move {
+        if let Err(error) = pause_stranded(&pool).await {
+            tracing::warn!(
+                ?error,
+                "启动时没能暂停上次还在放的组"
+            );
+        }
         let mut tick = tokio::time::interval(ROLL_EVERY);
+        let mut beats = 0u32;
         loop {
             tick.tick().await;
+            beats = (beats + 1) % BEAT_EVERY;
+            if beats == 0
+                && let Err(error) = beat(&pool).await
+            {
+                tracing::warn!(?error, "组的心跳没记上");
+            }
             if let Err(error) =
                 roll_due(&pool, &roster).await
             {
@@ -245,6 +301,55 @@ pub fn spawn_roller(pool: PgPool, roster: SharedRoster) {
             }
         }
     });
+}
+
+async fn beat(pool: &PgPool) -> Result<(), AppError> {
+    let mut conn = pool.acquire().await?;
+    rows::beat(&mut conn, wall_now_us()).await
+}
+
+/// 服务端挂掉时,所有出声设备都在那一刻断开了:照掉线规则 ②,把还在放的组暂停在
+/// 最近一次心跳那一刻(没有心跳的就是此刻)。启动时一台设备都还没连上,不必广播。
+pub async fn pause_stranded(
+    pool: &PgPool,
+) -> Result<(), AppError> {
+    let stranded = {
+        let mut conn = pool.acquire().await?;
+        rows::stranded(&mut conn).await?
+    };
+    let now = wall_now_us();
+    for (account, alive) in stranded {
+        let at = alive.map_or(now, |alive| alive.min(now));
+        pause_stranded_one(pool, account, at).await?;
+    }
+    Ok(())
+}
+
+/// [`pause_stranded`] 的一个组:在放就暂停,位置记在挂钟 `at`。返回有没有改。
+pub async fn pause_stranded_one(
+    pool: &PgPool,
+    account: AccountId,
+    at: i64,
+) -> Result<bool, AppError> {
+    let mut tx = pool.begin().await?;
+    let mut group = rows::lock(&mut tx, account).await?;
+    let entries =
+        current_entries(&mut tx, account, &group).await?;
+    let before = started(&group);
+    if !group.pause_if_silent(
+        &playlist(&entries),
+        |_| false,
+        at,
+    ) {
+        return Ok(false);
+    }
+    tracing::info!(
+        account,
+        at,
+        "上次服务端退出时组还在放:暂停在最后一次心跳那一刻"
+    );
+    commit(tx, account, before, group, &entries).await?;
+    Ok(true)
 }
 
 async fn roll_due(
@@ -308,7 +413,7 @@ async fn commit(
     let boundary = group.now.as_ref().and_then(|now| {
         playlist(entries)
             .duration_of(now.entry_id)
-            .and_then(|duration| now.boundary(duration))
+            .and_then(|duration| now.deadline(duration))
     });
     rows::save(&mut tx, account, &group, boundary).await?;
     tx.commit().await?;

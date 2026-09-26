@@ -277,7 +277,8 @@ async fn a_stranger_cannot_steer_the_group() {
     drop_account(&pool, account).await;
 }
 
-/// 服务端重启:状态从库里读回来,版本号不回退,组照样能控制(AC-4)。
+/// 服务端重启:状态从库里读回来,版本号不回退,组照样能控制(AC-4)。重启期间出声设备
+/// 全断开了,照掉线规则 ② 暂停在服务端最后还活着的那一刻(#142 F-5)。
 #[tokio::test]
 async fn the_group_survives_a_server_restart() {
     let pool = connect().await;
@@ -286,23 +287,36 @@ async fn the_group_survives_a_server_restart() {
         online(account, &["phone", "pc"]);
     let before =
         phone_and_pc(&pool, &roster, account).await;
+    let died = group::wall_now_us();
 
-    // 新进程:名册是空的,库还在。
+    // 新进程:名册是空的,库还在。启动时先把还在放的组补暂停。
     let restarted = connect().await;
+    assert!(
+        group::pause_stranded_one(
+            &restarted, account, died
+        )
+        .await
+        .expect("补暂停该成"),
+        "重启前组在放,该补暂停"
+    );
     let (roster, _inboxes) =
         online(account, &["phone", "pc"]);
     let recovered = group::current(&restarted, account)
         .await
         .expect("读得出来")
         .expect("组该还在");
-    assert_eq!(recovered.version, before.version);
+    assert_eq!(recovered.version, before.version + 1);
     assert_eq!(recovered.members, before.members);
-    assert_eq!(
-        recovered
-            .now
-            .as_ref()
-            .map(|now| now.track.id.clone()),
-        Some("b".to_owned())
+    let now = recovered.now.as_ref().expect("该有歌");
+    assert_eq!(now.track.id, "b");
+    assert!(
+        !now.playing,
+        "服务端挂掉时没有出声设备在线,该暂停"
+    );
+    assert!(
+        now.position_us >= 30_000_000,
+        "位置停在断开那一刻,不回到种子之前: {}",
+        now.position_us
     );
 
     let after = group::apply(
@@ -315,9 +329,66 @@ async fn the_group_survives_a_server_restart() {
     .await
     .expect("重启后照样能控制")
     .expect("组该在");
-    assert!(after.version > before.version, "版本号不回退");
+    assert!(
+        after.version > recovered.version,
+        "版本号不回退"
+    );
     assert_eq!(
         after.now.map(|now| now.track.id),
+        Some("c".to_owned())
+    );
+    drop_account(&pool, account).await;
+}
+
+/// 出声设备真正放完就推进;另一台迟到的同一份报告不再推进(AC-9)。
+#[tokio::test]
+async fn the_first_output_to_finish_advances_the_group() {
+    let pool = connect().await;
+    let account = account(&pool, "advance").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let before =
+        phone_and_pc(&pool, &roster, account).await;
+    let entry =
+        before.now.as_ref().expect("该有歌").entry_id;
+
+    let advanced = group::advance(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        entry,
+        before.version,
+    )
+    .await
+    .expect("报放完该成")
+    .expect("组该在");
+    assert_eq!(advanced.version, before.version + 1);
+    assert_eq!(
+        advanced
+            .now
+            .as_ref()
+            .map(|now| now.track.id.clone()),
+        Some("c".to_owned())
+    );
+
+    let late = group::advance(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        entry,
+        before.version,
+    )
+    .await
+    .expect("迟到的报告不是错")
+    .expect("组该在");
+    assert_eq!(
+        late.version, advanced.version,
+        "迟到的不加版本"
+    );
+    assert_eq!(
+        late.now.map(|now| now.track.id),
         Some("c".to_owned())
     );
     drop_account(&pool, account).await;

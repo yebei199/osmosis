@@ -12,6 +12,13 @@ use contract::LoopModeDto;
 /// 起播、切歌、跳转、继续时,锚点定在「现在」之后多久(与 #137 ⑤ 的 `app_core::LEAD_US` 同值)。
 pub const LEAD_US: i64 = 500_000;
 
+/// 按元数据时长兜底推进前,放完之后再等多久(#142 AC-9)。
+///
+/// 下一首本该由出声设备真正放完时报上来([`Group::advance`]);元数据时长与真实媒体长度
+/// 常差上一两秒,只按它推进会截掉歌尾或留一段空白。所以服务端只在时长到了、又过了这么久
+/// 还没有一台报放完(都卡住了、报丢了)时才自己推进。
+pub const ADVANCE_GRACE_US: i64 = 5_000_000;
+
 /// 「上一首」在这一首放过多久之后改成回到开头。
 pub const RESTART_AFTER_US: u64 = 3_000_000;
 
@@ -104,6 +111,15 @@ impl Now {
                     .saturating_sub(self.position_us)
                     as i64
         })
+    }
+
+    /// 兜底推进的那一刻:按元数据放完,再过 [`ADVANCE_GRACE_US`]。暂停时没有。
+    pub fn deadline(
+        &self,
+        duration_us: u64,
+    ) -> Option<i64> {
+        self.boundary(duration_us)
+            .map(|end| end + ADVANCE_GRACE_US)
     }
 
     /// 从这一刻起,放第 `entry_id` 条的开头。
@@ -419,8 +435,38 @@ impl Group {
         }
     }
 
-    /// 放完的往下推:挂钟 `at` 之前该换的每一首都换过去,换到的那一首锚在它真正开始的
-    /// 那一刻。不循环又放到队尾就停在最后一首的末尾。返回有没有改。
+    /// 出声设备 `device` 报它真正放完了第 `entry_id` 条,手上那一版是 `version`(#142 AC-9)。
+    ///
+    /// 先到的那一台推进,后到的同一份报告因为版本或条目已经变了而作废 —— `(version, entry_id)`
+    /// 就是去重的键。下一首锚在「现在 + [`LEAD_US`]」,各台一起开始。不循环又放到队尾就停在
+    /// 这一首的末尾。返回有没有改。
+    pub fn advance(
+        &mut self,
+        device: &str,
+        list: &Playlist,
+        entry_id: i64,
+        version: i64,
+        at: i64,
+    ) -> Result<bool, Refusal> {
+        if !self.outputs.iter().any(|id| id == device) {
+            return Err(Refusal::NotMember);
+        }
+        let current = self.version;
+        let Some(now) = self.now.as_mut() else {
+            return Ok(false);
+        };
+        if version != current
+            || now.entry_id != entry_id
+            || !now.playing
+        {
+            return Ok(false);
+        }
+        step_on(now, list, at + LEAD_US);
+        Ok(true)
+    }
+
+    /// 兜底:元数据时长到了、又过了 [`ADVANCE_GRACE_US`] 还没有一台报放完,服务端自己推进,
+    /// 下一首锚在「现在 + [`LEAD_US`]」。返回有没有改。
     pub fn roll(
         &mut self,
         list: &Playlist,
@@ -429,29 +475,28 @@ impl Group {
         let Some(now) = self.now.as_mut() else {
             return false;
         };
-        let mut rolled = false;
-        // 一首时长为 0 的歌会让这个循环原地打转,次数上限兜住它。
-        for _ in 0..list.entries.len().max(1) {
-            let duration =
-                list.duration_of(now.entry_id).unwrap_or(0);
-            let Some(end) = now.boundary(duration) else {
-                break;
-            };
-            if at < end {
-                break;
+        let duration =
+            list.duration_of(now.entry_id).unwrap_or(0);
+        match now.deadline(duration) {
+            Some(deadline) if at >= deadline => {
+                step_on(now, list, at + LEAD_US);
+                true
             }
-            rolled = true;
-            match now.follower(list) {
-                Some(entry_id) => now.start(entry_id, end),
-                None => {
-                    now.playing = false;
-                    now.position_us = duration;
-                    now.anchor_wall_us = end;
-                    break;
-                }
-            }
+            _ => false,
         }
-        rolled
+    }
+}
+
+/// 这一首放完了:换到接下来那一条,从 `start` 那一刻开始;没有接下来的就停在这一首的末尾。
+fn step_on(now: &mut Now, list: &Playlist, start: i64) {
+    match now.follower(list) {
+        Some(entry_id) => now.start(entry_id, start),
+        None => {
+            now.playing = false;
+            now.position_us =
+                list.duration_of(now.entry_id).unwrap_or(0);
+            now.anchor_wall_us = start;
+        }
     }
 }
 

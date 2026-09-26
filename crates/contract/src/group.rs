@@ -175,6 +175,17 @@ pub struct GroupLeaveDto {
     pub device_id: String,
 }
 
+/// `POST /group/advance`:出声设备真正放完了第 `entry_id` 条,它手上那一版是 `version`
+/// (#142 AC-9)。最先到的推进,迟到的同一份按 `(version, entry_id)` 作废。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct GroupAdvanceDto {
+    pub device_id: String,
+    pub entry_id: i64,
+    pub version: u64,
+}
+
 /// `/group/*` 的应答:意图应用之后组的样子。组散了是 `None`。
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize,

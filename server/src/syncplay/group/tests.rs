@@ -127,36 +127,91 @@ fn looping_all_wraps_around() {
     assert_eq!(now(&group).entry_id, 1);
 }
 
-/// 放完自动往下推,下一首锚在上一首真正结束的那一刻。
+/// 最先真正放完的出声设备报上来就推进,下一首稍后一起开始;同一份报告第二次到(另一台
+/// 也放完了、或者重发)因为版本已经变了而作废(AC-9)。
 #[test]
-fn a_finished_track_rolls_to_the_next_at_its_end() {
+fn the_first_output_to_finish_advances_once() {
+    let mut group = group();
+    let version = group.version;
+    let end = LEAD_US + 100 * SEC;
+
+    assert_eq!(
+        group.advance("pc", &list(), 1, version, end),
+        Ok(true)
+    );
+    assert_eq!(now(&group).entry_id, 2);
+    assert_eq!(now(&group).anchor_wall_us, end + LEAD_US);
+
+    group.version += 1;
+    assert_eq!(
+        group.advance("pc", &list(), 1, version, end + 1),
+        Ok(false),
+        "迟到的同一份报告不再推进"
+    );
+    assert_eq!(now(&group).entry_id, 2);
+}
+
+/// 报的不是此刻那一条(别处已经切了歌),什么都不动;只当遥控器的不算数。
+#[test]
+fn a_stale_or_silent_report_does_not_advance() {
+    let mut group = group();
+    let version = group.version;
+
+    assert_eq!(
+        group.advance("pc", &list(), 2, version, SEC),
+        Ok(false)
+    );
+    assert_eq!(
+        group.advance("phone", &list(), 1, version, SEC),
+        Err(Refusal::NotMember)
+    );
+    assert_eq!(now(&group).entry_id, 1);
+}
+
+/// 兜底:元数据时长到了不推(不截歌尾),再过宽限还没人报放完才推。
+#[test]
+fn the_server_only_rolls_after_the_grace() {
     let mut group = group();
     let end = LEAD_US + 100 * SEC;
 
-    assert!(!group.roll(&list(), end - 1));
-    assert!(group.roll(&list(), end + 5 * SEC));
+    assert!(!group.roll(&list(), end));
+    assert!(
+        !group.roll(&list(), end + ADVANCE_GRACE_US - 1)
+    );
+    assert!(group.roll(&list(), end + ADVANCE_GRACE_US));
 
     assert_eq!(now(&group).entry_id, 2);
-    assert_eq!(now(&group).anchor_wall_us, end);
     assert_eq!(
-        now(&group).position_at(end + 5 * SEC, TRACK),
-        5 * SEC as u64
+        now(&group).anchor_wall_us,
+        end + ADVANCE_GRACE_US + LEAD_US
     );
 }
 
 /// 不循环放到队尾就停在最后一首的末尾;停在队尾后继续从这一首开头放;单曲循环一直放同一首。
 #[test]
-fn rolling_stops_at_the_tail_or_repeats_one() {
+fn advancing_stops_at_the_tail_or_repeats_one() {
     let mut group = group();
     group.jump("pc", (7, 1), &list(), 3, 0, 1).unwrap();
-    group.roll(&list(), LEAD_US + 150 * SEC);
+    let version = group.version;
+    group
+        .advance(
+            "pc",
+            &list(),
+            3,
+            version,
+            LEAD_US + 100 * SEC,
+        )
+        .unwrap();
     assert!(!now(&group).playing);
     assert_eq!(now(&group).position_us, TRACK);
     group.resume("pc", &list(), 200 * SEC).unwrap();
     assert_eq!(now(&group).position_us, 0);
 
     let mut group = group_with_loop(LoopModeDto::One);
-    group.roll(&list(), LEAD_US + 250 * SEC);
+    group.roll(
+        &list(),
+        LEAD_US + 100 * SEC + ADVANCE_GRACE_US,
+    );
     assert_eq!(now(&group).entry_id, 1);
     assert!(now(&group).playing);
 }

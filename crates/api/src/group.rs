@@ -4,9 +4,10 @@
 //! 状态的广播走信令(`syncplay` 的 `Event::GroupState`),这里只管发意图。
 
 use contract::{
-    GroupLeaveDto, GroupOutputsDto, GroupPickDto,
-    GroupPlayDto, GroupReplyDto, GroupSeedDto,
-    GroupStateDto, GroupTransportDto, TransportOpDto,
+    GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
+    GroupPickDto, GroupPlayDto, GroupReplyDto,
+    GroupSeedDto, GroupStateDto, GroupTransportDto,
+    TransportOpDto,
 };
 
 use crate::url::group_url;
@@ -75,6 +76,23 @@ pub async fn group_leave(
         "/leave",
         GroupLeaveDto {
             device_id: device_id.to_owned(),
+        },
+    )
+    .await
+}
+
+/// `POST /group/advance` —— 本机真正放完了第 `entry_id` 条,手上那一版是 `version`。
+pub async fn group_advance(
+    device_id: &str,
+    entry_id: i64,
+    version: u64,
+) -> Result<Option<GroupStateDto>, ApiError> {
+    post(
+        "/advance",
+        GroupAdvanceDto {
+            device_id: device_id.to_owned(),
+            entry_id,
+            version,
         },
     )
     .await

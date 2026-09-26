@@ -7,8 +7,8 @@
 use axum::Json;
 use axum::extract::State;
 use contract::{
-    GroupLeaveDto, GroupOutputsDto, GroupPlayDto,
-    GroupReplyDto, GroupTransportDto,
+    GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
+    GroupPlayDto, GroupReplyDto, GroupTransportDto,
 };
 use server::error::{self, Failure};
 use server::store::account::Account;
@@ -83,6 +83,25 @@ pub(crate) async fn leave(
 ) -> Result<Json<GroupReplyDto>, Failure> {
     apply(&state, &account, &body.device_id, Intent::Leave)
         .await
+}
+
+/// `POST /group/advance` —— 出声设备真正放完了这一首(#142 AC-9)。
+pub(crate) async fn advance(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<GroupAdvanceDto>,
+) -> Result<Json<GroupReplyDto>, Failure> {
+    let state = group::advance(
+        &state.pool,
+        &state.roster,
+        account.id,
+        &body.device_id,
+        body.entry_id,
+        body.version as i64,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+    Ok(Json(GroupReplyDto { state }))
 }
 
 async fn apply(
