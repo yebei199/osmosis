@@ -102,6 +102,14 @@ impl SignalSender {
         .await
     }
 
+    /// 出声设备的执行事实(#142),服务端转给组里其他设备。
+    pub async fn report_device(
+        &self,
+        report: contract::DeviceReportDto,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::Report { report }).await
+    }
+
     /// 向被控端要一次完整状态。
     pub async fn snapshot(
         &self,
@@ -371,12 +379,18 @@ impl Signalling {
                 // 超时 = 判死。跳出去就把收件箱的发送端丢掉,`next` 于是
                 // 返回 `None`,编排循环按「连接断了」处理并重连 ——
                 // 与真的收到 FIN 走的是同一条路。
-                let Ok(incoming) = tokio::time::timeout(
-                    idle_limit,
-                    ws_rx.next(),
-                )
-                .await
-                else {
+                //
+                // 收件箱那头没人了(`Client` 被丢掉、编排循环收工)也要走:不走的话读半边
+                // 一直攥着 socket,要等下一条来信或空闲超时才发现,服务端在这段时间里
+                // 一直以为这台设备还在线(#142)。
+                let incoming = tokio::select! {
+                    incoming = tokio::time::timeout(
+                        idle_limit,
+                        ws_rx.next(),
+                    ) => incoming,
+                    () = inbox_tx.closed() => break,
+                };
+                let Ok(incoming) = incoming else {
                     break;
                 };
                 let Some(Ok(message)) = incoming else {

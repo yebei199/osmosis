@@ -98,6 +98,15 @@ pub enum Event {
         master: Option<String>,
         members: Vec<String>,
     },
+    /// 信令连上了(每次重连都有一条)。组状态随后就到。
+    Connected,
+    /// 组的全局播放状态(#142)。组散了是 `None`。
+    GroupState(Option<Box<contract::GroupStateDto>>),
+    /// 组里某台出声设备的执行事实。
+    DeviceReport {
+        from: String,
+        report: contract::DeviceReportDto,
+    },
     /// 主端发来的共同计划。
     GroupPlan {
         from: String,
@@ -119,6 +128,8 @@ enum Command {
     Send(RemoteCommand),
     /// 把本机的状态报给正在遥控本机的那台设备。
     Report(Box<RemoteStateDto>),
+    /// 出声设备的执行事实(#142)。
+    ReportDevice(contract::DeviceReportDto),
     /// 向当前持权的那台设备要一次快照。
     Snapshot,
     /// 把一条命令发给指定的设备。迁移时要同时叫得动源与目标,不能只认持权那一台。
@@ -255,6 +266,16 @@ impl Client {
     /// 输出设备选回本机:忘掉持权记录,不知会任何人。
     pub fn release_control(&self) {
         let _ = self.commands.send(Command::ReleaseControl);
+    }
+
+    /// 出声设备报本机的执行事实(#142)。断着的时候丢掉:下一秒还有一条。
+    pub fn report_device(
+        &self,
+        report: contract::DeviceReportDto,
+    ) {
+        let _ = self
+            .commands
+            .send(Command::ReportDevice(report));
     }
 
     /// 被控端按了「退出被遥控」。
@@ -572,6 +593,7 @@ async fn run(
         // 连上、断开各一行 info:「那台设备到底在不在线」是查遥控问题的
         // 第一问,从前客户端日志里一个字都没有(#113)。
         log::info!("信令已连上");
+        events(Event::Connected);
 
         if !serve(
             signalling,
@@ -902,6 +924,14 @@ fn accept(
             events(Event::GroupPlan { from, term, plan });
             Ok(())
         }
+        ServerSignal::GroupState { state } => {
+            events(Event::GroupState(state));
+            Ok(())
+        }
+        ServerSignal::DeviceReport { from, report } => {
+            events(Event::DeviceReport { from, report });
+            Ok(())
+        }
     }
 }
 
@@ -992,6 +1022,9 @@ async fn dispatch(
         },
         Command::Report(state) => {
             sender.report(*state).await
+        }
+        Command::ReportDevice(report) => {
+            sender.report_device(report).await
         }
         Command::Snapshot => match held.as_ref() {
             Some(current) => {
