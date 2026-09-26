@@ -413,3 +413,39 @@ fn there_is_nothing_to_join_without_a_group() {
 
     assert!(deck.group.intents().is_empty());
 }
+
+/// 组已存在时独奏的本机按「+」:在组的出声设备上追加,不拿本机播放拼一份新的去覆盖
+/// (#149)。已经在出声的那台再按也不会被移出 —— 独奏时芯片上它不亮,那颗键写的是「加入」。
+#[test]
+fn the_plus_key_while_solo_adds_to_the_existing_group() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_toggle_member("c".into());
+    ui.global::<Shell>().invoke_toggle_member("a".into());
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![
+            r#"outputs ["a", "b", "c"]"#,
+            r#"outputs ["a", "b"]"#
+        ]
+    );
+}
+
+/// 组已存在时独奏的本机选一台设备:同样是追加,原有的出声设备不被挤掉(#149)。
+#[test]
+fn picking_a_device_while_solo_keeps_the_existing_outputs()
+{
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_set_output("c".into());
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["a", "b", "c"]"#]
+    );
+}
