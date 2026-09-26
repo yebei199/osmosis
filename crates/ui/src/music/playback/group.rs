@@ -57,6 +57,18 @@ pub(in crate::music) struct Alignment {
 }
 
 impl Alignment {
+    /// 本机此刻被记成丢了音频焦点。
+    #[cfg(test)]
+    pub(in crate::music) fn focus_lost(&self) -> bool {
+        self.inner.borrow().focus_lost
+    }
+
+    /// 下一次照状态放时要把这一首重新起一遍(断线重连、焦点回来)。
+    #[cfg(test)]
+    pub(in crate::music) fn restarts_next(&self) -> bool {
+        self.inner.borrow().stale
+    }
+
     /// 报给组里其他设备的故障(取不到状态要的那一首、跳不到位置)。
     pub(in crate::music) fn fault(&self) -> Option<String> {
         self.inner.borrow().fault.clone()
@@ -386,8 +398,16 @@ pub(in crate::music) fn focus_changed(
     held: bool,
 ) {
     if deck.group.is_member() {
-        deck.alignment.inner.borrow_mut().focus_lost =
-            !held;
+        {
+            let mut state =
+                deck.alignment.inner.borrow_mut();
+            state.focus_lost = !held;
+            // 丢了焦点这一刻就记下「回来要重起」,不等对准那一拍:永久丢失时安卓那边
+            // 已经放掉了输出,拿回焦点只可能是重新申请当场批准(#142 N-4),原地追不回来。
+            if !held {
+                state.stale = true;
+            }
+        }
         align(ui, deck);
         return;
     }

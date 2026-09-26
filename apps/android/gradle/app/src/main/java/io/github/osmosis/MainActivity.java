@@ -26,6 +26,12 @@ public class MainActivity extends NativeActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        MediaControls.onForeground(this);
+    }
+
+    @Override
     protected void onDestroy() {
         MediaControls.detachActivity(this);
         super.onDestroy();

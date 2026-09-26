@@ -352,3 +352,28 @@ fn losing_audio_focus_in_the_group_sends_nothing() {
 
     assert!(deck.group.intents().is_empty());
 }
+
+/// 焦点回来(系统的 GAIN 回调,或者永久丢失之后重新申请当场批准)在组里清掉「丢了焦点」,
+/// 并记下这一首要按状态此刻的位置重新起,不发意图(#142 N-4)。
+#[test]
+fn regaining_focus_in_the_group_restarts_at_the_group_position()
+ {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["me"], true)));
+
+    ui.global::<Player>().invoke_focus_changed(false);
+    assert!(deck.alignment.focus_lost());
+    assert!(deck.alignment.restarts_next());
+
+    ui.global::<Player>().invoke_focus_changed(true);
+    assert!(
+        !deck.alignment.focus_lost(),
+        "焦点回来了就不再停着"
+    );
+    assert!(
+        deck.alignment.restarts_next(),
+        "照状态此刻的位置重新起,不在停下的流上接着追"
+    );
+    assert!(deck.group.intents().is_empty());
+}

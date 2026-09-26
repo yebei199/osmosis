@@ -136,6 +136,18 @@ public final class MediaControls {
         }
     }
 
+    /**
+     * 应用回到前台。本机正在出声却丢过焦点的话,让服务再申请一次(#142 N-4)。不在出声就不
+     * 惊动服务 —— 没在放时它可能根本没起。
+     */
+    static void onForeground(Activity host) {
+        if (current.status != STATUS_PLAYING) {
+            return;
+        }
+        host.startService(new Intent(host, MediaControlsService.class)
+                .setAction(MediaControlsService.ACTION_REFOCUS));
+    }
+
     static Snapshot current() {
         return current;
     }

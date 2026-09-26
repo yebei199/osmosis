@@ -33,6 +33,8 @@ import android.os.IBinder;
 public final class MediaControlsService extends Service {
 
     static final String ACTION_PUBLISH = "io.github.osmosis.PUBLISH";
+    /** 应用回到前台:丢过焦点的话再申请一次(#142 N-4)。见 MediaControls.onForeground。 */
+    static final String ACTION_REFOCUS = "io.github.osmosis.REFOCUS";
     /** 通知上的按钮按下来时走这个 action,具体哪个键在 EXTRA_COMMAND 里。 */
     static final String ACTION_COMMAND = "io.github.osmosis.COMMAND";
 
@@ -49,6 +51,14 @@ public final class MediaControlsService extends Service {
     private BroadcastReceiver becomingNoisy;
     /** 已经拿到焦点了吗。丢了焦点要暂停,拿回来要继续,得知道自己在哪一边。 */
     private boolean holdsFocus;
+    /**
+     * 丢过焦点、还没拿回来。拿回来有两条路,两条都要告诉 Rust:系统的 GAIN 回调(短暂丢失
+     * 之后),与我们重新申请时当场批准 —— 后者系统<b>不</b>再发 GAIN,永久丢失之后只有这一条
+     * (#142 N-4:MIUI 音乐抢走焦点、它退出之后,不告诉 Rust 的话组里这台就一直不出声)。
+     */
+    private boolean focusLost;
+    /** 上一次推来的状态是不是「出声」。按了播放 = 从 false 变 true。 */
+    private boolean wasPlaying;
 
     @Override
     public void onCreate() {
@@ -69,6 +79,7 @@ public final class MediaControlsService extends Service {
         session.setCallback(new MediaSession.Callback() {
             @Override
             public void onPlay() {
+                refocus();
                 MediaControls.dispatch(MediaControls.COMMAND_PLAY, 0);
             }
 
@@ -124,6 +135,11 @@ public final class MediaControlsService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) {
+            return START_NOT_STICKY;
+        }
+
+        if (ACTION_REFOCUS.equals(intent.getAction())) {
+            refocus();
             return START_NOT_STICKY;
         }
 
@@ -187,29 +203,76 @@ public final class MediaControlsService extends Service {
         return START_NOT_STICKY;
     }
 
-    /** 拿焦点 / 还焦点。别的 app 开始放歌时我们要让路,来电同理。 */
+    /**
+     * 拿焦点 / 还焦点。别的 app 开始放歌时我们要让路,来电同理。
+     *
+     * <p>丢过焦点之后,状态推送<b>不</b>去重新申请:组里这台丢了焦点时组照放,状态一直是
+     * 「出声」,每推一次(换歌、拖动)就申请一次的话,等于从正在放歌的那个 app 手里把焦点
+     * 抢回来。重新申请只在两种时候做:状态从「停着」变成「出声」(有人按了播放,独奏与组里
+     * 都是),以及用户回来的时候(见 {@link #refocus})。
+     */
     private void updateFocus(boolean playing) {
-        if (playing && !holdsFocus) {
-            focusRequest = new AudioFocusRequest.Builder(
-                    AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build())
-                    .setOnAudioFocusChangeListener(this::onFocusChange)
-                    .build();
-            holdsFocus = audioManager.requestAudioFocus(focusRequest)
-                    == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        boolean started = playing && !wasPlaying;
+        wasPlaying = playing;
+        if (playing && !holdsFocus && (!focusLost || started)) {
+            requestFocus();
         } else if (!playing && holdsFocus && focusRequest != null) {
             audioManager.abandonAudioFocusRequest(focusRequest);
             holdsFocus = false;
         }
     }
 
+    private void requestFocus() {
+        focusRequest = new AudioFocusRequest.Builder(
+                AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                .setOnAudioFocusChangeListener(this::onFocusChange)
+                .build();
+        holdsFocus = audioManager.requestAudioFocus(focusRequest)
+                == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        if (holdsFocus && focusLost) {
+            // 当场批准不会再有 GAIN 回调:这就是「焦点回来了」。
+            focusLost = false;
+            MediaControls.dispatch(MediaControls.COMMAND_FOCUS_GAINED, 0);
+        }
+    }
+
+    /**
+     * 丢过焦点就重新申请一次:应用回到前台(ACTION_REFOCUS),或者锁屏 / 通知 / 耳机按了
+     * 播放。只在状态是「本机在出声」时才申请 —— 独奏时丢了焦点 Rust 那边已经暂停,状态不是
+     * 出声,这里什么都不做,行为与从前一样。
+     */
+    private void refocus() {
+        if (!focusLost) {
+            return;
+        }
+        MediaControls.Snapshot now = MediaControls.current();
+        if (now.status != MediaControls.STATUS_PLAYING) {
+            return;
+        }
+        if (holdsFocus && focusRequest != null) {
+            // 短暂丢失时请求还挂着;先撤掉,重新申请才会当场给出结果。
+            audioManager.abandonAudioFocusRequest(focusRequest);
+        }
+        holdsFocus = false;
+        requestFocus();
+    }
+
     private void onFocusChange(int change) {
         switch (change) {
             case AudioManager.AUDIOFOCUS_LOSS:
+                // 永久丢失:这一份请求已经作废,系统不会再为它发 GAIN。记成没拿着,
+                // 下一次要出声时(或回到前台时)重新申请。
+                if (focusRequest != null) {
+                    audioManager.abandonAudioFocusRequest(focusRequest);
+                }
+                holdsFocus = false;
+                // fall through
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                focusLost = true;
                 // 短暂丢焦点(来电、导航播报)也停下而不是压低音量:
                 // 压低音量要有音量控制,而那条线还没接(见 #38 的「本次不做」)。
                 // 发的是「焦点」而不是「暂停」键:独奏时 Rust 侧照旧当暂停,在组里
@@ -217,6 +280,7 @@ public final class MediaControlsService extends Service {
                 MediaControls.dispatch(MediaControls.COMMAND_FOCUS_LOST, 0);
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
+                focusLost = false;
                 MediaControls.dispatch(MediaControls.COMMAND_FOCUS_GAINED, 0);
                 break;
             default:
