@@ -88,12 +88,14 @@ export global Shell {
     in-out property <bool> empty-daily-hover: false;
     in-out property <float> empty-daily-px: 0.72;
     in-out property <float> empty-daily-py: 0.5;
-    // #66 卡墙(adr/0025):每日推荐分区的主视图。wall-supported 由 Rust 在
-    // GPU 构建里置真;view-wall 是用户意图,wall-showing 是显示态 ——
-    // 切列表要等塌回动画落地才熄,由 wall_drive.rs 写。
+    // #66 卡墙(adr/0025):每日推荐分区的一种视图,列表是另一种。
+    // wall-supported 由 Rust 在 GPU 构建里置真;view-wall 是用户意图,
+    // wall-showing 是显示态 —— 切列表要等塌回动画落地才熄,由
+    // wall_drive.rs 写。默认列表(#144,用户 2026-09-26 定;不持久化),
+    // 手动切到卡墙、再切回都正常。
     in-out property <bool> wall-supported: false;
-    in-out property <bool> view-wall: true;
-    in-out property <bool> wall-showing: true;
+    in-out property <bool> view-wall: false;
+    in-out property <bool> wall-showing: false;
     in property <image> wall-bg;
     // 墙可见的总判据。列表与开关都照它排布。
     out property <bool> wall-visible: wall-supported
