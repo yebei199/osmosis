@@ -358,7 +358,7 @@ async fn the_first_output_to_finish_advances_the_group() {
         account,
         "pc",
         entry,
-        before.version,
+        before.version as i64,
     )
     .await
     .expect("报放完该成")
@@ -378,7 +378,7 @@ async fn the_first_output_to_finish_advances_the_group() {
         account,
         "pc",
         entry,
-        before.version,
+        before.version as i64,
     )
     .await
     .expect("迟到的报告不是错")
