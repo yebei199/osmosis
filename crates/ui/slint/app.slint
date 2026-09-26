@@ -57,7 +57,7 @@ import { LyricsPage } from "lyrics.slint";
 import { MusicPage } from "musicpage.slint";
 import { PlayPage } from "playpage.slint";
 
-global Nav {
+export global Nav {
     out property <[NavEntry]> items: [
         {
             label: "Home",
@@ -470,6 +470,8 @@ export component MainWindow inherits Window {
                 if Shell.current-tab == 3: SettingsPage {
                     width: 100%;
                     height: 100%;
+                    // 与下面摆控制条那一行是同一个条件,理由同个人页。
+                    bar-visible: Player.has-track && !Shell.play-page-open;
                     about-line: Profile.about-line;
                     tier-line: Profile.tier-line;
                     update-status: Profile.update-status;
