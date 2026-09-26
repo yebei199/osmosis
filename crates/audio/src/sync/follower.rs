@@ -63,6 +63,11 @@ pub struct Follower {
 }
 
 impl Follower {
+    /// 是不是已经在跟一条开始了的时间线(不是刚进来)。
+    pub fn running(&self) -> bool {
+        self.running
+    }
+
     /// 这一块怎么放。
     ///
     /// - `present_ns`:这一块第一帧真正出声的本机时刻;

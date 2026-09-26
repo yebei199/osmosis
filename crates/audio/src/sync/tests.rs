@@ -614,3 +614,28 @@ fn closing_the_output_forgets_the_last_pairing() {
     assert_eq!(shared.pairing(), None);
     assert!(!shared.report().sounding, "流关着就不在出声");
 }
+
+// ── 诊断日志限频 ──
+
+/// 同一类事件一秒最多写一行，那一行带上累计次数与其间省掉的条数。
+#[test]
+fn diagnostics_write_at_most_one_line_per_second_per_kind()
+{
+    use std::time::Instant;
+    let t0 = Instant::now();
+    let at = |ms: u64| t0 + Duration::from_millis(ms);
+    let mut throttle = Throttle::default();
+    assert_eq!(
+        throttle.hit(at(0)),
+        Some((1, 0)),
+        "第一次照写"
+    );
+    assert_eq!(throttle.hit(at(500)), None);
+    assert_eq!(throttle.hit(at(999)), None);
+    assert_eq!(
+        throttle.hit(at(1_000)),
+        Some((4, 2)),
+        "满一秒再写，带上累计 4 次、其间省掉 2 条"
+    );
+    assert_eq!(throttle.hit(at(1_100)), None);
+}
