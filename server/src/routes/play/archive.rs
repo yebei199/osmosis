@@ -1,7 +1,8 @@
 //! 听过的歌存进对象存储(#126)。
 //!
 //! 曲目按**上游原始格式**存进桶(不转码),档位是 [`CACHE_TIER`]。取源与拉流与
-//! `/download` 是同一条路。谁该存由预取队列定(#147,见 `prefetch`):我们的歌单、
+//! `/download` 是同一条路。字节边从上游下、边往桶里传,不整首读进内存:无损单曲
+//! 几十到上百 MB,整首缓冲在 512Mi 的 pod 里撑爆过(#147)。谁该存由预取队列定(#147,见 `prefetch`):我们的歌单、
 //! 当天日推,以及 `/played` 报上来的还没存过的那首。
 //!
 //! 全程只记日志、不回报:存歌是顺手的事,它失败了用户照样在听。
@@ -22,10 +23,11 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::State;
 use contract::PlaySourceDto;
+use futures_util::{StreamExt, TryStreamExt};
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool};
 
-use server::objects::Objects;
+use server::objects::{ObjectBody, Objects, whole};
 use server::quality::{
     Quality, Tier, flac_stream_info, guess_tier, netease,
 };
@@ -221,19 +223,24 @@ async fn store(
         return Ok(Stored::NoLossless);
     }
     let content_type = content_type(&quality.format)?;
-    let bytes = download::fetch(&source.url)
+    let upstream = download::fetch(&source.url)
         .await
-        .map_err(describe)?
-        .bytes()
-        .await
-        .map_err(|err| err.to_string())?
-        .to_vec();
-    if let Some((bits, rate)) = flac_stream_info(&bytes) {
+        .map_err(describe)?;
+    // 单个 PUT 要事先知道长度;不给长度的上游这次不存,队列会再排它
+    let length =
+        upstream.content_length().ok_or_else(|| {
+            "上游没给 Content-Length,流式存不了".to_owned()
+        })?;
+    let mut body: ObjectBody = upstream
+        .bytes_stream()
+        .map_err(std::io::Error::other)
+        .boxed();
+    let head = read_head(&mut body).await?;
+    if let Some((bits, rate)) = flac_stream_info(&head) {
         quality.bits_per_sample = Some(bits);
         quality.sample_rate = Some(rate);
     }
-    let size =
-        i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    let size = i64::try_from(length).unwrap_or(i64::MAX);
     if !make_space(state, archive, track, size).await? {
         return Ok(Stored::OverCap);
     }
@@ -255,7 +262,13 @@ async fn store(
     };
     archive
         .objects
-        .put(&stored.object_key, bytes, content_type)
+        .put(
+            &stored.object_key,
+            // 读头时取走的那几块接回流的开头
+            whole(head).chain(body).boxed(),
+            length,
+            content_type,
+        )
         .await?;
 
     let mut conn = state
@@ -275,6 +288,25 @@ async fn store(
         "已存进对象存储"
     );
     Ok(Stored::Now)
+}
+
+/// FLAC 的 `fLaC`、块头与 STREAMINFO 一共这么长,位深与采样率都在里面。
+const FLAC_HEAD: usize = 42;
+
+/// 从流的开头攒出至少 [`FLAC_HEAD`] 字节(流更短就是全部)。只多读到凑够的那一块。
+async fn read_head(
+    body: &mut ObjectBody,
+) -> Result<Vec<u8>, String> {
+    let mut head = Vec::new();
+    while head.len() < FLAC_HEAD {
+        let Some(chunk) = body.next().await else {
+            break;
+        };
+        head.extend_from_slice(
+            &chunk.map_err(|err| err.to_string())?,
+        );
+    }
+    Ok(head)
 }
 
 /// 放不放得下这 `size` 字节:放得下直接放;放不下就请名次在它后面的让位

@@ -22,6 +22,7 @@ use crate::routes::testing::{
 use super::{Archive, Stored, quality, store_track};
 
 mod retention;
+mod streaming;
 
 /// 在随机端口上摆一段字节,并数它被取了几次。
 async fn serve_counted(
@@ -351,7 +352,8 @@ impl server::objects::Objects for Unreachable {
     fn put(
         &self,
         _key: &str,
-        _bytes: Vec<u8>,
+        _body: server::objects::ObjectBody,
+        _length: u64,
         _content_type: &'static str,
     ) -> futures_util::future::BoxFuture<
         '_,

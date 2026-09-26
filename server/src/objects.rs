@@ -1,6 +1,6 @@
 //! 对象存储:听过的歌存在这里,再播时从这里交付(#126)。
 //!
-//! 只有四个动作 —— 存、问在不在、删、签一条给客户端的只读链接。上面的归档逻辑
+//! 只有四个动作 —— 存(流式,见 [`Objects::put`])、问在不在、删、签一条给客户端的只读链接。上面的归档逻辑
 //! 只认 [`Objects`] 这个 trait,路由测试拿内存实现替掉 S3,不必起容器。
 //!
 //! S3 那一侧用 `rusty-s3`:它只**签名**、不带 HTTP,字节照旧走依赖树里已有的那份
@@ -11,22 +11,36 @@
 
 use std::time::Duration;
 
+use bytes::Bytes;
 use futures_util::future::BoxFuture;
+use futures_util::stream::BoxStream;
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
 /// 失败只需要一句能进日志的话:调用方拿它什么也做不了,只能退回网易云。
 pub type ObjectResult<T> = Result<T, String>;
+
+/// 要存的字节:一条流,边到边传,内存里只有正在路上的那几块(#147 的 OOM)。
+pub type ObjectBody =
+    BoxStream<'static, std::io::Result<Bytes>>;
+
+/// 一段已经在内存里的字节当成 [`ObjectBody`]。只给测试和小对象用。
+pub fn whole(bytes: impl Into<Bytes>) -> ObjectBody {
+    use futures_util::StreamExt;
+    futures_util::stream::iter([Ok(bytes.into())]).boxed()
+}
 
 /// 归档用得到的全部动作。
 ///
 /// 返回装箱的 future 而不是 `async fn`:后者做不成 `dyn`,而 `AppState` 要在
 /// S3 与测试替身之间换着装。
 pub trait Objects: Send + Sync {
-    /// 整个对象一次写进去,同名覆盖。
+    /// 把 `body` 写成一个对象,同名覆盖。`length` 是它的总字节数,事前必须知道:
+    /// 单个 PUT 要 Content-Length,流少给或多给都算失败,桶里不会留下半截。
     fn put(
         &self,
         key: &str,
-        bytes: Vec<u8>,
+        body: ObjectBody,
+        length: u64,
         content_type: &'static str,
     ) -> BoxFuture<'_, ObjectResult<()>>;
 
@@ -199,7 +213,8 @@ impl Objects for S3 {
     fn put(
         &self,
         key: &str,
-        bytes: Vec<u8>,
+        body: ObjectBody,
+        length: u64,
         content_type: &'static str,
     ) -> BoxFuture<'_, ObjectResult<()>> {
         let url = self
@@ -214,7 +229,11 @@ impl Objects for S3 {
                     reqwest::header::CONTENT_TYPE,
                     content_type,
                 )
-                .body(bytes)
+                .header(
+                    reqwest::header::CONTENT_LENGTH,
+                    length,
+                )
+                .body(reqwest::Body::wrap_stream(body))
                 .send()
                 .await
                 .map_err(|err| err.to_string())?;
