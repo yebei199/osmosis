@@ -325,3 +325,16 @@ fn a_silent_member_never_reports_finishing() {
 
     assert!(deck.group.intents().is_empty());
 }
+
+/// 队列页点的正是组此刻在放的那一条:与列表同一个判据,是多余的一下,不再发(#142 N-1)。
+#[test]
+fn picking_the_entry_the_group_is_playing_is_redundant() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["pc"], true)));
+
+    ui.global::<Viz>().invoke_queue_pick("12".into());
+    ui.global::<Viz>().invoke_queue_pick("12".into());
+
+    assert!(deck.group.intents().is_empty());
+}

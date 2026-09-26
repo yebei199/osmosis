@@ -275,24 +275,10 @@ impl Group {
         else {
             return;
         };
-        // 组里此刻就在放这一首:与本机那条路的连点去重同一个判据(`rules::is_redundant_tap`)。
-        // 只看「在路上」不够 —— 服务端几毫秒就回了,连点的第二下到时在途标记早清了(#142 F-1)。
-        let sounding = self.now().is_some_and(|now| {
-            now.playing && now.track.id == tapped
-        });
-        {
-            let mut in_flight = lock(&self.inner.in_flight);
-            if sounding
-                || in_flight.as_deref()
-                    == Some(tapped.as_str())
-            {
-                crate::notice::show(
-                    ui,
-                    "这首已经在放或正在切过去".to_owned(),
-                );
-                return;
-            }
-            *in_flight = Some(tapped);
+        if self.redundant(ui, tapped.clone(), |now| {
+            now.track.id == tapped
+        }) {
+            return;
         }
         self.send(
             ui,
@@ -313,6 +299,17 @@ impl Group {
         revision: i64,
         entry_id: i64,
     ) {
+        if self.redundant(
+            ui,
+            format!("entry {entry_id}"),
+            |now| {
+                now.queue_id == queue_id
+                    && now.revision == revision
+                    && now.entry_id == entry_id
+            },
+        ) {
+            return;
+        }
         self.send(
             ui,
             "切换",
@@ -323,6 +320,34 @@ impl Group {
                 entry_id,
             }),
         );
+    }
+
+    /// 点歌的连点去重,列表 / 卡墙 / 搜索与队列页共用(#142 F-1、N-1)。
+    ///
+    /// 多余的一下有两种:组此刻在放、放的就是这一首(`is_this`)—— 与本机那条路
+    /// `rules::is_redundant_tap` 同一个判据;或者同一下的意图还在路上(`key`)。只看后者
+    /// 不够:服务端几毫秒就回了,连点的第二下到时在途标记早清了。不多余就记下 `key` 为在途。
+    fn redundant(
+        &self,
+        ui: &MainWindow,
+        key: String,
+        is_this: impl Fn(&app_core::GroupNowDto) -> bool,
+    ) -> bool {
+        let sounding = self.now().is_some_and(|now| {
+            now.playing && is_this(&now)
+        });
+        let mut in_flight = lock(&self.inner.in_flight);
+        if sounding
+            || in_flight.as_deref() == Some(key.as_str())
+        {
+            crate::notice::show(
+                ui,
+                "这首已经在放或正在切过去".to_owned(),
+            );
+            return true;
+        }
+        *in_flight = Some(key);
+        false
     }
 
     /// 本机(出声设备)真正放完了此刻那一首:报给服务端,最先报的那台推进(#142 AC-9)。
