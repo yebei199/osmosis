@@ -55,7 +55,8 @@ export global Shell {
     in property <string> output-text;
     // 正在出声的那台设备的 id(只有一台远端出声时)。空串 = 本机 —— 芯片按它决定谁被选中。
     in property <string> output-id;
-    // 组横幅,如「与 小米13 一起播放」「正在遥控 pc1」。空串 = 不在组里,横幅不出现。
+    // 组横幅,如「与 小米13 一起播放」「正在遥控 pc1」,独奏时组在放则是「组里正在播放: 歌名」。
+    // 空串 = 横幅不出现。
     in property <string> group-banner;
     // 本机在组里、却连不上服务端:出声设备已经停下。
     in property <bool> output-stale: false;
@@ -77,6 +78,10 @@ export global Shell {
     callback group-changed();
     // 横幅上的「退出」:本机退出组,回到独奏。
     callback leave-group();
+    // 本机独奏、组却在放(#149):横幅说组在放什么,那颗键换成「加入」。
+    in property <bool> group-joinable: false;
+    // 横幅上的「加入」:本机加进正在出声的那几台,原有的不动。
+    callback join-group();
 
     in-out property <bool> aurora-buttons-on: true;
     callback aurora-buttons-toggled();

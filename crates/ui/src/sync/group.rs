@@ -521,7 +521,7 @@ impl Group {
 
     /// 横幅、输出设备那一排、组那一行推到界面上。
     pub fn refresh(&self) {
-        let (standing, outputs, fellows, offline) = {
+        let (standing, outputs, fellows, offline, now) = {
             let view = lock(&self.inner.view);
             (
                 view.standing(),
@@ -530,15 +530,26 @@ impl Group {
                     .unwrap_or_default(),
                 view.fellow_outputs(),
                 view.is_member() && !view.is_online(),
+                view.state()
+                    .and_then(|state| state.now.clone()),
             )
         };
         let fellows: Vec<String> = fellows
             .iter()
             .map(|id| self.name_of(id))
             .collect();
-        let banner =
-            rules::describe_banner(standing, &fellows);
         let member = standing != Standing::Solo;
+        // 独奏、组却在放:横幅说组在放什么,给一颗「加入」(#149)。
+        let joinable = !member && now.is_some();
+        let banner = match now.filter(|_| joinable) {
+            Some(now) => rules::describe_invite(
+                &now.track.title,
+                now.playing,
+            ),
+            None => {
+                rules::describe_banner(standing, &fellows)
+            }
+        };
         let output_text =
             rules::describe_output(&if member {
                 outputs
@@ -585,6 +596,7 @@ impl Group {
             move |ui| {
                 let shell = ui.global::<Shell>();
                 shell.set_group_banner(banner.into());
+                shell.set_group_joinable(joinable);
                 shell.set_output_text(output_text.into());
                 shell.set_output_id(first.into());
                 shell.set_group_text(line.into());

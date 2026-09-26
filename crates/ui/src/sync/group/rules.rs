@@ -11,8 +11,14 @@ pub const UNCALIBRATED: &str = "该路由未校准,不保证同步";
 ///
 /// 出处:`slint/controls.slint` 的输出设备一行,`slint/app.slint` 的组横幅。
 #[cfg(test)]
-pub const SLINT_COPY: &[&str] =
-    &["输出设备", "本机", "退出", "加入", "移出"];
+pub const SLINT_COPY: &[&str] = &[
+    "输出设备",
+    "本机",
+    "退出",
+    "加入",
+    "移出",
+    "加入播放组",
+];
 
 /// 组横幅那一句。不在组里是空串 —— 空串就是不显示。
 ///
@@ -35,6 +41,18 @@ pub fn describe_banner(
         Standing::Remote => {
             format!("正在遥控 {}", fellows.join("、"))
         }
+    }
+}
+
+/// 独奏时组在播,横幅上那一句(#149):组在放什么,旁边那颗键是「加入」。
+pub fn describe_invite(
+    title: &str,
+    playing: bool,
+) -> String {
+    if playing {
+        format!("组里正在播放: {title}")
+    } else {
+        format!("组里已暂停: {title}")
     }
 }
 
@@ -154,6 +172,19 @@ mod tests {
         );
     }
 
+    /// 独奏时组在播:横幅说组在放哪一首,暂停着也说(#149)。
+    #[test]
+    fn the_invite_says_what_the_group_plays() {
+        assert_eq!(
+            describe_invite("晴天", true),
+            "组里正在播放: 晴天"
+        );
+        assert_eq!(
+            describe_invite("晴天", false),
+            "组里已暂停: 晴天"
+        );
+    }
+
     /// 输出设备那一行列出正在出声的那几台。
     #[test]
     fn the_output_line_lists_the_sounding_devices() {
@@ -233,6 +264,8 @@ mod tests {
                 &names(&["a", "b"]),
             ));
         }
+        copy.push(describe_invite("", true));
+        copy.push(describe_invite("", false));
         copy.push(describe_output(&[]));
         copy.push(describe_output(&names(&["a", "b"])));
         copy.push(UNCALIBRATED.to_owned());
