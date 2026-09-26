@@ -6,6 +6,7 @@
 
 import { Theme, Type } from "theme.slint";
 import { SectionCard, DayNightSwitch } from "widgets.slint";
+import { BarMetrics } from "playerbar.slint";
 
 // 胶囊开关:aurora 与「跟随系统」共用。a11y 在组件根上,
 // 无头测试按元素 id 找到的是这一层,挂在里面的 TouchArea 上就点不动了。
@@ -55,6 +56,10 @@ export component SettingsPage inherits Flickable {
     // 退出登录:清会话是 Rust 的活,这里只喊。
     callback logout();
 
+    // 控制条此刻在不在,条件与 app.slint 摆条那一行是同一个
+    // (见 profile.slint 同名属性)。
+    in property <bool> bar-visible;
+
     content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
@@ -63,6 +68,11 @@ export component SettingsPage inherits Flickable {
         width: min(root.width - 52px, 640px);
         alignment: start;
         spacing: 14px;
+        // 控制条压在页面底部,「检查更新」是这一页常见的最后一个可点项。
+        // 留在 padding 而不是 content-height 上,理由同 profile.slint。
+        padding-bottom: root.bar-visible
+            ? BarMetrics.page-reserve
+            : 0;
 
         Text {
             text: "设置";
