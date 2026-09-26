@@ -377,3 +377,39 @@ fn regaining_focus_in_the_group_restarts_at_the_group_position()
     );
     assert!(deck.group.intents().is_empty());
 }
+
+/// 组在别的设备上放、本机不在组里:成员与出声都是 `outputs`。
+fn elsewhere(outputs: &[&str]) -> GroupStateDto {
+    let mut state = state(outputs, true);
+    state.members.clone_from(&state.outputs);
+    state
+}
+
+/// 后来者加入(#149):组在 a、b 上放,独奏的本机点横幅上的「加入」,发出去的是
+/// a、b 再加上本机 —— 原来出声的一台都不少,也不带种子(组接着放它自己的那一首)。
+#[test]
+fn a_late_device_joins_without_kicking_anyone() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    crate::sync::group::bind(&ui, &deck.group);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_join_group();
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["a", "b", "me"]"#]
+    );
+}
+
+/// 没有组在放就没有什么可加入的:什么都不发。
+#[test]
+fn there_is_nothing_to_join_without_a_group() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    crate::sync::group::bind(&ui, &deck.group);
+
+    ui.global::<Shell>().invoke_join_group();
+
+    assert!(deck.group.intents().is_empty());
+}

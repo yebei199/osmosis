@@ -409,9 +409,33 @@ impl Group {
         self.send(
             ui,
             "改输出设备",
-            format!("outputs {outputs:?}"),
+            format!(
+                "outputs {outputs:?}{}",
+                if seed.is_some() { " +seed" } else { "" }
+            ),
             GroupIntent::Outputs(outputs, seed),
         );
+    }
+
+    /// 组正在放时,在它现有的出声设备上加上 `device`(#149)。原有的一台都不动,不带种子:
+    /// 组接着放它自己的那一首。没有组在放就是 `false`,什么都不发。
+    pub fn add_output(
+        &self,
+        ui: &MainWindow,
+        device: &str,
+    ) -> bool {
+        let Some(mut outputs) = self
+            .state()
+            .filter(|state| state.now.is_some())
+            .map(|state| state.outputs)
+        else {
+            return false;
+        };
+        if !outputs.iter().any(|id| id == device) {
+            outputs.push(device.to_owned());
+        }
+        self.set_outputs(ui, outputs, None);
+        true
     }
 
     /// 本机退出组,回到独奏。
@@ -746,8 +770,15 @@ pub(crate) fn mark_members(
     );
 }
 
-/// 把组接到界面上:横幅上的「退出」。
+/// 把组接到界面上:横幅上的「退出」与「加入」。
 pub fn bind(ui: &MainWindow, group: &Group) {
+    let joining = group.clone();
+    let weak = ui.as_weak();
+    ui.global::<Shell>().on_join_group(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        joining.add_output(&ui, &joining.inner.me);
+    });
+
     let leaving = group.clone();
     let weak = ui.as_weak();
     ui.global::<Shell>().on_leave_group(move || {
