@@ -1243,14 +1243,12 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
         // 遥控关系被别处撤掉),这台就挂着假横幅、锁着本地播放,而横幅上
         // 那台设备早就不管它了(#102 F-004)。
         //
-        // 信令断了也一样(#118):断着的时候服务端的消息过不来,锁留着的话
-        // 本机在断网期间连歌都点不了。重连之后客户端自己退出被遥控,两端
-        // 对得上账(见 `syncplay::client` 的 `serve`)。
+        // 信令断了**不**撤锁(#142 推翻 #118):服务端替断线的被控端留着租约,
+        // 闪断回来遥控照旧;满了租约的,重连后第一条上报就换回 `NotControlled`。
         // 撤锁**不是**离组(#137 ⑤):遥控器满租约时服务端同样撤锁,而那时组不散、主端照常
         // 发计划。离组看组的通告里还有没有本机(被移出时服务端也通告一份),或者本机自己按了
         // 「退出被遥控」。断线也不离组:断着的时候计划过不来,跟随端照已确认的放到有效期末尾。
-        syncplay::Event::NotControlled
-        | syncplay::Event::Disconnected => {
+        syncplay::Event::NotControlled => {
             if lock(&inner.controlled_by).take().is_some() {
                 remote.refresh();
             }

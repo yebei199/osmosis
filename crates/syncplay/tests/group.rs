@@ -153,6 +153,17 @@ async fn the_masters_plan_reaches_the_follower() {
     })
     .await;
     phone.commit_outputs("op", None);
+    // 任期从服务端启动那一刻的挂钟数起(#142),不是 1;以提交的回话为准。
+    let committed =
+        wait_for(&phone_rx, "OutputsCommitted", |event| {
+            match event {
+                Event::OutputsCommitted { term, .. } => {
+                    Some(*term)
+                }
+                _ => None,
+            }
+        })
+        .await;
 
     let (term, master) =
         wait_for(&pc_rx, "组通告", |event| match event {
@@ -160,7 +171,9 @@ async fn the_masters_plan_reaches_the_follower() {
                 term,
                 master,
                 members,
-            } if members.len() == 2 && *term == 1 => {
+            } if members.len() == 2
+                && *term == committed =>
+            {
                 Some((*term, master.clone()))
             }
             _ => None,

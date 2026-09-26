@@ -43,7 +43,7 @@ fn room() -> Room {
     roster.join(ALICE, device("pad"), pad);
     Room {
         roster,
-        control: Control::default(),
+        control: Control::booted_at(LEASE, 0),
         phone: rx_phone,
         pc: rx_pc,
         pad: rx_pad,

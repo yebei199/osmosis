@@ -24,9 +24,13 @@ const TOKEN: &str = "test-token";
 const PATIENCE: Duration = Duration::from_secs(5);
 
 async fn start_server() -> SocketAddr {
-    let app = signaling::unauthenticated_test_router(
-        signaling::Timing::default(),
-    );
+    start_server_with(signaling::Timing::default()).await
+}
+
+async fn start_server_with(
+    timing: signaling::Timing,
+) -> SocketAddr {
+    let app = signaling::unauthenticated_test_router(timing);
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -349,12 +353,18 @@ async fn a_target_without_a_grant_is_told_it_is_free() {
 struct Cable {
     addr: SocketAddr,
     cut: tokio::sync::broadcast::Sender<()>,
+    upstream: Arc<std::sync::Mutex<SocketAddr>>,
 }
 
 impl Cable {
     /// 拔线:掐掉此刻所有连接的客户端那一半。
     fn cut(&self) {
         let _ = self.cut.send(());
+    }
+
+    /// 之后的新连接改接到 `upstream` —— 造一次「服务端重启」。
+    fn reroute(&self, upstream: SocketAddr) {
+        *self.upstream.lock().expect("锁中毒") = upstream;
     }
 }
 
@@ -373,6 +383,8 @@ async fn cable(upstream: SocketAddr) -> Cable {
         Arc::default();
 
     let cutter = cut.clone();
+    let upstream = Arc::new(std::sync::Mutex::new(upstream));
+    let target = upstream.clone();
     tokio::spawn(async move {
         loop {
             let Ok((mut client, _)) =
@@ -380,8 +392,9 @@ async fn cable(upstream: SocketAddr) -> Cable {
             else {
                 return;
             };
+            let to = *target.lock().expect("锁中毒");
             let Ok(mut server) =
-                TcpStream::connect(upstream).await
+                TcpStream::connect(to).await
             else {
                 continue;
             };
@@ -399,7 +412,11 @@ async fn cable(upstream: SocketAddr) -> Cable {
         }
     });
 
-    Cable { addr, cut }
+    Cable {
+        addr,
+        cut,
+        upstream,
+    }
 }
 
 /// 信令断了要说出来。
@@ -421,18 +438,18 @@ async fn a_dropped_link_is_reported() {
     .await;
 }
 
-/// 被控端掉线又重连上来,遥控关系就此结束,遥控器得到撤权。
-///
-/// 掉线期间被控端已经解锁、可能在本机放着别的歌了;服务端却还没发现旧连接
-/// 死了,重连把它顶替掉,槽位原样留着(被顶替的那次出册不清槽)。不结束的话
-/// 遥控器接着往一台已经不听它的设备发命令,两端对「谁在遥控谁」各执一词。
-#[tokio::test]
-async fn a_target_that_comes_back_is_no_longer_controlled()
-{
-    let addr = start_server().await;
-    let line = cable(addr).await;
-    let (phone, phone_rx) = spawn_client(addr, "phone");
-    let (_pc, pc_rx) = spawn_client(line.addr, "pc");
+/// 手机经一根线遥控 `pc`(两台都走这根线),等双方都确认。
+async fn phone_controls_pc_through(
+    line: &Cable,
+) -> (
+    Client,
+    mpsc::Receiver<Event>,
+    Client,
+    mpsc::Receiver<Event>,
+) {
+    let (phone, phone_rx) =
+        spawn_client(line.addr, "phone");
+    let (pc, pc_rx) = spawn_client(line.addr, "pc");
     wait_until_both_online(&phone_rx, "pc").await;
     phone.claim("pc");
     wait_for(&phone_rx, "ControlGranted", |event| {
@@ -445,9 +462,97 @@ async fn a_target_that_comes_back_is_no_longer_controlled()
             .then_some(())
     })
     .await;
+    (phone, phone_rx, pc, pc_rx)
+}
+
+/// 遥控器发一条命令,等被控端收到 —— 「还在控制」的凭据。
+///
+/// 发一次可能正撞上重连的空窗,所以每半秒补一条,直到对面收到为止。
+async fn command_arrives(
+    phone: &Client,
+    pc_rx: &mpsc::Receiver<Event>,
+) {
+    let deadline = tokio::time::Instant::now() + PATIENCE;
+    loop {
+        phone.command(RemoteCommand::Pause);
+        let pause = tokio::time::Instant::now()
+            + Duration::from_millis(500);
+        while tokio::time::Instant::now() < pause {
+            if pc_rx.try_iter().any(|event| {
+                matches!(event, Event::Command { .. })
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20))
+                .await;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "被控端一直没收到命令"
+        );
+    }
+}
+
+/// 被控端闪断又在租约内重连上来,遥控照旧(#142 推翻 #118「重连即退出」)。
+///
+/// 从前被控端重连时主动退出、服务端断线即移出组,于是任何一次闪断都结束遥控,
+/// 而被控端还在放歌 —— 遥控器自己掉回本机,之后再也进不去。
+#[tokio::test]
+async fn a_target_that_comes_back_within_the_lease_stays_controlled()
+ {
+    let addr = start_server().await;
+    let line = cable(addr).await;
+    let (phone, phone_rx, _pc, pc_rx) =
+        phone_controls_pc_through(&line).await;
 
     line.cut();
+    wait_for(&pc_rx, "Disconnected", |event| {
+        matches!(event, Event::Disconnected).then_some(())
+    })
+    .await;
 
+    command_arrives(&phone, &pc_rx).await;
+    assert!(
+        !phone_rx.try_iter().any(|event| matches!(
+            event,
+            Event::ControlRevoked { .. }
+        )),
+        "闪断不该让遥控器失权"
+    );
+    assert!(
+        !pc_rx.try_iter().any(|event| matches!(
+            event,
+            Event::NotControlled
+        )),
+        "闪断回来不该被解锁"
+    );
+}
+
+/// 被控端一去不回,满了租约遥控器才得到撤权,说是被控端走的。
+#[tokio::test]
+async fn a_target_gone_past_the_lease_revokes_its_controller()
+{
+    let addr = start_server_with(signaling::Timing {
+        lease: Duration::from_millis(300),
+        ping_every: Duration::from_millis(100),
+        ..signaling::Timing::default()
+    })
+    .await;
+    let line = cable(addr).await;
+    let (phone, phone_rx) = spawn_client(addr, "phone");
+    let (pc, pc_rx) = spawn_client(line.addr, "pc");
+    wait_until_both_online(&phone_rx, "pc").await;
+    phone.claim("pc");
+    wait_for(&pc_rx, "ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+
+    // 丢掉客户端(不再重连)再拔线:服务端那一半挂在半空,靠探活判死出册,
+    // 与手机没电是同一个样子。
+    drop(pc);
+    line.cut();
     let by =
         wait_for(&phone_rx, "ControlRevoked", |event| {
             match event {
@@ -458,7 +563,38 @@ async fn a_target_that_comes_back_is_no_longer_controlled()
             }
         })
         .await;
-    assert_eq!(by, "pc", "撤权该说是被控端自己走的");
+    assert_eq!(by, "pc", "撤权该说是被控端走的");
+}
+
+/// 服务端重启之后,原来的遥控器续上权,被控端重新被锁上、命令照样到(#142)。
+///
+/// 从前新进程里查不到组,续权一律被当成「早被顶替了」,遥控器掉回本机;
+/// 任期从 0 重新数,两端还拿旧任期发计划,全被判 `stale_term`。
+#[tokio::test]
+async fn control_survives_a_server_restart() {
+    let first = start_server().await;
+    let line = cable(first).await;
+    let (phone, phone_rx, _pc, pc_rx) =
+        phone_controls_pc_through(&line).await;
+
+    let second = start_server().await;
+    line.reroute(second);
+    line.cut();
+
+    wait_for(&pc_rx, "重启后的 ControlledBy", |event| {
+        matches!(event, Event::ControlledBy { .. })
+            .then_some(())
+    })
+    .await;
+    command_arrives(&phone, &pc_rx).await;
+    assert!(
+        !phone_rx.try_iter().any(|event| matches!(
+            event,
+            Event::ControlRevoked { .. }
+                | Event::ClaimFailed { .. }
+        )),
+        "重启不该让遥控器失权"
+    );
 }
 
 /// 接管一台不在线的设备:遥控器得到一条接管失败,而不只是一行报错。
