@@ -305,6 +305,11 @@ fn pick(ui: &MainWindow, deck: &Deck, entry: &str) {
         pick_remote(ui, deck, entry_id);
         return;
     }
+    // 与列表、卡墙同一道锁(#142):正被遥控时本机前面那个人点的不算数。
+    if deck.remote.is_controlled() {
+        crate::notice::show(ui, "本机正被遥控".to_owned());
+        return;
+    }
 
     // 本机:跳过去就行,**不重建队列** —— `replace` 会把随机清掉再重洗,
     // 而用户点的是「放这一首」,不是「重洗一次」(见 `Queue::jump_to`)。
@@ -365,12 +370,22 @@ fn pick_remote(
             }
             return;
         }
-        deck.remote.send(app_core::RemoteCommand::Play {
-            queue_id,
-            revision,
-            entry_id,
-            operation_id,
-        });
+        let sent =
+            deck.remote.send(app_core::RemoteCommand::Play {
+                queue_id,
+                revision,
+                entry_id,
+                operation_id,
+            });
+        // 没交出去要说出来(#142),与列表、卡墙那条路同一句话。
+        if sent != crate::sync::remote::Submitted::Ok
+            && let Some(ui) = weak.upgrade()
+        {
+            crate::notice::show(
+                &ui,
+                deck.remote.unavailable_notice(),
+            );
+        }
     });
 }
 

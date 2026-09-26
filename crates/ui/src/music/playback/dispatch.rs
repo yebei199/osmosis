@@ -243,6 +243,11 @@ fn submit_remote_play(
         log::info!(
             "遥控点播: {tapped} 还在路上或已在放,这一下丢掉"
         );
+        // 说一句,不静默(#142):上一下真丢了的话,用户看得出要等一会儿再点。
+        crate::notice::show(
+            ui,
+            "这首已经在放或正在切过去".to_owned(),
+        );
         return Dispatched::Blocked("这一下是多余的");
     }
 
@@ -474,6 +479,9 @@ fn to_local(
                 deck.execution.identity().0.is_some()
                     && *deck.queue.borrow().tracks()
                         == tracks;
+            if !unchanged {
+                deck.execution.forget_entries();
+            }
             play_batch(ui, deck, tracks.clone(), index);
             if unchanged {
                 checkpoint(deck, index);
@@ -811,6 +819,11 @@ pub(in crate::music) fn adopt_remote_queue(
             Adoption::Dropped => {
                 log::info!(
                     "取数期间本机已不再被遥控,丢掉这一次"
+                );
+                // 不静默(#142):本机前面的人至少知道刚才那一下为什么没动。
+                crate::notice::show(
+                    &ui,
+                    "遥控已结束,刚才那次点歌没有执行".to_owned(),
                 );
             }
             Adoption::Failed(reason) => {

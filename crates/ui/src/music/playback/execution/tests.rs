@@ -625,3 +625,21 @@ fn a_failed_publish_does_not_reset_the_resync_clock() {
         "真过了三十秒就该再试"
     );
 }
+
+/// 本机换批、新版本还在发布的路上:旧条目号作废,队列标识留着给发布用(#142)。
+///
+/// 不作废的话主端这几百毫秒里写出「新歌 + 旧批的条目号」,跟随端放成另一首。
+#[test]
+fn a_new_local_batch_forgets_the_old_entries_but_keeps_the_queue() {
+    let execution = Execution::default();
+    execution.adopt(7, 3, vec![11, 12]);
+
+    execution.forget_entries();
+
+    assert_eq!(execution.entry_at(1), None);
+    assert_eq!(
+        execution.identity(),
+        (Some(7), Some(3), Some(3)),
+        "发布新版本要拿它"
+    );
+}
