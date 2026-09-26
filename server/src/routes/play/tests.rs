@@ -17,7 +17,7 @@ use crate::routes::testing::{self, FakeUpstream};
 use super::download::download;
 use super::play;
 
-use server::bangdream::proto::PlaySource;
+use server::bangdream::proto::{PlaySource, QualityLevel};
 
 /// 响应体最多读多少 —— 测试里的音频是秒级的,几 MB 绰绰有余。
 const BODY_LIMIT: usize = 16 * 1024 * 1024;
@@ -432,4 +432,42 @@ async fn a_link_too_short_for_the_track_is_fetched_every_time()
     play_url(&state, &account, &track).await;
     play_url(&state, &account, &track).await;
     assert_eq!(fake.play_asks(), 2);
+}
+
+/// 桶里没有:向上游要最高档,并把上游报回来的实际音质交给客户端(#147)。
+#[tokio::test]
+async fn an_unstored_track_is_asked_at_the_highest_tier() {
+    let (state, account, fake) = play_fixture(
+        "play_highest",
+        PlaySource {
+            level: QualityLevel::Lossless as i32,
+            ..source(
+                "https://m8.music.126.net/x.flac"
+                    .to_owned(),
+                "FLAC",
+            )
+        },
+    )
+    .await;
+    let track = testing::track_id("play_highest", 1);
+
+    let dto = play(State(state), account, Path(track))
+        .await
+        .expect("应当取得到播放源")
+        .0;
+
+    assert_eq!(
+        fake.play_levels(),
+        vec![QualityLevel::HiRes as i32]
+    );
+    assert_eq!(
+        dto.quality,
+        Some(contract::QualityDto {
+            tier: "lossless".to_owned(),
+            format: "flac".to_owned(),
+            bit_rate: 320_000,
+            bits_per_sample: None,
+            sample_rate: None,
+        })
+    );
 }

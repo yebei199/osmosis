@@ -1,8 +1,8 @@
 //! 播放与下载:同一条上游源的两种交付方式。
 //!
 //! [`play`] 交出一条客户端自己去取的临时直链;[`download`](download::download)
-//! 把字节从上游拉过来、必要时转成 mp3 再交出去。两者共用 [`PLAY_QUALITY`] ——
-//! 各自取各自的档位的话,「听到的」和「存下的」会是两个版本。
+//! 把字节从上游拉过来、必要时转成 mp3 再交出去。三条路各要各的档位
+//! (`docs/adr/0034`):播放要最高,缓存要无损,下载要 320k。
 
 use std::time::Instant;
 
@@ -14,9 +14,10 @@ use contract::PlaySourceDto;
 
 use server::bangdream::{
     self,
-    proto::{GetPlaySourceRequest, Platform, QualityLevel},
+    proto::{GetPlaySourceRequest, Platform},
 };
 use server::error::Failure;
+use server::quality::{Tier, netease};
 use server::store::account::Account;
 
 use crate::{AppState, fail};
@@ -28,17 +29,15 @@ pub(crate) mod links;
 #[cfg(test)]
 mod tests;
 
-/// 取播放地址时请求的音质档位。
-///
-// ponytail: 先写死。做到音质选择时再提成查询参数 —— 现在没有任何界面能选它。
-pub(crate) const PLAY_QUALITY: QualityLevel =
-    QualityLevel::High;
+/// 现取时要的档位:音源能给的最好那一档(#147)。
+const PLAY_TIER: Tier = Tier::HIGHEST;
 
 /// `GET /play/{track_id}` —— 取一条临时直链。
 ///
-/// 存过的歌给对象存储的签名链接,不再找网易云(#126);没存过、或对象存储
-/// 此刻不可用,就向上游要。上游的直链带签名会过期,只在剩余有效期还够放完
-/// 整首时复用上一次拿到的那条(#139,见 [`links`])。
+/// 桶里有无损就给对象存储的签名链接,不再找网易云(#126、#147);没有、或对象
+/// 存储此刻不可用,就向上游按「最高」现取。上游的直链带签名会过期,只在剩余
+/// 有效期还够放完整首时复用上一次拿到的那条(#139,见 [`links`])。
+/// 两条路都在响应里带上实际音质。
 pub(crate) async fn play(
     State(state): State<AppState>,
     account: Account,
@@ -50,7 +49,8 @@ pub(crate) async fn play(
         return Ok(Json(stored));
     }
 
-    let key = (account.id, track_id, PLAY_QUALITY as i32);
+    let level = netease::level_of(PLAY_TIER) as i32;
+    let key = (account.id, track_id, level);
     if let Some(cached) =
         state.links.get(&key, Instant::now())
     {
@@ -65,7 +65,7 @@ pub(crate) async fn play(
             GetPlaySourceRequest {
                 platform: Platform::Netease as i32,
                 track_id: key.1.clone(),
-                level: PLAY_QUALITY as i32,
+                level,
             },
         ))
         .await

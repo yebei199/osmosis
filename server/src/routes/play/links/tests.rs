@@ -35,6 +35,7 @@ fn dto(url: &str) -> PlaySourceDto {
         format: "mp3".to_owned(),
         bit_rate: 320_000,
         trial: false,
+        quality: None,
     }
 }
 

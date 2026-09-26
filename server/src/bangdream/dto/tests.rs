@@ -208,6 +208,11 @@ fn play_source_maps_url_and_trial_flag() {
     assert_eq!(dto.format, "mp3");
     assert_eq!(dto.bit_rate, 320_000);
     assert!(dto.trial);
+    // 档位照上游报回来的翻,不按请求的冒充(docs/adr/0034)
+    assert_eq!(
+        dto.quality.map(|quality| quality.tier),
+        Some("standard".to_owned())
+    );
 }
 
 /// 歌手的详情字段都过桥;头像空串翻成 None,不用空串冒充"有头像"。

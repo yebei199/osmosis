@@ -105,12 +105,16 @@ pub fn track_to_dto(track: proto::Track) -> TrackDto {
 
 /// 把上游的一次播放源翻成契约里的 [`PlaySourceDto`]。
 ///
-/// 不带 `size` 与 `level`:客户端边下边播,不需要预先知道体积;
-/// 实际档位目前也没有消费者。用到时再加。
+/// 不带 `size`:客户端边下边播,不需要预先知道体积。实际档位翻成与音源无关的
+/// 音质(`docs/adr/0034`)。
 pub fn play_source_to_dto(
     source: proto::PlaySource,
 ) -> PlaySourceDto {
     PlaySourceDto {
+        quality: Some(
+            crate::quality::netease::quality_of(&source)
+                .to_dto(),
+        ),
         url: source.url,
         format: source.format,
         bit_rate: source.bit_rate,

@@ -57,6 +57,7 @@ struct Fixture {
     account: Account,
     objects: Arc<MemoryObjects>,
     hits: Arc<AtomicUsize>,
+    fake: FakeUpstream,
 }
 
 /// 摆好假上游、内存对象存储与账号;同一测试名留下的账目按 id 前缀清掉。
@@ -85,7 +86,10 @@ async fn fixture(case: &str, trial: bool) -> Fixture {
     let objects = Arc::new(MemoryObjects::default());
     let state = AppState {
         archive: Some(Archive::new(objects.clone())),
-        ..testing::state(pool, testing::serve(fake).await)
+        ..testing::state(
+            pool,
+            testing::serve(fake.clone()).await,
+        )
     };
 
     Fixture {
@@ -93,6 +97,7 @@ async fn fixture(case: &str, trial: bool) -> Fixture {
         account,
         objects,
         hits,
+        fake,
     }
 }
 
@@ -121,14 +126,22 @@ async fn a_played_track_is_stored_as_is() {
 
     keep(&f.state, &f.account, &netease(&id)).await;
 
-    let key = format!("tracks/{id}/high.flac");
+    let key = format!("tracks/{id}/lossless.flac");
     assert_eq!(f.objects.get(&key), Some(audio()));
+    assert_eq!(
+        f.fake.play_levels(),
+        vec![
+            server::bangdream::proto::QualityLevel::Lossless
+                as i32
+        ],
+        "缓存向上游要的是无损"
+    );
     assert_eq!(
         row(&f.state, &id).await,
         Some(ledger::StoredTrack {
             platform: "netease".to_owned(),
             track_id: id.clone(),
-            quality: "high".to_owned(),
+            quality: "lossless".to_owned(),
             object_key: key,
             format: "flac".to_owned(),
             bit_rate: 999_000,
@@ -195,7 +208,7 @@ async fn reporting_a_play_stores_the_track() {
         .expect("起播上报应当成功");
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
 
-    let key = format!("tracks/{id}/high.flac");
+    let key = format!("tracks/{id}/lossless.flac");
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(5);
     while f.objects.get(&key).is_none() {
@@ -306,10 +319,19 @@ async fn a_stored_track_plays_from_the_store() {
     assert_eq!(
         source,
         contract::PlaySourceDto {
-            url: format!("memory://tracks/{id}/high.flac"),
+            url: format!(
+                "memory://tracks/{id}/lossless.flac"
+            ),
             format: "flac".to_owned(),
             bit_rate: 999_000,
             trial: false,
+            quality: Some(contract::QualityDto {
+                tier: "lossless".to_owned(),
+                format: "flac".to_owned(),
+                bit_rate: 999_000,
+                bits_per_sample: None,
+                sample_rate: None,
+            }),
         }
     );
 }
@@ -331,7 +353,7 @@ async fn a_lost_object_falls_back_and_forgets_the_row() {
     let f = fixture("ar_lost", false).await;
     let id = testing::track_id("ar_lost", 1);
     keep(&f.state, &f.account, &netease(&id)).await;
-    f.objects.lose(&format!("tracks/{id}/high.flac"));
+    f.objects.lose(&format!("tracks/{id}/lossless.flac"));
 
     let url = play_url(&f.state, &f.account, &id).await;
 

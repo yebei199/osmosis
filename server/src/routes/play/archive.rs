@@ -1,7 +1,7 @@
 //! 听过的歌存进对象存储(#126)。
 //!
 //! `/played` 报一次起播,这里就在后台把那首的音频按**上游原始格式**存进桶
-//! (不转码,无损的留无损)。取源与拉流与 `/download` 是同一条路、同一个档位。
+//! (不转码)。取源与拉流与 `/download` 是同一条路,档位是 [`CACHE_TIER`]。
 //!
 //! 全程只记日志、不回报:存歌是顺手的事,它失败了用户照样在听,`/played`
 //! 的响应也不等它。
@@ -22,12 +22,12 @@ use sqlx::{PgConnection, PgPool};
 use tokio::sync::Semaphore;
 
 use server::objects::Objects;
+use server::quality::{Tier, guess_tier};
 use server::store::account::Account;
 use server::store::archive::{self, StoredTrack};
 use server::store::playlist::TrackRef;
 
 use crate::AppState;
-use crate::routes::play::PLAY_QUALITY;
 use crate::routes::play::download;
 
 #[cfg(test)]
@@ -74,12 +74,12 @@ impl Archive {
     }
 }
 
-/// 档位在键与表里的写法,如 `high`。
+/// 缓存向音源要的档位(#147,`docs/adr/0034`)。
+pub(crate) const CACHE_TIER: Tier = Tier::Lossless;
+
+/// 档位在键与表里的写法,如 `lossless`。
 pub(crate) fn quality() -> String {
-    PLAY_QUALITY
-        .as_str_name()
-        .trim_start_matches("QUALITY_LEVEL_")
-        .to_ascii_lowercase()
+    CACHE_TIER.name().to_owned()
 }
 
 /// `/played` 之后调用:后台去存,立刻返回。没配对象存储就什么都不做。
@@ -180,6 +180,7 @@ async fn store(
         state,
         account,
         &track.track_id,
+        CACHE_TIER,
     )
     .await
     .map_err(describe)?;
@@ -266,10 +267,21 @@ pub(crate) async fn stored_source(
     match archive.objects.exists(&stored.object_key).await {
         Ok(true) => {
             tracing::info!(track_id, "从对象存储交付");
+            let quality = server::quality::Quality {
+                tier: guess_tier(
+                    &stored.format,
+                    stored.bit_rate,
+                ),
+                format: stored.format.clone(),
+                bit_rate: stored.bit_rate,
+                bits_per_sample: None,
+                sample_rate: None,
+            };
             Some(PlaySourceDto {
                 url: archive
                     .objects
                     .presign_get(&stored.object_key),
+                quality: Some(quality.to_dto()),
                 format: stored.format,
                 bit_rate: stored.bit_rate,
                 trial: false,
