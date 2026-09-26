@@ -13,7 +13,6 @@ use syncplay::clock::monotonic_ns;
 use syncplay::{Client, Event};
 
 const TOKEN: &str = "test-token";
-const PATIENCE: Duration = Duration::from_secs(5);
 
 async fn start_server() -> SocketAddr {
     let app = signaling::unauthenticated_test_router(
@@ -53,26 +52,6 @@ fn spawn_client(
         },
     );
     (client, rx)
-}
-
-async fn wait_for<T>(
-    rx: &mpsc::Receiver<Event>,
-    what: &str,
-    mut pick: impl FnMut(&Event) -> Option<T>,
-) -> T {
-    let deadline = tokio::time::Instant::now() + PATIENCE;
-    loop {
-        if let Ok(event) = rx.try_recv()
-            && let Some(picked) = pick(&event)
-        {
-            return picked;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "等 {what} 超时"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 /// 客户端自己与服务端往返校时：同一台机器上，换算出来的本机时刻与真实的差不过一两毫秒。
