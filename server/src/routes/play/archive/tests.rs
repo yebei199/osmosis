@@ -560,7 +560,30 @@ async fn liked_by(
     .expect("写红心失败");
 }
 
-/// 清理只删「没人红心、且三天没播」的;红心的与三天内播过的都留着。
+/// 把一首放进这个账号新建的一个普通歌单。
+async fn in_playlist(
+    tx: &mut sqlx::PgConnection,
+    account: &Account,
+    id: &str,
+) {
+    let list = server::store::playlist::create(
+        &mut *tx,
+        account.id,
+        &format!("歌单 {id}"),
+    )
+    .await
+    .expect("建歌单失败");
+    server::store::playlist::add_tracks(
+        tx,
+        account.id,
+        list.id,
+        &[netease(id)],
+    )
+    .await
+    .expect("加歌失败");
+}
+
+/// 清理只删「哪都不在、且三天没播」的;红心的、在歌单或日推里的、三天内播过的都留着。
 #[tokio::test]
 async fn the_sweep_keeps_liked_and_recent_tracks() {
     let f = fixture("ar_sweep", false).await;
@@ -568,6 +591,22 @@ async fn the_sweep_keeps_liked_and_recent_tracks() {
     let old = testing::track_id("ar_sweep", 1);
     let liked = testing::track_id("ar_sweep", 2);
     let recent = testing::track_id("ar_sweep", 3);
+    let listed = testing::track_id("ar_sweep", 4);
+    let picked = testing::track_id("ar_sweep", 5);
+    let listed_key =
+        stored_days_ago(&mut tx, &f.objects, &listed, 4)
+            .await;
+    in_playlist(&mut tx, &f.account, &listed).await;
+    let picked_key =
+        stored_days_ago(&mut tx, &f.objects, &picked, 4)
+            .await;
+    server::store::daily::replace(
+        &mut tx,
+        f.account.id,
+        &[netease(&picked)],
+    )
+    .await
+    .unwrap();
 
     let old_key =
         stored_days_ago(&mut tx, &f.objects, &old, 4).await;
@@ -586,6 +625,9 @@ async fn the_sweep_keeps_liked_and_recent_tracks() {
     assert_eq!(f.objects.get(&old_key), None);
     assert!(f.objects.get(&liked_key).is_some());
     assert!(f.objects.get(&recent_key).is_some());
+    // 普通歌单与当天日推里的也长期留着(#147)
+    assert!(f.objects.get(&listed_key).is_some());
+    assert!(f.objects.get(&picked_key).is_some());
     let left = |id: &str| {
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
@@ -763,4 +805,114 @@ async fn job_state(
     .fetch_optional(&f.state.pool)
     .await
     .expect("查队列失败")
+}
+
+/// 放得下就不让;放不下按顺序请前几个让位;全让掉也放不下就不存。
+#[test]
+fn make_room_takes_as_few_as_it_needs() {
+    use super::make_room;
+
+    assert_eq!(make_room(50, 40, 100, &[30]), Some(0));
+    assert_eq!(
+        make_room(90, 40, 100, &[20, 20, 20]),
+        Some(2)
+    );
+    assert_eq!(make_room(90, 40, 100, &[30, 5]), Some(1));
+    assert_eq!(make_room(90, 40, 100, &[10, 10]), None);
+    assert_eq!(make_room(90, 40, 100, &[]), None);
+}
+
+/// 名次:「我的喜欢」0、当天日推 1、其他歌单 2、哪都不在 3;换了日推,旧的那批掉到 3。
+#[tokio::test]
+async fn ranks_follow_liked_then_daily_then_playlists() {
+    let f = fixture("ar_rank", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let id = |n| testing::track_id("ar_rank", n);
+    liked_by(&mut tx, &f.account, &id(1)).await;
+    in_playlist(&mut tx, &f.account, &id(3)).await;
+    server::store::daily::replace(
+        &mut tx,
+        f.account.id,
+        &[netease(&id(1)), netease(&id(2))],
+    )
+    .await
+    .unwrap();
+
+    let mut ranks = Vec::new();
+    for n in 1..=4 {
+        ranks.push(
+            ledger::rank(&mut tx, "netease", &id(n))
+                .await
+                .unwrap(),
+        );
+    }
+    assert_eq!(ranks, vec![0, 1, 2, ledger::UNKEPT]);
+
+    server::store::daily::replace(
+        &mut tx,
+        f.account.id,
+        &[netease(&id(4))],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ledger::rank(&mut tx, "netease", &id(2))
+            .await
+            .unwrap(),
+        ledger::UNKEPT
+    );
+}
+
+/// 为名次靠前的让位时,只请名次在它之后的;越靠后越先,同名次里最久没播的先。
+#[tokio::test]
+async fn the_ones_behind_yield_last_played_first() {
+    let f = fixture("ar_yield", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let id = |n| testing::track_id("ar_yield", n);
+    stored_days_ago(&mut tx, &f.objects, &id(1), 1).await;
+    liked_by(&mut tx, &f.account, &id(1)).await;
+    stored_days_ago(&mut tx, &f.objects, &id(2), 1).await;
+    in_playlist(&mut tx, &f.account, &id(2)).await;
+    stored_days_ago(&mut tx, &f.objects, &id(3), 1).await;
+    stored_days_ago(&mut tx, &f.objects, &id(4), 2).await;
+
+    let ours = async |tx: &mut sqlx::PgConnection, rank| {
+        ledger::yielding_to(tx, rank)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|track| track.track_id)
+            .filter(|track_id| {
+                track_id.starts_with(&testing::scoped(
+                    "ar_yield",
+                ))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        ours(&mut tx, 0).await,
+        vec![id(4), id(3), id(2)]
+    );
+    assert_eq!(ours(&mut tx, 2).await, vec![id(4), id(3)]);
+}
+
+/// 统计入口带着配置的空间上限。
+#[tokio::test]
+async fn the_stats_carry_the_cap() {
+    let f = fixture("ar_stats", false).await;
+    let state = AppState {
+        archive: Some(
+            Archive::new(f.objects.clone()).with_cap(123),
+        ),
+        ..f.state.clone()
+    };
+
+    let stats =
+        super::stats(State(state), f.account.clone())
+            .await
+            .expect("统计应当取得到")
+            .0;
+
+    assert_eq!(stats.cap_bytes, 123);
 }

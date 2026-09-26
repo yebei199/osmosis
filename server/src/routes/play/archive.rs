@@ -11,14 +11,18 @@
 //!
 //! 只存无损:音源给不出无损的这首不存(`docs/adr/0034`)。
 //!
-//! 只有红心的歌长期留着:[`spawn_sweeper`] 每小时删一轮没人红心、且最后一次
-//! 播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
+//! 在我们任何一个歌单里、或在当天日推里的长期留着;[`spawn_sweeper`] 每小时删一轮
+//! 哪都不在、且最后一次播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
+//! 桶有空间上限(默认 [`DEFAULT_CAP_BYTES`]),超过时按「我的喜欢 → 日推 →
+//! 其他歌单 → 哪都不在」取舍,存不下的记日志,见 [`make_room`]。
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
+use axum::extract::State;
 use contract::PlaySourceDto;
+use serde::Serialize;
 use sqlx::{PgConnection, PgPool};
 
 use server::objects::Objects;
@@ -28,9 +32,10 @@ use server::quality::{
 use server::store::account::Account;
 use server::store::archive::{self, StoredTrack};
 use server::store::playlist::TrackRef;
+use server::store::prefetch as queue;
 
-use crate::AppState;
 use crate::routes::play::{download, prefetch};
+use crate::{AppState, conn};
 
 #[cfg(test)]
 mod tests;
@@ -48,15 +53,28 @@ const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 /// 目前唯一的平台。别的平台的曲目不存 —— 取源只认网易云。
 pub(crate) const NETEASE: &str = "netease";
 
-/// 对象存储。同时存几首、多快去问音源,由预取队列的 worker 管(见 `prefetch`)。
+/// 桶的空间上限的默认值:85 GB(十进制)。RustFS 的数据卷是 98 GB,留十几 GB 余量。
+pub(crate) const DEFAULT_CAP_BYTES: i64 = 85_000_000_000;
+
+/// 对象存储,连同它的空间上限。同时存几首、多快去问音源,由预取队列的 worker 管
+/// (见 `prefetch`)。
 #[derive(Clone)]
 pub(crate) struct Archive {
     objects: Arc<dyn Objects>,
+    /// 桶里最多放多少字节(#147)。超过时按名次取舍,见 [`make_room`]。
+    cap_bytes: i64,
 }
 
 impl Archive {
     pub(crate) fn new(objects: Arc<dyn Objects>) -> Self {
-        Self { objects }
+        Self {
+            objects,
+            cap_bytes: DEFAULT_CAP_BYTES,
+        }
+    }
+
+    pub(crate) fn with_cap(self, cap_bytes: i64) -> Self {
+        Self { cap_bytes, ..self }
     }
 }
 
@@ -77,6 +95,8 @@ pub(crate) enum Stored {
     Already,
     /// 音源给不出无损(或只给试听片段),不存。
     NoLossless,
+    /// 放进去会超出空间上限,排在它后面的又腾不出地方,不存。
+    OverCap,
 }
 
 /// `/played` 之后调用:后台去办,立刻返回。没配对象存储就什么都不做。
@@ -212,6 +232,11 @@ async fn store(
         quality.bits_per_sample = Some(bits);
         quality.sample_rate = Some(rate);
     }
+    let size =
+        i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    if !make_space(state, archive, track, size).await? {
+        return Ok(Stored::OverCap);
+    }
 
     let stored = StoredTrack {
         object_key: format!(
@@ -223,8 +248,7 @@ async fn store(
         quality: quality_key,
         format: quality.format,
         bit_rate: quality.bit_rate,
-        bytes: i64::try_from(bytes.len())
-            .unwrap_or(i64::MAX),
+        bytes: size,
         tier: quality.tier.name().to_owned(),
         bits_per_sample: quality.bits_per_sample,
         sample_rate: quality.sample_rate,
@@ -251,6 +275,100 @@ async fn store(
         "已存进对象存储"
     );
     Ok(Stored::Now)
+}
+
+/// 放不放得下这 `size` 字节:放得下直接放;放不下就请名次在它后面的让位
+/// (删对象、删账,在歌单或日推里的记一笔 over_cap),腾不出来就不存。
+///
+// ponytail: 几个 worker 各自先量后放,同时放的那几首可能一起越过上限,
+// 最多越过 worker 数 × 一首的大小(百来 MB);要严丝合缝就把量与放包进一把 advisory lock。
+async fn make_space(
+    state: &AppState,
+    archive: &Archive,
+    track: &TrackRef,
+    size: i64,
+) -> Result<bool, String> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| err.to_string())?;
+    let used = archive::total_bytes(&mut conn)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    if used.saturating_add(size) <= archive.cap_bytes {
+        return Ok(true);
+    }
+
+    let rank = archive::rank(
+        &mut conn,
+        &track.platform,
+        &track.track_id,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))?;
+    let behind = archive::yielding_to(&mut conn, rank)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    let sizes: Vec<i64> =
+        behind.iter().map(|victim| victim.bytes).collect();
+    let Some(count) =
+        make_room(used, size, archive.cap_bytes, &sizes)
+    else {
+        tracing::warn!(
+            track_id = %track.track_id,
+            rank,
+            used,
+            size,
+            cap = archive.cap_bytes,
+            "超出空间上限,不存"
+        );
+        return Ok(false);
+    };
+
+    for victim in &behind[..count] {
+        archive.objects.delete(&victim.object_key).await?;
+        archive::forget(&mut conn, victim)
+            .await
+            .map_err(|err| format!("{err:?}"))?;
+        queue::mark_evicted(
+            &mut conn,
+            &TrackRef {
+                platform: victim.platform.clone(),
+                track_id: victim.track_id.clone(),
+            },
+        )
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+        tracing::warn!(
+            track_id = %victim.track_id,
+            bytes = victim.bytes,
+            for_track = %track.track_id,
+            "超出空间上限,让位给排在前面的"
+        );
+    }
+    Ok(true)
+}
+
+/// 已用 `used` 字节、上限 `cap`,要放进 `incoming` 字节:按顺序请 `candidates`
+/// (各自的字节数)让位,要让掉前几个才放得下。全让掉也放不下是 `None`。
+pub(crate) fn make_room(
+    used: i64,
+    incoming: i64,
+    cap: i64,
+    candidates: &[i64],
+) -> Option<usize> {
+    let mut need = used.saturating_add(incoming) - cap;
+    if need <= 0 {
+        return Some(0);
+    }
+    for (index, bytes) in candidates.iter().enumerate() {
+        need -= bytes;
+        if need <= 0 {
+            return Some(index + 1);
+        }
+    }
+    None
 }
 
 /// 这首存过、对象也还在,就交出桶里那份的签名链接;否则 `None`,调用方去找网易云。
@@ -418,6 +536,61 @@ pub(crate) fn spawn_sweeper(
             }
         }
     });
+}
+
+/// `GET /archive/stats` 的响应:桶里存了多少、队列里还剩多少(#147)。
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ArchiveStats {
+    /// 以无损存进桶的曲目数。
+    pub(crate) tracks: i64,
+    /// 它们一共多少字节。应当等于桶的用量。
+    pub(crate) bytes: i64,
+    /// 空间上限。没配对象存储时是 0。
+    pub(crate) cap_bytes: i64,
+    /// 预取队列里还在排的(含正在取的)。
+    pub(crate) queued: i64,
+    /// 因为超出空间上限没存的。
+    pub(crate) over_cap: i64,
+    /// 音源给不出无损的。
+    pub(crate) no_lossless: i64,
+    /// 重试用尽的。
+    pub(crate) failed: i64,
+}
+
+/// `GET /archive/stats` —— 缓存的统计。界面上没有入口,带登录 token 用 curl 打它。
+pub(crate) async fn stats(
+    State(state): State<AppState>,
+    _account: Account,
+) -> Result<Json<ArchiveStats>, server::error::Failure> {
+    let map = |err: server::error::AppError| {
+        server::error::map_error(&err)
+    };
+    let mut conn = conn(&state.pool).await?;
+    let (tracks, bytes) =
+        archive::usage(&mut conn, &quality())
+            .await
+            .map_err(map)?;
+    let counts =
+        queue::counts(&mut conn).await.map_err(map)?;
+    let count = |wanted: &str| {
+        counts
+            .iter()
+            .find(|(state, _)| state == wanted)
+            .map_or(0, |(_, n)| *n)
+    };
+
+    Ok(Json(ArchiveStats {
+        tracks,
+        bytes,
+        cap_bytes: state
+            .archive
+            .as_ref()
+            .map_or(0, |archive| archive.cap_bytes),
+        queued: count("queued"),
+        over_cap: count("over_cap"),
+        no_lossless: count("no_lossless"),
+        failed: count("failed"),
+    }))
 }
 
 /// 上游给的格式进了对象键,也决定交回去的 `Content-Type`。

@@ -207,6 +207,34 @@ pub async fn retry_later(
     Ok(())
 }
 
+/// 一首存歌为排在前面的让了位:它若在谁的歌单或日推里,记一笔 over_cap,
+/// 统计数得到它,下一次入队再试。哪都不在的不记 —— 本来就没人要留它。
+pub async fn mark_evicted(
+    conn: &mut PgConnection,
+    track: &TrackRef,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO prefetch_jobs (platform, track_id, account_id, state)
+         SELECT $1, $2, owner, 'over_cap' FROM (
+             SELECT lp.account_id AS owner
+             FROM local_playlist_tracks lt
+             JOIN local_playlists lp ON lp.id = lt.playlist_id
+             WHERE lt.platform = $1 AND lt.track_id = $2
+             UNION ALL
+             SELECT account_id FROM daily_picks
+             WHERE platform = $1 AND track_id = $2
+             ORDER BY 1 LIMIT 1
+         ) AS owners
+         ON CONFLICT (platform, track_id) DO UPDATE SET state = 'over_cap'",
+    )
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
 /// 各个状态各有几条,如 `[("queued", 12), ("over_cap", 3)]`。
 pub async fn counts(
     conn: &mut PgConnection,

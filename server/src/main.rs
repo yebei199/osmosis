@@ -423,7 +423,25 @@ fn archive() -> Option<Archive> {
     };
     tracing::info!(endpoint = %config.endpoint, bucket = %config.bucket, "听过的歌存进对象存储");
     let s3 = S3::new(config).expect("S3 配置不对");
-    Some(Archive::new(std::sync::Arc::new(s3)))
+    // 空间上限(#147),十进制 GB。不设就是默认的 85
+    let cap_bytes = std::env::var("ARCHIVE_CAP_GB")
+        .ok()
+        .map(|raw| {
+            raw.trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|gb| *gb > 0)
+                .expect("ARCHIVE_CAP_GB 要是正整数")
+                * 1_000_000_000
+        })
+        .unwrap_or(
+            routes::play::archive::DEFAULT_CAP_BYTES,
+        );
+    tracing::info!(cap_bytes, "存歌的空间上限");
+    Some(
+        Archive::new(std::sync::Arc::new(s3))
+            .with_cap(cap_bytes),
+    )
 }
 
 #[tokio::main]
@@ -575,6 +593,11 @@ async fn main() {
         .route("/played", post(record_play))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
+        // 缓存的统计(#147):存了多少首、多少字节,队列里还剩多少。界面上没有入口
+        .route(
+            "/archive/stats",
+            get(routes::play::archive::stats),
+        )
         .with_state(state.clone())
         // 队列与信令各自成组,好把限流挂在组上(见下面那几个构造函数)。
         .merge(queue_routes(&state))

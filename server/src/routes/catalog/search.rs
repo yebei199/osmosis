@@ -20,6 +20,7 @@ use server::bangdream::{
 };
 use server::error::Failure;
 use server::store::account::Account;
+use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
 use crate::routes::play::prefetch;
@@ -208,10 +209,31 @@ pub(crate) async fn daily(
             track_id: track.id.clone(),
         })
         .collect();
+    remember_daily(&state, account.id, &refs).await;
     prefetch::enqueue(&state, account.id, &refs).await;
 
     Ok(Json(TracksDto {
         tracks,
         unavailable: 0,
     }))
+}
+
+/// 记下这个账号当天的日推:保留规则要知道哪几首在里面(#147)。
+/// 记不上只写日志,日推照样交出去。
+async fn remember_daily(
+    state: &AppState,
+    account_id: i64,
+    tracks: &[TrackRef],
+) {
+    let remembered = match state.pool.acquire().await {
+        Ok(mut conn) => daily_picks::replace(
+            &mut conn, account_id, tracks,
+        )
+        .await
+        .map_err(|err| format!("{err:?}")),
+        Err(err) => Err(err.to_string()),
+    };
+    if let Err(err) = remembered {
+        tracing::warn!(%err, "记不下当天的日推");
+    }
 }

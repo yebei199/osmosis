@@ -224,6 +224,14 @@ pub(crate) async fn run(state: &AppState, job: &Job) {
                 )
                 .await
             }
+            Ok(Stored::OverCap) => {
+                prefetch::settle(
+                    &mut conn,
+                    job,
+                    Unfinished::OverCap,
+                )
+                .await
+            }
             Err(err) => {
                 tracing::warn!(
                     track_id = %job.track_id,
