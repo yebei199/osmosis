@@ -296,6 +296,7 @@ dependencies = [
  "log",
  "render3d",
  "slint",
+ "tempfile",
  "ui",
  "zbus",
 ]
