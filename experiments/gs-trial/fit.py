@@ -1,5 +1,5 @@
 # 路线 B:受约束拟合。三张设计图(外加侧面镜像)配正交相机和前景 mask,Hunyuan 高模当几何先验。
-# 用法: python fit.py <out_dir> [--n 300000] [--iters 6000] [--prior aligned.ply] [--max-scale 0.006] [--max-aniso 8]
+# 用法: python fit.py <out_dir> [--n 300000] [--iters 6000] [--prior aligned.ply] [--max-scale 0.006] [--max-aniso 8] [--extra 补画目录]
 # 输入: ~/ai3d/unicat/rest-hi.glb、~/ai3d/unicat/views-rest/*.png(只读)
 # 产物: <out_dir>/fit.ply、targets.png(配准检查)、fit.json(数量、用时、显存峰值)
 import argparse
@@ -25,6 +25,7 @@ ap.add_argument("--iters", type=int, default=6000)
 ap.add_argument("--prior", help="已对齐到设计图坐标系的 .ply(eval.py --align 的产物),在中间视角当低频颜色先验")
 ap.add_argument("--max-scale", type=float, default=0.006)
 ap.add_argument("--max-aniso", type=float, default=8.0)
+ap.add_argument("--extra", help="补画视角目录(front34.png、back34.png);给了就做五视角拟合")
 args = ap.parse_args()
 os.makedirs(args.out, exist_ok=True)
 dev = "cuda"
@@ -33,12 +34,14 @@ np.random.seed(0)
 t0 = time.time()
 
 # 设计视角权重:镜像侧面只是「猫大体对称」的猜测,降权
-W_VIEW = {"side": 1.0, "front": 1.0, "back": 0.8, "side_m": 0.35}
+# 补画的两张四分之三是 Codex 照三视图画的,和三视图有出入,整张降到一半
+W_VIEW = {"side": 1.0, "front": 1.0, "back": 0.8, "side_m": 0.35, "front34": 0.5, "back34": 0.5}
+W_CONFLICT = 0.2                     # 补画视角里轮廓和高模对不上的像素,alpha 损失再乘这个
 BAND_OUT, BAND_IN = 0.015, 0.012     # 高斯中心离高模表面的容许带(米):外 15mm 给毛尖,内 12mm
 MAX_SCALE = args.max_scale          # 单个高斯最长半轴超过它开始罚,压住中间视角里的长针
 
 mesh = gs.load_mesh(args.mesh)
-T = gs.load_targets(mesh, args.designs)
+T = gs.load_targets(mesh, args.designs, args.extra)
 print("REGISTER", {k: v["info"] for k, v in T.items()}, flush=True)
 
 
@@ -49,7 +52,7 @@ def overlay(t):
     return Image.fromarray((np.clip(o, 0, 1) * 255).astype(np.uint8))
 
 
-for k in ("side", "front", "back"):
+for k in [k for k in T if k != "side_m"]:
     overlay(T[k]).save(f"{args.out}/register-{k}.png")
 
 # ---------- 初始化:高模表面采样 ----------
@@ -144,6 +147,18 @@ def ssim(x, y):
 
 
 TG = {k: (torch.tensor(t["rgb"], device=dev), torch.tensor(t["mask"], dtype=torch.float32, device=dev)) for k, t in T.items()}
+
+
+def alpha_weight(k, t):
+    """原三视图全权重;补画视角里「图里有猫而高模没有」或反过来的像素(容 6px),降到 W_CONFLICT。"""
+    if k not in gs.EXTRA_VIEWS:
+        return torch.ones(t["mask"].shape, device=dev)
+    m, s = t["mask"] > 0.5, t["sil"]
+    conflict = (m & ~nd.binary_dilation(s, iterations=6)) | (s & ~nd.binary_dilation(m, iterations=6))
+    return torch.tensor(np.where(conflict, W_CONFLICT, 1.0), dtype=torch.float32, device=dev)
+
+
+AW = {k: alpha_weight(k, t) for k, t in T.items()}
 t_setup = time.time() - t0
 torch.cuda.reset_peak_memory_stats()
 t1 = time.time()
@@ -157,7 +172,7 @@ for it in range(args.iters):
         rgb, alpha = gs.render(P, [t["cam"]])
         tg, mk = TG[k]
         l_rgb = (rgb[0] - tg).abs().mean() * 0.8 + 0.2 * (1 - ssim(rgb[0].permute(2, 0, 1)[None], tg.permute(2, 0, 1)[None]))
-        loss = loss + W_VIEW[k] * (l_rgb + 0.5 * (alpha[0, ..., 0] - mk).abs().mean())
+        loss = loss + W_VIEW[k] * (l_rgb + 0.5 * ((alpha[0, ..., 0] - mk).abs() * AW[k]).mean())
     for cam, inside, pr in (NOVEL[i] for i in np.random.choice(len(NOVEL), 2, replace=False)):
         rgb, a = gs.render(P, [cam])
         loss = loss + 1.0 * (F.relu(0.98 - a[0, ..., 0]) * inside).sum() / inside.sum().clamp(min=1)

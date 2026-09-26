@@ -206,12 +206,69 @@ def register_design(path, cam, ref_sil, mirror=False):
     return rgb, mk, dict(iou=float(best[0]), scale=float(s), dx=float(dx), dy=float(dy))
 
 
-def load_targets(mesh, design_dir):
-    """四个设计视角的相机和配准后的目标图。"""
+# 第 2 轮补画的两张四分之三(用户审过):不是正交图,相机靠轮廓搜。值是方位角、仰角的搜索范围(度)。
+# front34 画的是猫的左前方(侧面原图那一侧),back34 是右后方(三视图都没画的那一侧)。
+# 仰角只搜 0~40°:提示词要的是平视到略俯;放开到 -10° 时 back34 会落到边界上的仰视,
+# 轮廓分不清仰俯,那是腿和尾巴的姿势差在凑 IoU。
+EXTRA_VIEWS = {"front34": ((0, 90), (0, 40)), "back34": ((-180, -90), (0, 40))}
+
+
+def surface_splats(mesh, n=200_000, device="cuda"):
+    """高模表面上的小实心高斯,只用来渲轮廓。定种子:相机搜索靠它,拟合和出图两次调用得搜出同一台相机。"""
+    pts, _ = trimesh.sample.sample_surface(mesh, n, seed=0)
+    return dict(means=torch.tensor(pts, dtype=torch.float32, device=device),
+                scales=torch.full((n, 3), float(np.log(0.0015)), device=device),
+                quats=torch.tensor([[1.0, 0, 0, 0]], device=device).repeat(n, 1),
+                opacities=torch.full((n,), 5.0, device=device), sh0=torch.zeros(n, 1, 3, device=device))
+
+
+def _norm_mask(m, size=96):
+    """裁到外框、非等比缩到 size x size;另返回宽高比。"""
+    ys, xs = np.where(m)
+    c = m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    return np.asarray(Image.fromarray(c.astype(np.uint8) * 255).resize((size, size), Image.BILINEAR)) > 127, c.shape[1] / c.shape[0]
+
+
+def estimate_view(mesh, path, az_range, el_range, splats):
+    """在方位角/仰角网格上找高模轮廓和图里猫的轮廓最像的正交相机(先 5° 粗搜,再 ±5° 按 1° 细搜)。
+    比的是裁到外框后的形状 IoU,乘上宽高比的惩罚;平移和比例留给 register_design。"""
+    img_m, img_ar = _norm_mask(design_mask(np.asarray(Image.open(path).convert("RGB"))))
+    lo, hi = mesh.bounds
+    center = (lo + hi) / 2
+    R = float(np.linalg.norm(hi - lo) / 2) + 0.02
+
+    def score(az, el):
+        with torch.no_grad():
+            _, a = render(splats, [ortho_cam(orbit(az, el), center, R, R, px=400.0)])
+        m, ar = _norm_mask(a[0, ..., 0].cpu().numpy() > 0.5)
+        return (m & img_m).sum() / max(1, (m | img_m).sum()) * np.exp(-2 * abs(np.log(ar / img_ar)))
+
+    grid = [(az, el) for az in range(az_range[0], az_range[1] + 1, 5) for el in range(el_range[0], el_range[1] + 1, 5)]
+    az0, el0 = max(grid, key=lambda g: score(*g))
+    fine = [(az, el) for az in range(max(az_range[0], az0 - 5), min(az_range[1], az0 + 5) + 1)
+            for el in range(max(el_range[0], el0 - 5), min(el_range[1], el0 + 5) + 1)]
+    best = max(fine, key=lambda g: score(*g))
+    return best, float(score(*best))
+
+
+def load_targets(mesh, design_dir, extra_dir=None):
+    """设计视角的相机和配准后的目标图;给了 extra_dir 就加上补画的两张四分之三。"""
     cams = design_cams(mesh)
     out = {}
     for k, cam in cams.items():
         sil = mesh_silhouette(mesh, cam)
         rgb, mk, info = register_design(f"{design_dir}/{VIEW_FILES[k]}", cam, sil, mirror=(k == "side_m"))
         out[k] = dict(cam=cam, rgb=rgb, mask=mk, sil=sil, info=info)
+    if extra_dir:
+        splats = surface_splats(mesh)
+        lo, hi = mesh.bounds
+        center = (lo + hi) / 2
+        R = float(np.linalg.norm(hi - lo) / 2) + 0.02
+        for k, (azr, elr) in EXTRA_VIEWS.items():
+            path = f"{extra_dir}/{k}.png"
+            (az, el), sc = estimate_view(mesh, path, azr, elr, splats)
+            cam = ortho_cam(orbit(az, el), center, R, R * 0.75)
+            sil = mesh_silhouette(mesh, cam)
+            rgb, mk, info = register_design(path, cam, sil)
+            out[k] = dict(cam=cam, rgb=rgb, mask=mk, sil=sil, info=dict(info, az=az, el=el, shape_score=sc))
     return out

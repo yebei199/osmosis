@@ -21,12 +21,13 @@ ap.add_argument("out")
 ap.add_argument("--align", action="store_true")
 ap.add_argument("--mesh", default=os.path.expanduser("~/ai3d/unicat/rest-hi.glb"))
 ap.add_argument("--designs", default=os.path.expanduser("~/ai3d/unicat/views-rest"))
+ap.add_argument("--extra", help="补画视角目录;给了就加两张四分之三的对照,没画过的角度换成正上方俯视和从下往上仰视")
 args = ap.parse_args()
 stem = os.path.splitext(args.out)[0]
 os.makedirs(f"{stem}-views", exist_ok=True)
 
 mesh = gs.load_mesh(args.mesh)
-T = gs.load_targets(mesh, args.designs)
+T = gs.load_targets(mesh, args.designs, args.extra)
 P = gs.load_ply(args.ply)
 
 
@@ -102,16 +103,21 @@ for k in ("side", "front", "back"):
     tiles[f"design {k}"], tiles[f"gaussian {k}"] = T[k]["rgb"], shot(T[k]["cam"])
 tiles["design face"], face_cam = face_pair()
 tiles["gaussian face"] = shot(face_cam)
-NOVEL = {"front 3/4 from above (not drawn)": (45, 35), "back 3/4 other side (not drawn)": (-135, 20)}
+for k in gs.EXTRA_VIEWS if args.extra else ():
+    tiles[f"painted {k}"], tiles[f"gaussian {k}"] = T[k]["rgb"], shot(T[k]["cam"])
+NOVEL = ({"straight down (not drawn)": (0, 89), "from below, front-left (not drawn)": (30, -35)} if args.extra else
+         {"front 3/4 from above (not drawn)": (45, 35), "back 3/4 other side (not drawn)": (-135, 20)})
 for name, (az, el) in NOVEL.items():
-    tiles[name] = shot(gs.persp_cam(gs.orbit(az, el), center, 30, 900, 900, 0.95))
+    tiles[name] = shot(gs.persp_cam(gs.orbit(az, el), center, 30, 900, 900, 0.95 if abs(el) < 45 else 1.25))  # 俯视时猫身最长,拉远
 
 for name, im in tiles.items():
     Image.fromarray((np.clip(im, 0, 1) * 255).astype(np.uint8)).save(f"{stem}-views/{name.split(' (')[0].replace(' ', '_').replace('/', '')}.png")
 
 # ---------- 拼图:每行统一高度 ----------
-ROWS = [["design side", "gaussian side"], ["design front", "gaussian front", "design back", "gaussian back"],
-        ["design face", "gaussian face", *NOVEL]]
+ROWS = [["design side", "gaussian side"], ["design front", "gaussian front", "design back", "gaussian back"]]
+if args.extra:
+    ROWS.append([f"{p} {k}" for k in gs.EXTRA_VIEWS for p in ("painted", "gaussian")])
+ROWS.append(["design face", "gaussian face", *NOVEL])
 HT = 560
 try:
     font = ImageFont.load_default(size=26)
@@ -140,6 +146,7 @@ for r in rows:
 out.save(args.out)
 
 info = dict(ply=args.ply, gaussians=int(P["means"].shape[0]), ply_mib=round(os.path.getsize(args.ply) / 2 ** 20, 1),
-            iou={k: round(iou(P, k), 3) for k in ("side", "front", "back")})
+            iou={k: round(iou(P, k), 3) for k in T if k != "side_m"},
+            extra_cams={k: T[k]["info"] for k in gs.EXTRA_VIEWS if k in T})
 json.dump(info, open(f"{stem}.json", "w"), indent=1)
 print("EVAL", json.dumps(info), flush=True)
