@@ -26,6 +26,8 @@ tonic-prost.workspace = true
 prost.workspace = true
 # WebSocket 的收发两端要拆开跑(见 signaling::serve),故需要 StreamExt/SinkExt。
 futures-util = { version = "0.3", default-features = false }
+# 存歌的流式 body(见 objects::ObjectBody);reqwest 与 axum 已经带着它。
+bytes = "1"
 # 信令走 JSON 文本帧。HTTP 那侧由 axum 的 Json 提取器负责,不必自己序列化;
 # WebSocket 没有对应的提取器,消息体只能自己转。
 serde_json = "1"
