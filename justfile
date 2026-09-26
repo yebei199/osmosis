@@ -64,12 +64,12 @@ ci-fmt:
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
 ci-test: pg rustfs
-    nix-shell slint.nix --run 'cargo test'
+    nix-shell slint.nix --run 'cargo test --locked'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
-    nix-shell slint.nix --run 'cargo test -p audio -p syncplay -p server -p xtask'
-    nix-shell slint.nix --run 'cargo clippy --all-targets -- -D warnings'
-    nix-shell slint.nix --run 'cargo clippy --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
+    nix-shell slint.nix --run 'cargo test --locked -p audio -p syncplay -p server -p xtask'
+    nix-shell slint.nix --run 'cargo clippy --locked --all-targets -- -D warnings'
+    nix-shell slint.nix --run 'cargo clippy --locked --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
 
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
 # web / iOS 已冻结(#105),不在此列 —— 解冻前不再为它们付编译税
@@ -78,12 +78,12 @@ ci-test: pg rustfs
 # 根本不参与编译,lint 一条都报不到它 —— 这一条是它唯一的门
 [group('ci')]
 ci-cross:
-    nix-shell Android.nix --run 'cargo clippy -p app-android --target aarch64-linux-android -- -D warnings'
+    nix-shell Android.nix --run 'cargo clippy --locked -p app-android --target aarch64-linux-android -- -D warnings'
 
 # 架构边界(docs/adr/0001、0002)。与 CI 调的是同一份 xtask 代码
 [group('ci')]
 ci-boundaries:
-    nix-shell slint.nix --run 'cargo xtask boundaries'
+    nix-shell slint.nix --run 'cargo --locked xtask boundaries'
 
 # 热重载 UI 开发:编辑 crates/ui/slint/*.slint 保存即刷新运行中的窗口(改 Rust 逻辑仍需重启)
 # 左上角帧率读数:`OSMOSIS_FPS=1 just desktop-dev`(运行期开关,不必重编)

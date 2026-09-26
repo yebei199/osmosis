@@ -125,8 +125,8 @@ jobs:
       # 语义明确,不依赖 config 与 manifest 谁覆盖谁。
       #
       # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
-      - run: cargo test --config 'profile.dev.package."*".opt-level=0'
-      - run: cargo test --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
+      - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0'
+      - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
 
   clippy:
     name: clippy
@@ -144,8 +144,8 @@ jobs:
       - name: 安装 native 依赖
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev protobuf-compiler dbus
 
-      - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -- -D warnings
-      - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
+      - run: cargo clippy --locked --config 'profile.dev.package."*".opt-level=0' --all-targets -- -D warnings
+      - run: cargo clippy --locked --config 'profile.dev.package."*".opt-level=0' --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings
 
   # 本地跑不动的端,至少保证它们**能编译** —— 否则 app-core/api 会悄悄长出
   # 这些 target 编不过的假设。见 issue #1。
@@ -193,7 +193,7 @@ jobs:
       #
       # 走 clippy 而不是 check:`cfg(target_os = "android")` 里的代码在上面那条
       # clippy job 里根本不参与编译,lint 一条都报不到它 —— 这一条是它唯一的门。
-      - run: cargo clippy --config 'profile.dev.package."*".opt-level=0' -p ${{ matrix.package }} --target ${{ matrix.target }} -- -D warnings
+      - run: cargo clippy --locked --config 'profile.dev.package."*".opt-level=0' -p ${{ matrix.package }} --target ${{ matrix.target }} -- -D warnings
 
   # 架构约束的可执行形式。这些断言一旦失守,重构就白做了。
   #
@@ -208,4 +208,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo xtask boundaries
+      - run: cargo --locked xtask boundaries
