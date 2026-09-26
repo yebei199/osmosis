@@ -13,7 +13,8 @@
 | `env.sh` | 运行前 `. ~/ai3d/gs-trial/env.sh` |
 | `gs.py` | 公共件:坐标系、相机、gsplat 渲染、`.ply` 读写、设计图配准 |
 | `lgm_run.py` | 路线 A:LGM。`idream` 由 ImageDream 从正面图补四视图;`hybrid` 四个槽直接放设计图(侧面镜像补另一侧) |
-| `fit.py` | 路线 B:受约束拟合。高模表面采样初始化、设计图投影上色,gsplat 对四个设计视角优化,高模 SDF 和中间视角轮廓当约束 |
+| `fit.py` | 路线 B:受约束拟合。高模表面采样初始化、设计图投影上色,gsplat 对四个设计视角优化,高模 SDF 和中间视角轮廓当约束;`--prior` 拿 LGM 的对齐结果在中间视角当低频颜色先验 |
+| `eval.py` | 固定机位出对比图:设计图三视角 + 脸部特写并排,外加两个没画过的角度;`--align` 把 LGM 的输出对齐进设计图坐标系 |
 
 坐标系沿用 #140 的 `sil.py`:Z 朝上、脚底 z=0、脚底到耳尖 0.30m、头朝 -Y。
 
@@ -22,5 +23,8 @@
 ```sh
 . ~/ai3d/gs-trial/env.sh
 cd ~/ai3d/gs-trial/LGM && python ../scripts/lgm_run.py ../out/lgm      # 约 10s,显存峰值约 8GiB
-cd ~/ai3d/gs-trial/scripts && python fit.py ../out/fit1                # 约 4min,显存峰值不到 1GiB
+cd ~/ai3d/gs-trial/scripts
+python eval.py ../out/lgm/hybrid.ply ../out/lgm/eval-hybrid.png --align   # 另存 eval-hybrid-aligned.ply
+python fit.py ../out/fit2 --prior ../out/lgm/eval-hybrid-aligned.ply --max-scale 0.004 --max-aniso 5   # 约 4min,显存峰值不到 1GiB
+python eval.py ../out/fit2/fit.ply ../out/fit2/eval.png
 ```

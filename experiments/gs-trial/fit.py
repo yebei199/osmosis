@@ -1,5 +1,5 @@
 # 路线 B:受约束拟合。三张设计图(外加侧面镜像)配正交相机和前景 mask,Hunyuan 高模当几何先验。
-# 用法: python fit.py <out_dir> [--n 300000] [--iters 6000]
+# 用法: python fit.py <out_dir> [--n 300000] [--iters 6000] [--prior aligned.ply] [--max-scale 0.006] [--max-aniso 8]
 # 输入: ~/ai3d/unicat/rest-hi.glb、~/ai3d/unicat/views-rest/*.png(只读)
 # 产物: <out_dir>/fit.ply、targets.png(配准检查)、fit.json(数量、用时、显存峰值)
 import argparse
@@ -22,6 +22,9 @@ ap.add_argument("--mesh", default=os.path.expanduser("~/ai3d/unicat/rest-hi.glb"
 ap.add_argument("--designs", default=os.path.expanduser("~/ai3d/unicat/views-rest"))
 ap.add_argument("--n", type=int, default=300_000)
 ap.add_argument("--iters", type=int, default=6000)
+ap.add_argument("--prior", help="已对齐到设计图坐标系的 .ply(eval.py --align 的产物),在中间视角当低频颜色先验")
+ap.add_argument("--max-scale", type=float, default=0.006)
+ap.add_argument("--max-aniso", type=float, default=8.0)
 args = ap.parse_args()
 os.makedirs(args.out, exist_ok=True)
 dev = "cuda"
@@ -32,7 +35,7 @@ t0 = time.time()
 # 设计视角权重:镜像侧面只是「猫大体对称」的猜测,降权
 W_VIEW = {"side": 1.0, "front": 1.0, "back": 0.8, "side_m": 0.35}
 BAND_OUT, BAND_IN = 0.015, 0.012     # 高斯中心离高模表面的容许带(米):外 15mm 给毛尖,内 12mm
-MAX_SCALE = 0.006                    # 单个高斯最长半轴超过 6mm 开始罚,压住中间视角里的长针
+MAX_SCALE = args.max_scale          # 单个高斯最长半轴超过它开始罚,压住中间视角里的长针
 
 mesh = gs.load_mesh(args.mesh)
 T = gs.load_targets(mesh, args.designs)
@@ -114,13 +117,18 @@ lo, hi = mesh.bounds
 center = (lo + hi) / 2
 R_half = float(np.linalg.norm(hi - lo) / 2) + 0.02
 NOVEL = []
+PRIOR = gs.load_ply(args.prior) if args.prior else None
 with torch.no_grad():
     for az in range(0, 360, 20):
         for el in (-25, 10, 40, 70):
             cam = gs.ortho_cam(gs.orbit(az, el), center, R_half, R_half, px=1000.0)
             _, a = gs.render(P, [cam])
             inside = nd.binary_erosion(a[0, ..., 0].cpu().numpy() > 0.5, iterations=5)
-            NOVEL.append((cam, torch.tensor(inside, device=dev)))
+            pr = None
+            if PRIOR is not None:                          # 先验渲染缩到 1/8 只留低频颜色,alpha 够实的地方才算
+                prgb, pa = gs.render(PRIOR, [cam])
+                pr = (F.avg_pool2d(prgb.permute(0, 3, 1, 2), 8), F.avg_pool2d(pa.permute(0, 3, 1, 2), 8) > 0.9)
+            NOVEL.append((cam, torch.tensor(inside, device=dev), pr))
 
 
 def ssim(x, y):
@@ -150,14 +158,17 @@ for it in range(args.iters):
         tg, mk = TG[k]
         l_rgb = (rgb[0] - tg).abs().mean() * 0.8 + 0.2 * (1 - ssim(rgb[0].permute(2, 0, 1)[None], tg.permute(2, 0, 1)[None]))
         loss = loss + W_VIEW[k] * (l_rgb + 0.5 * (alpha[0, ..., 0] - mk).abs().mean())
-    for cam, inside in (NOVEL[i] for i in np.random.choice(len(NOVEL), 2, replace=False)):
-        _, a = gs.render(P, [cam])
+    for cam, inside, pr in (NOVEL[i] for i in np.random.choice(len(NOVEL), 2, replace=False)):
+        rgb, a = gs.render(P, [cam])
         loss = loss + 1.0 * (F.relu(0.98 - a[0, ..., 0]) * inside).sum() / inside.sum().clamp(min=1)
+        if pr is not None:
+            low = F.avg_pool2d(rgb.permute(0, 3, 1, 2), 8)
+            loss = loss + 0.5 * ((low - pr[0]).abs() * pr[1]).sum() / pr[1].sum().clamp(min=1) / 3
     s = sdf_at(P["means"])
     loss = loss + 10.0 * ((F.relu(s - BAND_OUT) + F.relu(-s - BAND_IN)) / 0.005).pow(2).mean()
     sc = torch.exp(P["scales"])
     loss = loss + 10.0 * (F.relu(sc.max(1).values - MAX_SCALE) / 0.001).pow(2).mean()
-    loss = loss + 0.01 * F.relu(sc.max(1).values / sc.min(1).values - 8).mean()
+    loss = loss + 0.01 * F.relu(sc.max(1).values / sc.min(1).values - args.max_aniso).mean()
     opt.zero_grad(set_to_none=True)
     loss.backward()
     opt.step()
