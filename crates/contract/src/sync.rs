@@ -144,6 +144,8 @@ pub enum ClientSignal {
         term: u64,
         plan: Box<crate::GroupPlanDto>,
     },
+    /// 出声设备每秒一条的执行事实(#142)。服务端转给组里其他在线成员。
+    Report { report: crate::DeviceReportDto },
 }
 
 /// 服务端发给设备的信令消息。
@@ -254,6 +256,16 @@ pub enum ServerSignal {
         from: String,
         term: u64,
         plan: Box<crate::GroupPlanDto>,
+    },
+    /// 组的全局播放状态(#142)。入册之后先推一份,之后版本一变就推给账号下每台在线设备。
+    /// 组散了(或者从来没有)是 `None`。装箱:它比别的变体大出一截。
+    GroupState {
+        state: Option<Box<crate::GroupStateDto>>,
+    },
+    /// 组里某台出声设备的执行事实,原样转来。
+    DeviceReport {
+        from: String,
+        report: crate::DeviceReportDto,
     },
 }
 

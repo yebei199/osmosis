@@ -57,12 +57,16 @@ pub use sync::*;
 /// 协议 5 的成员不会校时、不认共同计划，进了组只会各放各的，而一起出声正是这一版
 /// 要保证的东西，所以不兼容、成套升级。
 ///
+/// 7:服务端持有组的全局播放状态,组里设备对等可控(#142)。多了 `GroupState` /
+/// `DeviceReport` 两条下行、`Report` 一条上行与 `/group/*` 意图路由;遥控接管、被控锁、
+/// 主端计划那一套退场。协议 6 的客户端还在等主端发计划,进了组谁也不出声,所以不兼容。
+///
 /// **光改这个常量不够。** 版本比对此前只发生在 `/health`,而 `/signal` 的
 /// 握手不看版本 —— 旧客户端照样连得上,两边遇到不认识的 JSON 默默丢弃,
 /// 症状是「按了没反应」。拒绝要落在**取得控制权之前**,见
 /// [`ClientSignal::Hello`] 的 `protocol_version` 与
 /// [`ServerSignal::Incompatible`]。
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// `GET /health` 的响应体。
 #[derive(

@@ -6,5 +6,6 @@
 
 pub mod clock;
 pub mod control;
+pub mod group;
 pub mod roster;
 pub mod signaling;

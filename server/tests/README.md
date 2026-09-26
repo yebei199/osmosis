@@ -6,6 +6,7 @@
 | 文件 | 验什么 | 要什么 |
 |---|---|---|
 | `accounts.rs`、`history.rs`、`playlists.rs`、`queues.rs`、`cache.rs` | 存储层对着真库的行为 | Postgres(`just pg`) |
+| `groups.rs` | 组的全局播放状态:意图、广播、掉线暂停、重启后恢复且版本不回退(#142) | Postgres |
 | `signal_auth.rs` | `/signal` 的鉴权与来源校验 | Postgres |
 | `objects.rs` | S3 客户端:存、取(含 Range)、删、不可达(#126) | RustFS(`just rustfs`) |
 | `live_signaling.rs` | 两条真实连接之间信令真的过去了 | 无,进程内起服务端 |

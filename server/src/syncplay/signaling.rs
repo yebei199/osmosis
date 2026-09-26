@@ -101,6 +101,7 @@ pub async fn handler(
     State(roster): State<SharedRoster>,
     State(control): State<SharedControl>,
     State(origins): State<AllowedOrigins>,
+    State(pool): State<sqlx::PgPool>,
 ) -> Response {
     // 浏览器一定带 `Origin`,原生端不带。带了就必须在白名单里 ——
     // 同源策略管不到 WebSocket,不校验的话任意网页都能借用户的登录态连上来。
@@ -126,6 +127,7 @@ pub async fn handler(
                 socket,
                 roster,
                 control,
+                Some(pool),
                 account_id,
                 Timing::default(),
             )
@@ -144,6 +146,7 @@ pub async fn serve(
     socket: WebSocket,
     roster: SharedRoster,
     control: SharedControl,
+    pool: Option<sqlx::PgPool>,
     account: AccountId,
     timing: Timing,
 ) {
@@ -222,6 +225,15 @@ pub async fn serve(
         broadcast_roster(&guard, account);
         generation
     };
+    // 组的全局状态先推一份(#142):重连不需要任何「续权」,拿到最新状态照着做。
+    if let Some(pool) = &pool
+        && let Err(error) = crate::syncplay::group::greet(
+            pool, &roster, account, &device_id,
+        )
+        .await
+    {
+        tracing::warn!(?error, "入册时没能推组状态");
+    }
     // info 而不是 debug:「那台设备到底连上没有」是查遥控问题的第一问,
     // 生产默认 info 下看不见它,grep 零结果就成了假阴性(#113)。
     tracing::info!(
@@ -275,33 +287,57 @@ pub async fn serve(
         }
     }
 
-    let mut guard = roster.lock().expect("名册锁中毒");
-    // 被顶替掉的那条连接的清理什么都不该动:它的 leave 返回 false,
-    // 而顺手清掉控制权会把刚重连上的那条遥控关系带走。
-    if guard.leave(account, &device_id, generation) {
-        // 下线的若是**被控端**,它身上的遥控关系没了,遥控器得知道。
-        // 下线的若是遥控器,槽位先留一个租约 —— 手机没电不能让 pc1 停,
-        // 但也不能让 pc1 永远挂着横幅(#111)。
-        let mut control =
-            control.lock().expect("控制权锁中毒");
-        control.controller_left(
-            account,
-            &device_id,
-            std::time::Instant::now(),
-        );
-        let freed = control.release(account, &device_id);
-        if let Some(controller) = freed
-            && let Some(sink) =
-                guard.sink(account, &controller)
-        {
-            let _ = sink.try_send(
-                ServerSignal::ControlRevoked {
-                    by: device_id.clone(),
-                },
+    let left = {
+        let guard =
+            &mut *roster.lock().expect("名册锁中毒");
+        // 被顶替掉的那条连接的清理什么都不该动:它的 leave 返回 false,
+        // 而顺手清掉控制权会把刚重连上的那条遥控关系带走。
+        let left =
+            guard.leave(account, &device_id, generation);
+        if left {
+            release_control(
+                guard, &control, account, &device_id,
             );
         }
+        broadcast_roster(guard, account);
+        left
+    };
+    // 出声设备掉线:组里再没有一台出声设备在线就暂停(#142 的掉线规则)。
+    if left
+        && let Some(pool) = &pool
+        && let Err(error) =
+            crate::syncplay::group::device_left(
+                pool, &roster, account, &device_id,
+            )
+            .await
+    {
+        tracing::warn!(?error, "出册时没能更新组状态");
     }
-    broadcast_roster(&guard, account);
+}
+
+/// 出册时的控制权收尾:下线的若是**被控端**,它身上的遥控关系没了,遥控器得知道;
+/// 下线的若是遥控器,槽位先留一个租约(#111)。
+fn release_control(
+    guard: &Roster<Sink>,
+    control: &SharedControl,
+    account: AccountId,
+    device_id: &str,
+) {
+    let mut control = control.lock().expect("控制权锁中毒");
+    control.controller_left(
+        account,
+        device_id,
+        std::time::Instant::now(),
+    );
+    let freed = control.release(account, device_id);
+    if let Some(controller) = freed
+        && let Some(sink) = guard.sink(account, &controller)
+    {
+        let _ =
+            sink.try_send(ServerSignal::ControlRevoked {
+                by: device_id.to_owned(),
+            });
+    }
 }
 
 /// 处理一条文本帧:解析、路由,应答塞回发信人自己的收件箱。
@@ -362,7 +398,7 @@ pub fn unauthenticated_test_router(
             .max_message_size(MAX_MESSAGE_BYTES)
             .on_upgrade(move |socket| {
                 serve(
-                    socket, roster, control, account,
+                    socket, roster, control, None, account,
                     timing,
                 )
             })
@@ -453,6 +489,25 @@ fn route(
                 server_us: crate::syncplay::clock::now_us(),
                 epoch: crate::syncplay::clock::epoch(),
             })
+        }
+        // 出声设备的执行事实(#142):原样转给账号下其余在线设备,谁在组里由收的那一侧看。
+        ClientSignal::Report { report } => {
+            for device in roster.devices(account) {
+                if device.id == from {
+                    continue;
+                }
+                if let Some(sink) =
+                    roster.sink(account, &device.id)
+                {
+                    let _ = sink.try_send(
+                        ServerSignal::DeviceReport {
+                            from: from.to_owned(),
+                            report: report.clone(),
+                        },
+                    );
+                }
+            }
+            None
         }
         // 其余几条都是遥控器模式的,归 `crate::syncplay::control`。
         remote @ (ClientSignal::ClaimControl { .. }

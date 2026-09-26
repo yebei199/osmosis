@@ -747,7 +747,8 @@ pub fn route(
         ),
         // 握手与校时归 `signaling::route`,到不了这里。
         ClientSignal::Hello { .. }
-        | ClientSignal::TimePing { .. } => None,
+        | ClientSignal::TimePing { .. }
+        | ClientSignal::Report { .. } => None,
         ClientSignal::GroupPlan { term, plan } => {
             match control
                 .plan_recipients(account, from, term)

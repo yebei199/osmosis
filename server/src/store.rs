@@ -8,6 +8,7 @@ pub mod account;
 pub mod archive;
 pub mod cache;
 pub mod db;
+pub mod group;
 pub mod history;
 pub mod playlist;
 pub mod queue;

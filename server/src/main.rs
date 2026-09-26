@@ -276,6 +276,47 @@ fn queue_routes(state: &AppState) -> Router {
         .with_state(state.clone())
 }
 
+/// 组的全局播放状态(#142)。点歌可能带着整批曲目,与建队列同一道闸、同一个 body 上限;
+/// 其余几条是小操作,与队列意图同一道闸。
+fn group_routes(state: &AppState) -> Router {
+    let play = Router::new()
+        .route("/group/play", post(routes::group::play))
+        .layer(DefaultBodyLimit::max(QUEUE_UPLOAD_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_write.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let steer = Router::new()
+        .route(
+            "/group/transport",
+            post(routes::group::transport),
+        )
+        .route(
+            "/group/outputs",
+            post(routes::group::outputs),
+        )
+        .route("/group/leave", post(routes::group::leave))
+        .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_intent.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let read = Router::new()
+        .route("/group", get(routes::group::current))
+        .route_layer(guard(
+            state.policies.queue_read.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    Router::new()
+        .merge(play)
+        .merge(steer)
+        .merge(read)
+        .with_state(state.clone())
+}
+
 /// 信令建连。
 ///
 /// **这一层只拦升级请求本身**,拦不到升级之后那条 WebSocket 上的消息 ——
@@ -449,6 +490,11 @@ async fn main() {
             }),
         archive: archive(),
     };
+    // 组放完一首就往下推一首(#142)。
+    server::syncplay::group::spawn_roller(
+        state.pool.clone(),
+        state.roster.clone(),
+    );
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
     // 没人红心、三天没播的存歌同理
@@ -534,6 +580,7 @@ async fn main() {
         .with_state(state.clone())
         // 队列与信令各自成组,好把限流挂在组上(见下面那几个构造函数)。
         .merge(queue_routes(&state))
+        .merge(group_routes(&state))
         .merge(signal_routes(&state))
         .merge(auth_routes(&state))
         // 每个请求一行耗时,并给它的上游调用开一个共同的 span(见 timed_request)。
