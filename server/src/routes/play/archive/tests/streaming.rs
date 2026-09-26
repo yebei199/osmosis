@@ -52,17 +52,20 @@ async fn serve_big_flac(
                     Bytes::copy_from_slice(&head[10..]),
                 ];
                 chunks.extend(
-                    (0..rest / CHUNK).map(|_| filler.clone()),
+                    (0..rest / CHUNK)
+                        .map(|_| filler.clone()),
                 );
                 chunks.push(filler.slice(..rest % CHUNK));
-                let body = futures_util::stream::iter(chunks)
-                    .map(move |chunk| {
-                        emitted.fetch_add(
-                            chunk.len() as u64,
-                            Ordering::SeqCst,
-                        );
-                        Ok::<_, std::io::Error>(chunk)
-                    });
+                let body = futures_util::stream::iter(
+                    chunks,
+                )
+                .map(move |chunk| {
+                    emitted.fetch_add(
+                        chunk.len() as u64,
+                        Ordering::SeqCst,
+                    );
+                    Ok::<_, std::io::Error>(chunk)
+                });
                 let mut response =
                     axum::response::Response::new(
                         Body::from_stream(body),
@@ -194,13 +197,17 @@ async fn a_huge_track_streams_through_bounded_memory() {
 
     assert_eq!(outcome, Ok(Stored::Now));
     assert_eq!(*gauge.length.lock().unwrap(), Some(TRACK));
-    assert_eq!(gauge.received.load(Ordering::SeqCst), TRACK);
+    assert_eq!(
+        gauge.received.load(Ordering::SeqCst),
+        TRACK
+    );
     let peak = gauge.peak_in_flight.load(Ordering::SeqCst);
     assert!(
         peak < IN_FLIGHT_CEILING,
         "在路上的字节峰值 {peak},上限 {IN_FLIGHT_CEILING}:整首被缓冲了"
     );
-    let stored = row(&state, &id).await.expect("应当记了账");
+    let stored =
+        row(&state, &id).await.expect("应当记了账");
     assert_eq!(
         (
             stored.bytes,

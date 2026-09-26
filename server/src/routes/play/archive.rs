@@ -227,9 +227,10 @@ async fn store(
         .await
         .map_err(describe)?;
     // 单个 PUT 要事先知道长度;不给长度的上游这次不存,队列会再排它
-    let length = upstream.content_length().ok_or_else(|| {
-        "上游没给 Content-Length,流式存不了".to_owned()
-    })?;
+    let length =
+        upstream.content_length().ok_or_else(|| {
+            "上游没给 Content-Length,流式存不了".to_owned()
+        })?;
     let mut body: ObjectBody = upstream
         .bytes_stream()
         .map_err(std::io::Error::other)

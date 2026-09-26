@@ -60,8 +60,8 @@ async fn put_then_fetch_then_delete() {
         bytes.len() as u64,
         "audio/mpeg",
     )
-        .await
-        .expect("存应当成功");
+    .await
+    .expect("存应当成功");
     assert!(s3.exists(key).await.expect("问得到"));
 
     let fetched = reqwest::get(s3.presign_get(key))
@@ -93,8 +93,8 @@ async fn presigned_link_honours_range() {
         bytes.len() as u64,
         "audio/flac",
     )
-        .await
-        .expect("存应当成功");
+    .await
+    .expect("存应当成功");
 
     let partial = reqwest::Client::new()
         .get(s3.presign_get(key))
