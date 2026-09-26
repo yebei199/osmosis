@@ -252,6 +252,8 @@ pub(crate) struct FakeUpstream {
     /// `GetPlaySource` 被问了几次。直链缓存命中与否,响应里看不出来 ——
     /// 两次拿到的是同一条链接 —— 只能数上游被问了几回。
     pub(crate) play_asks: Arc<Mutex<usize>>,
+    /// 每一次 `GetPlaySource` 要的档位,按到达顺序。
+    pub(crate) play_levels: Arc<Mutex<Vec<i32>>>,
     /// 每一次 `GetTracks` 收到的 id 批次,按到达顺序记下来。
     ///
     /// 「只补缺的那些」和「按 `DETAIL_BATCH` 分批」这两条规矩,除了数它
@@ -297,6 +299,14 @@ impl FakeUpstream {
             .play_asks
             .lock()
             .expect("记取源次数的锁被毒化了")
+    }
+
+    /// 至今每一次取源要的档位。
+    pub(crate) fn play_levels(&self) -> Vec<i32> {
+        self.play_levels
+            .lock()
+            .expect("记档位的锁被毒化了")
+            .clone()
     }
 
     /// 至今为止每一批被问到的 id。
@@ -389,13 +399,17 @@ impl CatalogService for FakeUpstream {
 
     async fn get_play_source(
         &self,
-        _request: Request<GetPlaySourceRequest>,
+        request: Request<GetPlaySourceRequest>,
     ) -> Result<Response<GetPlaySourceResponse>, Status>
     {
         *self
             .play_asks
             .lock()
             .expect("记取源次数的锁被毒化了") += 1;
+        self.play_levels
+            .lock()
+            .expect("记档位的锁被毒化了")
+            .push(request.get_ref().level);
 
         Ok(Response::new(GetPlaySourceResponse {
             source: self.play_source.clone(),

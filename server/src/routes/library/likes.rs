@@ -28,7 +28,7 @@ use crate::routes::catalog::catalog_cache::{
     detail_tracks_of, fill_details, netease_name,
     track_refs_of,
 };
-use crate::routes::play::archive;
+use crate::routes::play::{archive, prefetch};
 use crate::{AppState, conn, fail};
 
 /// `GET /recent` 的查询参数。
@@ -48,6 +48,7 @@ pub(crate) async fn liked_ids(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TrackIdsDto>, Failure> {
+    import_once(&state, &account).await;
     let mut conn = conn(&state.pool).await?;
     let refs = liked::refs(&mut conn, account.id)
         .await
@@ -70,6 +71,7 @@ pub(crate) async fn liked(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
+    import_once(&state, &account).await;
     let mut conn = conn(&state.pool).await?;
     let ids: Vec<String> =
         liked::refs(&mut conn, account.id)
@@ -111,7 +113,53 @@ pub(crate) async fn import_liked(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<LikedImport>, Failure> {
-    let detail = netease_liked(&state, &account).await?;
+    import(&state, &account).await.map(Json)
+}
+
+/// 「我的喜欢」还没建过时,从网易云导入一次(#147):上线后第一次用到它的那一刻,
+/// 不再靠人手动打 `POST /liked/import`,也就不会出现一份空的「我的喜欢」。
+///
+/// 读红心、点心、歌单页都先过这里。导不进来(网易云没登录、连不上)只记日志,
+/// 也不建一份空的 —— 建了就再也不会自动导了,下一次用到时再试。
+///
+// ponytail: 同一刻的几个首次请求会各导一遍;导入本身幂等,只是多问几次上游。
+pub(crate) async fn import_once(
+    state: &AppState,
+    account: &Account,
+) {
+    let exists = match state.pool.acquire().await {
+        Ok(mut conn) => {
+            liked::exists(&mut conn, account.id)
+                .await
+                .map_err(|err| format!("{err:?}"))
+        }
+        Err(err) => Err(err.to_string()),
+    };
+    match exists {
+        Ok(true) => {}
+        Ok(false) => {
+            if let Err((status, Json(body))) =
+                import(state, account).await
+            {
+                tracing::warn!(
+                    %status,
+                    message = body.message,
+                    "「我的喜欢」还没有,没能从网易云导入,下次用到再试"
+                );
+            }
+        }
+        Err(err) => {
+            tracing::warn!(%err, "查不了「我的喜欢」建过没有");
+        }
+    }
+}
+
+/// 导入的本体,见 [`import_liked`]。
+async fn import(
+    state: &AppState,
+    account: &Account,
+) -> Result<LikedImport, Failure> {
+    let detail = netease_liked(state, account).await?;
     let refs = track_refs_of(&detail);
     let ids: Vec<String> =
         refs.iter().map(|track| track.id.clone()).collect();
@@ -123,7 +171,7 @@ pub(crate) async fn import_liked(
     )
     .await
     .map_err(|err| error::map_error(&err))?;
-    fill_details(&state, &account, &mut conn, &ids).await?;
+    fill_details(state, account, &mut conn, &ids).await?;
 
     let added = liked::import(
         &mut conn,
@@ -137,8 +185,17 @@ pub(crate) async fn import_liked(
         .await
         .map_err(|err| error::map_error(&err))?;
     tracing::info!(added, total, "导入网易云红心");
+    drop(conn);
+    let imported: Vec<TrackRef> = ids
+        .into_iter()
+        .map(|track_id| TrackRef {
+            platform: netease_name(),
+            track_id,
+        })
+        .collect();
+    prefetch::enqueue(state, account.id, &imported).await;
 
-    Ok(Json(LikedImport { added, total }))
+    Ok(LikedImport { added, total })
 }
 
 /// 网易云红心歌单的详情:问账号 → 找红心歌单 → 取成员关系与加入时刻。
@@ -223,13 +280,25 @@ async fn liked_playlist_id(
         })
 }
 
-/// `PUT /liked/{track_id}` —— 点红心。
+/// `PUT /liked/{track_id}` —— 点红心。这首排进预取队列(#147)。
 pub(crate) async fn like_track(
     State(state): State<AppState>,
     account: Account,
     Path(track_id): Path<String>,
 ) -> Result<StatusCode, Failure> {
-    set_liked(&state, &account, track_id, true).await
+    let track = TrackRef {
+        platform: netease_name(),
+        track_id: track_id.clone(),
+    };
+    let status =
+        set_liked(&state, &account, track_id, true).await?;
+    prefetch::enqueue(
+        &state,
+        account.id,
+        std::slice::from_ref(&track),
+    )
+    .await;
+    Ok(status)
 }
 
 /// `DELETE /liked/{track_id}` —— 取消红心。
@@ -261,6 +330,8 @@ pub(crate) async fn set_liked(
     track_id: String,
     liked: bool,
 ) -> Result<StatusCode, Failure> {
+    // 先把网易云那份导进来:点的这一颗心不能抢先建出一份只有它的「我的喜欢」
+    import_once(state, account).await;
     let mut conn = conn(&state.pool).await?;
     let track = TrackRef {
         platform: netease_name(),

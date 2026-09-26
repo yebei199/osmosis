@@ -7,9 +7,11 @@
 pub mod account;
 pub mod archive;
 pub mod cache;
+pub mod daily;
 pub mod db;
 pub mod group;
 pub mod history;
 pub mod liked;
 pub mod playlist;
+pub mod prefetch;
 pub mod queue;

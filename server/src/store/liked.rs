@@ -45,6 +45,23 @@ pub async fn ensure(
     Ok(id)
 }
 
+/// 这个账号的「我的喜欢」建过没有。没建过的第一次用到时从平台导入一次(#147)。
+pub async fn exists(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<bool, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM local_playlists
+             WHERE account_id = $1 AND system = $2
+         )",
+    )
+    .bind(account_id)
+    .bind(SYSTEM)
+    .fetch_one(conn)
+    .await?)
+}
+
 /// 全部红心,最近加入的在最前(`docs/adr/0021`)。
 ///
 /// 加入时刻相同或没有的,按 position 倒排 —— 导入时平台排在前面的拿到的
