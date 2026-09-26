@@ -5,5 +5,4 @@
 
 - `signalling.rs`、`wss_signalling.rs`、`auth.rs`:建连、握手、TLS、鉴权;
 - `client.rs`:编排循环的重连与名册;
-- `remote.rs`:遥控器模式 —— 接管、命令、上报、被顶掉;
-- `group.rs`:播放组(#137 ⑤)—— 校时收敛、组通告、共同计划经服务端转给跟随端。
+- `group.rs`:校时走一遍真信令。组的全局状态要落库,对着真库的测试在 `server/tests/groups.rs`。
