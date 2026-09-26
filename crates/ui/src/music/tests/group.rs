@@ -276,3 +276,52 @@ fn a_member_leaves_advancing_to_the_group() {
     }));
     assert!(is_silent_member(&deck), "本机只当遥控器");
 }
+
+/// 组里正在放的那一首再点:与本机同一个判据,是多余的一下,不再发(#142 F-1)。服务端几毫秒
+/// 就回了应答,只看「意图在路上」挡不住连点的第二下。
+#[test]
+fn tapping_the_track_the_group_is_playing_is_redundant() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    batch_of(&deck, &["a", "x"]);
+    deck.group.assume(Some(state(&["pc"], true)));
+
+    ui.global::<Player>().invoke_play("x".into());
+
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 组暂停着:出声设备的 ⏯ 画成「播放」,不看本机播放器(它在组里一直没按暂停)(#142 F-4)。
+#[test]
+fn the_play_key_follows_the_group_state() {
+    let (ui, deck) = deck_window();
+    ui.global::<Player>().set_is_playing(true);
+    deck.group.assume(Some(state(&["me"], false)));
+
+    align(&ui, &deck);
+
+    assert!(!ui.global::<Player>().get_is_playing());
+}
+
+/// 出声设备放完了此刻那一首:报一次 advance,同一份不报第二次(AC-9)。
+#[test]
+fn a_finished_output_reports_once() {
+    let (ui, deck) = deck_window();
+    deck.group.assume(Some(state(&["me"], true)));
+
+    deck.group.finished(&ui);
+    deck.group.finished(&ui);
+
+    assert_eq!(deck.group.intents(), vec!["advance 12"]);
+}
+
+/// 只当遥控器的不出声,没有「放完」可报。
+#[test]
+fn a_silent_member_never_reports_finishing() {
+    let (ui, deck) = deck_window();
+    deck.group.assume(Some(state(&["pc"], true)));
+
+    deck.group.finished(&ui);
+
+    assert!(deck.group.intents().is_empty());
+}

@@ -55,6 +55,8 @@ struct Inner {
     names: Mutex<HashMap<String, String>>,
     /// 点歌意图还在路上的那一首。同一首连点只发一次。
     in_flight: Mutex<Option<String>>,
+    /// 已经报过放完的那一份 `(version, entry_id)`。每拍都看得见放空,只报一次。
+    finished: Mutex<Option<(u64, i64)>>,
     /// 封面已经取到哪一首了(只当遥控器时控制条的封面)。
     cover_id: Mutex<String>,
     /// 测试里记下发了哪些意图:测试里没有服务端。
@@ -73,6 +75,7 @@ pub fn new(ui: &MainWindow, me: &str) -> Group {
             reports: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
             in_flight: Mutex::new(None),
+            finished: Mutex::new(None),
             cover_id: Mutex::new(String::new()),
             #[cfg(test)]
             intents: Mutex::new(Vec::new()),
@@ -106,6 +109,11 @@ impl Group {
     /// 本机在组里(出声或只当遥控器)。点歌入口据此发意图,而不是本机放。
     pub fn is_member(&self) -> bool {
         lock(&self.inner.view).is_member()
+    }
+
+    /// 信令连着没有。出声设备断开期间停着,连回来要按最新状态重新起这一首。
+    pub fn is_online(&self) -> bool {
+        lock(&self.inner.view).is_online()
     }
 
     /// 手上那一版全局状态。
@@ -267,9 +275,16 @@ impl Group {
         else {
             return;
         };
+        // 组里此刻就在放这一首:与本机那条路的连点去重同一个判据(`rules::is_redundant_tap`)。
+        // 只看「在路上」不够 —— 服务端几毫秒就回了,连点的第二下到时在途标记早清了(#142 F-1)。
+        let sounding = self.now().is_some_and(|now| {
+            now.playing && now.track.id == tapped
+        });
         {
             let mut in_flight = lock(&self.inner.in_flight);
-            if in_flight.as_deref() == Some(tapped.as_str())
+            if sounding
+                || in_flight.as_deref()
+                    == Some(tapped.as_str())
             {
                 crate::notice::show(
                     ui,
@@ -307,6 +322,41 @@ impl Group {
                 revision,
                 entry_id,
             }),
+        );
+    }
+
+    /// 本机(出声设备)真正放完了此刻那一首:报给服务端,最先报的那台推进(#142 AC-9)。
+    /// 同一份 `(version, entry_id)` 只报一次。
+    pub fn finished(&self, ui: &MainWindow) {
+        let Some((version, entry_id)) = ({
+            let view = lock(&self.inner.view);
+            view.state().and_then(|state| {
+                state
+                    .now
+                    .as_ref()
+                    .filter(|now| now.playing)
+                    .map(|now| {
+                        (state.version, now.entry_id)
+                    })
+            })
+        }) else {
+            return;
+        };
+        if self.standing() != Standing::Output {
+            return;
+        }
+        {
+            let mut finished = lock(&self.inner.finished);
+            if *finished == Some((version, entry_id)) {
+                return;
+            }
+            *finished = Some((version, entry_id));
+        }
+        self.send(
+            ui,
+            "切换",
+            format!("advance {entry_id}"),
+            GroupIntent::Advance { entry_id, version },
         );
     }
 
@@ -399,6 +449,15 @@ impl Group {
                     }
                     GroupIntent::Leave => {
                         api::group_leave(&me).await
+                    }
+                    GroupIntent::Advance {
+                        entry_id,
+                        version,
+                    } => {
+                        api::group_advance(
+                            &me, entry_id, version,
+                        )
+                        .await
                     }
                 };
                 lock(&group.inner.in_flight).take();
@@ -622,6 +681,7 @@ enum GroupIntent {
     Transport(TransportOpDto),
     Outputs(Vec<String>, Option<GroupSeedDto>),
     Leave,
+    Advance { entry_id: i64, version: u64 },
 }
 
 /// 名册那一排芯片上标出谁在出声(空串是本机)。「加入 / 移出」那颗小键照它显示。

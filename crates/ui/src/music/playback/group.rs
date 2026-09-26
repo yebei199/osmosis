@@ -19,8 +19,8 @@ use std::time::Duration;
 use app_core::{Effective, PlaybackState, Sound};
 use audio::sync::{Anchor, Target};
 
-use crate::Shell;
 use crate::music::*;
+use crate::{Player, Shell};
 
 /// 多久对准一次。
 const ALIGN_EVERY: Duration = Duration::from_millis(200);
@@ -39,6 +39,10 @@ struct State {
     entry: Option<(i64, i64, i64, u64)>,
     /// 正在取哪一版队列副本。
     fetching: Option<(i64, i64)>,
+    /// 与服务端断开时停过:连回来要按最新状态把这一首重新起一遍,不在停下的那个流上接着追。
+    /// 断开几十秒后,输出流已经关了、媒体连接多半也被对端掐了,原地追赶会卡死在停下的
+    /// 位置(#142 F-5)。
+    stale: bool,
     /// 报给组里其他设备的故障。
     fault: Option<String>,
 }
@@ -88,13 +92,25 @@ pub(in crate::music) fn align(
     ui: &MainWindow,
     deck: &Deck,
 ) {
-    let Ok(player) = deck.player.as_ref() else {
-        return;
-    };
     let sound = deck.group.sound();
     let was_member = deck.alignment.inner.borrow().member;
     deck.alignment.inner.borrow_mut().member =
         sound != Sound::Solo;
+    // 控制条的 ⏯ 照全局状态画:出声设备的播放器在组里一直「没按暂停」,暂停的是时间线
+    // (#142 F-4)。只当遥控器的由 `Group::push_playback` 画。
+    match &sound {
+        Sound::Follow(now) => {
+            ui.global::<Player>()
+                .set_is_playing(now.playing);
+        }
+        Sound::Hold => {
+            ui.global::<Player>().set_is_playing(false)
+        }
+        Sound::Solo | Sound::Silent => {}
+    }
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
     match sound {
         Sound::Solo => {
             release(deck, player);
@@ -104,7 +120,13 @@ pub(in crate::music) fn align(
             }
         }
         Sound::Silent => silence(ui, deck, player),
-        Sound::Hold => hold(deck, player),
+        Sound::Hold => {
+            if !deck.group.is_online() {
+                deck.alignment.inner.borrow_mut().stale =
+                    true;
+            }
+            hold(deck, player);
+        }
         Sound::Follow(now) => track(ui, deck, player, &now),
     }
 }
@@ -164,7 +186,15 @@ fn track(
     player: &audio::Player,
     now: &Effective,
 ) {
-    deck.alignment.inner.borrow_mut().silenced = false;
+    // 断开后连回来:这一首从状态此刻的位置重新起,见 `State::stale`。
+    let reload = {
+        let mut state = deck.alignment.inner.borrow_mut();
+        state.silenced = false;
+        if state.stale {
+            state.entry = None;
+        }
+        state.stale
+    };
     let (queue_id, _, applied) = deck.execution.identity();
     if (queue_id, applied)
         != (Some(now.queue_id), Some(now.revision))
@@ -197,8 +227,9 @@ fn track(
                 deck.alignment.inner.borrow_mut();
             state.entry = Some(want);
             state.fault = None;
+            state.stale = false;
         }
-        start_entry(ui, deck, index, now);
+        start_entry(ui, deck, index, now, reload);
     }
     if let PlaybackState::Failed(why) =
         deck.playback.borrow().state().clone()
@@ -238,20 +269,24 @@ fn start_entry(
     deck: &Deck,
     index: usize,
     now: &Effective,
+    reload: bool,
 ) {
     let current = deck
         .execution
         .entry_at(deck.queue.borrow().index());
+    // 手上在放的得真是这一首:换了一版队列之后,队列的游标可能恰好落在同一个条目号上,
+    // 播放器里却还是上一版的那首歌(#142 F-3,从另一份搜索结果点歌后两台重放了上一首)。
     let busy = matches!(
         deck.playback.borrow().state(),
-        PlaybackState::Playing(_)
-            | PlaybackState::Loading(_)
+        PlaybackState::Playing(track)
+            | PlaybackState::Loading(track)
+            if track.id == now.track.id
     ) && deck
         .player
         .as_ref()
         .as_ref()
         .is_ok_and(|player| !player.empty());
-    if current == Some(now.entry_id) && busy {
+    if !reload && current == Some(now.entry_id) && busy {
         return;
     }
     let at_us = deck.group.server_now_us().map_or(
@@ -328,6 +363,27 @@ fn fetch_copy(
             align(&ui, &deck);
         }
     });
+}
+
+/// 本机(出声设备)真正放完了全局状态此刻那一首:手上放的就是那一条的那首歌。
+///
+/// 播放器放空不够:换版取副本、条目不在、校时没结论时播放器也可能是空的,那不是放完了,
+/// 报上去会把组推到下一首(#142 AC-9)。
+pub(in crate::music) fn finished_the_entry(
+    deck: &Deck,
+) -> bool {
+    let Some(now) = deck.group.now() else {
+        return false;
+    };
+    let started =
+        deck.alignment.inner.borrow().entry.is_some_and(
+            |(_, _, entry, _)| entry == now.entry_id,
+        );
+    started
+        && matches!(
+            deck.playback.borrow().state(),
+            PlaybackState::Playing(track) if track.id == now.track.id
+        )
 }
 
 /// 本机在组里:放哪一首只听全局状态,本机自己的自动续播、断流切歌、起播上报都停

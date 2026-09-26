@@ -130,15 +130,18 @@ impl GlobalGroup {
         }
     }
 
-    /// 服务端时钟 `now_us` 这一刻该放的那一条:预告的下一首到点了就是它。组里没有歌时
-    /// 是 `None`。控制条、进度也读它。
+    /// 此刻该放的那一条。组里没有歌时是 `None`。控制条、进度也读它。
+    ///
+    /// 预告的下一首(`now.next`)只是提示,**不**到点自己换:这一首放到媒体真正的末尾,
+    /// 最先放完的出声设备报给服务端,服务端推进后广播新的一版(#142 AC-9)。按元数据时长
+    /// 自己换会截掉歌尾,或者在歌尾留一段空白。
     pub fn effective(
         &self,
-        now_us: u64,
+        _now_us: u64,
     ) -> Option<Effective> {
         let state = self.state.as_ref()?;
         let now = state.now.as_ref()?;
-        let current = Effective {
+        Some(Effective {
             clock_epoch: state.clock_epoch,
             queue_id: now.queue_id,
             revision: now.revision,
@@ -148,21 +151,6 @@ impl GlobalGroup {
             position_us: now.position_us,
             playing: now.playing,
             start_us: now.anchor_us,
-        };
-        Some(match &now.next {
-            Some(next)
-                if now.playing && now_us >= next.at_us =>
-            {
-                Effective {
-                    entry_id: next.entry_id,
-                    track: next.track.clone(),
-                    anchor_us: next.at_us,
-                    position_us: 0,
-                    start_us: next.at_us,
-                    ..current
-                }
-            }
-            _ => current,
         })
     }
 
@@ -283,20 +271,16 @@ mod tests {
         assert_eq!(group.standing(), Standing::Solo);
     }
 
-    /// 预告的下一首到点就换过去,锚在它开始的那一刻、从头放。
+    /// 预告的下一首到了预告的时刻也不自己换:等出声设备真正放完、服务端推进(AC-9)。
     #[test]
-    fn the_next_entry_takes_over_at_its_moment() {
+    fn the_next_entry_waits_for_the_server() {
         let group = pc(1);
 
-        let before = group.effective(100_000_000).unwrap();
-        assert_eq!(before.entry_id, 1);
         let after = group.effective(101_000_000).unwrap();
-        assert_eq!(after.entry_id, 2);
-        assert_eq!(after.anchor_us, 101_000_000);
-        assert_eq!(after.position_us, 0);
+        assert_eq!(after.entry_id, 1);
         assert!(matches!(
             group.sound(101_000_000),
-            Sound::Follow(now) if now.entry_id == 2
+            Sound::Follow(now) if now.entry_id == 1
         ));
     }
 

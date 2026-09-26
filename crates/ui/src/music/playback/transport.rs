@@ -342,14 +342,19 @@ pub(in crate::music) fn start_auto_advance(
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
             //
-            // 组里两样都不做:放哪一首只听全局状态(预告的下一首到点就换),断流了
-            // 跟随器静音追赶、取不到就报故障 —— 不自己换下一首。
+            // 组里不自己换下一首:放完了报给服务端,由它推进、广播;断流了跟随器静音追赶、
+            // 取不到就报故障。
             if !following {
                 if should_report_loss(&state, drained, gave_up) {
                     report_stream_loss(&ui, &deck);
                 } else if should_advance(&state, drained) {
                     advance_auto(&ui, &deck);
                 }
+            } else if should_advance(&state, drained)
+                && finished_the_entry(&deck)
+            {
+                // 组里真正放完了:报给服务端,最先报的那台推进(#142 AC-9)。
+                deck.group.finished(&ui);
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
