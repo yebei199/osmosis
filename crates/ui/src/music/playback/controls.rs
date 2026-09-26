@@ -6,8 +6,6 @@
 //! 各写了一遍,写法还不一致,于是总有一个被漏掉,而漏掉的那个在界面上表现为
 //! 「别的键都遥控,唯独这个还在本机上放」(#108)。
 
-use crate::Shell;
-
 use super::*;
 use crate::Player;
 use crate::music::*;
@@ -63,6 +61,13 @@ pub(in crate::music) fn bind_controls(
         );
     });
 
+    let focus = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_focus_changed(move |held| {
+        let Some(ui) = weak.upgrade() else { return };
+        focus_changed(&ui, &focus, held);
+    });
+
     let next = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_next_track(move || {
@@ -81,6 +86,15 @@ pub(in crate::music) fn bind_controls(
     let weak = ui.as_weak();
     ui.global::<Player>().on_shuffle_toggled(move || {
         let Some(ui) = weak.upgrade() else { return };
+        // 组里的随机是全局状态的一部分(#142):发给服务端,开关跟着状态走。
+        if shuffle.group.is_member() {
+            let on = !group_shuffled(&shuffle);
+            shuffle.group.transport(
+                &ui,
+                app_core::TransportOpDto::Shuffle { on },
+            );
+            return;
+        }
         let on = {
             let mut queue = shuffle.queue.borrow_mut();
             if queue.is_shuffled() {
@@ -106,7 +120,12 @@ pub(in crate::music) fn bind_controls(
         let Some(ui) = weak.upgrade() else { return };
         use app_core::LoopMode;
         // 关→列表→单曲→关:单键三态,读的是队列里的真相,不是界面属性。
-        let next = match looper.queue.borrow().loop_mode() {
+        let current = if looper.group.is_member() {
+            group_loop(&looper)
+        } else {
+            looper.queue.borrow().loop_mode()
+        };
+        let next = match current {
             LoopMode::Off => LoopMode::All,
             LoopMode::All => LoopMode::One,
             LoopMode::One => LoopMode::Off,
@@ -134,6 +153,26 @@ pub(in crate::music) fn apply_loop(
     deck: &Deck,
     mode: app_core::LoopMode,
 ) {
+    // 组里的循环是全局状态的一部分(#142)。
+    if deck.group.is_member() {
+        deck.group.transport(
+            ui,
+            app_core::TransportOpDto::Loop {
+                mode: match mode {
+                    app_core::LoopMode::Off => {
+                        app_core::LoopModeDto::Off
+                    }
+                    app_core::LoopMode::All => {
+                        app_core::LoopModeDto::All
+                    }
+                    app_core::LoopMode::One => {
+                        app_core::LoopModeDto::One
+                    }
+                },
+            },
+        );
+        return;
+    }
     deck.queue.borrow_mut().set_loop_mode(mode);
     ui.global::<Player>()
         .set_loop_mode(crate::media::loop_index(mode));
@@ -165,9 +204,7 @@ pub(in crate::music) fn bind_volume(
             let volume = audio::clamped_volume(volume);
             ui.global::<Player>().set_volume(volume);
 
-            // 遥控时拧的是**那台**设备的音量:本机没在出声,改本机的播放器
-            // 等于什么都没发生。存盘也跟着去那一端 —— 音量跟着设备走,
-            // 记住它的该是真正改变了响度的那台(见 `dispatch::execute`)。
+            // 音量每台各自调(#142),在组里也落在本机。
             dispatch(
                 &ui,
                 &deck,
@@ -228,103 +265,27 @@ pub(in crate::music) fn push_seek_state(
     ui.global::<Player>().set_buffering(state.is_seeking());
 }
 
-/// 遥控器发来的命令在 UI 线程上执行,以及被控端每次要报的那份快照。
-///
-/// 命令**不走**上面那些回调:回调入口上有「被遥控时不生效」那道闸,
-/// 而这条路正是那道闸放行的唯一来源。绕过去是对的 —— 锁住的是这台机器
-/// 前面那个人,不是遥控它的那个人。
+/// 组里此刻开没开随机。
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn bind_remote(
-    ui: &MainWindow,
-    deck: &Deck,
-) {
-    let commands = deck.clone();
-    let weak = ui.as_weak();
-    ui.global::<Shell>().on_remote_command(move || {
-        let Some(ui) = weak.upgrade() else { return };
-        while let Some(cmd) = commands.remote.take_command()
-        {
-            execute(&ui, &commands, cmd);
-        }
-    });
-
-    // 要快照就立刻报一次,不等下一趟轮询 —— 那要一秒,而遥控器那边
-    // 正停在「状态已过期」上等着。
-    let snap = deck.clone();
-    ui.global::<Shell>().on_remote_snapshot(move || {
-        snap.remote.report(snapshot(&snap));
-    });
+fn group_shuffled(deck: &Deck) -> bool {
+    deck.group
+        .state()
+        .and_then(|state| state.now)
+        .is_some_and(|now| now.shuffled)
 }
 
-/// 本机此刻的**小状态**,报给遥控它的那台设备。
-///
-/// 「小」是要点:这里没有一个字段随用户的数据增长(`docs/adr/0031` 三)。
-/// 从前它把整个队列抄进去,977 首时每秒往信令连接上打 23 万字节,而上限是
-/// 64 KiB —— 超限在服务端那侧是跳出读循环、整条连接断掉,于是被控端每秒
-/// 把自己踢下线一次(#109 F-002)。队列本身按 `queue_id`/`revision` 走 HTTP。
-///
-/// 报的仍然是**队列**那一份的长度与位置,不是界面上那个列表:用户可以一边
-/// 听着队列一边翻别的歌单,两者那时根本不是一回事。
+/// 组里此刻的循环模式。
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn snapshot(
-    deck: &Deck,
-) -> app_core::RemoteStateDto {
-    use app_core::RemotePlayState;
-
-    // 位置、在不在放、音量都问播放器本身,不回读界面(#137 ③):界面是投影,
-    // 回读它就等于让投影反过来当真相 —— 而这一份正是报给别人看的真相。
-    let player = deck.player.as_ref().as_ref().ok();
-    let position = player
-        .map(audio::Player::position)
-        .unwrap_or_default();
-    let playing = player.is_some_and(is_sounding);
-    let state = match deck.playback.borrow().state() {
-        // 取直链、开流、解码都还没出声 —— 报 Playing 的话,遥控器会从
-        // 这个位置开始插值,而那几秒里进度根本没动。
-        PlaybackState::Loading(_) => {
-            RemotePlayState::Buffering
-        }
-        PlaybackState::Playing(_) if playing => {
-            RemotePlayState::Playing
-        }
-        PlaybackState::Playing(_) => {
-            RemotePlayState::Paused
-        }
-        PlaybackState::Idle | PlaybackState::Failed(_) => {
-            RemotePlayState::Idle
-        }
-    };
-    let queue = deck.queue.borrow();
-    let (epoch, state_seq) = deck.remote.stamp();
-    let (queue_id, revision, applied_revision) =
-        deck.execution.identity();
-
-    app_core::RemoteStateDto {
-        track: queue.current().cloned(),
-        position_ms: position.as_millis() as u64,
-        state,
-        volume: player.map_or_else(
-            || api::settings::load().volume,
-            audio::Player::volume,
-        ),
-        // 三样都可能是 `None`,而那是**正常状态**:这一批还没同步到服务端
-        // 去(`docs/adr/0031` 八)。遥控器据此知道自己拉不到列表,而不是
-        // 拉了个空的。
-        queue_id,
-        revision,
-        applied_revision,
-        // 正在放的是哪一条。按位置查 `entry_id` 而不是报下标:队列允许同一
-        // 首歌出现多次,下标随插入删除整体挪位。
-        entry_id: deck.execution.entry_at(queue.index()),
-        // 长度是一个标量,不随内容增长。
-        queue_len: queue.tracks().len() as u32,
-        epoch,
-        state_seq,
-        // 最近一次迁移步骤的回话:每条都带着,丢一条下一秒就补回来。
-        operation: deck.member.ack(),
-        // 作为播放组成员时取不到计划要的那一首、跳不到位置:遥控器按成员逐台列出。
-        fault: deck.alignment.fault(),
-        route: audio::route()
-            .map(crate::sync::remote::route_dto),
+fn group_loop(deck: &Deck) -> app_core::LoopMode {
+    use app_core::{LoopMode, LoopModeDto};
+    match deck
+        .group
+        .state()
+        .and_then(|state| state.now)
+        .map(|now| now.loop_mode)
+    {
+        Some(LoopModeDto::All) => LoopMode::All,
+        Some(LoopModeDto::One) => LoopMode::One,
+        _ => LoopMode::Off,
     }
 }

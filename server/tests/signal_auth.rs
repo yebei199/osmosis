@@ -14,7 +14,7 @@ use server::gate::ratelimit::{self, Policies};
 use server::store::account::Account;
 use server::store::{account, db};
 use server::syncplay::signaling::{
-    self, AllowedOrigins, SharedControl, SharedRoster,
+    self, AllowedOrigins, SharedRoster,
 };
 use sqlx::PgPool;
 use tokio_tungstenite::tungstenite;
@@ -38,7 +38,6 @@ const INVITE: &str = "let-me-in";
 struct SignalState {
     pool: PgPool,
     roster: SharedRoster,
-    control: SharedControl,
     origins: AllowedOrigins,
     policies: Policies,
 }
@@ -52,12 +51,6 @@ impl FromRef<SignalState> for PgPool {
 impl FromRef<SignalState> for SharedRoster {
     fn from_ref(state: &SignalState) -> Self {
         state.roster.clone()
-    }
-}
-
-impl FromRef<SignalState> for SharedControl {
-    fn from_ref(state: &SignalState) -> Self {
-        state.control.clone()
     }
 }
 
@@ -131,7 +124,6 @@ async fn start_server(pool: PgPool) -> SocketAddr {
     let state = SignalState {
         pool,
         roster: SharedRoster::default(),
-        control: SharedControl::default(),
         origins: AllowedOrigins::new(vec![
             ALLOWED_ORIGIN.to_owned(),
         ]),

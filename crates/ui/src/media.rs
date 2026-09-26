@@ -179,6 +179,10 @@ fn dispatch(
                 ui.global::<Player>().invoke_toggle_play();
             }
         }
+        MediaCommand::Focus(held) => {
+            ui.global::<Player>()
+                .invoke_focus_changed(held);
+        }
         MediaCommand::SetShuffle(_) => {
             if flips_shuffle(
                 command,
@@ -244,6 +248,21 @@ pub(crate) fn push(
             ui.global::<Player>().get_loop_mode(),
         ),
         media.art(),
+    ));
+}
+
+/// 组里只当遥控器时,把组在放什么报给系统媒体控件(#142)。安卓据此一直挂着前台服务,
+/// 切后台不被冻住。
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn push_remote(
+    ui: &MainWindow,
+    group: &crate::sync::group::Group,
+    media: &Bridge,
+) {
+    let track = group.effective().map(|now| now.track);
+    media.publish(NowPlaying::remote(
+        track.as_ref(),
+        ui.global::<Player>().get_is_playing(),
     ));
 }
 

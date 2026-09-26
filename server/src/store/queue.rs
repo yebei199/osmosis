@@ -432,6 +432,35 @@ pub async fn page(
     })
 }
 
+/// 某一版的全部条目,按队列原序。组状态要算上一首、下一首与这一首的时长(#142)。
+///
+/// 按页读、拼起来:一版至多 [`contract::MAX_QUEUE_ENTRIES`] 条,十页上下。
+pub async fn whole(
+    conn: &mut PgConnection,
+    account_id: i64,
+    queue_id: i64,
+    revision: i64,
+) -> Result<Vec<Entry>, AppError> {
+    let limit = contract::QUEUE_PAGE_LIMIT as i64;
+    let mut entries = Vec::new();
+    loop {
+        let page = page(
+            conn,
+            account_id,
+            queue_id,
+            revision,
+            entries.len() as i64,
+            limit,
+        )
+        .await?;
+        let got = page.entries.len();
+        entries.extend(page.entries);
+        if got == 0 || entries.len() as i64 >= page.total {
+            return Ok(entries);
+        }
+    }
+}
+
 /// 队列此刻的概况:最新版本、条目数,以及意图与报告各自的最新一条。
 pub async fn head(
     conn: &mut PgConnection,
@@ -712,6 +741,10 @@ async fn reclaim_orphans(
              WHERE q.account_id = $1
                AND r.queue_id IS NULL
                AND i.queue_id IS NULL
+               -- 组正在放的那个队列不算孤儿:组里的设备不走报告那条路(#142)
+               AND NOT EXISTS (
+                   SELECT 1 FROM play_groups g WHERE g.queue_id = q.id
+               )
                AND q.updated_at < now() - INTERVAL '{ORPHAN_GRACE}'
              ORDER BY q.updated_at
              LIMIT {CLEANUP_BATCH}

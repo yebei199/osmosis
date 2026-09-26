@@ -115,7 +115,7 @@ src/ 下按职责分成六个目录,哪一组负责什么见 `src/README.md`;下
 - `src/pages/search.rs`:搜索的三个页签(单曲/歌手/歌单)。关键词记在 Rust 侧,
   因为输入框长在一个 `if` 里,Rust 引用不到它。
 - `src/sync/link.rs`:信令连接的界面接线(仅原生)。本机身份、信令地址、设备名册、
-  连接失败与版本对不上的提示。遥控那一侧在 `src/sync/remote.rs`。
+  连接失败与版本对不上的提示。播放组那一侧在 `src/sync/group.rs`。
 - `src/shader/nav_glass.rs`:导航水滴选中器的 seam 数据与转场判定(静止时不重算纹理的
   工作量缓存,不是会冻住动画的门)。宽版式侧栏与紧凑版式底栏共用一套:三球位置
   只带移动轴坐标,`horizontal` 说明那是 x 还是 y(#70),几何真相在 `app.slint`。

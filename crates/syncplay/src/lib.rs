@@ -1,8 +1,8 @@
-//! 设备之间的信令客户端:同账号的在线名册,以及遥控器模式(`docs/adr/0030`)。
+//! 设备之间的信令客户端:同账号的在线名册、校时,以及组的全局状态广播(#142)。
 //!
 //! 与 `api`、`audio`、`render3d` 平行 —— `app-core` 不认识本 crate,由 `ui` 注入。
 //!
-//! 接上服务端的 `/signal`([`Signalling`]),由 [`Client`] 编排重连、接管与命令。
+//! 接上服务端的 `/signal`([`Signalling`]),由 [`Client`] 编排重连与版本协商。
 //! 同播(WebRTC 推流)已删(#137,`docs/adr/0008` 废止),crate 名是它留下的。
 
 mod client;
@@ -12,10 +12,7 @@ mod signalling;
 
 pub use client::{Client, Event, SharedClock};
 pub use session::Roster;
-pub use signalling::{
-    SignalSender, Signalling, command_wire_len,
-    report_wire_len,
-};
+pub use signalling::{SignalSender, Signalling};
 
 /// 设备的线上表示。
 ///

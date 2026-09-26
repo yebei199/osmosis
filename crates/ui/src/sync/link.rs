@@ -1,7 +1,7 @@
 //! 本机在设备之间的那条信令连接:本机叫什么、信令连到哪、名册与连接状态写成什么话。
 //!
-//! 连接只有一条,当前只承载遥控器模式(`docs/adr/0030`);遥控那一侧的状态在
-//! [`crate::sync::remote`]。重连、接管、版本协商在 `syncplay::Client` 里,
+//! 连接只有一条,承载播放组的状态广播(#142);组那一侧的状态在
+//! [`crate::sync::group`]。重连、版本协商在 `syncplay::Client` 里,
 //! 那一层有对着真服务端跑的测试(`crates/syncplay/tests/`)。
 //! 同播(WebRTC 推流)已删(#137)。
 //!
@@ -45,20 +45,6 @@ pub(crate) fn local_device_id() -> String {
     identity().id
 }
 
-/// 一次操作的标识:点播与迁移都用它。
-///
-/// 时间加一个进程内自增数:要的只是「这一次与上一次不是同一次」,而重试同一次
-/// 操作时调用方会把同一个值再用一遍。不引 uuid —— 换不来更少的代码。
-pub fn fresh_operation_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    format!(
-        "{}-{}",
-        crate::sync::remote::now_ms(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
-}
-
 /// 本机在名册里的身份。
 fn identity() -> DeviceDto {
     let host = std::fs::read_to_string(HOSTNAME_FILE)
@@ -92,16 +78,14 @@ fn identity_from(
     }
 }
 
-/// 连上信令,把名册与遥控接到界面上。返回音乐页要用的遥控把手。
-pub fn bind(
-    ui: &MainWindow,
-) -> crate::sync::remote::Remote {
+/// 连上信令,把名册与播放组接到界面上。返回音乐页要用的组把手。
+pub fn bind(ui: &MainWindow) -> crate::sync::group::Group {
     let me = identity();
     // 名册由后台线程改、UI 线程读,所以是 `Mutex` 而不是 `RefCell`。
     let roster =
         Arc::new(Mutex::new(Roster::new(me.id.clone())));
 
-    let remote = crate::sync::remote::new(ui, &me.id);
+    let group = crate::sync::group::new(ui, &me.id);
 
     let weak = ui.as_weak();
     let client = Arc::new(Client::start(
@@ -110,17 +94,17 @@ pub fn bind(
         // 每次建连现取:开机时多半还没登录,而登录之后信令要能自己接上。
         api::session::token,
         {
-            let remote = remote.clone();
+            let group = group.clone();
             move |event| {
-                handle(event, &weak, &roster, &remote)
+                handle(event, &weak, &roster, &group)
             }
         },
     ));
-    remote.attach(&client);
+    group.attach(&client);
 
-    crate::sync::remote::bind(ui, &remote);
+    crate::sync::group::bind(ui, &group);
 
-    remote
+    group
 }
 
 /// 处理一条信令事件。**在后台线程上**跑。
@@ -131,10 +115,10 @@ pub(crate) fn handle(
     event: Event,
     weak: &slint::Weak<MainWindow>,
     roster: &Arc<Mutex<Roster>>,
-    remote: &crate::sync::remote::Remote,
+    group: &crate::sync::group::Group,
 ) {
-    // 遥控那几条归 `crate::sync::remote`,这里只管名册与连接本身的状态。
-    crate::sync::remote::handle(&event, remote);
+    // 组那几条归 `crate::sync::group`,这里只管名册与连接本身的状态。
+    group.handle(&event);
 
     match event {
         Event::Roster(devices) => {
@@ -143,8 +127,8 @@ pub(crate) fn handle(
                 roster.update(devices);
                 roster.others().to_vec()
             };
-            let members = remote.member_ids();
-            show_devices(weak, others, members);
+            show_devices(weak, others.clone());
+            group.set_names(&others);
         }
         Event::Failed(message) => {
             // 走提示:失败是**这一刻**的事,写进常驻的状态行就没人会重算它
@@ -179,7 +163,7 @@ pub(crate) fn handle(
             let _ = weak.upgrade_in_event_loop(|ui| {
                 crate::pages::account::to_login_page(
                     &ui,
-                    "遥控信令被服务端拒绝",
+                    "信令被服务端拒绝",
                 );
             });
         }
@@ -192,7 +176,6 @@ pub(crate) fn handle(
 fn show_devices(
     weak: &slint::Weak<MainWindow>,
     devices: Vec<DeviceDto>,
-    members: Vec<String>,
 ) {
     // 转成 Slint 的行是在 UI 线程里做的:`DeviceDto` 是纯字符串,跨线程没问题,
     // 而 Slint 的模型只能在它自己的线程上建。
@@ -202,7 +185,7 @@ fn show_devices(
             .map(|device| DeviceRow {
                 id: device.id.clone().into(),
                 name: device.name.clone().into(),
-                member: members.contains(&device.id),
+                member: false,
             })
             .collect();
         ui.global::<Shell>().set_devices(ModelRc::new(

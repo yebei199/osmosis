@@ -90,6 +90,7 @@ impl Controls {
                 &[
                     jni::objects::JValue::Int(status_code(
                         now.status,
+                        now.remote,
                     )),
                     (&title).into(),
                     (&artists).into(),
@@ -110,11 +111,18 @@ impl Controls {
 }
 
 /// 与 `MediaControls.java` 的 `STATUS_*` 常量一一对应。
-fn status_code(status: ui::MediaStatus) -> jint {
-    match status {
-        ui::MediaStatus::Playing => 0,
-        ui::MediaStatus::Paused => 1,
-        ui::MediaStatus::Stopped => 2,
+///
+/// 遥控别的设备时另有两个码(#142):服务要一直挂在前台,却不抢音频焦点。
+fn status_code(
+    status: ui::MediaStatus,
+    remote: bool,
+) -> jint {
+    match (status, remote) {
+        (ui::MediaStatus::Playing, true) => 3,
+        (_, true) => 4,
+        (ui::MediaStatus::Playing, false) => 0,
+        (ui::MediaStatus::Paused, false) => 1,
+        (ui::MediaStatus::Stopped, false) => 2,
     }
 }
 
@@ -218,6 +226,8 @@ fn decode(
             2 => ui::LoopMode::One,
             _ => ui::LoopMode::Off,
         }),
+        9 => ui::MediaCommand::Focus(false),
+        10 => ui::MediaCommand::Focus(true),
         _ => return None,
     })
 }

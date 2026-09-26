@@ -169,8 +169,8 @@ pub(super) fn deck_window_pumped()
 }
 
 /// 播放器给的是 `Err`:开不出设备本来就是要支持的常态(见 `music::bind`),
-/// 而这样就不必在测试机上真占一张声卡。遥控那半边接的是谁也不连的空壳
-/// (`sync::remote::detached`),测试不碰真的信令。
+/// 而这样就不必在测试机上真占一张声卡。组那半边接的是谁也不连的空壳
+/// (`sync::group::detached`),测试不碰真的信令,也不发 HTTP。
 #[cfg(not(target_arch = "wasm32"))]
 fn deck_window_with(
     pump: bool,
@@ -209,7 +209,7 @@ fn deck_window_with(
         queue: Rc::new(RefCell::new(
             app_core::Queue::default(),
         )),
-        remote: crate::sync::remote::detached(&ui),
+        group: crate::sync::group::detached(&ui),
         media,
         player,
         lyrics,
@@ -232,7 +232,6 @@ fn deck_window_with(
         queue_mirror: Default::default(),
         frames: Default::default(),
         start_at: Rc::new(Cell::new(None)),
-        member: Default::default(),
         alignment: Default::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),

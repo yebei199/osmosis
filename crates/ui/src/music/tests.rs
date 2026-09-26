@@ -1,7 +1,7 @@
 use similar_asserts::assert_eq;
 
 mod dispatch;
-mod remote;
+mod group;
 mod views;
 
 use super::fixtures::*;

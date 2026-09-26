@@ -36,7 +36,7 @@ use server::gate::ratelimit::{self, Policies};
 use server::objects::{S3, S3Config};
 use server::store::db;
 use server::syncplay::signaling::{
-    self, AllowedOrigins, SharedControl, SharedRoster,
+    self, AllowedOrigins, SharedRoster,
 };
 
 mod routes;
@@ -118,9 +118,6 @@ pub(crate) struct AppState {
     /// 信令的在线名册。与音乐那几条路由毫无关系,只是同住一个进程 ——
     /// 但 `/signal` 要鉴权,而鉴权提取器要池,两者因此必须在同一份 state 里。
     roster: SharedRoster,
-    /// 遥控器模式的控制权槽位。与名册同住一个进程、同样只在内存里 ——
-    /// 进程重启即清空,而那正是对的:连接都断了,遥控关系也就不存在了。
-    control: SharedControl,
     /// 浏览器来源白名单。CORS 与 WebSocket 的 Origin 校验共用这一张表 ——
     /// 配两份的话,迟早只改了一处,而那时 web 端会在其中一道门上莫名其妙地失败。
     origins: AllowedOrigins,
@@ -150,12 +147,6 @@ impl FromRef<AppState> for PgPool {
 impl FromRef<AppState> for SharedRoster {
     fn from_ref(state: &AppState) -> Self {
         state.roster.clone()
-    }
-}
-
-impl FromRef<AppState> for SharedControl {
-    fn from_ref(state: &AppState) -> Self {
-        state.control.clone()
     }
 }
 
@@ -272,6 +263,51 @@ fn queue_routes(state: &AppState) -> Router {
         .merge(write)
         .merge(intent)
         .merge(report)
+        .merge(read)
+        .with_state(state.clone())
+}
+
+/// 组的全局播放状态(#142)。点歌可能带着整批曲目,与建队列同一道闸、同一个 body 上限;
+/// 其余几条是小操作,与队列意图同一道闸。
+fn group_routes(state: &AppState) -> Router {
+    let play = Router::new()
+        .route("/group/play", post(routes::group::play))
+        .layer(DefaultBodyLimit::max(QUEUE_UPLOAD_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_write.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let steer = Router::new()
+        .route(
+            "/group/transport",
+            post(routes::group::transport),
+        )
+        .route(
+            "/group/outputs",
+            post(routes::group::outputs),
+        )
+        .route("/group/leave", post(routes::group::leave))
+        .route(
+            "/group/advance",
+            post(routes::group::advance),
+        )
+        .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_intent.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    let read = Router::new()
+        .route("/group", get(routes::group::current))
+        .route_layer(guard(
+            state.policies.queue_read.clone(),
+        ))
+        .route_layer(authenticated(state));
+
+    Router::new()
+        .merge(play)
+        .merge(steer)
         .merge(read)
         .with_state(state.clone())
 }
@@ -436,7 +472,6 @@ async fn main() {
             "必须设置 INVITE_CODE —— 没有它任何人都能注册",
         ),
         roster: SharedRoster::default(),
-        control: SharedControl::default(),
         origins: AllowedOrigins::new(allowed_origins()),
         policies: Policies::tuned(),
         playlists: Freshness::default(),
@@ -449,6 +484,11 @@ async fn main() {
             }),
         archive: archive(),
     };
+    // 组放完一首就往下推一首(#142)。
+    server::syncplay::group::spawn_roller(
+        state.pool.clone(),
+        state.roster.clone(),
+    );
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
     // 没人红心、三天没播的存歌同理
@@ -534,6 +574,7 @@ async fn main() {
         .with_state(state.clone())
         // 队列与信令各自成组,好把限流挂在组上(见下面那几个构造函数)。
         .merge(queue_routes(&state))
+        .merge(group_routes(&state))
         .merge(signal_routes(&state))
         .merge(auth_routes(&state))
         // 每个请求一行耗时,并给它的上游调用开一个共同的 span(见 timed_request)。

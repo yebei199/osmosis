@@ -234,7 +234,7 @@ pub(in crate::music) fn play_current(
     .expect("event loop must be running");
 }
 
-/// 回到本机输出:让本机的播放停在原地,不接着往下放。
+/// 本机停下,不接着往下放:退出组、只当遥控器时用。
 ///
 /// 只按停,不清队列 —— 用户按一下播放键就能从这里接着听,而那一下是他自己按的。
 #[cfg(not(target_arch = "wasm32"))]
@@ -272,27 +272,11 @@ pub(in crate::music) fn start_auto_advance(
         ADVANCE_POLL,
         move || {
             let Some(ui) = weak.upgrade() else { return };
-            // 被控端失联太久:把输出收回本机。排在边沿判断**之前** ——
-            // 同一拍里收回、认边沿、按停,分两拍的话中间那一拍会落到
-            // `should_advance` 上,从 0:00 起一首谁也没点过的歌(#102 之四)。
-            deck.remote.give_up_if_lost();
-            // 刚从别的设备回到本机(对方退出被遥控、或者用户自己选回本机):
-            // 把本机的状态机按停。它此刻还停在进遥控之前的 `Playing`,而
-            // 播放器是空的 —— 直接落到下面那道 `should_advance` 上,就是
-            // 从 0:00 起播一首谁也没点过的歌(#102 之四)。
-            if deck.remote.took_local_edge() {
-                rest_local(&ui, &deck);
-            }
-            // 迁移等过了头没有(准备超时放弃、停止与开始超时进「待确认」)。
-            deck.remote.tick();
-            // 不再被遥控、自己也没在迁移:备好的那一份没人会叫它开始了。
-            if !deck.remote.is_controlled() && !deck.remote.is_moving() {
-                deck.member.forget_staged();
-            }
-            // 迁移那几秒控制条画迁过去的那一首,本机这边的续播、上报一概停一拍 ——
-            // 输出还没定下来,照本机的状态画或推进都是在猜(#137 ③)。
-            if deck.remote.holds_transport() {
-                crate::sync::remote::push_moving(&ui, &deck.remote);
+            // 组里只当遥控器(#142):本机不出声,控制条画全局状态。
+            if is_silent_member(&deck) {
+                deck.group.push_playback(&ui);
+                crate::media::push_remote(&ui, &deck.group, &deck.media);
+                crate::music::queuepage::refresh(&ui, &deck);
                 return;
             }
             let (drained, position) =
@@ -318,31 +302,11 @@ pub(in crate::music) fn start_auto_advance(
                 .is_some_and(audio::StreamHealth::gave_up);
             let state = deck.playback.borrow().state().clone();
 
-            // 输出设备不是本机:这几行改读被控端的上报,本机的播放器此刻
-            // 是空的。续播、预取与起播上报统统归被控端 —— 那边自己有一趟
-            // 同样的轮询在跑。
-            //
-            // ponytail: 系统媒体控件这一轮不跟着遥控走,锁屏上停在本机
-            // 上一次的状态。要它跟的话,得让 media::push 也认「输出设备」
-            // 这个抽象,而锁屏遥控不在本轮的验收步骤里。
-            if deck.remote.is_remote() {
-                crate::sync::remote::push_playback(
-                    &ui,
-                    &deck.remote,
-                );
-                // 遥控时那一页画的是被控端那份,同样要跟着上报走。
-                crate::music::queuepage::refresh(
-                    &ui, &deck,
-                );
-                return;
-            }
-
             // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
             // 而两个定时器意味着两套"现在放到哪"的说法。
             push_progress(&ui, &state, position);
-            // 被遥控时每秒报一次。搭同一趟车的理由相同:另起一个定时器
-            // 就会有两套「现在放到哪」的说法,而遥控器那头看的正是这个数。
-            deck.remote.report(snapshot(&deck));
+            // 组里出声时每秒报一次执行事实(故障、路由),给组里其他设备看。
+            deck.group.report(device_report(&deck));
             // 服务端回来了就把没同步上去的那一批补提交(AC-12 的「恢复后
             // 对账」)。搭这趟车而不是另起定时器,理由与上面几样相同;
             // `due_for_resync` 自己管节流,不会每秒打一发。
@@ -357,9 +321,9 @@ pub(in crate::music) fn start_auto_advance(
             // 起播上报也搭这趟车:个人主页的统计从这条账本查询时聚合
             // (server 的 `play_events`)。报失败只写日志 —— 统计不该打断听歌。
             //
-            // 播放组里一次播放只记一条(#137 ⑤,AC-5.4):统计的是「我听了什么」,
-            // 几台一起响还是那一次。只有主端报;跟随端照样过一遍判据、记住这一首,
-            // 交接成主端之后才不会把正在放的这一首再记一次。
+            // 组里一次播放只记一条(#137 ⑤,AC-5.4):统计的是「我听了什么」,
+            // 几台一起响还是那一次。组里的起播由服务端记(#142);本机照样过一遍
+            // 判据、记住这一首,退出组之后才不会把正在放的这一首再记一次。
             let following = follows_the_group(&deck);
             if let Some((platform, id)) =
                 play_to_report(&state, &mut reported.borrow_mut())
@@ -378,27 +342,35 @@ pub(in crate::music) fn start_auto_advance(
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
             // 网没了下一首同样放不出来,一分钟能把整个队列烧光。
             //
-            // 跟随端两样都不做:放哪一首只听计划(预告的下一首到点就换),断流了
-            // 跟随器静音追赶、取不到就报故障 —— 不自己换下一首(#137 ⑤)。
+            // 组里不自己换下一首:放完了报给服务端,由它推进、广播;断流了跟随器静音追赶、
+            // 取不到就报故障。
             if !following {
                 if should_report_loss(&state, drained, gave_up) {
                     report_stream_loss(&ui, &deck);
                 } else if should_advance(&state, drained) {
                     advance_auto(&ui, &deck);
                 }
+            } else if should_advance(&state, drained)
+                && finished_the_entry(&deck)
+            {
+                // 组里真正放完了:报给服务端,最先报的那台推进(#142 AC-9)。
+                deck.group.finished(&ui);
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
+            // 组里不备:下一首由全局状态预告,跟随器自己取。
             let already_have = deck.prefetching.get()
                 || deck.prefetched.borrow().is_some();
             let has_next =
                 deck.queue.borrow().peek_next().is_some();
-            if should_prefetch(
-                &state,
-                position,
-                already_have,
-                has_next,
-            ) {
+            if !following
+                && should_prefetch(
+                    &state,
+                    position,
+                    already_have,
+                    has_next,
+                )
+            {
                 start_prefetch(&deck);
             }
         },
@@ -416,8 +388,7 @@ const PROGRESS_TICK: core::time::Duration =
 
 /// 进度的快档(#137 ⑥):每 [`PROGRESS_TICK`] 读一次此刻的位置推给进度条。
 ///
-/// 本机读播放器本身(它就是执行端,位置是准的);遥控读被控端最近那份上报,
-/// 按本地时钟推算(见 `sync::remote::push_progress`)。没在出声时什么都不做 ——
+/// 本机读播放器本身(它就是执行端,位置是准的);只当遥控器时按全局状态的锚点推算。没在出声时什么都不做 ——
 /// 停着的进度条没有东西可推,也不该为它每秒重绘四次。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn start_progress_tick(
@@ -447,11 +418,8 @@ pub(in crate::music) fn tick_progress(
     ui: &MainWindow,
     deck: &Deck,
 ) {
-    if deck.remote.is_remote() {
-        crate::sync::remote::push_progress(
-            ui,
-            &deck.remote,
-        );
+    if is_silent_member(deck) {
+        deck.group.push_playback(ui);
         return;
     }
     let Ok(player) = deck.player.as_ref() else {
@@ -494,4 +462,19 @@ pub(in crate::music) fn push_progress(
         )
         .into(),
     );
+}
+
+/// 出声设备每秒报的执行事实:在放哪一条、有没有故障、走的什么路由。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn device_report(
+    deck: &Deck,
+) -> app_core::DeviceReportDto {
+    app_core::DeviceReportDto {
+        entry_id: deck
+            .execution
+            .entry_at(deck.queue.borrow().index()),
+        fault: deck.alignment.fault(),
+        route: audio::route()
+            .map(crate::sync::group::route_dto),
+    }
 }

@@ -3,6 +3,7 @@
 pub(crate) mod apk;
 pub(crate) mod auth;
 pub(crate) mod catalog;
+pub(crate) mod group;
 pub(crate) mod library;
 pub(crate) mod play;
 pub(crate) mod queue;

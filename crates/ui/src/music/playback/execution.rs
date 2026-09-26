@@ -25,17 +25,6 @@ use std::rc::Rc;
 // ponytail: 真要紧的话该由重连事件触发,而不是轮询问一句
 const RESYNC_EVERY_MS: u64 = 30_000;
 
-/// 一次操作做完之后要捎给服务端的那句话。
-///
-/// 与报告同一条请求发出去:播放端知道「我到哪了」与「那次操作成没成」是同一刻
-/// 的事,分两次发会出现两者互相矛盾的中间态。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::music) struct Outcome {
-    pub(in crate::music) operation_id: String,
-    pub(in crate::music) applied: bool,
-    pub(in crate::music) reason: Option<String>,
-}
-
 /// 执行副本与服务端那一版的对应关系。
 #[derive(Clone, Default)]
 pub(in crate::music) struct Execution {
@@ -53,20 +42,6 @@ struct State {
     /// 说的是「这一批里的第几条」—— 同一首歌在队列里出现两次,曲目是同一个,
     /// 条目是两个。
     entry_ids: Vec<i64>,
-    pending: Option<Outcome>,
-    /// 正在取数的那一次操作。
-    ///
-    /// 取数是一次 HTTP 往返,几百毫秒到几秒。这期间可能发生三件事,而它们
-    /// 都该让这一次作废(`docs/adr/0031` 七):遥控器又点了一首(新操作顶掉
-    /// 旧的)、本机失权、用户退出被控。少了它,那几秒之后到货的旧队列会把
-    /// 已经换上的新队列盖掉 —— 而用户看到的是「点了 B,放出来的是 A」。
-    in_flight: Option<String>,
-    /// 最后一次**应用成功**的操作。
-    ///
-    /// 重试同一次点播不该再次重置播放(`docs/adr/0031` 七):遥控器重发一遍
-    /// 是常态(命令丢了、重连之后补一次),而重新取一遍队列、从头起播那一首,
-    /// 在用户那里就是「歌自己跳回开头了」。
-    applied_operation: Option<String>,
     /// 上一次试着把本机队列同步上去是什么时候。
     last_sync_try_ms: u64,
     /// 上一次**报出去**的播放次序。
@@ -77,6 +52,19 @@ struct State {
     reported_order: Vec<i64>,
     /// 发起过几次本机队列发布。与补同步那只钟一样不随 `detach` 清零。
     publishes: u64,
+    /// 本进程报过几条执行报告,与 [`epoch`] 一起组成报告的顺序键。不随 `detach` 清零。
+    state_seq: u64,
+}
+
+/// 这一次执行会话的标识:进程启动后第一次报告时的毫秒挂钟。与服务端
+/// `play_queue_reports.epoch` 是同一个数,跨重启比大小要靠它。
+// ponytail: 挂钟倒退时新进程会拿到更小的 epoch,那一次的报告会被服务端全丢掉。
+// 真出现再换单调时钟加持久计数器
+fn epoch() -> i64 {
+    static EPOCH: std::sync::OnceLock<i64> =
+        std::sync::OnceLock::new();
+    *EPOCH
+        .get_or_init(|| crate::sync::group::now_ms() as i64)
 }
 
 impl Execution {
@@ -97,22 +85,6 @@ impl Execution {
         state.entry_ids = entry_ids;
     }
 
-    /// 服务端上出现了一版我们还没应用的。
-    pub(in crate::music) fn want(
-        &self,
-        queue_id: i64,
-        revision: i64,
-    ) {
-        let mut state = self.inner.borrow_mut();
-        // 换了个队列就等于换了一批:旧的对应关系一条都不作数了。
-        if state.queue_id != Some(queue_id) {
-            state.queue_id = Some(queue_id);
-            state.applied_revision = None;
-            state.entry_ids.clear();
-        }
-        state.desired_revision = Some(revision);
-    }
-
     /// 这一批是本机自己攒的,还没同步到服务端去。
     ///
     /// 不是错误状态:服务端不可达时本机照常起播,界面标一句「未同步」即可。
@@ -123,11 +95,15 @@ impl Execution {
     /// 于是服务端不可达时反倒变成每秒打一发(2026-09-21 小米 13 上量到)。
     pub(in crate::music) fn detach(&self) {
         let mut state = self.inner.borrow_mut();
-        let (last_sync_try_ms, publishes) =
-            (state.last_sync_try_ms, state.publishes);
+        let (last_sync_try_ms, publishes, state_seq) = (
+            state.last_sync_try_ms,
+            state.publishes,
+            state.state_seq,
+        );
         *state = State::default();
         state.last_sync_try_ms = last_sync_try_ms;
         state.publishes = publishes;
+        state.state_seq = state_seq;
     }
 
     /// 一次本机队列发布发出去了。
@@ -186,27 +162,6 @@ impl Execution {
             .position(|id| *id == entry_id)
     }
 
-    /// 一整份次序(条目号)换成下标。有一条不在手上这份里就是 `None`。
-    ///
-    /// 先建一张表再查:五千条逐个线性找就是两千五百万次比较，而这在 UI 线程上。
-    pub(in crate::music) fn indices_of(
-        &self,
-        order: &[i64],
-    ) -> Option<Vec<usize>> {
-        let state = self.inner.borrow();
-        let table: std::collections::HashMap<i64, usize> =
-            state
-                .entry_ids
-                .iter()
-                .enumerate()
-                .map(|(index, id)| (*id, index))
-                .collect();
-        order
-            .iter()
-            .map(|id| table.get(id).copied())
-            .collect()
-    }
-
     /// 这一次要报的排列:与上次报过的一样就给 `None`,让服务端沿用。
     ///
     /// 问过就算数 —— 它同时是「已经报到哪一版排列」的那份记录。
@@ -220,61 +175,6 @@ impl Execution {
         }
         state.reported_order = order.to_vec();
         Some(state.reported_order.clone())
-    }
-
-    /// 开始应用一次操作。**返回 `false` 表示这一次已经应用过了,别再动播放。**
-    ///
-    /// 幂等那一半:重试同一个 `operation_id` 不该再次重置播放。
-    pub(in crate::music) fn begin(
-        &self,
-        operation_id: &str,
-    ) -> bool {
-        let mut state = self.inner.borrow_mut();
-        if state.applied_operation.as_deref()
-            == Some(operation_id)
-        {
-            return false;
-        }
-        state.in_flight = Some(operation_id.to_owned());
-        true
-    }
-
-    /// 这一次取数回来时,它还算不算数。
-    ///
-    /// 不算数的三种情形共用这一个判据:被更新的操作顶掉、失权、退出被控 ——
-    /// 后两种由 [`Self::abandon`] 清掉在途那一个。
-    pub(in crate::music) fn still_current(
-        &self,
-        operation_id: &str,
-    ) -> bool {
-        self.inner.borrow().in_flight.as_deref()
-            == Some(operation_id)
-    }
-
-    /// 在途那次操作作废:失权、换目标、退出被控。
-    ///
-    /// 只丢在途的那一个,**不动已经应用的那份副本** —— 失权不等于停止播放
-    /// (`docs/adr/0030`:手机没电不能让 pc1 停)。
-    pub(in crate::music) fn abandon(&self) {
-        self.inner.borrow_mut().in_flight = None;
-    }
-
-    /// 记下一次操作的下场,等下一条报告捎走。
-    ///
-    /// 顺带给在途那一位收尾:成了就记住它(下次重试认得出来),没成就只是
-    /// 清掉 —— 失败过的那一次**重试是应该的**。
-    pub(in crate::music) fn note(&self, outcome: Outcome) {
-        let mut state = self.inner.borrow_mut();
-        if state.in_flight.as_deref()
-            == Some(outcome.operation_id.as_str())
-        {
-            state.in_flight = None;
-            if outcome.applied {
-                state.applied_operation =
-                    Some(outcome.operation_id.clone());
-            }
-        }
-        state.pending = Some(outcome);
     }
 
     /// 该不该再试一次把本机队列同步上去(AC-12 的「恢复后对账」)。
@@ -299,133 +199,12 @@ impl Execution {
         true
     }
 
-    /// 取走那句话 —— **只捎一次**。
-    ///
-    /// 留着的话,每秒那条报告会把同一次操作的下场反复汇报,而服务端每收到
-    /// 一次就按 `operation_id` 去改一次意图的状态。
-    pub(in crate::music) fn take_outcome(
-        &self,
-    ) -> Option<Outcome> {
-        self.inner.borrow_mut().pending.take()
+    /// 这一条报告的顺序键:`(epoch, state_seq)`,序号取完即加一。
+    pub(in crate::music) fn stamp(&self) -> (i64, u64) {
+        let mut state = self.inner.borrow_mut();
+        state.state_seq += 1;
+        (epoch(), state.state_seq)
     }
-}
-
-/// 一次取数走完之后的下场。
-///
-/// 六个而不是一个 `Result`:调用方要照着它决定给用户看什么,而「被顶掉」
-/// 与「取失败」在屏幕上是两回事 —— 前者一句话都不该说(用户点的那一首正在
-/// 取),后者必须说。
-#[derive(Debug, PartialEq, Eq)]
-pub(in crate::music) enum Adoption {
-    /// 同一次点播重发了一遍,而它已经应用过:连取都不取。
-    AlreadyApplied,
-    /// 取回来时已经被更新的一次顶掉了:账本一个字都不写。
-    Superseded,
-    /// 取数期间本机不再被遥控:作废在途那一次,已经在放的那份不动。
-    Dropped,
-    /// 取不下来。保留旧副本,附上说得出口的原因。
-    Failed(String),
-    /// 取回来了,但这一版里没有要播的那一条。
-    Missing,
-    /// 换上:这一批的第 `index` 首。
-    Adopt {
-        index: usize,
-        tracks: Vec<app_core::TrackDto>,
-    },
-}
-
-/// 取一份执行副本换上,三条闸都过一遍(`docs/adr/0031` 七)。
-///
-/// 只动账本,一个像素都不画 —— 起播、提示、检查点归调用方
-/// (`dispatch::adopt_remote_queue`)。拆开是为了**能测**:要验的东西是
-/// 「取数那几秒里用户又动了一下会怎样」,而那既不需要窗口,也不需要服务端。
-///
-/// 两个闭包而不是两个值,各有各的理由:
-///
-/// - `fetch` 是闭包,所以重发那一次**连请求都不发**;
-/// - `controlled` 是闭包,所以它在 `await` **之后**才求值 —— 先求好的话,
-///   取数期间的失权就查不出来,而那正是这一段存在的理由。
-pub(in crate::music) async fn adopt_with<Fut, E>(
-    execution: &Execution,
-    queue_id: i64,
-    revision: i64,
-    entry_id: i64,
-    operation_id: String,
-    controlled: impl Fn() -> bool,
-    fetch: impl FnOnce() -> Fut,
-) -> Adoption
-where
-    Fut: core::future::Future<
-            Output = Result<Vec<api::QueueEntryDto>, E>,
-        >,
-    E: core::fmt::Display,
-{
-    if !execution.begin(&operation_id) {
-        return Adoption::AlreadyApplied;
-    }
-    // 先记下想要哪一版再去取:这几秒里遥控器那头看到的应该是「新版本待应用」,
-    // 而不是「什么都没发生」。
-    execution.want(queue_id, revision);
-
-    let fetched = fetch().await;
-
-    // 顺序要紧:先问「这一份还算不算数」,再看它成没成。反过来的话,一份
-    // 迟到的失败会把下场记到**新**那一次头上,于是遥控器把正在放的那一首
-    // 标成没应用。
-    if !execution.still_current(&operation_id) {
-        return Adoption::Superseded;
-    }
-    // 失权、换目标、退出被控:三种都让本机不再被遥控,判据因此是同一个。
-    if !controlled() {
-        execution.abandon();
-        return Adoption::Dropped;
-    }
-
-    let entries = match fetched {
-        Ok(entries) => entries,
-        Err(error) => {
-            // 这里**不动** `applied_revision` —— 它说的是「手上这份是哪一版」,
-            // 而手上这份没换。
-            let reason = error.to_string();
-            execution.note(Outcome {
-                operation_id,
-                applied: false,
-                reason: Some(reason.clone()),
-            });
-            return Adoption::Failed(reason);
-        }
-    };
-
-    let Some(index) = entries
-        .iter()
-        .position(|entry| entry.entry_id == entry_id)
-    else {
-        // 别猜第一首:放一首没点过的歌比不出声更糟。
-        execution.note(Outcome {
-            operation_id,
-            applied: false,
-            reason: Some(format!(
-                "第 {revision} 版里没有条目 {entry_id}"
-            )),
-        });
-        return Adoption::Missing;
-    };
-
-    let entry_ids = entries
-        .iter()
-        .map(|entry| entry.entry_id)
-        .collect();
-    let tracks = entries
-        .into_iter()
-        .map(|entry| entry.track)
-        .collect();
-    execution.adopt(queue_id, revision, entry_ids);
-    execution.note(Outcome {
-        operation_id,
-        applied: true,
-        reason: None,
-    });
-    Adoption::Adopt { index, tracks }
 }
 
 #[cfg(test)]

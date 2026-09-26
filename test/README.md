@@ -82,12 +82,36 @@ nixos_config 换成临时 git 仓库加本地裸远端,断言:签名不对不上
 ```sh
 test/pick-e2e.sh list       # 列表那条路
 test/pick-e2e.sh wall       # 卡墙那条路(要 GPU 构建)
+test/pick-e2e.sh search     # 搜索那条路:搜 KEYWORD(缺省「晴天」),点一行结果
+test/pick-e2e.sh queue      # 队列页那条路:展开播放页、打开队列,点一行(要已经在放)
 ```
 
 两条用户路径各跑一遍,每条都把同一首**连点三下**。判据两样,都查库:`play_events`
 恰好多一行(有设备真的起播了);各设备队列的 `revision` 之和涨 1(新的一批只发布了一次),
 或者不涨但 `play_queue_reports` 记了一个新检查点(这一批早已同步上去,#137 ③ 之后
-同一批不再重复发布)。两次以上就是连点又在重复发布。输出在本机还是遥控别的设备都适用。
+同一批不再重复发布)。两次以上就是连点又在重复发布。
+
+**组内**(#142):设 `OTHER_PORT` 为组里另一台的 MCP 端口,两台事先已在同一个组里
+(输出设备那一排按「+」)。组里点歌只改服务端的全局状态,判据换成:`play_events` 恰好
++1(服务端记的)、`play_groups.version` 恰好 +1(连点三下只发一次意图),并且 30 秒内
+**两台**控制条上的曲名(`PlayerBar::title`)都换成库里全局状态那一条的曲名。四条入口
+在两台上各跑一遍,就是「组里任何一台从任何入口点歌,两台都换过去」:
+
+```sh
+OTHER_PORT=8090 test/pick-e2e.sh list     # 在桌面上点,手机跟着换
+PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,桌面跟着换
+```
+
+元素一律从窗口根用 `query_element_descendants` 按 id 找:`find_elements_by_id` 找不到 `if` /
+`for` 里长出来的元素(搜索框、分区条、播放页的队列入口),只会返回空。真机上填完搜索框
+软键盘会盖住结果、吃掉第一下点击,脚本在键盘真的开着时(`dumpsys input_method` 的
+`mInputShown=true`)按一次返回收起它;真机端口不是 8090 时设 `ANDROID_MCP_PORT`。adb 用哪条
+命令由 `ADB` 给(缺省 `adb`):桌面实例在 namespace 里时够不到宿主的 adb,要写成能够到的
+命令,够不到就直接失败,不静默跳过。
+
+每一项开头都先复位:收起播放页、回到音乐页、选这一项要的分区;队列页那一项看播放页与队列页
+是不是已经开着,开着就直接用。所以连着跑四项(`list → wall → search → queue`)与单独跑
+一项结果一样,不依赖上一项留下的页面。
 
 卡墙的卡画在 3D 纹理里,按坐标点第二下未必还命中同一张;脚本走场区上的无障碍动作
 (`Increment` 挪选中、`Default_` 播选中的那张),读屏用户走的也是这条。
@@ -111,12 +135,12 @@ osmosis-desktop 2>&1 | test/pick-bench.py stamp > app.log     # 桌面日志每�
 adb logcat -v epoch -s osmosis > app.log                       # 安卓自带
 test/pick-bench.py drive --mode list --picks 0,1,2,3,0,1 --out list.jsonl
 test/pick-bench.py drive --section 1 --playlist 0 --out bigq.jsonl   # 大队列:「我喜欢的」
-test/pick-bench.py drive --output device --out remote.jsonl          # 遥控名字带 device 的那台
+test/pick-bench.py drive --output device --out remote.jsonl          # 组里让名字带 device 的那台出声
 test/pick-bench.py report --picks list.jsonl --log app.log [--clock-offset 秒]
 ```
 
 `drive` 每点一下等 `play_events` 多一行再静置几秒,记下点击时刻;`report` 按点击时刻
-去日志里找这一下的 `act#… play` 各段与 `ui: 主线程卡了` 行,打成一行一下的表。遥控时
+去日志里找这一下的 `act#… play` 各段与 `ui: 主线程卡了` 行,打成一行一下的表。在组里时
 点的是控制端,日志读出声的那一端;跨机器时 `--clock-offset` 是日志时钟减本机时钟。
 下标重复的那几下是「缓存命中」:同一首第二次点。
 
@@ -126,26 +150,8 @@ test/pick-bench.py report --picks list.jsonl --log app.log [--clock-offset 秒]
   动画走不完。编译机上用 `Xvfb :7` 加 `DISPLAY=:7`(去掉 `WAYLAND_DISPLAY`)能跑到
   三四十帧,核对日志里 `近 120 帧` 那行的 fps 再采。
 - **队列槽满了**。`队列数到上限了` 时发布当场 409,大队列那组等于没发布,数字偏低。
-- **被控端还锁着**。遥控器选回本机不通知被控端,那台仍挂着「正被 xx 遥控」,它自己的
-  点歌全被锁挡掉(`played` 为 null)。先在它上面按「退出被遥控」。
-
-## move-e2e.py —— 选设备时控制条还在、接着放了吗(#137 ③)
-
-```sh
-test/move-e2e.py --port 8091 --to 小米 --out move.jsonl          # 遥控器是桌面
-test/move-e2e.py --ns-pid $(cat d1/ns.pid) --to 本机 --out back.jsonl  # ns-desktop 起的实例
-```
-
-选设备是一次迁移(目标准备 → 源停 → 目标从源停下的位置开始 → 确认)。脚本在遥控器上
-按抽屉里的输出芯片,之后每 100ms 采一次:控制条(`PlayerBar::title`)在不在、曲名变没变、
-状态行(`MainWindow::move-label`)走到哪、那颗芯片选中没有。判据:控制条全程在、曲名全程是
-选之前那一首、芯片最后被选中且状态行清空(确认了;快的时候整个迁移不到半秒,状态行未必
-采得到,所以只记不判)、确认之后进度读数不早于选之前 —— 是接着放,不是从 0:00 起。
-每次采样写一行 JSON 到 `--out`。
-
-它只看遥控器这一侧。源真的停了、目标真的响了,要另取两端的实际输出证据(桌面 PipeWire
-流的 corked、安卓 `dumpsys audio` 的 AudioTrack 状态),以及两端日志里同一个操作号的
-`迁移回话`(带位置)。
+- **本机还在组里**。在组里点歌改的是组的全局状态,出声的是组里的出声设备;要量本机
+  自己的起播,先按横幅上的「退出」回到独奏(#142)。
 
 ## views-e2e.py —— 进「我喜欢的」时别的视图的歌冒不冒出来(#137 ④)
 
@@ -182,38 +188,37 @@ test/playlist-fill-e2e.sh   # 安卓默认 8090;桌面用 PORT=8091
 掉到 0.05 上下,先把它们关掉再跑。清过应用数据、或刚用 MCP 往登录框里灌过值之后,
 这两样都常见。
 
-## link-loss-e2e.sh 与 signal-gate.py —— 断线、接管失败、反复重启(#118),遥控器消失(#111)
+## link-loss-e2e.sh 与 signal-gate.py —— 掉线、服务端重启、反复重启(#142)
 
 `signal-gate.py` 是一道只管 `/signal` 的闸:HTTP 照常放行,信令可以 `kill -USR1` 掐断
 (只掐客户端那一半,服务端要等探活才发现,与移动网络掉线同形)、`kill -USR2` 恢复。
-整条网断掉的话点歌要经服务端取直链,本机本来就放不了歌,测不出锁有没有撤 —— 所以
-断的只是信令。每台设备走自己的一道闸:手机经 `adb reverse tcp:3000 tcp:<闸端口>`,
-namespace 里的桌面实例把闸起在 ns 自己的 `127.0.0.1:3000`、上游指 `10.0.2.2`。
+每台设备走自己的一道闸:手机经 `adb reverse tcp:3000 tcp:<闸端口>`,namespace 里的
+桌面实例把闸起在 ns 自己的 `127.0.0.1:3000`、上游指 `10.0.2.2`。
 
 ```sh
 test/signal-gate.py 3131 3118            # 手机那道:3131 → 本机 3118 那份 server
-CTL=ns:<目录> TGT=android:<闸 pid> SERVER_LOG=<server 日志> test/link-loss-e2e.sh link-loss
-CTL=android:<闸 pid> TGT=ns:<目录> SERVER_LOG=... RESTART_TGT=<拉起命令> test/link-loss-e2e.sh claim-fail
-CTL=... TGT=... SERVER_LOG=... RESTART_CTL=<命令> RESTART_TGT=<命令> test/link-loss-e2e.sh restarts
-CTL=... TGT=... SERVER_LOG=... test/link-loss-e2e.sh vanish   # #111
-CTL=... TGT=... SERVER_LOG=... test/link-loss-e2e.sh blip     # #111
+OUT=android:<闸 pid> PEER=ns:<目录> SERVER_LOG=<server 日志> test/link-loss-e2e.sh link-loss
+OUT=... PEER=... SERVER_LOG=... test/link-loss-e2e.sh last-output
+OUT=... PEER=... SERVER_LOG=... RESTART_SERVER=<命令> test/link-loss-e2e.sh server-restart
+OUT=... PEER=... SERVER_LOG=... RESTART_OUT=<命令> RESTART_PEER=<命令> test/link-loss-e2e.sh restarts
 ```
 
-三条场景各对一条验收:被控端信令断了横幅就撤、本机点歌落账,恢复后遥控端回本机、
-被控端不再被锁;掐住遥控端的信令让它名册停住,再让目标下线、去接管它,恢复后接管
-失败、遥控端回本机、本机点歌落账;两台一起反复重启,服务端一次限流都没有。真相源是
-`play_events` 行数与服务端日志(`设备入册`、`限流挡下一条请求`,server 要带
-`RUST_LOG=info,server=debug`),安卓另查 `dumpsys audio` 的 `state:started`。
+四条场景对 #142 的掉线规则(`docs/adr/0032` 第五节):`link-loss` 让 OUT 与 PEER 一起
+出声,掐断 OUT —— OUT 立刻停下、PEER 照放、库里组仍在放,恢复后 OUT 照最新状态接着出声;
+`last-output` 只让 OUT 出声,掐断它 —— OUT 立刻停下,服务端探活发现后把组置为暂停(日志
+「出声设备出册」),恢复后 OUT 照组状态停着、PEER 按 ⏯ 才一起接着放;`server-restart`
+重启服务端 —— 组还在库里、版本不回退,暂停在服务端挂掉那一刻(出声设备全断开了),两台
+重新入册、OUT 照状态停着,PEER 按 ⏯ 后 OUT 接着出声;`restarts` 两台
+一起反复重启,服务端一次限流都没有。
 
-#111 的两条对「遥控器消失而被控端连接完好」:`vanish` 让被控端本机放着歌、被接管,
-然后杀掉遥控端(安卓 `force-stop`、ns 实例 `SIGKILL`),断言租约满之前横幅还在、满了
-自己撤掉、服务端记了「遥控器下线满租约」、被控端一直在出声;`blip` 掐断遥控端信令
-几秒再放开,断言服务端记了「遥控器租约内续上」,再过一个租约被控端仍被它遥控。
-`LEASE` 缺省 30,要与服务端 `control::LEASE` 一致。ns 实例的「在出声」看播放器自己的
-位置日志,所以实例要带 `RUST_LOG=info,ui=debug` 起;不看 pipewire —— 应用一直开着
-输出流,不放歌时那条流也是 running。
+真相源是 `play_groups` 那一行(`playing`、`version`)与服务端日志(`设备入册`、
+`出声设备出册`、`限流挡下一条请求`,server 要带 `RUST_LOG=info,server=debug`)。「在出声」
+安卓看 `dumpsys audio` 里本应用的 `state:started`,ns 实例看播放器自己的位置日志,所以
+实例要带 `RUST_LOG=info,ui=debug` 起;不看 pipewire —— 应用一直开着输出流,不放歌时那条流
+也是 running。
 
-起播点一下就够。别连点两下:2026-09-23 在 ns 桌面实例上,同一行连点两下什么都没放。
+这套推翻了 #118/#111 的旧验收(断线就撤被控锁、遥控器租约、接管失败回本机):遥控器与
+控制权槽位整个删了(#142 的决定),`claim-fail`、`vanish`、`blip` 三条随之删除。
 namespace 实例怎么起、`ns:` 目录里要有什么,见脚本头注释。
 
 ## wheel-scroll-android.sh —— 外接鼠标滚列表还崩不崩(#120)

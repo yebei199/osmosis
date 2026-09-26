@@ -50,57 +50,33 @@ export global Shell {
 
     in property <[DeviceRow]> devices: [];
 
-    // ── 遥控器模式(docs/adr/0030)。「输出设备 = 谁」就是它的全部状态。 ──
-    // 输出设备那一行,如「输出: 本机」。由 Rust 渲染后推送。
+    // ── 播放组(#142):服务端持有全局播放状态,组里设备对等。 ──
+    // 输出设备那一行,如「输出: 本机、pc1」。由 Rust 渲染后推送。
     in property <string> output-text;
-    // 当前输出设备的 id。空串 = 本机 —— 芯片按它决定谁被选中。
+    // 正在出声的那台设备的 id(只有一台远端出声时)。空串 = 本机 —— 芯片按它决定谁被选中。
     in property <string> output-id;
-    // 本机正被谁遥控,如「正被 小米13 遥控」。空串 = 没被遥控,横幅不出现。
-    in property <string> controlled-text;
-    // 遥控的状态已过期(连着三秒没收到上报)。控制此刻发不出去。
+    // 组横幅,如「与 小米13 一起播放」「正在遥控 pc1」。空串 = 不在组里,横幅不出现。
+    in property <string> group-banner;
+    // 本机在组里、却连不上服务端:出声设备已经停下。
     in property <bool> output-stale: false;
-    // 被控端手上那份还不是服务端上最新的那一版(docs/adr/0031 一)。
-    //
-    // **数据库里写了不等于音箱在响。** 点了歌、队列也提交了,但被控端还没把
-    // 那一版取下来换上 —— 这两件事之间可能是几秒,也可能因为取数失败而一直
-    // 停在这里。不标出来的话,用户看到的是「一切正常,只是放的还是上一首」。
-    in property <bool> queue-pending: false;
     // 手上这批歌还没同步到服务端的队列里(docs/adr/0031 八)。
     //
-    // **不是错误**:服务端不可达时本机照常起播,只是这一份还没拿到 queue_id
-    // —— 遥控器因此拉不到它的列表,而本机播放一切照旧。恢复之后下一次点播
-    // 会把它补上。
+    // **不是错误**:服务端不可达时本机照常起播,只是这一份还没拿到 queue_id。
+    // 恢复之后下一次点播会把它补上。
     in property <bool> queue-unsynced: false;
-    // 选设备 = 迁移当前播放(#137 ③)。迁移进行中那一句,如「正在切到 pc1:等它
-    // 准备好」。空串 = 没在迁移,那条不出现。唯一写者是 ui/src/sync/remote.rs。
-    in property <string> move-text;
-    // 迁移停在「待确认」上 —— 源停没停、或目标起没起不知道。出重试 / 放弃两颗键,
-    // 由用户处理;什么都不自动替他做(不启动目标、不恢复源)。
-    in property <bool> move-doubt: false;
-    callback move-retry();
-    callback move-abandon();
-    // 会话交回来的本机那一步(准备 / 停止 / 开始)到了,去收件箱里取。
-    // 由 Rust 自己 invoke,界面不碰它。
-    callback session-effects();
-    // 把输出设备换成这一台。参数是 DeviceRow 的 id,**空串是本机**。
+    // 改成只在这一台出声。参数是 DeviceRow 的 id,**空串是本机**。
     callback set-output(string);
-    // ── 播放组(#137 ⑤):几台一起出声、保持同步。 ──
-    // 加入一起播放 / 移出:在当前成员上加上或去掉这一台。参数同上,空串是本机。
+    // 加入一起出声 / 移出:在正在出声的那几台上加上或去掉这一台。参数同上,空串是本机。
     callback toggle-member(string);
-    // 本机在不在播放组里。
+    // 本机在不在出声(独奏时恒为真)。
     in property <bool> local-member: true;
-    // 组那一行:谁在组里、谁是主端、哪台待确认、哪台报了故障。空串 = 不出现。
-    // 唯一写者是 ui/src/sync/remote.rs。
+    // 组那一行:哪台报了故障、哪台的路由没校准。空串 = 不出现。
+    // 唯一写者是 ui/src/sync/group.rs。
     in property <string> group-text;
-    // 组或共同计划变了,去重新对准本机播放。由 Rust 自己 invoke,界面不碰它。
+    // 组状态变了,去重新对准本机播放。由 Rust 自己 invoke,界面不碰它。
     callback group-changed();
-    // 被控端按了「退出被遥控」。
-    callback exit-controlled();
-    // 遥控器发来的命令到了,去收件箱里取(见 ui/src/remote.rs 模块头)。
-    // 由 Rust 自己 invoke,界面不碰它。
-    callback remote-command();
-    // 遥控器要一次完整状态。同样由 Rust invoke。
-    callback remote-snapshot();
+    // 横幅上的「退出」:本机退出组,回到独奏。
+    callback leave-group();
 
     in-out property <bool> aurora-buttons-on: true;
     callback aurora-buttons-toggled();

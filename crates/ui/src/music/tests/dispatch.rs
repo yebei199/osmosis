@@ -1,26 +1,16 @@
 //! 一条播放意图从按下去到落地的那一段(见 `music::playback::dispatch`)。
 //!
-//! 这一组补的是本仓从来没人走过的那条路:**遥控器侧**。#108 之前,全仓没有
-//! 任何一条测试调用过 `invoke_play`,于是「按下去到底发没发出命令」谁也说不出来
-//! —— 而现场那个故障的症状恰好就是「按了没反应」。
+//! 这一组走独奏(不在组里)那条路;组里的点歌与控制见 `tests/group.rs`(#142)。
 //!
 //! 入口一律用 Slint 的回调(`invoke_play` / `invoke_next_track` / …),不直接调
 //! 内部函数:那两道闸从前就是写在回调入口上的,绕过入口去测,测的就不是
 //! 用户真正走的那条路。
 
 use similar_asserts::assert_eq;
-use syncplay::Event;
 
 use super::super::fixtures::*;
 use super::super::*;
-use crate::{Player, Shell};
-
-fn device(id: &str) -> app_core::DeviceDto {
-    app_core::DeviceDto {
-        id: id.to_owned(),
-        name: format!("设备 {id}"),
-    }
-}
+use crate::Player;
 
 /// 把传输控件真正接到窗口上。
 ///
@@ -40,44 +30,6 @@ fn batch_of(deck: &Deck, ids: &[&str]) -> Vec<TrackDto> {
         ids.iter().map(|id| track_with_id(id)).collect();
     *deck.tracks.borrow_mut() = batch.clone();
     batch
-}
-
-/// 把输出交给 `pc`,并让它报一条**新鲜**的状态 —— 控制因此发得出去。
-fn take_control_of_pc(deck: &Deck) {
-    deck.remote.assume_output("pc", "pc1");
-    deck.remote.accept_report_at(
-        report(),
-        crate::sync::remote::now_ms(),
-    );
-}
-
-/// 把输出交给 `pc`,但手上那份上报已经过期(`STALE_AFTER_MS` 是三秒)。
-fn hold_a_stale_view_of_pc(deck: &Deck) {
-    deck.remote.assume_output("pc", "pc1");
-    deck.remote.accept_report_at(
-        report(),
-        crate::sync::remote::now_ms() - 10_000,
-    );
-}
-
-/// 被控端报来的一份状态。
-fn report() -> app_core::RemoteStateDto {
-    app_core::RemoteStateDto {
-        track: Some(track()),
-        position_ms: 0,
-        state: app_core::RemotePlayState::Playing,
-        volume: 0.5,
-        queue_id: Some(7),
-        revision: Some(1),
-        applied_revision: Some(1),
-        entry_id: Some(12),
-        queue_len: 1,
-        epoch: 1_700_000_000_000,
-        state_seq: 1,
-        operation: None,
-        fault: None,
-        route: None,
-    }
 }
 
 /// 把本机的 playback 按在「这一首正在加载」上。
@@ -102,41 +54,6 @@ fn stall_on_loading(deck: &Deck, track: TrackDto) {
     .expect("event loop must be running");
 }
 
-// ── 遥控器侧:点歌真的发出去了 ──
-
-/// **遥控时点一首歌,发出去的是带整批的 `Play`。**
-///
-/// 整批而不是一首:自动续播在被控端发生(`docs/adr/0030`),它得自己拿着
-/// 后面那些歌 —— 只发一首的话,遥控器一锁屏,pc1 放完就停了。
-///
-/// 批次取的是**用户点中的那个列表**,不是被控端回报的队列:他想听的是眼前
-/// 这一批的后面那些歌,不是对面正在放的那一批。
-#[test]
-fn tapping_a_track_while_remote_sends_the_whole_batch() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let batch = batch_of(&deck, &["a", "b", "c"]);
-    take_control_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play("b".into());
-
-    // 队列挪进服务端之后(`docs/adr/0031`),这一下走的是「先把这一批发布
-    // 成服务端队列,拿到 queue_id/revision 再发命令」。发布是一次 HTTP 往返,
-    // 测试环境里没有服务端,所以命令发不出去 —— 但**这一下确实走到了远端
-    // 分支**,而那正是这条测试的主语。原来的断言是「该变成一条带整批的
-    // Play」,那条命令已经不存在了。
-    let _ = batch;
-    assert_eq!(
-        deck.remote.play_submits(),
-        1,
-        "遥控时点一首歌,该走远端那条路"
-    );
-    assert!(
-        deck.queue.borrow().current().is_none(),
-        "遥控那一下不该在本机起播 —— 两台会同时出声"
-    );
-}
-
 /// 输出在本机时,同一下走本机播放器,一条命令也不发。
 #[test]
 fn tapping_a_track_locally_starts_the_local_transport() {
@@ -157,214 +74,8 @@ fn tapping_a_track_locally_starts_the_local_transport() {
         "整批都该进队列,后面那些歌要能自动接上"
     );
     assert!(
-        deck.remote.sent_commands().is_empty(),
-        "本机输出不该往信令上发东西"
-    );
-}
-
-// ── ADR 0030:过期不回落本机 ──
-
-/// **状态过期时按下一首,声音不许从遥控器自己这台放出来。**
-///
-/// 这是 #108 要改掉的那一半:从前是 `if send(..) { return }`,发不出去就
-/// 径直落到本机 `advance()` 上。用户低头一看,歌从手机里放出来了 ——
-/// 而他要的是让 pc1 放(`docs/adr/0030`:过期只禁用控制,**不自动切回本机**)。
-#[test]
-fn a_stale_target_never_falls_back_to_the_local_speaker() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let batch = batch_of(&deck, &["a", "b"]);
-    deck.queue.borrow_mut().replace(batch, 0);
-    hold_a_stale_view_of_pc(&deck);
-
-    ui.global::<Player>().invoke_next_track();
-
-    assert_eq!(
-        deck.queue.borrow().current().map(|t| t.id.clone()),
-        Some("a".to_owned()),
-        "本机队列一步都不该动"
-    );
-    assert!(
-        deck.remote.is_remote(),
-        "输出要留在那台设备上,不许偷偷收回本机"
-    );
-    assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "pc1 控制暂不可用",
-        "既然不回落,就必须说一句 —— 否则按下去与坏掉毫无区别"
-    );
-}
-
-/// 点歌同理:过期时不许改在本机放。
-#[test]
-fn a_stale_target_never_plays_the_tap_locally() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    batch_of(&deck, &["a", "b"]);
-    hold_a_stale_view_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play("b".into());
-
-    assert!(
-        deck.queue.borrow().current().is_none(),
-        "过期不是回本机放的理由"
-    );
-    assert!(
-        deck.remote.sent_commands().is_empty(),
-        "过期时不该把命令发出去 —— 发了会攒着一次全到"
-    );
-}
-
-/// 音量也一样:从前它发不出去就落到本机播放器上,于是遥控器拧了一下,
-/// 响的是自己这台。
-#[test]
-fn a_stale_target_never_turns_the_local_volume() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    hold_a_stale_view_of_pc(&deck);
-
-    ui.global::<Player>().invoke_volume_changed(0.25);
-
-    assert_eq!(
-        ui.global::<Shell>().get_banner_text(),
-        "pc1 控制暂不可用"
-    );
-    assert!(deck.remote.sent_commands().is_empty());
-}
-
-// ── 被控锁:拦本机用户,不拦收到的命令 ──
-
-/// 锁定期间本机那一下不算数,而**遥控器发来的同一条命令照常执行**。
-///
-/// 两条路必须分开:锁住的是这台机器前面那个人,不是遥控它的那个人。
-/// 收到的命令若也走出站路由,这台还会把它原样转发回去。
-#[test]
-fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
- {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let batch = batch_of(&deck, &["a", "b"]);
-    crate::sync::remote::handle(
-        &Event::ControlledBy {
-            device: device("phone"),
-        },
-        &deck.remote,
-    );
-
-    ui.global::<Player>().invoke_play("b".into());
-    assert!(
-        deck.queue.borrow().current().is_none(),
-        "锁定期间本机前面那个人按的不算数"
-    );
-
-    // 遥控器发来的 Play 现在只带队列标识,曲目要另取(#109 第 4 段)。
-    // 这条测试钉的是「锁不拦遥控器发来的命令」,所以直接走拿到曲目之后
-    // 那一段 —— 它正是取数成功时会落到的地方。
-    play_batch(&ui, &deck, batch, 1);
-
-    assert_eq!(
-        deck.queue.borrow().current().map(|t| t.id.clone()),
-        Some("b".to_owned()),
-        "遥控器发来的那条要照常执行 —— 锁不拦它"
-    );
-    assert!(
-        deck.remote.sent_commands().is_empty(),
-        "收到的命令不许再转发回去"
-    );
-}
-
-/// 信令断了,锁就撤:断网期间本机点歌照常落到本机(#118)。
-///
-/// 锁此前只有服务端的消息才清,而断着的时候消息过不来 —— 被控端断网期间
-/// 连歌都点不了,要等重连、等服务端想起来告诉它一声。
-#[test]
-fn a_dropped_link_lets_the_local_tap_through() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let _ = batch_of(&deck, &["a", "b"]);
-    crate::sync::remote::handle(
-        &Event::ControlledBy {
-            device: device("phone"),
-        },
-        &deck.remote,
-    );
-
-    crate::sync::remote::handle(
-        &Event::Disconnected,
-        &deck.remote,
-    );
-    ui.global::<Player>().invoke_play("b".into());
-
-    assert_eq!(
-        deck.queue.borrow().current().map(|t| t.id.clone()),
-        Some("b".to_owned()),
-        "断线之后本机前面那个人按的要算数"
-    );
-}
-
-/// 接管失败,输出回本机:之后点歌落到本机,不再发去那台设备(#118)。
-#[test]
-fn a_failed_claim_sends_the_next_tap_to_the_local_player() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let _ = batch_of(&deck, &["a", "b"]);
-    deck.remote.assume_output("pc", "pc1");
-    assert!(
-        deck.remote.is_remote(),
-        "按下去那一刻先乐观地切过去"
-    );
-
-    crate::sync::remote::handle(
-        &Event::ClaimFailed {
-            target: "pc".to_owned(),
-            reason: "device_offline: 设备 pc 不在线"
-                .to_owned(),
-        },
-        &deck.remote,
-    );
-    ui.global::<Player>().invoke_play("b".into());
-
-    assert!(
-        !deck.remote.is_remote(),
-        "接管没成,输出该回本机"
-    );
-    assert_eq!(
-        ui.global::<Shell>().get_output_id(),
-        "",
-        "芯片也要跟着回本机"
-    );
-    assert_eq!(
-        deck.queue.borrow().current().map(|t| t.id.clone()),
-        Some("b".to_owned()),
-        "这一下该落到本机播放器上"
-    );
-    assert_eq!(
-        deck.remote.play_submits(),
-        0,
-        "不该再发去那台设备"
-    );
-}
-
-/// 失败的是上一台,用户已经改选了别的:不许把新的选择一起撤掉。
-#[test]
-fn a_failed_claim_on_a_device_no_longer_selected_is_ignored()
- {
-    let (_ui, deck) = deck_window();
-    deck.remote.assume_output("pc", "pc1");
-    deck.remote.assume_output("tablet", "平板");
-
-    crate::sync::remote::handle(
-        &Event::ClaimFailed {
-            target: "pc".to_owned(),
-            reason: "device_offline".to_owned(),
-        },
-        &deck.remote,
-    );
-
-    assert_eq!(
-        deck.remote.target_id().as_deref(),
-        Some("tablet"),
-        "失败的那一台早就不是当前的输出了"
+        deck.group.intents().is_empty(),
+        "独奏时不该发组意图"
     );
 }
 
@@ -404,11 +115,7 @@ fn a_seek_marks_buffering_right_away() {
     wire_transport(&ui, &deck);
     ui.global::<Player>().set_buffering(false);
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Seek { ms: 1_000 },
-    );
+    execute(&ui, &deck, Command::Seek { ms: 1_000 });
 
     assert!(
         ui.global::<Player>().get_buffering(),
@@ -431,11 +138,7 @@ fn executing_a_volume_command_remembers_it_for_this_device()
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Volume { level: 0.25 },
-    );
+    execute(&ui, &deck, Command::Volume { level: 0.25 });
     // 存盘是节流的(#137 ⑥):拖完停一下才写。原断言不变,只是等它落盘
     settle_volume_save();
 
@@ -472,11 +175,7 @@ fn a_volume_drag_is_saved_once_it_settles() {
     wire_transport(&ui, &deck);
 
     for level in [0.31, 0.32, 0.33] {
-        execute(
-            &ui,
-            &deck,
-            app_core::RemoteCommand::Volume { level },
-        );
+        execute(&ui, &deck, Command::Volume { level });
     }
 
     assert_ne!(
@@ -506,72 +205,9 @@ fn a_volume_command_is_clamped_before_it_lands() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
 
-    execute(
-        &ui,
-        &deck,
-        app_core::RemoteCommand::Volume { level: 1.5 },
-    );
+    execute(&ui, &deck, Command::Volume { level: 1.5 });
 
     assert_eq!(ui.global::<Player>().get_volume(), 1.0);
-}
-
-/// 差异 6(产品裁决):音量**不受**被控锁限制,而切歌受。
-///
-/// 那道锁拦的是 transport —— 遥控器正按着这台报来的进度插值,本机偷偷改一下
-/// 就让对面的进度条撒谎。音量不在那条链上:它是这台机器的响度,而且每秒随
-/// 快照报一次,最迟一秒后遥控器就看见了。这也保持了改之前的行为
-/// (`bind_volume` 本来就没有这道闸),不在重构里无声改产品规则。
-#[test]
-fn the_controlled_lock_stops_transport_but_not_the_volume_knob()
- {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let batch = batch_of(&deck, &["a", "b"]);
-    deck.queue.borrow_mut().replace(batch, 0);
-    crate::sync::remote::handle(
-        &Event::ControlledBy {
-            device: device("phone"),
-        },
-        &deck.remote,
-    );
-
-    ui.global::<Player>().invoke_volume_changed(0.25);
-    assert_eq!(
-        ui.global::<Player>().get_volume(),
-        0.25,
-        "被控端前面的人拧自己音箱,是物理动作,锁不该拦"
-    );
-
-    ui.global::<Player>().invoke_next_track();
-    assert_eq!(
-        deck.queue.borrow().current().map(|t| t.id.clone()),
-        Some("a".to_owned()),
-        "切歌照旧被锁拦下 —— 那一下会让遥控器的进度条撒谎"
-    );
-}
-
-/// 差异 4:本机残留的 `Loading` 不许把一条**远端**意图丢掉。
-///
-/// 连点去重读的是本机 playback,而它早于目标选择被问的话,刚从本机切到遥控
-/// 时那份残留的 `Loading` 会把用户点的第一首静默吞掉 —— 症状与现场那个故障
-/// 一模一样,而原因完全不同。
-#[test]
-fn a_leftover_local_loading_state_does_not_swallow_a_remote_tap()
- {
-    let (ui, deck) = deck_window_pumped();
-    wire_transport(&ui, &deck);
-    batch_of(&deck, &["a", "b"]);
-    // 本机此刻正卡在「b 加载中」上 —— 切到遥控之前留下的那一格。
-    stall_on_loading(&deck, track_with_id("b"));
-    take_control_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play("b".into());
-
-    assert_eq!(
-        deck.remote.play_submits(),
-        1,
-        "去重是本机那条路的事,不该拦下发给别的设备的意图"
-    );
 }
 
 /// 本机上同一下仍然要被去重拦住:连点五下就是五条在途下载,
@@ -605,186 +241,6 @@ fn next_track_advances_the_local_queue() {
         deck.queue.borrow().current().map(|t| t.id.clone()),
         Some("b".to_owned()),
         "切歌要落到本机队列上"
-    );
-}
-
-// ── 提交成功 ≠ 放起来了 ──
-
-/// 刚接管、一条上报都还没回来时,控制**要能发出去**。
-///
-/// 从选中设备到第一条上报回来是三个来回,而「选完设备马上点一首歌」是最自然
-/// 的操作顺序。把那一下也挡掉,得到的同样是「按了没反应」,只是原因反过来。
-#[test]
-fn a_just_claimed_target_accepts_the_first_tap() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    batch_of(&deck, &["a"]);
-    deck.remote.assume_output("pc", "pc1");
-
-    ui.global::<Player>().invoke_play("a".into());
-
-    assert_eq!(
-        deck.remote.play_submits(),
-        1,
-        "快照还在路上,不是丢掉用户这一下的理由"
-    );
-}
-
-// ── 四种下场各自说清一件事 ──
-
-/// 返回值要分得清**实际含义**,不是一个「成了没有」的布尔。
-///
-/// 尤其是 `RemoteSubmitted`:它只表示**本地提交**成功。队列、服务端转发、
-/// 被控端执行都还在后面,任何一跳都可能悄悄丢掉它 —— 真放起来了以被控端的
-/// 上报为准。把它当成「放成了」正是现场那次误判的来源。
-#[test]
-fn each_outcome_says_which_of_the_four_things_happened() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let batch = batch_of(&deck, &["a", "b"]);
-
-    assert_eq!(
-        dispatch(
-            &ui,
-            &deck,
-            Intent::Play {
-                tracks: batch.clone(),
-                index: 0,
-            }
-        ),
-        Dispatched::LocalApplied,
-        "输出在本机:自己执行"
-    );
-
-    take_control_of_pc(&deck);
-    assert_eq!(
-        dispatch(&ui, &deck, Intent::Next),
-        Dispatched::RemoteSubmitted,
-        "交给客户端了 —— 仅此而已,不代表那边放起来了"
-    );
-
-    hold_a_stale_view_of_pc(&deck);
-    assert_eq!(
-        dispatch(&ui, &deck, Intent::Next),
-        Dispatched::Unavailable("目标此刻收不了命令"),
-        "过期:不发、也不回落本机"
-    );
-
-    crate::sync::remote::handle(
-        &Event::ControlledBy {
-            device: device("phone"),
-        },
-        &deck.remote,
-    );
-    assert_eq!(
-        dispatch(&ui, &deck, Intent::Next),
-        Dispatched::Blocked("本机正被遥控"),
-        "锁拦下的是本机前面那个人按的这一下"
-    );
-}
-
-// ── AC-2:批次大小不再进这条链 ──
-
-/// **批次大小不再决定这一下能不能发出去**(AC-2、AC-6)。
-///
-/// 这里原本是两条相反的测试:`a_batch_under_the_limit_still_goes_out` 断言
-/// 二十首照常发,`an_oversized_batch_is_refused_before_it_can_break_the_connection`
-/// 断言四千首在发之前被拒、横幅说「队列太长」。两条的前提都是
-/// **`Play` 拖着整批曲目**,于是它的字节数随用户的歌单长度增长,而超限会撞掉
-/// 整条连接(#108)。
-///
-/// 本轮把曲目挪去了 HTTP(`docs/adr/0031`),`Play` 只带
-/// `queue_id/revision/entry_id/operation_id`,定长 —— 那道按字节的闸对它
-/// 永远不再触发,两条断言的前提都没了。
-///
-/// 留下的这条钉的是那个前提消失之后**仍然成立**的事:两种规模走到同一个
-/// 下场。第 4 段把取数接上之后它照样成立,只是那个下场从「还发不出去」
-/// 变成「发出去了」。
-///
-/// 按字节的自检本身没删,它仍是发之前唯一一道闸,由
-/// `syncplay` 的 `no_command_grows_with_user_data` 守着。
-#[test]
-fn the_batch_size_no_longer_decides_a_remote_tap() {
-    // 同一个窗口里换两次批:Slint 的后端一个线程只装得下一个,
-    // 起两个窗口会撞 `AlreadySet`。
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    take_control_of_pc(&deck);
-
-    let mut outcomes = Vec::new();
-    for count in [20_usize, 4_000] {
-        let ids: Vec<String> =
-            (0..count).map(|n| n.to_string()).collect();
-        let refs: Vec<&str> =
-            ids.iter().map(String::as_str).collect();
-        batch_of(&deck, &refs);
-
-        // 两轮点不同的两首:同一首连点两下会被当成多余的那一下(#113)。
-        let tapped = if count == 20 { "7" } else { "8" };
-        ui.global::<Player>().invoke_play(tapped.into());
-
-        outcomes.push((
-            deck.remote.play_submits(),
-            ui.global::<Shell>()
-                .get_banner_text()
-                .to_string(),
-        ));
-    }
-
-    assert_eq!(
-        outcomes[0].1, outcomes[1].1,
-        "二十首与四千首该走到同一个下场 —— 批次大小已经不在这条链上了"
-    );
-    assert_eq!(
-        outcomes[1].0, 2,
-        "两下都该走到远端分支,而不是被哪一道按字节的闸拦下"
-    );
-    assert!(
-        !outcomes[1].1.contains("太长"),
-        "两种规模都在配额之内,不该说太长,实得 {}",
-        outcomes[1].1
-    );
-}
-
-/// 超出**配额**的那一批仍然当场拒绝,而且立刻说得出话(AC-6)。
-///
-/// 与上一条不是一回事:那条说的是「字节数不再是判据」,这条说的是「条数
-/// 仍然有上限」。上限从 64 KiB 那条线换成了 `MAX_QUEUE_ENTRIES`,而拒绝的
-/// 规矩没变 —— **不截断、不静默**,而且不等那次 HTTP 往返回来:用户要的是
-/// 一句立刻出现的话,而这一条等多久都不会好。
-#[test]
-fn a_batch_past_the_quota_is_refused_on_the_spot() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let ids: Vec<String> = (0..api::MAX_QUEUE_ENTRIES + 1)
-        .map(|n| n.to_string())
-        .collect();
-    let refs: Vec<&str> =
-        ids.iter().map(String::as_str).collect();
-    batch_of(&deck, &refs);
-    take_control_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play("7".into());
-
-    assert_eq!(
-        deck.remote.play_submits(),
-        0,
-        "超出配额的那一批不该发出去"
-    );
-    assert!(
-        ui.global::<Shell>()
-            .get_banner_text()
-            .contains("太长"),
-        "要说得出为什么,实得 {}",
-        ui.global::<Shell>().get_banner_text()
-    );
-    assert!(
-        deck.remote.is_remote(),
-        "拒掉这一下不等于放弃那台设备"
-    );
-    assert!(
-        deck.queue.borrow().current().is_none(),
-        "更不等于改在本机放 —— 那是 ADR 0030 明令禁止的回落"
     );
 }
 
@@ -900,128 +356,4 @@ fn tapping_another_track_while_loading_switches() {
         "点的是另一首就照常切过去"
     );
     assert_eq!(deck.execution.publishes(), 1);
-}
-
-/// 遥控时连点同一首:只发布一次队列、只发一条 play(#113)。
-///
-/// #125 的连点去重只挂在本机那条路上,遥控这边每点一下都重新发布一次、
-/// 再发一条 play —— 现场两秒十发,同一队列版本号 1→10,操作号 1→10。
-#[test]
-fn tapping_the_same_track_again_while_remote_submits_once()
-{
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    batch_of(&deck, &["a", "b", "c"]);
-    take_control_of_pc(&deck);
-
-    for _ in 0..10 {
-        ui.global::<Player>().invoke_play("b".into());
-    }
-
-    assert_eq!(
-        deck.remote.play_submits(),
-        1,
-        "同一首还在路上,再点是多余的"
-    );
-
-    ui.global::<Player>().invoke_play("c".into());
-    assert_eq!(
-        deck.remote.play_submits(),
-        2,
-        "点的是另一首就照常发出去"
-    );
-}
-
-/// 被控端已经在放这一首,遥控器上再点它不该从头再来一遍。
-#[test]
-fn tapping_the_track_the_target_is_playing_is_ignored() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let playing = report().track.expect("上报里有一首").id;
-    *deck.tracks.borrow_mut() =
-        vec![track_with_id(&playing)];
-    take_control_of_pc(&deck);
-
-    ui.global::<Player>().invoke_play(playing.into());
-
-    assert_eq!(
-        deck.remote.play_submits(),
-        0,
-        "对面已经在放这一首了"
-    );
-}
-
-/// 对面暂停着的那一首再点不算多余 —— 那一下是想让它响。
-#[test]
-fn tapping_the_track_the_target_paused_still_goes_out() {
-    let (ui, deck) = deck_window();
-    wire_transport(&ui, &deck);
-    let paused = report().track.expect("上报里有一首").id;
-    *deck.tracks.borrow_mut() =
-        vec![track_with_id(&paused)];
-    deck.remote.assume_output("pc", "pc1");
-    deck.remote.accept_report_at(
-        app_core::RemoteStateDto {
-            state: app_core::RemotePlayState::Paused,
-            ..report()
-        },
-        crate::sync::remote::now_ms(),
-    );
-
-    ui.global::<Player>().invoke_play(paused.into());
-
-    assert_eq!(deck.remote.play_submits(), 1);
-}
-
-// ── 进度在两次上报之间也走(#137 ⑥)──
-
-/// 被控端每秒报一次位置;两次之间进度条靠快一档的那一趟按本地时钟推,
-/// 不再一秒跳一格。推算的规矩(只在 Playing 且新鲜时走)在
-/// `app_core::RemoteView::position_ms`,这里钉的是「有人按更快的节奏去读它」。
-#[test]
-fn remote_progress_moves_between_reports() {
-    let (ui, deck) = deck_window();
-    deck.remote.assume_output("pc", "pc1");
-    let now = crate::sync::remote::now_ms();
-    deck.remote.accept_report_at(
-        app_core::RemoteStateDto {
-            position_ms: 10_000,
-            ..report()
-        },
-        now - 1_500,
-    );
-
-    tick_progress(&ui, &deck);
-
-    let duration = track().duration_ms as f32;
-    let ratio = ui.global::<Player>().get_progress_ratio();
-    assert!(
-        ratio > (10_000.0 + 1_000.0) / duration,
-        "一秒半之前报的 0:10,现在该推到 0:11 以后,实际比例 {ratio}"
-    );
-}
-
-/// 暂停着的被控端:进度停在报来的位置,不自己往前走。
-#[test]
-fn remote_progress_holds_while_paused() {
-    let (ui, deck) = deck_window();
-    deck.remote.assume_output("pc", "pc1");
-    let now = crate::sync::remote::now_ms();
-    deck.remote.accept_report_at(
-        app_core::RemoteStateDto {
-            position_ms: 10_000,
-            state: app_core::RemotePlayState::Paused,
-            ..report()
-        },
-        now - 1_500,
-    );
-
-    tick_progress(&ui, &deck);
-
-    let duration = track().duration_ms as f32;
-    let ratio = ui.global::<Player>().get_progress_ratio();
-    assert!(
-        (ratio - 10_000.0 / duration).abs() < 1e-6,
-        "暂停时进度走了: {ratio}"
-    );
 }

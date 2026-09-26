@@ -135,6 +135,40 @@ async fn clients_see_each_other_in_the_roster() {
     );
 }
 
+/// 丢掉客户端,它就真的下线了:别的设备很快在名册里看不到它(#142)。
+///
+/// 从前读半边的任务在客户端丢掉之后还攥着 socket,要等下一条来信(服务端 30 秒一次的
+/// 探活)才发现没人收了 —— 这段时间里服务端一直当它在线,组的掉线规则也就晚半分钟才生效。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_client_leaves_the_roster_promptly() {
+    let addr = start_signalling_server().await;
+    let (_phone, phone_events) =
+        start_client(addr, "phone");
+    let (pc, _pc_events) = start_client(addr, "pc");
+    wait_for(
+        &phone_events,
+        "手机看到 pc",
+        roster_has(&["pc"]),
+    );
+
+    drop(pc);
+
+    wait_for(
+        &phone_events,
+        "pc 从名册里消失",
+        |event| match event {
+            Event::Roster(devices)
+                if !devices
+                    .iter()
+                    .any(|d| d.id == "pc") =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 重连的节奏(#109 F-R3)
 //

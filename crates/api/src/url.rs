@@ -137,6 +137,11 @@ mod tests;
 ///
 /// id 是服务端给的整数主键,不经用户输入,所以不必转义 —— 但路径拼接仍然
 /// 集中在这里,免得六个调用点各写一遍 `format!`,而其中一个少个斜杠。
+/// `/group` 与它下面的意图路由(#142)。`path` 为空就是 `GET /group` 本身。
+pub(crate) fn group_url(path: &str) -> String {
+    format!("{}/group{path}", base_url())
+}
+
 pub(crate) fn queues_url() -> String {
     format!("{}/queues", base_url())
 }
