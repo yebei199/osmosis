@@ -527,11 +527,14 @@ impl Remote {
                 return false;
             }
         }
-        let last = self.inner.verified_at.load(Ordering::Relaxed);
+        let last =
+            self.inner.verified_at.load(Ordering::Relaxed);
         if now_ms.saturating_sub(last) < VERIFY_EVERY_MS {
             return false;
         }
-        self.inner.verified_at.store(now_ms, Ordering::Relaxed);
+        self.inner
+            .verified_at
+            .store(now_ms, Ordering::Relaxed);
         log::info!("被控端久不上报,向服务端核一次持权");
         #[cfg(test)]
         self.inner.verifies.fetch_add(1, Ordering::Relaxed);
@@ -743,7 +746,8 @@ impl Remote {
         if let Some(client) = self.inner.client.get() {
             client.claim(&device.id);
         }
-        let message = format!("正在重新接管 {}", device.name);
+        let message =
+            format!("正在重新接管 {}", device.name);
         let _ = self.inner.weak.upgrade_in_event_loop(
             move |ui| crate::notice::show(&ui, message),
         );

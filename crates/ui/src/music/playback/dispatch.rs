@@ -823,7 +823,8 @@ pub(in crate::music) fn adopt_remote_queue(
                 // 不静默(#142):本机前面的人至少知道刚才那一下为什么没动。
                 crate::notice::show(
                     &ui,
-                    "遥控已结束,刚才那次点歌没有执行".to_owned(),
+                    "遥控已结束,刚才那次点歌没有执行"
+                        .to_owned(),
                 );
             }
             Adoption::Failed(reason) => {

@@ -276,7 +276,8 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
 /// 信令断了锁**不**撤(#142 推翻 #118):服务端替断线的被控端留着租约,闪断回来
 /// 还是原来那台遥控器在管;满了租约,服务端的 `NotControlled` 才撤锁,之后本机点歌落到本机。
 #[test]
-fn a_dropped_link_keeps_the_lock_until_the_server_lifts_it() {
+fn a_dropped_link_keeps_the_lock_until_the_server_lifts_it()
+{
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     let _ = batch_of(&deck, &["a", "b"]);

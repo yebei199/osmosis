@@ -742,7 +742,8 @@ impl Session {
     /// 进遥控之前,调用方要把它按停;本来就在组里一起出声的,不许按停(#142)。
     #[must_use]
     pub fn come_home(&mut self) -> bool {
-        let was_silent = !self.members.contains(&Output::Local);
+        let was_silent =
+            !self.members.contains(&Output::Local);
         self.members = vec![Output::Local];
         self.master = Output::Local;
         self.moving = None;

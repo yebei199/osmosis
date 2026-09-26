@@ -254,7 +254,8 @@ pub(crate) fn push_remote(
     remote: &crate::sync::remote::Remote,
     media: &Bridge,
 ) {
-    let track = remote.with_view(|view, _| view.track().cloned());
+    let track =
+        remote.with_view(|view, _| view.track().cloned());
     media.publish(NowPlaying::remote(
         track.as_ref(),
         ui.global::<Player>().get_is_playing(),

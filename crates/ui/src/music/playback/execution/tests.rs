@@ -630,7 +630,8 @@ fn a_failed_publish_does_not_reset_the_resync_clock() {
 ///
 /// 不作废的话主端这几百毫秒里写出「新歌 + 旧批的条目号」,跟随端放成另一首。
 #[test]
-fn a_new_local_batch_forgets_the_old_entries_but_keeps_the_queue() {
+fn a_new_local_batch_forgets_the_old_entries_but_keeps_the_queue()
+ {
     let execution = Execution::default();
     execution.adopt(7, 3, vec![11, 12]);
 

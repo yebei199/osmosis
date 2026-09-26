@@ -746,9 +746,10 @@ async fn retry_resume(
             | ServerSignal::ControlRevoked { .. },
             _,
         ) => Resume::Idle,
-        (ServerSignal::Error { code, .. }, Resume::Sent)
-            if code == "device_offline" =>
-        {
+        (
+            ServerSignal::Error { code, .. },
+            Resume::Sent,
+        ) if code == "device_offline" => {
             Resume::AwaitingTarget
         }
         (
@@ -756,7 +757,9 @@ async fn retry_resume(
             Resume::AwaitingTarget,
         ) => match resume_claim(held) {
             Some((target, generation))
-                if devices.iter().any(|d| d.id == target) =>
+                if devices
+                    .iter()
+                    .any(|d| d.id == target) =>
             {
                 let _ = sender
                     .claim(&target, Some(generation))
@@ -1028,12 +1031,16 @@ async fn dispatch(
             *held = None;
             Ok(())
         }
-        Command::Verify => match resume_claim(held.as_ref()) {
-            Some((target, generation)) => {
-                sender.claim(&target, Some(generation)).await
+        Command::Verify => {
+            match resume_claim(held.as_ref()) {
+                Some((target, generation)) => {
+                    sender
+                        .claim(&target, Some(generation))
+                        .await
+                }
+                None => Ok(()),
             }
-            None => Ok(()),
-        },
+        }
         Command::ExitControlled => {
             sender.exit_controlled().await
         }

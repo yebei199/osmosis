@@ -578,7 +578,10 @@ mod tests {
             "cannot_control_self",
             "x",
         ] {
-            copy.push(describe_claim_failed(&remote(), reason));
+            copy.push(describe_claim_failed(
+                &remote(),
+                reason,
+            ));
         }
         for line in [
             "这首已经在放或正在切过去",

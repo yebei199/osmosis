@@ -1306,7 +1306,10 @@ fn a_member_back_within_the_lease_keeps_the_group() {
     control.member_left(ALICE, "pc", gone);
     control.member_back(ALICE, "pc");
 
-    assert_eq!(control.expire(ALICE, gone + lease * 10), None);
+    assert_eq!(
+        control.expire(ALICE, gone + lease * 10),
+        None
+    );
     assert_eq!(
         control.controller_of(ALICE, "pc"),
         Some("phone")
@@ -1389,7 +1392,10 @@ fn a_resume_from_before_a_restart_rebuilds_the_group() {
         after.claim(ALICE, "phone", "pc", Some(generation));
 
     assert!(
-        matches!(claim, Claim::Granted { revoked: None, .. }),
+        matches!(
+            claim,
+            Claim::Granted { revoked: None, .. }
+        ),
         "重启前的代次该重建,得到 {claim:?}"
     );
     assert_eq!(

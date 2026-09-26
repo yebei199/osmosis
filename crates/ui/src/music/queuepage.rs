@@ -370,13 +370,14 @@ fn pick_remote(
             }
             return;
         }
-        let sent =
-            deck.remote.send(app_core::RemoteCommand::Play {
+        let sent = deck.remote.send(
+            app_core::RemoteCommand::Play {
                 queue_id,
                 revision,
                 entry_id,
                 operation_id,
-            });
+            },
+        );
         // 没交出去要说出来(#142),与列表、卡墙那条路同一句话。
         if sent != crate::sync::remote::Submitted::Ok
             && let Some(ui) = weak.upgrade()

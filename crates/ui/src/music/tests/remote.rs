@@ -1150,7 +1150,8 @@ fn a_failed_reclaim_says_why_and_comes_home() {
     crate::sync::remote::handle(
         &Event::ClaimFailed {
             target: "pc".to_owned(),
-            reason: "device_offline: 设备 pc 不在线".to_owned(),
+            reason: "device_offline: 设备 pc 不在线"
+                .to_owned(),
         },
         &deck.remote,
     );

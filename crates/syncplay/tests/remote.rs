@@ -30,7 +30,8 @@ async fn start_server() -> SocketAddr {
 async fn start_server_with(
     timing: signaling::Timing,
 ) -> SocketAddr {
-    let app = signaling::unauthenticated_test_router(timing);
+    let app =
+        signaling::unauthenticated_test_router(timing);
     let listener =
         tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -383,7 +384,8 @@ async fn cable(upstream: SocketAddr) -> Cable {
         Arc::default();
 
     let cutter = cut.clone();
-    let upstream = Arc::new(std::sync::Mutex::new(upstream));
+    let upstream =
+        Arc::new(std::sync::Mutex::new(upstream));
     let target = upstream.clone();
     tokio::spawn(async move {
         loop {
@@ -531,7 +533,7 @@ async fn a_target_that_comes_back_within_the_lease_stays_controlled()
 /// 被控端一去不回,满了租约遥控器才得到撤权,说是被控端走的。
 #[tokio::test]
 async fn a_target_gone_past_the_lease_revokes_its_controller()
-{
+ {
     let addr = start_server_with(signaling::Timing {
         lease: Duration::from_millis(300),
         ping_every: Duration::from_millis(100),

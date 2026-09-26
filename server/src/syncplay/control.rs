@@ -247,7 +247,10 @@ impl Control {
 
     /// 这个账号的组,没有就新建一个 —— 新组接着最近发出去的任期往下数,不从 0 数。
     /// 与散掉的旧组同一个任期不要紧:客户端只丢比手上**更低**的通告。
-    fn group_mut(&mut self, account: AccountId) -> &mut Group {
+    fn group_mut(
+        &mut self,
+        account: AccountId,
+    ) -> &mut Group {
         let term = self.last_term;
         self.groups
             .entry(account)
@@ -264,7 +267,10 @@ impl Control {
         if let Some(group) = self.groups.get_mut(&account)
             && group.includes(device)
         {
-            group.absent.entry(device.to_owned()).or_insert(now);
+            group
+                .absent
+                .entry(device.to_owned())
+                .or_insert(now);
             tracing::info!(
                 account,
                 member = %device,
@@ -337,7 +343,9 @@ impl Control {
             .get(&account)?
             .absent
             .iter()
-            .filter(|(_, left)| now.duration_since(**left) >= lease)
+            .filter(|(_, left)| {
+                now.duration_since(**left) >= lease
+            })
             .map(|(id, _)| id.clone())
             .collect();
         let mut revoked = None;
@@ -347,7 +355,9 @@ impl Control {
                 member = %device,
                 "组成员下线满租约,移出组"
             );
-            if let Some(controller) = self.release(account, &device) {
+            if let Some(controller) =
+                self.release(account, &device)
+            {
                 revoked = Some((controller, device));
             }
         }

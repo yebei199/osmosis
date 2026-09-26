@@ -157,9 +157,9 @@ async fn the_masters_plan_reaches_the_follower() {
     let committed =
         wait_for(&phone_rx, "OutputsCommitted", |event| {
             match event {
-                Event::OutputsCommitted { term, .. } => {
-                    Some(*term)
-                }
+                Event::OutputsCommitted {
+                    term, ..
+                } => Some(*term),
                 _ => None,
             }
         })

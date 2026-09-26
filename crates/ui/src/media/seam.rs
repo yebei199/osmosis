@@ -118,7 +118,8 @@ impl NowPlaying {
     /// 不会换第二张图。
     pub(super) fn fingerprint(
         &self,
-    ) -> (MediaStatus, &str, bool, bool, LoopMode, bool) {
+    ) -> (MediaStatus, &str, bool, bool, LoopMode, bool)
+    {
         (
             self.status,
             &self.track_id,
