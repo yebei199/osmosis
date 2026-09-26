@@ -1,7 +1,7 @@
 //! `GET /download/{track_id}` —— 把一首歌当作 mp3 文件交出去。
 //!
-//! 与 [`super::play`] 共用同一条上游取源(同一个档位),差别只在交付方式:
-//! 那边交出一条**客户端自己去取**的临时直链,这边把字节从上游拉过来交出去。
+//! 与 [`super::play`] 共用同一条上游取源,差别在交付方式与档位:那边交出一条
+//! **客户端自己去取**的临时直链,这边把字节从上游拉过来交出去。
 //!
 //! **格式一律归一成 mp3**。源已经是 mp3 就原样透传;flac 之类的过一遍 ffmpeg。
 //! 转码放在这一侧而不是客户端:LAME 是 C 依赖,安卓要交叉编译进包、wasm 端
@@ -35,10 +35,13 @@ use server::bangdream::{
     },
 };
 use server::error::Failure;
+use server::quality::{Tier, netease};
 use server::store::account::Account;
 
-use crate::routes::play::PLAY_QUALITY;
 use crate::{AppState, fail};
+
+/// 下载要的档位。产物一律是 320k mp3,要无损只是多转一次码(`docs/adr/0034`)。
+const DOWNLOAD_TIER: Tier = Tier::High;
 
 /// 转码的目标码率。定值 —— 界面上没有任何地方能选它,做到音质选择时再提成参数。
 const MP3_BITRATE: &str = "320k";
@@ -56,8 +59,13 @@ pub(crate) async fn download(
     account: Account,
     Path(track_id): Path<String>,
 ) -> Result<Response, Failure> {
-    let source =
-        play_source(&state, &account, &track_id).await?;
+    let source = play_source(
+        &state,
+        &account,
+        &track_id,
+        DOWNLOAD_TIER,
+    )
+    .await?;
 
     // 试听片段单独一个 code:客户端要据此说清「这首要会员」,
     // 而不是笼统地报一句"不让下"。
@@ -84,12 +92,12 @@ pub(crate) async fn download(
     }
 }
 
-/// 向上游要这一首的播放源。与 [`super::play`] 同一个档位 ——
-/// 下载与播放拿到的必须是同一条源,否则「听到的」和「存下的」会是两个版本。
+/// 向上游按某个档位要这一首的播放源。实际给的可能低于所要的,见 `docs/adr/0034`。
 pub(crate) async fn play_source(
     state: &AppState,
     account: &Account,
     track_id: &str,
+    tier: Tier,
 ) -> Result<PlaySource, Failure> {
     let mut catalog = state.upstream.catalog.clone();
     let response = catalog
@@ -98,7 +106,7 @@ pub(crate) async fn play_source(
             GetPlaySourceRequest {
                 platform: Platform::Netease as i32,
                 track_id: track_id.to_owned(),
-                level: PLAY_QUALITY as i32,
+                level: netease::level_of(tier) as i32,
             },
         ))
         .await

@@ -144,6 +144,21 @@ pub async fn authenticate(
     Ok(Account { id, username })
 }
 
+/// 按 id 找账号。后台任务以某个账号的身份问上游时用;账号已删是 `None`。
+pub async fn find(
+    conn: &mut PgConnection,
+    id: i64,
+) -> Result<Option<Account>, AppError> {
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, username FROM accounts WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(conn)
+    .await?;
+
+    Ok(row.map(|(id, username)| Account { id, username }))
+}
+
 /// 吊销一个会话。
 ///
 /// 只删这一条 —— 同账号在别处的 token 仍然有效。一并删掉的话,

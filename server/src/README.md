@@ -1,7 +1,7 @@
 # server/src
 
 后端的源码。六块:进程装配(`main.rs`)、库门面(`lib.rs`)、错误映射(`error.rs`)、
-上游 gRPC 的翻译(`bangdream.rs`)、对象存储客户端(`objects.rs`,听过的歌存进 RustFS)、HTTP 处理函数(`routes/`),以及三个按职责分的子目录。
+上游 gRPC 的翻译(`bangdream.rs`)、对象存储客户端(`objects.rs`,听过的歌存进 RustFS)、与音源无关的音质(`quality.rs`,各音源映射在 `quality/`)、HTTP 处理函数(`routes/`),以及三个按职责分的子目录。
 
 - `gate/`:请求进门那一道 —— token 换成账号、限流。
 - `store/`:自家数据的家 —— 连接池与迁移、账号、本地歌单、播放事件、平台曲目缓存。

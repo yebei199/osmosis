@@ -232,3 +232,75 @@ async fn liking_and_unliking_never_touch_netease() {
             .is_empty()
     );
 }
+
+/// 「我的喜欢」还没建过:第一次读它时自动从网易云导入一次(#147),
+/// 不必有人先打 `POST /liked/import`。
+#[tokio::test]
+async fn the_first_read_imports_from_netease() {
+    let case = "lk_auto_import";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let newer = track_id(case, 2);
+    let older = track_id(case, 1);
+    let state = testing::state(
+        pool,
+        testing::serve(netease_liked(
+            &[(&newer, 2_000), (&older, 1_000)],
+            &[(&newer, "后点的"), (&older, "先点的")],
+        ))
+        .await,
+    );
+
+    let ids = liked_ids(State(state), account)
+        .await
+        .expect("该取得到")
+        .0;
+
+    assert_eq!(ids.track_ids, vec![newer, older]);
+}
+
+/// 导不进来(网易云没登录)时不建一份空的「我的喜欢」,下一次用到再试;
+/// 登上之后的下一次读就导进来了。
+#[tokio::test]
+async fn a_failed_first_import_is_retried_next_time() {
+    let case = "lk_auto_retry";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let only = track_id(case, 1);
+    let logged_out = testing::state(
+        pool.clone(),
+        testing::serve(FakeUpstream::default()).await,
+    );
+
+    let ids = liked_ids(
+        State(logged_out.clone()),
+        account.clone(),
+    )
+    .await
+    .expect("导不进来也照样回答")
+    .0;
+    assert!(ids.track_ids.is_empty());
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(
+        !server::store::liked::exists(
+            &mut conn, account.id
+        )
+        .await
+        .unwrap(),
+        "导不进来时不该建一份空的"
+    );
+
+    let logged_in = testing::with_upstream(
+        &logged_out,
+        testing::serve(netease_liked(
+            &[(&only, 1_000)],
+            &[(&only, "那一首")],
+        ))
+        .await,
+    );
+    let ids = liked_ids(State(logged_in), account)
+        .await
+        .expect("该取得到")
+        .0;
+    assert_eq!(ids.track_ids, vec![only]);
+}

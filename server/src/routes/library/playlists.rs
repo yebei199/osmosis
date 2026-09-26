@@ -23,6 +23,8 @@ use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
     netease_name, store_first, track_refs_of,
 };
+use crate::routes::library::likes::import_once;
+use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
 /// `GET /playlists` —— 我们自己的歌单:置顶的「我的喜欢」,其后是本地歌单。
@@ -32,6 +34,7 @@ pub(crate) async fn playlists(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<PlaylistsDto>, Failure> {
+    import_once(&state, &account).await;
     let mut conn = conn(&state.pool).await?;
     let liked_count = liked::count(&mut conn, account.id)
         .await
@@ -212,7 +215,7 @@ impl TracksBody {
     }
 }
 
-/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。
+/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。加进来的排进预取队列(#147)。
 pub(crate) async fn add_playlist_tracks(
     State(state): State<AppState>,
     account: Account,
@@ -220,15 +223,13 @@ pub(crate) async fn add_playlist_tracks(
     Json(body): Json<TracksBody>,
 ) -> Result<StatusCode, Failure> {
     let mut conn = conn(&state.pool).await?;
+    let refs = body.refs();
 
-    playlist::add_tracks(
-        &mut conn,
-        account.id,
-        id,
-        &body.refs(),
-    )
-    .await
-    .map_err(|err| error::map_error(&err))?;
+    playlist::add_tracks(&mut conn, account.id, id, &refs)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+    drop(conn);
+    prefetch::enqueue(&state, account.id, &refs).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

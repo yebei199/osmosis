@@ -1,4 +1,4 @@
-//! 听过的歌存进对象存储:存、不重复存、试听不存、`/played` 真的会触发;
+//! 存进对象存储:存、不重复存、试听与有损不存、`/played` 真的会排进队列;
 //! 再播时从对象存储交付,它出岔子时退回网易云;清理只删没人红心、三天没播的。
 
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use axum::extract::State;
 use contract::PlayedDto;
 use similar_asserts::assert_eq;
 
-use server::bangdream::proto::PlaySource;
+use server::bangdream::proto::{PlaySource, QualityLevel};
 use server::store::account::Account;
 use server::store::archive as ledger;
 use server::store::playlist::TrackRef;
@@ -19,7 +19,9 @@ use crate::routes::testing::{
     self, FakeUpstream, MemoryObjects,
 };
 
-use super::{Archive, keep, quality};
+use super::{Archive, Stored, quality, store_track};
+
+mod retention;
 
 /// 在随机端口上摆一段字节,并数它被取了几次。
 async fn serve_counted(
@@ -47,6 +49,19 @@ async fn serve_counted(
     (format!("http://{addr}/audio"), hits)
 }
 
+/// 一段最小的 FLAC 头:STREAMINFO 里给定采样率、双声道、给定位深。
+fn flac_header(sample_rate: u64, bits: u64) -> Vec<u8> {
+    let mut bytes = b"fLaC".to_vec();
+    bytes.extend([0x80, 0, 0, 34]);
+    bytes.extend([0; 10]);
+    let packed = (sample_rate << 44)
+        | (1 << 41)
+        | ((bits - 1) << 36);
+    bytes.extend(packed.to_be_bytes());
+    bytes.extend([0; 16]);
+    bytes
+}
+
 /// 一首歌的字节,够认得出来就行。
 fn audio() -> Vec<u8> {
     (0..4096u32).map(|i| i as u8).collect()
@@ -57,10 +72,30 @@ struct Fixture {
     account: Account,
     objects: Arc<MemoryObjects>,
     hits: Arc<AtomicUsize>,
+    fake: FakeUpstream,
 }
 
 /// 摆好假上游、内存对象存储与账号;同一测试名留下的账目按 id 前缀清掉。
 async fn fixture(case: &str, trial: bool) -> Fixture {
+    fixture_with(
+        case,
+        audio(),
+        PlaySource {
+            format: "FLAC".to_owned(),
+            bit_rate: 999_000,
+            trial,
+            ..PlaySource::default()
+        },
+    )
+    .await
+}
+
+/// 同上,上游摆出 `body` 这段字节,源的其余字段由 `source` 给(`url` 会被换掉)。
+async fn fixture_with(
+    case: &str,
+    body: Vec<u8>,
+    source: PlaySource,
+) -> Fixture {
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
     sqlx::query(
@@ -71,21 +106,18 @@ async fn fixture(case: &str, trial: bool) -> Fixture {
     .await
     .expect("清账目失败");
 
-    let (url, hits) = serve_counted(audio()).await;
+    let (url, hits) = serve_counted(body).await;
     let fake = FakeUpstream {
-        play_source: Some(PlaySource {
-            url,
-            format: "FLAC".to_owned(),
-            bit_rate: 999_000,
-            trial,
-            ..PlaySource::default()
-        }),
+        play_source: Some(PlaySource { url, ..source }),
         ..FakeUpstream::logged_in_with("42", vec![])
     };
     let objects = Arc::new(MemoryObjects::default());
     let state = AppState {
         archive: Some(Archive::new(objects.clone())),
-        ..testing::state(pool, testing::serve(fake).await)
+        ..testing::state(
+            pool,
+            testing::serve(fake.clone()).await,
+        )
     };
 
     Fixture {
@@ -93,6 +125,7 @@ async fn fixture(case: &str, trial: bool) -> Fixture {
         account,
         objects,
         hits,
+        fake,
     }
 }
 
@@ -119,48 +152,120 @@ async fn a_played_track_is_stored_as_is() {
     let f = fixture("ar_store", false).await;
     let id = testing::track_id("ar_store", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
-    let key = format!("tracks/{id}/high.flac");
+    let key = format!("tracks/{id}/lossless.flac");
     assert_eq!(f.objects.get(&key), Some(audio()));
+    assert_eq!(
+        f.fake.play_levels(),
+        vec![
+            server::bangdream::proto::QualityLevel::Lossless
+                as i32
+        ],
+        "缓存向上游要的是无损"
+    );
     assert_eq!(
         row(&f.state, &id).await,
         Some(ledger::StoredTrack {
             platform: "netease".to_owned(),
             track_id: id.clone(),
-            quality: "high".to_owned(),
+            quality: "lossless".to_owned(),
             object_key: key,
             format: "flac".to_owned(),
             bit_rate: 999_000,
             bytes: 4096,
+            tier: "lossless".to_owned(),
+            bits_per_sample: None,
+            sample_rate: None,
         })
     );
 }
 
-/// 同一首第二次播放不再下载。
+/// FLAC 的位深与采样率从文件头读出来记进账,`/play` 交出去时带着。
+#[tokio::test]
+async fn a_stored_flac_records_depth_and_rate() {
+    let f = fixture_with(
+        "ar_hires",
+        flac_header(96_000, 24),
+        PlaySource {
+            format: "flac".to_owned(),
+            bit_rate: 2_000_000,
+            level: QualityLevel::Lossless as i32,
+            ..PlaySource::default()
+        },
+    )
+    .await;
+    let id = testing::track_id("ar_hires", 1);
+
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+
+    let stored =
+        row(&f.state, &id).await.expect("应当存进去了");
+    assert_eq!(
+        (stored.bits_per_sample, stored.sample_rate),
+        (Some(24), Some(96_000))
+    );
+    let quality = crate::routes::play::play(
+        State(f.state.clone()),
+        f.account.clone(),
+        axum::extract::Path(id),
+    )
+    .await
+    .expect("存过的歌应当放得出来")
+    .0
+    .quality
+    .expect("应当带着音质");
+    assert_eq!(
+        (quality.bits_per_sample, quality.sample_rate),
+        (Some(24), Some(96_000))
+    );
+}
+
+/// 音源给不出无损(只给 320k):不下载、不存,桶里不长出 320k(#147)。
+#[tokio::test]
+async fn a_lossy_source_is_not_stored() {
+    let f = fixture_with(
+        "ar_lossy",
+        audio(),
+        PlaySource {
+            format: "mp3".to_owned(),
+            bit_rate: 320_000,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
+        },
+    )
+    .await;
+    let id = testing::track_id("ar_lossy", 1);
+
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+
+    assert_eq!(f.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(row(&f.state, &id).await, None);
+}
+
+/// 同一首第二次不再下载。
 #[tokio::test]
 async fn a_stored_track_is_not_downloaded_again() {
     let f = fixture("ar_twice", false).await;
     let id = testing::track_id("ar_twice", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let first =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+    let second =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
-    assert_eq!(f.hits.load(Ordering::SeqCst), 1);
-}
-
-/// 同一首同时报两次,也只下载一遍。
-#[tokio::test]
-async fn concurrent_plays_download_once() {
-    let f = fixture("ar_race", false).await;
-    let id = testing::track_id("ar_race", 1);
-    let track = netease(&id);
-
-    tokio::join!(
-        keep(&f.state, &f.account, &track),
-        keep(&f.state, &f.account, &track),
+    assert_eq!(
+        (first, second),
+        (Ok(Stored::Now), Ok(Stored::Already))
     );
-
     assert_eq!(f.hits.load(Ordering::SeqCst), 1);
 }
 
@@ -170,15 +275,17 @@ async fn a_trial_clip_is_not_stored() {
     let f = fixture("ar_trial", true).await;
     let id = testing::track_id("ar_trial", 1);
 
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     assert_eq!(f.hits.load(Ordering::SeqCst), 0);
     assert_eq!(row(&f.state, &id).await, None);
 }
 
-/// `/played` 照常 204,并在后台把这首存进去。
+/// `/played` 照常 204,并在后台把没存过的这首排进预取队列(#147)。
 #[tokio::test]
-async fn reporting_a_play_stores_the_track() {
+async fn reporting_a_play_queues_the_track() {
     let f = fixture("ar_played", false).await;
     let id = testing::track_id("ar_played", 1);
 
@@ -195,13 +302,22 @@ async fn reporting_a_play_stores_the_track() {
         .expect("起播上报应当成功");
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
 
-    let key = format!("tracks/{id}/high.flac");
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(5);
-    while f.objects.get(&key).is_none() {
+    loop {
+        let owner: Option<i64> = sqlx::query_scalar(
+            "SELECT account_id FROM prefetch_jobs WHERE track_id = $1",
+        )
+        .bind(&id)
+        .fetch_optional(&f.state.pool)
+        .await
+        .expect("查队列失败");
+        if owner == Some(f.account.id) {
+            break;
+        }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "五秒内没存进去"
+            "五秒内没排进队列"
         );
         tokio::time::sleep(
             std::time::Duration::from_millis(20),
@@ -220,8 +336,11 @@ async fn an_upstream_failure_stores_nothing() {
         testing::unreachable_upstream(),
     );
 
-    keep(&state, &f.account, &netease(&id)).await;
+    let outcome =
+        store_track(&state, &f.account, &netease(&id))
+            .await;
 
+    assert!(outcome.is_err(), "{outcome:?}");
     assert_eq!(row(&state, &id).await, None);
 }
 
@@ -288,7 +407,9 @@ async fn play_url(
 async fn a_stored_track_plays_from_the_store() {
     let f = fixture("ar_serve", false).await;
     let id = testing::track_id("ar_serve", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
 
     let offline = testing::with_upstream(
         &f.state,
@@ -306,10 +427,19 @@ async fn a_stored_track_plays_from_the_store() {
     assert_eq!(
         source,
         contract::PlaySourceDto {
-            url: format!("memory://tracks/{id}/high.flac"),
+            url: format!(
+                "memory://tracks/{id}/lossless.flac"
+            ),
             format: "flac".to_owned(),
             bit_rate: 999_000,
             trial: false,
+            quality: Some(contract::QualityDto {
+                tier: "lossless".to_owned(),
+                format: "flac".to_owned(),
+                bit_rate: 999_000,
+                bits_per_sample: None,
+                sample_rate: None,
+            }),
         }
     );
 }
@@ -330,8 +460,10 @@ async fn an_unstored_track_plays_from_upstream() {
 async fn a_lost_object_falls_back_and_forgets_the_row() {
     let f = fixture("ar_lost", false).await;
     let id = testing::track_id("ar_lost", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
-    f.objects.lose(&format!("tracks/{id}/high.flac"));
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+    f.objects.lose(&format!("tracks/{id}/lossless.flac"));
 
     let url = play_url(&f.state, &f.account, &id).await;
 
@@ -345,7 +477,9 @@ async fn an_unreachable_store_falls_back_and_keeps_the_row()
 {
     let f = fixture("ar_down", false).await;
     let id = testing::track_id("ar_down", 1);
-    keep(&f.state, &f.account, &netease(&id)).await;
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
     let down = AppState {
         archive: Some(Archive::new(Arc::new(Unreachable))),
         ..f.state.clone()
@@ -357,155 +491,81 @@ async fn an_unreachable_store_falls_back_and_keeps_the_row()
     assert!(row(&down, &id).await.is_some());
 }
 
-/// 在事务里记一首存歌(连同桶里的对象),最后一次播放拨回 `days_ago` 天前。
-async fn stored_days_ago(
-    tx: &mut sqlx::PgConnection,
-    objects: &MemoryObjects,
-    id: &str,
-    days_ago: i32,
-) -> String {
-    use server::objects::Objects as _;
+/// 排进队列的这首,worker 办一次:存进桶,队列里那一行随之删掉。
+#[tokio::test]
+async fn a_queued_job_is_stored_and_leaves_the_queue() {
+    let f = fixture("ar_job", false).await;
+    let id = testing::track_id("ar_job", 1);
+    let job = queued(&f, &id).await;
 
-    let key = format!("tracks/{id}/high.mp3");
-    objects.put(&key, audio(), "audio/mpeg").await.unwrap();
-    ledger::record(
-        tx,
-        &ledger::StoredTrack {
-            platform: "netease".to_owned(),
-            track_id: id.to_owned(),
-            quality: quality(),
-            object_key: key.clone(),
+    crate::routes::play::prefetch::run(&f.state, &job)
+        .await;
+
+    assert!(
+        f.objects
+            .get(&format!("tracks/{id}/lossless.flac"))
+            .is_some()
+    );
+    assert_eq!(job_state(&f, &id).await, None);
+}
+
+/// 给不出无损的这首:不存,行留着记 no_lossless,统计数得到它。
+#[tokio::test]
+async fn a_job_without_lossless_is_marked() {
+    let f = fixture_with(
+        "ar_job_lossy",
+        audio(),
+        PlaySource {
             format: "mp3".to_owned(),
             bit_rate: 320_000,
-            bytes: 4096,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
         },
     )
+    .await;
+    let id = testing::track_id("ar_job_lossy", 1);
+    let job = queued(&f, &id).await;
+
+    crate::routes::play::prefetch::run(&f.state, &job)
+        .await;
+
+    assert_eq!(
+        job_state(&f, &id).await,
+        Some("no_lossless".to_owned())
+    );
+}
+
+/// 把这首以夹具账号排进队列,返回 worker 领到它时拿到的那个任务。
+async fn queued(
+    f: &Fixture,
+    id: &str,
+) -> server::store::prefetch::Job {
+    let mut conn = f.state.pool.acquire().await.unwrap();
+    server::store::prefetch::enqueue(
+        &mut conn,
+        f.account.id,
+        &[netease(id)],
+        &quality(),
+    )
     .await
-    .expect("记账失败");
-    sqlx::query(
-        "UPDATE stored_tracks
-         SET last_played_at = now() - $2 * interval '1 day'
-         WHERE track_id = $1",
+    .expect("入队失败");
+    server::store::prefetch::Job {
+        platform: "netease".to_owned(),
+        track_id: id.to_owned(),
+        account_id: f.account.id,
+        attempts: 1,
+    }
+}
+
+async fn job_state(
+    f: &Fixture,
+    id: &str,
+) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT state FROM prefetch_jobs WHERE track_id = $1",
     )
     .bind(id)
-    .bind(days_ago)
-    .execute(&mut *tx)
+    .fetch_optional(&f.state.pool)
     .await
-    .expect("拨时间失败");
-    key
-}
-
-/// 把一首放进某个账号的「我的喜欢」(#146 起红心归自家库)。
-async fn liked_by(
-    tx: &mut sqlx::PgConnection,
-    account: &Account,
-    id: &str,
-) {
-    server::store::liked::set(
-        tx,
-        account.id,
-        &TrackRef {
-            platform: "netease".to_owned(),
-            track_id: id.to_owned(),
-        },
-        true,
-    )
-    .await
-    .expect("写红心失败");
-}
-
-/// 清理只删「没人红心、且三天没播」的;红心的与三天内播过的都留着。
-#[tokio::test]
-async fn the_sweep_keeps_liked_and_recent_tracks() {
-    let f = fixture("ar_sweep", false).await;
-    let mut tx = f.state.pool.begin().await.unwrap();
-    let old = testing::track_id("ar_sweep", 1);
-    let liked = testing::track_id("ar_sweep", 2);
-    let recent = testing::track_id("ar_sweep", 3);
-
-    let old_key =
-        stored_days_ago(&mut tx, &f.objects, &old, 4).await;
-    let liked_key =
-        stored_days_ago(&mut tx, &f.objects, &liked, 4)
-            .await;
-    liked_by(&mut tx, &f.account, &liked).await;
-    let recent_key =
-        stored_days_ago(&mut tx, &f.objects, &recent, 2)
-            .await;
-
-    super::sweep(&mut tx, f.objects.as_ref())
-        .await
-        .expect("清理应当成功");
-
-    assert_eq!(f.objects.get(&old_key), None);
-    assert!(f.objects.get(&liked_key).is_some());
-    assert!(f.objects.get(&recent_key).is_some());
-    let left = |id: &str| {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
-        )
-        .bind(id.to_owned())
-    };
-    assert_eq!(
-        left(&old).fetch_one(&mut *tx).await.unwrap(),
-        0
-    );
-    assert_eq!(
-        left(&liked).fetch_one(&mut *tx).await.unwrap(),
-        1
-    );
-    assert_eq!(
-        left(&recent).fetch_one(&mut *tx).await.unwrap(),
-        1
-    );
-}
-
-/// 对象删不掉时那一行留着,下一轮再来 —— 先删行的话桶里就多一个没人记得的孤儿。
-#[tokio::test]
-async fn the_sweep_keeps_the_row_when_the_object_cannot_be_deleted()
- {
-    let f = fixture("ar_orphan", false).await;
-    let mut tx = f.state.pool.begin().await.unwrap();
-    let id = testing::track_id("ar_orphan", 1);
-    stored_days_ago(&mut tx, &f.objects, &id, 4).await;
-
-    super::sweep(&mut tx, &Unreachable)
-        .await
-        .expect("删不掉对象不算清理失败");
-
-    let left: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
-    )
-    .bind(&id)
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    assert_eq!(left, 1);
-}
-
-/// 取消红心从那一刻重新数三天,而不是按很久以前那次播放当场就删。
-#[tokio::test]
-async fn unliking_restarts_the_clock() {
-    let f = fixture("ar_unlike", false).await;
-    let id = testing::track_id("ar_unlike", 1);
-    let mut conn = f.state.pool.acquire().await.unwrap();
-    stored_days_ago(&mut conn, &f.objects, &id, 4).await;
-    drop(conn);
-
-    crate::routes::library::likes::unlike_track(
-        State(f.state.clone()),
-        f.account.clone(),
-        axum::extract::Path(id.clone()),
-    )
-    .await
-    .expect("取消红心应当成功");
-
-    let mut conn = f.state.pool.acquire().await.unwrap();
-    let expired = ledger::expired(&mut conn, super::RETAIN)
-        .await
-        .unwrap();
-    assert!(
-        expired.iter().all(|track| track.track_id != id),
-        "刚取消红心的歌不该算过期"
-    );
+    .expect("查队列失败")
 }

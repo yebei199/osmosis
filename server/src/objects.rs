@@ -178,6 +178,23 @@ fn check(
     }
 }
 
+/// 删对象的结果。
+///
+/// 404(NoSuchKey)算删掉了:S3 对不存在的键回 204,RustFS 却回 404,而契约是
+/// 「本来就不在也算成功」(见 [`Objects::delete`])。不这样判的话,账上有、桶里
+/// 没有的那一行每轮清扫都删不掉,永远留着(#147 R-1)。其余非 2xx 才是失败。
+fn deleted(
+    status: reqwest::StatusCode,
+) -> ObjectResult<()> {
+    if status.is_success()
+        || status == reqwest::StatusCode::NOT_FOUND
+    {
+        Ok(())
+    } else {
+        Err(format!("删对象返回 {status}"))
+    }
+}
+
 impl Objects for S3 {
     fn put(
         &self,
@@ -246,7 +263,7 @@ impl Objects for S3 {
                 .send()
                 .await
                 .map_err(|err| err.to_string())?;
-            check(response, "删对象").map(drop)
+            deleted(response.status())
         })
     }
 
@@ -255,5 +272,24 @@ impl Objects for S3 {
             .get_object(Some(&self.credentials), key)
             .sign(CLIENT_SIGNATURE)
             .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::StatusCode;
+
+    use super::deleted;
+
+    /// 删掉了(2xx)与本来就不在(404)都算成功;5xx 与拒绝访问才是失败,留给下一轮。
+    #[test]
+    fn a_missing_object_counts_as_deleted() {
+        assert_eq!(deleted(StatusCode::NO_CONTENT), Ok(()));
+        assert_eq!(deleted(StatusCode::NOT_FOUND), Ok(()));
+        assert!(
+            deleted(StatusCode::SERVICE_UNAVAILABLE)
+                .is_err()
+        );
+        assert!(deleted(StatusCode::FORBIDDEN).is_err());
     }
 }
