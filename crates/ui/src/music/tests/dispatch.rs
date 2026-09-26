@@ -273,12 +273,10 @@ fn being_controlled_blocks_the_local_tap_but_not_a_received_command()
     );
 }
 
-/// 信令断了,锁就撤:断网期间本机点歌照常落到本机(#118)。
-///
-/// 锁此前只有服务端的消息才清,而断着的时候消息过不来 —— 被控端断网期间
-/// 连歌都点不了,要等重连、等服务端想起来告诉它一声。
+/// 信令断了锁**不**撤(#142 推翻 #118):服务端替断线的被控端留着租约,闪断回来
+/// 还是原来那台遥控器在管;满了租约,服务端的 `NotControlled` 才撤锁,之后本机点歌落到本机。
 #[test]
-fn a_dropped_link_lets_the_local_tap_through() {
+fn a_dropped_link_keeps_the_lock_until_the_server_lifts_it() {
     let (ui, deck) = deck_window();
     wire_transport(&ui, &deck);
     let _ = batch_of(&deck, &["a", "b"]);
@@ -293,12 +291,21 @@ fn a_dropped_link_lets_the_local_tap_through() {
         &Event::Disconnected,
         &deck.remote,
     );
+    assert!(
+        deck.remote.is_controlled(),
+        "闪断不该撤锁:遥控器还在管这台"
+    );
+
+    crate::sync::remote::handle(
+        &Event::NotControlled,
+        &deck.remote,
+    );
     ui.global::<Player>().invoke_play("b".into());
 
     assert_eq!(
         deck.queue.borrow().current().map(|t| t.id.clone()),
         Some("b".to_owned()),
-        "断线之后本机前面那个人按的要算数"
+        "服务端撤了锁,本机前面那个人按的要算数"
     );
 }
 
