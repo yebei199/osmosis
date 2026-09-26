@@ -102,6 +102,11 @@ OTHER_PORT=8090 test/pick-e2e.sh list     # 在桌面上点,手机跟着换
 PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,桌面跟着换
 ```
 
+元素一律从窗口根用 `query_element_descendants` 按 id 找:`find_elements_by_id` 找不到 `if` /
+`for` 里长出来的元素(搜索框、分区条、播放页的队列入口),只会返回空。真机上填完搜索框
+软键盘会盖住结果、吃掉第一下点击,脚本在键盘真的开着时(`dumpsys input_method` 的
+`mInputShown=true`)按一次返回收起它;真机端口不是 8090 时设 `ANDROID_MCP_PORT`。
+
 卡墙的卡画在 3D 纹理里,按坐标点第二下未必还命中同一张;脚本走场区上的无障碍动作
 (`Increment` 挪选中、`Default_` 播选中的那张),读屏用户走的也是这条。
 
@@ -196,7 +201,8 @@ OUT=... PEER=... SERVER_LOG=... RESTART_OUT=<命令> RESTART_PEER=<命令> test/
 出声,掐断 OUT —— OUT 立刻停下、PEER 照放、库里组仍在放,恢复后 OUT 照最新状态接着出声;
 `last-output` 只让 OUT 出声,掐断它 —— OUT 立刻停下,服务端探活发现后把组置为暂停(日志
 「出声设备出册」),恢复后 OUT 照组状态停着、PEER 按 ⏯ 才一起接着放;`server-restart`
-重启服务端 —— 组还在库里、版本不回退,两台重新入册,OUT 照状态接着出声;`restarts` 两台
+重启服务端 —— 组还在库里、版本不回退,暂停在服务端挂掉那一刻(出声设备全断开了),两台
+重新入册、OUT 照状态停着,PEER 按 ⏯ 后 OUT 接着出声;`restarts` 两台
 一起反复重启,服务端一次限流都没有。
 
 真相源是 `play_groups` 那一行(`playing`、`version`)与服务端日志(`设备入册`、

@@ -46,8 +46,11 @@ call() {
 }
 
 # 第 n 个匹配元素的句柄;一个都没有就返回空串。
+#
+# 从窗口根往下按 id 找,不用 find_elements_by_id:那个找不到 `if` / `for` 里长出来的元素
+# (搜索框、分区条、播放页的队列入口都是),找不到就返回空,看着像页面不对(#142 F-7)。
 handle() {
-  call find_elements_by_id "{\"windowHandle\":$win,\"elementsId\":\"$1\"}" \
+  call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}" \
   | python3 -c "
 import json, sys
 hs = json.load(sys.stdin).get('elementHandles') or []
@@ -62,9 +65,10 @@ act() {
 
 # 某一台控制条上的曲名(PlayerBar::title 那个 Text 的无障碍标签)。
 title_on() {
-  local w h
+  local w r h
   w=$(CALL_PORT=$1 call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
-  h=$(CALL_PORT=$1 call find_elements_by_id "{\"windowHandle\":$w,\"elementsId\":\"PlayerBar::title\"}" \
+  r=$(CALL_PORT=$1 call get_window_properties "{\"windowHandle\":$w}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
+  h=$(CALL_PORT=$1 call query_element_descendants "{\"elementHandle\":$r,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"PlayerBar::title\"}]}" \
     | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")')
   [ -n "$h" ] || return 0
   CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" \
@@ -133,8 +137,7 @@ show_view() {
 
 # 队列页里第 index 行。队列页常驻在播放页里,列表那几行与它同名,所以从 QueuePage 往下找。
 queue_row() {
-  local root page
-  root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
+  local page
   page=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"QueuePage\"}]}" \
     | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")')
   [ -n "$page" ] || return 0
@@ -144,6 +147,17 @@ import json, sys
 hs = json.load(sys.stdin).get('elementHandles') or []
 print(json.dumps(hs[$1]) if len(hs) > $1 else '')
 "
+}
+
+# 真机上填完搜索框,软键盘会盖住结果,第一下点击被它吃掉(#142 F-7)。键盘真的开着才按返回,
+# 否则返回会把页面退掉。桌面(没有 adb 或不是真机那个端口)什么都不做。
+hide_keyboard() {
+  [ "${CALL_PORT:-$PORT}" = "${ANDROID_MCP_PORT:-8090}" ] && command -v adb >/dev/null || return 0
+  sleep 1
+  if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
+    adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
 }
 
 # 搜索分区搜 KEYWORD。结果落在列表里,之后与列表那条路一样点。
@@ -159,6 +173,7 @@ search() {
   call click_element "{\"elementHandle\":$box}" >/dev/null
   call set_element_value "{\"elementHandle\":$box,\"value\":\"$KEYWORD\"}" >/dev/null
   call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\n\"}" >/dev/null
+  hide_keyboard
   for _ in $(seq 1 20); do
     [ -n "$(handle "TrackList::touch")" ] && return
     sleep 1
@@ -209,6 +224,7 @@ tap() {
 }
 
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
+root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
 
 # 音乐页 → 每日推荐。两种版式的分区条 id 不同,哪个在用哪个。
 music=$(handle "NavItem::touch" 1)

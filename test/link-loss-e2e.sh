@@ -7,7 +7,8 @@
 #   last-output  PEER 只让 OUT 出声,点一首;掐断 OUT → OUT 停下,服务端探活发现它掉了之后
 #                把组置为暂停;恢复 → OUT 仍停着(不按旧状态自己放);PEER 按 ⏯ → OUT 出声。
 #   server-restart  PEER 只让 OUT 出声,点一首;RESTART_SERVER 重启服务端 → 组状态还在库里、
-#                版本不回退,两台重新入册,OUT 照状态接着出声。
+#                版本不回退,组暂停在服务端挂掉那一刻(出声设备全断开了),两台重新入册、
+#                OUT 照状态停着;PEER 按 ⏯ → OUT 接着出声。
 #   restarts     两台一起反复重启应用 → 服务端一次限流都没有,每次都重新入册。
 #
 # 真相源:play_groups 那一行(在不在放、版本号)、服务端日志(入册、出声设备出册、限流),
@@ -56,9 +57,12 @@ mcp() {
 
 window() { mcp "$1" list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))'; }
 
-# handles <设备> <元素 id> —— 每行一个句柄。
+root() { mcp "$1" get_window_properties "{\"windowHandle\":$(window "$1")}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))'; }
+
+# handles <设备> <元素 id> —— 每行一个句柄。从窗口根往下找:find_elements_by_id 找不到
+# `if` / `for` 里长出来的元素(输出芯片就在 for 里,#142 F-7)。
 handles() {
-  mcp "$1" find_elements_by_id "{\"windowHandle\":$(window "$1"),\"elementsId\":\"$2\"}" \
+  mcp "$1" query_element_descendants "{\"elementHandle\":$(root "$1"),\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$2\"}]}" \
     | python3 -c 'import json,sys; [print(json.dumps(h,separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles",[])]'
 }
 
@@ -269,6 +273,13 @@ server_restart() {
   until_true 60 "两台重新入册" joined_since $((before + 1))
   [ "$(group_version)" -ge "$version" ] || fail "重启后组版本回退了($version → $(group_version))"
   echo "  ✓ 组状态还在库里,版本没回退"
+  # 重启期间出声设备全断开了:照掉线规则 ②,服务端启动时把组暂停在最后一次心跳那一刻。
+  group_paused || fail "服务端挂掉时没有出声设备在线,重启后组该是暂停的"
+  sleep 5
+  silent "$OUT" || fail "OUT 重连后没照组状态停着"
+  echo "  ✓ 组暂停着,OUT 照状态停着"
+  click "$PEER" "$(play_key "$PEER")"
+  until_true 10 "PEER 按 ⏯ 后组在放" group_playing
   until_true 30 "OUT 照状态接着出声" playing "$OUT"
 }
 
