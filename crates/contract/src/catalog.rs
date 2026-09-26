@@ -120,6 +120,23 @@ pub struct PlaySourceDto {
     pub trial: bool,
 }
 
+/// 一次取到的源实际是什么音质,与音源无关(#147,`docs/adr/0034`)。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct QualityDto {
+    /// 档位:`low`、`standard`、`high`、`lossless`、`hi_res`。
+    pub tier: String,
+    /// 容器格式,小写,如 `"flac"`。
+    pub format: String,
+    /// 码率,bit/s。
+    pub bit_rate: i32,
+    /// 位深。音源不报、也没看过文件头时是 `None`。
+    pub bits_per_sample: Option<i32>,
+    /// 采样率,Hz。同上。
+    pub sample_rate: Option<i32>,
+}
+
 /// 歌词的一行。
 ///
 /// 时间轴取**行级**:上游同时提供逐字(`LyricWord`),但那一档要等行级链路
