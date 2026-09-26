@@ -69,6 +69,7 @@ pub async fn apply(
     let at = wall_now_us();
     let mut entries =
         current_entries(&mut tx, account, &group).await?;
+    let before = started(&group);
     group.roll(&playlist(&entries), at);
 
     match intent {
@@ -145,7 +146,8 @@ pub async fn apply(
         );
     }
     let state =
-        commit(tx, account, group, &entries).await?;
+        commit(tx, account, before, group, &entries)
+            .await?;
     broadcast(roster, account, &state);
     Ok(state)
 }
@@ -167,6 +169,7 @@ pub async fn device_left(
     let entries =
         current_entries(&mut tx, account, &group).await?;
     let list = playlist(&entries);
+    let before = started(&group);
     let rolled = group.roll(&list, at);
     let paused = {
         let online = roster.lock().expect("名册锁中毒");
@@ -186,7 +189,8 @@ pub async fn device_left(
         "出声设备出册,组状态随之更新"
     );
     let state =
-        commit(tx, account, group, &entries).await?;
+        commit(tx, account, before, group, &entries)
+            .await?;
     broadcast(roster, account, &state);
     Ok(())
 }
@@ -258,24 +262,49 @@ async fn roll_due(
         let entries =
             current_entries(&mut tx, account, &group)
                 .await?;
+        let before = started(&group);
         if !group.roll(&playlist(&entries), wall_now_us()) {
             continue;
         }
         let state =
-            commit(tx, account, group, &entries).await?;
+            commit(tx, account, before, group, &entries)
+                .await?;
         broadcast(roster, account, &state);
     }
     Ok(())
 }
 
 /// 版本加一、写回、提交,换成线上的样子。
+///
+/// 这一版若是新起播的一首(换了条目或重新从头放),顺手记一条起播(`play_events`):
+/// 组里几台一起响还是那一次,由服务端记,就不必再挑一台设备来报(#137 ⑤ 的 AC-5.4)。
 async fn commit(
     mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
     account: AccountId,
+    before: Option<(i64, i64)>,
     mut group: Group,
     entries: &[Entry],
 ) -> Result<Option<GroupStateDto>, AppError> {
     group.version += 1;
+    if let Some(now) = &group.now
+        && now.playing
+        && now.position_us == 0
+        && before
+            != Some((now.entry_id, now.anchor_wall_us))
+        && let Some(entry) = entries
+            .iter()
+            .find(|e| e.entry_id == now.entry_id)
+    {
+        crate::store::history::record(
+            &mut tx,
+            account,
+            &crate::store::playlist::TrackRef {
+                platform: entry.platform.clone(),
+                track_id: entry.track_id.clone(),
+            },
+        )
+        .await?;
+    }
     let boundary = group.now.as_ref().and_then(|now| {
         playlist(entries)
             .duration_of(now.entry_id)
@@ -471,6 +500,14 @@ fn track_of(entry: &Entry) -> TrackDto {
         cover: entry.cover.clone(),
         duration_ms: entry.duration_ms,
     }
+}
+
+/// 这一刻放的是哪一条、锚在哪 —— 与改完之后比,认出「新起播了一首」。
+fn started(group: &Group) -> Option<(i64, i64)> {
+    group
+        .now
+        .as_ref()
+        .map(|now| (now.entry_id, now.anchor_wall_us))
 }
 
 fn playlist(entries: &[Entry]) -> Playlist {

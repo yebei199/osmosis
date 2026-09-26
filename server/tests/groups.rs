@@ -228,6 +228,15 @@ async fn any_member_steers_and_everyone_hears_it() {
     assert_eq!(now.track.id, "c");
     assert!(now.playing);
     assert!(picked.version > paused.version);
+    // 组里一次点歌只记一条起播,由服务端记(几台一起响还是那一次)。
+    let (plays,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM play_events WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_one(&pool)
+    .await
+    .expect("数得出起播");
+    assert_eq!(plays, 1, "种子那一份不算新起播,点歌算一次");
 
     for inbox in &mut inboxes {
         let mut last = None;
