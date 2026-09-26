@@ -9,6 +9,7 @@
 //! 这既让本 crate 可以脱离网络单测,也让它不必依赖 `api`。
 
 mod counter;
+mod global;
 mod group;
 mod health;
 mod lyric;
@@ -18,6 +19,7 @@ mod queue;
 mod session;
 
 pub use counter::Counter;
+pub use global::{GlobalGroup, Sound, Standing};
 pub use group::{
     Cue, Draft, Effective, Group, GroupRole, Intercepts,
     LEAD_US, MASTER_SILENT_MS, PREANNOUNCE_US, REANCHOR_US,
@@ -36,10 +38,11 @@ pub use session::{
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
-    ArtistDto, DeviceDto, GroupPlanDto, HealthDto,
+    ArtistDto, DeviceDto, DeviceReportDto, GroupNowDto,
+    GroupPickDto, GroupPlanDto, GroupStateDto, HealthDto,
     LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
     NextEntryDto, OperationAckDto, OperationPhase,
     OutputRouteDto, PlaylistDto, PlaylistSource,
     RemoteCommand, RemotePlayState, RemoteStateDto,
-    TrackDto, TracksDto,
+    TrackDto, TracksDto, TransportOpDto,
 };
