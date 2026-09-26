@@ -142,7 +142,8 @@ fn every_tab_is_either_covered_or_exempted() {
         + nav.get_bottom_items().row_count();
 
     // 覆盖:上面三条测试各自钉住的页签。
-    let covered = ["MusicPage", "ProfilePage", "SettingsPage"];
+    let covered =
+        ["MusicPage", "ProfilePage", "SettingsPage"];
     // 豁免:卡墙分区(tab 0),理由见文件头注释。
     let exempted = ["WallView(卡墙,tab 0)"];
 
