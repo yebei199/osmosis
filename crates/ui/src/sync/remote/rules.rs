@@ -118,11 +118,24 @@ pub fn lost_remote(
 
 /// 接管没成、回到本机时那句提示。
 ///
-/// 与失联那句一样,要说出是哪台设备、以及声音现在在哪儿。原因(不在线、
-/// 信令断了)记日志,不上界面:用户能做的只有一件事 —— 过会儿再选一次。
-pub fn describe_claim_failed(output: &Output) -> String {
+/// 要说出是哪台设备、为什么、以及声音现在在哪儿(#142:重新接管失败要给出看得懂的原因)。
+/// `reason` 是客户端给的那一行(服务端的错误码,或者信令断开),翻成人话;认不出的
+/// 不照抄 —— 那是给日志看的。
+pub fn describe_claim_failed(
+    output: &Output,
+    reason: &str,
+) -> String {
     let name = output.name().unwrap_or("那台设备");
-    format!("没能接管 {name},已回到本机")
+    let why = if reason.contains("device_offline") {
+        "它不在线"
+    } else if reason.contains("信令断开") {
+        "本机连不上服务端"
+    } else if reason.contains("cannot_control_self") {
+        "那就是本机"
+    } else {
+        "服务端没有同意"
+    };
+    format!("接管 {name} 失败({why}),已回到本机")
 }
 
 /// 目标在别的设备、但这一下没提交成功时说的那句话。
@@ -558,6 +571,24 @@ mod tests {
         copy.push(describe_too_large(&Output::Local));
         copy.push(describe_too_large(&remote()));
         copy.push(describe_revoked(&remote(), "pc1"));
+        // #142 新加的几句。
+        for reason in [
+            "device_offline",
+            "信令断开",
+            "cannot_control_self",
+            "x",
+        ] {
+            copy.push(describe_claim_failed(&remote(), reason));
+        }
+        for line in [
+            "这首已经在放或正在切过去",
+            "遥控已结束,刚才那次点歌没有执行",
+            "本机正被遥控",
+            "已经在这些设备上播放",
+            "正在重新接管 pc1",
+        ] {
+            copy.push(line.to_owned());
+        }
         for state in [
             RemotePlayState::Idle,
             RemotePlayState::Buffering,
@@ -616,6 +647,22 @@ mod tests {
         assert!(
             missing.is_empty(),
             "子集字体缺字形:{missing:?} —— 重跑 just font-subset"
+        );
+    }
+
+    /// 接管失败说得出原因,认不出的原因不照抄(#142)。
+    #[test]
+    fn a_failed_claim_says_why_in_plain_words() {
+        assert_eq!(
+            describe_claim_failed(
+                &remote(),
+                "device_offline: 设备 pc 不在线"
+            ),
+            "接管 pc1 失败(它不在线),已回到本机"
+        );
+        assert_eq!(
+            describe_claim_failed(&remote(), "weird: 42"),
+            "接管 pc1 失败(服务端没有同意),已回到本机"
         );
     }
 

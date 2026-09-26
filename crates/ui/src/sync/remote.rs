@@ -701,7 +701,7 @@ impl Remote {
         );
         match outcome {
             Ok(effects) => self.apply(effects),
-            Err(Refused::AlreadyThere) => {}
+            Err(Refused::AlreadyThere) => self.reclaim(),
             Err(Refused::Busy) => {
                 let _ = self
                     .inner
@@ -715,6 +715,38 @@ impl Remote {
                     });
             }
         }
+    }
+
+    /// 点的正是会话认为已经在上面的那台:强制重新认领,不再静默忽略(#142)。
+    ///
+    /// 会话与服务端对不上时(撤权丢了、服务端重启过、被别处顶掉过),用户能做的就是
+    /// 再点一次那台设备 —— 那一下必须真的去服务端要一次权。认领成了照旧遥控,
+    /// 没成走接管失败那条收尾,说清原因、回到本机。
+    fn reclaim(&self) {
+        let members = self.members();
+        let [Output::Remote(device)] = members.as_slice()
+        else {
+            let _ = self.inner.weak.upgrade_in_event_loop(
+                |ui| {
+                    crate::notice::show(
+                        &ui,
+                        "已经在这些设备上播放".to_owned(),
+                    );
+                },
+            );
+            return;
+        };
+        log::info!("重新认领 {}", device.id);
+        #[cfg(test)]
+        lock(&self.inner.group_ops)
+            .push(format!("claim {}", device.id));
+        if let Some(client) = self.inner.client.get() {
+            client.claim(&device.id);
+        }
+        let message = format!("正在重新接管 {}", device.name);
+        let _ = self.inner.weak.upgrade_in_event_loop(
+            move |ui| crate::notice::show(&ui, message),
+        );
     }
 
     /// 本机那一步做完了的回话,交还会话。
@@ -1227,7 +1259,9 @@ pub fn handle(event: &syncplay::Event, remote: &Remote) {
                 return;
             }
             log::warn!("接管 {target} 失败: {reason}");
-            remote.come_home(describe_claim_failed);
+            remote.come_home(|output| {
+                describe_claim_failed(output, reason)
+            });
         }
         syncplay::Event::ControlledBy { device } => {
             log::info!("本机被 {} 遥控", device.name);

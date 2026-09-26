@@ -1110,3 +1110,50 @@ fn a_move_waiting_for_confirmation_is_not_dropped_as_lost()
         Some("pc")
     );
 }
+
+/// 点的正是会话认为已经在上面的那台:强制重新认领,不再静默忽略(#142)。
+///
+/// 会话与服务端对不上时(撤权丢了、服务端重启过),用户唯一的出路就是再点一次那台。
+#[test]
+fn picking_the_current_device_again_reclaims_it() {
+    let (ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+    crate::sync::remote::handle(
+        &Event::RemoteState {
+            from: "pc".to_owned(),
+            state: Box::new(report(
+                1_000,
+                app_core::RemotePlayState::Playing,
+            )),
+        },
+        &deck.remote,
+    );
+
+    select_output(&ui, &deck, "pc");
+
+    assert!(
+        deck.remote
+            .group_ops()
+            .contains(&"claim pc".to_owned()),
+        "该去服务端重新要一次权,得到 {:?}",
+        deck.remote.group_ops()
+    );
+    assert!(!deck.remote.is_moving(), "这不是一次迁移");
+}
+
+/// 重新认领失败:说清原因,回到本机(#142)。
+#[test]
+fn a_failed_reclaim_says_why_and_comes_home() {
+    let (_ui, deck) = deck_window();
+    deck.remote.assume_output("pc", "pc1");
+
+    crate::sync::remote::handle(
+        &Event::ClaimFailed {
+            target: "pc".to_owned(),
+            reason: "device_offline: 设备 pc 不在线".to_owned(),
+        },
+        &deck.remote,
+    );
+
+    assert!(!deck.remote.is_remote());
+}
