@@ -5,7 +5,7 @@
 //! 报的呈现时刻用的就是这个钟。两台设备的时钟读数从不直接相减，系统时钟也不动。
 //!
 //! 机制照搬 ② 的原型(`experiments/synctest/src/clock.rs`,实测两台设备稳态 ±2ms):
-//! 排队与调度只会让往返变长，所以 RTT 明显偏大的样本不进拟合;两台机器的晶振差几十 ppm,
+//! 排队与调度只会让往返变长，所以只有 RTT 最短的那一份样本进拟合;两台机器的晶振差几十 ppm,
 //! 几分钟就是毫秒级，所以拟合的是一条随本机时间变化的直线，不是一个平均数。
 
 use std::collections::VecDeque;
@@ -20,10 +20,11 @@ const WINDOW: usize = 120;
 /// 速度挪，跟随器靠调速就追得上，不会被逼着丢帧或 seek。
 const MAX_SLOPE: f64 = 500e-6;
 
-/// RTT 超过最短那次多少就不进拟合:最短的一半再加 200µs(同原型)。
-fn too_slow(rtt: i64, min_rtt: i64) -> bool {
-    rtt > min_rtt + min_rtt / 2 + 200_000
-}
+/// 进拟合的是窗口里 RTT 最短的这么一份(四分之一)。
+///
+/// 排队只会让往返变长，最快的那批最接近真实偏移;按份数取而不是按「比最快那次慢多少」
+/// 取，最快的一次滑出窗口时入选集只换掉一个样本，锚点不会整批跳(#155)。
+const FIT_SHARE: usize = 4;
 
 /// 本机 `CLOCK_MONOTONIC`,纳秒。与 `audio::clock::monotonic_ns` 是同一个钟 ——
 /// 两个 crate 互不依赖，各读一次。
@@ -89,14 +90,12 @@ impl Clock {
 
     /// 本机时刻 `local_ns` 上的偏移估计(纳秒)。
     fn offset_at(&self, local_ns: i64) -> Option<f64> {
-        let min_rtt =
-            self.samples.iter().map(|s| s.rtt).min()?;
-        let good: Vec<&Sample> = self
-            .samples
-            .iter()
-            .filter(|s| !too_slow(s.rtt, min_rtt))
-            .collect();
+        let mut good: Vec<&Sample> =
+            self.samples.iter().collect();
+        good.sort_by_key(|s| s.rtt);
+        good.truncate(good.len() / FIT_SHARE);
         if good.len() < 3 {
+            // 样本还太少，先照最快那次
             let best = self
                 .samples
                 .iter()
@@ -287,6 +286,56 @@ mod tests {
                 <= (10.0 * S as f64 * MAX_SLOPE) as i64
                     + 1_000,
             "十秒里换算滑了 {slide}ns"
+        );
+    }
+
+    /// 窗口里最快的那次往返滑出去，入选的样本不许整批换掉，锚点跟着跳(#155):
+    /// pc1 现场一分钟里纠正了一串，每次 10–30ms。
+    #[test]
+    fn the_fastest_sample_leaving_does_not_step_the_anchor()
+    {
+        let mut clock = Clock::default();
+        // 偏移误差 = 往返不对称：快的那次 +5ms,其余一律 -5ms
+        let add = |clock: &mut Clock,
+                   i: i64,
+                   rtt: i64,
+                   err: i64| {
+            let sent = i * S / 2;
+            let mid = sent + rtt / 2;
+            clock.add(
+                1,
+                sent,
+                ((mid + S + err) / 1_000) as u64,
+                sent + rtt,
+            );
+        };
+        add(&mut clock, 0, 10_000_000, 5_000_000);
+        // 其余往返 20–30ms,错开分布
+        let rtt =
+            |i: i64| 20_000_000 + (i * 7 % 11) * 1_000_000;
+        for i in 1..WINDOW as i64 {
+            add(&mut clock, i, rtt(i), -5_000_000);
+        }
+        let at = |clock: &Clock| {
+            clock
+                .to_local_ns(
+                    1,
+                    ((61 * S + S) / 1_000) as u64,
+                )
+                .unwrap()
+        };
+        let before = at(&clock);
+        // 再来一次，最快那次被挤出窗口
+        add(
+            &mut clock,
+            WINDOW as i64,
+            rtt(WINDOW as i64),
+            -5_000_000,
+        );
+        let step = at(&clock) - before;
+        assert!(
+            step.abs() <= 2_000_000,
+            "锚点一步挪了 {step}ns"
         );
     }
 
