@@ -384,7 +384,7 @@ async fn reporting_a_play_queues_the_track() {
     let f = fixture("ar_played", false).await;
     let id = testing::track_id("ar_played", 1);
 
-    crate::routes::library::history::record_play(
+    let ack = crate::routes::library::history::record_play(
         State(f.state.clone()),
         f.account.clone(),
         Json(PlayedDto {
@@ -394,6 +394,7 @@ async fn reporting_a_play_queues_the_track() {
     )
     .await
     .expect("起播上报应当成功");
+    assert!(ack.0.id > 0);
 
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(5);
