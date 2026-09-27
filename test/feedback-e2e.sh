@@ -5,15 +5,17 @@
 #                                   再点踩 → 同一行变 -1;再点一次踩 → 行消失。
 #   test/feedback-e2e.sh skip      起播后立刻切歌,断言这一行的 listened_ms 记进去了、
 #                                   且小于 30000(#157 的跳过口径:前 30 秒内切走)。
+#   test/feedback-e2e.sh complete  拖进度条到曲尾附近,等它自己放完切下一首,
+#                                   断言这一行的 listened_ms/duration_ms ≥ 0.9(#157 F-002)。
 #
-# 播满 = 完播那一步不进这个脚本:等一整首歌放完在自动化里太慢,那一步走
-# AGENTS.md「发版与实机」的真机人工过一遍,库里查 listened_ms/duration_ms 的比值。
+# complete 不必等一整首播完:拖到曲尾前几秒,让它自己走完最后那一段就够了 ——
+# 验的是「切歌那一刻算出的比例对不对」,不是「等待本身要多久」。
 #
 # 前提同 test/pick-e2e.sh:应用起着并已登录、just server-dev 与 osmosis-pg 在跑、
 # 每日推荐有歌。
 set -euo pipefail
 
-MODE="${1:?用法: $0 verdict|skip}"
+MODE="${1:?用法: $0 verdict|skip|complete}"
 PORT="${PORT:-8091}"
 PG_CONTAINER="${PG_CONTAINER:-osmosis-pg}"
 
@@ -57,6 +59,11 @@ played() { sql "select count(*) from play_events;"; }
 last_listened_ms() {
   sql "select coalesce(listened_ms::text, 'NULL') from play_events
        where listened_ms is not null order by id desc limit 1;"
+}
+# listened_ms/duration_ms,四位小数;没有补上过就是空串。
+last_listened_ratio() {
+  sql "select round(listened_ms::numeric / nullif(duration_ms, 0), 4)::text
+       from play_events where listened_ms is not null order by id desc limit 1;"
 }
 
 # 复位:播放页收起 → 音乐页 → 每日推荐,点第一行起播。**不**展开播放页 ——
@@ -118,6 +125,24 @@ open_play_page() {
   sleep 1
 }
 
+# 拖进度条到 `ratio`(0..1)附近。播放页要已经展开 —— 进度细轨长在
+# `PlayerBar` 里,只有那份 `pinned: true`(#157 F-002)。
+# `drag_element` 从元素中心按下、插值挪到目标、松手,原样落进
+# `progress.slint` 的"没拖过就点哪跳哪、拖过了就用拖动落点"那套判断。
+seek_to() {
+  local ratio=$1 h props x y w hh tx ty
+  h=$(handle "ProgressBar::seek-touch")
+  must "$h" "进度条(播放页要已经展开)"
+  props=$(call get_element_properties "{\"elementHandle\":$h}")
+  x=$(python3 -c "import json; print(json.loads('''$props''')['absolutePosition']['x'])")
+  y=$(python3 -c "import json; print(json.loads('''$props''')['absolutePosition']['y'])")
+  w=$(python3 -c "import json; print(json.loads('''$props''')['size']['width'])")
+  hh=$(python3 -c "import json; print(json.loads('''$props''')['size']['height'])")
+  tx=$(python3 -c "print($x + $w * $ratio)")
+  ty=$(python3 -c "print($y + $hh / 2)")
+  call drag_element "{\"elementHandle\":$h,\"target\":{\"x\":$tx,\"y\":$ty},\"button\":\"Left\"}" >/dev/null
+}
+
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
 root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
 
@@ -170,8 +195,29 @@ case "$MODE" in
     echo "  切歌后 listened_ms=$ms(< 30000,判定为跳过)"
     echo "skip: 通过"
     ;;
+  complete)
+    open_play_page
+    before=$(played)
+    seek_to 0.97
+    echo "  拖到曲尾附近(97%),等它自己放完切下一首…"
+
+    for _ in $(seq 1 30); do
+      [ "$(played)" -gt "$before" ] && break
+      sleep 1
+    done
+    [ "$(played)" -gt "$before" ] || { echo "complete: 失败 —— 拖到曲尾 30 秒没有切到下一首" >&2; exit 1; }
+    # 补记是异步的,切歌那一刻不保证已经落库,多等一下。
+    sleep 3
+
+    ratio=$(last_listened_ratio)
+    [ -n "$ratio" ] || { echo "complete: 失败 —— 切歌后上一行的 listened_ms/duration_ms 该被补上,读到空" >&2; exit 1; }
+    awk -v r="$ratio" 'BEGIN { exit !(r >= 0.9) }' \
+      || { echo "complete: 失败 —— 播满该判为完播,listened_ms/duration_ms 该 ≥ 0.9,读到 $ratio" >&2; exit 1; }
+    echo "  切歌后 listened_ms/duration_ms=$ratio(≥ 0.9,判定为完播)"
+    echo "complete: 通过"
+    ;;
   *)
-    echo "用法: $0 verdict|skip" >&2
+    echo "用法: $0 verdict|skip|complete" >&2
     exit 2
     ;;
 esac

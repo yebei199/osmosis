@@ -131,17 +131,20 @@ PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,�
 前提同 `pick-e2e.sh`。
 
 ```sh
-test/feedback-e2e.sh verdict   # 点赞 track_feedback +1、改点踩同一行变 -1、再点一次消失
-test/feedback-e2e.sh skip      # 起播后立刻切歌,断言这一行的 listened_ms 补上了、且判为跳过
+test/feedback-e2e.sh verdict    # 点赞 track_feedback +1、改点踩同一行变 -1、再点一次消失
+test/feedback-e2e.sh skip       # 起播后立刻切歌,断言这一行的 listened_ms 补上了、且判为跳过
+test/feedback-e2e.sh complete   # 拖进度条到曲尾附近,等它自己放完切下一首,断言判为完播
 ```
 
 `verdict` 展开播放页,按 `PlayPage::feedback-up` / `PlayPage::feedback-down` 点,查
 `track_feedback` 的行数与最新一行的 `verdict`。`skip` 不展开播放页(它要点列表里的
 另一行来触发切歌,播放页开着会盖住列表),起播后立即换到第二行,查 `play_events`
 最新一行的 `listened_ms` 存在且小于 30000(#157 的口径:前 30 秒内切走算跳过)。
-
-**完播那一步不在这个脚本里**:等一整首歌放完对自动化来说太慢,那一步走
-AGENTS.md「发版与实机」的真机人工过一遍,库里比 `listened_ms` 和 `duration_ms`。
+`complete` 展开播放页,拖 `ProgressBar::seek-touch`(`drag_element`,从元素中心按下、
+插值挪到曲尾附近 97%、松手,原样落进 `progress.slint` 的拖动判断)到接近结尾,
+等它自然放完、自动续播切到下一首,查最新一行的 `listened_ms/duration_ms` ≥ 0.9
+(#157 F-002)。不必等一整首:拖到只剩几秒,验的是切歌那一刻算出的比例对不对,
+不是等待本身要多久。
 
 ## pick-bench.py —— 点一首歌到出声花了多久(#137)
 
