@@ -438,6 +438,23 @@ fn route(
             }
             None
         }
+        // 远程调音量(#151):只转给目标那一台。不进组状态 —— 音量的真相在各台本机,
+        // 它应用之后在下一条执行事实里带回来,别的成员从那里看见。
+        ClientSignal::SetVolume { to, volume } => {
+            let Some(sink) = roster.sink(account, &to)
+            else {
+                return Some(ServerSignal::Error {
+                    code: "offline".to_owned(),
+                    message: format!("{to} 不在线"),
+                });
+            };
+            let _ =
+                sink.try_send(ServerSignal::SetVolume {
+                    from: from.to_owned(),
+                    volume,
+                });
+            None
+        }
     }
 }
 
@@ -527,6 +544,73 @@ mod tests {
         assert!(
             rx_c.try_recv().is_err(),
             "别人账号的设备不该收到这份名册"
+        );
+    }
+    /// 调音量只转给目标那一台:发的那台、同账号的第三台都收不到(#151)。
+    #[test]
+    fn a_volume_change_reaches_only_its_target() {
+        let (mut roster, mut rx_a, mut rx_b) =
+            two_devices();
+        let (sink_c, mut rx_c) =
+            mpsc::channel(OUTBOX_CAPACITY);
+        roster.join(ALICE, device("c"), sink_c);
+
+        let reply = route(
+            &roster,
+            ALICE,
+            "a",
+            ClientSignal::SetVolume {
+                to: "b".to_owned(),
+                volume: 0.3,
+            },
+        );
+
+        assert_eq!(reply, None);
+        assert_eq!(
+            rx_b.try_recv(),
+            Ok(ServerSignal::SetVolume {
+                from: "a".to_owned(),
+                volume: 0.3,
+            })
+        );
+        assert!(
+            rx_a.try_recv().is_err(),
+            "发的那台不该收到"
+        );
+        assert!(
+            rx_c.try_recv().is_err(),
+            "旁观的那台不该收到"
+        );
+    }
+
+    /// 目标不在线、或在别的账号里,都只说「不在线」,一个字也不转出去。
+    #[test]
+    fn a_volume_change_to_another_account_is_not_relayed() {
+        let (mut roster, _rx_a, _rx_b) = two_devices();
+        let (sink_c, mut rx_c) =
+            mpsc::channel(OUTBOX_CAPACITY);
+        roster.join(BOB, device("c"), sink_c);
+
+        let reply = route(
+            &roster,
+            ALICE,
+            "a",
+            ClientSignal::SetVolume {
+                to: "c".to_owned(),
+                volume: 0.3,
+            },
+        );
+
+        assert!(
+            matches!(
+                reply,
+                Some(ServerSignal::Error { ref code, .. }) if code == "offline"
+            ),
+            "实得 {reply:?}"
+        );
+        assert!(
+            rx_c.try_recv().is_err(),
+            "别人账号的设备收到了"
         );
     }
 }

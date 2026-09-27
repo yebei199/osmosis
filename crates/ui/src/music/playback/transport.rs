@@ -464,7 +464,7 @@ pub(in crate::music) fn push_progress(
     );
 }
 
-/// 出声设备每秒报的执行事实:在放哪一条、有没有故障、走的什么路由。
+/// 出声设备每秒报的执行事实:在放哪一条、有没有故障、走的什么路由、音量多大。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn device_report(
     deck: &Deck,
@@ -476,5 +476,11 @@ pub(in crate::music) fn device_report(
         fault: deck.alignment.fault(),
         route: audio::route()
             .map(crate::sync::group::route_dto),
+        volume: deck
+            .player
+            .as_ref()
+            .as_ref()
+            .ok()
+            .map(audio::Player::volume),
     }
 }
