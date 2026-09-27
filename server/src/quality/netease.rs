@@ -3,6 +3,11 @@
 //! bang-dream 把它再翻成网易云的 `level` 参数(`standard`/`higher`/`exhigh`/
 //! `lossless`/`hires`),并把网易云实际给的档位报回来。协商在网易云那边发生:
 //! 请求 `hires`,给得出就给 hires,给不出给它能给的最好那一档。
+//!
+//! 例外:账号的网易云云盘里有这首的上传文件时(`song/detail` 的 privilege 里
+//! `cs: true`),网易云给的是云盘那份,不看请求的档位 —— 406238《Flower Dance》
+//! 曲库标着有无损,返回的却是用户自己上传的 340k mp3(#152)。只能在网易云那边删掉
+//! 云盘里那份,这里照它报的如实记。
 
 use crate::bangdream::proto::{PlaySource, QualityLevel};
 
