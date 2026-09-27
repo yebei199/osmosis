@@ -197,11 +197,15 @@ pub fn bind(ui: &MainWindow, set: &LikedSet) {
         refresh(&reloading, &ui);
     });
 
+    // 赞踩搭这趟车而不是自己再订一次:`on_now_id_changed` 只接受一个
+    // 处理者,后订的会悄悄顶掉先订的(#157 踩过一次)。
     let projecting = set.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_now_id_changed(move || {
         let Some(ui) = weak.upgrade() else { return };
         project_now(&projecting, &ui);
+        let id = ui.global::<Player>().get_now_id();
+        crate::library::feedback::refresh(&ui, &id);
     });
 
     let set = set.clone();

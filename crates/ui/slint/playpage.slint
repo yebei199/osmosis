@@ -2,12 +2,13 @@ import { Palette } from "std-widgets.slint";
 
 import { Theme, Type } from "theme.slint";
 import { LyricRow } from "types.slint";
-import { OutlinedText } from "widgets.slint";
+import { OutlinedText, RoundControl } from "widgets.slint";
 import { PlayerBar } from "playerbar.slint";
 import { LyricsPage } from "lyrics.slint";
 import { QueuePage } from "queue.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
+import { Library } from "globals/library.slint";
 import { Viz } from "globals/viz.slint";
 
 // 播放页:盖住包括导航在内的整个窗口的全屏沉浸层(CONTEXT.md「播放页」)。
@@ -211,6 +212,47 @@ export component PlayPage inherits FocusScope {
         }
     }
 
+    // 三态赞踩,与红心并列(#157,用户可见决定点,交付时附截图)。
+    // 摆在队列入口下方一档:歌名歌手是「这首是什么」,队列入口是「后面还有
+    // 哪些」,这一排是「我对这首的评价」,三者各自成一层,让位规则与它们相同 ——
+    // 歌词页或队列页打开时整排让位。
+    if !Viz.lyrics-page-open && !Viz.queue-page-open
+            && Player.now-id != "": feedback-row := HorizontalLayout {
+        y: root.viz-title-y + 104px;
+        width: root.feedback-btn * 3 + root.feedback-gap * 2;
+        height: root.feedback-btn;
+        x: (root.width - self.width) / 2;
+        spacing: root.feedback-gap;
+
+        RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.heart-icon;
+            label: Player.now-liked ? "取消喜欢" : "喜欢";
+            checkable: true;
+            checked: Player.now-liked;
+            transparent-base: true;
+            clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
+        }
+        RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.thumb-up-icon;
+            label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
+            checkable: true;
+            checked: Player.now-feedback == 1;
+            transparent-base: true;
+            clicked => { Library.toggle-feedback(1); }
+        }
+        RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.thumb-down-icon;
+            label: Player.now-feedback == -1 ? "取消点踩" : "点踩";
+            checkable: true;
+            checked: Player.now-feedback == -1;
+            transparent-base: true;
+            clicked => { Library.toggle-feedback(-1); }
+        }
+    }
+
     // 取直链/开流的那几秒:点下去了、正在办。
     // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
     // 而这一层还压在点云上。文案硬编码中文,走子集字体。
@@ -336,4 +378,12 @@ export component PlayPage inherits FocusScope {
     // 点了等于不点,而开它的那一行只长在播放页 —— 那是两处抽屉唯一的差别。
     // 加档时列表连同抽屉里那一行一起回来,并且回到抽屉里(drawer.slint)。
   }
+
+  // 三态赞踩那一排的尺寸与图标。与 drawer.slint 的 heart-icon 是同一个
+  // path —— 两处画的是同一件事,长得不一样才奇怪。
+  property <length> feedback-btn: 34px;
+  property <length> feedback-gap: 16px;
+  property <string> heart-icon: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
+  property <string> thumb-up-icon: "M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z";
+  property <string> thumb-down-icon: "M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05C1.05 11.5 1 11.74 1 12v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z";
 }
