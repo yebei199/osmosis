@@ -110,3 +110,45 @@ fn an_ordinary_banner_has_nothing_to_click() {
         "没去处就不该有能按的区域"
     );
 }
+
+/// **独奏时组在播,横幅上那颗键是「加入」,按下去发的是加入**(#149)。
+///
+/// 屏幕阅读器与无头测试都只认无障碍动作:标签写对了,按下去走的是 `join-group`,
+/// 不是在组里时那颗「退出」。
+#[test]
+fn a_solo_device_can_join_from_the_group_banner() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+    let joined =
+        std::rc::Rc::new(std::cell::Cell::new(false));
+    let left =
+        std::rc::Rc::new(std::cell::Cell::new(false));
+    ui.global::<Shell>().on_join_group({
+        let joined = joined.clone();
+        move || joined.set(true)
+    });
+    ui.global::<Shell>().on_leave_group({
+        let left = left.clone();
+        move || left.set(true)
+    });
+
+    ui.global::<Shell>()
+        .set_group_banner("组里正在播放: x".into());
+    ui.global::<Shell>().set_group_joinable(true);
+
+    let key: Vec<_> =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "加入播放组",
+        )
+        .collect();
+    assert_eq!(
+        key.len(),
+        1,
+        "横幅上该有一颗「加入播放组」"
+    );
+    key[0].invoke_accessible_default_action();
+
+    assert!(joined.get(), "按下去该发加入");
+    assert!(!left.get(), "不在组里,不该发退出");
+}

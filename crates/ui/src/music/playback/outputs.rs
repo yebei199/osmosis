@@ -2,7 +2,8 @@
 //!
 //! 都只改服务端全局状态里的出声设备(`POST /group/outputs`),不再有迁移的三步编排:
 //! 新加入的那台看到状态里有自己,就按标识取执行副本、到点跟上;被移出的那台看到没有自己,
-//! 就停下。本机还独奏着时选了别的设备,组从本机正在放的那一份接着放(`seed`)。
+//! 就停下。本机还独奏着时选了别的设备,组从本机正在放的那一份接着放(`seed`);组已经在
+//! 别处放着时则只往它的出声设备里加,原有的不动(#149)。
 
 use app_core::{GroupSeedDto, PlaybackState};
 
@@ -25,6 +26,10 @@ pub(in crate::music) fn select_output(
     if target == deck.group.me() {
         return;
     }
+    // 组已经在放:加进去,不拿本机播放建一个新的把原有的挤掉(#149)。
+    if deck.group.add_output(ui, &target) {
+        return;
+    }
     start_group(ui, deck, vec![target]);
 }
 
@@ -36,6 +41,14 @@ pub(in crate::music) fn toggle_member(
 ) {
     let target = device_of(deck, id);
     let me = deck.group.me().to_owned();
+    // 独奏、组已经在放:只往组里加,不移出 —— 独奏时芯片上组的设备不亮,那颗键写的是
+    // 「加入」(#149)。本机那颗照旧:独奏时它本来就在出声。
+    if !deck.group.is_member()
+        && target != me
+        && deck.group.add_output(ui, &target)
+    {
+        return;
+    }
     let mut outputs = if deck.group.is_member() {
         deck.group
             .state()
