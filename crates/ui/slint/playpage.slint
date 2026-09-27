@@ -352,12 +352,22 @@ export component PlayPage inherits FocusScope {
         x: (root.width - self.width) / 2;
         spacing: root.feedback-gap;
 
+        // 底色走 glass 变体(docs/design.md「光带按钮与按钮变体」,#157 F-001):
+        // 三键与播放页「更多」键共用同一批槽渲出来的那张图(`Shell.viz-glass-bg`,
+        // `aurora_btn/band.rs` 的 `viz_glass_i`)—— 播放页开着就有这张图,不必
+        // 单为这三颗键再开一个 pass。选中态是 `RoundControl` 新加的
+        // `checked-fill`:玻璃纹理本身够不透明,叠在它外面的实心圆会被盖住,
+        // 得让 accent 圆画在纹理**之上、图标之下**,只能进组件内部插这一层
+        // (见 `widgets.slint`)。
         feedback-heart := RoundControl {
             diameter: root.feedback-btn;
             icon: root.heart-icon;
             label: Player.now-liked ? "取消喜欢" : "喜欢";
             checkable: true;
             checked: Player.now-liked;
+            checked-fill: true;
+            transparent-base: true;
+            backdrop: Shell.viz-glass-bg;
             clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         }
         feedback-up := RoundControl {
@@ -366,6 +376,9 @@ export component PlayPage inherits FocusScope {
             label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
             checkable: true;
             checked: Player.now-feedback == 1;
+            checked-fill: true;
+            transparent-base: true;
+            backdrop: Shell.viz-glass-bg;
             clicked => { Library.toggle-feedback(1); }
         }
         feedback-down := RoundControl {
@@ -374,6 +387,9 @@ export component PlayPage inherits FocusScope {
             label: Player.now-feedback == -1 ? "取消点踩" : "点踩";
             checkable: true;
             checked: Player.now-feedback == -1;
+            checked-fill: true;
+            transparent-base: true;
+            backdrop: Shell.viz-glass-bg;
             clicked => { Library.toggle-feedback(-1); }
         }
     }
