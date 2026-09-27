@@ -49,6 +49,18 @@ android {
 
     // libosmosis.so (+ libc++_shared.so) are placed in
     // src/main/jniLibs/<abi>/ by `cargo xtask android` via cargo-ndk.
+
+    // AGP defaults useLegacyPackaging to false so .so files are stored
+    // uncompressed and mmap'd straight from the APK. That's ~56 MB of
+    // dead weight in the download (issue #163: libosmosis.so alone is
+    // 54.4 MB stored). Compressing costs a one-time extract-to-disk on
+    // install (~54 MB, a few extra seconds) in exchange for a much
+    // smaller download on every one of the three install paths.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
