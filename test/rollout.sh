@@ -206,6 +206,17 @@ run "prefetch 与 sha256sums.txt 对不上:不改 nixos_config" 1 v0.1.15
 expect "$(nix_file)" 'version = "0\.1\.14";'
 
 setup
+sed -i 's/osmosis-desktop-x86_64-linux\.zst/osmosis-desktop-x86_64-linux/' "$(nix_file)"
+git -C "$work/case/nixos" commit -qam "simulate pre-.zst osmosis.nix"
+git -C "$work/case/nixos" push -q
+before=$(git -C "$work/case/origin.git" rev-parse HEAD)
+run "nix 文件里的 url 还是旧文件名(资产改名后未同步):报错、不改文件、不提交" 1 v0.1.15
+expect "$(nix_file)" 'version = "0\.1\.14";'
+expect "$work/out" 'osmosis-desktop-x86_64-linux\.zst 的 url 行'
+git -C "$work/case/origin.git" rev-parse HEAD > "$work/head2"
+expect "$work/head2" "^$before\$"
+
+setup
 FAKE_MANIFEST='{"digest":"sha256:abc","manifests":[{"platform":{"architecture":"amd64"}}]}' \
     run "镜像不含 arm64:报失败" 1 v0.1.15
 expect "$work/out" 'arm64'
