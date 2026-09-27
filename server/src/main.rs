@@ -298,6 +298,16 @@ fn group_routes(state: &AppState) -> Router {
         ))
         .route_layer(authenticated(state));
 
+    // 就绪是出声设备的执行报告,不是人按的:与队列报告同一道闸。放在意图那个桶里的话,
+    // 连按几下「下一首」、几台各报一次,就能把人的点击挤成 429。
+    let report = Router::new()
+        .route("/group/ready", post(routes::group::ready))
+        .layer(DefaultBodyLimit::max(SMALL_BODY_LIMIT))
+        .route_layer(guard(
+            state.policies.queue_report.clone(),
+        ))
+        .route_layer(authenticated(state));
+
     let read = Router::new()
         .route("/group", get(routes::group::current))
         .route_layer(guard(
@@ -308,6 +318,7 @@ fn group_routes(state: &AppState) -> Router {
     Router::new()
         .merge(play)
         .merge(steer)
+        .merge(report)
         .merge(read)
         .with_state(state.clone())
 }

@@ -5,9 +5,9 @@
 
 use contract::{
     GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
-    GroupPickDto, GroupPlayDto, GroupReplyDto,
-    GroupSeedDto, GroupStateDto, GroupTransportDto,
-    TransportOpDto,
+    GroupPickDto, GroupPlayDto, GroupReadyDto,
+    GroupReplyDto, GroupSeedDto, GroupStateDto,
+    GroupTransportDto, TransportOpDto,
 };
 
 use crate::url::group_url;
@@ -90,6 +90,23 @@ pub async fn group_advance(
     post(
         "/advance",
         GroupAdvanceDto {
+            device_id: device_id.to_owned(),
+            entry_id,
+            version,
+        },
+    )
+    .await
+}
+
+/// `POST /group/ready` —— 本机把第 `entry_id` 条备好了,手上那一版是 `version`(#154)。
+pub async fn group_ready(
+    device_id: &str,
+    entry_id: i64,
+    version: u64,
+) -> Result<Option<GroupStateDto>, ApiError> {
+    post(
+        "/ready",
+        GroupReadyDto {
             device_id: device_id.to_owned(),
             entry_id,
             version,

@@ -8,7 +8,8 @@ use axum::Json;
 use axum::extract::State;
 use contract::{
     GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
-    GroupPlayDto, GroupReplyDto, GroupTransportDto,
+    GroupPlayDto, GroupReadyDto, GroupReplyDto,
+    GroupTransportDto,
 };
 use server::error::{self, Failure};
 use server::store::account::Account;
@@ -92,6 +93,25 @@ pub(crate) async fn advance(
     Json(body): Json<GroupAdvanceDto>,
 ) -> Result<Json<GroupReplyDto>, Failure> {
     let state = group::advance(
+        &state.pool,
+        &state.roster,
+        account.id,
+        &body.device_id,
+        body.entry_id,
+        body.version as i64,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+    Ok(Json(GroupReplyDto { state }))
+}
+
+/// `POST /group/ready` —— 出声设备备好了这一首,随时能出声(#154)。
+pub(crate) async fn ready(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<GroupReadyDto>,
+) -> Result<Json<GroupReplyDto>, Failure> {
+    let state = group::ready(
         &state.pool,
         &state.roster,
         account.id,

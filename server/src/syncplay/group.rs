@@ -13,6 +13,8 @@ pub mod timeline;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use contract::{
@@ -187,6 +189,84 @@ pub async fn advance(
         device = %device,
         entry_id,
         "出声设备放完,组推进到下一首"
+    );
+    let state =
+        commit(tx, account, before, group, &entries)
+            .await?;
+    broadcast(roster, account, &state);
+    Ok(state)
+}
+
+/// 各组这一版里报过就绪的出声设备(#154)。
+///
+/// 只在内存里:起播最多等 [`timeline::START_WAIT_US`],服务端这时重启了也只是等满上限。
+/// 版本一变整份作废 —— 每条意图都加版本,别的意图插进来之后各台照新的一版再报一次。
+static READY: LazyLock<
+    Mutex<HashMap<AccountId, (i64, Vec<String>)>>,
+> = LazyLock::new(Mutex::default);
+
+/// 记下 `device` 在 `version` 这一版报了就绪,返回这一版报过的全部设备。
+fn mark_ready(
+    account: AccountId,
+    version: i64,
+    device: &str,
+) -> Vec<String> {
+    let mut all = READY.lock().expect("就绪表锁中毒");
+    let held = all.entry(account).or_default();
+    if held.0 != version {
+        *held = (version, Vec::new());
+    }
+    if !held.1.iter().any(|id| id == device) {
+        held.1.push(device.to_owned());
+    }
+    held.1.clone()
+}
+
+/// 出声设备报它手上第 `entry_id` 条已经备好,手上那一版是 `version`(#154)。
+///
+/// 在线的出声设备都报过了,起播就从 [`timeline::START_WAIT_US`] 的上限提前到「现在 +
+/// [`timeline::LEAD_US`]」并广播;还有没报的就只记下来。返回此刻组的样子。
+pub async fn ready(
+    pool: &PgPool,
+    roster: &SharedRoster,
+    account: AccountId,
+    device: &str,
+    entry_id: i64,
+    version: i64,
+) -> Result<Option<GroupStateDto>, AppError> {
+    let mut tx = pool.begin().await?;
+    let mut group = rows::lock(&mut tx, account).await?;
+    let at = wall_now_us();
+    let entries =
+        current_entries(&mut tx, account, &group).await?;
+    let list = playlist(&entries);
+    let mut before = started(&group);
+    let rolled = group.roll(&list, at);
+    let ready = mark_ready(account, version, device);
+    let moved = {
+        let online = roster.lock().expect("名册锁中毒");
+        group.ready(
+            device,
+            &ready,
+            entry_id,
+            version,
+            |id| online.device(account, id).is_some(),
+            at,
+        )
+    }
+    .map_err(refused)?;
+    if !rolled && !moved {
+        return Ok(dto(&group, &entries));
+    }
+    // 只是同一首提前开走,不是新起了一首:不再记一次 `play_events`。
+    if !rolled {
+        before = started(&group);
+    }
+    tracing::info!(
+        account,
+        device = %device,
+        entry_id,
+        "出声设备都就绪,起播提前"
     );
     let state =
         commit(tx, account, before, group, &entries)

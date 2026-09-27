@@ -646,3 +646,34 @@ fn an_output_prefetches_the_track_the_group_announced() {
     deck.group.assume(Some(announced));
     assert_eq!(id(&deck), None, "只当遥控器不备");
 }
+
+/// 出声设备备好了此刻那一首就报一次就绪,同一版不重报;新的一版再报;只当遥控器不报(#154)。
+#[test]
+fn an_output_reports_ready_once_per_version() {
+    let (ui, deck) = deck_window();
+    let mut pending = state(&["me"], true);
+    deck.group.assume(Some(pending.clone()));
+
+    deck.group.ready(&ui, 12);
+    deck.group.ready(&ui, 12);
+    deck.group.ready(&ui, 99);
+    pending.version += 1;
+    deck.group.assume(Some(pending.clone()));
+    deck.group.ready(&ui, 12);
+
+    assert_eq!(
+        deck.group.intents(),
+        vec!["ready 12", "ready 12"],
+        "每版一次;不是此刻那一条不报"
+    );
+
+    pending.version += 1;
+    pending.outputs = vec!["pc".to_owned()];
+    deck.group.assume(Some(pending));
+    deck.group.ready(&ui, 12);
+    assert_eq!(
+        deck.group.intents().len(),
+        2,
+        "只当遥控器不报"
+    );
+}

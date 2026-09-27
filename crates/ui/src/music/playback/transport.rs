@@ -221,6 +221,10 @@ pub(in crate::music) fn play_current(
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             mark_loading(&ui, &deck, None);
+            // 组里备好了就当场对准一次:起播还没到的话报就绪,不等下一拍(#154)。
+            if follows_the_group(&deck) {
+                align(&ui, &deck);
+            }
             // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
             push_media(&ui, &deck);
             action.mark("model");
