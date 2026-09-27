@@ -21,7 +21,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 package=io.github.osmosis
 image=ghcr.io/yebei199/osmosis-server
 nix_file=home/features/desktop/osmosis.nix
-desktop_assets=(osmosis-desktop-x86_64-linux io.github.osmosis.desktop io.github.osmosis.svg)
+desktop_assets=(osmosis-desktop-x86_64-linux.zst io.github.osmosis.desktop io.github.osmosis.svg)
 
 tag=${1:-$(gh release view --json tagName -q .tagName)}
 ver=${tag#v}

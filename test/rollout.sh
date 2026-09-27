@@ -109,10 +109,10 @@ setup() {
     export FAKE_BUILT_APK="$work/case/built.apk" FAKE_DEVICES="dev=NP06J mi=2211133C"
     unset FAKE_CORRUPT_INSTALL
     echo "apk-bytes" > "$FAKE_BUILT_APK"
-    for f in osmosis-desktop-x86_64-linux io.github.osmosis.desktop io.github.osmosis.svg; do
+    for f in osmosis-desktop-x86_64-linux.zst io.github.osmosis.desktop io.github.osmosis.svg; do
         echo "$f-bytes" > "$FAKE_REL/$f"
     done
-    (cd "$FAKE_REL" && sha256sum osmosis-desktop-x86_64-linux io.github.osmosis.desktop \
+    (cd "$FAKE_REL" && sha256sum osmosis-desktop-x86_64-linux.zst io.github.osmosis.desktop \
         io.github.osmosis.svg > sha256sums.txt)
 
     git init -q --bare "$work/case/origin.git"
@@ -120,7 +120,7 @@ setup() {
     mkdir -p "$work/case/nixos/home/features/desktop"
     cat > "$work/case/nixos/home/features/desktop/osmosis.nix" <<'NIX'
     version = "0.1.14";
-      url = "https://github.com/yebei199/osmosis/releases/download/v${finalAttrs.version}/osmosis-desktop-x86_64-linux";
+      url = "https://github.com/yebei199/osmosis/releases/download/v${finalAttrs.version}/osmosis-desktop-x86_64-linux.zst";
       hash = "sha256-old1";
       url = "https://github.com/yebei199/osmosis/releases/download/v${finalAttrs.version}/io.github.osmosis.desktop";
       hash = "sha256-old2";
@@ -169,7 +169,7 @@ expect "$FAKE_CALLS" '^adb -s dev install -r '
 expect_not "$FAKE_CALLS" '^adb -s mi install'
 expect "$work/out" 'SM-S9180.*(未在线|跳过)'
 expect "$(nix_file)" 'version = "0\.1\.15";'
-expect "$(nix_file)" "hash = \"$(sri_of osmosis-desktop-x86_64-linux)\";"
+expect "$(nix_file)" "hash = \"$(sri_of osmosis-desktop-x86_64-linux.zst)\";"
 expect "$(nix_file)" "hash = \"$(sri_of io.github.osmosis.svg)\";"
 git -C "$work/case/origin.git" log --oneline -1 > "$work/pushed"
 expect "$work/pushed" '0\.1\.15'
