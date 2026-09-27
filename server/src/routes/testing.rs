@@ -25,6 +25,8 @@ use tonic::{Request, Response, Status};
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
+    GetDailyRecommendationsRequest,
+    GetDailyRecommendationsResponse,
     GetPlaySourceRequest, GetPlaySourceResponse,
     GetPlaylistRequest, GetPlaylistResponse,
     GetTracksRequest, GetTracksResponse,
@@ -33,6 +35,7 @@ use server::bangdream::proto::{
     LogoutRequest, LogoutResponse, Platform, PlaySource,
     Playlist, PlaylistTrackRef, QrLoginEvent,
     SetPlaylistSubscribedRequest,
+    SearchTracksRequest, SearchTracksResponse,
     SetPlaylistSubscribedResponse, SetTrackLikedRequest,
     SetTrackLikedResponse, Track, WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
@@ -42,6 +45,9 @@ use server::bangdream::proto::{
         CatalogService, CatalogServiceServer,
     },
     discover_service_client::DiscoverServiceClient,
+    discover_service_server::{
+        DiscoverService, DiscoverServiceServer,
+    },
     library_service_client::LibraryServiceClient,
     library_service_server::{
         LibraryService, LibraryServiceServer,
@@ -267,6 +273,8 @@ pub(crate) struct FakeUpstream {
     pub(crate) playlist_delay: std::time::Duration,
     /// `ListUserPlaylists` 回答前先等这么久。`/playlists` 的「不等上游」靠它验。
     pub(crate) lists_delay: std::time::Duration,
+    /// `SearchTracks` 与 `GetDailyRecommendations` 回的那一批。
+    pub(crate) listed: Vec<Track>,
 }
 
 impl FakeUpstream {
@@ -416,6 +424,32 @@ impl CatalogService for FakeUpstream {
             source: self.play_source.clone(),
         }))
     }
+
+    async fn search_tracks(
+        &self,
+        _request: Request<SearchTracksRequest>,
+    ) -> Result<Response<SearchTracksResponse>, Status>
+    {
+        Ok(Response::new(SearchTracksResponse {
+            tracks: self.listed.clone(),
+            ..SearchTracksResponse::default()
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl DiscoverService for FakeUpstream {
+    async fn get_daily_recommendations(
+        &self,
+        _request: Request<GetDailyRecommendationsRequest>,
+    ) -> Result<
+        Response<GetDailyRecommendationsResponse>,
+        Status,
+    > {
+        Ok(Response::new(GetDailyRecommendationsResponse {
+            tracks: self.listed.clone(),
+        }))
+    }
 }
 
 #[tonic::async_trait]
@@ -517,6 +551,9 @@ pub(crate) async fn serve(fake: FakeUpstream) -> Upstream {
                 fake.clone(),
             ))
             .add_service(CatalogServiceServer::new(
+                fake.clone(),
+            ))
+            .add_service(DiscoverServiceServer::new(
                 fake.clone(),
             ))
             .add_service(LibraryServiceServer::new(fake))
