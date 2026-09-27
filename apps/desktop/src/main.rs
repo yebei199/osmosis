@@ -114,12 +114,17 @@ fn main() {
                     )
                 };
             Some(ui::VizImages {
-                warp: warp.render_frame(
-                    v.time,
-                    &v.audio,
-                    render3d::WARP_SIDE,
-                    render3d::WARP_SIDE,
-                ),
+                // warp 是反馈式的,再渲一遍画面就往前流:暂停与定格时不渲(#153)。
+                warp: if v.needs_warp {
+                    warp.render_frame(
+                        v.time,
+                        &v.audio,
+                        render3d::WARP_SIDE,
+                        render3d::WARP_SIDE,
+                    )
+                } else {
+                    slint::Image::default()
+                },
                 scene: viz_scene,
                 occluder,
                 anchor,

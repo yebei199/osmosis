@@ -23,25 +23,39 @@ pub(crate) struct CoverFeed {
 }
 
 impl CoverFeed {
+    /// 有没有动作在等人取。渲染循环据此决定定格时也要渲一帧点云。
+    pub(crate) fn pending(&self) -> bool {
+        !matches!(
+            *self.pending.borrow(),
+            crate::viz::CoverUpdate::Unchanged
+        )
+    }
+
     /// 取走这一帧的动作,取完回到 [`crate::viz::CoverUpdate::Unchanged`]。
     pub(crate) fn take(&self) -> crate::viz::CoverUpdate {
         core::mem::take(&mut *self.pending.borrow_mut())
     }
 
     /// 换歌了:先让点云退回渐变,别挂着上一首的图等新图。
-    pub(super) fn clear(&self) {
+    ///
+    /// 排上队就经 pace 放行一小段(#153):渲染循环可能正定格着,没人叫醒的话
+    /// 这个动作要等到下一次触摸才被取走。
+    pub(super) fn clear(&self, ui: &MainWindow) {
         *self.pending.borrow_mut() =
             crate::viz::CoverUpdate::Clear;
+        crate::runtime::pace::settle(ui);
     }
 
     /// 新封面解出来了:排上队等下一帧取走。上一个动作还没被取走就直接顶掉 ——
     /// 点云只显示当前这一首,过期的封面排队也没人要。
-    pub(super) fn replace(
+    pub(crate) fn replace(
         &self,
+        ui: &MainWindow,
         pixels: std::sync::Arc<crate::viz::CoverPixels>,
     ) {
         *self.pending.borrow_mut() =
             crate::viz::CoverUpdate::Show(pixels);
+        crate::runtime::pace::settle(ui);
     }
 }
 
@@ -61,6 +75,20 @@ pub(crate) struct LyricFeed {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl LyricFeed {
+    /// 没有播放器、也没有歌词的一份。给不经 `music::bind` 的测试用。
+    #[cfg(test)]
+    pub(crate) fn silent() -> Self {
+        Self {
+            lines: Rc::new(RefCell::new(Vec::new())),
+            generation: Rc::new(std::cell::Cell::new(0)),
+            player: Arc::new(Err(
+                audio::AudioError::Device(
+                    "测试里没有声卡".to_owned(),
+                ),
+            )),
+        }
+    }
+
     /// 当前该显示的 (代际, 行号, 原文, 译文)。没歌词、还在前奏、或没播放器时给 `None`。
     pub(crate) fn current(
         &self,

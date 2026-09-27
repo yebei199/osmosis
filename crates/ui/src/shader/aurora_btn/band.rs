@@ -10,6 +10,7 @@ use super::*;
 use crate::MainWindow;
 use crate::Player;
 use crate::Shell;
+use crate::runtime::pace::Demand;
 
 /// 两颗光带按钮与胶囊的跨帧动画状态,外加它们共用的那只时钟。
 #[derive(Default)]
@@ -19,264 +20,275 @@ pub struct ButtonBand {
     bar: ButtonAnim,
     time: f32,
     last: Option<web_time::Instant>,
+    /// 上一次真的交给渲染器的那一份。这一帧组出来一模一样就不渲:
+    /// 定格时时钟不走,只有状态变了(播停、尺寸、选中)才换出新图。
+    shown: Option<AuroraBtnControls>,
 }
 
 impl ButtonBand {
     /// 推进一帧的动画,并把渲染出来的几张图推给界面。
+    ///
+    /// `live` 为假时环境动效定格(#153):时钟与振幅都不走,组出来的控制量与上次
+    /// 一样就不渲,Slint 复用上一帧的图 —— 只有状态变了(播停、尺寸、选中)才换出
+    /// 新图。交回这一帧的需求:渲了新图算 `busy`(差一帧上屏),有任何一槽在场算
+    /// `ambient`。
     pub fn tick(
         &mut self,
         ui: &MainWindow,
         scale: f32,
+        live: bool,
         btn_frame: &mut impl FnMut(
             &AuroraBtnControls,
         ) -> Vec<slint::Image>,
-    ) {
+    ) -> Demand {
         // ── 光带按钮(§9)──
-        // 两颗:Home 空槽(nebula)与空状态「换一批推荐」(ribbon 绿板)。
-        // 前台恒满帧,每帧照渲;关掉开关即整段不进 —— 纯色实底,功能不变。
-        if ui.global::<Shell>().get_aurora_buttons_on() {
-            self.home.step(
-                ui.global::<Shell>().get_home_slot_hover(),
-                (
-                    ui.global::<Shell>().get_home_slot_px(),
-                    ui.global::<Shell>().get_home_slot_py(),
-                ),
-            );
-            self.daily.step(
-                ui.global::<Shell>()
-                    .get_empty_daily_hover(),
-                (
-                    ui.global::<Shell>()
-                        .get_empty_daily_px(),
-                    ui.global::<Shell>()
-                        .get_empty_daily_py(),
-                ),
-            );
-            // 胶囊的 fluid:播放当"热"(振幅升到满),暂停收回静息。
-            self.bar.step(
-                ui.global::<Player>().get_is_playing(),
-                (0.72, 0.5),
-            );
-            {
-                let now = web_time::Instant::now();
-                if let Some(last) = self.last {
-                    self.time += now
-                        .duration_since(last)
-                        .as_secs_f32()
-                        .min(0.1);
-                }
-                self.last = Some(now);
-
-                // 绿色四色板:底/主/次/高光(handoff aurora-button.js 的 DEF)。
-                const GREENS: [[f32; 3]; 4] = [
-                    [0.043, 0.075, 0.063],
-                    [0.310, 0.478, 0.247],
-                    [0.561, 0.769, 0.416],
-                    [0.914, 0.969, 0.839],
-                ];
-                let compact =
-                    ui.global::<Shell>().get_compact();
-                let (hw, hh) = if compact {
-                    (120.0, 150.0)
-                } else {
-                    (168.0, 210.0)
-                };
-                // fluid 正在播放胶囊(#68):尺寸由 .slint 回写,
-                // 没歌或场区未量出时不渲这一槽。
-                let bar_w =
-                    ui.global::<Shell>().get_bar_w();
-                let bar_h =
-                    ui.global::<Shell>().get_bar_h();
-                let bar_on =
-                    ui.global::<Player>().get_is_playing()
-                        && bar_w > 1.0
-                        && bar_h > 1.0;
-                let mut slots = vec![
-                    // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
-                    AuroraBtnSlotControls {
-                        w: hw * scale,
-                        h: hh * scale,
-                        radius: 22.0 * scale,
-                        seed: 3.7,
-                        speed: 1.0,
-                        amp: self.home.amp,
-                        mode: 1.0,
-                        bands: 3.0,
-                        variant: VARIANT_NEBULA,
-                        progress: 0.0,
-                        pointer: (
-                            self.home.px,
-                            self.home.py,
-                        ),
-                        colors: GREENS,
-                    },
-                    AuroraBtnSlotControls {
-                        w: 150.0 * scale,
-                        h: 38.0 * scale,
-                        radius: 19.0 * scale,
-                        seed: 8.1,
-                        speed: 1.15,
-                        amp: self.daily.amp,
-                        mode: 1.0, // 绿板:全光谱只准在 Home 空槽
-                        bands: 3.0,
-                        variant: VARIANT_RIBBON,
-                        progress: 0.0,
-                        pointer: (
-                            self.daily.px,
-                            self.daily.py,
-                        ),
-                        colors: GREENS,
-                    },
-                ];
-                // 后面几槽按需追加,记下各自的下标 —— 三个可选槽再用
-                // 长度 match 就是八条臂,而错位不会报错,只会把玻璃底
-                // 贴到胶囊上。
-                let bar_i = bar_on.then(|| {
-                    slots.push(AuroraBtnSlotControls {
-                        w: bar_w * scale,
-                        h: bar_h * scale,
-                        // 宽版胶囊圆角 = 高的一半;紧凑版是 16px 圆角矩形。
-                        radius: if compact {
-                            16.0 * scale
-                        } else {
-                            bar_h * 0.5 * scale
-                        },
-                        seed: 5.3,
-                        speed: 0.9,
-                        amp: self.bar.amp,
-                        mode: 1.0,
-                        bands: 3.0,
-                        variant: VARIANT_FLUID,
-                        progress: 0.0,
-                        pointer: (self.bar.px, self.bar.py),
-                        colors: GREENS,
-                    });
-                    slots.len() - 1
-                });
-                // 播放页覆层在场时的两槽(#69):主控条底与两颗次要圆钮
-                // 的 glass 底。覆层不在场就整个不进 —— 那时它们连元素
-                // 都还没实例化。
-                let viz_open = ui
-                    .global::<Shell>()
-                    .get_play_page_open();
-                let viz_bar_w =
-                    ui.global::<Shell>().get_viz_bar_w();
-                let viz_bar_h =
-                    ui.global::<Shell>().get_viz_bar_h();
-                let viz_bar_i = (viz_open
-                    && viz_bar_w > 1.0
-                    && viz_bar_h > 1.0)
-                    .then(|| {
-                        let (variant, progress) =
-                            fluid_or_progress(
-                                ui.global::<Player>()
-                                    .get_buffering(),
-                                ui.global::<Player>()
-                                    .get_progress_ratio(),
-                            );
-                        slots.push(AuroraBtnSlotControls {
-                            w: viz_bar_w * scale,
-                            h: viz_bar_h * scale,
-                            // 与 app.slint 的 border-radius 同式。
-                            radius: if compact {
-                                16.0 * scale
-                            } else {
-                                viz_bar_h * 0.5 * scale
-                            },
-                            seed: 2.9,
-                            speed: 0.85,
-                            // 与胶囊同一个信号(播放当热),共用那份振幅,
-                            // 不为同一条曲线养第二台收敛机。压掉四成:
-                            // 控制键就压在这层上,紧凑版式的条又短,满幅的
-                            // 羽流会把随机键与循环键的图标冲得读不出来
-                            // (真机竖屏才看得出,桌面那条长而扁,亮核落在
-                            // 时间读数那边)。
-                            amp: self.bar.amp * 0.6,
-                            mode: 1.0,
-                            bands: 3.0,
-                            variant,
-                            progress,
-                            pointer: (0.72, 0.5),
-                            colors: GREENS,
-                        });
-                        slots.len() - 1
-                    });
-                // 侧栏底部两颗 glass 圆钮(#71)。各渲各的:选中那颗把振幅
-                // 拉满,共用一张图就分不出谁被选中。侧栏只在宽版式存在。
-                let rail_keys = !compact;
-                let tab =
-                    ui.global::<Shell>().get_current_tab();
-                let mut rail_key = |i: i32, seed: f32| {
-                    rail_keys.then(|| {
-                        slots.push(nav_key_slot(
-                            scale,
-                            seed,
-                            tab == i,
-                            GREENS,
-                        ));
-                        slots.len() - 1
-                    })
-                };
-                let key_a_i = rail_key(2, 4.6);
-                let key_b_i = rail_key(3, 7.2);
-                let viz_glass_i = viz_open.then(|| {
-                    slots.push(AuroraBtnSlotControls {
-                        // 与 widgets.slint 的 RoundControl 默认直径一致。
-                        w: 44.0 * scale,
-                        h: 44.0 * scale,
-                        radius: 22.0 * scale,
-                        seed: 6.4,
-                        speed: 0.7,
-                        // 两颗共用一张图,拆不出各自的悬停,底幅因此固定;
-                        // glass 本就是低密度底,不靠振幅出戏。
-                        amp: 0.55,
-                        mode: 1.0,
-                        bands: 3.0,
-                        variant: VARIANT_GLASS,
-                        progress: 0.0,
-                        pointer: (0.5, 0.5),
-                        colors: GREENS,
-                    });
-                    slots.len() - 1
-                });
-                let imgs =
-                    (btn_frame)(&AuroraBtnControls {
-                        time: self.time,
-                        slots,
-                    });
-                if let [home, daily, ..] = imgs.as_slice() {
-                    ui.global::<Shell>()
-                        .set_home_slot_bg(home.clone());
-                    ui.global::<Shell>()
-                        .set_empty_daily_bg(daily.clone());
-                }
-                let at = |i: Option<usize>| {
-                    i.and_then(|i| imgs.get(i)).cloned()
-                };
-                if let Some(img) = at(bar_i) {
-                    ui.global::<Shell>()
-                        .set_bar_fluid_bg(img);
-                }
-                if let Some(img) = at(viz_bar_i) {
-                    ui.global::<Shell>()
-                        .set_viz_bar_bg(img);
-                }
-                if let Some(img) = at(viz_glass_i) {
-                    ui.global::<Shell>()
-                        .set_viz_glass_bg(img);
-                }
-                if let Some(img) = at(key_a_i) {
-                    ui.global::<Shell>()
-                        .set_nav_key_a_bg(img);
-                }
-                if let Some(img) = at(key_b_i) {
-                    ui.global::<Shell>()
-                        .set_nav_key_b_bg(img);
-                }
-            }
+        // 关掉开关即整段不进 —— 纯色实底,功能不变。
+        let shell = ui.global::<Shell>();
+        if !shell.get_aurora_buttons_on() {
+            self.last = None;
+            self.shown = None;
+            return Demand::default();
+        }
+        if live {
+            self.advance(ui);
         } else {
+            // 定格期间的时间不补:恢复那一帧从定格处接着走。
             self.last = None;
         }
+
+        // 绿色四色板:底/主/次/高光(handoff aurora-button.js 的 DEF)。
+        const GREENS: [[f32; 3]; 4] = [
+            [0.043, 0.075, 0.063],
+            [0.310, 0.478, 0.247],
+            [0.561, 0.769, 0.416],
+            [0.914, 0.969, 0.839],
+        ];
+        let compact = shell.get_compact();
+        let (hw, hh) = if compact {
+            (120.0, 150.0)
+        } else {
+            (168.0, 210.0)
+        };
+        // 各槽按需追加,记下各自的下标 —— 可选槽再用长度 match 就是一长串臂,
+        // 而错位不会报错,只会把玻璃底贴到胶囊上。
+        let mut slots = Vec::new();
+        let mut push =
+            |on: bool, slot: AuroraBtnSlotControls| {
+                on.then(|| {
+                    slots.push(slot);
+                    slots.len() - 1
+                })
+            };
+        // 两颗光带按钮:Home 空槽(nebula)与音乐页空状态「换一批推荐」(ribbon)。
+        // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
+        let home_i = push(
+            true,
+            AuroraBtnSlotControls {
+                w: hw * scale,
+                h: hh * scale,
+                radius: 22.0 * scale,
+                seed: 3.7,
+                speed: 1.0,
+                amp: self.home.amp,
+                mode: 1.0,
+                bands: 3.0,
+                variant: VARIANT_NEBULA,
+                progress: 0.0,
+                pointer: (self.home.px, self.home.py),
+                colors: GREENS,
+            },
+        );
+        let daily_i = push(
+            true,
+            AuroraBtnSlotControls {
+                w: 150.0 * scale,
+                h: 38.0 * scale,
+                radius: 19.0 * scale,
+                seed: 8.1,
+                speed: 1.15,
+                amp: self.daily.amp,
+                mode: 1.0, // 绿板:全光谱只准在 Home 空槽
+                bands: 3.0,
+                variant: VARIANT_RIBBON,
+                progress: 0.0,
+                pointer: (self.daily.px, self.daily.py),
+                colors: GREENS,
+            },
+        );
+        // fluid 正在播放胶囊(#68):尺寸由 .slint 回写,
+        // 没歌或场区未量出时不渲这一槽。
+        let bar_w = shell.get_bar_w();
+        let bar_h = shell.get_bar_h();
+        let bar_i = push(
+            ui.global::<Player>().get_is_playing()
+                && bar_w > 1.0
+                && bar_h > 1.0,
+            AuroraBtnSlotControls {
+                w: bar_w * scale,
+                h: bar_h * scale,
+                // 宽版胶囊圆角 = 高的一半;紧凑版是 16px 圆角矩形。
+                radius: if compact {
+                    16.0 * scale
+                } else {
+                    bar_h * 0.5 * scale
+                },
+                seed: 5.3,
+                speed: 0.9,
+                amp: self.bar.amp,
+                mode: 1.0,
+                bands: 3.0,
+                variant: VARIANT_FLUID,
+                progress: 0.0,
+                pointer: (self.bar.px, self.bar.py),
+                colors: GREENS,
+            },
+        );
+        // 播放页覆层在场时的两槽(#69):主控条底与两颗次要圆钮
+        // 的 glass 底。覆层不在场就整个不进 —— 那时它们连元素
+        // 都还没实例化。
+        let viz_open = shell.get_play_page_open();
+        let viz_bar_w = shell.get_viz_bar_w();
+        let viz_bar_h = shell.get_viz_bar_h();
+        let (variant, progress) = fluid_or_progress(
+            ui.global::<Player>().get_buffering(),
+            ui.global::<Player>().get_progress_ratio(),
+        );
+        let viz_bar_i = push(
+            viz_open && viz_bar_w > 1.0 && viz_bar_h > 1.0,
+            AuroraBtnSlotControls {
+                w: viz_bar_w * scale,
+                h: viz_bar_h * scale,
+                // 与 app.slint 的 border-radius 同式。
+                radius: if compact {
+                    16.0 * scale
+                } else {
+                    viz_bar_h * 0.5 * scale
+                },
+                seed: 2.9,
+                speed: 0.85,
+                // 与胶囊同一个信号(播放当热),共用那份振幅,
+                // 不为同一条曲线养第二台收敛机。压掉四成:
+                // 控制键就压在这层上,紧凑版式的条又短,满幅的
+                // 羽流会把随机键与循环键的图标冲得读不出来
+                // (真机竖屏才看得出,桌面那条长而扁,亮核落在
+                // 时间读数那边)。
+                amp: self.bar.amp * 0.6,
+                mode: 1.0,
+                bands: 3.0,
+                variant,
+                progress,
+                pointer: (0.72, 0.5),
+                colors: GREENS,
+            },
+        );
+        // 侧栏底部两颗 glass 圆钮(#71)。各渲各的:选中那颗把振幅
+        // 拉满,共用一张图就分不出谁被选中。侧栏只在宽版式存在。
+        let tab = shell.get_current_tab();
+        let key_a_i = push(
+            !compact,
+            nav_key_slot(scale, 4.6, tab == 2, GREENS),
+        );
+        let key_b_i = push(
+            !compact,
+            nav_key_slot(scale, 7.2, tab == 3, GREENS),
+        );
+        let viz_glass_i = push(
+            viz_open,
+            AuroraBtnSlotControls {
+                // 与 widgets.slint 的 RoundControl 默认直径一致。
+                w: 44.0 * scale,
+                h: 44.0 * scale,
+                radius: 22.0 * scale,
+                seed: 6.4,
+                speed: 0.7,
+                // 两颗共用一张图,拆不出各自的悬停,底幅因此固定;
+                // glass 本就是低密度底,不靠振幅出戏。
+                amp: 0.55,
+                mode: 1.0,
+                bands: 3.0,
+                variant: VARIANT_GLASS,
+                progress: 0.0,
+                pointer: (0.5, 0.5),
+                colors: GREENS,
+            },
+        );
+
+        if slots.is_empty() {
+            return Demand::default();
+        }
+        let ambient = Demand {
+            busy: false,
+            ambient: true,
+        };
+        let controls = AuroraBtnControls {
+            time: self.time,
+            slots,
+        };
+        if self.shown.as_ref() == Some(&controls) {
+            return ambient;
+        }
+        let imgs = (btn_frame)(&controls);
+        self.shown = Some(controls);
+        let at = |i: Option<usize>| {
+            i.and_then(|i| imgs.get(i)).cloned()
+        };
+        if let Some(img) = at(home_i) {
+            shell.set_home_slot_bg(img);
+        }
+        if let Some(img) = at(daily_i) {
+            shell.set_empty_daily_bg(img);
+        }
+        if let Some(img) = at(bar_i) {
+            shell.set_bar_fluid_bg(img);
+        }
+        if let Some(img) = at(viz_bar_i) {
+            shell.set_viz_bar_bg(img);
+        }
+        if let Some(img) = at(viz_glass_i) {
+            shell.set_viz_glass_bg(img);
+        }
+        if let Some(img) = at(key_a_i) {
+            shell.set_nav_key_a_bg(img);
+        }
+        if let Some(img) = at(key_b_i) {
+            shell.set_nav_key_b_bg(img);
+        }
+        Demand {
+            busy: true,
+            ambient: true,
+        }
+    }
+
+    /// 活跃期内的一步:振幅朝各自的目标收敛,时钟往前走(单帧最多补 0.1 秒)。
+    fn advance(&mut self, ui: &MainWindow) {
+        let shell = ui.global::<Shell>();
+        self.home.step(
+            shell.get_home_slot_hover(),
+            (
+                shell.get_home_slot_px(),
+                shell.get_home_slot_py(),
+            ),
+        );
+        self.daily.step(
+            shell.get_empty_daily_hover(),
+            (
+                shell.get_empty_daily_px(),
+                shell.get_empty_daily_py(),
+            ),
+        );
+        // 胶囊的 fluid:播放当"热"(振幅升到满),暂停收回静息。
+        self.bar.step(
+            ui.global::<Player>().get_is_playing(),
+            (0.72, 0.5),
+        );
+        let now = web_time::Instant::now();
+        if let Some(last) = self.last {
+            self.time += now
+                .duration_since(last)
+                .as_secs_f32()
+                .min(0.1);
+        }
+        self.last = Some(now);
     }
 }
 
@@ -370,6 +382,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -395,6 +408,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -439,7 +453,7 @@ mod tests {
         let mut band = ButtonBand::default();
         ui.global::<Player>().set_is_playing(true);
 
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
         assert_eq!(
             frames.last().slots.len(),
             4,
@@ -448,7 +462,7 @@ mod tests {
 
         ui.global::<Shell>().set_bar_w(240.0);
         ui.global::<Shell>().set_bar_h(60.0);
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
 
         let slots = frames.last().slots;
         assert_eq!(slots.len(), 5);
@@ -478,6 +492,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -518,6 +533,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -539,6 +555,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -565,6 +582,7 @@ mod tests {
         ButtonBand::default().tick(
             &ui,
             1.0,
+            true,
             &mut frames.renderer(),
         );
 
@@ -588,7 +606,7 @@ mod tests {
         let frames = Frames::default();
         let mut band = ButtonBand::default();
 
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
         assert_eq!(
             frames.last().time,
             0.0,
@@ -598,7 +616,7 @@ mod tests {
         std::thread::sleep(
             core::time::Duration::from_millis(150),
         );
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
         assert_eq!(
             frames.last().time,
             0.1,
@@ -610,14 +628,97 @@ mod tests {
             core::time::Duration::from_millis(150),
         );
         ui.global::<Shell>().set_aurora_buttons_on(false);
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
         ui.global::<Shell>().set_aurora_buttons_on(true);
-        band.tick(&ui, 1.0, &mut frames.renderer());
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
 
         assert_eq!(
             frames.last().time,
             0.1,
             "关掉期间的时间不该在重开那一帧补上"
         );
+    }
+
+    /// 定格(`live` 为假)时时钟不走、控制量不变,一张图都不重渲 ——
+    /// 这正是静止时 GPU 不再烧的那一半。
+    #[test]
+    fn a_frozen_band_renders_nothing_new() {
+        let ui = band_window();
+        let frames = Frames::default();
+        let mut band = ButtonBand::default();
+
+        let first = band.tick(
+            &ui,
+            1.0,
+            true,
+            &mut frames.renderer(),
+        );
+        assert!(
+            first.busy,
+            "第一次渲出新图,要一帧让它上屏"
+        );
+        std::thread::sleep(
+            core::time::Duration::from_millis(30),
+        );
+
+        let frozen = band.tick(
+            &ui,
+            1.0,
+            false,
+            &mut frames.renderer(),
+        );
+        let again = band.tick(
+            &ui,
+            1.0,
+            false,
+            &mut frames.renderer(),
+        );
+
+        assert_eq!(frames.count(), 1, "定格之后不该再渲");
+        assert_eq!(
+            frozen,
+            Demand {
+                busy: false,
+                ambient: true
+            },
+            "还有常驻动效在场,但定格时不要下一帧"
+        );
+        assert_eq!(again, frozen);
+    }
+
+    /// 定格期间状态变了(媒体键开播,胶囊出场),照样渲出新的一帧,只是不连续动。
+    #[test]
+    fn a_state_change_while_frozen_renders_one_new_frame() {
+        let ui = band_window();
+        let frames = Frames::default();
+        let mut band = ButtonBand::default();
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
+
+        ui.global::<Player>().set_is_playing(true);
+        ui.global::<Shell>().set_bar_w(240.0);
+        ui.global::<Shell>().set_bar_h(60.0);
+        let changed = band.tick(
+            &ui,
+            1.0,
+            false,
+            &mut frames.renderer(),
+        );
+        let settled = band.tick(
+            &ui,
+            1.0,
+            false,
+            &mut frames.renderer(),
+        );
+
+        assert_eq!(frames.count(), 2);
+        assert_eq!(
+            slot_of(
+                &ui.global::<Shell>().get_bar_fluid_bg()
+            ),
+            Some(2),
+            "胶囊出场那一帧就该有底图"
+        );
+        assert!(changed.busy);
+        assert!(!settled.busy, "画完那一帧之后不该再要帧");
     }
 }

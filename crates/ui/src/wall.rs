@@ -335,6 +335,11 @@ impl Prewarm {
         true
     }
 
+    /// 预热停下了没有:编完了,或者墙已经真的在画。
+    pub fn done(&self) -> bool {
+        self.done
+    }
+
     /// render3d 回话:没有管线还在排队或编译了。
     pub fn finish(&mut self) {
         self.done = true;

@@ -2,8 +2,10 @@
 //!
 //! 职责:把 slint 镜像来的指针/滚轮/点击变成相机与动画状态,每帧组装一份
 //! [`WallControls`](POD seam)交给 apps/* 的卡墙闭包;封面缩略图到货后取出
-//! 像素、烘上圆角,经同一条 seam 上传。渲染循环前台恒满帧
-//! (见 change_log 2026-08-11 always-on-rendering),墙每帧照渲,没有冻结门。
+//! 像素、烘上圆角,经同一条 seam 上传。墙在动或有卡面要传时报 [`WallDrive::busy`],
+//! 渲染循环据此要下一帧;静止的墙只在活跃期内照渲(#153,`runtime::pace`)。
+//! 这里的回调都是用户动作,一律先经 pace 报一次输入 —— 光标不动的滚轮与读屏
+//! 那条路,`.slint` 的输入探针看不见。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -76,6 +78,9 @@ pub struct WallDrive {
     requested: Vec<slint::SharedString>,
     /// 烘一次就不动的空白卡面(像素, 宽, 高)。
     blank: Option<(Vec<u8>, u32, u32)>,
+    /// 上一次组帧时墙还在动(拖动、惯性、塌回、推镜)或还有卡面要传。
+    /// 渲染循环据此决定要不要下一帧(#153)。
+    busy: bool,
 }
 
 impl Default for WallDrive {
@@ -96,7 +101,14 @@ impl WallDrive {
             uploaded: Vec::new(),
             requested: Vec::new(),
             blank: None,
+            busy: false,
         }
+    }
+
+    /// 上一次 [`Self::frame`] 时墙还在动,或者还有卡面没传完 —— 这一帧必须渲,
+    /// 也还要下一帧。封面传一半就停帧的话,剩下的卡永远是空白。
+    pub fn busy(&self) -> bool {
+        self.busy
     }
 
     /// 这一帧的布局(物理像素)。场区尺寸由 slint 元素回写到 root 属性,
@@ -185,7 +197,7 @@ impl WallDrive {
         }
         self.was_pressed = pressed;
 
-        self.cam.step();
+        let cam_moving = self.cam.step();
         let collapsing = self.collapse.step();
 
         // 塌回落地:把墙藏掉,列表接管。
@@ -212,6 +224,11 @@ impl WallDrive {
             ui.global::<Player>().get_tracks().row_count();
         let poses = self.poses(&lay, count);
         let covers = self.collect_covers(ui, poses.len());
+        self.busy = pressed
+            || cam_moving
+            || collapsing
+            || self.dolly.is_some()
+            || !covers.is_empty();
 
         let dolly_extra = self
             .dolly
@@ -382,7 +399,7 @@ impl WallDrive {
                 }
                 _ => {
                     // 缩略图还没到:请求一次(列表虚拟化不会替看不见的行开口)。
-                    // 循环恒满帧,到货那一帧自然会被上面那一支接住。
+                    // 到货时 `thumbnail::apply` 经 pace 叫醒渲染循环,那一帧由上面那一支接住。
                     if !row.cover_url.is_empty()
                         && !self
                             .requested
@@ -431,6 +448,7 @@ pub(crate) fn bind(
     let d = drive.clone();
     ui.global::<Shell>().on_wall_tap(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let mut d = d.borrow_mut();
         let hit = d.hit(&ui, x, y);
         // 再点一次已经浮起的那张 = 播放。见 should_play:触摸屏收不到双击。
@@ -448,6 +466,7 @@ pub(crate) fn bind(
     // 鼠标的双击照旧能播 —— 它走得到这条回调,而触摸走不到。
     ui.global::<Shell>().on_wall_double(move |x, y| {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let mut d = d.borrow_mut();
         let Some(index) = d.hit(&ui, x, y) else {
             return;
@@ -464,6 +483,7 @@ pub(crate) fn bind(
     let d = drive.clone();
     ui.global::<Shell>().on_wall_step(move |delta| {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let count =
             ui.global::<Player>().get_tracks().row_count();
         let mut d = d.borrow_mut();
@@ -475,6 +495,7 @@ pub(crate) fn bind(
     let d = drive.clone();
     ui.global::<Shell>().on_wall_confirm(move || {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let mut d = d.borrow_mut();
         let focus = d.focus;
         if d.should_play(focus)
@@ -490,6 +511,7 @@ pub(crate) fn bind(
     let d = drive.clone();
     ui.global::<Shell>().on_wall_wheel(move |delta| {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let dpr = ui.window().scale_factor();
         d.borrow_mut().cam.wheel(delta * dpr);
     });
@@ -499,6 +521,7 @@ pub(crate) fn bind(
     let d = drive.clone();
     ui.global::<Shell>().on_set_view_wall(move |to_wall| {
         let Some(ui) = weak.upgrade() else { return };
+        crate::runtime::pace::input(&ui);
         let mut d = d.borrow_mut();
         d.collapse.target = if to_wall { 1.0 } else { 0.0 };
         if to_wall {
@@ -612,8 +635,8 @@ mod tests {
         );
     }
 
-    /// 动画收敛只是插值到位,不再衍生冻结:step 收敛后照样可以每帧调用,
-    /// 状态稳定不漂移(前台恒满帧,见 change_log 2026-08-11)。
+    /// 动画收敛只是插值到位:step 收敛后照样可以反复调用,状态稳定不漂移 ——
+    /// 定格期间属性变化带来的零星帧也会调到它(#153)。
     #[test]
     fn settled_steps_stay_stable_under_constant_calls() {
         let mut d = WallDrive::new();
