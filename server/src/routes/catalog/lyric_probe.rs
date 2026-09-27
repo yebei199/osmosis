@@ -60,13 +60,14 @@ pub(crate) fn kind_of(lyric: &proto::Lyric) -> LyricKind {
         return LyricKind::None;
     }
     if lines.len() <= INSTRUMENTAL_MAX_LINES
-        && lines
-            .iter()
-            .any(|line| line.text.contains(INSTRUMENTAL_MARK))
+        && lines.iter().any(|line| {
+            line.text.contains(INSTRUMENTAL_MARK)
+        })
     {
         return LyricKind::Instrumental;
     }
-    if lines.iter().any(|line| !line.translation.is_empty()) {
+    if lines.iter().any(|line| !line.translation.is_empty())
+    {
         return LyricKind::Translated;
     }
     LyricKind::Lyric
@@ -74,30 +75,45 @@ pub(crate) fn kind_of(lyric: &proto::Lyric) -> LyricKind {
 
 /// 每分钟问几次:`LYRIC_PROBE_PER_MINUTE`,没设或不是正整数就用默认值。
 fn per_minute() -> NonZeroU32 {
-    let Ok(raw) = std::env::var("LYRIC_PROBE_PER_MINUTE") else {
+    let Ok(raw) = std::env::var("LYRIC_PROBE_PER_MINUTE")
+    else {
         return DEFAULT_PER_MINUTE;
     };
     raw.trim().parse().unwrap_or_else(|_| {
-        tracing::warn!(raw, "LYRIC_PROBE_PER_MINUTE 不是正整数,用默认值");
+        tracing::warn!(
+            raw,
+            "LYRIC_PROBE_PER_MINUTE 不是正整数,用默认值"
+        );
         DEFAULT_PER_MINUTE
     })
 }
 
 /// 起 worker。`stop` 一到就不再领。
-pub(crate) fn spawn(state: &AppState, stop: &CancellationToken) {
+pub(crate) fn spawn(
+    state: &AppState,
+    stop: &CancellationToken,
+) {
     let per_minute = per_minute();
-    tracing::info!(per_minute = per_minute.get(), "歌词探测 worker 起来了");
-    let limiter = RateLimiter::direct(Quota::per_minute(per_minute));
+    tracing::info!(
+        per_minute = per_minute.get(),
+        "歌词探测 worker 起来了"
+    );
+    let limiter =
+        RateLimiter::direct(Quota::per_minute(per_minute));
     let state = state.clone();
     let stop = stop.clone();
     tokio::spawn(async move {
         while let Some(busy) = stop
-            .run_until_cancelled(step(&state, NETEASE, &limiter))
+            .run_until_cancelled(step(
+                &state, NETEASE, &limiter,
+            ))
             .await
         {
             if !busy
                 && stop
-                    .run_until_cancelled(tokio::time::sleep(IDLE))
+                    .run_until_cancelled(
+                        tokio::time::sleep(IDLE),
+                    )
                     .await
                     .is_none()
             {
@@ -114,11 +130,14 @@ pub(crate) async fn step(
     limiter: &DefaultDirectRateLimiter,
 ) -> bool {
     let claimed = match state.pool.acquire().await {
-        Ok(mut conn) => {
-            lyric::claim(&mut conn, platform, LEASE, MAX_ATTEMPTS)
-                .await
-                .map_err(|err| format!("{err:?}"))
-        }
+        Ok(mut conn) => lyric::claim(
+            &mut conn,
+            platform,
+            LEASE,
+            MAX_ATTEMPTS,
+        )
+        .await
+        .map_err(|err| format!("{err:?}")),
         Err(err) => Err(err.to_string()),
     };
     match claimed {
@@ -136,11 +155,16 @@ pub(crate) async fn step(
 }
 
 /// 问平台要这首的歌词,翻成标记。平台说这首不存在(下架)也当没有歌词。
-async fn probe(state: &AppState, job: &Job) -> Result<LyricKind, String> {
+async fn probe(
+    state: &AppState,
+    job: &Job,
+) -> Result<LyricKind, String> {
     let account = match state.pool.acquire().await {
-        Ok(mut conn) => account::find(&mut conn, job.account_id)
-            .await
-            .map_err(|err| format!("{err:?}"))?,
+        Ok(mut conn) => {
+            account::find(&mut conn, job.account_id)
+                .await
+                .map_err(|err| format!("{err:?}"))?
+        }
         Err(err) => return Err(err.to_string()),
     }
     .ok_or("问歌词的账号刚被删了")?;
@@ -157,7 +181,10 @@ async fn probe(state: &AppState, job: &Job) -> Result<LyricKind, String> {
         .await;
     match asked {
         Ok(response) => Ok(kind_of(
-            &response.into_inner().lyric.unwrap_or_default(),
+            &response
+                .into_inner()
+                .lyric
+                .unwrap_or_default(),
         )),
         Err(status) if status.code() == Code::NotFound => {
             Ok(LyricKind::None)
@@ -171,7 +198,9 @@ async fn run(state: &AppState, job: &Job) {
     let outcome = probe(state, job).await;
     let settled = match state.pool.acquire().await {
         Ok(mut conn) => match outcome {
-            Ok(kind) => lyric::settle(&mut conn, job, kind).await,
+            Ok(kind) => {
+                lyric::settle(&mut conn, job, kind).await
+            }
             Err(err) => {
                 tracing::warn!(
                     track_id = %job.track_id,
@@ -179,7 +208,8 @@ async fn run(state: &AppState, job: &Job) {
                     %err,
                     "歌词探测失败,退避后再试"
                 );
-                lyric::retry_later(&mut conn, job, BACKOFF).await
+                lyric::retry_later(&mut conn, job, BACKOFF)
+                    .await
             }
         }
         .map_err(|err| format!("{err:?}")),

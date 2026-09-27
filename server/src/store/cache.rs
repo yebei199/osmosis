@@ -319,9 +319,10 @@ impl TrackRow {
             cover: self.cover,
             duration_ms: self.duration_ms,
             // 两列同进同出(见 put_details),只有一半的行不存在
-            album: self.album_id.zip(self.album_name).map(
-                |(id, name)| AlbumRefDto { id, name },
-            ),
+            album: self
+                .album_id
+                .zip(self.album_name)
+                .map(|(id, name)| AlbumRefDto { id, name }),
         }
     }
 }
@@ -348,7 +349,9 @@ pub async fn put_details(
                 .push_bind(&track.artists)
                 .push_bind(&track.cover)
                 .push_bind(track.duration_ms)
-                .push_bind(track.album.as_ref().map(|a| &a.id))
+                .push_bind(
+                    track.album.as_ref().map(|a| &a.id),
+                )
                 .push_bind(
                     track.album.as_ref().map(|a| &a.name),
                 );

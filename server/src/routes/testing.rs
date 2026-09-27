@@ -27,16 +27,15 @@ use server::bangdream::proto::{
     GetAccountStatusRequest, GetAccountStatusResponse,
     GetDailyRecommendationsRequest,
     GetDailyRecommendationsResponse, GetLyricRequest,
-    GetLyricResponse,
-    GetPlaySourceRequest, GetPlaySourceResponse,
-    GetPlaylistRequest, GetPlaylistResponse,
-    GetTracksRequest, GetTracksResponse,
-    ListLikedTracksRequest, ListLikedTracksResponse,
-    ListUserPlaylistsRequest, ListUserPlaylistsResponse,
-    LogoutRequest, LogoutResponse, Lyric, Platform, PlaySource,
-    Playlist, PlaylistTrackRef, QrLoginEvent,
-    SetPlaylistSubscribedRequest,
-    SearchTracksRequest, SearchTracksResponse,
+    GetLyricResponse, GetPlaySourceRequest,
+    GetPlaySourceResponse, GetPlaylistRequest,
+    GetPlaylistResponse, GetTracksRequest,
+    GetTracksResponse, ListLikedTracksRequest,
+    ListLikedTracksResponse, ListUserPlaylistsRequest,
+    ListUserPlaylistsResponse, LogoutRequest,
+    LogoutResponse, Lyric, Platform, PlaySource, Playlist,
+    PlaylistTrackRef, QrLoginEvent, SearchTracksRequest,
+    SearchTracksResponse, SetPlaylistSubscribedRequest,
     SetPlaylistSubscribedResponse, SetTrackLikedRequest,
     SetTrackLikedResponse, Track, WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
@@ -441,7 +440,9 @@ impl CatalogService for FakeUpstream {
             Some(Err(code)) => {
                 Err(Status::new(*code, "假上游说不行"))
             }
-            None => Err(Status::unavailable("假上游没摆这首")),
+            None => {
+                Err(Status::unavailable("假上游没摆这首"))
+            }
         }
     }
 

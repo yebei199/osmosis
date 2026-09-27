@@ -231,9 +231,11 @@ pub(crate) async fn remember_details(
     tracks: &[TrackDto],
 ) {
     let written = match state.pool.acquire().await {
-        Ok(mut conn) => cache::put_details(&mut conn, tracks)
-            .await
-            .map_err(|err| format!("{err:?}")),
+        Ok(mut conn) => {
+            cache::put_details(&mut conn, tracks)
+                .await
+                .map_err(|err| format!("{err:?}"))
+        }
         Err(err) => Err(err.to_string()),
     };
     if let Err(err) = written {

@@ -352,9 +352,8 @@ fn foreign_cover_passes_through() {
 /// 专辑只带身份与名字落到 DTO(#156)。
 #[test]
 fn track_maps_album_id_and_name() {
-    let album = track_to_dto(full_track())
-        .album
-        .expect("有专辑");
+    let album =
+        track_to_dto(full_track()).album.expect("有专辑");
 
     assert_eq!(album.id, "88888");
     assert_eq!(album.name, "LiSA BEST");

@@ -13,7 +13,9 @@ use crate::routes::testing::{
 use super::{SearchQuery, daily, search_tracks};
 
 /// 两首歌:一首带专辑,一首没有。
-fn listed(case: &str) -> Vec<server::bangdream::proto::Track> {
+fn listed(
+    case: &str,
+) -> Vec<server::bangdream::proto::Track> {
     let mut with_album =
         upstream_track(&track_id(case, 1), "有专辑");
     with_album.album = Some(Album {
@@ -21,7 +23,10 @@ fn listed(case: &str) -> Vec<server::bangdream::proto::Track> {
         name: "LiSA BEST".to_owned(),
         ..Album::default()
     });
-    vec![with_album, upstream_track(&track_id(case, 2), "单曲")]
+    vec![
+        with_album,
+        upstream_track(&track_id(case, 2), "单曲"),
+    ]
 }
 
 /// 库里这两首的详情,按 id 顺序。
@@ -65,7 +70,10 @@ async fn search_writes_its_tracks_into_the_cache() {
     .await
     .expect("搜索应该成功");
 
-    assert_eq!(stored(&pool, case).await, response.0.tracks);
+    assert_eq!(
+        stored(&pool, case).await,
+        response.0.tracks
+    );
     assert_eq!(
         response.0.tracks[0]
             .album
@@ -93,5 +101,8 @@ async fn daily_writes_its_tracks_into_the_cache() {
         .await
         .expect("日推应该成功");
 
-    assert_eq!(stored(&pool, case).await, response.0.tracks);
+    assert_eq!(
+        stored(&pool, case).await,
+        response.0.tracks
+    );
 }

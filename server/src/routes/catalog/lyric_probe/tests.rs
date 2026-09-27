@@ -61,7 +61,10 @@ fn a_lyric_with_any_translation_is_translated() {
         line("紅蓮華", ""),
         line("強くなれる理由を", "变强的理由"),
     ];
-    assert_eq!(kind_of(&lyric(lines)).as_str(), "translated");
+    assert_eq!(
+        kind_of(&lyric(lines)).as_str(),
+        "translated"
+    );
 }
 
 /// 这条测试独有的平台名:领任务按平台领,别的测试写的网易云行碰不到。

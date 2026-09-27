@@ -4,10 +4,10 @@
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
 use contract::{
-    AlbumRefDto, ArtistDto, LyricDto, LyricLineDto, NeteaseStatusDto,
-    PlaySourceDto, PlaylistDto, PlaylistSource,
-    QR_CONFIRMED, QR_EXPIRED, QR_SCANNED, QR_WAITING,
-    QrLoginDto, TrackDto,
+    AlbumRefDto, ArtistDto, LyricDto, LyricLineDto,
+    NeteaseStatusDto, PlaySourceDto, PlaylistDto,
+    PlaylistSource, QR_CONFIRMED, QR_EXPIRED, QR_SCANNED,
+    QR_WAITING, QrLoginDto, TrackDto,
 };
 
 use super::lyric_split::split_long_lines;
