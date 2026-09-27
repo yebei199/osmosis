@@ -126,6 +126,22 @@ PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,�
 测试实例)占账号一个队列槽,满 10 个就发布不上去。脚本判失败是对的,那是真问题。
 窗口在锁屏或屏外时合成器一秒只给一帧,动画与相机慢到几十秒,脚本的等待按这个放宽过。
 
+## radio-e2e.sh —— 电台起播、续取,续进来的都没听过吗(#159)
+
+```sh
+test/radio-e2e.sh fm       # Music 页点「电台」分区,私人 FM
+test/radio-e2e.sh heart    # 控制条抽屉「从这首开电台」,心动模式(要已经在放一首)
+PORT=8090 test/radio-e2e.sh fm   # 真机
+```
+
+形状照 `pick-e2e.sh`:MCP 驱动、按无障碍标签找控件(分区条插进电台之后,按位置找会全体
+错位),断言走数据库。起播后按「下一首」(心动一批上百首,先从队列页点到队尾)直到队列剩
+最后一首,判据三条:`play_events` 多了一行、这台设备队列最新一版的条目数涨了、那一版里
+每一首开电台之前都不在该账号的 `play_events` 里。
+
+前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
+的那一版,网易云要绑着。
+
 ## pick-bench.py —— 点一首歌到出声花了多久(#137)
 
 前提同 `pick-e2e.sh`。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。

@@ -206,6 +206,31 @@ async fn netease_liked(
     state: &AppState,
     account: &Account,
 ) -> Result<GetPlaylistResponse, Failure> {
+    let liked_id = netease_liked_id(state, account).await?;
+
+    Ok(state
+        .upstream
+        .library
+        .clone()
+        .get_playlist(bangdream::as_user(
+            account,
+            GetPlaylistRequest {
+                platform: Platform::Netease as i32,
+                playlist_id: liked_id,
+            },
+        ))
+        .await
+        .map_err(|status| fail(&status))?
+        .into_inner())
+}
+
+/// 这个账号绑的网易云账号的红心歌单 id:问账号 → 找红心歌单。
+///
+/// 心动模式也要它(#159):上游的 `GetIntelligenceList` 必须挂在一个真歌单上。
+pub(crate) async fn netease_liked_id(
+    state: &AppState,
+    account: &Account,
+) -> Result<String, Failure> {
     let mut auth = state.upstream.auth.clone();
     let mut library = state.upstream.library.clone();
 
@@ -220,7 +245,7 @@ async fn netease_liked(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    // 未登录是**状态**不是错误(上游的 `docs/adr/0005`),但导入的目的没达成 ——
+    // 未登录是**状态**不是错误(上游的 `docs/adr/0005`),但调用方的目的没达成 ——
     // 当成「导进零首」的话,用户会以为网易云那边一首红心都没有
     if !netease_account.logged_in {
         return Err(fail(&tonic::Status::unauthenticated(
@@ -228,24 +253,12 @@ async fn netease_liked(
         )));
     }
 
-    let liked_id = liked_playlist_id(
+    liked_playlist_id(
         &mut library,
         account,
         &netease_account.user_id,
     )
-    .await?;
-
-    Ok(library
-        .get_playlist(bangdream::as_user(
-            account,
-            GetPlaylistRequest {
-                platform: Platform::Netease as i32,
-                playlist_id: liked_id,
-            },
-        ))
-        .await
-        .map_err(|status| fail(&status))?
-        .into_inner())
+    .await
 }
 
 /// 找出这个账号的红心歌单在平台上的 id。

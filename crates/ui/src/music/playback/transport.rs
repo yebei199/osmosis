@@ -409,6 +409,8 @@ pub(in crate::music) fn start_progress_tick(
             let Some(ui) = weak.upgrade() else { return };
             if ui.global::<Player>().get_is_playing() {
                 tick_progress(&ui, &deck);
+                // 电台的队列快放完了就续一批(#159)
+                crate::music::radio::top_up(&ui, &deck);
             }
         },
     );

@@ -557,6 +557,8 @@ async fn main() {
         // 搜到的歌手点下去听什么 —— 平台此刻认为的热门那几首
         .route("/artists/{id}/tracks", get(artist_tracks))
         .route("/daily", get(daily))
+        // 电台(#159):私人 FM 与心动两种模式,听过的丢掉
+        .route("/radio", get(routes::catalog::radio::radio))
         .route("/liked", get(liked))
         // 红心的**全量标识**,不分页。/liked 给的是一页曲目,回答不了
         // 「这一首红心没有」—— 而界面每一行都要问这个问题。

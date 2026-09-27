@@ -434,3 +434,45 @@ fn like_does_nothing_without_a_track() {
 
     assert_eq!(asked.get(), 0, "手上没歌时不该喊");
 }
+
+/// 从这首开电台(#159):真按一下,带着正在放的那首的 id 喊 radio-from,抽屉跟着收起。
+#[test]
+fn a_real_click_on_radio_seeds_it_with_the_playing_track() {
+    let ui = drawer_playing("42");
+
+    let asked = std::rc::Rc::new(std::cell::RefCell::new(
+        Vec::new(),
+    ));
+    let log = asked.clone();
+    ui.global::<Player>().on_radio_from(move |id| {
+        log.borrow_mut().push(id.to_string());
+    });
+
+    let row = key(&ui, "从这首开电台")
+        .expect("抽屉里该有「从这首开电台」");
+    click_at(&ui, &row);
+
+    assert_eq!(*asked.borrow(), vec!["42".to_owned()]);
+    assert!(
+        !present(&ui, "PlayerBar::drawer"),
+        "开了电台,抽屉该收起"
+    );
+}
+
+/// 没在放歌时点它什么也不发生 —— 没有种子。
+#[test]
+fn radio_does_nothing_without_a_track() {
+    let ui = drawer_playing("");
+
+    let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counter = asked.clone();
+    ui.global::<Player>().on_radio_from(move |_| {
+        counter.set(counter.get() + 1);
+    });
+
+    key(&ui, "从这首开电台")
+        .expect("行还在,只是灰着")
+        .invoke_accessible_default_action();
+
+    assert_eq!(asked.get(), 0, "手上没歌时不该喊");
+}

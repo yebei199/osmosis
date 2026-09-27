@@ -30,6 +30,8 @@ mod feed;
 mod list;
 mod notice;
 mod queuepage;
+#[cfg(not(target_arch = "wasm32"))]
+mod radio;
 mod report;
 mod rules;
 #[cfg(not(target_arch = "wasm32"))]
@@ -159,6 +161,8 @@ struct Deck {
     /// 换过几次歌。封面在后台线程上排队解码时拿它判断「还是不是这一首」——
     /// `playback` 是 `Rc`,过不了线程(见 `imagery::cover::decode_off_thread`)。
     cover_turn: Arc<std::sync::atomic::AtomicU64>,
+    /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
+    radio: radio::Radio,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -225,6 +229,7 @@ pub fn bind(
         alignment: Alignment::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
+        radio: radio::Radio::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -257,6 +262,7 @@ pub fn bind(
     bind_outputs(ui, &deck);
     bind_group(ui, &deck);
     queuepage::bind(ui, &deck);
+    radio::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
     start_progress_tick(ui, &deck);

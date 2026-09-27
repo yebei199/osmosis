@@ -243,7 +243,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     });
 }
 
-/// Music 页的四个分区。编号即 `musicnav.slint` 里 `MusicSections.items` 的下标。
+/// Music 页的分区。编号即 `musicnav.slint` 里 `MusicSections.items` 各项的 `id`。
 ///
 /// 两处手工对齐:那边加一项,这里就要多一个分支。做成枚举而不是散在各处的
 /// 魔数,是为了让「漏了一个分区」变成编译错误而不是运行时的一片空白。
@@ -254,6 +254,9 @@ pub enum Section {
     Playlists,
     Search,
     Recent,
+    /// 电台(#159)。编号 4 是后加的:摆在每日推荐之后,编号不插队,
+    /// 已有四个分区的编号因此一个没动。
+    Radio,
 }
 
 // 门要加在 impl 上,不能只加在方法上:方法没了,`impl Section` 这行还在,
@@ -267,6 +270,7 @@ impl Section {
             1 => Self::Playlists,
             2 => Self::Search,
             3 => Self::Recent,
+            4 => Self::Radio,
             _ => Self::Daily,
         }
     }
@@ -281,6 +285,12 @@ pub(super) fn load_section(
 ) {
     match Section::from_index(section) {
         Section::Daily => fetch_daily(weak, deck),
+        // 点开即播私人 FM;电台已经在放 FM 就只摆出来,不重开一批
+        Section::Radio => {
+            if let Some(ui) = weak.upgrade() {
+                radio::open(&ui, deck);
+            }
+        }
         Section::Recent => {
             fetch_into(
                 weak,
@@ -434,7 +444,7 @@ pub(super) fn fetch_cached_into<Cached, Fut>(
 
 /// 等这次取数回来,凭 `ticket` 落账:算数就写进它的视图,是当前视图才上屏。
 #[cfg(not(target_arch = "wasm32"))]
-fn land<Cached, Fut>(
+pub(super) fn land<Cached, Fut>(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
     action: Rc<Action>,
@@ -545,6 +555,7 @@ pub(super) fn show_section(
     let source = match Section::from_index(section) {
         Section::Daily => Some(ViewSource::Daily),
         Section::Recent => Some(ViewSource::Recent),
+        Section::Radio => Some(ViewSource::Radio),
         Section::Search => deck.views.latest_search(),
         // 歌单分区摆的是歌单列表,曲目区不出现
         Section::Playlists => return,

@@ -114,8 +114,8 @@ export component MainWindow inherits Window {
     // 回调 —— docs/adr/0010 的「功能等价路径」。
 
     // ── Music 页的二级导航 ──
-    // 当前分区:0=每日推荐、1=我的歌单、2=搜索、3=最近播放。
-    // 编号即 musicnav.slint 里 MusicSections.items 的下标,Rust 按它决定拉什么。
+    // 当前分区:0=每日推荐、1=我的歌单、2=搜索、3=最近播放、4=电台。
+    // 编号即 musicnav.slint 里 MusicSections.items 各项的 id,Rust 按它决定拉什么。
 
     // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
     // 负偏移都从这几个值算,别在别处重抄。歌词**不**参与深度合成,它与歌名同层

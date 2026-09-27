@@ -326,6 +326,33 @@ impl Queue {
         &self.order
     }
 
+    /// 往队尾续一批(电台续取,#159):**不换批**,当前这首与已排的次序都不动。
+    ///
+    /// 已在队列里的(按平台与 id 认)不再进,返回真正续上了几首。随机开着时
+    /// 新来的照到达顺序排在最后 —— 它们本来就是平台刚推的,没有可洗的先后。
+    pub fn append(
+        &mut self,
+        tracks: Vec<TrackDto>,
+    ) -> usize {
+        let before = self.tracks.len();
+        for track in tracks {
+            let known = self.tracks.iter().any(|held| {
+                held.platform == track.platform
+                    && held.id == track.id
+            });
+            if !known {
+                self.order.push(self.tracks.len());
+                self.tracks.push(track);
+            }
+        }
+        self.tracks.len() - before
+    }
+
+    /// 当前这首之后还排着几首。空批是 0。
+    pub fn remaining(&self) -> usize {
+        self.order.len().saturating_sub(self.cursor + 1)
+    }
+
     /// 列表循环回卷过几次。见 [`Self::round`] 的说明。
     pub const fn round(&self) -> u64 {
         self.round

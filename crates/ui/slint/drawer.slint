@@ -23,12 +23,12 @@ export global DrawerMetrics {
     out property <length> pad: 8px;
     out property <length> gap: 2px;
 
-    // 模式两行 + 喜欢一行 + 下载一行 + 音量一行 + 输出设备一行。**到处都是这个数** ——
+    // 模式两行 + 喜欢一行 + 下载一行 + 电台一行 + 音量一行 + 输出设备一行。**到处都是这个数** ——
     // 抽屉在播放页里与在别处一样高、一样几行,否则「展开」在两处就不是同一件事了。
     out property <length> total-h: self.pad * 2
-        + self.row-h * 5
+        + self.row-h * 6
         + self.strip-h
-        + self.gap * 5;
+        + self.gap * 6;
 }
 
 // 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
@@ -140,6 +140,7 @@ export component Drawer inherits Rectangle {
     callback like-toggled();
 
     callback download-clicked();
+    callback radio-clicked();
     callback shuffle-toggled();
     callback loop-cycled();
     callback volume-changed(float);
@@ -207,6 +208,20 @@ export component Drawer inherits Rectangle {
             }
         }
 
+        // 从这首开电台(#159):以正在放的这首为种子开心动模式,队列换成它推的歌。
+        // 没在放歌时灰着,理由同下载。
+        DrawerRow {
+            icon: root.radio-icon;
+            title: "从这首开电台";
+            state: "";
+            label: "从这首开电台";
+            checkable: false;
+            opacity: root.can-download ? 1.0 : 0.4;
+            clicked => {
+                if (root.can-download) { root.radio-clicked(); }
+            }
+        }
+
         // 音量:抽屉里有地方,滑块常驻,不必再点开一层。
         HorizontalLayout {
             height: DrawerMetrics.row-h;
@@ -255,6 +270,8 @@ export component Drawer inherits Rectangle {
     // 图标一律内嵌 SVG path,viewbox 24×24,不引外部资源。
     property <string> shuffle-icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
     property <string> heart-icon: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
+    // 电台:一座发射塔两道波。
+    property <string> radio-icon: "M12 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm-1 5h2l2 7h-2l-.5-2h-1l-.5 2H9l2-7zM7.05 7.05l1.41 1.41a5 5 0 0 0 0 7.08l-1.41 1.41a7 7 0 0 1 0-9.9zm9.9 0a7 7 0 0 1 0 9.9l-1.41-1.41a5 5 0 0 0 0-7.08l1.41-1.41zM4.22 4.22l1.42 1.42a9 9 0 0 0 0 12.72l-1.42 1.42a11 11 0 0 1 0-15.56zm15.56 0a11 11 0 0 1 0 15.56l-1.42-1.42a9 9 0 0 0 0-12.72l1.42-1.42z";
     property <string> download-icon: "M12 3v10.55l3.29-3.26 1.42 1.42L12 16.4l-4.71-4.69 1.42-1.42L12 13.55V3h0zM5 18h14v2H5z";
     property <string> loop-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
     property <string> loop-one-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";

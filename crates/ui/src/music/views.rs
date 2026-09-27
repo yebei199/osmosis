@@ -22,6 +22,8 @@ const CAPACITY: usize = 16;
 pub(crate) enum ViewSource {
     Daily,
     Recent,
+    /// 电台区:电台正在放的那一批(#159)。
+    Radio,
     /// 歌单:来源与歌单 id。
     Playlist(crate::library::playlist::Source, String),
     Artist(String),

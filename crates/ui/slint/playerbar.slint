@@ -114,6 +114,10 @@ export component PlayerBar inherits Rectangle {
         liked: Player.now-liked;
         like-toggled => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         download-clicked => { Library.download-track(Player.now-id); }
+        radio-clicked => {
+            root.drawer-open = false;
+            Player.radio-from(Player.now-id);
+        }
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
         volume-changed(v) => { Player.volume-changed(v); }
