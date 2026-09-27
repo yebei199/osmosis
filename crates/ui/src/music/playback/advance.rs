@@ -58,7 +58,7 @@ pub(in crate::music) fn start_prefetch(
         deck.prefetching.set(false);
         match ready {
             Ok((decoded, health)) => {
-                log::debug!("预取就绪: {}", track.title);
+                log::info!("预取就绪: {}", track.title);
                 *deck.prefetched.borrow_mut() =
                     Some((track.id, (decoded, health)));
             }
