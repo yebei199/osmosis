@@ -238,3 +238,37 @@ fn only_replacing_starts_a_new_batch() {
         "换一批(哪怕内容一样)就是新的一批"
     );
 }
+
+/// 电台续取(#159):接在队尾,不换批、不动当前这首,已在队列里的不重复进。
+#[test]
+fn append_extends_the_batch_without_replacing_it() {
+    let mut queue = Queue::new(batch(3), 1);
+    let before = queue.batch();
+
+    let added =
+        queue.append(vec![track(2), track(3), track(4)]);
+
+    assert_eq!(added, 2);
+    assert_eq!(queue.batch(), before);
+    assert_eq!(id_of(&queue), Some("1".to_owned()));
+    assert_eq!(queue.tracks().len(), 5);
+    assert_eq!(queue.remaining(), 3);
+    queue.next(0);
+    queue.next(0);
+    assert_eq!(id_of(&queue), Some("3".to_owned()));
+}
+
+/// 还剩几首没放:当前这首不算。随机开着时按播放次序数。
+#[test]
+fn remaining_counts_what_is_left_after_the_current_track() {
+    let mut queue = Queue::new(batch(4), 0);
+    assert_eq!(queue.remaining(), 3);
+
+    queue.shuffle(7);
+    queue.next(0);
+    assert_eq!(queue.remaining(), 2);
+
+    queue.append(vec![track(9)]);
+    assert_eq!(queue.remaining(), 3);
+    assert_eq!(Queue::default().remaining(), 0);
+}

@@ -146,6 +146,22 @@ test/feedback-e2e.sh complete   # 拖进度条到曲尾附近,等它自己放完
 (#157 F-002)。不必等一整首:拖到只剩几秒,验的是切歌那一刻算出的比例对不对,
 不是等待本身要多久。
 
+## radio-e2e.sh —— 电台起播、续取,续进来的都没听过吗(#159)
+
+```sh
+test/radio-e2e.sh fm       # Music 页点「电台」分区,私人 FM
+test/radio-e2e.sh heart    # 控制条抽屉「从这首开电台」,心动模式(要已经在放一首)
+PORT=8090 test/radio-e2e.sh fm   # 真机
+```
+
+形状照 `pick-e2e.sh`:MCP 驱动、按无障碍标签找控件(分区条插进电台之后,按位置找会全体
+错位),断言走数据库。起播后按「下一首」(心动一批上百首,先从队列页点到队尾)直到队列剩
+最后一首,判据三条:`play_events` 多了一行、这台设备队列最新一版的条目数涨了、那一版里
+每一首开电台之前都不在该账号的 `play_events` 里。
+
+前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
+的那一版,网易云要绑着。
+
 ## pick-bench.py —— 点一首歌到出声花了多久(#137)
 
 前提同 `pick-e2e.sh`。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。

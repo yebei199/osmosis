@@ -61,8 +61,8 @@ pub use artwork::{
 pub use auth::{login, logout, register};
 
 pub use catalog::{
-    artist_tracks, daily, health, liked, lyric,
-    play_source, search_artists, search_playlists,
+    RadioMode, artist_tracks, daily, health, liked, lyric,
+    play_source, radio, search_artists, search_playlists,
     search_tracks,
 };
 

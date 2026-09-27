@@ -30,6 +30,8 @@ mod feed;
 mod list;
 mod notice;
 mod queuepage;
+#[cfg(not(target_arch = "wasm32"))]
+mod radio;
 mod report;
 mod rules;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +164,8 @@ struct Deck {
     /// 正在计的这一段播放挂在哪条服务端事件行上(#157)。换歌或停下时
     /// 取走它去补记听了多久,取不到(还没报上起播、或已经报过)就不补。
     current_play: Rc<RefCell<Option<CurrentPlay>>>,
+    /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
+    radio: radio::Radio,
 }
 
 /// 把搜索与播放接到音乐页上。
@@ -229,6 +233,7 @@ pub fn bind(
         volume_save: Default::default(),
         cover_turn: Default::default(),
         current_play: Rc::new(RefCell::new(None)),
+        radio: radio::Radio::default(),
     };
 
     // 红心先接上再拉:拉回来那一刻会重标列表,而列表这时还是空的,
@@ -263,6 +268,7 @@ pub fn bind(
     bind_outputs(ui, &deck);
     bind_group(ui, &deck);
     queuepage::bind(ui, &deck);
+    radio::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
     start_progress_tick(ui, &deck);

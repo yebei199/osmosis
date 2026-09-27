@@ -11,7 +11,7 @@
 //! 前缀里带着进程起跑的时刻,早于一天的由 [`sweep_stale_runs`] 清掉,
 //! 开发库因此不会越堆越多。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,8 +26,11 @@ use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
     GetDailyRecommendationsRequest,
-    GetDailyRecommendationsResponse, GetLyricRequest,
-    GetLyricResponse, GetPlaySourceRequest,
+    GetDailyRecommendationsResponse,
+    GetIntelligenceListRequest,
+    GetIntelligenceListResponse, GetLyricRequest,
+    GetLyricResponse, GetPersonalFmRequest,
+    GetPersonalFmResponse, GetPlaySourceRequest,
     GetPlaySourceResponse, GetPlaylistRequest,
     GetPlaylistResponse, GetTracksRequest,
     GetTracksResponse, ListLikedTracksRequest,
@@ -277,6 +280,13 @@ pub(crate) struct FakeUpstream {
     pub(crate) listed: Vec<Track>,
     /// `GetLyric` 按曲目 id 回的:歌词,或一个错误码。不在里面的回 Unavailable。
     pub(crate) lyrics: HashMap<String, Result<Lyric, Code>>,
+    /// `GetPersonalFm` 依次回的各批,问一次取走一批;取完了回空批。
+    pub(crate) fm_batches: Arc<Mutex<VecDeque<Vec<Track>>>>,
+    /// `GetPersonalFm` 被问了几次。拉取上限只能靠数它来验。
+    pub(crate) fm_pulls: Arc<Mutex<usize>>,
+    /// 每一次 `GetIntelligenceList` 收到的请求。它回的是 `listed`。
+    pub(crate) heart_asks:
+        Arc<Mutex<Vec<GetIntelligenceListRequest>>>,
 }
 
 impl FakeUpstream {
@@ -317,6 +327,24 @@ impl FakeUpstream {
         self.play_levels
             .lock()
             .expect("记档位的锁被毒化了")
+            .clone()
+    }
+
+    /// 私人 FM 至今被问了几次。
+    pub(crate) fn fm_pulls(&self) -> usize {
+        *self
+            .fm_pulls
+            .lock()
+            .expect("记 FM 次数的锁被毒化了")
+    }
+
+    /// 至今每一次心动模式的请求。
+    pub(crate) fn heart_asks(
+        &self,
+    ) -> Vec<GetIntelligenceListRequest> {
+        self.heart_asks
+            .lock()
+            .expect("记心动请求的锁被毒化了")
             .clone()
     }
 
@@ -468,6 +496,40 @@ impl DiscoverService for FakeUpstream {
         Status,
     > {
         Ok(Response::new(GetDailyRecommendationsResponse {
+            tracks: self.listed.clone(),
+        }))
+    }
+
+    async fn get_personal_fm(
+        &self,
+        _request: Request<GetPersonalFmRequest>,
+    ) -> Result<Response<GetPersonalFmResponse>, Status>
+    {
+        *self
+            .fm_pulls
+            .lock()
+            .expect("记 FM 次数的锁被毒化了") += 1;
+        let tracks = self
+            .fm_batches
+            .lock()
+            .expect("FM 批次的锁被毒化了")
+            .pop_front()
+            .unwrap_or_default();
+
+        Ok(Response::new(GetPersonalFmResponse { tracks }))
+    }
+
+    async fn get_intelligence_list(
+        &self,
+        request: Request<GetIntelligenceListRequest>,
+    ) -> Result<Response<GetIntelligenceListResponse>, Status>
+    {
+        self.heart_asks
+            .lock()
+            .expect("记心动请求的锁被毒化了")
+            .push(request.into_inner());
+
+        Ok(Response::new(GetIntelligenceListResponse {
             tracks: self.listed.clone(),
         }))
     }

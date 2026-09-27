@@ -93,4 +93,6 @@ export global Player {
     // 循环拨到这个绝对值。系统媒体控件给的是绝对值(MPRIS 的 LoopStatus),
     // 与现值的比对在 media.rs 的 dispatch 里做,这里只落地。
     callback loop-mode-set(int);
+    // 以这一首为种子开心动模式电台(#159)。参数是正在放的那首的 id。
+    callback radio-from(string);
 }

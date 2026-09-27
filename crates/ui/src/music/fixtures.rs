@@ -237,6 +237,7 @@ fn deck_window_with(
         volume_save: Default::default(),
         cover_turn: Default::default(),
         current_play: Rc::new(RefCell::new(None)),
+        radio: Default::default(),
     };
 
     (ui, deck)

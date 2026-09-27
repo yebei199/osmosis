@@ -423,3 +423,42 @@ fn playback_copy_only_uses_subset_glyphs() {
         }
     }
 }
+
+/// 电台续取(#159):电台还握着这一批、剩下不到一首、没有一次在路上,才续。
+#[test]
+fn radio_tops_up_only_when_it_owns_the_batch_and_is_running_out()
+ {
+    let owns = RadioTurn {
+        owns_batch: true,
+        remaining: 1,
+        pulling: false,
+        now_ms: 10_000,
+        retry_at_ms: 0,
+    };
+    assert!(radio_due(&owns));
+    assert!(radio_due(&RadioTurn {
+        remaining: 0,
+        ..owns
+    }));
+
+    // 还剩两首:不急
+    assert!(!radio_due(&RadioTurn {
+        remaining: 2,
+        ..owns
+    }));
+    // 用户点了别的歌,队列换批了:电台不再往里续
+    assert!(!radio_due(&RadioTurn {
+        owns_batch: false,
+        ..owns
+    }));
+    // 上一次还在路上
+    assert!(!radio_due(&RadioTurn {
+        pulling: true,
+        ..owns
+    }));
+    // 上一次失败或凑不出新歌,冷却没过:每秒一趟的轮询不能每秒问一次平台
+    assert!(!radio_due(&RadioTurn {
+        retry_at_ms: 10_001,
+        ..owns
+    }));
+}
