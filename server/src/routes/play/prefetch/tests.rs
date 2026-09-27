@@ -327,3 +327,90 @@ async fn every_playlist_track_is_enqueued_at_startup() {
         .expect("歌单里的歌应当排上了");
     assert_eq!(job.account_id, account.id);
 }
+
+/// 这条测试专用的一个 worker 限速器:额度给足,限速不是这里要测的。
+fn roomy_limiter() -> governor::DefaultDirectRateLimiter {
+    governor::RateLimiter::direct(
+        governor::Quota::per_minute(
+            std::num::NonZeroU32::new(60).expect("非零"),
+        ),
+    )
+}
+
+/// 停止信号先到了:worker 立刻返回,排着的任务一次也没被领。
+///
+/// 滚动部署时旧 pod 在宽限期里接着领,会按旧规则办掉新 pod 刚排上的任务
+/// (#152:31 首因此被旧代码判成 no_lossless)。
+#[tokio::test]
+async fn a_stopped_worker_claims_nothing() {
+    let pool = testing::pool().await;
+    let owner =
+        testing::fresh_account(&pool, "pf_stopped").await;
+    let p = platform("pf_stopped");
+    let song = track(&p, "1");
+    let mut conn = pool.acquire().await.unwrap();
+    prefetch::enqueue(
+        &mut conn,
+        owner.id,
+        std::slice::from_ref(&song),
+        "lossless",
+    )
+    .await
+    .expect("入队应当成功");
+    let state = testing::state(
+        pool.clone(),
+        testing::unreachable_upstream(),
+    );
+    let stop = tokio_util::sync::CancellationToken::new();
+    stop.cancel();
+
+    let finished = tokio::time::timeout(
+        Duration::from_secs(2),
+        super::work(&state, &p, &roomy_limiter(), &stop),
+    )
+    .await;
+
+    assert!(finished.is_ok(), "停了的 worker 该立刻返回");
+    assert_eq!(
+        job_state(&mut conn, &song).await,
+        Some(("queued".to_owned(), 0))
+    );
+}
+
+/// 歇着等新任务的 worker 收到停止信号就醒来退出,不把进程拖过宽限期。
+#[tokio::test]
+async fn an_idle_worker_stops_at_once() {
+    let pool = testing::pool().await;
+    let p = platform("pf_idle_stop");
+    let state = testing::state(
+        pool,
+        testing::unreachable_upstream(),
+    );
+    let stop = tokio_util::sync::CancellationToken::new();
+    let worker = {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            super::work(
+                &state,
+                &p,
+                &roomy_limiter(),
+                &stop,
+            )
+            .await;
+        })
+    };
+    // 领一次扑空,进入歇着的那段
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    stop.cancel();
+
+    let finished = tokio::time::timeout(
+        Duration::from_secs(2),
+        worker,
+    )
+    .await;
+
+    assert!(
+        finished.is_ok(),
+        "歇着的 worker 该被停止信号叫醒"
+    );
+}

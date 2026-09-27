@@ -14,6 +14,7 @@ use std::time::Duration;
 use governor::{
     DefaultDirectRateLimiter, Quota, RateLimiter,
 };
+use tokio_util::sync::CancellationToken;
 
 use server::store::account;
 use server::store::playlist::TrackRef;
@@ -112,7 +113,11 @@ pub(crate) async fn enqueue(
 }
 
 /// 起 worker,并把所有歌单排一遍(首次上线时就是全部存量)。没配对象存储就不起。
-pub(crate) fn spawn(state: &AppState, limits: Limits) {
+pub(crate) fn spawn(
+    state: &AppState,
+    limits: Limits,
+    stop: &CancellationToken,
+) {
     if state.archive.is_none() {
         return;
     }
@@ -152,13 +157,38 @@ pub(crate) fn spawn(state: &AppState, limits: Limits) {
     for _ in 0..limits.workers {
         let state = state.clone();
         let limiter = limiter.clone();
+        let stop = stop.clone();
         tokio::spawn(async move {
-            loop {
-                if !step(&state, NETEASE, &limiter).await {
-                    tokio::time::sleep(IDLE).await;
-                }
-            }
+            work(&state, NETEASE, &limiter, &stop).await;
         });
+    }
+}
+
+/// 一个 worker:领一个办一个,没有就歇一会儿。`stop` 一到就不再领,歇着的立刻
+/// 醒来;办到一半的随之放弃,租约到期别人会再领。
+///
+/// 滚动部署时旧进程还要活几十秒,它接着领就会按旧规则办掉新进程刚排上的任务
+/// (#152:31 首被旧代码判成 no_lossless)。
+pub(crate) async fn work(
+    state: &AppState,
+    platform: &str,
+    limiter: &DefaultDirectRateLimiter,
+    stop: &CancellationToken,
+) {
+    while let Some(busy) = stop
+        .run_until_cancelled(step(state, platform, limiter))
+        .await
+    {
+        if !busy
+            && stop
+                .run_until_cancelled(tokio::time::sleep(
+                    IDLE,
+                ))
+                .await
+                .is_none()
+        {
+            return;
+        }
     }
 }
 
