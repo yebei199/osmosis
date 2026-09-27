@@ -25,8 +25,9 @@ just rollout v0.1.15    # 指定 tag
    主机 `nmap` 扫 adb 端口逐个 `adb connect`。**只装 release、只 `-r` 覆盖,从不卸载、
    不清数据。**
 3. **nixos_config**(`NIXOS_CONFIG`,默认 `~/nixos_config`)。工作树不干净就不动。
-   `pull --ff-only` 后,三个桌面资产的哈希取自 `sha256sums.txt`,逐个
-   `nix store prefetch-file` 实取核对,全对才改 `home/features/desktop/osmosis.nix` 的
+   `pull --ff-only` 后,三个桌面资产(`osmosis-desktop-x86_64-linux.zst`、
+   `io.github.osmosis.desktop`、`io.github.osmosis.svg`)的哈希取自 `sha256sums.txt`,
+   逐个 `nix store prefetch-file` 实取核对,全对才改 `home/features/desktop/osmosis.nix` 的
    `version` 与哈希,提交并推送。已是本版就不提交。
 4. **服务端镜像**。打印 `ghcr.io/yebei199/osmosis-server:<ver>@sha256:<index digest>`,
    并核对 index 里有 arm64。

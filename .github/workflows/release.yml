@@ -123,7 +123,7 @@ jobs:
       # server/build.rs 的 codegen,dbus 是 MPRIS。
       # 这次只编 app-desktop,若某一项实际编译时发现根本用不上,再删。
       - name: 安装 native 依赖
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev protobuf-compiler dbus
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev protobuf-compiler dbus zstd
 
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -182,15 +182,17 @@ jobs:
 
       # [[bin]] 声明的产物名是 osmosis-desktop(见 apps/desktop/Cargo.toml),
       # 落在 target/release/osmosis-desktop;发布名加上 target 三元组前缀。
+      # zstd -19 把 65.8 MB 的裸二进制压到约 19 MB(issue #163 实测),换来
+      # 三条下载路径都变快;代价是消费方多一步 zstd -d,由 nixos_config 承担。
       # 桌面入口与图标(assets/io.github.osmosis.desktop、.svg)与平台无关,
-      # 裸名原样带进 dist,不加三元组前缀;必须先 cp 齐三个文件再 cd dist,
-      # 否则 cd 之后 cp 就找不到 assets/ 里的源了。
+      # 裸名原样带进 dist,不加三元组前缀;必须先 cp 齐再 cd dist,否则 cd
+      # 之后 cp 就找不到 assets/ 里的源了。
       - name: 打包产物与校验和
         run: |
           mkdir -p dist
-          cp target/release/osmosis-desktop dist/osmosis-desktop-x86_64-linux
+          zstd -19 -o dist/osmosis-desktop-x86_64-linux.zst target/release/osmosis-desktop
           cp assets/io.github.osmosis.desktop assets/io.github.osmosis.svg dist/
-          cd dist && sha256sum osmosis-desktop-x86_64-linux io.github.osmosis.desktop io.github.osmosis.svg > sha256sums.txt
+          cd dist && sha256sum osmosis-desktop-x86_64-linux.zst io.github.osmosis.desktop io.github.osmosis.svg > sha256sums.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -244,7 +246,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            dist/osmosis-desktop-x86_64-linux dist/io.github.osmosis.desktop \
+            dist/osmosis-desktop-x86_64-linux.zst dist/io.github.osmosis.desktop \
             dist/io.github.osmosis.svg dist/sha256sums.txt \
             --title "${{ github.ref_name }}" \
             --notes-file dist/digest-note.txt
