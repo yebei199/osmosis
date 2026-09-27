@@ -30,6 +30,52 @@ pub async fn record(
     Ok(())
 }
 
+/// `tracks` 里这个账号播放过的那些,顺序照 `tracks`。
+///
+/// 电台要丢掉听过的歌(#159):判据是事件流里出现过,不看听没听完 ——
+/// 事件流本来就不记听了多久。
+pub async fn played_among(
+    conn: &mut PgConnection,
+    account_id: i64,
+    tracks: &[TrackRef],
+) -> Result<Vec<TrackRef>, AppError> {
+    let (platforms, ids): (Vec<&str>, Vec<&str>) = tracks
+        .iter()
+        .map(|track| {
+            (
+                track.platform.as_str(),
+                track.track_id.as_str(),
+            )
+        })
+        .unzip();
+
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT t.platform, t.track_id
+         FROM unnest($2::text[], $3::text[])
+              WITH ORDINALITY AS t (platform, track_id, n)
+         WHERE EXISTS (
+             SELECT 1 FROM play_events AS pe
+             WHERE pe.account_id = $1
+               AND pe.platform = t.platform
+               AND pe.track_id = t.track_id
+         )
+         ORDER BY t.n",
+    )
+    .bind(account_id)
+    .bind(platforms)
+    .bind(ids)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(platform, track_id)| TrackRef {
+            platform,
+            track_id,
+        })
+        .collect())
+}
+
 /// 最近播放的曲目标识,最近的在前。
 ///
 /// **同一首歌只出现一次**,位置取它最后一次被播放的时刻。不去重的话,

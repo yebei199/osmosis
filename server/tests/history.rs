@@ -354,3 +354,31 @@ async fn recording_for_an_unknown_account_fails() {
 
     assert!(matches!(result, Err(AppError::Db(_))));
 }
+
+/// 电台的听过过滤(#159):只认本账号的事件,顺序照给进来的那批。
+#[tokio::test]
+async fn played_among_picks_only_this_accounts_plays() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "hs_played").await;
+    let other =
+        make_account(&mut tx, "hs_played_other").await;
+
+    for id in ["3", "1"] {
+        history::record(&mut tx, account.id, &track(id))
+            .await
+            .unwrap();
+    }
+    history::record(&mut tx, other.id, &track("2"))
+        .await
+        .unwrap();
+
+    let played = history::played_among(
+        &mut tx,
+        account.id,
+        &[track("1"), track("2"), track("3"), track("4")],
+    )
+    .await
+    .expect("查询应该成功");
+
+    assert_eq!(played, vec![track("1"), track("3")]);
+}

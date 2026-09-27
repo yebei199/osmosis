@@ -497,6 +497,34 @@ message RemovePlaylistTracksResponse {}
 service DiscoverService {
   rpc GetDailyRecommendations(GetDailyRecommendationsRequest) returns (GetDailyRecommendationsResponse);
   rpc GetRecommendedPlaylists(GetRecommendedPlaylistsRequest) returns (GetRecommendedPlaylistsResponse);
+
+  // GetPersonalFm 取私人 FM 的下一批推荐曲目,通常 3 首。需要已登录。
+  rpc GetPersonalFm(GetPersonalFmRequest) returns (GetPersonalFmResponse);
+
+  // GetIntelligenceList 心动模式:以一首种子曲目为起点的智能播放列表。
+  rpc GetIntelligenceList(GetIntelligenceListRequest) returns (GetIntelligenceListResponse);
+}
+
+message GetPersonalFmRequest {
+  Platform platform = 1;
+}
+
+message GetPersonalFmResponse {
+  repeated Track tracks = 1;
+}
+
+message GetIntelligenceListRequest {
+  Platform platform = 1;
+  // seed_track_id 种子曲目标识
+  string seed_track_id = 2;
+  // playlist_id 心动模式挂靠的歌单,通常是调用方的"我喜欢的音乐"
+  string playlist_id = 3;
+  // count 要多少首,平台必传字段,缺省服务端报 500,不填时按 1 处理
+  int32 count = 4;
+}
+
+message GetIntelligenceListResponse {
+  repeated Track tracks = 1;
 }
 
 message GetDailyRecommendationsRequest {
