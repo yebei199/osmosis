@@ -12,6 +12,8 @@
 //!
 //! 注意 workspace 的 `default-members` 不含本 crate,裸 `cargo build` 不会编它。
 
+use std::time::Duration;
+
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, FromRef},
@@ -19,6 +21,7 @@ use axum::{
     routing::{get, post},
 };
 use sqlx::PgPool;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 use tower_governor::GovernorLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -513,9 +516,21 @@ async fn main() {
         );
     }
     // 歌单与日推里的歌以无损预先存进桶(#147)
+    let stop = CancellationToken::new();
+    tokio::spawn({
+        let stop = stop.clone();
+        async move {
+            stopped().await;
+            tracing::info!(
+                "收到停止信号,不再领新活,答完手上的请求就退出"
+            );
+            stop.cancel();
+        }
+    });
     routes::play::prefetch::spawn(
         &state,
         routes::play::prefetch::Limits::from_env(),
+        &stop,
     );
 
     let app = Router::new()
@@ -639,12 +654,112 @@ async fn main() {
     // 才取得到。**反代之后这个 IP 是代理的** —— 真实客户端 IP 在
     // `X-Forwarded-For` 里,而无条件信任那个头比不限流更糟(谁都能伪造它)。
     // 要按真实 IP 限流得先决定信任哪一层代理,那是部署侧的决定。
-    axum::serve(
+    serve_until(listener, app, &stop, DRAIN).await;
+}
+
+/// 停止信号之后最多再等这么久,要比 k8s 的宽限期(30s)短。
+const DRAIN: Duration = Duration::from_secs(10);
+
+/// SIGTERM(k8s 停 pod)或 Ctrl-C。
+async fn stopped() {
+    let mut term = tokio::signal::unix::signal(
+        tokio::signal::unix::SignalKind::terminate(),
+    )
+    .expect("装不上 SIGTERM 处理");
+    tokio::select! {
+        _ = term.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+}
+
+/// 一直服务到 `stop`:之后不接新连接,等手上的请求答完,最多再等 `drain`。
+/// 过了还占着的(信令 WebSocket、长流)不等,进程退出时随之断开。
+async fn serve_until(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    stop: &CancellationToken,
+    drain: Duration,
+) {
+    let serve = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .await
-    .expect("server failed");
+    .with_graceful_shutdown(stop.clone().cancelled_owned());
+    let deadline = async {
+        stop.cancelled().await;
+        tokio::time::sleep(drain).await;
+    };
+    tokio::select! {
+        served = serve => served.expect("server failed"),
+        () = deadline => tracing::warn!("还有连接没断,不等了"),
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use std::time::Duration;
+
+    use axum::body::Body;
+    use axum::routing::get;
+    use tokio_util::sync::CancellationToken;
+
+    use super::serve_until;
+
+    /// 一条永远不结束的响应(像 WebSocket 或长流)不能把退出拖过宽限期:
+    /// 停止信号之后最多等 `drain` 就返回。
+    #[tokio::test]
+    async fn a_hanging_connection_does_not_hold_shutdown() {
+        let app = axum::Router::new().route(
+            "/hang",
+            get(|| async {
+                Body::from_stream(
+                    futures_util::stream::pending::<
+                        Result<
+                            bytes::Bytes,
+                            std::io::Error,
+                        >,
+                    >(),
+                )
+            }),
+        );
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("绑不上本地端口");
+        let addr =
+            listener.local_addr().expect("取不到本地地址");
+        let stop = CancellationToken::new();
+        let server = tokio::spawn({
+            let stop = stop.clone();
+            async move {
+                serve_until(
+                    listener,
+                    app,
+                    &stop,
+                    Duration::from_millis(200),
+                )
+                .await;
+            }
+        });
+        // 拿到响应头就行,响应体永远不来,连接一直占着
+        let hanging =
+            reqwest::get(format!("http://{addr}/hang"))
+                .await
+                .expect("请求没发出去");
+        assert_eq!(hanging.status(), 200);
+
+        stop.cancel();
+        let finished = tokio::time::timeout(
+            Duration::from_secs(3),
+            server,
+        )
+        .await;
+
+        assert!(
+            finished.is_ok(),
+            "停止信号之后该在 drain 内返回"
+        );
+    }
 }
 
 #[cfg(test)]
