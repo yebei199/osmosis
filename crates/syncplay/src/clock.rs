@@ -13,6 +13,13 @@ use std::collections::VecDeque;
 /// 拟合窗口：半秒一次往返，留一分钟。
 const WINDOW: usize = 120;
 
+/// 拟合出来的漂移最多这么陡:500ppm,一秒 0.5ms。
+///
+/// 两台机器晶振差几十 ppm,真实漂移远在这以内;比它陡的只能是几个挤在一起的样本的噪声被
+/// 外推出去(#145 现场一秒滑 7ms)。取音频跟随器速率修正上限(0.1%)的一半，锚点照这个
+/// 速度挪，跟随器靠调速就追得上，不会被逼着丢帧或 seek。
+const MAX_SLOPE: f64 = 500e-6;
+
 /// RTT 超过最短那次多少就不进拟合:最短的一半再加 200µs(同原型)。
 fn too_slow(rtt: i64, min_rtt: i64) -> bool {
     rtt > min_rtt + min_rtt / 2 + 200_000
@@ -112,7 +119,8 @@ impl Clock {
         if denom.abs() < 1.0 {
             return Some(sy / n);
         }
-        let slope = (n * sxy - sx * sy) / denom;
+        let slope = ((n * sxy - sx * sy) / denom)
+            .clamp(-MAX_SLOPE, MAX_SLOPE);
         let intercept = (sy - slope * sx) / n;
         Some(intercept + slope * (local_ns as f64 - x0))
     }
@@ -229,6 +237,57 @@ mod tests {
             )
             .unwrap();
         assert!((local - 11 * S).abs() < 5_000, "{local}");
+    }
+
+    /// 进拟合的只剩挤在一秒里的几个快往返，它们的噪声不许被外推成一条陡线(#145):
+    /// pc1 现场锚点每秒滑 7ms、一步挪过 185ms,两台晶振的真实漂移只有几十 ppm。
+    #[test]
+    fn a_short_noisy_cluster_does_not_tilt_the_fit() {
+        let mut clock = Clock::default();
+        let add = |clock: &mut Clock,
+                   sent: i64,
+                   rtt: i64,
+                   noise: i64| {
+            let mid = sent + rtt / 2;
+            clock.add(
+                1,
+                sent,
+                ((mid + S + noise) / 1_000) as u64,
+                sent + rtt,
+            );
+        };
+        // 头一秒三次 20ms 的快往返，偏移噪声 0、+2ms、+4ms
+        for (i, noise) in [0, 2_000_000, 4_000_000]
+            .into_iter()
+            .enumerate()
+        {
+            add(
+                &mut clock,
+                i as i64 * S / 2,
+                20_000_000,
+                noise,
+            );
+        }
+        // 之后 30 秒全是 40ms 的往返，都进不了拟合
+        for i in 4..64 {
+            add(&mut clock, i * S / 2, 40_000_000, 0);
+        }
+
+        let at = |local: i64| {
+            clock
+                .to_local_ns(
+                    1,
+                    ((local + S) / 1_000) as u64,
+                )
+                .unwrap()
+        };
+        let slide = at(42 * S) - at(32 * S) - 10 * S;
+        assert!(
+            slide.abs()
+                <= (10.0 * S as f64 * MAX_SLOPE) as i64
+                    + 1_000,
+            "十秒里换算滑了 {slide}ns"
+        );
     }
 
     /// 服务端重启换了纪元：旧样本作废，旧纪元的时刻不再换算。
