@@ -3,7 +3,7 @@ import { Palette } from "std-widgets.slint";
 import { Theme, Type } from "theme.slint";
 import { LyricRow } from "types.slint";
 import { OutlinedText, RoundControl } from "widgets.slint";
-import { PlayerBar } from "playerbar.slint";
+import { PlayerBar, BarMetrics } from "playerbar.slint";
 import { LyricsPage } from "lyrics.slint";
 import { QueuePage } from "queue.slint";
 import { Player } from "globals/player.slint";
@@ -212,47 +212,6 @@ export component PlayPage inherits FocusScope {
         }
     }
 
-    // 三态赞踩,与红心并列(#157,用户可见决定点,交付时附截图)。
-    // 摆在队列入口下方一档:歌名歌手是「这首是什么」,队列入口是「后面还有
-    // 哪些」,这一排是「我对这首的评价」,三者各自成一层,让位规则与它们相同 ——
-    // 歌词页或队列页打开时整排让位。
-    if !Viz.lyrics-page-open && !Viz.queue-page-open
-            && Player.now-id != "": feedback-row := HorizontalLayout {
-        y: root.viz-title-y + 104px;
-        width: root.feedback-btn * 3 + root.feedback-gap * 2;
-        height: root.feedback-btn;
-        x: (root.width - self.width) / 2;
-        spacing: root.feedback-gap;
-
-        feedback-heart := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.heart-icon;
-            label: Player.now-liked ? "取消喜欢" : "喜欢";
-            checkable: true;
-            checked: Player.now-liked;
-            transparent-base: true;
-            clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
-        }
-        feedback-up := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.thumb-up-icon;
-            label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
-            checkable: true;
-            checked: Player.now-feedback == 1;
-            transparent-base: true;
-            clicked => { Library.toggle-feedback(1); }
-        }
-        feedback-down := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.thumb-down-icon;
-            label: Player.now-feedback == -1 ? "取消点踩" : "点踩";
-            checkable: true;
-            checked: Player.now-feedback == -1;
-            transparent-base: true;
-            clicked => { Library.toggle-feedback(-1); }
-        }
-    }
-
     // 取直链/开流的那几秒:点下去了、正在办。
     // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
     // 而这一层还压在点云上。文案硬编码中文,走子集字体。
@@ -372,6 +331,51 @@ export component PlayPage inherits FocusScope {
         y: parent.height - self.height - root.safe-bottom - 24px;
         // 与壳里那根同一个内缩常量,不再各给各的(docs/adr/0029)。
         width-cap: parent.width - root.bar-inset * 2;
+    }
+
+    // 三态赞踩,与红心并列(#157,用户可见决定点,交付时附截图)。摆在控制条
+    // 正上方 —— 歌名/歌词那一块挤在标题下方 96px 里(viz-lyric-y 就是
+    // title-y+96),塞不下第三样,塞了也会被后画的歌词块盖住(声在其后)。
+    //
+    // y 算的是**条身**(那颗圆胶囊)的绝对顶边,不是 `player-bar.y`:后者是
+    // 抽屉展开也算在内的包围盒,展开时会往上长,player-bar.y 跟着变小,
+    // 这一排要是挂在它上面就会跟着抽屉一起往上跳。条身在组件内部固定贴底
+    // (`playerbar.slint` 的 `capsule`),把 `PlayerBar` 自己那套 y 表达式
+    // 展开、抵消 `self.height` 项,剩下的就是这个常量算式 —— 条身位置不随
+    // 抽屉开合变,这一排也就不用变。
+    if !Viz.lyrics-page-open && !Viz.queue-page-open
+            && Player.now-id != "": feedback-row := HorizontalLayout {
+        y: root.height - root.safe-bottom - 24px - BarMetrics.bar-h
+            - root.feedback-btn - 16px;
+        width: root.feedback-btn * 3 + root.feedback-gap * 2;
+        height: root.feedback-btn;
+        x: (root.width - self.width) / 2;
+        spacing: root.feedback-gap;
+
+        feedback-heart := RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.heart-icon;
+            label: Player.now-liked ? "取消喜欢" : "喜欢";
+            checkable: true;
+            checked: Player.now-liked;
+            clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
+        }
+        feedback-up := RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.thumb-up-icon;
+            label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
+            checkable: true;
+            checked: Player.now-feedback == 1;
+            clicked => { Library.toggle-feedback(1); }
+        }
+        feedback-down := RoundControl {
+            diameter: root.feedback-btn;
+            icon: root.thumb-down-icon;
+            label: Player.now-feedback == -1 ? "取消点踩" : "点踩";
+            checkable: true;
+            checked: Player.now-feedback == -1;
+            clicked => { Library.toggle-feedback(-1); }
+        }
     }
 
     // 视觉预设的选择列表已退场:名册里只剩「封面」一档,列表里那一项恒高亮、
