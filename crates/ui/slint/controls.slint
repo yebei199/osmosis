@@ -190,6 +190,12 @@ export component OutputStrip inherits VerticalLayout {
                     clicked => { Shell.toggle-member(device.id); }
                 }
             }
+            // 它自己的音量(#151):远程调,落在那台上。本机的音量在上面那一行。
+            if device.has-volume: VolumeControl {
+                label: "音量 " + device.name;
+                volume: device.volume;
+                changed(v) => { Shell.set-device-volume(device.id, v); }
+            }
         }
     }
 

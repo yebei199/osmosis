@@ -152,11 +152,11 @@ fn executing_a_volume_command_remembers_it_for_this_device()
 
 /// 设置文件是进程级的一份,测试并行跑。会真写它的测试(让节流存盘到点的那几条)
 /// 先拿这把锁,否则一条断言到的是另一条刚写进去的数。
-static SETTINGS_FILE: std::sync::Mutex<()> =
+pub(super) static SETTINGS_FILE: std::sync::Mutex<()> =
     std::sync::Mutex::new(());
 
 /// 让音量的节流存盘到点。
-fn settle_volume_save() {
+pub(super) fn settle_volume_save() {
     i_slint_backend_testing::mock_elapsed_time(
         VOLUME_SAVE_DELAY
             + core::time::Duration::from_millis(50),
