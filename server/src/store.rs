@@ -16,3 +16,4 @@ pub mod lyric;
 pub mod playlist;
 pub mod prefetch;
 pub mod queue;
+pub mod tags;

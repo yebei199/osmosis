@@ -16,6 +16,7 @@ mod playlist;
 mod queue;
 mod remote;
 mod sync;
+mod tag;
 
 pub use account::*;
 pub use catalog::*;
@@ -26,6 +27,7 @@ pub use playlist::*;
 pub use queue::*;
 pub use remote::*;
 pub use sync::*;
+pub use tag::*;
 
 /// 协议版本。客户端与服务端就线上格式达成的约定的版本号。
 ///

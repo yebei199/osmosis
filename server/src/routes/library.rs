@@ -5,3 +5,4 @@
 pub(crate) mod history;
 pub(crate) mod likes;
 pub(crate) mod playlists;
+pub(crate) mod tags;

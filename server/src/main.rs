@@ -66,6 +66,10 @@ use routes::library::playlists::{
     platform_playlist_tracks, playlist_tracks, playlists,
     remove_playlist_tracks, rename_playlist,
 };
+use routes::library::tags::{
+    create_tag, delete_tag, list_tags, rename_tag,
+    tag_track, track_tags, untag_track,
+};
 use routes::play::archive::Archive;
 use routes::play::download::download;
 use routes::play::links::SignedLinks;
@@ -600,6 +604,25 @@ async fn main() {
         .route(
             "/playlists/platform/{id}/tracks",
             get(platform_playlist_tracks),
+        )
+        // 账号级自定义标签(#158),同一首歌在哪个歌单里都一样
+        .route(
+            "/tags",
+            get(list_tags).post(create_tag),
+        )
+        .route(
+            "/tags/{id}",
+            axum::routing::patch(rename_tag)
+                .delete(delete_tag),
+        )
+        .route(
+            "/tags/{id}/tracks/{platform}/{track_id}",
+            axum::routing::put(tag_track)
+                .delete(untag_track),
+        )
+        .route(
+            "/tracks/{platform}/{track_id}/tags",
+            get(track_tags),
         )
         // 网易云绑定。凭据按账号分片(docs/adr/0017),所以这几条都要登录态 ——
         // 提取器给出的账号正是上游用来分片的那个键。
