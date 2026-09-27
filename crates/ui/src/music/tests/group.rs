@@ -612,3 +612,37 @@ fn each_sounding_device_shows_and_takes_its_own_volume() {
     );
     assert!((row(0).volume - 0.25).abs() < 1e-6);
 }
+
+/// 出声设备备的是全局状态预告的下一首,不是本机队列里的下一首(#154):切歌时直接用,
+/// 不必现取直链、现开流。只当遥控器的不出声,什么都不备;独奏照旧备本机队列的下一首。
+#[test]
+fn an_output_prefetches_the_track_the_group_announced() {
+    let (_ui, deck) = deck_window();
+    deck.queue.borrow_mut().replace(
+        vec![track_with_id("a"), track_with_id("b")],
+        0,
+    );
+    let id =
+        |deck: &Deck| upcoming(deck).map(|track| track.id);
+
+    assert_eq!(
+        id(&deck),
+        Some("b".to_owned()),
+        "独奏备本机队列的下一首"
+    );
+
+    let mut announced = state(&["me"], true);
+    announced.now.as_mut().expect("在放").next =
+        Some(app_core::NextEntryDto {
+            entry_id: 13,
+            track: track_with_id("y"),
+            at_us: 0,
+        });
+    deck.group.assume(Some(announced.clone()));
+    assert_eq!(id(&deck), Some("y".to_owned()));
+
+    announced.outputs = vec!["pc".to_owned()];
+    announced.version += 1;
+    deck.group.assume(Some(announced));
+    assert_eq!(id(&deck), None, "只当遥控器不备");
+}

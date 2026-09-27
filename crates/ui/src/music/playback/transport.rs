@@ -354,20 +354,24 @@ pub(in crate::music) fn start_auto_advance(
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
-            // 组里不备:下一首由全局状态预告,跟随器自己取。
+            // 备的是哪一首见 `upcoming`:组里是全局状态预告的那一首(#154)。
+            let next = upcoming(&deck);
             let already_have = deck.prefetching.get()
-                || deck.prefetched.borrow().is_some();
-            let has_next =
-                deck.queue.borrow().peek_next().is_some();
-            if !following
+                || next.as_ref().is_some_and(|next| {
+                    deck.prefetched
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|(id, _)| *id == next.id)
+                });
+            if let Some(next) = next
                 && should_prefetch(
                     &state,
                     position,
                     already_have,
-                    has_next,
+                    true,
                 )
             {
-                start_prefetch(&deck);
+                start_prefetch(&deck, next);
             }
         },
     );

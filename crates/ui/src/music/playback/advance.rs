@@ -20,17 +20,31 @@ pub(in crate::music) fn take_prefetched<T>(
     (id == wanted).then_some(ready)
 }
 
+/// 接下来要放的那一首,预取备的就是它。
+///
+/// 独奏是本机队列的下一首。组里出声时是全局状态预告的那一首(`next`,#154):本机队列
+/// 只是执行副本,随机次序在服务端;切歌时直接用备好的,不必现取直链、现开流 —— 那两三秒
+/// 正是每首开头被吃掉的那一段。只当遥控器不出声,不备。
+pub(in crate::music) fn upcoming(
+    deck: &Deck,
+) -> Option<app_core::TrackDto> {
+    if !follows_the_group(deck) {
+        return deck.queue.borrow().peek_next().cloned();
+    }
+    if deck.group.standing() != app_core::Standing::Output {
+        return None;
+    }
+    deck.group.now()?.next.map(|next| next.track)
+}
+
 /// 备下一首:与正常播放走**同一个** [`prepare`],只是备好了先搁着。
 ///
 /// 失败不声张:预取只是提速,它没成的话照常走原路,用户什么都不会察觉。
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn start_prefetch(deck: &Deck) {
-    let Some(track) =
-        deck.queue.borrow().peek_next().cloned()
-    else {
-        return;
-    };
-
+pub(in crate::music) fn start_prefetch(
+    deck: &Deck,
+    track: app_core::TrackDto,
+) {
     deck.prefetching.set(true);
     let deck = deck.clone();
     slint::spawn_local(async move {
