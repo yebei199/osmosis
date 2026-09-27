@@ -222,11 +222,7 @@ pub(in crate::music) fn play_current(
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             mark_loading(&ui, &deck, None);
             // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
-            crate::media::push(
-                &ui,
-                &deck.playback,
-                &deck.media,
-            );
+            push_media(&ui, &deck);
             action.mark("model");
             deck.frames.after_next_frame(action);
         }
@@ -275,7 +271,7 @@ pub(in crate::music) fn start_auto_advance(
             // 组里只当遥控器(#142):本机不出声,控制条画全局状态。
             if is_silent_member(&deck) {
                 deck.group.push_playback(&ui);
-                crate::media::push_remote(&ui, &deck.group, &deck.media);
+                push_media(&ui, &deck);
                 crate::music::queuepage::refresh(&ui, &deck);
                 return;
             }
@@ -316,7 +312,7 @@ pub(in crate::music) fn start_auto_advance(
             crate::music::queuepage::refresh(&ui, &deck);
             push_seek_state(&ui, &deck);
             // 媒体控件搭同一趟车。它自己去重,平帧推出去的是零个字节。
-            crate::media::push(&ui, &deck.playback, &deck.media);
+            push_media(&ui, &deck);
 
             // 起播上报也搭这趟车:个人主页的统计从这条账本查询时聚合
             // (server 的 `play_events`)。报失败只写日志 —— 统计不该打断听歌。

@@ -160,6 +160,52 @@ fn volume_stays_on_this_device() {
     );
 }
 
+/// 记下推给系统媒体控件的每一份。
+struct Recorded(
+    std::rc::Rc<core::cell::RefCell<Vec<bool>>>,
+);
+
+impl crate::media::MediaControls for Recorded {
+    fn publish(&self, now: &crate::media::NowPlaying) {
+        self.0.borrow_mut().push(now.remote);
+    }
+}
+
+/// 只当遥控器时拖音量,报出去的仍是遥控那一份(#150)。
+///
+/// 从前这一下推的是本机那份(`remote: false`,状态「停」),与每秒轮询推的遥控那份来回
+/// 翻:安卓上就是 stopService 与 startForegroundService 交替,stop 一旦落在服务调
+/// startForeground 之前,系统当场杀进程。
+#[test]
+fn a_silent_member_dragging_the_volume_keeps_reporting_the_remote()
+ {
+    let (ui, deck) = deck_window();
+    let published = std::rc::Rc::default();
+    let deck = Deck {
+        media: std::rc::Rc::new(crate::media::Bridge::new(
+            Box::new(Recorded(std::rc::Rc::clone(
+                &published,
+            ))),
+            std::sync::Arc::default(),
+        )),
+        ..deck
+    };
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["pc"], false)));
+    crate::media::push_remote(
+        &ui,
+        &deck.group,
+        &deck.media,
+    );
+
+    for level in [0.2, 0.5, 0.0] {
+        ui.global::<Player>().invoke_volume_changed(level);
+    }
+    ui.global::<Player>().invoke_toggle_play();
+
+    assert_eq!(*published.borrow(), vec![true]);
+}
+
 /// 随机与循环是全局状态的一部分:在组里拨它们发意图。
 #[test]
 fn shuffle_and_loop_go_to_the_group() {
