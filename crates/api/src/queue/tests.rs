@@ -18,6 +18,7 @@ fn entry(entry_id: i64) -> QueueEntryDto {
             artists: vec!["LiSA".to_owned()],
             cover: None,
             duration_ms: 234_000,
+            album: None,
         },
     }
 }

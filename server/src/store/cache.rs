@@ -9,14 +9,14 @@
 
 use std::collections::HashSet;
 
-use contract::TrackDto;
+use contract::{AlbumRefDto, TrackDto};
 use sqlx::{Connection, PgConnection, QueryBuilder};
 
 use crate::error::AppError;
 
 /// 一次写多少行。
 ///
-/// Postgres 一条语句最多 65535 个参数,而每首歌占 7 个 —— 973 首的歌单
+/// Postgres 一条语句最多 65535 个参数,而每首歌占 9 个 —— 973 首的歌单
 /// 一次写不完。分批的批量插入仍然远快过一首一条语句。
 const ROWS_PER_STATEMENT: usize = 1000;
 
@@ -245,7 +245,8 @@ pub async fn details_of(
     // 免得把几百条记录取回来再在内存里重排一次。
     let rows: Vec<TrackRow> = sqlx::query_as(
         "SELECT d.platform, d.track_id, d.title, d.alias,
-                d.artists, d.cover, d.duration_ms
+                d.artists, d.cover, d.duration_ms,
+                d.album_id, d.album_name
          FROM UNNEST($1::text[]) WITH ORDINALITY AS asked (id, pos)
          JOIN platform_tracks d
            ON d.platform = $2 AND d.track_id = asked.id
@@ -273,7 +274,8 @@ pub async fn tracks_of(
 ) -> Result<Vec<TrackDto>, AppError> {
     let rows: Vec<TrackRow> = sqlx::query_as(
         "SELECT d.platform, d.track_id, d.title, d.alias,
-                d.artists, d.cover, d.duration_ms
+                d.artists, d.cover, d.duration_ms,
+                d.album_id, d.album_name
          FROM platform_playlist_tracks m
          JOIN platform_tracks d
            ON d.platform = m.platform AND d.track_id = m.track_id
@@ -302,6 +304,8 @@ struct TrackRow {
     artists: Vec<String>,
     cover: Option<String>,
     duration_ms: i64,
+    album_id: Option<String>,
+    album_name: Option<String>,
 }
 
 impl TrackRow {
@@ -314,6 +318,10 @@ impl TrackRow {
             artists: self.artists,
             cover: self.cover,
             duration_ms: self.duration_ms,
+            // 两列同进同出(见 put_details),只有一半的行不存在
+            album: self.album_id.zip(self.album_name).map(
+                |(id, name)| AlbumRefDto { id, name },
+            ),
         }
     }
 }
@@ -329,7 +337,8 @@ pub async fn put_details(
     for chunk in tracks.chunks(ROWS_PER_STATEMENT) {
         let mut query = QueryBuilder::new(
             "INSERT INTO platform_tracks
-             (platform, track_id, title, alias, artists, cover, duration_ms) ",
+             (platform, track_id, title, alias, artists, cover, duration_ms,
+              album_id, album_name) ",
         );
         query.push_values(chunk, |mut row, track| {
             row.push_bind(&track.platform)
@@ -338,7 +347,11 @@ pub async fn put_details(
                 .push_bind(&track.alias)
                 .push_bind(&track.artists)
                 .push_bind(&track.cover)
-                .push_bind(track.duration_ms);
+                .push_bind(track.duration_ms)
+                .push_bind(track.album.as_ref().map(|a| &a.id))
+                .push_bind(
+                    track.album.as_ref().map(|a| &a.name),
+                );
         });
         query.push(
             " ON CONFLICT (platform, track_id) DO UPDATE SET
@@ -347,6 +360,8 @@ pub async fn put_details(
                 artists = EXCLUDED.artists,
                 cover = EXCLUDED.cover,
                 duration_ms = EXCLUDED.duration_ms,
+                album_id = EXCLUDED.album_id,
+                album_name = EXCLUDED.album_name,
                 fetched_at = now()",
         );
 

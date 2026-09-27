@@ -686,6 +686,7 @@ fn track_of(entry: &Entry) -> TrackDto {
         artists: entry.artists.clone(),
         cover: entry.cover.clone(),
         duration_ms: entry.duration_ms,
+        album: None,
     }
 }
 

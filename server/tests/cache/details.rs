@@ -159,3 +159,33 @@ async fn details_of_skips_ids_without_details() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].id, "1");
 }
+
+/// 专辑随详情存进去、原样读回来(#156)—— 分类视图按它分组。
+#[tokio::test]
+async fn album_round_trips_through_the_cache() {
+    let mut tx = tx().await;
+    let with_album = TrackDto {
+        album: Some(contract::AlbumRefDto {
+            id: "88888".to_owned(),
+            name: "LiSA BEST".to_owned(),
+        }),
+        ..track("1", "有专辑")
+    };
+
+    cache::put_details(
+        &mut tx,
+        &[with_album.clone(), track("2", "单曲")],
+    )
+    .await
+    .expect("写详情应该成功");
+
+    let got = cache::details_of(
+        &mut tx,
+        "netease",
+        &["1".to_owned(), "2".to_owned()],
+    )
+    .await
+    .expect("读详情应该成功");
+
+    assert_eq!(got, vec![with_album, track("2", "单曲")]);
+}

@@ -187,6 +187,7 @@ mod tests {
             artists: vec![],
             cover: None,
             duration_ms: 100_000,
+            album: None,
         }
     }
 

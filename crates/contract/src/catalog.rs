@@ -28,6 +28,22 @@ pub struct TrackDto {
     pub cover: Option<String>,
     /// 时长,毫秒。与上游同单位,不做换算。
     pub duration_ms: i64,
+    /// 所属专辑。平台没给(单曲、下架)就是 `None`。
+    ///
+    /// `serde(default)`:老服务端的响应里没有这个字段,新客户端照样解得开。
+    #[serde(default)]
+    pub album: Option<AlbumRefDto>,
+}
+
+/// 曲目里内嵌的专辑:只有身份与名字,够分组、够点进去。
+///
+/// 封面、年份这些是专辑详情,曲目上不带 —— 曲目已有自己的封面。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct AlbumRefDto {
+    pub id: String,
+    pub name: String,
 }
 
 /// `GET /search/tracks` 的响应体。

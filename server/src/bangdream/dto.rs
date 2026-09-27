@@ -4,7 +4,7 @@
 //! 此刻用得上的字段。加字段是兼容变更,用到时再加。
 
 use contract::{
-    ArtistDto, LyricDto, LyricLineDto, NeteaseStatusDto,
+    AlbumRefDto, ArtistDto, LyricDto, LyricLineDto, NeteaseStatusDto,
     PlaySourceDto, PlaylistDto, PlaylistSource,
     QR_CONFIRMED, QR_EXPIRED, QR_SCANNED, QR_WAITING,
     QrLoginDto, TrackDto,
@@ -100,6 +100,14 @@ pub fn track_to_dto(track: proto::Track) -> TrackDto {
             .collect(),
         cover: stable_image(track.cover),
         duration_ms: track.duration_ms,
+        // 空 id 的专辑等于没有专辑:平台拿它表示单曲/下架
+        album: track
+            .album
+            .filter(|album| !album.id.is_empty())
+            .map(|album| AlbumRefDto {
+                id: album.id,
+                name: album.name,
+            }),
     }
 }
 

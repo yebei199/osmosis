@@ -348,3 +348,27 @@ fn foreign_cover_passes_through() {
         )
     );
 }
+
+/// 专辑只带身份与名字落到 DTO(#156)。
+#[test]
+fn track_maps_album_id_and_name() {
+    let album = track_to_dto(full_track())
+        .album
+        .expect("有专辑");
+
+    assert_eq!(album.id, "88888");
+    assert_eq!(album.name, "LiSA BEST");
+}
+
+/// 没有专辑,或平台给了个空 id 的专辑壳子,都是 `None` —— 空 id 点不进去,
+/// 也不该让分类视图多出一个无名分组。
+#[test]
+fn track_without_album_id_has_no_album() {
+    let mut track = full_track();
+    track.album = None;
+    assert_eq!(track_to_dto(track).album, None);
+
+    let mut track = full_track();
+    track.album = Some(proto::Album::default());
+    assert_eq!(track_to_dto(track).album, None);
+}
