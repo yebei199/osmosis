@@ -212,8 +212,9 @@ impl FrameLoop {
     /// 标注卡 + 遮挡层)只在播放页开着时走:它是 9216 个立方体的全绘,而且与卡墙
     /// 互斥 —— render_viz_frame 进门就把墙的相机关掉。
     ///
-    /// 按需渲染的规矩(#153):光环与点云都只在活跃期内动,定格时有封面在等、
-    /// 或纹理还没有,照样渲一帧。
+    /// 按需渲染的规矩(#153):光环只在放歌且活跃时动,暂停与定格都静止(推翻
+    /// 「暂停照样动」);点云在播放页开着的活跃期内动。定格时有封面在等、或纹理
+    /// 还没有,照样渲一帧。
     fn viz_frame(
         &mut self,
         ui: &MainWindow,
@@ -231,16 +232,17 @@ impl FrameLoop {
         };
         let wants_scene =
             ui.global::<Shell>().get_play_page_open();
+        let playing = player.get_is_playing();
         let vz = ui.global::<Viz>();
-        let needs_warp =
-            live || vz.get_viz_bg().size().width == 0;
+        let needs_warp = (playing && live)
+            || vz.get_viz_bg().size().width == 0;
         let needs_scene = wants_scene
             && (live
                 || self.cover.pending()
                 || vz.get_viz_scene().size().width == 0);
         let ambient = Demand {
             busy: false,
-            ambient: true,
+            ambient: playing || wants_scene,
         };
         if !needs_warp && !needs_scene {
             // 定格期间的时间不补:恢复那一帧从定格处接着走。
@@ -602,6 +604,24 @@ mod tests {
             calls.warp.get(),
             frozen,
             "定格了光环还在渲"
+        );
+    }
+
+    /// 暂停时光环静止,哪怕正在活跃期里(推翻「暂停照样动」)。
+    /// 已经有一张图挂着,就一次都不渲 —— warp 是反馈式的,再渲一遍画面就会流动。
+    #[test]
+    fn a_paused_ring_does_not_advance() {
+        let (ui, mut frame_loop, _, calls) = setup();
+        ui.global::<Player>().set_has_track(true);
+        ui.global::<Viz>().set_viz_bg(drawn());
+
+        frame_loop.frame(&ui, Instant::now());
+        frame_loop.frame(&ui, Instant::now());
+
+        assert_eq!(
+            calls.warp.get(),
+            0,
+            "暂停时光环不该推进"
         );
     }
 

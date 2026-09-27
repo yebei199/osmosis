@@ -80,9 +80,10 @@ impl ButtonBand {
                 })
             };
         // 两颗光带按钮:Home 空槽(nebula)与音乐页空状态「换一批推荐」(ribbon)。
+        // 看不见的不画(#153):不在首页、不在空状态时这两槽不进。
         // 尺寸与 app.slint 的空槽/空状态键一致,改那边要同步这里。
         let home_i = push(
-            true,
+            shell.get_home_slot_shown(),
             AuroraBtnSlotControls {
                 w: hw * scale,
                 h: hh * scale,
@@ -99,7 +100,7 @@ impl ButtonBand {
             },
         );
         let daily_i = push(
-            true,
+            shell.get_empty_daily_shown(),
             AuroraBtnSlotControls {
                 w: 150.0 * scale,
                 h: 38.0 * scale,
@@ -395,12 +396,13 @@ mod tests {
         );
     }
 
-    /// 最素的一帧:两颗光带按钮加侧栏底部那两颗圆钮,图各就各位。
+    /// 最素的一帧:首页的星云加侧栏底部那两颗圆钮,图各就各位。
     ///
     /// 胶囊与播放页那几槽都是按需追加的,没歌、没开播放页时它们不该在场 ——
-    /// 多渲一槽就是多算一遍 fbm,而那张图没有任何地方会用到。
+    /// 多渲一槽就是多算一遍 fbm,而那张图没有任何地方会用到。「换一批推荐」
+    /// 那颗长在音乐页的空状态里,首页上看不见,也不画(#153)。
     #[test]
-    fn an_idle_wide_frame_carries_the_two_ribbons_and_the_rail_keys()
+    fn an_idle_home_frame_carries_the_nebula_and_the_rail_keys()
      {
         let ui = band_window();
         let frames = Frames::default();
@@ -415,8 +417,8 @@ mod tests {
         let shell = ui.global::<Shell>();
         assert_eq!(
             frames.last().slots.len(),
-            4,
-            "空槽、绿板、侧栏两颗圆钮,不多不少"
+            3,
+            "空槽、侧栏两颗圆钮,不多不少"
         );
         assert_eq!(
             slot_of(&shell.get_home_slot_bg()),
@@ -424,15 +426,16 @@ mod tests {
         );
         assert_eq!(
             slot_of(&shell.get_empty_daily_bg()),
-            Some(1)
+            None,
+            "首页上看不见「换一批推荐」,不该渲它"
         );
         assert_eq!(
             slot_of(&shell.get_nav_key_a_bg()),
-            Some(2)
+            Some(1)
         );
         assert_eq!(
             slot_of(&shell.get_nav_key_b_bg()),
-            Some(3)
+            Some(2)
         );
         assert_eq!(
             slot_of(&shell.get_bar_fluid_bg()),
@@ -456,7 +459,7 @@ mod tests {
         band.tick(&ui, 1.0, true, &mut frames.renderer());
         assert_eq!(
             frames.last().slots.len(),
-            4,
+            3,
             "尺寸还没量出来,胶囊不该进合批"
         );
 
@@ -465,14 +468,14 @@ mod tests {
         band.tick(&ui, 1.0, true, &mut frames.renderer());
 
         let slots = frames.last().slots;
-        assert_eq!(slots.len(), 5);
-        assert_eq!(slots[2].variant, VARIANT_FLUID);
+        assert_eq!(slots.len(), 4);
+        assert_eq!(slots[1].variant, VARIANT_FLUID);
         assert_eq!(
             slot_of(
                 &ui.global::<Shell>().get_bar_fluid_bg()
             ),
-            Some(2),
-            "胶囊要拿第 2 槽那张图,拿错就是把绿板贴到胶囊上"
+            Some(1),
+            "胶囊要拿第 1 槽那张图,拿错就是把星云贴到胶囊上"
         );
     }
 
@@ -496,21 +499,22 @@ mod tests {
             &mut frames.renderer(),
         );
 
+        // 播放页盖满全窗,首页的星云被盖住了,不画(#153)。
         let slots = frames.last().slots;
         assert_eq!(
             slots.len(),
-            6,
-            "空槽、绿板、条底、两颗圆钮、玻璃底"
+            4,
+            "条底、两颗圆钮、玻璃底"
         );
-        assert_eq!(slots[2].variant, VARIANT_FLUID);
-        assert_eq!(slots[5].variant, VARIANT_GLASS);
+        assert_eq!(slots[0].variant, VARIANT_FLUID);
+        assert_eq!(slots[3].variant, VARIANT_GLASS);
         assert_eq!(
             slot_of(&shell.get_viz_bar_bg()),
-            Some(2)
+            Some(0)
         );
         assert_eq!(
             slot_of(&shell.get_viz_glass_bg()),
-            Some(5)
+            Some(3)
         );
     }
 
@@ -537,7 +541,7 @@ mod tests {
             &mut frames.renderer(),
         );
 
-        let bar = frames.last().slots[2];
+        let bar = frames.last().slots[0];
         assert_eq!(bar.variant, VARIANT_PROGRESS);
         assert_eq!(bar.progress, 0.4);
     }
@@ -559,7 +563,7 @@ mod tests {
             &mut frames.renderer(),
         );
 
-        assert_eq!(frames.last().slots.len(), 2);
+        assert_eq!(frames.last().slots.len(), 1);
         assert_eq!(
             slot_of(
                 &ui.global::<Shell>().get_nav_key_a_bg()
@@ -586,13 +590,14 @@ mod tests {
             &mut frames.renderer(),
         );
 
+        // 离开了首页,星云不在合批里,两颗圆钮就是头两槽。
         let slots = frames.last().slots;
-        assert_eq!(slots[2].amp, 1.0, "选中那颗该拉满");
+        assert_eq!(slots[0].amp, 1.0, "选中那颗该拉满");
         assert!(
-            slots[3].amp < slots[2].amp,
+            slots[1].amp < slots[0].amp,
             "另一颗该停在低位,实得 {} 对 {}",
-            slots[3].amp,
-            slots[2].amp
+            slots[1].amp,
+            slots[0].amp
         );
     }
 
@@ -636,6 +641,35 @@ mod tests {
             frames.last().time,
             0.1,
             "关掉期间的时间不该在重开那一帧补上"
+        );
+    }
+
+    /// 「换一批推荐」只在音乐页的空状态里画:列表有歌、还在取、或者不在音乐页,
+    /// 它都不在屏幕上(#153)。
+    #[test]
+    fn the_daily_ribbon_only_renders_in_the_music_empty_state()
+     {
+        let ui = band_window();
+        let frames = Frames::default();
+        let mut band = ButtonBand::default();
+        ui.global::<Shell>().set_current_tab(1);
+
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
+        assert_eq!(
+            frames.last().slots[0].variant,
+            VARIANT_RIBBON,
+            "空的每日推荐页上该有那颗按钮"
+        );
+
+        ui.global::<Player>().set_tracks_loading(true);
+        band.tick(&ui, 1.0, true, &mut frames.renderer());
+        assert!(
+            frames
+                .last()
+                .slots
+                .iter()
+                .all(|slot| slot.variant != VARIANT_RIBBON),
+            "还在取这一页时空状态不摆按钮,光带也不该画"
         );
     }
 
@@ -715,10 +749,30 @@ mod tests {
             slot_of(
                 &ui.global::<Shell>().get_bar_fluid_bg()
             ),
-            Some(2),
+            Some(1),
             "胶囊出场那一帧就该有底图"
         );
         assert!(changed.busy);
         assert!(!settled.busy, "画完那一帧之后不该再要帧");
+    }
+
+    /// 什么都不在场(紧凑版式、不在首页、没开播放页)时整段不渲,也不报环境动效 ——
+    /// 否则一次触摸就会白白换来十秒满帧。
+    #[test]
+    fn nothing_on_screen_asks_for_nothing() {
+        let ui = band_window();
+        ui.global::<Shell>().set_compact(true);
+        ui.global::<Shell>().set_current_tab(3);
+        let frames = Frames::default();
+
+        let demand = ButtonBand::default().tick(
+            &ui,
+            1.0,
+            true,
+            &mut frames.renderer(),
+        );
+
+        assert_eq!(frames.count(), 0);
+        assert_eq!(demand, Demand::default());
     }
 }
