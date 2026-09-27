@@ -28,6 +28,13 @@ pub const CONVERGE_NS: f64 = 2e9;
 /// 通道里最多缓冲 5 秒(`BUFFER_SAMPLES`),丢 3 秒以内多半都在缓冲里。
 pub const SKIP_MAX_NS: i64 = 3_000_000_000;
 
+/// 超前多少以内就地静音等着，不 seek。
+///
+/// 往回 seek 要换一条空通道重新解码：接着断流、再判一次跳，还在声卡回调里等解码线程的裁决
+/// (最多 10ms,够一次欠载)。曲尾解码线程收工以后它干脆跳不动。等是 |误差| 那么长的一段静音，
+/// 一次就对上;pc1 现场校时噪声一步最多挪了 185ms,都在这以内。
+pub const WAIT_MAX_NS: i64 = 250_000_000;
+
 /// 这一块怎么放。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Decision {
@@ -40,6 +47,8 @@ pub enum Decision {
     Skip { frames: u64 },
     /// 跳到媒体的这一帧(先静音，对齐了才出声)。
     Seek { to_frames: f64 },
+    /// 超前了：先出这么多帧静音，不消耗媒体，等时间线追上来。
+    Wait { frames: u64 },
     /// 照放：每输出一帧，读指针走 `step` 帧。`muted` 表示还在对齐，照常消耗但不出声。
     Play { step: f64, muted: bool },
 }
@@ -52,6 +61,7 @@ pub struct Stats {
     pub corr: f64,
     pub skips: u64,
     pub seeks: u64,
+    pub waits: u64,
 }
 
 /// 跟随器：记住自己是不是已经在跟、是不是还在对齐。
@@ -170,7 +180,7 @@ impl Follower {
         Decision::Hold { lead_frames: lead }
     }
 
-    /// 差得太多：落后不多就往前丢帧，否则 seek。之后先静音，对齐了再出声。
+    /// 差得太多：落后不多就往前丢帧，超前不多就静音等着，否则 seek。之后先静音，对齐了再出声。
     fn jump(
         &mut self,
         err: f64,
@@ -183,6 +193,12 @@ impl Follower {
             self.stats.skips += 1;
             return Decision::Skip {
                 frames: (-err).round() as u64,
+            };
+        }
+        if err > 0.0 && err_ns <= WAIT_MAX_NS {
+            self.stats.waits += 1;
+            return Decision::Wait {
+                frames: err.round() as u64,
             };
         }
         self.stats.seeks += 1;

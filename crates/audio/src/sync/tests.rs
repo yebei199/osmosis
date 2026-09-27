@@ -107,7 +107,8 @@ fn free_playback_just_plays() {
     );
 }
 
-/// 落后得不多(缓冲里就有)就往前丢帧，落后太多就 seek,超前也 seek(退不回去)。
+/// 落后得不多(缓冲里就有)就往前丢帧，落后太多就 seek;超前不多就静音等着，超前太多也 seek
+/// (退不回去)。超前 100ms 从前也走 seek,#145 起改成等:seek 换通道之后必然断流再跳。
 #[test]
 fn a_large_error_skips_or_seeks() {
     let target = follow(0, 0, true, 0);
@@ -128,9 +129,17 @@ fn a_large_error_skips_or_seeks() {
         }
     );
 
-    let mut ahead = Follower::default();
+    let mut ahead_a_little = Follower::default();
     assert_eq!(
-        ahead.decide(&target, now, 10_100.0, RATE, 10),
+        ahead_a_little
+            .decide(&target, now, 10_100.0, RATE, 10),
+        Decision::Wait { frames: 100 }
+    );
+
+    let mut ahead_a_lot = Follower::default();
+    assert_eq!(
+        ahead_a_lot
+            .decide(&target, now, 11_000.0, RATE, 10),
         Decision::Seek {
             to_frames: 10_000.0
         }
@@ -277,6 +286,8 @@ struct FakeFeed {
     pulls: usize,
     starve_on: Vec<usize>,
     seeks: Arc<Mutex<Vec<Duration>>>,
+    /// 跳不动：解码线程已经收工(曲尾最后几秒只剩缓冲，#145)。
+    seek_fails: bool,
 }
 
 impl FakeFeed {
@@ -288,6 +299,7 @@ impl FakeFeed {
             pulls: 0,
             starve_on: Vec::new(),
             seeks: Arc::default(),
+            seek_fails: false,
         }
     }
 }
@@ -312,6 +324,11 @@ impl Feed for FakeFeed {
         to: Duration,
     ) -> Result<(), SeekError> {
         self.seeks.lock().unwrap().push(to);
+        if self.seek_fails {
+            return Err(SeekError::NotSupported {
+                underlying_source: "FakeFeed",
+            });
+        }
         let frame =
             (to.as_secs_f64() * RATE).round() as usize;
         self.cursor = frame * usize::from(self.channels);
@@ -555,6 +572,88 @@ fn a_seek_between_two_frames_plays_on_from_there() {
     );
     assert!((got[0] - 50.7).abs() < 1e-3, "{got:?}");
     assert!((got[1] - 51.7).abs() < 1e-3, "{got:?}");
+}
+
+// ── 小毛刺不许连成一串(#145 pc1 现场) ──
+
+/// 放着放着时间线往回挪了 30ms(校时噪声):等 30ms 静音就对上了，不去 seek。
+/// seek 要换一条空通道重新解码，接着就断流、再跳，现场一两秒就来一次。
+#[test]
+fn a_small_lead_on_a_running_timeline_waits_instead_of_seeking()
+ {
+    let shared = SyncShared::new();
+    let feed = FakeFeed::mono(10_000);
+    let seeks = feed.seeks.clone();
+    let mut source = SyncSource::new(feed, shared.clone());
+    let present = 5_000 * MS;
+    shared.set_target(follow(present, 0, true, present));
+    shared.block(present, 100);
+    assert_eq!(take(&mut source, 100), values(0, 100));
+
+    shared.set_target(follow(
+        present,
+        -30 * MS,
+        true,
+        present,
+    ));
+    shared.block(present + 100 * MS, 100);
+    let mut expected = vec![0.0; 30];
+    expected.extend(values(100, 70));
+    assert_eq!(take(&mut source, 100), expected);
+    assert_eq!(*seeks.lock().unwrap(), vec![], "不该 seek");
+}
+
+/// 曲尾解码线程收工了，往回 seek 必然失败：只试一次，然后静音等到时间线追上，
+/// 而不是每一块都再 seek 一次、一直静音到切歌(现场歌尾每秒 85 次 Seek)。
+#[test]
+fn a_seek_that_fails_is_not_retried_every_block() {
+    let shared = SyncShared::new();
+    let feed = FakeFeed {
+        seek_fails: true,
+        ..FakeFeed::mono(10_000)
+    };
+    let seeks = feed.seeks.clone();
+    let mut source = SyncSource::new(feed, shared.clone());
+    take(&mut source, 2_000);
+
+    // 手上在第 2000 帧，时间线说该在第 1000 帧：超前一秒
+    let present = 5_000 * MS;
+    shared.set_target(follow(present, 1_000 * MS, true, 0));
+    for block in 0..11 {
+        shared.block(present + block * 100 * MS, 100);
+        take(&mut source, 100);
+    }
+    shared.block(present + 1_100 * MS, 100);
+    assert_eq!(
+        take(&mut source, 100),
+        values(2_100, 100),
+        "等够一秒，对上了照常出声"
+    );
+    assert_eq!(seeks.lock().unwrap().len(), 1, "只试一次");
+}
+
+/// 断流期间每一块都「落后一块」,但那不是跑偏：不许每块丢一次帧(现场误差钉在 -11.6ms、
+/// 每秒 Skip 85 次)。数据回来之后一次丢到位，对齐了照常出声。
+#[test]
+fn a_starving_feed_is_not_skipped_block_by_block() {
+    let shared = SyncShared::new();
+    let feed = FakeFeed {
+        starve_on: (6..=40).collect(),
+        ..FakeFeed::mono(10_000)
+    };
+    let mut source = SyncSource::new(feed, shared.clone());
+    let present = 5_000 * MS;
+    shared.set_target(follow(present, 0, true, present));
+    shared.block(present, 5);
+    assert_eq!(take(&mut source, 5), values(0, 5));
+
+    for block in 1..=9 {
+        shared.block(present + block * 5 * MS, 5);
+        take(&mut source, 5);
+    }
+    shared.block(present + 50 * MS, 5);
+    assert_eq!(take(&mut source, 5), values(50, 5));
+    assert_eq!(shared.report().follower.skips, 1);
 }
 
 // ── 声卡用不用得着(#138) ──
