@@ -377,7 +377,8 @@ pub struct NavSelector {
 }
 
 impl NavSelector {
-    /// 这一帧要不要重渲选中器;要就渲一张推给界面。
+    /// 这一帧要不要重渲选中器;要就渲一张推给界面。交回这一帧渲了没有 ——
+    /// 渲了就要再来一帧让它上屏(转场本身由 Slint 的动画驱动着出帧)。
     pub fn tick(
         &mut self,
         ui: &MainWindow,
@@ -386,7 +387,7 @@ impl NavSelector {
             &NavGlassControls,
         )
             -> Option<slint::Image>,
-    ) {
+    ) -> bool {
         // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
         // 常驻,与下面播放页视觉的门相互独立:只在切 tab 的 metaball 还在走
         // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
@@ -441,7 +442,9 @@ impl NavSelector {
                 self.last_dark = Some(dark);
                 self.last_ball = Some(ball);
                 self.last_size = Some((strip_w, strip_h));
+                return true;
             }
         }
+        false
     }
 }

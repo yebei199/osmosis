@@ -2,6 +2,7 @@ import { Palette } from "std-widgets.slint";
 import { DeviceRow } from "../types.slint";
 import { Library } from "library.slint";
 import { Player } from "player.slint";
+import { Session } from "session.slint";
 
 // 壳级的状态面:调试读数、GPU 纹理槽、设备名册、卡墙、封面取色与横幅。
 //
@@ -141,6 +142,32 @@ export global Shell {
     callback select-section(int);
 
     in-out property <bool> play-page-open: false;
+
+    // 音乐页列表该有一批歌、却一首都没有(空状态)。musicpage.slint 照它摆空状态,
+    // Rust 照它判「换一批推荐」那颗光带按钮在不在屏幕上 —— 一份判据两处读。
+    out property <bool> music-empty: Player.tracks.length == 0
+        && (Library.open-playlist-name != ""
+            || music-section == 0
+            || music-section == 3
+            || (music-section == 2 && Library.search-tab == 0));
+    // 两颗光带按钮此刻在不在屏幕上(#153):看不见的不画。播放页是盖满全窗的覆层。
+    out property <bool> home-slot-shown: Session.logged-in
+        && current-tab == 0
+        && !play-page-open;
+    out property <bool> empty-daily-shown: Session.logged-in
+        && current-tab == 1
+        && music-empty
+        && !Player.tracks-loading
+        && !play-page-open;
+
+    // 按需渲染的三个入口(#153,docs/adr/0035)。渲染循环只在有东西在动时要下一帧,
+    // 不经 Slint 属性就改了画面的那些到达,必须从这里叫醒它 —— Rust 侧在 runtime::pace。
+    // 用户动了(触摸、点击、滚动):环境动效从此刻起再活一段。
+    callback user-input();
+    // 状态变了、要一小段过渡(换歌换封面):短暂放行,走完就定格。
+    callback settle();
+    // 画面变了,只要一帧(缩略图到货这类)。
+    callback wake();
 
     callback theme-mode-selected(int);
     // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。

@@ -351,10 +351,14 @@ async fn fetch(
 ///
 /// 与 `artwork::apply` 同一条规矩:每次有新图就整表扫一遍,而不是记住"这张图是
 /// 第几行"—— 行会因为刷新、搜索、换歌单而换位置,记下的下标随时指向另一首歌。
+///
+/// 填进了任何一张就经 pace 叫醒渲染循环(#153):卡墙的卡面是从这张表里取的,
+/// 而墙亮着时列表不在屏幕上 —— 改行数据不会让 Slint 自己重绘,墙就一直挂着空白卡。
 fn apply(ui: &MainWindow, cache: &Rc<RefCell<Lru>>) {
     use slint::Model as _;
 
     let rows = ui.global::<Player>().get_tracks();
+    let mut filled = false;
     for i in 0..rows.row_count() {
         let Some(mut row) = rows.row_data(i) else {
             continue;
@@ -369,6 +373,10 @@ fn apply(ui: &MainWindow, cache: &Rc<RefCell<Lru>>) {
         };
         row.cover = image;
         rows.set_row_data(i, row);
+        filled = true;
+    }
+    if filled {
+        crate::runtime::pace::wake(ui);
     }
 }
 
@@ -583,6 +591,38 @@ mod tests {
         assert!(
             first_row_has_cover(&ui),
             "手上有的图该在这一帧就摆回行里"
+        );
+    }
+
+    /// 缩略图摆进行里就叫醒渲染循环一次,什么都没摆就不叫(#153)。
+    ///
+    /// 卡墙的卡面从这张表里取,而墙亮着时列表不在屏幕上:不叫的话,定格着的
+    /// 循环不会醒,墙上那一格一直是空白卡。反过来每次防抖都叫,就是白白多一帧。
+    #[test]
+    fn a_thumbnail_arrival_wakes_the_render_loop() {
+        let url = "https://cdn/a.jpg";
+        let ui = window_with(vec![row(url)]);
+        let wakes = Rc::new(std::cell::Cell::new(0));
+        {
+            let wakes = wakes.clone();
+            ui.global::<crate::Shell>().on_wake(
+                move || wakes.set(wakes.get() + 1),
+            );
+        }
+        let (cache, _, _) = tables();
+
+        apply(&ui, &cache);
+        assert_eq!(wakes.get(), 0, "没有新图就不该叫");
+
+        cache.borrow_mut().put(url.to_owned(), image());
+        apply(&ui, &cache);
+        assert_eq!(wakes.get(), 1);
+
+        apply(&ui, &cache);
+        assert_eq!(
+            wakes.get(),
+            1,
+            "那一行已经有图了,不该再叫"
         );
     }
 

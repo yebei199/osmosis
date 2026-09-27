@@ -242,11 +242,11 @@ fn the_list_is_the_default_view_when_supported() {
     );
 }
 
-/// **静止的墙每帧照渲。**
+/// **静止的墙照样组得出帧。**
 ///
-/// 旧省电门在动画收敛后让 frame() 给 None(冻结);前台恒满帧之后
-/// (change_log 2026-08-11 always-on-rendering),只要场区量出了尺寸,
-/// frame() 每次都给控制量 —— 连续调用也一样。
+/// 旧省电门在动画收敛后让 frame() 给 None(冻结)。现在渲不渲由渲染循环按
+/// `WallDrive::busy` 与活跃期决定(#153),frame() 只管组帧:只要场区量出了
+/// 尺寸,每次都给控制量 —— 连续调用也一样。
 #[test]
 fn a_settled_wall_still_renders_every_frame() {
     let ui = music_page(true);

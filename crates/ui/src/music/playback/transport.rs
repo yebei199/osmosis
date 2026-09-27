@@ -85,7 +85,7 @@ pub(in crate::music) fn play_current(
     // 点云也跟着清:与上面那两样同一条原则。少了这一步,取封面的那几百毫秒里
     // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
     // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
-    deck.cover.clear();
+    deck.cover.clear(ui);
     // 极光的封面色同理:旧色配新歌比主题绿更误导(aurora.rs)。
     crate::shader::aurora::reset(ui);
     // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
@@ -134,7 +134,7 @@ pub(in crate::music) fn play_current(
                 // `Arc` 免掉后面几个各拷一份兆级字节。
                 let pixels = Arc::new(decoded.pixels);
                 crate::shader::aurora::feed_colors(&ui, decoded.colors);
-                cover.replace(pixels.clone());
+                cover.replace(&ui, pixels.clone());
                 media.set_art(pixels);
                 crate::media::push(&ui, &playback, &media);
             }

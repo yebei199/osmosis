@@ -1,4 +1,5 @@
 use similar_asserts::assert_eq;
+use std::cell::Cell;
 
 mod dispatch;
 mod group;
@@ -13,13 +14,14 @@ use crate::{Shell, Viz};
 /// 一张封面是兆级的字节,每帧搬一次过 seam 纯属白耗。
 #[test]
 fn cover_feed_hands_pixels_over_once_per_track() {
+    let ui = cover_window();
     let feed = CoverFeed::default();
     assert!(
         matches!(feed.take(), CoverUpdate::Unchanged),
         "没换歌不该有动作"
     );
 
-    feed.replace(Arc::new(pixels(2)));
+    feed.replace(&ui, Arc::new(pixels(2)));
     assert!(
         matches!(feed.take(), CoverUpdate::Show(p) if p.width == 2)
     );
@@ -34,9 +36,10 @@ fn cover_feed_hands_pixels_over_once_per_track() {
 /// 就会攒下一串。
 #[test]
 fn cover_feed_replaces_a_pending_cover() {
+    let ui = cover_window();
     let feed = CoverFeed::default();
-    feed.replace(Arc::new(pixels(2)));
-    feed.replace(Arc::new(pixels(4)));
+    feed.replace(&ui, Arc::new(pixels(2)));
+    feed.replace(&ui, Arc::new(pixels(4)));
     assert!(
         matches!(feed.take(), CoverUpdate::Show(p) if p.width == 4)
     );
@@ -51,16 +54,48 @@ fn cover_feed_replaces_a_pending_cover() {
 /// (见 `CONTEXT.md`「封面点云」)。
 #[test]
 fn cover_feed_clears_before_the_new_art_arrives() {
+    let ui = cover_window();
     let feed = CoverFeed::default();
-    feed.replace(Arc::new(pixels(2)));
+    feed.replace(&ui, Arc::new(pixels(2)));
     // 上一首的图还排在队里没人取,这时候用户按了下一首。
-    feed.clear();
+    feed.clear(&ui);
 
     assert!(
         matches!(feed.take(), CoverUpdate::Clear),
         "换歌那一帧该是清空,而不是把上一首的图交出去"
     );
     assert!(matches!(feed.take(), CoverUpdate::Unchanged));
+}
+
+/// 封面一排上队就叫醒渲染循环(#153):循环可能正定格着,没人叫的话换歌
+/// 之后点云要等到下一次触摸才换图。清空与新图两条路都要叫。
+#[test]
+fn a_cover_arrival_wakes_the_render_loop() {
+    let ui = cover_window();
+    let settles = Rc::new(Cell::new(0));
+    {
+        let settles = settles.clone();
+        ui.global::<Shell>().on_settle(move || {
+            settles.set(settles.get() + 1)
+        });
+    }
+    let feed = CoverFeed::default();
+
+    feed.clear(&ui);
+    assert_eq!(settles.get(), 1, "换歌清空时没叫醒");
+    assert!(feed.pending());
+
+    feed.replace(&ui, Arc::new(pixels(2)));
+    assert_eq!(settles.get(), 2, "新封面到了没叫醒");
+
+    let _ = feed.take();
+    assert!(!feed.pending(), "取走之后不该还挂着");
+}
+
+/// 封面测试用的无头窗口:叫醒要经它的 `Shell` 回调。
+fn cover_window() -> MainWindow {
+    i_slint_backend_testing::init_no_event_loop();
+    MainWindow::new().expect("建不出主窗口")
 }
 
 /// 边长 `side` 的纯色封面像素,只用来分辨是哪一张。

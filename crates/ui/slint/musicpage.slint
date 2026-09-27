@@ -289,12 +289,7 @@ export component MusicPage inherits VerticalLayout {
             // 空状态:该有一批歌的地方一首都没有。大标题 +
             // 一个真动作(拉一批推荐);设计稿里的「打开本地
             // 文件夹」等入口等功能存在了再上(硬规则 8)。
-            if Player.tracks.length == 0
-                && (Library.open-playlist-name != ""
-                    || Shell.music-section == 0
-                    || Shell.music-section == 3
-                    || (Shell.music-section == 2
-                        && Library.search-tab == 0)):
+            if Shell.music-empty:
             empty-state := VerticalLayout {
                 vertical-stretch: 1;
                 alignment: center;

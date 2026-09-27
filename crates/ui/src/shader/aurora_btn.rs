@@ -1,8 +1,8 @@
 //! 光带按钮的边界逻辑(docs/design/handoff-shaders.md §9/§10)。
 //!
 //! 视觉由 render3d 的 `AuroraBtnPass` 画;这里管两件事:设置开关的存取与
-//! hover 振幅的收敛。渲染循环前台恒满帧(见 change_log 2026-08-11
-//! always-on-rendering),按钮每帧重渲,不再有冻结门。
+//! hover 振幅的收敛。什么时候渲、看不见的槽不进合批、无人触摸时定格,都在
+//! `band.rs`(按需渲染,#153)。
 //!
 //! 当前接了五槽:Home 空槽(nebula)、空状态「换一批推荐」(ribbon 绿板)、
 //! 正在播放胶囊(fluid,#68)、播放页主控条底(fluid,缓冲时换 progress)
@@ -78,7 +78,7 @@ impl Default for ButtonAnim {
 }
 
 impl ButtonAnim {
-    /// 振幅与指针朝目标走一步。收敛与否不再有人问:循环恒满帧,每帧都渲。
+    /// 振幅与指针朝目标走一步。只在活跃期内走,定格时振幅跟着停(见 `band.rs`)。
     pub fn step(
         &mut self,
         hovered: bool,

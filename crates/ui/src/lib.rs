@@ -106,7 +106,7 @@ const MAX_TAB: i32 = 3;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
 ///
-/// 顺带交出可视化的数据源(频谱分析器句柄):它由 music 的播放器产出,
+/// 顺带交出按需渲染的节拍(`runtime::pace`)与可视化的数据源(频谱分析器句柄):后者由 music 的播放器产出,
 /// 而消费它的渲染通知回调装在 [`run_with_renderers`] 里 —— 两处只在这里相遇。
 ///
 /// 调用前平台入口必须已经初始化好 slint 的渲染后端。
@@ -114,6 +114,7 @@ fn build_ui(
     media: impl FnOnce(MediaHooks) -> Box<dyn MediaControls>,
 ) -> (
     MainWindow,
+    std::rc::Rc<runtime::pace::Pace>,
     viz::Source,
     music::LyricFeed,
     music::CoverFeed,
@@ -121,6 +122,9 @@ fn build_ui(
 ) {
     let ui = MainWindow::new()
         .expect("failed to create main window");
+    // 按需渲染的唤醒入口要赶在一切绑定之前接上:绑定里就有会叫醒循环的路
+    // (封面、缩略图),接晚了那几下叫醒落空。
+    let pace = runtime::pace::bind(&ui);
 
     // 先恢复上次的登录态,再绑界面 —— 绑定那一步会按登录与否决定先拉什么。
     // 恢复出来的 token 可能已被服务端吊销,那要等第一次请求 401 才知道。
@@ -159,7 +163,7 @@ fn build_ui(
         ui.global::<Shell>()
             .set_current_tab(tab.clamp(0, MAX_TAB));
     }
-    (ui, viz_source, lyrics, cover, frames)
+    (ui, pace, viz_source, lyrics, cover, frames)
 }
 
 /// 会话、设置、封面与设备 id 的落点。与下载落点同一个接缝形状:
@@ -178,7 +182,7 @@ pub fn set_state_dir(dir: std::path::PathBuf) {
 /// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
     // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
-    let (ui, _viz_source, _lyrics, _cover, _frames) =
+    let (ui, _pace, _viz_source, _lyrics, _cover, _frames) =
         build_ui(|_| Box::new(NoControls));
     // Timer 必须活到事件循环结束,否则会被立即析构、不再触发。
     // 关掉时连建都不建 —— 空转的 2Hz 唤醒在移动端是白耗电。
