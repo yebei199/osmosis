@@ -1,7 +1,8 @@
 //! 播放事件与最近播放。
 //!
-//! 事件流只增不改:起播即追加一条,不补记听了多久 —— 补记要靠客户端在退出或切歌时
-//! 再发一次,而崩溃与断网时那一条就丢了(见 `docs/adr/0016`)。
+//! 起播即追加一条,不等声音真的出来之后再补;`listened_ms`/`duration_ms`
+//! 两列(#157)例外于「只增不改」—— 切歌/播完/停止时客户端补一次,补不上
+//! (进程被杀)就留 NULL,算不出完播也算不出跳过,接受(见 `docs/adr/0016`)。
 //!
 //! 「最近播放」「最常听」这类东西都是**查询时**的聚合,不存在独立的统计表。
 //! 口径想改就改,因为原始事件都在。
@@ -11,22 +12,47 @@ use sqlx::PgConnection;
 use crate::error::AppError;
 use crate::store::playlist::TrackRef;
 
-/// 记一次起播。
+/// 记一次起播,返回这一行的 id —— 补记听了多久时要靠它认哪一行。
 pub async fn record(
     conn: &mut PgConnection,
     account_id: i64,
     track: &TrackRef,
-) -> Result<(), AppError> {
-    sqlx::query(
+) -> Result<i64, AppError> {
+    Ok(sqlx::query_scalar(
         "INSERT INTO play_events (account_id, platform, track_id)
-         VALUES ($1, $2, $3)",
+         VALUES ($1, $2, $3)
+         RETURNING id",
     )
     .bind(account_id)
     .bind(&track.platform)
     .bind(&track.track_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// 补记这一次播放听了多久。只认自己账号的行,别人的行按不存在回答
+/// (与 [`crate::store::playlist::rename`] 同一个理由)。
+pub async fn report_listened(
+    conn: &mut PgConnection,
+    account_id: i64,
+    play_event_id: i64,
+    listened_ms: i64,
+    duration_ms: i64,
+) -> Result<(), AppError> {
+    let done = sqlx::query(
+        "UPDATE play_events SET listened_ms = $3, duration_ms = $4
+         WHERE id = $2 AND account_id = $1",
+    )
+    .bind(account_id)
+    .bind(play_event_id)
+    .bind(listened_ms)
+    .bind(duration_ms)
     .execute(conn)
     .await?;
 
+    if done.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
     Ok(())
 }
 

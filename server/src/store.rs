@@ -9,6 +9,7 @@ pub mod archive;
 pub mod cache;
 pub mod daily;
 pub mod db;
+pub mod feedback;
 pub mod group;
 pub mod history;
 pub mod liked;
