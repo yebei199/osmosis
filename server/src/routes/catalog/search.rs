@@ -6,7 +6,7 @@ use axum::{
 };
 use contract::{
     ArtistSearchDto, PlaylistSearchDto, SearchDto,
-    TracksDto,
+    TrackDto, TracksDto,
 };
 use serde::Deserialize;
 
@@ -20,6 +20,7 @@ use server::bangdream::{
 };
 use server::error::Failure;
 use server::store::account::Account;
+use server::store::cache;
 use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
@@ -46,7 +47,7 @@ pub(crate) async fn search_tracks(
     account: Account,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchDto>, Failure> {
-    let mut catalog = state.upstream.catalog;
+    let mut catalog = state.upstream.catalog.clone();
     let response = catalog
         .search_tracks(bangdream::as_user(
             &account,
@@ -63,12 +64,15 @@ pub(crate) async fn search_tracks(
         .map_err(|status| fail(&status))?
         .into_inner();
 
+    let tracks: Vec<_> = response
+        .tracks
+        .into_iter()
+        .map(bangdream::track_to_dto)
+        .collect();
+    remember_details(&state, &tracks).await;
+
     Ok(Json(SearchDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
+        tracks,
         has_more: response.has_more,
     }))
 }
@@ -180,7 +184,7 @@ pub(crate) async fn search_playlists(
 /// `GET /daily` —— 今日推荐。
 ///
 /// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。当天的这批排进预取队列
-/// (#147):取到就是日推刷新了,已在桶里的入队时就跳过。
+/// (#147):取到就是日推刷新了,已在桶里的入队时就跳过。详情顺手写进缓存(#156)。
 pub(crate) async fn daily(
     State(state): State<AppState>,
     account: Account,
@@ -209,6 +213,7 @@ pub(crate) async fn daily(
             track_id: track.id.clone(),
         })
         .collect();
+    remember_details(&state, &tracks).await;
     remember_daily(&state, account.id, &refs).await;
     prefetch::enqueue(&state, account.id, &refs).await;
 
@@ -216,6 +221,26 @@ pub(crate) async fn daily(
         tracks,
         unavailable: 0,
     }))
+}
+
+/// 把列表里出现的曲目详情写进 `platform_tracks`(#156):分类视图要的专辑、
+/// 歌词标记都挂在那一行上,只有歌单路径写的话,日推与搜索里的歌就没有。
+/// 写不上只写日志,列表照样交出去。
+pub(crate) async fn remember_details(
+    state: &AppState,
+    tracks: &[TrackDto],
+) {
+    let written = match state.pool.acquire().await {
+        Ok(mut conn) => {
+            cache::put_details(&mut conn, tracks)
+                .await
+                .map_err(|err| format!("{err:?}"))
+        }
+        Err(err) => Err(err.to_string()),
+    };
+    if let Err(err) = written {
+        tracing::warn!(%err, "曲目详情写不进缓存");
+    }
 }
 
 /// 记下这个账号当天的日推:保留规则要知道哪几首在里面(#147)。
@@ -237,3 +262,6 @@ async fn remember_daily(
         tracing::warn!(%err, "记不下当天的日推");
     }
 }
+
+#[cfg(test)]
+mod tests;

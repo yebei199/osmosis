@@ -64,6 +64,7 @@ pub(crate) fn track(id: &str, title: &str) -> TrackDto {
         artists: vec!["某人".to_owned()],
         cover: None,
         duration_ms: 200_000,
+        album: None,
     }
 }
 

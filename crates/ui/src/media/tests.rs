@@ -21,6 +21,7 @@ mod helpers {
             artists: vec!["甲".into(), "乙".into()],
             cover: Some(format!("https://cdn/{id}.jpg")),
             duration_ms: 240_000,
+            album: None,
         }
     }
 

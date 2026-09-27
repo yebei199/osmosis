@@ -11,6 +11,7 @@ fn dto(id: &str) -> TrackDto {
         artists: Vec::new(),
         cover: None,
         duration_ms: 1,
+        album: None,
     }
 }
 

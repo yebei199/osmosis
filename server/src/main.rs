@@ -543,6 +543,8 @@ async fn main() {
         routes::play::prefetch::Limits::from_env(),
         &stop,
     );
+    // 缓存里每首歌探一次有没有歌词,歌单分类视图要它(#156)
+    routes::catalog::lyric_probe::spawn(&state, &stop);
 
     let app = Router::new()
         .route("/health", get(health))

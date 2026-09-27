@@ -326,6 +326,7 @@ fn as_entry(entry: Entry) -> QueueEntryDto {
             artists: entry.artists,
             cover: entry.cover,
             duration_ms: entry.duration_ms,
+            album: None,
         },
     }
 }

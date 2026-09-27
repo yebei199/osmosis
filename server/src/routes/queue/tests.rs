@@ -37,6 +37,7 @@ fn track(id: &str) -> TrackDto {
         artists: vec!["LiSA".to_owned()],
         cover: None,
         duration_ms: 234_000,
+        album: None,
     }
 }
 

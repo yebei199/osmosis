@@ -15,6 +15,7 @@ fn track(id: usize) -> TrackDto {
         artists: vec!["测试".to_owned()],
         cover: None,
         duration_ms: 1_000,
+        album: None,
     }
 }
 

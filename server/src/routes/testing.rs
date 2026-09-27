@@ -20,19 +20,22 @@ use contract::TrackDto;
 use sqlx::PgPool;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
-    GetPlaySourceRequest, GetPlaySourceResponse,
-    GetPlaylistRequest, GetPlaylistResponse,
-    GetTracksRequest, GetTracksResponse,
-    ListLikedTracksRequest, ListLikedTracksResponse,
-    ListUserPlaylistsRequest, ListUserPlaylistsResponse,
-    LogoutRequest, LogoutResponse, Platform, PlaySource,
-    Playlist, PlaylistTrackRef, QrLoginEvent,
-    SetPlaylistSubscribedRequest,
+    GetDailyRecommendationsRequest,
+    GetDailyRecommendationsResponse, GetLyricRequest,
+    GetLyricResponse, GetPlaySourceRequest,
+    GetPlaySourceResponse, GetPlaylistRequest,
+    GetPlaylistResponse, GetTracksRequest,
+    GetTracksResponse, ListLikedTracksRequest,
+    ListLikedTracksResponse, ListUserPlaylistsRequest,
+    ListUserPlaylistsResponse, LogoutRequest,
+    LogoutResponse, Lyric, Platform, PlaySource, Playlist,
+    PlaylistTrackRef, QrLoginEvent, SearchTracksRequest,
+    SearchTracksResponse, SetPlaylistSubscribedRequest,
     SetPlaylistSubscribedResponse, SetTrackLikedRequest,
     SetTrackLikedResponse, Track, WatchQrLoginRequest,
     auth_service_client::AuthServiceClient,
@@ -42,6 +45,9 @@ use server::bangdream::proto::{
         CatalogService, CatalogServiceServer,
     },
     discover_service_client::DiscoverServiceClient,
+    discover_service_server::{
+        DiscoverService, DiscoverServiceServer,
+    },
     library_service_client::LibraryServiceClient,
     library_service_server::{
         LibraryService, LibraryServiceServer,
@@ -219,6 +225,7 @@ pub(crate) fn expected_dto(
         artists: vec!["某人".to_owned()],
         cover: None,
         duration_ms: 200_000,
+        album: None,
     }
 }
 
@@ -266,6 +273,10 @@ pub(crate) struct FakeUpstream {
     pub(crate) playlist_delay: std::time::Duration,
     /// `ListUserPlaylists` 回答前先等这么久。`/playlists` 的「不等上游」靠它验。
     pub(crate) lists_delay: std::time::Duration,
+    /// `SearchTracks` 与 `GetDailyRecommendations` 回的那一批。
+    pub(crate) listed: Vec<Track>,
+    /// `GetLyric` 按曲目 id 回的:歌词,或一个错误码。不在里面的回 Unavailable。
+    pub(crate) lyrics: HashMap<String, Result<Lyric, Code>>,
 }
 
 impl FakeUpstream {
@@ -415,6 +426,51 @@ impl CatalogService for FakeUpstream {
             source: self.play_source.clone(),
         }))
     }
+
+    async fn get_lyric(
+        &self,
+        request: Request<GetLyricRequest>,
+    ) -> Result<Response<GetLyricResponse>, Status> {
+        match self.lyrics.get(&request.get_ref().track_id) {
+            Some(Ok(lyric)) => {
+                Ok(Response::new(GetLyricResponse {
+                    lyric: Some(lyric.clone()),
+                }))
+            }
+            Some(Err(code)) => {
+                Err(Status::new(*code, "假上游说不行"))
+            }
+            None => {
+                Err(Status::unavailable("假上游没摆这首"))
+            }
+        }
+    }
+
+    async fn search_tracks(
+        &self,
+        _request: Request<SearchTracksRequest>,
+    ) -> Result<Response<SearchTracksResponse>, Status>
+    {
+        Ok(Response::new(SearchTracksResponse {
+            tracks: self.listed.clone(),
+            ..SearchTracksResponse::default()
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl DiscoverService for FakeUpstream {
+    async fn get_daily_recommendations(
+        &self,
+        _request: Request<GetDailyRecommendationsRequest>,
+    ) -> Result<
+        Response<GetDailyRecommendationsResponse>,
+        Status,
+    > {
+        Ok(Response::new(GetDailyRecommendationsResponse {
+            tracks: self.listed.clone(),
+        }))
+    }
 }
 
 #[tonic::async_trait]
@@ -516,6 +572,9 @@ pub(crate) async fn serve(fake: FakeUpstream) -> Upstream {
                 fake.clone(),
             ))
             .add_service(CatalogServiceServer::new(
+                fake.clone(),
+            ))
+            .add_service(DiscoverServiceServer::new(
                 fake.clone(),
             ))
             .add_service(LibraryServiceServer::new(fake))
