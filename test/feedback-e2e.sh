@@ -51,14 +51,25 @@ last_feedback_verdict() {
   sql "select verdict from track_feedback order by updated_at desc limit 1;"
 }
 played() { sql "select count(*) from play_events;"; }
+# 切歌那一刻,新一首的 play_events 行紧接着就插进去了(比补记快)——
+# 「最新一行」到那时已经是下一首、listened_ms 还是 NULL。要读的是**最近一条
+# 补上了 listened_ms 的行**,不是字面意义的最后一行。
 last_listened_ms() {
-  sql "select coalesce(listened_ms::text, 'NULL') from play_events order by id desc limit 1;"
+  sql "select coalesce(listened_ms::text, 'NULL') from play_events
+       where listened_ms is not null order by id desc limit 1;"
 }
 
 # 复位:播放页收起 → 音乐页 → 每日推荐,点第一行起播。**不**展开播放页 ——
 # skip 模式接下来要点列表里的另一行切歌,播放页开着会盖住列表。
+#
+# 点了要等出**新**的一条 play_events,不是随便 >0:这首可能已经在放(上一轮
+# 测试留下的),点它可能只是个无操作,那时下面 skip 算出来的 listened_ms
+# 其实是从上一轮起就在计的时长,不是这一次真正的起播。
+# 起播用的是列表第几行,skip 模式切歌时要换成**另一**行,不是随便点。
+PLAYING_INDEX=0
+
 start_playing() {
-  local music item row
+  local music item row before
   for _ in 1 2 3; do
     [ -n "$(present PlayPage)" ] || break
     call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
@@ -75,7 +86,23 @@ start_playing() {
 
   row=$(handle "TrackList::touch" 0)
   must "$row" "列表第一行"
+  before=$(played)
   call click_element "{\"elementHandle\":$row}" >/dev/null
+  for _ in $(seq 1 5); do
+    [ "$(played)" -gt "$before" ] && { PLAYING_INDEX=0; return; }
+    sleep 1
+  done
+  # 点中的正是已经在放的那首:界面按多余点击丢掉它,账本不动。再点第二行
+  # 换一首,保证起播是全新的。
+  row=$(handle "TrackList::touch" 1)
+  must "$row" "列表第二行(第一行点了个无操作,换一首)"
+  call click_element "{\"elementHandle\":$row}" >/dev/null
+  for _ in $(seq 1 30); do
+    [ "$(played)" -gt "$before" ] && { PLAYING_INDEX=1; return; }
+    sleep 1
+  done
+  echo "起播 30 秒没起来" >&2
+  exit 1
 }
 
 # 展开播放页:点控制条封面。只有 verdict 模式要它 —— 赞踩键长在播放页上。
@@ -129,16 +156,11 @@ case "$MODE" in
     echo "verdict: 通过"
     ;;
   skip)
-    for _ in $(seq 1 30); do
-      [ "$(played)" -gt 0 ] && break
-      sleep 1
-    done
-    [ "$(played)" -gt 0 ] || { echo "skip: 失败 —— 没起播" >&2; exit 1; }
-
     # 上一首/下一首键没有独立的元素 id 可按(与 PlayerBar::cover-touch 不同名),
-    # 等自动续播又太慢 —— 直接切到列表第二行来触发一次切歌。
-    row=$(handle "TrackList::touch" 1)
-    must "$row" "列表第二行(用来触发一次切歌)"
+    # 直接点列表里另一行来触发一次切歌 —— 与 start_playing 刚点中的那首不同。
+    other=$((PLAYING_INDEX == 0 ? 1 : 0))
+    row=$(handle "TrackList::touch" "$other")
+    must "$row" "列表第 $((other + 1)) 行(用来触发一次切歌)"
     call click_element "{\"elementHandle\":$row}" >/dev/null
     sleep 2
 
