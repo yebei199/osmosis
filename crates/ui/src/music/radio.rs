@@ -29,6 +29,25 @@ struct State {
     retry_at_ms: u64,
 }
 
+/// 接上播放页的「从这首开电台」:以正在放的那首为种子开心动模式。
+pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Player>().on_radio_from(move |id| {
+        let Some(ui) = weak.upgrade() else { return };
+        if id.is_empty() {
+            return;
+        }
+        start(
+            &ui,
+            &deck,
+            api::RadioMode::Heart {
+                seed: id.to_string(),
+            },
+        );
+    });
+}
+
 /// 开电台:取一批,拿到就整批起播。
 ///
 /// 正在电台区就摆进列表;从播放页开的心动模式在后台进电台区自己那份,

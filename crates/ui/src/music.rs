@@ -262,6 +262,7 @@ pub fn bind(
     bind_outputs(ui, &deck);
     bind_group(ui, &deck);
     queuepage::bind(ui, &deck);
+    radio::bind(ui, &deck);
     bind_download(ui, &deck);
     start_auto_advance(ui, &deck);
     start_progress_tick(ui, &deck);
