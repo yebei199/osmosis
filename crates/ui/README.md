@@ -53,10 +53,10 @@ src/ 下按职责分成六个目录,哪一组负责什么见 `src/README.md`;下
   这里只按 `offset` 画衰减 —— 透明度与字号随行距递减,充当景深。Slint 没有高斯模糊,
   文字要真模糊得进 3D 走一套字形管线,与卡墙里砍掉内嵌文字是同一笔账。
   拖动只改浏览偏移,不碰播放进度;松手三秒回到跟随。
-- `src/lib.rs`:crate 门面与帧驱动。`build_ui` 完成绑定;`run_with_renderers` 把渲染
-  通知回调当帧泵,依次驱动导航选中器、光带按钮、卡墙与播放页 warp,末尾每帧
-  `request_redraw`,前台恒满帧、后台由平台停发重绘而自然暂停
-  (change_log 2026-08-11 always-on-rendering)。
+- `src/lib.rs`:crate 门面。`build_ui` 完成绑定(头一件是接上按需渲染的唤醒入口);
+  帧驱动在 `src/runtime/`:`run_with_renderers` 把渲染通知回调当帧泵,`FrameLoop` 依次
+  驱动导航选中器、光带按钮、卡墙与播放页 warp,按各渲染器交回的需求决定要不要下一帧
+  (按需渲染,`docs/adr/0035`)。
 - `src/music.rs`:音乐页绑定。搜索/每日/红心、队列点播、控制条、自动续播、
   下一首的预取(判据 `should_prefetch`,认领判据 `take_prefetched`)、
   开机自检,以及播放页元数据(歌名/歌手/封面/歌词)的推送。显示格式化都在这层做。
@@ -135,8 +135,8 @@ src/ 下按职责分成六个目录,哪一组负责什么见 `src/README.md`;下
   相机与动画状态,封面缩略图取出像素、烘成卡面后经 seam 上传;还没有封面的
   格子先挂一张空白卡面,免得露出没圆角没投影的方块。哪一格在放(`Player.now-id`)
   也在这里定,只有它走闪卡材质。起播挂在普通点按上(点中已浮起的那张)而不是
-  双击 —— 触摸屏收不到双击,理由写在 `should_play` 的文档里。动画收敛只是插值到位,不再衍生冻结门 ——
-  前台恒满帧,墙每帧照渲(change_log 2026-08-11 always-on-rendering)。
+  双击 —— 触摸屏收不到双击,理由写在 `should_play` 的文档里。墙在动或有卡面要传时报 `busy`,
+  渲染循环据此要下一帧;静止的墙只在活跃期内照渲,之后定格(`docs/adr/0035`)。
 - `src/runtime/frame_stats.rs`:诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
 - `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
   `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件
