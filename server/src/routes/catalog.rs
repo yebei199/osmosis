@@ -4,5 +4,6 @@
 
 pub(crate) mod catalog_cache;
 pub(crate) mod lyric;
+pub(crate) mod lyric_probe;
 pub(crate) mod netease;
 pub(crate) mod search;

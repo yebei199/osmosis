@@ -20,19 +20,20 @@ use contract::TrackDto;
 use sqlx::PgPool;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
-use tonic::{Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 use server::bangdream::proto::{
     Artist, CreateQrLoginRequest, CreateQrLoginResponse,
     GetAccountStatusRequest, GetAccountStatusResponse,
     GetDailyRecommendationsRequest,
-    GetDailyRecommendationsResponse,
+    GetDailyRecommendationsResponse, GetLyricRequest,
+    GetLyricResponse,
     GetPlaySourceRequest, GetPlaySourceResponse,
     GetPlaylistRequest, GetPlaylistResponse,
     GetTracksRequest, GetTracksResponse,
     ListLikedTracksRequest, ListLikedTracksResponse,
     ListUserPlaylistsRequest, ListUserPlaylistsResponse,
-    LogoutRequest, LogoutResponse, Platform, PlaySource,
+    LogoutRequest, LogoutResponse, Lyric, Platform, PlaySource,
     Playlist, PlaylistTrackRef, QrLoginEvent,
     SetPlaylistSubscribedRequest,
     SearchTracksRequest, SearchTracksResponse,
@@ -275,6 +276,8 @@ pub(crate) struct FakeUpstream {
     pub(crate) lists_delay: std::time::Duration,
     /// `SearchTracks` 与 `GetDailyRecommendations` 回的那一批。
     pub(crate) listed: Vec<Track>,
+    /// `GetLyric` 按曲目 id 回的:歌词,或一个错误码。不在里面的回 Unavailable。
+    pub(crate) lyrics: HashMap<String, Result<Lyric, Code>>,
 }
 
 impl FakeUpstream {
@@ -423,6 +426,23 @@ impl CatalogService for FakeUpstream {
         Ok(Response::new(GetPlaySourceResponse {
             source: self.play_source.clone(),
         }))
+    }
+
+    async fn get_lyric(
+        &self,
+        request: Request<GetLyricRequest>,
+    ) -> Result<Response<GetLyricResponse>, Status> {
+        match self.lyrics.get(&request.get_ref().track_id) {
+            Some(Ok(lyric)) => {
+                Ok(Response::new(GetLyricResponse {
+                    lyric: Some(lyric.clone()),
+                }))
+            }
+            Some(Err(code)) => {
+                Err(Status::new(*code, "假上游说不行"))
+            }
+            None => Err(Status::unavailable("假上游没摆这首")),
+        }
     }
 
     async fn search_tracks(
