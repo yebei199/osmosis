@@ -186,6 +186,18 @@ pub struct GroupAdvanceDto {
     pub version: u64,
 }
 
+/// `POST /group/ready`:出声设备把第 `entry_id` 条备好了(取到流、能出声),它手上那一版
+/// 是 `version`(#154)。在线的出声设备都报了,服务端把还没开走的起播提前;没报齐就等到上限
+/// (`server::syncplay::group::timeline::START_WAIT_US`)照常开播。旧客户端不报,只是等满上限。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct GroupReadyDto {
+    pub device_id: String,
+    pub entry_id: i64,
+    pub version: u64,
+}
+
 /// `/group/*` 的应答:意图应用之后组的样子。组散了是 `None`。
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize,

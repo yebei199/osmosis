@@ -282,6 +282,25 @@ fn track(
         start_ns,
     });
     deck.alignment.inner.borrow_mut().following = true;
+    // 起播还没到、本机已经备好:报就绪,出声设备都好了服务端就提前开走(#154)。
+    if now.playing
+        && start_ns > audio::clock::monotonic_ns()
+        && prepared(deck, now)
+    {
+        deck.group.ready(ui, now.entry_id);
+    }
+}
+
+/// 状态要的那一首已经取到流、交给了播放器,随时能出声。
+fn prepared(deck: &Deck, now: &Effective) -> bool {
+    matches!(
+        deck.playback.borrow().state(),
+        PlaybackState::Playing(track) if track.id == now.track.id
+    ) && deck
+        .player
+        .as_ref()
+        .as_ref()
+        .is_ok_and(|player| !player.empty())
 }
 
 /// 起播状态要的那一条,从它此刻该在的位置起。手上已经在放(或在取)这一条就不重起 ——

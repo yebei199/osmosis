@@ -4,13 +4,22 @@
 //! (测试在 `super::tests`)。持久化在 `crate::store::group`,接线在 `super`。
 //!
 //! 时间线只有一种写法:「挂钟 `anchor_wall_us` 这一刻,媒体在 `position_us`」。播放时
-//! 锚点可以落在未来 —— 起播、切歌、跳转、继续都锚在「现在 + [`LEAD_US`]」,
+//! 锚点可以落在未来 —— 跳转、继续锚在「现在 + [`LEAD_US`]」,新起一首先锚在「现在 +
+//! [`START_WAIT_US`]」、出声设备都就绪了再提前(#154),
 //! 让状态先到各台出声设备手上,大家在那一刻一起出声。
 
 use contract::LoopModeDto;
 
-/// 起播、切歌、跳转、继续时,锚点定在「现在」之后多久(与 #137 ⑤ 的 `app_core::LEAD_US` 同值)。
+/// 跳转、继续时,以及出声设备都就绪之后,锚点定在「现在」之后多久(与 #137 ⑤ 的 `app_core::LEAD_US` 同值)。
 pub const LEAD_US: i64 = 500_000;
+
+/// 新起一首(点歌、上下首、放完推进)时,锚点先定在「现在」之后多久(#154)。
+///
+/// 出声设备拿到新状态后要取直链、建连、预取开头,没预加载时要两到四秒。锚点若照旧定在
+/// 「现在 + [`LEAD_US`]」,设备好了时时间线已经走出几秒,开头就被跳过去。所以先锚远一点,
+/// 在线的出声设备都报了就绪([`Group::ready`])就提前到「那一刻 + [`LEAD_US`]」。这也是
+/// 等待的上限:谁卡住、谁掉线,到点照常开播,不永远等。
+pub const START_WAIT_US: i64 = 3_000_000;
 
 /// 按元数据时长兜底推进前,放完之后再等多久(#142 AC-9)。
 ///
@@ -266,11 +275,11 @@ impl Group {
             };
         match target {
             Some(entry_id) => {
-                now.start(entry_id, at + LEAD_US)
+                now.start(entry_id, at + START_WAIT_US)
             }
             None if step < 0 => {
                 let entry_id = now.entry_id;
-                now.start(entry_id, at + LEAD_US);
+                now.start(entry_id, at + START_WAIT_US);
             }
             None => {}
         }
@@ -296,7 +305,7 @@ impl Group {
             list,
             entry_id,
             (0, true),
-            at + LEAD_US,
+            at + START_WAIT_US,
             seed,
         );
         Ok(())
@@ -438,7 +447,7 @@ impl Group {
     /// 出声设备 `device` 报它真正放完了第 `entry_id` 条,手上那一版是 `version`(#142 AC-9)。
     ///
     /// 先到的那一台推进,后到的同一份报告因为版本或条目已经变了而作废 —— `(version, entry_id)`
-    /// 就是去重的键。下一首锚在「现在 + [`LEAD_US`]」,各台一起开始。不循环又放到队尾就停在
+    /// 就是去重的键。下一首锚在「现在 + [`START_WAIT_US`]」,各台一起开始。不循环又放到队尾就停在
     /// 这一首的末尾。返回有没有改。
     pub fn advance(
         &mut self,
@@ -461,12 +470,52 @@ impl Group {
         {
             return Ok(false);
         }
-        step_on(now, list, at + LEAD_US);
+        step_on(now, list, at + START_WAIT_US);
+        Ok(true)
+    }
+
+    /// 出声设备 `device` 报它手上第 `entry_id` 条已经备好、随时能出声,手上那一版是
+    /// `version`(#154)。`ready` 是这一版里报过就绪的全部设备(含它)。
+    ///
+    /// 在线的出声设备都在 `ready` 里,而起播还在「`at` + [`LEAD_US`]」之后,就把起播提前到
+    /// 那一刻:大家都好了就不必干等到 [`START_WAIT_US`] 的上限。掉线的不等;报的不是此刻
+    /// 那一版、那一条,或者已经开走、暂停着,什么都不动。返回有没有改。
+    pub fn ready(
+        &mut self,
+        device: &str,
+        ready: &[String],
+        entry_id: i64,
+        version: i64,
+        online: impl Fn(&str) -> bool,
+        at: i64,
+    ) -> Result<bool, Refusal> {
+        if !self.outputs.iter().any(|id| id == device) {
+            return Err(Refusal::NotMember);
+        }
+        let everyone = self
+            .outputs
+            .iter()
+            .filter(|id| online(id))
+            .all(|id| ready.contains(id));
+        let current = self.version;
+        let Some(now) = self.now.as_mut() else {
+            return Ok(false);
+        };
+        let start = at + LEAD_US;
+        if version != current
+            || now.entry_id != entry_id
+            || !now.playing
+            || !everyone
+            || now.anchor_wall_us <= start
+        {
+            return Ok(false);
+        }
+        now.anchor_wall_us = start;
         Ok(true)
     }
 
     /// 兜底:元数据时长到了、又过了 [`ADVANCE_GRACE_US`] 还没有一台报放完,服务端自己推进,
-    /// 下一首锚在「现在 + [`LEAD_US`]」。返回有没有改。
+    /// 下一首锚在「现在 + [`START_WAIT_US`]」。返回有没有改。
     pub fn roll(
         &mut self,
         list: &Playlist,
@@ -479,7 +528,7 @@ impl Group {
             list.duration_of(now.entry_id).unwrap_or(0);
         match now.deadline(duration) {
             Some(deadline) if at >= deadline => {
-                step_on(now, list, at + LEAD_US);
+                step_on(now, list, at + START_WAIT_US);
                 true
             }
             _ => false,

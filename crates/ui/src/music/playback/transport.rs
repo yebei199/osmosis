@@ -221,6 +221,10 @@ pub(in crate::music) fn play_current(
             // 这一首要么放起来了、要么失败了,行上的加载态该收了。
             // 被顶掉的那次连这里都到不了 —— `app_core::play` 提前返回。
             mark_loading(&ui, &deck, None);
+            // 组里备好了就当场对准一次:起播还没到的话报就绪,不等下一拍(#154)。
+            if follows_the_group(&deck) {
+                align(&ui, &deck);
+            }
             // 换歌立刻报出去。等下一次轮询是 1 秒之后,锁屏上会慢半拍。
             push_media(&ui, &deck);
             action.mark("model");
@@ -354,20 +358,24 @@ pub(in crate::music) fn start_auto_advance(
             }
 
             // 备下一首。判据抽在 `should_prefetch`,这里只负责把当下的事实凑齐。
-            // 组里不备:下一首由全局状态预告,跟随器自己取。
+            // 备的是哪一首见 `upcoming`:组里是全局状态预告的那一首(#154)。
+            let next = upcoming(&deck);
             let already_have = deck.prefetching.get()
-                || deck.prefetched.borrow().is_some();
-            let has_next =
-                deck.queue.borrow().peek_next().is_some();
-            if !following
+                || next.as_ref().is_some_and(|next| {
+                    deck.prefetched
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|(id, _)| *id == next.id)
+                });
+            if let Some(next) = next
                 && should_prefetch(
                     &state,
                     position,
                     already_have,
-                    has_next,
+                    true,
                 )
             {
-                start_prefetch(&deck);
+                start_prefetch(&deck, next);
             }
         },
     );

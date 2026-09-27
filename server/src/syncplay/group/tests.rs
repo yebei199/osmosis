@@ -51,15 +51,20 @@ fn a_non_member_cannot_steer_the_group() {
     );
 }
 
-/// 点歌锚在「现在 + LEAD」,大家那一刻一起起播。
+/// 点歌先锚在「现在 + START_WAIT」:等出声设备取流(#154),到点谁没好也照常开播。
 #[test]
 fn a_jump_starts_together_a_moment_from_now() {
     let group = group();
 
-    assert_eq!(now(&group).anchor_wall_us, LEAD_US);
-    assert_eq!(now(&group).position_at(0, TRACK), 0);
+    assert_eq!(now(&group).anchor_wall_us, START_WAIT_US);
     assert_eq!(
-        now(&group).position_at(LEAD_US + 2 * SEC, TRACK),
+        now(&group).position_at(START_WAIT_US - 1, TRACK),
+        0,
+        "没人报就绪,到上限之前一直停在开头"
+    );
+    assert_eq!(
+        now(&group)
+            .position_at(START_WAIT_US + 2 * SEC, TRACK),
         2 * SEC as u64
     );
 }
@@ -69,7 +74,9 @@ fn a_jump_starts_together_a_moment_from_now() {
 fn pause_and_resume_keep_the_position() {
     let mut group = group();
 
-    group.pause("pc", &list(), LEAD_US + 10 * SEC).unwrap();
+    group
+        .pause("pc", &list(), START_WAIT_US + 10 * SEC)
+        .unwrap();
     assert!(!now(&group).playing);
     assert_eq!(now(&group).position_us, 10 * SEC as u64);
 
@@ -97,7 +104,12 @@ fn next_and_prev_follow_the_order() {
     );
 
     group
-        .step("phone", &list(), -1, 3 * SEC + LEAD_US + SEC)
+        .step(
+            "phone",
+            &list(),
+            -1,
+            3 * SEC + START_WAIT_US + SEC,
+        )
         .unwrap();
     assert_eq!(
         now(&group).entry_id,
@@ -105,14 +117,17 @@ fn next_and_prev_follow_the_order() {
         "刚放一秒,上一首就是前一首"
     );
 
-    let later = 3 * SEC + 2 * LEAD_US + 10 * SEC;
+    let later = 3 * SEC + 2 * START_WAIT_US + 10 * SEC;
     group.step("phone", &list(), -1, later).unwrap();
     assert_eq!(
         now(&group).entry_id,
         2,
         "放过三秒就回到开头"
     );
-    assert_eq!(now(&group).anchor_wall_us, later + LEAD_US);
+    assert_eq!(
+        now(&group).anchor_wall_us,
+        later + START_WAIT_US
+    );
 }
 
 /// 列表循环时队尾接回队头。
@@ -133,14 +148,17 @@ fn looping_all_wraps_around() {
 fn the_first_output_to_finish_advances_once() {
     let mut group = group();
     let version = group.version;
-    let end = LEAD_US + 100 * SEC;
+    let end = START_WAIT_US + 100 * SEC;
 
     assert_eq!(
         group.advance("pc", &list(), 1, version, end),
         Ok(true)
     );
     assert_eq!(now(&group).entry_id, 2);
-    assert_eq!(now(&group).anchor_wall_us, end + LEAD_US);
+    assert_eq!(
+        now(&group).anchor_wall_us,
+        end + START_WAIT_US
+    );
 
     group.version += 1;
     assert_eq!(
@@ -172,7 +190,7 @@ fn a_stale_or_silent_report_does_not_advance() {
 #[test]
 fn the_server_only_rolls_after_the_grace() {
     let mut group = group();
-    let end = LEAD_US + 100 * SEC;
+    let end = START_WAIT_US + 100 * SEC;
 
     assert!(!group.roll(&list(), end));
     assert!(
@@ -183,7 +201,7 @@ fn the_server_only_rolls_after_the_grace() {
     assert_eq!(now(&group).entry_id, 2);
     assert_eq!(
         now(&group).anchor_wall_us,
-        end + ADVANCE_GRACE_US + LEAD_US
+        end + ADVANCE_GRACE_US + START_WAIT_US
     );
 }
 
@@ -199,7 +217,7 @@ fn advancing_stops_at_the_tail_or_repeats_one() {
             &list(),
             3,
             version,
-            LEAD_US + 100 * SEC,
+            START_WAIT_US + 100 * SEC,
         )
         .unwrap();
     assert!(!now(&group).playing);
@@ -210,7 +228,7 @@ fn advancing_stops_at_the_tail_or_repeats_one() {
     let mut group = group_with_loop(LoopModeDto::One);
     group.roll(
         &list(),
-        LEAD_US + 100 * SEC + ADVANCE_GRACE_US,
+        START_WAIT_US + 100 * SEC + ADVANCE_GRACE_US,
     );
     assert_eq!(now(&group).entry_id, 1);
     assert!(now(&group).playing);
@@ -238,7 +256,7 @@ fn the_last_output_going_offline_pauses_the_group() {
     assert!(group.pause_if_silent(
         &list(),
         |_| false,
-        LEAD_US + 10 * SEC
+        START_WAIT_US + 10 * SEC
     ));
     assert!(!now(&group).playing);
     assert_eq!(now(&group).position_us, 10 * SEC as u64);
@@ -310,5 +328,145 @@ fn a_seed_carries_on_from_the_local_playback() {
     assert_eq!(
         now.position_at(6 * SEC, TRACK),
         31 * SEC as u64
+    );
+}
+
+/// pc 与 tab 一起出声,在放第 1 条(还没开走)。
+fn two_outputs() -> Group {
+    let mut group = group();
+    group.set_outputs(
+        "phone",
+        vec!["pc".to_owned(), "tab".to_owned()],
+    );
+    group
+}
+
+fn ids(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|id| (*id).to_owned()).collect()
+}
+
+/// 在线的出声设备都报了就绪,起播提前到「那一刻 + LEAD」;缺一台就接着等(#154)。
+/// 已经提前过的,再报一遍不再挪。
+#[test]
+fn the_start_moves_up_once_every_online_output_is_ready() {
+    let mut group = two_outputs();
+    let version = group.version;
+    let online = |_: &str| true;
+
+    assert_eq!(
+        group.ready(
+            "pc",
+            &ids(&["pc"]),
+            1,
+            version,
+            online,
+            SEC / 10
+        ),
+        Ok(false),
+        "tab 还没好"
+    );
+    assert_eq!(now(&group).anchor_wall_us, START_WAIT_US);
+
+    assert_eq!(
+        group.ready(
+            "tab",
+            &ids(&["pc", "tab"]),
+            1,
+            version,
+            online,
+            SEC / 5
+        ),
+        Ok(true)
+    );
+    assert_eq!(
+        now(&group).anchor_wall_us,
+        SEC / 5 + LEAD_US
+    );
+    assert_eq!(now(&group).position_us, 0);
+
+    assert_eq!(
+        group.ready(
+            "tab",
+            &ids(&["pc", "tab"]),
+            1,
+            version,
+            online,
+            SEC / 5 + 1
+        ),
+        Ok(false),
+        "已经提前过"
+    );
+}
+
+/// 掉线的出声设备不等;报的不是此刻那一版、那一条不算数;只当遥控器的报不算数。
+#[test]
+fn an_offline_output_does_not_hold_the_start() {
+    let mut group = two_outputs();
+    let version = group.version;
+    let only_pc = |id: &str| id == "pc";
+
+    assert_eq!(
+        group.ready(
+            "pc",
+            &ids(&["pc"]),
+            2,
+            version,
+            only_pc,
+            SEC / 10
+        ),
+        Ok(false),
+        "不是此刻那一条"
+    );
+    assert_eq!(
+        group.ready(
+            "pc",
+            &ids(&["pc"]),
+            1,
+            version - 1,
+            only_pc,
+            SEC / 10
+        ),
+        Ok(false),
+        "不是此刻那一版"
+    );
+    assert_eq!(
+        group.ready(
+            "phone",
+            &ids(&["phone"]),
+            1,
+            version,
+            only_pc,
+            SEC / 10
+        ),
+        Err(Refusal::NotMember)
+    );
+    assert_eq!(now(&group).anchor_wall_us, START_WAIT_US);
+
+    assert_eq!(
+        group.ready(
+            "pc",
+            &ids(&["pc"]),
+            1,
+            version,
+            only_pc,
+            SEC / 10
+        ),
+        Ok(true),
+        "tab 掉线了,不等它"
+    );
+    assert_eq!(
+        now(&group).anchor_wall_us,
+        SEC / 10 + LEAD_US
+    );
+}
+
+/// 一台卡住、一直不报:到上限照常开播,不永远等(#154)。
+#[test]
+fn a_stuck_output_only_delays_the_start_up_to_the_cap() {
+    let group = two_outputs();
+
+    assert_eq!(
+        now(&group).position_at(START_WAIT_US + SEC, TRACK),
+        SEC as u64
     );
 }

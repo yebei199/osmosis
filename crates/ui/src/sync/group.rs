@@ -57,6 +57,8 @@ struct Inner {
     in_flight: Mutex<Option<String>>,
     /// 已经报过放完的那一份 `(version, entry_id)`。每拍都看得见放空,只报一次。
     finished: Mutex<Option<(u64, i64)>>,
+    /// 已经报过就绪的那一份 `(version, entry_id)`(#154)。同上,每拍都看得见,只报一次。
+    readied: Mutex<Option<(u64, i64)>>,
     /// 封面已经取到哪一首了(只当遥控器时控制条的封面)。
     cover_id: Mutex<String>,
     /// 测试里记下发了哪些意图:测试里没有服务端。
@@ -76,6 +78,7 @@ pub fn new(ui: &MainWindow, me: &str) -> Group {
             names: Mutex::new(HashMap::new()),
             in_flight: Mutex::new(None),
             finished: Mutex::new(None),
+            readied: Mutex::new(None),
             cover_id: Mutex::new(String::new()),
             #[cfg(test)]
             intents: Mutex::new(Vec::new()),
@@ -400,6 +403,39 @@ impl Group {
         );
     }
 
+    /// 本机(出声设备)把此刻那一首备好了,随时能出声:报给服务端。在线的出声设备都报了,
+    /// 服务端把还没开走的起播提前(#154)。同一份 `(version, entry_id)` 只报一次。
+    pub fn ready(&self, ui: &MainWindow, entry_id: i64) {
+        let Some(version) = ({
+            let view = lock(&self.inner.view);
+            view.state()
+                .filter(|state| {
+                    state.now.as_ref().is_some_and(|now| {
+                        now.entry_id == entry_id
+                    })
+                })
+                .map(|state| state.version)
+                .filter(|_| {
+                    view.standing() == Standing::Output
+                })
+        }) else {
+            return;
+        };
+        {
+            let mut readied = lock(&self.inner.readied);
+            if *readied == Some((version, entry_id)) {
+                return;
+            }
+            *readied = Some((version, entry_id));
+        }
+        self.send(
+            ui,
+            "",
+            format!("ready {entry_id}"),
+            GroupIntent::Ready { entry_id, version },
+        );
+    }
+
     /// 控制条上的一下。
     pub fn transport(
         &self,
@@ -515,6 +551,11 @@ impl Group {
             let me = self.inner.me.clone();
             let weak = ui.as_weak();
             let _ = slint::spawn_local(async move {
+                // 就绪不是人按的:没报上只是等满上限,不提示,也不清点歌的在途标记。
+                let quiet = matches!(
+                    intent,
+                    GroupIntent::Ready { .. }
+                );
                 let reply = match intent {
                     GroupIntent::Play(pick) => {
                         api::group_play(&me, pick).await
@@ -540,15 +581,28 @@ impl Group {
                         )
                         .await
                     }
+                    GroupIntent::Ready {
+                        entry_id,
+                        version,
+                    } => {
+                        api::group_ready(
+                            &me, entry_id, version,
+                        )
+                        .await
+                    }
                 };
-                lock(&group.inner.in_flight).take();
+                if !quiet {
+                    lock(&group.inner.in_flight).take();
+                }
                 match reply {
                     Ok(state) => group.accept(state),
                     Err(error) => {
                         log::warn!(
                             "组意图 {label} 没成: {error}"
                         );
-                        if let Some(ui) = weak.upgrade() {
+                        if !quiet
+                            && let Some(ui) = weak.upgrade()
+                        {
                             crate::notice::show(
                                 &ui,
                                 rules::describe_intent_failure(
@@ -817,6 +871,7 @@ enum GroupIntent {
     Outputs(Vec<String>, Option<GroupSeedDto>),
     Leave,
     Advance { entry_id: i64, version: u64 },
+    Ready { entry_id: i64, version: u64 },
 }
 
 /// 名册那一排芯片上标出谁在出声(空串是本机)。「加入 / 移出」那颗小键照它显示。

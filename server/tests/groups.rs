@@ -13,7 +13,8 @@ use contract::{
 use server::store::account::register;
 use server::store::db;
 use server::store::queue::{self, EntryInput};
-use server::syncplay::group::{self, Intent};
+use server::syncplay::clock;
+use server::syncplay::group::{self, Intent, timeline};
 use server::syncplay::roster::Roster;
 use server::syncplay::signaling::{SharedRoster, Sink};
 use sqlx::PgPool;
@@ -390,6 +391,93 @@ async fn the_first_output_to_finish_advances_the_group() {
     assert_eq!(
         late.now.map(|now| now.track.id),
         Some("c".to_owned())
+    );
+    drop_account(&pool, account).await;
+}
+
+/// 新起一首先锚远一点,等出声设备取流;在线的出声设备都报了就绪,起播提前到「现在 +
+/// LEAD」并广播,不另记一次起播;再报一遍不加版本(#154)。
+#[tokio::test]
+async fn a_new_track_starts_once_every_output_is_ready() {
+    let pool = connect().await;
+    let account = account(&pool, "ready").await;
+    let (roster, mut inboxes) =
+        online(account, &["phone", "pc"]);
+    phone_and_pc(&pool, &roster, account).await;
+
+    let next = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Transport(TransportOpDto::Next),
+    )
+    .await
+    .expect("下一首该成")
+    .expect("组该在");
+    let waiting = next.now.clone().expect("该在放");
+    let issued = clock::now_us();
+    assert!(
+        waiting.anchor_us >= issued + 2_000_000,
+        "没人报就绪时起播该在两秒开外,离现在只有 {}us",
+        waiting.anchor_us.saturating_sub(issued)
+    );
+    for inbox in &mut inboxes {
+        while inbox.try_recv().is_ok() {}
+    }
+
+    let ready = group::ready(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        waiting.entry_id,
+        next.version as i64,
+    )
+    .await
+    .expect("报就绪该成")
+    .expect("组该在");
+    let started = ready.now.clone().expect("该在放");
+    assert_eq!(ready.version, next.version + 1);
+    assert_eq!(started.entry_id, waiting.entry_id);
+    assert!(
+        started.anchor_us
+            <= clock::now_us() + timeline::LEAD_US as u64,
+        "都就绪了该在 LEAD 之内开走"
+    );
+    let (plays,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM play_events WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_one(&pool)
+    .await
+    .expect("数得出起播");
+    assert_eq!(plays, 1, "提前开走不是又起了一首");
+    for inbox in &mut inboxes {
+        assert!(
+            matches!(
+                inbox.try_recv(),
+                Ok(ServerSignal::GroupState { state: Some(ref state) })
+                    if state.version == ready.version
+            ),
+            "提前开走要广播"
+        );
+    }
+
+    let again = group::ready(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        started.entry_id,
+        ready.version as i64,
+    )
+    .await
+    .expect("再报一遍不是错")
+    .expect("组该在");
+    assert_eq!(
+        again.version, ready.version,
+        "再报不加版本"
     );
     drop_account(&pool, account).await;
 }
