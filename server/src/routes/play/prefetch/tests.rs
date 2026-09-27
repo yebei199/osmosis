@@ -114,6 +114,38 @@ async fn a_stored_track_is_not_enqueued() {
     assert_eq!(job_state(&mut tx, &song).await, None);
 }
 
+/// 桶里只有非无损那份的(音源当时给不出无损)照样入队:
+/// 之后给得出无损时好换掉它(#152)。
+#[tokio::test]
+async fn a_track_stored_below_lossless_is_enqueued_again() {
+    let pool = testing::pool().await;
+    let account =
+        testing::fresh_account(&pool, "pf_lossy").await;
+    let mut tx = pool.begin().await.unwrap();
+    let p = platform("pf_lossy");
+    let song = track(&p, "1");
+    sqlx::query(
+        "INSERT INTO stored_tracks
+             (platform, track_id, quality, object_key, format, bit_rate, bytes, tier)
+         VALUES ($1, '1', 'lossless', 'k', 'mp3', 320000, 1, 'high')",
+    )
+    .bind(&p)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+
+    let queued = prefetch::enqueue(
+        &mut tx,
+        account.id,
+        std::slice::from_ref(&song),
+        "lossless",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(queued, 1);
+}
+
 /// 两个 worker 同时来领一个任务:只有一个领到;领走的在租约内不会再被领。
 #[tokio::test]
 async fn concurrent_claims_take_a_job_once() {

@@ -3,6 +3,11 @@
 //! bang-dream 把它再翻成网易云的 `level` 参数(`standard`/`higher`/`exhigh`/
 //! `lossless`/`hires`),并把网易云实际给的档位报回来。协商在网易云那边发生:
 //! 请求 `hires`,给得出就给 hires,给不出给它能给的最好那一档。
+//!
+//! 例外:账号的网易云云盘里有这首的上传文件时(`song/detail` 的 privilege 里
+//! `cs: true`),网易云给的是云盘那份,不看请求的档位 —— 406238《Flower Dance》
+//! 曲库标着有无损,返回的却是用户自己上传的 340k mp3(#152)。只能在网易云那边删掉
+//! 云盘里那份,这里照它报的如实记。
 
 use crate::bangdream::proto::{PlaySource, QualityLevel};
 
@@ -32,12 +37,21 @@ pub fn tier_of(level: i32) -> Option<Tier> {
 }
 
 /// 一次取到的源实际是什么音质。上游没报档位时按格式与码率认。
+///
+/// 无损容器(FLAC 等)至少是无损:网易云会给一个三十多万码率的 FLAC,
+/// 却把档位报成 `exhigh`(#152)。
 pub fn quality_of(source: &PlaySource) -> Quality {
     let format = source.format.to_ascii_lowercase();
+    let guessed = guess_tier(&format, source.bit_rate);
+    let tier = match tier_of(source.level) {
+        Some(reported) if guessed.is_lossless() => {
+            reported.max(guessed)
+        }
+        Some(reported) => reported,
+        None => guessed,
+    };
     Quality {
-        tier: tier_of(source.level).unwrap_or_else(|| {
-            guess_tier(&format, source.bit_rate)
-        }),
+        tier,
         format,
         bit_rate: source.bit_rate,
         bits_per_sample: None,
@@ -94,6 +108,22 @@ mod tests {
                 bits_per_sample: None,
                 sample_rate: None,
             }
+        );
+    }
+
+    /// 网易云给了 FLAC 却把档位报成 exhigh(安静的钢琴曲压到三十多万,#152):
+    /// FLAC 按格式就是无损,与码率和报来的档位无关。
+    #[test]
+    fn a_flac_is_lossless_whatever_level_is_reported() {
+        let source = PlaySource {
+            format: "flac".to_owned(),
+            bit_rate: 307_682,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
+        };
+        assert_eq!(
+            quality_of(&source).tier,
+            Tier::Lossless
         );
     }
 

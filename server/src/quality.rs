@@ -82,11 +82,38 @@ impl Quality {
             sample_rate: self.sample_rate,
         }
     }
+
+    /// 记下文件头里读到的位深与采样率(见 [`flac_stream_info`])。
+    ///
+    /// 无损的是不是 hi-res 以它为准:位深过 16 或采样率过 48k 是 hi-res,
+    /// 否则是无损,音源报的档位不算数(#152)。
+    #[must_use]
+    pub fn with_stream(
+        self,
+        bits_per_sample: i32,
+        sample_rate: i32,
+    ) -> Self {
+        let tier = if !self.tier.is_lossless() {
+            self.tier
+        } else if bits_per_sample > 16
+            || sample_rate > 48_000
+        {
+            Tier::HiRes
+        } else {
+            Tier::Lossless
+        };
+        Self {
+            tier,
+            bits_per_sample: Some(bits_per_sample),
+            sample_rate: Some(sample_rate),
+            ..self
+        }
+    }
 }
 
 /// 音源没报档位时,按格式与码率认一个。
 ///
-/// 无损容器至少是无损;有损的按码率落档,门槛取常见的 128k / 192k / 320k。
+/// 无损容器至少是无损,与码率无关;有损的按码率落档,门槛取常见的 128k / 192k / 320k。
 pub fn guess_tier(format: &str, bit_rate: i32) -> Tier {
     match format.to_ascii_lowercase().as_str() {
         "flac" | "wav" | "ape" | "alac" => Tier::Lossless,
@@ -148,6 +175,34 @@ mod tests {
             Tier::Standard
         );
         assert_eq!(guess_tier("mp3", 128_000), Tier::Low);
+    }
+
+    /// 无损的是不是 hi-res,按文件头判:位深过 16 或采样率过 48k(#152)。
+    #[test]
+    fn the_stream_decides_lossless_or_hi_res() {
+        let flac = |tier| Quality {
+            tier,
+            format: "flac".to_owned(),
+            bit_rate: 900_000,
+            bits_per_sample: None,
+            sample_rate: None,
+        };
+        let cd = flac(Tier::HiRes).with_stream(16, 44_100);
+        assert_eq!(cd.tier, Tier::Lossless);
+        assert_eq!(cd.bits_per_sample, Some(16));
+        assert_eq!(cd.sample_rate, Some(44_100));
+        assert_eq!(
+            flac(Tier::Lossless)
+                .with_stream(24, 48_000)
+                .tier,
+            Tier::HiRes
+        );
+        assert_eq!(
+            flac(Tier::Lossless)
+                .with_stream(16, 96_000)
+                .tier,
+            Tier::HiRes
+        );
     }
 
     /// 一段最小的 FLAC 头:STREAMINFO 里给定采样率、双声道、给定位深。

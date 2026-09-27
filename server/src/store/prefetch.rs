@@ -1,7 +1,7 @@
 //! 预取队列:该以无损存进桶的曲目排在这里,等后台 worker 去取(#147)。
 //!
 //! 一首一行,主键是 `(平台, 曲目)`,重复入队只会撞在主键上(见迁移 0013)。
-//! 取完就删行;留下的行要么在排队,要么是没办成的(给不出无损、超出上限、
+//! 取完就删行;留下的行要么在排队,要么是没办成的(只给试听、超出上限、
 //! 重试用尽),等下一次入队再试。worker 的编排在 `routes::play::prefetch`。
 
 use std::time::Duration;
@@ -34,7 +34,7 @@ impl Job {
 /// 没办成的那几种,各自是 `state` 列的一个取值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unfinished {
-    /// 音源给不出无损(或只给试听)。
+    /// 音源只给试听片段。给得出整首的不论档位都存了(#152),不落在这里。
     NoLossless,
     /// 超出空间上限,没存。
     OverCap,
@@ -55,11 +55,12 @@ const REQUEUE: &str =
      SET state = 'queued', attempts = 0, run_after = now()
      WHERE prefetch_jobs.state <> 'queued'";
 
-/// 已经按 `$1` 那一档存进桶的不必入队。
+/// 已经按 `$1` 那一档存进桶、且存的是无损的不必入队。存的是非无损的
+/// (音源当时给不出无损)照样入队,之后给得出无损时换掉它(#152)。
 const NOT_STORED: &str = "NOT EXISTS (
          SELECT 1 FROM stored_tracks s
          WHERE s.platform = t.platform AND s.track_id = t.track_id
-           AND s.quality = $1
+           AND s.quality = $1 AND s.tier IN ('lossless', 'hi_res')
      )";
 
 /// 以这个账号的凭据把这些曲目排上。返回新排上(或重新排上)的条数。
