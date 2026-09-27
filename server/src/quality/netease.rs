@@ -32,12 +32,21 @@ pub fn tier_of(level: i32) -> Option<Tier> {
 }
 
 /// 一次取到的源实际是什么音质。上游没报档位时按格式与码率认。
+///
+/// 无损容器(FLAC 等)至少是无损:网易云会给一个三十多万码率的 FLAC,
+/// 却把档位报成 `exhigh`(#152)。
 pub fn quality_of(source: &PlaySource) -> Quality {
     let format = source.format.to_ascii_lowercase();
+    let guessed = guess_tier(&format, source.bit_rate);
+    let tier = match tier_of(source.level) {
+        Some(reported) if guessed.is_lossless() => {
+            reported.max(guessed)
+        }
+        Some(reported) => reported,
+        None => guessed,
+    };
     Quality {
-        tier: tier_of(source.level).unwrap_or_else(|| {
-            guess_tier(&format, source.bit_rate)
-        }),
+        tier,
         format,
         bit_rate: source.bit_rate,
         bits_per_sample: None,
@@ -94,6 +103,22 @@ mod tests {
                 bits_per_sample: None,
                 sample_rate: None,
             }
+        );
+    }
+
+    /// 网易云给了 FLAC 却把档位报成 exhigh(安静的钢琴曲压到三十多万,#152):
+    /// FLAC 按格式就是无损,与码率和报来的档位无关。
+    #[test]
+    fn a_flac_is_lossless_whatever_level_is_reported() {
+        let source = PlaySource {
+            format: "flac".to_owned(),
+            bit_rate: 307_682,
+            level: QualityLevel::High as i32,
+            ..PlaySource::default()
+        };
+        assert_eq!(
+            quality_of(&source).tier,
+            Tier::Lossless
         );
     }
 

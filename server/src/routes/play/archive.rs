@@ -237,8 +237,7 @@ async fn store(
         .boxed();
     let head = read_head(&mut body).await?;
     if let Some((bits, rate)) = flac_stream_info(&head) {
-        quality.bits_per_sample = Some(bits);
-        quality.sample_rate = Some(rate);
+        quality = quality.with_stream(bits, rate);
     }
     let size = i64::try_from(length).unwrap_or(i64::MAX);
     if !make_space(state, archive, track, size).await? {
