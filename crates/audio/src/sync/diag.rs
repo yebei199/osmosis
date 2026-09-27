@@ -36,6 +36,14 @@ impl Throttle {
     }
 }
 
+/// 跳的是哪一种。
+#[derive(Debug, Clone, Copy)]
+pub enum Jump {
+    Skip,
+    Seek,
+    Wait,
+}
+
 /// 为什么跳：刚开始跟、跟着跟着偏了、还是不出声时定位。
 #[derive(Debug, Clone, Copy)]
 pub enum Why {
@@ -52,6 +60,7 @@ pub enum Why {
 pub struct Diag {
     skip: Throttle,
     seek: Throttle,
+    wait: Throttle,
     starve: Throttle,
     /// 上一块时间线的「媒体减本机时刻」:它变了，说明锚点动了(校时一步或服务端重发)。
     last_offset_ns: Option<i64>,
@@ -83,25 +92,25 @@ impl Diag {
         )
     }
 
-    /// 跳了一次：`skip` 为真是往前丢帧，否则 seek。`err_ns` 是跳之前的误差。
+    /// 跳了一次。`err_ns` 是跳之前的误差。
     pub fn jump(
         &mut self,
-        skip: bool,
+        kind: Jump,
         why: Why,
         err_ns: i64,
     ) {
         let now = Instant::now();
-        let (kind, throttle) = if skip {
-            ("Skip", &mut self.skip)
-        } else {
-            ("Seek", &mut self.seek)
+        let throttle = match kind {
+            Jump::Skip => &mut self.skip,
+            Jump::Seek => &mut self.seek,
+            Jump::Wait => &mut self.wait,
         };
         let Some((total, suppressed)) = throttle.hit(now)
         else {
             return;
         };
         log::warn!(
-            "同步源 {kind}: 误差 {:.1}ms, 原因 {why:?}, 锚点这一步挪了 {:.1}ms, \
+            "同步源 {kind:?}: 误差 {:.1}ms, 原因 {why:?}, 锚点这一步挪了 {:.1}ms, \
              距上次欠载 {}, 累计 {total} 次, 省略 {suppressed} 条",
             ms(err_ns),
             ms(self.offset_step_ns),

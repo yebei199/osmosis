@@ -15,7 +15,7 @@ use std::time::Duration;
 use rodio::source::SeekError;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
-use super::diag::{Diag, Why};
+use super::diag::{Diag, Jump, Why};
 use super::follower::{Decision, Follower, Stats};
 use super::timeline::Target;
 
@@ -295,6 +295,16 @@ impl<F: Feed> SyncSource<F> {
             }
             Target::Free => None,
         });
+        // 手上的纠正还没做完(断流中、静音等着):这一块「落后/超前一块」是它造成的，不是跑偏，
+        // 不再判一次 —— 否则每块都丢一次帧、seek 一次(#145 现场每秒 85 次)。暂停照判;拖进度条
+        // 等这次纠正做完再判(静音等完那一段，或断流等到数据回来)。
+        if self.follower.running()
+            && target.desired(present).is_some()
+            && self.correcting()
+        {
+            self.pair(present);
+            return;
+        }
         let why = match target.desired(present) {
             None => Why::Hold,
             Some(_) if self.follower.running() => {
@@ -317,6 +327,11 @@ impl<F: Feed> SyncSource<F> {
             self.note(decision, Why::Hold);
             self.apply(decision);
         }
+        self.pair(present);
+    }
+
+    /// 记下这一块的配对与跟随器读数。
+    fn pair(&mut self, present: i64) {
         *lock(&self.shared.pairing) = Some((
             present,
             (self.pos * 1e9 / self.rate) as i64,
@@ -325,20 +340,31 @@ impl<F: Feed> SyncSource<F> {
         stats.follower = self.follower.stats;
     }
 
+    /// 有一次纠正还在进行：媒体断着流，或者还在为超前静音等着。
+    fn correcting(&self) -> bool {
+        self.starving
+            || matches!(self.holding, Some(Some(left)) if left > 0)
+    }
+
     /// 跳的决定记一行诊断日志(#145),误差按跳之前的读指针算。
     fn note(&mut self, decision: Decision, why: Why) {
         let ns =
             |frames: f64| (frames * 1e9 / self.rate) as i64;
         match decision {
             Decision::Skip { frames } => self.diag.jump(
-                true,
+                Jump::Skip,
                 why,
                 -ns(frames as f64),
             ),
             Decision::Seek { to_frames } => self.diag.jump(
-                false,
+                Jump::Seek,
                 why,
                 ns(self.pos - to_frames),
+            ),
+            Decision::Wait { frames } => self.diag.jump(
+                Jump::Wait,
+                why,
+                ns(frames as f64),
             ),
             Decision::Hold { .. }
             | Decision::Play { .. } => {}
@@ -369,9 +395,40 @@ impl<F: Feed> SyncSource<F> {
                 self.holding = None;
                 self.step = 1.0;
                 self.muted = true;
-                let _ = self.seek_to(to_frames);
+                if let Err(e) = self.seek_to(to_frames) {
+                    self.seek_failed(to_frames, &e);
+                }
                 true
             }
+            Decision::Wait { frames } => {
+                self.wait(frames);
+                true
+            }
+        }
+    }
+
+    /// 超前了：先出 `frames` 帧静音，不消耗媒体，之后照放。
+    fn wait(&mut self, frames: u64) {
+        self.holding = Some(Some(frames));
+        self.step = 1.0;
+        self.muted = true;
+    }
+
+    /// 跳不动(曲尾解码线程已经收工，只剩缓冲):往前的照样丢帧过去，往回的静音等时间线追上。
+    /// 不这么办的话读指针原地不动，下一块又判一次 seek,一直静音到切歌(#145 现场)。
+    fn seek_failed(&mut self, to: f64, e: &SeekError) {
+        log::warn!(
+            "同步源 Seek 失败({e}),改为{}",
+            if to < self.pos {
+                "静音等着"
+            } else {
+                "丢帧"
+            }
+        );
+        if to < self.pos {
+            self.wait((self.pos - to).round() as u64);
+        } else {
+            self.pos = to;
         }
     }
 
@@ -550,6 +607,10 @@ impl<F: Feed> SyncSource<F> {
         self.starve_frames += 1;
         if !self.starving {
             self.starving = true;
+            // 跟着时间线时，数据回来那一刻多半已经错位：静音到下一块判过再出声。
+            if self.follower.running() {
+                self.muted = true;
+            }
             let mut stats = lock(&self.shared.stats);
             stats.starves += 1;
             stats.sounding = false;
