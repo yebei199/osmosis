@@ -224,7 +224,7 @@ export component PlayPage inherits FocusScope {
         x: (root.width - self.width) / 2;
         spacing: root.feedback-gap;
 
-        RoundControl {
+        feedback-heart := RoundControl {
             diameter: root.feedback-btn;
             icon: root.heart-icon;
             label: Player.now-liked ? "取消喜欢" : "喜欢";
@@ -233,7 +233,7 @@ export component PlayPage inherits FocusScope {
             transparent-base: true;
             clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         }
-        RoundControl {
+        feedback-up := RoundControl {
             diameter: root.feedback-btn;
             icon: root.thumb-up-icon;
             label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
@@ -242,7 +242,7 @@ export component PlayPage inherits FocusScope {
             transparent-base: true;
             clicked => { Library.toggle-feedback(1); }
         }
-        RoundControl {
+        feedback-down := RoundControl {
             diameter: root.feedback-btn;
             icon: root.thumb-down-icon;
             label: Player.now-feedback == -1 ? "取消点踩" : "点踩";

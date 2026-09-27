@@ -236,6 +236,7 @@ fn deck_window_with(
         alignment: Default::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
+        current_play: Rc::new(RefCell::new(None)),
     };
 
     (ui, deck)
