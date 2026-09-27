@@ -45,15 +45,10 @@ pub fn describe_banner(
 }
 
 /// 独奏时组在播,横幅上那一句(#149):组在放什么,旁边那颗键是「加入」。
-pub fn describe_invite(
-    title: &str,
-    playing: bool,
-) -> String {
-    if playing {
-        format!("组里正在播放: {title}")
-    } else {
-        format!("组里已暂停: {title}")
-    }
+///
+/// 组暂停着不邀请:出声设备都关了时组只是停着,不该在每台独奏设备上一直挂着。
+pub fn describe_invite(title: &str) -> String {
+    format!("组里正在播放: {title}")
 }
 
 /// 输出设备那一行。不在组里就是本机;在组里列出正在出声的那几台。
@@ -172,16 +167,12 @@ mod tests {
         );
     }
 
-    /// 独奏时组在播:横幅说组在放哪一首,暂停着也说(#149)。
+    /// 独奏时组在播:横幅说组在放哪一首(#149)。
     #[test]
     fn the_invite_says_what_the_group_plays() {
         assert_eq!(
-            describe_invite("晴天", true),
+            describe_invite("晴天"),
             "组里正在播放: 晴天"
-        );
-        assert_eq!(
-            describe_invite("晴天", false),
-            "组里已暂停: 晴天"
         );
     }
 
@@ -264,8 +255,7 @@ mod tests {
                 &names(&["a", "b"]),
             ));
         }
-        copy.push(describe_invite("", true));
-        copy.push(describe_invite("", false));
+        copy.push(describe_invite(""));
         copy.push(describe_output(&[]));
         copy.push(describe_output(&names(&["a", "b"])));
         copy.push(UNCALIBRATED.to_owned());

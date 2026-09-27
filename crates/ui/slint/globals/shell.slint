@@ -78,7 +78,7 @@ export global Shell {
     callback group-changed();
     // 横幅上的「退出」:本机退出组,回到独奏。
     callback leave-group();
-    // 本机独奏、组却在放(#149):横幅说组在放什么,那颗键换成「加入」。
+    // 本机独奏、组却在播(#149):横幅说组在放什么,那颗键换成「加入」。组暂停着不挂。
     in property <bool> group-joinable: false;
     // 横幅上的「加入」:本机加进正在出声的那几台,原有的不动。
     callback join-group();

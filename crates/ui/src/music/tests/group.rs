@@ -449,3 +449,26 @@ fn picking_a_device_while_solo_keeps_the_existing_outputs()
         vec![r#"outputs ["a", "b", "c"]"#]
     );
 }
+
+/// 加入入口只在组**在播**时出现(#149 AC-1):组从在播转为暂停,独奏设备上的入口随下一版
+/// 状态收掉。出声设备都关了、组只是停着时,不该在每台独奏设备上一直挂一条横幅。
+#[test]
+fn the_join_entry_goes_away_when_the_group_pauses() {
+    let (_ui, deck) = deck_window();
+
+    deck.group.assume(Some(elsewhere(&["a"])));
+    let (banner, joinable) = deck.group.banner();
+    assert!(joinable, "组在播,该有入口");
+    assert_eq!(banner, "组里正在播放: 歌 x");
+
+    let mut paused = elsewhere(&["a"]);
+    paused.version = 4;
+    paused.now.as_mut().expect("在放").playing = false;
+    deck.group.assume(Some(paused));
+
+    assert_eq!(
+        deck.group.banner(),
+        (String::new(), false),
+        "组暂停:不挂入口,独奏时横幅照旧不出现"
+    );
+}

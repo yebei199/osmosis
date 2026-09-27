@@ -543,37 +543,49 @@ impl Group {
             .unwrap_or_else(|| id.to_owned())
     }
 
+    /// 组横幅那一句,以及那颗键是不是「加入」。空串是不显示。
+    ///
+    /// 独奏、组却在播:横幅说组在放什么,给一颗「加入」(#149)。暂停着不给:出声设备都关了
+    /// 时组只是停着、成员也不清理,入口会在每台独奏设备上一直挂着。
+    pub(crate) fn banner(&self) -> (String, bool) {
+        let (standing, fellows, now) = {
+            let view = lock(&self.inner.view);
+            (
+                view.standing(),
+                view.fellow_outputs(),
+                view.state()
+                    .and_then(|state| state.now.clone()),
+            )
+        };
+        if standing == Standing::Solo
+            && let Some(now) = now.filter(|now| now.playing)
+        {
+            return (
+                rules::describe_invite(&now.track.title),
+                true,
+            );
+        }
+        let fellows: Vec<String> = fellows
+            .iter()
+            .map(|id| self.name_of(id))
+            .collect();
+        (rules::describe_banner(standing, &fellows), false)
+    }
+
     /// 横幅、输出设备那一排、组那一行推到界面上。
     pub fn refresh(&self) {
-        let (standing, outputs, fellows, offline, now) = {
+        let (standing, outputs, offline) = {
             let view = lock(&self.inner.view);
             (
                 view.standing(),
                 view.state()
                     .map(|state| state.outputs.clone())
                     .unwrap_or_default(),
-                view.fellow_outputs(),
                 view.is_member() && !view.is_online(),
-                view.state()
-                    .and_then(|state| state.now.clone()),
             )
         };
-        let fellows: Vec<String> = fellows
-            .iter()
-            .map(|id| self.name_of(id))
-            .collect();
+        let (banner, joinable) = self.banner();
         let member = standing != Standing::Solo;
-        // 独奏、组却在放:横幅说组在放什么,给一颗「加入」(#149)。
-        let joinable = !member && now.is_some();
-        let banner = match now.filter(|_| joinable) {
-            Some(now) => rules::describe_invite(
-                &now.track.title,
-                now.playing,
-            ),
-            None => {
-                rules::describe_banner(standing, &fellows)
-            }
-        };
         let output_text =
             rules::describe_output(&if member {
                 outputs
