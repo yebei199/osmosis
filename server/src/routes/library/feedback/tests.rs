@@ -15,8 +15,10 @@ async fn like_then_dislike_then_cancel() {
     let case = "fb_toggle";
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
-    let state =
-        testing::state(pool, testing::unreachable_upstream());
+    let state = testing::state(
+        pool,
+        testing::unreachable_upstream(),
+    );
     let song = track_id(case, 1);
 
     set_feedback(
@@ -44,7 +46,9 @@ async fn like_then_dislike_then_cancel() {
         State(state.clone()),
         account.clone(),
         Path(song.clone()),
-        axum::Json(contract::SetFeedbackDto { verdict: -1 }),
+        axum::Json(contract::SetFeedbackDto {
+            verdict: -1,
+        }),
     )
     .await
     .expect("点踩该覆盖成 -1");
@@ -85,8 +89,10 @@ async fn cancelling_untouched_track_is_a_noop() {
     let case = "fb_noop_cancel";
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
-    let state =
-        testing::state(pool, testing::unreachable_upstream());
+    let state = testing::state(
+        pool,
+        testing::unreachable_upstream(),
+    );
 
     let status = clear_feedback(
         State(state),

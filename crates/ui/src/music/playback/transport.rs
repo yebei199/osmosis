@@ -420,7 +420,8 @@ pub(in crate::music) fn start_auto_advance(
 /// `take()` 保证同一段播放只报一次,不会因为连着两次切歌各报一遍半截的数字。
 #[cfg(not(target_arch = "wasm32"))]
 fn report_previous_listened(deck: &Deck) {
-    let Some(current) = deck.current_play.borrow_mut().take()
+    let Some(current) =
+        deck.current_play.borrow_mut().take()
     else {
         return;
     };

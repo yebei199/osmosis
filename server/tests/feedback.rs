@@ -64,7 +64,8 @@ async fn untouched_track_reads_none() {
 #[tokio::test]
 async fn setting_again_overwrites_the_single_row() {
     let mut tx = tx().await;
-    let account = make_account(&mut tx, "fb_overwrite").await;
+    let account =
+        make_account(&mut tx, "fb_overwrite").await;
 
     feedback::set(&mut tx, account.id, &track("1"), 1)
         .await

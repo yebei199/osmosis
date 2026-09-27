@@ -27,9 +27,10 @@ pub(crate) async fn get_feedback(
         platform: netease_name(),
         track_id,
     };
-    let verdict = feedback::get(&mut conn, account.id, &track)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    let verdict =
+        feedback::get(&mut conn, account.id, &track)
+            .await
+            .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(FeedbackDto { verdict }))
 }
@@ -55,9 +56,14 @@ pub(crate) async fn set_feedback(
         platform: netease_name(),
         track_id,
     };
-    feedback::set(&mut conn, account.id, &track, body.verdict)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    feedback::set(
+        &mut conn,
+        account.id,
+        &track,
+        body.verdict,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

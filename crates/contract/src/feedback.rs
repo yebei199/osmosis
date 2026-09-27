@@ -4,7 +4,13 @@ use serde::{Deserialize, Serialize};
 
 /// `PUT /feedback/{track_id}` 的请求体。
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
 )]
 pub struct SetFeedbackDto {
     /// `1` 赞,`-1` 踩。取消赞踩改发 `DELETE`,不是把这个字段传成 0 ——
@@ -14,7 +20,13 @@ pub struct SetFeedbackDto {
 
 /// `GET /feedback/{track_id}` 的响应体:这首歌此刻的赞踩,没表态过是 `None`。
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
 )]
 pub struct FeedbackDto {
     pub verdict: Option<i16>,
@@ -25,7 +37,13 @@ pub struct FeedbackDto {
 /// 客户端拿它去 `PATCH /played/{id}/listened` 补听了多久 —— 起播与补记
 /// 分两次请求,补记那次可能因为进程被杀而永远不发生,所以两者不能合成一次。
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
 )]
 pub struct PlayedAckDto {
     pub id: i64,
@@ -36,7 +54,13 @@ pub struct PlayedAckDto {
 /// 只报原始数字,完播/跳过的口径由服务端查询时判定 —— 与事件流「口径想改就改」
 /// 同一个理由(见服务端 `history` 模块)。
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
 )]
 pub struct ListenedDto {
     pub listened_ms: i64,

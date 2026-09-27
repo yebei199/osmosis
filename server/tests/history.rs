@@ -359,11 +359,13 @@ async fn recording_for_an_unknown_account_fails() {
 #[tokio::test]
 async fn report_listened_fills_in_the_row() {
     let mut tx = tx().await;
-    let account = make_account(&mut tx, "hs_listened").await;
+    let account =
+        make_account(&mut tx, "hs_listened").await;
 
-    let id = history::record(&mut tx, account.id, &track("1"))
-        .await
-        .expect("记录应该成功");
+    let id =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .expect("记录应该成功");
     history::report_listened(
         &mut tx, account.id, id, 9_000, 200_000,
     )
@@ -385,13 +387,15 @@ async fn report_listened_fills_in_the_row() {
 #[tokio::test]
 async fn report_listened_is_scoped_to_the_account() {
     let mut tx = tx().await;
-    let mine = make_account(&mut tx, "hs_lst_scope_a").await;
+    let mine =
+        make_account(&mut tx, "hs_lst_scope_a").await;
     let theirs =
         make_account(&mut tx, "hs_lst_scope_b").await;
 
-    let id = history::record(&mut tx, theirs.id, &track("1"))
-        .await
-        .expect("记录应该成功");
+    let id =
+        history::record(&mut tx, theirs.id, &track("1"))
+            .await
+            .expect("记录应该成功");
     let result = history::report_listened(
         &mut tx, mine.id, id, 1_000, 2_000,
     )

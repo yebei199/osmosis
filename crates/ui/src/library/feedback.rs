@@ -66,14 +66,15 @@ pub fn bind(ui: &MainWindow) {
             let weak = weak.clone();
             let track_id = track_id.to_string();
             let _ = slint::spawn_local(async move {
-                #[allow(
-                    clippy::cast_possible_truncation
-                )]
+                #[allow(clippy::cast_possible_truncation)]
                 let result = if next == 0 {
                     api::clear_feedback(&track_id).await
                 } else {
-                    api::set_feedback(&track_id, next as i16)
-                        .await
+                    api::set_feedback(
+                        &track_id,
+                        next as i16,
+                    )
+                    .await
                 };
                 let Err(err) = result else { return };
                 let Some(ui) = weak.upgrade() else {

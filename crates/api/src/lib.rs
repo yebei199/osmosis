@@ -90,7 +90,9 @@ pub use error::{ApiError, base_url, is_release};
 
 pub(crate) use error::server_error;
 
-pub use feedback::{clear_feedback, feedback, set_feedback};
+pub use feedback::{
+    clear_feedback, feedback, set_feedback,
+};
 
 pub use group::{
     group_advance, group_leave, group_outputs, group_play,
