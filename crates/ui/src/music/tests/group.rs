@@ -377,3 +377,98 @@ fn regaining_focus_in_the_group_restarts_at_the_group_position()
     );
     assert!(deck.group.intents().is_empty());
 }
+
+/// 组在别的设备上放、本机不在组里:成员与出声都是 `outputs`。
+fn elsewhere(outputs: &[&str]) -> GroupStateDto {
+    let mut state = state(outputs, true);
+    state.members.clone_from(&state.outputs);
+    state
+}
+
+/// 后来者加入(#149):组在 a、b 上放,独奏的本机点横幅上的「加入」,发出去的是
+/// a、b 再加上本机 —— 原来出声的一台都不少,也不带种子(组接着放它自己的那一首)。
+#[test]
+fn a_late_device_joins_without_kicking_anyone() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    crate::sync::group::bind(&ui, &deck.group);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_join_group();
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["a", "b", "me"]"#]
+    );
+}
+
+/// 没有组在放就没有什么可加入的:什么都不发。
+#[test]
+fn there_is_nothing_to_join_without_a_group() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    crate::sync::group::bind(&ui, &deck.group);
+
+    ui.global::<Shell>().invoke_join_group();
+
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 组已存在时独奏的本机按「+」:在组的出声设备上追加,不拿本机播放拼一份新的去覆盖
+/// (#149)。已经在出声的那台再按也不会被移出 —— 独奏时芯片上它不亮,那颗键写的是「加入」。
+#[test]
+fn the_plus_key_while_solo_adds_to_the_existing_group() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_toggle_member("c".into());
+    ui.global::<Shell>().invoke_toggle_member("a".into());
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![
+            r#"outputs ["a", "b", "c"]"#,
+            r#"outputs ["a", "b"]"#
+        ]
+    );
+}
+
+/// 组已存在时独奏的本机选一台设备:同样是追加,原有的出声设备不被挤掉(#149)。
+#[test]
+fn picking_a_device_while_solo_keeps_the_existing_outputs()
+{
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(elsewhere(&["a", "b"])));
+
+    ui.global::<Shell>().invoke_set_output("c".into());
+
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["a", "b", "c"]"#]
+    );
+}
+
+/// 加入入口只在组**在播**时出现(#149 AC-1):组从在播转为暂停,独奏设备上的入口随下一版
+/// 状态收掉。出声设备都关了、组只是停着时,不该在每台独奏设备上一直挂一条横幅。
+#[test]
+fn the_join_entry_goes_away_when_the_group_pauses() {
+    let (_ui, deck) = deck_window();
+
+    deck.group.assume(Some(elsewhere(&["a"])));
+    let (banner, joinable) = deck.group.banner();
+    assert!(joinable, "组在播,该有入口");
+    assert_eq!(banner, "组里正在播放: 歌 x");
+
+    let mut paused = elsewhere(&["a"]);
+    paused.version = 4;
+    paused.now.as_mut().expect("在放").playing = false;
+    deck.group.assume(Some(paused));
+
+    assert_eq!(
+        deck.group.banner(),
+        (String::new(), false),
+        "组暂停:不挂入口,独奏时横幅照旧不出现"
+    );
+}

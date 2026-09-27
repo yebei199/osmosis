@@ -603,6 +603,7 @@ export component MainWindow inherits Window {
     // ── 播放组横幅:同样压在所有页之上 ──
     // 它不是一次性提示,是一个**状态** —— 这台在组里(「与 X、Y 一起播放」「正在遥控 X」),
     // 以及怎么退出组回到独奏(#142)。它自己不会消失,只有那颗退出键关得掉它。
+    // 独奏时组在播(#149),它说组在放什么,那颗键换成「加入」;组暂停着不挂。
     //
     // 摆在 banner 下面一格:两条同时在场时不叠在一起。
     if Shell.group-banner != "": group-strip := Rectangle {
@@ -642,15 +643,17 @@ export component MainWindow inherits Window {
 
                     exit-touch := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { Shell.leave-group(); }
+                        clicked => {
+                            if Shell.group-joinable { Shell.join-group(); } else { Shell.leave-group(); }
+                        }
 
                         accessible-role: button;
-                        accessible-label: "退出";
-                        accessible-action-default => { Shell.leave-group(); }
+                        accessible-label: Shell.group-joinable ? "加入播放组" : "退出";
+                        accessible-action-default => { self.clicked(); }
                     }
 
                     exit-label := Text {
-                        text: "退出";
+                        text: Shell.group-joinable ? "加入" : "退出";
                         font-family: "Maple Mono NF CN";
                         font-size: 12px;
                         color: exit-touch.has-hover ? Theme.accent-text : Theme.text;
