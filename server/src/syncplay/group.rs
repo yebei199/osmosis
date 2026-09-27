@@ -201,9 +201,11 @@ pub async fn advance(
 ///
 /// 只在内存里:起播最多等 [`timeline::START_WAIT_US`],服务端这时重启了也只是等满上限。
 /// 版本一变整份作废 —— 每条意图都加版本,别的意图插进来之后各台照新的一版再报一次。
-static READY: LazyLock<
-    Mutex<HashMap<AccountId, (i64, Vec<String>)>>,
-> = LazyLock::new(Mutex::default);
+static READY: LazyLock<Mutex<ReadyTable>> =
+    LazyLock::new(Mutex::default);
+
+/// 账号 → (哪一版, 这一版报过就绪的出声设备)。
+type ReadyTable = HashMap<AccountId, (i64, Vec<String>)>;
 
 /// 记下 `device` 在 `version` 这一版报了就绪,返回这一版报过的全部设备。
 fn mark_ready(
