@@ -13,5 +13,12 @@
 
     <application
         android:usesCleartextTraffic="true"
-        tools:targetApi="28" />
+        tools:targetApi="28">
+
+        <!-- #150 的连发探针,用法见 FgsStressProbe。exported 是为了让 adb 打得进来;
+             release 变体里没有这个类,也没有这一条。 -->
+        <receiver
+            android:name=".FgsStressProbe"
+            android:exported="true" />
+    </application>
 </manifest>
