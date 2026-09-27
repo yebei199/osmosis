@@ -37,6 +37,7 @@ public final class MediaControlsService extends Service {
     static final String ACTION_REFOCUS = "io.github.osmosis.REFOCUS";
     /** 通知上的按钮按下来时走这个 action,具体哪个键在 EXTRA_COMMAND 里。 */
     static final String ACTION_COMMAND = "io.github.osmosis.COMMAND";
+    static final String ACTION_STOP = "io.github.osmosis.STOP";
 
     /** 通知上的按钮按的是哪个键。曲目信息不走 Intent,见 MediaControls.current。 */
     static final String EXTRA_COMMAND = "command";
@@ -138,16 +139,16 @@ public final class MediaControlsService extends Service {
             return START_NOT_STICKY;
         }
 
-        if (ACTION_REFOCUS.equals(intent.getAction())) {
-            refocus();
-            return START_NOT_STICKY;
-        }
-
-        if (ACTION_COMMAND.equals(intent.getAction())) {
-            // 通知上的键都不带参数(带参数的只有会话回调那条 onSeekTo)。
-            MediaControls.dispatch(
-                    intent.getIntExtra(EXTRA_COMMAND, MediaControls.COMMAND_TOGGLE),
-                    0);
+        if (!ACTION_PUBLISH.equals(intent.getAction())) {
+            if (ACTION_REFOCUS.equals(intent.getAction())) {
+                refocus();
+            } else if (ACTION_COMMAND.equals(intent.getAction())) {
+                // 通知上的键都不带参数(带参数的只有会话回调那条 onSeekTo)。
+                MediaControls.dispatch(
+                        intent.getIntExtra(EXTRA_COMMAND, MediaControls.COMMAND_TOGGLE),
+                        0);
+            }
+            stopIfIdle(startId);
             return START_NOT_STICKY;
         }
 
@@ -370,6 +371,20 @@ public final class MediaControlsService extends Service {
             session = null;
         }
         super.onDestroy();
+    }
+
+    /**
+     * 此刻报的是「停」就停下 —— 但只在 startId 是最后一次启动时才真的停(#150)。
+     *
+     * <p>后面若还排着一条 PUBLISH,那次启动正等着 startForeground,此刻停下系统就以
+     * ForegroundServiceDidNotStartInTimeException 杀进程;留给它,之后的 STOP 再来停。
+     * 不只 STOP 走这里:STOP 之后排进来的 REFOCUS、COMMAND 会把启动号顶上去,
+     * 让那条 STOP 停不下来,所以它们收尾时也问一次。
+     */
+    private void stopIfIdle(int startId) {
+        if (MediaControls.current().status == MediaControls.STATUS_STOPPED) {
+            stopSelf(startId);
+        }
     }
 
     /** 没有跨进程的客户端,不提供绑定。 */

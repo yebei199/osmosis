@@ -113,6 +113,9 @@ public final class MediaControls {
     /** 权限被拒过一次就不再问。反复弹框比没有通知更烦人。 */
     private static volatile boolean notificationPermissionAsked;
 
+    /** 发过启动、还没发过停。只在推送那条线程上改。 */
+    private static volatile boolean started;
+
     private MediaControls() {
     }
 
@@ -191,13 +194,37 @@ public final class MediaControls {
 
         Intent intent = new Intent(host, MediaControlsService.class);
         if (status == STATUS_STOPPED) {
-            host.stopService(intent);
+            stop(host, intent);
             return;
         }
 
         ensureNotificationPermission(host);
         host.startForegroundService(
                 intent.setAction(MediaControlsService.ACTION_PUBLISH));
+        started = true;
+    }
+
+    /**
+     * 让服务停下 —— 排在已经发出去的那些启动<b>后面</b>停,不当场停(#150)。
+     *
+     * <p>直接 stopService 会追上一次还没走到 startForeground 的 startForegroundService,
+     * 系统当场以 ForegroundServiceDidNotStartInTimeException 杀进程。投一条 STOP 进服务,
+     * 它与 PUBLISH 走同一条主线程队列,轮到它时前面每一次启动都已经 startForeground 过了。
+     *
+     * <p>没要求启动过就不投:为了停而把服务拉起来,是白建一个 MediaSession。
+     */
+    private static void stop(Activity host, Intent intent) {
+        if (!started) {
+            return;
+        }
+        started = false;
+        try {
+            host.startService(
+                    intent.setAction(MediaControlsService.ACTION_STOP));
+        } catch (IllegalStateException notRunning) {
+            // 后台里只有服务已经不在时才不让 startService:那本来就没什么可停。
+            Log.w(TAG, "停媒体服务时它已经不在了", notRunning);
+        }
     }
 
     /**
