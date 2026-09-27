@@ -378,24 +378,22 @@ async fn a_trial_clip_is_not_stored() {
     assert_eq!(row(&f.state, &id).await, None);
 }
 
-/// `/played` 照常 204,并在后台把没存过的这首排进预取队列(#147)。
+/// `/played` 照常给行 id,并在后台把没存过的这首排进预取队列(#147)。
 #[tokio::test]
 async fn reporting_a_play_queues_the_track() {
     let f = fixture("ar_played", false).await;
     let id = testing::track_id("ar_played", 1);
 
-    let status =
-        crate::routes::library::history::record_play(
-            State(f.state.clone()),
-            f.account.clone(),
-            Json(PlayedDto {
-                platform: "netease".to_owned(),
-                track_id: id.clone(),
-            }),
-        )
-        .await
-        .expect("起播上报应当成功");
-    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    crate::routes::library::history::record_play(
+        State(f.state.clone()),
+        f.account.clone(),
+        Json(PlayedDto {
+            platform: "netease".to_owned(),
+            track_id: id.clone(),
+        }),
+    )
+    .await
+    .expect("起播上报应当成功");
 
     let deadline = tokio::time::Instant::now()
         + std::time::Duration::from_secs(5);
