@@ -172,6 +172,27 @@ pub(in crate::music) fn is_silent_member(
     deck.group.standing() == Standing::Remote
 }
 
+/// 把此刻该报的那一份报给系统媒体控件:只当遥控器时报组在放什么,否则报本机。
+///
+/// 所有带着 deck 的推送都走这里(#150)。各处自己挑的话,遥控时总有一处推本机那份
+/// (「停」),与轮询推的遥控那份来回翻 —— 安卓上就是 stopService 与
+/// startForegroundService 交替,stop 落在服务调 startForeground 之前,系统当场杀进程。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn push_media(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
+    if is_silent_member(deck) {
+        crate::media::push_remote(
+            ui,
+            &deck.group,
+            &deck.media,
+        );
+    } else {
+        crate::media::push(ui, &deck.playback, &deck.media);
+    }
+}
+
 /// 不在组里(独奏):本机自己执行,行为与没有组时一样。
 fn to_local(
     ui: &MainWindow,
@@ -232,11 +253,7 @@ fn to_local(
                 }
                 LocalToggle::Replay => {
                     play_current(ui, deck);
-                    crate::media::push(
-                        ui,
-                        &deck.playback,
-                        &deck.media,
-                    );
+                    push_media(ui, deck);
                 }
             }
         }
@@ -488,7 +505,7 @@ pub(in crate::music) fn play_batch(
         deck.queue.borrow_mut().shuffle(shuffle_seed());
     }
     play_current(ui, deck);
-    crate::media::push(ui, &deck.playback, &deck.media);
+    push_media(ui, deck);
 }
 
 /// 音量停手多久之后才写盘(#137 ⑥)。
@@ -580,5 +597,5 @@ pub(in crate::music) fn execute(
             deck.volume_save.remember(level);
         }
     }
-    crate::media::push(ui, &deck.playback, &deck.media);
+    push_media(ui, deck);
 }

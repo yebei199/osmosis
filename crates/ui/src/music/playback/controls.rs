@@ -54,11 +54,7 @@ pub(in crate::music) fn bind_controls(
         let Some(ui) = weak.upgrade() else { return };
         dispatch(&ui, &toggle, Intent::TogglePlay);
         // 暂停图标不该慢一拍 —— 轮询要 1 秒之后才轮到。
-        crate::media::push(
-            &ui,
-            &toggle.playback,
-            &toggle.media,
-        );
+        push_media(&ui, &toggle);
     });
 
     let focus = deck.clone();
@@ -107,11 +103,7 @@ pub(in crate::music) fn bind_controls(
         // 界面上那个开关是这一位的投影,拨完由这里写回去 —— 开关自己不置位。
         ui.global::<Player>().set_shuffle_on(on);
         // 系统控件上的随机也该立刻跟着翻,轮询要 1 秒之后才轮到。
-        crate::media::push(
-            &ui,
-            &shuffle.playback,
-            &shuffle.media,
-        );
+        push_media(&ui, &shuffle);
     });
 
     let looper = deck.clone();
@@ -176,7 +168,7 @@ pub(in crate::music) fn apply_loop(
     deck.queue.borrow_mut().set_loop_mode(mode);
     ui.global::<Player>()
         .set_loop_mode(crate::media::loop_index(mode));
-    crate::media::push(ui, &deck.playback, &deck.media);
+    push_media(ui, deck);
 }
 
 /// 接上音量:开局从本地设置恢复,拖动时既改播放器也存回去。
