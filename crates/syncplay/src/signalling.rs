@@ -62,6 +62,16 @@ impl SignalSender {
         self.push(ClientSignal::Report { report }).await
     }
 
+    /// 调同账号 `to` 那台的音量(#151),服务端只转给它。
+    pub async fn set_volume(
+        &self,
+        to: String,
+        volume: f32,
+    ) -> Result<(), SyncError> {
+        self.push(ClientSignal::SetVolume { to, volume })
+            .await
+    }
+
     /// 校时的一次往返：发出去，等 `TimePong`。
     pub async fn time_ping(
         &self,

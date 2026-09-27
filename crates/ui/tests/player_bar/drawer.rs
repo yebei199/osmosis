@@ -77,7 +77,7 @@ fn listed_devices_show_up_only_as_outputs() {
         VecModel::from(vec![ui::DeviceRow {
             id: "pc1".into(),
             name: "pc1".into(),
-            member: false,
+            ..Default::default()
         }]),
     ));
 

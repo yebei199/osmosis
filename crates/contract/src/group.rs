@@ -195,9 +195,9 @@ pub struct GroupReplyDto {
 }
 
 /// 出声设备每秒一条的执行事实,经服务端转给组里其他设备,只用于显示
-/// (「某台没跟上」「该路由未校准」)。
+/// (「某台没跟上」「该路由未校准」「它的音量」)。
 #[derive(
-    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+    Debug, Clone, PartialEq, Serialize, Deserialize,
 )]
 pub struct DeviceReportDto {
     /// 本机此刻放的条目。
@@ -205,6 +205,10 @@ pub struct DeviceReportDto {
     /// 取不到媒体、跳不到位置这类故障。好了就是 `None`。
     pub fault: Option<String>,
     pub route: Option<crate::OutputRouteDto>,
+    /// 本机此刻的音量(0..=1,#151)。音量的真相在各台本机,这里只是让别的成员看得见、
+    /// 拖得动。旧客户端不报,缺省 `None`,界面上那台就不出音量条。
+    #[serde(default)]
+    pub volume: Option<f32>,
 }
 
 #[cfg(test)]

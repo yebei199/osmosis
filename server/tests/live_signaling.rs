@@ -427,9 +427,10 @@ async fn a_report_stays_within_its_account() {
     assert!(
         matches!(
             relayed,
-            ServerSignal::DeviceReport { ref from, .. } if from == "a1"
+            ServerSignal::DeviceReport { ref from, ref report }
+                if from == "a1" && report.volume == Some(0.4)
         ),
-        "实得 {relayed:?}"
+        "上报的音量没原样转到(#151),实得 {relayed:?}"
     );
 
     // bob 那边一个字都不该收到。给它一点时间,再确认收件箱是空的。
@@ -608,6 +609,7 @@ fn report() -> ClientSignal {
             entry_id: Some(1),
             fault: None,
             route: None,
+            volume: Some(0.4),
         },
     }
 }

@@ -104,6 +104,8 @@ export component VolumeControl inherits HorizontalLayout {
     // 滑块常驻。抽屉里有横向空间,不必让人先点开喇叭再拖 —— 那一层
     // 折叠是当初为一排塞不下才有的,抽屉里没有那个约束。
     in property <bool> expanded: false;
+    // 读屏念的名字。输出设备那一排每台一个,得念得出是哪一台的(#151)。
+    in property <string> label: "音量";
     callback changed(float);
 
     property <bool> open: false;
@@ -135,7 +137,7 @@ export component VolumeControl inherits HorizontalLayout {
                 // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"
                 // (同 widgets.slint 里的 HoverButton)。
                 accessible-role: button;
-                accessible-label: "音量";
+                accessible-label: root.label;
                 accessible-expandable: true;
                 accessible-expanded: root.open;
                 accessible-action-default => {

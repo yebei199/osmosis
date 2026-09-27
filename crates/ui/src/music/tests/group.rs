@@ -518,3 +518,97 @@ fn the_join_entry_goes_away_when_the_group_pauses() {
         "组暂停:不挂入口,独奏时横幅照旧不出现"
     );
 }
+
+/// 别的成员远程调本机的音量(#151):本机照自己拖滑块那样应用、存盘,不发任何组意图。
+#[test]
+fn a_remote_volume_change_is_applied_and_saved() {
+    let _file = super::dispatch::SETTINGS_FILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let (ui, deck) = deck_window_pumped();
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["me", "pc"], true)));
+
+    // 收到信令那一步(`Group::handle`)只是把这一下送上 UI 线程;测试后端没有进程级的
+    // 事件循环代理,送不过去,所以直接走 UI 线程上那一半。
+    crate::sync::group::apply_remote_volume(&ui, 0.2);
+    super::dispatch::settle_volume_save();
+
+    assert!(
+        (ui.global::<Player>().get_volume() - 0.2).abs()
+            < 1e-6
+    );
+    assert!(
+        (api::settings::load().volume - 0.2).abs() < 1e-6,
+        "远程调的音量该存进本机设置"
+    );
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 别处来的音量照样要夹:1.7 这种数不该原样进播放器和设置文件。
+#[test]
+fn a_remote_volume_out_of_range_is_clamped() {
+    let (ui, deck) = deck_window_pumped();
+    wire(&ui, &deck);
+
+    crate::sync::group::apply_remote_volume(&ui, 1.7);
+
+    assert!(
+        (ui.global::<Player>().get_volume() - 1.0).abs()
+            < 1e-6
+    );
+}
+
+/// 输出设备那一排:正在出声、报过音量的那台出它自己的音量条;不出声的不出。
+/// 拖那条音量条发给那一台,条先跟手(#151)。
+#[test]
+fn each_sounding_device_shows_and_takes_its_own_volume() {
+    use slint::Model as _;
+
+    let (ui, deck) = deck_window_pumped();
+    wire(&ui, &deck);
+    crate::sync::group::bind(&ui, &deck.group);
+    ui.global::<Shell>().set_devices(slint::ModelRc::new(
+        slint::VecModel::from(
+            ["pc", "tab"]
+                .map(|id| crate::DeviceRow {
+                    id: id.into(),
+                    name: id.into(),
+                    ..Default::default()
+                })
+                .to_vec(),
+        ),
+    ));
+    deck.group.assume(Some(state(&["me", "pc"], true)));
+    for (from, volume) in [("pc", 0.4), ("tab", 0.9)] {
+        deck.group.handle(&syncplay::Event::DeviceReport {
+            from: from.to_owned(),
+            report: app_core::DeviceReportDto {
+                entry_id: Some(12),
+                fault: None,
+                route: None,
+                volume: Some(volume),
+            },
+        });
+    }
+    deck.group.paint_now(&ui);
+    let row = |index| {
+        ui.global::<Shell>()
+            .get_devices()
+            .row_data(index)
+            .expect("那一行不见了")
+    };
+
+    assert!(row(0).has_volume);
+    assert!((row(0).volume - 0.4).abs() < 1e-6);
+    assert!(!row(1).has_volume, "不出声的那台不该有音量条");
+
+    ui.global::<Shell>()
+        .invoke_set_device_volume("pc".into(), 0.25);
+
+    assert_eq!(
+        deck.group.intents(),
+        vec!["volume pc 0.25"]
+    );
+    assert!((row(0).volume - 0.25).abs() < 1e-6);
+}

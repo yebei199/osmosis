@@ -199,6 +199,21 @@ impl Group {
                 self.accept(state);
                 return;
             }
+            // 别的成员远程调本机的音量(#151):照本机拖滑块那样应用并存盘,
+            // 下一条执行事实把新值带回给大家。
+            Event::SetVolume { from, volume } => {
+                log::info!(
+                    "{from} 把本机音量调到 {volume}"
+                );
+                let volume = *volume;
+                let _ = self
+                    .inner
+                    .weak
+                    .upgrade_in_event_loop(move |ui| {
+                        apply_remote_volume(&ui, volume)
+                    });
+                return;
+            }
             Event::DeviceReport { from, report } => {
                 let changed = lock(&self.inner.reports)
                     .insert(from.clone(), report.clone())
@@ -438,6 +453,23 @@ impl Group {
         true
     }
 
+    /// 远程调 `device` 的音量(#151)。音量条先跟手,真值等它下一条执行事实带回来。
+    pub fn set_volume(
+        &self,
+        ui: &MainWindow,
+        device: &str,
+        volume: f32,
+    ) {
+        let volume = audio::clamped_volume(volume);
+        set_row_volume(ui, device, volume);
+        #[cfg(test)]
+        lock(&self.inner.intents)
+            .push(format!("volume {device} {volume:.2}"));
+        if let Some(client) = self.inner.client.get() {
+            client.set_volume(device, volume);
+        }
+    }
+
     /// 本机退出组,回到独奏。
     pub fn leave(&self, ui: &MainWindow) {
         self.send(
@@ -574,6 +606,24 @@ impl Group {
 
     /// 横幅、输出设备那一排、组那一行推到界面上。
     pub fn refresh(&self) {
+        let paint = self.painting();
+        let _ = self
+            .inner
+            .weak
+            .upgrade_in_event_loop(move |ui| paint(&ui));
+    }
+
+    /// 测试里当场画一遍:测试后端没有进程级的事件循环代理,
+    /// `upgrade_in_event_loop` 送出去的闭包在那里一律被丢掉。
+    #[cfg(test)]
+    pub(crate) fn paint_now(&self, ui: &MainWindow) {
+        self.painting()(ui);
+    }
+
+    /// 在这一侧把要画的算好,交回一个只在 UI 线程上跑的闭包。
+    fn painting(
+        &self,
+    ) -> impl FnOnce(&MainWindow) + Send + 'static {
         let (standing, outputs, offline) = {
             let view = lock(&self.inner.view);
             (
@@ -595,6 +645,20 @@ impl Group {
             } else {
                 Vec::new()
             });
+        // 出声的别台报上来的音量,那一排每台一条音量条(#151)。
+        let volumes: HashMap<String, f32> = {
+            let reports = lock(&self.inner.reports);
+            outputs
+                .iter()
+                .filter(|id| **id != self.inner.me)
+                .filter_map(|id| {
+                    Some((
+                        id.clone(),
+                        reports.get(id)?.volume?,
+                    ))
+                })
+                .collect()
+        };
         let line = {
             let reports = lock(&self.inner.reports);
             if member {
@@ -628,18 +692,16 @@ impl Group {
             .cloned()
             .filter(|_| !marked.contains(&String::new()))
             .unwrap_or_default();
-        let _ = self.inner.weak.upgrade_in_event_loop(
-            move |ui| {
-                let shell = ui.global::<Shell>();
-                shell.set_group_banner(banner.into());
-                shell.set_group_joinable(joinable);
-                shell.set_output_text(output_text.into());
-                shell.set_output_id(first.into());
-                shell.set_group_text(line.into());
-                shell.set_output_stale(offline);
-                mark_members(&ui, &marked);
-            },
-        );
+        move |ui: &MainWindow| {
+            let shell = ui.global::<Shell>();
+            shell.set_group_banner(banner.into());
+            shell.set_group_joinable(joinable);
+            shell.set_output_text(output_text.into());
+            shell.set_output_id(first.into());
+            shell.set_group_text(line.into());
+            shell.set_output_stale(offline);
+            mark_members(ui, &marked, &volumes);
+        }
     }
 
     /// 只当遥控器时控制条画全局状态:歌名、进度、在不在放。
@@ -761,20 +823,27 @@ enum GroupIntent {
 pub(crate) fn mark_members(
     ui: &MainWindow,
     member_ids: &[String],
+    volumes: &HashMap<String, f32>,
 ) {
     use slint::Model as _;
 
     let rows = ui.global::<Shell>().get_devices();
     for index in 0..rows.row_count() {
-        let Some(mut row) = rows.row_data(index) else {
+        let Some(row) = rows.row_data(index) else {
             continue;
         };
         let member = member_ids
             .iter()
             .any(|id| *id == row.id.as_str());
-        if row.member != member {
-            row.member = member;
-            rows.set_row_data(index, row);
+        let volume = volumes.get(row.id.as_str()).copied();
+        let updated = crate::DeviceRow {
+            member,
+            has_volume: volume.is_some(),
+            volume: volume.unwrap_or(row.volume),
+            ..row.clone()
+        };
+        if updated != row {
+            rows.set_row_data(index, updated);
         }
     }
     ui.global::<Shell>().set_local_member(
@@ -782,8 +851,44 @@ pub(crate) fn mark_members(
     );
 }
 
-/// 把组接到界面上:横幅上的「退出」与「加入」。
+/// 那一排里 `device` 那一行的音量条改成 `volume`。
+fn set_row_volume(
+    ui: &MainWindow,
+    device: &str,
+    volume: f32,
+) {
+    use slint::Model as _;
+
+    let rows = ui.global::<Shell>().get_devices();
+    for index in 0..rows.row_count() {
+        if let Some(mut row) = rows.row_data(index)
+            && row.id == device
+        {
+            row.volume = volume;
+            rows.set_row_data(index, row);
+        }
+    }
+}
+
+/// 别的成员调了本机的音量(#151):走的是本机拖滑块那条路,夹值、应用、节流存盘都在那里。
+pub(crate) fn apply_remote_volume(
+    ui: &MainWindow,
+    volume: f32,
+) {
+    ui.global::<Player>().invoke_volume_changed(volume);
+}
+
+/// 把组接到界面上:横幅上的「退出」与「加入」,以及远程调音量。
 pub fn bind(ui: &MainWindow, group: &Group) {
+    let tuning = group.clone();
+    let weak = ui.as_weak();
+    ui.global::<Shell>().on_set_device_volume(
+        move |device, volume| {
+            let Some(ui) = weak.upgrade() else { return };
+            tuning.set_volume(&ui, &device, volume);
+        },
+    );
+
     let joining = group.clone();
     let weak = ui.as_weak();
     ui.global::<Shell>().on_join_group(move || {

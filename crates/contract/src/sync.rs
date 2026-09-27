@@ -67,6 +67,9 @@ pub enum ClientSignal {
     TimePing { id: u64 },
     /// 出声设备每秒一条的执行事实(#142)。服务端转给组里其他在线成员。
     Report { report: crate::DeviceReportDto },
+    /// 把 `to` 那台的音量调成 `volume`(0..=1,#151)。服务端只转给它一台,不进组状态:
+    /// 音量的真相在各台本机,它应用、存盘之后在下一条 `Report` 里带回来。
+    SetVolume { to: String, volume: f32 },
 }
 
 /// 服务端发给设备的信令消息。
@@ -112,6 +115,8 @@ pub enum ServerSignal {
         from: String,
         report: crate::DeviceReportDto,
     },
+    /// 同账号的 `from` 要本机把音量调成 `volume`(#151)。本机照自己调音量那样应用并存盘。
+    SetVolume { from: String, volume: f32 },
 }
 
 #[cfg(test)]

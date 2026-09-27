@@ -57,12 +57,16 @@ pub enum Event {
         from: String,
         report: contract::DeviceReportDto,
     },
+    /// 同账号的 `from` 要本机把音量调成 `volume`(#151)。
+    SetVolume { from: String, volume: f32 },
 }
 
 /// 界面发给编排循环的指令。
 enum Command {
     /// 出声设备的执行事实(#142)。
     ReportDevice(contract::DeviceReportDto),
+    /// 调 `to` 那台的音量(#151)。
+    SetVolume { to: String, volume: f32 },
 }
 
 /// 一个连着信令服务器的客户端。
@@ -149,6 +153,15 @@ impl Client {
         let _ = self
             .commands
             .send(Command::ReportDevice(report));
+    }
+
+    /// 把 `to` 那台的音量调成 `volume`(#151)。断着的时候丢掉:界面上那条音量条
+    /// 跟着对方下一条执行事实回到真实的值。
+    pub fn set_volume(&self, to: &str, volume: f32) {
+        let _ = self.commands.send(Command::SetVolume {
+            to: to.to_owned(),
+            volume,
+        });
     }
 
     /// 校时的结论。界面拿它把计划里的服务端时刻换算成本机单调时钟。
@@ -416,6 +429,9 @@ async fn serve(
                     Command::ReportDevice(report) => {
                         sender.report_device(report).await
                     }
+                    Command::SetVolume { to, volume } => {
+                        sender.set_volume(to, volume).await
+                    }
                 }
             }
         };
@@ -496,6 +512,9 @@ fn accept(
         }
         ServerSignal::DeviceReport { from, report } => {
             events(Event::DeviceReport { from, report });
+        }
+        ServerSignal::SetVolume { from, volume } => {
+            events(Event::SetVolume { from, volume });
         }
         // 握手应答在 `verify_handshake` 里已经读过了;校时的回话在 `serve` 里就地收下。
         ServerSignal::Welcome { .. }

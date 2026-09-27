@@ -185,7 +185,7 @@ fn show_devices(
             .map(|device| DeviceRow {
                 id: device.id.clone().into(),
                 name: device.name.clone().into(),
-                member: false,
+                ..Default::default()
             })
             .collect();
         ui.global::<Shell>().set_devices(ModelRc::new(

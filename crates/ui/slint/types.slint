@@ -74,6 +74,9 @@ export struct DeviceRow {
     name: string,
     // 在不在播放组里(#137 ⑤)。「加入 / 移出」那颗小键照它显示。
     member: bool,
+    // 它报上来的音量(#151)。只有正在出声、报过音量的那台 has-volume 才为真,出音量条。
+    volume: float,
+    has-volume: bool,
 }
 
 // 歌词页当前该画的那一段里的一行。窗口由 `app_core::window` 选好,

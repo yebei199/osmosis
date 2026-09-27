@@ -69,6 +69,8 @@ export global Shell {
     callback set-output(string);
     // 加入一起出声 / 移出:在正在出声的那几台上加上或去掉这一台。参数同上,空串是本机。
     callback toggle-member(string);
+    // 远程调那一台的音量(#151)。参数是 DeviceRow 的 id 与 0..=1 的音量。
+    callback set-device-volume(string, float);
     // 本机在不在出声(独奏时恒为真)。
     in property <bool> local-member: true;
     // 组那一行:哪台报了故障、哪台的路由没校准。空串 = 不出现。

@@ -199,6 +199,7 @@ mod tests {
                         "取不到媒体: 403".to_owned(),
                     ),
                     route: Some(OutputRouteDto::Speaker),
+                    volume: None,
                 },
             ),
             (
@@ -207,6 +208,7 @@ mod tests {
                     entry_id: Some(1),
                     fault: None,
                     route: Some(OutputRouteDto::Bluetooth),
+                    volume: None,
                 },
             ),
         ]);
