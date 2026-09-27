@@ -1,4 +1,4 @@
-//! 存进对象存储:存、不重复存、试听与有损不存、`/played` 真的会排进队列;
+//! 存进对象存储:存、不重复存、试听不存、给不出无损存最高可得并在有了无损时换掉、`/played` 真的会排进队列;
 //! 再播时从对象存储交付,它出岔子时退回网易云;清理只删没人红心、三天没播的。
 
 use std::sync::Arc;
@@ -226,28 +226,122 @@ async fn a_stored_flac_records_depth_and_rate() {
     );
 }
 
-/// 音源给不出无损(只给 320k):不下载、不存,桶里不长出 320k(#147)。
+/// 只给得出 320k 的源。
+fn lossy() -> PlaySource {
+    PlaySource {
+        format: "mp3".to_owned(),
+        bit_rate: 320_000,
+        level: QualityLevel::High as i32,
+        ..PlaySource::default()
+    }
+}
+
+/// 音源给不出无损(只给 320k):存它能给的最高那档,账上如实记 high;
+/// 清理不删它,再播从桶里交付,不回源(#152)。
 #[tokio::test]
-async fn a_lossy_source_is_not_stored() {
-    let f = fixture_with(
-        "ar_lossy",
-        audio(),
-        PlaySource {
-            format: "mp3".to_owned(),
-            bit_rate: 320_000,
-            level: QualityLevel::High as i32,
-            ..PlaySource::default()
-        },
-    )
-    .await;
+async fn a_lossy_source_is_stored_as_the_best_available() {
+    let f =
+        fixture_with("ar_lossy", audio(), lossy()).await;
     let id = testing::track_id("ar_lossy", 1);
 
-    let _ =
+    let outcome =
         store_track(&f.state, &f.account, &netease(&id))
             .await;
 
-    assert_eq!(f.hits.load(Ordering::SeqCst), 0);
-    assert_eq!(row(&f.state, &id).await, None);
+    assert_eq!(outcome, Ok(Stored::Now));
+    let key = format!("tracks/{id}/high.mp3");
+    assert_eq!(f.objects.get(&key), Some(audio()));
+    let stored =
+        row(&f.state, &id).await.expect("应当存进去了");
+    assert_eq!(
+        (stored.tier.as_str(), stored.object_key.as_str()),
+        ("high", key.as_str())
+    );
+
+    let mut tx = f.state.pool.begin().await.unwrap();
+    super::sweep(&mut tx, f.objects.as_ref())
+        .await
+        .expect("清理应当成功");
+    tx.commit().await.unwrap();
+    assert!(f.objects.get(&key).is_some(), "清理删了它");
+
+    let offline = testing::with_upstream(
+        &f.state,
+        testing::unreachable_upstream(),
+    );
+    assert_eq!(
+        play_url(&offline, &f.account, &id).await,
+        format!("memory://{key}")
+    );
+}
+
+/// 存过 320k、音源仍只给 320k:问一次音源,不再下载。
+#[tokio::test]
+async fn a_lossy_copy_is_not_downloaded_again() {
+    let f =
+        fixture_with("ar_lossy_twice", audio(), lossy())
+            .await;
+    let id = testing::track_id("ar_lossy_twice", 1);
+
+    let first =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+    let second =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+
+    assert_eq!(
+        (first, second),
+        (Ok(Stored::Now), Ok(Stored::Already))
+    );
+    assert_eq!(f.hits.load(Ordering::SeqCst), 1);
+}
+
+/// 先只有 320k,之后音源给得出无损:换成无损,旧的 320k 对象随之删掉(#152)。
+#[tokio::test]
+async fn a_lossless_version_replaces_the_lossy_copy() {
+    let f =
+        fixture_with("ar_upgrade", audio(), lossy()).await;
+    let id = testing::track_id("ar_upgrade", 1);
+    let _ =
+        store_track(&f.state, &f.account, &netease(&id))
+            .await;
+    let lossy_key = format!("tracks/{id}/high.mp3");
+    assert!(f.objects.get(&lossy_key).is_some());
+    let (url, _) = serve_counted(audio()).await;
+    let upgraded = testing::with_upstream(
+        &f.state,
+        testing::serve(FakeUpstream {
+            play_source: Some(PlaySource {
+                url,
+                format: "flac".to_owned(),
+                bit_rate: 900_000,
+                level: QualityLevel::Lossless as i32,
+                ..PlaySource::default()
+            }),
+            ..f.fake.clone()
+        })
+        .await,
+    );
+
+    let outcome =
+        store_track(&upgraded, &f.account, &netease(&id))
+            .await;
+
+    assert_eq!(outcome, Ok(Stored::Now));
+    let key = format!("tracks/{id}/lossless.flac");
+    assert!(f.objects.get(&key).is_some());
+    assert_eq!(
+        f.objects.get(&lossy_key),
+        None,
+        "旧的 320k 应当删掉"
+    );
+    let stored =
+        row(&f.state, &id).await.expect("应当还在账上");
+    assert_eq!(
+        (stored.tier.as_str(), stored.object_key.as_str()),
+        ("lossless", key.as_str())
+    );
 }
 
 /// 同一首第二次不再下载。
@@ -511,29 +605,22 @@ async fn a_queued_job_is_stored_and_leaves_the_queue() {
     assert_eq!(job_state(&f, &id).await, None);
 }
 
-/// 给不出无损的这首:不存,行留着记 no_lossless,统计数得到它。
+/// 给不出无损的这首:存最高可得的那档,队列里那一行照样删掉(#152)。
 #[tokio::test]
-async fn a_job_without_lossless_is_marked() {
-    let f = fixture_with(
-        "ar_job_lossy",
-        audio(),
-        PlaySource {
-            format: "mp3".to_owned(),
-            bit_rate: 320_000,
-            level: QualityLevel::High as i32,
-            ..PlaySource::default()
-        },
-    )
-    .await;
+async fn a_job_without_lossless_stores_the_best_available()
+{
+    let f = fixture_with("ar_job_lossy", audio(), lossy())
+        .await;
     let id = testing::track_id("ar_job_lossy", 1);
     let job = queued(&f, &id).await;
 
     crate::routes::play::prefetch::run(&f.state, &job)
         .await;
 
+    assert_eq!(job_state(&f, &id).await, None);
     assert_eq!(
-        job_state(&f, &id).await,
-        Some("no_lossless".to_owned())
+        row(&f.state, &id).await.map(|stored| stored.tier),
+        Some("high".to_owned())
     );
 }
 

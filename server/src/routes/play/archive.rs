@@ -10,7 +10,8 @@
 //! 再播时 [`stored_source`] 把桶里那份的签名链接交给 `/play`;对象存储出任何
 //! 岔子都只是退回网易云,不让点歌失败。
 //!
-//! 只存无损:音源给不出无损的这首不存(`docs/adr/0034`)。
+//! 存最高可得:向音源要无损,给不出就存它给得出的最高那档,账上如实记档位;
+//! 以后给得出无损了,预取再办这首时换成无损、删掉旧的(#152,`docs/adr/0034`)。
 //!
 //! 在我们任何一个歌单里、或在当天日推里的长期留着;[`spawn_sweeper`] 每小时删一轮
 //! 哪都不在、且最后一次播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
@@ -95,7 +96,7 @@ pub(crate) enum Stored {
     Now,
     /// 早就在桶里,没再下载。
     Already,
-    /// 音源给不出无损(或只给试听片段),不存。
+    /// 音源只给试听片段,不存。给得出整首的,不论什么档位都存(#152)。
     NoLossless,
     /// 放进去会超出空间上限,排在它后面的又腾不出地方,不存。
     OverCap,
@@ -180,13 +181,13 @@ async fn store(
 ) -> Result<Stored, String> {
     let quality_key = quality();
     // 连接只借这一下:下载可能要几十秒,池里一共才五条
-    {
+    let existing = {
         let mut conn = state
             .pool
             .acquire()
             .await
             .map_err(|err| err.to_string())?;
-        if archive::find(
+        archive::find(
             &mut conn,
             &track.platform,
             &track.track_id,
@@ -194,10 +195,13 @@ async fn store(
         )
         .await
         .map_err(|err| format!("{err:?}"))?
-        .is_some()
-        {
-            return Ok(Stored::Already);
-        }
+    };
+    let held = existing
+        .as_ref()
+        .map(|stored| stored_quality(stored).tier);
+    // 桶里已是无损就不必再问;非无损的那份要问一次,音源也许给得出更好的了(#152)
+    if held.is_some_and(Tier::is_lossless) {
+        return Ok(Stored::Already);
     }
 
     let source = download::play_source(
@@ -208,19 +212,24 @@ async fn store(
     )
     .await
     .map_err(describe)?;
+    let mut quality = netease::quality_of(&source);
+    // 没有比桶里那份更好的,不再下载
+    if held.is_some_and(|held| {
+        source.trial || quality.tier <= held
+    }) {
+        return Ok(Stored::Already);
+    }
     // 试听片段只有三十秒,存下来再交出去就是一首永远放不完的歌
     if source.trial {
         return Ok(Stored::NoLossless);
     }
-    let mut quality = netease::quality_of(&source);
-    // 给不出无损就不存:桶里只留无损(docs/adr/0034),这首每次播放现取
+    // 给不出无损就存它给得出的最高那档(docs/adr/0034),以后给得出无损再换
     if !quality.tier.is_lossless() {
         tracing::info!(
             track_id = %track.track_id,
             tier = quality.tier.name(),
-            "音源给不出无损,不存"
+            "音源给不出无损,存最高可得"
         );
-        return Ok(Stored::NoLossless);
     }
     let content_type = content_type(&quality.format)?;
     let upstream = download::fetch(&source.url)
@@ -246,8 +255,10 @@ async fn store(
 
     let stored = StoredTrack {
         object_key: format!(
-            "tracks/{}/{quality_key}.{}",
-            track.track_id, quality.format
+            "tracks/{}/{}.{}",
+            track.track_id,
+            quality.tier.name(),
+            quality.format
         ),
         platform: track.platform.clone(),
         track_id: track.track_id.clone(),
@@ -278,6 +289,14 @@ async fn store(
     archive::record(&mut conn, &stored)
         .await
         .map_err(|err| format!("{err:?}"))?;
+    // 换下来的那份:账已指向新的,旧对象删不掉只是桶里多一个孤儿
+    if let Some(old) = existing
+        .filter(|old| old.object_key != stored.object_key)
+        && let Err(err) =
+            archive.objects.delete(&old.object_key).await
+    {
+        tracing::warn!(key = %old.object_key, %err, "删不掉换下来的旧档位");
+    }
 
     tracing::info!(
         track_id = %stored.track_id,
@@ -572,7 +591,7 @@ pub(crate) fn spawn_sweeper(
 /// `GET /archive/stats` 的响应:桶里存了多少、队列里还剩多少(#147)。
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ArchiveStats {
-    /// 以无损存进桶的曲目数。
+    /// 存进桶的曲目数,无损与「最高可得」的非无损都算(#152)。
     pub(crate) tracks: i64,
     /// 它们一共多少字节。应当等于桶的用量。
     pub(crate) bytes: i64,
@@ -582,7 +601,7 @@ pub(crate) struct ArchiveStats {
     pub(crate) queued: i64,
     /// 因为超出空间上限没存的。
     pub(crate) over_cap: i64,
-    /// 音源给不出无损的。
+    /// 音源只给试听片段的(#152 起给不出无损的也存,不再记在这里)。
     pub(crate) no_lossless: i64,
     /// 重试用尽的。
     pub(crate) failed: i64,
