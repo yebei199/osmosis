@@ -99,6 +99,34 @@ fn daily_url() -> String {
     format!("{}/daily", base_url())
 }
 
+/// 电台的两种模式(#159)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RadioMode {
+    /// 私人 FM。
+    Fm,
+    /// 心动模式:以 `seed` 这首为起点。
+    Heart { seed: String },
+}
+
+/// `GET /radio` —— 一批没听过的新歌。每次都是新的一批,不进缓存。
+///
+/// 可能是空的:服务端把听过的都丢掉,问满上限仍凑不出就交空批。
+pub async fn radio(
+    mode: &RadioMode,
+) -> Result<TracksDto, ApiError> {
+    let url = match mode {
+        RadioMode::Fm => {
+            format!("{}/radio?mode=fm", base_url())
+        }
+        RadioMode::Heart { seed } => format!(
+            "{}/radio?mode=heart&seed={}",
+            base_url(),
+            crate::url::encode_component(seed)
+        ),
+    };
+    platform::get_json(url).await
+}
+
 /// `GET /liked` —— 我喜欢的音乐,取第一页。
 ///
 /// 服务端不带 limit 时用它自己的默认页大小,客户端不必知道那个数字。

@@ -171,6 +171,28 @@ pub fn daily_is_due<D: PartialEq>(
     last != Some(today)
 }
 
+/// 电台这一拍的处境,供 [`radio_due`] 判断。
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RadioTurn {
+    /// 队列还是电台起播的那一批:用户点了别的歌,队列就换批了。
+    pub(super) owns_batch: bool,
+    /// 当前这首之后还排着几首。
+    pub(super) remaining: usize,
+    /// 上一次续取还在路上。
+    pub(super) pulling: bool,
+    pub(super) now_ms: u64,
+    /// 上一次失败或一首新歌都没续上,冷却到这一刻。
+    pub(super) retry_at_ms: u64,
+}
+
+/// 该不该续一批(#159):队列剩最后一首时续,两种模式共用这一个判据。
+pub(super) fn radio_due(turn: &RadioTurn) -> bool {
+    turn.owns_batch
+        && turn.remaining <= 1
+        && !turn.pulling
+        && turn.now_ms >= turn.retry_at_ms
+}
+
 /// 把一批歌翻成列表的行,顺带标出正在加载的那一首。
 ///
 /// 所有格式化都在这里做完,`.slint` 只负责摆。`loading` 给的是那一首的 id ——

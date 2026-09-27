@@ -62,6 +62,53 @@ fn only_the_selected_section_is_in_the_tree() {
     ui.global::<Shell>().set_music_section(2);
     assert!(present(&ui, "MusicPage::keyword"));
     assert!(present(&ui, "MusicPage::track-list"));
+
+    // 4 = 电台(#159):摆电台正在放的那一批,没有搜索框
+    ui.global::<Shell>().set_music_section(4);
+    assert!(present(&ui, "MusicPage::track-list"));
+    assert!(!present(&ui, "MusicPage::keyword"));
+    assert!(!present(&ui, "MusicPage::playlist-list"));
+}
+
+/// 电台摆在每日推荐之后(#159),点它报的是电台的编号而不是它的位置。
+///
+/// 摆放顺序与编号分开了:按位置报的话,点电台会进「我的歌单」。
+#[test]
+fn the_radio_entry_sits_after_daily_and_reports_its_own_id()
+{
+    let ui = music_page();
+    ui.global::<Shell>().set_compact(true);
+    let picked = std::rc::Rc::new(std::cell::Cell::new(-1));
+    let sink = picked.clone();
+    ui.global::<Shell>().on_select_section(
+        move |section| {
+            sink.set(section);
+        },
+    );
+
+    let labels: Vec<String> =
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "MusicBar::item-touch",
+        )
+        .filter_map(|touch| {
+            touch.accessible_label().map(|s| s.to_string())
+        })
+        .collect();
+    assert_eq!(
+        labels.get(..2),
+        Some(
+            &["每日推荐".to_owned(), "电台".to_owned()][..]
+        )
+    );
+
+    testing::ElementHandle::find_by_accessible_label(
+        &ui, "电台",
+    )
+    .next()
+    .expect("分段条里该有电台")
+    .invoke_accessible_default_action();
+    assert_eq!(picked.get(), 4);
 }
 
 /// 竖栏只在宽版式、分段条只在紧凑版式。

@@ -201,7 +201,7 @@ reset() {
   call click_element "{\"elementHandle\":$music}" >/dev/null
   item=$(handle "MusicRail::item-touch" "$section")
   [ -n "$item" ] || item=$(handle "MusicBar::item-touch" "$section")
-  must "$item" "音乐页第 $((section + 1)) 个分区"
+  must "$item" "音乐页第 $((section + 1)) 个位置的分区"
   call click_element "{\"elementHandle\":$item}" >/dev/null
   sleep 2
 }
@@ -273,7 +273,8 @@ win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(jso
 root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
 
 # 复位:播放页收起 → 音乐页 → 搜索分区(search)或每日推荐(其余)。
-[ "$MODE" = search ] && reset 2 || reset 0
+# 给的是分区键在条上的**位置**,不是分区编号:电台(#159)摆在每日推荐之后,搜索排第四。
+[ "$MODE" = search ] && reset 3 || reset 0
 
 # 点中的若正是在放的那首,界面按多余的点击丢掉它,账本自然不动 ——
 # 所以两个候选轮着试,只固定点一首的话第二次跑必然失败。

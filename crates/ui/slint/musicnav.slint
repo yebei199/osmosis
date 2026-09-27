@@ -1,16 +1,20 @@
 // Music 页内部的二级导航。
 //
 // 主导航仍然只有 Home 与 Music 两个 tab(见 CONTEXT.md「播放页」那条的同一个
-// 理由:导航位是稀缺的)。音乐那一页里的四个去处放在这一层,宽版式是可收缩的
+// 理由:导航位是稀缺的)。音乐那一页里的五个去处放在这一层,宽版式是可收缩的
 // 竖栏,紧凑版式是顶部的一条分段条 —— 同一组条目,两种摆法。
 //
-// 紧凑版式不做抽屉:抽屉要手势、遮罩、动画一整套,而一行分段条就能把四个词摆下。
+// 紧凑版式不做抽屉:抽屉要手势、遮罩、动画一整套,而一行分段条就能把五个词摆下。
 
-// 四个分区。**唯一真相** —— 竖栏与横条都 `for` 它,免得两处各抄一份标签,
-// 改了一处忘另一处。顺序即编号,Rust 侧按编号决定拉什么。
+// 各个分区。**唯一真相** —— 竖栏与横条都 `for` 它,免得两处各抄一份标签,
+// 改了一处忘另一处。顺序是摆放顺序,`id` 是编号,Rust 侧按编号决定拉什么。
+// 两者分开是因为电台(#159)要摆在每日推荐之后,而插进下标 1 会让已有分区的
+// 编号全体挪位 —— 界面与测试里按编号判分区的地方有几十处。
 import { Theme } from "theme.slint";
 
 export struct MusicSection {
+    // 编号,即 Shell.music-section 的取值。
+    id: int,
     label: string,
     // 竖栏收起后显示的短标签。显式给而不是截 label 的首字:
     // 截取是猜(Slint 的 string 也没有 substring),显式是决定。
@@ -19,10 +23,11 @@ export struct MusicSection {
 
 export global MusicSections {
     out property <[MusicSection]> items: [
-        { label: "每日推荐", short: "荐" },
-        { label: "我的歌单", short: "单" },
-        { label: "搜索", short: "搜" },
-        { label: "最近播放", short: "近" },
+        { id: 0, label: "每日推荐", short: "荐" },
+        { id: 4, label: "电台", short: "台" },
+        { id: 1, label: "我的歌单", short: "单" },
+        { id: 2, label: "搜索", short: "搜" },
+        { id: 3, label: "最近播放", short: "近" },
     ];
 }
 
@@ -59,22 +64,26 @@ export component MusicRail inherits Rectangle {
             clicked => { root.collapsed = !root.collapsed; }
         }
 
-        for item[i] in MusicSections.items: Rectangle {
+        for item in MusicSections.items: Rectangle {
             height: 34px;
             border-radius: 8px;
-            background: root.current == i ? Theme.accent.with-alpha(0.2)
+            background: root.current == item.id ? Theme.accent.with-alpha(0.2)
                 : (item-touch.has-hover ? Theme.overlay : transparent);
             animate background { duration: 140ms; easing: ease-out; }
 
             item-touch := TouchArea {
-                clicked => { root.selected(i); }
+                clicked => { root.selected(item.id); }
+                // 读屏与 MCP 脚本按名字找它(#159):按位置找的话,插进一个分区就全体错位。
+                accessible-role: tab;
+                accessible-label: item.label;
+                accessible-action-default => { root.selected(item.id); }
             }
 
-            // 收起时只留一个字。画图标要四张 path,而它们此刻还不存在。
+            // 收起时只留一个字。画图标要五张 path,而它们此刻还不存在。
             Text {
                 text: root.collapsed ? item.short : item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
+                color: root.current == item.id ? Theme.accent-ink : Theme.text-dim;
                 font-size: 13px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -84,7 +93,7 @@ export component MusicRail inherits Rectangle {
     }
 }
 
-// 紧凑版式的顶部分段条。四个词一行摆得下,不必抽屉。
+// 紧凑版式的顶部分段条。五个词一行摆得下,不必抽屉。
 export component MusicBar inherits Rectangle {
     in property <int> current;
 
@@ -98,21 +107,25 @@ export component MusicBar inherits Rectangle {
         padding: 3px;
         spacing: 3px;
 
-        for item[i] in MusicSections.items: Rectangle {
+        for item in MusicSections.items: Rectangle {
             horizontal-stretch: 1;
             border-radius: 7px;
-            background: root.current == i ? Theme.accent.with-alpha(0.2) : transparent;
+            background: root.current == item.id ? Theme.accent.with-alpha(0.2) : transparent;
             animate background { duration: 140ms; easing: ease-out; }
 
             // 有 id 才能被 MCP 脚本按 id 找到(#113),与宽版式那个同名。
             item-touch := TouchArea {
-                clicked => { root.selected(i); }
+                clicked => { root.selected(item.id); }
+                // 读屏与 MCP 脚本按名字找它(#159):按位置找的话,插进一个分区就全体错位。
+                accessible-role: tab;
+                accessible-label: item.label;
+                accessible-action-default => { root.selected(item.id); }
             }
 
             Text {
                 text: item.label;
                 font-family: "Maple Mono NF CN";
-                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
+                color: root.current == item.id ? Theme.accent-ink : Theme.text-dim;
                 font-size: 12px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
