@@ -406,7 +406,7 @@ async fn report_listened_is_scoped_to_the_account() {
 
 /// 电台的听过过滤(#159):只认本账号的事件,顺序照给进来的那批。
 #[tokio::test]
-async fn played_among_picks_only_this_accounts_plays() {
+async fn known_among_picks_only_this_accounts_plays() {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_played").await;
     let other =
@@ -421,10 +421,11 @@ async fn played_among_picks_only_this_accounts_plays() {
         .await
         .unwrap();
 
-    let played = history::played_among(
+    let played = history::known_among(
         &mut tx,
         account.id,
         &[track("1"), track("2"), track("3"), track("4")],
+        None,
     )
     .await
     .expect("查询应该成功");

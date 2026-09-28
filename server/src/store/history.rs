@@ -56,14 +56,19 @@ pub async fn report_listened(
     Ok(())
 }
 
-/// `tracks` 里这个账号播放过的那些,顺序照 `tracks`。
+/// `tracks` 里这个账号「听过或表过态」的那些,顺序照 `tracks`。电台要丢掉它们:
 ///
-/// 电台要丢掉听过的歌(#159):判据是事件流里出现过,不看听没听完 ——
-/// 事件流本来就不记听了多久。
-pub async fn played_among(
+/// - 播放过:事件流里出现过,不看听没听完(#159);
+/// - 红心过:本地「我的喜欢」,以及 `liked_playlist` 给出时平台红心歌单在缓存里的那份;
+/// - 赞或踩过:`track_feedback` 里有行(#157)。
+///
+/// 后两条是 2026-09-28 并进 #161 的:心动模式会混进红心歌单里的歌,而它们
+/// 不一定在 osmosis 里播过,只看播放挡不住。
+pub async fn known_among(
     conn: &mut PgConnection,
     account_id: i64,
     tracks: &[TrackRef],
+    liked_playlist: Option<&str>,
 ) -> Result<Vec<TrackRef>, AppError> {
     let (platforms, ids): (Vec<&str>, Vec<&str>) = tracks
         .iter()
@@ -84,12 +89,30 @@ pub async fn played_among(
              WHERE pe.account_id = $1
                AND pe.platform = t.platform
                AND pe.track_id = t.track_id
+         ) OR EXISTS (
+             SELECT 1 FROM track_feedback AS f
+             WHERE f.account_id = $1
+               AND f.platform = t.platform
+               AND f.track_id = t.track_id
+         ) OR EXISTS (
+             SELECT 1 FROM local_playlist_tracks AS lt
+             JOIN local_playlists AS lp ON lp.id = lt.playlist_id
+             WHERE lp.account_id = $1 AND lp.system = $5
+               AND lt.platform = t.platform
+               AND lt.track_id = t.track_id
+         ) OR EXISTS (
+             SELECT 1 FROM platform_playlist_tracks AS pt
+             WHERE pt.account_id = $1 AND pt.playlist_id = $4
+               AND pt.platform = t.platform
+               AND pt.track_id = t.track_id
          )
          ORDER BY t.n",
     )
     .bind(account_id)
     .bind(platforms)
     .bind(ids)
+    .bind(liked_playlist)
+    .bind(crate::store::liked::SYSTEM)
     .fetch_all(conn)
     .await?;
 

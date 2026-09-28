@@ -1,6 +1,7 @@
 //! 电台(#159):私人 FM 与心动模式,一条路由两种模式,都为了推新歌。
 //!
-//! 听过的一律丢掉(用户 2026-09-27 定):判据是这个账号的 `play_events`。
+//! 听过的一律丢掉(用户 2026-09-27 定):判据是这个账号的 `play_events`;
+//! 红心过、赞踩过、命中屏蔽规则的同样丢掉(2026-09-28 并进 #161)。
 //! 丢完不够就再问平台,但一次请求最多问 [`MAX_PULLS`] 回 —— 过滤太狠时
 //! 会连着问,而连着问平台就是风控的靶子。问满了仍不够,交出已有的。
 
@@ -91,9 +92,26 @@ pub(crate) async fn radio(
     for pull in 1..=MAX_PULLS {
         let batch = source.pull(&state, &account).await?;
         let fetched = batch.len();
-        let fresh =
-            unheard(&state, account.id, batch, &picked)
-                .await?;
+        // 先过出口那一道:填聚合、滤掉命中屏蔽规则的(#161)
+        let batch = for_account(
+            &state,
+            account.id,
+            TracksDto {
+                tracks: batch,
+                unavailable: 0,
+                hidden: 0,
+            },
+        )
+        .await
+        .tracks;
+        let fresh = unheard(
+            &state,
+            account.id,
+            batch,
+            &picked,
+            source.liked_playlist(),
+        )
+        .await?;
         tracing::info!(
             mode = ?query.mode,
             pull,
@@ -108,22 +126,27 @@ pub(crate) async fn radio(
     }
     remember_details(&state, &picked).await;
 
-    // 电台区也是一个歌单视图,同样要分组筛选(#160)
-    Ok(Json(
-        for_account(
-            &state,
-            account.id,
-            TracksDto {
-                tracks: picked,
-                unavailable: 0,
-                hidden: 0,
-            },
-        )
-        .await,
-    ))
+    // 聚合在每批进来时已经填过(电台区也要分组筛选,#160)。藏掉几首不报:
+    // 电台本来就是挑剩下的,少的那几首换一批就补上了
+    Ok(Json(TracksDto {
+        tracks: picked,
+        unavailable: 0,
+        hidden: 0,
+    }))
 }
 
 impl Source {
+    /// 平台红心歌单的 id。只有心动模式为了挂种子问过它,私人 FM 不为此多问一次:
+    /// 导进本地「我的喜欢」的那些照样挡得住。
+    fn liked_playlist(&self) -> Option<&str> {
+        match self {
+            Self::Fm => None,
+            Self::Heart { playlist_id, .. } => {
+                Some(playlist_id)
+            }
+        }
+    }
+
     async fn pull(
         &self,
         state: &AppState,
@@ -174,12 +197,13 @@ impl Source {
     }
 }
 
-/// `batch` 里没听过、也不在 `picked` 里的那些。同一批里重复的只留第一首。
+/// `batch` 里没听过、没表过态、也不在 `picked` 里的那些。同一批里重复的只留第一首。
 async fn unheard(
     state: &AppState,
     account_id: i64,
     batch: Vec<TrackDto>,
     picked: &[TrackDto],
+    liked_playlist: Option<&str>,
 ) -> Result<Vec<TrackDto>, Failure> {
     let refs: Vec<TrackRef> = batch
         .iter()
@@ -189,10 +213,14 @@ async fn unheard(
         })
         .collect();
     let mut conn = conn(&state.pool).await?;
-    let played =
-        history::played_among(&mut conn, account_id, &refs)
-            .await
-            .map_err(|err| error::map_error(&err))?;
+    let played = history::known_among(
+        &mut conn,
+        account_id,
+        &refs,
+        liked_playlist,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
 
     let mut fresh: Vec<TrackDto> = Vec::new();
     for (track, key) in batch.into_iter().zip(refs) {

@@ -225,3 +225,78 @@ async fn heart_without_a_seed_is_rejected() {
     );
     assert!(fake.heart_asks().is_empty());
 }
+
+/// 心动模式把「表过态」的也丢掉(2026-09-28 并进 #161):本地红心、平台红心歌单
+/// 缓存里的那份、赞过、踩过、命中屏蔽规则的,一首都不该出来。
+#[tokio::test]
+async fn heart_drops_liked_judged_and_blocked_tracks() {
+    use contract::{BlockKind, TrackDto};
+    use server::store::{blocks, cache, feedback, liked};
+
+    let case = "radio_heart_known";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = |n| track_id(case, n);
+    let at = |n| TrackRef {
+        platform: "netease".to_owned(),
+        track_id: id(n),
+    };
+    let seed = id(1);
+    played(&pool, account.id, std::slice::from_ref(&seed))
+        .await;
+
+    let mut conn = pool.acquire().await.expect("取连接");
+    liked::set(&mut conn, account.id, &at(2), true)
+        .await
+        .expect("点红心");
+    feedback::set(&mut conn, account.id, &at(3), 1)
+        .await
+        .expect("点赞");
+    feedback::set(&mut conn, account.id, &at(4), -1)
+        .await
+        .expect("点踩");
+    let in_platform_liked: TrackDto =
+        testing::expected_dto(&id(5), "平台红心");
+    cache::set_playlist(
+        &mut conn,
+        account.id,
+        "liked-9",
+        &[in_platform_liked],
+    )
+    .await
+    .expect("写平台红心缓存");
+    blocks::create(
+        &mut conn,
+        account.id,
+        BlockKind::Track,
+        &id(6),
+        None,
+    )
+    .await
+    .expect("屏蔽一首");
+    drop(conn);
+
+    let mut fake =
+        FakeUpstream::logged_in_with("nuid", Vec::new());
+    fake.playlists = vec![liked_playlist("liked-9")];
+    fake.listed = (1..=7)
+        .map(|n| upstream_track(&id(n), "心动"))
+        .collect();
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake).await,
+    );
+
+    let response = radio(
+        State(state),
+        account,
+        Query(RadioQuery {
+            mode: RadioMode::Heart,
+            seed: Some(seed),
+        }),
+    )
+    .await
+    .expect("心动应该成功");
+
+    assert_eq!(ids(&response.0), vec![id(7)]);
+}
