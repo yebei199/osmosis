@@ -123,14 +123,24 @@ sounding() {
   fi
 }
 # 服务端回过几次 /group/outputs 的 400。
-refusals() { grep "/group/outputs" "$SERVER_LOG" | grep -c "status=400" || true; }
+# 服务端日志带颜色转义,先剥掉。
+refusals() { sed 's/\x1b\[[0-9;]*m//g' "$SERVER_LOG" | grep "/group/outputs" | grep -c "status=400" || true; }
 
 if [ "$MODE" = dead ]; then
   music=$(nth "NavItem::touch" 1)
   [ -n "$music" ] || fail "找不到音乐入口"
-  act "$music"
-  sleep 3
-  row=$(nth "TrackList::touch" -1)
+  call click_element "{\"elementHandle\":$music}" >/dev/null
+  sleep 1
+  # 第一个分区是列表(形状照 test/pick-e2e.sh 的 reset 0)
+  item=$(nth "MusicRail::item-touch" 0)
+  [ -n "$item" ] || item=$(nth "MusicBar::item-touch" 0)
+  [ -n "$item" ] || fail "找不到音乐页的第一个分区"
+  call click_element "{\"elementHandle\":$item}" >/dev/null
+  for _ in $(seq 1 15); do
+    sleep 1
+    [ -z "$(nth "TrackList::touch" 0)" ] || break
+  done
+  row=$(nth "TrackList::touch" 0)  # 最后一行多半在可视区外,点不到
   [ -n "$row" ] || fail "音乐页的列表是空的,没歌可点"
   tap "$row"
   echo "  点了一首"
@@ -150,9 +160,11 @@ if [ "$MODE" = dead ]; then
   echo "  本机在出声"
 else
   before=$(refusals)
+  # 宽版式是右上角的「个人」圆键;紧凑版式(手机)是底栏第三项,没挂标签
   tab=$(labelled "RoundControl::touch" "个人")
+  [ -n "$tab" ] || tab=$(nth "NavItem::touch" 2)
   [ -n "$tab" ] || fail "找不到「个人」"
-  act "$tab"
+  call click_element "{\"elementHandle\":$tab}" >/dev/null
   sleep 2
   join=$(labelled "MemberToggle::touch" "加入 " "加入 本机")
   [ -n "$join" ] || fail "个人页上没有「加入 <另一台>」:另一台不在线?"
