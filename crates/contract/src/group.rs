@@ -118,6 +118,18 @@ pub enum GroupPickDto {
     },
 }
 
+/// `POST /group/append`:往组此刻那一版(`queue_id`、`revision`)的队尾续几首,在放的那一首
+/// 不换(电台续歌,#165)。那一版已经不是组此刻的就被拒:期间有人换了歌,电台不往里续。
+#[derive(
+    Debug, Clone, PartialEq, Serialize, Deserialize,
+)]
+pub struct GroupAppendDto {
+    pub device_id: String,
+    pub queue_id: i64,
+    pub revision: i64,
+    pub tracks: Vec<TrackDto>,
+}
+
 /// `POST /group/transport`:控制条与系统媒体控件。
 #[derive(
     Debug, Clone, PartialEq, Serialize, Deserialize,

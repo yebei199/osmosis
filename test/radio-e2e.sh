@@ -6,6 +6,8 @@
 #   test/radio-e2e.sh filter  私人 FM 起播后在电台区选 CHIPS(默认「有歌词」)再点一首,
 #                             续进来的每首都得过得了这些筛选(#166)
 #   test/radio-e2e.sh dry     同上,但 CHIPS 选得窄到续不出:界面要出「按当前筛选暂时找不到新歌」
+#   test/radio-e2e.sh group   两台同组(都出声)时在本机开私人 FM(#165):续取要追加进组队列,
+#                             组换到续上的那一版;再按「下一首」进到续上的歌,两台都还在出声
 #
 # 起播之后:私人 FM 连按「下一首」直到队列剩最后一首;心动一批上百首,先从队列页点到
 # 队尾那首。两种模式都是剩最后一首时电台续一批。
@@ -17,6 +19,10 @@
 #   - filter:续进来的每一首的 platform_tracks.lyric_kind 是 lyric / translated
 #     (只认「有歌词」;CHIPS 换成别的,这一条换成人工核对,脚本只报续进来的歌)。
 #   - dry:提示横幅出现,队列没涨。CHIPS 不够窄、居然续上了,退 3(不算过也不算挂)。
+#   - group:play_groups 那一行换到续上的那一版;进到续上的歌之后组在放,两台都在出声 ——
+#     安卓看 dumpsys audio 里本应用 state:started 的 AudioTrack,桌面看 DESK_LOG 里播放器
+#     每秒那行位置在走(桌面要带 RUST_LOG=info,ui=debug 起,输出落到 DESK_LOG)。
+#     前提是两台已经同组、都是出声设备(组横幅「与 X 一起播放」),本机走 PORT 那一台。
 #
 # 前提:应用起着(桌面 just desktop-dev,安卓 just mcp-android)、已登录且网易云已绑,
 # just server-dev、新版 bang-dream(带 GetPersonalFm / GetIntelligenceList)与 osmosis-pg 在跑。
@@ -33,9 +39,10 @@ MAX_NEXT="${MAX_NEXT:-8}"
 # filter / dry 在电台区选哪几个 chip,逗号分隔,按 chip 文字的前缀认(chip 上还挂着数目)。
 case "$MODE" in
   fm|heart) ;;
+  group) : "${DESK_LOG:?group 要 DESK_LOG:桌面实例的日志(RUST_LOG=info,ui=debug)}" ;;
   filter) CHIPS="${CHIPS:-有歌词}" ;;
   dry) CHIPS="${CHIPS:-无歌词,5 分钟以上}" ;;
-  *) echo "用法: $0 fm|heart|filter|dry" >&2; exit 2 ;;
+  *) echo "用法: $0 fm|heart|filter|dry|group" >&2; exit 2 ;;
 esac
 DRY_NOTICE="按当前筛选暂时找不到新歌"
 
@@ -97,8 +104,14 @@ act() {
   call invoke_accessibility_action "{\"elementHandle\":$1,\"action\":\"Default_\"}" >/dev/null
 }
 
+# 控制条在组里要等组状态回来才出现(#165),找不到先等一会儿。
 press() {
-  local h; h=$(labelled "$1" "$2")
+  local h
+  for _ in $(seq 1 10); do
+    h=$(labelled "$1" "$2")
+    [ -z "$h" ] || break
+    sleep 1
+  done
   must "$h" "「$2」"
   act "$h"
 }
@@ -118,6 +131,30 @@ queue_row() {
          where e.queue_id = q.id and e.revision = q.revision)
        from play_queues q order by q.updated_at desc limit 1;"
 }
+
+# 组此刻那一行:「队列:版本:条目在这一版排第几:在不在放」。
+group_row() {
+  sql "select g.queue_id || ':' || g.revision || ':' || coalesce(e.position::text, '') || ':' || g.playing
+       from play_groups g left join play_queue_entries e
+         on (e.queue_id, e.revision, e.entry_id) = (g.queue_id, g.revision, g.entry_id)
+       where cardinality(g.outputs) >= 2 order by g.version desc limit 1;"
+}
+# 本机这个应用此刻在不在出声(形状照 test/link-loss-e2e.sh 的 playing)。
+android_sounding() {
+  local pid
+  pid=$(${ADB:-adb} shell pidof io.github.osmosis | tr -d '\r')
+  [ -n "$pid" ] && ${ADB:-adb} shell dumpsys audio | grep -qE "u/pid:[0-9]+/$pid state:started"
+}
+desk_sounding() {
+  local a b
+  a=$(grep "自动续播轮询" "$DESK_LOG" | tail -1)
+  sleep 2
+  b=$(grep "自动续播轮询" "$DESK_LOG" | tail -1)
+  [[ "$b" == *"放空 false"* && "${a#*位置 }" != "${b#*位置 }" ]]
+}
+if [ "$MODE" = group ]; then
+  [ "$(sql "select count(*) from play_groups where cardinality(outputs) >= 2;")" -gt 0 ] || { echo "group: 前提不满足 —— 库里没有两台都出声的组,先把两台拉进同一个组" >&2; exit 1; }
+fi
 
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
 root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
@@ -340,6 +377,38 @@ if [ "$MODE" = dry ]; then
 fi
 [ -n "$grown" ] || { echo "$MODE: 失败 —— 按到第 $MAX_NEXT 下队列也没续" >&2; exit 1; }
 echo "  续上了:$start_count → ${grown##*:} 首"
+
+if [ "$MODE" = group ]; then
+  revision=$(echo "$grown" | cut -d: -f2)
+  row=$(group_row)
+  [ "$(echo "$row" | cut -d: -f1,2)" = "$queue_id:$revision" ] \
+    || { echo "group: 失败 —— 组没换到续上的那一版($queue_id:$revision),组此刻 $row" >&2; exit 1; }
+  echo "  组换到了续上的那一版 $queue_id:$revision"
+  # 按「下一首」进到续上的歌(排在第 start_count 条及之后)
+  for n in $(seq 1 "$MAX_NEXT"); do
+    row=$(group_row)
+    at=$(echo "$row" | cut -d: -f3)
+    [ -n "$at" ] && [ "$at" -ge "$start_count" ] && break
+    press "RoundControl::touch" "下一首"
+    sleep 4
+  done
+  row=$(group_row)
+  at=$(echo "$row" | cut -d: -f3)
+  { [ -n "$at" ] && [ "$at" -ge "$start_count" ]; } \
+    || { echo "group: 失败 —— 按了 $MAX_NEXT 下也没进到续上的歌,组此刻 $row" >&2; exit 1; }
+  [ "${row##*:}" = true ] || { echo "group: 失败 —— 进到续上的歌但组没在放:$row" >&2; exit 1; }
+  echo "  组在放续上的第 $((at + 1)) 条"
+  # 两台都在出声:起播有几秒的对齐等待,给十秒
+  for dev in android desk; do
+    ok=""
+    for _ in $(seq 1 5); do
+      if "${dev}_sounding"; then ok=yes; break; fi
+      sleep 2
+    done
+    [ -n "$ok" ] || { echo "group: 失败 —— $dev 没在出声" >&2; exit 1; }
+    echo "  $dev 在出声"
+  done
+fi
 
 revision=$(echo "$grown" | cut -d: -f2)
 heard=$(lines "select platform || ':' || track_id from play_queue_entries

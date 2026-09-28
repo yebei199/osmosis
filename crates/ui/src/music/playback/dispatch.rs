@@ -54,7 +54,13 @@ pub(in crate::music) enum Dispatched {
     GroupSubmitted,
     /// 规则挡下的:多余的连点、手上没歌可跳。
     Blocked(&'static str),
+    /// 本机挂在一个没有在线出声设备的组上:先退组,退成了再本机放(#165)。
+    LeavingGroup,
 }
+
+/// 退组没成时的提示。横幅上那颗「退出」键还在,手动退一次就回到本机。
+const DEAD_GROUP_NOTICE: &str =
+    "组里没有在线的出声设备,点横幅上的「退出」回到本机";
 
 /// 本机执行的一条命令。
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +111,57 @@ fn local_sounding(deck: &Deck) -> bool {
 
 /// 一条用户播放意图的唯一出口。
 pub(in crate::music) fn dispatch(
+    ui: &MainWindow,
+    deck: &Deck,
+    intent: Intent,
+) -> Dispatched {
+    if matches!(intent, Intent::Play { .. })
+        && in_dead_group(deck)
+    {
+        leave_dead_group(ui, deck, move |ui, deck| {
+            to_local(ui, deck, intent);
+        });
+        return Dispatched::LeavingGroup;
+    }
+    dispatch_live(ui, deck, intent)
+}
+
+/// 本机挂在一个没有在线出声设备的组上:组里点歌哪儿都不响(#165)。
+pub(in crate::music) fn in_dead_group(deck: &Deck) -> bool {
+    deck.group.is_member() && !deck.group.has_live_output()
+}
+
+/// 在 [`in_dead_group`] 里点歌时的回落(用户 2026-09-28 选的):先退组,退成了再照独奏
+/// 做 `then`;退不成提示一句。只在点歌这一下判,组里有一台出声设备在线就照常走组意图。
+pub(in crate::music) fn leave_dead_group(
+    ui: &MainWindow,
+    deck: &Deck,
+    then: impl FnOnce(&MainWindow, &Deck) + 'static,
+) {
+    log::info!("组里没有在线的出声设备,退组回到本机");
+    let leaving = deck.clone();
+    let weak = ui.as_weak();
+    deck.group.leave_then(
+        ui,
+        Box::new(move |left| {
+            let Some(ui) = weak.upgrade() else { return };
+            if left.is_err() {
+                crate::notice::show(
+                    &ui,
+                    DEAD_GROUP_NOTICE.to_owned(),
+                );
+                return;
+            }
+            // 先把「从组里出来」对准完(本机停下、放开时间线)再本机放:否则稍后那一拍
+            // 对准会把刚起的本机播放当成组里剩下的停掉。
+            super::group::align(&ui, &leaving);
+            then(&ui, &leaving);
+        }),
+    );
+}
+
+/// 组里有在线出声设备(或本机不在组里)时的出口。
+fn dispatch_live(
     ui: &MainWindow,
     deck: &Deck,
     intent: Intent,

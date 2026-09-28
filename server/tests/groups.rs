@@ -557,3 +557,124 @@ async fn leaving_takes_the_device_out_and_the_last_one_dissolves()
     assert_eq!(gone, None);
     drop_account(&pool, account).await;
 }
+
+/// 电台续歌(#165):组队列续上新的一版,已在队列里的不再进,在放的那一首不换、不重起,
+/// 也不多记一条起播;拿着旧的一版再续被拒。
+#[tokio::test]
+async fn appending_extends_the_group_queue_in_place() {
+    let pool = connect().await;
+    let account = account(&pool, "append").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let before = phone_and_pc(&pool, &roster, account)
+        .await
+        .now
+        .expect("该在放");
+
+    let appended = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Append {
+            queue: (before.queue_id, before.revision),
+            tracks: vec![track("c"), track("d")],
+        },
+    )
+    .await
+    .expect("成员续歌该成")
+    .expect("组该在");
+    let after = appended.now.expect("该在放");
+    assert_eq!(after.queue_id, before.queue_id);
+    assert!(after.revision > before.revision);
+    assert_eq!(after.entry_id, before.entry_id);
+    assert_eq!(after.track.id, "b");
+    assert!(after.playing);
+
+    let mut conn =
+        pool.acquire().await.expect("取不到连接");
+    let ids: Vec<String> = queue::whole(
+        &mut conn,
+        account,
+        after.queue_id,
+        after.revision,
+    )
+    .await
+    .expect("读得到新的一版")
+    .into_iter()
+    .map(|entry| entry.track_id)
+    .collect();
+    assert_eq!(ids, ["a", "b", "c", "d"]);
+    let (plays,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM play_events WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_one(&pool)
+    .await
+    .expect("数得出起播");
+    assert_eq!(plays, 0, "续歌不是新起播");
+
+    let stale = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Append {
+            queue: (before.queue_id, before.revision),
+            tracks: vec![track("e")],
+        },
+    )
+    .await;
+    assert!(stale.is_err(), "旧的一版不该续得上");
+    drop(conn);
+    drop_account(&pool, account).await;
+}
+
+/// 组的出声设备里挂着一台已经不在线的(#165):独奏的设备加进来时带上了它,服务端把它
+/// 剔掉、照常加入;新点的设备不在线仍然拒。
+#[tokio::test]
+async fn joining_drops_offline_outputs_instead_of_refusing()
+{
+    let pool = connect().await;
+    let account = account(&pool, "ghost").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc", "tab"]);
+    phone_and_pc(&pool, &roster, account).await;
+    go_offline(&roster, account, "pc");
+
+    let joined = group::apply(
+        &pool,
+        &roster,
+        account,
+        "tab",
+        Intent::Outputs {
+            outputs: vec![
+                "pc".to_owned(),
+                "tab".to_owned(),
+            ],
+            seed: None,
+        },
+    )
+    .await
+    .expect("离线的旧出声设备不该挡住加入")
+    .expect("组该在");
+    assert_eq!(joined.outputs, vec!["tab"]);
+    assert!(joined.members.contains(&"tab".to_owned()));
+
+    let stranger = group::apply(
+        &pool,
+        &roster,
+        account,
+        "tab",
+        Intent::Outputs {
+            outputs: vec![
+                "tab".to_owned(),
+                "nobody".to_owned(),
+            ],
+            seed: None,
+        },
+    )
+    .await;
+    assert!(stranger.is_err(), "新点的设备不在线仍该拒");
+    drop_account(&pool, account).await;
+}

@@ -171,6 +171,22 @@ test/radio-e2e.sh dry      # 选得窄到续不出,界面要出「按当前筛�
 前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
 的那一版,网易云要绑着。
 
+## stale-group-e2e.sh —— 挂在旧组上还能点歌、还能建组吗(#165)
+
+```sh
+PORT=8091 ME=$(cat ~/.local/state/osmosis-dev/device) DESK_LOG=<桌面日志> \
+  RESTART='just desktop-kill; (RUST_LOG=info,ui=debug just desktop-dev > <桌面日志> 2>&1 &)' \
+  test/stale-group-e2e.sh dead
+PORT=8090 ME=<手机 id> SERVER_LOG=<服务端日志> \
+  RESTART='adb shell am force-stop io.github.osmosis; adb shell am start -n io.github.osmosis/.MainActivity' \
+  test/stale-group-e2e.sh ghost
+```
+
+改库造一个从不在线的幽灵 `ghost-165`,再重启被测应用让它入册时拿到那份组状态。`dead`:本机是成员、
+出声设备只有幽灵,音乐页点一首 → 库里成员已无本机、本机在出声(安卓看 `dumpsys audio`,桌面看
+`DESK_LOG` 里播放器的位置在走)。`ghost`:本机独奏、幽灵在出声设备里,个人页点「加入 <另一台>」
+→ 出声设备换成另一台、本机成了成员、服务端没回 400。改的是开发库那一行组,跑完组就是脚本留下的样子。
+
 ## blocks-e2e.sh —— 屏蔽的歌真的藏起来、跳过去了吗(#161)
 
 ```sh
