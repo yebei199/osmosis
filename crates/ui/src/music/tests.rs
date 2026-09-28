@@ -706,6 +706,7 @@ fn grouping_by_artist_makes_one_pile_per_artist() {
         vec!["甲 2 首", "丙 1 首", "乙 1 首"],
         "三位歌手就是三堆,按堆大小排"
     );
+    assert_eq!(ui.global::<Player>().get_pile_count(), 3);
     assert_eq!(queue_ids(&deck), vec!["a", "b", "c"]);
 }
 

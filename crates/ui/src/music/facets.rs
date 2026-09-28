@@ -103,6 +103,16 @@ impl FacetState {
             .collect()
     }
 
+    /// 分出了几堆;不分组是 0。
+    fn pile_count(&self) -> usize {
+        self.arranged()
+            .iter()
+            .filter(|line| {
+                matches!(line, Line::Header { .. })
+            })
+            .count()
+    }
+
     /// 列表的行:堆头与歌。
     pub(super) fn rows(
         &self,
@@ -159,6 +169,10 @@ impl FacetState {
             .collect();
         player
             .set_chips(ModelRc::new(VecModel::from(chips)));
+        player.set_pile_count(
+            i32::try_from(self.pile_count())
+                .unwrap_or(i32::MAX),
+        );
         player.set_chosen_count(
             i32::try_from(self.chosen.len())
                 .unwrap_or(i32::MAX),

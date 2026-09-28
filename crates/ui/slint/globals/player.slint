@@ -104,6 +104,9 @@ export global Player {
     in property <[string]> grouping-labels: [];
     // 选中的是 grouping-labels 的第几项。
     in property <int> grouping: 0;
+    // 分出了几堆。选中的那颗分组药丸把它报给读屏(「歌手 · 12 堆」)——
+    // 列表是虚拟化的,滚不到的堆头不在元素树上,端到端脚本也靠它数堆。
+    in property <int> pile-count: 0;
     in property <[FacetChip]> chips: [];
     // 选中了几个 chip。筛空了时靠它说「没有符合的歌」,而不是摆开局的空状态。
     in property <int> chosen-count: 0;

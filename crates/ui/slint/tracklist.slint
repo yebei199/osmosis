@@ -270,6 +270,8 @@ export component TrackList inherits ListView {
 component Pill inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
+    // 只给读屏的补充说明,不上屏。
+    in property <string> description;
     callback clicked;
 
     height: Shell.compact ? 44px : 32px;
@@ -278,6 +280,7 @@ component Pill inherits Rectangle {
     accessible-label: root.text;
     accessible-checkable: true;
     accessible-checked: root.selected;
+    accessible-description: root.description;
     accessible-action-default => { root.clicked(); }
 
     Rectangle {
@@ -324,6 +327,8 @@ export component FacetBar inherits VerticalLayout {
             for label[i] in Player.grouping-labels: grouping-pill := Pill {
                 text: label;
                 selected: Player.grouping == i;
+                description: Player.grouping == i && i > 0
+                    ? Player.pile-count + " 堆" : "";
                 clicked => { Player.set-grouping(i); }
             }
         }
