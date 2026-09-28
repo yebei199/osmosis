@@ -126,19 +126,11 @@ sleep 1
   || { echo "失败 —— 再点一次该取消,track_tags 该回到 $before,读到 $(tag_rows)" >&2; exit 1; }
 echo "  再点一次取消勾选:track_tags 回到打标签之前"
 
-# 收尾关掉选择器,不给下一次跑留一个开着的弹层。它没有 id,按尺寸认——
-# 铺满整个窗口的那个 TouchArea 就是点击关闭那一层(见 app.slint 的 tag-picker)。
-# 尺寸要问根元素而不是 get_window_properties:真机上后者给的是物理像素
-# (scaleFactor 2.75),元素尺寸却是逻辑像素,两边比不出相等。
-root_size=$(call get_element_properties "{\"elementHandle\":$root}" | python3 -c 'import json,sys; s=json.load(sys.stdin)["size"]; print(s["width"], s["height"])')
-closer=""
-for h in $(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementTypeName\":\"TouchArea\"}]}" \
-  | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
-  size=$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; s=json.load(sys.stdin)["size"]; print(s["width"], s["height"])')
-  if [ "$size" = "$root_size" ]; then closer="$h"; break; fi
-done
-if [ -n "$closer" ]; then
-  call click_element "{\"elementHandle\":$closer}" >/dev/null
-fi
+# 收尾关掉选择器,不给下一次跑留一个开着的弹层。选择器的关闭层铺满整个窗口
+# 但没有 id,直接按它的元素点不出「点在框外」的效果 —— click_element 点的是
+# 目标元素几何中心,而那层的中心正好落在居中的选择器框里,命中的是框自己的
+# 挡点层,不是关闭层。借 $row(长按那一行,坐标在选择器框外)的当前坐标点一下:
+# 那个坐标只被铺满全窗口的关闭层盖着,点下去落的正是它。
+call click_element "{\"elementHandle\":$row}" >/dev/null
 
 echo "通过"
