@@ -33,6 +33,12 @@ pub(in crate::music) fn play_current(
         take_prefetched(&deck.prefetched, &track.id);
     let instant = ready.is_some();
 
+    // 上一首听了多久,补记给服务端(#157)。**必须在停它之前读位置** ——
+    // `player.stop()` 之后 `position()` 读到的是清零后的状态,不是它
+    // 放到哪了。切歌与自动续播都会经过这里,所以「切歌」与「播完」两种
+    // 都在这里报出去。
+    report_previous_listened(deck);
+
     // **旧歌立刻停。** 界面下面几行就要换成新歌了,让耳朵继续听上一首是自相矛盾
     // ——「封面换了但还在放上一首」正是这么来的。备好了的话这一停是零长度的。
     if let Ok(player) = deck.player.as_ref() {
@@ -242,6 +248,7 @@ pub(in crate::music) fn rest_local(
     ui: &MainWindow,
     deck: &Deck,
 ) {
+    report_previous_listened(deck);
     if let Ok(player) = deck.player.as_ref() {
         player.stop();
     }
@@ -329,11 +336,32 @@ pub(in crate::music) fn start_auto_advance(
                 play_to_report(&state, &mut reported.borrow_mut())
                 && !following
             {
+                // 这首多长,报上起播成功后记下来 —— 换歌时用它补记听了多久
+                // (#157)。只有 `Playing` 才会走到这里,`track` 必在。
+                let duration_ms = match &state {
+                    PlaybackState::Playing(track) => {
+                        track.duration_ms
+                    }
+                    _ => 0,
+                };
+                let current_play = deck.current_play.clone();
                 slint::spawn_local(async move {
-                    if let Err(error) =
-                        api::record_play(&platform, &id).await
+                    match api::record_play(&platform, &id)
+                        .await
                     {
-                        log::debug!("起播上报没成: {error}");
+                        Ok(ack) => {
+                            current_play.replace(Some(
+                                CurrentPlay {
+                                    id: ack.id,
+                                    duration_ms,
+                                },
+                            ));
+                        }
+                        Err(error) => {
+                            log::debug!(
+                                "起播上报没成: {error}"
+                            );
+                        }
                     }
                 })
                 .expect("event loop must be running");
@@ -383,6 +411,38 @@ pub(in crate::music) fn start_auto_advance(
     // ponytail: 定时器与进程同寿,leak 掉省一条把 Timer 递回平台入口的通道;
     // 真要按页开关时再把它挂到 Deck 上管理。
     Box::leak(Box::new(timer));
+}
+
+/// 上一段播放听了多久,报给服务端(#157)。**调用方必须在 `player.stop()`
+/// 之前调这个** —— 停完之后 `position()` 读到的是清零后的状态。
+///
+/// 手上没有挂着的事件行(还没报上起播、或已经报过一次)就什么都不做 ——
+/// `take()` 保证同一段播放只报一次,不会因为连着两次切歌各报一遍半截的数字。
+#[cfg(not(target_arch = "wasm32"))]
+fn report_previous_listened(deck: &Deck) {
+    let Some(current) =
+        deck.current_play.borrow_mut().take()
+    else {
+        return;
+    };
+    let Ok(player) = deck.player.as_ref() else {
+        return;
+    };
+    let listened_ms =
+        i64::try_from(player.position().as_millis())
+            .unwrap_or(i64::MAX);
+    slint::spawn_local(async move {
+        if let Err(error) = api::report_listened(
+            current.id,
+            listened_ms,
+            current.duration_ms,
+        )
+        .await
+        {
+            log::debug!("补记听了多久没成: {error}");
+        }
+    })
+    .expect("event loop must be running");
 }
 
 /// 进度快档的间隔。权威位置仍由每秒那一趟给,这一档只让进度条走得连续。

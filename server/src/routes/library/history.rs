@@ -2,11 +2,12 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use contract::{
-    PlayedDto, StatsDto, TopArtistDto, TracksDto,
+    ListenedDto, PlayedAckDto, PlayedDto, StatsDto,
+    TopArtistDto, TracksDto,
 };
 
 use server::bangdream::{
@@ -28,7 +29,7 @@ use crate::{AppState, conn, fail};
 // ponytail: 一屏够看就行,客户端要更多可以自己传 limit。
 pub(crate) const DEFAULT_RECENT_LIMIT: i64 = 50;
 
-/// `POST /played` —— 报告一次起播。
+/// `POST /played` —— 报告一次起播。响应体带这一行的 id,补记听了多久时要用。
 ///
 /// 客户端在**声音真的出来之后**才发,不是按下播放键就发:取直链可能失败,
 /// 那时并没有发生一次播放。
@@ -36,19 +37,43 @@ pub(crate) async fn record_play(
     State(state): State<AppState>,
     account: Account,
     Json(body): Json<PlayedDto>,
-) -> Result<StatusCode, Failure> {
+) -> Result<Json<PlayedAckDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
     let track = TrackRef {
         platform: body.platform,
         track_id: body.track_id,
     };
 
-    history::record(&mut conn, account.id, &track)
+    let id = history::record(&mut conn, account.id, &track)
         .await
         .map_err(|err| error::map_error(&err))?;
 
     // 声音已经出来了,这首值得存:后台去,不等它(#126)
     archive::spawn_keep(&state, account, track);
+
+    Ok(Json(PlayedAckDto { id }))
+}
+
+/// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157)。
+///
+/// 切歌、播完、停止时客户端各发一次;进程被杀时这条永远不会发生,那一行
+/// 的 `listened_ms`/`duration_ms` 留 NULL,算不出完播也算不出跳过,接受。
+pub(crate) async fn report_listened(
+    State(state): State<AppState>,
+    account: Account,
+    Path(play_event_id): Path<i64>,
+    Json(body): Json<ListenedDto>,
+) -> Result<StatusCode, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    history::report_listened(
+        &mut conn,
+        account.id,
+        play_event_id,
+        body.listened_ms,
+        body.duration_ms,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

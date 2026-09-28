@@ -2,6 +2,17 @@
 
 use super::*;
 
+/// 挂在哪一条服务端事件行上、这首歌多长(#157)。
+///
+/// 起播上报成功后记住,换歌或停下时用它补记听了多久 —— 见
+/// `playback::transport` 的 `report_previous_listened`。
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CurrentPlay {
+    pub(super) id: i64,
+    pub(super) duration_ms: i64,
+}
+
 /// 起播上报的判据:声音真的出来那一刻报一次,同一次播放不重复报。
 ///
 /// `last` 是上一次记住的身份,由调用方跨帧持有。返回 `Some` 就是这一帧要报的

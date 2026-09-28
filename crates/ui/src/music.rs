@@ -161,6 +161,9 @@ struct Deck {
     /// 换过几次歌。封面在后台线程上排队解码时拿它判断「还是不是这一首」——
     /// `playback` 是 `Rc`,过不了线程(见 `imagery::cover::decode_off_thread`)。
     cover_turn: Arc<std::sync::atomic::AtomicU64>,
+    /// 正在计的这一段播放挂在哪条服务端事件行上(#157)。换歌或停下时
+    /// 取走它去补记听了多久,取不到(还没报上起播、或已经报过)就不补。
+    current_play: Rc<RefCell<Option<CurrentPlay>>>,
     /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
     radio: radio::Radio,
 }
@@ -229,6 +232,7 @@ pub fn bind(
         alignment: Alignment::default(),
         volume_save: Default::default(),
         cover_turn: Default::default(),
+        current_play: Rc::new(RefCell::new(None)),
         radio: radio::Radio::default(),
     };
 
@@ -236,6 +240,8 @@ pub fn bind(
     // 真正生效的是之后每次 push_rows 里的那次重标。
     crate::library::liked::bind(ui, &deck.liked);
     crate::library::liked::refresh(&deck.liked, ui);
+    // 赞踩(#157):独立于红心,只投影当前这一首。
+    crate::library::feedback::bind(ui);
 
     // 本地歌单的写操作。改完要把当前歌单的曲目重取一遍,而那要用播放队列 ——
     // 队列归这里,所以重取那一步由这边交出去。

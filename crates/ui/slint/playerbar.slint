@@ -112,6 +112,9 @@ export component PlayerBar inherits Rectangle {
         can-download: Player.now-id != "";
         download-state: Shell.download-text;
         liked: Player.now-liked;
+        // 三态赞踩(#157),挨着喜欢那一行:红心管收藏,这两行管评价。
+        feedback: Player.now-feedback;
+        feedback-toggled(v) => { Library.toggle-feedback(v); }
         like-toggled => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         download-clicked => { Library.download-track(Player.now-id); }
         radio-clicked => {
@@ -272,7 +275,7 @@ export component PlayerBar inherits Rectangle {
             // 抽屉键:随机、循环、音量、输出设备都在里面。
             VerticalLayout {
                 alignment: center;
-                RoundControl {
+                more := RoundControl {
                     diameter: root.key-size;
                     icon: root.more-icon;
                     label: root.drawer-open ? "收起更多" : "更多";
