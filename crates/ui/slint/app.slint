@@ -922,10 +922,29 @@ export component MainWindow inherits Window {
                                 padding-right: 4px;
                                 spacing: 8px;
 
-                                Text {
-                                    text: row.applied ? "☑" : "☐";
-                                    color: row.applied ? Theme.accent : Theme.text-dim;
-                                    vertical-alignment: center;
+                                // 勾选框:矢量图标,不用 Unicode 符号 —— ☐ 在安卓字体里没有,
+                                // ☑ 又被 emoji 字体接走,两端画出来的东西对不上(#158 F-001)。
+                                // 与抽屉那排图标芯片同一种做法:关着透底描边,开着填强调色。
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        border-radius: 4px;
+                                        background: row.applied ? Theme.accent : transparent;
+                                        border-width: 1.5px;
+                                        border-color: row.applied ? Theme.accent : Theme.overlay;
+                                        animate background, border-color { duration: 140ms; easing: ease-out; }
+
+                                        if row.applied: Path {
+                                            width: 12px;
+                                            height: 12px;
+                                            viewbox-width: 24;
+                                            viewbox-height: 24;
+                                            commands: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+                                            fill: Theme.accent-text;
+                                        }
+                                    }
                                 }
                                 Text {
                                     text: row.name;
