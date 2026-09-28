@@ -82,7 +82,8 @@ pub async fn apply(
         current_entries(&mut tx, account, &group).await?;
     let before = started(&group);
     group.roll(
-        &blocked_playlist(&mut tx, account, &entries).await?,
+        &blocked_playlist(&mut tx, account, &entries)
+            .await?,
         at,
     );
 
@@ -98,9 +99,10 @@ pub async fn apply(
             if let Some(fresh) = fresh {
                 entries = fresh;
             }
-            let list =
-                blocked_playlist(&mut tx, account, &entries)
-                    .await?;
+            let list = blocked_playlist(
+                &mut tx, account, &entries,
+            )
+            .await?;
             group
                 .jump(
                     device, queue, &list, picked, at,
@@ -109,9 +111,10 @@ pub async fn apply(
                 .map_err(refused)?;
         }
         Intent::Transport(op) => {
-            let list =
-                blocked_playlist(&mut tx, account, &entries)
-                    .await?;
+            let list = blocked_playlist(
+                &mut tx, account, &entries,
+            )
+            .await?;
             transport(&mut group, device, &list, op, at)
                 .map_err(refused)?;
         }
@@ -241,8 +244,8 @@ pub async fn advance(
     let at = wall_now_us();
     let entries =
         current_entries(&mut tx, account, &group).await?;
-    let list =
-        blocked_playlist(&mut tx, account, &entries).await?;
+    let list = blocked_playlist(&mut tx, account, &entries)
+        .await?;
     let before = started(&group);
     let rolled = group.roll(&list, at);
     let advanced = group
@@ -304,8 +307,8 @@ pub async fn ready(
     let at = wall_now_us();
     let entries =
         current_entries(&mut tx, account, &group).await?;
-    let list =
-        blocked_playlist(&mut tx, account, &entries).await?;
+    let list = blocked_playlist(&mut tx, account, &entries)
+        .await?;
     let mut before = started(&group);
     let rolled = group.roll(&list, at);
     let ready = mark_ready(account, version, device);
