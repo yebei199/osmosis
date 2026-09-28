@@ -79,18 +79,74 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
             &deck,
             Action::begin("search"),
             ViewSource::Search(keyword.clone()),
-            async move {
-                // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
-                api::search_tracks(&keyword).await.map(
-                    |dto| TracksDto {
-                        tracks: dto.tracks,
-                        unavailable: 0,
-                        hidden: dto.hidden,
-                    },
-                )
-            },
+            search_tracks(keyword),
         );
     });
+}
+
+/// 搜歌,翻成与其他视图同形的一批。
+#[cfg(not(target_arch = "wasm32"))]
+async fn search_tracks(
+    keyword: String,
+) -> Result<TracksDto, api::ApiError> {
+    // 搜索结果没有「平台给不出详情」这回事:它给什么就是什么
+    api::search_tracks(&keyword).await.map(|dto| {
+        TracksDto {
+            tracks: dto.tracks,
+            unavailable: 0,
+            hidden: dto.hidden,
+        }
+    })
+}
+
+/// 把此刻摆着的那个视图重取一遍。
+///
+/// 建、删屏蔽规则之后走这里(#161):隐藏在服务端出口做,界面上那一批是规则
+/// 变之前拿的。电台那一批就是正在放的队列,重拉等于换歌,所以不动 ——
+/// 命中的那几首由队列前进时跳过。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
+    let weak = ui.as_weak();
+    let action = Action::begin("reload");
+    match deck.views.current_source() {
+        Some(ViewSource::Daily) => fetch_daily(&weak, deck),
+        Some(ViewSource::Recent) => fetch_into(
+            &weak,
+            deck,
+            action,
+            ViewSource::Recent,
+            async { api::recent().await },
+        ),
+        Some(ViewSource::Playlist(source, id)) => {
+            fetch_into(
+                &weak,
+                deck,
+                action,
+                ViewSource::Playlist(source, id.clone()),
+                async move {
+                    crate::library::playlist::tracks_of(
+                        source, &id,
+                    )
+                    .await
+                },
+            )
+        }
+        Some(ViewSource::Artist(id)) => fetch_into(
+            &weak,
+            deck,
+            action,
+            ViewSource::Artist(id.clone()),
+            async move { api::artist_tracks(&id).await },
+        ),
+        Some(ViewSource::Search(keyword)) => fetch_into(
+            &weak,
+            deck,
+            action,
+            ViewSource::Search(keyword.clone()),
+            search_tracks(keyword),
+        ),
+        Some(ViewSource::Radio) | None => {}
+    }
 }
 
 /// 今日推荐、分区、歌单与歌手详情的取数入口。
@@ -217,6 +273,9 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     ui.global::<Library>().on_open_artist(
         move |id, name| {
             let Some(ui) = weak.upgrade() else { return };
+            // 「屏蔽该歌手」按名字认(#161):曲目上只带歌手名,不带 id
+            ui.global::<Library>()
+                .set_open_artist_name(name.clone());
             ui.global::<Library>()
                 .set_open_playlist_name(name);
 

@@ -72,6 +72,14 @@ export struct PlaylistRow {
 
 // 一个自定义标签,连同「这首歌打没打」这一位一起(#158)。
 // applied 只在标签选择器里有意义,别处摆着不看。
+// 设置页「已屏蔽」里的一条规则(#161)。`kind` 是给人看的类别字样
+// (歌手 / 标签 / 单曲),由 Rust 填好,界面不再翻译。
+export struct BlockRow {
+    id: string,
+    label: string,
+    kind: string,
+}
+
 export struct TagRow {
     id: string,
     name: string,

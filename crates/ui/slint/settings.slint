@@ -1,12 +1,13 @@
 // 设置页:分组卡片流(docs/design.md「页面清单」)。
 //
 // 只摆背后真有东西的组:外观(日月开关 + 跟随系统)、账号(退出登录)、
-// 快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
+// 已屏蔽(#161)、快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
 // 没有数据源的卡不上屏(硬规则 8)。
 
 import { Theme, Type } from "theme.slint";
 import { SectionCard, DayNightSwitch } from "widgets.slint";
 import { BarMetrics } from "playerbar.slint";
+import { Library } from "globals/library.slint";
 
 // 胶囊开关:aurora 与「跟随系统」共用。a11y 在组件根上,
 // 无头测试按元素 id 找到的是这一层,挂在里面的 TouchArea 上就点不动了。
@@ -61,6 +62,9 @@ export component SettingsPage inherits Flickable {
     in property <bool> bar-visible;
 
     content-height: column.preferred-height + 52px;
+
+    // 「已屏蔽」那一列每次进设置页都重拉:启动时那次可能还没登录(#161)
+    init => { Library.refresh-blocks(); }
 
     column := VerticalLayout {
         x: 26px;
@@ -206,6 +210,66 @@ export component SettingsPage inherits Flickable {
                     logout-touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.logout(); }
+                    }
+                }
+            }
+        }
+
+        // 屏蔽规则(#161):命中的歌在所有列表里隐藏,队列与电台跳过。
+        // 在这里恢复 —— 歌曲菜单与歌手页只管建。
+        SectionCard {
+            kicker: "已屏蔽";
+
+            if Library.blocks.length == 0: Text {
+                text: "还没有屏蔽任何歌手、标签或歌曲";
+                font-family: "Maple Mono NF CN";
+                font-size: 12px;
+                color: Theme.text-faint;
+            }
+
+            for row in Library.blocks: HorizontalLayout {
+                spacing: 12px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: row.label;
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: row.kind;
+                        font-family: "Maple Mono NF CN";
+                        font-size: 11px;
+                        color: Theme.text-faint;
+                    }
+                }
+                unblock-button := Rectangle {
+                    width: unblock-label.preferred-width + 32px;
+                    height: 34px;
+                    border-radius: 999px;
+                    background: unblock-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    // a11y 在根上,理由同退出登录那颗
+                    accessible-role: button;
+                    accessible-label: "恢复 " + row.label;
+                    accessible-action-default => { Library.unblock(row.id); }
+
+                    unblock-label := Text {
+                        text: "恢复";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 13px;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    unblock-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Library.unblock(row.id); }
                     }
                 }
             }

@@ -251,7 +251,15 @@ pub fn bind(
     crate::library::liked::bind(ui, &deck.liked);
     crate::library::liked::refresh(&deck.liked, ui);
     crate::library::tag::bind(ui);
-    crate::library::block::refresh(&deck.blocks);
+    // 屏蔽规则(#161):建、删之后重取当前视图,隐藏在服务端出口生效
+    let reviewing = deck.clone();
+    crate::library::block::bind(
+        ui,
+        &deck.blocks,
+        move |ui| {
+            reload_view(ui, &reviewing);
+        },
+    );
     // 赞踩(#157):独立于红心,只投影当前这一首。
     crate::library::feedback::bind(ui);
 

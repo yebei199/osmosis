@@ -198,6 +198,8 @@ where
 fn on_login_succeeded(ui: &MainWindow) {
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Library>().invoke_refresh_liked();
+    // 屏蔽规则同理:启动时那次拉在登录之前,不带 token(#161)
+    ui.global::<Library>().invoke_refresh_blocks();
 }
 
 /// 这次失败是不是「登录态没了」。

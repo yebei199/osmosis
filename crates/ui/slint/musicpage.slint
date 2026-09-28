@@ -194,6 +194,39 @@ export component MusicPage inherits VerticalLayout {
                         }
                     }
                 }
+                // 歌手页才有(#161)。按名字屏蔽:曲目上只带歌手名,不带 id。
+                // 两个名字对得上才算歌手页 —— 点开歌单时标题就换了。
+                if Library.open-artist-name != ""
+                    && Library.open-artist-name == Library.open-playlist-name:
+                // 小胶囊而不是 HoverButton:那个定高 56px、18px 字,塞进 28px 的
+                // 标题行会溢出去压住下面的分组条
+                block-artist-button := Rectangle {
+                    width: block-artist-label.preferred-width + 24px;
+                    border-radius: 999px;
+                    background: block-artist-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    accessible-role: button;
+                    accessible-label: "屏蔽该歌手";
+                    accessible-action-default => {
+                        Library.block-artist(Library.open-artist-name);
+                    }
+
+                    block-artist-label := Text {
+                        text: "屏蔽该歌手";
+                        font-family: "Maple Mono NF CN";
+                        font-size: 12px;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    block-artist-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            Library.block-artist(Library.open-artist-name);
+                        }
+                    }
+                }
             }
 
             // 「把刚才那批加进来」。只在本地歌单详情、且刚才
