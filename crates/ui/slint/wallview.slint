@@ -58,6 +58,8 @@ export component WallView inherits VerticalLayout {
             accessible-role: button;
             accessible-label: "卡墙视图";
             accessible-action-default => {
+                // 卡墙只筛选、不分组(#160):切过去先清掉分组
+                Player.set-grouping(0);
                 Shell.set-view-wall(true);
             }
             Text {
@@ -73,6 +75,8 @@ export component WallView inherits VerticalLayout {
             TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
+                    // 卡墙只筛选、不分组(#160):切过去先清掉分组
+                    Player.set-grouping(0);
                     Shell.set-view-wall(true);
                 }
             }

@@ -323,6 +323,7 @@ impl TrackRow {
                 .album_id
                 .zip(self.album_name)
                 .map(|(id, name)| AlbumRefDto { id, name }),
+            facets: Default::default(),
         }
     }
 }

@@ -248,8 +248,12 @@ fn republish(ui: &MainWindow, deck: &Deck) {
         },
         true,
     );
-    if landing == Landing::Current {
-        let found = deck.views.show(ViewSource::Radio);
-        project(ui, deck, found);
+    // 同一视图续长,不是换视图:走 show 而不是 project,选着的筛选与折叠不清(#160)
+    if landing == Landing::Current
+        && let Some(found) =
+            deck.views.show(ViewSource::Radio).tracks
+    {
+        ui.global::<Player>().set_tracks_loading(false);
+        show(ui, deck, found);
     }
 }

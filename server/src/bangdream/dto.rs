@@ -108,6 +108,7 @@ pub fn track_to_dto(track: proto::Track) -> TrackDto {
                 id: album.id,
                 name: album.name,
             }),
+        facets: Default::default(),
     }
 }
 

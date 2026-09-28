@@ -26,6 +26,9 @@ use app_core::Queue;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod download;
+// 歌单视图的分组条与筛选(#160)。
+#[cfg(not(target_arch = "wasm32"))]
+mod facets;
 mod feed;
 mod list;
 mod notice;
@@ -104,8 +107,10 @@ struct Deck {
     /// 点击时要靠它把 id 换回完整的 `TrackDto`;重推行(标加载态)也从它来。
     tracks: Rc<RefCell<Vec<TrackDto>>>,
     /// 各个浏览视图自己那份曲目,以及此刻摆的是哪一个(见 `views`)。
-    /// `tracks` 永远是其中当前那一份的投影。
+    /// `tracks` 永远是其中当前那一份的投影 —— 筛过、按分组排过的(见 `facets`)。
     views: Views,
+    /// 当前那一份的整批,与分组条的状态(#160)。
+    facets: facets::Facets,
     /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
     /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::library::liked)。
     liked: crate::library::liked::LikedSet,
@@ -213,6 +218,7 @@ pub fn bind(
         cover: cover.clone(),
         tracks: Rc::new(RefCell::new(Vec::new())),
         views: Views::default(),
+        facets: Default::default(),
         liked: crate::library::liked::LikedSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),
@@ -264,6 +270,7 @@ pub fn bind(
 
     bind_search(ui, &deck);
     bind_list(ui, &deck);
+    facets::bind(ui, &deck);
     bind_play(ui, &deck);
     bind_controls(ui, &deck);
     bind_outputs(ui, &deck);

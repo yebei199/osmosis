@@ -222,6 +222,8 @@ pub(super) fn to_rows(
                 .into(),
             // 图由 thumbnail 在行滑进可见区之后回填,与红心同理。
             cover: slint::Image::default(),
+            header: false,
+            collapsed: false,
         })
         .collect()
 }

@@ -9,6 +9,7 @@
 //! 这既让本 crate 可以脱离网络单测,也让它不必依赖 `api`。
 
 mod counter;
+pub mod facets;
 mod global;
 mod health;
 mod lyric;
@@ -24,10 +25,11 @@ pub use queue::{LoopMode, Queue};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
-    ArtistDto, DeviceDto, DeviceReportDto, GroupNowDto,
-    GroupPickDto, GroupSeedDto, GroupStateDto, HealthDto,
-    LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
-    NextEntryDto, OutputRouteDto, PlaylistDto,
-    PlaylistSource, RemotePlayState, TagDto, TagSource,
-    TrackDto, TracksDto, TransportOpDto,
+    AlbumRefDto, ArtistDto, DeviceDto, DeviceReportDto,
+    GroupNowDto, GroupPickDto, GroupSeedDto, GroupStateDto,
+    HealthDto, LoopModeDto, LyricDto, LyricKindDto,
+    LyricLineDto, MAX_SIGNAL_BYTES, NextEntryDto,
+    OutputRouteDto, PlaylistDto, PlaylistSource,
+    RemotePlayState, TagDto, TagSource, TrackDto,
+    TrackFacetsDto, TracksDto, TransportOpDto,
 };

@@ -314,7 +314,15 @@ fn starting_a_track_shows_it_as_loading_right_away() {
     let (ui, deck) = deck_window();
     let batch =
         vec![track_with_id("a"), track_with_id("b")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
     ui.global::<Player>().set_is_playing(true);
 
@@ -356,7 +364,15 @@ fn starting_a_track_wipes_what_the_previous_one_left_behind()
  {
     let (ui, deck) = deck_window();
     let batch = vec![track_with_cover("a")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
 
     // 上一首留下的那一摊。
@@ -434,7 +450,15 @@ fn an_empty_queue_starts_nothing() {
 fn a_track_that_fails_to_start_clears_the_loading_state() {
     let (ui, deck) = deck_window_pumped();
     let batch = vec![track_with_id("a")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
 
     play_current(&ui, &deck);
@@ -624,4 +648,179 @@ fn a_failed_refresh_keeps_the_cached_list() {
         vec!["a".to_owned()],
         "取不到新的,上次那份得还在"
     );
+}
+
+// ── 分组条与筛选(#160)──
+
+/// 一批带歌手与标签的歌:a 甲+乙、b 甲、c 丙(标签「夜」)。
+#[cfg(not(target_arch = "wasm32"))]
+fn faceted_batch() -> TracksDto {
+    let mut a = track_with_id("a");
+    a.artists = vec!["甲".into(), "乙".into()];
+    let mut b = track_with_id("b");
+    b.artists = vec!["甲".into()];
+    let mut c = track_with_id("c");
+    c.artists = vec!["丙".into()];
+    c.facets.tags = vec!["夜".into()];
+    TracksDto {
+        tracks: vec![a, b, c],
+        unavailable: 0,
+    }
+}
+
+/// 摆进一个视图,并接上分组条。
+#[cfg(not(target_arch = "wasm32"))]
+fn faceted_window(
+    source: ViewSource,
+) -> (MainWindow, Deck) {
+    let (ui, deck) = deck_window();
+    super::facets::bind(&ui, &deck);
+    let (_ticket, shown) = deck.views.begin(source);
+    project(&ui, &deck, shown);
+    show(&ui, &deck, faceted_batch());
+    (ui, deck)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn headers(ui: &MainWindow) -> Vec<String> {
+    ui.global::<Player>()
+        .get_tracks()
+        .iter()
+        .filter(|row| row.header)
+        .map(|row| {
+            format!("{} {}", row.title, row.duration)
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn queue_ids(deck: &Deck) -> Vec<String> {
+    deck.tracks
+        .borrow()
+        .iter()
+        .map(|track| track.id.clone())
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn chip_index(ui: &MainWindow, text: &str) -> i32 {
+    ui.global::<Player>()
+        .get_chips()
+        .iter()
+        .position(|chip| chip.text == text)
+        .map(|at| at as i32)
+        .unwrap_or_else(|| {
+            panic!("没有「{text}」这个 chip")
+        })
+}
+
+/// 按歌手分:堆数等于歌手去重数,多歌手的歌进每一堆,队列里只排一次。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn grouping_by_artist_makes_one_pile_per_artist() {
+    let (ui, deck) = faceted_window(ViewSource::Daily);
+    assert!(ui.global::<Player>().get_facets_enabled());
+
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
+
+    assert_eq!(
+        headers(&ui),
+        vec!["甲 2 首", "丙 1 首", "乙 1 首"],
+        "三位歌手就是三堆,按堆大小排"
+    );
+    assert_eq!(ui.global::<Player>().get_pile_count(), 3);
+    assert_eq!(queue_ids(&deck), vec!["a", "b", "c"]);
+}
+
+/// 选了分组就把卡墙切回列表(用户 2026-09-27 定)。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn choosing_a_grouping_leaves_the_wall() {
+    let (ui, _deck) = faceted_window(ViewSource::Daily);
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let probe = asked.clone();
+    ui.global::<Shell>().on_set_view_wall(move |to| {
+        probe.borrow_mut().push(to)
+    });
+
+    ui.global::<Player>().invoke_set_grouping(0);
+    assert!(asked.borrow().is_empty(), "不分组不碰卡墙");
+
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Tag.index(),
+    );
+    assert_eq!(*asked.borrow(), vec![false]);
+}
+
+/// chip 筛掉的歌既不在列表上、也不进队列;换了视图,选中的 chip 清掉。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_chip_filters_the_rows_and_the_queue() {
+    let (ui, deck) = faceted_window(ViewSource::Daily);
+
+    ui.global::<Player>()
+        .invoke_toggle_chip(chip_index(&ui, "夜 1"));
+
+    assert_eq!(shown_ids(&ui), vec!["c"]);
+    assert_eq!(queue_ids(&deck), vec!["c"]);
+    assert_eq!(ui.global::<Player>().get_chosen_count(), 1);
+
+    let (_ticket, shown) =
+        deck.views.begin(ViewSource::Recent);
+    project(&ui, &deck, shown);
+    show(&ui, &deck, faceted_batch());
+    assert_eq!(ui.global::<Player>().get_chosen_count(), 0);
+    assert_eq!(shown_ids(&ui), vec!["a", "b", "c"]);
+}
+
+/// 折起来的堆只剩堆头;再点一次展开。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_collapsed_pile_keeps_only_its_header() {
+    let (ui, _deck) = faceted_window(ViewSource::Daily);
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
+
+    ui.global::<Player>().invoke_toggle_pile("甲".into());
+    assert_eq!(shown_ids(&ui), vec!["", "", "c", "", "a"]);
+
+    ui.global::<Player>().invoke_toggle_pile("甲".into());
+    assert_eq!(
+        shown_ids(&ui),
+        vec!["", "a", "b", "", "c", "", "a"]
+    );
+}
+
+/// 搜索结果不是歌单:不挂分组条,选着的分组也不作用在它上面。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn search_results_are_not_grouped() {
+    let (ui, deck) = faceted_window(ViewSource::Daily);
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
+
+    let (_ticket, shown) =
+        deck.views.begin(ViewSource::Search("x".into()));
+    project(&ui, &deck, shown);
+    show(&ui, &deck, faceted_batch());
+
+    assert!(!ui.global::<Player>().get_facets_enabled());
+    assert_eq!(shown_ids(&ui), vec!["a", "b", "c"]);
+}
+
+/// 电台区也是歌单视图(主路由确认):挂分组条,分组作用在它上面。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_radio_list_is_grouped_too() {
+    let (ui, _deck) = faceted_window(ViewSource::Radio);
+
+    assert!(ui.global::<Player>().get_facets_enabled());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
+    assert_eq!(ui.global::<Player>().get_pile_count(), 3);
 }

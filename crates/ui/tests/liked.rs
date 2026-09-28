@@ -30,6 +30,8 @@ fn row(id: &str, liked: bool) -> TrackRow {
         liked,
         cover_url: String::new().into(),
         cover: slint::Image::default(),
+        header: false,
+        collapsed: false,
     }
 }
 

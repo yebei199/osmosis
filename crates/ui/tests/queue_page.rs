@@ -39,6 +39,8 @@ fn queue_window(rows: usize) -> MainWindow {
             liked: false,
             cover_url: Default::default(),
             cover: Default::default(),
+            header: false,
+            collapsed: false,
         })
         .collect();
     ui.global::<Viz>().set_queue_total(rows.len() as i32);

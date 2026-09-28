@@ -285,6 +285,8 @@ fn track_row(id: &str) -> crate::TrackRow {
         liked: false,
         cover_url: String::new().into(),
         cover: slint::Image::default(),
+        header: false,
+        collapsed: false,
     }
 }
 

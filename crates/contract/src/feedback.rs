@@ -52,7 +52,7 @@ pub struct PlayedAckDto {
 /// `PATCH /played/{id}/listened` 的请求体。
 ///
 /// 只报原始数字,完播/跳过的口径由服务端查询时判定 —— 与事件流「口径想改就改」
-/// 同一个理由(见服务端 `history` 模块)。
+/// 同一个理由(见服务端 `history` 模块)。跳过口径在服务端 `store::facets::SKIP_WITHIN_MS`。
 #[derive(
     Debug,
     Clone,

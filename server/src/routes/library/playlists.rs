@@ -24,6 +24,7 @@ use crate::routes::catalog::catalog_cache::{
     netease_name, store_first, track_refs_of,
 };
 use crate::routes::library::likes::import_once;
+use crate::routes::library::with_facets;
 use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
@@ -60,11 +61,20 @@ pub(crate) async fn platform_playlist_tracks(
     Path(id): Path<String>,
 ) -> Result<Json<TracksDto>, Failure> {
     let playlist_id = id.clone();
-    store_first(&state, &account, &id, |state, account| {
-        fetch_platform_playlist(state, account, playlist_id)
-    })
-    .await
-    .map(Json)
+    let found = store_first(
+        &state,
+        &account,
+        &id,
+        |state, account| {
+            fetch_platform_playlist(
+                state,
+                account,
+                playlist_id,
+            )
+        },
+    )
+    .await?;
+    Ok(Json(with_facets(&state, account.id, found).await))
 }
 
 /// 平台歌单的回源路径:取成员关系,回填缓存。
@@ -184,10 +194,11 @@ pub(crate) async fn playlist_tracks(
             .map_err(|err| error::map_error(&err))?;
 
     // 这条路不经过缓存的剔除,没有"平台给不出详情"这回事
-    Ok(Json(TracksDto {
+    let found = TracksDto {
         tracks,
         unavailable: 0,
-    }))
+    };
+    Ok(Json(with_facets(&state, account.id, found).await))
 }
 
 /// 增删曲目的请求体。

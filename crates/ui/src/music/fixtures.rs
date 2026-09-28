@@ -12,6 +12,7 @@ pub(super) fn track() -> TrackDto {
         cover: None,
         duration_ms: 234_000,
         album: None,
+        facets: Default::default(),
     }
 }
 
@@ -217,6 +218,7 @@ fn deck_window_with(
         cover: super::CoverFeed::default(),
         tracks: Rc::new(RefCell::new(Vec::new())),
         views: super::Views::default(),
+        facets: Default::default(),
         liked: crate::library::liked::LikedSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),

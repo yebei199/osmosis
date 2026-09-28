@@ -16,6 +16,7 @@ fn track(id: usize) -> TrackDto {
         cover: None,
         duration_ms: 1_000,
         album: None,
+        facets: Default::default(),
     }
 }
 

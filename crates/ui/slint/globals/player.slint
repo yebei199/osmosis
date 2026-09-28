@@ -1,4 +1,4 @@
-import { TrackRow } from "../types.slint";
+import { FacetChip, TrackRow } from "../types.slint";
 
 // 播放与传输的状态面。真相在 app-core 的 Queue 与播放器上,这里是它的投影
 // —— 开关自己不置位,拨一下只喊对应的回调(见 crates/ui/src/music)。
@@ -95,4 +95,24 @@ export global Player {
     callback loop-mode-set(int);
     // 以这一首为种子开心动模式电台(#159)。参数是正在放的那首的 id。
     callback radio-from(string);
+
+    // ── 分组与筛选(#160) ──
+    // 规则在 app_core::facets,状态在 Rust(ui/src/music/facets.rs),这里只摆。
+    // 当前视图是不是歌单类(日推、最近、歌单、歌手)、手上有没有歌。
+    in property <bool> facets-enabled: false;
+    // 分组条的各项,第 0 项是「不分组」。文案由 Rust 给,与规则同一处。
+    in property <[string]> grouping-labels: [];
+    // 选中的是 grouping-labels 的第几项。
+    in property <int> grouping: 0;
+    // 分出了几堆。选中的那颗分组药丸把它报给读屏(「歌手 · 12 堆」)——
+    // 列表是虚拟化的,滚不到的堆头不在元素树上,端到端脚本也靠它数堆。
+    in property <int> pile-count: 0;
+    in property <[FacetChip]> chips: [];
+    // 选中了几个 chip。筛空了时靠它说「没有符合的歌」,而不是摆开局的空状态。
+    in property <int> chosen-count: 0;
+    callback set-grouping(int);
+    // 参数是 chips 里的下标。
+    callback toggle-chip(int);
+    // 参数是堆名。
+    callback toggle-pile(string);
 }

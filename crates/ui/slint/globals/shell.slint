@@ -145,7 +145,9 @@ export global Shell {
 
     // 音乐页列表该有一批歌、却一首都没有(空状态)。musicpage.slint 照它摆空状态,
     // Rust 照它判「换一批推荐」那颗光带按钮在不在屏幕上 —— 一份判据两处读。
+    // 筛空了不算:那时该说「没有符合的歌」,不是摆开局的「点一首歌开始」(#160)。
     out property <bool> music-empty: Player.tracks.length == 0
+        && Player.chosen-count == 0
         && (Library.open-playlist-name != ""
             || music-section == 0
             || music-section == 3

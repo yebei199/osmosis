@@ -9,6 +9,8 @@
 import { ListView } from "std-widgets.slint";
 import { TrackRow } from "types.slint";
 import { Theme } from "theme.slint";
+import { Player } from "globals/player.slint";
+import { Shell } from "globals/shell.slint";
 
 // ListView 而不是 Flickable + for:后者会把整批歌全部实例化,而歌单详情能到
 // 近千行 —— 每行还要配一张封面的话,那就是上千张图同时在内存里。
@@ -38,13 +40,16 @@ export component TrackList inherits ListView {
     // 按住这一行不放。参数是曲目 id 与标题 —— 菜单要显示标题,而这一行随时
     // 会被 ListView 复用到别的歌上去,菜单开着的时候回头来读就已经不是它了。
     callback long-press(string, string);
+    // 点了一个堆头(#160):折叠或展开它。参数是堆名。
+    callback toggle-pile(string);
 
     vertical-stretch: 1;
 
     // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
     // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
     for row[i] in root.tracks: Rectangle {
-        height: 56px;
+        // 堆头(#160)比歌矮一截,没有卡片底,读起来是分隔而不是又一首歌。
+        height: row.header ? 44px : 56px;
 
         // 就是它在响 —— 与 root.current 绑的那一首比对,空串不算(见上面
         // `current` 的注释)。background/border/无障碍态共用同一个判断,
@@ -56,7 +61,8 @@ export component TrackList inherits ListView {
         Rectangle {
             y: 2px;
             height: 52px;
-            background: row.loading ? Theme.accent.with-alpha(0.15)
+            background: row.header ? transparent
+                : row.loading ? Theme.accent.with-alpha(0.15)
                 : (parent.is-current
                     ? Theme.accent.with-alpha(0.22)
                     : (touch.has-hover ? Theme.overlay : Theme.overlay-weak));
@@ -86,9 +92,10 @@ export component TrackList inherits ListView {
             // 颜色读屏看不见 —— 正在播的那一行额外报一个可查的选中态。
             accessible-role: button;
             // 读屏要念出这一行是哪首;端到端脚本也按它认出列表里摆的是哪一批
-            accessible-label: row.title;
+            accessible-label: row.header ? row.title + " " + row.duration : row.title;
             accessible-checkable: true;
-            accessible-checked: parent.is-current;
+            // 堆头报的是「展开着」,歌报的是「正在放」
+            accessible-checked: row.header ? !row.collapsed : parent.is-current;
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     parent.pressing = true;
@@ -100,13 +107,17 @@ export component TrackList inherits ListView {
                 }
             }
             clicked => {
-                if (!parent.menu-opened) { root.play(row.id); }
+                if (row.header) {
+                    root.toggle-pile(row.title);
+                } else if (!parent.menu-opened) {
+                    root.play(row.id);
+                }
             }
         }
 
         Timer {
             interval: 450ms;
-            running: parent.pressing;
+            running: parent.pressing && !row.header;
             triggered => {
                 parent.menu-opened = true;
                 parent.pressing = false;
@@ -120,7 +131,7 @@ export component TrackList inherits ListView {
             spacing: 12px;
 
             // 时间轴那一列:竖线贯穿整行,圆点盖在线上。
-            if root.timeline: Rectangle {
+            if root.timeline && !row.header: Rectangle {
                 width: 20px;
 
                 Rectangle {
@@ -144,7 +155,7 @@ export component TrackList inherits ListView {
 
             // 封面。取不到就是一块占位色 —— 留个空洞会让整列参差不齐,
             // 而封面取不到是常态(与歌单行同一条规矩,见 playlists.slint)。
-            VerticalLayout {
+            if !row.header: VerticalLayout {
                 alignment: center;
                 cover-slot := Rectangle {
                     width: 40px;
@@ -173,11 +184,12 @@ export component TrackList inherits ListView {
                 // 已知缺口,见 README「音乐链路」。
                 Text {
                     text: row.title;
-                    color: Theme.text;
-                    font-size: 14px;
+                    color: row.header ? Theme.text-dim : Theme.text;
+                    font-size: row.header ? 13px : 14px;
+                    font-weight: row.header ? 700 : 400;
                     overflow: elide;
                 }
-                Text {
+                if !row.header: Text {
                     text: row.artists;
                     color: Theme.text-dim;
                     font-size: 12px;
@@ -185,7 +197,7 @@ export component TrackList inherits ListView {
                 }
             }
             // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
-            heart := TouchArea {
+            if !row.header: heart := TouchArea {
                 width: 32px;
 
                 Text {
@@ -204,7 +216,7 @@ export component TrackList inherits ListView {
             }
 
             // 移出歌单。只在本地歌单详情里出现。
-            if root.removable: remove-hit := TouchArea {
+            if root.removable && !row.header: remove-hit := TouchArea {
                 width: 28px;
 
                 Text {
@@ -228,6 +240,123 @@ export component TrackList inherits ListView {
                 font-size: 12px;
                 vertical-alignment: center;
             }
+
+            // 堆头的折叠指示:展开朝下,折起朝右。画成矢量,不用 ▾ 这类字形 ——
+            // 系统字体不一定有它(#158 的勾选框吃过这个亏)。
+            if row.header: VerticalLayout {
+                alignment: center;
+                Path {
+                    width: 10px;
+                    height: 10px;
+                    viewbox-width: 10;
+                    viewbox-height: 10;
+                    commands: row.collapsed ? "M 3 1 L 7 5 L 3 9" : "M 1 3 L 5 7 L 9 3";
+                    stroke: Theme.text-dim;
+                    stroke-width: 1.5px;
+                }
+            }
         }
+    }
+}
+
+// ── 分组条与筛选 chips(#160) ──
+//
+// 两排可横滑的药丸:上排「筛选」开关 + 分组方式,下排是 chip(开着筛选或已选了
+// 几个时才出现 —— 手机上两排常驻太占地方)。分堆、筛选、每个 chip 数几首都在
+// Rust(app_core::facets),这里只摆、只喊回调。
+
+// 一颗药丸。紧凑版式下触摸区 44px 高(docs/design.md「版式」),画出来的仍是
+// 细细一条 —— 44px 的实心药丸一排下来像一行按钮。
+component Pill inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    // 只给读屏的补充说明,不上屏。
+    in property <string> description;
+    callback clicked;
+
+    height: Shell.compact ? 44px : 32px;
+    width: label.preferred-width + 24px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-description: root.description;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 28px;
+        border-radius: 14px;
+        background: root.selected
+            ? Theme.accent
+            : (touch.has-hover ? Theme.overlay : Theme.surface);
+    }
+    label := Text {
+        // 药丸自己已经报了标签,字不再报一遍
+        accessible-role: none;
+        text: root.text;
+        font-family: "Maple Mono NF CN";
+        font-size: 12px;
+        color: root.selected ? Theme.accent-text : Theme.text-dim;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component FacetBar inherits VerticalLayout {
+    // 筛选那一排开着。已选了 chip 时不论开关都摆着,否则看不见筛了什么。
+    in-out property <bool> filters-open: false;
+    property <length> row-height: Shell.compact ? 44px : 32px;
+
+    spacing: 2px;
+
+    Flickable {
+        height: root.row-height;
+        content-width: groups.preferred-width;
+        groups := HorizontalLayout {
+            spacing: 6px;
+            filter-toggle := Pill {
+                text: Player.chosen-count > 0
+                    ? "筛选 · " + Player.chosen-count
+                    : "筛选";
+                selected: root.filters-open || Player.chosen-count > 0;
+                clicked => { root.filters-open = !root.filters-open; }
+            }
+            for label[i] in Player.grouping-labels: grouping-pill := Pill {
+                text: label;
+                selected: Player.grouping == i;
+                description: Player.grouping == i && i > 0
+                    ? Player.pile-count + " 堆" : "";
+                clicked => { Player.set-grouping(i); }
+            }
+        }
+    }
+
+    if root.filters-open || Player.chosen-count > 0: Flickable {
+        height: root.row-height;
+        content-width: chip-row.preferred-width;
+        chip-row := HorizontalLayout {
+            spacing: 6px;
+            for chip[i] in Player.chips: chip-pill := Pill {
+                text: chip.text;
+                selected: chip.chosen;
+                clicked => { Player.toggle-chip(i); }
+            }
+        }
+    }
+
+    // 筛空了:说清楚是筛选的结果,不摆开局那句「点一首歌开始」。
+    if Player.chosen-count > 0 && Player.tracks.length == 0: filtered-empty := Text {
+        text: "没有符合筛选的歌";
+        accessible-role: text;
+        accessible-label: self.text;
+        font-family: "Maple Mono NF CN";
+        font-size: 13px;
+        color: Theme.text-dim;
+        horizontal-alignment: center;
     }
 }

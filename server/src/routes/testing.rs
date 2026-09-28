@@ -229,6 +229,7 @@ pub(crate) fn expected_dto(
         cover: None,
         duration_ms: 200_000,
         album: None,
+        facets: Default::default(),
     }
 }
 

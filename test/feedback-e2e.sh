@@ -5,7 +5,8 @@
 #                                   再点踩 → 同一行变 -1;再点一次踩 → 行消失(#157 F-004:
 #                                   赞踩键已从播放页搬进抽屉,挨着「喜欢」那一行)。
 #   test/feedback-e2e.sh skip      起播后立刻切歌,断言这一行的 listened_ms 记进去了、
-#                                   且小于 30000(#157 的跳过口径:前 30 秒内切走)。
+#                                   且小于 30000(#157 的跳过口径:前 30 秒内切走,
+#                                   服务端常量 store::facets::SKIP_WITHIN_MS)。
 #   test/feedback-e2e.sh complete  拖进度条到曲尾附近,等它自己放完切下一首,
 #                                   断言这一行的 listened_ms/duration_ms ≥ 0.9(#157 F-002)。
 #

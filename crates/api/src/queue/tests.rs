@@ -19,6 +19,7 @@ fn entry(entry_id: i64) -> QueueEntryDto {
             cover: None,
             duration_ms: 234_000,
             album: None,
+            facets: Default::default(),
         },
     }
 }
