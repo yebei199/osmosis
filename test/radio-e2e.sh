@@ -104,8 +104,14 @@ act() {
   call invoke_accessibility_action "{\"elementHandle\":$1,\"action\":\"Default_\"}" >/dev/null
 }
 
+# 控制条在组里要等组状态回来才出现(#165),找不到先等一会儿。
 press() {
-  local h; h=$(labelled "$1" "$2")
+  local h
+  for _ in $(seq 1 10); do
+    h=$(labelled "$1" "$2")
+    [ -z "$h" ] || break
+    sleep 1
+  done
   must "$h" "「$2」"
   act "$h"
 }
@@ -147,7 +153,7 @@ desk_sounding() {
   [[ "$b" == *"放空 false"* && "${a#*位置 }" != "${b#*位置 }" ]]
 }
 if [ "$MODE" = group ]; then
-  [ -n "$(group_row)" ] || { echo "group: 前提不满足 —— 库里没有两台都出声的组,先把两台拉进同一个组" >&2; exit 1; }
+  [ "$(sql "select count(*) from play_groups where cardinality(outputs) >= 2;")" -gt 0 ] || { echo "group: 前提不满足 —— 库里没有两台都出声的组,先把两台拉进同一个组" >&2; exit 1; }
 fi
 
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
@@ -390,7 +396,7 @@ if [ "$MODE" = group ]; then
   at=$(echo "$row" | cut -d: -f3)
   { [ -n "$at" ] && [ "$at" -ge "$start_count" ]; } \
     || { echo "group: 失败 —— 按了 $MAX_NEXT 下也没进到续上的歌,组此刻 $row" >&2; exit 1; }
-  [ "${row##*:}" = t ] || { echo "group: 失败 —— 进到续上的歌但组没在放:$row" >&2; exit 1; }
+  [ "${row##*:}" = true ] || { echo "group: 失败 —— 进到续上的歌但组没在放:$row" >&2; exit 1; }
   echo "  组在放续上的第 $((at + 1)) 条"
   # 两台都在出声:起播有几秒的对齐等待,给十秒
   for dev in android desk; do
