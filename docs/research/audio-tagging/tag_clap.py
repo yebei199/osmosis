@@ -1,6 +1,11 @@
 # CLAP 零样本:每首取 25%/50%/75% 处三段 10s,音频嵌入平均后与文本提示比余弦相似度
-import json, sys, time
-import numpy as np, torch, laion_clap
+import json
+import sys
+import time
+
+import laion_clap
+import numpy as np
+import torch
 from essentia.standard import MonoLoader
 
 dev = sys.argv[2] if len(sys.argv) > 2 else "cuda"
@@ -16,16 +21,18 @@ SIZE = ["a solo instrument piece", "a duet of two instruments", "a small ensembl
 model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=dev)
 model.load_ckpt("models/music_audioset_epoch_15_esc_90.14.pt", verbose=False)
 
+
 def text_emb(labels, tmpl):
     with torch.no_grad():
         e = model.get_text_embedding([tmpl.format(l) for l in labels], use_tensor=True)
     return torch.nn.functional.normalize(e, dim=-1)
 
+
 T = {"genre": (GENRES, text_emb(GENRES, "This is a {} track.")),
      "instrument": (INSTR, text_emb(INSTR, "This is a music of {}.")),
      "size": (SIZE, text_emb(SIZE, "This is {}."))}
 res = {}
-for t in json.load(open("sample.json")):
+for t in json.load(open("sample.json", encoding="utf-8")):
     t0 = time.perf_counter()
     a = MonoLoader(filename="audio/" + t["id"], sampleRate=48000, resampleQuality=4)()
     t1 = time.perf_counter()
@@ -42,4 +49,4 @@ for t in json.load(open("sample.json")):
     r["infer_s"] = round(time.perf_counter() - t1, 3)
     res[t["id"]] = r
     print(t["n"], t["title"], r["load_s"], r["infer_s"], list(r["genre"])[:3], list(r["instrument"])[:4], list(r["size"])[0], flush=True)
-json.dump(res, open(sys.argv[1], "w"), ensure_ascii=False, indent=1)
+json.dump(res, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)

@@ -26,10 +26,10 @@ def families(probs):
 
 
 def main():
-    e, c = json.load(open("essentia.json")), json.load(open("clap.json"))
+    e, c = json.load(open("essentia.json", encoding="utf-8")), json.load(open("clap.json", encoding="utf-8"))
     print("| # | 曲目 | Discogs 风格 top3 | Jamendo 风格 top2 | CLAP 风格 top2 | Essentia 乐器(族,p≥0.2) | CLAP 乐器 top3 | 数量:Essentia / CLAP | 风格 | 乐器 | 数量 |")
     print("|---|---|---|---|---|---|---|---|---|---|---|")
-    for t in json.load(open("sample.json")):
+    for t in json.load(open("sample.json", encoding="utf-8")):
         er, cr = e[t["id"]], c[t["id"]]
         fam = families(er["instrument_all"])
         row = [

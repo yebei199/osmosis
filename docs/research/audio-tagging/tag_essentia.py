@@ -1,7 +1,14 @@
 # Essentia:EffNet-Discogs 嵌入 + 四个分类头,整曲帧平均,每首记耗时
-import json, sys, time
+import json
+import sys
+import time
+
 import numpy as np
-from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs, TensorflowPredict2D
+from essentia.standard import (
+    MonoLoader,
+    TensorflowPredict2D,
+    TensorflowPredictEffnetDiscogs,
+)
 
 M = "models/"
 HEADS = {  # name: (file stem, output node)
@@ -13,13 +20,13 @@ HEADS = {  # name: (file stem, output node)
 emb_model = TensorflowPredictEffnetDiscogs(graphFilename=M + "discogs-effnet-bs64-1.pb", output="PartitionedCall:1")
 heads = {}
 for k, stem in HEADS.items():
-    meta = json.load(open(M + stem + ".json"))
+    meta = json.load(open(M + stem + ".json", encoding="utf-8"))
     out = next(o["name"] for o in meta["schema"]["outputs"] if o["output_purpose"] == "predictions")
     inp = meta["schema"]["inputs"][0]["name"]
     heads[k] = (TensorflowPredict2D(graphFilename=M + stem + ".pb", input=inp, output=out), meta["classes"])
 
 res = {}
-for t in json.load(open("sample.json")):
+for t in json.load(open("sample.json", encoding="utf-8")):
     t0 = time.perf_counter()
     audio = MonoLoader(filename="audio/" + t["id"], sampleRate=16000, resampleQuality=4)()
     t1 = time.perf_counter()
@@ -33,4 +40,4 @@ for t in json.load(open("sample.json")):
     r["infer_s"] = round(time.perf_counter() - t1, 2)
     res[t["id"]] = r
     print(t["n"], t["title"], r["dur_s"], r["load_s"], r["infer_s"], list(r["discogs400"])[:3], list(r["jamendo_instrument"])[:4], flush=True)
-json.dump(res, open(sys.argv[1], "w"), ensure_ascii=False, indent=1)
+json.dump(res, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
