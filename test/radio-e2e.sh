@@ -213,9 +213,11 @@ if [ "$MODE" = filter ] || [ "$MODE" = dry ]; then
     act "$chip"
     sleep 1
   done
-  row=$(nth "$root" "TrackList::touch")
+  # 点筛过列表的最后一行:第一行多半是正在放的那首,点它被连点去重挡掉,换不了批。
+  # 走 tap 不走 act:列表行的 TouchArea 没挂无障碍默认动作,act 过去什么都不发生。
+  row=$(nth "$root" "TrackList::touch" -1)
   [ -n "$row" ] || { echo "$MODE: 失败 —— 选完「$CHIPS」列表空了,没歌可点(换 CHIPS 再试)" >&2; exit 1; }
-  act "$row"
+  tap "$row"
   for _ in $(seq 1 20); do
     sleep 1
     [ "$(queue_row)" != "$started" ] && break
