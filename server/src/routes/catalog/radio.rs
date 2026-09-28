@@ -6,13 +6,17 @@
 //! 会连着问,而连着问平台就是风控的靶子。问满了仍不够,交出已有的。
 //!
 //! 带着筛选来的(#166,电台区选了 chip 再点歌)在排除之后再按筛选过一道;
-//! 筛选越窄丢得越多,上限放到 [`MAX_FILTERED_PULLS`]。
+//! 筛选越窄丢得越多,上限放到 [`MAX_FILTERED_PULLS`]。筛选看歌词的话,
+//! 新歌多半还没探过,当场探一次(见 [`probe_lyrics`]),不等后台队列。
 
 use axum::{
     Json,
     extract::{Query, State},
 };
-use contract::{FacetPickDto, TrackDto, TracksDto};
+use contract::{
+    FacetDto, FacetPickDto, TrackDto, TracksDto,
+};
+use futures_util::StreamExt;
 use serde::Deserialize;
 
 use server::bangdream::{
@@ -25,8 +29,10 @@ use server::bangdream::{
 use server::error::{self, Failure};
 use server::store::account::Account;
 use server::store::history;
+use server::store::lyric::{self, LyricKind};
 use server::store::playlist::TrackRef;
 
+use super::lyric_probe;
 use super::search::remember_details;
 use crate::routes::library::for_account;
 use crate::routes::library::likes::netease_liked_id;
@@ -37,6 +43,13 @@ pub(crate) const MAX_PULLS: usize = 5;
 
 /// 带筛选时最多问几回。估的值(#166),按风控实测再调。
 pub(crate) const MAX_FILTERED_PULLS: usize = 10;
+
+/// 一次请求最多当场探几首的歌词。探歌词也是问平台,同样得有个顶。
+// ponytail: 按请求计的顶,并发电台多了要换成跨请求的限速(像后台 worker 那样)
+const MAX_PROBES: usize = 20;
+
+/// 当场探歌词时同时问几首。
+const PROBES_AT_ONCE: usize = 4;
 
 /// 攒到这么多首就不再问。私人 FM 一批通常 3 首,丢掉任何一首就再问一回。
 pub(crate) const ENOUGH: usize = 3;
@@ -124,6 +137,7 @@ pub(crate) async fn radio(
     };
 
     let mut picked: Vec<TrackDto> = Vec::new();
+    let mut probed: Vec<(String, LyricKind)> = Vec::new();
     for pull in 1..=max_pulls {
         let batch = source.pull(&state, &account).await?;
         let fetched = batch.len();
@@ -136,6 +150,18 @@ pub(crate) async fn radio(
         )
         .await?;
         let unheard = fresh.len();
+        let mut fresh = fresh;
+        let asked = probed.len();
+        if filter::wants_lyric(&picks) {
+            probe_lyrics(
+                &state,
+                &account,
+                &mut fresh,
+                &picks,
+                &mut probed,
+            )
+            .await;
+        }
         let kept: Vec<TrackDto> = fresh
             .into_iter()
             .filter(|track| filter::passes(track, &picks, None))
@@ -146,6 +172,7 @@ pub(crate) async fn radio(
             fetched,
             dropped = fetched - unheard,
             filtered = unheard - kept.len(),
+            probed = probed.len() - asked,
             "电台拉了一批"
         );
         picked.extend(kept);
@@ -154,6 +181,7 @@ pub(crate) async fn radio(
         }
     }
     remember_details(&state, &picked).await;
+    remember_lyrics(&state, &probed).await;
 
     // 聚合在每批进来时已经填过(电台区也要分组筛选,#160)。藏掉几首不报:
     // 电台本来就是挑剩下的,少的那几首换一批就补上了
@@ -163,6 +191,83 @@ pub(crate) async fn radio(
         hidden: 0,
     }))
 }
+
+/// 筛选要看歌词时,`tracks` 里还没探过、其余维度已经过了的当场探一次,
+/// 探到的标记写回曲目并记进 `probed`。一次请求一共最多探 [`MAX_PROBES`] 首;
+/// 探不到的留着 `None`,由筛选当「歌词未知」处理。
+async fn probe_lyrics(
+    state: &AppState,
+    account: &Account,
+    tracks: &mut [TrackDto],
+    picks: &[FacetPickDto],
+    probed: &mut Vec<(String, LyricKind)>,
+) {
+    let budget = MAX_PROBES.saturating_sub(probed.len());
+    let wanted: Vec<(usize, String)> = tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| {
+            track.facets.lyric_kind.is_none()
+                && filter::passes(
+                    track,
+                    picks,
+                    Some(FacetDto::Lyric),
+                )
+        })
+        .map(|(at, track)| (at, track.id.clone()))
+        .take(budget)
+        .collect();
+    let answers: Vec<(usize, String, Result<LyricKind, String>)> =
+        futures_util::stream::iter(wanted)
+            .map(|(at, id)| async move {
+                let kind =
+                    lyric_probe::ask(state, account, &id).await;
+                (at, id, kind)
+            })
+            .buffer_unordered(PROBES_AT_ONCE)
+            .collect()
+            .await;
+    for (at, id, kind) in answers {
+        match kind {
+            Ok(kind) => {
+                tracks[at].facets.lyric_kind =
+                    Some(kind.to_dto());
+                probed.push((id, kind));
+            }
+            Err(err) => {
+                tracing::warn!(track_id = %id, %err, "电台当场探歌词失败");
+            }
+        }
+    }
+}
+
+/// 当场探到的歌词标记落库。要在详情进了缓存之后:还没进缓存的歌没有行可写。
+/// 记不上只写日志 —— 后台队列迟早会再探一遍。
+async fn remember_lyrics(
+    state: &AppState,
+    probed: &[(String, LyricKind)],
+) {
+    if probed.is_empty() {
+        return;
+    }
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(err) => {
+            tracing::warn!(%err, "当场探的歌词标记记不上");
+            return;
+        }
+    };
+    for (id, kind) in probed {
+        if let Err(err) =
+            lyric::record(&mut conn, NETEASE, id, *kind).await
+        {
+            tracing::warn!(track_id = %id, ?err, "当场探的歌词标记记不上");
+        }
+    }
+}
+
+/// 电台只有网易云。
+const NETEASE: &str = "netease";
 
 impl Source {
     /// 平台红心歌单的 id,排除红心过的歌时认它在缓存里的那份。

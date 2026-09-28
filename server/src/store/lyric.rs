@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use contract::LyricKindDto;
 use sqlx::PgConnection;
 
 use crate::error::AppError;
@@ -30,6 +31,16 @@ impl LyricKind {
             Self::Instrumental => "instrumental",
             Self::Lyric => "lyric",
             Self::Translated => "translated",
+        }
+    }
+
+    /// 线上的那个取值。
+    pub fn to_dto(self) -> LyricKindDto {
+        match self {
+            Self::None => LyricKindDto::Missing,
+            Self::Instrumental => LyricKindDto::Instrumental,
+            Self::Lyric => LyricKindDto::Lyric,
+            Self::Translated => LyricKindDto::Translated,
         }
     }
 }
@@ -92,12 +103,23 @@ pub async fn settle(
     job: &Job,
     kind: LyricKind,
 ) -> Result<(), AppError> {
+    record(conn, &job.platform, &job.track_id, kind).await
+}
+
+/// 记下一首的标记,不管它在不在队列里(电台续歌时当场探的,#166)。
+/// 还不在缓存里的歌没有行可写,什么都不发生。
+pub async fn record(
+    conn: &mut PgConnection,
+    platform: &str,
+    track_id: &str,
+    kind: LyricKind,
+) -> Result<(), AppError> {
     sqlx::query(
         "UPDATE platform_tracks SET lyric_kind = $3
          WHERE platform = $1 AND track_id = $2",
     )
-    .bind(&job.platform)
-    .bind(&job.track_id)
+    .bind(platform)
+    .bind(track_id)
     .bind(kind.as_str())
     .execute(conn)
     .await?;

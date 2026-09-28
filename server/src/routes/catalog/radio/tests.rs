@@ -454,3 +454,69 @@ async fn a_garbled_filter_is_rejected() {
     );
     assert_eq!(fake.fm_pulls(), 0);
 }
+
+/// 筛「有歌词」:还没探过的当场探,有歌词的留下、纯音乐与探不到的丢掉,
+/// 探到的标记跟着详情进了缓存(#166)。
+#[tokio::test]
+async fn a_lyric_filter_probes_unknown_tracks_on_the_spot() {
+    use server::bangdream::proto::{Lyric, LyricLine};
+    use tonic::Code;
+
+    let case = "radio_fm_lyric";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = |n| track_id(case, n);
+    let sung = Lyric {
+        lines: vec![LyricLine {
+            text: "啦啦".to_owned(),
+            ..LyricLine::default()
+        }],
+        ..Lyric::default()
+    };
+
+    let fake = FakeUpstream {
+        lyrics: [
+            (id(1), Ok(sung.clone())),
+            (id(2), Ok(Lyric::default())),
+            (id(3), Err(Code::Unavailable)),
+            (id(4), Ok(sung)),
+        ]
+        .into(),
+        ..FakeUpstream::default()
+    };
+    fake.fm_batches.lock().unwrap().extend([vec![
+        upstream_track(&id(1), "有词"),
+        upstream_track(&id(2), "无词"),
+        upstream_track(&id(3), "探不到"),
+        upstream_track(&id(4), "有词"),
+    ]]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(
+        State(state),
+        account,
+        fm_filtered(r#"[{"facet":"lyric","label":"有歌词"}]"#),
+    )
+    .await
+    .expect("电台应该成功");
+
+    assert_eq!(ids(&response.0), vec![id(1), id(4)]);
+    let kinds: Vec<(String, String)> = sqlx::query_as(
+        "SELECT track_id, lyric_kind FROM platform_tracks
+         WHERE track_id = ANY($1) ORDER BY track_id",
+    )
+    .bind(ids(&response.0))
+    .fetch_all(&pool)
+    .await
+    .expect("读歌词标记");
+    assert_eq!(
+        kinds,
+        vec![
+            (id(1), "lyric".to_owned()),
+            (id(4), "lyric".to_owned())
+        ]
+    );
+}
