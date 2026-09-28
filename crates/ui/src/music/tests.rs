@@ -314,7 +314,15 @@ fn starting_a_track_shows_it_as_loading_right_away() {
     let (ui, deck) = deck_window();
     let batch =
         vec![track_with_id("a"), track_with_id("b")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
     ui.global::<Player>().set_is_playing(true);
 
@@ -356,7 +364,15 @@ fn starting_a_track_wipes_what_the_previous_one_left_behind()
  {
     let (ui, deck) = deck_window();
     let batch = vec![track_with_cover("a")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
 
     // 上一首留下的那一摊。
@@ -434,7 +450,15 @@ fn an_empty_queue_starts_nothing() {
 fn a_track_that_fails_to_start_clears_the_loading_state() {
     let (ui, deck) = deck_window_pumped();
     let batch = vec![track_with_id("a")];
-    *deck.tracks.borrow_mut() = batch.clone();
+    // 经 show 摆上去:列表的行由分组状态投影(#160),只写 deck.tracks 不上屏
+    show(
+        &ui,
+        &deck,
+        TracksDto {
+            tracks: batch.clone(),
+            unavailable: 0,
+        },
+    );
     deck.queue.borrow_mut().replace(batch, 0);
 
     play_current(&ui, &deck);

@@ -314,7 +314,7 @@ export component FacetBar inherits VerticalLayout {
 
     Flickable {
         height: root.row-height;
-        viewport-width: groups.preferred-width;
+        content-width: groups.preferred-width;
         groups := HorizontalLayout {
             spacing: 6px;
             filter-toggle := Pill {
@@ -336,7 +336,7 @@ export component FacetBar inherits VerticalLayout {
 
     if root.filters-open || Player.chosen-count > 0: Flickable {
         height: root.row-height;
-        viewport-width: chip-row.preferred-width;
+        content-width: chip-row.preferred-width;
         chip-row := HorizontalLayout {
             spacing: 6px;
             for chip[i] in Player.chips: chip-pill := Pill {
