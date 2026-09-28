@@ -111,17 +111,24 @@ pub async fn apply(
                 .map_err(refused)?;
         }
         Intent::Outputs { outputs, seed } => {
-            {
+            // 新点的设备不在线就拒;原来就在出声、此刻不在线的直接剔掉(#165):加入是在
+            // 组现有的出声设备上追加,离线的旧设备(换了 id 的开发实例、没人用的旧设备)
+            // 留在里面会让每一次加入都被拒。
+            let outputs: Vec<String> = {
                 let online =
                     roster.lock().expect("名册锁中毒");
+                let live = |id: &String| {
+                    online.device(account, id).is_some()
+                };
                 if outputs.iter().any(|id| {
-                    online.device(account, id).is_none()
+                    !live(id) && !group.outputs.contains(id)
                 }) {
                     return Err(AppError::Invalid(
                         "有设备不在线",
                     ));
                 }
-            }
+                outputs.into_iter().filter(live).collect()
+            };
             group.set_outputs(device, outputs);
             if let (None, Some(seed)) = (&group.now, seed) {
                 entries = queue::whole(
