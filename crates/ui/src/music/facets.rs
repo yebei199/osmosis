@@ -80,6 +80,11 @@ impl FacetState {
         }
     }
 
+    /// 选着的筛选。
+    pub(super) fn chosen(&self) -> &Chosen {
+        &self.chosen
+    }
+
     /// 点一首歌时排进队列的那一批。
     pub(super) fn batch(&self) -> Vec<TrackDto> {
         let order = if self.enabled {

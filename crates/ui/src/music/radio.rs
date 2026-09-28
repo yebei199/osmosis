@@ -3,8 +3,12 @@
 //! 电台不是另一套队列:起播就是一次普通点歌(整批进队列),续取是往同一批
 //! 队尾追加,再把新的一版发布到服务端。「还是不是电台在放」靠队列的批号认 ——
 //! 用户点了别的歌,队列换批,电台就不再往里续,不必另外记一个开关去关它。
+//! 例外是在电台区里点的(#166):那一批仍算电台的,选着的筛选成了电台的口味,
+//! 续进来的歌照它过滤(见 [`adopt`])。
 //!
 //! 在组里时点歌走组意图,本机队列不换批,电台因此不续(一起听不做特殊处理)。
+
+use app_core::FacetPickDto;
 
 use super::*;
 use crate::Shell;
@@ -25,6 +29,8 @@ struct State {
     mode: Option<api::RadioMode>,
     /// 电台起播的那一批的批号(`Queue::batch`)。
     batch: u64,
+    /// 续歌带的筛选。电台区里选了 chip 再点歌时记下(#166),开新电台时清空。
+    filter: Vec<FacetPickDto>,
     pulling: bool,
     retry_at_ms: u64,
 }
@@ -62,7 +68,7 @@ pub(super) fn start(
         let weak = weak.clone();
         let deck = deck.clone();
         async move {
-            let found = api::radio(&mode).await?;
+            let found = api::radio(&mode, &[]).await?;
             if let Some(ui) = weak.upgrade() {
                 begin(
                     &ui,
@@ -122,7 +128,7 @@ pub(super) fn open(ui: &MainWindow, deck: &Deck) {
 }
 
 /// 拿到的这一批起播,并记下它是电台的。
-fn begin(
+pub(super) fn begin(
     ui: &MainWindow,
     deck: &Deck,
     mode: api::RadioMode,
@@ -143,8 +149,41 @@ fn begin(
         let mut state = deck.radio.inner.borrow_mut();
         state.mode = Some(mode);
         state.batch = after;
+        state.filter.clear();
         state.retry_at_ms = 0;
     }
+}
+
+/// 在电台区点了一首(#166):换出来的这一批仍是电台的,选着的筛选记下来,
+/// 续歌时带给服务端。`before` 是点之前的批号;没换批(组里走了组意图、
+/// 连点被去重)或者电台从没开过,就什么都不做。
+pub(super) fn adopt(deck: &Deck, before: u64) {
+    let after = deck.queue.borrow().batch();
+    if after == before
+        || deck.views.current_source()
+            != Some(ViewSource::Radio)
+    {
+        return;
+    }
+    let filter = app_core::facets::picks(
+        deck.facets.borrow().chosen(),
+    );
+    let mut state = deck.radio.inner.borrow_mut();
+    if state.mode.is_none() {
+        return;
+    }
+    state.batch = after;
+    state.filter = filter;
+    state.retry_at_ms = 0;
+}
+
+/// 电台还在放的话,它续歌带的筛选;不在放是 `None`。
+#[cfg(test)]
+pub(super) fn taste(
+    deck: &Deck,
+) -> Option<Vec<FacetPickDto>> {
+    owns_batch(deck)
+        .then(|| deck.radio.inner.borrow().filter.clone())
 }
 
 /// 队列还是电台起播的那一批。
@@ -171,13 +210,17 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
         return;
     }
     let Some(mode) = next_mode(deck) else { return };
-    deck.radio.inner.borrow_mut().pulling = true;
+    let filter = {
+        let mut state = deck.radio.inner.borrow_mut();
+        state.pulling = true;
+        state.filter.clone()
+    };
 
     let batch = deck.queue.borrow().batch();
     let deck = deck.clone();
     let weak = ui.as_weak();
     slint::spawn_local(async move {
-        let found = api::radio(&mode).await;
+        let found = api::radio(&mode, &filter).await;
         let mut added = 0;
         match found {
             // 等的这几秒里用户点了别的歌:这一批不是它的了,扔掉

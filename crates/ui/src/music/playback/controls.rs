@@ -34,11 +34,13 @@ pub(in crate::music) fn bind_play(
             return;
         };
 
+        let before = deck.queue.borrow().batch();
         dispatch(
             &ui,
             &deck,
             Intent::Play { tracks, index },
         );
+        crate::music::radio::adopt(&deck, before);
     });
 }
 
