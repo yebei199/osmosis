@@ -12,6 +12,7 @@ fn dto(id: &str) -> TrackDto {
         cover: None,
         duration_ms: 1,
         album: None,
+        facets: Default::default(),
     }
 }
 

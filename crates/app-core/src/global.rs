@@ -188,6 +188,7 @@ mod tests {
             cover: None,
             duration_ms: 100_000,
             album: None,
+            facets: Default::default(),
         }
     }
 

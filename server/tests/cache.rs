@@ -65,6 +65,7 @@ pub(crate) fn track(id: &str, title: &str) -> TrackDto {
         cover: None,
         duration_ms: 200_000,
         album: None,
+        facets: Default::default(),
     }
 }
 

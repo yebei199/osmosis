@@ -24,6 +24,7 @@ use server::store::cache;
 use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
+use crate::routes::library::with_facets;
 use crate::routes::play::prefetch;
 use crate::{AppState, fail};
 
@@ -134,14 +135,25 @@ pub(crate) async fn artist_tracks(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    Ok(Json(TracksDto {
-        tracks: response
-            .hot_tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
-        unavailable: 0,
-    }))
+    let tracks: Vec<_> = response
+        .hot_tracks
+        .into_iter()
+        .map(bangdream::track_to_dto)
+        .collect();
+    // 只写详情、不写成员关系:专辑与歌词标记挂在详情那一行上(#160)
+    remember_details(&state, &tracks).await;
+
+    Ok(Json(
+        with_facets(
+            &state,
+            account.id,
+            TracksDto {
+                tracks,
+                unavailable: 0,
+            },
+        )
+        .await,
+    ))
 }
 
 /// `GET /search/playlists?q=华语` —— 搜歌单。
@@ -217,10 +229,17 @@ pub(crate) async fn daily(
     remember_daily(&state, account.id, &refs).await;
     prefetch::enqueue(&state, account.id, &refs).await;
 
-    Ok(Json(TracksDto {
-        tracks,
-        unavailable: 0,
-    }))
+    Ok(Json(
+        with_facets(
+            &state,
+            account.id,
+            TracksDto {
+                tracks,
+                unavailable: 0,
+            },
+        )
+        .await,
+    ))
 }
 
 /// 把列表里出现的曲目详情写进 `platform_tracks`(#156):分类视图要的专辑、

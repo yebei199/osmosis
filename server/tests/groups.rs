@@ -113,6 +113,7 @@ fn track(id: &str) -> TrackDto {
         cover: None,
         duration_ms: 200_000,
         album: None,
+        facets: Default::default(),
     }
 }
 

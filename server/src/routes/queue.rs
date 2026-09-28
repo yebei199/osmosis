@@ -327,6 +327,7 @@ fn as_entry(entry: Entry) -> QueueEntryDto {
             cover: entry.cover,
             duration_ms: entry.duration_ms,
             album: None,
+            facets: Default::default(),
         },
     }
 }

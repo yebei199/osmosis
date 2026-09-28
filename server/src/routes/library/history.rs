@@ -21,6 +21,8 @@ use server::store::history;
 use server::store::playlist::TrackRef;
 
 use super::likes::PageQuery;
+use super::with_facets;
+use crate::routes::catalog::search::remember_details;
 use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
 
@@ -124,14 +126,25 @@ pub(crate) async fn recent(
         .map_err(|status| fail(&status))?
         .into_inner();
 
-    Ok(Json(TracksDto {
-        tracks: response
-            .tracks
-            .into_iter()
-            .map(bangdream::track_to_dto)
-            .collect(),
-        unavailable: 0,
-    }))
+    let tracks: Vec<_> = response
+        .tracks
+        .into_iter()
+        .map(bangdream::track_to_dto)
+        .collect();
+    // 专辑与歌词标记挂在详情那一行上,最近播放也得写(#160)
+    remember_details(&state, &tracks).await;
+
+    Ok(Json(
+        with_facets(
+            &state,
+            account.id,
+            TracksDto {
+                tracks,
+                unavailable: 0,
+            },
+        )
+        .await,
+    ))
 }
 
 /// `GET /stats`:收听统计,从播放事件流查询时聚合(见 `history` 模块)。

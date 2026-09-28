@@ -687,6 +687,7 @@ fn track_of(entry: &Entry) -> TrackDto {
         cover: entry.cover.clone(),
         duration_ms: entry.duration_ms,
         album: None,
+        facets: Default::default(),
     }
 }
 

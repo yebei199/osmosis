@@ -125,4 +125,21 @@ mod tests {
             "没提这件事就是一首都没少"
         );
     }
+
+    /// 聚合是默认值时不上线,旧报文(没有 facets)照样解得开(#160)。
+    #[test]
+    fn empty_facets_stay_off_the_wire() {
+        let old = r#"{"platform":"netease","id":"1","title":"曲","alias":null,
+            "artists":[],"cover":null,"duration_ms":1}"#;
+        let track: TrackDto = serde_json::from_str(old)
+            .expect("没有 facets 的旧报文该解得开");
+
+        assert!(track.facets.is_empty());
+        assert!(
+            !serde_json::to_string(&track)
+                .expect("序列化")
+                .contains("facets"),
+            "默认值不该占信令的额度"
+        );
+    }
 }

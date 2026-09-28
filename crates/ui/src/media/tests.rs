@@ -22,6 +22,7 @@ mod helpers {
             cover: Some(format!("https://cdn/{id}.jpg")),
             duration_ms: 240_000,
             album: None,
+            facets: Default::default(),
         }
     }
 

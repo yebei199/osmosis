@@ -33,6 +33,70 @@ pub struct TrackDto {
     /// `serde(default)`:老服务端的响应里没有这个字段,新客户端照样解得开。
     #[serde(default)]
     pub album: Option<AlbumRefDto>,
+    /// 这个账号对这首歌的聚合:听过几次、赞踩、跳过率、歌词标记、标签(#160)。
+    ///
+    /// 只有歌单类接口填它,其余路径(搜索、队列、信令)给默认值,且默认值不上线 ——
+    /// 信令有大小上限,没意义的零不该占那份额度。
+    #[serde(
+        default,
+        skip_serializing_if = "TrackFacetsDto::is_empty"
+    )]
+    pub facets: TrackFacetsDto,
+}
+
+/// 歌单视图分组与筛选要的那几样(#160)。都是这个账号自己的,不是平台的。
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
+#[serde(default)]
+pub struct TrackFacetsDto {
+    /// 起播过几次。
+    pub play_count: u32,
+    /// `1` 赞,`-1` 踩,没表态是 `None`。
+    pub verdict: Option<i16>,
+    /// 跳过率,百分数取整。没有一次记下了听多久的播放就是 `None` ——
+    /// 算不出来不等于 0%。口径在服务端 `store::facets`。
+    pub skip_rate: Option<u8>,
+    /// 有没有歌词。还没探过是 `None`。
+    pub lyric_kind: Option<LyricKindDto>,
+    /// 打上的标签名。
+    pub tags: Vec<String>,
+}
+
+impl TrackFacetsDto {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+/// 一首歌有没有歌词(#156 探出来的标记)。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricKindDto {
+    /// 平台没有歌词。
+    #[serde(rename = "none")]
+    Missing,
+    /// 平台标了纯音乐。
+    Instrumental,
+    /// 有原文歌词。
+    Lyric,
+    /// 有歌词,还带翻译。
+    Translated,
 }
 
 /// 曲目里内嵌的专辑:只有身份与名字,够分组、够点进去。
