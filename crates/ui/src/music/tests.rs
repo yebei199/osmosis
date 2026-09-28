@@ -811,3 +811,16 @@ fn search_results_are_not_grouped() {
     assert!(!ui.global::<Player>().get_facets_enabled());
     assert_eq!(shown_ids(&ui), vec!["a", "b", "c"]);
 }
+
+/// 电台区也是歌单视图(主路由确认):挂分组条,分组作用在它上面。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_radio_list_is_grouped_too() {
+    let (ui, _deck) = faceted_window(ViewSource::Radio);
+
+    assert!(ui.global::<Player>().get_facets_enabled());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
+    assert_eq!(ui.global::<Player>().get_pile_count(), 3);
+}

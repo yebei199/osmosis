@@ -34,15 +34,9 @@ pub(super) struct FacetState {
 
 pub(super) type Facets = Rc<RefCell<FacetState>>;
 
-/// 哪些视图算歌单:日推、最近、歌单、歌手。搜索结果与电台不是。
+/// 哪些视图算歌单:日推、最近、电台、歌单、歌手。搜索结果不是(#160,主路由确认)。
 pub(super) fn supports(source: &ViewSource) -> bool {
-    matches!(
-        source,
-        ViewSource::Daily
-            | ViewSource::Recent
-            | ViewSource::Playlist(..)
-            | ViewSource::Artist(_)
-    )
+    !matches!(source, ViewSource::Search(_))
 }
 
 impl FacetState {

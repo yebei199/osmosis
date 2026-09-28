@@ -370,12 +370,13 @@ export component MusicPage inherits VerticalLayout {
             }
 
             // 分组条与筛选(#160):凡是摆一批歌单类曲目的地方都有 —— 日推、最近、
-            // 某个歌单、某位歌手。搜索与电台不是歌单,不挂。卡墙在它下面,
+            // 电台、某个歌单、某位歌手。搜索结果不是歌单,不挂。卡墙在它下面,
             // 于是卡墙也能筛;选了分组 Rust 会把卡墙切回列表。
             if Player.facets-enabled
                 && (Library.open-playlist-name != ""
                     || Shell.music-section == 0
-                    || Shell.music-section == 3):
+                    || Shell.music-section == 3
+                    || Shell.music-section == 4):
             facet-bar := FacetBar { }
 
             // 墙只在每日推荐分区才有东西可摆。别处也实例化的话,
