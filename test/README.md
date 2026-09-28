@@ -164,6 +164,20 @@ PORT=8090 test/radio-e2e.sh fm   # 真机
 前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
 的那一版,网易云要绑着。
 
+## blocks-e2e.sh —— 屏蔽的歌真的藏起来、跳过去了吗(#161)
+
+```sh
+test/blocks-e2e.sh radio      # 红心一首、踩一首,心动再拉一批,两首都不在
+test/blocks-e2e.sh outlets    # 屏蔽一位歌手:本地歌单、日推、电台里都没有他;删规则回来
+test/blocks-e2e.sh queue      # 放日推,长按第二首「屏蔽此曲」,按「下一首」跳过它
+test/blocks-e2e.sh settings   # 设置页「已屏蔽」点「恢复」
+PORT=8090 test/blocks-e2e.sh queue   # 真机
+```
+
+radio 与 outlets 走 HTTP:拿 `.env` 的 `TEST_USERNAME` / `TEST_PASSWORD` 登本机后端,
+断言看响应与库。queue 与 settings 走 MCP,断言看 `block_rules` 的行数、`play_events`
+里有没有被屏蔽的那首。服务端连的不是 `osmosis` 库时用 `PG_DB` 指过去。
+
 ## pick-bench.py —— 点一首歌到出声花了多久(#137)
 
 前提同 `pick-e2e.sh`。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。

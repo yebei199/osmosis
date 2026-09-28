@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 mod account;
+mod block;
 mod catalog;
 mod download;
 mod feedback;
@@ -20,6 +21,7 @@ mod sync;
 mod tag;
 
 pub use account::*;
+pub use block::*;
 pub use catalog::*;
 pub use download::*;
 pub use feedback::*;

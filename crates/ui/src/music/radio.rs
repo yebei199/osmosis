@@ -245,6 +245,7 @@ fn republish(ui: &MainWindow, deck: &Deck) {
         TracksDto {
             tracks,
             unavailable: 0,
+            hidden: 0,
         },
         true,
     );

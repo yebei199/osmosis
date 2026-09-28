@@ -121,6 +121,9 @@ pub struct SearchDto {
     pub tracks: Vec<TrackDto>,
     /// 还有没有下一页。翻页由客户端持有 offset 自行推进。
     pub has_more: bool,
+    /// 这一页里命中屏蔽规则、没给出来的有几首(#161)。
+    #[serde(default)]
+    pub hidden: usize,
 }
 
 /// 一个歌手。
@@ -179,6 +182,10 @@ pub struct TracksDto {
     /// 报文没有这个字段,不能因此整条解不出来。
     #[serde(default)]
     pub unavailable: usize,
+    /// 命中屏蔽规则、因此没给出来的有几首(#161)。报出来的理由同上:
+    /// 不说一声,用户会以为歌单对不上网易云、或者搜不到。
+    #[serde(default)]
+    pub hidden: usize,
 }
 
 /// `GET /play/{track_id}` 的响应体:一次取到的可播放源。

@@ -38,6 +38,7 @@ mod history;
 
 mod netease;
 
+mod blocks;
 mod playlists;
 mod queue;
 mod tags;
@@ -120,6 +121,8 @@ pub use playlists::{
     playlists, remove_playlist_tracks, rename_playlist,
     set_liked, set_subscribed,
 };
+
+pub use blocks::{blocks, create_block, delete_block};
 
 pub use tags::{
     create_tag, delete_tag, rename_tag, set_track_tag,

@@ -1,4 +1,4 @@
-import { PlaylistRow, ArtistRow, TagRow } from "../types.slint";
+import { PlaylistRow, ArtistRow, TagRow, BlockRow } from "../types.slint";
 
 // 曲库那一面:我的歌单、歌单详情的写操作、搜索结果与红心。
 //
@@ -93,6 +93,23 @@ export global Library {
     // 新建一个标签并立刻打到当前这首歌上。文本由回调带出来 ——
     // 输入框在 `if` 里,Rust 引用不到它。
     callback create-track-tag(string);
+
+    // ── 屏蔽规则(#161) ──
+    // 当前详情页是哪位歌手的热门曲目。空串 = 不是歌手页。只有它与
+    // open-playlist-name 对得上时才出「屏蔽该歌手」:点开歌单时名字就换了。
+    in-out property <string> open-artist-name: "";
+    // 屏蔽这一首 / 这位歌手 / 这个标签。单曲带上标题,设置页要靠它说出是哪首歌。
+    callback block-track(string, string);
+    callback block-artist(string);
+    callback block-tag(string);
+    // 菜单里点「屏蔽 tag…」开的那个选择器。列的是 all-tags,与标签选择器共用
+    // 那一张表(开之前同样喊一次 open-tag-picker 把它填上)。
+    in-out property <bool> block-tag-picker-open: false;
+    // 设置页「已屏蔽」那一列,以及点「恢复」删掉其中一条。
+    in property <[BlockRow]> blocks: [];
+    callback unblock(string);
+    // 重拉一次规则。设置页打开时喊:登录前拉的那次不带 token。
+    callback refresh-blocks();
 
     // 点某一行的红心。参数是曲目 id 与点完之后的状态。
     callback toggle-liked(string, bool);

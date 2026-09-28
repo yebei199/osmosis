@@ -20,8 +20,8 @@ use server::store::account::Account;
 use server::store::history;
 use server::store::playlist::TrackRef;
 
+use super::for_account;
 use super::likes::PageQuery;
-use super::with_facets;
 use crate::routes::catalog::search::remember_details;
 use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
@@ -104,6 +104,7 @@ pub(crate) async fn recent(
         return Ok(Json(TracksDto {
             tracks: Vec::new(),
             unavailable: 0,
+            hidden: 0,
         }));
     }
 
@@ -135,12 +136,13 @@ pub(crate) async fn recent(
     remember_details(&state, &tracks).await;
 
     Ok(Json(
-        with_facets(
+        for_account(
             &state,
             account.id,
             TracksDto {
                 tracks,
                 unavailable: 0,
+                hidden: 0,
             },
         )
         .await,

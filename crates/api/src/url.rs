@@ -130,6 +130,14 @@ pub(crate) fn subscription_url(
     )
 }
 
+pub(crate) fn blocks_url() -> String {
+    format!("{}/blocks", base_url())
+}
+
+pub(crate) fn block_url(id: &str) -> String {
+    format!("{}/{}", blocks_url(), encode_component(id))
+}
+
 pub(crate) fn tags_url() -> String {
     format!("{}/tags", base_url())
 }

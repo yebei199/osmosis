@@ -8,6 +8,7 @@
 //! 需要网络的地方由调用方**注入**一个返回 future 的闭包 —— 见 [`health::refresh`]。
 //! 这既让本 crate 可以脱离网络单测,也让它不必依赖 `api`。
 
+pub mod blocks;
 mod counter;
 pub mod facets;
 mod global;
@@ -25,11 +26,11 @@ pub use queue::{LoopMode, Queue};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{
-    AlbumRefDto, ArtistDto, DeviceDto, DeviceReportDto,
-    GroupNowDto, GroupPickDto, GroupSeedDto, GroupStateDto,
-    HealthDto, LoopModeDto, LyricDto, LyricKindDto,
-    LyricLineDto, MAX_SIGNAL_BYTES, NextEntryDto,
-    OutputRouteDto, PlaylistDto, PlaylistSource,
-    RemotePlayState, TagDto, TagSource, TrackDto,
-    TrackFacetsDto, TracksDto, TransportOpDto,
+    AlbumRefDto, ArtistDto, BlockKind, BlockRuleDto,
+    DeviceDto, DeviceReportDto, GroupNowDto, GroupPickDto,
+    GroupSeedDto, GroupStateDto, HealthDto, LoopModeDto,
+    LyricDto, LyricKindDto, LyricLineDto, MAX_SIGNAL_BYTES,
+    NextEntryDto, OutputRouteDto, PlaylistDto,
+    PlaylistSource, RemotePlayState, TagDto, TagSource,
+    TrackDto, TrackFacetsDto, TracksDto, TransportOpDto,
 };

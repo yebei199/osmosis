@@ -763,7 +763,9 @@ export component MainWindow inherits Window {
         // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
         // 关掉」也正是靠这一整块接住的。只有一项是有意的 —— 这一期就下载一件事,
         // 为它先造一套通用菜单,是给一个不存在的第二项付账。
-        if Library.track-menu-id != "" && !Library.tag-picker-open: track-menu := Rectangle {
+        if Library.track-menu-id != ""
+            && !Library.tag-picker-open
+            && !Library.block-tag-picker-open: track-menu := Rectangle {
             width: 100%;
             height: 100%;
             background: #000000.with-alpha(0.5);
@@ -855,6 +857,148 @@ export component MainWindow inherits Window {
                                 ? Theme.accent-text : Theme.text;
                             vertical-alignment: center;
                             horizontal-alignment: center;
+                        }
+                    }
+
+                    // 屏蔽(#161):屏蔽是规则,不是踩。命中的歌在所有列表里隐藏,
+                    // 队列与电台跳过;设置页「已屏蔽」里能恢复。
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 10px;
+                        background: block-track-touch.has-hover
+                            ? Theme.accent : Theme.overlay-weak;
+                        animate background { duration: 140ms; easing: ease-out; }
+
+                        block-track-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            accessible-role: button;
+                            accessible-label: "屏蔽此曲";
+                            accessible-action-default => { block-track-touch.clicked(); }
+                            clicked => {
+                                Library.block-track(Library.track-menu-id, Library.track-menu-title);
+                                Library.track-menu-id = "";
+                            }
+                        }
+
+                        Text {
+                            text: "屏蔽此曲";
+                            font-family: "Maple Mono NF CN";
+                            font-size: 14px;
+                            color: block-track-touch.has-hover
+                                ? Theme.accent-text : Theme.text;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // 选哪个标签来屏蔽。列表与标签选择器同一张 all-tags,
+                    // 开之前一样先喊 open-tag-picker 把它填上。
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 10px;
+                        background: block-tag-touch.has-hover
+                            ? Theme.accent : Theme.overlay-weak;
+                        animate background { duration: 140ms; easing: ease-out; }
+
+                        block-tag-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            accessible-role: button;
+                            accessible-label: "屏蔽标签";
+                            accessible-action-default => { block-tag-touch.clicked(); }
+                            clicked => {
+                                Library.open-tag-picker();
+                                Library.block-tag-picker-open = true;
+                            }
+                        }
+
+                        Text {
+                            text: "屏蔽 tag…";
+                            font-family: "Maple Mono NF CN";
+                            font-size: 14px;
+                            color: block-tag-touch.has-hover
+                                ? Theme.accent-text : Theme.text;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 屏蔽哪个标签(#161) ──
+        //
+        // 点一行就建一条标签规则并关掉。与标签选择器同一个外形,但不勾选:
+        // 屏蔽是一下子的决定,撤销在设置页「已屏蔽」里。
+        if Library.block-tag-picker-open: block-tag-picker := Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #000000.with-alpha(0.5);
+
+            TouchArea {
+                clicked => {
+                    Library.block-tag-picker-open = false;
+                    Library.track-menu-id = "";
+                }
+            }
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width - 48px, 360px);
+                height: min(parent.height - 96px, block-tag-body.preferred-height + 28px);
+                background: Theme.surface;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.overlay;
+
+                TouchArea { }
+
+                block-tag-body := VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "屏蔽哪个标签";
+                        font-size: 14px;
+                        color: Theme.text-dim;
+                    }
+
+                    if Library.all-tags.length == 0: Text {
+                        text: "还没有标签";
+                        font-size: 13px;
+                        color: Theme.text-faint;
+                    }
+
+                    ListView {
+                        height: min(Library.all-tags.length * 44px, 220px);
+
+                        for row[i] in Library.all-tags: Rectangle {
+                            height: 40px;
+                            border-radius: 8px;
+                            background: block-row-touch.has-hover ? Theme.overlay-weak : transparent;
+
+                            block-row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: "屏蔽标签 " + row.name;
+                                accessible-action-default => { block-row-touch.clicked(); }
+                                clicked => {
+                                    Library.block-tag(row.name);
+                                    Library.block-tag-picker-open = false;
+                                    Library.track-menu-id = "";
+                                }
+                            }
+
+                            Text {
+                                x: 8px;
+                                width: parent.width - 16px;
+                                height: parent.height;
+                                text: row.name;
+                                color: Theme.text;
+                                font-size: 14px;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
                         }
                     }
                 }

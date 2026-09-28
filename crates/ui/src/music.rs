@@ -114,6 +114,9 @@ struct Deck {
     /// 哪些歌在红心里。服务端给的曲目不带这个字段(那要让每个列表接口都多问
     /// 一次上游),所以取一次全量标识存成集合,推行时本地比对(见 crate::library::liked)。
     liked: crate::library::liked::LikedSet,
+    /// 屏蔽规则(#161)。列表的隐藏在服务端,这份只管已经装进队列的歌:
+    /// 前进到命中的那首时跳过(见 `playback::advance`)。
+    blocks: crate::library::block::BlockSet,
     /// 正在编辑哪个歌单,以及打开它之前列表里摆的那一批歌。
     /// 后者是「把刚才那批加进来」的唯一来源 —— 进歌单那一刻 `tracks`
     /// 就被换掉了(见 crate::library::playlist::Editing)。
@@ -220,6 +223,7 @@ pub fn bind(
         views: Views::default(),
         facets: Default::default(),
         liked: crate::library::liked::LikedSet::default(),
+        blocks: crate::library::block::BlockSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),
         artwork: crate::imagery::artwork::Artwork::default(
@@ -247,6 +251,15 @@ pub fn bind(
     crate::library::liked::bind(ui, &deck.liked);
     crate::library::liked::refresh(&deck.liked, ui);
     crate::library::tag::bind(ui);
+    // 屏蔽规则(#161):建、删之后重取当前视图,隐藏在服务端出口生效
+    let reviewing = deck.clone();
+    crate::library::block::bind(
+        ui,
+        &deck.blocks,
+        move |ui| {
+            reload_view(ui, &reviewing);
+        },
+    );
     // 赞踩(#157):独立于红心,只投影当前这一首。
     crate::library::feedback::bind(ui);
 

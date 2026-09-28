@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod archive;
+pub mod blocks;
 pub mod cache;
 pub mod daily;
 pub mod db;

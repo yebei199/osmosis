@@ -54,6 +54,9 @@ use routes::catalog::search::{
     artist_tracks, daily, search_artists, search_playlists,
     search_tracks,
 };
+use routes::library::blocks::{
+    create_block, delete_block, list_blocks,
+};
 use routes::library::feedback::{
     clear_feedback, get_feedback, set_feedback,
 };
@@ -626,6 +629,15 @@ async fn main() {
         .route(
             "/tracks/{platform}/{track_id}/tags",
             get(track_tags),
+        )
+        // 屏蔽规则(#161):命中的歌在所有列表里隐藏,队列与电台跳过
+        .route(
+            "/blocks",
+            get(list_blocks).post(create_block),
+        )
+        .route(
+            "/blocks/{id}",
+            axum::routing::delete(delete_block),
         )
         // 网易云绑定。凭据按账号分片(docs/adr/0017),所以这几条都要登录态 ——
         // 提取器给出的账号正是上游用来分片的那个键。

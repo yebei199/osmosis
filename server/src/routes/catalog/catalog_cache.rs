@@ -100,6 +100,7 @@ async fn stored(
     Ok(TracksDto {
         tracks,
         unavailable,
+        hidden: 0,
     })
 }
 

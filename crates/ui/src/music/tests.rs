@@ -321,6 +321,7 @@ fn starting_a_track_shows_it_as_loading_right_away() {
         TracksDto {
             tracks: batch.clone(),
             unavailable: 0,
+            hidden: 0,
         },
     );
     deck.queue.borrow_mut().replace(batch, 0);
@@ -371,6 +372,7 @@ fn starting_a_track_wipes_what_the_previous_one_left_behind()
         TracksDto {
             tracks: batch.clone(),
             unavailable: 0,
+            hidden: 0,
         },
     );
     deck.queue.borrow_mut().replace(batch, 0);
@@ -457,6 +459,7 @@ fn a_track_that_fails_to_start_clears_the_loading_state() {
         TracksDto {
             tracks: batch.clone(),
             unavailable: 0,
+            hidden: 0,
         },
     );
     deck.queue.borrow_mut().replace(batch, 0);
@@ -540,6 +543,7 @@ fn batch(ids: &[&str]) -> TracksDto {
             .map(|id| track_with_id(id))
             .collect(),
         unavailable: 0,
+        hidden: 0,
     }
 }
 
@@ -665,6 +669,7 @@ fn faceted_batch() -> TracksDto {
     TracksDto {
         tracks: vec![a, b, c],
         unavailable: 0,
+        hidden: 0,
     }
 }
 
