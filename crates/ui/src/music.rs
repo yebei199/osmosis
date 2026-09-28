@@ -240,6 +240,7 @@ pub fn bind(
     // 真正生效的是之后每次 push_rows 里的那次重标。
     crate::library::liked::bind(ui, &deck.liked);
     crate::library::liked::refresh(&deck.liked, ui);
+    crate::library::tag::bind(ui);
     // 赞踩(#157):独立于红心,只投影当前这一首。
     crate::library::feedback::bind(ui);
 

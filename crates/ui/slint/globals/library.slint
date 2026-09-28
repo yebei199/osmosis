@@ -1,4 +1,4 @@
-import { PlaylistRow, ArtistRow } from "../types.slint";
+import { PlaylistRow, ArtistRow, TagRow } from "../types.slint";
 
 // 曲库那一面:我的歌单、歌单详情的写操作、搜索结果与红心。
 //
@@ -78,6 +78,21 @@ export global Library {
     in-out property <string> track-menu-title: "";
     // 把这一首下到本机(统一 mp3)。参数是曲目 id。
     callback download-track(string);
+
+    // ── 标签选择器(#158) ──
+    // 菜单里点「标签…」触发。Rust 借 track-menu-id 知道是哪一首,
+    // 拉这个账号的全部标签、这首歌已经打了哪些,填进 all-tags 再开选择器。
+    callback open-tag-picker();
+    in-out property <bool> tag-picker-open: false;
+    // 每一行带着「这首歌打没打」这一位,选择器直接按它画勾选状态,
+    // 不必再让界面去比对两张表。
+    in property <[TagRow]> all-tags: [];
+    // 勾选/取消勾选某一行。参数是标签 id 与勾完之后的状态,
+    // 与 toggle-liked 同一条理由:让 Rust 再猜一遍当前状态,两边就有了两个真相源。
+    callback toggle-track-tag(string, bool);
+    // 新建一个标签并立刻打到当前这首歌上。文本由回调带出来 ——
+    // 输入框在 `if` 里,Rust 引用不到它。
+    callback create-track-tag(string);
 
     // 点某一行的红心。参数是曲目 id 与点完之后的状态。
     callback toggle-liked(string, bool);

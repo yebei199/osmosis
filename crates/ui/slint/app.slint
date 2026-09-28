@@ -17,7 +17,7 @@ import "../fonts/figtree-700.ttf";
 import "../fonts/dm-mono.ttf";
 
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
-import { LineEdit, Palette } from "std-widgets.slint";
+import { LineEdit, ListView, Palette } from "std-widgets.slint";
 
 // 玻璃拟态:供 Home / Server 页透出颜色的极光背景,以及装内容的玻璃卡片。
 import { AuroraBackground, GlassCard } from "glass.slint";
@@ -763,7 +763,7 @@ export component MainWindow inherits Window {
         // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
         // 关掉」也正是靠这一整块接住的。只有一项是有意的 —— 这一期就下载一件事,
         // 为它先造一套通用菜单,是给一个不存在的第二项付账。
-        if Library.track-menu-id != "": track-menu := Rectangle {
+        if Library.track-menu-id != "" && !Library.tag-picker-open: track-menu := Rectangle {
             width: 100%;
             height: 100%;
             background: #000000.with-alpha(0.5);
@@ -824,6 +824,176 @@ export component MainWindow inherits Window {
                                 ? Theme.accent-text : Theme.text;
                             vertical-alignment: center;
                             horizontal-alignment: center;
+                        }
+                    }
+
+                    // 标签(#158):打开选择器之前先把菜单藏起来,track-menu-id
+                    // 留着不清 —— 选择器就靠它知道现在打的是哪一首。
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 10px;
+                        background: tag-touch.has-hover
+                            ? Theme.accent : Theme.overlay-weak;
+                        animate background { duration: 140ms; easing: ease-out; }
+
+                        tag-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            accessible-role: button;
+                            accessible-label: "标签";
+                            accessible-action-default => { tag-touch.clicked(); }
+                            clicked => {
+                                Library.open-tag-picker();
+                                Library.tag-picker-open = true;
+                            }
+                        }
+
+                        Text {
+                            text: "标签…";
+                            font-family: "Maple Mono NF CN";
+                            font-size: 14px;
+                            color: tag-touch.has-hover
+                                ? Theme.accent-text : Theme.text;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 标签选择器(#158) ──
+        //
+        // 打的是 track-menu-id 那一首:开票的是「标签…」那一下,菜单藏起来但
+        // track-menu-id 没清,退出这个选择器时才连它一起清掉。
+        if Library.tag-picker-open: tag-picker := Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #000000.with-alpha(0.5);
+
+            TouchArea {
+                clicked => {
+                    Library.tag-picker-open = false;
+                    Library.track-menu-id = "";
+                }
+            }
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width - 48px, 360px);
+                height: min(parent.height - 96px, picker-body.preferred-height + 28px);
+                background: Theme.surface;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.overlay;
+
+                TouchArea { }
+
+                picker-body := VerticalLayout {
+                    padding: 14px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "标签 · " + Library.track-menu-title;
+                        font-size: 14px;
+                        color: Theme.text-dim;
+                        overflow: elide;
+                    }
+
+                    tag-list := ListView {
+                        height: min(Library.all-tags.length * 44px, 220px);
+
+                        for row[i] in Library.all-tags: Rectangle {
+                            height: 40px;
+
+                            row-touch := TouchArea {
+                                accessible-role: checkbox;
+                                accessible-label: row.name;
+                                accessible-checkable: true;
+                                accessible-checked: row.applied;
+                                accessible-action-default => { row-touch.clicked(); }
+                                clicked => {
+                                    Library.toggle-track-tag(row.id, !row.applied);
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 4px;
+                                padding-right: 4px;
+                                spacing: 8px;
+
+                                // 勾选框:矢量图标,不用 Unicode 符号 —— ☐ 在安卓字体里没有,
+                                // ☑ 又被 emoji 字体接走,两端画出来的东西对不上(#158 F-001)。
+                                // 与抽屉那排图标芯片同一种做法:关着透底描边,开着填强调色。
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        border-radius: 4px;
+                                        background: row.applied ? Theme.accent : transparent;
+                                        border-width: 1.5px;
+                                        border-color: row.applied ? Theme.accent : Theme.overlay;
+                                        animate background, border-color { duration: 140ms; easing: ease-out; }
+
+                                        if row.applied: Path {
+                                            width: 12px;
+                                            height: 12px;
+                                            viewbox-width: 24;
+                                            viewbox-height: 24;
+                                            commands: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
+                                            fill: Theme.accent-text;
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: row.name;
+                                    color: Theme.text;
+                                    font-size: 14px;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        new-tag-name := LineEdit {
+                            horizontal-stretch: 1;
+                            placeholder-text: "新建标签";
+                            accepted => {
+                                Library.create-track-tag(self.text);
+                                self.text = "";
+                            }
+                        }
+                        Rectangle {
+                            width: 56px;
+                            border-radius: 10px;
+                            background: create-tag-touch.has-hover
+                                ? Theme.accent : Theme.overlay-weak;
+
+                            create-tag-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                accessible-role: button;
+                                accessible-label: "新建";
+                                accessible-action-default => { create-tag-touch.clicked(); }
+                                clicked => {
+                                    Library.create-track-tag(new-tag-name.text);
+                                    new-tag-name.text = "";
+                                }
+                            }
+
+                            Text {
+                                text: "新建";
+                                font-size: 14px;
+                                color: create-tag-touch.has-hover
+                                    ? Theme.accent-text : Theme.text;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
                         }
                     }
                 }

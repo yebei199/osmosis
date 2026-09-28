@@ -40,6 +40,7 @@ mod netease;
 
 mod playlists;
 mod queue;
+mod tags;
 mod url;
 
 // 应用内升级(#129)。只有安卓装得了,但取数与校验两个原生端都编得过。
@@ -118,6 +119,11 @@ pub use playlists::{
     liked_ids, platform_playlist_tracks, playlist_tracks,
     playlists, remove_playlist_tracks, rename_playlist,
     set_liked, set_subscribed,
+};
+
+pub use tags::{
+    create_tag, delete_tag, rename_tag, set_track_tag,
+    tags, track_tags,
 };
 
 // 「先画上次那份」的读端(#123)。

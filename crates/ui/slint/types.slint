@@ -59,6 +59,14 @@ export struct PlaylistRow {
     cover: image,
 }
 
+// 一个自定义标签,连同「这首歌打没打」这一位一起(#158)。
+// applied 只在标签选择器里有意义,别处摆着不看。
+export struct TagRow {
+    id: string,
+    name: string,
+    applied: bool,
+}
+
 // 搜索结果里的一位歌手。
 //
 // 没有 source:歌手只有平台一个来源,自家不造歌手。副标题(专辑数)已在
