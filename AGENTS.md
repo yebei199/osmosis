@@ -371,20 +371,36 @@ HoverButton 的标签绑的是属性,塞子 Text 画得出来但读屏念不出,
 为 `1`),真正的原因是 MIUI 每次 adb 装包都会在屏幕上弹安全中心的确认页
 (`com.miui.securitycenter/com.miui.permcenter.install.AdbInstallActivity`),几秒内没人点
 「继续安装」就按「用户取消」处理。手机边上没人时,装包的同时盯着前台窗口,一出现就用
-uiautomator 找按钮点掉:
+uiautomator 找按钮点掉。
+
+**检测→dump→算坐标→点这一整段必须推到手机上用 `sh` 跑,不能留在 host 端轮询**(#168):
+无线 adb 上一次 `uiautomator dump` 往返约 2.3s,而确认框只活 11-12s ——
+host 端每轮「发 dumpsys → 等回包 → 发 dump 命令 → 等回包」的网络延迟摞起来,追不上就被
+MIUI 当「用户没点」按取消处理。手机本地跑同一段 `sh`,dump 与解析都发生在设备上,
+省掉这些往返。
+
+bounds 的抓取也要限定在**匹配到的那个 `<node>` 标签内**,不能让 `[^>]*bounds="[^"]+"`
+这种写法把标签里其他数字属性(`index`、`resource-id` 里的编号等)一起吃进
+`grep -oE '[0-9]+'` 的结果 —— 那样 `set -- $b` 摆进来的四个数字就不是矩形的四个角,
+点的位置也就偏了(#153 报过的点歪,原因就是这个)。
 
 ```sh
 X=$ANDROID_SERIAL
-adb -s $X shell input keyevent KEYCODE_WAKEUP
-adb -s $X install -r dist/osmosis-debug.apk & ip=$!
-for i in $(seq 40); do
-  adb -s $X shell dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
-    adb -s $X shell uiautomator dump /sdcard/ui.xml >/dev/null
-    b=$(adb -s $X shell cat /sdcard/ui.xml | grep -oE 'text="(继续安装|安装)"[^>]*bounds="[^"]+"' \
-        | head -1 | grep -oE '[0-9]+' | tr '\n' ' ')
-    set -- $b; adb -s $X shell input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
+adb -s "$X" shell input keyevent KEYCODE_WAKEUP
+adb -s "$X" install -r dist/osmosis-debug.apk & ip=$!
+adb -s "$X" shell sh -c '
+for i in $(seq 1 40); do
+  dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
+    uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    node=$(grep -oE "<node[^>]*text=\"(继续安装|安装)\"[^>]*>" /sdcard/ui.xml | head -1)
+    bounds=$(echo "$node" | grep -oE "bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" | grep -oE "[0-9]+")
+    set -- $bounds
+    [ $# -eq 4 ] && { input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
+  }
   sleep 1
-done; wait $ip
+done
+'
+wait $ip
 ```
 
 只有 `getprop` 读出来不是 `1` 时,才是开关真的关了(它联网校验后会自己回退),那时才要人到手机上
