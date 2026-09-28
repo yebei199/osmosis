@@ -376,8 +376,14 @@ async fn fm_keeps_only_tracks_passing_the_filter() {
 
     let fake = FakeUpstream::default();
     fake.fm_batches.lock().unwrap().extend([
-        vec![lasting(&id(1), 100_000), lasting(&id(2), 400_000)],
-        vec![lasting(&id(3), 400_000), lasting(&id(4), 170_000)],
+        vec![
+            lasting(&id(1), 100_000),
+            lasting(&id(2), 400_000),
+        ],
+        vec![
+            lasting(&id(3), 400_000),
+            lasting(&id(4), 170_000),
+        ],
         vec![lasting(&id(5), 60_000)],
     ]);
     let state = testing::state(
@@ -458,7 +464,8 @@ async fn a_garbled_filter_is_rejected() {
 /// 筛「有歌词」:还没探过的当场探,有歌词的留下、纯音乐与探不到的丢掉,
 /// 探到的标记跟着详情进了缓存(#166)。
 #[tokio::test]
-async fn a_lyric_filter_probes_unknown_tracks_on_the_spot() {
+async fn a_lyric_filter_probes_unknown_tracks_on_the_spot()
+{
     use server::bangdream::proto::{Lyric, LyricLine};
     use tonic::Code;
 
@@ -498,7 +505,9 @@ async fn a_lyric_filter_probes_unknown_tracks_on_the_spot() {
     let response = radio(
         State(state),
         account,
-        fm_filtered(r#"[{"facet":"lyric","label":"有歌词"}]"#),
+        fm_filtered(
+            r#"[{"facet":"lyric","label":"有歌词"}]"#,
+        ),
     )
     .await
     .expect("电台应该成功");

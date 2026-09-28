@@ -97,11 +97,13 @@ pub(crate) async fn radio(
 ) -> Result<Json<TracksDto>, Failure> {
     let picks: Vec<FacetPickDto> = match &query.filter {
         None => Vec::new(),
-        Some(raw) => serde_json::from_str(raw).map_err(|err| {
-            fail(&tonic::Status::invalid_argument(format!(
-                "筛选条件读不懂: {err}"
-            )))
-        })?,
+        Some(raw) => {
+            serde_json::from_str(raw).map_err(|err| {
+                fail(&tonic::Status::invalid_argument(
+                    format!("筛选条件读不懂: {err}"),
+                ))
+            })?
+        }
     };
     let max_pulls = if picks.is_empty() {
         MAX_PULLS
@@ -164,7 +166,9 @@ pub(crate) async fn radio(
         }
         let kept: Vec<TrackDto> = fresh
             .into_iter()
-            .filter(|track| filter::passes(track, &picks, None))
+            .filter(|track| {
+                filter::passes(track, &picks, None)
+            })
             .collect();
         tracing::info!(
             mode = ?query.mode,
@@ -217,16 +221,19 @@ async fn probe_lyrics(
         .map(|(at, track)| (at, track.id.clone()))
         .take(budget)
         .collect();
-    let answers: Vec<(usize, String, Result<LyricKind, String>)> =
-        futures_util::stream::iter(wanted)
-            .map(|(at, id)| async move {
-                let kind =
-                    lyric_probe::ask(state, account, &id).await;
-                (at, id, kind)
-            })
-            .buffer_unordered(PROBES_AT_ONCE)
-            .collect()
-            .await;
+    let answers: Vec<(
+        usize,
+        String,
+        Result<LyricKind, String>,
+    )> = futures_util::stream::iter(wanted)
+        .map(|(at, id)| async move {
+            let kind =
+                lyric_probe::ask(state, account, &id).await;
+            (at, id, kind)
+        })
+        .buffer_unordered(PROBES_AT_ONCE)
+        .collect()
+        .await;
     for (at, id, kind) in answers {
         match kind {
             Ok(kind) => {
@@ -259,7 +266,8 @@ async fn remember_lyrics(
     };
     for (id, kind) in probed {
         if let Err(err) =
-            lyric::record(&mut conn, NETEASE, id, *kind).await
+            lyric::record(&mut conn, NETEASE, id, *kind)
+                .await
         {
             tracing::warn!(track_id = %id, ?err, "当场探的歌词标记记不上");
         }

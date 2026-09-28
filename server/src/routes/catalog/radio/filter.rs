@@ -24,11 +24,13 @@ pub(crate) fn labels(
     let facets = &track.facets;
     let one = |label: &str| vec![label.to_owned()];
     match facet {
-        FacetDto::Duration => one(match track.duration_ms {
-            ms if ms < SHORT_MS => "3 分钟以内",
-            ms if ms <= LONG_MS => "3–5 分钟",
-            _ => "5 分钟以上",
-        }),
+        FacetDto::Duration => {
+            one(match track.duration_ms {
+                ms if ms < SHORT_MS => "3 分钟以内",
+                ms if ms <= LONG_MS => "3–5 分钟",
+                _ => "5 分钟以上",
+            })
+        }
         FacetDto::Lyric => one(match facets.lyric_kind {
             Some(
                 LyricKindDto::Lyric
@@ -137,18 +139,28 @@ mod tests {
             Some(LyricKindDto::Lyric),
             Some(LyricKindDto::Translated),
         ] {
-            tracks.push(with(&|t| t.facets.lyric_kind = kind));
+            tracks.push(with(&|t| {
+                t.facets.lyric_kind = kind
+            }));
         }
         for n in [0, 1, 5, 6, 20, 21] {
             tracks.push(with(&|t| t.facets.play_count = n));
         }
-        for rate in
-            [None, Some(0), Some(19), Some(20), Some(50), Some(51)]
-        {
-            tracks.push(with(&|t| t.facets.skip_rate = rate));
+        for rate in [
+            None,
+            Some(0),
+            Some(19),
+            Some(20),
+            Some(50),
+            Some(51),
+        ] {
+            tracks
+                .push(with(&|t| t.facets.skip_rate = rate));
         }
         for verdict in [None, Some(1), Some(-1)] {
-            tracks.push(with(&|t| t.facets.verdict = verdict));
+            tracks.push(with(&|t| {
+                t.facets.verdict = verdict
+            }));
         }
         tracks.push(with(&|t| {
             t.facets.tags = vec!["夜".into(), "雨".into()];
@@ -210,7 +222,10 @@ mod tests {
 
     #[test]
     fn only_a_lyric_pick_asks_for_probing() {
-        assert!(wants_lyric(&[pick(FacetDto::Lyric, "有歌词")]));
+        assert!(wants_lyric(&[pick(
+            FacetDto::Lyric,
+            "有歌词"
+        )]));
         assert!(!wants_lyric(&[pick(FacetDto::Tag, "夜")]));
     }
 }

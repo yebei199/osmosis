@@ -38,7 +38,9 @@ impl LyricKind {
     pub fn to_dto(self) -> LyricKindDto {
         match self {
             Self::None => LyricKindDto::Missing,
-            Self::Instrumental => LyricKindDto::Instrumental,
+            Self::Instrumental => {
+                LyricKindDto::Instrumental
+            }
             Self::Lyric => LyricKindDto::Lyric,
             Self::Translated => LyricKindDto::Translated,
         }
