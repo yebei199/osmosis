@@ -2,8 +2,9 @@
 //!
 //! 全部查询时从原始表聚合,不存统计表 —— 与 `history` 同一条规矩,口径想改就改。
 //!
-//! **跳过**的口径:一次记下了听多久的播放,听了不到一半就算跳过。没记下
-//! (进程被杀、老客户端)的那些不进分母;一次都没记下时跳过率是 `None`。
+//! **跳过**的口径是 #157 定的、也告诉过用户的那一条:前 30 秒内切走(见
+//! [`SKIP_WITHIN_MS`])。没记下听了多久的播放(进程被杀、老客户端)不进分母;
+//! 一次都没记下时跳过率是 `None`。
 
 use std::collections::HashMap;
 
@@ -11,6 +12,10 @@ use contract::{LyricKindDto, TrackDto, TrackFacetsDto};
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+
+/// 听不到这么久就切走,算一次跳过(#157 的口径,毫秒)。全仓只此一处;
+/// `test/feedback-e2e.sh skip` 按同一个数断言。
+pub const SKIP_WITHIN_MS: i64 = 30_000;
 
 /// 给这批曲目填上这个账号的聚合。一条查询,与歌单多长无关。
 ///
@@ -42,7 +47,7 @@ pub async fn fill(
                         WHERE pe.listened_ms IS NOT NULL AND pe.duration_ms > 0
                     ) AS measured,
                     count(*) FILTER (
-                        WHERE pe.duration_ms > 0 AND pe.listened_ms * 2 < pe.duration_ms
+                        WHERE pe.duration_ms > 0 AND pe.listened_ms < $4
                     ) AS skips
              FROM play_events pe
              JOIN asked USING (platform, track_id)
@@ -75,6 +80,7 @@ pub async fn fill(
     .bind(account_id)
     .bind(platforms)
     .bind(ids)
+    .bind(SKIP_WITHIN_MS)
     .fetch_all(conn)
     .await?;
 

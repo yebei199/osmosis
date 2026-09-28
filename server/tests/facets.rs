@@ -102,9 +102,23 @@ async fn every_facet_is_aggregated() {
     .execute(&mut *tx)
     .await
     .expect("标歌词");
-    // 三次:一次听完、一次跳过、一次没补记(不进跳过率的分母)
-    play(&mut tx, &account, id, Some(190_000)).await;
-    play(&mut tx, &account, id, Some(20_000)).await;
+    // 四次:30 秒整不算跳过、29.999 秒算、听了一大半也不算、一次没补记
+    // (不进跳过率的分母)。口径见 facets::SKIP_WITHIN_MS
+    play(
+        &mut tx,
+        &account,
+        id,
+        Some(facets::SKIP_WITHIN_MS),
+    )
+    .await;
+    play(
+        &mut tx,
+        &account,
+        id,
+        Some(facets::SKIP_WITHIN_MS - 1),
+    )
+    .await;
+    play(&mut tx, &account, id, Some(90_000)).await;
     play(&mut tx, &account, id, None).await;
     feedback::set(&mut tx, account.id, &key(id), -1)
         .await
@@ -128,9 +142,9 @@ async fn every_facet_is_aggregated() {
     assert_eq!(
         tracks[0].facets,
         TrackFacetsDto {
-            play_count: 3,
+            play_count: 4,
             verdict: Some(-1),
-            skip_rate: Some(50),
+            skip_rate: Some(33),
             lyric_kind: Some(LyricKindDto::Translated),
             tags: vec!["夜".to_owned(), "雨".to_owned()],
         }
