@@ -678,3 +678,119 @@ async fn joining_drops_offline_outputs_instead_of_refusing()
     assert!(stranger.is_err(), "新点的设备不在线仍该拒");
     drop_account(&pool, account).await;
 }
+
+/// 组里换歌与独奏一致,同样跳过命中屏蔽规则的歌(#167):自然放完与「下一首」都跳过
+/// 屏蔽队列里的 "b",落到再下一首,`play_events` 里没有被屏蔽那首。
+#[tokio::test]
+async fn the_group_skips_a_blocked_track_on_advance_and_next()
+ {
+    let pool = connect().await;
+    let account = account(&pool, "block-skip").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+
+    let inputs: Vec<EntryInput> = tracks()
+        .iter()
+        .map(|track| EntryInput {
+            platform: track.platform.clone(),
+            track_id: track.id.clone(),
+            title: track.title.clone(),
+            alias: None,
+            artists: track.artists.clone(),
+            cover: None,
+            duration_ms: track.duration_ms,
+        })
+        .collect();
+    let mut tx = pool.begin().await.expect("开事务失败");
+    let seeded =
+        queue::create(&mut tx, account, "pc", &inputs)
+            .await
+            .expect("建队列该成");
+    tx.commit().await.expect("提交失败");
+
+    {
+        let mut conn =
+            pool.acquire().await.expect("取不到连接");
+        server::store::blocks::create(
+            &mut conn,
+            account,
+            contract::BlockKind::Track,
+            "b",
+            None,
+        )
+        .await
+        .expect("建屏蔽规则该成");
+    }
+
+    let before = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Outputs {
+            outputs: vec!["pc".to_owned()],
+            seed: Some(GroupSeedDto {
+                queue_id: seeded.queue_id,
+                revision: seeded.revision,
+                entry_id: seeded.entry_ids[0],
+                position_ms: 0,
+                playing: true,
+            }),
+        },
+    )
+    .await
+    .expect("建组该成")
+    .expect("组该在");
+    let entry =
+        before.now.as_ref().expect("该有歌").entry_id;
+
+    let advanced = group::advance(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        entry,
+        before.version as i64,
+    )
+    .await
+    .expect("报放完该成")
+    .expect("组该在");
+    assert_eq!(
+        advanced
+            .now
+            .as_ref()
+            .map(|now| now.track.id.clone()),
+        Some("c".to_owned()),
+        "自然放完该跳过被屏蔽的 b,落到 c"
+    );
+
+    let stepped = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Transport(TransportOpDto::Prev),
+    )
+    .await
+    .expect("上一首该成")
+    .expect("组该在");
+    assert_eq!(
+        stepped.now.map(|now| now.track.id),
+        Some("a".to_owned()),
+        "上一首同样该跳过被屏蔽的 b,落到 a"
+    );
+
+    let hits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM play_events
+         WHERE account_id = $1 AND track_id = 'b'",
+    )
+    .bind(account)
+    .fetch_one(&pool)
+    .await
+    .expect("查 play_events 该成");
+    assert_eq!(
+        hits, 0,
+        "被屏蔽的 b 不该起播、不该留下记录"
+    );
+    drop_account(&pool, account).await;
+}

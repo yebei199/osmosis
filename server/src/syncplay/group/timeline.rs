@@ -57,10 +57,10 @@ pub struct Group {
     pub now: Option<Now>,
 }
 
-/// 组队列那一版:条目号与时长(微秒),按队列原序。
+/// 组队列那一版:条目号、时长(微秒)、是不是命中账号的屏蔽规则,按队列原序。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Playlist {
-    pub entries: Vec<(i64, u64)>,
+    pub entries: Vec<(i64, u64, bool)>,
 }
 
 impl Playlist {
@@ -70,8 +70,16 @@ impl Playlist {
     ) -> Option<u64> {
         self.entries
             .iter()
-            .find(|(id, _)| *id == entry_id)
-            .map(|(_, duration)| *duration)
+            .find(|(id, ..)| *id == entry_id)
+            .map(|(_, duration, _)| *duration)
+    }
+
+    /// 这一条命不命中账号的屏蔽规则(#167)。不在列表里的当作不命中。
+    fn is_blocked(&self, entry_id: i64) -> bool {
+        self.entries
+            .iter()
+            .find(|(id, ..)| *id == entry_id)
+            .is_some_and(|(_, _, blocked)| *blocked)
     }
 
     fn contains(&self, entry_id: i64) -> bool {
@@ -79,7 +87,7 @@ impl Playlist {
     }
 
     fn natural(&self) -> Vec<i64> {
-        self.entries.iter().map(|(id, _)| *id).collect()
+        self.entries.iter().map(|(id, ..)| *id).collect()
     }
 }
 
@@ -150,8 +158,6 @@ impl Now {
         }
     }
 
-    /// 次序里相邻的那一条。`step` 为 1 是下一首、-1 是上一首;到头时列表循环就绕回去,
-    /// 否则没有。
     fn neighbour(
         &self,
         list: &Playlist,
@@ -163,15 +169,21 @@ impl Now {
             .position(|id| *id == self.entry_id)?
             as isize;
         let len = sequence.len() as isize;
-        let next = at + step;
-        let index = if (0..len).contains(&next) {
-            next
-        } else if self.loop_mode == LoopModeDto::All {
-            next.rem_euclid(len)
-        } else {
-            return None;
-        };
-        sequence.get(index as usize).copied()
+        for offset in 1..=len {
+            let next = at + step * offset;
+            let index = if (0..len).contains(&next) {
+                next
+            } else if self.loop_mode == LoopModeDto::All {
+                next.rem_euclid(len)
+            } else {
+                return None;
+            };
+            let candidate = sequence[index as usize];
+            if !list.is_blocked(candidate) {
+                return Some(candidate);
+            }
+        }
+        None
     }
 
     /// 自然放完之后接哪一条:单曲循环是它自己,其余照次序。
