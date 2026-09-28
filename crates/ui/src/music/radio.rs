@@ -17,6 +17,9 @@ use crate::runtime::trace::Action;
 /// 续取失败或一首新歌都没续上之后,隔多久再试。每秒一趟的轮询不能每秒问一次平台。
 const RETRY_AFTER_MS: u64 = 30_000;
 
+/// 带着筛选续歌,服务端问满上限仍一首不剩时的提示(#166)。
+const DRY_NOTICE: &str = "按当前筛选暂时找不到新歌";
+
 /// 电台此刻的账。
 #[derive(Clone, Default)]
 pub(super) struct Radio {
@@ -31,6 +34,9 @@ struct State {
     batch: u64,
     /// 续歌带的筛选。电台区里选了 chip 再点歌时记下(#166),开新电台时清空。
     filter: Vec<FacetPickDto>,
+    /// 「按当前筛选找不到新歌」已经说过了。续上一首之前不再说第二遍 ——
+    /// 冷却每 30 秒试一次,每次都弹就成了噪音。
+    told_dry: bool,
     pulling: bool,
     retry_at_ms: u64,
 }
@@ -150,6 +156,7 @@ pub(super) fn begin(
         state.mode = Some(mode);
         state.batch = after;
         state.filter.clear();
+        state.told_dry = false;
         state.retry_at_ms = 0;
     }
 }
@@ -174,6 +181,7 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
     }
     state.batch = after;
     state.filter = filter;
+    state.told_dry = false;
     state.retry_at_ms = 0;
 }
 
@@ -222,6 +230,7 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
     slint::spawn_local(async move {
         let found = api::radio(&mode, &filter).await;
         let mut added = 0;
+        let mut dry = false;
         match found {
             // 等的这几秒里用户点了别的歌:这一批不是它的了,扔掉
             Ok(found)
@@ -231,6 +240,7 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
                     .queue
                     .borrow_mut()
                     .append(found.tracks);
+                dry = added == 0 && !filter.is_empty();
                 log::info!("电台续了 {added} 首");
             }
             Ok(_) => {}
@@ -238,12 +248,20 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
                 log::warn!("电台续取失败: {error}")
             }
         }
-        {
+        let tell_dry = {
             let mut state = deck.radio.inner.borrow_mut();
             state.pulling = false;
             if added == 0 {
                 state.retry_at_ms = now_ms + RETRY_AFTER_MS;
+            } else {
+                state.told_dry = false;
             }
+            let tell = dry && !state.told_dry;
+            state.told_dry |= dry;
+            tell
+        };
+        if tell_dry && let Some(ui) = weak.upgrade() {
+            crate::notice::show(&ui, DRY_NOTICE.to_owned());
         }
         if added > 0
             && let Some(ui) = weak.upgrade()
