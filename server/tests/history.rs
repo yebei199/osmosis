@@ -355,6 +355,55 @@ async fn recording_for_an_unknown_account_fails() {
     assert!(matches!(result, Err(AppError::Db(_))));
 }
 
+/// 补记听了多久(#157):`record` 给的 id 认哪一行,写完能在库里查到。
+#[tokio::test]
+async fn report_listened_fills_in_the_row() {
+    let mut tx = tx().await;
+    let account =
+        make_account(&mut tx, "hs_listened").await;
+
+    let id =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .expect("记录应该成功");
+    history::report_listened(
+        &mut tx, account.id, id, 9_000, 200_000,
+    )
+    .await
+    .expect("补记应该成功");
+
+    let row: (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT listened_ms, duration_ms FROM play_events WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+
+    assert_eq!(row, (Some(9_000), Some(200_000)));
+}
+
+/// 别人的那一行按不存在回答,不是 403 —— 与歌单归属检查同一个理由。
+#[tokio::test]
+async fn report_listened_is_scoped_to_the_account() {
+    let mut tx = tx().await;
+    let mine =
+        make_account(&mut tx, "hs_lst_scope_a").await;
+    let theirs =
+        make_account(&mut tx, "hs_lst_scope_b").await;
+
+    let id =
+        history::record(&mut tx, theirs.id, &track("1"))
+            .await
+            .expect("记录应该成功");
+    let result = history::report_listened(
+        &mut tx, mine.id, id, 1_000, 2_000,
+    )
+    .await;
+
+    assert!(matches!(result, Err(AppError::NotFound)));
+}
+
 /// 电台的听过过滤(#159):只认本账号的事件,顺序照给进来的那批。
 #[tokio::test]
 async fn played_among_picks_only_this_accounts_plays() {

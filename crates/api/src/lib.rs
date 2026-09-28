@@ -31,6 +31,7 @@ mod catalog;
 mod download;
 
 mod error;
+mod feedback;
 mod group;
 
 mod history;
@@ -90,12 +91,18 @@ pub use error::{ApiError, base_url, is_release};
 
 pub(crate) use error::server_error;
 
+pub use feedback::{
+    clear_feedback, feedback, set_feedback,
+};
+
 pub use group::{
     group_advance, group_leave, group_outputs, group_play,
     group_ready, group_state, group_transport,
 };
 
-pub use history::{recent, record_play, stats};
+pub use history::{
+    recent, record_play, report_listened, stats,
+};
 
 pub use netease::{
     QrStep, netease_qr, netease_qr_state, netease_status,

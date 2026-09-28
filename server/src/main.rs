@@ -54,8 +54,11 @@ use routes::catalog::search::{
     artist_tracks, daily, search_artists, search_playlists,
     search_tracks,
 };
+use routes::library::feedback::{
+    clear_feedback, get_feedback, set_feedback,
+};
 use routes::library::history::{
-    recent, record_play, stats,
+    recent, record_play, report_listened, stats,
 };
 use routes::library::likes::{
     import_liked, like_track, liked, liked_ids,
@@ -644,8 +647,20 @@ async fn main() {
             get(routes::apk::android_apk),
         )
         .route("/played", post(record_play))
+        .route(
+            "/played/{id}/listened",
+            axum::routing::patch(report_listened),
+        )
         .route("/recent", get(recent))
         .route("/stats", get(stats))
+        // 赞踩独立于红心(#157):红心管收藏,这条管评价,与 /liked/{track_id}
+        // 同一个 PUT/DELETE 套路。
+        .route(
+            "/feedback/{track_id}",
+            get(get_feedback)
+                .put(set_feedback)
+                .delete(clear_feedback),
+        )
         // 缓存的统计(#147):存了多少首、多少字节,队列里还剩多少。界面上没有入口
         .route(
             "/archive/stats",

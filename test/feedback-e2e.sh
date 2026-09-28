@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# 端到端:三态赞踩与收听时长上报(#157)。驱动走应用内嵌的 MCP,断言走数据库。
+#
+#   test/feedback-e2e.sh verdict   控制条「更多」抽屉里点赞 → track_feedback +1(verdict=1);
+#                                   再点踩 → 同一行变 -1;再点一次踩 → 行消失(#157 F-004:
+#                                   赞踩键已从播放页搬进抽屉,挨着「喜欢」那一行)。
+#   test/feedback-e2e.sh skip      起播后立刻切歌,断言这一行的 listened_ms 记进去了、
+#                                   且小于 30000(#157 的跳过口径:前 30 秒内切走)。
+#   test/feedback-e2e.sh complete  拖进度条到曲尾附近,等它自己放完切下一首,
+#                                   断言这一行的 listened_ms/duration_ms ≥ 0.9(#157 F-002)。
+#
+# complete 不必等一整首播完:拖到曲尾前几秒,让它自己走完最后那一段就够了 ——
+# 验的是「切歌那一刻算出的比例对不对」,不是「等待本身要多久」。
+#
+# 前提同 test/pick-e2e.sh:应用起着并已登录、just server-dev 与 osmosis-pg 在跑、
+# 每日推荐有歌。
+set -euo pipefail
+
+MODE="${1:?用法: $0 verdict|skip|complete}"
+PORT="${PORT:-8091}"
+PG_CONTAINER="${PG_CONTAINER:-osmosis-pg}"
+
+call() {
+  curl -s -X POST "http://127.0.0.1:${PORT}/mcp" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
+}
+
+handle() {
+  call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}" \
+  | python3 -c "
+import json, sys
+hs = json.load(sys.stdin).get('elementHandles') or []
+print(json.dumps(hs[${2:-0}]) if len(hs) > ${2:-0} else '')
+"
+}
+
+must() {
+  [ -n "$1" ] || { echo "找不到 $2 —— 页面不对,或者手上没有正在放的歌" >&2; exit 1; }
+}
+
+present() {
+  call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"$1\"}]}" \
+    | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("elementHandles") else "")'
+}
+
+# 某个 id 的元素里,无障碍标签是 label 的那一个。按名字找而不是按位置:
+# 抽屉的行随功能增减,位置不稳定(与 radio-e2e.sh 同一个理由)。
+labelled() {
+  local hs
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+
+# 无障碍动作不过命中测试,不必量坐标(抽屉行同理)。
+act() {
+  call invoke_accessibility_action "{\"elementHandle\":$1,\"action\":\"Default_\"}" >/dev/null
+}
+
+press() {
+  local h; h=$(labelled "$1" "$2")
+  must "$h" "「$2」"
+  act "$h"
+}
+
+sql() {
+  docker exec "$PG_CONTAINER" psql -U slint -d osmosis -tAc "$1" | tr -d '[:space:]'
+}
+feedback_count() { sql "select count(*) from track_feedback;"; }
+last_feedback_verdict() {
+  sql "select verdict from track_feedback order by updated_at desc limit 1;"
+}
+played() { sql "select count(*) from play_events;"; }
+# 切歌那一刻,新一首的 play_events 行紧接着就插进去了(比补记快)——
+# 「最新一行」到那时已经是下一首、listened_ms 还是 NULL。要读的是**最近一条
+# 补上了 listened_ms 的行**,不是字面意义的最后一行。
+last_listened_ms() {
+  sql "select coalesce(listened_ms::text, 'NULL') from play_events
+       where listened_ms is not null order by id desc limit 1;"
+}
+# listened_ms/duration_ms,四位小数;没有补上过就是空串。
+last_listened_ratio() {
+  sql "select round(listened_ms::numeric / nullif(duration_ms, 0), 4)::text
+       from play_events where listened_ms is not null order by id desc limit 1;"
+}
+
+# 复位:播放页收起 → 音乐页 → 每日推荐,点第一行起播。**不**展开播放页 ——
+# skip 模式接下来要点列表里的另一行切歌,播放页开着会盖住列表。
+#
+# 点了要等出**新**的一条 play_events,不是随便 >0:这首可能已经在放(上一轮
+# 测试留下的),点它可能只是个无操作,那时下面 skip 算出来的 listened_ms
+# 其实是从上一轮起就在计的时长,不是这一次真正的起播。
+# 起播用的是列表第几行,skip 模式切歌时要换成**另一**行,不是随便点。
+PLAYING_INDEX=0
+
+start_playing() {
+  local music item row before
+  for _ in 1 2 3; do
+    [ -n "$(present PlayPage)" ] || break
+    call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
+    sleep 1
+  done
+  music=$(handle "NavItem::touch" 1)
+  must "$music" "音乐入口"
+  call click_element "{\"elementHandle\":$music}" >/dev/null
+  item=$(handle "MusicRail::item-touch" 0)
+  [ -n "$item" ] || item=$(handle "MusicBar::item-touch" 0)
+  must "$item" "音乐页第一个分区"
+  call click_element "{\"elementHandle\":$item}" >/dev/null
+  sleep 2
+
+  row=$(handle "TrackList::touch" 0)
+  must "$row" "列表第一行"
+  before=$(played)
+  call click_element "{\"elementHandle\":$row}" >/dev/null
+  for _ in $(seq 1 5); do
+    [ "$(played)" -gt "$before" ] && { PLAYING_INDEX=0; return; }
+    sleep 1
+  done
+  # 点中的正是已经在放的那首:界面按多余点击丢掉它,账本不动。再点第二行
+  # 换一首,保证起播是全新的。
+  row=$(handle "TrackList::touch" 1)
+  must "$row" "列表第二行(第一行点了个无操作,换一首)"
+  call click_element "{\"elementHandle\":$row}" >/dev/null
+  for _ in $(seq 1 30); do
+    [ "$(played)" -gt "$before" ] && { PLAYING_INDEX=1; return; }
+    sleep 1
+  done
+  echo "起播 30 秒没起来" >&2
+  exit 1
+}
+
+# 展开播放页:点控制条封面。只有 verdict 模式要它 —— 赞踩键长在播放页上。
+open_play_page() {
+  local cover
+  for _ in $(seq 1 30); do
+    [ -n "$(handle "PlayerBar::cover-touch")" ] && break
+    sleep 1
+  done
+  cover=$(handle "PlayerBar::cover-touch")
+  must "$cover" "控制条封面"
+  call click_element "{\"elementHandle\":$cover}" >/dev/null
+  sleep 1
+}
+
+# 拖进度条到 `ratio`(0..1)附近。播放页要已经展开 —— 进度细轨长在
+# `PlayerBar` 里,只有那份 `pinned: true`(#157 F-002)。
+# `drag_element` 从元素中心按下、插值挪到目标、松手,原样落进
+# `progress.slint` 的"没拖过就点哪跳哪、拖过了就用拖动落点"那套判断。
+seek_to() {
+  local ratio=$1 h props x y w hh tx ty
+  h=$(handle "ProgressBar::seek-touch")
+  must "$h" "进度条(播放页要已经展开)"
+  props=$(call get_element_properties "{\"elementHandle\":$h}")
+  x=$(python3 -c "import json; print(json.loads('''$props''')['absolutePosition']['x'])")
+  y=$(python3 -c "import json; print(json.loads('''$props''')['absolutePosition']['y'])")
+  w=$(python3 -c "import json; print(json.loads('''$props''')['size']['width'])")
+  hh=$(python3 -c "import json; print(json.loads('''$props''')['size']['height'])")
+  tx=$(python3 -c "print($x + $w * $ratio)")
+  ty=$(python3 -c "print($y + $hh / 2)")
+  call drag_element "{\"elementHandle\":$h,\"target\":{\"x\":$tx,\"y\":$ty},\"button\":\"Left\"}" >/dev/null
+}
+
+win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
+root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
+
+start_playing
+
+case "$MODE" in
+  verdict)
+    press "RoundControl::touch" "更多"
+    sleep 1
+
+    before=$(feedback_count)
+    press "DrawerRow::touch" "点赞"
+    sleep 1
+    after=$(feedback_count)
+    [ "$((after - before))" -eq 1 ] || { echo "verdict: 失败 —— 点赞该多一行(前 $before,后 $after)" >&2; exit 1; }
+    [ "$(last_feedback_verdict)" = "1" ] || { echo "verdict: 失败 —— 新行该是 +1" >&2; exit 1; }
+    echo "  点赞: track_feedback +1,verdict=1"
+
+    press "DrawerRow::touch" "点踩"
+    sleep 1
+    [ "$(feedback_count)" -eq "$after" ] || { echo "verdict: 失败 —— 改点踩不该多一行" >&2; exit 1; }
+    [ "$(last_feedback_verdict)" = "-1" ] || { echo "verdict: 失败 —— 该覆盖成 -1" >&2; exit 1; }
+    echo "  改点踩: 同一行变 -1"
+
+    press "DrawerRow::touch" "取消点踩"
+    sleep 1
+    [ "$(feedback_count)" -eq "$before" ] || { echo "verdict: 失败 —— 再点一次该取消(行消失)" >&2; exit 1; }
+    echo "  再点踩: 行消失"
+    echo "verdict: 通过"
+    ;;
+  skip)
+    # 上一首/下一首键没有独立的元素 id 可按(与 PlayerBar::cover-touch 不同名),
+    # 直接点列表里另一行来触发一次切歌 —— 与 start_playing 刚点中的那首不同。
+    other=$((PLAYING_INDEX == 0 ? 1 : 0))
+    row=$(handle "TrackList::touch" "$other")
+    must "$row" "列表第 $((other + 1)) 行(用来触发一次切歌)"
+    call click_element "{\"elementHandle\":$row}" >/dev/null
+    sleep 2
+
+    ms=$(last_listened_ms)
+    [ "$ms" != "NULL" ] || { echo "skip: 失败 —— 切歌后上一行的 listened_ms 该被补上,读到 NULL" >&2; exit 1; }
+    [ "$ms" -lt 30000 ] || { echo "skip: 失败 —— 起播后立刻切歌,listened_ms 该小于 30000,读到 $ms" >&2; exit 1; }
+    echo "  切歌后 listened_ms=$ms(< 30000,判定为跳过)"
+    echo "skip: 通过"
+    ;;
+  complete)
+    open_play_page
+    before=$(played)
+    seek_to 0.97
+    echo "  拖到曲尾附近(97%),等它自己放完切下一首…"
+
+    for _ in $(seq 1 30); do
+      [ "$(played)" -gt "$before" ] && break
+      sleep 1
+    done
+    [ "$(played)" -gt "$before" ] || { echo "complete: 失败 —— 拖到曲尾 30 秒没有切到下一首" >&2; exit 1; }
+    # 补记是异步的,切歌那一刻不保证已经落库,多等一下。
+    sleep 3
+
+    ratio=$(last_listened_ratio)
+    [ -n "$ratio" ] || { echo "complete: 失败 —— 切歌后上一行的 listened_ms/duration_ms 该被补上,读到空" >&2; exit 1; }
+    awk -v r="$ratio" 'BEGIN { exit !(r >= 0.9) }' \
+      || { echo "complete: 失败 —— 播满该判为完播,listened_ms/duration_ms 该 ≥ 0.9,读到 $ratio" >&2; exit 1; }
+    echo "  切歌后 listened_ms/duration_ms=$ratio(≥ 0.9,判定为完播)"
+    echo "complete: 通过"
+    ;;
+  *)
+    echo "用法: $0 verdict|skip|complete" >&2
+    exit 2
+    ;;
+esac

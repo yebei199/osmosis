@@ -102,4 +102,9 @@ export global Library {
     // 绑定阶段,也就是登录之前。本次会话内才首次登录的人,那一次不带 token,
     // 失败后静默降级成空集合 —— 整页的心都是空的。登录收尾与进列表页各喊一次它。
     callback refresh-liked();
+
+    // 点赞或点踩正在放的这一首(#157)。参数是 `1`(赞)或 `-1`(踩) ——
+    // 再点已生效的那一档时界面传的还是同一个值,Rust 据此判断该设还是该取消
+    // (见 ui/src/library/feedback.rs)。独立于红心:两者互不相干。
+    callback toggle-feedback(int);
 }

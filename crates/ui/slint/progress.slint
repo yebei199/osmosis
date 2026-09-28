@@ -52,7 +52,7 @@ export component ProgressBar inherits Rectangle {
             border-radius: 2px;
             // 细轨档平时隐身,指过来或拖着才现形 —— 环形键已经报着进度,
             // 这条只在要精确落点的那一刻出现。
-            opacity: !root.slim || root.pinned || touch.has-hover || root.dragging ? 1 : 0;
+            opacity: !root.slim || root.pinned || seek-touch.has-hover || root.dragging ? 1 : 0;
             animate opacity { duration: 120ms; easing: ease-out; }
 
             Rectangle {
@@ -76,7 +76,9 @@ export component ProgressBar inherits Rectangle {
     }
 
     // 覆在整块上,比那条 4px 的槽好点得多 —— 手指按不准 4 个像素。
-    touch := TouchArea {
+    // 起个 id(#157 F-002):e2e 脚本要靠它精确拖到曲尾附近,验证「播满」
+    // 记为完播;别处不靠 id 找它,改名不影响功能。
+    seek-touch := TouchArea {
         mouse-cursor: pointer;
 
         moved => {

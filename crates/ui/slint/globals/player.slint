@@ -32,6 +32,10 @@ export global Player {
     // 当前这一首在不在红心里。**只有 Rust 写它** —— 真相是红心集合,
     // 这里是投影(见 ui/src/library/liked.rs 的 project_now)。
     in property <bool> now-liked: false;
+    // 当前这一首的赞踩(#157):1 赞、-1 踩、0 没表态。独立于红心 ——
+    // 红心管收藏,这个管评价。**只有 Rust 写它**,真相在服务端的
+    // `track_feedback`(见 ui/src/library/feedback.rs)。
+    in property <int> now-feedback: 0;
     // 换了一首就重投影一次。写 now-id 的地方有三处(本机起播、放完、遥控),
     // 在这里观察一次,好过三处各记着去喊。
     callback now-id-changed();
