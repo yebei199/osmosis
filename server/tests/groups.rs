@@ -683,7 +683,7 @@ async fn joining_drops_offline_outputs_instead_of_refusing()
 /// 屏蔽队列里的 "b",落到再下一首,`play_events` 里没有被屏蔽那首。
 #[tokio::test]
 async fn the_group_skips_a_blocked_track_on_advance_and_next()
-{
+ {
     let pool = connect().await;
     let account = account(&pool, "block-skip").await;
     let (roster, _inboxes) =
@@ -788,6 +788,9 @@ async fn the_group_skips_a_blocked_track_on_advance_and_next()
     .fetch_one(&pool)
     .await
     .expect("查 play_events 该成");
-    assert_eq!(hits, 0, "被屏蔽的 b 不该起播、不该留下记录");
+    assert_eq!(
+        hits, 0,
+        "被屏蔽的 b 不该起播、不该留下记录"
+    );
     drop_account(&pool, account).await;
 }
