@@ -7275,6 +7275,7 @@ dependencies = [
 name = "server"
 version = "0.1.24"
 dependencies = [
+ "app-core",
  "argon2",
  "axum",
  "bytes",

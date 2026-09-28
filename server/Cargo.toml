@@ -66,6 +66,9 @@ tonic-prost-build.workspace = true
 
 [dev-dependencies]
 similar-asserts.workspace = true
+# 只为电台筛选的对拍测试(#166):分段口径两侧各写一遍(ADR 0001),
+# 拿客户端那份当标尺,漂了就红。正式依赖里仍然没有它。
+app-core.workspace = true
 tempfile.workspace = true
 # 信令测试要当**客户端**连自己的 WebSocket。axum 只提供服务端那一半,
 # 客户端另找一个 —— tungstenite 是 axum 自己底下用的那套,协议实现一致。

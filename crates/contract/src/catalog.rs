@@ -75,6 +75,46 @@ impl TrackFacetsDto {
     }
 }
 
+/// 电台续歌带的一个筛选条件(#166):歌单视图里选中的一个 chip。
+///
+/// `label` 就是 chip 上那几个字(「有歌词」「3 分钟以内」……),同一维度内是或、
+/// 跨维度是且。分段口径两侧各算一遍:客户端 `app_core::facets`,服务端
+/// `routes::catalog::radio::filter`,服务端有一条对拍测试钉住两边一致。
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+pub struct FacetPickDto {
+    pub facet: FacetDto,
+    pub label: String,
+}
+
+/// 能当筛选条件的维度。歌手与专辑只分组、不当 chip,不在这里。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FacetDto {
+    Duration,
+    Lyric,
+    Plays,
+    SkipRate,
+    Verdict,
+    Tag,
+}
+
 /// 一首歌有没有歌词(#156 探出来的标记)。
 #[derive(
     Debug,
