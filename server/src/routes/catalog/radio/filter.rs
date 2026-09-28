@@ -88,11 +88,6 @@ pub(crate) fn passes(
     })
 }
 
-/// 筛选里有没有歌词这一维 —— 有的话,还没探过的歌得当场探一次。
-pub(crate) fn wants_lyric(picks: &[FacetPickDto]) -> bool {
-    picks.iter().any(|pick| pick.facet == FacetDto::Lyric)
-}
-
 #[cfg(test)]
 mod tests {
     use app_core::facets::{self, Facet};
@@ -218,14 +213,5 @@ mod tests {
             Some(FacetDto::Lyric)
         ));
         assert!(passes(&long_lyric, &[], None));
-    }
-
-    #[test]
-    fn only_a_lyric_pick_asks_for_probing() {
-        assert!(wants_lyric(&[pick(
-            FacetDto::Lyric,
-            "有歌词"
-        )]));
-        assert!(!wants_lyric(&[pick(FacetDto::Tag, "夜")]));
     }
 }

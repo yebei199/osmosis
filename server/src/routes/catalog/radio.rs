@@ -6,8 +6,10 @@
 //! 会连着问,而连着问平台就是风控的靶子。问满了仍不够,交出已有的。
 //!
 //! 带着筛选来的(#166,电台区选了 chip 再点歌)在排除之后再按筛选过一道;
-//! 筛选越窄丢得越多,上限放到 [`MAX_FILTERED_PULLS`]。筛选看歌词的话,
-//! 新歌多半还没探过,当场探一次(见 [`probe_lyrics`]),不等后台队列。
+//! 筛选越窄丢得越多,上限放到 [`MAX_FILTERED_PULLS`]。
+//!
+//! 新歌多半还没探过歌词,每批都当场探一次(见 [`probe_lyrics`]),不等后台队列:
+//! 不带筛选的起播那一批也探,电台区一摆出来就有「有歌词」可选。
 
 use axum::{
     Json,
@@ -154,16 +156,14 @@ pub(crate) async fn radio(
         let unheard = fresh.len();
         let mut fresh = fresh;
         let asked = probed.len();
-        if filter::wants_lyric(&picks) {
-            probe_lyrics(
-                &state,
-                &account,
-                &mut fresh,
-                &picks,
-                &mut probed,
-            )
-            .await;
-        }
+        probe_lyrics(
+            &state,
+            &account,
+            &mut fresh,
+            &picks,
+            &mut probed,
+        )
+        .await;
         let kept: Vec<TrackDto> = fresh
             .into_iter()
             .filter(|track| {
@@ -196,7 +196,7 @@ pub(crate) async fn radio(
     }))
 }
 
-/// 筛选要看歌词时,`tracks` 里还没探过、其余维度已经过了的当场探一次,
+/// `tracks` 里还没探过歌词、其余维度已经过了筛选的当场探一次,
 /// 探到的标记写回曲目并记进 `probed`。一次请求一共最多探 [`MAX_PROBES`] 首;
 /// 探不到的留着 `None`,由筛选当「歌词未知」处理。
 async fn probe_lyrics(

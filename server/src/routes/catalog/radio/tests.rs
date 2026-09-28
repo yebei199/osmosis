@@ -529,3 +529,46 @@ async fn a_lyric_filter_probes_unknown_tracks_on_the_spot()
         ]
     );
 }
+
+/// 不带筛选的也探:电台区一摆出来就有「有歌词」可选(#166)。
+#[tokio::test]
+async fn an_unfiltered_pull_probes_lyrics_too() {
+    use contract::LyricKindDto;
+    use server::bangdream::proto::{Lyric, LyricLine};
+
+    let case = "radio_fm_lyric_unfiltered";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = track_id(case, 1);
+    let fake = FakeUpstream {
+        lyrics: [(
+            id.clone(),
+            Ok(Lyric {
+                lines: vec![LyricLine {
+                    text: "啦啦".to_owned(),
+                    ..LyricLine::default()
+                }],
+                ..Lyric::default()
+            }),
+        )]
+        .into(),
+        ..FakeUpstream::default()
+    };
+    fake.fm_batches
+        .lock()
+        .unwrap()
+        .extend([vec![upstream_track(&id, "有词")]]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(State(state), account, fm())
+        .await
+        .expect("电台应该成功");
+
+    assert_eq!(
+        response.0.tracks[0].facets.lyric_kind,
+        Some(LyricKindDto::Lyric)
+    );
+}
