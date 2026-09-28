@@ -122,7 +122,7 @@ pub(crate) async fn artist_tracks(
     account: Account,
     Path(id): Path<String>,
 ) -> Result<Json<TracksDto>, Failure> {
-    let mut catalog = state.upstream.catalog;
+    let mut catalog = state.upstream.catalog.clone();
     let response = catalog
         .get_artist(bangdream::as_user(
             &account,

@@ -113,7 +113,7 @@ pub(crate) async fn recent(
         .map(|track| track.track_id)
         .collect();
 
-    let mut catalog = state.upstream.catalog;
+    let mut catalog = state.upstream.catalog.clone();
     let response = catalog
         .get_tracks(bangdream::as_user(
             &account,
