@@ -89,7 +89,11 @@ impl FacetState {
     /// 点一首歌时排进队列的那一批。
     pub(super) fn batch(&self) -> Vec<TrackDto> {
         let order = if self.enabled {
-            facets::batch(&self.all, &self.chosen, self.grouping)
+            facets::batch(
+                &self.all,
+                &self.chosen,
+                self.grouping,
+            )
         } else {
             (0..self.all.len()).collect()
         };
@@ -142,17 +146,22 @@ impl FacetState {
             .chips
             .iter()
             .map(|chip| FacetChip {
-                text: format!("{} {}", chip.label, chip.count)
-                    .into(),
+                text: format!(
+                    "{} {}",
+                    chip.label, chip.count
+                )
+                .into(),
                 chosen: self.chosen.contains(&(
                     chip.facet,
                     chip.label.clone(),
                 )),
             })
             .collect();
-        player.set_chips(ModelRc::new(VecModel::from(chips)));
+        player
+            .set_chips(ModelRc::new(VecModel::from(chips)));
         player.set_chosen_count(
-            i32::try_from(self.chosen.len()).unwrap_or(i32::MAX),
+            i32::try_from(self.chosen.len())
+                .unwrap_or(i32::MAX),
         );
     }
 }
@@ -176,8 +185,9 @@ fn header_row(
 pub(super) fn relayout(ui: &MainWindow, deck: &Deck) {
     let batch = deck.facets.borrow().batch();
     *deck.tracks.borrow_mut() = batch;
-    let loading = loading_id(deck.playback.borrow().state())
-        .map(str::to_owned);
+    let loading =
+        loading_id(deck.playback.borrow().state())
+            .map(str::to_owned);
     push_rows(ui, deck, loading.as_deref());
     deck.facets.borrow().project(ui);
 }
@@ -186,11 +196,16 @@ pub(super) fn relayout(ui: &MainWindow, deck: &Deck) {
 pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
     let labels: Vec<slint::SharedString> =
         std::iter::once("不分组")
-            .chain(Facet::ALL.iter().map(|facet| facet.label()))
+            .chain(
+                Facet::ALL
+                    .iter()
+                    .map(|facet| facet.label()),
+            )
             .map(Into::into)
             .collect();
-    ui.global::<Player>()
-        .set_grouping_labels(ModelRc::new(VecModel::from(labels)));
+    ui.global::<Player>().set_grouping_labels(
+        ModelRc::new(VecModel::from(labels)),
+    );
 
     let grouped = deck.clone();
     let weak = ui.as_weak();
@@ -204,7 +219,8 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
         }
         // 卡墙只筛选、不分组(#160,用户 2026-09-27 定):一选分组就切回列表
         if grouping.is_some() {
-            ui.global::<Shell>().invoke_set_view_wall(false);
+            ui.global::<Shell>()
+                .invoke_set_view_wall(false);
         }
         relayout(&ui, &grouped);
     });

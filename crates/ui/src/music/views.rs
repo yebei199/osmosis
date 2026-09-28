@@ -262,7 +262,9 @@ impl Views {
     }
 
     /// 此刻摆的是哪个视图,没有就是 `None`。
-    pub(crate) fn current_source(&self) -> Option<ViewSource> {
+    pub(crate) fn current_source(
+        &self,
+    ) -> Option<ViewSource> {
         self.state
             .borrow()
             .current

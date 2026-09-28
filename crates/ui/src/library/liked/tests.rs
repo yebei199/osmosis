@@ -287,9 +287,7 @@ fn track_row(id: &str) -> crate::TrackRow {
         cover: slint::Image::default(),
         header: false,
         collapsed: false,
-    },
-    header: false,
-    collapsed: false,
+    }
 }
 
 fn press(ui: &MainWindow, label: &str) {

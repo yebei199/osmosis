@@ -646,7 +646,9 @@ fn faceted_batch() -> TracksDto {
 
 /// 摆进一个视图,并接上分组条。
 #[cfg(not(target_arch = "wasm32"))]
-fn faceted_window(source: ViewSource) -> (MainWindow, Deck) {
+fn faceted_window(
+    source: ViewSource,
+) -> (MainWindow, Deck) {
     let (ui, deck) = deck_window();
     super::facets::bind(&ui, &deck);
     let (_ticket, shown) = deck.views.begin(source);
@@ -661,7 +663,9 @@ fn headers(ui: &MainWindow) -> Vec<String> {
         .get_tracks()
         .iter()
         .filter(|row| row.header)
-        .map(|row| format!("{} {}", row.title, row.duration))
+        .map(|row| {
+            format!("{} {}", row.title, row.duration)
+        })
         .collect()
 }
 
@@ -681,7 +685,9 @@ fn chip_index(ui: &MainWindow, text: &str) -> i32 {
         .iter()
         .position(|chip| chip.text == text)
         .map(|at| at as i32)
-        .unwrap_or_else(|| panic!("没有「{text}」这个 chip"))
+        .unwrap_or_else(|| {
+            panic!("没有「{text}」这个 chip")
+        })
 }
 
 /// 按歌手分:堆数等于歌手去重数,多歌手的歌进每一堆,队列里只排一次。
@@ -691,8 +697,9 @@ fn grouping_by_artist_makes_one_pile_per_artist() {
     let (ui, deck) = faceted_window(ViewSource::Daily);
     assert!(ui.global::<Player>().get_facets_enabled());
 
-    ui.global::<Player>()
-        .invoke_set_grouping(app_core::facets::Facet::Artist.index());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
 
     assert_eq!(
         headers(&ui),
@@ -709,14 +716,16 @@ fn choosing_a_grouping_leaves_the_wall() {
     let (ui, _deck) = faceted_window(ViewSource::Daily);
     let asked = Rc::new(RefCell::new(Vec::new()));
     let probe = asked.clone();
-    ui.global::<Shell>()
-        .on_set_view_wall(move |to| probe.borrow_mut().push(to));
+    ui.global::<Shell>().on_set_view_wall(move |to| {
+        probe.borrow_mut().push(to)
+    });
 
     ui.global::<Player>().invoke_set_grouping(0);
     assert!(asked.borrow().is_empty(), "不分组不碰卡墙");
 
-    ui.global::<Player>()
-        .invoke_set_grouping(app_core::facets::Facet::Tag.index());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Tag.index(),
+    );
     assert_eq!(*asked.borrow(), vec![false]);
 }
 
@@ -733,7 +742,8 @@ fn a_chip_filters_the_rows_and_the_queue() {
     assert_eq!(queue_ids(&deck), vec!["c"]);
     assert_eq!(ui.global::<Player>().get_chosen_count(), 1);
 
-    let (_ticket, shown) = deck.views.begin(ViewSource::Recent);
+    let (_ticket, shown) =
+        deck.views.begin(ViewSource::Recent);
     project(&ui, &deck, shown);
     show(&ui, &deck, faceted_batch());
     assert_eq!(ui.global::<Player>().get_chosen_count(), 0);
@@ -745,14 +755,18 @@ fn a_chip_filters_the_rows_and_the_queue() {
 #[test]
 fn a_collapsed_pile_keeps_only_its_header() {
     let (ui, _deck) = faceted_window(ViewSource::Daily);
-    ui.global::<Player>()
-        .invoke_set_grouping(app_core::facets::Facet::Artist.index());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
 
     ui.global::<Player>().invoke_toggle_pile("甲".into());
     assert_eq!(shown_ids(&ui), vec!["", "", "c", "", "a"]);
 
     ui.global::<Player>().invoke_toggle_pile("甲".into());
-    assert_eq!(shown_ids(&ui), vec!["", "a", "b", "", "c", "", "a"]);
+    assert_eq!(
+        shown_ids(&ui),
+        vec!["", "a", "b", "", "c", "", "a"]
+    );
 }
 
 /// 搜索结果不是歌单:不挂分组条,选着的分组也不作用在它上面。
@@ -760,8 +774,9 @@ fn a_collapsed_pile_keeps_only_its_header() {
 #[test]
 fn search_results_are_not_grouped() {
     let (ui, deck) = faceted_window(ViewSource::Daily);
-    ui.global::<Player>()
-        .invoke_set_grouping(app_core::facets::Facet::Artist.index());
+    ui.global::<Player>().invoke_set_grouping(
+        app_core::facets::Facet::Artist.index(),
+    );
 
     let (_ticket, shown) =
         deck.views.begin(ViewSource::Search("x".into()));
