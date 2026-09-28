@@ -24,7 +24,7 @@ use server::store::cache;
 use server::store::liked;
 use server::store::playlist::TrackRef;
 
-use super::with_facets;
+use super::for_account;
 use crate::routes::catalog::catalog_cache::{
     detail_tracks_of, fill_details, netease_name,
     track_refs_of,
@@ -91,9 +91,10 @@ pub(crate) async fn liked(
 
     let found = TracksDto {
         unavailable: ids.len() - tracks.len(),
+        hidden: 0,
         tracks,
     };
-    Ok(Json(with_facets(&state, account.id, found).await))
+    Ok(Json(for_account(&state, account.id, found).await))
 }
 
 /// `POST /liked/import` 的响应:这次新加了几首,导完一共几首。

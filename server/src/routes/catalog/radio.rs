@@ -24,8 +24,8 @@ use server::store::history;
 use server::store::playlist::TrackRef;
 
 use super::search::remember_details;
+use crate::routes::library::for_account;
 use crate::routes::library::likes::netease_liked_id;
-use crate::routes::library::with_facets;
 use crate::{AppState, conn, fail};
 
 /// 一次请求最多问平台几回。
@@ -110,12 +110,13 @@ pub(crate) async fn radio(
 
     // 电台区也是一个歌单视图,同样要分组筛选(#160)
     Ok(Json(
-        with_facets(
+        for_account(
             &state,
             account.id,
             TracksDto {
                 tracks: picked,
                 unavailable: 0,
+                hidden: 0,
             },
         )
         .await,

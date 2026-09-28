@@ -356,6 +356,7 @@ mod tests {
         TracksDto {
             tracks: Vec::new(),
             unavailable: 0,
+            hidden: 0,
         }
     }
 

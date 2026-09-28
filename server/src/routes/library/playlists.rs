@@ -23,8 +23,8 @@ use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
     netease_name, store_first, track_refs_of,
 };
+use crate::routes::library::for_account;
 use crate::routes::library::likes::import_once;
-use crate::routes::library::with_facets;
 use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
@@ -74,7 +74,7 @@ pub(crate) async fn platform_playlist_tracks(
         },
     )
     .await?;
-    Ok(Json(with_facets(&state, account.id, found).await))
+    Ok(Json(for_account(&state, account.id, found).await))
 }
 
 /// 平台歌单的回源路径:取成员关系,回填缓存。
@@ -108,6 +108,7 @@ async fn fetch_platform_playlist(
     Ok(TracksDto {
         tracks,
         unavailable,
+        hidden: 0,
     })
 }
 
@@ -197,8 +198,9 @@ pub(crate) async fn playlist_tracks(
     let found = TracksDto {
         tracks,
         unavailable: 0,
+        hidden: 0,
     };
-    Ok(Json(with_facets(&state, account.id, found).await))
+    Ok(Json(for_account(&state, account.id, found).await))
 }
 
 /// 增删曲目的请求体。

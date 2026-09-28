@@ -87,12 +87,21 @@ pub fn add_batch_text(count: usize) -> String {
 /// 存在的理由是**别让歌单静默变短**:服务端把拿不到详情的曲目剔出成员关系
 /// (见 server 的 `keep_available`),不说一声的话用户只看到数目对不上,
 /// 而分不清「我少点了一个红心」和「平台不给这首歌的详情」。
-pub fn unavailable_text(count: usize) -> String {
-    if count == 0 {
-        String::new()
-    } else {
-        format!("另有 {count} 首平台不再提供")
+///
+/// 命中屏蔽规则被藏起来的(#161)也在这一行报:同一个理由,歌单对不上网易云时
+/// 用户得知道是自己屏蔽的,不是平台少给了。
+pub fn unavailable_text(
+    count: usize,
+    hidden: usize,
+) -> String {
+    let mut parts = Vec::new();
+    if count > 0 {
+        parts.push(format!("另有 {count} 首平台不再提供"));
     }
+    if hidden > 0 {
+        parts.push(format!("已隐藏 {hidden} 首"));
+    }
+    parts.join(" · ")
 }
 
 /// 这个来源的歌单能不能改。

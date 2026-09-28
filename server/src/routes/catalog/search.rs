@@ -24,7 +24,7 @@ use server::store::cache;
 use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
-use crate::routes::library::with_facets;
+use crate::routes::library::for_account;
 use crate::routes::play::prefetch;
 use crate::{AppState, fail};
 
@@ -35,11 +35,11 @@ pub(crate) const DEFAULT_SEARCH_LIMIT: i32 = 30;
 #[derive(Deserialize)]
 pub(crate) struct SearchQuery {
     /// 关键词。
-    q: String,
+    pub(crate) q: String,
     /// 每页条数,不给按 [`DEFAULT_SEARCH_LIMIT`]。
-    limit: Option<i32>,
+    pub(crate) limit: Option<i32>,
     /// 偏移量,不给从 0 开始。翻页由客户端自行推进。
-    offset: Option<i32>,
+    pub(crate) offset: Option<i32>,
 }
 
 /// `GET /search/tracks?q=紅蓮華` —— 搜歌。
@@ -71,10 +71,22 @@ pub(crate) async fn search_tracks(
         .map(bangdream::track_to_dto)
         .collect();
     remember_details(&state, &tracks).await;
+    // 搜到被屏蔽的也藏起来,但报出藏了几首,免得以为搜不到(#161)
+    let shown = for_account(
+        &state,
+        account.id,
+        TracksDto {
+            tracks,
+            unavailable: 0,
+            hidden: 0,
+        },
+    )
+    .await;
 
     Ok(Json(SearchDto {
-        tracks,
+        tracks: shown.tracks,
         has_more: response.has_more,
+        hidden: shown.hidden,
     }))
 }
 
@@ -144,12 +156,13 @@ pub(crate) async fn artist_tracks(
     remember_details(&state, &tracks).await;
 
     Ok(Json(
-        with_facets(
+        for_account(
             &state,
             account.id,
             TracksDto {
                 tracks,
                 unavailable: 0,
+                hidden: 0,
             },
         )
         .await,
@@ -230,12 +243,13 @@ pub(crate) async fn daily(
     prefetch::enqueue(&state, account.id, &refs).await;
 
     Ok(Json(
-        with_facets(
+        for_account(
             &state,
             account.id,
             TracksDto {
                 tracks,
                 unavailable: 0,
+                hidden: 0,
             },
         )
         .await,

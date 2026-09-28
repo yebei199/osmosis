@@ -99,8 +99,18 @@ fn an_unreadable_subtitle_yields_no_count() {
 /// 和「平台不给这首歌的详情」。
 #[test]
 fn the_note_says_how_many_are_unavailable() {
-    assert!(unavailable_text(1).contains('1'));
-    assert!(unavailable_text(23).contains("23"));
+    assert!(unavailable_text(1, 0).contains('1'));
+    assert!(unavailable_text(23, 0).contains("23"));
+}
+
+/// 屏蔽藏掉的也要报出几首(#161),和平台缺的并在同一行。
+#[test]
+fn the_note_says_how_many_are_hidden() {
+    assert_eq!(unavailable_text(0, 4), "已隐藏 4 首");
+    assert_eq!(
+        unavailable_text(2, 4),
+        "另有 2 首平台不再提供 · 已隐藏 4 首"
+    );
 }
 
 /// 边界:一首都没少时返回空串,那一行整个不出现 ——
@@ -109,7 +119,7 @@ fn the_note_says_how_many_are_unavailable() {
 #[test]
 fn no_note_when_nothing_is_unavailable() {
     assert_eq!(
-        unavailable_text(0),
+        unavailable_text(0, 0),
         "",
         "一首都没少时那一行整个不该出现"
     );

@@ -85,6 +85,7 @@ pub(super) fn bind_search(ui: &MainWindow, deck: &Deck) {
                     |dto| TracksDto {
                         tracks: dto.tracks,
                         unavailable: 0,
+                        hidden: dto.hidden,
                     },
                 )
             },
@@ -540,6 +541,7 @@ pub(super) fn project(
     let empty = || TracksDto {
         tracks: Vec::new(),
         unavailable: 0,
+        hidden: 0,
     };
     show(ui, deck, shown.tracks.unwrap_or_else(empty));
 }
@@ -590,10 +592,11 @@ pub(super) fn show(
     deck: &Deck,
     found: TracksDto,
 ) {
-    // 平台给不出详情的那些没能进这一批。说一声,否则歌单静默变短
+    // 平台给不出详情的、命中屏蔽规则的都没能进这一批。说一声,否则歌单静默变短
     ui.global::<Library>().set_unavailable_note(
         crate::library::playlist::unavailable_text(
             found.unavailable,
+            found.hidden,
         )
         .into(),
     );
