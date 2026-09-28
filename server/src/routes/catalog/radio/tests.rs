@@ -300,3 +300,46 @@ async fn heart_drops_liked_judged_and_blocked_tracks() {
 
     assert_eq!(ids(&response.0), vec![id(7)]);
 }
+
+/// 私人 FM 也认平台红心歌单(缓存里那份):问一次红心歌单 id,
+/// 里面的歌与本地「我的喜欢」一样丢掉(#161)。
+#[tokio::test]
+async fn fm_drops_tracks_in_the_platform_liked_playlist() {
+    use server::store::cache;
+
+    let case = "radio_fm_platform_liked";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = |n| track_id(case, n);
+
+    let mut conn = pool.acquire().await.expect("取连接");
+    cache::set_playlist(
+        &mut conn,
+        account.id,
+        "liked-9",
+        &[testing::expected_dto(&id(1), "平台红心")],
+    )
+    .await
+    .expect("写平台红心缓存");
+    drop(conn);
+
+    let mut fake =
+        FakeUpstream::logged_in_with("nuid", Vec::new());
+    fake.playlists = vec![liked_playlist("liked-9")];
+    fake.fm_batches.lock().unwrap().extend([vec![
+        upstream_track(&id(1), "红心过"),
+        upstream_track(&id(2), "新"),
+        upstream_track(&id(3), "新"),
+        upstream_track(&id(4), "新"),
+    ]]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake).await,
+    );
+
+    let response = radio(State(state), account, fm())
+        .await
+        .expect("电台应该成功");
+
+    assert_eq!(ids(&response.0), vec![id(2), id(3), id(4)]);
+}
