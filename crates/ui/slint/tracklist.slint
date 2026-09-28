@@ -292,6 +292,8 @@ component Pill inherits Rectangle {
             : (touch.has-hover ? Theme.overlay : Theme.surface);
     }
     label := Text {
+        // 药丸自己已经报了标签,字不再报一遍
+        accessible-role: none;
         text: root.text;
         font-family: "Maple Mono NF CN";
         font-size: 12px;
