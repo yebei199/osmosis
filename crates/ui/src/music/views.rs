@@ -261,6 +261,15 @@ impl Views {
         state.touch(key).shown()
     }
 
+    /// 此刻摆的是哪个视图,没有就是 `None`。
+    pub(crate) fn current_source(&self) -> Option<ViewSource> {
+        self.state
+            .borrow()
+            .current
+            .as_ref()
+            .map(|key| key.source.clone())
+    }
+
     /// 离开所有视图:当前没有任何一批歌可摆(比如还没搜过的搜索页)。
     pub(crate) fn leave(&self) {
         self.state.borrow_mut().current = None;

@@ -218,6 +218,7 @@ fn deck_window_with(
         cover: super::CoverFeed::default(),
         tracks: Rc::new(RefCell::new(Vec::new())),
         views: super::Views::default(),
+        facets: Default::default(),
         liked: crate::library::liked::LikedSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),

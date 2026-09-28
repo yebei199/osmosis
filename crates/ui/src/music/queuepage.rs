@@ -358,6 +358,8 @@ fn row(
             .as_deref()
             .and_then(|url| deck.thumbnails.cached(url))
             .unwrap_or_default(),
+        header: false,
+        collapsed: false,
     }
 }
 

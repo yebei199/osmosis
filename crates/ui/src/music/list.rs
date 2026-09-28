@@ -535,6 +535,8 @@ pub(super) fn project(
     shown: Shown,
 ) {
     ui.global::<Player>().set_tracks_loading(shown.loading);
+    // 换了视图:上一批歌的 chip 与折叠不带过来(#160)
+    deck.facets.borrow_mut().leave_view();
     let empty = || TracksDto {
         tracks: Vec::new(),
         unavailable: 0,
@@ -595,11 +597,13 @@ pub(super) fn show(
         )
         .into(),
     );
-    *deck.tracks.borrow_mut() = found.tracks;
-    let loading =
-        loading_id(deck.playback.borrow().state())
-            .map(str::to_owned);
-    push_rows(ui, deck, loading.as_deref());
+    let enabled = deck
+        .views
+        .current_source()
+        .is_some_and(|source| facets::supports(&source));
+    deck.facets.borrow_mut().load(found.tracks, enabled);
+    // 筛过、排过的那一批进 `deck.tracks`,行连同堆头推上去(#160)
+    facets::relayout(ui, deck);
 }
 
 /// 重推一遍列表,把 `loading` 那一行标成加载中。
@@ -612,7 +616,7 @@ pub(super) fn push_rows(
     deck: &Deck,
     loading: Option<&str>,
 ) {
-    let mut rows = to_rows(&deck.tracks.borrow(), loading);
+    let mut rows = deck.facets.borrow().rows(loading);
     // 心在行还是 Vec 的时候就标好 —— 换上模型之后再整表重标,近千行的歌单
     // 就是近千次 row_data / set_row_data(#117)。
     crate::library::liked::mark(&deck.liked, &mut rows);
@@ -636,7 +640,7 @@ pub(super) fn mark_loading(
     loading: Option<&str>,
 ) {
     let model = ui.global::<Player>().get_tracks();
-    if model.row_count() != deck.tracks.borrow().len()
+    if model.row_count() != deck.facets.borrow().row_count()
         || model
             .as_any()
             .downcast_ref::<VecModel<TrackRow>>()

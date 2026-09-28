@@ -40,6 +40,17 @@ export struct TrackRow {
     // 缩略图。取不到就是空图(width == 0),那时画一块占位色 ——
     // 与 PlaylistRow.cover 同一条规矩:CDN 会过期,取不到是常态不是故障。
     cover: image,
+    // 分组时的堆头(#160):title 是堆名,duration 是「12 首」。点它折叠/展开,
+    // 不放歌 —— id 是空串,点播那条路认不出它。
+    header: bool,
+    // 这个堆头折着,底下的歌不摆。
+    collapsed: bool,
+}
+
+// 筛选条上的一个 chip(#160)。text 已格式化好(「有歌词 12」)。
+export struct FacetChip {
+    text: string,
+    chosen: bool,
 }
 
 // 名册里的一台在线设备。名字由对端自报,是任意文本 —— 与歌名同理,

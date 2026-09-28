@@ -526,6 +526,8 @@ mod tests {
             liked: false,
             cover_url: url.into(),
             cover: slint::Image::default(),
+            header: false,
+            collapsed: false,
         }
     }
 
