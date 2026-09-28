@@ -10,8 +10,23 @@ const TRACK: u64 = 100 * SEC as u64;
 /// 三首,各 100 秒。
 fn list() -> Playlist {
     Playlist {
-        entries: vec![(1, TRACK), (2, TRACK), (3, TRACK)],
+        entries: vec![
+            (1, TRACK, false),
+            (2, TRACK, false),
+            (3, TRACK, false),
+        ],
     }
+}
+
+/// `list()` 的三首里,把 `entry_id` 那一条标成命中屏蔽规则。
+fn blocking(entry_id: i64) -> Playlist {
+    let mut list = list();
+    for entry in &mut list.entries {
+        if entry.0 == entry_id {
+            entry.2 = true;
+        }
+    }
+    list
 }
 
 /// pc 在放第 1 条,手机只当遥控器。
@@ -140,6 +155,80 @@ fn looping_all_wraps_around() {
     group.step("pc", &list(), 1, SEC).unwrap();
 
     assert_eq!(now(&group).entry_id, 1);
+}
+
+/// 下一首命中屏蔽规则就再跳一首;上一首同理(#167)。
+#[test]
+fn next_and_prev_skip_a_blocked_entry() {
+    let mut group = group();
+    group.step("phone", &blocking(2), 1, SEC).unwrap();
+    assert_eq!(
+        now(&group).entry_id,
+        3,
+        "2 被屏蔽,下一首该是 3"
+    );
+
+    group
+        .step(
+            "phone",
+            &blocking(2),
+            -1,
+            SEC + START_WAIT_US + SEC,
+        )
+        .unwrap();
+    assert_eq!(
+        now(&group).entry_id,
+        1,
+        "上一首同样跳过被屏蔽的 2"
+    );
+}
+
+/// 自然放完(`roll`/`advance` 走的都是 `follower`)同样跳过被屏蔽的下一首。
+#[test]
+fn a_natural_finish_skips_a_blocked_entry() {
+    let mut group = group();
+    let list = blocking(2);
+    let version = group.version;
+    group
+        .advance(
+            "pc",
+            &list,
+            1,
+            version,
+            START_WAIT_US + 100 * SEC,
+        )
+        .unwrap();
+    assert_eq!(now(&group).entry_id, 3);
+}
+
+/// 除了在放这一首,其余全被屏蔽:停在这一首末尾,与放到队尾一致。
+#[test]
+fn everything_else_blocked_stops_at_the_tail() {
+    let mut group = group();
+    let mut list = list();
+    for entry in &mut list.entries {
+        if entry.0 != 1 {
+            entry.2 = true;
+        }
+    }
+    group.step("phone", &list, 1, SEC).unwrap();
+    assert_eq!(
+        now(&group).entry_id,
+        1,
+        "没有可跳的下一首,不动"
+    );
+}
+
+/// 单曲循环重放的是这一首自己,即便它命中了屏蔽规则也不跳(#167)。
+#[test]
+fn looping_one_does_not_skip_the_blocked_current_track() {
+    let mut group = group_with_loop(LoopModeDto::One);
+    group.roll(
+        &blocking(1),
+        START_WAIT_US + 100 * SEC + ADVANCE_GRACE_US,
+    );
+    assert_eq!(now(&group).entry_id, 1);
+    assert!(now(&group).playing);
 }
 
 /// 最先真正放完的出声设备报上来就推进,下一首稍后一起开始;同一份报告第二次到(另一台

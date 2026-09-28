@@ -26,6 +26,7 @@ use sqlx::{PgConnection, PgPool};
 use crate::error::AppError;
 use crate::store::group as rows;
 use crate::store::queue::{self, Entry, EntryInput};
+use crate::store::{blocks, facets};
 use crate::syncplay::clock;
 use crate::syncplay::signaling::{AccountId, SharedRoster};
 use timeline::{Group, Playlist, Refusal};
@@ -67,7 +68,6 @@ pub fn wall_now_us() -> i64 {
         .map_or(0, |since| since.as_micros() as i64)
 }
 
-/// 应用一条意图,返回应用之后组的样子(组散了是 `None`),并推给账号下每台在线设备。
 pub async fn apply(
     pool: &PgPool,
     roster: &SharedRoster,
@@ -81,7 +81,11 @@ pub async fn apply(
     let mut entries =
         current_entries(&mut tx, account, &group).await?;
     let before = started(&group);
-    group.roll(&playlist(&entries), at);
+    group.roll(
+        &blocked_playlist(&mut tx, account, &entries)
+            .await?,
+        at,
+    );
 
     match intent {
         Intent::Play(pick) => {
@@ -95,19 +99,23 @@ pub async fn apply(
             if let Some(fresh) = fresh {
                 entries = fresh;
             }
+            let list = blocked_playlist(
+                &mut tx, account, &entries,
+            )
+            .await?;
             group
                 .jump(
-                    device,
-                    queue,
-                    &playlist(&entries),
-                    picked,
-                    at,
+                    device, queue, &list, picked, at,
                     at as u64,
                 )
                 .map_err(refused)?;
         }
         Intent::Transport(op) => {
-            transport(&mut group, device, &entries, op, at)
+            let list = blocked_playlist(
+                &mut tx, account, &entries,
+            )
+            .await?;
+            transport(&mut group, device, &list, op, at)
                 .map_err(refused)?;
         }
         Intent::Outputs { outputs, seed } => {
@@ -138,10 +146,14 @@ pub async fn apply(
                     seed.revision,
                 )
                 .await?;
+                let list = blocked_playlist(
+                    &mut tx, account, &entries,
+                )
+                .await?;
                 group
                     .seed(
                         (seed.queue_id, seed.revision),
-                        &playlist(&entries),
+                        &list,
                         seed.entry_id,
                         (
                             seed.position_ms * 1_000,
@@ -202,9 +214,12 @@ pub async fn apply(
     }
 
     {
+        let list =
+            blocked_playlist(&mut tx, account, &entries)
+                .await?;
         let online = roster.lock().expect("名册锁中毒");
         group.pause_if_silent(
-            &playlist(&entries),
+            &list,
             |id| online.device(account, id).is_some(),
             at,
         );
@@ -216,10 +231,6 @@ pub async fn apply(
     Ok(state)
 }
 
-/// 出声设备报它真正放完了第 `entry_id` 条,手上那一版是 `version`(#142 AC-9)。
-///
-/// 最先报的那台推进;同一份报告迟到的(别的出声设备也放完了)按 `(version, entry_id)` 作废,
-/// 不改状态、不加版本、不广播。返回此刻组的样子。
 pub async fn advance(
     pool: &PgPool,
     roster: &SharedRoster,
@@ -233,7 +244,8 @@ pub async fn advance(
     let at = wall_now_us();
     let entries =
         current_entries(&mut tx, account, &group).await?;
-    let list = playlist(&entries);
+    let list = blocked_playlist(&mut tx, account, &entries)
+        .await?;
     let before = started(&group);
     let rolled = group.roll(&list, at);
     let advanced = group
@@ -282,10 +294,6 @@ fn mark_ready(
     held.1.clone()
 }
 
-/// 出声设备报它手上第 `entry_id` 条已经备好,手上那一版是 `version`(#154)。
-///
-/// 在线的出声设备都报过了,起播就从 [`timeline::START_WAIT_US`] 的上限提前到「现在 +
-/// [`timeline::LEAD_US`]」并广播;还有没报的就只记下来。返回此刻组的样子。
 pub async fn ready(
     pool: &PgPool,
     roster: &SharedRoster,
@@ -299,7 +307,8 @@ pub async fn ready(
     let at = wall_now_us();
     let entries =
         current_entries(&mut tx, account, &group).await?;
-    let list = playlist(&entries);
+    let list = blocked_playlist(&mut tx, account, &entries)
+        .await?;
     let mut before = started(&group);
     let rolled = group.roll(&list, at);
     let ready = mark_ready(account, version, device);
@@ -507,8 +516,11 @@ async fn roll_due(
         let entries =
             current_entries(&mut tx, account, &group)
                 .await?;
+        let list =
+            blocked_playlist(&mut tx, account, &entries)
+                .await?;
         let before = started(&group);
-        if !group.roll(&playlist(&entries), wall_now_us()) {
+        if !group.roll(&list, wall_now_us()) {
             continue;
         }
         let state =
@@ -672,29 +684,28 @@ async fn pick_entry(
 fn transport(
     group: &mut Group,
     device: &str,
-    entries: &[Entry],
+    list: &Playlist,
     op: TransportOpDto,
     at: i64,
 ) -> Result<(), Refusal> {
-    let list = playlist(entries);
     match op {
         TransportOpDto::Pause => {
-            group.pause(device, &list, at)
+            group.pause(device, list, at)
         }
         TransportOpDto::Resume => {
-            group.resume(device, &list, at)
+            group.resume(device, list, at)
         }
         TransportOpDto::Next => {
-            group.step(device, &list, 1, at)
+            group.step(device, list, 1, at)
         }
         TransportOpDto::Prev => {
-            group.step(device, &list, -1, at)
+            group.step(device, list, -1, at)
         }
         TransportOpDto::Seek { position_ms } => {
             group.seek(device, position_ms * 1_000, at)
         }
         TransportOpDto::Shuffle { on } => {
-            group.shuffle(device, &list, on, at as u64)
+            group.shuffle(device, list, on, at as u64)
         }
         TransportOpDto::Loop { mode } => {
             group.set_loop(device, mode)
@@ -766,10 +777,41 @@ fn playlist(entries: &[Entry]) -> Playlist {
                 (
                     entry.entry_id,
                     entry.duration_ms.max(0) as u64 * 1_000,
+                    false,
                 )
             })
             .collect(),
     }
+}
+
+/// 组接下来该放哪一条要认账号的屏蔽规则(#167):没规则时与 [`playlist`] 等价,一条
+/// 查询按 [`crate::store::blocks::hits`] 同一套口径给每条标上「命不命中」,标签命中
+/// 走与列表出口([`crate::store::facets::fill`])同一份聚合。
+async fn blocked_playlist(
+    conn: &mut PgConnection,
+    account: AccountId,
+    entries: &[Entry],
+) -> Result<Playlist, AppError> {
+    let rules = blocks::list(conn, account).await?;
+    if rules.is_empty() {
+        return Ok(playlist(entries));
+    }
+    let mut tracks: Vec<TrackDto> =
+        entries.iter().map(track_of).collect();
+    facets::fill(conn, account, &mut tracks).await?;
+    Ok(Playlist {
+        entries: entries
+            .iter()
+            .zip(&tracks)
+            .map(|(entry, track)| {
+                (
+                    entry.entry_id,
+                    entry.duration_ms.max(0) as u64 * 1_000,
+                    blocks::hits(&rules, track),
+                )
+            })
+            .collect(),
+    })
 }
 
 /// 换成线上的样子。时刻从挂钟换到服务端单调钟:锚点已经过去的,重新锚在「现在」。
