@@ -2,13 +2,12 @@ import { Palette } from "std-widgets.slint";
 
 import { Theme, Type } from "theme.slint";
 import { LyricRow } from "types.slint";
-import { OutlinedText, RoundControl } from "widgets.slint";
-import { PlayerBar, BarMetrics } from "playerbar.slint";
+import { OutlinedText } from "widgets.slint";
+import { PlayerBar } from "playerbar.slint";
 import { LyricsPage } from "lyrics.slint";
 import { QueuePage } from "queue.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
-import { Library } from "globals/library.slint";
 import { Viz } from "globals/viz.slint";
 
 // 播放页:盖住包括导航在内的整个窗口的全屏沉浸层(CONTEXT.md「播放页」)。
@@ -333,78 +332,12 @@ export component PlayPage inherits FocusScope {
         width-cap: parent.width - root.bar-inset * 2;
     }
 
-    // 三态赞踩,与红心并列(#157,用户可见决定点,交付时附截图)。摆在控制条
-    // 正上方 —— 歌名/歌词那一块挤在标题下方 96px 里(viz-lyric-y 就是
-    // title-y+96),塞不下第三样,塞了也会被后画的歌词块盖住(声在其后)。
-    //
-    // y 算的是**条身**(那颗圆胶囊)的绝对顶边,不是 `player-bar.y`:后者是
-    // 抽屉展开也算在内的包围盒,展开时会往上长,player-bar.y 跟着变小,
-    // 这一排要是挂在它上面就会跟着抽屉一起往上跳。条身在组件内部固定贴底
-    // (`playerbar.slint` 的 `capsule`),把 `PlayerBar` 自己那套 y 表达式
-    // 展开、抵消 `self.height` 项,剩下的就是这个常量算式 —— 条身位置不随
-    // 抽屉开合变,这一排也就不用变。
-    if !Viz.lyrics-page-open && !Viz.queue-page-open
-            && Player.now-id != "": feedback-row := HorizontalLayout {
-        y: root.height - root.safe-bottom - 24px - BarMetrics.bar-h
-            - root.feedback-btn - 16px;
-        width: root.feedback-btn * 3 + root.feedback-gap * 2;
-        height: root.feedback-btn;
-        x: (root.width - self.width) / 2;
-        spacing: root.feedback-gap;
-
-        // 底色走 glass 变体(docs/design.md「光带按钮与按钮变体」,#157 F-001):
-        // 三键与播放页「更多」键共用同一批槽渲出来的那张图(`Shell.viz-glass-bg`,
-        // `aurora_btn/band.rs` 的 `viz_glass_i`)—— 播放页开着就有这张图,不必
-        // 单为这三颗键再开一个 pass。选中态是 `RoundControl` 新加的
-        // `checked-fill`:玻璃纹理本身够不透明,叠在它外面的实心圆会被盖住,
-        // 得让 accent 圆画在纹理**之上、图标之下**,只能进组件内部插这一层
-        // (见 `widgets.slint`)。
-        feedback-heart := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.heart-icon;
-            label: Player.now-liked ? "取消喜欢" : "喜欢";
-            checkable: true;
-            checked: Player.now-liked;
-            checked-fill: true;
-            transparent-base: true;
-            backdrop: Shell.viz-glass-bg;
-            clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
-        }
-        feedback-up := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.thumb-up-icon;
-            label: Player.now-feedback == 1 ? "取消点赞" : "点赞";
-            checkable: true;
-            checked: Player.now-feedback == 1;
-            checked-fill: true;
-            transparent-base: true;
-            backdrop: Shell.viz-glass-bg;
-            clicked => { Library.toggle-feedback(1); }
-        }
-        feedback-down := RoundControl {
-            diameter: root.feedback-btn;
-            icon: root.thumb-down-icon;
-            label: Player.now-feedback == -1 ? "取消点踩" : "点踩";
-            checkable: true;
-            checked: Player.now-feedback == -1;
-            checked-fill: true;
-            transparent-base: true;
-            backdrop: Shell.viz-glass-bg;
-            clicked => { Library.toggle-feedback(-1); }
-        }
-    }
-
     // 视觉预设的选择列表已退场:名册里只剩「封面」一档,列表里那一项恒高亮、
     // 点了等于不点,而开它的那一行只长在播放页 —— 那是两处抽屉唯一的差别。
     // 加档时列表连同抽屉里那一行一起回来,并且回到抽屉里(drawer.slint)。
+    //
+    // 三态赞踩(#157)不在这里:第一版做过播放页常驻三键,用户看过四状态截图后
+    // 定了换个位置 —— 收进「更多」抽屉,挨着已有的喜欢那一行(#157 F-004,
+    // 见 `drawer.slint` 的 `feedback-up`/`feedback-down`)。
   }
-
-  // 三态赞踩那一排的尺寸与图标。与 drawer.slint 的 heart-icon 是同一个
-  // path —— 两处画的是同一件事,长得不一样才奇怪。
-  // 触摸目标不低于 44px(docs/design.md「版式」)。
-  property <length> feedback-btn: 44px;
-  property <length> feedback-gap: 12px;
-  property <string> heart-icon: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
-  property <string> thumb-up-icon: "M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z";
-  property <string> thumb-down-icon: "M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05C1.05 11.5 1 11.74 1 12v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z";
 }

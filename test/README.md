@@ -136,8 +136,10 @@ test/feedback-e2e.sh skip       # 起播后立刻切歌,断言这一行的 liste
 test/feedback-e2e.sh complete   # 拖进度条到曲尾附近,等它自己放完切下一首,断言判为完播
 ```
 
-`verdict` 展开播放页,按 `PlayPage::feedback-up` / `PlayPage::feedback-down` 点,查
-`track_feedback` 的行数与最新一行的 `verdict`。`skip` 不展开播放页(它要点列表里的
+`verdict` 按控制条「更多」键(`RoundControl::touch`,标签「更多」)展开抽屉,再按标签
+找抽屉里「点赞」「点踩」「取消点踩」那几行(`DrawerRow::touch`,#157 F-004 起赞踩键挨着
+「喜欢」那一行,不再长在播放页上),查 `track_feedback` 的行数与最新一行的 `verdict`。
+`skip` 不展开播放页(它要点列表里的
 另一行来触发切歌,播放页开着会盖住列表),起播后立即换到第二行,查 `play_events`
 最新一行的 `listened_ms` 存在且小于 30000(#157 的口径:前 30 秒内切走算跳过)。
 `complete` 展开播放页,拖 `ProgressBar::seek-touch`(`drag_element`,从元素中心按下、

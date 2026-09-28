@@ -162,11 +162,6 @@ export component RoundControl inherits Rectangle {
     // 垫在图标下的一张画(#69 起是 glass 变体的按钮底)。空图即没有,
     // 素底照常。shader 自带圆形 alpha 裁切,这里不必再 clip。
     in property <image> backdrop;
-    // 选中时要不要在 backdrop 之上叠一层实心 accent 圆(#157 F-001)。
-    // 默认关:大多数 RoundControl 只靠图标变色表达选中(见下面 Path 的
-    // stroke),这层是给 glass 底的按钮准备的 —— 玻璃纹理本身够不透明,
-    // 图标变色单独看不够醒目,选中态需要更硬的信号。
-    in property <bool> checked-fill: false;
     callback clicked;
 
     width: root.diameter;
@@ -183,14 +178,6 @@ export component RoundControl inherits Rectangle {
         width: 100%;
         height: 100%;
         source: root.backdrop;
-    }
-
-    if root.checked && root.checked-fill: Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: root.diameter / 2;
-        background: Theme.accent.with-alpha(0.55);
-        animate background { duration: 120ms; easing: ease-out; }
     }
 
     Path {

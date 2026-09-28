@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 端到端:三态赞踩与收听时长上报(#157)。驱动走应用内嵌的 MCP,断言走数据库。
 #
-#   test/feedback-e2e.sh verdict   点赞 → track_feedback +1(verdict=1);
-#                                   再点踩 → 同一行变 -1;再点一次踩 → 行消失。
+#   test/feedback-e2e.sh verdict   控制条「更多」抽屉里点赞 → track_feedback +1(verdict=1);
+#                                   再点踩 → 同一行变 -1;再点一次踩 → 行消失(#157 F-004:
+#                                   赞踩键已从播放页搬进抽屉,挨着「喜欢」那一行)。
 #   test/feedback-e2e.sh skip      起播后立刻切歌,断言这一行的 listened_ms 记进去了、
 #                                   且小于 30000(#157 的跳过口径:前 30 秒内切走)。
 #   test/feedback-e2e.sh complete  拖进度条到曲尾附近,等它自己放完切下一首,
@@ -43,6 +44,30 @@ must() {
 present() {
   call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"$1\"}]}" \
     | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("elementHandles") else "")'
+}
+
+# 某个 id 的元素里,无障碍标签是 label 的那一个。按名字找而不是按位置:
+# 抽屉的行随功能增减,位置不稳定(与 radio-e2e.sh 同一个理由)。
+labelled() {
+  local hs
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+
+# 无障碍动作不过命中测试,不必量坐标(抽屉行同理)。
+act() {
+  call invoke_accessibility_action "{\"elementHandle\":$1,\"action\":\"Default_\"}" >/dev/null
+}
+
+press() {
+  local h; h=$(labelled "$1" "$2")
+  must "$h" "「$2」"
+  act "$h"
 }
 
 sql() {
@@ -150,31 +175,24 @@ start_playing
 
 case "$MODE" in
   verdict)
-    open_play_page
-    for _ in $(seq 1 20); do
-      [ -n "$(handle "PlayPage::feedback-up")" ] && break
-      sleep 1
-    done
-    up=$(handle "PlayPage::feedback-up")
-    down=$(handle "PlayPage::feedback-down")
-    must "$up" "点赞键"
-    must "$down" "点踩键"
+    press "RoundControl::touch" "更多"
+    sleep 1
 
     before=$(feedback_count)
-    call click_element "{\"elementHandle\":$up}" >/dev/null
+    press "DrawerRow::touch" "点赞"
     sleep 1
     after=$(feedback_count)
     [ "$((after - before))" -eq 1 ] || { echo "verdict: 失败 —— 点赞该多一行(前 $before,后 $after)" >&2; exit 1; }
     [ "$(last_feedback_verdict)" = "1" ] || { echo "verdict: 失败 —— 新行该是 +1" >&2; exit 1; }
     echo "  点赞: track_feedback +1,verdict=1"
 
-    call click_element "{\"elementHandle\":$down}" >/dev/null
+    press "DrawerRow::touch" "点踩"
     sleep 1
     [ "$(feedback_count)" -eq "$after" ] || { echo "verdict: 失败 —— 改点踩不该多一行" >&2; exit 1; }
     [ "$(last_feedback_verdict)" = "-1" ] || { echo "verdict: 失败 —— 该覆盖成 -1" >&2; exit 1; }
     echo "  改点踩: 同一行变 -1"
 
-    call click_element "{\"elementHandle\":$down}" >/dev/null
+    press "DrawerRow::touch" "取消点踩"
     sleep 1
     [ "$(feedback_count)" -eq "$before" ] || { echo "verdict: 失败 —— 再点一次该取消(行消失)" >&2; exit 1; }
     echo "  再点踩: 行消失"
