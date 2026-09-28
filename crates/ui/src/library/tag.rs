@@ -164,11 +164,9 @@ pub fn bind(ui: &MainWindow) {
                 };
                 match done {
                     Ok(()) => refresh(&ui, track_id),
-                    Err(err) => report(
-                        &ui,
-                        &err,
-                        "标签没能保存",
-                    ),
+                    Err(err) => {
+                        report(&ui, &err, "标签没能保存")
+                    }
                 }
             });
         },

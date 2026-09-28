@@ -115,8 +115,8 @@ pub use playlists::{
 };
 
 pub use tags::{
-    create_tag, delete_tag, rename_tag, set_track_tag, tags,
-    track_tags,
+    create_tag, delete_tag, rename_tag, set_track_tag,
+    tags, track_tags,
 };
 
 // 「先画上次那份」的读端(#123)。

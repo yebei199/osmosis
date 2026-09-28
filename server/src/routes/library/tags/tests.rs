@@ -138,7 +138,11 @@ async fn untagging_twice_is_a_no_op() {
     untag_track(
         axum::extract::State(state.clone()),
         account,
-        Path((tag.id, "netease".to_owned(), "333".to_owned())),
+        Path((
+            tag.id,
+            "netease".to_owned(),
+            "333".to_owned(),
+        )),
     )
     .await
     .expect("摘两遍也不该报错");
@@ -155,9 +159,10 @@ async fn creating_a_tag_with_an_existing_name_reuses_it() {
     let first = tags::create(&mut conn, account.id, "国风")
         .await
         .unwrap();
-    let second = tags::create(&mut conn, account.id, "国风")
-        .await
-        .unwrap();
+    let second =
+        tags::create(&mut conn, account.id, "国风")
+            .await
+            .unwrap();
 
     assert_eq!(first.id, second.id);
 

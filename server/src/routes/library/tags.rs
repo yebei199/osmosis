@@ -39,10 +39,7 @@ pub(crate) async fn list_tags(
         .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(TagsDto {
-        tags: found
-            .iter()
-            .map(tags::Tag::to_dto)
-            .collect(),
+        tags: found.iter().map(tags::Tag::to_dto).collect(),
     }))
 }
 
@@ -54,9 +51,10 @@ pub(crate) async fn create_tag(
 ) -> Result<Json<TagDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
 
-    let created = tags::create(&mut conn, account.id, &body.name)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    let created =
+        tags::create(&mut conn, account.id, &body.name)
+            .await
+            .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(created.to_dto()))
 }
@@ -103,19 +101,13 @@ pub(crate) async fn track_tags(
     let mut conn = conn(&state.pool).await?;
 
     let found = tags::tags_of_track(
-        &mut conn,
-        account.id,
-        &platform,
-        &track_id,
+        &mut conn, account.id, &platform, &track_id,
     )
     .await
     .map_err(|err| error::map_error(&err))?;
 
     Ok(Json(TagsDto {
-        tags: found
-            .iter()
-            .map(tags::Tag::to_dto)
-            .collect(),
+        tags: found.iter().map(tags::Tag::to_dto).collect(),
     }))
 }
 
@@ -123,14 +115,20 @@ pub(crate) async fn track_tags(
 pub(crate) async fn tag_track(
     State(state): State<AppState>,
     account: Account,
-    Path((id, platform, track_id)): Path<(String, String, String)>,
+    Path((id, platform, track_id)): Path<(
+        String,
+        String,
+        String,
+    )>,
 ) -> Result<StatusCode, Failure> {
     let id = parse_id(&id)?;
     let mut conn = conn(&state.pool).await?;
 
-    tags::tag_track(&mut conn, account.id, id, &platform, &track_id)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    tags::tag_track(
+        &mut conn, account.id, id, &platform, &track_id,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -139,14 +137,20 @@ pub(crate) async fn tag_track(
 pub(crate) async fn untag_track(
     State(state): State<AppState>,
     account: Account,
-    Path((id, platform, track_id)): Path<(String, String, String)>,
+    Path((id, platform, track_id)): Path<(
+        String,
+        String,
+        String,
+    )>,
 ) -> Result<StatusCode, Failure> {
     let id = parse_id(&id)?;
     let mut conn = conn(&state.pool).await?;
 
-    tags::untag_track(&mut conn, account.id, id, &platform, &track_id)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    tags::untag_track(
+        &mut conn, account.id, id, &platform, &track_id,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
