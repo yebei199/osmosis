@@ -25,7 +25,8 @@ tonic.workspace = true
 tonic-prost.workspace = true
 prost.workspace = true
 # WebSocket 的收发两端要拆开跑(见 signaling::serve),故需要 StreamExt/SinkExt。
-futures-util = { version = "0.3", default-features = false }
+# alloc 给电台当场探歌词的 buffer_unordered(#166)。
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # 存歌的流式 body(见 objects::ObjectBody);reqwest 与 axum 已经带着它。
 bytes = "1"
 # 信令走 JSON 文本帧。HTTP 那侧由 axum 的 Json 提取器负责,不必自己序列化;
@@ -66,6 +67,9 @@ tonic-prost-build.workspace = true
 
 [dev-dependencies]
 similar-asserts.workspace = true
+# 只为电台筛选的对拍测试(#166):分段口径两侧各写一遍(ADR 0001),
+# 拿客户端那份当标尺,漂了就红。正式依赖里仍然没有它。
+app-core.workspace = true
 tempfile.workspace = true
 # 信令测试要当**客户端**连自己的 WebSocket。axum 只提供服务端那一半,
 # 客户端另找一个 —— tungstenite 是 axum 自己底下用的那套,协议实现一致。

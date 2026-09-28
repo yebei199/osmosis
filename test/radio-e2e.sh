@@ -3,6 +3,9 @@
 #
 #   test/radio-e2e.sh fm      Music 页点「电台」分区 → 私人 FM 起播
 #   test/radio-e2e.sh heart   控制条抽屉点「从这首开电台」→ 心动模式起播(要已经在放一首)
+#   test/radio-e2e.sh filter  私人 FM 起播后在电台区选 CHIPS(默认「有歌词」)再点一首,
+#                             续进来的每首都得过得了这些筛选(#166)
+#   test/radio-e2e.sh dry     同上,但 CHIPS 选得窄到续不出:界面要出「按当前筛选暂时找不到新歌」
 #
 # 起播之后:私人 FM 连按「下一首」直到队列剩最后一首;心动一批上百首,先从队列页点到
 # 队尾那首。两种模式都是剩最后一首时电台续一批。
@@ -10,7 +13,10 @@
 # 驱动走应用内嵌的 MCP(形状照 test/pick-e2e.sh),断言走数据库:
 #   - play_events 多了一行:电台那一批真的起播了;
 #   - 本机队列最新一版的条目数涨了:续取发生了,新的一版发布到了服务端;
-#   - 那一版里的每一首(起播那批加续进来的),开电台之前都不在这个账号的播放历史里。
+#   - 那一版里的每一首(起播那批加续进来的),开电台之前都不在这个账号的播放历史里;
+#   - filter:续进来的每一首的 platform_tracks.lyric_kind 是 lyric / translated
+#     (只认「有歌词」;CHIPS 换成别的,这一条换成人工核对,脚本只报续进来的歌)。
+#   - dry:提示横幅出现,队列没涨。CHIPS 不够窄、居然续上了,退 3(不算过也不算挂)。
 #
 # 前提:应用起着(桌面 just desktop-dev,安卓 just mcp-android)、已登录且网易云已绑,
 # just server-dev、新版 bang-dream(带 GetPersonalFm / GetIntelligenceList)与 osmosis-pg 在跑。
@@ -24,10 +30,14 @@ PG_DB="${PG_DB:-osmosis}"
 # 最多按几下「下一首」等续取。私人 FM 一批约 3 首,两三下就该续。
 MAX_NEXT="${MAX_NEXT:-8}"
 
+# filter / dry 在电台区选哪几个 chip,逗号分隔,按 chip 文字的前缀认(chip 上还挂着数目)。
 case "$MODE" in
   fm|heart) ;;
-  *) echo "用法: $0 fm|heart" >&2; exit 2 ;;
+  filter) CHIPS="${CHIPS:-有歌词}" ;;
+  dry) CHIPS="${CHIPS:-无歌词,5 分钟以上}" ;;
+  *) echo "用法: $0 fm|heart|filter|dry" >&2; exit 2 ;;
 esac
+DRY_NOTICE="按当前筛选暂时找不到新歌"
 
 call() {
   curl -s -X POST "http://127.0.0.1:${PORT}/mcp" \
@@ -142,7 +152,7 @@ who=$(account)
 played_before=$(played)
 queue_before=$(queue_row)
 
-if [ "$MODE" = fm ]; then
+if [ "$MODE" != heart ]; then
   item=$(labelled "MusicRail::item-touch" "电台")
   [ -n "$item" ] || item=$(labelled "MusicBar::item-touch" "电台")
   must "$item" "「电台」分区"
@@ -181,11 +191,63 @@ queue_id=${started%%:*}
 start_count=${started##*:}
 echo "  电台那一批 $start_count 首"
 
-# 队列涨过 start_count 就是续上了。
+# 电台区选 chip 再点列表第一行(#166)。chip 的模型每按一次就重建,句柄跟着失效,每次重取。
+chip_named() {
+  local hs h label
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"FacetBar::chip-pill\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    label=$(call get_element_properties "{\"elementHandle\":$h}" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')
+    case "$label" in "$1 "*) echo "$h"; return ;; esac
+  done
+}
+if [ "$MODE" = filter ] || [ "$MODE" = dry ]; then
+  toggle=$(nth "$root" "FacetBar::filter-toggle")
+  must "$toggle" "筛选开关"
+  act "$toggle"
+  sleep 1
+  IFS=, read -ra wanted <<< "$CHIPS"
+  for want in "${wanted[@]}"; do
+    chip=$(chip_named "$want")
+    [ -n "$chip" ] || { echo "$MODE: 失败 —— 电台区这一批没有「$want」这个 chip(换 CHIPS 或重开电台再试)" >&2; exit 1; }
+    act "$chip"
+    sleep 1
+  done
+  # 点筛过列表的最后一行:第一行多半是正在放的那首,点它被连点去重挡掉,换不了批。
+  # 走 tap 不走 act:列表行的 TouchArea 没挂无障碍默认动作,act 过去什么都不发生。
+  row=$(nth "$root" "TrackList::touch" -1)
+  [ -n "$row" ] || { echo "$MODE: 失败 —— 选完「$CHIPS」列表空了,没歌可点(换 CHIPS 再试)" >&2; exit 1; }
+  tap "$row"
+  for _ in $(seq 1 20); do
+    sleep 1
+    [ "$(queue_row)" != "$started" ] && break
+  done
+  started=$(queue_row)
+  queue_id=${started%%:*}
+  start_count=${started##*:}
+  echo "  选「$CHIPS」点了一首:筛过的那一批 $start_count 首"
+fi
+
+# 横幅此刻的文字,没有横幅是空串。
+banner() {
+  local b
+  b=$(nth "$root" "MainWindow::banner")
+  [ -n "$b" ] || return 0
+  call query_element_descendants "{\"elementHandle\":$b,\"findAll\":true,\"queryStack\":[{\"matchElementTypeName\":\"Text\"}]}" \
+    | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")' \
+    | { read -r t; [ -z "$t" ] || call get_element_properties "{\"elementHandle\":$t}" \
+        | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("accessibleLabel") or p.get("accessibleValue") or "")'; }
+}
+
+# 队列涨过 start_count 就是续上了。dry 同时盯着横幅,出了提示就记下。
 grown=""
+told=""
 wait_growth() {
   for _ in $(seq 1 "$1"); do
     sleep 1
+    if [ "$MODE" = dry ] && [ "$(banner)" = "$DRY_NOTICE" ]; then
+      told=yes; return
+    fi
     local now; now=$(queue_row)
     if [ "${now%%:*}" = "$queue_id" ] && [ "${now##*:}" -gt "$start_count" ]; then
       grown=$now; return
@@ -264,12 +326,18 @@ if [ "$MODE" = heart ] && [ "$start_count" -gt 2 ] && [ "$PORT" = "${ANDROID_MCP
   wait_growth 20
 fi
 for n in $(seq 1 "$MAX_NEXT"); do
-  [ -z "$grown" ] || break
+  [ -z "$grown" ] && [ -z "$told" ] || break
   press "RoundControl::touch" "下一首"
   echo "  按了第 $n 下「下一首」"
   # 续取由每秒一趟的轮询发起,只在放着的时候走;等它问完平台、发布新的一版
   wait_growth 15
 done
+if [ "$MODE" = dry ]; then
+  [ -z "$grown" ] || { echo "dry: 不确定 —— 「$CHIPS」不够窄,续上了:$start_count → ${grown##*:} 首(换更窄的 CHIPS 再跑)" >&2; exit 3; }
+  [ -n "$told" ] || { echo "dry: 失败 —— 续不出新歌,界面也没出「$DRY_NOTICE」" >&2; exit 1; }
+  echo "dry: 通过 —— 界面出了「$DRY_NOTICE」,队列没涨"
+  exit 0
+fi
 [ -n "$grown" ] || { echo "$MODE: 失败 —— 按到第 $MAX_NEXT 下队列也没续" >&2; exit 1; }
 echo "  续上了:$start_count → ${grown##*:} 首"
 
@@ -281,5 +349,18 @@ if [ -n "$heard" ]; then
   echo "$MODE: 失败 —— 这些歌开电台之前就听过:" >&2
   echo "$heard" >&2
   exit 1
+fi
+if [ "$MODE" = filter ]; then
+  # 续进来的:这一版里排在筛过那一批之后的
+  added=$(lines "select e.platform || ':' || e.track_id || ' ' || coalesce(d.lyric_kind, '不在缓存')
+                 from play_queue_entries e
+                 left join platform_tracks d on (d.platform, d.track_id) = (e.platform, e.track_id)
+                 where e.queue_id = $queue_id and e.revision = $revision and e.position >= $start_count
+                 order by e.position;")
+  echo "  续进来的:"; echo "$added" | sed 's/^/    /'
+  if [ "$CHIPS" = 有歌词 ]; then
+    wrong=$(echo "$added" | grep -vE ' (lyric|translated)$' || true)
+    [ -z "$wrong" ] || { echo "filter: 失败 —— 这些续进来的不是有歌词:" >&2; echo "$wrong" >&2; exit 1; }
+  fi
 fi
 echo "$MODE: 通过"

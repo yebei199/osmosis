@@ -18,7 +18,7 @@ use server::bangdream::{
     self,
     proto::{self, GetLyricRequest, Platform},
 };
-use server::store::account;
+use server::store::account::{self, Account};
 use server::store::lyric::{self, Job, LyricKind};
 
 use crate::AppState;
@@ -154,7 +154,7 @@ pub(crate) async fn step(
     }
 }
 
-/// 问平台要这首的歌词,翻成标记。平台说这首不存在(下架)也当没有歌词。
+/// 以任务记下的账号问一次。
 async fn probe(
     state: &AppState,
     job: &Job,
@@ -168,14 +168,23 @@ async fn probe(
         Err(err) => return Err(err.to_string()),
     }
     .ok_or("问歌词的账号刚被删了")?;
+    ask(state, &account, &job.track_id).await
+}
 
+/// 问平台要这首的歌词,翻成标记。平台说这首不存在(下架)也当没有歌词。
+/// 电台续歌当场探(#166)也走这里。
+pub(crate) async fn ask(
+    state: &AppState,
+    account: &Account,
+    track_id: &str,
+) -> Result<LyricKind, String> {
     let mut catalog = state.upstream.catalog.clone();
     let asked = catalog
         .get_lyric(bangdream::as_user(
-            &account,
+            account,
             GetLyricRequest {
                 platform: Platform::Netease as i32,
-                track_id: job.track_id.clone(),
+                track_id: track_id.to_owned(),
             },
         ))
         .await;

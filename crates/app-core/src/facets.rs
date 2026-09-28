@@ -7,7 +7,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use contract::{LyricKindDto, TrackDto};
+use contract::{
+    FacetDto, FacetPickDto, LyricKindDto, TrackDto,
+};
 
 /// 一个分组维度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,6 +46,19 @@ impl Facet {
         Self::Verdict,
         Self::Tag,
     ];
+
+    /// 线上的那个维度。只分组、不当 chip 的歌手与专辑没有。
+    pub fn to_dto(self) -> Option<FacetDto> {
+        match self {
+            Self::Duration => Some(FacetDto::Duration),
+            Self::Lyric => Some(FacetDto::Lyric),
+            Self::Plays => Some(FacetDto::Plays),
+            Self::SkipRate => Some(FacetDto::SkipRate),
+            Self::Verdict => Some(FacetDto::Verdict),
+            Self::Tag => Some(FacetDto::Tag),
+            Self::Artist | Self::Album => None,
+        }
+    }
 
     /// 界面编号 → 维度。0 与认不出的都是「不分组」。
     pub fn from_index(index: i32) -> Option<Self> {
@@ -262,6 +277,27 @@ pub fn group(
 
 /// 选中的筛选条件:同一维度内是「或」,不同维度之间是「且」。
 pub type Chosen = HashSet<(Facet, String)>;
+
+/// 选中的筛选翻成线上格式,电台续歌带着它(#166)。按维度、取值排好,
+/// 同样的选择翻出同样的一份。
+pub fn picks(chosen: &Chosen) -> Vec<FacetPickDto> {
+    let mut picks: Vec<(i32, FacetPickDto)> = chosen
+        .iter()
+        .filter_map(|(facet, label)| {
+            Some((
+                facet.index(),
+                FacetPickDto {
+                    facet: facet.to_dto()?,
+                    label: label.clone(),
+                },
+            ))
+        })
+        .collect();
+    picks.sort_by(|a, b| {
+        (a.0, &a.1.label).cmp(&(b.0, &b.1.label))
+    });
+    picks.into_iter().map(|(_, pick)| pick).collect()
+}
 
 /// 过得了筛选的那几首,原次序。什么都没选就是全部。
 pub fn filter(
@@ -742,6 +778,30 @@ mod tests {
                 Some(Facet::Tag)
             ),
             vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn picks_are_sorted_and_carry_only_chip_facets() {
+        let chosen: Chosen = [
+            (Facet::Tag, "雨".to_owned()),
+            (Facet::Duration, "3 分钟以内".to_owned()),
+            (Facet::Tag, "夜".to_owned()),
+            (Facet::Artist, "甲".to_owned()),
+        ]
+        .into();
+        let pick = |facet, label: &str| FacetPickDto {
+            facet,
+            label: label.to_owned(),
+        };
+
+        assert_eq!(
+            picks(&chosen),
+            vec![
+                pick(FacetDto::Duration, "3 分钟以内"),
+                pick(FacetDto::Tag, "夜"),
+                pick(FacetDto::Tag, "雨"),
+            ]
         );
     }
 

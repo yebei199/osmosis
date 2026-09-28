@@ -3,6 +3,7 @@
 use axum::extract::{Query, State};
 use similar_asserts::assert_eq;
 
+use server::bangdream::proto::Track;
 use server::store::history;
 use server::store::playlist::TrackRef;
 
@@ -12,14 +13,32 @@ use crate::routes::testing::{
 };
 
 use super::{
-    ENOUGH, MAX_PULLS, RadioMode, RadioQuery, radio,
+    ENOUGH, MAX_FILTERED_PULLS, MAX_PULLS, RadioMode,
+    RadioQuery, radio,
 };
 
 fn fm() -> Query<RadioQuery> {
     Query(RadioQuery {
         mode: RadioMode::Fm,
         seed: None,
+        filter: None,
     })
+}
+
+/// 带筛选的私人 FM。`filter` 是 `[FacetPickDto]` 的 JSON。
+fn fm_filtered(filter: &str) -> Query<RadioQuery> {
+    Query(RadioQuery {
+        mode: RadioMode::Fm,
+        seed: None,
+        filter: Some(filter.to_owned()),
+    })
+}
+
+/// 上游给的一首,时长 `ms`。
+fn lasting(id: &str, ms: i64) -> Track {
+    let mut track = upstream_track(id, "新");
+    track.duration_ms = ms;
+    track
 }
 
 /// 这个账号听过 `ids` 里的每一首。
@@ -178,6 +197,7 @@ async fn heart_seeds_from_the_liked_playlist() {
         Query(RadioQuery {
             mode: RadioMode::Heart,
             seed: Some(seed.clone()),
+            filter: None,
         }),
     )
     .await
@@ -214,6 +234,7 @@ async fn heart_without_a_seed_is_rejected() {
         Query(RadioQuery {
             mode: RadioMode::Heart,
             seed: Some(String::new()),
+            filter: None,
         }),
     )
     .await
@@ -293,6 +314,7 @@ async fn heart_drops_liked_judged_and_blocked_tracks() {
         Query(RadioQuery {
             mode: RadioMode::Heart,
             seed: Some(seed),
+            filter: None,
         }),
     )
     .await
@@ -342,4 +364,211 @@ async fn fm_drops_tracks_in_the_platform_liked_playlist() {
         .expect("电台应该成功");
 
     assert_eq!(ids(&response.0), vec![id(2), id(3), id(4)]);
+}
+
+/// 带筛选:排除之后再按筛选过一道,不够就接着问(#166)。
+#[tokio::test]
+async fn fm_keeps_only_tracks_passing_the_filter() {
+    let case = "radio_fm_filter";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = |n| track_id(case, n);
+
+    let fake = FakeUpstream::default();
+    fake.fm_batches.lock().unwrap().extend([
+        vec![
+            lasting(&id(1), 100_000),
+            lasting(&id(2), 400_000),
+        ],
+        vec![
+            lasting(&id(3), 400_000),
+            lasting(&id(4), 170_000),
+        ],
+        vec![lasting(&id(5), 60_000)],
+    ]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(
+        State(state),
+        account,
+        fm_filtered(
+            r#"[{"facet":"duration","label":"3 分钟以内"}]"#,
+        ),
+    )
+    .await
+    .expect("电台应该成功");
+
+    assert_eq!(ids(&response.0), vec![id(1), id(4), id(5)]);
+    assert_eq!(fake.fm_pulls(), 3);
+}
+
+/// 筛选窄到一首不剩:问满带筛选的上限就停,交空批。
+#[tokio::test]
+async fn a_too_narrow_filter_stops_at_its_own_limit() {
+    let case = "radio_fm_filter_limit";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+
+    let fake = FakeUpstream::default();
+    fake.fm_batches.lock().unwrap().extend(
+        (0..MAX_FILTERED_PULLS + 3).map(|n| {
+            vec![lasting(&track_id(case, n), 400_000)]
+        }),
+    );
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(
+        State(state),
+        account,
+        fm_filtered(
+            r#"[{"facet":"duration","label":"3 分钟以内"}]"#,
+        ),
+    )
+    .await
+    .expect("电台应该成功");
+
+    assert!(response.0.tracks.is_empty());
+    assert_eq!(fake.fm_pulls(), MAX_FILTERED_PULLS);
+}
+
+/// 读不懂的筛选是调用方的错,不去问上游。
+#[tokio::test]
+async fn a_garbled_filter_is_rejected() {
+    let case = "radio_fm_filter_garbled";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let fake = FakeUpstream::default();
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let failure =
+        radio(State(state), account, fm_filtered("[{"))
+            .await
+            .expect_err("读不懂的筛选应该失败");
+
+    assert_eq!(
+        failure.0,
+        axum::http::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(fake.fm_pulls(), 0);
+}
+
+/// 筛「有歌词」:还没探过的当场探,有歌词的留下、纯音乐与探不到的丢掉,
+/// 探到的标记跟着详情进了缓存(#166)。
+#[tokio::test]
+async fn a_lyric_filter_probes_unknown_tracks_on_the_spot()
+{
+    use server::bangdream::proto::{Lyric, LyricLine};
+    use tonic::Code;
+
+    let case = "radio_fm_lyric";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = |n| track_id(case, n);
+    let sung = Lyric {
+        lines: vec![LyricLine {
+            text: "啦啦".to_owned(),
+            ..LyricLine::default()
+        }],
+        ..Lyric::default()
+    };
+
+    let fake = FakeUpstream {
+        lyrics: [
+            (id(1), Ok(sung.clone())),
+            (id(2), Ok(Lyric::default())),
+            (id(3), Err(Code::Unavailable)),
+            (id(4), Ok(sung)),
+        ]
+        .into(),
+        ..FakeUpstream::default()
+    };
+    fake.fm_batches.lock().unwrap().extend([vec![
+        upstream_track(&id(1), "有词"),
+        upstream_track(&id(2), "无词"),
+        upstream_track(&id(3), "探不到"),
+        upstream_track(&id(4), "有词"),
+    ]]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(
+        State(state),
+        account,
+        fm_filtered(
+            r#"[{"facet":"lyric","label":"有歌词"}]"#,
+        ),
+    )
+    .await
+    .expect("电台应该成功");
+
+    assert_eq!(ids(&response.0), vec![id(1), id(4)]);
+    let kinds: Vec<(String, String)> = sqlx::query_as(
+        "SELECT track_id, lyric_kind FROM platform_tracks
+         WHERE track_id = ANY($1) ORDER BY track_id",
+    )
+    .bind(ids(&response.0))
+    .fetch_all(&pool)
+    .await
+    .expect("读歌词标记");
+    assert_eq!(
+        kinds,
+        vec![
+            (id(1), "lyric".to_owned()),
+            (id(4), "lyric".to_owned())
+        ]
+    );
+}
+
+/// 不带筛选的也探:电台区一摆出来就有「有歌词」可选(#166)。
+#[tokio::test]
+async fn an_unfiltered_pull_probes_lyrics_too() {
+    use contract::LyricKindDto;
+    use server::bangdream::proto::{Lyric, LyricLine};
+
+    let case = "radio_fm_lyric_unfiltered";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let id = track_id(case, 1);
+    let fake = FakeUpstream {
+        lyrics: [(
+            id.clone(),
+            Ok(Lyric {
+                lines: vec![LyricLine {
+                    text: "啦啦".to_owned(),
+                    ..LyricLine::default()
+                }],
+                ..Lyric::default()
+            }),
+        )]
+        .into(),
+        ..FakeUpstream::default()
+    };
+    fake.fm_batches
+        .lock()
+        .unwrap()
+        .extend([vec![upstream_track(&id, "有词")]]);
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(fake.clone()).await,
+    );
+
+    let response = radio(State(state), account, fm())
+        .await
+        .expect("电台应该成功");
+
+    assert_eq!(
+        response.0.tracks[0].facets.lyric_kind,
+        Some(LyricKindDto::Lyric)
+    );
 }

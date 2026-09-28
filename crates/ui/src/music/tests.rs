@@ -817,6 +817,75 @@ fn search_results_are_not_grouped() {
     assert_eq!(shown_ids(&ui), vec!["a", "b", "c"]);
 }
 
+/// 电台在放,摆着 `source` 这个视图,选「夜」再点其中一首。返回电台还在不在放、带什么筛选。
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_filtered_on(
+    source: ViewSource,
+) -> Option<Vec<app_core::FacetPickDto>> {
+    let (ui, deck) = faceted_window(source);
+    bind_play(&ui, &deck);
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        faceted_batch().tracks,
+    );
+    assert!(super::radio::taste(&deck).is_some());
+
+    ui.global::<Player>()
+        .invoke_toggle_chip(chip_index(&ui, "夜 1"));
+    ui.global::<Player>().invoke_play("c".into());
+    super::radio::taste(&deck)
+}
+
+/// 电台区里选了 chip 再点歌(#166):换出来的那一批仍是电台的,选着的筛选记下来续歌用。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn picking_on_the_radio_list_keeps_the_radio_with_its_filter()
+ {
+    assert_eq!(
+        pick_filtered_on(ViewSource::Radio),
+        Some(vec![app_core::FacetPickDto {
+            facet: app_core::FacetDto::Tag,
+            label: "夜".to_owned(),
+        }])
+    );
+}
+
+/// 点的正是在放的那首(连点去重挡掉,没换批):电台仍在放这一批,筛选照样记下。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_deduplicated_pick_on_the_radio_list_still_takes_the_filter()
+ {
+    let (ui, deck) = faceted_window(ViewSource::Radio);
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        faceted_batch().tracks,
+    );
+    ui.global::<Player>()
+        .invoke_toggle_chip(chip_index(&ui, "夜 1"));
+
+    let batch = deck.queue.borrow().batch();
+    super::radio::adopt(&deck, batch);
+
+    assert_eq!(
+        super::radio::taste(&deck),
+        Some(vec![app_core::FacetPickDto {
+            facet: app_core::FacetDto::Tag,
+            label: "夜".to_owned(),
+        }])
+    );
+}
+
+/// 在别的视图点歌,电台照旧让位。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn picking_elsewhere_still_stops_the_radio() {
+    assert_eq!(pick_filtered_on(ViewSource::Daily), None);
+}
+
 /// 电台区也是歌单视图(主路由确认):挂分组条,分组作用在它上面。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]

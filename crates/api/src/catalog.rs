@@ -1,8 +1,9 @@
 //! 目录侧的只读请求:健康检查、搜索、播放直链、每日推荐、红心与歌词。
 
 use contract::{
-    ArtistSearchDto, HealthDto, LyricDto, PROTOCOL_VERSION,
-    PlaySourceDto, PlaylistSearchDto, SearchDto, TracksDto,
+    ArtistSearchDto, FacetPickDto, HealthDto, LyricDto,
+    PROTOCOL_VERSION, PlaySourceDto, PlaylistSearchDto,
+    SearchDto, TracksDto,
 };
 
 use crate::url::{
@@ -109,12 +110,14 @@ pub enum RadioMode {
 }
 
 /// `GET /radio` —— 一批没听过的新歌。每次都是新的一批,不进缓存。
+/// `filter` 不空就只要过得了这些筛选的(#166)。
 ///
 /// 可能是空的:服务端把听过的都丢掉,问满上限仍凑不出就交空批。
 pub async fn radio(
     mode: &RadioMode,
+    filter: &[FacetPickDto],
 ) -> Result<TracksDto, ApiError> {
-    let url = match mode {
+    let mut url = match mode {
         RadioMode::Fm => {
             format!("{}/radio?mode=fm", base_url())
         }
@@ -124,6 +127,12 @@ pub async fn radio(
             crate::url::encode_component(seed)
         ),
     };
+    if !filter.is_empty() {
+        let json = serde_json::to_string(filter)
+            .expect("筛选条件总能序列化");
+        url.push_str("&filter=");
+        url.push_str(&crate::url::encode_component(&json));
+    }
     platform::get_json(url).await
 }
 
