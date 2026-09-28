@@ -151,6 +151,12 @@ pub(super) fn begin(
         );
         return;
     }
+    if in_dead_group(deck) {
+        leave_dead_group(ui, deck, move |ui, deck| {
+            begin(ui, deck, mode, tracks);
+        });
+        return;
+    }
     if deck.group.is_member() {
         let radio = deck.radio.clone();
         deck.group.play_then(
@@ -158,6 +164,7 @@ pub(super) fn begin(
             tracks,
             0,
             Box::new(move |queue| {
+                let queue = queue.ok().flatten();
                 if queue.is_some() {
                     radio.inner.replace(State {
                         mode: Some(mode),
@@ -360,6 +367,7 @@ fn top_up_shared(
             queue,
             tracks,
             Box::new(move |extended| {
+                let extended = extended.ok().flatten();
                 let added = if extended.is_some() {
                     radio.inner.borrow_mut().shared =
                         extended;

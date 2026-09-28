@@ -19,6 +19,11 @@ fn wire(ui: &MainWindow, deck: &Deck) {
     bind_seek(ui, deck);
     bind_outputs(ui, deck);
     queuepage::bind(ui, deck);
+    // pc 在线:组里有一台出声设备活着,点歌照常走组意图(#165 的回落不介入)。
+    deck.group.set_names(&[app_core::DeviceDto {
+        id: "pc".to_owned(),
+        name: "pc".to_owned(),
+    }]);
 }
 
 fn batch_of(deck: &Deck, ids: &[&str]) -> Vec<TrackDto> {
@@ -710,7 +715,7 @@ fn the_radio_in_a_group_owns_the_revision_it_started() {
     );
     assert_eq!(deck.group.intents(), vec!["play 0"]);
     deck.group.assume(Some(radio_state(3, false)));
-    deck.group.answer(Some((7, 3)));
+    deck.group.answer(Ok(Some((7, 3))));
 
     assert!(
         !super::super::radio::due(&deck, 0),
@@ -740,7 +745,7 @@ fn another_pick_in_the_group_stops_the_radio() {
         batch_of(&deck, &["a", "b"]),
     );
     deck.group.assume(Some(radio_state(3, true)));
-    deck.group.answer(Some((7, 3)));
+    deck.group.answer(Ok(Some((7, 3))));
     assert!(super::super::radio::due(&deck, 0));
 
     deck.group.assume(Some(radio_state(4, true)));
@@ -761,7 +766,69 @@ fn a_failed_radio_start_in_the_group_owns_nothing() {
         batch_of(&deck, &["a", "b"]),
     );
 
-    deck.group.answer(None);
+    deck.group.answer(Err(()));
 
     assert!(!super::super::radio::due(&deck, 0));
+}
+
+/// 本机挂在一个出声设备全不在线的组上(#165):点歌先退组,退成了在本机放。
+#[test]
+fn a_tap_in_a_dead_group_leaves_it_and_plays_here() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    deck.group.assume(Some(state(&["ghost"], true)));
+
+    ui.global::<Player>().invoke_play("b".into());
+    assert_eq!(deck.group.intents(), vec!["leave"]);
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "退组应答回来之前不在本机放"
+    );
+
+    let mut left = state(&["ghost"], true);
+    left.version = 4;
+    left.members = vec!["pc".to_owned()];
+    deck.group.assume(Some(left));
+    deck.group.answer(Ok(Some((7, 2))));
+
+    assert!(!deck.group.is_member());
+    assert_eq!(
+        deck.queue
+            .borrow()
+            .current()
+            .map(|track| track.id.clone()),
+        Some("b".to_owned())
+    );
+}
+
+/// 退组没成(离线等):不在本机放,说一句为什么、怎么办。
+#[test]
+fn a_failed_leave_from_a_dead_group_says_why() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    deck.group.assume(Some(state(&["ghost"], true)));
+
+    ui.global::<Player>().invoke_play("b".into());
+    deck.group.answer(Err(()));
+
+    assert!(deck.queue.borrow().current().is_none());
+    assert_eq!(
+        ui.global::<Shell>().get_banner_text().as_str(),
+        "组里没有在线的出声设备,点横幅上的「退出」回到本机"
+    );
+}
+
+/// 本机自己就是在线的出声设备:组活着,点歌照常走组意图。
+#[test]
+fn a_tap_while_this_device_sounds_goes_to_the_group() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    batch_of(&deck, &["a", "b", "c"]);
+    deck.group.assume(Some(state(&["me"], true)));
+
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert_eq!(deck.group.intents(), vec!["play 1"]);
 }

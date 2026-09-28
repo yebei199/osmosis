@@ -29,9 +29,11 @@ pub(crate) use rules::{
 
 use crate::{MainWindow, Player, Shell};
 
-/// 意图应答之后回头告诉发的那一侧:成了是组此刻那一版队列 `(queue_id, revision)`,
-/// 没成(或组里没有歌)是 `None`。电台靠它认出组队列里哪一版是它的(#165)。
-pub type Then = Box<dyn FnOnce(Option<(i64, i64)>)>;
+/// 意图应答之后回头告诉发的那一侧:成了是 `Ok(组此刻那一版队列 (queue_id, revision))`
+/// (组里没有歌或组散了是 `Ok(None)`),没成是 `Err(())`。电台靠它认出组队列里哪一版是
+/// 它的,点歌回落本机靠它知道退组成了没有(#165)。
+pub type Then =
+    Box<dyn FnOnce(Result<Option<(i64, i64)>, ()>)>;
 
 #[cfg(test)]
 thread_local! {
@@ -64,6 +66,8 @@ struct Inner {
     reports: Mutex<HashMap<String, DeviceReportDto>>,
     /// 设备 id → 名字,来自名册。横幅上写的是人看得懂的那个。
     names: Mutex<HashMap<String, String>>,
+    /// 名册上此刻在线的其他设备(不含本机)。
+    online: Mutex<std::collections::HashSet<String>>,
     /// 点歌意图还在路上的那一首。同一首连点只发一次。
     in_flight: Mutex<Option<String>>,
     /// 已经报过放完的那一份 `(version, entry_id)`。每拍都看得见放空,只报一次。
@@ -87,6 +91,7 @@ pub fn new(ui: &MainWindow, me: &str) -> Group {
             view: Mutex::new(GlobalGroup::new(me)),
             reports: Mutex::new(HashMap::new()),
             names: Mutex::new(HashMap::new()),
+            online: Mutex::new(Default::default()),
             in_flight: Mutex::new(None),
             finished: Mutex::new(None),
             readied: Mutex::new(None),
@@ -123,6 +128,23 @@ impl Group {
     /// 本机在组里(出声或只当遥控器)。点歌入口据此发意图,而不是本机放。
     pub fn is_member(&self) -> bool {
         lock(&self.inner.view).is_member()
+    }
+
+    /// 组的出声设备里有没有一台此刻在线(本机算在线:信令连着)。一台都没有时组里点歌
+    /// 哪儿都不响 —— 设备挂在没人用的旧组上(#165)。
+    pub fn has_live_output(&self) -> bool {
+        let view = lock(&self.inner.view);
+        let Some(state) = view.state() else {
+            return false;
+        };
+        let online = lock(&self.inner.online);
+        state.outputs.iter().any(|id| {
+            if *id == self.inner.me {
+                view.is_online()
+            } else {
+                online.contains(id)
+            }
+        })
     }
 
     /// 信令连着没有。出声设备断开期间停着,连回来要按最新状态重新起这一首。
@@ -255,6 +277,10 @@ impl Group {
         &self,
         devices: &[app_core::DeviceDto],
     ) {
+        *lock(&self.inner.online) = devices
+            .iter()
+            .map(|device| device.id.clone())
+            .collect();
         {
             let mut names = lock(&self.inner.names);
             for device in devices {
@@ -553,11 +579,17 @@ impl Group {
 
     /// 本机退出组,回到独奏。
     pub fn leave(&self, ui: &MainWindow) {
-        self.send(
+        self.leave_then(ui, Box::new(|_| {}));
+    }
+
+    /// 同 [`Self::leave`],应答之后调 `then`。
+    pub fn leave_then(&self, ui: &MainWindow, then: Then) {
+        self.send_then(
             ui,
             "退出组",
             "leave".to_owned(),
             GroupIntent::Leave,
+            then,
         );
     }
 
@@ -579,7 +611,10 @@ impl Group {
 
     /// 测试里代服务端应答:还没回的意图一律按 `queue` 回。
     #[cfg(test)]
-    pub(crate) fn answer(&self, queue: Option<(i64, i64)>) {
+    pub(crate) fn answer(
+        &self,
+        queue: Result<Option<(i64, i64)>, ()>,
+    ) {
         for then in PENDING.with(|pending| pending.take()) {
             then(queue);
         }
@@ -689,10 +724,10 @@ impl Group {
                                 (now.queue_id, now.revision)
                             });
                         group.accept(state);
-                        then(queue);
+                        then(Ok(queue));
                     }
                     Err(error) => {
-                        then(None);
+                        then(Err(()));
                         log::warn!(
                             "组意图 {label} 没成: {error}"
                         );
