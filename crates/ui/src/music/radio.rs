@@ -6,7 +6,9 @@
 //! 例外是在电台区里点的(#166):那一批仍算电台的,选着的筛选成了电台的口味,
 //! 续进来的歌照它过滤(见 [`adopt`])。
 //!
-//! 在组里时点歌走组意图,本机队列不换批,电台因此不续(一起听不做特殊处理)。
+//! 在组里时(#165)起播走组意图,「还是不是电台在放」改认组队列的版本:起播的应答里
+//! 那一版是电台的,续取走组意图追加进去、换到续上的那一版;有人点了别的歌,组队列换了
+//! 一版,电台就不再往里续。组里只看得见下一首,所以在放最后一首时才续。
 
 use app_core::FacetPickDto;
 
@@ -32,6 +34,8 @@ struct State {
     mode: Option<api::RadioMode>,
     /// 电台起播的那一批的批号(`Queue::batch`)。
     batch: u64,
+    /// 在组里时电台的那一版组队列 `(queue_id, revision)`(#165)。
+    shared: Option<(i64, i64)>,
     /// 续歌带的筛选。电台区里选了 chip 再点歌时记下(#166),开新电台时清空。
     filter: Vec<FacetPickDto>,
     /// 「按当前筛选找不到新歌」已经说过了。续上一首之前不再说第二遍 ——
@@ -147,6 +151,24 @@ pub(super) fn begin(
         );
         return;
     }
+    if deck.group.is_member() {
+        let radio = deck.radio.clone();
+        deck.group.play_then(
+            ui,
+            tracks,
+            0,
+            Box::new(move |queue| {
+                if queue.is_some() {
+                    radio.inner.replace(State {
+                        mode: Some(mode),
+                        shared: queue,
+                        ..State::default()
+                    });
+                }
+            }),
+        );
+        return;
+    }
     let before = deck.queue.borrow().batch();
     dispatch(ui, deck, Intent::Play { tracks, index: 0 });
     let after = deck.queue.borrow().batch();
@@ -155,6 +177,7 @@ pub(super) fn begin(
         let mut state = deck.radio.inner.borrow_mut();
         state.mode = Some(mode);
         state.batch = after;
+        state.shared = None;
         state.filter.clear();
         state.told_dry = false;
         state.retry_at_ms = 0;
@@ -201,27 +224,40 @@ pub(super) fn taste(
         .then(|| deck.radio.inner.borrow().filter.clone())
 }
 
-/// 队列还是电台起播的那一批。
+/// 队列还是电台起播的那一批;在组里是组此刻那一版还是电台的。
 fn owns_batch(deck: &Deck) -> bool {
     let state = deck.radio.inner.borrow();
-    state.mode.is_some()
-        && state.batch == deck.queue.borrow().batch()
+    if state.mode.is_none() {
+        return false;
+    }
+    if deck.group.is_member() {
+        state.shared.is_some()
+            && state.shared == shared_now(deck)
+    } else {
+        state.batch == deck.queue.borrow().batch()
+    }
+}
+
+/// 组此刻那一版组队列。
+fn shared_now(deck: &Deck) -> Option<(i64, i64)> {
+    deck.group.now().map(|now| (now.queue_id, now.revision))
+}
+
+/// 当前这首之后还排着几首。组里只看得见下一首:在放最后一首是 0,否则按 1 之外算。
+fn remaining(deck: &Deck) -> usize {
+    if !deck.group.is_member() {
+        return deck.queue.borrow().remaining();
+    }
+    match deck.group.now() {
+        Some(now) if now.playing && now.next.is_none() => 0,
+        _ => usize::MAX,
+    }
 }
 
 /// 每秒一趟:电台的队列只剩最后一首就续一批。
 pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
     let now_ms = crate::sync::group::now_ms();
-    let turn = {
-        let state = deck.radio.inner.borrow();
-        RadioTurn {
-            owns_batch: owns_batch(deck),
-            remaining: deck.queue.borrow().remaining(),
-            pulling: state.pulling,
-            now_ms,
-            retry_at_ms: state.retry_at_ms,
-        }
-    };
-    if !radio_due(&turn) {
+    if !due(deck, now_ms) {
         return;
     }
     let Some(mode) = next_mode(deck) else { return };
@@ -231,6 +267,10 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
         state.filter.clone()
     };
 
+    if deck.group.is_member() {
+        top_up_shared(ui, deck, mode, filter, now_ms);
+        return;
+    }
     let batch = deck.queue.borrow().batch();
     let deck = deck.clone();
     let weak = ui.as_weak();
@@ -255,20 +295,8 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
                 log::warn!("电台续取失败: {error}")
             }
         }
-        let tell_dry = {
-            let mut state = deck.radio.inner.borrow_mut();
-            state.pulling = false;
-            if added == 0 {
-                state.retry_at_ms = now_ms + RETRY_AFTER_MS;
-            } else {
-                state.told_dry = false;
-            }
-            let tell = dry && !state.told_dry;
-            state.told_dry |= dry;
-            tell
-        };
-        if tell_dry && let Some(ui) = weak.upgrade() {
-            crate::notice::show(&ui, DRY_NOTICE.to_owned());
+        if let Some(ui) = weak.upgrade() {
+            settle(&ui, &deck, added, dry, now_ms);
         }
         if added > 0
             && let Some(ui) = weak.upgrade()
@@ -279,11 +307,119 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
     .expect("event loop must be running");
 }
 
+/// 此刻该不该续一批。
+pub(super) fn due(deck: &Deck, now_ms: u64) -> bool {
+    let state = deck.radio.inner.borrow();
+    radio_due(&RadioTurn {
+        owns_batch: owns_batch(deck),
+        remaining: remaining(deck),
+        pulling: state.pulling,
+        now_ms,
+        retry_at_ms: state.retry_at_ms,
+    })
+}
+
+/// 在组里续:取到的歌走组意图追加进电台那一版组队列,电台换到续上的那一版(#165)。
+fn top_up_shared(
+    ui: &MainWindow,
+    deck: &Deck,
+    mode: api::RadioMode,
+    filter: Vec<FacetPickDto>,
+    now_ms: u64,
+) {
+    let deck = deck.clone();
+    let weak = ui.as_weak();
+    slint::spawn_local(async move {
+        let found = api::radio(&mode, &filter).await;
+        let Some(ui) = weak.upgrade() else { return };
+        let (tracks, dry) = match found {
+            // 等的这几秒里有人点了别的歌:组队列不是电台的了,扔掉
+            Ok(found) if owns_batch(&deck) => {
+                let dry = found.tracks.is_empty()
+                    && !filter.is_empty();
+                (found.tracks, dry)
+            }
+            Ok(_) => (Vec::new(), false),
+            Err(error) => {
+                log::warn!("电台续取失败: {error}");
+                (Vec::new(), false)
+            }
+        };
+        let queue = deck.radio.inner.borrow().shared;
+        let (Some(queue), false) =
+            (queue, tracks.is_empty())
+        else {
+            settle(&ui, &deck, 0, dry, now_ms);
+            return;
+        };
+        let added = tracks.len();
+        let radio = deck.radio.clone();
+        let settling = deck.clone();
+        deck.group.append(
+            &ui,
+            queue,
+            tracks,
+            Box::new(move |extended| {
+                let added = if extended.is_some() {
+                    radio.inner.borrow_mut().shared =
+                        extended;
+                    log::info!(
+                        "电台往组队列续了 {added} 首"
+                    );
+                    added
+                } else {
+                    0
+                };
+                if let Some(ui) = weak.upgrade() {
+                    settle(
+                        &ui, &settling, added, false,
+                        now_ms,
+                    );
+                }
+            }),
+        );
+    })
+    .expect("event loop must be running");
+}
+
+/// 一趟续取落定:放下「在路上」,没续上就冷却,筛选续不出新歌时说一次。
+fn settle(
+    ui: &MainWindow,
+    deck: &Deck,
+    added: usize,
+    dry: bool,
+    now_ms: u64,
+) {
+    let tell_dry = {
+        let mut state = deck.radio.inner.borrow_mut();
+        state.pulling = false;
+        if added == 0 {
+            state.retry_at_ms = now_ms + RETRY_AFTER_MS;
+        } else {
+            state.told_dry = false;
+        }
+        let tell = dry && !state.told_dry;
+        state.told_dry |= dry;
+        tell
+    };
+    if tell_dry {
+        crate::notice::show(ui, DRY_NOTICE.to_owned());
+    }
+}
+
 /// 续这一批用什么:私人 FM 照旧;心动以队尾那首为种子,往下接着推。
 fn next_mode(deck: &Deck) -> Option<api::RadioMode> {
     let mode = deck.radio.inner.borrow().mode.clone()?;
     Some(match mode {
         api::RadioMode::Fm => api::RadioMode::Fm,
+        // 组里在放最后一首时才续,那一首就是队尾
+        api::RadioMode::Heart { .. }
+            if deck.group.is_member() =>
+        {
+            api::RadioMode::Heart {
+                seed: deck.group.now()?.track.id,
+            }
+        }
         api::RadioMode::Heart { .. } => {
             api::RadioMode::Heart {
                 seed: deck

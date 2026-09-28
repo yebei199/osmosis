@@ -29,6 +29,17 @@ pub(crate) use rules::{
 
 use crate::{MainWindow, Player, Shell};
 
+/// 意图应答之后回头告诉发的那一侧:成了是组此刻那一版队列 `(queue_id, revision)`,
+/// 没成(或组里没有歌)是 `None`。电台靠它认出组队列里哪一版是它的(#165)。
+pub type Then = Box<dyn FnOnce(Option<(i64, i64)>)>;
+
+#[cfg(test)]
+thread_local! {
+    /// 测试里没有服务端:发出去还没应答的回调,由 [`Group::answer`] 代服务端回。
+    static PENDING: std::cell::RefCell<Vec<Then>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// 本机挂钟的毫秒。
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -288,6 +299,17 @@ impl Group {
         tracks: Vec<app_core::TrackDto>,
         index: usize,
     ) {
+        self.play_then(ui, tracks, index, Box::new(|_| {}));
+    }
+
+    /// 同 [`Self::play`],应答之后调 `then`。
+    pub fn play_then(
+        &self,
+        ui: &MainWindow,
+        tracks: Vec<app_core::TrackDto>,
+        index: usize,
+        then: Then,
+    ) {
         let Some(tapped) =
             tracks.get(index).map(|track| track.id.clone())
         else {
@@ -298,7 +320,7 @@ impl Group {
         }) {
             return;
         }
-        self.send(
+        self.send_then(
             ui,
             "点歌",
             format!("play {index}"),
@@ -306,6 +328,29 @@ impl Group {
                 tracks,
                 index,
             }),
+            then,
+        );
+    }
+
+    /// 往组队列 `(queue_id, revision)` 那一版的队尾续几首(电台续歌,#165)。不是人按的,
+    /// 没成不提示:电台自己冷却了再试。
+    pub fn append(
+        &self,
+        ui: &MainWindow,
+        (queue_id, revision): (i64, i64),
+        tracks: Vec<app_core::TrackDto>,
+        then: Then,
+    ) {
+        self.send_then(
+            ui,
+            "",
+            format!("append {}", tracks.len()),
+            GroupIntent::Append {
+                queue_id,
+                revision,
+                tracks,
+            },
+            then,
         );
     }
 
@@ -532,6 +577,14 @@ impl Group {
         lock(&self.inner.view).on_state(state);
     }
 
+    /// 测试里代服务端应答:还没回的意图一律按 `queue` 回。
+    #[cfg(test)]
+    pub(crate) fn answer(&self, queue: Option<(i64, i64)>) {
+        for then in PENDING.with(|pending| pending.take()) {
+            then(queue);
+        }
+    }
+
     fn send(
         &self,
         ui: &MainWindow,
@@ -539,11 +592,31 @@ impl Group {
         label: String,
         intent: GroupIntent,
     ) {
+        self.send_then(
+            ui,
+            what,
+            label,
+            intent,
+            Box::new(|_| {}),
+        );
+    }
+
+    fn send_then(
+        &self,
+        ui: &MainWindow,
+        what: &'static str,
+        label: String,
+        intent: GroupIntent,
+        then: Then,
+    ) {
         log::info!("组意图: {label}");
         #[cfg(test)]
         {
             let _ = (ui, what, intent);
             lock(&self.inner.intents).push(label);
+            PENDING.with(|pending| {
+                pending.borrow_mut().push(then)
+            });
         }
         #[cfg(not(test))]
         {
@@ -551,10 +624,11 @@ impl Group {
             let me = self.inner.me.clone();
             let weak = ui.as_weak();
             let _ = slint::spawn_local(async move {
-                // 就绪不是人按的:没报上只是等满上限,不提示,也不清点歌的在途标记。
+                // 就绪与续歌不是人按的:没成不提示,也不清点歌的在途标记。
                 let quiet = matches!(
                     intent,
                     GroupIntent::Ready { .. }
+                        | GroupIntent::Append { .. }
                 );
                 let reply = match intent {
                     GroupIntent::Play(pick) => {
@@ -590,13 +664,35 @@ impl Group {
                         )
                         .await
                     }
+                    GroupIntent::Append {
+                        queue_id,
+                        revision,
+                        tracks,
+                    } => {
+                        api::group_append(
+                            &me, queue_id, revision, tracks,
+                        )
+                        .await
+                    }
                 };
                 if !quiet {
                     lock(&group.inner.in_flight).take();
                 }
                 match reply {
-                    Ok(state) => group.accept(state),
+                    Ok(state) => {
+                        let queue = state
+                            .as_ref()
+                            .and_then(|state| {
+                                state.now.as_ref()
+                            })
+                            .map(|now| {
+                                (now.queue_id, now.revision)
+                            });
+                        group.accept(state);
+                        then(queue);
+                    }
                     Err(error) => {
+                        then(None);
                         log::warn!(
                             "组意图 {label} 没成: {error}"
                         );
@@ -870,8 +966,19 @@ enum GroupIntent {
     Transport(TransportOpDto),
     Outputs(Vec<String>, Option<GroupSeedDto>),
     Leave,
-    Advance { entry_id: i64, version: u64 },
-    Ready { entry_id: i64, version: u64 },
+    Advance {
+        entry_id: i64,
+        version: u64,
+    },
+    Ready {
+        entry_id: i64,
+        version: u64,
+    },
+    Append {
+        queue_id: i64,
+        revision: i64,
+        tracks: Vec<app_core::TrackDto>,
+    },
 }
 
 /// 名册那一排芯片上标出谁在出声(空串是本机)。「加入 / 移出」那颗小键照它显示。

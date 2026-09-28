@@ -282,6 +282,7 @@ fn queue_routes(state: &AppState) -> Router {
 fn group_routes(state: &AppState) -> Router {
     let play = Router::new()
         .route("/group/play", post(routes::group::play))
+        .route("/group/append", post(routes::group::append))
         .layer(DefaultBodyLimit::max(QUEUE_UPLOAD_LIMIT))
         .route_layer(guard(
             state.policies.queue_write.clone(),

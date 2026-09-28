@@ -7,9 +7,9 @@
 use axum::Json;
 use axum::extract::State;
 use contract::{
-    GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
-    GroupPlayDto, GroupReadyDto, GroupReplyDto,
-    GroupTransportDto,
+    GroupAdvanceDto, GroupAppendDto, GroupLeaveDto,
+    GroupOutputsDto, GroupPlayDto, GroupReadyDto,
+    GroupReplyDto, GroupTransportDto,
 };
 use server::error::{self, Failure};
 use server::store::account::Account;
@@ -39,6 +39,24 @@ pub(crate) async fn play(
         &account,
         &body.device_id,
         Intent::Play(body.pick),
+    )
+    .await
+}
+
+/// `POST /group/append` —— 往组队列队尾续几首(电台续歌,#165)。
+pub(crate) async fn append(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<GroupAppendDto>,
+) -> Result<Json<GroupReplyDto>, Failure> {
+    apply(
+        &state,
+        &account,
+        &body.device_id,
+        Intent::Append {
+            queue: (body.queue_id, body.revision),
+            tracks: body.tracks,
+        },
     )
     .await
 }

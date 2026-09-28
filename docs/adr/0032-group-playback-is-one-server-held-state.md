@@ -35,7 +35,8 @@
 
 ### 二、意图走 HTTP,状态经信令广播
 
-`GET /group`、`POST /group/play | transport | outputs | leave`(`contract::group`)。每一条意图
+`GET /group`、`POST /group/play | transport | outputs | leave`(`contract::group`);电台续歌另有
+`POST /group/append`(#165):往组此刻那一版的队尾追加、换到续上的那一版,在放的那一首与时间线不动。每一条意图
 都是同一个形状:开事务 → 锁这一行 → 把放完的先往下推 → 应用意图 → 版本加一 → 写回 → 提交
 → 经名册把新状态(`ServerSignal::GroupState`)推给账号下每台在线设备。请求有明确的成败,
 界面失败一律提示一句,不再静默丢弃。

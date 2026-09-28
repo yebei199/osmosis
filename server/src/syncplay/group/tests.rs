@@ -306,6 +306,46 @@ fn jumping_to_a_missing_entry_is_refused() {
     );
 }
 
+/// 电台续歌(#165):组队列换到续上的那一版,在放的这一条与时间线不动,
+/// 随机时新条目排在次序末尾。
+#[test]
+fn extending_moves_to_the_new_revision_and_leaves_the_timeline()
+ {
+    let mut group = group();
+    group.shuffle("pc", &list(), true, 7).unwrap();
+    let before = now(&group).clone();
+
+    group.extend("phone", (7, 1), (7, 2), &[4, 5]).unwrap();
+
+    let after = now(&group);
+    assert_eq!((after.queue_id, after.revision), (7, 2));
+    assert_eq!(after.entry_id, before.entry_id);
+    assert_eq!(after.anchor_wall_us, before.anchor_wall_us);
+    assert_eq!(after.position_us, before.position_us);
+    assert_eq!(after.order[..3], before.order[..]);
+    assert_eq!(after.order[3..], [4, 5]);
+}
+
+/// 续的不是组此刻那一版(期间有人点了别的歌),或者发的不是成员:拒掉,不往别人的队列里续。
+#[test]
+fn extending_a_stale_revision_is_refused() {
+    let mut group = group();
+
+    assert_eq!(
+        group.extend("phone", (7, 0), (7, 2), &[4]),
+        Err(Refusal::Stale)
+    );
+    assert_eq!(
+        group.extend("stranger", (7, 1), (7, 2), &[4]),
+        Err(Refusal::NotMember)
+    );
+    assert_eq!(now(&group).revision, 1);
+    assert!(
+        now(&group).order.is_empty(),
+        "不随机时次序仍是原序"
+    );
+}
+
 /// 从本机正在放的那一份接着:位置、在不在放照原样,锚在「现在」,不另加 LEAD。
 #[test]
 fn a_seed_carries_on_from_the_local_playback() {

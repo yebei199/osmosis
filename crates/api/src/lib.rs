@@ -97,8 +97,9 @@ pub use feedback::{
 };
 
 pub use group::{
-    group_advance, group_leave, group_outputs, group_play,
-    group_ready, group_state, group_transport,
+    group_advance, group_append, group_leave,
+    group_outputs, group_play, group_ready, group_state,
+    group_transport,
 };
 
 pub use history::{

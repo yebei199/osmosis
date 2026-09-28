@@ -677,3 +677,87 @@ fn an_output_reports_ready_once_per_version() {
         "只当遥控器不报"
     );
 }
+
+/// 组此刻放的是组队列第 `revision` 版;`last` 是在放它的最后一首(没有预告的下一首)。
+fn radio_state(revision: i64, last: bool) -> GroupStateDto {
+    let mut state = state(&["me", "pc"], true);
+    let now = state.now.as_mut().expect("该在放");
+    now.revision = revision;
+    if !last {
+        now.next = Some(app_core::NextEntryDto {
+            entry_id: 13,
+            track: track_with_id("y"),
+            at_us: 0,
+        });
+    }
+    state
+}
+
+/// 组里开电台(#165):起播走组意图,应答里那一版组队列归电台;放到最后一首就续。
+#[test]
+fn the_radio_in_a_group_owns_the_revision_it_started() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(radio_state(2, false)));
+
+    super::super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        batch_of(&deck, &["a", "b"]),
+    );
+    assert_eq!(deck.group.intents(), vec!["play 0"]);
+    deck.group.assume(Some(radio_state(3, false)));
+    deck.group.answer(Some((7, 3)));
+
+    assert!(
+        !super::super::radio::due(&deck, 0),
+        "还有下一首,不续"
+    );
+    deck.group.assume(Some(radio_state(3, true)));
+    assert!(
+        super::super::radio::due(&deck, 0),
+        "放到电台那一版的最后一首,该续"
+    );
+    assert!(
+        deck.queue.borrow().current().is_none(),
+        "组里的电台不在本机队列上放"
+    );
+}
+
+/// 组里有人点了别的歌:组队列换了一版,电台不再往里续。
+#[test]
+fn another_pick_in_the_group_stops_the_radio() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(radio_state(2, false)));
+    super::super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        batch_of(&deck, &["a", "b"]),
+    );
+    deck.group.answer(Some((7, 3)));
+
+    deck.group.assume(Some(radio_state(4, true)));
+
+    assert!(!super::super::radio::due(&deck, 0));
+}
+
+/// 起播的组意图没成:电台不接组队列里的任何一版。
+#[test]
+fn a_failed_radio_start_in_the_group_owns_nothing() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(radio_state(2, true)));
+    super::super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        batch_of(&deck, &["a", "b"]),
+    );
+
+    deck.group.answer(None);
+
+    assert!(!super::super::radio::due(&deck, 0));
+}

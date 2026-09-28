@@ -4,10 +4,10 @@
 //! 状态的广播走信令(`syncplay` 的 `Event::GroupState`),这里只管发意图。
 
 use contract::{
-    GroupAdvanceDto, GroupLeaveDto, GroupOutputsDto,
-    GroupPickDto, GroupPlayDto, GroupReadyDto,
-    GroupReplyDto, GroupSeedDto, GroupStateDto,
-    GroupTransportDto, TransportOpDto,
+    GroupAdvanceDto, GroupAppendDto, GroupLeaveDto,
+    GroupOutputsDto, GroupPickDto, GroupPlayDto,
+    GroupReadyDto, GroupReplyDto, GroupSeedDto,
+    GroupStateDto, GroupTransportDto, TransportOpDto,
 };
 
 use crate::url::group_url;
@@ -31,6 +31,25 @@ pub async fn group_play(
         GroupPlayDto {
             device_id: device_id.to_owned(),
             pick,
+        },
+    )
+    .await
+}
+
+/// `POST /group/append` —— 往组此刻那一版的队尾续几首(电台续歌,#165)。
+pub async fn group_append(
+    device_id: &str,
+    queue_id: i64,
+    revision: i64,
+    tracks: Vec<contract::TrackDto>,
+) -> Result<Option<GroupStateDto>, ApiError> {
+    post(
+        "/append",
+        GroupAppendDto {
+            device_id: device_id.to_owned(),
+            queue_id,
+            revision,
+            tracks,
         },
     )
     .await

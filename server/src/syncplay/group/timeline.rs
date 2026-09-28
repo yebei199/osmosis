@@ -92,6 +92,8 @@ pub enum Refusal {
     Idle,
     /// 要切到的那一条不在组队列这一版里。
     NoSuchEntry,
+    /// 拿着的不是组此刻那一版:期间有人换了歌。
+    Stale,
 }
 
 impl Now {
@@ -366,6 +368,27 @@ impl Group {
             loop_mode,
             order,
         });
+    }
+
+    /// 组队列从 `from` 续成了 `to`,多出 `added` 这几条(电台续歌,#165)。在放的这一条与
+    /// 时间线不动;随机时新条目排在次序末尾。
+    pub fn extend(
+        &mut self,
+        device: &str,
+        from: (i64, i64),
+        to: (i64, i64),
+        added: &[i64],
+    ) -> Result<(), Refusal> {
+        self.member(device)?;
+        let now = self.now_mut()?;
+        if (now.queue_id, now.revision) != from {
+            return Err(Refusal::Stale);
+        }
+        (now.queue_id, now.revision) = to;
+        if now.shuffled {
+            now.order.extend_from_slice(added);
+        }
+        Ok(())
     }
 
     /// 随机开关。打开时从当前这一首起重洗,关上就回到原序。

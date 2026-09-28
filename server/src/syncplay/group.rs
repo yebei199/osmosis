@@ -53,6 +53,11 @@ pub enum Intent {
         seed: Option<contract::GroupSeedDto>,
     },
     Leave,
+    /// 往组此刻那一版(`queue`)的队尾续几首,不换在放的那一首(电台续歌,#165)。
+    Append {
+        queue: (i64, i64),
+        tracks: Vec<TrackDto>,
+    },
 }
 
 /// 挂钟微秒。时间线落库用它:服务端单调钟每次启动从零起,重启后换算不回来。
@@ -141,6 +146,52 @@ pub async fn apply(
             }
         }
         Intent::Leave => group.leave(device),
+        Intent::Append { queue, tracks } => {
+            // 已在队列里的(按平台与 id 认)不再进,与本机队列的续取同一个规矩
+            let mut inputs: Vec<EntryInput> = entries
+                .iter()
+                .map(|entry| input(&track_of(entry)))
+                .collect();
+            for track in &tracks {
+                let fresh = input(track);
+                if !inputs.iter().any(|held| {
+                    (&held.platform, &held.track_id)
+                        == (
+                            &fresh.platform,
+                            &fresh.track_id,
+                        )
+                }) {
+                    inputs.push(fresh);
+                }
+            }
+            if inputs.len() == entries.len() {
+                return Err(AppError::Invalid(
+                    "续来的歌都已经在组队列里",
+                ));
+            }
+            let published = queue::publish(
+                &mut tx, account, queue.0, queue.1, &inputs,
+            )
+            .await?;
+            group
+                .extend(
+                    device,
+                    queue,
+                    (
+                        published.queue_id,
+                        published.revision,
+                    ),
+                    &published.entry_ids[entries.len()..],
+                )
+                .map_err(refused)?;
+            entries = queue::whole(
+                &mut tx,
+                account,
+                published.queue_id,
+                published.revision,
+            )
+            .await?;
+        }
     }
 
     {
@@ -649,6 +700,7 @@ fn refused(refusal: Refusal) -> AppError {
         Refusal::NotMember => "本机不在组里",
         Refusal::Idle => "组里还没有歌",
         Refusal::NoSuchEntry => "那一首不在组队列里",
+        Refusal::Stale => "组里已经换了歌",
     })
 }
 
