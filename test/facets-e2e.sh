@@ -143,14 +143,21 @@ case "$MODE" in
     # 卡墙能筛:打开筛选、选第一个 chip,卡墙还在
     act "$(handle "FacetBar::filter-toggle")"
     sleep 1
+    # chip 的模型每按一次就重建,句柄随之失效:先读标签,按完重新取
     chip=$(handle "FacetBar::chip-pill" 0)
     must "$chip" "第一个筛选 chip"
+    label=$(prop "$chip" accessibleLabel)
     act "$chip"
     sleep 2
+    [ "$(prop "$(handle "FacetBar::filter-toggle")" accessibleLabel)" = "筛选 · 1" ] \
+      || { echo "wall: 失败 —— 按了「$label」,筛选开关没报「筛选 · 1」" >&2; exit 1; }
     [ -n "$(handle "WallView::wall-area")" ] \
       || { echo "wall: 失败 —— 筛选之后卡墙没了" >&2; exit 1; }
-    echo "  卡墙上筛「$(prop "$chip" accessibleLabel)」:卡墙还在"
-    act "$chip"
+    echo "  卡墙上筛「$label」:卡墙还在"
+    act "$(handle "FacetBar::chip-pill" 0)"
+    sleep 1
+    [ "$(prop "$(handle "FacetBar::filter-toggle")" accessibleLabel)" = "筛选" ] \
+      || { echo "wall: 失败 —— 再按一次「$label」没取消" >&2; exit 1; }
 
     # 一选分组就切回列表
     piles=$(group_by_artist)
