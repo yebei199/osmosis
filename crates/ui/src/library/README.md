@@ -1,6 +1,7 @@
 # library
 
-我的库:哪些歌在红心里(`liked`),以及歌单的读与写(`playlist`)。
+我的库:哪些歌在红心里(`liked`)、歌单的读与写(`playlist`)、标签(`tag`)、
+赞踩(`feedback`),以及屏蔽规则(`block`,#161)。
 
 与 `../music` 的分法照旧 —— 那边管的是「一批歌」,这边管的是「哪一批」。
 不负责取数据,那在 `api`;哪些歌单可写由 `playlist::is_editable` 判(平台歌单只读)。

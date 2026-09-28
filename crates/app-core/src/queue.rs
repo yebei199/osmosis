@@ -155,6 +155,44 @@ impl Queue {
         self.next(seed)
     }
 
+    /// 手动「下一首」,跳过 `skip` 认出的那些(#161):屏蔽规则可能是这批歌
+    /// 装进队列之后才建的,只能在前进这一刻再认一次。
+    pub fn next_skipping(
+        &mut self,
+        seed: u64,
+        skip: impl Fn(&TrackDto) -> bool,
+    ) -> Option<&TrackDto> {
+        self.skipping(seed, skip, Self::next)
+    }
+
+    /// 自动推进,跳过 `skip` 认出的那些。单曲循环时正放着的这首被屏蔽了,
+    /// 不再重放它,照手动「下一首」往下走。
+    pub fn advance_auto_skipping(
+        &mut self,
+        seed: u64,
+        skip: impl Fn(&TrackDto) -> bool,
+    ) -> Option<&TrackDto> {
+        self.skipping(seed, skip, Self::advance_auto)
+    }
+
+    /// 先走 `first` 一步,落在被跳过的歌上就改走「下一首」接着找。最多试一整批:
+    /// 列表循环下整批都被屏蔽时,再找下去就是死循环,那等于放完了。
+    fn skipping(
+        &mut self,
+        seed: u64,
+        skip: impl Fn(&TrackDto) -> bool,
+        first: fn(&mut Self, u64) -> Option<&TrackDto>,
+    ) -> Option<&TrackDto> {
+        let mut step = first;
+        for _ in 0..=self.tracks.len() {
+            if !skip(step(self, seed)?) {
+                return self.current();
+            }
+            step = Self::next;
+        }
+        None
+    }
+
     /// 回卷:列表循环在队尾之后开新一轮。
     ///
     /// 随机开着就重洗**整批** —— 每一轮都是新排列,「随机」不退化成

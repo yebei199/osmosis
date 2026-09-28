@@ -220,6 +220,7 @@ fn deck_window_with(
         views: super::Views::default(),
         facets: Default::default(),
         liked: crate::library::liked::LikedSet::default(),
+        blocks: crate::library::block::BlockSet::default(),
         editing: crate::library::playlist::Editing::default(
         ),
         artwork: crate::imagery::artwork::Artwork::default(

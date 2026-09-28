@@ -77,10 +77,13 @@ pub(in crate::music) fn advance(
     ui: &MainWindow,
     deck: &Deck,
 ) {
+    // 规则可能是这批歌装进队列之后才建的,前进这一刻再认一次(#161)
     let has_next = deck
         .queue
         .borrow_mut()
-        .next(shuffle_seed())
+        .next_skipping(shuffle_seed(), |track| {
+            crate::library::block::hits(&deck.blocks, track)
+        })
         .is_some();
     after_advance(ui, deck, has_next);
 }
@@ -94,7 +97,9 @@ pub(in crate::music) fn advance_auto(
     let has_next = deck
         .queue
         .borrow_mut()
-        .advance_auto(shuffle_seed())
+        .advance_auto_skipping(shuffle_seed(), |track| {
+            crate::library::block::hits(&deck.blocks, track)
+        })
         .is_some();
     after_advance(ui, deck, has_next);
 }

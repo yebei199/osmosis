@@ -273,3 +273,74 @@ fn remaining_counts_what_is_left_after_the_current_track() {
     assert_eq!(queue.remaining(), 3);
     assert_eq!(Queue::default().remaining(), 0);
 }
+
+/// 屏蔽规则的替身:按 id 认(#161)。
+fn blocked<'a>(
+    ids: &'a [&'a str],
+) -> impl Fn(&TrackDto) -> bool + 'a {
+    move |track| ids.contains(&track.id.as_str())
+}
+
+/// 手动下一首:连着两首被屏蔽就一起跳过,落在第一首没被屏蔽的上。
+#[test]
+fn next_skips_consecutive_blocked_tracks() {
+    let mut queue = Queue::new(batch(5), 0);
+
+    let landed = queue
+        .next_skipping(0, blocked(&["1", "2"]))
+        .map(|track| track.id.clone());
+
+    assert_eq!(landed, Some("3".to_owned()));
+    assert_eq!(id_of(&queue), Some("3".to_owned()));
+}
+
+/// 后面全被屏蔽:循环关着时就是放完了。
+#[test]
+fn next_is_none_when_the_rest_is_blocked() {
+    let mut queue = Queue::new(batch(3), 0);
+
+    assert!(
+        queue
+            .next_skipping(0, blocked(&["1", "2"]))
+            .is_none()
+    );
+}
+
+/// 列表循环下整批都被屏蔽:试完一整批就停,不死循环。
+#[test]
+fn looping_a_fully_blocked_batch_stops() {
+    let mut queue = Queue::new(batch(3), 0);
+    queue.set_loop_mode(LoopMode::All);
+
+    assert!(
+        queue
+            .next_skipping(0, blocked(&["0", "1", "2"]))
+            .is_none()
+    );
+}
+
+/// 单曲循环时正在放的这首被屏蔽了:自动推进不再重放它,往下走。
+#[test]
+fn single_loop_moves_on_from_a_blocked_current() {
+    let mut queue = Queue::new(batch(3), 0);
+    queue.set_loop_mode(LoopMode::One);
+
+    let landed = queue
+        .advance_auto_skipping(0, blocked(&["0"]))
+        .map(|track| track.id.clone());
+
+    assert_eq!(landed, Some("1".to_owned()));
+}
+
+/// 没被屏蔽时与不跳过的推进一模一样(单曲循环照样重放)。
+#[test]
+fn nothing_blocked_behaves_like_plain_advance() {
+    let mut queue = Queue::new(batch(3), 0);
+    queue.set_loop_mode(LoopMode::One);
+
+    let landed = queue
+        .advance_auto_skipping(0, blocked(&[]))
+        .map(|track| track.id.clone());
+
+    assert_eq!(landed, Some("0".to_owned()));
+}
