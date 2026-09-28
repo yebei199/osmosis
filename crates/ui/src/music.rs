@@ -236,6 +236,7 @@ pub fn bind(
     // 真正生效的是之后每次 push_rows 里的那次重标。
     crate::library::liked::bind(ui, &deck.liked);
     crate::library::liked::refresh(&deck.liked, ui);
+    crate::library::tag::bind(ui);
 
     // 本地歌单的写操作。改完要把当前歌单的曲目重取一遍,而那要用播放队列 ——
     // 队列归这里,所以重取那一步由这边交出去。

@@ -130,6 +130,41 @@ pub(crate) fn subscription_url(
     )
 }
 
+pub(crate) fn tags_url() -> String {
+    format!("{}/tags", base_url())
+}
+
+pub(crate) fn tag_url(id: &str) -> String {
+    format!("{}/{}", tags_url(), encode_component(id))
+}
+
+/// 给一首歌打上/摘掉某个标签的地址。
+pub(crate) fn tag_track_url(
+    tag_id: &str,
+    platform: &str,
+    track_id: &str,
+) -> String {
+    format!(
+        "{}/tracks/{}/{}",
+        tag_url(tag_id),
+        encode_component(platform),
+        encode_component(track_id)
+    )
+}
+
+/// 一首歌打了哪些标签的地址。
+pub(crate) fn track_tags_url(
+    platform: &str,
+    track_id: &str,
+) -> String {
+    format!(
+        "{}/tracks/{}/{}/tags",
+        base_url(),
+        encode_component(platform),
+        encode_component(track_id)
+    )
+}
+
 #[cfg(test)]
 mod tests;
 

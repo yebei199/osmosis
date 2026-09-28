@@ -28,6 +28,6 @@ pub use contract::{
     GroupPickDto, GroupSeedDto, GroupStateDto, HealthDto,
     LoopModeDto, LyricDto, LyricLineDto, MAX_SIGNAL_BYTES,
     NextEntryDto, OutputRouteDto, PlaylistDto,
-    PlaylistSource, RemotePlayState, TrackDto, TracksDto,
-    TransportOpDto,
+    PlaylistSource, RemotePlayState, TagDto, TagSource,
+    TrackDto, TracksDto, TransportOpDto,
 };
