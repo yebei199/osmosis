@@ -679,8 +679,10 @@ fn an_output_reports_ready_once_per_version() {
 }
 
 /// 组此刻放的是组队列第 `revision` 版;`last` 是在放它的最后一首(没有预告的下一首)。
+/// 版本号跟着往上走:同一版号的状态本机不收。
 fn radio_state(revision: i64, last: bool) -> GroupStateDto {
     let mut state = state(&["me", "pc"], true);
+    state.version = (revision * 2 + i64::from(last)) as u64;
     let now = state.now.as_mut().expect("该在放");
     now.revision = revision;
     if !last {
@@ -737,7 +739,9 @@ fn another_pick_in_the_group_stops_the_radio() {
         api::RadioMode::Fm,
         batch_of(&deck, &["a", "b"]),
     );
+    deck.group.assume(Some(radio_state(3, true)));
     deck.group.answer(Some((7, 3)));
+    assert!(super::super::radio::due(&deck, 0));
 
     deck.group.assume(Some(radio_state(4, true)));
 
