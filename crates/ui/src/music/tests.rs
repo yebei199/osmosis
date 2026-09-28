@@ -852,6 +852,33 @@ fn picking_on_the_radio_list_keeps_the_radio_with_its_filter()
     );
 }
 
+/// 点的正是在放的那首(连点去重挡掉,没换批):电台仍在放这一批,筛选照样记下。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_deduplicated_pick_on_the_radio_list_still_takes_the_filter()
+ {
+    let (ui, deck) = faceted_window(ViewSource::Radio);
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        faceted_batch().tracks,
+    );
+    ui.global::<Player>()
+        .invoke_toggle_chip(chip_index(&ui, "夜 1"));
+
+    let batch = deck.queue.borrow().batch();
+    super::radio::adopt(&deck, batch);
+
+    assert_eq!(
+        super::radio::taste(&deck),
+        Some(vec![app_core::FacetPickDto {
+            facet: app_core::FacetDto::Tag,
+            label: "夜".to_owned(),
+        }])
+    );
+}
+
 /// 在别的视图点歌,电台照旧让位。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]

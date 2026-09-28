@@ -162,23 +162,30 @@ pub(super) fn begin(
 }
 
 /// 在电台区点了一首(#166):换出来的这一批仍是电台的,选着的筛选记下来,
-/// 续歌时带给服务端。`before` 是点之前的批号;没换批(组里走了组意图、
-/// 连点被去重)或者电台从没开过,就什么都不做。
+/// 续歌时带给服务端。`before` 是点之前的批号。
+///
+/// 没换批分两种:点的正是在放的那首(连点去重挡掉了),电台仍在放这一批 ——
+/// 筛选照样记下,不然选了 chip 点在放的那首,续进来的却不筛;组里走了组意图、
+/// 本机队列不归电台 —— 什么都不做。电台从没开过也什么都不做。
 pub(super) fn adopt(deck: &Deck, before: u64) {
-    let after = deck.queue.borrow().batch();
-    if after == before
-        || deck.views.current_source()
-            != Some(ViewSource::Radio)
+    if deck.views.current_source()
+        != Some(ViewSource::Radio)
     {
         return;
     }
+    let after = deck.queue.borrow().batch();
     let filter = app_core::facets::picks(
         deck.facets.borrow().chosen(),
     );
     let mut state = deck.radio.inner.borrow_mut();
-    if state.mode.is_none() {
+    let foreign = after == before && state.batch != after;
+    if state.mode.is_none() || foreign {
+        log::info!(
+            "电台区点歌,电台不接:没开过或这一批不归它"
+        );
         return;
     }
+    log::info!("电台接下这一批,筛选 {} 条", filter.len());
     state.batch = after;
     state.filter = filter;
     state.told_dry = false;
