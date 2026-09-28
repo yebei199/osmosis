@@ -154,12 +154,19 @@ test/feedback-e2e.sh complete   # 拖进度条到曲尾附近,等它自己放完
 test/radio-e2e.sh fm       # Music 页点「电台」分区,私人 FM
 test/radio-e2e.sh heart    # 控制条抽屉「从这首开电台」,心动模式(要已经在放一首)
 PORT=8090 test/radio-e2e.sh fm   # 真机
+test/radio-e2e.sh filter   # 电台区选「有歌词」再点歌,续进来的都得有歌词(#166)
+test/radio-e2e.sh dry      # 选得窄到续不出,界面要出「按当前筛选暂时找不到新歌」
 ```
 
 形状照 `pick-e2e.sh`:MCP 驱动、按无障碍标签找控件(分区条插进电台之后,按位置找会全体
 错位),断言走数据库。起播后按「下一首」(心动一批上百首,先从队列页点到队尾)直到队列剩
 最后一首,判据三条:`play_events` 多了一行、这台设备队列最新一版的条目数涨了、那一版里
 每一首开电台之前都不在该账号的 `play_events` 里。
+
+`filter` / `dry` 在私人 FM 起播之后打开筛选、按 `CHIPS`(逗号分隔,按 chip 文字前缀认)
+选好,再点筛过列表的第一行。`filter` 多一条判据:续进来的每首在 `platform_tracks` 里
+`lyric_kind` 是 lyric / translated(`CHIPS` 不是默认的「有歌词」时只列出来不判)。
+`dry` 的判据是横幅出了那句提示、队列没涨;`CHIPS` 不够窄居然续上了就退 3,换更窄的再跑。
 
 前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
 的那一版,网易云要绑着。
