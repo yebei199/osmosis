@@ -389,7 +389,7 @@ fn playback_copy_only_uses_subset_glyphs() {
         ),
         "下载".to_owned(),
         "下载这一首".to_owned(),
-        "这一端还不支持下载".to_owned(),
+        "桌面端还不支持下载".to_owned(),
         "这一首已经在下了".to_owned(),
         "Web 端暂不支持下载".to_owned(),
         "已存到 音乐/osmosis".to_owned(),

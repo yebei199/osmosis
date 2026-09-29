@@ -135,8 +135,8 @@ fn refuse(
     already_busy: bool,
 ) -> Option<String> {
     if !has_store {
-        // 桌面与 web 都会走到这里(落点各自的那一期还没做)。
-        return Some("这一端还不支持下载".to_owned());
+        // 只有桌面走得到这里(web 已废弃),落点那一期是 #169。
+        return Some("桌面端还不支持下载".to_owned());
     }
     if already_busy {
         // 网络一慢用户就会连点,而每一下都会开出一个新的待定条目 ——
@@ -322,7 +322,7 @@ mod tests {
     fn a_platform_without_a_store_says_so() {
         assert_eq!(
             refuse(false, false).as_deref(),
-            Some("这一端还不支持下载")
+            Some("桌面端还不支持下载")
         );
     }
 
