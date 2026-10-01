@@ -82,6 +82,35 @@ title_on() {
  h=$(CALL_PORT=$1 nth "PlayerBar::title")
  CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")'
 }
+android_progress() {
+ local h raw duration
+ [ "$(sql "SELECT NOT EXISTS(SELECT 1 FROM play_groups WHERE account_id=$ACCOUNT_ID AND '$ME'=ANY(members));")" = t ] || return 1
+ duration=$(sql "SELECT duration_ms FROM play_queue_entries WHERE queue_id=$queue AND revision=$revision AND entry_id=$entry;")
+ [[ "$duration" =~ ^[0-9]+$ ]] && [ "$duration" -gt 0 ] || return 1
+ h=$(nth "PlayerBar::track") || return 1
+ [ -n "$h" ] || return 1
+ raw=$(mktemp "${EVIDENCE_DIR:-${TMPDIR:-/tmp}}/174-source-progress.XXXXXX")
+ call get_element_tree "{\"elementHandle\":$h,\"maxElements\":30}" > "$raw" || return 1
+ python3 - "$raw" "$duration" <<'PROGRESS'
+import datetime,json,sys
+from pathlib import Path
+p=Path(sys.argv[1]); sample=json.loads(p.read_text()); elements=sample["elements"]
+assert not sample["truncated"]
+matches=[i for i,e in enumerate(elements) if any(t.get("id")=="ProgressBar::groove" for t in e["typeNamesAndIds"])]
+assert len(matches)==1, "槽元素缺失或歧义"
+i=matches[0]
+groove=elements[i]; fill=elements[i+1]
+assert any(t.get("typeName")=="Rectangle" for t in fill["typeNamesAndIds"])
+fills=[e for e in elements if any(t.get("typeName")=="Rectangle" and not t.get("id") for t in e["typeNamesAndIds"]) and e["absolutePosition"]==groove["absolutePosition"] and e["size"]["height"]==groove["size"]["height"]]
+assert len(fills)==1 and fills[0]==fill, "填充元素缺失或歧义"
+width=groove["size"]["width"]; filled=fill["size"]["width"]
+assert width>0 and 0<=filled<=width and fill["absolutePosition"]==groove["absolutePosition"]
+sample["sampled_at"]=datetime.datetime.now(datetime.UTC).isoformat()
+sample["duration_ms"]=int(sys.argv[2]); sample["position_ms"]=round(filled/width*int(sys.argv[2]))
+p.write_text(json.dumps(sample,ensure_ascii=False)+"\n")
+print(json.dumps({"position_ms":sample["position_ms"],"sampled_at":sample["sampled_at"],"raw":str(p)},ensure_ascii=False))
+PROGRESS
+}
 fresh_progress() {
  local mark line previous=-1 current checkpoint_title
  local before after reference previous_reference='' previous_line='' previous_time='' sampled_at
@@ -90,10 +119,17 @@ fresh_progress() {
   before=$(report)
   IFS='|' read -r queue revision entry _ <<< "$before"
   reference="$queue|$revision|$entry"
-  line=$(tail -n "+$((mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1 || true)
+  if [ "$PORT" = 8090 ]; then
+   line=$(android_progress) || return 1
+  else
+   line=$(tail -n "+$((mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1 || true)
+  fi
   sampled_at=$(date -Iseconds)
-  if [[ "$line" == *"放空 false"* && "$line" != "$previous_line" && "$queue" =~ ^[0-9]+$ && "$revision" =~ ^[0-9]+$ && "$entry" =~ ^[0-9]+$ ]]; then
-   current=$(position_ms "$line")
+  if [[ ( "$PORT" = 8090 || "$line" == *"放空 false"* ) && "$line" != "$previous_line" && "$queue" =~ ^[0-9]+$ && "$revision" =~ ^[0-9]+$ && "$entry" =~ ^[0-9]+$ ]]; then
+   if [ "$PORT" = 8090 ]; then
+    current=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["position_ms"])' "$line") || return 1
+   else current=$(position_ms "$line")
+   fi
    checkpoint_title=$(sql "SELECT title FROM play_queue_entries WHERE queue_id=$queue AND revision=$revision AND entry_id=$entry;")
    source_title=$(title_on "$PORT")
    after=$(report)
@@ -225,6 +261,12 @@ else
 fi
 if [ "$MODE" = idle ]; then
  source_stopped
+ # 重启后名册异步到达,在空闲前提建立后取实际输出控件。
+ for _ in $(seq 1 30); do
+  output_handle=$(labelled "OutputChip::touch" "输出到 pc1")
+  [ -n "$output_handle" ] && break
+  sleep 1
+ done
  latest=$(tail -n "+$((idle_target_mark+1))" "$TARGET_LOG" | rg "自动续播轮询" | tail -1)
  [[ "$latest" == *"放空 true"* ]] || { echo "idle 目标点击前并非空闲: $latest" >&2; exit 1; }
  echo "$(date -Iseconds) idle 目标点击前空闲: $latest"
