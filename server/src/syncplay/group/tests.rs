@@ -1,4 +1,4 @@
-//! `timeline.rs` 的测试:全局播放状态的纯规则。
+//! 全局播放状态的纯规则,以及在独立 schema 中验证周期入口的持久事务。
 
 use contract::LoopModeDto;
 
@@ -598,4 +598,332 @@ fn a_stuck_output_only_delays_the_start_up_to_the_cap() {
         now(&group).position_at(START_WAIT_US + SEC, TRACK),
         SEC as u64
     );
+}
+
+/// 私有周期入口扫描整个池,因此每条真库测试使用自己的 schema 和全部连接。
+mod persistence {
+    use std::future::Future;
+    use std::panic::AssertUnwindSafe;
+    use std::str::FromStr;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use contract::{
+        DeviceDto, GroupSeedDto, GroupStateDto,
+        ServerSignal,
+    };
+    use futures_util::FutureExt;
+    use similar_asserts::assert_eq;
+    use sqlx::PgPool;
+    use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+    use tokio::sync::mpsc;
+
+    use super::super::timeline::ADVANCE_GRACE_US;
+    use super::super::{
+        Intent, apply, roll_due, wall_now_us,
+    };
+    use crate::store::group as rows;
+    use crate::store::queue::{self, EntryInput};
+    use crate::syncplay::roster::Roster;
+    use crate::syncplay::signaling::SharedRoster;
+
+    /// 与已有真库集成测试使用相同开发数据库默认值。
+    const DEFAULT_DATABASE_URL: &str =
+        "postgres://slint:devonly@127.0.0.1:5432/osmosis";
+
+    /// 测试全部连接只看本次 schema;迁移、断言或超时失败也先清理再传播 panic。
+    async fn isolated<F, Fut>(run: F)
+    where
+        F: FnOnce(PgPool) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| {
+                DEFAULT_DATABASE_URL.to_owned()
+            });
+        let options = PgConnectOptions::from_str(&url)
+            .expect("解析真库连接")
+            .options([("statement_timeout", "10000")]);
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.clone())
+            .await
+            .expect("schema管理连接");
+        let token: String =
+            std::env::var("RADIO_OUTPUT_TEST_RUN")
+                .unwrap_or_default()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .take(12)
+                .collect();
+        // 同一进程的并行测试能落在同一微秒;存活的临时目录提供原子唯一名称。
+        let unique = tempfile::tempdir()
+            .expect("本次schema的唯一名称资源");
+        // 完整basename按字节无损编码,PG折小写也不会合并大小写不同的目录名。
+        let suffix: String = unique
+            .path()
+            .file_name()
+            .expect("临时目录名")
+            .as_encoded_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let schema = format!(
+            "radio_roller_{token}_{}_{suffix}",
+            std::process::id()
+        );
+        assert!(schema.len() <= 63, "schema不得被PG截断");
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&admin)
+            .await
+            .expect("创建本次独有schema");
+        let pool = PgPoolOptions::new()
+            .max_connections(3)
+            .connect_lazy_with(options.options([(
+                "search_path",
+                schema.as_str(),
+            )]));
+        let outcome = AssertUnwindSafe(async {
+            sqlx::migrate!()
+                .run(&pool)
+                .await
+                .expect("迁移本次schema");
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run(pool.clone()),
+            )
+            .await
+            .expect("周期测试有界结束");
+        })
+        .catch_unwind()
+        .await;
+        pool.close().await;
+        let cleaned = sqlx::query(&format!(
+            "DROP SCHEMA {schema} CASCADE"
+        ))
+        .execute(&admin)
+        .await;
+        admin.close().await;
+        cleaned.expect("只清理本次schema");
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    /// 两首真队列通过公开输出入口建组;保留接收端检验周期广播。
+    async fn playing_group(
+        pool: &PgPool,
+        tag: &str,
+    ) -> (
+        i64,
+        SharedRoster,
+        mpsc::Receiver<ServerSignal>,
+        GroupStateDto,
+    ) {
+        let account: i64 = sqlx::query_scalar(
+            "INSERT INTO accounts (username, password_hash) VALUES ($1, 'test-only') RETURNING id"
+        ).bind(tag).fetch_one(pool).await.expect("建立本schema账号");
+        let mut roster = Roster::default();
+        let (sink, inbox) = mpsc::channel(16);
+        roster.join(
+            account,
+            DeviceDto {
+                id: "pc".to_owned(),
+                name: "pc".to_owned(),
+            },
+            sink,
+        );
+        let roster = Arc::new(Mutex::new(roster));
+        let mut tx =
+            pool.begin().await.expect("建队列事务");
+        let inputs: Vec<EntryInput> = ["first", "second"]
+            .into_iter()
+            .map(|id| EntryInput {
+                platform: "netease".to_owned(),
+                track_id: id.to_owned(),
+                title: id.to_owned(),
+                alias: None,
+                artists: Vec::new(),
+                cover: None,
+                duration_ms: 200_000,
+            })
+            .collect();
+        let queue = queue::create(
+            &mut tx, account, "phone", &inputs,
+        )
+        .await
+        .expect("真实队列");
+        tx.commit().await.expect("提交队列");
+        let state = apply(
+            pool,
+            &roster,
+            account,
+            "phone",
+            Intent::Outputs {
+                outputs: vec!["pc".to_owned()],
+                seed: Some(GroupSeedDto {
+                    queue_id: queue.queue_id,
+                    revision: queue.revision,
+                    entry_id: queue.entry_ids[0],
+                    position_ms: 0,
+                    playing: true,
+                }),
+            },
+        )
+        .await
+        .expect("输出采用种子")
+        .expect("组已建立");
+        // 兜底时刻含元数据时长后的宽限,从真实曲目时长构造已经过期的完整前提。
+        let duration_us = state
+            .now
+            .as_ref()
+            .expect("种子播放在")
+            .track
+            .duration_ms
+            * 1_000;
+        assert!(duration_us > 0);
+        let anchor = wall_now_us()
+            - duration_us
+            - ADVANCE_GRACE_US
+            - 1_000_000;
+        let deadline =
+            anchor + duration_us + ADVANCE_GRACE_US;
+        sqlx::query("UPDATE play_groups SET anchor_wall_us = $2, boundary_wall_us = $3 WHERE account_id = $1")
+            .bind(account).bind(anchor).bind(deadline).execute(pool).await.expect("固定真实兜底到期前提");
+        let mut conn =
+            pool.acquire().await.expect("检查到期前提连接");
+        let held = rows::load(&mut conn, account)
+            .await
+            .expect("读取持久前提")
+            .expect("组在");
+        assert_eq!(
+            held.now
+                .expect("持久播放在")
+                .deadline(duration_us as u64),
+            Some(deadline)
+        );
+        let stored_deadline: i64 = sqlx::query_scalar("SELECT boundary_wall_us FROM play_groups WHERE account_id = $1")
+            .bind(account).fetch_one(&mut *conn).await.expect("读取持久兜底时刻");
+        assert_eq!(stored_deadline, deadline);
+        let sampled_at = wall_now_us();
+        assert!(deadline <= sampled_at, "真实宽限已经过去");
+        assert!(
+            rows::due(&mut conn, sampled_at)
+                .await
+                .expect("真实due查询")
+                .contains(&account)
+        );
+        (account, roster, inbox, state)
+    }
+
+    /// 空集合不造组;健康到期组推进精确条目,持久提交并广播相同新版本。
+    #[tokio::test]
+    async fn rolling_due_advances_healthy_groups_and_broadcasts()
+     {
+        isolated(|pool| async move {
+            let empty: SharedRoster =
+                Arc::new(Mutex::new(Roster::default()));
+            roll_due(&pool, &empty)
+                .await
+                .expect("空due集合成功");
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM play_groups",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("空周期后计数组");
+            assert_eq!(count, 0);
+            let (account, roster, mut inbox, before) =
+                playing_group(&pool, "healthy").await;
+            let expected_version =
+                i64::try_from(before.version)
+                    .expect("测试版本可持久存储")
+                    + 1;
+            inbox.try_recv().expect("建组广播正对照");
+            let prior = before.now.expect("起播前提");
+            roll_due(&pool, &roster)
+                .await
+                .expect("真实周期推进");
+            let mut conn = pool
+                .acquire()
+                .await
+                .expect("原始持久读取连接");
+            let stored = rows::load(&mut conn, account)
+                .await
+                .expect("读组原始行")
+                .expect("组仍在");
+            let now = stored.now.expect("健康播放仍在");
+            assert_eq!(stored.version, expected_version);
+            assert_eq!(
+                (now.queue_id, now.revision),
+                (prior.queue_id, prior.revision)
+            );
+            assert_ne!(now.entry_id, prior.entry_id);
+            assert!(now.playing);
+            let entries = queue::whole(
+                &mut conn,
+                account,
+                now.queue_id,
+                now.revision,
+            )
+            .await
+            .expect("精确版仍可读");
+            assert_eq!(now.entry_id, entries[1].entry_id);
+            let signal =
+                inbox.try_recv().expect("周期提交后的广播");
+            let ServerSignal::GroupState {
+                state: Some(state),
+            } = signal
+            else {
+                panic!("周期应广播播放组状态: {signal:?}");
+            };
+            assert_eq!(
+                i64::try_from(state.version)
+                    .expect("广播版本可持久存储"),
+                stored.version
+            );
+            assert_eq!(
+                state.now.expect("广播带播放").entry_id,
+                now.entry_id
+            );
+        })
+        .await;
+    }
+
+    /// 缺队列、版、条目的到期组走真实周期入口,无推进时也提交完整恢复并保持关系。
+    #[tokio::test]
+    async fn rolling_due_persists_recovery_without_advancing()
+     {
+        isolated(|pool| async move {
+            for damage in ["revision", "entry", "queue"] {
+                let (account, roster, _inbox, before) = playing_group(&pool, damage).await;
+                let expected_version = i64::try_from(before.version).expect("测试版本可持久存储") + 1;
+                let prior = before.now.expect("损坏前播放引用");
+                let sql = match damage {
+                    "revision" => "DELETE FROM play_queue_entries WHERE queue_id = $1 AND revision = $2",
+                    "entry" => "DELETE FROM play_queue_entries WHERE queue_id = $1 AND entry_id = $2",
+                    "queue" => "DELETE FROM play_queues WHERE id = $1 AND revision = $2",
+                    _ => unreachable!("测试矩阵固定"),
+                };
+                let id = if damage == "entry" { prior.entry_id } else { prior.revision };
+                sqlx::query(sql).bind(prior.queue_id).bind(id).execute(&pool)
+                    .await.expect("仅损坏本次组精确引用");
+                roll_due(&pool, &roster).await.expect("真实周期恢复成功");
+                let cleared: bool = sqlx::query_scalar(
+                    "SELECT version = $2 AND members = $3 AND outputs = $4
+                     AND queue_id IS NULL AND revision IS NULL AND entry_id IS NULL
+                     AND NOT playing AND position_us = 0 AND anchor_wall_us = 0
+                     AND boundary_wall_us IS NULL AND alive_wall_us IS NULL
+                     AND NOT shuffled AND loop_mode = 'off' AND cardinality(play_order) = 0
+                     FROM play_groups WHERE account_id = $1"
+                ).bind(account).bind(expected_version).bind(&before.members).bind(&before.outputs)
+                    .fetch_one(&pool).await.expect("直接核对恢复持久行");
+                assert!(cleared, "周期恢复应完整提交并保留关系: {damage}");
+                roll_due(&pool, &roster).await.expect("重复周期幂等");
+                let version: i64 = sqlx::query_scalar("SELECT version FROM play_groups WHERE account_id = $1")
+                    .bind(account).fetch_one(&pool).await.expect("读重复周期版本");
+                assert_eq!(version, expected_version);
+            }
+        }).await;
+    }
 }

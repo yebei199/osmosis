@@ -79,7 +79,8 @@ pub async fn apply(
     let mut group = rows::lock(&mut tx, account).await?;
     let at = wall_now_us();
     let mut entries =
-        current_entries(&mut tx, account, &group).await?;
+        current_entries(&mut tx, account, &mut group)
+            .await?;
     let before = started(&group);
     group.roll(
         &blocked_playlist(&mut tx, account, &entries)
@@ -139,7 +140,7 @@ pub async fn apply(
             };
             group.set_outputs(device, outputs);
             if let (None, Some(seed)) = (&group.now, seed) {
-                entries = queue::whole(
+                entries = queue::lock_whole(
                     &mut tx,
                     account,
                     seed.queue_id,
@@ -203,7 +204,7 @@ pub async fn apply(
                     &published.entry_ids[entries.len()..],
                 )
                 .map_err(refused)?;
-            entries = queue::whole(
+            entries = queue::lock_whole(
                 &mut tx,
                 account,
                 published.queue_id,
@@ -243,7 +244,8 @@ pub async fn advance(
     let mut group = rows::lock(&mut tx, account).await?;
     let at = wall_now_us();
     let entries =
-        current_entries(&mut tx, account, &group).await?;
+        current_entries(&mut tx, account, &mut group)
+            .await?;
     let list = blocked_playlist(&mut tx, account, &entries)
         .await?;
     let before = started(&group);
@@ -252,6 +254,7 @@ pub async fn advance(
         .advance(device, &list, entry_id, version, at)
         .map_err(refused)?;
     if !rolled && !advanced {
+        tx.commit().await?;
         return Ok(dto(&group, &entries));
     }
     tracing::info!(
@@ -306,7 +309,8 @@ pub async fn ready(
     let mut group = rows::lock(&mut tx, account).await?;
     let at = wall_now_us();
     let entries =
-        current_entries(&mut tx, account, &group).await?;
+        current_entries(&mut tx, account, &mut group)
+            .await?;
     let list = blocked_playlist(&mut tx, account, &entries)
         .await?;
     let mut before = started(&group);
@@ -325,6 +329,7 @@ pub async fn ready(
     }
     .map_err(refused)?;
     if !rolled && !moved {
+        tx.commit().await?;
         return Ok(dto(&group, &entries));
     }
     // 只是同一首提前开走,不是新起了一首:不再记一次 `play_events`。
@@ -354,12 +359,14 @@ pub async fn device_left(
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
     let mut group = rows::lock(&mut tx, account).await?;
+    let entries =
+        current_entries(&mut tx, account, &mut group)
+            .await?;
     if !group.outputs.iter().any(|id| id == device) {
+        tx.commit().await?;
         return Ok(());
     }
     let at = wall_now_us();
-    let entries =
-        current_entries(&mut tx, account, &group).await?;
     let list = playlist(&entries);
     let before = started(&group);
     let rolled = group.roll(&list, at);
@@ -372,6 +379,7 @@ pub async fn device_left(
         )
     };
     if !rolled && !paused {
+        tx.commit().await?;
         return Ok(());
     }
     tracing::info!(
@@ -404,19 +412,20 @@ pub async fn greet(
     Ok(())
 }
 
-/// 组此刻的样子(不改库)。`GET /group` 与入册推送用它。
+/// 组此刻的样子。已失效的播放引用在同一事务内清空,GET 与入册一致。
 pub async fn current(
     pool: &PgPool,
     account: AccountId,
 ) -> Result<Option<GroupStateDto>, AppError> {
-    let mut conn = pool.acquire().await?;
-    let Some(mut group) =
-        rows::load(&mut conn, account).await?
-    else {
+    let mut tx = pool.begin().await?;
+    if rows::load(&mut tx, account).await?.is_none() {
         return Ok(None);
-    };
+    }
+    let mut group = rows::lock(&mut tx, account).await?;
     let entries =
-        current_entries(&mut conn, account, &group).await?;
+        current_entries(&mut tx, account, &mut group)
+            .await?;
+    tx.commit().await?;
     group.roll(&playlist(&entries), wall_now_us());
     Ok(dto(&group, &entries))
 }
@@ -483,13 +492,15 @@ pub async fn pause_stranded_one(
     let mut tx = pool.begin().await?;
     let mut group = rows::lock(&mut tx, account).await?;
     let entries =
-        current_entries(&mut tx, account, &group).await?;
+        current_entries(&mut tx, account, &mut group)
+            .await?;
     let before = started(&group);
     if !group.pause_if_silent(
         &playlist(&entries),
         |_| false,
         at,
     ) {
+        tx.commit().await?;
         return Ok(false);
     }
     tracing::info!(
@@ -514,13 +525,14 @@ async fn roll_due(
         let mut group =
             rows::lock(&mut tx, account).await?;
         let entries =
-            current_entries(&mut tx, account, &group)
+            current_entries(&mut tx, account, &mut group)
                 .await?;
         let list =
             blocked_playlist(&mut tx, account, &entries)
                 .await?;
         let before = started(&group);
         if !group.roll(&list, wall_now_us()) {
+            tx.commit().await?;
             continue;
         }
         let state =
@@ -587,24 +599,50 @@ fn broadcast(
     }
 }
 
-/// 组此刻那一版队列的全部条目。组里还没有歌时是空的。
+/// 固定组引用直到事务提交;确认版/条目失效时持久清空,保留成员输出。
 async fn current_entries(
-    conn: &mut PgConnection,
+    tx: &mut queue::Tx<'_>,
     account: AccountId,
-    group: &Group,
+    group: &mut Group,
 ) -> Result<Vec<Entry>, AppError> {
-    match &group.now {
-        Some(now) => {
-            queue::whole(
-                conn,
-                account,
-                now.queue_id,
-                now.revision,
-            )
-            .await
+    let Some(now) = &group.now else {
+        return Ok(Vec::new());
+    };
+    let (queue_id, revision, entry_id) =
+        (now.queue_id, now.revision, now.entry_id);
+    let entries = match queue::lock_whole(
+        tx, account, queue_id, revision,
+    )
+    .await
+    {
+        Ok(entries) => entries,
+        Err(AppError::NotFound) => {
+            let owner: Option<i64> = sqlx::query_scalar("SELECT account_id FROM play_queues WHERE id = $1")
+                .bind(queue_id).fetch_optional(&mut **tx).await?;
+            if owner.is_some_and(|owner| owner != account) {
+                return Err(AppError::NotFound);
+            }
+            Vec::new()
         }
-        None => Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    if entries
+        .iter()
+        .any(|entry| entry.entry_id == entry_id)
+    {
+        return Ok(entries);
     }
+    group.now = None;
+    group.version += 1;
+    rows::save(tx, account, group, None).await?;
+    tracing::info!(
+        account,
+        queue_id,
+        revision,
+        entry_id,
+        "清除组的失效播放引用"
+    );
+    Ok(Vec::new())
 }
 
 /// 点的是哪一条:返回(队列, 版本)、条目号,以及换了一版时的新条目。
@@ -631,7 +669,7 @@ async fn pick_entry(
                 None
             } else {
                 Some(
-                    queue::whole(
+                    queue::lock_whole(
                         tx, account, queue_id, revision,
                     )
                     .await?,
@@ -665,7 +703,7 @@ async fn pick_entry(
             )
             .await?;
             let entry_id = published.entry_ids[index];
-            let fresh = queue::whole(
+            let fresh = queue::lock_whole(
                 tx,
                 account,
                 published.queue_id,

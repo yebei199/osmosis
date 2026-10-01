@@ -243,6 +243,73 @@ fn picking_a_device_in_the_group_sets_the_outputs() {
     );
 }
 
+/// 本机加载中的电台有有效执行副本,经真实播放状态机生成种子。
+fn load_local_radio(deck: &Deck) {
+    let track = track_with_id("local-radio");
+    deck.queue.borrow_mut().replace(vec![track.clone()], 0);
+    deck.execution.adopt(17, 27, vec![3071]);
+    let future = app_core::play(
+        &deck.playback,
+        track,
+        |_| core::future::pending::<Result<(), String>>(),
+        |()| {},
+    );
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(
+        std::task::Waker::noop(),
+    );
+    assert!(
+        std::future::Future::poll(future.as_mut(), &mut cx)
+            .is_pending()
+    );
+}
+
+/// 已损坏状态仍在本机,同一次切输出必须带有效电台种子供服务端恢复后采用。
+#[test]
+fn radio_output_member_sends_the_local_seed_for_same_request_recovery()
+ {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    deck.group.assume(Some(state(&["pc"], false)));
+    load_local_radio(&deck);
+    ui.global::<Shell>().invoke_set_output("pc".into());
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["pc"] +seed"#]
+    );
+}
+
+/// 恢复空组先推给客户端后,成员切输出仍带本机电台种子。
+#[test]
+fn radio_output_recovered_member_sends_the_local_seed() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    let mut empty = state(&["pc"], false);
+    empty.now = None;
+    deck.group.assume(Some(empty));
+    load_local_radio(&deck);
+    ui.global::<Shell>().invoke_set_output("pc".into());
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["pc"] +seed"#]
+    );
+}
+
+/// 恢复空组而本机没播放时,切输出只改变关系,不播未知歌曲。
+#[test]
+fn radio_output_recovered_idle_member_sends_no_seed() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    let mut empty = state(&["pc"], false);
+    empty.now = None;
+    deck.group.assume(Some(empty));
+    ui.global::<Shell>().invoke_set_output("pc".into());
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["pc"]"#]
+    );
+}
+
 /// 「+」在正在出声的那几台上加上一台:本机与 pc 一起出声(AC-5)。
 #[test]
 fn the_plus_key_adds_an_output() {

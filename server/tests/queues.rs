@@ -11,6 +11,61 @@ use server::store::db;
 use server::store::queue::{self, EntryInput, Report};
 use sqlx::{PgPool, Postgres, Transaction};
 
+/// 新的组版本保护仍保留待应用意图引用的旧版。
+#[tokio::test]
+async fn radio_output_pending_intent_revision_is_still_retained()
+ {
+    let mut tx = tx().await;
+    let name = format!(
+        "q-intent-retain-{}-{}",
+        std::process::id(),
+        server::syncplay::group::wall_now_us()
+    );
+    let account = make_account(&mut tx, &name).await;
+    let first = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("建队列");
+    queue::set_intent(
+        &mut tx,
+        account.id,
+        first.queue_id,
+        PC1,
+        first.revision,
+        first.entry_ids[0],
+        "pending",
+    )
+    .await
+    .expect("写待应用意图");
+    let mut revision = first.revision;
+    for _ in 0..5 {
+        revision = queue::publish(
+            &mut tx,
+            account.id,
+            first.queue_id,
+            revision,
+            &[entry("b")],
+        )
+        .await
+        .expect("发布新版")
+        .revision;
+    }
+    let retained = queue::whole(
+        &mut tx,
+        account.id,
+        first.queue_id,
+        first.revision,
+    )
+    .await
+    .expect("意图旧版在");
+    assert_eq!(retained[0].entry_id, first.entry_ids[0]);
+    tx.rollback().await.expect("回滚本次数据");
+}
+
 /// 与 `main.rs` 的默认值一致。
 const DEFAULT_DATABASE_URL: &str =
     "postgres://slint:devonly@127.0.0.1:5432/osmosis";

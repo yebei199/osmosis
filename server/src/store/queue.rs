@@ -203,11 +203,12 @@ pub async fn create(
 
     // **先锁账号行,再数**。反过来的话两条并发的建队列都数到 K-1,
     // 都觉得还有余量,于是一起插进去 —— 配额就成了摆设。锁的是账号那一行,
-    // 所以同一账号的建队列排队,不同账号互不影响。
+    // 所以同一账号的建队列排队,不同账号互不影响。NO KEY UPDATE 允许队列
+    // 发布的外键检查拿 KEY SHARE,不会和已经持有队列锁的发布事务互等。
     //
     // 这一段必须在事务里,而签名收的是 `Tx` 就保证了这一点(#109 F-R1)。
     sqlx::query(
-        "SELECT id FROM accounts WHERE id = $1 FOR UPDATE",
+        "SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE",
     )
     .bind(account_id)
     .fetch_optional(&mut **tx)
@@ -461,6 +462,19 @@ pub async fn whole(
     }
 }
 
+/// 组事务采用固定版本前锁住队列,直到组引用提交后才允许发布或删除。
+pub async fn lock_whole(
+    tx: &mut Tx<'_>,
+    account_id: i64,
+    queue_id: i64,
+    revision: i64,
+) -> Result<Vec<Entry>, AppError> {
+    sqlx::query("SELECT id FROM play_queues WHERE id = $1 AND account_id = $2 FOR UPDATE")
+        .bind(queue_id).bind(account_id).fetch_optional(&mut **tx).await?
+        .ok_or(AppError::NotFound)?;
+    whole(tx, account_id, queue_id, revision).await
+}
+
 /// 队列此刻的概况:最新版本、条目数,以及意图与报告各自的最新一条。
 pub async fn head(
     conn: &mut PgConnection,
@@ -707,6 +721,7 @@ async fn collapse_per_device(
     sqlx::query(
         "DELETE FROM play_queues q
          WHERE q.account_id = $1
+           AND NOT EXISTS (SELECT 1 FROM play_groups g WHERE g.queue_id = q.id)
            AND EXISTS (
                SELECT 1 FROM play_queues newer
                WHERE newer.account_id = q.account_id
@@ -904,8 +919,8 @@ async fn insert_entries(
 
 /// 回收旧版本的条目。
 ///
-/// 两种版本**不能**回收:播放端已经采用的那一版(它此刻正照着它放),以及
-/// 待应用意图指着的那一版。除此之外留最近 [`KEEP_REVISIONS`] 版,
+/// 播放端已经采用、待应用意图与组引用的精确版本都保留,包含暂停组。
+/// 其余留最近 [`KEEP_REVISIONS`] 版,
 /// 给正在分页读的那一方一点余量。
 async fn reclaim(
     conn: &mut PgConnection,
@@ -921,7 +936,10 @@ async fn reclaim(
                   WHERE queue_id = $1), -1)
            AND e.revision <> COALESCE(
                  (SELECT revision FROM play_queue_intents
-                  WHERE queue_id = $1), -1)",
+                  WHERE queue_id = $1), -1)
+           AND NOT EXISTS (
+                 SELECT 1 FROM play_groups g
+                 WHERE g.queue_id = e.queue_id AND g.revision = e.revision)",
     )
     .bind(queue_id)
     .bind(current)

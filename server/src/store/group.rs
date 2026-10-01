@@ -44,12 +44,19 @@ pub async fn load(
     Ok(row.map(from_row))
 }
 
-/// 读并锁住一个账号的组,直到事务结束。没有行就先插一行空的再锁 ——
-/// 两条并发的意图因此总在同一行上排队,不会各建一个组。
+/// 按账号、组的顺序锁定,与建队列/归并一致;没有组行就先插空组。
 pub async fn lock(
     tx: &mut Tx<'_>,
     account_id: i64,
 ) -> Result<Group, AppError> {
+    // 不改账号主键;允许队列发布的外键检查拿 KEY SHARE,避免账号与队列互等。
+    sqlx::query(
+        "SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE",
+    )
+    .bind(account_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
     sqlx::query(
         "INSERT INTO play_groups (account_id, version)
          VALUES ($1, 0) ON CONFLICT (account_id) DO NOTHING",
@@ -64,7 +71,20 @@ pub async fn lock(
     .bind(account_id)
     .fetch_one(&mut **tx)
     .await?;
-    Ok(from_row(row))
+    let incomplete = (row.3.is_some()
+        || row.4.is_some()
+        || row.5.is_some())
+        && (row.3.is_none()
+            || row.4.is_none()
+            || row.5.is_none());
+    let mut group = from_row(row);
+    if incomplete {
+        group.now = None;
+        group.version += 1;
+        save(tx, account_id, &group, None).await?;
+        tracing::info!(account_id, "清除组的残缺播放引用");
+    }
+    Ok(group)
 }
 
 /// 写回。`boundary` 是兜底推进的挂钟时刻(只在播放时有),续播任务按它挑组。
@@ -81,7 +101,8 @@ pub async fn save(
              queue_id = $5, revision = $6, entry_id = $7,
              playing = $8, position_us = $9, anchor_wall_us = $10,
              boundary_wall_us = $11, shuffled = $12,
-             loop_mode = $13, play_order = $14
+             loop_mode = $13, play_order = $14,
+             alive_wall_us = CASE WHEN $5 IS NULL THEN NULL ELSE alive_wall_us END
          WHERE account_id = $1",
     )
     .bind(account_id)
