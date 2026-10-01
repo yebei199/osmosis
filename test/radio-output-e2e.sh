@@ -66,19 +66,59 @@ report() {
  sql "SELECT q.id || '|' || r.applied_revision || '|' || r.entry_id || '|' || r.position_ms
  FROM play_queues q JOIN play_queue_reports r ON r.queue_id=q.id
  WHERE q.account_id=$ACCOUNT_ID AND q.device_id='$ME' AND r.play_state='playing'
- AND r.reported_at >= clock_timestamp()-interval '3 seconds'
  ORDER BY r.reported_at DESC LIMIT 1;"
 }
+position_ms() {
+ printf '%s' "$1" | python3 -c '
+import re,sys
+m=re.search(r"位置 ([0-9.]+)(ns|µs|ms|s), 放空 false",sys.stdin.read())
+assert m, "不能解析播放器位置"
+print(round(float(m[1])*{"ns":0.000001,"µs":0.001,"ms":1,"s":1000}[m[2]]))
+'
+}
+title_on() {
+ local root win h
+ CALL_PORT=$1 refresh
+ h=$(CALL_PORT=$1 nth "PlayerBar::title")
+ CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")'
+}
 fresh_progress() {
+ local mark line previous=-1 current checkpoint_position checkpoint_title
+ local before after reference previous_reference='' previous_line='' previous_time='' sampled_at
+ mark=$(wc -l < "$SOURCE_LOG")
  for _ in $(seq 1 60); do
-  snapshot=$(report)
-  IFS='|' read -r queue revision entry position <<< "$snapshot"
-  if [[ "${position:-}" =~ ^[0-9]+$ ]] && [ "$position" -ge 20000 ]; then break; fi
+  before=$(report)
+  IFS='|' read -r queue revision entry checkpoint_position <<< "$before"
+  reference="$queue|$revision|$entry"
+  line=$(tail -n "+$((mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1 || true)
+  sampled_at=$(date -Iseconds)
+  if [[ "$line" == *"放空 false"* && "$line" != "$previous_line" && "$queue" =~ ^[0-9]+$ && "$revision" =~ ^[0-9]+$ && "$entry" =~ ^[0-9]+$ ]]; then
+   current=$(position_ms "$line")
+   checkpoint_title=$(sql "SELECT title FROM play_queue_entries WHERE queue_id=$queue AND revision=$revision AND entry_id=$entry;")
+   source_title=$(title_on "$PORT")
+   after=$(report)
+   if [ "$before" = "$after" ] && [ -n "$checkpoint_title" ] && [ "$source_title" = "$checkpoint_title" ]; then
+    if [ "$reference" = "$previous_reference" ] && [ "$current" -ge 20000 ] && [ "$previous" -ge 0 ] && [ "$current" -gt "$previous" ]; then
+     position=$current
+     echo "$previous_time 源前样本: $previous_line;引用=$previous_reference;实际进度=$previous"
+     echo "$sampled_at 源后样本: $line;引用=$reference;实际进度=$position"
+     echo "取样前后检查点=$before;曲名=$checkpoint_title"
+     return
+    fi
+    previous=$current
+    previous_reference=$reference
+    previous_line=$line
+    previous_time=$sampled_at
+   else
+    previous=-1
+    previous_reference=''
+   fi
+  fi
   sleep 1
  done
- [[ "${position:-}" =~ ^[0-9]+$ && "$position" -ge 20000 ]] || { echo "缺少新鲜且超过容差的本机进度" >&2; exit 1; }
- echo "$(date -Iseconds) 本机新鲜报告 $snapshot"
+ echo "缺少新鲜且超过容差的本机进度" >&2; return 1
 }
+
 profile
 act "$(labelled "OutputChip::touch" "输出到 本机")"
 if [ "$MODE" = idle ]; then
@@ -194,12 +234,6 @@ if [ "$MODE" = direct ]; then
  echo "本次输出响应: $request"
 fi
 
-title_on() {
- local root win h
- CALL_PORT=$1 refresh
- h=$(CALL_PORT=$1 nth "PlayerBar::title")
- CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")'
-}
 for _ in $(seq 1 30); do
  if [ "$(title_on "$PORT")" = "$title" ] && [ "$(title_on "$TARGET_PORT")" = "$title" ]; then break; fi
  sleep 1
@@ -210,12 +244,7 @@ target_sample() {
  for _ in $(seq 1 30); do
   line=$(tail -n "+$((target_mark+1))" "$TARGET_LOG" | rg "自动续播轮询" | tail -1 || true)
   if [[ "$line" == *"放空 false"* ]]; then
-   value=$(printf '%s' "$line" | python3 -c '
-import re,sys
-m=re.search(r"位置 ([0-9.]+)(ns|µs|ms|s), 放空 false",sys.stdin.read())
-assert m, "不能解析播放器位置"
-print(round(float(m[1])*{"ns":0.000001,"µs":0.001,"ms":1,"s":1000}[m[2]]))
-')
+   value=$(position_ms "$line")
    expected=$(sql "SELECT position_us/1000 + GREATEST(0,(extract(epoch FROM clock_timestamp())*1000)::bigint-anchor_wall_us/1000)
    FROM play_groups WHERE account_id=$ACCOUNT_ID AND queue_id=$queue AND revision=$revision AND entry_id=$entry AND playing;")
    [[ "$expected" =~ ^[0-9]+$ ]]
