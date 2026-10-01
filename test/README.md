@@ -11,9 +11,10 @@ pc1 播放器位置推进、源端停止本机音频,最后从源端遥控暂停
 
 `direct` 留存点击前仍损坏的行及本次请求恢复日志;`recovered` 核对入册恢复版本已到源客户端。
 目标端数值位置必须推进且对上同曲目的组时间线,使用切换后的新日志。
-`idle` 重启两端清空本机播放后真实选择输出,十秒内保持组无曲目且两端音频放空。
+`idle` 重启两端清空本机播放后真实选择输出,十秒内保持组无曲目且目标轮询与源实际 OS 音频流放空。
 
 必须给 `ACCOUNT_ID`、`ME`、`TARGET`、`TARGET_PORT`、`TARGET_LOG`、`SOURCE_LOG`、`SERVER_LOG` 和 `PG_CONTAINER`;
+桌面源另给 `SOURCE_AUDIO_CMD`,输出绑定本轮实例 PID 的 PipeWire JSON;
 安卓源要 `ANDROID_SERIAL`,`recovered` 和 `idle` 要重启源实例的 `RESTART`,
 `idle` 还要重启目标实例的 `RESTART_TARGET`。重启命令向原日志追加,避免丢掉本轮时序证据。
 `PORT` 默认 8091,安卓用 8090。凭据沿用 `mcp-login.sh`,不进脚本或日志。

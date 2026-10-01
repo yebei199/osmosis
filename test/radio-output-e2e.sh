@@ -119,6 +119,55 @@ fresh_progress() {
  echo "缺少新鲜且超过容差的本机进度" >&2; return 1
 }
 
+source_audio() {
+ local raw pid
+ raw=$(mktemp "${EVIDENCE_DIR:-${TMPDIR:-/tmp}}/174-source-audio.XXXXXX")
+ if [ "$PORT" = 8090 ]; then
+  pid=$(adb -s "${ANDROID_SERIAL:?要安卓序列号}" shell pidof io.github.osmosis | tr -d '\r')
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  adb -s "$ANDROID_SERIAL" shell dumpsys audio | python3 -c '
+import json,sys
+print(json.dumps({"pid":int(sys.argv[1]),"audio":sys.stdin.read()}))
+' "$pid" > "$raw" || return 1
+ else
+  bash -c "${SOURCE_AUDIO_CMD:?桌面源要本轮 PID 绑定的 PipeWire JSON 命令}" > "$raw" || return 1
+ fi
+ python3 - "$raw" <<'AUDIO'
+import datetime,json,re,sys
+from pathlib import Path
+p=Path(sys.argv[1]); sample=json.loads(p.read_text())
+pid=sample["pid"]; assert isinstance(pid,int) and pid>0
+if "audio" in sample:
+    active=len(re.findall(r"u/pid:[0-9]+/"+str(pid)+r" state:started",sample["audio"]))
+else:
+    clients={o["id"] for o in sample["graph"] if o["type"].endswith(":Client")
+        and str(o.get("info",{}).get("props",{}).get("application.process.id",
+            o.get("info",{}).get("props",{}).get("pipewire.sec.pid")))==str(pid)}
+    active=sum(o["type"].endswith(":Node") and
+        o.get("info",{}).get("props",{}).get("client.id") in clients and
+        o.get("info",{}).get("props",{}).get("media.class")=="Stream/Output/Audio"
+        for o in sample["graph"])
+sample["sampled_at"]=datetime.datetime.now(datetime.UTC).isoformat()
+sample["active_outputs"]=active;p.write_text(json.dumps(sample,ensure_ascii=False)+"\n")
+print(sample["sampled_at"],"源实际音频",p,"PID",pid,"输出数",active,file=sys.stderr)
+print(f"{pid}|{active}")
+AUDIO
+}
+source_stopped() {
+ local sample pid count previous=0
+ for _ in $(seq 1 45); do
+  sample=$(source_audio) || return 1; IFS='|' read -r pid count <<< "$sample"
+  if [ -z "${source_pid:-}" ]; then source_pid=$pid; fi
+  [ "$pid" = "$source_pid" ] || { echo "源实例 PID 已改变" >&2; return 1; }
+  if [ "$count" = 0 ]; then
+   previous=$((previous+1))
+   [ "$previous" -ge 2 ] && return
+  else previous=0
+  fi
+  sleep 1
+ done
+ echo "源输出流未关闭" >&2; return 1
+}
 profile
 act "$(labelled "OutputChip::touch" "输出到 本机")"
 if [ "$MODE" = idle ]; then
@@ -138,7 +187,6 @@ sql "INSERT INTO play_groups(account_id,version,members,outputs,queue_id,revisio
  playing=false,position_us=0,anchor_wall_us=0,boundary_wall_us=NULL,alive_wall_us=NULL,play_order='{}';" >/dev/null
 if [ "$MODE" != direct ]; then
  source_mark=$(wc -l < "$SOURCE_LOG")
- idle_source_mark=$source_mark
  idle_target_mark=$(wc -l < "$TARGET_LOG")
  if [ "$MODE" = idle ]; then bash -c "$RESTART_TARGET"; fi
  bash -c "$RESTART"
@@ -176,12 +224,16 @@ else
  [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = t ]
 fi
 if [ "$MODE" = idle ]; then
- for log_mark in "$SOURCE_LOG:$idle_source_mark" "$TARGET_LOG:$idle_target_mark"; do
-  latest=$(tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" | tail -1)
-  [[ "$latest" == *"放空 true"* ]] || { echo "idle 点击前并非空闲: $latest" >&2; exit 1; }
-  echo "$(date -Iseconds) idle 点击前空闲: $latest"
- done
+ source_stopped
+ latest=$(tail -n "+$((idle_target_mark+1))" "$TARGET_LOG" | rg "自动续播轮询" | tail -1)
+ [[ "$latest" == *"放空 true"* ]] || { echo "idle 目标点击前并非空闲: $latest" >&2; exit 1; }
+ echo "$(date -Iseconds) idle 目标点击前空闲: $latest"
+else
+ audio_sample=$(source_audio) || exit 1
+ IFS='|' read -r source_pid source_outputs <<< "$audio_sample"
+ [ "$source_outputs" -gt 0 ] || { echo "源起播缺实际输出流正对照" >&2; exit 1; }
 fi
+
 target_mark=$(wc -l < "$TARGET_LOG")
 source_mark=$(wc -l < "$SOURCE_LOG")
 server_mark=$(wc -l < "$SERVER_LOG")
@@ -190,21 +242,25 @@ echo "$(date -Iseconds) 点击 pc1 输出"
 act "$output_handle"
 if [ "$MODE" = idle ]; then
  evidence=$(mktemp -d "${EVIDENCE_DIR:-${TMPDIR:-/tmp}}/174-idle.XXXXXX")
- sleep 10
+ for _ in $(seq 1 10); do
+  audio_sample=$(source_audio) || exit 1
+  IFS='|' read -r pid count <<< "$audio_sample"
+  [ "$pid" = "$source_pid" ] && [ "$count" = 0 ]
+  sleep 1
+ done
  [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL AND NOT playing
  FROM play_groups WHERE account_id=$ACCOUNT_ID AND outputs=ARRAY['$TARGET'] AND '$ME'=ANY(members);")" = t ]
- index=0
- for log_mark in "$SOURCE_LOG:$source_mark" "$TARGET_LOG:$target_mark"; do
-  index=$((index+1))
-  window="$evidence/audio-$index.log"
-  tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" > "$window"
-  [ -s "$window" ] || { echo "idle 观测窗口没有新样本" >&2; exit 1; }
-  if rg -q "放空 false" "$window"; then
-   echo "idle 观测窗口发生自动起播: $window" >&2; exit 1
-  fi
-  echo "$(date -Iseconds) idle 整窗音频真相: $window ($(wc -l < "$window") 个新样本)"
-  cat "$window"
- done
+ window="$evidence/audio-target.log"
+ tail -n "+$((target_mark+1))" "$TARGET_LOG" | rg "自动续播轮询" > "$window"
+ [ -s "$window" ] || { echo "idle 目标观测窗口没有新样本" >&2; exit 1; }
+ if rg -q "放空 false" "$window"; then
+  echo "idle 目标观测窗口发生自动起播: $window" >&2; exit 1
+ fi
+ echo "$(date -Iseconds) idle 目标整窗音频真相: $window ($(wc -l < "$window") 个新样本)"
+ cat "$window"
+ source_window="$evidence/source-poll.log"
+ tail -n "+$((source_mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" > "$source_window" || true
+ if rg -q "放空 false" "$source_window"; then echo "idle 源观测窗口自动起播" >&2; exit 1; fi
  if [ "$PORT" = 8090 ]; then
   audio=$(adb -s "${ANDROID_SERIAL:?要安卓序列号}" shell dumpsys audio)
   pid=$(adb -s "$ANDROID_SERIAL" shell pidof io.github.osmosis | tr -d '\r')
@@ -262,19 +318,9 @@ a=$(target_sample)
 sleep 2
 b=$(target_sample)
 [ "$b" -gt "$a" ]
-if [ "$PORT" = 8090 ]; then
- : "${ANDROID_SERIAL:?安卓源要设备序列号}"
- pid=$(adb -s "$ANDROID_SERIAL" shell pidof io.github.osmosis | tr -d '\r')
- [ -n "$pid" ]
- audio=$(adb -s "$ANDROID_SERIAL" shell dumpsys audio)
- if rg -q "u/pid:[0-9]+/$pid state:started" <<< "$audio"; then
-  echo "源设备还在本机出声" >&2; exit 1
- fi
-else
- source_line=$(tail -n "+$((source_mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1)
- [[ "$source_line" == *"放空 true"* ]]
- echo "$(date -Iseconds) 源端已放空: $source_line"
-fi
+source_stopped
+echo "$(date -Iseconds) 源实际输出流已关闭,本轮 PID=$source_pid"
+
 # 遥控暂停也必须落在同一组,证明源端已是遥控器。
 refresh
 act "$(labelled "RoundControl::touch" "暂停")"
