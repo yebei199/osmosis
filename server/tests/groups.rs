@@ -17,6 +17,7 @@ use server::syncplay::clock;
 use server::syncplay::group::{self, Intent, timeline};
 use server::syncplay::roster::Roster;
 use server::syncplay::signaling::{SharedRoster, Sink};
+use similar_asserts::assert_eq;
 use sqlx::PgPool;
 use tokio::sync::mpsc;
 
@@ -37,9 +38,11 @@ async fn connect() -> PgPool {
 /// 一个本进程独有的账号。
 async fn account(pool: &PgPool, tag: &str) -> i64 {
     let name = format!(
-        "group-{tag}-{}-{}",
+        "group-{tag}-{}-{}-{}",
         std::process::id(),
-        group::wall_now_us()
+        group::wall_now_us(),
+        std::env::var("RADIO_OUTPUT_TEST_RUN")
+            .unwrap_or_default()
     );
     let mut conn =
         pool.acquire().await.expect("取不到连接");
@@ -119,6 +122,794 @@ fn track(id: &str) -> TrackDto {
 
 fn tracks() -> Vec<TrackDto> {
     ["a", "b", "c"].into_iter().map(track).collect()
+}
+
+/// 同一条电台队列持续发布,暂停和播放中的组都保留精确旧版;解除引用后恢复回收。
+#[tokio::test]
+async fn radio_output_retains_the_group_revision_until_released()
+ {
+    let pool = connect().await;
+    for paused in [false, true] {
+        let account = account(
+            &pool,
+            if paused {
+                "retain-paused"
+            } else {
+                "retain-playing"
+            },
+        )
+        .await;
+        let (roster, _inboxes) =
+            online(account, &["phone", "pc"]);
+        let initial =
+            phone_and_pc(&pool, &roster, account).await;
+        let now = initial.now.expect("该有播放引用");
+        if paused {
+            group::apply(
+                &pool,
+                &roster,
+                account,
+                "phone",
+                Intent::Transport(TransportOpDto::Pause),
+            )
+            .await
+            .expect("暂停该成");
+        }
+        let mut revision = now.revision;
+        for _ in 0..5 {
+            let mut tx =
+                pool.begin().await.expect("开事务");
+            revision = queue::publish(
+                &mut tx,
+                account,
+                now.queue_id,
+                revision,
+                &[EntryInput {
+                    platform: "netease".to_owned(),
+                    track_id: "new-radio".to_owned(),
+                    title: "新电台曲目".to_owned(),
+                    alias: None,
+                    artists: Vec::new(),
+                    cover: None,
+                    duration_ms: 200_000,
+                }],
+            )
+            .await
+            .expect("发布新版")
+            .revision;
+            tx.commit().await.expect("提交新版");
+        }
+        let mut conn =
+            pool.acquire().await.expect("取连接");
+        let held = queue::whole(
+            &mut conn,
+            account,
+            now.queue_id,
+            now.revision,
+        )
+        .await;
+        assert!(
+            held.is_ok(),
+            "组引用的旧版应保留: {held:?}"
+        );
+        drop(conn);
+        let current = group::current(&pool, account)
+            .await
+            .expect("GET 组应成功")
+            .expect("组在");
+        assert_eq!(
+            current
+                .now
+                .as_ref()
+                .expect("播放引用在")
+                .entry_id,
+            now.entry_id
+        );
+        group::greet(&pool, &roster, account, "pc")
+            .await
+            .expect("重新入册应成功");
+        let switched = group::apply(
+            &pool,
+            &roster,
+            account,
+            "phone",
+            Intent::Outputs {
+                outputs: vec!["pc".to_owned()],
+                seed: None,
+            },
+        )
+        .await
+        .expect("切输出应成功")
+        .expect("组在");
+        assert_eq!(
+            switched.now.expect("原播放还在").playing,
+            !paused
+        );
+        group::apply(
+            &pool,
+            &roster,
+            account,
+            "phone",
+            Intent::Play(GroupPickDto::Tracks {
+                tracks: tracks(),
+                index: 0,
+            }),
+        )
+        .await
+        .expect("换队列该成");
+        let mut tx = pool.begin().await.expect("开事务");
+        queue::publish(
+            &mut tx,
+            account,
+            now.queue_id,
+            revision,
+            &[EntryInput {
+                platform: "netease".to_owned(),
+                track_id: "next-radio".to_owned(),
+                title: "下一批".to_owned(),
+                alias: None,
+                artists: Vec::new(),
+                cover: None,
+                duration_ms: 200_000,
+            }],
+        )
+        .await
+        .expect("再发布");
+        assert!(
+            matches!(
+                queue::whole(
+                    &mut tx,
+                    account,
+                    now.queue_id,
+                    now.revision
+                )
+                .await,
+                Err(server::error::AppError::NotFound)
+            ),
+            "解除组引用的旧版该回收"
+        );
+        tx.commit().await.expect("提交");
+        drop_account(&pool, account).await;
+    }
+}
+
+/// 模拟生产失效版或缺失当前条目,仅删除本测试账号组指着的条目。
+async fn damage_radio_group(
+    pool: &PgPool,
+    account: i64,
+    missing_entry: bool,
+) {
+    sqlx::query(if missing_entry {
+        "DELETE FROM play_queue_entries WHERE (queue_id, revision, entry_id) IN
+         (SELECT queue_id, revision, entry_id FROM play_groups WHERE account_id = $1)"
+    } else {
+        "DELETE FROM play_queue_entries WHERE (queue_id, revision) IN
+         (SELECT queue_id, revision FROM play_groups WHERE account_id = $1)"
+    }).bind(account).execute(pool).await.expect("构造失效引用");
+}
+
+/// create 归并同设备旧队列时,保护组引用的精确旧队列,其余旧队列照常删除。
+#[tokio::test]
+async fn radio_output_collapse_retains_referenced_queues_only()
+ {
+    let pool = connect().await;
+    let account = account(&pool, "collapse-group").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let before =
+        phone_and_pc(&pool, &roster, account).await;
+    let now = before.now.expect("原引用在");
+    let obsolete: i64 = sqlx::query_scalar("INSERT INTO play_queues (account_id, device_id, revision, next_entry_id, updated_at)
+        VALUES ($1, 'pc', 1, 1, now() - INTERVAL '1 day') RETURNING id")
+        .bind(account).fetch_one(&pool).await.expect("本次无引用旧队列");
+    sqlx::query("INSERT INTO play_queues (account_id, device_id, revision, next_entry_id, updated_at)
+        VALUES ($1, 'pc', 1, 1, now() + INTERVAL '1 day')")
+        .bind(account).execute(&pool).await.expect("本次同设备最新队列");
+    let mut tx = pool.begin().await.expect("开事务");
+    queue::create(
+        &mut tx,
+        account,
+        "pc",
+        &[EntryInput {
+            platform: "netease".to_owned(),
+            track_id: "new-radio".to_owned(),
+            title: "新电台".to_owned(),
+            alias: None,
+            artists: Vec::new(),
+            cover: None,
+            duration_ms: 200_000,
+        }],
+    )
+    .await
+    .expect("真实 create 触发归并");
+    tx.commit().await.expect("提交归并");
+    let mut conn = pool.acquire().await.expect("取连接");
+    let retained = queue::whole(
+        &mut conn,
+        account,
+        now.queue_id,
+        now.revision,
+    )
+    .await;
+    assert!(
+        retained.is_ok(),
+        "归并应保护组旧队列: {retained:?}"
+    );
+    drop(conn);
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM play_queues WHERE id = $1",
+    )
+    .bind(obsolete)
+    .fetch_one(&pool)
+    .await
+    .expect("查未引用队列");
+    assert_eq!(count, 0, "正常无引用旧队列仍回收");
+    let after = group::current(&pool, account)
+        .await
+        .expect("组还可读")
+        .expect("组在");
+    assert_eq!(
+        after.now.expect("保留播放").entry_id,
+        now.entry_id
+    );
+    drop_account(&pool, account).await;
+}
+
+/// 用真实发布事务的队列锁编排种子采用,已提交组绝不能引用被回收版,两端有界完成。
+#[tokio::test]
+async fn radio_output_concurrent_seed_and_publish_keep_committed_references_readable()
+ {
+    let pool = connect().await;
+    let account = account(&pool, "seed-publish-race").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let mut publisher =
+        pool.begin().await.expect("开发布事务");
+    let first = queue::create(
+        &mut publisher,
+        account,
+        "phone",
+        &[EntryInput {
+            platform: "netease".to_owned(),
+            track_id: "a".to_owned(),
+            title: "a".to_owned(),
+            alias: None,
+            artists: Vec::new(),
+            cover: None,
+            duration_ms: 200_000,
+        }],
+    )
+    .await
+    .expect("建种子队列");
+    publisher.commit().await.expect("提交种子");
+    let actor = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .expect("本次独立种子连接池");
+    let actor_pid: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&actor)
+            .await
+            .expect("种子连接身份");
+    sqlx::query("SET statement_timeout = '10s'")
+        .execute(&actor)
+        .await
+        .expect("种子数据库等待有界");
+    let mut publisher =
+        pool.begin().await.expect("真实发布事务");
+    sqlx::query("SET LOCAL statement_timeout = '10s'")
+        .execute(&mut *publisher)
+        .await
+        .expect("发布数据库等待有界");
+    sqlx::query("SELECT id FROM play_queues WHERE id = $1 FOR UPDATE")
+        .bind(first.queue_id).execute(&mut *publisher).await.expect("冻结发布临界区");
+    let seed_pool = actor.clone();
+    let seed_roster = roster.clone();
+    let seed = GroupSeedDto {
+        queue_id: first.queue_id,
+        revision: first.revision,
+        entry_id: first.entry_ids[0],
+        position_ms: 30_000,
+        playing: true,
+    };
+    let adopting = tokio::spawn(async move {
+        group::apply(
+            &seed_pool,
+            &seed_roster,
+            account,
+            "phone",
+            Intent::Outputs {
+                outputs: vec!["pc".to_owned()],
+                seed: Some(seed),
+            },
+        )
+        .await
+    });
+    // 等数据库确认种子事务正在等锁;不靠 sleep 猜测是否到达临界区。
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1)) > 0")
+                .bind(actor_pid).fetch_one(&pool).await.expect("查询本次事务等待");
+            if blocked { break; }
+            assert!(!adopting.is_finished(), "种子应与发布临界区交错");
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("种子应有界抵达数据库同步点");
+    let mut revision = first.revision;
+    for _ in 0..5 {
+        revision = queue::publish(
+            &mut publisher,
+            account,
+            first.queue_id,
+            revision,
+            &[EntryInput {
+                platform: "netease".to_owned(),
+                track_id: "b".to_owned(),
+                title: "b".to_owned(),
+                alias: None,
+                artists: Vec::new(),
+                cover: None,
+                duration_ms: 200_000,
+            }],
+        )
+        .await
+        .expect("真实发布与回收")
+        .revision;
+    }
+    publisher.commit().await.expect("发布应无死锁提交");
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        adopting,
+    )
+    .await
+    .expect("种子请求应有界完成")
+    .expect("种子任务未 panic");
+    match outcome {
+        Ok(Some(state)) => {
+            let now = state
+                .now
+                .expect("采用成功必须有有效播放引用");
+            let mut conn =
+                pool.acquire().await.expect("验证连接");
+            let entries = queue::whole(
+                &mut conn,
+                account,
+                now.queue_id,
+                now.revision,
+            )
+            .await
+            .expect("已提交组引用必须可读");
+            assert!(entries.iter().any(|entry| {
+                entry.entry_id == now.entry_id
+            }));
+        }
+        Err(server::error::AppError::NotFound) => {
+            assert!(
+                group::current(&pool, account)
+                    .await
+                    .expect("拒绝后仍可读")
+                    .is_none(),
+                "被拒种子不提交半个组"
+            );
+        }
+        other => panic!(
+            "竞态只许成功采用有效版或明确拒绝过期种子: {other:?}"
+        ),
+    }
+    actor.close().await;
+    drop_account(&pool, account).await;
+}
+
+/// GET 和入册都持久恢复,清空时间线、保留关系,重复读不再递增版本。
+#[tokio::test]
+async fn radio_output_read_and_greet_repair_invalid_references()
+ {
+    let pool = connect().await;
+    for damage in ["revision", "entry", "queue"] {
+        let account =
+            account(&pool, &format!("missing-{damage}"))
+                .await;
+        let (roster, mut inboxes) =
+            online(account, &["phone", "pc"]);
+        let before =
+            phone_and_pc(&pool, &roster, account).await;
+        if damage == "queue" {
+            sqlx::query("DELETE FROM play_queues WHERE id IN (SELECT queue_id FROM play_groups WHERE account_id = $1)")
+                .bind(account).execute(&pool).await.expect("构造缺队列");
+        } else {
+            damage_radio_group(
+                &pool,
+                account,
+                damage == "entry",
+            )
+            .await;
+        }
+        for inbox in &mut inboxes {
+            while inbox.try_recv().is_ok() {}
+        }
+        group::greet(&pool, &roster, account, "pc")
+            .await
+            .expect("入册应恢复");
+        let restored = group::current(&pool, account)
+            .await
+            .expect("读取应恢复")
+            .expect("成员还在");
+        assert_eq!(restored.members, before.members);
+        assert_eq!(restored.outputs, before.outputs);
+        assert!(restored.now.is_none(), "不能猜旧歌");
+        assert_eq!(restored.version, before.version + 1);
+        assert!(
+            matches!(inboxes[1].try_recv(), Ok(ServerSignal::GroupState { state: Some(state) })
+            if state.version == restored.version && state.now.is_none())
+        );
+        let stored: (Option<i64>, Option<i64>, Option<i64>, bool, i64, i64, Option<i64>, bool, String, Vec<i64>) =
+            sqlx::query_as("SELECT queue_id, revision, entry_id, playing, position_us, anchor_wall_us,
+                boundary_wall_us, shuffled, loop_mode, play_order FROM play_groups WHERE account_id = $1")
+            .bind(account).fetch_one(&pool).await.expect("读持久状态");
+        assert_eq!(
+            stored,
+            (
+                None,
+                None,
+                None,
+                false,
+                0,
+                0,
+                None,
+                false,
+                "off".to_owned(),
+                Vec::new()
+            )
+        );
+        assert_eq!(
+            group::current(&pool, account)
+                .await
+                .expect("再读")
+                .expect("组在")
+                .version,
+            restored.version
+        );
+        drop_account(&pool, account).await;
+    }
+}
+
+/// 健康空组读取和入册不触发修复或增加版本。
+#[tokio::test]
+async fn radio_output_healthy_empty_group_is_not_repaired()
+{
+    let pool = connect().await;
+    let account = account(&pool, "healthy-empty").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let before = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Outputs {
+            outputs: vec!["pc".to_owned()],
+            seed: None,
+        },
+    )
+    .await
+    .expect("建健康空组")
+    .expect("成员在");
+    let stored: String = sqlx::query_scalar("SELECT to_jsonb(g)::text FROM play_groups g WHERE account_id = $1")
+        .bind(account).fetch_one(&pool).await.expect("读健康空组");
+    group::greet(&pool, &roster, account, "pc")
+        .await
+        .expect("健康空组入册");
+    let after = group::current(&pool, account)
+        .await
+        .expect("读健康空组")
+        .expect("组在");
+    assert_eq!(after, before);
+    let unchanged: String = sqlx::query_scalar("SELECT to_jsonb(g)::text FROM play_groups g WHERE account_id = $1")
+        .bind(account).fetch_one(&pool).await.expect("再读健康空组");
+    assert_eq!(unchanged, stored);
+    drop_account(&pool, account).await;
+}
+
+/// 同一次切输出恢复,或客户端已先收到空组,都接续有效本机种子;无种子保持空组。
+#[tokio::test]
+async fn radio_output_reseeds_repaired_groups_in_both_entry_paths()
+ {
+    let pool = connect().await;
+    for read_first in [false, true] {
+        for with_seed in [false, true] {
+            let account = account(
+                &pool,
+                &format!("reseed-{read_first}-{with_seed}"),
+            )
+            .await;
+            let (roster, _inboxes) =
+                online(account, &["phone", "pc"]);
+            let before =
+                phone_and_pc(&pool, &roster, account).await;
+            damage_radio_group(&pool, account, false).await;
+            if read_first {
+                group::current(&pool, account)
+                    .await
+                    .expect("先读恢复");
+            }
+            let mut tx =
+                pool.begin().await.expect("开事务");
+            let local = queue::create(
+                &mut tx,
+                account,
+                "phone",
+                &[EntryInput {
+                    platform: "netease".to_owned(),
+                    track_id: "current-radio".to_owned(),
+                    title: "当前电台".to_owned(),
+                    alias: None,
+                    artists: Vec::new(),
+                    cover: None,
+                    duration_ms: 200_000,
+                }],
+            )
+            .await
+            .expect("本机有效队列");
+            tx.commit().await.expect("提交种子");
+            let after = group::apply(
+                &pool,
+                &roster,
+                account,
+                "phone",
+                Intent::Outputs {
+                    outputs: vec!["pc".to_owned()],
+                    seed: with_seed.then_some(
+                        GroupSeedDto {
+                            queue_id: local.queue_id,
+                            revision: local.revision,
+                            entry_id: local.entry_ids[0],
+                            position_ms: 30_000,
+                            playing: true,
+                        },
+                    ),
+                },
+            )
+            .await
+            .expect("损坏组切输出应成功")
+            .expect("组在");
+            assert_eq!(after.members, before.members);
+            assert_eq!(after.outputs, vec!["pc"]);
+            assert!(after.version > before.version);
+            if with_seed {
+                let now = after.now.expect("接续电台");
+                assert_eq!(
+                    (
+                        now.queue_id,
+                        now.revision,
+                        now.entry_id
+                    ),
+                    (
+                        local.queue_id,
+                        local.revision,
+                        local.entry_ids[0]
+                    )
+                );
+                assert_eq!(now.track.id, "current-radio");
+                assert!(
+                    now.playing
+                        && now.position_us >= 30_000_000
+                );
+            } else {
+                assert!(
+                    after.now.is_none(),
+                    "无本机播放不猜歌"
+                );
+            }
+            drop_account(&pool, account).await;
+        }
+    }
+}
+
+/// 损坏组仍能离组和点新歌,组外设备控制仍拒绝。
+#[tokio::test]
+async fn radio_output_damage_does_not_block_leave_or_new_play()
+ {
+    let pool = connect().await;
+    for leave in [false, true] {
+        let account = account(
+            &pool,
+            if leave {
+                "damaged-leave"
+            } else {
+                "damaged-play"
+            },
+        )
+        .await;
+        let (roster, _inboxes) =
+            online(account, &["phone", "pc", "stranger"]);
+        phone_and_pc(&pool, &roster, account).await;
+        damage_radio_group(&pool, account, false).await;
+        let denied = group::apply(
+            &pool,
+            &roster,
+            account,
+            "stranger",
+            Intent::Play(GroupPickDto::Tracks {
+                tracks: tracks(),
+                index: 0,
+            }),
+        )
+        .await;
+        assert!(
+            matches!(
+                denied,
+                Err(server::error::AppError::Invalid(_))
+            ),
+            "仍检查成员权限: {denied:?}"
+        );
+        let intent = if leave {
+            Intent::Leave
+        } else {
+            Intent::Play(GroupPickDto::Tracks {
+                tracks: tracks(),
+                index: 0,
+            })
+        };
+        let after = group::apply(
+            &pool, &roster, account, "phone", intent,
+        )
+        .await
+        .expect("损坏引用不挡操作")
+        .expect("组在");
+        if leave {
+            assert_eq!(after.members, vec!["pc"]);
+            assert!(after.now.is_none());
+        } else {
+            assert_eq!(
+                after.now.expect("新歌在放").track.id,
+                "a"
+            );
+        }
+        drop_account(&pool, account).await;
+    }
+}
+
+/// 空组的种子必须同账号、同版本、同条目;正常组收到种子仍沿用原播放。
+#[tokio::test]
+async fn radio_output_seed_validation_and_valid_playback_are_preserved()
+ {
+    let pool = connect().await;
+    let foreign = account(&pool, "seed-foreign").await;
+    let account = account(&pool, "seed-validation").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let valid = phone_and_pc(&pool, &roster, account).await;
+    let now = valid.now.clone().expect("有效播放");
+    let held = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Outputs {
+            outputs: vec!["pc".to_owned()],
+            seed: Some(GroupSeedDto {
+                queue_id: now.queue_id,
+                revision: now.revision,
+                entry_id: -1,
+                position_ms: 0,
+                playing: false,
+            }),
+        },
+    )
+    .await
+    .expect("有效组忽略种子")
+    .expect("组在");
+    assert_eq!(
+        held.now.expect("原歌在").entry_id,
+        now.entry_id
+    );
+    let mut tx = pool.begin().await.expect("开事务");
+    let outsider = queue::create(
+        &mut tx,
+        foreign,
+        "pc",
+        &[EntryInput {
+            platform: "netease".to_owned(),
+            track_id: "foreign".to_owned(),
+            title: "别人的歌".to_owned(),
+            alias: None,
+            artists: Vec::new(),
+            cover: None,
+            duration_ms: 200_000,
+        }],
+    )
+    .await
+    .expect("外账号队列");
+    tx.commit().await.expect("提交");
+    group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Leave,
+    )
+    .await
+    .expect("离组");
+    group::apply(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        Intent::Leave,
+    )
+    .await
+    .expect("散组");
+    for (case, (queue_id, revision, entry_id)) in [
+        (
+            outsider.queue_id,
+            outsider.revision,
+            outsider.entry_ids[0],
+        ),
+        (now.queue_id, now.revision + 99, now.entry_id),
+        (now.queue_id, now.revision, -1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let before: String = sqlx::query_scalar("SELECT to_jsonb(g)::text FROM play_groups g WHERE account_id = $1")
+            .bind(account).fetch_one(&pool).await.expect("读取失败请求前状态");
+        let denied = group::apply(
+            &pool,
+            &roster,
+            account,
+            "phone",
+            Intent::Outputs {
+                outputs: vec!["pc".to_owned()],
+                seed: Some(GroupSeedDto {
+                    queue_id,
+                    revision,
+                    entry_id,
+                    position_ms: 0,
+                    playing: true,
+                }),
+            },
+        )
+        .await;
+        if case < 2 {
+            assert!(
+                matches!(
+                    denied,
+                    Err(server::error::AppError::NotFound)
+                ),
+                "跨账号/缺版本须 NotFound: {denied:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    denied,
+                    Err(server::error::AppError::Invalid(
+                        "那一首不在组队列里"
+                    ))
+                ),
+                "缺条目须领域拒绝: {denied:?}"
+            );
+        }
+        let after: String = sqlx::query_scalar("SELECT to_jsonb(g)::text FROM play_groups g WHERE account_id = $1")
+            .bind(account).fetch_one(&pool).await.expect("读取失败请求后状态");
+        assert_eq!(
+            after, before,
+            "被拒请求所有持久状态都应回滚"
+        );
+    }
+    drop_account(&pool, account).await;
+    drop_account(&pool, foreign).await;
+}
+
+/// 数据库连接故障照常报错,不伪造一个恢复后的空组。
+#[tokio::test]
+async fn radio_output_database_errors_are_not_recovered() {
+    let pool = connect().await;
+    pool.close().await;
+    assert!(matches!(
+        group::current(&pool, 0).await,
+        Err(server::error::AppError::Db(_))
+    ));
 }
 
 /// 手机只当遥控器,pc 出声,从 pc 本机正在放的那一批的第 2 条接着放。
