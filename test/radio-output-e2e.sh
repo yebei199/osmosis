@@ -4,19 +4,20 @@
 # 必填 ACCOUNT_ID/ME/TARGET/TARGET_PORT/TARGET_LOG/PG_CONTAINER;recovered 还要 RESTART。
 # 桌面源另设 SOURCE_LOG;安卓源设 ANDROID_SERIAL。运行前应用已登录。
 set -euo pipefail
-MODE="${1:?用法: $0 direct|recovered}"
+MODE="${1:?用法: $0 direct|recovered|idle}"
 PORT="${PORT:-8091}"
 : "${ACCOUNT_ID:?要隔离测试账号 ID}" "${ME:?要源设备 ID}" "${TARGET:?要 pc1 设备 ID}"
 : "${TARGET_PORT:?要 pc1 MCP 端口}" "${TARGET_LOG:?要 pc1 播放器日志}"
 : "${PG_CONTAINER:?要本轮独立 Postgres 容器}"
+: "${SOURCE_LOG:?要源实例日志}" "${SERVER_LOG:?要服务端日志}"
 [[ "$PG_CONTAINER" == osmosis-174-* && "$ACCOUNT_ID" =~ ^[0-9]+$ ]] || exit 2
 [[ "$ME" =~ ^[A-Za-z0-9_-]+$ && "$TARGET" =~ ^[A-Za-z0-9_-]+$ && "$ME" != "$TARGET" ]] || exit 2
 case "$MODE" in
  direct) ;;
  recovered) : "${RESTART:?要重启源实例的命令}" ;;
+ idle) : "${RESTART:?要重启源实例的命令}" "${RESTART_TARGET:?要重启目标实例的命令}" ;;
  *) exit 2 ;;
 esac
-if [ "$PORT" != 8090 ]; then : "${SOURCE_LOG:?桌面源要 SOURCE_LOG}"; fi
 
 sql() { docker exec "$PG_CONTAINER" psql -U slint -d osmosis -v ON_ERROR_STOP=1 -Atc "$1"; }
 [ "$(sql "SELECT count(*) FROM accounts;")" = 1 ] || { echo "拒绝在非单账号测试库造数" >&2; exit 2; }
@@ -59,50 +60,101 @@ profile() {
 radio() {
  PORT="$PORT" PG_CONTAINER="$PG_CONTAINER" ADB="adb -s ${ANDROID_SERIAL:-unused}" bash "$(dirname "$0")/radio-e2e.sh" fm
 }
-profile
-act "$(labelled "OutputChip::touch" "输出到 本机")"
-radio
-# 要至少十秒的真实本机进度,才能区分接续与从零重播。
-for _ in $(seq 1 45); do
- snapshot=$(sql "SELECT q.id || '|' || r.applied_revision || '|' || r.entry_id || '|' || r.position_ms
+report() {
+ sql "SELECT q.id || '|' || r.applied_revision || '|' || r.entry_id || '|' || r.position_ms
  FROM play_queues q JOIN play_queue_reports r ON r.queue_id=q.id
  WHERE q.account_id=$ACCOUNT_ID AND q.device_id='$ME' AND r.play_state='playing'
- ORDER BY r.reported_at DESC LIMIT 1;")
- IFS='|' read -r queue revision entry position <<< "$snapshot"
- if [[ "${position:-}" =~ ^[0-9]+$ ]] && [ "$position" -ge 10000 ]; then break; fi
- sleep 1
-done
-[[ "${position:-}" =~ ^[0-9]+$ && "$position" -ge 10000 ]] || { echo "本机电台没有有效进度" >&2; exit 1; }
+ AND r.reported_at >= clock_timestamp()-interval '3 seconds'
+ ORDER BY r.reported_at DESC LIMIT 1;"
+}
+fresh_progress() {
+ for _ in $(seq 1 60); do
+  snapshot=$(report)
+  IFS='|' read -r queue revision entry position <<< "$snapshot"
+  if [[ "${position:-}" =~ ^[0-9]+$ ]] && [ "$position" -ge 20000 ]; then break; fi
+  sleep 1
+ done
+ [[ "${position:-}" =~ ^[0-9]+$ && "$position" -ge 20000 ]] || { echo "缺少新鲜且超过容差的本机进度" >&2; exit 1; }
+ echo "$(date -Iseconds) 本机新鲜报告 $snapshot"
+}
+profile
+act "$(labelled "OutputChip::touch" "输出到 本机")"
+if [ "$MODE" = idle ]; then
+ snapshot=$(sql "SELECT q.id || '|' || e.revision || '|' || e.entry_id FROM play_queues q
+ JOIN play_queue_entries e ON e.queue_id=q.id WHERE q.account_id=$ACCOUNT_ID ORDER BY q.id DESC,e.revision DESC LIMIT 1;")
+ IFS='|' read -r queue revision entry <<< "$snapshot"
+ [[ "$queue" =~ ^[0-9]+$ && "$revision" =~ ^[0-9]+$ && "$entry" =~ ^[0-9]+$ ]]
+else
+ radio
+ fresh_progress
+fi
 # SQL 仅造损坏现场,实际输出选择始终由 MCP 点击。
 sql "INSERT INTO play_groups(account_id,version,members,outputs,queue_id,revision,entry_id,playing)
  VALUES($ACCOUNT_ID,1,ARRAY['$TARGET'],ARRAY['$TARGET'],$queue,$revision+1000000,$entry,false)
  ON CONFLICT(account_id) DO UPDATE SET version=play_groups.version+1,members=EXCLUDED.members,
  outputs=EXCLUDED.outputs,queue_id=EXCLUDED.queue_id,revision=EXCLUDED.revision,entry_id=EXCLUDED.entry_id,
  playing=false,position_us=0,anchor_wall_us=0,boundary_wall_us=NULL,alive_wall_us=NULL,play_order='{}';" >/dev/null
-if [ "$MODE" = recovered ]; then
+if [ "$MODE" != direct ]; then
+ source_mark=$(wc -l < "$SOURCE_LOG")
+ if [ "$MODE" = idle ]; then bash -c "$RESTART_TARGET"; fi
  bash -c "$RESTART"
  for _ in $(seq 1 60); do
   if [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = t ]; then break; fi
   sleep 1
  done
  [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = t ]
- echo "重入册已持久恢复空组"
+ recovered_version=$(sql "SELECT version FROM play_groups WHERE account_id=$ACCOUNT_ID;")
+ for _ in $(seq 1 60); do
+  state_line=$(tail -n "+$((source_mark+1))" "$SOURCE_LOG" | rg "组状态: 第 $recovered_version 版," | tail -1 || true)
+  [ -n "$state_line" ] && break
+  sleep 1
+ done
+ [ -n "$state_line" ] || { echo "恢复状态未到源客户端" >&2; exit 1; }
+ echo "$(date -Iseconds) 客户端恢复状态: $state_line"
  refresh
- radio
+ if [ "$MODE" = recovered ]; then radio; fresh_progress; fi
 fi
 
 # 点击前再抓当前曲目与进度,不用开始电台时的旧快照。
-snapshot=$(sql "SELECT q.id || '|' || r.applied_revision || '|' || r.entry_id || '|' || r.position_ms
- FROM play_queues q JOIN play_queue_reports r ON r.queue_id=q.id
- WHERE q.account_id=$ACCOUNT_ID AND q.device_id='$ME' AND r.play_state='playing'
- ORDER BY r.reported_at DESC LIMIT 1;")
-IFS='|' read -r queue revision entry position <<< "$snapshot"
-[[ "$queue" =~ ^[0-9]+$ && "$revision" =~ ^[0-9]+$ && "$entry" =~ ^[0-9]+$ && "$position" =~ ^[0-9]+$ ]]
-title=$(sql "SELECT title FROM play_queue_entries WHERE queue_id=$queue AND revision=$revision AND entry_id=$entry;")
-[ -n "$title" ]
-started=$(date +%s)
 profile
-act "$(labelled "OutputChip::touch" "输出到 pc1")"
+output_handle=$(labelled "OutputChip::touch" "输出到 pc1")
+if [ "$MODE" != idle ]; then
+ fresh_progress
+ title=$(sql "SELECT title FROM play_queue_entries WHERE queue_id=$queue AND revision=$revision AND entry_id=$entry;")
+ [ -n "$title" ]
+fi
+if [ "$MODE" = direct ]; then
+ broken=$(sql "SELECT g.revision IS NOT NULL AND NOT EXISTS(SELECT 1 FROM play_queue_entries e
+ WHERE e.queue_id=g.queue_id AND e.revision=g.revision AND e.entry_id=g.entry_id) FROM play_groups g WHERE g.account_id=$ACCOUNT_ID;")
+ [ "$broken" = t ] || { echo "direct 点击前已经提前恢复,此格未验" >&2; exit 1; }
+ echo "$(date -Iseconds) direct 点击前仍损坏: $(sql "SELECT queue_id||'|'||revision||'|'||entry_id||'|'||version FROM play_groups WHERE account_id=$ACCOUNT_ID;")"
+else
+ [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = t ]
+fi
+target_mark=$(wc -l < "$TARGET_LOG")
+source_mark=$(wc -l < "$SOURCE_LOG")
+server_mark=$(wc -l < "$SERVER_LOG")
+started=$(date +%s)
+echo "$(date -Iseconds) 点击 pc1 输出"
+act "$output_handle"
+if [ "$MODE" = idle ]; then
+ sleep 10
+ [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL AND NOT playing
+ FROM play_groups WHERE account_id=$ACCOUNT_ID AND outputs=ARRAY['$TARGET'] AND '$ME'=ANY(members);")" = t ]
+ for log_mark in "$SOURCE_LOG:$source_mark" "$TARGET_LOG:$target_mark"; do
+  latest=$(tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" | tail -1)
+  [[ "$latest" == *"放空 true"* ]] || { echo "idle 存在自动起播: $latest" >&2; exit 1; }
+  echo "$(date -Iseconds) idle 音频真相: $latest"
+ done
+ if [ "$PORT" = 8090 ]; then
+  audio=$(adb -s "${ANDROID_SERIAL:?要安卓序列号}" shell dumpsys audio)
+  pid=$(adb -s "$ANDROID_SERIAL" shell pidof io.github.osmosis | tr -d '\r')
+  [ -n "$pid" ]
+  if rg -q "u/pid:[0-9]+/$pid state:started" <<< "$audio"; then exit 1; fi
+ fi
+ echo "idle:通过;无本机播放时真实输出点击未自动播未知曲目"
+ exit 0
+fi
 for _ in $(seq 1 30); do
  state=$(sql "SELECT queue_id || '|' || revision || '|' || entry_id || '|' || playing || '|' ||
  (position_us/1000 + CASE WHEN playing THEN GREATEST(0,(extract(epoch FROM clock_timestamp())*1000)::bigint-anchor_wall_us/1000) ELSE 0 END)
@@ -115,6 +167,13 @@ done
 delta=$((got_position - position - ($(date +%s)-started)*1000))
 [ "$delta" -ge -7000 ] && [ "$delta" -le 7000 ]
 echo "组精确接续 queue=$queue revision=$revision entry=$entry position=$got_position delta=$delta"
+if [ "$MODE" = direct ]; then
+ recovery=$(tail -n "+$((server_mark+1))" "$SERVER_LOG" | rg "清除组的失效播放引用" | tail -1)
+ request=$(tail -n "+$((server_mark+1))" "$SERVER_LOG" | rg '/group/outputs' | rg 'status=200' | tail -1)
+ [ -n "$recovery" ] && [ -n "$request" ]
+ echo "本次输出操作恢复: $recovery"
+ echo "本次输出响应: $request"
+fi
 
 title_on() {
  local root win h
@@ -127,10 +186,34 @@ for _ in $(seq 1 30); do
  sleep 1
 done
 [ "$(title_on "$PORT")" = "$title" ] && [ "$(title_on "$TARGET_PORT")" = "$title" ]
-a=$(rg "自动续播轮询" "$TARGET_LOG" | tail -1)
+target_sample() {
+ local line value expected difference
+ for _ in $(seq 1 30); do
+  line=$(tail -n "+$((target_mark+1))" "$TARGET_LOG" | rg "自动续播轮询" | tail -1 || true)
+  if [[ "$line" == *"放空 false"* ]]; then
+   value=$(printf '%s' "$line" | python3 -c '
+import re,sys
+m=re.search(r"位置 ([0-9.]+)(ns|µs|ms|s), 放空 false",sys.stdin.read())
+assert m, "不能解析播放器位置"
+print(round(float(m[1])*{"ns":0.000001,"µs":0.001,"ms":1,"s":1000}[m[2]]))
+')
+   expected=$(sql "SELECT position_us/1000 + GREATEST(0,(extract(epoch FROM clock_timestamp())*1000)::bigint-anchor_wall_us/1000)
+   FROM play_groups WHERE account_id=$ACCOUNT_ID AND queue_id=$queue AND revision=$revision AND entry_id=$entry AND playing;")
+   [[ "$expected" =~ ^[0-9]+$ ]]
+   difference=$((value-expected))
+   if [ "$difference" -ge -7000 ] && [ "$difference" -le 7000 ]; then
+    echo "$(date -Iseconds) pc1 实际播放器: $line;组时间线=$expected 差值=$difference" >&2
+    echo "$value"; return
+   fi
+  fi
+  sleep 1
+ done
+ echo "pc1 实际播放器未对上组时间线: $line" >&2; return 1
+}
+a=$(target_sample)
 sleep 2
-b=$(rg "自动续播轮询" "$TARGET_LOG" | tail -1)
-[[ "$b" == *"放空 false"* && "${a#*位置 }" != "${b#*位置 }" ]]
+b=$(target_sample)
+[ "$b" -gt "$a" ]
 if [ "$PORT" = 8090 ]; then
  : "${ANDROID_SERIAL:?安卓源要设备序列号}"
  pid=$(adb -s "$ANDROID_SERIAL" shell pidof io.github.osmosis | tr -d '\r')
@@ -140,7 +223,9 @@ if [ "$PORT" = 8090 ]; then
   echo "源设备还在本机出声" >&2; exit 1
  fi
 else
- [[ "$(rg "自动续播轮询" "$SOURCE_LOG" | tail -1)" == *"放空 true"* ]]
+ source_line=$(tail -n "+$((source_mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1)
+ [[ "$source_line" == *"放空 true"* ]]
+ echo "$(date -Iseconds) 源端已放空: $source_line"
 fi
 # 遥控暂停也必须落在同一组,证明源端已是遥控器。
 refresh

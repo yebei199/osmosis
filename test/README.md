@@ -2,13 +2,19 @@
 
 ## radio-output-e2e.sh —— 损坏组切 pc1 输出能接续当前电台吗(#174)
 
-`bash test/radio-output-e2e.sh direct|recovered` 从真实电台入口起播,再在个人页点击
+`bash test/radio-output-e2e.sh direct|recovered|idle` 从真实电台入口起播,再在个人页点击
 「输出到 pc1」。`direct` 让输出请求恢复损坏引用;`recovered` 先通过重入册持久恢复空组,
-重新开电台后再切输出。两种路径都断言精确队列/版本/条目和进度接续、两端曲名一致、
+重新开电台后再切输出。两种路径都在最终点击前要求三秒内的报告和至少二十秒进度,
+并断言精确队列/版本/条目和进度接续、两端曲名一致、
 pc1 播放器位置推进、源端停止本机音频,最后从源端遥控暂停并查库确认。
 
-必须给 `ACCOUNT_ID`、`ME`、`TARGET`、`TARGET_PORT`、`TARGET_LOG` 和 `PG_CONTAINER`;
-桌面源还要 `SOURCE_LOG`,安卓源要 `ANDROID_SERIAL`,`recovered` 要重启源实例的 `RESTART`。
+`direct` 留存点击前仍损坏的行及本次请求恢复日志;`recovered` 核对入册恢复版本已到源客户端。
+目标端数值位置必须推进且对上同曲目的组时间线,使用切换后的新日志。
+`idle` 重启两端清空本机播放后真实选择输出,十秒内保持组无曲目且两端音频放空。
+
+必须给 `ACCOUNT_ID`、`ME`、`TARGET`、`TARGET_PORT`、`TARGET_LOG`、`SOURCE_LOG`、`SERVER_LOG` 和 `PG_CONTAINER`;
+安卓源要 `ANDROID_SERIAL`,`recovered` 和 `idle` 要重启源实例的 `RESTART`,
+`idle` 还要重启目标实例的 `RESTART_TARGET`。重启命令向原日志追加,避免丢掉本轮时序证据。
 `PORT` 默认 8091,安卓用 8090。凭据沿用 `mcp-login.sh`,不进脚本或日志。
 造数仅允许名字带本轮前缀 `osmosis-174-` 且只含指定一个账号的隔离开发库。
 应用、容器、状态目录和音源凭据由调用者按本轮独立分配并清理;该脚本只改指定账号的组。
