@@ -1,5 +1,19 @@
 # test —— 端到端脚本与浏览器侧的对照页
 
+## radio-output-e2e.sh —— 损坏组切 pc1 输出能接续当前电台吗(#174)
+
+`bash test/radio-output-e2e.sh direct|recovered` 从真实电台入口起播,再在个人页点击
+「输出到 pc1」。`direct` 让输出请求恢复损坏引用;`recovered` 先通过重入册持久恢复空组,
+重新开电台后再切输出。两种路径都断言精确队列/版本/条目和进度接续、两端曲名一致、
+pc1 播放器位置推进、源端停止本机音频,最后从源端遥控暂停并查库确认。
+
+必须给 `ACCOUNT_ID`、`ME`、`TARGET`、`TARGET_PORT`、`TARGET_LOG` 和 `PG_CONTAINER`;
+桌面源还要 `SOURCE_LOG`,安卓源要 `ANDROID_SERIAL`,`recovered` 要重启源实例的 `RESTART`。
+`PORT` 默认 8091,安卓用 8090。凭据沿用 `mcp-login.sh`,不进脚本或日志。
+造数仅允许名字带本轮前缀 `osmosis-174-` 且只含指定一个账号的隔离开发库。
+应用、容器、状态目录和音源凭据由调用者按本轮独立分配并清理;该脚本只改指定账号的组。
+真实设备同一时刻只跑一项,属于占用该设备的串行实机检查,不进 `just ci`。
+
 ## mcp-login.sh —— 把界面登进去
 
 端到端脚本(如 `pick-e2e.sh`)把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
