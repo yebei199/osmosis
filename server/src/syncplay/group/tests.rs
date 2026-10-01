@@ -786,6 +786,10 @@ mod persistence {
             assert_eq!(count, 0);
             let (account, roster, mut inbox, before) =
                 playing_group(&pool, "healthy").await;
+            let expected_version =
+                i64::try_from(before.version)
+                    .expect("测试版本可持久存储")
+                    + 1;
             inbox.try_recv().expect("建组广播正对照");
             let prior = before.now.expect("起播前提");
             roll_due(&pool, &roster)
@@ -800,7 +804,7 @@ mod persistence {
                 .expect("读组原始行")
                 .expect("组仍在");
             let now = stored.now.expect("健康播放仍在");
-            assert_eq!(stored.version, before.version + 1);
+            assert_eq!(stored.version, expected_version);
             assert_eq!(
                 (now.queue_id, now.revision),
                 (prior.queue_id, prior.revision)
@@ -818,12 +822,17 @@ mod persistence {
             assert_eq!(now.entry_id, entries[1].entry_id);
             let signal =
                 inbox.try_recv().expect("周期提交后的广播");
-            let ServerSignal::Group { state: Some(state) } =
-                signal
+            let ServerSignal::GroupState {
+                state: Some(state),
+            } = signal
             else {
                 panic!("周期应广播播放组状态: {signal:?}");
             };
-            assert_eq!(state.version, stored.version);
+            assert_eq!(
+                i64::try_from(state.version)
+                    .expect("广播版本可持久存储"),
+                stored.version
+            );
             assert_eq!(
                 state.now.expect("广播带播放").entry_id,
                 now.entry_id
@@ -839,6 +848,7 @@ mod persistence {
         isolated(|pool| async move {
             for damage in ["revision", "entry", "queue"] {
                 let (account, roster, _inbox, before) = playing_group(&pool, damage).await;
+                let expected_version = i64::try_from(before.version).expect("测试版本可持久存储") + 1;
                 let prior = before.now.expect("损坏前播放引用");
                 let sql = match damage {
                     "revision" => "DELETE FROM play_queue_entries WHERE queue_id = $1 AND revision = $2",
@@ -857,13 +867,13 @@ mod persistence {
                      AND boundary_wall_us IS NULL AND alive_wall_us IS NULL
                      AND NOT shuffled AND loop_mode = 'off' AND cardinality(play_order) = 0
                      FROM play_groups WHERE account_id = $1"
-                ).bind(account).bind(before.version + 1).bind(&before.members).bind(&before.outputs)
+                ).bind(account).bind(expected_version).bind(&before.members).bind(&before.outputs)
                     .fetch_one(&pool).await.expect("直接核对恢复持久行");
                 assert!(cleared, "周期恢复应完整提交并保留关系: {damage}");
                 roll_due(&pool, &roster).await.expect("重复周期幂等");
                 let version: i64 = sqlx::query_scalar("SELECT version FROM play_groups WHERE account_id = $1")
                     .bind(account).fetch_one(&pool).await.expect("读重复周期版本");
-                assert_eq!(version, before.version + 1);
+                assert_eq!(version, expected_version);
             }
         }).await;
     }
