@@ -42,7 +42,9 @@ labelled() {
  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h,separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
   label=$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')
-  if [ "$label" = "$2" ]; then echo "$h"; return; fi
+  if [ "$label" = "$2" ] || [[ "$2" = "输出到 pc1" && "$label" == "输出到 pc1 #"* ]]; then
+   echo "$h"; return
+  fi
  done
 }
 act() {
@@ -169,7 +171,7 @@ delta=$((got_position - position - ($(date +%s)-started)*1000))
 echo "组精确接续 queue=$queue revision=$revision entry=$entry position=$got_position delta=$delta"
 if [ "$MODE" = direct ]; then
  recovery=$(tail -n "+$((server_mark+1))" "$SERVER_LOG" | rg "清除组的失效播放引用" | tail -1)
- request=$(tail -n "+$((server_mark+1))" "$SERVER_LOG" | rg '/group/outputs' | rg 'status=200' | tail -1)
+ request=$(tail -n "+$((server_mark+1))" "$SERVER_LOG" | sed 's/\x1b\[[0-9;]*m//g' | rg '/group/outputs' | rg 'status=200' | tail -1)
  [ -n "$recovery" ] && [ -n "$request" ]
  echo "本次输出操作恢复: $recovery"
  echo "本次输出响应: $request"
