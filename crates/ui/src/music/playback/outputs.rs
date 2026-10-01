@@ -3,7 +3,8 @@
 //! 都只改服务端全局状态里的出声设备(`POST /group/outputs`),不再有迁移的三步编排:
 //! 新加入的那台看到状态里有自己,就按标识取执行副本、到点跟上;被移出的那台看到没有自己,
 //! 就停下。本机还独奏着时选了别的设备,组从本机正在放的那一份接着放(`seed`);组已经在
-//! 别处放着时则只往它的出声设备里加,原有的不动(#149)。
+//! 别处放着时则只往它的出声设备里加,原有的不动(#149)。已有组也带有效本机种子,
+//! 服务端仅在清掉失效播放后采用,用于电台接续(#174)。
 
 use app_core::{GroupSeedDto, PlaybackState};
 
@@ -19,7 +20,12 @@ pub(in crate::music) fn select_output(
 ) {
     let target = device_of(deck, id);
     if deck.group.is_member() {
-        deck.group.set_outputs(ui, vec![target], None);
+        // 种子是可选的恢复材料;尚未同步时保留正常组切输出的行为。
+        deck.group.set_outputs(
+            ui,
+            vec![target],
+            local_seed(ui, deck).ok().flatten(),
+        );
         return;
     }
     // 独奏时点本机:本来就在本机。
@@ -27,7 +33,16 @@ pub(in crate::music) fn select_output(
         return;
     }
     // 组已经在放:加进去,不拿本机播放建一个新的把原有的挤掉(#149)。
-    if deck.group.add_output(ui, &target) {
+    if deck
+        .group
+        .state()
+        .is_some_and(|state| state.now.is_some())
+        && deck.group.add_output(
+            ui,
+            &target,
+            local_seed(ui, deck).ok().flatten(),
+        )
+    {
         return;
     }
     start_group(ui, deck, vec![target]);
@@ -45,7 +60,15 @@ pub(in crate::music) fn toggle_member(
     // 「加入」(#149)。本机那颗照旧:独奏时它本来就在出声。
     if !deck.group.is_member()
         && target != me
-        && deck.group.add_output(ui, &target)
+        && deck
+            .group
+            .state()
+            .is_some_and(|state| state.now.is_some())
+        && deck.group.add_output(
+            ui,
+            &target,
+            local_seed(ui, deck).ok().flatten(),
+        )
     {
         return;
     }
@@ -65,7 +88,11 @@ pub(in crate::music) fn toggle_member(
         outputs.push(target);
     }
     if deck.group.is_member() {
-        deck.group.set_outputs(ui, outputs, None);
+        deck.group.set_outputs(
+            ui,
+            outputs,
+            local_seed(ui, deck).ok().flatten(),
+        );
         return;
     }
     // 独奏时只动了本机:还是独奏,不必建组。
