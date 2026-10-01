@@ -83,12 +83,12 @@ title_on() {
  CALL_PORT=$1 call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")'
 }
 fresh_progress() {
- local mark line previous=-1 current checkpoint_position checkpoint_title
+ local mark line previous=-1 current checkpoint_title
  local before after reference previous_reference='' previous_line='' previous_time='' sampled_at
  mark=$(wc -l < "$SOURCE_LOG")
  for _ in $(seq 1 60); do
   before=$(report)
-  IFS='|' read -r queue revision entry checkpoint_position <<< "$before"
+  IFS='|' read -r queue revision entry _ <<< "$before"
   reference="$queue|$revision|$entry"
   line=$(tail -n "+$((mark+1))" "$SOURCE_LOG" | rg "自动续播轮询" | tail -1 || true)
   sampled_at=$(date -Iseconds)
