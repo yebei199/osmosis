@@ -659,19 +659,20 @@ mod persistence {
         // 同一进程的并行测试能落在同一微秒;存活的临时目录提供原子唯一名称。
         let unique = tempfile::tempdir()
             .expect("本次schema的唯一名称资源");
+        // 完整basename按字节无损编码,PG折小写也不会合并大小写不同的目录名。
         let suffix: String = unique
             .path()
             .file_name()
             .expect("临时目录名")
-            .to_str()
-            .expect("临时目录名为ASCII")
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
+            .as_encoded_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
             .collect();
         let schema = format!(
             "radio_roller_{token}_{}_{suffix}",
             std::process::id()
         );
+        assert!(schema.len() <= 63, "schema不得被PG截断");
         sqlx::query(&format!("CREATE SCHEMA {schema}"))
             .execute(&admin)
             .await
