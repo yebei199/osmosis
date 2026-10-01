@@ -774,15 +774,12 @@ mod persistence {
         .expect("输出采用种子")
         .expect("组已建立");
         // 兜底时刻含元数据时长后的宽限,从真实曲目时长构造已经过期的完整前提。
-        let duration_us = i64::try_from(
-            state
-                .now
-                .as_ref()
-                .expect("种子播放在")
-                .track
-                .duration_ms,
-        )
-        .expect("本次时长可换算")
+        let duration_us = state
+            .now
+            .as_ref()
+            .expect("种子播放在")
+            .track
+            .duration_ms
             * 1_000;
         assert!(duration_us > 0);
         let anchor = wall_now_us()
