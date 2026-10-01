@@ -21,6 +21,20 @@ use similar_asserts::assert_eq;
 use sqlx::PgPool;
 use tokio::sync::mpsc;
 
+/// 恢复时必须清空的原始播放引用与时间线,按数据库列顺序取。
+type StoredPlayback = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    bool,
+    i64,
+    i64,
+    Option<i64>,
+    bool,
+    String,
+    Vec<i64>,
+);
+
 const DEFAULT_DATABASE_URL: &str =
     "postgres://slint:devonly@127.0.0.1:5432/osmosis";
 
@@ -543,7 +557,7 @@ async fn radio_output_read_and_greet_repair_invalid_references()
             matches!(inboxes[1].try_recv(), Ok(ServerSignal::GroupState { state: Some(state) })
             if state.version == restored.version && state.now.is_none())
         );
-        let stored: (Option<i64>, Option<i64>, Option<i64>, bool, i64, i64, Option<i64>, bool, String, Vec<i64>) =
+        let stored: StoredPlayback =
             sqlx::query_as("SELECT queue_id, revision, entry_id, playing, position_us, anchor_wall_us,
                 boundary_wall_us, shuffled, loop_mode, play_order FROM play_groups WHERE account_id = $1")
             .bind(account).fetch_one(&pool).await.expect("读持久状态");

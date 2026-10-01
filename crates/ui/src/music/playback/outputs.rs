@@ -24,7 +24,7 @@ pub(in crate::music) fn select_output(
         deck.group.set_outputs(
             ui,
             vec![target],
-            local_seed(ui, deck).ok().flatten(),
+            recovery_seed(ui, deck),
         );
         return;
     }
@@ -40,7 +40,7 @@ pub(in crate::music) fn select_output(
         && deck.group.add_output(
             ui,
             &target,
-            local_seed(ui, deck).ok().flatten(),
+            recovery_seed(ui, deck),
         )
     {
         return;
@@ -67,7 +67,7 @@ pub(in crate::music) fn toggle_member(
         && deck.group.add_output(
             ui,
             &target,
-            local_seed(ui, deck).ok().flatten(),
+            recovery_seed(ui, deck),
         )
     {
         return;
@@ -91,7 +91,7 @@ pub(in crate::music) fn toggle_member(
         deck.group.set_outputs(
             ui,
             outputs,
-            local_seed(ui, deck).ok().flatten(),
+            recovery_seed(ui, deck),
         );
         return;
     }
@@ -128,6 +128,20 @@ fn device_of(deck: &Deck, id: &str) -> String {
 /// 本机播放器此刻在不在出声。
 fn local_sounding(deck: &Deck) -> bool {
     deck.player.as_ref().as_ref().is_ok_and(is_sounding)
+}
+
+/// 已有组切输出的可选恢复种子;未同步时记录原因,有效组继续接受输出操作。
+fn recovery_seed(
+    ui: &MainWindow,
+    deck: &Deck,
+) -> Option<GroupSeedDto> {
+    match local_seed(ui, deck) {
+        Ok(seed) => seed,
+        Err(why) => {
+            log::debug!("输出恢复种子暂不可用: {why}");
+            None
+        }
+    }
 }
 
 /// 本机正在放的那一份。什么都没放是 `Ok(None)`:组从空的开始,不是错。
