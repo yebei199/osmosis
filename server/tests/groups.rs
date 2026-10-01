@@ -1441,6 +1441,59 @@ async fn appending_extends_the_group_queue_in_place() {
     drop_account(&pool, account).await;
 }
 
+/// 重复电台续取被明确拒绝,组、队列全部版本与起播记录保持原样。
+#[tokio::test]
+async fn appending_only_existing_tracks_keeps_persistent_state_unchanged()
+ {
+    let pool = connect().await;
+    let account = account(&pool, "append-duplicate").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let now = phone_and_pc(&pool, &roster, account)
+        .await
+        .now
+        .expect("组有播放引用");
+    let before = append_snapshot(&pool, account).await;
+    let outcome = group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Append {
+            queue: (now.queue_id, now.revision),
+            tracks: vec![track("a"), track("b")],
+        },
+    )
+    .await;
+    assert!(matches!(
+        outcome,
+        Err(server::error::AppError::Invalid(
+            "续来的歌都已经在组队列里"
+        ))
+    ));
+    assert_eq!(
+        append_snapshot(&pool, account).await,
+        before
+    );
+    drop_account(&pool, account).await;
+}
+
+/// 按稳定主键排序保存这次账号的组、所有队列版本和起播记录。
+async fn append_snapshot(
+    pool: &PgPool,
+    account: i64,
+) -> String {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object(
+            'group', (SELECT to_jsonb(g) FROM play_groups g WHERE account_id = $1),
+            'queues', (SELECT jsonb_agg(to_jsonb(q) ORDER BY id) FROM play_queues q WHERE account_id = $1),
+            'entries', (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.queue_id, e.revision, e.entry_id)
+                FROM play_queue_entries e JOIN play_queues q ON q.id = e.queue_id WHERE q.account_id = $1),
+            'plays', (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM play_events p WHERE account_id = $1)
+        )::text"
+    ).bind(account).fetch_one(pool).await.expect("保存续取前后持久状态")
+}
+
 /// 组的出声设备里挂着一台已经不在线的(#165):独奏的设备加进来时带上了它,服务端把它
 /// 剔掉、照常加入;新点的设备不在线仍然拒。
 #[tokio::test]
