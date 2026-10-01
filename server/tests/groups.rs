@@ -239,18 +239,24 @@ async fn radio_output_retains_the_group_revision_until_released()
             switched.now.expect("原播放还在").playing,
             !paused
         );
-        group::apply(
+        let replacement = group::apply(
             &pool,
             &roster,
             account,
             "phone",
             Intent::Play(GroupPickDto::Tracks {
-                tracks: tracks(),
+                tracks: vec![track("replacement-radio")],
                 index: 0,
             }),
         )
         .await
-        .expect("换队列该成");
+        .expect("换队列该成")
+        .expect("组仍在");
+        assert_ne!(
+            replacement.now.expect("新播放引用在").queue_id,
+            now.queue_id,
+            "先确认组已经解除旧队列引用"
+        );
         let mut tx = pool.begin().await.expect("开事务");
         queue::publish(
             &mut tx,

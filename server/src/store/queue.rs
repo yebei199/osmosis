@@ -203,11 +203,12 @@ pub async fn create(
 
     // **先锁账号行,再数**。反过来的话两条并发的建队列都数到 K-1,
     // 都觉得还有余量,于是一起插进去 —— 配额就成了摆设。锁的是账号那一行,
-    // 所以同一账号的建队列排队,不同账号互不影响。
+    // 所以同一账号的建队列排队,不同账号互不影响。NO KEY UPDATE 允许队列
+    // 发布的外键检查拿 KEY SHARE,不会和已经持有队列锁的发布事务互等。
     //
     // 这一段必须在事务里,而签名收的是 `Tx` 就保证了这一点(#109 F-R1)。
     sqlx::query(
-        "SELECT id FROM accounts WHERE id = $1 FOR UPDATE",
+        "SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE",
     )
     .bind(account_id)
     .fetch_optional(&mut **tx)

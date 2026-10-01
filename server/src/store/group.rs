@@ -49,8 +49,9 @@ pub async fn lock(
     tx: &mut Tx<'_>,
     account_id: i64,
 ) -> Result<Group, AppError> {
+    // 不改账号主键;允许队列发布的外键检查拿 KEY SHARE,避免账号与队列互等。
     sqlx::query(
-        "SELECT id FROM accounts WHERE id = $1 FOR UPDATE",
+        "SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE",
     )
     .bind(account_id)
     .fetch_optional(&mut **tx)
