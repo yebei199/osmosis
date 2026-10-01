@@ -98,6 +98,8 @@ sql "INSERT INTO play_groups(account_id,version,members,outputs,queue_id,revisio
  playing=false,position_us=0,anchor_wall_us=0,boundary_wall_us=NULL,alive_wall_us=NULL,play_order='{}';" >/dev/null
 if [ "$MODE" != direct ]; then
  source_mark=$(wc -l < "$SOURCE_LOG")
+ idle_source_mark=$source_mark
+ idle_target_mark=$(wc -l < "$TARGET_LOG")
  if [ "$MODE" = idle ]; then bash -c "$RESTART_TARGET"; fi
  bash -c "$RESTART"
  for _ in $(seq 1 60); do
@@ -133,6 +135,13 @@ if [ "$MODE" = direct ]; then
 else
  [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = t ]
 fi
+if [ "$MODE" = idle ]; then
+ for log_mark in "$SOURCE_LOG:$idle_source_mark" "$TARGET_LOG:$idle_target_mark"; do
+  latest=$(tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" | tail -1)
+  [[ "$latest" == *"放空 true"* ]] || { echo "idle 点击前并非空闲: $latest" >&2; exit 1; }
+  echo "$(date -Iseconds) idle 点击前空闲: $latest"
+ done
+fi
 target_mark=$(wc -l < "$TARGET_LOG")
 source_mark=$(wc -l < "$SOURCE_LOG")
 server_mark=$(wc -l < "$SERVER_LOG")
@@ -140,13 +149,21 @@ started=$(date +%s)
 echo "$(date -Iseconds) 点击 pc1 输出"
 act "$output_handle"
 if [ "$MODE" = idle ]; then
+ evidence=$(mktemp -d "${EVIDENCE_DIR:-${TMPDIR:-/tmp}}/174-idle.XXXXXX")
  sleep 10
  [ "$(sql "SELECT queue_id IS NULL AND revision IS NULL AND entry_id IS NULL AND NOT playing
  FROM play_groups WHERE account_id=$ACCOUNT_ID AND outputs=ARRAY['$TARGET'] AND '$ME'=ANY(members);")" = t ]
+ index=0
  for log_mark in "$SOURCE_LOG:$source_mark" "$TARGET_LOG:$target_mark"; do
-  latest=$(tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" | tail -1)
-  [[ "$latest" == *"放空 true"* ]] || { echo "idle 存在自动起播: $latest" >&2; exit 1; }
-  echo "$(date -Iseconds) idle 音频真相: $latest"
+  index=$((index+1))
+  window="$evidence/audio-$index.log"
+  tail -n "+$((${log_mark##*:}+1))" "${log_mark%:*}" | rg "自动续播轮询" > "$window"
+  [ -s "$window" ] || { echo "idle 观测窗口没有新样本" >&2; exit 1; }
+  if rg -q "放空 false" "$window"; then
+   echo "idle 观测窗口发生自动起播: $window" >&2; exit 1
+  fi
+  echo "$(date -Iseconds) idle 整窗音频真相: $window ($(wc -l < "$window") 个新样本)"
+  cat "$window"
  done
  if [ "$PORT" = 8090 ]; then
   audio=$(adb -s "${ANDROID_SERIAL:?要安卓序列号}" shell dumpsys audio)
