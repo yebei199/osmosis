@@ -656,10 +656,21 @@ mod persistence {
                 .filter(char::is_ascii_alphanumeric)
                 .take(12)
                 .collect();
+        // 同一进程的并行测试能落在同一微秒;存活的临时目录提供原子唯一名称。
+        let unique = tempfile::tempdir()
+            .expect("本次schema的唯一名称资源");
+        let suffix: String = unique
+            .path()
+            .file_name()
+            .expect("临时目录名")
+            .to_str()
+            .expect("临时目录名为ASCII")
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
         let schema = format!(
-            "radio_roller_{token}_{}_{}",
-            std::process::id(),
-            wall_now_us()
+            "radio_roller_{token}_{}_{suffix}",
+            std::process::id()
         );
         sqlx::query(&format!("CREATE SCHEMA {schema}"))
             .execute(&admin)
