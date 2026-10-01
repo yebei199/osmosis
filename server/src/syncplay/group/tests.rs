@@ -618,6 +618,7 @@ mod persistence {
     use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
     use tokio::sync::mpsc;
 
+    use super::super::timeline::ADVANCE_GRACE_US;
     use super::super::{
         Intent, apply, roll_due, wall_now_us,
     };
@@ -760,10 +761,49 @@ mod persistence {
         .await
         .expect("输出采用种子")
         .expect("组已建立");
-        // 将真实组锚到第一首刚放完,扫描时仅这一组到期。
-        let anchor = wall_now_us() - 201_000_000;
-        sqlx::query("UPDATE play_groups SET anchor_wall_us = $2, boundary_wall_us = $2 + 200000000 WHERE account_id = $1")
-            .bind(account).bind(anchor).execute(pool).await.expect("固定本次到期前提");
+        // 兜底时刻含元数据时长后的宽限,从真实曲目时长构造已经过期的完整前提。
+        let duration_us = i64::try_from(
+            state
+                .now
+                .as_ref()
+                .expect("种子播放在")
+                .track
+                .duration_ms,
+        )
+        .expect("本次时长可换算")
+            * 1_000;
+        assert!(duration_us > 0);
+        let anchor = wall_now_us()
+            - duration_us
+            - ADVANCE_GRACE_US
+            - 1_000_000;
+        let deadline =
+            anchor + duration_us + ADVANCE_GRACE_US;
+        sqlx::query("UPDATE play_groups SET anchor_wall_us = $2, boundary_wall_us = $3 WHERE account_id = $1")
+            .bind(account).bind(anchor).bind(deadline).execute(pool).await.expect("固定真实兜底到期前提");
+        let mut conn =
+            pool.acquire().await.expect("检查到期前提连接");
+        let held = rows::load(&mut conn, account)
+            .await
+            .expect("读取持久前提")
+            .expect("组在");
+        assert_eq!(
+            held.now
+                .expect("持久播放在")
+                .deadline(duration_us as u64),
+            Some(deadline)
+        );
+        let stored_deadline: i64 = sqlx::query_scalar("SELECT boundary_wall_us FROM play_groups WHERE account_id = $1")
+            .bind(account).fetch_one(&mut *conn).await.expect("读取持久兜底时刻");
+        assert_eq!(stored_deadline, deadline);
+        let sampled_at = wall_now_us();
+        assert!(deadline <= sampled_at, "真实宽限已经过去");
+        assert!(
+            rows::due(&mut conn, sampled_at)
+                .await
+                .expect("真实due查询")
+                .contains(&account)
+        );
         (account, roster, inbox, state)
     }
 
