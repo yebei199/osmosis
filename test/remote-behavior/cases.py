@@ -441,7 +441,12 @@ def last_output_reconnect(world):
     remote_pick(world)
     world.one.gate.cut()
     world.silent(*world.clients)
-    wait_until(lambda: not world.group()["playing"], "last output removal pauses group")
+    # 闸保留服务端半连接,等待生产 30s×两次容忍的最坏相位清退。
+    wait_until(
+        lambda: not world.group()["playing"],
+        "last output removal pauses group",
+        timeout=100,
+    )
     world.one.gate.heal()
     wait_until(
         lambda: world.one.ui.find("RoundControl::touch", "\u64ad\u653e"),
