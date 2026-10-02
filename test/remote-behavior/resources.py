@@ -33,6 +33,7 @@ from position import (
 TIMEOUT = 40
 POLL = 0.1
 PCM_WINDOW = 1.25
+CAPTURE_LATENCY_MS = 100
 
 
 # 环境失败与最终行为失败分开，故障灵敏度只认后者。
@@ -292,6 +293,8 @@ class Client:
                 "--format=s16le",
                 "--rate=48000",
                 "--channels=2",
+                # 默认 monitor 以 2s 调度,与本轮 CPAL 短缓冲不匹配。
+                f"--latency-msec={CAPTURE_LATENCY_MS}",
             ],
             self.env,
             stdout=capture_file,
