@@ -10,7 +10,7 @@ if [[ "$mode" != all && "$mode" != list ]]; then
     exit 2
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
-for required in cargo uv pasta pulseaudio pactl parec initdb postgres Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     command -v "$required" >/dev/null || { echo "missing dependency: $required" >&2; exit 2; }
 done
 if [[ $(id -u) == 0 ]]; then
@@ -65,7 +65,7 @@ print("pidfd and grpc/numpy/psycopg/pytest imports available")
 PY
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
-for required in cargo uv pasta pulseaudio pactl parec initdb postgres Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     executable=$(command -v "$required")
     sha256sum "$executable" >> "$REMOTE_BEHAVIOR_ARTIFACTS/environment-sha256.txt"
 done

@@ -598,8 +598,29 @@ class World:
                 raise RuntimeError(f"initdb exited: {status}")
         finally:
             initialization.stop()
-        self.spawn("postgres", ["postgres", "-D", self.pg_data, "-k", self.pg_socket, "-h", ""])
-        wait_until(lambda: (self.pg_socket / ".s.PGSQL.5432").exists(), "Postgres socket")
+        postgres = self.spawn(
+            "postgres", ["postgres", "-D", self.pg_data, "-k", self.pg_socket, "-h", ""]
+        )
+        wait_until(
+            lambda: (
+                postgres.alive() is None
+                and subprocess.run(
+                    [
+                        "pg_isready",
+                        "--host",
+                        str(self.pg_socket),
+                        "--dbname",
+                        "postgres",
+                        "--timeout=1",
+                    ],
+                    capture_output=True,
+                    timeout=5,
+                    check=False,
+                ).returncode
+                == 0
+            ),
+            "private Postgres accepting connections",
+        )
         with psycopg.connect(dbname="postgres", host=str(self.pg_socket), autocommit=True) as db:
             db.execute("CREATE DATABASE osmosis")
         self.db = psycopg.Connection[dict[str, Any]].connect(
