@@ -78,4 +78,5 @@ tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
+    --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \
     --junitxml "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml"
