@@ -8,7 +8,6 @@ use ui::{
 };
 
 fn window(width: f32) -> MainWindow {
-    testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.window()
         .set_size(slint::LogicalSize::new(width, 800.0));
@@ -115,6 +114,7 @@ fn every_strip_combination_reserves_space_in_both_layouts()
 /// 页面覆层共用同一份让位空间，登录页同时缩短高度。
 #[test]
 fn login_and_play_pages_move_below_the_status_stack() {
+    testing::init_no_event_loop();
     let ui = window(420.0);
     ui.global::<Session>().set_logged_in(false);
     let original = element(&ui, "MainWindow::login-page")
@@ -139,6 +139,7 @@ fn login_and_play_pages_move_below_the_status_stack() {
 /// 两种组状态的操作都达到触控下限，保留原来的加入与退出标签。
 #[test]
 fn group_actions_have_a_full_touch_target() {
+    testing::init_no_event_loop();
     let ui = window(420.0);
     strips(&ui, 2);
     for (joinable, label) in
@@ -156,6 +157,7 @@ fn group_actions_have_a_full_touch_target() {
 /// 歌单首行走指针命中测试；回调把详情页打开，防止无障碍动作绕过遮挡。
 #[test]
 fn the_first_playlist_opens_through_a_real_pointer_click() {
+    testing::init_no_event_loop();
     for width in [420.0, 1000.0] {
         let ui = window(width);
         ui.global::<Library>().set_playlists(ModelRc::new(
