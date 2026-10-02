@@ -357,3 +357,445 @@ fn tapping_another_track_while_loading_switches() {
     );
     assert_eq!(deck.execution.publishes(), 1);
 }
+
+/// 每条健康播放器用例只在自己的 ALSA null 子进程里执行，不改宿主默认输出。
+#[cfg(target_os = "linux")]
+fn with_null_audio(test: &str, check: impl FnOnce()) {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if std::env::var("UI_TRANSPORT_CHILD")
+        .is_ok_and(|name| name == test)
+    {
+        check();
+        return;
+    }
+
+    /// 超时、断言失败和正常退出都回收本用例唯一的子进程。
+    struct OwnedChild(std::process::Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let directory = tempfile::tempdir()
+        .expect("创建本用例的音频与状态目录");
+    let alsa = directory.path().join("asound.conf");
+    std::fs::write(&alsa, "pcm.!default { type null }\n")
+        .expect("写入只属于子进程的 ALSA null 配置");
+    let log_path = directory.path().join("child.log");
+    let log = std::fs::File::create(&log_path)
+        .expect("创建子进程输出文件");
+    let mut command = Command::new(
+        std::env::current_exe()
+            .expect("取得当前测试二进制"),
+    );
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env("UI_TRANSPORT_CHILD", test)
+        .env("ALSA_CONFIG_PATH", &alsa)
+        .env("TMPDIR", directory.path())
+        .env("HOME", directory.path())
+        .env("XDG_CONFIG_HOME", directory.path())
+        .env("XDG_STATE_HOME", directory.path())
+        .env("XDG_RUNTIME_DIR", directory.path())
+        .env(
+            "PULSE_SERVER",
+            format!(
+                "unix:{}",
+                directory.path().join("unused").display()
+            ),
+        )
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!(
+                "unix:path={}",
+                directory
+                    .path()
+                    .join("unused-bus")
+                    .display()
+            ),
+        )
+        .stdout(Stdio::from(
+            log.try_clone().expect("复制日志句柄"),
+        ))
+        .stderr(Stdio::from(log));
+    // 继承覆盖率目录但给子进程独有 profile，避免覆盖父测试的执行计数。
+    if let Some(mut profile) =
+        std::env::var_os("LLVM_PROFILE_FILE")
+    {
+        profile.push(".transport-%p.profraw");
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    let mut child = OwnedChild(
+        command.spawn().expect("启动本用例的独有子进程"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) =
+            child.0.try_wait().expect("读取子进程退出")
+        {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "本机控制特征用例子进程超时"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let output = std::fs::read_to_string(log_path)
+        .expect("读取子进程原始输出");
+    assert!(
+        status.success(),
+        "子进程失败 {status}: {output}"
+    );
+    assert!(
+        output.contains("1 passed; 0 failed;"),
+        "子进程必须执行一个真实用例，不能用空选择通过: {output}",
+    );
+}
+
+/// 只替换设备边界，传输回调、Queue、Execution 和真实 audio::Player 照常执行。
+#[cfg(target_os = "linux")]
+fn healthy_deck_window() -> (MainWindow, Deck) {
+    let (ui, mut deck) = deck_window();
+    let player = Arc::new(Ok(audio::Player::new()
+        .expect("本用例的 ALSA null 输出必须可用")));
+    deck.player = player.clone();
+    deck.lyrics.player = player;
+    wire_transport(&ui, &deck);
+    (ui, deck)
+}
+
+/// 非空源暂停与继续仍操作真实播放器，不能把每次播放键都误判为 Replay。
+#[cfg(target_os = "linux")]
+#[test]
+fn local_toggle_pauses_and_resumes_the_existing_source() {
+    with_null_audio(
+        "music::tests::dispatch::local_toggle_pauses_and_resumes_the_existing_source",
+        || {
+            let (ui, deck) = healthy_deck_window();
+            let batch = batch_of(&deck, &["a", "b"]);
+            deck.queue.borrow_mut().replace(batch, 1);
+            deck.execution.adopt(41, 7, vec![101, 102]);
+            let player = deck
+                .player
+                .as_ref()
+                .as_ref()
+                .expect("健康播放器");
+            player.play(rodio::source::Zero::new(
+                rodio::ChannelCount::new(2)
+                    .expect("两声道"),
+                rodio::SampleRate::new(48_000)
+                    .expect("固定样本率"),
+            ));
+            assert!(!player.empty());
+            assert!(!player.is_paused());
+            ui.global::<Player>().set_is_playing(false);
+            let before = deck.execution.stamp().1;
+
+            ui.global::<Player>().invoke_toggle_play();
+
+            assert!(player.is_paused());
+            assert!(!player.empty());
+            assert!(
+                !ui.global::<Player>().get_is_playing()
+            );
+            ui.global::<Player>().invoke_toggle_play();
+            assert!(!player.is_paused());
+            assert!(!player.empty());
+            assert!(ui.global::<Player>().get_is_playing());
+            assert_eq!(deck.queue.borrow().index(), 1);
+            assert_eq!(
+                deck.execution.identity(),
+                (Some(41), Some(7), Some(7))
+            );
+            assert_eq!(deck.execution.publishes(), 0);
+            assert_eq!(
+                deck.execution.stamp().1,
+                before + 1
+            );
+            assert!(deck.group.intents().is_empty());
+        },
+    );
+}
+
+/// 已同步队列的空播放器重播当前条目，保留身份、只产生一次检查点而不发布新批。
+#[cfg(target_os = "linux")]
+#[test]
+fn local_replay_keeps_identity_and_stamps_one_checkpoint() {
+    with_null_audio(
+        "music::tests::dispatch::local_replay_keeps_identity_and_stamps_one_checkpoint",
+        || {
+            let (ui, deck) = healthy_deck_window();
+            let batch = batch_of(&deck, &["a", "b"]);
+            deck.queue
+                .borrow_mut()
+                .replace(batch.clone(), 1);
+            deck.execution.adopt(41, 7, vec![101, 102]);
+            let player = deck
+                .player
+                .as_ref()
+                .as_ref()
+                .expect("健康播放器");
+            assert!(player.empty());
+            assert!(player.is_paused());
+            ui.global::<Player>()
+                .set_now_id("stale".into());
+            ui.global::<Player>().set_now_loading(false);
+            let before = deck.execution.stamp().1;
+
+            ui.global::<Player>().invoke_toggle_play();
+
+            assert_eq!(
+                deck.queue.borrow().tracks(),
+                &batch
+            );
+            assert_eq!(deck.queue.borrow().index(), 1);
+            assert_eq!(
+                ui.global::<Player>().get_now_id(),
+                "b"
+            );
+            assert!(
+                ui.global::<Player>().get_now_loading()
+            );
+            assert!(
+                !ui.global::<Player>().get_is_playing()
+            );
+            assert_eq!(
+                deck.execution.identity(),
+                (Some(41), Some(7), Some(7))
+            );
+            assert_eq!(
+                deck.execution.entry_at(1),
+                Some(102)
+            );
+            assert_eq!(deck.execution.publishes(), 0);
+            assert_eq!(
+                deck.execution.stamp().1,
+                before + 2
+            );
+            assert!(deck.group.intents().is_empty());
+        },
+    );
+}
+
+/// 未同步队列也能按播放键重播；没有服务端身份时不凭空发检查点或发布。
+#[cfg(target_os = "linux")]
+#[test]
+fn local_replay_without_identity_still_starts_the_current_track()
+ {
+    with_null_audio(
+        "music::tests::dispatch::local_replay_without_identity_still_starts_the_current_track",
+        || {
+            let (ui, deck) = healthy_deck_window();
+            let batch = batch_of(&deck, &["a", "b"]);
+            deck.queue.borrow_mut().replace(batch, 1);
+            let before = deck.execution.stamp().1;
+
+            ui.global::<Player>().invoke_toggle_play();
+
+            assert_eq!(
+                ui.global::<Player>().get_now_id(),
+                "b"
+            );
+            assert!(
+                ui.global::<Player>().get_now_loading()
+            );
+            assert_eq!(deck.queue.borrow().index(), 1);
+            assert_eq!(
+                deck.execution.identity(),
+                (None, None, None)
+            );
+            assert_eq!(deck.execution.publishes(), 0);
+            assert_eq!(
+                deck.execution.stamp().1,
+                before + 1
+            );
+            assert!(deck.group.intents().is_empty());
+        },
+    );
+}
+
+/// 真空队列的播放键没有当前条目，不虚构曲目、加载态或执行检查点。
+#[cfg(target_os = "linux")]
+#[test]
+fn local_replay_with_an_empty_queue_does_not_create_a_checkpoint()
+ {
+    with_null_audio(
+        "music::tests::dispatch::local_replay_with_an_empty_queue_does_not_create_a_checkpoint",
+        || {
+            let (ui, deck) = healthy_deck_window();
+            deck.execution.adopt(41, 7, Vec::new());
+            ui.global::<Player>().set_now_id("".into());
+            ui.global::<Player>().set_now_loading(false);
+            let before = deck.execution.stamp().1;
+
+            ui.global::<Player>().invoke_toggle_play();
+
+            assert!(
+                deck.queue.borrow().current().is_none()
+            );
+            assert_eq!(
+                ui.global::<Player>().get_now_id(),
+                ""
+            );
+            assert!(
+                !ui.global::<Player>().get_now_loading()
+            );
+            assert!(
+                !ui.global::<Player>().get_is_playing()
+            );
+            assert_eq!(deck.execution.publishes(), 0);
+            assert_eq!(
+                deck.execution.stamp().1,
+                before + 1
+            );
+            assert!(deck.group.intents().is_empty());
+        },
+    );
+}
+
+/// 同批已同步曲目再点另一条，只更新当前条目检查点，不能再次发布整批。
+#[test]
+fn local_pick_in_the_synced_batch_stamps_without_republishing()
+ {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let batch = batch_of(&deck, &["a", "b"]);
+    deck.queue.borrow_mut().replace(batch.clone(), 0);
+    deck.execution.adopt(41, 7, vec![101, 102]);
+    let before = deck.execution.stamp().1;
+
+    ui.global::<Player>().invoke_play("b".into());
+
+    assert_eq!(deck.queue.borrow().tracks(), &batch);
+    assert_eq!(deck.queue.borrow().index(), 1);
+    assert_eq!(ui.global::<Player>().get_now_id(), "b");
+    assert!(ui.global::<Player>().get_now_loading());
+    assert_eq!(
+        deck.execution.identity(),
+        (Some(41), Some(7), Some(7))
+    );
+    assert_eq!(deck.execution.publishes(), 0);
+    assert_eq!(deck.execution.stamp().1, before + 2);
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 上一首从第二条回到第一条，回调落在本机队列且不发布新批。
+#[test]
+fn local_previous_returns_to_the_previous_queue_entry() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let batch = batch_of(&deck, &["a", "b"]);
+    deck.queue.borrow_mut().replace(batch, 1);
+
+    ui.global::<Player>().invoke_prev_track();
+
+    assert_eq!(deck.queue.borrow().index(), 0);
+    assert_eq!(ui.global::<Player>().get_now_id(), "a");
+    assert!(ui.global::<Player>().get_now_loading());
+    assert_eq!(deck.execution.publishes(), 0);
+    assert!(deck.group.intents().is_empty());
+}
+
+/// Idle 上的进度拖动没有曲目可跳，不能凭 UI 的旧数据进入缓冲。
+#[test]
+fn local_seek_while_idle_leaves_buffering_unchanged() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    ui.global::<Player>().set_buffering(false);
+
+    ui.global::<Player>().invoke_seek(0.5);
+
+    assert!(!ui.global::<Player>().get_buffering());
+    assert!(matches!(
+        deck.playback.borrow().state(),
+        PlaybackState::Idle
+    ));
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 加载中的有时长曲目允许拖进度，同步段当场挂上缓冲，保留原曲目。
+#[test]
+fn local_seek_on_a_loading_track_marks_buffering() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    hold_loading(&deck, "a");
+    ui.global::<Player>().set_buffering(false);
+
+    ui.global::<Player>().invoke_seek(0.5);
+
+    assert!(ui.global::<Player>().get_buffering());
+    assert!(
+        matches!(deck.playback.borrow().state(), PlaybackState::Loading(track) if track.id == "a")
+    );
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 已起播曲目也经过同一跳转闸；本用例只判同步反馈，不代替真实 PCM 位置。
+#[test]
+fn local_seek_on_a_playing_track_marks_buffering() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    poll_once(app_core::play(
+        &deck.playback,
+        track_with_id("a"),
+        |_| async { Ok::<(), String>(()) },
+        |()| {},
+    ));
+    ui.global::<Player>().set_buffering(false);
+
+    ui.global::<Player>().invoke_seek(0.5);
+
+    assert!(ui.global::<Player>().get_buffering());
+    assert!(
+        matches!(deck.playback.borrow().state(), PlaybackState::Playing(track) if track.id == "a")
+    );
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 没有时长或比例不是有限数时不跳，不虚构缓冲或破坏当前 Loading。
+#[test]
+fn local_seek_rejects_unknown_duration_and_nonfinite_ratios()
+ {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+    let mut unknown = track_with_id("a");
+    unknown.duration_ms = 0;
+    poll_once(app_core::play(
+        &deck.playback,
+        unknown,
+        |_| core::future::pending::<Result<(), String>>(),
+        |()| {},
+    ));
+    ui.global::<Player>().set_buffering(false);
+    ui.global::<Player>().invoke_seek(0.5);
+    assert!(!ui.global::<Player>().get_buffering());
+
+    hold_loading(&deck, "a");
+    for ratio in [f32::NAN, f32::INFINITY] {
+        ui.global::<Player>().invoke_seek(ratio);
+        assert!(!ui.global::<Player>().get_buffering());
+    }
+    assert!(
+        matches!(deck.playback.borrow().state(), PlaybackState::Loading(track) if track.id == "a")
+    );
+    assert!(deck.group.intents().is_empty());
+}
+
+/// 音量滑块的真实回调进入本机分支，马上夹值并投影，不发组操作。
+#[test]
+fn local_volume_callback_clamps_without_group_transport() {
+    let (ui, deck) = deck_window();
+    wire_transport(&ui, &deck);
+
+    ui.global::<Player>().invoke_volume_changed(1.5);
+
+    assert_eq!(ui.global::<Player>().get_volume(), 1.0);
+    assert_eq!(deck.execution.publishes(), 0);
+    assert!(deck.group.intents().is_empty());
+}

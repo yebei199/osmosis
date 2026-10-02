@@ -1,5 +1,13 @@
 # test —— 端到端脚本与浏览器侧的对照页
 
+## remote-behavior/ —— 三个真实客户端的遥控音频验收
+
+独立 Linux 显示、namespace、数据库及音频服务，MCP 驱动列表、卡墙和遥控操作，
+实际 PCM 区分曲目与时间位置。覆盖恢复和生命周期回归，四个独立变异证明故障灵敏度。
+`just ci-remote` 纳入 `just ci` 与 PR/workflow_dispatch 的 CI；缺依赖和采集失败均非零。
+环境、入口及证明边界见 [remote-behavior/README.md](remote-behavior/README.md)。
+当前为 #175 审前材料，尚未执行。
+
 ## radio-output-e2e.sh —— 损坏组切 pc1 输出能接续当前电台吗(#174)
 
 `bash test/radio-output-e2e.sh direct|recovered|idle` 从真实电台入口起播,再在个人页点击

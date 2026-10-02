@@ -41,8 +41,13 @@ _default:
 # 本地跑一遍 CI 会跑的全部检查。dev 上的 push 不触发 CI,提交前跑这个
 # 与 .github/workflows/ci.yml 一一对应,命令逐字相同
 [group('ci')]
-ci: ci-fmt ci-test ci-cross ci-boundaries
+ci: ci-fmt ci-test ci-cross ci-boundaries ci-remote
     @echo "==> CI 全部通过"
+
+# 遥控行为套件：独立软件显示/音频与真实三客户端，缺能力非零。
+[group('ci')]
+ci-remote:
+    nix-shell test/remote-behavior/env.nix --run 'python "$REMOTE_BEHAVIOR_ACCEPT_CHECK" run'
 
 # 不套 nix-shell:slint.nix 给的是 fontconfig、alsa 这类原生库,rustfmt 一个都不用,
 # 而 Rust 工具链本来就来自外面的环境。CI 那个 fmt job 同样什么都不装

@@ -40,3 +40,4 @@ local.properties
 # Claude Code 的本机设置(哪些 MCP server 在这台机器上开着)。settings.json 是
 # 共享的、进版本库;这一份是每台机器各自的
 /.claude/settings.local.json
+/test/remote-behavior/results/

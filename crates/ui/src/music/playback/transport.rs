@@ -257,6 +257,55 @@ pub(in crate::music) fn rest_local(
     ui.global::<Player>().set_playback_text(
         describe_playback(&PlaybackState::Idle).into(),
     );
+    push_stopped(ui, deck);
+}
+
+/// 停音频不丢操作入口:组内画全局状态,独奏画保留队列,不改变执行状态。
+#[cfg(not(target_arch = "wasm32"))]
+fn push_stopped(ui: &MainWindow, deck: &Deck) {
+    if deck.group.is_member() {
+        deck.group.push_playback(ui);
+        return;
+    }
+    let queue = deck.queue.borrow();
+    let track = queue.current();
+    let id = track.map_or("", |track| track.id.as_str());
+    if ui.global::<Player>().get_now_id().as_str() != id {
+        ui.global::<Viz>()
+            .set_cover_art(slint::Image::default());
+        deck.cover.clear(ui);
+        deck.lyrics.replace(Vec::new());
+        ui.global::<Viz>()
+            .set_lyric_line(slint::SharedString::new());
+        ui.global::<Viz>().set_lyric_translation(
+            slint::SharedString::new(),
+        );
+    }
+    ui.global::<Player>().set_has_track(track.is_some());
+    ui.global::<Player>().set_now_id(id.into());
+    ui.global::<Player>().set_is_playing(false);
+    ui.global::<Player>().set_now_loading(false);
+    ui.global::<Player>().set_buffering(false);
+    ui.global::<Viz>().set_now_title(
+        track
+            .map_or("", |track| track.title.as_str())
+            .into(),
+    );
+    ui.global::<Viz>().set_now_artists(
+        track
+            .map_or_else(String::new, |track| {
+                join_artists(&track.artists)
+            })
+            .into(),
+    );
+    ui.global::<Player>().set_progress_ratio(0.0);
+    ui.global::<Player>().set_progress_text(
+        crate::progress::progress_text(
+            0.0,
+            track.map_or(0, |track| track.duration_ms),
+        )
+        .into(),
+    );
 }
 
 /// 自动续播:每秒看一眼,放空了就推进队列。
@@ -311,7 +360,7 @@ pub(in crate::music) fn start_auto_advance(
 
             // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
             // 而两个定时器意味着两套"现在放到哪"的说法。
-            push_progress(&ui, &state, position);
+            push_progress(&ui, &deck, &state, position);
             // 组里出声时每秒报一次执行事实(故障、路由),给组里其他设备看。
             deck.group.report(device_report(&deck));
             // 服务端回来了就把没同步上去的那一批补提交(AC-12 的「恢复后
@@ -488,26 +537,34 @@ pub(in crate::music) fn tick_progress(
         deck.group.push_playback(ui);
         return;
     }
+    let state = deck.playback.borrow().state().clone();
+    if matches!(state, PlaybackState::Idle) {
+        push_stopped(ui, deck);
+        return;
+    }
     let Ok(player) = deck.player.as_ref() else {
         return;
     };
-    let state = deck.playback.borrow().state().clone();
     if matches!(state, PlaybackState::Playing(_)) {
-        push_progress(ui, &state, player.position());
+        push_progress(ui, deck, &state, player.position());
     }
 }
 
 /// 把当前进度推给界面。
 ///
-/// 手上没歌时清成「没有」而不是留着上一首的数字 —— 停下之后那条进度条
-/// 还停在 3:41,读起来像是还在放。
+/// Idle保留队列的可操作信息并归零进度;音频执行与展示曲目分别读取。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn push_progress(
     ui: &MainWindow,
+    deck: &Deck,
     state: &PlaybackState,
     position: core::time::Duration,
 ) {
     let track = match state {
+        PlaybackState::Idle => {
+            push_stopped(ui, deck);
+            return;
+        }
         PlaybackState::Playing(track)
         | PlaybackState::Loading(track) => track,
         _ => {
