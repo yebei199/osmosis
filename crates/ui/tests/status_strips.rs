@@ -54,6 +54,7 @@ fn strips(ui: &MainWindow, mask: u8) {
 #[test]
 fn every_strip_combination_reserves_space_in_both_layouts()
 {
+    testing::init_no_event_loop();
     for width in [420.0, 1000.0] {
         let ui = window(width);
         let page_id = if width < 600.0 {

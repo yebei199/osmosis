@@ -144,9 +144,7 @@ export component MainWindow inherits Window {
     out property <length> nav-slot-h: 68px;
     // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
     out property <length> nav-w: 96px;
-    // 侧栏只在宽版式出现,而宽版式没有底栏 —— 所以它的高度**就是**窗口高减去
-    // 上下安全区。此前写的是 `content.height`,那是同一个值绕了一圈拿到的;
-    // 内容区被登录页那层 `if` 包起来之后,外面也就引不到它了。
+    // 侧栏纹理跟随状态条下方的壳高度，底部安全区仍由主行消化。
     out property <length> nav-h: page-stack.height
         - root.safe-area-insets.bottom;
     // 底栏(紧凑版式)的横条几何。宽由布局回写 —— 四格等分要它,而它随窗口变;
@@ -315,8 +313,8 @@ export component MainWindow inherits Window {
                                 alignment: center;
                                 Rectangle {
                                     width: exit-label.preferred-width + 20px;
-                                    height: 30px;
-                                    border-radius: 15px;
+                                    height: 44px;
+                                    border-radius: 22px;
                                     background: exit-touch.has-hover ? Theme.accent : Theme.overlay-weak;
                                     animate background { duration: 140ms; easing: ease-out; }
 
