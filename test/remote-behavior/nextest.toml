@@ -1,6 +1,6 @@
 # 仅本任务新增的快速状态投影证据；不迁移整个Rust套件。
 [profile.rb-projection]
-default-filter = 'binary_id(ui) & (test(music::tests::group::local_idle_queue_keeps_playback_entry) | test(music::tests::group::empty_idle_queue_clears_remote_projection) | test(music::tests::group::silent_member_projection_stays_global))'
+default-filter = 'binary_id(ui) & (test(music::tests::group::local_idle_queue_keeps_playback_entry) | test(music::tests::group::empty_idle_queue_clears_remote_projection) | test(music::tests::group::silent_member_projection_stays_global) | test(music::tests::group::remote_shuffle_and_loop_follow_group_state) | test(music::tests::group::output_shuffle_and_loop_follow_group_state) | test(music::tests::group::local_radio_seed_))'
 retries = 0
 
 [profile.rb-projection.junit]

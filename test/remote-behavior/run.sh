@@ -5,9 +5,20 @@ repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
 mode=${1:-all}
-if [[ "$mode" != all && "$mode" != list && "$mode" != radio ]]; then
-    echo 'usage: run.sh [all|list|radio]' >&2
+if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != targeted ]]; then
+    echo 'usage: run.sh [all|list|radio|targeted <testcase>...]' >&2
     exit 2
+fi
+selected_tests=()
+if [[ "$mode" == targeted ]]; then
+    shift
+    if [[ $# -eq 0 ]]; then
+        echo 'targeted requires at least one testcase' >&2
+        exit 2
+    fi
+    for testcase in "$@"; do
+        selected_tests+=("$suite_dir/$testcase")
+    done
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
 for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
@@ -88,6 +99,7 @@ fi
 tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi
+if [[ "$mode" == targeted ]]; then tests=("${selected_tests[@]}"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \
