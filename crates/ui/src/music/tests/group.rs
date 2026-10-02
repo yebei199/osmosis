@@ -14,7 +14,7 @@ use crate::{Player, Shell, Viz};
 /// Idle仍保留本地当前曲目:停止和刷新不能伪造Playing,也不能留远端曲目。
 #[test]
 fn local_idle_queue_keeps_playback_entry() {
-    let (ui, deck) = deck_window();
+    let (ui, deck) = projection_window();
     let local = track_with_id("local-retained");
     deck.queue.borrow_mut().replace(vec![local.clone()], 0);
     deck.group.assume(Some(state(&["pc"], true)));
@@ -56,7 +56,7 @@ fn local_idle_queue_keeps_playback_entry() {
 /// 真正没有本地曲目:离组时清除原组投影,不凭旧has_track造出重播入口。
 #[test]
 fn empty_idle_queue_clears_remote_projection() {
-    let (ui, deck) = deck_window();
+    let (ui, deck) = projection_window();
     assert!(deck.queue.borrow().current().is_none());
     deck.group.assume(Some(state(&["pc"], true)));
     deck.group.push_playback(&ui);
@@ -85,7 +85,7 @@ fn empty_idle_queue_clears_remote_projection() {
 /// 非出声成员始终投影组状态:本地Idle/保留曲目不覆盖组曲目及暂停按钮。
 #[test]
 fn silent_member_projection_stays_global() {
-    let (ui, deck) = deck_window();
+    let (ui, deck) = projection_window();
     deck.queue
         .borrow_mut()
         .replace(vec![track_with_id("local-retained")], 0);
@@ -117,6 +117,24 @@ fn silent_member_projection_stays_global() {
             assert!(deck.group.intents().is_empty());
         }
     }
+}
+
+/// 投影需要已校时的信令钟；只提供时钟输入，不替代Group的投影结果。
+fn projection_window() -> (MainWindow, Deck) {
+    let (ui, mut deck) = deck_window();
+    let client =
+        std::sync::Arc::new(syncplay::Client::detached());
+    let now = audio::clock::monotonic_ns();
+    client.clock().lock().expect("test clock lock").add(
+        1,
+        now,
+        u64::try_from(now / 1_000)
+            .expect("monotonic clock is nonnegative"),
+        now,
+    );
+    deck.group = crate::sync::group::new(&ui, "me");
+    deck.group.attach(&client);
+    (ui, deck)
 }
 
 /// 把控制条、输出设备那一排、队列页接到窗口上。
