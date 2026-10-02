@@ -8894,6 +8894,7 @@ dependencies = [
  "image",
  "log",
  "qrcode",
+ "rodio",
  "similar-asserts",
  "slint",
  "slint-build",
