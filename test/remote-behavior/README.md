@@ -11,9 +11,9 @@ namespace 请求该客户端的 MCP。
 测试失败保留资源日志与 PCM，临时进程和数据库仍精确清理。`mutate.py` 只改临时固定快照，
 保留每一种独立变异的 patch 和行为失败结果。
 
-不验证 Android 原生集成、物理扬声器或全部声卡驱动。当前提交是 #175 的审前测试材料，
-尚未执行；CI 接入提案及环境待验证项见本树 `.dispatch/175-tests-1.md` 与
-`.dispatch/175-tests-t2.md`。
+不验证 Android 原生集成、物理扬声器或全部声卡驱动。#175 测试设计已经审过，正在执行
+真实链路验证；运行结果与未决项以本树 `.dispatch/175-handoff-*` 的固定候选报告为准，
+不能将设计通过视作功能通过。设计见 `.dispatch/175-tests-t2.md`。
 
 审后运行入口为 `just ci-remote`，完整 `just ci` 也包含它。CI workflow 的非 draft PR
 事件及 `workflow_dispatch` 执行相同 Nix shell 和部署检查器，检查器消费
@@ -39,6 +39,9 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 wrapper 报告的 PID 必须等于实际持有的命令 PID，才用于音频绑定和停止。pasta 仅接入
 已核对的本轮 namespace，不自行创建 PID namespace。lavapipe 通过现有 SLINT_WGPU_CPU
 开关允许软件 adapter，没有修改渲染生产逻辑。
+登录在真实 LoginPage 内要求唯一可见的登录 HoverButton，并点击该按钮唯一可见的 touch。
+标签属于按钮根，touch 承接实际点击。每个客户端保留填值前的原始 MCP 子树与提交按钮
+根/touch 的属性、句柄和唯一性记录，账户填值不进入证据。
 
 启动前三台各采有效静音窗口。每次音频采样保留原始 S16LE、字节偏移、采样时间和
 音频图：应用 PID/birth → sink-input → 私有 sink → monitor → 本轮 parec PID。

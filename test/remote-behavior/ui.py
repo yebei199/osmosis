@@ -129,13 +129,62 @@ class UI:
         else:
             self.call("invoke_accessibility_action", elementHandle=handle, action=action)
 
+    # 标签在 HoverButton 根，点击落在同一按钮的唯一可见 touch。
+    def login_submit(self, page):
+        buttons = self.call(
+            "query_element_descendants",
+            elementHandle=page,
+            findAll=True,
+            queryStack=[{"matchElementTypeName": "HoverButton"}],
+        ).get("elementHandles", [])
+        matches = []
+        for button in buttons:
+            properties = self.call("get_element_properties", elementHandle=button)
+            if properties.get("accessibleLabel") == LABELS["login"] and self.visible(button):
+                matches.append((button, properties))
+        if len(matches) != 1:
+            raise RuntimeError(f"login page requires one visible submit button: {len(matches)}")
+        button, properties = matches[0]
+        touches = self.call(
+            "query_element_descendants",
+            elementHandle=button,
+            findAll=True,
+            queryStack=[{"matchElementId": "HoverButton::touch"}],
+        ).get("elementHandles", [])
+        visible = [touch for touch in touches if self.visible(touch)]
+        if len(visible) != 1:
+            raise RuntimeError(f"login button requires one visible touch: {len(visible)}")
+        touch = visible[0]
+        (self.client.directory / "login-submit.json").write_text(
+            json.dumps(
+                {
+                    "page": page,
+                    "button": button,
+                    "button_properties": properties,
+                    "touch": touch,
+                    "touch_properties": self.call("get_element_properties", elementHandle=touch),
+                    "matching_buttons": len(matches),
+                    "visible_touches": len(visible),
+                },
+                indent=2,
+            )
+        )
+        return touch
+
     # 所有客户端在真实登录页提交隔离测试账户，不直接写登录态。
     def login(self, username, password):
+        page = self.must("MainWindow::login-page")
+        # 填值前保存原始子树，避免将口令或账户值写入证据。
+        (self.client.directory / "login-tree-before-input.json").write_text(
+            json.dumps(
+                self.call("get_element_tree", elementHandle=page, maxElements=1000), indent=2
+            )
+        )
         user = self.must("LoginPage::username")
         secret = self.must("LoginPage::password")
         self.call("set_element_value", elementHandle=user, value=username)
         self.call("set_element_value", elementHandle=secret, value=password)
-        self.activate(self.must("HoverButton::touch", LABELS["login"]), pointer=True)
+        self.activate(self.login_submit(page), pointer=True)
         wait_until(lambda: not self.elements("LoginPage::username"), "login completion")
 
     # Escape 沿用已有 pick-e2e 的收起动作，随后进入音乐主 tab。
