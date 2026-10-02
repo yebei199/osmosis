@@ -111,3 +111,7 @@ REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix T
 覆盖心跳最坏90秒及真实重连退避最大75秒，避免90秒素材先到末尾。
 继续之前要求暂停版本实际到达重连目标端，等待上限为60×1.25+10秒。
 其他用例保留90秒输入；原静音、暂停、真实继续及最终PCM断言不变。
+
+PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录，
+不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
+所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。

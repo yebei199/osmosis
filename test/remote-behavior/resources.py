@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -230,18 +231,20 @@ class Client:
         world.gates.append(self.gate)
         self.name = f"rb-{world.directory.name[-8:]}-{role}"
         (self.directory / "hostname").write_text(self.name + "\n")
+        runtime = world.runtime / role
+        runtime.mkdir(mode=0o700)
         self.env = world.env | {
             "XDG_STATE_HOME": str(self.directory / "state"),
             "XDG_CONFIG_HOME": str(self.directory / "config"),
             "XDG_CACHE_HOME": str(self.directory / "cache"),
             "XDG_DATA_HOME": str(self.directory / "data"),
-            "XDG_RUNTIME_DIR": str(self.directory / "runtime"),
+            "XDG_RUNTIME_DIR": str(runtime),
             "TMPDIR": str(self.directory / "tmp"),
             "DISPLAY": world.display,
             "SLINT_MCP_PORT": "8091",
             "RUST_LOG": "info,ui=debug",
         }
-        bus = self.directory / "runtime/bus"
+        bus = runtime / "bus"
         self.env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
         world.spawn(
             role + "-dbus",
@@ -249,7 +252,7 @@ class Client:
             self.env,
         )
         wait_until(bus.exists, role + " private D-Bus")
-        self.socket = self.directory / "runtime/pulse.sock"
+        self.socket = runtime / "pulse.sock"
         config = self.directory / "pulse.pa"
         config.write_text(
             f"load-module module-native-protocol-unix socket={self.socket} auth-anonymous=1\n"
@@ -552,6 +555,9 @@ class World:
         self.root, self.directory = root, directory
         self.desktop, self.server_binary = desktop, server
         self.processes, self.gates, self.clients, self.open_files = [], [], [], []
+        # socket不随持久证据目录嵌套,本轮独有短路径在关闭所有进程后回收。
+        self.runtime_directory = tempfile.TemporaryDirectory(prefix="rb-")
+        self.runtime = Path(self.runtime_directory.name)
         self.media = None
         self.media_duration = media_duration
         self.db: psycopg.Connection[dict[str, Any]] | None = None
@@ -591,7 +597,7 @@ class World:
     # 数据库只监听独有 unix socket；迁移完全由真实 server 执行。
     def start(self):
         self.pg_data = self.directory / "pg-data"
-        self.pg_socket = self.directory / "pg-socket"
+        self.pg_socket = self.runtime / "pg"
         self.pg_socket.mkdir()
         initialization = self.spawn(
             "initdb",
@@ -866,6 +872,7 @@ class World:
             finish(process.name, process.stop)
         for stream in self.open_files:
             finish(str(stream.name), stream.close)
+        finish("private runtime directory", self.runtime_directory.cleanup)
         (self.directory / "resources.json").write_text(
             json.dumps(
                 {
@@ -873,6 +880,8 @@ class World:
                     "audio_windows": [
                         sample for client in self.clients for sample in client.samples
                     ],
+                    "runtime_directory": str(self.runtime),
+                    "runtime_removed": not self.runtime.exists(),
                     "cleanup_errors": errors,
                 },
                 indent=2,
