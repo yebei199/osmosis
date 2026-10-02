@@ -528,7 +528,23 @@ impl Group {
         outputs: Vec<String>,
         seed: Option<GroupSeedDto>,
     ) {
-        self.send(
+        self.set_outputs_then(
+            ui,
+            outputs,
+            seed,
+            Box::new(|_| {}),
+        );
+    }
+
+    /// 改输出并把服务端实际采用的队列身份交给发起端。
+    pub fn set_outputs_then(
+        &self,
+        ui: &MainWindow,
+        outputs: Vec<String>,
+        seed: Option<GroupSeedDto>,
+        then: Then,
+    ) {
+        self.send_then(
             ui,
             "改输出设备",
             format!(
@@ -536,6 +552,7 @@ impl Group {
                 if seed.is_some() { " +seed" } else { "" }
             ),
             GroupIntent::Outputs(outputs, seed),
+            then,
         );
     }
 
