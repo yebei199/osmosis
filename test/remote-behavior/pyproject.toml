@@ -1,0 +1,20 @@
+[project]
+name = "osmosis-remote-behavior"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "grpcio==1.76.0",
+  "grpcio-tools==1.76.0",
+  "numpy==2.3.4",
+  "psycopg[binary]==3.2.12",
+  "pytest==8.4.2",
+  "pytest-xdist==3.8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["test_remote.py"]
+junit_family = "xunit2"
+addopts = "--strict-markers --strict-config"
+
+[tool.ruff]
+line-length = 100

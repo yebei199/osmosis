@@ -33,6 +33,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  remote-behavior:
+    name: remote-behavior
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      REMOTE_BEHAVIOR_JOBS: 1
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v30
+      # Ubuntu 的 AppArmor 可能拒绝未登记应用创建 user namespace。
+      # 仅配置一次性 runner；能力仍由用例校验，不可 skip。
+      - name: 允许 runner 的私有 namespace
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: 完整遥控行为与故障灵敏度
+        id: behavior
+        run: nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh'
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.behavior.outputs.artifacts != '' }}
+        with:
+          name: remote-behavior-evidence
+          path: |
+            ${{ steps.behavior.outputs.artifacts }}
+            !${{ steps.behavior.outputs.artifacts }}/build/**
+            !${{ steps.behavior.outputs.artifacts }}/fault-*/build/**
+            !${{ steps.behavior.outputs.artifacts }}/fault-*/snapshot/**
+          if-no-files-found: error
+          retention-days: 7
+
   # 格式。单独一个 job,而且排在最前面:cargo fmt 不编译任何东西,不要 native 依赖、
   # 也不要缓存,整轮二十来秒就有结论。挂到别的 job 后面的话,少一个空格也得等那边
   # 把依赖树编完才说得出来。

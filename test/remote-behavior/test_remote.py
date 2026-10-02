@@ -1,0 +1,128 @@
+"""REMOTE-BEHAVIOR-1 的可收集测试，JUnit 名称与验收映射逐一对应。"""
+
+import json
+import os
+import tempfile
+import time
+import traceback
+from pathlib import Path
+
+import pytest
+
+import cases
+from resources import World
+
+
+# 每个 testcase 从新环境开始，失败保留日志和 PCM；初始化失败同样清理。
+@pytest.fixture
+def world(request):
+    artifact_root = Path(os.environ["REMOTE_BEHAVIOR_ARTIFACTS"])
+    directory = Path(tempfile.mkdtemp(prefix="175-", dir=artifact_root))
+    root = Path(__file__).resolve().parents[2]
+    target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
+    instance = World(root, directory, target / "debug/osmosis-desktop", target / "debug/server")
+    started = time.time()
+    try:
+        yield instance.start()
+    except BaseException:
+        (directory / "original-failure.txt").write_text(traceback.format_exc())
+        raise
+    finally:
+        instance.close()
+        (directory / "testcase.json").write_text(
+            json.dumps(
+                {
+                    "nodeid": request.node.nodeid,
+                    "start": started,
+                    "end": time.time(),
+                    "candidate": os.environ["REMOTE_BEHAVIOR_COMMIT"],
+                },
+                indent=2,
+            )
+        )
+
+
+# 真实列表与真实卡墙各自贯通，不互相抵扣。
+@pytest.mark.parametrize("mode", ("list", "wall"))
+def test_core_pick(world, mode):
+    cases.remote_pick(world, mode)
+
+
+# 暂停/继续的判据是采到静音及再次推进的 PCM。
+def test_pause_resume(world):
+    cases.pause_resume(world)
+
+
+# 上首/下首必须改变真实输出的曲目编码。
+def test_previous_next(world):
+    cases.previous_next(world)
+
+
+# 同一素材的前跳与后跳都必须改变输出位置编码。
+def test_seek_both_directions(world):
+    cases.seek_both_directions(world)
+
+
+# 两台输出之间切换必须同时验证新目标播放与旧目标停止。
+def test_switch_output(world):
+    cases.switch_output(world)
+
+
+# 建组从本机真实播放接续有效 seed。
+def test_local_seed(world):
+    cases.local_seed(world)
+
+
+# 健康组不能被无关本机 seed 覆盖。
+def test_healthy_group_ignores_unrelated_seed(world):
+    cases.healthy_group_ignores_unrelated_seed(world)
+
+
+# 空组选择输出不自启，随后点歌仍可用。
+def test_idle_group(world):
+    cases.idle_group(world)
+
+
+# 三种失效、两种进入顺序和有/无 seed 都覆盖恢复后的遥控旧功能。
+@pytest.mark.parametrize(
+    ("damage", "order", "seed"),
+    [
+        pytest.param(damage, order, seed, id=f"{damage}-{order}-{seed}")
+        for damage in ("queue", "revision", "entry")
+        for order in ("direct", "recovered")
+        for seed in ("playing", "empty")
+    ],
+)
+def test_recover_invalid(world, damage, order, seed):
+    cases.recover_invalid(world, damage, order, seed)
+
+
+# 电台多次发布后仍能从暂停组继续原引用并再次遥控。
+def test_radio_publication_preserves_group_reference(world):
+    cases.radio_publication_preserves_group_reference(world)
+
+
+# 唯一目标断线、重连、手动继续由实际音频验证。
+def test_last_output_reconnect(world):
+    cases.last_output_reconnect(world)
+
+
+# 多输出时一台断线不打断另一台，重连按最新状态执行。
+def test_one_of_two_outputs_reconnect(world):
+    cases.one_of_two_outputs_reconnect(world)
+
+
+# 服务重启后版本和可控制性必须保持。
+def test_server_restart(world):
+    cases.server_restart(world)
+
+
+# 每个变异独立编译固定快照，编译/启动错误不会被计作有效 RED。
+@pytest.mark.parametrize(
+    "fault", ("send-request", "execute-target", "recover-reference", "protect-reference")
+)
+def test_fault_sensitivity(fault):
+    from mutate import verify
+
+    root = Path(__file__).resolve().parents[2]
+    verify(root, Path(os.environ["REMOTE_BEHAVIOR_ARTIFACTS"]), fault)
