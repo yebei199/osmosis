@@ -112,6 +112,21 @@ def verify(root: Path, artifacts: Path, fault: str):
     patch = subprocess.check_output(["git", "diff", "--", FAULTS[fault][0]], cwd=snapshot)
     (directory / "mutation.patch").write_bytes(patch)
     target = directory / "build"
+    source_target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
+    target.mkdir()
+    (directory / "build-source.json").write_text(
+        json.dumps({"candidate": candidate, "source": str(source_target)}, indent=2)
+    )
+    # 已结束的本轮构建复制到独有 target,不硬链接可写文件；变异仍重新编译。
+    if command(
+        ["cp", "--reflink=auto", "-R", "--dereference", str(source_target) + "/.", str(target)],
+        root,
+        env,
+        directory,
+        "copy-build",
+        1200,
+    ):
+        raise RuntimeError("cannot copy completed run-owned build")
     env.pop("OSMOSIS_API_BASE", None)
     env["SLINT_EMIT_DEBUG_INFO"] = "1"
     build = [
@@ -131,6 +146,15 @@ def verify(root: Path, artifacts: Path, fault: str):
     ]
     if command(build, snapshot, env, directory, "build", 3600):
         raise RuntimeError("mutation did not compile; this is not a valid RED")
+    if command(
+        ["sha256sum", str(target / "debug/osmosis-desktop"), str(target / "debug/server")],
+        snapshot,
+        env,
+        directory,
+        "binary-sha256",
+        60,
+    ):
+        raise RuntimeError("cannot record mutation binary identity")
     test = FAULTS[fault][1]
     status, case = run_case(snapshot, target, directory / "red", test)
     failure = case.find("failure")
