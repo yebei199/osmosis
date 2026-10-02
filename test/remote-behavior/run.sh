@@ -32,7 +32,6 @@ if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
     exit 2
 fi
 export REMOTE_BEHAVIOR_TARGET_DIR="${REMOTE_BEHAVIOR_TARGET_DIR:-$REMOTE_BEHAVIOR_ARTIFACTS/build}"
-export CARGO_TARGET_DIR="$REMOTE_BEHAVIOR_TARGET_DIR"
 export SLINT_EMIT_DEBUG_INFO=1
 unset OSMOSIS_API_BASE SLINT_LIVE_PREVIEW
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
@@ -77,7 +76,7 @@ run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
 if [[ "$mode" == all ]]; then
-    projection_junit="$REMOTE_BEHAVIOR_TARGET_DIR/nextest/rb-projection/junit.xml"
+    projection_junit="$repo_root/target/nextest/rb-projection/junit.xml"
     rm -f "$projection_junit"
     run_owned projection 3600 cargo nextest run --locked -p ui --lib \
         --config 'profile.dev.package."*".opt-level=0' \
