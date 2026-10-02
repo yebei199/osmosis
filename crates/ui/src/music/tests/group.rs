@@ -1004,14 +1004,15 @@ fn local_radio_seed_keeps_topping_up_after_join() {
 /// 输出应答采用其他队列或失败时,本机电台不能接管组里的曲目。
 #[test]
 fn local_radio_seed_rejects_failed_or_foreign_reply() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
     for reply in [
         Err(()),
         Ok(None),
         Ok(Some((99, 2))),
         Ok(Some((7, 3))),
     ] {
-        let (ui, deck) = deck_window();
-        wire(&ui, &deck);
+        deck.group.assume(None);
         start_local_fm(&ui, &deck);
         ui.global::<Shell>().invoke_set_output("pc".into());
         deck.group.assume(Some(radio_state(2, true)));
