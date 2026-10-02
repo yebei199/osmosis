@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from media import Media
+from media import DAILY_IDS, Media
 from resources import Client, World, wait_until
 
 
@@ -119,18 +119,33 @@ def download_world(monkeypatch):
 def start_download(world, mode, outcome):
     client = world.controller
     client.ui.pick(mode)
-    client.ui.must("RoundControl::touch", "更多")
-    # 选歌 HTTP 请求完成后才设置下载源，避免改变播放阶段的外部输入。
+    # 等真实播放输出，避免下载夹具抢走尚未完成的播放音源请求。
+    world.sound(client, DAILY_IDS[0], group=False)
     wait_until(lambda: bool(world.sql("SELECT id FROM play_events")), "selected track play event")
     world.media.download_mode = outcome
-    client.ui.activate(client.ui.must("RoundControl::touch", "更多"))
+
+    def open_drawer():
+        try:
+            client.ui.activate(client.ui.must("RoundControl::touch", "更多"))
+            return True
+        except RuntimeError as error:
+            if "element that was destroyed" not in str(error):
+                raise
+            return False
+
+    wait_until(open_drawer, "current playback drawer")
     client.ui.activate(client.ui.must("DrawerRow::touch", "下载这一首"))
     return client.directory / "home/Music/osmosis"
 
 
 # 提示取自真实元素树的 Text 属性，不把回调意图当下载结果。
 def banner_text(client):
-    tree = client.ui.call("get_element_tree", elementHandle=client.ui.root)
+    handles = client.ui.elements("MainWindow::banner")
+    if not handles:
+        return ""
+    tree = client.ui.call("get_element_tree", elementHandle=handles[0], maxElements=1000)
+    assert not tree["truncated"]
+    (client.directory / "download-banner.json").write_text(json.dumps(tree, ensure_ascii=False))
     return json.dumps(tree, ensure_ascii=False)
 
 
