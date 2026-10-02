@@ -397,6 +397,31 @@ fn output_shuffle_and_loop_follow_group_state() {
     assert_eq!(ui.global::<Player>().get_loop_mode(), 2);
 }
 
+/// 离组后开关重新显示保留的本机队列设置,不把组设置带进独奏。
+#[test]
+fn leaving_group_restores_local_modes() {
+    let (ui, deck) = projection_window();
+    let mut queue = deck.queue.borrow_mut();
+    queue.replace(
+        vec![track_with_id("a"), track_with_id("b")],
+        0,
+    );
+    queue.shuffle(13);
+    queue.set_loop_mode(app_core::LoopMode::All);
+    drop(queue);
+    let mut remote = state(&["pc"], true);
+    remote.now.as_mut().expect("group track").loop_mode =
+        LoopModeDto::One;
+    deck.group.assume(Some(remote));
+    playback::transport::tick_progress(&ui, &deck);
+    assert!(!ui.global::<Player>().get_shuffle_on());
+    assert_eq!(ui.global::<Player>().get_loop_mode(), 2);
+    deck.group.assume(None);
+    playback::transport::rest_local(&ui, &deck);
+    assert!(ui.global::<Player>().get_shuffle_on());
+    assert_eq!(ui.global::<Player>().get_loop_mode(), 1);
+}
+
 /// 在组里点一台设备:改成只在它上面出声;点本机就是本机出声。
 #[test]
 fn picking_a_device_in_the_group_sets_the_outputs() {

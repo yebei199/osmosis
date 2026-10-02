@@ -268,6 +268,11 @@ fn push_stopped(ui: &MainWindow, deck: &Deck) {
         return;
     }
     let queue = deck.queue.borrow();
+    ui.global::<Player>()
+        .set_shuffle_on(queue.is_shuffled());
+    ui.global::<Player>().set_loop_mode(
+        crate::media::loop_index(queue.loop_mode()),
+    );
     let track = queue.current();
     let id = track.map_or("", |track| track.id.as_str());
     if ui.global::<Player>().get_now_id().as_str() != id {

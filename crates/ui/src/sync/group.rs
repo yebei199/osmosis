@@ -889,8 +889,31 @@ impl Group {
         }
     }
 
+    /// 遥控与出声成员共用的开关投影,不依赖校时或本机解码状态。
+    pub fn push_modes(&self, ui: &MainWindow) {
+        if !self.is_member() {
+            return;
+        }
+        let now = self.now();
+        ui.global::<Player>().set_shuffle_on(
+            now.as_ref().is_some_and(|now| now.shuffled),
+        );
+        let mode = match now.map(|now| now.loop_mode) {
+            Some(app_core::LoopModeDto::All) => {
+                app_core::LoopMode::All
+            }
+            Some(app_core::LoopModeDto::One) => {
+                app_core::LoopMode::One
+            }
+            _ => app_core::LoopMode::Off,
+        };
+        ui.global::<Player>()
+            .set_loop_mode(crate::media::loop_index(mode));
+    }
+
     /// 只当遥控器时控制条画全局状态:歌名、进度、在不在放。
     pub fn push_playback(&self, ui: &MainWindow) {
+        self.push_modes(ui);
         let Some(now) = self.effective() else {
             ui.global::<Player>().set_has_track(false);
             ui.global::<Player>().set_is_playing(false);
