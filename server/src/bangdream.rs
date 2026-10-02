@@ -83,7 +83,9 @@ where
     }
 }
 
-/// 由 `build.rs` 从 `third_party/bang-dream/proto` 生成。
+/// 由 `build.rs` 从 `server/proto` 生成。
+// tonic 生成的 async_trait 方法重复标注 Future 的 must_use，仅在生成代码中豁免。
+#[allow(clippy::double_must_use)]
 pub mod proto {
     tonic::include_proto!("bangdream.music.v1");
 }
