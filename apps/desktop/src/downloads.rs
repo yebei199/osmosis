@@ -41,7 +41,14 @@ pub(crate) struct Store {
 impl Store {
     /// 平台入口只解析一次落点，目录实际在首次下载时创建。
     pub(crate) fn new() -> std::io::Result<Self> {
-        Ok(Self::at(music_directory()?.join("osmosis")))
+        Self::initialize(music_directory()?.join("osmosis"))
+    }
+
+    /// 初始化时回收上次进程留下的本应用待定条目。
+    fn initialize(
+        directory: PathBuf,
+    ) -> std::io::Result<Self> {
+        Ok(Self::at(directory))
     }
 
     /// 测试与平台目录解析共用同一个存储实现。
@@ -367,6 +374,50 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    /// 初始化只清理本应用的待定文件，其他文件与目录保持原样。
+    #[test]
+    fn initialization_cleans_only_owned_pending_files() {
+        let directory = tempfile::tempdir()
+            .expect("owned download directory");
+        let pending = directory
+            .path()
+            .join(".download-ABC123.pending");
+        std::fs::write(&pending, b"partial download")
+            .expect("write stale pending file");
+        let preserved = [
+            "song.mp3",
+            ".download-ABC123",
+            "other.pending",
+            ".other-ABC123.pending",
+        ];
+        for name in preserved {
+            std::fs::write(
+                directory.path().join(name),
+                b"preserved",
+            )
+            .expect("write unrelated file");
+        }
+        let unrelated_directory = directory
+            .path()
+            .join(".download-DEF456.pending");
+        std::fs::create_dir(&unrelated_directory)
+            .expect("create unrelated directory");
+        Store::initialize(directory.path().to_path_buf())
+            .expect("initialize download store");
+        assert!(
+            !pending.exists(),
+            "stale pending bytes survived initialization"
+        );
+        for name in preserved {
+            assert_eq!(
+                std::fs::read(directory.path().join(name))
+                    .expect("read preserved file"),
+                b"preserved"
+            );
+        }
+        assert!(unrelated_directory.is_dir());
     }
 
     /// 完成消息报告真正的落点。
