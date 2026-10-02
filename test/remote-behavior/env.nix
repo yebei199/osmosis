@@ -31,6 +31,7 @@ base.overrideAttrs (old: {
     ]);
   shellHook = (old.shellHook or "") + ''
     export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
+    export REMOTE_BEHAVIOR_PYTHON="${pkgs.python3}/bin/python3"
     export ALSA_PLUGIN_DIR="${pkgs.alsa-plugins}/lib/alsa-lib"
     for remote_icd in ${pkgs.mesa.drivers}/share/vulkan/icd.d/lvp_icd*.json; do
       test -f "$remote_icd" || { echo "missing lavapipe ICD" >&2; return 2; }
@@ -41,6 +42,7 @@ base.overrideAttrs (old: {
         pkgs.mesa
         pkgs.pulseaudio
         pkgs.alsa-plugins
+        pkgs.stdenv.cc.cc.lib
       ]
     }:$LD_LIBRARY_PATH"
   '';

@@ -25,6 +25,9 @@ pasta、PulseAudio、ALSA pulse plugin、PostgreSQL、Xvfb、lavapipe、namespac
 Python 依赖由 `uv.lock` 固定。宿主须是允许无特权 user/net/mount/UTS namespace 的
 Linux，使用普通用户。缺依赖、缺 namespace 或 GPU adapter、初始化和采集失败均非零，
 没有 skip 路径。CI 的 AppArmor 配置只发生在一次性 runner。
+uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ 由 Nix 声明。
+资源启动前实际核验 pidfd 与依赖导入；缺能力直接失败。`run.sh list` 仅选首条真实列表
+纵向用例，默认仍执行完整集合，acceptance/run.toml 与 CI 不使用局部模式。
 
 默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2` 限制软件 GPU 与编译资源，执行者
 获得更高额度后可以明确增加 worker；每个 testcase 独占资源，禁止自动重试和 worker 重启。
@@ -55,6 +58,8 @@ nextest 迁移。采集、位置与清理机制项也进入实际 pytest 集合�
 运行入口打印 `artifacts=`，证据留在该独占临时目录：原始 PCM、UI 动作（填充值去除）、
 媒体输入哈希、环境/候选哈希、命令日志、进程退出凭据、JUnit 与验收核对结果。
 四种变异分别在独立 clone 修改一个故障点，保留 patch、编译日志及定向 RED/GREEN JUnit。
+证据目录建立于持久 XDG cache 下的 osmosis-remote-behavior，或明确指定的
+REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix TMPDIR。
 编译/启动错误、超时和取消不算 RED。`lifecycle.py` 通过独占 IPC 持有 guardian，
 `guardian.py` 使用 Linux 子收割器与 pidfd 持有后代出生身份，跨 session 的后代也受托管。
 只遍历本树实际父子关系，不按名称或全机扫描；leader 先退后仍持有后代。先 TERM，

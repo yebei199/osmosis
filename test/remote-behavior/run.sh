@@ -4,6 +4,12 @@ set -euo pipefail
 repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
+mode=${1:-all}
+if [[ "$mode" != all && "$mode" != list ]]; then
+    echo 'usage: run.sh [all|list]' >&2
+    exit 2
+fi
+: "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
 for required in cargo uv pasta pulseaudio pactl parec initdb postgres Xvfb unshare nsenter mount dbus-daemon; do
     command -v "$required" >/dev/null || { echo "missing dependency: $required" >&2; exit 2; }
 done
@@ -12,7 +18,9 @@ if [[ $(id -u) == 0 ]]; then
     exit 2
 fi
 export REMOTE_BEHAVIOR_ARTIFACTS
-REMOTE_BEHAVIOR_ARTIFACTS=$(mktemp -d "${TMPDIR:-/tmp}/175-rb.XXXXXXXX")
+artifact_root=${REMOTE_BEHAVIOR_ARTIFACT_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/osmosis-remote-behavior}
+mkdir -p "$artifact_root"
+REMOTE_BEHAVIOR_ARTIFACTS=$(mktemp -d "$artifact_root/175-rb.XXXXXXXX")
 echo "artifacts=$REMOTE_BEHAVIOR_ARTIFACTS"
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
     echo "artifacts=$REMOTE_BEHAVIOR_ARTIFACTS" >> "$GITHUB_OUTPUT"
@@ -34,7 +42,27 @@ if ! [[ "$REMOTE_BEHAVIOR_JOBS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/start.txt"
 source "$suite_dir/lifecycle.sh"
-suite_python=$(uv run --project "$suite_dir" --frozen python -c 'import sys; print(sys.executable)')
+suite_python=$(uv run --project "$suite_dir" --frozen --no-managed-python \
+    --python "$REMOTE_BEHAVIOR_PYTHON" python -c 'import sys; print(sys.executable)')
+"$suite_python" - <<'PY' > "$REMOTE_BEHAVIOR_ARTIFACTS/python-capabilities.log" 2>&1
+import os
+import signal
+import sys
+
+import grpc
+import numpy
+import psycopg
+import pytest
+
+assert hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"), "Python lacks pidfd"
+fd = os.pidfd_open(os.getpid())
+try:
+    signal.pidfd_send_signal(fd, 0)
+finally:
+    os.close(fd)
+print(sys.executable, sys.version)
+print("pidfd and grpc/numpy/psycopg/pytest imports available")
+PY
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
 for required in cargo uv pasta pulseaudio pactl parec initdb postgres Xvfb unshare nsenter mount dbus-daemon; do
@@ -46,6 +74,8 @@ run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
+tests=("$suite_dir")
+if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
-    "$suite_dir" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
+    "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --junitxml "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml"
