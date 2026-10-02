@@ -1,0 +1,55 @@
+# #175：正式 tdd 验收映射；审前代码材料，不代表功能已通过。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实登录 → 个人页 OutputChip → 每日推荐 TrackList/WallView"
+observe = "目标真实客户端解码后私有 monitor 采到曲目与秒码；源端有效窗口静音"
+tests = ["test_remote::test_core_pick[list]", "test_remote::test_core_pick[wall]"]
+doubles = ["外部目录/音乐账户与 WAV HTTP 为替身；真实业务服务、客户端、解码和输出不替换，不能证明真实上游供应商或物理扬声器"]
+mutation = "send-request、execute-target 分别令 test_core_pick[list] 最终 PCM 失败"
+
+[[ac]]
+id = "AC-2"
+kind = "regression"
+entry = "列表点击；卡墙无障碍 Increment/Default；控制条暂停/继续/上下首；ProgressBar 拖动；个人页输出切换"
+observe = "曲目和播放位置由双声道 PCM 识别，暂停与旧输出通过连续有效 PCM 证明静音；先建立至少十二秒且推进两秒的实际音频，再从操作前 PCM 与单调时钟推导接续上下界，暂停期间连续有效静音至少六秒"
+tests = ["test_remote::test_core_pick[list]", "test_remote::test_core_pick[wall]", "test_remote::test_pause_resume", "test_remote::test_previous_next", "test_remote::test_seek_both_directions", "test_remote::test_switch_output", "test_remote::test_local_seed", "test_remote::test_healthy_group_ignores_unrelated_seed", "test_remote::test_idle_group", "test_position::test_handoff_accepts_continuation", "test_position::test_handoff_rejects_reset", "test_position::test_handoff_rejects_forward_jump", "test_position::test_pause_accepts_frozen_position", "test_position::test_pause_rejects_elapsed_time"]
+doubles = ["相同外部媒体替身；桌面软件声卡，不覆盖 Android 原生设备", "位置反例的构造时间/秒码仅验证断言判据，不抵扣真实用户路径的 PCM"]
+mutation = "send-request、execute-target；恢复候选同 ID 必须重新通过；test_position 的回零/前跳/暂停仍计时反例必须被拒绝"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+entry = "电台真实进入/续歌；直接 OutputChip 恢复；重启客户端后接收 GroupState 再切输出；恢复后列表点歌/暂停/继续/切输出/离组；真实信令断线及服务重启；电台旧引用恢复后确认独奏者非成员→点另一输出追加→双目标出声→确认已入组→再次点目标替换"
+observe = "失效 queue/revision/entry 恢复后遥控仍有音频；空组不自启；健康组不覆盖；暂停组旧引用保留；生命周期仍可继续；playing seed 接续位置须通过操作前 PCM 独立范围；独奏追加保留旧输出，成员替换令旧输出静音"
+tests = ["test_remote::test_recover_invalid[queue-direct-playing]", "test_remote::test_recover_invalid[queue-direct-empty]", "test_remote::test_recover_invalid[queue-recovered-playing]", "test_remote::test_recover_invalid[queue-recovered-empty]", "test_remote::test_recover_invalid[revision-direct-playing]", "test_remote::test_recover_invalid[revision-direct-empty]", "test_remote::test_recover_invalid[revision-recovered-playing]", "test_remote::test_recover_invalid[revision-recovered-empty]", "test_remote::test_recover_invalid[entry-direct-playing]", "test_remote::test_recover_invalid[entry-direct-empty]", "test_remote::test_recover_invalid[entry-recovered-playing]", "test_remote::test_recover_invalid[entry-recovered-empty]", "test_remote::test_radio_publication_preserves_group_reference", "test_remote::test_last_output_reconnect", "test_remote::test_one_of_two_outputs_reconnect", "test_remote::test_server_restart", "test_remote::test_switch_output", "test_remote::test_local_seed", "test_remote::test_healthy_group_ignores_unrelated_seed", "test_remote::test_idle_group"]
+doubles = ["SQL 仅造独立库的历史损坏引用；Gate 只切本轮客户端信令；不假造 GroupState、鉴权结果、播放状态或音频"]
+mutation = "recover-reference → revision-direct-playing；protect-reference → radio_publication_preserves_group_reference，必须是音频断言 RED"
+
+[[ac]]
+id = "AC-4"
+kind = "new"
+entry = "同一固定提交的四个独立临时 clone，分别删请求/目标执行/恢复/引用保护"
+observe = "每个变异独立编译后精确 testcase 的 AudioFailure；未变异候选同 testcase GREEN"
+tests = ["test_remote::test_fault_sensitivity[send-request]", "test_remote::test_fault_sensitivity[execute-target]", "test_remote::test_fault_sensitivity[recover-reference]", "test_remote::test_fault_sensitivity[protect-reference]"]
+doubles = ["源码变异是故障替身；编译/启动失败、定位失败、空集合和 skip 都不能证明灵敏度"]
+mutation = "四个实际 JUnit test_fault_sensitivity 参数项，留 mutation.patch、red/junit.xml、restored/junit.xml"
+
+[[ac]]
+id = "AC-5"
+kind = "new"
+entry = "just ci 的 ci-remote / forge PR、workflow_dispatch → Nix 固定部署 accept-check.py → acceptance/run.toml → run.sh → pytest --junitxml → 声明相对路径的本次 JUnit"
+observe = "完整集合全部通过且逐 AC 无遗漏；缺能力、skip、失败、重复 JUnit 名称、采集不足非零"
+tests = ["test_remote::test_core_pick[list]", "test_remote::test_core_pick[wall]", "test_remote::test_pause_resume", "test_remote::test_previous_next", "test_remote::test_seek_both_directions", "test_remote::test_switch_output", "test_remote::test_local_seed", "test_remote::test_healthy_group_ignores_unrelated_seed", "test_remote::test_idle_group", "test_remote::test_recover_invalid[queue-direct-playing]", "test_remote::test_recover_invalid[queue-direct-empty]", "test_remote::test_recover_invalid[queue-recovered-playing]", "test_remote::test_recover_invalid[queue-recovered-empty]", "test_remote::test_recover_invalid[revision-direct-playing]", "test_remote::test_recover_invalid[revision-direct-empty]", "test_remote::test_recover_invalid[revision-recovered-playing]", "test_remote::test_recover_invalid[revision-recovered-empty]", "test_remote::test_recover_invalid[entry-direct-playing]", "test_remote::test_recover_invalid[entry-direct-empty]", "test_remote::test_recover_invalid[entry-recovered-playing]", "test_remote::test_recover_invalid[entry-recovered-empty]", "test_remote::test_radio_publication_preserves_group_reference", "test_remote::test_last_output_reconnect", "test_remote::test_one_of_two_outputs_reconnect", "test_remote::test_server_restart", "test_remote::test_fault_sensitivity[send-request]", "test_remote::test_fault_sensitivity[execute-target]", "test_remote::test_fault_sensitivity[recover-reference]", "test_remote::test_fault_sensitivity[protect-reference]", "test_position::test_handoff_accepts_continuation", "test_position::test_handoff_rejects_reset", "test_position::test_handoff_rejects_forward_jump", "test_position::test_pause_accepts_frozen_position", "test_position::test_pause_rejects_elapsed_time", "test_lifecycle::test_leader_exit_reaps_detached_child[success]", "test_lifecycle::test_leader_exit_reaps_detached_child[failure]", "test_lifecycle::test_nested_pytest_timeout_cleans_world", "test_lifecycle::test_outer_cancel_cleans_descendants[term]", "test_lifecycle::test_outer_cancel_cleans_descendants[int]", "test_lifecycle::test_partial_initialization_cleans_registered_resource", "test_lifecycle::test_cleanup_preserves_unrelated_process"]
+doubles = ["CI 的虚拟 X11、lavapipe 与 PulseAudio 只代替硬件环境；不替代业务；执行耗时尚待审后量测"]
+mutation = "缺命令预检非零；四个关键链路故障项必须实际运行，不能只生成报告"
+
+[[ac]]
+id = "AC-6"
+kind = "regression"
+entry = "每 testcase 新账号/私有数据库、三客户端私有 namespace/音频/状态/端口；启动前静音、结束清理；独占 guardian IPC + Linux 子收割器/pidfd；实际嵌套 pytest 超时、TERM/INT、部分初始化失败、leader 先退出与异域进程对照"
+observe = "namespace 与 PID/birth、音频图和有效 PCM 窗口凭据；所有登记进程精确退出；宿主不改 hostname/音频/网络；124/130/143 与失败原状态单列，清理凭据 complete 且实际持有的后代出生身份均消失"
+tests = ["test_remote::test_core_pick[list]", "test_remote::test_core_pick[wall]", "test_remote::test_recover_invalid[queue-direct-playing]", "test_remote::test_recover_invalid[queue-direct-empty]", "test_remote::test_recover_invalid[queue-recovered-playing]", "test_remote::test_recover_invalid[queue-recovered-empty]", "test_remote::test_recover_invalid[revision-direct-playing]", "test_remote::test_recover_invalid[revision-direct-empty]", "test_remote::test_recover_invalid[revision-recovered-playing]", "test_remote::test_recover_invalid[revision-recovered-empty]", "test_remote::test_recover_invalid[entry-direct-playing]", "test_remote::test_recover_invalid[entry-direct-empty]", "test_remote::test_recover_invalid[entry-recovered-playing]", "test_remote::test_recover_invalid[entry-recovered-empty]", "test_remote::test_radio_publication_preserves_group_reference", "test_remote::test_last_output_reconnect", "test_remote::test_one_of_two_outputs_reconnect", "test_remote::test_server_restart", "test_lifecycle::test_leader_exit_reaps_detached_child[success]", "test_lifecycle::test_leader_exit_reaps_detached_child[failure]", "test_lifecycle::test_nested_pytest_timeout_cleans_world", "test_lifecycle::test_outer_cancel_cleans_descendants[term]", "test_lifecycle::test_outer_cancel_cleans_descendants[int]", "test_lifecycle::test_partial_initialization_cleans_registered_resource", "test_lifecycle::test_cleanup_preserves_unrelated_process"]
+doubles = ["Linux 桌面软件输出限定；Android、实际声卡、真实音乐供应商不在此套件证明边界；无生产接缝", "清理机制用受控 Python 子进程验证，不证明播放器语义；SIGKILL guardian 或宿主失联只能记未完成"]
+mutation = "污染音频图、缺 UTS/user/net/mount、录音进程退出或不足窗口都为环境失败，不能当静音/行为 RED；detached 子进程拒绝 TERM、fixture 卡住使嵌套 pytest 超时；不得以超时或取消记行为 RED"

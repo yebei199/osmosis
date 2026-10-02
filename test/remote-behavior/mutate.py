@@ -5,9 +5,10 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+from lifecycle import run_logged
 
 FAULTS = {
     "send-request": ("crates/ui/src/sync/group.rs", "test_core_pick[list]"),
@@ -50,29 +51,7 @@ def change(snapshot, fault):
 
 # 每条命令记录时间、完整日志和真实退出码，超时不算行为 RED。
 def command(args, cwd, env, directory, name, timeout):
-    started = time.time()
-    with (directory / f"{name}.log").open("wb") as log:
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-        )
-    (directory / f"{name}.json").write_text(
-        json.dumps(
-            {
-                "command": list(map(str, args)),
-                "start": started,
-                "end": time.time(),
-                "exit": result.returncode,
-            },
-            indent=2,
-        )
-    )
-    return result.returncode
+    return run_logged(args, cwd, env, directory, name, timeout)
 
 
 # 定向套件仍运行真实世界；限制为一个 testcase，避免无关失败污染证明。

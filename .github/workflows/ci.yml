@@ -50,7 +50,7 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: 完整遥控行为与故障灵敏度
         id: behavior
-        run: nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh'
+        run: nix-shell test/remote-behavior/env.nix --run 'python "$REMOTE_BEHAVIOR_ACCEPT_CHECK" run'
       - uses: actions/upload-artifact@v4
         if: ${{ always() && steps.behavior.outputs.artifacts != '' }}
         with:

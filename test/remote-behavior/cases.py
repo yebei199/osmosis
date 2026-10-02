@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from media import DAILY_IDS
+from position import act
 from resources import AudioFailure, wait_until
 
 
@@ -27,16 +28,19 @@ def remote_pick(world, mode="list"):
 
 # 暂停后必须静音，继续后 PCM 秒码必须从暂停点向前推进。
 def pause_resume(world):
-    before = remote_pick(world)
+    remote_pick(world)
+    before = world.progressed(world.one, DAILY_IDS[0])
     source = world.controller
-    source.ui.transport("pause")
-    world.silent(*world.clients)
+    pause = act(lambda: source.ui.transport("pause"))
+    quiet = world.silent(world.one)[0]
+    world.silent(source, world.two)
+    world.held_silent(world.one)
     stopped = world.group()
     assert not stopped["playing"]
-    source.ui.transport("resume")
+    resume = act(lambda: source.ui.transport("resume"))
     after = world.sound(world.one, DAILY_IDS[0])
+    world.continued(before, after, resume, (pause, quiet["monotonic_start"], resume))
     world.silent(source, world.two)
-    assert after[-1] >= before[-1]
     later = world.sound(world.one, DAILY_IDS[0])
     if later[-1] <= after[0]:
         raise AudioFailure(f"audio: resumed media did not advance: {after} -> {later}")
@@ -76,11 +80,12 @@ def seek_both_directions(world):
 
 # 切换输出后新目标实际出声，旧目标和遥控器均停止。
 def switch_output(world):
-    before = remote_pick(world)
-    world.controller.ui.output(world.two)
+    remote_pick(world)
+    before = world.progressed(world.one, DAILY_IDS[0])
+    action = act(lambda: world.controller.ui.output(world.two))
     after = world.sound(world.two, DAILY_IDS[0])
+    world.continued(before, after, action)
     world.silent(world.one, world.controller)
-    assert after[-1] >= before[0]
     assert world.group()["outputs"] == [world.two.device()]
 
 
@@ -88,11 +93,11 @@ def switch_output(world):
 def local_seed(world):
     source = world.controller
     source.ui.pick("list")
-    before = world.sound(source, DAILY_IDS[0], group=False)
-    source.ui.output(world.one)
+    before = world.progressed(source, DAILY_IDS[0], group=False)
+    action = act(lambda: source.ui.output(world.one))
     after = world.sound(world.one, DAILY_IDS[0])
+    world.continued(before, after, action)
     world.silent(source, world.two)
-    assert after[-1] >= before[0]
 
 
 # 加入健康组时，源端的另一首本机曲目不能覆盖已有组播放。
@@ -190,11 +195,12 @@ def install_invalid(world, damage):
 def recover_invalid(world, damage, order, seed):
     source = world.controller
     wanted = DAILY_IDS[0]
+    before = None
     if seed == "playing":
         source.ui.radio()
         # 真实取到的第一批 FM 标识由输入目录固定，目标不能由夹具回报播放成功。
         wanted = "175004"
-        world.sound(source, wanted, group=False)
+        before = world.progressed(source, wanted, group=False)
         wait_until(
             lambda: world.sql(
                 "SELECT 1 FROM play_queue_reports r JOIN play_queues q ON q.id=r.queue_id WHERE q.account_id=%s AND q.device_id=%s",
@@ -222,11 +228,13 @@ def recover_invalid(world, damage, order, seed):
         if seed == "playing":
             source.ui.pick("list")
             wanted = DAILY_IDS[0]
-            world.sound(source, wanted, group=False)
-    source.ui.output(world.one)
+            before = world.progressed(source, wanted, group=False)
+    action = act(lambda: source.ui.output(world.one))
     if seed == "playing":
         # 先看最终音频，404/意图未执行会停在此处，构成有效行为 RED。
-        world.sound(world.one, wanted)
+        after = world.sound(world.one, wanted)
+        assert before is not None
+        world.continued(before, after, action)
         world.silent(source, world.two)
     else:
         world.silent(*world.clients)
@@ -294,9 +302,22 @@ def radio_publication_preserves_group_reference(world):
         (prior["queue_id"], prior["revision"], prior["entry_id"]),
     )[0]["n"]
     assert count == 1
+    row = world.group()
+    assert source.device() not in row["members"]
+    assert row["outputs"] == [world.one.device()]
+    # 独奏者点健康组的另一输出先追加，原输出必须继续播放。
+    source.ui.output(world.two)
+    world.sound(world.two, "175004")
+    world.sound(world.one, "175004")
+    world.silent(source)
+    row = world.group()
+    assert source.device() in row["members"]
+    assert set(row["outputs"]) == {world.one.device(), world.two.device()}
+    # 加入已由真实状态确认，成员再次点目标才是替换。
     source.ui.output(world.two)
     world.sound(world.two, "175004")
     world.silent(world.one, source)
+    assert world.group()["outputs"] == [world.two.device()]
 
 
 # 唯一输出掉线后服务端暂停；恢复连接仍暂停，UI 继续后恢复音频。

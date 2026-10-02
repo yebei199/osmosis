@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -17,7 +18,17 @@ from urllib.parse import quote
 import psycopg
 import psycopg.rows
 
+from lifecycle import OwnedCommand
 from media import CAPTURE_RATE, POSITION_TOLERANCE, Media, identify, quiet
+from position import (
+    MIN_ADVANCE,
+    MIN_POSITION,
+    PAUSE_HOLD,
+    Observation,
+    check,
+    continuation,
+    resumed,
+)
 
 TIMEOUT = 40
 POLL = 0.1
@@ -58,7 +69,7 @@ def listener_port(process):
     return None
 
 
-# Popen 句柄与独立进程组用于精确停止和读取退出码。
+# IPC guardian 持有资源树，leader 提前退出也不会丢掉后代归属。
 class Process:
     def __init__(self, directory, name, command, env=None, stdout=None, pass_fds=()):
         self.name = name
@@ -66,16 +77,15 @@ class Process:
         self.started = time.time()
         self.log = (directory / f"{name}.log").open("wb")
         try:
-            self.child = subprocess.Popen(
+            self.child = OwnedCommand(
                 self.command,
+                directory / f"{name}-cleanup.json",
                 env=env,
-                stdin=subprocess.DEVNULL,
                 stdout=stdout if stdout is not None else self.log,
                 stderr=self.log,
-                start_new_session=True,
                 pass_fds=pass_fds,
             )
-        except OSError:
+        except (OSError, RuntimeError, TimeoutError):
             self.log.close()
             raise
         self.stopped = None
@@ -85,19 +95,15 @@ class Process:
         if self.child.poll() is not None:
             raise RuntimeError(f"{self.name} exited before assertion: {self.child.returncode}")
 
-    # 给自有进程组有界退出机会，退出状态进入凭据。
+    # 始终回收 guardian 的后代；不能用 leader 已退出作为清理成功判据。
     def stop(self):
         if self.stopped is not None:
             return
-        if self.child.poll() is None:
-            os.killpg(self.child.pid, signal.SIGTERM)
-            try:
-                self.child.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.child.pid, signal.SIGKILL)
-                self.child.wait(timeout=8)
-        self.stopped = time.time()
-        self.log.close()
+        try:
+            self.child.stop()
+            self.stopped = time.time()
+        finally:
+            self.log.close()
 
     # 凭据只记录命令与身份，测试密码和 token 不进命令参数。
     def receipt(self):
@@ -108,6 +114,8 @@ class Process:
             "start": self.started,
             "end": self.stopped,
             "exit": self.child.returncode,
+            "guardian_pid": self.child.guardian.pid,
+            "cleanup": self.child.result,
         }
 
 
@@ -371,21 +379,21 @@ class Client:
     # 停精确应用后再停自己的 pasta，重启保留此客户端状态。
     def stop(self):
         if self.app_pid is not None:
+            fd = None
             try:
+                fd = os.pidfd_open(self.app_pid)
                 if self.identity() != self.app_birth:
                     raise RuntimeError(f"client PID identity changed: {self.role}")
-                os.kill(self.app_pid, signal.SIGTERM)
-            except FileNotFoundError:
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
+            except (FileNotFoundError, ProcessLookupError):
                 pass
+            finally:
+                if fd is not None:
+                    os.close(fd)
         if self.process:
             self.process.stop()
         if self.app_pid is not None:
-            try:
-                wait_until(lambda: not self.app_alive(), self.role + " app exit", timeout=8)
-            except TimeoutError:
-                if self.app_alive():
-                    os.kill(self.app_pid, signal.SIGKILL)
-                wait_until(lambda: not self.app_alive(), self.role + " forced app exit", timeout=8)
+            wait_until(lambda: not self.app_alive(), self.role + " app exit", timeout=8)
         self.app_pid = None
 
     # 重连由真实应用发起，MCP 句柄与窗口重新获取。
@@ -461,6 +469,7 @@ class Client:
         before = self.capture.stat().st_size // 4 * 4
         wanted = int(CAPTURE_RATE * PCM_WINDOW) * 4
         started = time.time()
+        monotonic_started = time.monotonic()
         wait_until(
             lambda: (
                 self.recorder.alive() is None and self.capture.stat().st_size >= before + wanted
@@ -478,6 +487,8 @@ class Client:
             "bytes": len(pcm),
             "start": started,
             "end": time.time(),
+            "monotonic_start": monotonic_started,
+            "monotonic_end": time.monotonic(),
             "graph_before": graph_before,
         }
         self.samples.append(sample)
@@ -538,13 +549,15 @@ class World:
         self.pg_data = self.directory / "pg-data"
         self.pg_socket = self.directory / "pg-socket"
         self.pg_socket.mkdir()
-        with (self.directory / "initdb.log").open("wb") as output:
-            subprocess.run(
-                ["initdb", "-D", self.pg_data, "-A", "trust", "--no-locale"],
-                check=True,
-                timeout=30,
-                stdout=output,
-            )
+        initialization = self.spawn(
+            "initdb", ["initdb", "-D", self.pg_data, "-A", "trust", "--no-locale"]
+        )
+        try:
+            status = initialization.child.wait(timeout=30)
+            if status:
+                raise RuntimeError(f"initdb exited: {status}")
+        finally:
+            initialization.stop()
         self.spawn("postgres", ["postgres", "-D", self.pg_data, "-k", self.pg_socket, "-h", ""])
         wait_until(lambda: (self.pg_socket / ".s.PGSQL.5432").exists(), "Postgres socket")
         with psycopg.connect(dbname="postgres", host=str(self.pg_socket), autocommit=True) as db:
@@ -671,13 +684,16 @@ class World:
                         expected += max(0, sample["end"] - row["anchor_wall_us"] / 1_000_000)
                     if abs(seconds[-1] - expected) > POSITION_TOLERANCE:
                         raise AssertionError(f"audio: timeline want {expected}, got {seconds}")
-                return seconds
+                return Observation(
+                    tuple(seconds), sample["monotonic_start"], sample["monotonic_end"]
+                )
             except AssertionError as error:
                 last = str(error)
         raise AudioFailure(f"audio: {client.role} did not output {track_id}: {last}")
 
     # 稳定静音判据也保留完整窗口和音频图。
     def silent(self, *clients):
+        windows = []
         for client in clients:
             deadline = time.monotonic() + TIMEOUT
             last = None
@@ -686,11 +702,65 @@ class World:
                 sample["graph"] = client.graph(False)
                 try:
                     quiet(pcm)
+                    windows.append(sample)
                     break
                 except AssertionError as error:
                     last = str(error)
             else:
                 raise AudioFailure(f"audio: {client.role} did not become silent: {last}")
+        return windows
+
+    # 从真实音频建立十二秒非零且至少推进两秒的前提，拒绝起播瞬间的弱比较。
+    def progressed(self, client, track, group=True):
+        first = self.sound(client, track, group=group)
+        deadline = time.monotonic() + TIMEOUT
+        while time.monotonic() < deadline:
+            observed = self.sound(client, track, group=group)
+            if observed[0] >= MIN_POSITION and observed[-1] >= first[-1] + MIN_ADVANCE:
+                self.continued(first, observed)
+                return observed
+        raise AudioFailure(f"audio: {client.role} never established nonzero advancing PCM")
+
+    # 暂停保持期间每个新窗口都必须有效静音，不以任意 sleep 建立冻结前提。
+    def held_silent(self, client):
+        first = None
+        while True:
+            pcm, sample = client.window()
+            sample["graph"] = client.graph(False)
+            try:
+                quiet(pcm)
+            except AssertionError as error:
+                raise AudioFailure(f"audio: paused output resumed during hold: {error}") from error
+            if first is None:
+                first = sample["monotonic_start"]
+            if sample["monotonic_end"] - first >= PAUSE_HOLD:
+                return
+
+    # 音频接续断言不重试；错误回零/前跳不能靠继续等待变成通过。
+    def continued(self, before, after, action=None, pause=None):
+        bounds = continuation(before, after) if pause is None else resumed(before, after, *pause)
+        record = {
+            "before": asdict(before),
+            "after": asdict(after),
+            "bounds": bounds,
+            "tolerance": POSITION_TOLERANCE,
+            "action": None if action is None else asdict(action),
+            "pause": None
+            if pause is None
+            else {
+                "requested": asdict(pause[0]),
+                "first_silent": pause[1],
+                "resume": asdict(pause[2]),
+            },
+        }
+        try:
+            check(before, after, bounds, action)
+        except AssertionError as error:
+            record["failure"] = str(error)
+            raise AudioFailure(str(error)) from error
+        finally:
+            with (self.directory / "continuity.jsonl").open("a") as log:
+                log.write(json.dumps(record) + "\n")
 
     # 唯一账号的组状态只能属于本场景。
     def group(self):

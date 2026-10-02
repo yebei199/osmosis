@@ -7,6 +7,10 @@
 }:
 let
   base = import ../../slint.nix { inherit pkgs; };
+  acceptCheck = builtins.fetchurl {
+    url = "https://git.cryptorust.uk/sibyl/nixos_config/raw/commit/ab618e265a9c85869c24f22c117363a5991c9836/home/features/development/ai_cli/skills/tdd/scripts/accept-check.py";
+    sha256 = "a2224521120d8af0933cec4701f01f20b169198b8da890532d143035b272892a";
+  };
 in
 base.overrideAttrs (old: {
   nativeBuildInputs =
@@ -15,6 +19,7 @@ base.overrideAttrs (old: {
       cargo
       rustc
       uv
+      python3
       passt
       pulseaudio
       alsa-plugins
@@ -25,6 +30,7 @@ base.overrideAttrs (old: {
       mesa
     ]);
   shellHook = (old.shellHook or "") + ''
+    export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
     export ALSA_PLUGIN_DIR="${pkgs.alsa-plugins}/lib/alsa-lib"
     for remote_icd in ${pkgs.mesa.drivers}/share/vulkan/icd.d/lvp_icd*.json; do
       test -f "$remote_icd" || { echo "missing lavapipe ICD" >&2; return 2; }

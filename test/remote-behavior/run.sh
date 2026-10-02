@@ -33,21 +33,19 @@ if ! [[ "$REMOTE_BEHAVIOR_JOBS" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/start.txt"
-trap 'result=$?; date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/end.txt"; echo "$result" > "$REMOTE_BEHAVIOR_ARTIFACTS/exit.txt"; echo "exit=$result artifacts=$REMOTE_BEHAVIOR_ARTIFACTS"' EXIT
+source "$suite_dir/lifecycle.sh"
+suite_python=$(uv run --project "$suite_dir" --frozen python -c 'import sys; print(sys.executable)')
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
 for required in cargo uv pasta pulseaudio pactl parec initdb postgres Xvfb unshare nsenter mount dbus-daemon; do
     executable=$(command -v "$required")
     sha256sum "$executable" >> "$REMOTE_BEHAVIOR_ARTIFACTS/environment-sha256.txt"
 done
-cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
+run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
     -p app-desktop -p server --features app-desktop/mcp \
-    --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR" > "$REMOTE_BEHAVIOR_ARTIFACTS/build.log" 2>&1
+    --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
-uv run --project "$suite_dir" --frozen pytest --rootdir "$suite_dir" \
-    "$suite_dir/test_remote.py" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
+run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
+    "$suite_dir" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --junitxml "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml"
-uv run --project "$suite_dir" --frozen python "$suite_dir/verify_junit.py" \
-    "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml" "$suite_dir/acceptance.toml" \
-    "$REMOTE_BEHAVIOR_ARTIFACTS/acceptance-result.json"

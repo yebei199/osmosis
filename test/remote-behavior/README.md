@@ -12,10 +12,12 @@ namespace 请求该客户端的 MCP。
 保留每一种独立变异的 patch 和行为失败结果。
 
 不验证 Android 原生集成、物理扬声器或全部声卡驱动。当前提交是 #175 的审前测试材料，
-尚未执行；CI 接入提案及环境待验证项见本树 `.dispatch/175-tests-1.md`。
+尚未执行；CI 接入提案及环境待验证项见本树 `.dispatch/175-tests-1.md` 与
+`.dispatch/175-tests-t2.md`。
 
 审后运行入口为 `just ci-remote`，完整 `just ci` 也包含它。CI workflow 的非 draft PR
-事件及 `workflow_dispatch` 执行相同 Nix shell 和 `run.sh`，不新增 push 触发。
+事件及 `workflow_dispatch` 执行相同 Nix shell 和部署检查器，检查器消费
+`acceptance/run.toml` 后调用 `run.sh`，不新增 push 触发。
 实施者重编译仍使用派工已有的 remote-run/verify-run 空闲机器，不在 pc1 本地运行。
 
 `env.nix` 固定 nixpkgs tarball 和内容哈希，复用 `slint.nix` 的 native 库，额外声明
@@ -37,13 +39,28 @@ Linux，使用普通用户。缺依赖、缺 namespace 或 GPU adapter、初始�
 已知音频与静音都要求至少一秒有效采集，采集不足不能当静音。暂停、继续和双向 seek
 从 PCM 判定；数据库只补充核对实际采到的位置与组时间线。
 
-`acceptance.toml` 是 #239 试点草案，含逐 AC 的 id/kind/entry/observe/tests/doubles/mutation。
+接续操作先建立至少十二秒、推进至少两秒的真实 PCM；操作前后的原始窗口带单调时钟。
+`position.py` 从旧末帧的一秒区间与实际经过时间推导范围，沿用 1.5 秒容差且只加一次。
+暂停生效夹在请求发出和首个有效静音窗口之间；保持至少六秒连续有效静音后，继续生效
+夹在请求发出和新首帧之间。操作后 DB 不参与独立边界的推导，断言失败不重试。
+`test_position.py` 的构造反例仅验证判据，不能抵扣真实路径与 PCM 证据。
+
+根 `acceptance/175.toml` 使用正式格式 `[[ac]]` 与 doubles 列表，保留全部回归项。
 映射 ID 采用 `JUnit classname::name`，每个实际 testcase 身份唯一，多个 AC 可引用同一证据。
-`pytest --junitxml` 产生实际结果后，`verify_junit.py` 拒绝空集合、缺项、重复、skip 或失败。
-这份局部核对不定义共享治理协议。未需要 Rust 映射证据，因此没有 nextest 迁移。
+`pytest --junitxml` 的真实结果原样保留于独占 artifacts，并复制到 run.toml 声明的相对路径。
+部署检查器先删除声明路径的旧结果，再跑完整 41 项用例，拒绝缺项、skip、失败或重试成绿。
+Nix 固定部署检查器的提交和 SHA256，无仓库自写校验器。未需要 Rust 映射证据，因此没有
+nextest 迁移。采集、位置与清理机制项也进入实际 pytest 集合与映射。
 
 运行入口打印 `artifacts=`，证据留在该独占临时目录：原始 PCM、UI 动作（填充值去除）、
 媒体输入哈希、环境/候选哈希、命令日志、进程退出凭据、JUnit 与验收核对结果。
 四种变异分别在独立 clone 修改一个故障点，保留 patch、编译日志及定向 RED/GREEN JUnit。
-编译/启动错误不算 RED。正常退出和测试失败都会清理登记资源，日志和 PCM 留供复核。
-强制 SIGKILL 或宿主失联无法保证执行 finally，必须以资源凭据判未完成，不声称已清理。
+编译/启动错误、超时和取消不算 RED。`lifecycle.py` 通过独占 IPC 持有 guardian，
+`guardian.py` 使用 Linux 子收割器与 pidfd 持有后代出生身份，跨 session 的后代也受托管。
+只遍历本树实际父子关系，不按名称或全机扫描；leader 先退后仍持有后代。先 TERM，
+有界等待后冻结持有树、KILL 并收割，实际 children 为空才写 complete；否则非零失败。
+父端断开 IPC 也触发回收。`lifecycle.sh` 是 run.sh 与轻量取消测试共同使用的 shell
+收口入口；外层 TERM/INT、嵌套 pytest 超时和部分初始化失败都进入此路径。
+退出/超时/取消状态与清理结果分开记录，日志与 PCM 留供复核。`test_lifecycle.py` 验证机制，
+不替代音频业务证明；轻量验证命令与故障场景见 t2 设计文书。
+强制 SIGKILL guardian 或宿主失联无法保证收口，必须以资源凭据判未完成，不声称已清理。
