@@ -53,6 +53,7 @@ class UI:
                 "--user",
                 "--net",
                 "--mount",
+                "--preserve-credentials",
                 "--",
                 sys.executable,
                 str(Path(__file__).with_name("bridge.py")),
@@ -65,6 +66,11 @@ class UI:
             env=self.client.env,
         )
         if result.returncode:
+            with (self.client.directory / "mcp-bridge-errors.jsonl").open("a") as log:
+                log.write(
+                    json.dumps({"tool": name, "exit": result.returncode, "stderr": result.stderr})
+                    + "\n"
+                )
             raise ConnectionError(f"MCP bridge failed ({result.returncode}): {result.stderr}")
         reply = json.loads(result.stdout)
         if reply.get("error") or reply.get("result", {}).get("isError"):
