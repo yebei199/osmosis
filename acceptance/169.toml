@@ -10,10 +10,10 @@ mutation = "删除桌面入口 install_download_store，文件发布断言失败
 [[ac]]
 id = "AC-2"
 kind = "new"
-entry = "真实列表选歌后点击下载，确认部分字节写入再切断客户端独占连接"
+entry = "真实列表选歌后点击下载，确认部分字节写入再截断本轮音源 HTTP 连接"
 observe = "下载进度结束，公共音乐子目录为空"
 tests = ["test_download::test_interrupted_download_discards_partial_file"]
-doubles = ["gRPC/HTTP 固定音源与独占网络 gate；宿主网络不变"]
+doubles = ["gRPC/HTTP 固定音源与可截断音源连接；宿主网络不变"]
 mutation = "discard 保留待定文件，目录为空断言失败"
 
 [[ac]]

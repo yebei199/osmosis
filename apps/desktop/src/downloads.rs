@@ -4,10 +4,32 @@ use std::path::PathBuf;
 
 /// 集中解析音乐目录，供平台注入及后续目录消费者共用。
 fn music_directory() -> std::io::Result<PathBuf> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "music directory resolution is not implemented",
-    ))
+    #[cfg(target_os = "linux")]
+    if let Ok(output) =
+        std::process::Command::new("xdg-user-dir")
+            .arg("MUSIC")
+            .output()
+        && output.status.success()
+        && let Ok(directory) =
+            String::from_utf8(output.stdout)
+    {
+        let path = PathBuf::from(
+            directory.trim_end_matches(['\r', '\n']),
+        );
+        if path.is_absolute() {
+            return Ok(path);
+        }
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no home directory for music downloads",
+            )
+        })?;
+    Ok(home.join("Music"))
 }
 
 /// 桌面下载统一落在公共音乐目录的 osmosis 子目录。
@@ -17,6 +39,11 @@ pub(crate) struct Store {
 }
 
 impl Store {
+    /// 平台入口只解析一次落点，目录实际在首次下载时创建。
+    pub(crate) fn new() -> std::io::Result<Self> {
+        Ok(Self::at(music_directory()?.join("osmosis")))
+    }
+
     /// 测试与平台目录解析共用同一个存储实现。
     fn at(directory: PathBuf) -> Self {
         Self { directory }
@@ -24,27 +51,94 @@ impl Store {
 }
 
 impl ui::DownloadStore for Store {
+    /// 待定字节与正式文件名分离，下载失败不会损坏已有歌曲。
     fn open(
         &self,
-        _file_name: &str,
+        file_name: &str,
     ) -> std::io::Result<(
         Box<dyn std::io::Write + Send>,
         Box<dyn ui::DownloadCommit>,
     )> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "desktop download store is not implemented",
+        if file_name.is_empty()
+            || file_name == "."
+            || file_name == ".."
+            || file_name.contains(['/', '\\'])
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid download file name",
+            ));
+        }
+        std::fs::create_dir_all(&self.directory)?;
+        let pending = tempfile::Builder::new()
+            .prefix(".download-")
+            .tempfile_in(&self.directory)?;
+        let (writer, path) = pending.into_parts();
+        Ok((
+            Box::new(writer),
+            Box::new(Entry {
+                path,
+                destination: self.directory.join(file_name),
+            }),
         ))
     }
 
+    /// 下载完成提示使用实际公共目录。
     fn location(&self) -> String {
         self.directory.display().to_string()
+    }
+}
+
+/// 收尾令牌独占临时路径，未提交时由 TempPath 的 Drop 回收。
+struct Entry {
+    /// 与写句柄分开的待定路径所有权。
+    path: tempfile::TempPath,
+    /// 首选成品名；同名冲突时追加递增后缀。
+    destination: PathBuf,
+}
+
+impl ui::DownloadCommit for Entry {
+    /// 无覆盖发布是一次原子操作，并发同名下载也保留全部成品。
+    fn commit(self: Box<Self>) -> std::io::Result<()> {
+        let Self {
+            mut path,
+            destination,
+        } = *self;
+        let mut candidate = destination.clone();
+        for suffix in 1..=u32::MAX {
+            match path.persist_noclobber(&candidate) {
+                Ok(()) => return Ok(()),
+                Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    path = err.path;
+                    let stem = destination.file_stem().expect("open validated a file name").to_string_lossy();
+                    let mut name = format!("{stem} ({suffix})");
+                    if let Some(extension) = destination.extension() {
+                        name.push('.');
+                        name.push_str(&extension.to_string_lossy());
+                    }
+                    candidate = destination.with_file_name(name);
+                }
+                Err(err) => return Err(err.error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "download file names exhausted",
+        ))
+    }
+
+    /// 显式断流失败和丢弃令牌共用 TempPath 的清理语义。
+    fn discard(self: Box<Self>) {
+        if let Err(err) = self.path.close() {
+            log::warn!("半截下载文件未能清理: {err}");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use similar_asserts::assert_eq;
     use ui::DownloadStore as _;
 
     /// 子进程内读取环境，避免并发单测修改进程全局 HOME。
@@ -63,7 +157,7 @@ mod tests {
     }
 
     /// 真实工具进程返回 XDG 落点；工具缺失时回退到 HOME/Music。
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn music_directory_uses_xdg_then_home_fallback() {
         use std::os::unix::fs::PermissionsExt as _;

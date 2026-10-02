@@ -70,3 +70,4 @@ mcp = ["slint/mcp"]
 
 [dev-dependencies]
 tempfile.workspace = true
+similar-asserts.workspace = true

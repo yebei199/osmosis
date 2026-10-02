@@ -65,7 +65,7 @@ def download_world(monkeypatch):
             )
         )
 
-    # 断流在真实下载写入部分字节后由测试切断客户端的独占连接。
+    # 断流在真实下载写入部分字节后关闭本轮音源 HTTP 连接。
     def handler(media):
         base = original_handler(media)
 
@@ -100,7 +100,7 @@ def download_world(monkeypatch):
     started = time.time()
     try:
         world.start()
-        yield world, content, transfer
+        yield world, content, transfer, release
     finally:
         release.set()
         world.close()
@@ -137,7 +137,7 @@ def banner_text(client):
 # 两条 UI 入口各自贯通到完整可解码 MP3，文件内容也须与固定音源一致。
 @pytest.mark.parametrize("mode", ("list", "wall"))
 def test_download_creates_complete_mp3(download_world, mode):
-    world, content, _ = download_world
+    world, content, _, _ = download_world
     directory = start_download(world, mode, "complete")
     wait_until(lambda: directory.exists() and bool(list(directory.glob("*.mp3"))), "published mp3")
     files = list(directory.iterdir())
@@ -162,27 +162,26 @@ def test_download_creates_complete_mp3(download_world, mode):
     (world.directory / "ffprobe.json").write_text(probe.stdout)
 
 
-# 断开独占 gate，不修改宿主网络；断流后无成品也无半截文件。
+# 截断本轮音源连接，不修改宿主网络；断流后无成品也无半截文件。
 def test_interrupted_download_discards_partial_file(download_world):
-    world, _, transfer = download_world
+    world, _, transfer, release = download_world
     directory = start_download(world, "list", "cut")
     assert transfer.wait(15), "source never sent partial bytes"
     wait_until(
         lambda: directory.exists() and any(p.stat().st_size > 0 for p in directory.iterdir()),
         "partial bytes written",
     )
-    world.controller.gate.cut()
+    release.set()
     wait_until(
         lambda: not world.controller.ui.elements("MainWindow::download-strip"),
         "download error completed",
     )
     assert list(directory.iterdir()) == [], "interrupted download left files"
-    world.controller.gate.heal()
 
 
 # 外部 trial 标记走生产 server 拒绝，UI 保留原提示，待定条目被丢弃。
 def test_trial_download_keeps_existing_refusal(download_world):
-    world, _, _ = download_world
+    world, _, _, _ = download_world
     directory = start_download(world, "list", "trial")
     wait_until(lambda: "只有试听片段" in banner_text(world.controller), "trial-only refusal")
     assert directory.exists()
