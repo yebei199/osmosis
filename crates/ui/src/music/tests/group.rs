@@ -89,8 +89,10 @@ fn silent_member_projection_stays_global() {
     deck.queue
         .borrow_mut()
         .replace(vec![track_with_id("local-retained")], 0);
-    for playing in [true, false] {
-        deck.group.assume(Some(state(&["pc"], playing)));
+    for (version, playing) in [(3, true), (4, false)] {
+        let mut remote = state(&["pc"], playing);
+        remote.version = version;
+        deck.group.assume(Some(remote));
         playback::transport::rest_local(&ui, &deck);
         for _ in 0..3 {
             playback::transport::tick_progress(&ui, &deck);
