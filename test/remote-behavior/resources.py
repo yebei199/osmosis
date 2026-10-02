@@ -589,7 +589,8 @@ class World:
         self.pg_socket = self.directory / "pg-socket"
         self.pg_socket.mkdir()
         initialization = self.spawn(
-            "initdb", ["initdb", "-D", self.pg_data, "-A", "trust", "--no-locale"]
+            "initdb",
+            ["initdb", "-D", self.pg_data, "-A", "trust", "--no-locale", "--encoding=UTF8"],
         )
         try:
             status = initialization.child.wait(timeout=30)
@@ -804,6 +805,8 @@ class World:
     # 唯一账号的组状态只能属于本场景。
     def group(self):
         rows = self.sql("SELECT * FROM play_groups WHERE account_id = %s", (self.account,))
+        with (self.directory / "group-observations.jsonl").open("a") as log:
+            log.write(json.dumps({"time": time.time(), "rows_repr": repr(rows)}) + "\n")
         return rows[0] if rows else None
 
     # 不删除录音和日志；只停止本轮登记的客户端、服务与数据库。
