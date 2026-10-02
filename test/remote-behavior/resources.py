@@ -19,7 +19,7 @@ import psycopg
 import psycopg.rows
 
 from lifecycle import OwnedCommand
-from media import CAPTURE_RATE, POSITION_TOLERANCE, Media, identify, quiet
+from media import CAPTURE_RATE, DURATION, POSITION_TOLERANCE, Media, identify, quiet
 from position import (
     MIN_ADVANCE,
     MIN_POSITION,
@@ -33,6 +33,7 @@ from position import (
 TIMEOUT = 40
 POLL = 0.1
 PCM_WINDOW = 1.25
+# 默认 monitor 约2s批量到达；100ms采集使窗口观测与短缓冲输出及时对齐。
 CAPTURE_LATENCY_MS = 100
 
 
@@ -547,11 +548,12 @@ class Client:
 
 # 单一场景拥有自己的数据库、账号和三个真实客户端，可跨进程并行运行。
 class World:
-    def __init__(self, root, directory, desktop, server):
+    def __init__(self, root, directory, desktop, server, media_duration=DURATION):
         self.root, self.directory = root, directory
         self.desktop, self.server_binary = desktop, server
         self.processes, self.gates, self.clients, self.open_files = [], [], [], []
         self.media = None
+        self.media_duration = media_duration
         self.db: psycopg.Connection[dict[str, Any]] | None = None
         self.env = {
             key: value
@@ -632,7 +634,7 @@ class World:
             autocommit=True,
             row_factory=psycopg.rows.dict_row,
         )
-        self.media = Media(self.root, self.directory)
+        self.media = Media(self.root, self.directory, self.media_duration)
         self.server_env = self.env | {
             "DATABASE_URL": f"postgresql://{quote(getpass.getuser())}@localhost/osmosis?host={quote(str(self.pg_socket))}",
             "BANG_DREAM_ADDR": f"http://127.0.0.1:{self.media.grpc_port}",
@@ -732,7 +734,7 @@ class World:
         while time.monotonic() < deadline:
             pcm, sample = client.window()
             try:
-                seconds = identify(pcm, track_id)
+                seconds = identify(pcm, track_id, self.media_duration)
                 sample["graph"] = client.graph(True)
                 sample["decoded_seconds"] = seconds
                 if position is not None:

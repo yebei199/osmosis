@@ -33,11 +33,11 @@ def frequencies(track_id: str, second: int) -> tuple[int, int]:
 
 
 # WAV 固定输入让流式读取、解码、重采样及 seek 都经过真实播放器。
-def write_track(path: Path, track_id: str) -> None:
+def write_track(path: Path, track_id: str, duration: int = DURATION) -> None:
     with wave.open(str(path), "wb") as output:
         output.setparams((2, 2, SOURCE_RATE, 0, "NONE", "not compressed"))
         t = np.arange(SOURCE_RATE) / SOURCE_RATE
-        for second in range(DURATION):
+        for second in range(duration):
             left, right = frequencies(track_id, second)
             samples = np.stack(
                 (np.sin(2 * np.pi * left * t), np.sin(2 * np.pi * right * t)), axis=1
@@ -67,8 +67,9 @@ def load_proto(root: Path, directory: Path):
 
 # 只替换外部提供方，使用真实 gRPC framing 与仓库生成的 protobuf。
 class Media:
-    def __init__(self, root: Path, directory: Path):
+    def __init__(self, root: Path, directory: Path, duration: int = DURATION):
         self.directory = directory
+        self.duration = duration
         self.pb = load_proto(root, directory / "proto")
         self.lock = threading.Lock()
         self.fm_turn = 0
@@ -111,7 +112,7 @@ class Media:
             platform=1,
             id=track_id,
             title=f"RB-{track_id}",
-            duration_ms=DURATION * 1000,
+            duration_ms=self.duration * 1000,
             artists=[self.pb.Artist(id="175", name="RemoteBehavior")],
             quality=self.pb.Quality(
                 codec="pcm", sample_rate=SOURCE_RATE, bits_per_sample=16, channels=2
@@ -149,7 +150,7 @@ class Media:
                     bit_rate=SOURCE_RATE * 32,
                     level=4,
                     expires_in_seconds=3600,
-                    duration_ms=DURATION * 1000,
+                    duration_ms=self.duration * 1000,
                 )
             )
         if method == "GetLyric":
@@ -182,7 +183,7 @@ class Media:
         with self.lock:
             path = self.directory / f"{track_id}.wav"
             if track_id not in self.sources:
-                write_track(path, track_id)
+                write_track(path, track_id, self.duration)
                 self.sources[track_id] = hashlib.sha256(path.read_bytes()).hexdigest()
         return path
 
@@ -245,7 +246,7 @@ class Media:
                     "hashes": self.sources,
                     "calls": self.calls,
                     "rate": SOURCE_RATE,
-                    "duration": DURATION,
+                    "duration": self.duration,
                 },
                 indent=2,
             )
@@ -253,7 +254,7 @@ class Media:
 
 
 # 每段 PCM 独立识别两个声道；纯音幅度、频率和时间编码都有断言。
-def identify(pcm: bytes, track_id: str) -> list[int]:
+def identify(pcm: bytes, track_id: str, duration: int = DURATION) -> list[int]:
     samples = np.frombuffer(pcm, dtype="<i2").reshape(-1, 2) / 32768
     width = int(CAPTURE_RATE * FRAME_SECONDS)
     if len(samples) < width * 4:
@@ -270,7 +271,7 @@ def identify(pcm: bytes, track_id: str) -> list[int]:
         if abs(peaks[0] - wanted) > FREQUENCY_TOLERANCE:
             raise AssertionError(f"audio: wrong track: want {track_id}/{wanted}, got {peaks}")
         second = round((peaks[1] - 2400) / 24)
-        if not 0 <= second < DURATION or abs(peaks[1] - (2400 + second * 24)) > FREQUENCY_TOLERANCE:
+        if not 0 <= second < duration or abs(peaks[1] - (2400 + second * 24)) > FREQUENCY_TOLERANCE:
             raise AssertionError(f"audio: invalid position marker: {peaks}")
         seconds.append(second)
     if any(b < a or b - a > 1 for a, b in pairwise(seconds)):

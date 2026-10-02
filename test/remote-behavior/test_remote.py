@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import cases
+from media import DURATION
 from resources import World
 
 
@@ -20,7 +21,11 @@ def world(request):
     directory = Path(tempfile.mkdtemp(prefix="175-", dir=artifact_root))
     root = Path(__file__).resolve().parents[2]
     target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
-    instance = World(root, directory, target / "debug/osmosis-desktop", target / "debug/server")
+    # 断连心跳最坏90s加重连抖动75s,素材覆盖该前提且不提前播完。
+    duration = 240 if request.node.name == "test_last_output_reconnect" else DURATION
+    instance = World(
+        root, directory, target / "debug/osmosis-desktop", target / "debug/server", duration
+    )
     started = time.time()
     try:
         yield instance.start()

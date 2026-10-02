@@ -447,7 +447,15 @@ def last_output_reconnect(world):
         "last output removal pauses group",
         timeout=100,
     )
+    paused = world.group().copy()
     world.one.gate.heal()
+    # 真实客户端60s退避带±25%抖动,先等暂停版本到达再点击继续。
+    marker = f"组状态: 第 {paused['version']} 版,"
+    wait_until(
+        lambda: marker in Path(world.one.process.log.name).read_text(),
+        "reconnected target received paused group",
+        timeout=60 * 1.25 + 10,
+    )
     wait_until(
         lambda: world.one.ui.find("RoundControl::touch", "\u64ad\u653e"),
         "reconnected paused target",
