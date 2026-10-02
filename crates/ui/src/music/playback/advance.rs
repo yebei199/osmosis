@@ -113,6 +113,8 @@ pub(in crate::music) fn after_advance(
 ) {
     if has_next {
         play_current(ui, deck);
+        // 切歌是已有批次的执行事件,不续取时也要保存新的恢复检查点。
+        checkpoint(deck, deck.queue.borrow().index());
     } else {
         // 状态机也要停:不停的话它仍是 Playing,自动续播每秒都会再撞进来。
         deck.playback.borrow_mut().stop();
