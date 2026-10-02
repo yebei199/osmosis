@@ -1,0 +1,25 @@
+# #177 顶部状态条布局的逐项合同。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实MainWindow，420/1000两种窗口，七种状态组合；歌单首行真实指针事件；歌词入口"
+observe = "状态条互不重叠，页面首控件与登录/播放页让位，加入退出触控≥44px，首行打开详情，译文开关让出头部"
+tests = ["ui::status_strips::every_strip_combination_reserves_space_in_both_layouts", "ui::status_strips::login_and_play_pages_move_below_the_status_stack", "ui::status_strips::group_actions_have_a_full_touch_target", "ui::status_strips::the_first_playlist_opens_through_a_real_pointer_click", "ui::lyrics_page::translation_control_reserves_a_header_above_all_lines"]
+doubles = ["无头窗口与模拟时钟替代窗口系统/GPU；歌单打开回调接收真实指针触发的id并展示详情，不能证明后端曲目加载；不证明Android safe-area或像素"]
+mutation = "旧固定y使页面让位失败；旧30px按钮使尺寸失败；旧浮动译文开关使头部让位失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "横幅出现、跳转与清除，下载进度出现/收起，登录隔离，控制条，歌词切换和音乐列表"
+observe = "原有组件id、操作、控制条页面预留和歌词浏览行为保留"
+tests = ["ui::banner::the_banner_shows_up_only_when_there_is_something_to_say", "ui::banner::a_banner_with_somewhere_to_go_takes_you_there", "ui::download::the_progress_strip_follows_the_download_text", "ui::lyrics_page::the_translation_toggle_exists_only_with_translation_data"]
+doubles = ["同一无头后端，只证明Slint界面层行为"]
+
+[[ac]]
+id = "AC-2"
+none = "桌面宽/420合成器真实像素证据随交付报告提供，无头JUnit不代表像素复核"
+
+[[ac]]
+id = "AC-3"
+none = "小米13平台专属安全区与MCP歌单首行路径证据随交付报告提供，不能由无头JUnit证明"
