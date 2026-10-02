@@ -310,6 +310,11 @@ fn to_local(
                 }
                 LocalToggle::Replay => {
                     play_current(ui, deck);
+                    // 重播仍是同一批的执行事件,也要留下新的恢复检查点。
+                    let queue = deck.queue.borrow();
+                    if queue.current().is_some() {
+                        checkpoint(deck, queue.index());
+                    }
                     push_media(ui, deck);
                 }
             }
