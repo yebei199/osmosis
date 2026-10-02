@@ -7,6 +7,7 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod downloads;
 mod log_file;
 mod mpris;
 mod single_instance;
