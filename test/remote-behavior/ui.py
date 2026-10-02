@@ -238,7 +238,14 @@ class UI:
 
     # 控制条的可访问标签随真实播放状态改变。
     def transport(self, operation):
-        handle = self.must("RoundControl::touch", LABELS[operation])
+        try:
+            handle = self.must("RoundControl::touch", LABELS[operation])
+        except TimeoutError:
+            tree = self.call("get_element_tree", elementHandle=self.root, maxElements=1000)
+            (self.client.directory / "transport-failure-tree.json").write_text(
+                json.dumps(tree, indent=2)
+            )
+            raise
         properties = self.call("get_element_properties", elementHandle=handle)
         with (self.client.directory / "transport-controls.jsonl").open("a") as log:
             log.write(json.dumps({"operation": operation, "properties": properties}) + "\n")
