@@ -189,11 +189,12 @@ fn the_first_playlist_opens_through_a_real_pointer_click() {
                     "MainWindow::download-strip"
                 ))
         );
-        let position = row.absolute_position()
-            + slint::LogicalSize::new(
-                row.size().width / 2.0,
-                row.size().height / 2.0,
-            );
+        let position = slint::LogicalPosition::new(
+            row.absolute_position().x
+                + row.size().width / 2.0,
+            row.absolute_position().y
+                + row.size().height / 2.0,
+        );
         ui.window().dispatch_event(
             WindowEvent::PointerMoved { position },
         );
