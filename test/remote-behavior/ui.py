@@ -324,7 +324,8 @@ class UI:
     def shuffle_checked(self):
         self.playback_options()
         handle = self.must("DrawerRow::touch", "随机播放")
-        return self.call("get_element_properties", elementHandle=handle)["accessibleChecked"]
+        # protobuf JSON 省略值为 false 的标量字段。
+        return self.call("get_element_properties", elementHandle=handle).get("accessibleChecked", False)
 
     # 三态循环由控件无障碍标签给出,与用户看到的文字共用绑定。
     def loop_label(self):
