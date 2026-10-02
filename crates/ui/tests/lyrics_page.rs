@@ -288,3 +288,33 @@ fn the_play_page_text_steps_aside_for_the_lyrics_page() {
         "歌名也该让位"
     );
 }
+
+/// 开关占据独立头部行，整窗歌词都排在它的下沿之后。
+#[test]
+fn translation_control_reserves_a_header_above_all_lines() {
+    let ui = play_window();
+    ui.global::<Viz>().set_lyric_rows(rows(true));
+    open_lyrics(&ui);
+    let first_y = all(&ui, "LyricsPage::line")[0]
+        .absolute_position()
+        .y;
+    ui.global::<Viz>().set_lyric_has_translation(true);
+    assert!(
+        all(&ui, "LyricsPage::line")[0]
+            .absolute_position()
+            .y
+            > first_y,
+        "译文开关出现时应给歌词让出头部空间"
+    );
+    let toggle =
+        element(&ui, "LyricsPage::translation-toggle")
+            .expect("有译文该有开关");
+    let end =
+        toggle.absolute_position().y + toggle.size().height;
+    for line in all(&ui, "LyricsPage::line") {
+        assert!(
+            line.absolute_position().y >= end,
+            "歌词伸进了译文开关的头部行"
+        );
+    }
+}
