@@ -251,6 +251,47 @@ class UI:
             log.write(json.dumps({"operation": operation, "properties": properties}) + "\n")
         self.activate(handle)
 
+    # 在真实可见播放条子树同时核对曲目和播放态，保存原始树而非构造投影。
+    def playback_entry(self, track_id, playing):
+        def matching_tree():
+            bars = self.call(
+                "query_element_descendants",
+                elementHandle=self.root,
+                findAll=True,
+                queryStack=[{"matchElementTypeName": "PlayerBar"}],
+            ).get("elementHandles", [])
+            visible = [bar for bar in bars if self.visible(bar)]
+            if len(visible) != 1:
+                return None
+            tree = self.call("get_element_tree", elementHandle=visible[0], maxElements=1000)
+            assert not tree["truncated"], "playback entry evidence truncated"
+            labels = [element.get("accessibleLabel") for element in tree["elements"]]
+            control = LABELS["pause" if playing else "resume"]
+            return tree if f"RB-{track_id}" in labels and control in labels else None
+
+        try:
+            tree = wait_until(matching_tree, f"visible playback entry {track_id}/{playing}")
+        except TimeoutError:
+            tree = self.call("get_element_tree", elementHandle=self.root, maxElements=1000)
+            (self.client.directory / "playback-entry-failure-tree.json").write_text(
+                json.dumps(tree, indent=2)
+            )
+            raise
+        with (self.client.directory / "playback-entry-trees.jsonl").open("a") as log:
+            log.write(json.dumps({"track_id": track_id, "playing": playing, "tree": tree}) + "\n")
+
+    # 真正空队列没有可见播放条，也没有播放/暂停按钮。
+    def no_playback_entry(self):
+        tree = self.call("get_element_tree", elementHandle=self.root, maxElements=1000)
+        (self.client.directory / "empty-playback-tree.json").write_text(json.dumps(tree, indent=2))
+        assert not tree["truncated"], "empty queue evidence truncated"
+        assert not any(
+            any(item.get("typeName") == "PlayerBar" for item in element["typeNamesAndIds"])
+            for element in tree["elements"]
+        ), "empty local queue presented a playback entry"
+        assert not self.find("RoundControl::touch", LABELS["resume"])
+        assert not self.find("RoundControl::touch", LABELS["pause"])
+
     # 成功恢复后用户不应继续看到请求失败横幅；音频判据先执行。
     def no_error_banner(self):
         assert not self.elements("MainWindow::banner"), "unexpected user-visible error banner"

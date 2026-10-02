@@ -11,6 +11,114 @@ use super::super::fixtures::*;
 use super::super::*;
 use crate::{Player, Shell, Viz};
 
+/// Idle仍保留本地当前曲目:停止和刷新不能伪造Playing,也不能留远端曲目。
+#[test]
+fn local_idle_queue_keeps_playback_entry() {
+    let (ui, deck) = deck_window();
+    let local = track_with_id("local-retained");
+    deck.queue.borrow_mut().replace(vec![local.clone()], 0);
+    deck.group.assume(Some(state(&["pc"], true)));
+    deck.group.push_playback(&ui);
+    assert_eq!(
+        ui.global::<Player>().get_now_id().as_str(),
+        "x"
+    );
+    deck.group.assume(None);
+
+    playback::transport::rest_local(&ui, &deck);
+    for _ in 0..3 {
+        playback::transport::tick_progress(&ui, &deck);
+        assert!(ui.global::<Player>().get_has_track());
+        assert!(!ui.global::<Player>().get_is_playing());
+        assert_eq!(
+            ui.global::<Player>().get_now_id().as_str(),
+            local.id
+        );
+        assert_eq!(
+            ui.global::<Viz>().get_now_title().as_str(),
+            local.title
+        );
+        assert!(matches!(
+            deck.playback.borrow().state(),
+            app_core::PlaybackState::Idle
+        ));
+        assert_eq!(
+            deck.queue
+                .borrow()
+                .current()
+                .map(|track| &track.id),
+            Some(&local.id)
+        );
+        assert!(deck.group.intents().is_empty());
+    }
+}
+
+/// 真正没有本地曲目:离组时清除原组投影,不凭旧has_track造出重播入口。
+#[test]
+fn empty_idle_queue_clears_remote_projection() {
+    let (ui, deck) = deck_window();
+    assert!(deck.queue.borrow().current().is_none());
+    deck.group.assume(Some(state(&["pc"], true)));
+    deck.group.push_playback(&ui);
+    assert!(ui.global::<Player>().get_has_track());
+    deck.group.assume(None);
+
+    playback::transport::rest_local(&ui, &deck);
+    for _ in 0..3 {
+        playback::transport::tick_progress(&ui, &deck);
+        assert!(!ui.global::<Player>().get_has_track());
+        assert!(!ui.global::<Player>().get_is_playing());
+        assert!(
+            ui.global::<Player>().get_now_id().is_empty()
+        );
+        assert!(
+            ui.global::<Viz>().get_now_title().is_empty()
+        );
+        assert!(matches!(
+            deck.playback.borrow().state(),
+            app_core::PlaybackState::Idle
+        ));
+        assert!(deck.group.intents().is_empty());
+    }
+}
+
+/// 非出声成员始终投影组状态:本地Idle/保留曲目不覆盖组曲目及暂停按钮。
+#[test]
+fn silent_member_projection_stays_global() {
+    let (ui, deck) = deck_window();
+    deck.queue
+        .borrow_mut()
+        .replace(vec![track_with_id("local-retained")], 0);
+    for playing in [true, false] {
+        deck.group.assume(Some(state(&["pc"], playing)));
+        playback::transport::rest_local(&ui, &deck);
+        for _ in 0..3 {
+            playback::transport::tick_progress(&ui, &deck);
+            assert!(ui.global::<Player>().get_has_track());
+            assert_eq!(
+                ui.global::<Player>().get_is_playing(),
+                playing
+            );
+            assert_eq!(
+                ui.global::<Player>().get_now_id().as_str(),
+                "x"
+            );
+            assert!(matches!(
+                deck.playback.borrow().state(),
+                app_core::PlaybackState::Idle
+            ));
+            assert_eq!(
+                deck.queue
+                    .borrow()
+                    .current()
+                    .map(|track| track.id.as_str()),
+                Some("local-retained")
+            );
+            assert!(deck.group.intents().is_empty());
+        }
+    }
+}
+
 /// 把控制条、输出设备那一排、队列页接到窗口上。
 fn wire(ui: &MainWindow, deck: &Deck) {
     bind_play(ui, deck);

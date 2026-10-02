@@ -102,6 +102,22 @@ def test_radio_publication_preserves_group_reference(world):
     cases.radio_publication_preserves_group_reference(world)
 
 
+# 真实离组后跨轮询刷新保留入口，点击之前静音，之后本机PCM和新checkpoint。
+@pytest.mark.parametrize("origin", ("fm", "list"))
+def test_retained_local_playback_entry(world, origin):
+    cases.retained_local_playback_entry(world, origin)
+
+
+# 真正空的本机队列不得残留远端曲目的播放入口或自动起播。
+def test_empty_local_queue_stays_empty(world):
+    cases.empty_local_queue_stays_empty(world)
+
+
+# 非出声成员的曲目/控制依然来自组投影，不能被保留的本机曲目覆盖。
+def test_silent_member_projects_group_track(world):
+    cases.silent_member_projects_group_track(world)
+
+
 # 唯一目标断线、重连、手动继续由实际音频验证。
 def test_last_output_reconnect(world):
     cases.last_output_reconnect(world)

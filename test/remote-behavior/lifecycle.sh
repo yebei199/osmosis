@@ -17,6 +17,12 @@ finish() {
         mkdir -p "$suite_dir/results"
         cp "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml" "$suite_dir/results/junit.xml"
     fi
+    if [[ -n ${projection_junit:-} && -f "$projection_junit" ]]; then
+        mkdir -p "$suite_dir/results"
+        cp "$projection_junit" \
+            "$REMOTE_BEHAVIOR_ARTIFACTS/projection-junit.xml"
+        cp "$REMOTE_BEHAVIOR_ARTIFACTS/projection-junit.xml" "$suite_dir/results/projection-junit.xml"
+    fi
     date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/end.txt"
     echo "$result" > "$REMOTE_BEHAVIOR_ARTIFACTS/exit.txt"
     echo "exit=$result artifacts=$REMOTE_BEHAVIOR_ARTIFACTS"

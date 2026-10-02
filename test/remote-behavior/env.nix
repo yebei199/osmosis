@@ -17,6 +17,7 @@ base.overrideAttrs (old: {
     (old.nativeBuildInputs or [ ])
     ++ (with pkgs; [
       cargo
+      cargo-nextest
       rustc
       uv
       python3

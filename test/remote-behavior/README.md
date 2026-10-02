@@ -37,6 +37,18 @@ playing 上报，revision 取该上报实际应用的版本；至少四个新版
 `local-fm-premise.json`、`local-fm-publications.jsonl` 和 `transport-controls.jsonl`
 保留该前提；最终目标恢复旧曲、旧 entry 存在、追加/替换与静音判据保持不变。
 
+播放入口回归新增四个真实 Python testcase：FM/列表保留本地曲目离组后的可点击入口、
+真正空本机队列、组内非出声成员的全局投影。入口子树在至少六秒有效静音采集前后
+各核对一次，覆盖生产轮询刷新；音频执行用实际 PCM，新 checkpoint 只作辅助凭据。
+原始播放条树保存于 `playback-entry-trees.jsonl`，不把预期曲目写成 UI 状态。
+
+`nextest.toml` 只选择三项新增 Rust 状态投影用例；夹具无声卡，调用真实
+`rest_local`/`tick_progress`，输入 Idle 与实际队列，不人为设置 `has_track`。
+它们只补快速层，不抵扣 Python 音频。完整 `run.sh` 生成独立 nextest JUnit 和
+pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit.xml`；
+`acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
+依赖由 Nix 显式声明；首轮设计审前未执行这些用例，也未修改生产。
+
 默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2` 限制软件 GPU 与编译资源，执行者
 获得更高额度后可以明确增加 worker；每个 testcase 独占资源，禁止自动重试和 worker 重启。
 私有 DB 只监听独占 Unix socket；业务服务、媒体和信令闸由内核分配空闲端口。

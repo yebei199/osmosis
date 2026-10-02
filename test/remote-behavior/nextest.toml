@@ -1,0 +1,7 @@
+# 仅本任务新增的快速状态投影证据；不迁移整个Rust套件。
+[profile.rb-projection]
+default-filter = 'binary_id(ui) & (test(music::tests::group::local_idle_queue_keeps_playback_entry) | test(music::tests::group::empty_idle_queue_clears_remote_projection) | test(music::tests::group::silent_member_projection_stays_global))'
+retries = 0
+
+[profile.rb-projection.junit]
+path = "junit.xml"

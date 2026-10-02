@@ -18,7 +18,7 @@ from pathlib import Path
 for path in sorted(Path("test/remote-behavior").glob("*.py")):
     ast.parse(path.read_text(), filename=str(path))
     print(f"AST {path}")
-for path in [Path("test/remote-behavior/pyproject.toml"), *sorted(Path("acceptance").glob("*.toml"))]:
+for path in [*sorted(Path("test/remote-behavior").glob("*.toml")), *sorted(Path("acceptance").glob("*.toml"))]:
     tomllib.loads(path.read_text())
     print(f"TOML {path}")
 PY

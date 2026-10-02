@@ -10,7 +10,7 @@ if [[ "$mode" != all && "$mode" != list && "$mode" != radio ]]; then
     exit 2
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
-for required in cargo uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     command -v "$required" >/dev/null || { echo "missing dependency: $required" >&2; exit 2; }
 done
 if [[ $(id -u) == 0 ]]; then
@@ -41,6 +41,7 @@ if ! [[ "$REMOTE_BEHAVIOR_JOBS" =~ ^[1-9][0-9]*$ ]]; then
     exit 2
 fi
 date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/start.txt"
+projection_junit=''
 source "$suite_dir/lifecycle.sh"
 suite_python=$(uv run --project "$suite_dir" --frozen --no-managed-python \
     --python "$REMOTE_BEHAVIOR_PYTHON" python -c 'import sys; print(sys.executable)')
@@ -65,7 +66,7 @@ print("pidfd and grpc/numpy/psycopg/pytest imports available")
 PY
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
-for required in cargo uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     executable=$(command -v "$required")
     sha256sum "$executable" >> "$REMOTE_BEHAVIOR_ARTIFACTS/environment-sha256.txt"
 done
@@ -74,6 +75,16 @@ run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
+if [[ "$mode" == all ]]; then
+    projection_junit="$REMOTE_BEHAVIOR_TARGET_DIR/nextest/rb-projection/junit.xml"
+    rm -f "$projection_junit"
+    run_owned projection 3600 cargo nextest run --locked -p ui --lib \
+        --config 'profile.dev.package."*".opt-level=0' \
+        --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR" \
+        --config-file "$suite_dir/nextest.toml" --profile rb-projection --no-tests fail
+    cp "$projection_junit" \
+        "$REMOTE_BEHAVIOR_ARTIFACTS/projection-junit.xml"
+fi
 tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi

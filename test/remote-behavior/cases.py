@@ -273,6 +273,93 @@ def local_radio_report(world, source, queue_id, after):
     )
 
 
+# 已有真实本机曲目与远端曲目不同；离组后的入口必须回到本地保留曲目。
+def retained_local_playback_entry(world, origin):
+    source = world.controller
+    wanted = "175004" if origin == "fm" else DAILY_IDS[2]
+    if origin == "fm":
+        source.ui.radio()
+    else:
+        source.ui.pick("list", 2)
+    world.sound(source, wanted, group=False)
+    queue = world.sql(
+        "SELECT id FROM play_queues WHERE account_id=%s AND device_id=%s ORDER BY id DESC LIMIT 1",
+        (world.account, source.device()),
+    )[0]["id"]
+    source.ui.output(world.one)
+    world.sound(world.one, wanted)
+    world.one.ui.pick("list", 0)
+    world.sound(world.one, DAILY_IDS[0])
+    source.ui.playback_entry(DAILY_IDS[0], True)
+    world.one.ui.transport("pause")
+    world.silent(*world.clients)
+    prior = world.group().copy()
+    source.ui.leave()
+    wait_until(lambda: source.device() not in world.group()["members"], "retained source left")
+    source.ui.playback_entry(wanted, False)
+    world.held_silent(source)
+    source.ui.playback_entry(wanted, False)
+    world.silent(world.one, world.two)
+    after = world.sql("SELECT clock_timestamp() AS started")[0]["started"]
+    source.ui.transport("resume")
+    world.sound(source, wanted, group=False)
+    reports = wait_until(
+        lambda: local_radio_report(world, source, queue, after), "local replay checkpoint"
+    )
+    assert reports[0]["track_id"] == wanted
+    row = world.group()
+    assert not row["playing"] and source.device() not in row["members"]
+    for key in ("queue_id", "revision", "entry_id"):
+        assert row[key] == prior[key], f"local replay changed group {key}"
+    world.silent(world.one, world.two)
+    source.ui.playback_entry(wanted, True)
+    (world.directory / "local-replay-checkpoint.json").write_text(
+        json.dumps({"prior": prior, "after": row, "checkpoint": reports[0]}, default=str, indent=2)
+    )
+
+
+# 无本地曲目的遥控器离组后仍为空，不把远端曲目当成本机可重播曲目。
+def empty_local_queue_stays_empty(world):
+    remote_pick(world)
+    source = world.controller
+    source.ui.playback_entry(DAILY_IDS[0], True)
+    source.ui.transport("pause")
+    world.silent(*world.clients)
+    prior = world.group().copy()
+    source.ui.leave()
+    wait_until(lambda: source.device() not in world.group()["members"], "empty source left")
+    world.held_silent(source)
+    source.ui.no_playback_entry()
+    world.silent(world.one, world.two)
+    row = world.group()
+    assert not row["playing"]
+    for key in ("queue_id", "revision", "entry_id"):
+        assert row[key] == prior[key]
+
+
+# 保留本地曲目的非出声成员跨刷新仍显示组曲目，暂停/继续走组而非本机。
+def silent_member_projects_group_track(world):
+    source = world.controller
+    source.ui.pick("list", 2)
+    world.sound(source, DAILY_IDS[2], group=False)
+    source.ui.output(world.one)
+    world.one.ui.pick("list", 0)
+    world.sound(world.one, DAILY_IDS[0])
+    source.ui.playback_entry(DAILY_IDS[0], True)
+    world.held_silent(source)
+    source.ui.playback_entry(DAILY_IDS[0], True)
+    source.ui.transport("pause")
+    world.silent(*world.clients)
+    source.ui.playback_entry(DAILY_IDS[0], False)
+    world.held_silent(source)
+    source.ui.playback_entry(DAILY_IDS[0], False)
+    source.ui.transport("resume")
+    world.sound(world.one, DAILY_IDS[0])
+    world.silent(source, world.two)
+    assert source.device() in world.group()["members"]
+    assert world.group()["outputs"] == [world.one.device()]
+
+
 # 明确点击真实继续建立本机续取前提，暂停组及原引用必须保持。
 def continue_local_radio(world, source, prior):
     wait_until(lambda: source.device() not in world.group()["members"], "FM source left group")
