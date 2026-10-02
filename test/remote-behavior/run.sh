@@ -5,8 +5,8 @@ repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
 mode=${1:-all}
-if [[ "$mode" != all && "$mode" != list && "$mode" != radio ]]; then
-    echo 'usage: run.sh [all|list|radio]' >&2
+if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download ]]; then
+    echo 'usage: run.sh [all|list|radio|download]' >&2
     exit 2
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
@@ -88,6 +88,7 @@ fi
 tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi
+if [[ "$mode" == download ]]; then tests=("$suite_dir/test_download.py"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \

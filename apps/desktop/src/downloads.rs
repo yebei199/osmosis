@@ -2,6 +2,14 @@
 
 use std::path::PathBuf;
 
+/// 集中解析音乐目录，供平台注入及后续目录消费者共用。
+fn music_directory() -> std::io::Result<PathBuf> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "music directory resolution is not implemented",
+    ))
+}
+
 /// 桌面下载统一落在公共音乐目录的 osmosis 子目录。
 pub(crate) struct Store {
     /// 本实例的公共落点，不随下载任务变化。
@@ -38,6 +46,75 @@ impl ui::DownloadStore for Store {
 mod tests {
     use super::*;
     use ui::DownloadStore as _;
+
+    /// 子进程内读取环境，避免并发单测修改进程全局 HOME。
+    #[test]
+    fn music_directory_probe() {
+        let Some(expected) =
+            std::env::var_os("EXPECTED_MUSIC_DIRECTORY")
+        else {
+            return;
+        };
+        assert_eq!(
+            music_directory()
+                .expect("resolve music directory"),
+            PathBuf::from(expected)
+        );
+    }
+
+    /// 真实工具进程返回 XDG 落点；工具缺失时回退到 HOME/Music。
+    #[cfg(unix)]
+    #[test]
+    fn music_directory_uses_xdg_then_home_fallback() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory =
+            tempfile::tempdir().expect("owned home");
+        let bin = directory.path().join("bin");
+        std::fs::create_dir(&bin)
+            .expect("owned tool directory");
+        let shell = std::process::Command::new("sh")
+            .args(["-c", "command -v sh"])
+            .output()
+            .expect("locate shell");
+        assert!(shell.status.success());
+        let executable = bin.join("xdg-user-dir");
+        std::fs::write(&executable, format!("#!{}\nprintf '%s\\n' \"$XDG_TEST_MUSIC\"\n", String::from_utf8(shell.stdout).expect("shell path").trim())).expect("test xdg utility");
+        std::fs::set_permissions(
+            &executable,
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .expect("executable utility");
+        for xdg in [true, false] {
+            let expected = if xdg {
+                directory.path().join("custom music")
+            } else {
+                directory.path().join("Music")
+            };
+            if !xdg {
+                std::fs::remove_file(&executable)
+                    .expect("remove owned xdg utility");
+            }
+            let status = std::process::Command::new(
+                std::env::current_exe()
+                    .expect("test binary"),
+            )
+            .args([
+                "--exact",
+                "downloads::tests::music_directory_probe",
+                "--nocapture",
+            ])
+            .env("HOME", directory.path())
+            .env("PATH", &bin)
+            .env("XDG_TEST_MUSIC", &expected)
+            .env("EXPECTED_MUSIC_DIRECTORY", &expected)
+            .status()
+            .expect("isolated directory probe");
+            assert!(
+                status.success(),
+                "directory resolver failed: xdg={xdg}"
+            );
+        }
+    }
 
     /// 真实字节只在提交后出现在正式文件名下。
     #[test]
