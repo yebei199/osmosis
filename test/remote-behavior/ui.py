@@ -238,7 +238,11 @@ class UI:
 
     # 控制条的可访问标签随真实播放状态改变。
     def transport(self, operation):
-        self.activate(self.must("RoundControl::touch", LABELS[operation]))
+        handle = self.must("RoundControl::touch", LABELS[operation])
+        properties = self.call("get_element_properties", elementHandle=handle)
+        with (self.client.directory / "transport-controls.jsonl").open("a") as log:
+            log.write(json.dumps({"operation": operation, "properties": properties}) + "\n")
+        self.activate(handle)
 
     # 成功恢复后用户不应继续看到请求失败横幅；音频判据先执行。
     def no_error_banner(self):
@@ -259,7 +263,7 @@ class UI:
             },
         )
 
-    # 电台每次进入由应用真实取 FM，再由生产队列逻辑续取。
+    # 打开电台分区；仍拥有暂停的 FM 批次时只展示列表，不自动继续。
     def radio(self):
         self.music("radio")
 

@@ -27,7 +27,15 @@ Linux，使用普通用户。缺依赖、缺 namespace 或 GPU adapter、初始�
 没有 skip 路径。CI 的 AppArmor 配置只发生在一次性 runner。
 uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ 由 Nix 声明。
 资源启动前实际核验 pidfd 与依赖导入；缺能力直接失败。`run.sh list` 仅选首条真实列表
-纵向用例，默认仍执行完整集合，acceptance/run.toml 与 CI 不使用局部模式。
+纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
+acceptance/run.toml 与 CI 不使用局部模式。
+
+电台引用保护先向目标转交并暂停，保存原 queue/revision/entry。源端离组经有界确认后
+打开电台，再明确点击一次处于暂停态的真实播放按钮；导航本身不保证继续。PCM 确认
+源端本机播放，同时断言组仍暂停且原引用未变。续取只接受动作后服务端时间戳的新
+playing 上报，revision 取该上报实际应用的版本；至少四个新版本须属于原队列。
+`local-fm-premise.json`、`local-fm-publications.jsonl` 和 `transport-controls.jsonl`
+保留该前提；最终目标恢复旧曲、旧 entry 存在、追加/替换与静音判据保持不变。
 
 默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2` 限制软件 GPU 与编译资源，执行者
 获得更高额度后可以明确增加 worker；每个 testcase 独占资源，禁止自动重试和 worker 重启。

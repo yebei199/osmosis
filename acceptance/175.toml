@@ -21,7 +21,7 @@ mutation = "send-request、execute-target；恢复候选同 ID 必须重新通�
 [[ac]]
 id = "AC-3"
 kind = "regression"
-entry = "电台真实进入/续歌；直接 OutputChip 恢复；重启客户端后接收 GroupState 再切输出；恢复后列表点歌/暂停/继续/切输出/离组；真实信令断线及服务重启；电台旧引用恢复后确认独奏者非成员→点另一输出追加→双目标出声→确认已入组→再次点目标替换"
+entry = "电台真实进入/续歌（离组确认→打开分区→暂停态真实播放按钮继续→本机PCM；动作后新上报且同队列至少四个新revision，组仍暂停/原引用不变）；直接 OutputChip 恢复；重启客户端后接收 GroupState 再切输出；恢复后列表点歌/暂停/继续/切输出/离组；真实信令断线及服务重启；电台旧引用恢复后确认独奏者非成员→点另一输出追加→双目标出声→确认已入组→再次点目标替换"
 observe = "失效 queue/revision/entry 恢复后遥控仍有音频；空组不自启；健康组不覆盖；暂停组旧引用保留；生命周期仍可继续；playing seed 接续位置须通过操作前 PCM 独立范围；独奏追加保留旧输出，成员替换令旧输出静音"
 tests = ["test_remote::test_recover_invalid[queue-direct-playing]", "test_remote::test_recover_invalid[queue-direct-empty]", "test_remote::test_recover_invalid[queue-recovered-playing]", "test_remote::test_recover_invalid[queue-recovered-empty]", "test_remote::test_recover_invalid[revision-direct-playing]", "test_remote::test_recover_invalid[revision-direct-empty]", "test_remote::test_recover_invalid[revision-recovered-playing]", "test_remote::test_recover_invalid[revision-recovered-empty]", "test_remote::test_recover_invalid[entry-direct-playing]", "test_remote::test_recover_invalid[entry-direct-empty]", "test_remote::test_recover_invalid[entry-recovered-playing]", "test_remote::test_recover_invalid[entry-recovered-empty]", "test_remote::test_radio_publication_preserves_group_reference", "test_remote::test_last_output_reconnect", "test_remote::test_one_of_two_outputs_reconnect", "test_remote::test_server_restart", "test_remote::test_switch_output", "test_remote::test_local_seed", "test_remote::test_healthy_group_ignores_unrelated_seed", "test_remote::test_idle_group"]
 doubles = ["SQL 仅造独立库的历史损坏引用；Gate 只切本轮客户端信令；不假造 GroupState、鉴权结果、播放状态或音频"]

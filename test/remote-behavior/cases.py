@@ -259,6 +259,38 @@ def recover_invalid(world, damage, order, seed):
     source.ui.no_error_banner()
 
 
+# 本轮动作之后的真实本机上报；旧 playing report 不能建立续取前提。
+def local_radio_report(world, source, queue_id, after):
+    return world.sql(
+        """SELECT q.id,r.applied_revision AS revision,r.entry_id,e.track_id,r.reported_at
+        FROM play_queues q JOIN play_queue_reports r ON q.id=r.queue_id
+        JOIN play_queue_entries e ON e.queue_id=q.id AND e.revision=r.applied_revision
+          AND e.entry_id=r.entry_id
+        WHERE q.account_id=%s AND q.device_id=%s AND q.id=%s
+          AND r.play_state='playing' AND r.reported_at>%s
+        ORDER BY r.reported_at DESC LIMIT 1""",
+        (world.account, source.device(), queue_id, after),
+    )
+
+
+# 明确点击真实继续建立本机续取前提，暂停组及原引用必须保持。
+def continue_local_radio(world, source, prior):
+    wait_until(lambda: source.device() not in world.group()["members"], "FM source left group")
+    source.ui.radio()
+    started = world.sql("SELECT clock_timestamp() AS started")[0]["started"]
+    source.ui.transport("resume")
+    world.sound(source, "175004", group=False)
+    row = world.group()
+    assert not prior["playing"] and not row["playing"]
+    assert source.device() not in row["members"]
+    for key in ("queue_id", "revision", "entry_id"):
+        assert row[key] == prior[key], f"local FM resume changed group {key}"
+    (world.directory / "local-fm-premise.json").write_text(
+        json.dumps({"after": started, "prior": prior, "after_resume": row}, default=str, indent=2)
+    )
+    return started
+
+
 # 多次电台发布超过保留窗后，暂停组仍能继续原引用音频。
 def radio_publication_preserves_group_reference(world):
     source = world.controller
@@ -270,24 +302,21 @@ def radio_publication_preserves_group_reference(world):
     world.silent(*world.clients)
     prior = world.group().copy()
     source.ui.leave()
-    source.ui.radio()
+    after = continue_local_radio(world, source, prior)
     for _ in range(12):
         reports = wait_until(
-            lambda: world.sql(
-                """SELECT q.id,q.revision,r.entry_id,e.track_id
-            FROM play_queues q JOIN play_queue_reports r ON q.id=r.queue_id
-            JOIN play_queue_entries e ON e.queue_id=q.id AND e.revision=r.applied_revision AND e.entry_id=r.entry_id
-            WHERE q.account_id=%s AND q.device_id=%s AND r.play_state='playing' ORDER BY r.reported_at DESC LIMIT 1""",
-                (world.account, source.device()),
-            ),
+            lambda after=after: local_radio_report(world, source, prior["queue_id"], after),
             "local FM progress",
         )
+        with (world.directory / "local-fm-publications.jsonl").open("a") as log:
+            log.write(json.dumps(reports[0], default=str) + "\n")
         world.sound(source, reports[0]["track_id"], group=False)
         if (
             reports[0]["id"] == prior["queue_id"]
             and reports[0]["revision"] >= prior["revision"] + 4
         ):
             break
+        after = world.sql("SELECT clock_timestamp() AS started")[0]["started"]
         source.ui.transport("next")
     else:
         raise RuntimeError(
