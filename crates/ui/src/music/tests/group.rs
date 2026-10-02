@@ -355,6 +355,48 @@ fn shuffle_and_loop_go_to_the_group() {
     );
 }
 
+/// 遥控端每次进度刷新都显示组的开关,并能从开启状态切回关闭。
+#[test]
+fn remote_shuffle_and_loop_follow_group_state() {
+    let (ui, deck) = projection_window();
+    wire(&ui, &deck);
+    for (version, shuffled, mode, index) in [
+        (4, true, LoopModeDto::One, 2),
+        (5, false, LoopModeDto::All, 1),
+        (6, false, LoopModeDto::Off, 0),
+    ] {
+        let mut remote = state(&["pc"], true);
+        remote.version = version;
+        let now = remote.now.as_mut().expect("group track");
+        now.shuffled = shuffled;
+        now.loop_mode = mode;
+        deck.group.assume(Some(remote));
+        playback::transport::tick_progress(&ui, &deck);
+        assert_eq!(
+            ui.global::<Player>().get_shuffle_on(),
+            shuffled
+        );
+        assert_eq!(
+            ui.global::<Player>().get_loop_mode(),
+            index
+        );
+    }
+}
+
+/// 出声端对齐组状态也显示同一份开关,不沿用本机队列设置。
+#[test]
+fn output_shuffle_and_loop_follow_group_state() {
+    let (ui, deck) = projection_window();
+    let mut remote = state(&["me", "pc"], true);
+    let now = remote.now.as_mut().expect("group track");
+    now.shuffled = true;
+    now.loop_mode = LoopModeDto::One;
+    deck.group.assume(Some(remote));
+    playback::group::align(&ui, &deck);
+    assert!(ui.global::<Player>().get_shuffle_on());
+    assert_eq!(ui.global::<Player>().get_loop_mode(), 2);
+}
+
 /// 在组里点一台设备:改成只在它上面出声;点本机就是本机出声。
 #[test]
 fn picking_a_device_in_the_group_sets_the_outputs() {
@@ -893,6 +935,105 @@ fn radio_state(revision: i64, last: bool) -> GroupStateDto {
         });
     }
     state
+}
+
+/// 独奏 FM 已发布并进入加载态,提供可切输出的真实 seed 前提。
+fn start_local_fm(ui: &MainWindow, deck: &Deck) {
+    super::super::radio::begin(
+        ui,
+        deck,
+        api::RadioMode::Fm,
+        vec![track_with_id("fm")],
+    );
+    deck.execution.adopt(7, 2, vec![12]);
+    let track = deck
+        .queue
+        .borrow()
+        .current()
+        .expect("FM track")
+        .clone();
+    let future = app_core::play(
+        &deck.playback,
+        track,
+        |_| core::future::pending::<Result<(), String>>(),
+        |()| {},
+    );
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(
+        std::task::Waker::noop(),
+    );
+    assert!(
+        std::future::Future::poll(future.as_mut(), &mut cx)
+            .is_pending()
+    );
+    assert!(super::super::radio::due(deck, 0));
+}
+
+/// 独奏电台经输出选择入组后接管相同 seed 队列,最后一首仍该续取。
+#[test]
+fn local_radio_seed_keeps_topping_up_as_remote() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    start_local_fm(&ui, &deck);
+    ui.global::<Shell>().invoke_set_output("pc".into());
+    assert_eq!(
+        deck.group.intents(),
+        vec![r#"outputs ["pc"] +seed"#]
+    );
+    let mut remote = radio_state(2, true);
+    remote.outputs = vec!["pc".to_owned()];
+    deck.group.assume(Some(remote));
+    deck.group.answer(Ok(Some((7, 2))));
+    assert!(super::super::radio::due(&deck, 0));
+    deck.group.assume(Some(radio_state(3, true)));
+    assert!(!super::super::radio::due(&deck, 0));
+}
+
+/// 用加入按钮建组也必须接续本机电台的 seed 归属。
+#[test]
+fn local_radio_seed_keeps_topping_up_after_join() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    start_local_fm(&ui, &deck);
+    ui.global::<Shell>().invoke_toggle_member("pc".into());
+    deck.group.assume(Some(radio_state(2, true)));
+    deck.group.answer(Ok(Some((7, 2))));
+    assert!(super::super::radio::due(&deck, 0));
+}
+
+/// 输出应答采用其他队列或失败时,本机电台不能接管组里的曲目。
+#[test]
+fn local_radio_seed_rejects_failed_or_foreign_reply() {
+    for reply in [
+        Err(()),
+        Ok(None),
+        Ok(Some((99, 2))),
+        Ok(Some((7, 3))),
+    ] {
+        let (ui, deck) = deck_window();
+        wire(&ui, &deck);
+        start_local_fm(&ui, &deck);
+        ui.global::<Shell>().invoke_set_output("pc".into());
+        deck.group.assume(Some(radio_state(2, true)));
+        deck.group.answer(reply);
+        assert!(!super::super::radio::due(&deck, 0));
+    }
+}
+
+/// 输出请求在途时本机换了批,旧 seed 应答不得重新激活那份电台。
+#[test]
+fn local_radio_seed_rejects_reply_after_local_replacement()
+{
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    start_local_fm(&ui, &deck);
+    ui.global::<Shell>().invoke_set_output("pc".into());
+    deck.queue
+        .borrow_mut()
+        .replace(vec![track_with_id("other")], 0);
+    deck.group.assume(Some(radio_state(2, true)));
+    deck.group.answer(Ok(Some((7, 2))));
+    assert!(!super::super::radio::due(&deck, 0));
 }
 
 /// 组里开电台(#165):起播走组意图,应答里那一版组队列归电台;放到最后一首就续。

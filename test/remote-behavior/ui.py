@@ -315,6 +315,33 @@ class UI:
     def radio(self):
         self.music("radio")
 
+    # 展开常驻控制条的更多菜单,复用语义按钮定位开关。
+    def playback_options(self):
+        if not self.find("DrawerRow::touch", "随机播放"):
+            self.activate(self.must("RoundControl::touch", "更多"))
+
+    # 读取真实可访问状态,不以服务端的状态替代按钮显示。
+    def shuffle_checked(self):
+        self.playback_options()
+        handle = self.must("DrawerRow::touch", "随机播放")
+        return self.call("get_element_properties", elementHandle=handle)["accessibleChecked"]
+
+    # 三态循环由控件无障碍标签给出,与用户看到的文字共用绑定。
+    def loop_label(self):
+        self.playback_options()
+        handle = self.must("DrawerRow::touch", "循环: ", True)
+        return self.call("get_element_properties", elementHandle=handle)["accessibleLabel"]
+
+    # 控件动作走 Slint 的用户入口,不会直接发送组 HTTP 意图。
+    def shuffle(self):
+        self.playback_options()
+        self.activate(self.must("DrawerRow::touch", "随机播放"))
+
+    # 循环一次仍让生产回调根据真实组状态计算下一态。
+    def cycle_loop(self):
+        self.playback_options()
+        self.activate(self.must("DrawerRow::touch", "循环: ", True))
+
     # 退出播放组使用常驻横幅的用户入口。
     def leave(self):
         self.activate(self.must("MainWindow::exit-touch", LABELS["leave"]))
