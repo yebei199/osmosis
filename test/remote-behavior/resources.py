@@ -467,10 +467,21 @@ class Client:
                 timeout=5,
             )
         )
+        graph = {
+            "pid": self.app_pid,
+            "birth": self.app_birth,
+            "socket": str(self.socket),
+            "sinks": sinks,
+            "sink_inputs": inputs,
+            "sources": sources,
+            "source_outputs": captures,
+        }
+        with (self.directory / "audio-graphs.jsonl").open("a") as log:
+            log.write(json.dumps(graph) + "\n")
         if (
             len(sinks) != 1
             or sinks[0]["name"] != "rb"
-            or sinks[0]["monitor_source_name"] != "rb.monitor"
+            or sinks[0]["monitor_source"] != "rb.monitor"
         ):
             raise RuntimeError("private sink topology changed")
         for item in inputs:
@@ -488,15 +499,7 @@ class Client:
             capture["properties"].get("application.process.id")
         ) != str(self.recorder.child.pid):
             raise RuntimeError("capture is not the run-owned recorder on the private monitor")
-        return {
-            "pid": self.app_pid,
-            "birth": self.app_birth,
-            "socket": str(self.socket),
-            "sinks": sinks,
-            "sink_inputs": inputs,
-            "sources": sources,
-            "source_outputs": captures,
-        }
+        return graph
 
     # 每个窗口起止按字节位置记录；音频不足是环境错误。
     def window(self):
