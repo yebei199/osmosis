@@ -217,6 +217,7 @@ class Client:
         self.app_pid = None
         self.app_birth = None
         self.process = None
+        self.network = None
         self.samples = []
         world.clients.append(self)
         self.directory = world.directory / role
@@ -319,24 +320,20 @@ class Client:
     def start(self):
         self.pid_file = self.directory / "app.pid"
         self.pid_file.unlink(missing_ok=True)
-        wrapper = 'mount --bind "$1" /etc/hostname; printf "%s\\n" "$$" > "$2"; exec "$3"'
+        ready = self.directory / "network.ready"
+        ready.unlink(missing_ok=True)
+        wrapper = (
+            'mount --bind "$1" /etc/hostname; ip link set lo up; '
+            'printf "%s\\n" "$$" > "$2"; '
+            'while [ ! -f "$4" ]; do sleep 0.1; done; exec "$3"'
+        )
         process = self.world.spawn(
             self.role + f"-app-{len(self.world.processes)}",
             [
-                "pasta",
-                "--config-net",
-                "-f",
-                "--host-lo-to-ns-lo",
-                "-t",
-                "none",
-                "-u",
-                "none",
-                "-T",
-                f"3000:{self.gate.port},{self.world.media.http.server_port}",
-                "-U",
-                "none",
-                "--",
                 "unshare",
+                "--user",
+                "--map-root-user",
+                "--net",
                 "--mount",
                 "--uts",
                 "--",
@@ -347,18 +344,55 @@ class Client:
                 self.directory / "hostname",
                 self.pid_file,
                 self.world.desktop,
+                ready,
             ],
             self.env,
         )
         self.process = process
         wait_until(lambda: process.alive() is None and self.pid_file.exists(), self.role + " PID")
-        self.app_pid = int(self.pid_file.read_text())
+        reported = int(self.pid_file.read_text())
+        if reported != process.child.pid:
+            raise RuntimeError("namespace wrapper PID is not the held command PID")
+        self.app_pid = process.child.pid
         self.app_birth = self.identity()
         for namespace in ("net", "mnt", "uts", "user"):
             own = (Path("/proc/self/ns") / namespace).readlink()
             child = (Path("/proc") / str(self.app_pid) / "ns" / namespace).readlink()
             if own == child:
                 raise RuntimeError(f"client lacks private {namespace} namespace")
+        network = self.world.spawn(
+            self.role + f"-network-{len(self.world.processes)}",
+            [
+                "pasta",
+                "-f",
+                "--config-net",
+                "--ns-ifname",
+                "rb0",
+                "--netns",
+                f"/proc/{self.app_pid}/ns/net",
+                "--userns",
+                f"/proc/{self.app_pid}/ns/user",
+                "--host-lo-to-ns-lo",
+                "-t",
+                "none",
+                "-u",
+                "none",
+                "-T",
+                f"3000:{self.gate.port},{self.world.media.http.server_port}",
+                "-U",
+                "none",
+            ],
+            self.env,
+        )
+        self.network = network
+        wait_until(
+            lambda: (
+                network.alive() is None
+                and "rb0:" in Path(f"/proc/{self.app_pid}/net/dev").read_text()
+            ),
+            self.role + " network interface",
+        )
+        ready.touch()
 
     # PID 与内核启动 tick 配对，清理不能打到复用 PID 的无关进程。
     def identity(self):
@@ -392,6 +426,8 @@ class Client:
                     os.close(fd)
         if self.process:
             self.process.stop()
+        if self.network:
+            self.network.stop()
         if self.app_pid is not None:
             wait_until(lambda: not self.app_alive(), self.role + " app exit", timeout=8)
         self.app_pid = None

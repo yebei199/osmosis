@@ -26,12 +26,14 @@ base.overrideAttrs (old: {
       postgresql
       protobuf
       util-linux
+      iproute2
       xorg-server
       mesa
     ]);
   shellHook = (old.shellHook or "") + ''
     export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
     export REMOTE_BEHAVIOR_PYTHON="${pkgs.python3}/bin/python3"
+    export SLINT_WGPU_CPU=1
     export ALSA_PLUGIN_DIR="${pkgs.alsa-plugins}/lib/alsa-lib"
     for remote_icd in ${pkgs.mesa.drivers}/share/vulkan/icd.d/lvp_icd*.json; do
       test -f "$remote_icd" || { echo "missing lavapipe ICD" >&2; return 2; }

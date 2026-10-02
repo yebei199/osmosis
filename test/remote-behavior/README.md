@@ -35,6 +35,10 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 固定 3000、8091 和单实例抽象 socket 仅存在于各客户端独占的 net namespace。
 每台另有独占 mount/UTS namespace、hostname 文件、状态目录、D-Bus、PulseAudio socket
 和 null sink。代码不调用 sethostname，不加载宿主声卡模块，不连接用户的音频或 session bus。
+客户端由 unshare 显式创建 user/net/mount/UTS namespace，保留宿主 PID namespace；
+wrapper 报告的 PID 必须等于实际持有的命令 PID，才用于音频绑定和停止。pasta 仅接入
+已核对的本轮 namespace，不自行创建 PID namespace。lavapipe 通过现有 SLINT_WGPU_CPU
+开关允许软件 adapter，没有修改渲染生产逻辑。
 
 启动前三台各采有效静音窗口。每次音频采样保留原始 S16LE、字节偏移、采样时间和
 音频图：应用 PID/birth → sink-input → 私有 sink → monitor → 本轮 parec PID。
