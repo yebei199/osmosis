@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 
 use jni::JavaVM;
 use jni::objects::{JObjectArray, JString, JValue};
+use jni::refs::IntoAuto as _;
 
 /// Java 侧那个类的全名。三处调用共用,写错的现象是 `NoClassDefFoundError`,
 /// 而且要等用户第一次点下载才抛。
@@ -120,7 +121,7 @@ impl ui::DownloadStore for Store {
                 &[],
             );
             if result.is_err() {
-                env.exception_clear()?;
+                env.exception_clear();
             }
             result.map(|_| ())
         })
@@ -243,12 +244,12 @@ fn read_array(
             let mut fields = Vec::with_capacity(array.len(env)?);
             for index in 0..array.len(env)? {
                 let item = array.get_element(env, index)?;
-                let item = env.auto_local(item);
+                let item = item.auto();
                 fields.push(item.try_to_string(env)?);
             }
             Ok(fields)
         })();
-        if result.is_err() { env.exception_clear()?; }
+        if result.is_err() { env.exception_clear(); }
         result
     }).map_err(as_io)
 }
