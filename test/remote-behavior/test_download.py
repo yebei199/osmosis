@@ -53,8 +53,15 @@ def download_world(monkeypatch):
     # 正常播放仍用原夹具，点击下载之前才切换这一次外部音源的行为。
     def dispatch(media, method, request, context):
         mode = getattr(media, "download_mode", None)
-        if method != "GetPlaySource" or mode is None:
+        if (
+            method != "GetPlaySource"
+            or mode is None
+            or request.level != media.pb.QUALITY_LEVEL_HIGH
+            or request.track_id != DAILY_IDS[0]
+        ):
             return original_dispatch(media, method, request, context)
+        with media.lock:
+            media.calls.append({"method": method, "request": str(request), "download_mode": mode})
         return media.pb.GetPlaySourceResponse(
             source=media.pb.PlaySource(
                 url=f"http://127.0.0.1:{media.http.server_port}/169.mp3",
