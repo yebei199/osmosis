@@ -105,17 +105,13 @@ pub trait DownloadStore: Send + Sync + 'static {
     )>;
 
     /// List published entries, including any permission limitation.
-    fn list(&self) -> std::io::Result<DownloadListing> {
-        Ok(DownloadListing::default())
-    }
+    fn list(&self) -> std::io::Result<DownloadListing>;
 
     /// Delete only validated entries selected from this store.
     fn delete(
         &self,
-        _ids: &[String],
-    ) -> std::io::Result<DownloadDeletion> {
-        Ok(DownloadDeletion::default())
-    }
+        ids: &[String],
+    ) -> std::io::Result<DownloadDeletion>;
 
     /// Request read access on first entry; desktop stores need no request.
     fn request_access(&self) -> std::io::Result<()> {
