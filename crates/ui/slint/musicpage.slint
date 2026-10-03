@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { Palette } from "std-widgets.slint";
 
 import { Theme, Type } from "theme.slint";
@@ -15,6 +16,156 @@ import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
 import { Viz } from "globals/viz.slint";
 import { BarMetrics } from "playerbar.slint";
+
+// 本地下载管理独有的投影，不向壳添加属性或回调。
+export struct DownloadRow {
+    id: string,
+    file-name: string,
+    title: string,
+    artist: string,
+    size: string,
+    selected: bool,
+}
+
+// 音乐模块持有状态；平台权限与目录操作由 Rust 回调完成。
+export global Downloads {
+    in-out property <bool> active: false;
+    in-out property <bool> confirming: false;
+    in property <[DownloadRow]> rows;
+    in property <string> total;
+    in property <string> note;
+    in property <int> selected-count;
+    in property <bool> busy;
+    callback show;
+    callback refresh;
+    callback search(string);
+    callback toggle(string);
+    callback delete-selected;
+}
+
+// 管理器只显示本机文件；每行点击切换选择，不发起播放。
+export component DownloadManager inherits Rectangle {
+    VerticalLayout {
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            keyword := LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: "搜索歌名、歌手或文件名";
+                enabled: !Downloads.busy;
+                edited => { Downloads.search(self.text); }
+            }
+            refresh-button := HoverButton {
+                width: 64px;
+                text: "刷新";
+                enabled: !Downloads.busy;
+                clicked => { Downloads.refresh(); }
+            }
+        }
+        total-text := Text {
+            text: Downloads.total;
+            accessible-label: self.text;
+            color: Theme.text-dim;
+            font-size: 13px;
+        }
+        if Downloads.note != "": Text {
+            text: Downloads.note;
+            accessible-label: self.text;
+            color: Theme.text-dim;
+            wrap: word-wrap;
+            font-size: 13px;
+        }
+        HorizontalLayout {
+            Text {
+                text: Downloads.busy ? "等待系统删除确认" : "已选择 " + Downloads.selected-count + " 首";
+                color: Theme.text-dim;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            delete-button := HoverButton {
+                width: 100px;
+                height: 40px;
+                text: "删除所选";
+                enabled: Downloads.selected-count > 0 && !Downloads.busy;
+                clicked => { Downloads.confirming = true; }
+            }
+        }
+        if Downloads.rows.length == 0: Text {
+            text: "没有符合的已下载歌曲";
+            color: Theme.text-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            vertical-stretch: 1;
+        }
+        if Downloads.rows.length > 0: ScrollView {
+            vertical-stretch: 1;
+            content-width: self.width;
+            VerticalLayout {
+                spacing: 4px;
+                for row in Downloads.rows: Rectangle {
+                    height: 64px;
+                    background: row.selected ? Theme.accent.with-alpha(0.15) : Theme.overlay-weak;
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 8px;
+                        Text {
+                            width: 24px;
+                            text: row.selected ? "✓" : "○";
+                            color: Theme.accent-ink;
+                            vertical-alignment: center;
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: row.title; color: Theme.text; overflow: elide; }
+                            Text { text: row.artist == "" ? row.file-name : row.artist; color: Theme.text-dim; font-size: 12px; overflow: elide; }
+                        }
+                        Text { text: row.size; color: Theme.text-dim; font-size: 12px; vertical-alignment: center; }
+                    }
+                    entry-touch := TouchArea {
+                        enabled: !Downloads.busy;
+                        accessible-role: checkbox;
+                        accessible-label: row.file-name;
+                        accessible-checked: row.selected;
+                        accessible-action-default => { Downloads.toggle(row.id); }
+                        clicked => { Downloads.toggle(row.id); }
+                    }
+                }
+            }
+        }
+    }
+    // 覆层截获输入，确认前不会向平台发删除请求。
+    if Downloads.confirming: confirmation := Rectangle {
+        background: #00000088;
+        TouchArea {}
+        GlassCard {
+            width: min(parent.width - 24px, 360px);
+            height: 180px;
+            x: (parent.width - self.width) / 2;
+            y: max(0px, (parent.height - self.height) / 2);
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                Text {
+                    text: "删除选中的 " + Downloads.selected-count + " 首歌曲？";
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    font-size: 17px;
+                }
+                Text { text: "本机文件将被删除，无法撤销。"; color: Theme.text-dim; wrap: word-wrap; font-size: 13px; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    cancel-button := HoverButton { width: (parent.width - 8px) / 2; height: 40px; text: "取消"; clicked => { Downloads.confirming = false; } }
+                    confirm-button := HoverButton {
+                        width: (parent.width - 8px) / 2; height: 40px; text: "确认删除";
+                        enabled: !Downloads.busy && Downloads.selected-count > 0;
+                        clicked => { Downloads.confirming = false; Downloads.delete-selected(); }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // 音乐页(tab 1):二级导航、搜索、歌单详情、卡墙与列表,以及两套控制条。
 //
@@ -34,12 +185,16 @@ export component MusicPage inherits VerticalLayout {
     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
     // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
     // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
-    init => { Player.music-shown(); }
+    init => { if (Downloads.active) { Downloads.show(); } else { Player.music-shown(); } }
 
     // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
     if Shell.compact: music-bar := MusicBar {
-        current: Shell.music-section;
-        selected(section) => { Shell.select-section(section); }
+        current: Downloads.active ? 5 : Shell.music-section;
+        selected(section) => {
+            Downloads.confirming = false;
+            Downloads.active = section == 5;
+            if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
+        }
     }
 
     HorizontalLayout {
@@ -48,12 +203,20 @@ export component MusicPage inherits VerticalLayout {
 
         // 宽版式:可收缩竖栏。
         if !Shell.compact: music-rail := MusicRail {
-            current: Shell.music-section;
+            current: Downloads.active ? 5 : Shell.music-section;
             collapsed <=> Shell.rail-collapsed;
-            selected(section) => { Shell.select-section(section); }
+            selected(section) => {
+            Downloads.confirming = false;
+            Downloads.active = section == 5;
+            if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
+        }
         }
 
-        VerticalLayout {
+        if Downloads.active: downloads-manager := DownloadManager {
+            horizontal-stretch: 1;
+        }
+
+        if !Downloads.active: VerticalLayout {
             horizontal-stretch: 1;
             spacing: 12px;
 

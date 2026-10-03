@@ -8,6 +8,10 @@
          feature 下内嵌的 MCP server(监听 127.0.0.1,见 apps/android/src/lib.rs)。 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 已下载管理只读音乐：旧安装条目需要运行期授权。 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
     <!-- 系统媒体控件(见 docs/adr/0020 与 src/main/java/.../MediaControls.java)。
          锁屏与通知栏的媒体卡片必须挂在一条通知上,而通知要活过切后台就必须挂在
          前台服务上。targetSdk 34 起 mediaPlayback 这个类型是强制声明的,少了

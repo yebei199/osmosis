@@ -40,7 +40,8 @@ mod music;
 // 安卓那一份走 MediaStore;没人注入就是这一端不支持下载。
 #[cfg(not(target_arch = "wasm32"))]
 pub use music::{
-    DownloadCommit, DownloadStore, install_download_store,
+    DownloadCommit, DownloadDeletion, DownloadEntry,
+    DownloadListing, DownloadStore, install_download_store,
 };
 
 // 喂给 GPU 装饰层的 seam 数据与数学。

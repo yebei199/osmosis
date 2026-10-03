@@ -26,6 +26,8 @@ use app_core::Queue;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod download;
+#[cfg(not(target_arch = "wasm32"))]
+mod downloads;
 // 歌单视图的分组条与筛选(#160)。
 #[cfg(not(target_arch = "wasm32"))]
 mod facets;
@@ -47,7 +49,8 @@ pub use rules::{describe_playback, join_artists};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use download::{
-    DownloadCommit, DownloadStore, install_download_store,
+    DownloadCommit, DownloadDeletion, DownloadEntry,
+    DownloadListing, DownloadStore, install_download_store,
 };
 
 // 各子模块的条目都引进这一层,子模块的 `use super::*` 因此能互相看见 ——
@@ -291,6 +294,7 @@ pub fn bind(
     queuepage::bind(ui, &deck);
     radio::bind(ui, &deck);
     bind_download(ui, &deck);
+    downloads::bind(ui);
     start_auto_advance(ui, &deck);
     start_progress_tick(ui, &deck);
     startup_check(ui);

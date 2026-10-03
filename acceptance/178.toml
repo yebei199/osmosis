@@ -1,0 +1,38 @@
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "桌面DownloadStore公共落点接口与音乐管理状态机"
+observe = "只列正式直接文件，仅删除所选身份，拒绝目录外/软链/伪造身份；搜索和总占用按真实快照"
+tests = ["app-desktop::bin/osmosis-desktop::downloads::tests::list_contains_only_published_direct_files", "app-desktop::bin/osmosis-desktop::downloads::tests::missing_download_directory_is_empty", "app-desktop::bin/osmosis-desktop::downloads::tests::delete_removes_only_selected_entries", "app-desktop::bin/osmosis-desktop::downloads::tests::forged_ids_cannot_escape_download_directory", "ui::music::tests::downloads::search_matches_title_artist_and_filename_without_case", "ui::music::tests::downloads::total_space_uses_all_entries_not_filtered_rows", "ui::music::tests::downloads::selection_survives_filter_by_id", "ui::music::tests::downloads::partial_delete_reports_only_removed_entries", "ui::music::tests::downloads::pending_authorization_disables_duplicate_delete", "ui::music::tests::downloads::leaving_downloads_preserves_playback_and_browse_state"]
+doubles = ["音乐状态机单测替换系统权限/删除回传，桌面落点使用独占真实tempfile"]
+mutation = "平台remove_file不执行，所选文件不存在的断言失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "真实列表/卡墙下载两首，再从音乐分段进入已下载搜索、选择和确认删除"
+observe = "完整mp3发布，所选文件真删除，未选项字节和目录外哨兵保留，占用按文件大小刷新；取消保持文件"
+tests = ["test_download::test_download_manager_search_and_delete_selected_track[list]", "test_download::test_download_manager_search_and_delete_selected_track[wall]", "test_download::test_download_manager_cancel_then_delete_multiple"]
+doubles = ["固定外部gRPC/HTTP音源；真实客户端、生产server与文件系统；软件GPU不证明合成器像素"]
+mutation = "remove_file不执行，最终文件不存在的断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "音乐管理状态机接收系统取消与读取权限拒绝"
+observe = "取消不报删除成功；读取被拒仍保留自有条目及原因"
+tests = ["ui::music::tests::downloads::cancelled_delete_preserves_files_and_reports_zero", "ui::music::tests::downloads::declined_read_permission_keeps_owned_downloads"]
+doubles = ["系统结果为边界替身，不能证明JNI、MediaStore权限或跨重装ownership；小米13设备自动化另交凭据"]
+mutation = "取消被当成成功，零删除统计与文件保留断言失败"
+
+[[ac]]
+id = "AC-4"
+none = "固定提交diff范围合同，由上游按批准的音乐功能及下载接缝白名单核对"
+
+[[ac]]
+id = "AC-2"
+kind = "regression"
+entry = "已有#169真实下载入口及中途音源断流/试听拒绝"
+observe = "完整mp3发布、断流不留半截文件、试听拒绝保留"
+tests = ["test_download::test_download_creates_complete_mp3[list]", "test_download::test_download_creates_complete_mp3[wall]", "test_download::test_interrupted_download_discards_partial_file", "test_download::test_trial_download_keeps_existing_refusal"]
+doubles = ["固定外部音源与本轮HTTP故障注入；宿主网络不变"]

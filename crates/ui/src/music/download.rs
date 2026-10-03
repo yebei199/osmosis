@@ -18,6 +18,74 @@ use std::sync::OnceLock;
 use super::*;
 use crate::Shell;
 
+/// A published local download, identified by the platform store.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DownloadEntry {
+    /// Opaque identifier checked again before deletion.
+    pub id: String,
+    /// Actual published file name.
+    pub file_name: String,
+    /// File size in bytes.
+    pub size: u64,
+    /// Last modification time in Unix seconds.
+    pub modified: u64,
+    /// Title parsed from the published file name.
+    pub title: String,
+    /// Artist parsed from the published file name.
+    pub artist: String,
+}
+
+impl DownloadEntry {
+    /// Parse the shared artist-title naming convention, retaining the actual file name.
+    pub fn from_file(
+        id: String,
+        file_name: String,
+        size: u64,
+        modified: u64,
+    ) -> Self {
+        let stem = file_name
+            .strip_suffix(".mp3")
+            .unwrap_or(&file_name);
+        let (artist, title) = stem
+            .split_once(" - ")
+            .map_or(("", stem), |(artist, title)| {
+                (artist, title)
+            });
+        Self {
+            id,
+            title: title.to_owned(),
+            artist: artist.to_owned(),
+            file_name,
+            size,
+            modified,
+        }
+    }
+}
+
+/// Listing plus any limitation imposed by platform permissions.
+#[derive(Clone, Debug, Default)]
+pub struct DownloadListing {
+    /// Published entries in the application music directory.
+    pub entries: Vec<DownloadEntry>,
+    /// Explanation when earlier installations' files cannot be read.
+    pub note: String,
+    /// A system permission request is still in flight.
+    pub pending: bool,
+}
+
+/// Actual deletion outcome; pending authorization is never counted as success.
+#[derive(Clone, Debug, Default)]
+pub struct DownloadDeletion {
+    /// Entries actually removed by the platform.
+    pub deleted: Vec<DownloadEntry>,
+    /// Reasons for entries that remain.
+    pub failures: Vec<String>,
+    /// Waiting for the system confirmation.
+    pub pending: bool,
+    /// The system confirmation was cancelled.
+    pub cancelled: bool,
+}
+
 /// 下载的落点。由平台入口注入(见 `crate::install_download_store`)——
 /// 安卓那一份走 MediaStore,住在 `apps/android`。
 ///
@@ -35,6 +103,27 @@ pub trait DownloadStore: Send + Sync + 'static {
         Box<dyn std::io::Write + Send>,
         Box<dyn DownloadCommit>,
     )>;
+
+    /// List published entries, including any permission limitation.
+    fn list(&self) -> std::io::Result<DownloadListing>;
+
+    /// Delete only validated entries selected from this store.
+    fn delete(
+        &self,
+        ids: &[String],
+    ) -> std::io::Result<DownloadDeletion>;
+
+    /// Request read access on first entry; desktop stores need no request.
+    fn request_access(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// Consume an asynchronous system deletion result, when available.
+    fn poll_delete(
+        &self,
+    ) -> std::io::Result<Option<DownloadDeletion>> {
+        Ok(None)
+    }
 
     /// 存到哪儿了,如「音乐/osmosis」。完成那句话要说清楚文件去了哪 ——
     /// 不说的话用户得自己在文件管理器里找。
@@ -54,7 +143,7 @@ pub trait DownloadCommit: Send + 'static {
 /// `OnceLock` 而不是参数:传参数要给 `run` / `run_with_renderers` 各加一个形参,
 /// 而四个平台入口里只有安卓给得出实现,另外三个只能传 `None` —— 为一个端改四处
 /// 签名。同 `apps/android/src/controls.rs` 里那条命令通道的理由。
-static STORE: OnceLock<Box<dyn DownloadStore>> =
+pub(super) static STORE: OnceLock<Box<dyn DownloadStore>> =
     OnceLock::new();
 
 /// 接上落点。平台入口在 `run*` 之前调一次;不调就是这一端不支持下载。
@@ -203,6 +292,7 @@ fn pump(
                 slint::SharedString::new(),
             );
         }
+        ui.global::<crate::Downloads>().invoke_refresh();
         crate::notice::show(
             &ui,
             outcome.unwrap_or_else(|why| why),

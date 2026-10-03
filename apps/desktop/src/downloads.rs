@@ -117,10 +117,122 @@ impl ui::DownloadStore for Store {
         ))
     }
 
+    /// 只列正式直接文件，软链和子目录不能扩展音乐目录边界。
+    fn list(&self) -> std::io::Result<ui::DownloadListing> {
+        let directory =
+            match std::fs::read_dir(&self.directory) {
+                Ok(directory) => directory,
+                Err(err)
+                    if err.kind()
+                        == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(
+                        ui::DownloadListing::default(),
+                    );
+                }
+                Err(err) => return Err(err),
+            };
+        let mut entries = Vec::new();
+        for item in directory {
+            let item = item?;
+            let name = item.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !published_name(name)
+                || !item.file_type()?.is_file()
+            {
+                continue;
+            }
+            let metadata = item.metadata()?;
+            let modified = metadata
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            entries.push(ui::DownloadEntry::from_file(
+                name.to_owned(),
+                name.to_owned(),
+                metadata.len(),
+                modified,
+            ));
+        }
+        entries.sort_by(|left, right| {
+            right.modified.cmp(&left.modified).then_with(
+                || left.file_name.cmp(&right.file_name),
+            )
+        });
+        Ok(ui::DownloadListing {
+            entries,
+            ..Default::default()
+        })
+    }
+
+    /// 删除前重新列目录；身份只能来自这份受限快照。
+    fn delete(
+        &self,
+        ids: &[String],
+    ) -> std::io::Result<ui::DownloadDeletion> {
+        let entries = self.list()?.entries;
+        let mut outcome = ui::DownloadDeletion::default();
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(entry) = entries
+                .iter()
+                .find(|entry| &entry.id == id)
+            else {
+                outcome.failures.push(format!(
+                    "{id}: 文件不在已下载目录中"
+                ));
+                continue;
+            };
+            let path =
+                self.directory.join(&entry.file_name);
+            // symlink_metadata 不跟随替换成软链的条目。
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => outcome.deleted.push(
+                            ui::DownloadEntry {
+                                size: metadata.len(),
+                                ..entry.clone()
+                            },
+                        ),
+                        Err(err) => {
+                            outcome.failures.push(format!(
+                                "{}: {err}",
+                                entry.file_name
+                            ))
+                        }
+                    }
+                }
+                Ok(_) => outcome.failures.push(format!(
+                    "{}: 文件类型已改变",
+                    entry.file_name
+                )),
+                Err(err) => outcome.failures.push(format!(
+                    "{}: {err}",
+                    entry.file_name
+                )),
+            }
+        }
+        Ok(outcome)
+    }
+
     /// 下载完成提示使用实际公共目录。
     fn location(&self) -> String {
         self.directory.display().to_string()
     }
+}
+
+/// 成品名不含目录分隔符，也不把隐藏待定文件当下载歌曲。
+fn published_name(name: &str) -> bool {
+    !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && name.ends_with(".mp3")
 }
 
 /// 收尾令牌独占临时路径，未提交时由 TempPath 的 Drop 回收。
@@ -174,6 +286,159 @@ mod tests {
     use super::*;
     use similar_asserts::assert_eq;
     use ui::DownloadStore as _;
+
+    /// 只列出已发布的直接文件，外部、待定、嵌套与软链都不可见。
+    #[test]
+    fn list_contains_only_published_direct_files() {
+        let root = tempfile::tempdir().expect("owned root");
+        let directory = root.path().join("osmosis");
+        std::fs::create_dir(&directory)
+            .expect("music directory");
+        std::fs::write(
+            root.path().join("outside.mp3"),
+            b"outside",
+        )
+        .expect("outside sentinel");
+        std::fs::write(
+            directory.join("Artist - Title.mp3"),
+            b"track",
+        )
+        .expect("published bytes");
+        std::fs::write(
+            directory.join(".osmosis-download-X.pending"),
+            b"partial",
+        )
+        .expect("pending");
+        std::fs::create_dir(directory.join("nested"))
+            .expect("nested directory");
+        std::fs::write(
+            directory.join("nested/other.mp3"),
+            b"nested",
+        )
+        .expect("nested bytes");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            root.path().join("outside.mp3"),
+            directory.join("linked.mp3"),
+        )
+        .expect("outside link");
+        let entries = Store::at(directory)
+            .list()
+            .expect("listing")
+            .entries;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].file_name,
+            "Artist - Title.mp3"
+        );
+        assert_eq!(entries[0].size, 5);
+        assert_eq!(entries[0].title, "Title");
+        assert_eq!(entries[0].artist, "Artist");
+        assert!(entries[0].modified > 0);
+    }
+
+    /// 不存在的下载目录自然显示空列表，查询不能创建文件。
+    #[test]
+    fn missing_download_directory_is_empty() {
+        let root = tempfile::tempdir().expect("owned root");
+        let directory = root.path().join("osmosis");
+        assert!(
+            Store::at(directory.clone())
+                .list()
+                .expect("missing directory")
+                .entries
+                .is_empty()
+        );
+        assert!(!directory.exists());
+    }
+
+    /// 真实删除仅作用于选择的身份，剩余条目的字节保持原样。
+    #[test]
+    fn delete_removes_only_selected_entries() {
+        let root =
+            tempfile::tempdir().expect("owned music");
+        for (name, bytes) in [
+            ("a.mp3", b"a".as_slice()),
+            ("b.mp3", b"bb".as_slice()),
+            ("c.mp3", b"ccc".as_slice()),
+        ] {
+            std::fs::write(root.path().join(name), bytes)
+                .expect("published file");
+        }
+        let store = Store::at(root.path().to_path_buf());
+        let selected: Vec<_> = store
+            .list()
+            .expect("listing")
+            .entries
+            .iter()
+            .filter(|item| item.file_name != "b.mp3")
+            .map(|item| item.id.clone())
+            .collect();
+        let result = store
+            .delete(&selected)
+            .expect("selected deletion");
+        assert_eq!(result.deleted.len(), 2);
+        assert_eq!(
+            result
+                .deleted
+                .iter()
+                .map(|item| item.size)
+                .sum::<u64>(),
+            4
+        );
+        assert!(!root.path().join("a.mp3").exists());
+        assert!(!root.path().join("c.mp3").exists());
+        assert_eq!(
+            std::fs::read(root.path().join("b.mp3"))
+                .expect("unselected bytes"),
+            b"bb"
+        );
+    }
+
+    /// 伪造身份无法绕过目录边界，也不能跟随外部软链。
+    #[test]
+    fn forged_ids_cannot_escape_download_directory() {
+        let root = tempfile::tempdir().expect("owned root");
+        let directory = root.path().join("osmosis");
+        std::fs::create_dir(&directory)
+            .expect("owned music");
+        let outside = root.path().join("outside.mp3");
+        std::fs::write(&outside, b"sentinel")
+            .expect("outside bytes");
+        std::fs::write(
+            directory.join("inside.mp3"),
+            b"inside",
+        )
+        .expect("inside bytes");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            &outside,
+            directory.join("link.mp3"),
+        )
+        .expect("link");
+        let store = Store::at(directory.clone());
+        let ids = vec![
+            "../outside.mp3".into(),
+            outside.display().to_string(),
+            "nested/file.mp3".into(),
+            "link.mp3".into(),
+            "unknown.mp3".into(),
+        ];
+        let result = store
+            .delete(&ids)
+            .expect("invalid identities reported");
+        assert!(result.deleted.is_empty());
+        assert_eq!(result.failures.len(), ids.len());
+        assert_eq!(
+            std::fs::read(outside).expect("sentinel kept"),
+            b"sentinel"
+        );
+        assert_eq!(
+            std::fs::read(directory.join("inside.mp3"))
+                .expect("unselected kept"),
+            b"inside"
+        );
+    }
 
     /// 子进程内读取环境，避免并发单测修改进程全局 HOME。
     #[test]
