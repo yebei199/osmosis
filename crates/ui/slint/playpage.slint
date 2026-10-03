@@ -35,7 +35,8 @@ export component PlayPage inherits FocusScope {
     out property <length> viz-lyric-line-h: Shell.compact ? 84px : 120px;
     out property <length> viz-lyric-tr-h: Shell.compact ? 40px : 46px;
     out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
-    out property <length> viz-lyric-y: (root.height - root.viz-lyric-h) / 2 + 60px;
+    // 背景仍用全窗口几何，文字只在状态条下方的可用区域居中。
+    out property <length> viz-lyric-y: root.safe-top + (root.height - root.safe-top - root.viz-lyric-h) / 2 + 60px;
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
     out property <length> viz-title-y: root.viz-lyric-y - 96px;
 
@@ -283,9 +284,9 @@ export component PlayPage inherits FocusScope {
     // 能切歌暂停,那是 docs/adr/0010 的「功能永远在最上层 2D」。
     if Viz.lyric-rows.length > 0: LyricsPage {
         x: Viz.lyrics-page-open ? 0px : root.width;
-        y: 0;
+        y: root.safe-top;
         width: 100%;
-        height: 100%;
+        height: root.height - root.safe-top;
         animate x { duration: 280ms; easing: ease-out; }
         rows: Viz.lyric-rows;
         has-translation: Viz.lyric-has-translation;
@@ -297,9 +298,9 @@ export component PlayPage inherits FocusScope {
     // 最上层、点得到 —— 队列页上也要能切歌暂停(docs/adr/0010)。
     QueuePage {
         x: Viz.queue-page-open ? 0px : root.width;
-        y: 0;
+        y: root.safe-top;
         width: 100%;
-        height: 100%;
+        height: root.height - root.safe-top;
         animate x { duration: 280ms; easing: ease-out; }
         rows: Viz.queue-rows;
         current: Viz.queue-current;

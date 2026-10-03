@@ -1,0 +1,43 @@
+# #177 顶部状态条布局的逐项合同。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实MainWindow，420/1000两种窗口，七种状态组合；歌单首行真实指针事件；歌词入口"
+observe = "状态条互不重叠，页面首控件与登录表单/播放内容让位，加入退出触控≥44px，首行打开详情，译文开关让出头部"
+tests = ["ui::status_strips::every_strip_combination_reserves_space_in_both_layouts", "ui::status_strips::login_and_play_pages_move_below_the_status_stack", "ui::status_strips::group_actions_have_a_full_touch_target", "ui::status_strips::the_first_playlist_opens_through_a_real_pointer_click", "ui::lyrics_page::translation_control_reserves_a_header_above_all_lines"]
+doubles = ["无头窗口与模拟时钟替代窗口系统/GPU；歌单打开回调接收真实指针触发的id并展示详情，不能证明后端曲目加载；不证明Android safe-area或像素"]
+mutation = "旧固定y使页面让位失败；旧30px按钮使尺寸失败；旧浮动译文开关使头部让位失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "横幅出现、跳转与清除，下载进度出现/收起，登录隔离，控制条，歌词切换和音乐列表"
+observe = "原有组件id、操作、控制条页面预留和歌词浏览行为保留"
+tests = ["ui::banner::the_banner_shows_up_only_when_there_is_something_to_say", "ui::banner::a_banner_with_somewhere_to_go_takes_you_there", "ui::download::the_progress_strip_follows_the_download_text", "ui::lyrics_page::the_translation_toggle_exists_only_with_translation_data"]
+doubles = ["同一无头后端，只证明Slint界面层行为"]
+
+[[ac]]
+id = "AC-2"
+none = "桌面宽/420合成器真实像素证据随交付报告提供，无头JUnit不代表像素复核"
+
+[[ac]]
+id = "AC-3"
+none = "小米13平台专属安全区与MCP歌单首行路径证据随交付报告提供，不能由无头JUnit证明"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "真实MainWindow，420/1000逻辑宽，零至七种状态组合，打开播放页或退出登录"
+observe = "播放背景和登录极光背景从y=0铺满800px窗口，歌名、控制条与登录表单避让状态条底边"
+tests = ["ui::status_strips::play_background_fills_the_window_without_covering_content", "ui::status_strips::login_background_fills_the_window_while_the_form_avoids_strips"]
+doubles = ["无头窗口替代Android/GPU，safe-area为0；非零安全区及最终像素仍单独在小米13验证，不用JUnit替代"]
+mutation = "把覆层放回page-stack，使背景y大于0且高度小于窗口，背景边界断言失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "420/1000真实MainWindow，有条与无条，在音乐搜索框填字，打开/关闭播放页；向歌单首行发送真实指针事件"
+observe = "播放页打开时搜索框仍在树里，关闭后新查询到的框保留文字；覆层下歌单不可点击，关闭后原位置可打开详情"
+tests = ["ui::status_strips::search_text_survives_opening_and_closing_the_play_page", "ui::status_strips::the_play_page_blocks_pointer_input_to_the_retained_shell"]
+doubles = ["无头后端替代窗口/GPU；无障碍填值读取真实LineEdit，不构造保存结果；歌单回调只展示详情，不证明后端加载"]
+mutation = "恢复以play-page-open控制音乐壳存在的if，关闭播放页后文字变空；只保留壳却不隐藏时，指针进入覆层下歌单"

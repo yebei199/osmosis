@@ -15,6 +15,8 @@ import { Theme } from "theme.slint";
 export component LoginPage inherits Rectangle {
     // 正在等服务端答复。按钮据此变灰,免得连点发出两次注册。
     in property <bool> busy: false;
+    // 背景铺满窗口，表单从安全区和状态条下方开始居中。
+    in property <length> safe-top;
     // 给人看的失败说明。空串 = 没有失败,那一行整块让位。
     in property <string> error-text;
 
@@ -36,7 +38,7 @@ export component LoginPage inherits Rectangle {
         width: min(root.width - 48px, 360px);
         height: form.preferred-height + 48px;
         x: (root.width - self.width) / 2;
-        y: (root.height - self.height) / 2;
+        y: max(root.safe-top, root.safe-top + (root.height - root.safe-top - self.height) / 2);
 
         form := VerticalLayout {
             padding: 24px;

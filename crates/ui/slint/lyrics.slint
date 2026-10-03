@@ -72,82 +72,90 @@ export component LyricsPage inherits Rectangle {
     }
 
     VerticalLayout {
-        alignment: center;
-        spacing: 6px;
+        spacing: 0px;
+        if root.has-translation: HorizontalLayout {
+            padding: 16px;
+            alignment: end;
+            // 翻译开关。只在真有译文时出现 —— 一个永远切不出东西的开关比没有更糟。
+            translation-toggle := Rectangle {
+                width: 64px;
+                height: 44px;
+                border-radius: 22px;
+                background: root.translation-on
+                    ? Theme.accent.with-alpha(0.22)
+                    : Theme.overlay;
+                border-width: 1px;
+                border-color: Theme.immersive-line;
 
-        for row in root.rows: VerticalLayout {
-            spacing: 2px;
-            // 整行按距离淡出。焦点行满亮,三行开外只剩一层底噪。
-            opacity: max(0.08, 1 - Math.abs(row.offset) * root.fade-step);
+                accessible-role: button;
+                accessible-label: "翻译";
+                accessible-checkable: true;
+                accessible-checked: root.translation-on;
+                accessible-action-default => { root.translation-on = !root.translation-on; }
 
-            line := OutlinedText {
-                width: root.width - 48px;
-                x: 24px;
-                // 高度跟着字号走:定高才排得稳,而字号本身就是景深的一半。
-                // 焦点行留两行的高度并折行,其余行单行截断 —— 定高配折行会让
-                // 长句溢出自己的框、压到邻居身上(小米13 真机实拍),而手机宽度上
-                // 一句日文歌词经常就是两行。
-                height: row.offset == 0
-                    // 两行 26px 的字要约 70px:给 66px 的话第二行会被 elide 掉,
-                    // 看起来就像折行没生效(小米13 真机实拍,日文没有空格,
-                    // 折行只能发生在词内部)。
-                    ? root.focus-size * 3
-                    : root.focus-size + 10px
-                        - Math.abs(row.offset) * root.size-step;
-                text: row.text;
-                text-color: Theme.immersive-text;
-                font-size: root.focus-size
-                    - Math.abs(row.offset) * root.size-step;
-                outline: row.offset == 0 ? 2px : 1px;
-                wrap: row.offset == 0 ? word-wrap : no-wrap;
-            }
+                Text {
+                    text: "翻译";
+                    font-family: Type.mono;
+                    font-size: 12px;
+                    color: root.translation-on
+                        ? Theme.accent-text
+                        : Theme.immersive-text-dim;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
 
-            if root.translation-on && row.translation != "":
-            translation := OutlinedText {
-                width: root.width - 48px;
-                x: 24px;
-                height: 20px;
-                text: row.translation;
-                text-color: Theme.immersive-text-dim;
-                font-size: 13px;
-                vertical-alignment: top;
-                wrap: word-wrap;
+                TouchArea {
+                    clicked => { root.translation-on = !root.translation-on; }
+                }
             }
         }
-    }
+        Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: 6px;
 
-    // 翻译开关。只在真有译文时出现 —— 一个永远切不出东西的开关比没有更糟。
-    if root.has-translation: translation-toggle := Rectangle {
-        x: root.width - self.width - 16px;
-        y: 16px;
-        width: 64px;
-        height: 30px;
-        border-radius: 15px;
-        background: root.translation-on
-            ? Theme.accent.with-alpha(0.22)
-            : Theme.overlay;
-        border-width: 1px;
-        border-color: Theme.immersive-line;
+                for row in root.rows: VerticalLayout {
+                    spacing: 2px;
+                    // 整行按距离淡出。焦点行满亮,三行开外只剩一层底噪。
+                    opacity: max(0.08, 1 - Math.abs(row.offset) * root.fade-step);
 
-        accessible-role: button;
-        accessible-label: "翻译";
-        accessible-checkable: true;
-        accessible-checked: root.translation-on;
-        accessible-action-default => { root.translation-on = !root.translation-on; }
+                    line := OutlinedText {
+                        width: root.width - 48px;
+                        x: 24px;
+                        // 高度跟着字号走:定高才排得稳,而字号本身就是景深的一半。
+                        // 焦点行留两行的高度并折行,其余行单行截断 —— 定高配折行会让
+                        // 长句溢出自己的框、压到邻居身上(小米13 真机实拍),而手机宽度上
+                        // 一句日文歌词经常就是两行。
+                        height: row.offset == 0
+                            // 两行 26px 的字要约 70px:给 66px 的话第二行会被 elide 掉,
+                            // 看起来就像折行没生效(小米13 真机实拍,日文没有空格,
+                            // 折行只能发生在词内部)。
+                            ? root.focus-size * 3
+                            : root.focus-size + 10px
+                                - Math.abs(row.offset) * root.size-step;
+                        text: row.text;
+                        text-color: Theme.immersive-text;
+                        font-size: root.focus-size
+                            - Math.abs(row.offset) * root.size-step;
+                        outline: row.offset == 0 ? 2px : 1px;
+                        wrap: row.offset == 0 ? word-wrap : no-wrap;
+                    }
 
-        Text {
-            text: "翻译";
-            font-family: Type.mono;
-            font-size: 12px;
-            color: root.translation-on
-                ? Theme.accent-text
-                : Theme.immersive-text-dim;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
+                    if root.translation-on && row.translation != "":
+                    translation := OutlinedText {
+                        width: root.width - 48px;
+                        x: 24px;
+                        height: 20px;
+                        text: row.translation;
+                        text-color: Theme.immersive-text-dim;
+                        font-size: 13px;
+                        vertical-alignment: top;
+                        wrap: word-wrap;
+                    }
+                }
+            }
 
-        TouchArea {
-            clicked => { root.translation-on = !root.translation-on; }
         }
     }
 }

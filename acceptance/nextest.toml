@@ -1,0 +1,5 @@
+[profile.status-ui]
+retries = 0
+
+[profile.status-ui.junit]
+path = "junit.xml"
