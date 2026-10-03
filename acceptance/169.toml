@@ -1,0 +1,25 @@
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "桌面列表与卡墙分别点歌，更多抽屉点击下载这一首"
+observe = "公共 Music/osmosis 中仅有完整 MP3，逐字节等于音源且 ffprobe 可读出时长"
+tests = ["test_download::test_download_creates_complete_mp3[list]", "test_download::test_download_creates_complete_mp3[wall]"]
+doubles = ["gRPC/HTTP 固定音源，真实 UI/api/server/文件存储；Xvfb 软件 GPU 不证明桌面合成器像素"]
+mutation = "删除桌面入口 install_download_store，文件发布断言失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "真实列表选歌后点击下载，确认部分字节写入再截断本轮音源 HTTP 连接"
+observe = "下载进度结束，公共音乐子目录为空"
+tests = ["test_download::test_interrupted_download_discards_partial_file"]
+doubles = ["gRPC/HTTP 固定音源与可截断音源连接；宿主网络不变"]
+mutation = "discard 保留待定文件，目录为空断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+entry = "真实列表选歌后点击下载，外部音源返回 trial 标记"
+observe = "仍显示只有试听片段，公共音乐目录无文件"
+tests = ["test_download::test_trial_download_keeps_existing_refusal"]
+doubles = ["外部 gRPC 音源返回 trial，生产服务端拒绝与 UI 提示不替换"]

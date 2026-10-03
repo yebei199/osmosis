@@ -9,9 +9,12 @@ run_status_ui() {
 
 case "${1:-all}" in
     ui|status-ui) run_status_ui ;;
+    download)
+        nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh download'
+        ;;
     all)
-        nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh'
+        nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh all'
         run_status_ui
         ;;
-    *) echo "usage: acceptance/run.sh [all|status-ui]" >&2; exit 2 ;;
+    *) echo "usage: acceptance/run.sh [all|status-ui|download]" >&2; exit 2 ;;
 esac

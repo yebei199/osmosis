@@ -120,3 +120,4 @@ REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix T
 PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录，
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
+每个客户端的 HOME 也属于自己的证据目录，平台初始化与音乐下载不会访问宿主音乐目录。
