@@ -3,6 +3,7 @@
 use super::super::download::*;
 use super::super::downloads::State;
 use similar_asserts::assert_eq;
+use slint::ComponentHandle as _;
 use std::cell::Cell;
 use std::sync::Mutex;
 
