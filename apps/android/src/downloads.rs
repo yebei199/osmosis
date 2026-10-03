@@ -286,22 +286,7 @@ fn parse_entries(
 fn parse_deletion(
     fields: Vec<String>,
 ) -> std::io::Result<ui::DownloadDeletion> {
-    if fields.len() < 2 {
-        return Err(std::io::Error::other(
-            "invalid MediaStore deletion result",
-        ));
-    }
-    let count = fields[1]
-        .parse::<usize>()
-        .map_err(std::io::Error::other)?;
-    let start = count
-        .checked_add(2)
-        .filter(|start| *start <= fields.len())
-        .ok_or_else(|| {
-            std::io::Error::other(
-                "invalid deletion failure count",
-            )
-        })?;
+    let start = deletion_entries_start(&fields)?;
     if !["pending", "cancelled", "complete"]
         .contains(&fields[0].as_str())
     {
@@ -315,4 +300,26 @@ fn parse_deletion(
         pending: fields[0] == "pending",
         cancelled: fields[0] == "cancelled",
     })
+}
+
+/// 验证变长失败列表的头部，定位后续已删除条目。
+fn deletion_entries_start(
+    fields: &[String],
+) -> std::io::Result<usize> {
+    if fields.len() < 2 {
+        return Err(std::io::Error::other(
+            "invalid MediaStore deletion result",
+        ));
+    }
+    let count = fields[1]
+        .parse::<usize>()
+        .map_err(std::io::Error::other)?;
+    count
+        .checked_add(2)
+        .filter(|start| *start <= fields.len())
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "invalid deletion failure count",
+            )
+        })
 }
