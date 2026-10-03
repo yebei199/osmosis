@@ -145,11 +145,8 @@ export component MainWindow inherits Window {
     out property <length> nav-slot-h: 68px;
     // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
     out property <length> nav-w: 96px;
-    // 侧栏只在宽版式出现,而宽版式没有底栏 —— 所以它的高度**就是**窗口高减去
-    // 上下安全区。此前写的是 `content.height`,那是同一个值绕了一圈拿到的;
-    // 内容区被登录页那层 `if` 包起来之后,外面也就引不到它了。
-    out property <length> nav-h: root.height
-        - root.safe-area-insets.top
+    // 侧栏纹理跟随状态条下方的壳高度，底部安全区仍由主行消化。
+    out property <length> nav-h: page-stack.height
         - root.safe-area-insets.bottom;
     // 底栏(紧凑版式)的横条几何。宽由布局回写 —— 四格等分要它,而它随窗口变;
     // 高是图标那 64px 加手势条 inset,背景要铺到手势条底下。
@@ -227,354 +224,6 @@ export component MainWindow inherits Window {
         changed mouse-x => { Shell.user-input(); }
         changed mouse-y => { Shell.user-input(); }
 
-        // 顶层恒为一个 VerticalLayout(主体行 + 可选底栏)→ 窗口撑满且可调整大小。
-        //
-        // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
-        // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
-        // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
-        if Session.logged-in: VerticalLayout {
-
-            // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
-            HorizontalLayout {
-                vertical-stretch: 1;
-                padding-top: root.safe-area-insets.top;
-                padding-left: root.safe-area-insets.left;
-                padding-right: root.safe-area-insets.right;
-                // 紧凑版式的底部 inset 归底栏管 —— 它的背景要铺到手势条底下,不能在这里先留白,
-                // 否则手势条那一条会露出窗口底色,全面屏观感碎掉。
-                padding-bottom: Shell.compact ? 0 : root.safe-area-insets.bottom;
-
-                // ── 侧栏(宽版式)──
-                // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
-                // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
-                // 把侧栏也拆成「背景铺满 + 内部 padding」。
-                if !Shell.compact: Rectangle {
-                    width: root.nav-w;
-                    // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
-                    background: Theme.base;
-
-                    // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
-                    // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
-                    Image {
-                        source: root.nav-bg;
-                        width: 100%;
-                        height: 100%;
-                        image-fit: fill;
-                    }
-
-                    VerticalLayout {
-                        padding: root.nav-pad;
-                        spacing: root.nav-gap;
-
-                        for item[i] in Nav.items: NavItem {
-                            height: root.nav-slot-h;
-                            label: item.label;
-                            icon: item.icon;
-                            active: Shell.current-tab == i;
-                            // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
-                            gpu-selected: root.nav-bg.width > 0;
-                            clicked => { Shell.current-tab = i; }
-                        }
-
-                        // 把沉底组压到底。
-                        Rectangle { vertical-stretch: 1; }
-
-                        // 沉底那组是 glass 圆钮(#71):水滴的轨道只覆盖上面两格,
-                        // 这两颗自己表达选中 —— 一块大胶囊压在小圆钮下面,两者会互相抵消。
-                        for item[i] in Nav.bottom-items: HorizontalLayout {
-                            alignment: center;
-                            RoundControl {
-                                icon: item.icon;
-                                label: item.label;
-                                checkable: true;
-                                checked: Shell.current-tab == i + 2;
-                                backdrop: i == 0
-                                    ? Shell.nav-key-a-bg
-                                    : Shell.nav-key-b-bg;
-                                clicked => { Shell.current-tab = i + 2; }
-                            }
-                        }
-                    }
-                }
-
-                // ── 内容区。两页共用这块矩形,按 Shell.current-tab 切换子内容 ──
-                content := Rectangle {
-                    horizontal-stretch: 1;
-
-                    // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
-                    // bevy 画面,本来就有内容可透。
-                    AuroraBackground {
-                        width: 100%;
-                        height: 100%;
-                        // §4:封面取色喂极光。颜色由 aurora.rs 取好推进来。
-                        cover-active: Shell.aurora-cover-active;
-                        cover-warm: Shell.aurora-cover-warm;
-                        cover-deep: Shell.aurora-cover-deep;
-                        cover-soft: Shell.aurora-cover-soft;
-                    }
-
-                    // Home:壳的应用启动器(docs/adr/0024)。瓦片数据驱动:只放真实
-                    // 存在的应用与一个空槽,加应用就是加一张瓦片。3D 漂移与视差归
-                    // Bevy 瓦片场,与卡墙同期做(#66),这里先是 2D 摆法。
-                    if Shell.current-tab == 0: Rectangle {
-
-                        VerticalLayout {
-                            x: Shell.compact ? 24px : 48px;
-                            y: Shell.compact ? 32px : 56px;
-                            width: min(parent.width - (Shell.compact ? 48px : 96px), 880px);
-                            alignment: start;
-                            spacing: 10px;
-
-                            Text {
-                                text: "OSMOSIS";
-                                font-family: Type.mono;
-                                font-size: 11px;
-                                letter-spacing: 3px;
-                                color: Theme.accent;
-                            }
-                            Text {
-                                text: "今天做点什么";
-                                font-family: Type.display-cjk;
-                                font-weight: 900;
-                                font-size: Shell.compact ? 30px : 40px;
-                                color: Theme.text;
-                            }
-                            Text {
-                                text: "选一个应用开始";
-                                font-family: "Maple Mono NF CN";
-                                font-size: 13px;
-                                color: Theme.text-dim;
-                            }
-
-                            // 标题区与瓦片场之间的一口气。
-                            Rectangle { height: 22px; }
-
-                            HorizontalLayout {
-                                alignment: start;
-                                spacing: 20px;
-
-                                // 音乐:唯一的真瓦片。紧凑版式收一档,免得连空槽
-                                // 一起超出 420px 的内容宽。
-                                Rectangle {
-                                    width: Shell.compact ? 150px : 210px;
-                                    height: Shell.compact ? 150px : 210px;
-                                    border-radius: 22px;
-                                    clip: true;
-                                    background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
-                                    drop-shadow-blur: 30px;
-                                    drop-shadow-offset-y: 14px;
-                                    drop-shadow-color: Theme.glass-shadow;
-
-                                    // 压字渐变:上轻下重,左下角的字才读得出来。
-                                    Rectangle {
-                                        background: @linear-gradient(180deg, Theme.overlay-weak 0%, Theme.shadow.with-alpha(0.4) 100%);
-                                    }
-                                    VerticalLayout {
-                                        alignment: end;
-                                        padding: 16px;
-                                        spacing: 4px;
-                                        Text {
-                                            text: "音乐";
-                                            font-family: Type.display-cjk;
-                                            font-weight: 900;
-                                            font-size: 17px;
-                                            color: Theme.immersive-text;
-                                        }
-                                        Text {
-                                            text: Player.is-playing ? "MUSIC · " + Viz.now-title : "MUSIC";
-                                            font-family: Type.mono;
-                                            font-size: 11px;
-                                            letter-spacing: 1px;
-                                            color: Theme.immersive-text-dim;
-                                            overflow: elide;
-                                        }
-                                    }
-                                    music-tile := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { Shell.current-tab = 1; }
-                                        accessible-role: button;
-                                        accessible-label: "音乐";
-                                        accessible-action-default => { Shell.current-tab = 1; }
-                                    }
-                                }
-
-                                // 空槽:留给下一个应用。不是按钮,也不装成按钮 ——
-                                // 没有 TouchArea,点了不会假装发生什么(硬规则 8)。
-                                Rectangle {
-                                    width: Shell.compact ? 120px : 168px;
-                                    height: Shell.compact ? 150px : 210px;
-                                    border-radius: 22px;
-                                    background: Theme.overlay-weak;
-                                    border-width: 1px;
-                                    border-color: Theme.divider;
-                                    clip: true;
-
-                                    // §9:星云纹理垫底(render3d 画,尺寸在 lib.rs 有一份镜像)。
-                                    if Shell.aurora-buttons-on && Shell.home-slot-bg.width > 0: Image {
-                                        width: 100%;
-                                        height: 100%;
-                                        source: Shell.home-slot-bg;
-                                    }
-                                    // 只追 hover 喂给星云的指针涡旋;这仍不是按钮 ——
-                                    // 没有点击行为(硬规则 8)。
-                                    TouchArea {
-                                        changed has-hover => {
-                                            Shell.home-slot-hover = self.has-hover;
-                                        }
-                                        moved => {
-                                            Shell.home-slot-px = self.mouse-x / max(self.width, 1px);
-                                            Shell.home-slot-py = 1 - self.mouse-y / max(self.height, 1px);
-                                        }
-                                    }
-                                    VerticalLayout {
-                                        alignment: center;
-                                        spacing: 6px;
-                                        Text {
-                                            text: "+";
-                                            font-size: 22px;
-                                            color: Theme.text-faint;
-                                            horizontal-alignment: center;
-                                        }
-                                        Text {
-                                            text: "装一个";
-                                            font-family: Type.display-cjk;
-                                            font-weight: 900;
-                                            font-size: 13px;
-                                            color: Theme.text-faint;
-                                            horizontal-alignment: center;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                    }
-
-                    // 个人主页(tab 2)。进页即取统计,判断在 Rust 侧。
-                    if Shell.current-tab == 2: ProfilePage {
-                        width: 100%;
-                        height: 100%;
-                        // 与下面摆控制条那一行是同一个条件 —— 条在不在,
-                        // 决定这一页底部要不要多留出它那一块。
-                        bar-visible: Player.has-track && !Shell.play-page-open;
-                        init => { Profile.shown(); }
-                        username: Profile.username;
-                        loaded: Profile.loaded;
-                        error-text: Profile.error;
-                        month-plays: Profile.month-plays;
-                        distinct-tracks: Profile.distinct-tracks;
-                        streak-days: Profile.streak-days;
-                        top-artists: Profile.artists;
-                        devices: Shell.devices;
-                        output-current: Shell.output-id;
-                        set-output(id) => { Shell.set-output(id); }
-                        netease-bound: Profile.netease-bound;
-                        netease-nickname: Profile.netease-nickname;
-                        netease-qr: Profile.netease-qr;
-                        netease-hint: Profile.netease-hint;
-                        // 手机扫不了自己屏幕上的码,那一句提示只在安卓上说
-                        on-phone: Shell.platform == "android";
-                        unbind-netease => { Profile.unbind-netease(); }
-                    }
-
-                    // 设置(tab 3,rail 沉底最后一颗)。
-                    if Shell.current-tab == 3: SettingsPage {
-                        width: 100%;
-                        height: 100%;
-                        // 与下面摆控制条那一行是同一个条件,理由同个人页。
-                        bar-visible: Player.has-track && !Shell.play-page-open;
-                        about-line: Profile.about-line;
-                        tier-line: Profile.tier-line;
-                        update-status: Profile.update-status;
-                        update-action: Profile.update-action;
-                        update-requested => { Profile.update-requested(); }
-                        aurora-on: Shell.aurora-buttons-on;
-                        aurora-toggled => { Shell.aurora-buttons-toggled(); }
-                        theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
-                        logout => { Session.logout(); }
-                    }
-
-                    // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
-                    // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                    // Music:二级导航 + 四个分区。整页可滚,不裹玻璃卡片 ——
-                    // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                    if Shell.current-tab == 1: MusicPage { }
-
-                    // 控制条:壳持有、跨应用常驻(CONTEXT.md「控制条」)。
-                    // **一个实例管四个页签** —— 不是每页各摆一根:各摆一根就有各自的
-                    // 容器内缩与各自的形态,而那正是用户点名的「不统一」(docs/adr/0029)。
-                    // 播放页开着时让位:覆层整个盖住这一层,它自己带一根同样的条。
-                    if Player.has-track && !Shell.play-page-open: PlayerBar {
-                        x: (parent.width - self.width) / 2;
-                        // 间隙与 BarMetrics.bottom-gap 是同一个数:页面按它留空,
-                        // 条按它落位,两边对不上就会差出一条缝或者压住一行。
-                        y: parent.height - self.height - BarMetrics.bottom-gap;
-                        width-cap: parent.width - root.bar-inset * 2;
-                    }
-
-                    // Shell.fps 浮层:content 的最后一个子元素 → 画在最上层。
-                    // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 Shell.fps 模块)。
-                    if Shell.show-fps: Text {
-                        x: 8px;
-                        y: 8px;
-                        text: "FPS " + round(Shell.fps);
-                        color: #51cf66;
-                        font-size: 14px;
-                        font-weight: 700;
-                    }
-                }
-            }
-
-            // ── 底栏(紧凑版式)──
-            // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
-            // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
-            if Shell.compact: Rectangle {
-                height: root.nav-bar-h;
-                // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
-                background: Theme.base;
-                // 横条几何回写给 seam:四格等分要窗口宽,而它随窗口变(#70)。
-                init => { root.nav-bar-w = self.width; }
-                changed width => { root.nav-bar-w = self.width; }
-
-                // GPU 水滴选中器:与侧栏同一条 pass,只是移动轴换成 x。
-                // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
-                Image {
-                    source: root.nav-bg;
-                    width: 100%;
-                    height: 100%;
-                    image-fit: fill;
-                }
-
-                HorizontalLayout {
-                    padding-left: root.nav-bar-pad-left;
-                    padding-right: root.nav-bar-pad-right;
-                    padding-bottom: root.safe-area-insets.bottom;
-                    spacing: root.nav-bar-gap;
-
-                    for item[i] in Nav.items: NavItem {
-                        horizontal-stretch: 1;
-                        label: item.label;
-                        icon: item.icon;
-                        active: Shell.current-tab == i;
-                        // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
-                        gpu-selected: root.nav-bg.width > 0;
-                        clicked => { Shell.current-tab = i; }
-                    }
-                    // 沉底那组在底栏里接着排:手机没有"栏底"可沉,四项等分。
-                    // 设计稿的第三位是搜索,但搜索已经住在 Music 页的分段条里;
-                    // 设置不上底栏的话,手机上就没有任何入口能到它 —— 等价路径优先。
-                    for item[i] in Nav.bottom-items: NavItem {
-                        horizontal-stretch: 1;
-                        label: item.label;
-                        icon: item.icon;
-                        active: Shell.current-tab == i + 2;
-                        gpu-selected: root.nav-bg.width > 0;
-                        clicked => { Shell.current-tab = i + 2; }
-                    }
-                }
-            }
-        }
-
         // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
         // 五层合成:warp 背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
         // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
@@ -586,16 +235,15 @@ export component MainWindow inherits Window {
             bar-inset: root.bar-inset;
             safe-left: root.safe-area-insets.left;
             safe-right: root.safe-area-insets.right;
-            safe-top: root.safe-area-insets.top;
+            safe-top: page-stack.y;
             safe-bottom: root.safe-area-insets.bottom;
         }
 
-        // ── 登录页:未登录时盖住整个窗口 ──
-        // 排在横幅之前,所以横幅仍压在它之上 —— 登录页上也可能断网,
-        // 那句话必须看得见。
+        // 登录背景铺满窗口，只有表单避让安全区和状态条。
         if !Session.logged-in: login-page := LoginPage {
             width: 100%;
             height: 100%;
+            safe-top: page-stack.y;
             busy: Session.busy;
             error-text: Session.error;
             login(username, password) => {
@@ -606,158 +254,502 @@ export component MainWindow inherits Window {
             }
         }
 
-        // ── 横幅:压在所有页之上 ──
-        // 状态行长在音乐页上,而播放页是覆层、盖住它 —— 断流恰恰发生在听歌时,
-        // 写在状态行等于说给没人在的房间(docs/adr/0013)。一次性提示同理:
-        // 它们各自发生在哪一页并不确定,唯有压在所有页之上才一定被看见。
-        // 摆窗口顶端:控制簇、收起键、底栏全在下半边,压不着任何操作。
-        // ── 播放组横幅:同样压在所有页之上 ──
-        // 它不是一次性提示,是一个**状态** —— 这台在组里(「与 X、Y 一起播放」「正在遥控 X」),
-        // 以及怎么退出组回到独奏(#142)。它自己不会消失,只有那颗退出键关得掉它。
-        // 独奏时组在播(#149),它说组在放什么,那颗键换成「加入」;组暂停着不挂。
-        //
-        // 摆在 banner 下面一格:两条同时在场时不叠在一起。
-        if Shell.group-banner != "": group-strip := Rectangle {
-            y: root.safe-area-insets.top + (Shell.banner-text != "" ? 62px : 10px);
-            x: (parent.width - self.width) / 2;
-            width: min(parent.width - 32px, 420px);
-            height: 44px;
-            background: Theme.surface.with-alpha(0.96);
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: Theme.accent;
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 8px;
-                spacing: 8px;
-
-                Text {
-                    text: Shell.group-banner;
-                    // 固定部分是硬编码中文,设备名由对端自报 —— 与歌名同理,
-                    // 走系统字体回退。
-                    font-size: 13px;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-
+        // 顶部安全区只在窗口布局消化一次，状态条按实际高度让位。
+        VerticalLayout {
+            padding-top: root.safe-area-insets.top;
+            spacing: 0px;
+            if Shell.banner-text != "" || Shell.group-banner != "" || Shell.download-text != "": HorizontalLayout {
+                padding-top: 10px;
+                padding-bottom: 10px;
+                padding-left: 16px + root.safe-area-insets.left;
+                padding-right: 16px + root.safe-area-insets.right;
+                alignment: center;
                 VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: exit-label.preferred-width + 20px;
-                        height: 30px;
-                        border-radius: 15px;
-                        background: exit-touch.has-hover ? Theme.accent : Theme.overlay-weak;
-                        animate background { duration: 140ms; easing: ease-out; }
+                    max-width: 420px;
+                    horizontal-stretch: 1;
+                    spacing: 8px;
+                    if Shell.banner-text != "": banner := Rectangle {
+                        height: 44px;
+                        background: Theme.danger-surface;
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: Theme.danger-line;
 
-                        exit-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                if Shell.group-joinable { Shell.join-group(); } else { Shell.leave-group(); }
-                            }
-
+                        // 有去处的提示可以点整块。摆在内容**之前**,于是右边那颗关闭键仍在它
+                        // 上面 —— 反过来的话,想关掉提示会变成跳页。
+                        // 断流那类提示没有去处(tab 为 -1),这一块整个不在,横幅仍只是文字。
+                        if Shell.banner-tab >= 0: jump := TouchArea {
+                            // 屏幕阅读器要认得出这块能按;无头测试也只认无障碍动作,
+                            // 裸 TouchArea 在那里点不动(见 crates/ui/tests/banner.rs)。
                             accessible-role: button;
-                            accessible-label: Shell.group-joinable ? "加入播放组" : "退出";
-                            accessible-action-default => { self.clicked(); }
+                            accessible-label: Shell.banner-text;
+                            accessible-action-default => { jump.clicked(); }
+                            clicked => {
+                                Shell.current-tab = Shell.banner-tab;
+                                Shell.banner-text = "";
+                                Shell.banner-tab = -1;
+                            }
                         }
 
-                        exit-label := Text {
-                            text: Shell.group-joinable ? "加入" : "退出";
-                            font-family: "Maple Mono NF CN";
-                            font-size: 12px;
-                            color: exit-touch.has-hover ? Theme.accent-text : Theme.text;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 6px;
+                            spacing: 6px;
+
+                            Text {
+                            text: Shell.banner-text;
+                            accessible-role: text;
+                            accessible-label: Shell.banner-text;
+                                // 文案是硬编码中文,与状态行同一套子集字体。
+                                font-family: "Maple Mono NF CN";
+                                font-size: 13px;
+                                color: Theme.danger-text;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            // 关掉。清空文案就等于收起,不必回 Rust 绕一圈。
+                            RoundControl {
+                                diameter: 32px;
+                                transparent-base: true;
+                                icon: "M7 7 L17 17 M17 7 L7 17";
+                                clicked => { Shell.banner-text = ""; }
+                            }
+                        }
+                    }
+
+                    if Shell.group-banner != "": group-strip := Rectangle {
+                        height: 44px;
+                        background: Theme.surface.with-alpha(0.96);
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 8px;
+                            spacing: 8px;
+
+                            Text {
+                                text: Shell.group-banner;
+                                // 固定部分是硬编码中文,设备名由对端自报 —— 与歌名同理,
+                                // 走系统字体回退。
+                                font-size: 13px;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: exit-label.preferred-width + 20px;
+                                    height: 44px;
+                                    border-radius: 22px;
+                                    background: exit-touch.has-hover ? Theme.accent : Theme.overlay-weak;
+                                    animate background { duration: 140ms; easing: ease-out; }
+
+                                    exit-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            if Shell.group-joinable { Shell.join-group(); } else { Shell.leave-group(); }
+                                        }
+
+                                        accessible-role: button;
+                                        accessible-label: Shell.group-joinable ? "加入播放组" : "退出";
+                                        accessible-action-default => { self.clicked(); }
+                                    }
+
+                                    exit-label := Text {
+                                        text: Shell.group-joinable ? "加入" : "退出";
+                                        font-family: "Maple Mono NF CN";
+                                        font-size: 12px;
+                                        color: exit-touch.has-hover ? Theme.accent-text : Theme.text;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if Shell.download-text != "": download-strip := Rectangle {
+                        height: 40px;
+                        background: Theme.surface.with-alpha(0.96);
+                        border-radius: 10px;
+                        border-width: 1px;
+                        border-color: Theme.overlay;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+
+                            Text {
+                                text: Shell.download-text;
+                                font-size: 13px;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+
+                }
+            }
+            page-stack := Rectangle {
+                vertical-stretch: 1;
+                // 音乐壳保持在流布局；全窗口覆层只借用这里的内容起点。
+                //
+                // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
+                // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
+                // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
+                if Session.logged-in: VerticalLayout {
+                    // 播放页只隐藏音乐壳，保留搜索、折叠和滚动状态。
+                    visible: !Shell.play-page-open;
+
+                    // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
+                    HorizontalLayout {
+                        vertical-stretch: 1;
+                        padding-left: root.safe-area-insets.left;
+                        padding-right: root.safe-area-insets.right;
+                        // 紧凑版式的底部 inset 归底栏管 —— 它的背景要铺到手势条底下,不能在这里先留白,
+                        // 否则手势条那一条会露出窗口底色,全面屏观感碎掉。
+                        padding-bottom: Shell.compact ? 0 : root.safe-area-insets.bottom;
+
+                        // ── 侧栏(宽版式)──
+                        // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
+                        // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
+                        // 把侧栏也拆成「背景铺满 + 内部 padding」。
+                        if !Shell.compact: Rectangle {
+                            width: root.nav-w;
+                            // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
+                            background: Theme.base;
+
+                            // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
+                            // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+                            Image {
+                                source: root.nav-bg;
+                                width: 100%;
+                                height: 100%;
+                                image-fit: fill;
+                            }
+
+                            VerticalLayout {
+                                padding: root.nav-pad;
+                                spacing: root.nav-gap;
+
+                                for item[i] in Nav.items: NavItem {
+                                    height: root.nav-slot-h;
+                                    label: item.label;
+                                    icon: item.icon;
+                                    active: Shell.current-tab == i;
+                                    // GPU 构建里选中高亮由玻璃提供,压掉自带 active 底,免得叠两遍。
+                                    gpu-selected: root.nav-bg.width > 0;
+                                    clicked => { Shell.current-tab = i; }
+                                }
+
+                                // 把沉底组压到底。
+                                Rectangle { vertical-stretch: 1; }
+
+                                // 沉底那组是 glass 圆钮(#71):水滴的轨道只覆盖上面两格,
+                                // 这两颗自己表达选中 —— 一块大胶囊压在小圆钮下面,两者会互相抵消。
+                                for item[i] in Nav.bottom-items: HorizontalLayout {
+                                    alignment: center;
+                                    RoundControl {
+                                        icon: item.icon;
+                                        label: item.label;
+                                        checkable: true;
+                                        checked: Shell.current-tab == i + 2;
+                                        backdrop: i == 0
+                                            ? Shell.nav-key-a-bg
+                                            : Shell.nav-key-b-bg;
+                                        clicked => { Shell.current-tab = i + 2; }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── 内容区。两页共用这块矩形,按 Shell.current-tab 切换子内容 ──
+                        content := Rectangle {
+                            horizontal-stretch: 1;
+
+                            // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
+                            // bevy 画面,本来就有内容可透。
+                            AuroraBackground {
+                                width: 100%;
+                                height: 100%;
+                                // §4:封面取色喂极光。颜色由 aurora.rs 取好推进来。
+                                cover-active: Shell.aurora-cover-active;
+                                cover-warm: Shell.aurora-cover-warm;
+                                cover-deep: Shell.aurora-cover-deep;
+                                cover-soft: Shell.aurora-cover-soft;
+                            }
+
+                            // Home:壳的应用启动器(docs/adr/0024)。瓦片数据驱动:只放真实
+                            // 存在的应用与一个空槽,加应用就是加一张瓦片。3D 漂移与视差归
+                            // Bevy 瓦片场,与卡墙同期做(#66),这里先是 2D 摆法。
+                            if Shell.current-tab == 0: Rectangle {
+
+                                VerticalLayout {
+                                    x: Shell.compact ? 24px : 48px;
+                                    y: Shell.compact ? 32px : 56px;
+                                    width: min(parent.width - (Shell.compact ? 48px : 96px), 880px);
+                                    alignment: start;
+                                    spacing: 10px;
+
+                                    Text {
+                                        text: "OSMOSIS";
+                                        font-family: Type.mono;
+                                        font-size: 11px;
+                                        letter-spacing: 3px;
+                                        color: Theme.accent;
+                                    }
+                                    Text {
+                                        text: "今天做点什么";
+                                        font-family: Type.display-cjk;
+                                        font-weight: 900;
+                                        font-size: Shell.compact ? 30px : 40px;
+                                        color: Theme.text;
+                                    }
+                                    Text {
+                                        text: "选一个应用开始";
+                                        font-family: "Maple Mono NF CN";
+                                        font-size: 13px;
+                                        color: Theme.text-dim;
+                                    }
+
+                                    // 标题区与瓦片场之间的一口气。
+                                    Rectangle { height: 22px; }
+
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        spacing: 20px;
+
+                                        // 音乐:唯一的真瓦片。紧凑版式收一档,免得连空槽
+                                        // 一起超出 420px 的内容宽。
+                                        Rectangle {
+                                            width: Shell.compact ? 150px : 210px;
+                                            height: Shell.compact ? 150px : 210px;
+                                            border-radius: 22px;
+                                            clip: true;
+                                            background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+                                            drop-shadow-blur: 30px;
+                                            drop-shadow-offset-y: 14px;
+                                            drop-shadow-color: Theme.glass-shadow;
+
+                                            // 压字渐变:上轻下重,左下角的字才读得出来。
+                                            Rectangle {
+                                                background: @linear-gradient(180deg, Theme.overlay-weak 0%, Theme.shadow.with-alpha(0.4) 100%);
+                                            }
+                                            VerticalLayout {
+                                                alignment: end;
+                                                padding: 16px;
+                                                spacing: 4px;
+                                                Text {
+                                                    text: "音乐";
+                                                    font-family: Type.display-cjk;
+                                                    font-weight: 900;
+                                                    font-size: 17px;
+                                                    color: Theme.immersive-text;
+                                                }
+                                                Text {
+                                                    text: Player.is-playing ? "MUSIC · " + Viz.now-title : "MUSIC";
+                                                    font-family: Type.mono;
+                                                    font-size: 11px;
+                                                    letter-spacing: 1px;
+                                                    color: Theme.immersive-text-dim;
+                                                    overflow: elide;
+                                                }
+                                            }
+                                            music-tile := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { Shell.current-tab = 1; }
+                                                accessible-role: button;
+                                                accessible-label: "音乐";
+                                                accessible-action-default => { Shell.current-tab = 1; }
+                                            }
+                                        }
+
+                                        // 空槽:留给下一个应用。不是按钮,也不装成按钮 ——
+                                        // 没有 TouchArea,点了不会假装发生什么(硬规则 8)。
+                                        Rectangle {
+                                            width: Shell.compact ? 120px : 168px;
+                                            height: Shell.compact ? 150px : 210px;
+                                            border-radius: 22px;
+                                            background: Theme.overlay-weak;
+                                            border-width: 1px;
+                                            border-color: Theme.divider;
+                                            clip: true;
+
+                                            // §9:星云纹理垫底(render3d 画,尺寸在 lib.rs 有一份镜像)。
+                                            if Shell.aurora-buttons-on && Shell.home-slot-bg.width > 0: Image {
+                                                width: 100%;
+                                                height: 100%;
+                                                source: Shell.home-slot-bg;
+                                            }
+                                            // 只追 hover 喂给星云的指针涡旋;这仍不是按钮 ——
+                                            // 没有点击行为(硬规则 8)。
+                                            TouchArea {
+                                                changed has-hover => {
+                                                    Shell.home-slot-hover = self.has-hover;
+                                                }
+                                                moved => {
+                                                    Shell.home-slot-px = self.mouse-x / max(self.width, 1px);
+                                                    Shell.home-slot-py = 1 - self.mouse-y / max(self.height, 1px);
+                                                }
+                                            }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                spacing: 6px;
+                                                Text {
+                                                    text: "+";
+                                                    font-size: 22px;
+                                                    color: Theme.text-faint;
+                                                    horizontal-alignment: center;
+                                                }
+                                                Text {
+                                                    text: "装一个";
+                                                    font-family: Type.display-cjk;
+                                                    font-weight: 900;
+                                                    font-size: 13px;
+                                                    color: Theme.text-faint;
+                                                    horizontal-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                            }
+
+                            // 个人主页(tab 2)。进页即取统计,判断在 Rust 侧。
+                            if Shell.current-tab == 2: ProfilePage {
+                                width: 100%;
+                                height: 100%;
+                                // 与下面摆控制条那一行是同一个条件 —— 条在不在,
+                                // 决定这一页底部要不要多留出它那一块。
+                                bar-visible: Player.has-track && !Shell.play-page-open;
+                                init => { Profile.shown(); }
+                                username: Profile.username;
+                                loaded: Profile.loaded;
+                                error-text: Profile.error;
+                                month-plays: Profile.month-plays;
+                                distinct-tracks: Profile.distinct-tracks;
+                                streak-days: Profile.streak-days;
+                                top-artists: Profile.artists;
+                                devices: Shell.devices;
+                                output-current: Shell.output-id;
+                                set-output(id) => { Shell.set-output(id); }
+                                netease-bound: Profile.netease-bound;
+                                netease-nickname: Profile.netease-nickname;
+                                netease-qr: Profile.netease-qr;
+                                netease-hint: Profile.netease-hint;
+                                // 手机扫不了自己屏幕上的码,那一句提示只在安卓上说
+                                on-phone: Shell.platform == "android";
+                                unbind-netease => { Profile.unbind-netease(); }
+                            }
+
+                            // 设置(tab 3,rail 沉底最后一颗)。
+                            if Shell.current-tab == 3: SettingsPage {
+                                width: 100%;
+                                height: 100%;
+                                // 与下面摆控制条那一行是同一个条件,理由同个人页。
+                                bar-visible: Player.has-track && !Shell.play-page-open;
+                                about-line: Profile.about-line;
+                                tier-line: Profile.tier-line;
+                                update-status: Profile.update-status;
+                                update-action: Profile.update-action;
+                                update-requested => { Profile.update-requested(); }
+                                aurora-on: Shell.aurora-buttons-on;
+                                aurora-toggled => { Shell.aurora-buttons-toggled(); }
+                                theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
+                                logout => { Session.logout(); }
+                            }
+
+                            // Music:搜歌 + 点一首放出声。整页可滚,不裹玻璃卡片 ——
+                            // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                            // Music:二级导航 + 四个分区。整页可滚,不裹玻璃卡片 ——
+                            // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                            if Shell.current-tab == 1: MusicPage { }
+
+                            // 控制条:壳持有、跨应用常驻(CONTEXT.md「控制条」)。
+                            // **一个实例管四个页签** —— 不是每页各摆一根:各摆一根就有各自的
+                            // 容器内缩与各自的形态,而那正是用户点名的「不统一」(docs/adr/0029)。
+                            // 播放页开着时让位:覆层整个盖住这一层,它自己带一根同样的条。
+                            if Player.has-track && !Shell.play-page-open: PlayerBar {
+                                x: (parent.width - self.width) / 2;
+                                // 间隙与 BarMetrics.bottom-gap 是同一个数:页面按它留空,
+                                // 条按它落位,两边对不上就会差出一条缝或者压住一行。
+                                y: parent.height - self.height - BarMetrics.bottom-gap;
+                                width-cap: parent.width - root.bar-inset * 2;
+                            }
+
+                            // Shell.fps 浮层:content 的最后一个子元素 → 画在最上层。
+                            // 左上角,所有页可见。诚实即时帧率(见 lib.rs 的 Shell.fps 模块)。
+                            if Shell.show-fps: Text {
+                                x: 8px;
+                                y: 8px;
+                                text: "FPS " + round(Shell.fps);
+                                color: #51cf66;
+                                font-size: 14px;
+                                font-weight: 700;
+                            }
+                        }
+                    }
+
+                    // ── 底栏(紧凑版式)──
+                    // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
+                    // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
+                    if Shell.compact: Rectangle {
+                        height: root.nav-bar-h;
+                        // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
+                        background: Theme.base;
+                        // 横条几何回写给 seam:四格等分要窗口宽,而它随窗口变(#70)。
+                        init => { root.nav-bar-w = self.width; }
+                        changed width => { root.nav-bar-w = self.width; }
+
+                        // GPU 水滴选中器:与侧栏同一条 pass,只是移动轴换成 x。
+                        // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+                        Image {
+                            source: root.nav-bg;
+                            width: 100%;
+                            height: 100%;
+                            image-fit: fill;
+                        }
+
+                        HorizontalLayout {
+                            padding-left: root.nav-bar-pad-left;
+                            padding-right: root.nav-bar-pad-right;
+                            padding-bottom: root.safe-area-insets.bottom;
+                            spacing: root.nav-bar-gap;
+
+                            for item[i] in Nav.items: NavItem {
+                                horizontal-stretch: 1;
+                                label: item.label;
+                                icon: item.icon;
+                                active: Shell.current-tab == i;
+                                // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
+                                gpu-selected: root.nav-bg.width > 0;
+                                clicked => { Shell.current-tab = i; }
+                            }
+                            // 沉底那组在底栏里接着排:手机没有"栏底"可沉,四项等分。
+                            // 设计稿的第三位是搜索,但搜索已经住在 Music 页的分段条里;
+                            // 设置不上底栏的话,手机上就没有任何入口能到它 —— 等价路径优先。
+                            for item[i] in Nav.bottom-items: NavItem {
+                                horizontal-stretch: 1;
+                                label: item.label;
+                                icon: item.icon;
+                                active: Shell.current-tab == i + 2;
+                                gpu-selected: root.nav-bg.width > 0;
+                                clicked => { Shell.current-tab = i + 2; }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        if Shell.banner-text != "": banner := Rectangle {
-            y: root.safe-area-insets.top + 10px;
-            x: (parent.width - self.width) / 2;
-            width: min(parent.width - 32px, 420px);
-            height: 44px;
-            background: Theme.danger-surface;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: Theme.danger-line;
 
-            // 有去处的提示可以点整块。摆在内容**之前**,于是右边那颗关闭键仍在它
-            // 上面 —— 反过来的话,想关掉提示会变成跳页。
-            // 断流那类提示没有去处(tab 为 -1),这一块整个不在,横幅仍只是文字。
-            if Shell.banner-tab >= 0: jump := TouchArea {
-                // 屏幕阅读器要认得出这块能按;无头测试也只认无障碍动作,
-                // 裸 TouchArea 在那里点不动(见 crates/ui/tests/banner.rs)。
-                accessible-role: button;
-                accessible-label: Shell.banner-text;
-                accessible-action-default => { jump.clicked(); }
-                clicked => {
-                    Shell.current-tab = Shell.banner-tab;
-                    Shell.banner-text = "";
-                    Shell.banner-tab = -1;
-                }
-            }
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 6px;
-                spacing: 6px;
-
-                Text {
-                    text: Shell.banner-text;
-                    accessible-role: text;
-                    accessible-label: Shell.banner-text;
-                    // 文案是硬编码中文,与状态行同一套子集字体。
-                    font-family: "Maple Mono NF CN";
-                    font-size: 13px;
-                    color: Theme.danger-text;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-
-                // 关掉。清空文案就等于收起,不必回 Rust 绕一圈。
-                RoundControl {
-                    diameter: 32px;
-                    transparent-base: true;
-                    icon: "M7 7 L17 17 M17 7 L7 17";
-                    clicked => { Shell.banner-text = ""; }
-                }
-            }
-        }
-
-        // ── 下载进度。压在所有页之上,与横幅同一条理由 ──
-        //
-        // 它是个**状况**不是一次性提示:从起头到落盘都为真,收它的是下载本身的结束
-        // (见 globals/shell.slint 的 download-text)。摆在横幅与被遥控条之下,
-        // 三条同时在场时不叠在一起。
-        if Shell.download-text != "": download-strip := Rectangle {
-            y: root.safe-area-insets.top
-                + (Shell.banner-text != "" ? 62px : 10px)
-                + (Shell.group-banner != "" ? 52px : 0px);
-            x: (parent.width - self.width) / 2;
-            width: min(parent.width - 32px, 420px);
-            height: 40px;
-            background: Theme.surface.with-alpha(0.96);
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: Theme.overlay;
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-
-                Text {
-                    text: Shell.download-text;
-                    font-size: 13px;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
             }
         }
 

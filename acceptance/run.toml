@@ -1,2 +1,2 @@
-command = ["bash", "acceptance/run.sh"]
-junit = ["test/remote-behavior/results/junit.xml", "test/remote-behavior/results/projection-junit.xml"]
+command = ["bash", "acceptance/run.sh", "all"]
+junit = ["test/remote-behavior/results/junit.xml", "test/remote-behavior/results/projection-junit.xml", "target/nextest/status-ui/junit.xml"]
