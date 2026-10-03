@@ -292,7 +292,8 @@ def test_download_manager_search_and_delete_selected_track(download_world, mode)
     ask_delete(client)
     assert first.exists() and second.exists()
     answer_delete(client, True)
-    wait_until(lambda: not first.exists(), "selected file deleted")
+    wait_until(lambda: "已删除 1 首" in banner_text(client), "deletion completed")
+    assert not first.exists(), "selected file remains after completed deletion"
     assert second.read_bytes() == originals[second]
     assert outside.read_bytes() == b"outside-sentinel"
     search_downloads(client, "")
@@ -329,7 +330,10 @@ def test_download_manager_cancel_then_delete_multiple(download_world):
     assert_download_total(client, 2, sum(map(len, originals.values())))
     ask_delete(client)
     answer_delete(client, True)
-    wait_until(lambda: not any(path.exists() for path in originals), "both files deleted")
+    wait_until(lambda: "已删除 2 首" in banner_text(client), "multi deletion completed")
+    assert not any(path.exists() for path in originals), (
+        "selected files remain after completed deletion"
+    )
     assert outside.read_bytes() == b"outside-sentinel"
     wait_until(lambda: not download_names(client), "empty download list")
     assert_download_total(client, 0, 0)
