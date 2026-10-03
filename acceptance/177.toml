@@ -32,3 +32,12 @@ observe = "播放背景和登录极光背景从y=0铺满800px窗口，歌名、�
 tests = ["ui::status_strips::play_background_fills_the_window_without_covering_content", "ui::status_strips::login_background_fills_the_window_while_the_form_avoids_strips"]
 doubles = ["无头窗口替代Android/GPU，safe-area为0；非零安全区及最终像素仍单独在小米13验证，不用JUnit替代"]
 mutation = "把覆层放回page-stack，使背景y大于0且高度小于窗口，背景边界断言失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "420/1000真实MainWindow，有条与无条，在音乐搜索框填字，打开/关闭播放页；向歌单首行发送真实指针事件"
+observe = "播放页打开时搜索框仍在树里，关闭后新查询到的框保留文字；覆层下歌单不可点击，关闭后原位置可打开详情"
+tests = ["ui::status_strips::search_text_survives_opening_and_closing_the_play_page", "ui::status_strips::the_play_page_blocks_pointer_input_to_the_retained_shell"]
+doubles = ["无头后端替代窗口/GPU；无障碍填值读取真实LineEdit，不构造保存结果；歌单回调只展示详情，不证明后端加载"]
+mutation = "恢复以play-page-open控制音乐壳存在的if，关闭播放页后文字变空；只保留壳却不隐藏时，指针进入覆层下歌单"

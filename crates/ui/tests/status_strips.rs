@@ -50,6 +50,132 @@ fn strips(ui: &MainWindow, mask: u8) {
     );
 }
 
+fn click(
+    ui: &MainWindow,
+    position: slint::LogicalPosition,
+) {
+    ui.window().dispatch_event(WindowEvent::PointerMoved {
+        position,
+    });
+    ui.window().dispatch_event(
+        WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        },
+    );
+    ui.window().dispatch_event(
+        WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Left,
+        },
+    );
+}
+
+/// F-002：在真实输入框填字，开关播放页后重新查框，防止旧句柄掩盖重建。
+#[test]
+fn search_text_survives_opening_and_closing_the_play_page()
+{
+    testing::init_no_event_loop();
+    for width in [420.0, 1000.0] {
+        for mask in [0, 7] {
+            let ui = window(width);
+            strips(&ui, mask);
+            ui.global::<Shell>().set_music_section(2);
+            let keyword =
+                element(&ui, "MusicPage::keyword");
+            keyword.set_accessible_value("retained query");
+            similar_asserts::assert_eq!(
+                keyword.accessible_value().as_deref(),
+                Some("retained query")
+            );
+            ui.global::<Shell>().set_play_page_open(true);
+            let shell_retained =
+                testing::ElementHandle::find_by_element_id(
+                    &ui,
+                    "MusicPage::keyword",
+                )
+                .next()
+                .is_some();
+            ui.global::<Shell>().set_play_page_open(false);
+            similar_asserts::assert_eq!(
+                element(&ui, "MusicPage::keyword")
+                    .accessible_value()
+                    .as_deref(),
+                Some("retained query"),
+                "搜索文字丢失，width={width} mask={mask}"
+            );
+            assert!(
+                shell_retained,
+                "播放页打开时音乐壳不该销毁"
+            );
+        }
+    }
+}
+
+/// 隐藏壳的首行不能接收指针，关闭播放页后同一位置仍可进入详情。
+#[test]
+fn the_play_page_blocks_pointer_input_to_the_retained_shell()
+ {
+    testing::init_no_event_loop();
+    for width in [420.0, 1000.0] {
+        for mask in [0, 7] {
+            let ui = window(width);
+            strips(&ui, mask);
+            ui.global::<Library>().set_playlists(
+                ModelRc::new(VecModel::from(vec![
+                    PlaylistRow {
+                        id: "first".into(),
+                        name: "测试歌单".into(),
+                        subtitle: "1 首".into(),
+                        source: 2,
+                        cover: Default::default(),
+                    },
+                ])),
+            );
+            let weak = ui.as_weak();
+            ui.global::<Library>().on_open_playlist(
+                move |id, _| {
+                    similar_asserts::assert_eq!(
+                        id, "first"
+                    );
+                    weak.upgrade()
+                        .expect("点击时窗口仍存在")
+                        .global::<Library>()
+                        .set_open_playlist_name(
+                            "测试歌单".into(),
+                        );
+                },
+            );
+            let row = element(&ui, "PlaylistList::touch");
+            let position = slint::LogicalPosition::new(
+                row.absolute_position().x
+                    + row.size().width / 2.0,
+                row.absolute_position().y
+                    + row.size().height / 2.0,
+            );
+            ui.global::<Shell>().set_play_page_open(true);
+            click(&ui, position);
+            assert!(
+                ui.global::<Library>()
+                    .get_open_playlist_name()
+                    .is_empty(),
+                "播放页下的歌单收到了点击，width={width} mask={mask}"
+            );
+            ui.global::<Shell>().set_play_page_open(false);
+            click(&ui, position);
+            assert!(
+                testing::ElementHandle::find_by_element_id(
+                    &ui,
+                    "MusicPage::playlist-header",
+                )
+                .next()
+                .is_some(),
+                "关闭播放页后歌单仍该可点"
+            );
+        }
+    }
+}
+
 /// 每一种状态组合都实际量边界；收起条后页面回到原位。
 #[test]
 fn every_strip_combination_reserves_space_in_both_layouts()
