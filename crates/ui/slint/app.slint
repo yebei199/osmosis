@@ -708,6 +708,8 @@ export component MainWindow inherits Window {
 
                 Text {
                     text: Shell.banner-text;
+                    accessible-role: text;
+                    accessible-label: Shell.banner-text;
                     // 文案是硬编码中文,与状态行同一套子集字体。
                     font-family: "Maple Mono NF CN";
                     font-size: 13px;
