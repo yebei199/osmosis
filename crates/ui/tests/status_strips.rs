@@ -112,21 +112,21 @@ fn every_strip_combination_reserves_space_in_both_layouts()
     }
 }
 
-/// 页面覆层共用同一份让位空间，登录页同时缩短高度。
+/// 背景铺满窗口时，登录表单和播放内容仍共用状态条的让位空间。
 #[test]
 fn login_and_play_pages_move_below_the_status_stack() {
     testing::init_no_event_loop();
     let ui = window(420.0);
     ui.global::<Session>().set_logged_in(false);
-    let original = element(&ui, "MainWindow::login-page")
-        .size()
-        .height;
     strips(&ui, 7);
     let end =
         bottom(&element(&ui, "MainWindow::download-strip"));
-    let login = element(&ui, "MainWindow::login-page");
-    assert!(login.absolute_position().y >= end);
-    assert!(login.size().height < original);
+    assert!(
+        element(&ui, "LoginPage::username")
+            .absolute_position()
+            .y
+            >= end
+    );
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_play_page_open(true);
     assert!(
@@ -222,5 +222,107 @@ fn the_first_playlist_opens_through_a_real_pointer_click() {
             .is_some(),
             "首行点击未打开歌单详情"
         );
+    }
+}
+
+/// F-001：有条、无条都铺满背景，标题与控制条只在可用内容区内。
+#[test]
+fn play_background_fills_the_window_without_covering_content()
+ {
+    testing::init_no_event_loop();
+    for width in [420.0, 1000.0] {
+        let ui = window(width);
+        ui.global::<Shell>().set_play_page_open(true);
+        for mask in 0..8 {
+            strips(&ui, mask);
+            let page = testing::ElementHandle::find_by_element_type_name(&ui, "PlayPage")
+                .next().expect("播放页该展开");
+            let background = page
+                .query_descendants()
+                .match_type_name("Rectangle")
+                .find_first()
+                .expect("播放页该有背景");
+            assert_eq!(
+                background.absolute_position().y,
+                0.0,
+                "背景被状态条截断，width={width} mask={mask}"
+            );
+            assert_eq!(
+                background.size().height,
+                800.0,
+                "播放背景未铺满窗口，width={width} mask={mask}"
+            );
+            let end = [
+                "MainWindow::banner",
+                "MainWindow::group-strip",
+                "MainWindow::download-strip",
+            ]
+            .into_iter()
+            .filter_map(|id| {
+                testing::ElementHandle::find_by_element_id(
+                    &ui, id,
+                )
+                .next()
+            })
+            .map(|h| bottom(&h))
+            .fold(0.0_f32, f32::max);
+            for id in [
+                "PlayPage::play-title",
+                "PlayPage::player-bar",
+            ] {
+                assert!(
+                    element(&ui, id).absolute_position().y
+                        >= end,
+                    "播放内容被状态条覆盖，{id} width={width} mask={mask}"
+                );
+            }
+        }
+    }
+}
+
+/// 登录背景同样铺到屏顶，表单不能退回状态条下面的不可点击区域。
+#[test]
+fn login_background_fills_the_window_while_the_form_avoids_strips()
+ {
+    testing::init_no_event_loop();
+    for width in [420.0, 1000.0] {
+        let ui = window(width);
+        ui.global::<Session>().set_logged_in(false);
+        for mask in 0..8 {
+            strips(&ui, mask);
+            let background = testing::ElementHandle::find_by_element_type_name(&ui, "AuroraBackground")
+                .next().expect("登录页该有极光背景");
+            assert_eq!(
+                background.absolute_position().y,
+                0.0,
+                "登录背景被状态条截断，width={width} mask={mask}"
+            );
+            assert_eq!(
+                background.size().height,
+                800.0,
+                "登录背景未铺满窗口，width={width} mask={mask}"
+            );
+            let end = [
+                "MainWindow::banner",
+                "MainWindow::group-strip",
+                "MainWindow::download-strip",
+            ]
+            .into_iter()
+            .filter_map(|id| {
+                testing::ElementHandle::find_by_element_id(
+                    &ui, id,
+                )
+                .next()
+            })
+            .map(|h| bottom(&h))
+            .fold(0.0_f32, f32::max);
+            assert!(
+                element(&ui, "LoginPage::username")
+                    .absolute_position()
+                    .y
+                    >= end,
+                "登录表单被状态条覆盖，width={width} mask={mask}"
+            );
+        }
     }
 }
