@@ -223,6 +223,36 @@ export component MainWindow inherits Window {
         changed mouse-x => { Shell.user-input(); }
         changed mouse-y => { Shell.user-input(); }
 
+        // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
+        // 五层合成:warp 背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
+        // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
+        // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
+        // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
+        if Shell.play-page-open: PlayPage {
+            width: 100%;
+            height: 100%;
+            bar-inset: root.bar-inset;
+            safe-left: root.safe-area-insets.left;
+            safe-right: root.safe-area-insets.right;
+            safe-top: page-stack.y;
+            safe-bottom: root.safe-area-insets.bottom;
+        }
+
+        // 登录背景铺满窗口，只有表单避让安全区和状态条。
+        if !Session.logged-in: login-page := LoginPage {
+            width: 100%;
+            height: 100%;
+            safe-top: page-stack.y;
+            busy: Session.busy;
+            error-text: Session.error;
+            login(username, password) => {
+                Session.login(username, password);
+            }
+            register(username, password, invite) => {
+                Session.register(username, password, invite);
+            }
+        }
+
         // 顶部安全区只在窗口布局消化一次，状态条按实际高度让位。
         VerticalLayout {
             padding-top: root.safe-area-insets.top;
@@ -367,12 +397,12 @@ export component MainWindow inherits Window {
             }
             page-stack := Rectangle {
                 vertical-stretch: 1;
-                // 壳布局与覆层共用状态条下方的剩余空间。
+                // 音乐壳保持在流布局；全窗口覆层只借用这里的内容起点。
                 //
                 // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
                 // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
                 // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
-                if Session.logged-in: VerticalLayout {
+                if Session.logged-in && !Shell.play-page-open: VerticalLayout {
 
                     // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
                     HorizontalLayout {
@@ -714,34 +744,6 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // ── 播放页覆层:盖住包括导航在内的整个窗口(CONTEXT.md「播放页」)──
-                // 五层合成:warp 背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
-                // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
-                // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
-                // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
-                if Shell.play-page-open: PlayPage {
-                    width: 100%;
-                    height: 100%;
-                    bar-inset: root.bar-inset;
-                    safe-left: root.safe-area-insets.left;
-                    safe-right: root.safe-area-insets.right;
-                    safe-top: 0px;
-                    safe-bottom: root.safe-area-insets.bottom;
-                }
-
-                // 未登录时表单填满剩余空间，顶部状态条仍然可见。
-                if !Session.logged-in: login-page := LoginPage {
-                    width: 100%;
-                    height: 100%;
-                    busy: Session.busy;
-                    error-text: Session.error;
-                    login(username, password) => {
-                        Session.login(username, password);
-                    }
-                    register(username, password, invite) => {
-                        Session.register(username, password, invite);
-                    }
-                }
 
             }
         }
