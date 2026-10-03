@@ -30,9 +30,9 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
 acceptance/run.toml 与 CI 不使用局部模式。
 
-`run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发和
-实施者交回时的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合
-保持不变，最终候选的完整验收由上游执行。
+`run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
+的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
+验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
 
 电台引用保护先向目标转交并暂停，保存原 queue/revision/entry。源端离组经有界确认后
 打开电台，再明确点击一次处于暂停态的真实播放按钮；导航本身不保证继续。PCM 确认
