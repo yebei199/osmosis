@@ -15,6 +15,7 @@ ui.workspace = true
 api.workspace = true
 env_logger.workspace = true
 log.workspace = true
+tempfile.workspace = true
 # 后端 feature 在这里追加,而不是在 workspace 的公共定义里 ——
 # 否则 android 构建会被 feature 统一拉进 winit。
 #
@@ -69,3 +70,4 @@ mcp = ["slint/mcp"]
 
 [dev-dependencies]
 tempfile.workspace = true
+similar-asserts.workspace = true

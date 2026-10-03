@@ -7,6 +7,7 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod downloads;
 mod log_file;
 mod mpris;
 mod single_instance;
@@ -29,6 +30,16 @@ fn main() {
         );
         std::process::exit(1);
     };
+
+    // 入口装好落点后，共享下载链路才接受桌面下载请求。
+    match downloads::Store::new() {
+        Ok(store) => {
+            ui::install_download_store(Box::new(store))
+        }
+        Err(err) => {
+            log::warn!("桌面下载落点初始化失败: {err}")
+        }
+    }
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
     // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
@@ -217,8 +228,8 @@ fn main() {
     //   实测退出码仍是 134,与不加时一字不差。
     //
     // 所以要 `_exit`:直接进 `exit_group`,谁的析构都不跑。代价是析构函数不执行 ——
-    // 而此刻要还的只有 GPU 与音频设备,内核回收得比我们干净,且全仓没有任何落盘路径
-    // (核对过 crates/ 与 apps/,没有 `fs::write` / `File::create`),没有东西要 flush。
+    // GPU 与音频设备由内核回收。已完成的下载在发布前已 flush；未完成下载的
+    // 待定文件不会析构清理，由下次初始化下载落点时回收。
     // 日志也不丢:stderr 与日志文件(log_file.rs)都不带缓冲,每条当场就 write 出去了。
     //
     // release 构建其实不受影响(那段递归检测只在 debug 下编进去),但开发全程跑的是

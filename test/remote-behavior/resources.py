@@ -225,7 +225,7 @@ class Client:
         world.clients.append(self)
         self.directory = world.directory / role
         self.directory.mkdir()
-        for name in ("state", "tmp", "runtime", "config", "cache", "data"):
+        for name in ("home", "state", "tmp", "runtime", "config", "cache", "data"):
             (self.directory / name).mkdir(mode=0o700)
         self.gate = Gate(world.server_port)
         world.gates.append(self.gate)
@@ -234,6 +234,7 @@ class Client:
         runtime = world.runtime / role
         runtime.mkdir(mode=0o700)
         self.env = world.env | {
+            "HOME": str(self.directory / "home"),
             "XDG_STATE_HOME": str(self.directory / "state"),
             "XDG_CONFIG_HOME": str(self.directory / "config"),
             "XDG_CACHE_HOME": str(self.directory / "cache"),

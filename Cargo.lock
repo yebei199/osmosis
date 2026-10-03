@@ -295,6 +295,7 @@ dependencies = [
  "libc",
  "log",
  "render3d",
+ "similar-asserts",
  "slint",
  "tempfile",
  "ui",

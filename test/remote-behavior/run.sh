@@ -5,8 +5,8 @@ repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
 mode=${1:-all}
-if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != targeted ]]; then
-    echo 'usage: run.sh [all|list|radio|targeted <testcase>...]' >&2
+if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download && "$mode" != targeted ]]; then
+    echo 'usage: run.sh [all|list|radio|download|targeted <testcase>...]' >&2
     exit 2
 fi
 selected_tests=()
@@ -99,6 +99,7 @@ fi
 tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi
+if [[ "$mode" == download ]]; then tests=("$suite_dir/test_download.py"); fi
 if [[ "$mode" == targeted ]]; then tests=("${selected_tests[@]}"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \

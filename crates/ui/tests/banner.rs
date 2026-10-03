@@ -9,6 +9,7 @@
 //! 什么都没有(见 `docs/adr/0013`)。
 
 use i_slint_backend_testing as testing;
+use similar_asserts::assert_eq;
 use slint::ComponentHandle as _;
 use ui::MainWindow;
 use ui::Shell;
@@ -22,6 +23,30 @@ fn banner(
         "MainWindow::banner",
     )
     .next()
+}
+
+/// 无去处的普通横幅也把实际文案交给屏幕阅读器。
+#[test]
+fn the_banner_text_exposes_its_accessible_label() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("create main window");
+    let message = "这首歌只有试听片段,下不了整首";
+    ui.global::<Shell>().set_banner_text(message.into());
+    assert!(banner(&ui).is_some());
+    let labels: Vec<_> =
+        testing::ElementHandle::find_by_accessible_label(
+            &ui, message,
+        )
+        .collect();
+    assert_eq!(
+        labels.len(),
+        1,
+        "banner text must expose its displayed message"
+    );
+    assert_eq!(
+        labels[0].accessible_label().as_deref(),
+        Some(message)
+    );
 }
 
 /// **有话说才出现,话收了就消失。**
