@@ -75,7 +75,11 @@ class UI:
         reply = json.loads(result.stdout)
         if reply.get("error") or reply.get("result", {}).get("isError"):
             raise RuntimeError(f"MCP {name}: {reply}")
-        return json.loads(reply["result"]["content"][0]["text"])
+        content = reply["result"]["content"]
+        image = next((block for block in content if block["type"] == "image"), None)
+        if image is not None:
+            return image
+        return json.loads(content[0]["text"])
 
     # 服务未就绪只在初始化处轮询，已经启动后工具错误直接传播。
     def ready(self):

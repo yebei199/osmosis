@@ -1,5 +1,6 @@
 """桌面真实选歌与下载入口到公共目录成品的独占环境验收。"""
 
+import base64
 import json
 import os
 import subprocess
@@ -47,6 +48,7 @@ def download_world(monkeypatch):
         home = client.directory / "home"
         home.mkdir(exist_ok=True)
         client.env["HOME"] = str(home)
+        client.env["SLINT_SCALE_FACTOR"] = "1"
         (client.directory / "config/user-dirs.dirs").write_text('XDG_MUSIC_DIR="$HOME/Music"\n')
         return original_start(client)
 
@@ -138,7 +140,7 @@ def start_download(world, mode, outcome):
     return client.directory / "home/Music/osmosis"
 
 
-# 提示取自真实元素树的 Text 属性，不把回调意图当下载结果。
+# MCP 不暴露横幅 Text 文案，截图 OCR 读取用户实际看到的提示。
 def banner_text(client):
     handles = client.ui.elements("MainWindow::banner")
     if not handles:
@@ -146,7 +148,25 @@ def banner_text(client):
     tree = client.ui.call("get_element_tree", elementHandle=handles[0], maxElements=1000)
     assert not tree["truncated"]
     (client.directory / "download-banner.json").write_text(json.dumps(tree, ensure_ascii=False))
-    return json.dumps(tree, ensure_ascii=False)
+    image = client.ui.call("take_screenshot", windowHandle=client.ui.window)
+    screenshot = client.directory / "download-banner.png"
+    screenshot.write_bytes(base64.b64decode(image["data"]))
+    banner = tree["elements"][0]
+    position, size = banner["absolutePosition"], banner["size"]
+    # 私有 Xvfb 的 scale 固定为 1，裁切尺寸取自当次 MCP 几何。
+    crop = client.directory / "download-banner-crop.png"
+    geometry = f"{round(size['width'])}x{round(size['height'])}+{round(position['x'])}+{round(position['y'])}"
+    subprocess.run(
+        ["magick", str(screenshot), "-crop", geometry, "-resize", "400%", str(crop)], check=True
+    )
+    result = subprocess.run(
+        ["tesseract", str(crop), "stdout", "-l", "chi_sim", "--psm", "7"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (client.directory / "download-banner-ocr.txt").write_text(result.stdout)
+    return "".join(result.stdout.split())
 
 
 # 两条 UI 入口各自贯通到完整可解码 MP3，文件内容也须与固定音源一致。

@@ -115,3 +115,9 @@ REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix T
 PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录，
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
+
+#169 下载验收可用 `bash acceptance/run.sh download` 定向运行。列表与卡墙先经真实
+音频输出确认选歌，再通过更多抽屉下载固定 MP3，校验完整字节和 ffprobe 时长。
+断流只关闭本轮音源 HTTP 连接，待定文件清理以目录为空判定。trial 提示使用
+MCP 截图、当次横幅几何裁切及中文 OCR，保留原图、裁切图和识别文本；普通 Text
+文案未暴露为 MCP 无障碍属性，不能拿元素树的文案缺失判定产品错误。
