@@ -117,10 +117,122 @@ impl ui::DownloadStore for Store {
         ))
     }
 
+    /// 只列正式直接文件，软链和子目录不能扩展音乐目录边界。
+    fn list(&self) -> std::io::Result<ui::DownloadListing> {
+        let directory =
+            match std::fs::read_dir(&self.directory) {
+                Ok(directory) => directory,
+                Err(err)
+                    if err.kind()
+                        == std::io::ErrorKind::NotFound =>
+                {
+                    return Ok(
+                        ui::DownloadListing::default(),
+                    );
+                }
+                Err(err) => return Err(err),
+            };
+        let mut entries = Vec::new();
+        for item in directory {
+            let item = item?;
+            let name = item.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !published_name(name)
+                || !item.file_type()?.is_file()
+            {
+                continue;
+            }
+            let metadata = item.metadata()?;
+            let modified = metadata
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            entries.push(ui::DownloadEntry::from_file(
+                name.to_owned(),
+                name.to_owned(),
+                metadata.len(),
+                modified,
+            ));
+        }
+        entries.sort_by(|left, right| {
+            right.modified.cmp(&left.modified).then_with(
+                || left.file_name.cmp(&right.file_name),
+            )
+        });
+        Ok(ui::DownloadListing {
+            entries,
+            ..Default::default()
+        })
+    }
+
+    /// 删除前重新列目录；身份只能来自这份受限快照。
+    fn delete(
+        &self,
+        ids: &[String],
+    ) -> std::io::Result<ui::DownloadDeletion> {
+        let entries = self.list()?.entries;
+        let mut outcome = ui::DownloadDeletion::default();
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(entry) = entries
+                .iter()
+                .find(|entry| &entry.id == id)
+            else {
+                outcome.failures.push(format!(
+                    "{id}: 文件不在已下载目录中"
+                ));
+                continue;
+            };
+            let path =
+                self.directory.join(&entry.file_name);
+            // symlink_metadata 不跟随替换成软链的条目。
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => outcome.deleted.push(
+                            ui::DownloadEntry {
+                                size: metadata.len(),
+                                ..entry.clone()
+                            },
+                        ),
+                        Err(err) => {
+                            outcome.failures.push(format!(
+                                "{}: {err}",
+                                entry.file_name
+                            ))
+                        }
+                    }
+                }
+                Ok(_) => outcome.failures.push(format!(
+                    "{}: 文件类型已改变",
+                    entry.file_name
+                )),
+                Err(err) => outcome.failures.push(format!(
+                    "{}: {err}",
+                    entry.file_name
+                )),
+            }
+        }
+        Ok(outcome)
+    }
+
     /// 下载完成提示使用实际公共目录。
     fn location(&self) -> String {
         self.directory.display().to_string()
     }
+}
+
+/// 成品名不含目录分隔符，也不把隐藏待定文件当下载歌曲。
+fn published_name(name: &str) -> bool {
+    !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && name.ends_with(".mp3")
 }
 
 /// 收尾令牌独占临时路径，未提交时由 TempPath 的 Drop 回收。

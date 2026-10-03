@@ -35,6 +35,33 @@ pub struct DownloadEntry {
     pub artist: String,
 }
 
+impl DownloadEntry {
+    /// Parse the shared artist-title naming convention, retaining the actual file name.
+    pub fn from_file(
+        id: String,
+        file_name: String,
+        size: u64,
+        modified: u64,
+    ) -> Self {
+        let stem = file_name
+            .strip_suffix(".mp3")
+            .unwrap_or(&file_name);
+        let (artist, title) = stem
+            .split_once(" - ")
+            .map_or(("", stem), |(artist, title)| {
+                (artist, title)
+            });
+        Self {
+            id,
+            title: title.to_owned(),
+            artist: artist.to_owned(),
+            file_name,
+            size,
+            modified,
+        }
+    }
+}
+
 /// Listing plus any limitation imposed by platform permissions.
 #[derive(Clone, Debug, Default)]
 pub struct DownloadListing {
@@ -120,7 +147,7 @@ pub trait DownloadCommit: Send + 'static {
 /// `OnceLock` 而不是参数:传参数要给 `run` / `run_with_renderers` 各加一个形参,
 /// 而四个平台入口里只有安卓给得出实现,另外三个只能传 `None` —— 为一个端改四处
 /// 签名。同 `apps/android/src/controls.rs` 里那条命令通道的理由。
-static STORE: OnceLock<Box<dyn DownloadStore>> =
+pub(super) static STORE: OnceLock<Box<dyn DownloadStore>> =
     OnceLock::new();
 
 /// 接上落点。平台入口在 `run*` 之前调一次;不调就是这一端不支持下载。
