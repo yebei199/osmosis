@@ -89,13 +89,8 @@ fn search_text_survives_opening_and_closing_the_play_page()
                 Some("retained query")
             );
             ui.global::<Shell>().set_play_page_open(true);
-            let shell_retained =
-                testing::ElementHandle::find_by_element_id(
-                    &ui,
-                    "MusicPage::keyword",
-                )
-                .next()
-                .is_some();
+            // 查询过滤隐藏元素；弱句柄存活才说明音乐壳没有销毁。
+            let shell_retained = keyword.is_valid();
             ui.global::<Shell>().set_play_page_open(false);
             similar_asserts::assert_eq!(
                 element(&ui, "MusicPage::keyword")
