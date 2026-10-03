@@ -2,6 +2,9 @@
 
 use std::path::PathBuf;
 
+const PENDING_PREFIX: &str = ".osmosis-download-";
+const PENDING_SUFFIX: &str = ".pending";
+
 /// 集中解析音乐目录，供平台注入及后续目录消费者共用。
 fn music_directory() -> std::io::Result<PathBuf> {
     #[cfg(target_os = "linux")]
@@ -48,6 +51,29 @@ impl Store {
     fn initialize(
         directory: PathBuf,
     ) -> std::io::Result<Self> {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(err)
+                if err.kind()
+                    == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(Self::at(directory));
+            }
+            Err(err) => return Err(err),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name.starts_with(PENDING_PREFIX)
+                && name.ends_with(PENDING_SUFFIX)
+                && entry.file_type()?.is_file()
+            {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
         Ok(Self::at(directory))
     }
 
@@ -78,7 +104,8 @@ impl ui::DownloadStore for Store {
         }
         std::fs::create_dir_all(&self.directory)?;
         let pending = tempfile::Builder::new()
-            .prefix(".download-")
+            .prefix(PENDING_PREFIX)
+            .suffix(PENDING_SUFFIX)
             .tempfile_in(&self.directory)?;
         let (writer, path) = pending.into_parts();
         Ok((
@@ -405,6 +432,18 @@ mod tests {
             .join(".osmosis-download-DEF456.pending");
         std::fs::create_dir(&unrelated_directory)
             .expect("create unrelated directory");
+        #[cfg(unix)]
+        let unrelated_link = {
+            let link = directory
+                .path()
+                .join(".osmosis-download-GHI789.pending");
+            std::os::unix::fs::symlink(
+                directory.path().join("song.mp3"),
+                &link,
+            )
+            .expect("create unrelated link");
+            link
+        };
         Store::initialize(directory.path().to_path_buf())
             .expect("initialize download store");
         assert!(
@@ -419,6 +458,8 @@ mod tests {
             );
         }
         assert!(unrelated_directory.is_dir());
+        #[cfg(unix)]
+        assert!(unrelated_link.is_symlink());
     }
 
     /// 完成消息报告真正的落点。
