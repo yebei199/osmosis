@@ -78,6 +78,16 @@ def test_local_seed(world):
     cases.local_seed(world)
 
 
+# 随机与循环必须在遥控和出声两端显示,并影响真实目标音频。
+def test_shuffle_and_loop_projection(world):
+    cases.shuffle_and_loop_projection(world)
+
+
+# 独奏 FM 切到远端后必须续上组队列并播放新增曲目。
+def test_local_radio_seed_top_up(world):
+    cases.local_radio_seed_top_up(world)
+
+
 # 健康组不能被无关本机 seed 覆盖。
 def test_healthy_group_ignores_unrelated_seed(world):
     cases.healthy_group_ignores_unrelated_seed(world)
