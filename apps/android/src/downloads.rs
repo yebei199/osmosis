@@ -11,7 +11,7 @@ use std::os::fd::FromRawFd as _;
 use std::sync::OnceLock;
 
 use jni::JavaVM;
-use jni::objects::JValue;
+use jni::objects::{JObjectArray, JString, JValue};
 
 /// Java 侧那个类的全名。三处调用共用,写错的现象是 `NoClassDefFoundError`,
 /// 而且要等用户第一次点下载才抛。
@@ -71,6 +71,72 @@ impl ui::DownloadStore for Store {
         let file =
             unsafe { std::fs::File::from_raw_fd(fd) };
         Ok((Box::new(file), Box::new(Entry { token })))
+    }
+
+    /// MediaStore严格限定公共音乐子目录，受限权限说明随列表交回。
+    fn list(&self) -> std::io::Result<ui::DownloadListing> {
+        let fields =
+            read_array(jni::jni_str!("list"), None)?;
+        if fields.len() < 2 {
+            return Err(std::io::Error::other(
+                "invalid MediaStore listing",
+            ));
+        }
+        Ok(ui::DownloadListing {
+            note: fields[0].clone(),
+            pending: fields[1] == "true",
+            entries: parse_entries(&fields[2..])?,
+        })
+    }
+
+    /// Java侧重新查目录，仅接收数字MediaStore身份，不接收Uri。
+    fn delete(
+        &self,
+        ids: &[String],
+    ) -> std::io::Result<ui::DownloadDeletion> {
+        if ids.iter().any(|id| {
+            id.is_empty()
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit())
+        }) {
+            return Err(std::io::Error::other(
+                "invalid MediaStore download id",
+            ));
+        }
+        parse_deletion(read_array(
+            jni::jni_str!("delete"),
+            Some(&ids.join("\n")),
+        )?)
+    }
+
+    /// 读取权限请求在Java Activity主线程执行。
+    fn request_access(&self) -> std::io::Result<()> {
+        vm().attach_current_thread(|env| {
+            let result = env.call_static_method(
+                CLASS,
+                jni::jni_str!("requestAccess"),
+                jni::jni_sig!("()V"),
+                &[],
+            );
+            if result.is_err() {
+                env.exception_clear()?;
+            }
+            result.map(|_| ())
+        })
+        .map_err(as_io)
+    }
+
+    /// 系统确认尚未结束返回None，取消和失败都有可消费终态。
+    fn poll_delete(
+        &self,
+    ) -> std::io::Result<Option<ui::DownloadDeletion>> {
+        let fields =
+            read_array(jni::jni_str!("pollDelete"), None)?;
+        if fields.is_empty() {
+            return Ok(None);
+        }
+        parse_deletion(fields).map(Some)
     }
 
     fn location(&self) -> String {
@@ -158,4 +224,95 @@ fn vm() -> JavaVM {
 /// JNI 的失败对上层就是"没存下来"。
 fn as_io(err: jni::errors::Error) -> std::io::Error {
     std::io::Error::other(err.to_string())
+}
+
+/// 字符串数组跨JNI保留完整文件名，避免分隔符破坏任意用户文本。
+fn read_array(
+    method: &'static jni::strings::JNIStr,
+    argument: Option<&str>,
+) -> std::io::Result<Vec<String>> {
+    vm().attach_current_thread(|env| {
+        let result = (|| {
+            let object = if let Some(argument) = argument {
+                let argument = env.new_string(argument)?;
+                env.call_static_method(CLASS, method, jni::jni_sig!("(Ljava/lang/String;)[Ljava/lang/String;"), &[(&argument).into()])?.l()?
+            } else {
+                env.call_static_method(CLASS, method, jni::jni_sig!("()[Ljava/lang/String;"), &[])?.l()?
+            };
+            let array = JObjectArray::<JString>::cast_local(env, object)?;
+            let mut fields = Vec::with_capacity(array.len(env)?);
+            for index in 0..array.len(env)? {
+                let item = array.get_element(env, index)?;
+                let item = env.auto_local(item);
+                fields.push(item.try_to_string(env)?);
+            }
+            Ok(fields)
+        })();
+        if result.is_err() { env.exception_clear()?; }
+        result
+    }).map_err(as_io)
+}
+
+/// 四字段分组有明确长度检查，错误数据不能变成错误文件删除。
+fn parse_entries(
+    fields: &[String],
+) -> std::io::Result<Vec<ui::DownloadEntry>> {
+    if !fields.len().is_multiple_of(4) {
+        return Err(std::io::Error::other(
+            "invalid MediaStore entry fields",
+        ));
+    }
+    fields
+        .chunks_exact(4)
+        .map(|entry| {
+            let size = entry[2]
+                .parse::<u64>()
+                .map_err(std::io::Error::other)?;
+            let modified = entry[3]
+                .parse::<u64>()
+                .map_err(std::io::Error::other)?;
+            Ok(ui::DownloadEntry::from_file(
+                entry[0].clone(),
+                entry[1].clone(),
+                size,
+                modified,
+            ))
+        })
+        .collect()
+}
+
+/// 系统终态与实际删除列表分开解析，不凭成功按钮推测释放量。
+fn parse_deletion(
+    fields: Vec<String>,
+) -> std::io::Result<ui::DownloadDeletion> {
+    if fields.len() < 2 {
+        return Err(std::io::Error::other(
+            "invalid MediaStore deletion result",
+        ));
+    }
+    let count = fields[1]
+        .parse::<usize>()
+        .map_err(std::io::Error::other)?;
+    let start = count
+        .checked_add(2)
+        .filter(|start| *start <= fields.len())
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "invalid deletion failure count",
+            )
+        })?;
+    if !matches!(
+        fields[0].as_str(),
+        "pending" | "cancelled" | "complete"
+    ) {
+        return Err(std::io::Error::other(
+            "invalid system deletion state",
+        ));
+    }
+    Ok(ui::DownloadDeletion {
+        deleted: parse_entries(&fields[start..])?,
+        failures: fields[2..start].to_vec(),
+        pending: fields[0] == "pending",
+        cancelled: fields[0] == "cancelled",
+    })
 }

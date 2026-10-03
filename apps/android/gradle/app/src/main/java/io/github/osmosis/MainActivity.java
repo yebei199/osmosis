@@ -23,6 +23,7 @@ public class MainActivity extends NativeActivity {
         super.onCreate(savedInstanceState);
         setupEdgeToEdge();
         MediaControls.attachActivity(this);
+        Downloads.attachActivity(this);
     }
 
     @Override
@@ -33,6 +34,7 @@ public class MainActivity extends NativeActivity {
 
     @Override
     protected void onDestroy() {
+        Downloads.detachActivity(this);
         MediaControls.detachActivity(this);
         super.onDestroy();
     }
@@ -45,6 +47,7 @@ public class MainActivity extends NativeActivity {
     public void onRequestPermissionsResult(
             int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == Downloads.READ_REQUEST) { Downloads.onReadResult(); }
         for (int i = 0; i < permissions.length; i++) {
             if (android.Manifest.permission.POST_NOTIFICATIONS.equals(
                             permissions[i])
@@ -52,6 +55,13 @@ public class MainActivity extends NativeActivity {
                 MediaControls.onNotificationPermissionGranted();
             }
         }
+    }
+
+    /** 系统删除确认交回下载平台接缝，不向壳传递状态。 */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == Downloads.DELETE_REQUEST) { Downloads.onDeleteResult(resultCode); }
     }
 
     private void setupEdgeToEdge() {

@@ -99,7 +99,7 @@ export component DownloadManager inherits Rectangle {
         }
         if Downloads.rows.length > 0: ScrollView {
             vertical-stretch: 1;
-            viewport-width: self.width;
+            content-width: self.width;
             VerticalLayout {
                 spacing: 4px;
                 for row in Downloads.rows: Rectangle {
@@ -124,7 +124,7 @@ export component DownloadManager inherits Rectangle {
                     }
                     entry-touch := TouchArea {
                         enabled: !Downloads.busy;
-                        accessible-role: check-box;
+                        accessible-role: checkbox;
                         accessible-label: row.file-name;
                         accessible-checked: row.selected;
                         accessible-action-default => { Downloads.toggle(row.id); }
