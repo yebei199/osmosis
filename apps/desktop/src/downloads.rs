@@ -383,12 +383,13 @@ mod tests {
             .expect("owned download directory");
         let pending = directory
             .path()
-            .join(".download-ABC123.pending");
+            .join(".osmosis-download-ABC123.pending");
         std::fs::write(&pending, b"partial download")
             .expect("write stale pending file");
         let preserved = [
             "song.mp3",
-            ".download-ABC123",
+            ".osmosis-download-ABC123",
+            ".download-ABC123.pending",
             "other.pending",
             ".other-ABC123.pending",
         ];
@@ -401,7 +402,7 @@ mod tests {
         }
         let unrelated_directory = directory
             .path()
-            .join(".download-DEF456.pending");
+            .join(".osmosis-download-DEF456.pending");
         std::fs::create_dir(&unrelated_directory)
             .expect("create unrelated directory");
         Store::initialize(directory.path().to_path_buf())
