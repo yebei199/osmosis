@@ -302,10 +302,9 @@ fn parse_deletion(
                 "invalid deletion failure count",
             )
         })?;
-    if !matches!(
-        fields[0].as_str(),
-        "pending" | "cancelled" | "complete"
-    ) {
+    if !["pending", "cancelled", "complete"]
+        .contains(&fields[0].as_str())
+    {
         return Err(std::io::Error::other(
             "invalid system deletion state",
         ));
