@@ -42,11 +42,8 @@ def download_world(monkeypatch):
     original_handler = Media.handler
     original_start = Client.start
 
-    # 每个客户端的 HOME 与 Music 都属于本 testcase。
-    def isolated_start(client):
-        home = client.directory / "home"
-        home.mkdir(exist_ok=True)
-        client.env["HOME"] = str(home)
+    # HOME 由公共客户端夹具隔离，这里只指定该客户端的公共 Music 落点。
+    def music_start(client):
         (client.directory / "config/user-dirs.dirs").write_text('XDG_MUSIC_DIR="$HOME/Music"\n')
         return original_start(client)
 
@@ -98,7 +95,7 @@ def download_world(monkeypatch):
 
         return Handler
 
-    monkeypatch.setattr(Client, "start", isolated_start)
+    monkeypatch.setattr(Client, "start", music_start)
     monkeypatch.setattr(Media, "dispatch", dispatch)
     monkeypatch.setattr(Media, "handler", handler)
     root = Path(__file__).resolve().parents[2]
