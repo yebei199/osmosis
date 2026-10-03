@@ -1,6 +1,6 @@
-# 仅本任务新增的快速状态投影证据；不迁移整个Rust套件。
+# 组状态与控制的定向证据,覆盖累计映射中的投影、seed 与回归。
 [profile.rb-projection]
-default-filter = 'binary_id(ui) & (test(music::tests::group::local_idle_queue_keeps_playback_entry) | test(music::tests::group::empty_idle_queue_clears_remote_projection) | test(music::tests::group::silent_member_projection_stays_global))'
+default-filter = 'binary_id(ui) & test(music::tests::group::)'
 retries = 0
 
 [profile.rb-projection.junit]

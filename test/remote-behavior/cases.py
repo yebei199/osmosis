@@ -100,6 +100,87 @@ def local_seed(world):
     world.silent(source, world.two)
 
 
+# 两端按钮均投影组状态,下一首实际音频按服务端随机序列推进。
+def shuffle_and_loop_projection(world):
+    remote_pick(world)
+    source = world.controller
+    source.ui.shuffle()
+    wait_until(lambda: world.group()["shuffled"], "group shuffle enabled")
+    wait_until(source.ui.shuffle_checked, "controller shuffle checked")
+    wait_until(world.one.ui.shuffle_checked, "output shuffle checked")
+    row = world.group()
+    order = row["play_order"]
+    at = order.index(row["entry_id"])
+    next_entry = order[(at + 1) % len(order)]
+    wanted = world.sql(
+        "SELECT track_id FROM play_queue_entries WHERE queue_id=%s AND revision=%s AND entry_id=%s",
+        (row["queue_id"], row["revision"], next_entry),
+    )[0]["track_id"]
+    source.ui.transport("next")
+    world.sound(world.one, wanted)
+    source.ui.shuffle()
+    wait_until(lambda: not source.ui.shuffle_checked(), "controller shuffle unchecked")
+    wait_until(lambda: not world.one.ui.shuffle_checked(), "output shuffle unchecked")
+    for mode, label in [("all", "循环: 列表"), ("one", "循环: 单曲")]:
+        source.ui.cycle_loop()
+        wait_until(lambda mode=mode: world.group()["loop_mode"] == mode, "group loop " + mode)
+        wait_until(lambda label=label: source.ui.loop_label() == label, "controller " + label)
+        wait_until(lambda label=label: world.one.ui.loop_label() == label, "output " + label)
+    # 单曲循环必须在曲尾真的重播同一首,音频秒码回到开头。
+    source.ui.playback_options()
+    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
+    source.ui.seek(world.media_duration - 5)
+    world.sound(world.one, wanted, position=world.media_duration - 5, position_started=time.time())
+    repeated = wait_until(
+        lambda: (row := world.group()) and row["position_us"] < 5_000_000 and row,
+        "single-track loop restarted",
+    )
+    world.sound(
+        world.one,
+        wanted,
+        position=0,
+        position_started=repeated["anchor_wall_us"] / 1_000_000,
+    )
+    source.ui.cycle_loop()
+    wait_until(lambda: source.ui.loop_label() == "循环: 关", "controller loop off")
+    wait_until(lambda: world.one.ui.loop_label() == "循环: 关", "output loop off")
+    world.silent(source, world.two)
+
+
+# 从独奏 FM 的真实入口切目标,耗尽初始批次后组队列续上且目标播放新批次。
+def local_radio_seed_top_up(world):
+    source = world.controller
+    source.ui.radio()
+    before = world.progressed(source, "175004", group=False)
+    action = act(lambda: source.ui.output(world.one))
+    after = world.sound(world.one, "175004")
+    world.continued(before, after, action)
+    world.silent(source, world.two)
+    seeded = world.group()
+    source.ui.transport("next")
+    world.sound(world.one, "175005")
+    source.ui.transport("next")
+    world.sound(world.one, "175006")
+
+    # 查新的组版本及真实行数,初始批次只有三首。
+    def extended():
+        row = world.group()
+        entries = world.sql(
+            "SELECT count(*) AS total FROM play_queue_entries WHERE queue_id=%s AND revision=%s",
+            (row["queue_id"], row["revision"]),
+        )
+        return (
+            row["queue_id"] == seeded["queue_id"]
+            and row["revision"] > seeded["revision"]
+            and entries[0]["total"] >= 6
+        )
+
+    wait_until(extended, "FM appended to seeded group queue")
+    source.ui.transport("next")
+    world.sound(world.one, "175007")
+    world.silent(source, world.two)
+
+
 # 加入健康组时，源端的另一首本机曲目不能覆盖已有组播放。
 def healthy_group_ignores_unrelated_seed(world):
     remote_pick(world)

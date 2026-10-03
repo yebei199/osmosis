@@ -9,6 +9,8 @@
 //! 在组里时(#165)起播走组意图,「还是不是电台在放」改认组队列的版本:起播的应答里
 //! 那一版是电台的,续取走组意图追加进去、换到续上的那一版;有人点了别的歌,组队列换了
 //! 一版,电台就不再往里续。组里只看得见下一首,所以在放最后一首时才续。
+//! 独奏电台切输出入组时,只有服务端采用同一 seed 且本机未换批才接管组队列。
+//! 续取仍由发起电台的设备负责,该设备下线或挂起时不会由其他成员代续。
 
 use app_core::FacetPickDto;
 
@@ -229,6 +231,34 @@ pub(super) fn taste(
 ) -> Option<Vec<FacetPickDto>> {
     owns_batch(deck)
         .then(|| deck.radio.inner.borrow().filter.clone())
+}
+
+/// 独奏电台的 seed 被组采用后接管那一版;失败、换批和其他队列都不接。
+pub(in crate::music) fn seed_handoff(
+    deck: &Deck,
+    seed: Option<&app_core::GroupSeedDto>,
+) -> crate::sync::group::Then {
+    let Some(seed) = seed else {
+        return Box::new(|_| {});
+    };
+    let seeded = (seed.queue_id, seed.revision);
+    let batch = deck.queue.borrow().batch();
+    let queue = deck.queue.clone();
+    let radio = deck.radio.clone();
+    Box::new(move |reply| {
+        if reply.ok().flatten() != Some(seeded)
+            || queue.borrow().batch() != batch
+        {
+            return;
+        }
+        let mut state = radio.inner.borrow_mut();
+        if state.mode.is_some()
+            && state.batch == batch
+            && state.shared.is_none()
+        {
+            state.shared = Some(seeded);
+        }
+    })
 }
 
 /// 队列还是电台起播的那一批;在组里是组此刻那一版还是电台的。

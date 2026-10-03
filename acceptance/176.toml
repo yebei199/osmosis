@@ -1,0 +1,27 @@
+# #176：批准的客户端投影与独奏 FM seed 接续合同。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实遥控客户端更多菜单 → 随机与循环 DrawerRow"
+observe = "遥控及出声两端的无障碍开关状态；目标 PCM 按随机序列推进，单曲循环在曲尾重播同一首"
+tests = ["test_remote::test_shuffle_and_loop_projection", "ui::music::tests::group::remote_shuffle_and_loop_follow_group_state", "ui::music::tests::group::output_shuffle_and_loop_follow_group_state"]
+doubles = ["桌面软件声卡和外部音乐目录/媒体服务为替身；真实客户端、组服务、数据库、解码器不替换，不能证明 Android 原生输出", "Rust 无头 Deck 与 Group::assume 只证明状态投影，不证明网络或出声"]
+mutation = "移除共用的 shuffled/loop_mode 投影，真实按钮状态断言失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "独奏客户端打开私人 FM → 个人页 OutputChip 切至远端 → 下一首到初始批次末尾"
+observe = "本机 PCM 接续到目标且源端静音；当前组版本与 play_queue_entries 增加，再按下一首播放新增曲目"
+tests = ["test_remote::test_local_radio_seed_top_up", "ui::music::tests::group::local_radio_seed_keeps_topping_up_as_remote", "ui::music::tests::group::local_radio_seed_keeps_topping_up_after_join"]
+doubles = ["相同外部媒体替身和软件声卡；Rust Group::answer 仅提供输出请求的队列身份，不抵扣真实 append 和目标 PCM"]
+mutation = "移除 seed 应答里的电台归属接管，真实组队列增长断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+entry = "独奏与组内开电台；输出选择失败、另一队列版本或在途换批；已有健康组与普通曲目切输出"
+observe = "失败和过期 seed 不续取其他队列；组内电台原有续取及换歌停止规则保持；普通 seed 接续 PCM，健康组保留原曲目"
+tests = ["ui::music::tests::group::leaving_group_restores_local_modes", "ui::music::tests::group::local_radio_seed_rejects_failed_or_foreign_reply", "ui::music::tests::group::local_radio_seed_rejects_reply_after_local_replacement", "ui::music::tests::group::the_radio_in_a_group_owns_the_revision_it_started", "ui::music::tests::group::another_pick_in_the_group_stops_the_radio", "ui::music::tests::group::a_failed_radio_start_in_the_group_owns_nothing", "ui::music::tests::group::shuffle_and_loop_go_to_the_group", "test_remote::test_local_seed", "test_remote::test_healthy_group_ignores_unrelated_seed"]
+doubles = ["Rust Group::answer 和未推进异步下载只证明状态/意图；真实桌面回归保留目标音频判据，不覆盖安卓硬件"]

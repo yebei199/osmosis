@@ -110,7 +110,10 @@ fn start_group(
 ) {
     match local_seed(ui, deck) {
         Ok(seed) => {
-            deck.group.set_outputs(ui, outputs, seed)
+            let then =
+                radio::seed_handoff(deck, seed.as_ref());
+            deck.group
+                .set_outputs_then(ui, outputs, seed, then);
         }
         Err(why) => crate::notice::show(ui, why),
     }

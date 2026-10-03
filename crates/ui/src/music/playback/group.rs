@@ -107,6 +107,7 @@ pub(in crate::music) fn align(
     ui: &MainWindow,
     deck: &Deck,
 ) {
+    deck.group.push_modes(ui);
     let sound = deck.group.sound();
     let was_member = deck.alignment.inner.borrow().member;
     deck.alignment.inner.borrow_mut().member =
