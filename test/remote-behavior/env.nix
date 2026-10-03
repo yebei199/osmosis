@@ -30,13 +30,6 @@ base.overrideAttrs (old: {
       iproute2
       xorg-server
       mesa
-      (tesseract.override {
-        enableLanguages = [
-          "eng"
-          "chi_sim"
-        ];
-      })
-      imagemagick
     ]);
   shellHook = (old.shellHook or "") + ''
     export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
