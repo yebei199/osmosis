@@ -402,7 +402,9 @@ export component MainWindow inherits Window {
                 // 未登录时整块不建:登录页盖着的时候导航不该可达 —— 否则点进音乐页
                 // 只会收获一屏 401。用 `if` 而不是 `visible: false`,是要让它真的不在树里,
                 // 那样「绕不过去」这件事才测得到(见 tests/login.rs)。
-                if Session.logged-in && !Shell.play-page-open: VerticalLayout {
+                if Session.logged-in: VerticalLayout {
+                    // 播放页只隐藏音乐壳，保留搜索、折叠和滚动状态。
+                    visible: !Shell.play-page-open;
 
                     // ── 主体行:宽版式是「侧栏 + 内容」,紧凑版式只有内容 ──
                     HorizontalLayout {
