@@ -294,6 +294,7 @@ pub fn bind(
     queuepage::bind(ui, &deck);
     radio::bind(ui, &deck);
     bind_download(ui, &deck);
+    downloads::bind(ui);
     start_auto_advance(ui, &deck);
     start_progress_tick(ui, &deck);
     startup_check(ui);

@@ -111,3 +111,229 @@ impl State {
         Ok(())
     }
 }
+
+/// 模型和统计使用同一份状态，筛选不改变整份目录占用。
+fn project(ui: &crate::MainWindow, state: &State) {
+    use slint::ComponentHandle as _;
+    let global = ui.global::<crate::Downloads>();
+    let rows = state
+        .visible()
+        .into_iter()
+        .map(|entry| crate::DownloadRow {
+            id: entry.id.clone().into(),
+            file_name: entry.file_name.clone().into(),
+            title: entry.title.clone().into(),
+            artist: entry.artist.clone().into(),
+            size: format!(
+                "{:.2} MB",
+                entry.size as f64 / (1024.0 * 1024.0)
+            )
+            .into(),
+            selected: state.selected.contains(&entry.id),
+        })
+        .collect::<Vec<_>>();
+    global.set_rows(slint::ModelRc::new(
+        slint::VecModel::from(rows),
+    ));
+    global.set_total(
+        format!(
+            "共 {} 首 · 占用 {:.2} MB",
+            state.entries.len(),
+            state.total() as f64 / (1024.0 * 1024.0)
+        )
+        .into(),
+    );
+    global.set_note(state.note.clone().into());
+    global.set_selected_count(
+        i32::try_from(state.selected.len())
+            .unwrap_or(i32::MAX),
+    );
+    global.set_busy(state.busy);
+}
+
+/// 提示只消费一次平台最终结果，取消和部分失败各自说明。
+fn announce(ui: &crate::MainWindow, state: &mut State) {
+    let Some(result) = state.result.take() else {
+        return;
+    };
+    let text =
+        if result.cancelled && result.deleted.is_empty() {
+            "未删除，已取消系统确认".to_owned()
+        } else {
+            let bytes = result.deleted.iter().fold(
+                0u64,
+                |total, entry| {
+                    total.saturating_add(entry.size)
+                },
+            );
+            let mut text = format!(
+                "已删除 {} 首,释放 {:.2} MB",
+                result.deleted.len(),
+                bytes as f64 / (1024.0 * 1024.0)
+            );
+            if !result.failures.is_empty() {
+                text.push_str(&format!(
+                    "；{}",
+                    result.failures.join("；")
+                ));
+            }
+            text
+        };
+    crate::notice::show(ui, text);
+}
+
+/// 目录操作失败保持可恢复入口，并把原因给用户。
+fn refresh(
+    ui: &crate::MainWindow,
+    state: &mut State,
+    store: &dyn DownloadStore,
+) -> bool {
+    let pending = match store.list() {
+        Ok(listing) => {
+            let pending = listing.pending;
+            state.load(listing);
+            pending
+        }
+        Err(err) => {
+            state.note =
+                format!("无法读取已下载歌曲: {err}");
+            false
+        }
+    };
+    project(ui, state);
+    pending
+}
+
+/// 接独立音乐 global；计时器只在系统权限或删除确认未回传时运行。
+pub(super) fn bind(ui: &crate::MainWindow) {
+    use slint::ComponentHandle as _;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let Some(store) = super::download::STORE.get() else {
+        return;
+    };
+    let store = store.as_ref();
+    let state = Rc::new(RefCell::new(State::default()));
+    let timer = Rc::new(slint::Timer::default());
+
+    let polling = state.clone();
+    let timer_weak = Rc::downgrade(&timer);
+    let weak = ui.as_weak();
+    let poll = move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let mut state = polling.borrow_mut();
+        if state.busy {
+            match store.poll_delete() {
+                Ok(Some(result)) => {
+                    if let Err(err) =
+                        state.finish(store, result)
+                    {
+                        state.note =
+                            format!("刷新失败: {err}");
+                    }
+                    announce(&ui, &mut state);
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    state.busy = false;
+                    state.note =
+                        format!("系统删除失败: {err}");
+                    crate::notice::show(
+                        &ui,
+                        state.note.clone(),
+                    );
+                }
+            }
+        }
+        let pending = refresh(&ui, &mut state, store);
+        if !pending
+            && !state.busy
+            && let Some(timer) = timer_weak.upgrade()
+        {
+            timer.stop();
+        }
+    };
+    // 回调共享但不捕获计时器强引用，窗口退出后不会形成循环。
+    let poll: Rc<dyn Fn()> = Rc::new(poll);
+
+    let showing = state.clone();
+    let showing_timer = timer.clone();
+    let showing_poll = poll.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Downloads>().on_show(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if let Err(err) = store.request_access() {
+            crate::notice::show(
+                &ui,
+                format!("读取音乐授权失败: {err}"),
+            );
+        }
+        let pending =
+            refresh(&ui, &mut showing.borrow_mut(), store);
+        if pending {
+            let poll = showing_poll.clone();
+            showing_timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(250),
+                move || poll(),
+            );
+        }
+    });
+
+    let refreshing = state.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Downloads>().on_refresh(move || {
+        if let Some(ui) = weak.upgrade() {
+            refresh(
+                &ui,
+                &mut refreshing.borrow_mut(),
+                store,
+            );
+        }
+    });
+
+    let searching = state.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Downloads>().on_search(
+        move |keyword| {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut state = searching.borrow_mut();
+            state.keyword = keyword.to_string();
+            project(&ui, &state);
+        },
+    );
+
+    let selecting = state.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Downloads>().on_toggle(move |id| {
+        let Some(ui) = weak.upgrade() else { return };
+        let mut state = selecting.borrow_mut();
+        state.toggle(id.as_str());
+        project(&ui, &state);
+    });
+
+    let deleting_timer = timer;
+    let weak = ui.as_weak();
+    ui.global::<crate::Downloads>().on_delete_selected(
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut state = state.borrow_mut();
+            if let Err(err) = state.delete(store) {
+                crate::notice::show(
+                    &ui,
+                    format!("删除失败: {err}"),
+                );
+            }
+            announce(&ui, &mut state);
+            project(&ui, &state);
+            if state.busy {
+                let poll = poll.clone();
+                deleting_timer.start(
+                    slint::TimerMode::Repeated,
+                    std::time::Duration::from_millis(250),
+                    move || poll(),
+                );
+            }
+        },
+    );
+}

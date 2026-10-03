@@ -250,12 +250,16 @@ def select_download(client, name):
 
 # 自家删除确认按钮只在有选择时可操作。
 def ask_delete(client):
-    client.ui.activate(client.ui.must("HoverButton::touch", "删除所选"))
+    client.ui.activate(client.ui.must("DownloadManager::delete-button"))
 
 
 # 取消和确认分别走可见模态中的明确动作。
 def answer_delete(client, confirm):
-    client.ui.activate(client.ui.must("HoverButton::touch", "确认删除" if confirm else "取消"))
+    client.ui.activate(
+        client.ui.must(
+            "DownloadManager::confirm-button" if confirm else "DownloadManager::cancel-button"
+        )
+    )
 
 
 # 总占用取整份目录，显示精度是两位MB小数。

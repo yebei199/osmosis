@@ -296,6 +296,7 @@ fn pump(
                 slint::SharedString::new(),
             );
         }
+        ui.global::<crate::Downloads>().invoke_refresh();
         crate::notice::show(
             &ui,
             outcome.unwrap_or_else(|why| why),
