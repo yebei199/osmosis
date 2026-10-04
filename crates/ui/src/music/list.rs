@@ -145,7 +145,14 @@ pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
             ViewSource::Search(keyword.clone()),
             search_tracks(keyword),
         ),
-        Some(ViewSource::Radio) | None => {}
+        Some(ViewSource::Radio) => {
+            if let Some(found) =
+                deck.views.show(ViewSource::Radio).tracks
+            {
+                show(ui, deck, found);
+            }
+        }
+        None => {}
     }
 }
 
@@ -649,8 +656,13 @@ pub(super) fn show_section(
 pub(super) fn show(
     ui: &MainWindow,
     deck: &Deck,
-    found: TracksDto,
+    mut found: TracksDto,
 ) {
+    let before = found.tracks.len();
+    found.tracks.retain(|track| {
+        !crate::library::block::hits(&deck.blocks, track)
+    });
+    found.hidden += before - found.tracks.len();
     // 平台给不出详情的、命中屏蔽规则的都没能进这一批。说一声,否则歌单静默变短
     ui.global::<Library>().set_unavailable_note(
         crate::library::playlist::unavailable_text(
