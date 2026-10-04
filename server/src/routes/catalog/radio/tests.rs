@@ -639,7 +639,8 @@ async fn dislike_filters_radio_by_id_but_not_same_song_or_daily()
     client
         .put(format!("{base}/feedback/{first}"))
         .bearer_auth(&token)
-        .json(&contract::SetFeedbackDto { verdict: -1 })
+        .header("Content-Type", "application/json")
+        .body(r#"{"verdict":-1}"#)
         .send()
         .await
         .expect("真实点踩 HTTP")
@@ -651,7 +652,7 @@ async fn dislike_filters_radio_by_id_but_not_same_song_or_daily()
     let blocks: i64 = sqlx::query_scalar("SELECT count(*) FROM block_rules WHERE account_id = $1")
         .bind(account.id).fetch_one(&pool).await.expect("查规则行");
     assert_eq!(blocks, 0, "点踩不会建立任何屏蔽规则");
-    let fm: contract::TracksDto = client
+    let fm = client
         .get(format!("{base}/radio?mode=fm"))
         .bearer_auth(&token)
         .send()
@@ -659,15 +660,17 @@ async fn dislike_filters_radio_by_id_but_not_same_song_or_daily()
         .expect("请求电台")
         .error_for_status()
         .expect("电台成功")
-        .json()
+        .text()
         .await
         .expect("电台响应");
+    let fm: contract::TracksDto =
+        serde_json::from_str(&fm).expect("电台 JSON");
     assert_eq!(
         ids(&fm),
         vec![duplicate.clone()],
         "同 id 被滤掉,同名同歌手的不同 id 仍然出现"
     );
-    let recommended: contract::TracksDto = client
+    let recommended = client
         .get(format!("{base}/daily"))
         .bearer_auth(&token)
         .send()
@@ -675,9 +678,12 @@ async fn dislike_filters_radio_by_id_but_not_same_song_or_daily()
         .expect("请求日推")
         .error_for_status()
         .expect("日推成功")
-        .json()
+        .text()
         .await
         .expect("日推响应");
+    let recommended: contract::TracksDto =
+        serde_json::from_str(&recommended)
+            .expect("日推 JSON");
     assert_eq!(
         ids(&recommended),
         vec![first, duplicate],

@@ -86,7 +86,11 @@ fn serve_catalog() -> Arc<Mutex<Vec<String>>> {
             } else if first.starts_with("GET /blocks ") {
                 format!(
                     "{{\"rules\":[{}]}}",
-                    if created { rule } else { "" }
+                    if created {
+                        rule
+                    } else {
+                        r#"{"id":"0","kind":"track","value":"999","label":"unrelated"}"#
+                    }
                 )
             } else if first.starts_with("GET /daily ") {
                 r#"{"tracks":[{"platform":"netease","id":"2","title":"song 2","alias":null,"artists":["LiSA"],"cover":null,"duration_ms":234000}],"unavailable":0,"hidden":1}"#.to_owned()
@@ -145,8 +149,6 @@ fn blocking_the_current_track_reloads_daily_but_keeps_queue_and_radio()
             reload_view(ui, &reload_deck);
         },
     );
-    ui.global::<Library>()
-        .invoke_block_track("1".into(), "song 1".into());
     assert_eq!(
         shown_ids(&ui),
         vec!["1", "2"],
@@ -155,6 +157,7 @@ fn blocking_the_current_track_reloads_daily_but_keeps_queue_and_radio()
     assert_eq!(ui.global::<Player>().get_now_id(), "1");
     let timer = slint::Timer::default();
     let started = Instant::now();
+    let mut daily_started = false;
     let mut radio_started = false;
     timer.start(
         slint::TimerMode::Repeated,
@@ -164,6 +167,23 @@ fn blocking_the_current_track_reloads_daily_but_keeps_queue_and_radio()
                 started.elapsed() < Duration::from_secs(10),
                 "等待屏蔽与重载超时"
             );
+            if !daily_started {
+                // 初始 GET 处理完才点击,不让迟到的刷新覆盖刚建的规则。
+                if !deck
+                    .blocks
+                    .borrow()
+                    .iter()
+                    .any(|rule| rule.id == "0")
+                {
+                    return;
+                }
+                ui.global::<Library>().invoke_block_track(
+                    "1".into(),
+                    "song 1".into(),
+                );
+                daily_started = true;
+                return;
+            }
             if radio_started {
                 if reloads.get() < 2 {
                     return;
