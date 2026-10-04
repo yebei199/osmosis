@@ -180,6 +180,7 @@ mod tests {
 
     fn track(id: &str) -> TrackDto {
         TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: id.to_owned(),
             title: id.to_owned(),

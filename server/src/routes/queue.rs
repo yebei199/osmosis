@@ -319,6 +319,7 @@ fn as_entry(entry: Entry) -> QueueEntryDto {
         entry_id: entry.entry_id,
         position: entry.position,
         track: TrackDto {
+            artist_identities: Vec::new(),
             platform: entry.platform,
             id: entry.track_id,
             title: entry.title,

@@ -5,10 +5,13 @@ edition.workspace = true
 license-file.workspace = true
 description = "客户端与服务端之间在网络上传输的数据的形状"
 
-# 依赖只允许 serde 及其生态里同样 no-IO 的 crate。
+# #181 两端共享规范化；允许序列化与 Unicode 纯计算依赖，不做 IO。
 # 永远不许出现 tokio / sqlx / reqwest / axum。见 docs/adr/0001。
 [dependencies]
 serde.workspace = true
+serde_json = "1"
+unicode-normalization = "0.1"
+unicode-casefold = "0.2"
 
 # 只为测试:验 serde 的行为要能真的序列化一次。仍在准入规则之内 ——
 # serde 生态、no-IO,不进正式依赖。

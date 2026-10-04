@@ -4,6 +4,7 @@ use app_core::TrackDto;
 
 pub(super) fn track() -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         id: "1".to_owned(),
         title: "紅蓮華".to_owned(),

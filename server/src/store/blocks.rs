@@ -104,15 +104,7 @@ pub fn hits(
     rules: &[BlockRuleDto],
     track: &TrackDto,
 ) -> bool {
-    rules.iter().any(|rule| match rule.kind {
-        BlockKind::Artist => {
-            track.artists.contains(&rule.value)
-        }
-        BlockKind::Tag => {
-            track.facets.tags.contains(&rule.value)
-        }
-        BlockKind::Track => track.id == rule.value,
-    })
+    contract::block_hits(rules, track)
 }
 
 /// 滤掉命中规则的,返回滤掉了几首。
@@ -130,6 +122,8 @@ fn kind_name(kind: BlockKind) -> &'static str {
         BlockKind::Artist => "artist",
         BlockKind::Tag => "tag",
         BlockKind::Track => "track",
+        BlockKind::Song => "song",
+        BlockKind::SongVersions => "song_versions",
     }
 }
 
@@ -138,6 +132,8 @@ fn parse_kind(stored: &str) -> Option<BlockKind> {
         "artist" => Some(BlockKind::Artist),
         "tag" => Some(BlockKind::Tag),
         "track" => Some(BlockKind::Track),
+        "song" => Some(BlockKind::Song),
+        "song_versions" => Some(BlockKind::SongVersions),
         _ => None,
     }
 }
@@ -161,6 +157,7 @@ mod tests {
         tags: &[&str],
     ) -> TrackDto {
         let mut track = TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: id.to_owned(),
             title: id.to_owned(),

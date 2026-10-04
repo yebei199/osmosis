@@ -8,6 +8,7 @@ mod shuffle;
 
 fn track(id: usize) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         id: id.to_string(),
         title: format!("歌 {id}"),

@@ -311,6 +311,7 @@ struct TrackRow {
 impl TrackRow {
     fn into_dto(self) -> TrackDto {
         TrackDto {
+            artist_identities: Vec::new(),
             platform: self.platform,
             id: self.track_id,
             title: self.title,

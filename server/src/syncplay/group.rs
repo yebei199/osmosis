@@ -787,6 +787,7 @@ fn input(track: &TrackDto) -> EntryInput {
 
 fn track_of(entry: &Entry) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: entry.platform.clone(),
         id: entry.track_id.clone(),
         title: entry.title.clone(),

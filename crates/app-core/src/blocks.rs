@@ -2,9 +2,11 @@
 //!
 //! 列表的隐藏在服务端出口做,这里不重复;但已经装进队列的那一批是规则建立
 //! 之前拿到的,只能在前进那一刻再认一次。口径与服务端 `store::blocks::hits`
-//! 一致,改一边要改另一边。
+//! 一致，共同调用 contract 的纯匹配。
 
-use contract::{BlockKind, BlockRuleDto, TrackDto};
+#[cfg(test)]
+use contract::BlockKind;
+use contract::{BlockRuleDto, TrackDto};
 
 /// 这首歌命不命中任一条规则。标签认的是曲目带着的 `facets.tags` ——
 /// 那是装进队列那一刻的,之后才打的标签认不出来。
@@ -13,15 +15,7 @@ pub fn hits(
     rules: &[BlockRuleDto],
     track: &TrackDto,
 ) -> bool {
-    rules.iter().any(|rule| match rule.kind {
-        BlockKind::Artist => {
-            track.artists.contains(&rule.value)
-        }
-        BlockKind::Tag => {
-            track.facets.tags.contains(&rule.value)
-        }
-        BlockKind::Track => track.id == rule.value,
-    })
+    contract::block_hits(rules, track)
 }
 
 #[cfg(test)]
@@ -43,6 +37,7 @@ mod tests {
         tag: &str,
     ) -> TrackDto {
         let mut track = TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: id.to_owned(),
             title: id.to_owned(),

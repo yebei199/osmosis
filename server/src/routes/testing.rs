@@ -221,6 +221,7 @@ pub(crate) fn expected_dto(
     title: &str,
 ) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         id: id.to_owned(),
         title: title.to_owned(),

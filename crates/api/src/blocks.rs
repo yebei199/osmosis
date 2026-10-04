@@ -22,6 +22,7 @@ pub async fn create_block(
         reqwest::Method::POST,
         blocks_url(),
         Some(NewBlockRuleDto {
+            disliked_track: None,
             kind,
             value: value.to_owned(),
             label: Some(label.to_owned()),

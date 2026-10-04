@@ -89,6 +89,7 @@ pub fn liked_playlist_id(
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。
 pub fn track_to_dto(track: proto::Track) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: platform_name(track.platform),
         id: track.id,
         title: track.title,

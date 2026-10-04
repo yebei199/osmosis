@@ -117,6 +117,8 @@ fn kind_text(kind: BlockKind) -> &'static str {
         BlockKind::Artist => "歌手",
         BlockKind::Tag => "标签",
         BlockKind::Track => "单曲",
+        BlockKind::Song => "歌曲",
+        BlockKind::SongVersions => "歌曲（含其他版本）",
     }
 }
 
