@@ -172,8 +172,8 @@ fn assert_clear(ui: &MainWindow) {
         "HoverButton",
     ] {
         for other in testing::ElementHandle::find_by_element_type_name(ui, kind) {
-            // 胶囊自身的触控元素是唯一排除项。
-            if other.accessible_label().as_deref() == Some("播放组") { continue; }
+            // 输入探针只记录指针，没有点击动作；胶囊自身不计为遮挡。
+            if other.id().as_deref() == Some("MainWindow::input-probe") || other.accessible_label().as_deref() == Some("播放组") { continue; }
             assert!(!overlaps(&capsule, &other), "胶囊压到 {kind} {:?} at {:?}", other.accessible_label(), other.absolute_position());
         }
     }
@@ -339,6 +339,8 @@ fn the_compact_capsule_avoids_controls_on_every_shell_page()
             let ui = window(420.0, 800.0);
             ui.global::<Shell>().set_current_tab(tab);
             ui.global::<Shell>().set_music_section(section);
+            ui.global::<ui::Downloads>()
+                .set_active(section == 5);
             collapse(&ui);
             assert_clear(&ui);
             let capsule =
@@ -361,6 +363,8 @@ fn the_wide_capsule_avoids_navigation_even_in_a_short_window()
         for section in 0..6 {
             let ui = window(1000.0, height);
             ui.global::<Shell>().set_music_section(section);
+            ui.global::<ui::Downloads>()
+                .set_active(section == 5);
             collapse(&ui);
             assert_clear(&ui);
             let capsule =
