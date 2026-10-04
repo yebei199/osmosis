@@ -193,6 +193,20 @@ impl Now {
         }
         self.neighbour(list, 1)
     }
+
+    /// 当前条目之后没有可放条目,忽略循环回卷;不在次序中的条目不算末尾。
+    pub fn at_end(&self, list: &Playlist) -> bool {
+        let sequence = self.sequence(list);
+        let Some(at) = sequence
+            .iter()
+            .position(|id| *id == self.entry_id)
+        else {
+            return false;
+        };
+        sequence[at + 1..]
+            .iter()
+            .all(|id| list.is_blocked(*id))
+    }
 }
 
 impl Group {

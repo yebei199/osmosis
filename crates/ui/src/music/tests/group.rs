@@ -182,6 +182,7 @@ fn state(outputs: &[&str], playing: bool) -> GroupStateDto {
             position_us: 0,
             playing,
             next: None,
+            at_end: false,
             shuffled: false,
             loop_mode: LoopModeDto::Off,
         }),
