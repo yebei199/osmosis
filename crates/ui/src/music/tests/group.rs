@@ -1098,22 +1098,27 @@ fn the_radio_in_a_group_owns_the_revision_it_started() {
 /// 循环预告仍存在时,服务端的顺序末尾标记必须触发电台续取。
 #[test]
 fn group_radio_due_at_sequence_end_with_loop_and_shuffle() {
-    for (mode, shuffled) in [
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    for (index, (mode, shuffled)) in [
         (LoopModeDto::All, false),
         (LoopModeDto::All, true),
         (LoopModeDto::One, false),
         (LoopModeDto::Off, true),
-    ] {
-        let (ui, deck) = deck_window();
-        wire(&ui, &deck);
-        deck.group.assume(Some(radio_state(2, false)));
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let revision = 3 + index as i64 * 2;
+        deck.group
+            .assume(Some(radio_state(revision - 1, false)));
         super::super::radio::begin(
             &ui,
             &deck,
             api::RadioMode::Fm,
             batch_of(&deck, &["a", "b"]),
         );
-        let mut remote = radio_state(3, false);
+        let mut remote = radio_state(revision, false);
         remote.version += 1;
         let now =
             remote.now.as_mut().expect("playing group");
@@ -1126,7 +1131,7 @@ fn group_radio_due_at_sequence_end_with_loop_and_shuffle() {
             serde_json::from_value(wire)
                 .expect("wire state"),
         ));
-        deck.group.answer(Ok(Some((7, 3))));
+        deck.group.answer(Ok(Some((7, revision))));
         assert!(
             super::super::radio::due(&deck, 0),
             "{mode:?}, shuffled={shuffled}"
