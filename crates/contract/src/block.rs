@@ -144,8 +144,7 @@ fn version_title(title: &str) -> String {
         }
         if let Some((prefix, suffix)) =
             rest.rsplit_once(" - ")
-        {
-            if [
+            && [
                 "live",
                 "remaster",
                 "version",
@@ -160,10 +159,9 @@ fn version_title(title: &str) -> String {
             ]
             .iter()
             .any(|keyword| suffix.contains(keyword))
-            {
-                rest = prefix.trim_end();
-                continue;
-            }
+        {
+            rest = prefix.trim_end();
+            continue;
         }
         return rest.to_owned();
     }
