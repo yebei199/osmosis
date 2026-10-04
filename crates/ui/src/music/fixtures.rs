@@ -177,6 +177,21 @@ pub(super) fn deck_window_pumped()
 fn deck_window_with(
     pump: bool,
 ) -> (super::MainWindow, super::Deck) {
+    init_spawnable_backend(pump);
+    make_deck_window()
+}
+
+/// HTTP 调查使用真正的无头事件循环,后台 IO 的唤醒能回到 UI 线程。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn deck_window_event_loop()
+-> (super::MainWindow, super::Deck) {
+    i_slint_backend_testing::init_integration_test_with_system_time();
+    make_deck_window()
+}
+
+/// 后端由调用者装好;其余 Deck 与曲目夹具保持一致。
+#[cfg(not(target_arch = "wasm32"))]
+fn make_deck_window() -> (super::MainWindow, super::Deck) {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -185,7 +200,6 @@ fn deck_window_with(
 
     use super::Deck;
 
-    init_spawnable_backend(pump);
     isolate_state_dir();
     let ui =
         super::MainWindow::new().expect("建不出主窗口");

@@ -1,6 +1,8 @@
 use similar_asserts::assert_eq;
 use std::cell::Cell;
 
+#[cfg(target_os = "linux")]
+mod dislike;
 mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod downloads;
