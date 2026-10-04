@@ -43,6 +43,16 @@ pub(crate) async fn list_blocks(
                     | contract::BlockKind::Track
             )
         });
+        for rule in &mut rules {
+            if rule.kind == contract::BlockKind::Artist
+                && let Ok(artist) =
+                    serde_json::from_str::<
+                        contract::ArtistIdentityDto,
+                    >(&rule.value)
+            {
+                rule.value = artist.name;
+            }
+        }
     }
     Ok(Json(BlockRulesDto { rules }))
 }
