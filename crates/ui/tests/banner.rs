@@ -160,6 +160,7 @@ fn a_solo_device_can_join_from_the_group_banner() {
     ui.global::<Shell>()
         .set_group_banner("组里正在播放: x".into());
     ui.global::<Shell>().set_group_joinable(true);
+    testing::mock_elapsed_time(std::time::Duration::ZERO);
 
     let key: Vec<_> =
         testing::ElementHandle::find_by_accessible_label(

@@ -84,6 +84,32 @@ export global Nav {
 }
 
 export component MainWindow inherits Window {
+    // 只观察需要提醒的组投影，播放版本、曲目与进度不重新展开。
+    property <string> group-notice-state: Shell.group-banner + "\n" + Shell.output-text
+        + "\n" + Shell.group-text + (Shell.group-joinable ? "join" : "leave")
+        + (Shell.output-stale ? "stale" : "online");
+    // 完整提示与面板独立，读面板时状态更新保留面板。
+    property <bool> group-expanded: false;
+    property <bool> group-panel-open: false;
+    // 按住操作键时暂停计时，松手重新给完整四秒。
+    property <bool> group-action-pressed: false;
+    // 展开立即出现，收起在二百毫秒内释放布局高度。
+    property <length> group-notice-height: root.group-expanded ? 44px : 0px;
+    animate group-notice-height { duration: root.group-expanded ? 0ms : 200ms; easing: ease-out; }
+    changed group-notice-state => {
+        if Shell.group-banner == "" {
+            root.group-expanded = false;
+            root.group-panel-open = false;
+        } else if !root.group-panel-open {
+            root.group-expanded = true;
+            group-timer.restart();
+        }
+    }
+    group-timer := Timer {
+        interval: 4s;
+        running: root.group-expanded && !root.group-action-pressed && !root.group-panel-open;
+        triggered => { root.group-expanded = false; }
+    }
     // 控制条左右内缩。**同一时刻全应用一个数** —— 此前三个调用点各给各的
     // (16 / 24 / 32px),切页时条的边沿在跳(docs/adr/0029)。
     // 随宽度收是另一回事:手机上 24px 的内缩会从本就不够的文字区里再拿走 48px。
@@ -258,7 +284,7 @@ export component MainWindow inherits Window {
         VerticalLayout {
             padding-top: root.safe-area-insets.top;
             spacing: 0px;
-            if Shell.banner-text != "" || Shell.group-banner != "" || Shell.download-text != "": HorizontalLayout {
+            if Shell.banner-text != "" || root.group-notice-height > 0px || Shell.download-text != "": HorizontalLayout {
                 padding-top: 10px;
                 padding-bottom: 10px;
                 padding-left: 16px + root.safe-area-insets.left;
@@ -319,8 +345,11 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    if Shell.group-banner != "": group-strip := Rectangle {
-                        height: 44px;
+                    if Shell.group-banner != "" && root.group-notice-height > 0px: group-strip := Rectangle {
+                        preferred-height: root.group-notice-height;
+                        min-height: 0px;
+                        max-height: root.group-notice-height;
+                        clip: true;
                         background: Theme.surface.with-alpha(0.96);
                         border-radius: 10px;
                         border-width: 1px;
@@ -353,6 +382,7 @@ export component MainWindow inherits Window {
 
                                     exit-touch := TouchArea {
                                         mouse-cursor: pointer;
+                                        changed pressed => { root.group-action-pressed = self.pressed; }
                                         clicked => {
                                             if Shell.group-joinable { Shell.join-group(); } else { Shell.leave-group(); }
                                         }
@@ -753,6 +783,119 @@ export component MainWindow inherits Window {
             }
         }
 
+        // 胶囊借页面起点定位，位于安全区内，完全不参与流布局。
+        if Shell.group-banner != "" && !root.group-expanded: group-capsule := Rectangle {
+            x: Shell.compact ? root.width - root.safe-area-insets.right - 60px
+                : root.safe-area-insets.left + 26px;
+            y: page-stack.y + (Shell.compact ? 16px : 164px);
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: Theme.surface;
+            border-color: Theme.accent;
+            border-width: 1px;
+            accessible-role: button;
+            accessible-label: "播放组";
+            accessible-action-default => { root.group-panel-open = true; }
+            capsule-touch := TouchArea {
+                mouse-cursor: pointer;
+                accessible-role: button;
+                accessible-label: "播放组";
+                accessible-action-default => { root.group-panel-open = true; }
+                clicked => { root.group-panel-open = true; }
+            }
+            // 双设备图标用语义色，在深浅主题共用同一轮廓。
+            group-icon := Path {
+                x: 10px;
+                y: 10px;
+                width: 24px;
+                height: 24px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: "M2 4 H15 V14 H2 Z M6 18 H11 M8.5 14 V18 M17 9 H22 V21 H17 Z";
+                fill: transparent;
+                stroke: Theme.accent-ink;
+                stroke-width: 2px;
+            }
+        }
+
+        // 遮罩接住空白点击，面板自身截住事件；名册和播放状态直接读实时投影。
+        if root.group-panel-open && Shell.group-banner != "": Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.shadow.with-alpha(0.5);
+            TouchArea { clicked => { root.group-panel-open = false; } }
+
+            group-panel := Rectangle {
+                width: min(parent.width - root.safe-area-insets.left - root.safe-area-insets.right - 48px, 360px);
+                height: group-body.preferred-height;
+                x: root.safe-area-insets.left + (parent.width - root.safe-area-insets.left - root.safe-area-insets.right - self.width) / 2;
+                y: root.safe-area-insets.top + (parent.height - root.safe-area-insets.top - root.safe-area-insets.bottom - self.height) / 2;
+                background: Theme.surface;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: Theme.overlay;
+                TouchArea { }
+
+                group-body := VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+                    Text {
+                        text: Shell.group-banner;
+                        color: Theme.text;
+                        font-size: 18px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: Shell.output-text;
+                        color: Theme.accent-ink;
+                        overflow: elide;
+                    }
+                    if Player.playback-text != "": Text {
+                        text: Player.playback-text;
+                        color: Theme.text-dim;
+                        overflow: elide;
+                    }
+                    if Shell.group-text != "": Text {
+                        text: Shell.group-text;
+                        color: Theme.text-dim;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: Shell.local-member ? "本机 · 出声端"
+                            : Shell.group-joinable ? "本机 · 独奏" : "本机 · 遥控端";
+                        color: Theme.text-dim;
+                    }
+                    ListView {
+                        height: min(Shell.devices.length * 40px, 160px);
+                        for device in Shell.devices: HorizontalLayout {
+                            height: 40px;
+                            Text {
+                                text: device.name;
+                                color: Theme.text;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: device.member ? "出声端" : "未出声";
+                                color: device.member ? Theme.accent-ink : Theme.text-dim;
+                            }
+                        }
+                    }
+                    HoverButton {
+                        width: 100%;
+                        height: 44px;
+                        text: Shell.group-joinable ? "加入播放组" : "退出组";
+                        clicked => {
+                            if Shell.group-joinable { Shell.join-group(); }
+                            else { Shell.leave-group(); }
+                            root.group-panel-open = false;
+                        }
+                    }
+                }
+            }
+        }
+
         if Library.dislike-open: dislike-mask := Rectangle {
             width: 100%; height: 100%; background: #00000088;
             TouchArea { clicked => { Library.dislike-open = false; } }
@@ -779,7 +922,6 @@ export component MainWindow inherits Window {
         }
 
         // ── 曲目行的长按菜单 ──
-        //
         // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
         // 关掉」也正是靠这一整块接住的。只有一项是有意的 —— 这一期就下载一件事,
         // 为它先造一套通用菜单,是给一个不存在的第二项付账。
