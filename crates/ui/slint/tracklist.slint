@@ -98,6 +98,14 @@ export component TrackList inherits ListView {
             }
         }
 
+        function open-menu() {
+            if (!row.header) {
+                self.menu-opened = true;
+                self.pressing = false;
+                root.long-press(row.id, row.title);
+            }
+        }
+
         touch := TouchArea {
             // 颜色读屏看不见 —— 正在播的那一行额外报一个可查的选中态。
             accessible-role: button;
@@ -118,6 +126,7 @@ export component TrackList inherits ListView {
             }
             // 读屏与 MCP 的默认动作走这里,和手指点是同一条逻辑(#168)。
             accessible-action-default => { parent.activate(); }
+            accessible-action-expand => { parent.open-menu(); }
             clicked => { parent.activate(); }
         }
 
@@ -125,9 +134,7 @@ export component TrackList inherits ListView {
             interval: 450ms;
             running: parent.pressing && !row.header;
             triggered => {
-                parent.menu-opened = true;
-                parent.pressing = false;
-                root.long-press(row.id, row.title);
+                parent.open-menu();
             }
         }
 

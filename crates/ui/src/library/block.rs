@@ -147,10 +147,28 @@ fn create(
     value: String,
     label: String,
 ) {
+    create_rule(
+        weak,
+        set,
+        reload,
+        app_core::NewBlockRuleDto {
+            kind,
+            value,
+            label: Some(label),
+            disliked_track: None,
+        },
+    );
+}
+
+fn create_rule(
+    weak: &slint::Weak<MainWindow>,
+    set: &BlockSet,
+    reload: impl Fn(&MainWindow) + 'static,
+    body: app_core::NewBlockRuleDto,
+) {
     let (weak, set) = (weak.clone(), set.clone());
     let _ = slint::spawn_local(async move {
-        let created =
-            api::create_block(kind, &value, &label).await;
+        let created = api::create_dislike(body).await;
         let Some(ui) = weak.upgrade() else { return };
         match created {
             Ok(rule) => {
@@ -221,4 +239,94 @@ mod tests {
         assert_eq!(rows[0].kind, "单曲");
         assert_eq!(rows[1].kind, "歌手");
     }
+}
+
+/// 抽屉与列表菜单共用理由和多歌手选择，保存成功才通知音乐层。
+pub fn bind_dislike(
+    ui: &MainWindow,
+    set: &BlockSet,
+    lookup: impl Fn(&str) -> Option<TrackDto> + 'static,
+    saved: impl Fn(&MainWindow) + Clone + 'static,
+) {
+    let selected = Rc::new(RefCell::new(None::<TrackDto>));
+    let (weak, held) = (ui.as_weak(), selected.clone());
+    ui.global::<Library>().on_open_dislike(move |id| {
+        let Some(ui) = weak.upgrade() else { return };
+        let Some(track) = lookup(id.as_str()) else {
+            return;
+        };
+        let names = app_core::track_artists(&track)
+            .into_iter()
+            .map(|artist| artist.name.into())
+            .collect::<Vec<slint::SharedString>>();
+        *held.borrow_mut() = Some(track);
+        ui.global::<Library>().set_dislike_artists(
+            VecModel::from(names).into(),
+        );
+        ui.global::<Library>()
+            .set_dislike_pick_artist(false);
+        ui.global::<Library>().set_dislike_open(true);
+    });
+    let (weak, held, rules, again) = (
+        ui.as_weak(),
+        selected.clone(),
+        set.clone(),
+        saved.clone(),
+    );
+    ui.global::<Library>().on_choose_dislike(
+        move |reason| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(track) = held.borrow().clone() else {
+                return;
+            };
+            let artists = app_core::track_artists(&track);
+            let body = match reason {
+                0 if artists.len() > 1 => {
+                    ui.global::<Library>()
+                        .set_dislike_pick_artist(true);
+                    return;
+                }
+                0 => {
+                    let Some(artist) =
+                        artists.into_iter().next()
+                    else {
+                        return;
+                    };
+                    app_core::artist_dislike(artist)
+                }
+                1 => app_core::song_dislike(&track, true),
+                2 => app_core::song_dislike(&track, false),
+                _ => return,
+            };
+            ui.global::<Library>().set_dislike_open(false);
+            create_rule(&weak, &rules, again.clone(), body);
+        },
+    );
+    let (weak, held, set) =
+        (ui.as_weak(), selected, set.clone());
+    ui.global::<Library>().on_choose_dislike_artist(
+        move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            let Some(track) = held.borrow().clone() else {
+                return;
+            };
+            let Ok(index) = usize::try_from(index) else {
+                return;
+            };
+            let Some(artist) =
+                app_core::track_artists(&track)
+                    .get(index)
+                    .cloned()
+            else {
+                return;
+            };
+            ui.global::<Library>().set_dislike_open(false);
+            create_rule(
+                &weak,
+                &set,
+                saved.clone(),
+                app_core::artist_dislike(artist),
+            );
+        },
+    );
 }

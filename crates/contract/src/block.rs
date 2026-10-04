@@ -244,3 +244,54 @@ pub fn block_hits(
         }
     })
 }
+
+/// 选择歌曲理由后的写入请求，负反馈只绑定此次选中的平台曲目。
+pub fn song_dislike(
+    track: &crate::TrackDto,
+    versions: bool,
+) -> NewBlockRuleDto {
+    let artists = track_artists(track);
+    let names = track.artists.join(" / ");
+    let suffix = if versions {
+        "（含其他版本）"
+    } else {
+        ""
+    };
+    NewBlockRuleDto {
+        kind: if versions {
+            BlockKind::SongVersions
+        } else {
+            BlockKind::Song
+        },
+        value: serde_json::to_string(&SongBlockDto {
+            title: track.title.clone(),
+            artists,
+        })
+        .expect("string-only song rule"),
+        label: Some(format!(
+            "{} — {}{}",
+            track.title.trim(),
+            names,
+            suffix
+        )),
+        disliked_track: (!versions).then(|| {
+            crate::PlayedDto {
+                platform: track.platform.clone(),
+                track_id: track.id.clone(),
+            }
+        }),
+    }
+}
+
+/// 单歌手直接保存，多歌手由用户选出的身份保存。
+pub fn artist_dislike(
+    artist: ArtistIdentityDto,
+) -> NewBlockRuleDto {
+    NewBlockRuleDto {
+        kind: BlockKind::Artist,
+        label: Some(artist.name.clone()),
+        value: serde_json::to_string(&artist)
+            .expect("string-only artist rule"),
+        disliked_track: None,
+    }
+}

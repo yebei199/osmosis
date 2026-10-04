@@ -216,10 +216,10 @@ export component Drawer inherits Rectangle {
         }
         feedback-down := DrawerRow {
             icon: root.thumb-down-icon;
-            title: "点踩";
-            state: root.feedback == -1 ? "已点踩" : "";
-            label: root.feedback == -1 ? "取消点踩" : "点踩";
-            checked: root.feedback == -1;
+            title: "不喜欢";
+            state: "";
+            label: "不喜欢";
+            checked: false;
             opacity: root.can-download ? 1.0 : 0.4;
             clicked => {
                 if (root.can-download) { root.feedback-toggled(-1); }

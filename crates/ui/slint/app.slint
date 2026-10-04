@@ -33,7 +33,7 @@ import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { NavItem, RoundControl } from "widgets.slint";
+import { NavItem, RoundControl, HoverButton } from "widgets.slint";
 import { PlayerBar, BarMetrics } from "playerbar.slint";
 import { Theme, Type } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
@@ -753,6 +753,31 @@ export component MainWindow inherits Window {
             }
         }
 
+        if Library.dislike-open: dislike-mask := Rectangle {
+            width: 100%; height: 100%; background: #00000088;
+            TouchArea { clicked => { Library.dislike-open = false; } }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width - 24px, 390px);
+                height: dislike-body.preferred-height + 28px;
+                background: Theme.surface; border-radius: 14px;
+                TouchArea { }
+                dislike-body := VerticalLayout {
+                    padding: 14px; spacing: 10px;
+                    Text { text: Library.dislike-pick-artist ? "选择歌手" : "不喜欢"; color: Theme.text; font-size: 18px; }
+                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "不想再听这个歌手"; clicked => { Library.choose-dislike(0); } }
+                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "不想再听这首歌（含其他版本）"; clicked => { Library.choose-dislike(1); } }
+                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "太难听了"; clicked => { Library.choose-dislike(2); } }
+                    for artist[index] in Library.dislike-artists: HoverButton {
+                        visible: Library.dislike-pick-artist;
+                        width: 100%; height: 48px; text: artist;
+                        clicked => { Library.choose-dislike-artist(index); }
+                    }
+                }
+            }
+        }
+
         // ── 曲目行的长按菜单 ──
         //
         // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
@@ -760,7 +785,8 @@ export component MainWindow inherits Window {
         // 为它先造一套通用菜单,是给一个不存在的第二项付账。
         if Library.track-menu-id != ""
             && !Library.tag-picker-open
-            && !Library.block-tag-picker-open: track-menu := Rectangle {
+            && !Library.block-tag-picker-open
+            && !Library.dislike-open: track-menu := Rectangle {
             width: 100%;
             height: 100%;
             background: #000000.with-alpha(0.5);
@@ -867,16 +893,16 @@ export component MainWindow inherits Window {
                         block-track-touch := TouchArea {
                             mouse-cursor: pointer;
                             accessible-role: button;
-                            accessible-label: "屏蔽此曲";
+                            accessible-label: "不喜欢…";
                             accessible-action-default => { block-track-touch.clicked(); }
                             clicked => {
-                                Library.block-track(Library.track-menu-id, Library.track-menu-title);
+                                Library.open-dislike(Library.track-menu-id);
                                 Library.track-menu-id = "";
                             }
                         }
 
                         Text {
-                            text: "屏蔽此曲";
+                            text: "不喜欢…";
                             font-family: "Maple Mono NF CN";
                             font-size: 14px;
                             color: block-track-touch.has-hover
