@@ -427,13 +427,11 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     choose(world, "exact")
     world.sound(source, "175003", group=False)
     source.ui.music("radio")
-    source.ui.activate(source.ui.must("WallView::view-list-btn"))
     expected = ["Song (Live)", "Other", "Song", "Safe"]
     wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
     assert rows(source.ui) == expected
     source.restart()
     source.ui.radio()
-    source.ui.activate(source.ui.must("WallView::view-list-btn"))
     wait_until(lambda: rows(source.ui), "new radio batch")
     wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
     assert rows(source.ui) == expected
