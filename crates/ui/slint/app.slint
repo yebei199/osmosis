@@ -346,7 +346,7 @@ export component MainWindow inherits Window {
                     }
 
                     if Shell.group-banner != "" && root.group-notice-height > 0px: group-strip := Rectangle {
-                        height: root.group-notice-height;
+                        preferred-height: root.group-notice-height;
                         min-height: 0px;
                         max-height: root.group-notice-height;
                         clip: true;
