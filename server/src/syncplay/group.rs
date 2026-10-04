@@ -901,6 +901,7 @@ fn dto(
             position_us,
             playing: now.playing,
             next,
+            at_end: now.at_end(&list),
             shuffled: now.shuffled,
             loop_mode: now.loop_mode,
         })

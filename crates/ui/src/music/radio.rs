@@ -8,7 +8,7 @@
 //!
 //! 在组里时(#165)起播走组意图,「还是不是电台在放」改认组队列的版本:起播的应答里
 //! 那一版是电台的,续取走组意图追加进去、换到续上的那一版;有人点了别的歌,组队列换了
-//! 一版,电台就不再往里续。组里只看得见下一首,所以在放最后一首时才续。
+//! 一版,电台就不再往里续。组按服务端的实际播放次序末尾标记续取,循环预告不影响续取。
 //! 独奏电台切输出入组时,只有服务端采用同一 seed 且本机未换批才接管组队列。
 //! 续取仍由发起电台的设备负责,该设备下线或挂起时不会由其他成员代续。
 
@@ -280,13 +280,18 @@ fn shared_now(deck: &Deck) -> Option<(i64, i64)> {
     deck.group.now().map(|now| (now.queue_id, now.revision))
 }
 
-/// 当前这首之后还排着几首。组里只看得见下一首:在放最后一首是 0,否则按 1 之外算。
+/// 组按服务端实际次序末尾标记判队尾;旧后端继续用下一首预告兜底。
 fn remaining(deck: &Deck) -> usize {
     if !deck.group.is_member() {
         return deck.queue.borrow().remaining();
     }
     match deck.group.now() {
-        Some(now) if now.playing && now.next.is_none() => 0,
+        Some(now)
+            if now.playing
+                && (now.at_end || now.next.is_none()) =>
+        {
+            0
+        }
         _ => usize::MAX,
     }
 }

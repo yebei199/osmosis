@@ -77,6 +77,9 @@ pub struct GroupNowDto {
     pub playing: bool,
     /// 放完这一首接哪一首、在哪一刻换。播放时才有;单曲循环时就是它自己。
     pub next: Option<NextEntryDto>,
+    /// 实际播放次序里当前条目之后已无曲目,独立于循环预告。旧服务端缺省 false。
+    #[serde(default)]
+    pub at_end: bool,
     pub shuffled: bool,
     pub loop_mode: LoopModeDto,
 }
@@ -266,6 +269,7 @@ mod tests {
             position_us: 5_000_000,
             playing: true,
             next: None,
+            at_end: true,
             shuffled: false,
             loop_mode: LoopModeDto::Off,
         };

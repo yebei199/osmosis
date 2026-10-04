@@ -157,6 +157,73 @@ fn looping_all_wraps_around() {
     assert_eq!(now(&group).entry_id, 1);
 }
 
+/// 线上末尾标记按实际顺序计算,与循环预告独立;随机末尾可在原序中间。
+#[test]
+fn wire_sequence_end_is_independent_of_loop_and_shuffle() {
+    let entries: Vec<super::Entry> = (1..=3)
+        .map(|id| super::Entry {
+            entry_id: id,
+            position: id - 1,
+            platform: "netease".to_owned(),
+            track_id: id.to_string(),
+            title: id.to_string(),
+            alias: None,
+            artists: vec![],
+            cover: None,
+            duration_ms: 100_000,
+        })
+        .collect();
+    for mode in [
+        LoopModeDto::Off,
+        LoopModeDto::All,
+        LoopModeDto::One,
+    ] {
+        for shuffled in [false, true] {
+            let mut group = group();
+            let now =
+                group.now.as_mut().expect("playing group");
+            now.loop_mode = mode;
+            now.shuffled = shuffled;
+            now.order = vec![3, 1, 2];
+            for (entry, expected) in [
+                (1, false),
+                (if shuffled { 2 } else { 3 }, true),
+            ] {
+                group
+                    .now
+                    .as_mut()
+                    .expect("playing group")
+                    .entry_id = entry;
+                let dto = super::dto(&group, &entries)
+                    .expect("group state");
+                let wire = serde_json::to_value(dto)
+                    .expect("wire JSON");
+                assert_eq!(
+                    wire["now"]["at_end"],
+                    serde_json::json!(expected),
+                    "{mode:?}, shuffled={shuffled}, entry={entry}"
+                );
+            }
+        }
+    }
+}
+
+/// 新客户端读取旧状态缺少末尾字段时,按 false 解码并保留旧预告。
+#[test]
+fn legacy_group_wire_defaults_sequence_end_to_false() {
+    let wire = serde_json::json!({
+        "queue_id": 7, "revision": 1, "entry_id": 3,
+        "track": {"platform": "netease", "id": "3", "title": "3", "artists": [], "duration_ms": 100000},
+        "anchor_us": 0, "position_us": 0, "playing": true,
+        "next": null, "shuffled": false, "loop_mode": "all"
+    });
+    let now: contract::GroupNowDto =
+        serde_json::from_value(wire).expect("legacy wire");
+    let encoded =
+        serde_json::to_value(now).expect("current wire");
+    assert_eq!(encoded["at_end"], serde_json::json!(false));
+}
+
 /// 下一首命中屏蔽规则就再跳一首;上一首同理(#167)。
 #[test]
 fn next_and_prev_skip_a_blocked_entry() {
