@@ -261,7 +261,7 @@ pub fn bind_dislike(
             .collect::<Vec<slint::SharedString>>();
         *held.borrow_mut() = Some(track);
         ui.global::<Library>().set_dislike_artists(
-            VecModel::from(names).into(),
+            slint::ModelRc::new(VecModel::from(names)),
         );
         ui.global::<Library>()
             .set_dislike_pick_artist(false);
