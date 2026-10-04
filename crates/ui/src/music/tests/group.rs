@@ -182,6 +182,7 @@ fn state(outputs: &[&str], playing: bool) -> GroupStateDto {
             position_us: 0,
             playing,
             next: None,
+            at_end: false,
             shuffled: false,
             loop_mode: LoopModeDto::Off,
         }),
@@ -1092,6 +1093,53 @@ fn the_radio_in_a_group_owns_the_revision_it_started() {
         deck.queue.borrow().current().is_none(),
         "组里的电台不在本机队列上放"
     );
+}
+
+/// 循环预告仍存在时,服务端的顺序末尾标记必须触发电台续取。
+#[test]
+fn group_radio_due_at_sequence_end_with_loop_and_shuffle() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    for (index, (mode, shuffled)) in [
+        (LoopModeDto::All, false),
+        (LoopModeDto::All, true),
+        (LoopModeDto::One, false),
+        (LoopModeDto::Off, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let revision = 3 + index as i64 * 2;
+        deck.group
+            .assume(Some(radio_state(revision - 1, false)));
+        // 每批首曲不同,避免测试应答夹具保留的在途去重挡掉下一次起播。
+        let first = format!("a-{index}");
+        super::super::radio::begin(
+            &ui,
+            &deck,
+            api::RadioMode::Fm,
+            batch_of(&deck, &[&first, "b"]),
+        );
+        assert_eq!(deck.group.intents().len(), index + 1);
+        let mut remote = radio_state(revision, false);
+        remote.version += 1;
+        let now =
+            remote.now.as_mut().expect("playing group");
+        now.loop_mode = mode;
+        now.shuffled = shuffled;
+        let mut wire = serde_json::to_value(remote)
+            .expect("group JSON");
+        wire["now"]["at_end"] = serde_json::json!(true);
+        deck.group.assume(Some(
+            serde_json::from_value(wire)
+                .expect("wire state"),
+        ));
+        deck.group.answer(Ok(Some((7, revision))));
+        assert!(
+            super::super::radio::due(&deck, 0),
+            "{mode:?}, shuffled={shuffled}"
+        );
+    }
 }
 
 /// 组里有人点了别的歌:组队列换了一版,电台不再往里续。

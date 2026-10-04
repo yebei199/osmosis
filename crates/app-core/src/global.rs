@@ -220,6 +220,7 @@ mod tests {
                     track: track("b"),
                     at_us: 101_000_000,
                 }),
+                at_end: false,
                 shuffled: false,
                 loop_mode: LoopModeDto::Off,
             }),

@@ -1,0 +1,27 @@
+# #182:组电台到实际顺序末尾时续取,普通列表循环行为保持。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "组内遥控客户端打开私人 FM,切循环与随机,按实际顺序到初始批次最后一首"
+observe = "radio::due 为真;真实 append 使原组队列新版本增加条目;曲尾目标 PCM 播新增曲目"
+tests = ["ui::music::tests::group::group_radio_due_at_sequence_end_with_loop_and_shuffle", "test_remote::test_group_radio_sequence_end_top_up[list-loop]", "test_remote::test_group_radio_sequence_end_top_up[loop-off]", "test_remote::test_group_radio_sequence_end_top_up[shuffled-loop]", "test_remote::test_group_radio_sequence_end_top_up[single-loop]"]
+doubles = ["Rust 无头 Deck/组应答只证明 due;软件端到端替换外部音乐服务及声卡,真实 UI、组路由、数据库和解码器保留"]
+mutation = "恢复 remaining 对 next.is_none 的判断,列表循环与单曲循环续取行数断言失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "普通列表开列表循环到队尾;本机电台转组、组电台换批及失败应答"
+observe = "普通列表曲尾 PCM 回到首曲,队列版本和行数不变且不请求 FM;旧电台归属保护保持"
+tests = ["test_remote::test_non_radio_list_loop_wraps_without_append", "test_remote::test_local_radio_seed_top_up", "ui::music::tests::group::another_pick_in_the_group_stops_the_radio", "ui::music::tests::group::a_failed_radio_start_in_the_group_owns_nothing", "ui::music::tests::group::local_radio_seed_rejects_failed_or_foreign_reply", "ui::music::tests::group::local_radio_seed_rejects_reply_after_local_replacement"]
+doubles = ["沿用软件声卡、外部音乐服务和 Rust 无头状态夹具"]
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "组内真实客户端选远端出声,列表循环下打开 FM 到队尾;另做 Android 遥控与桌面实际出声硬件验证"
+observe = "软件自动验收证明 append 行数和目标解码 PCM;Android 原生集成及物理音频另留实机脚本与证据,本映射不替代实机"
+tests = ["test_remote::test_group_radio_sequence_end_top_up[list-loop]"]
+doubles = ["软件声卡和外部音乐目录不能证明 Android 或物理扬声器"]
+mutation = "恢复 next.is_none 判断,组版本和新增曲目 PCM 断言失败"
