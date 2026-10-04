@@ -181,14 +181,6 @@ fn deck_window_with(
     make_deck_window()
 }
 
-/// HTTP 调查使用真正的无头事件循环,后台 IO 的唤醒能回到 UI 线程。
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn deck_window_event_loop()
--> (super::MainWindow, super::Deck) {
-    i_slint_backend_testing::init_integration_test_with_system_time();
-    make_deck_window()
-}
-
 /// 后端由调用者装好;其余 Deck 与曲目夹具保持一致。
 #[cfg(not(target_arch = "wasm32"))]
 fn make_deck_window() -> (super::MainWindow, super::Deck) {

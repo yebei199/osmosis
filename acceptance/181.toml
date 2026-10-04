@@ -1,0 +1,81 @@
+# #181：审前测试合同；尚未运行 RED，也不是实机通过结论。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "app-core::blocks::hits 的线上规则输入；真实抽屉/列表理由选择"
+observe = "exact 只 trim，版本规则 NFKC/casefold/尾版本剥离，歌手集合交集且优先平台 id；三理由落库类型和仅太难听了的 verdict=-1"
+tests = [
+  "app-core::blocks::dislike_tests::exact_song_matches_all_ids_but_preserves_case_width_and_versions",
+  "app-core::blocks::dislike_tests::normalized_song_strips_only_approved_trailing_versions",
+  "app-core::blocks::dislike_tests::normalized_song_and_artist_use_unicode_nfkc_casefold",
+  "app-core::blocks::dislike_tests::song_requires_title_and_an_intersecting_artist",
+  "app-core::blocks::dislike_tests::artist_identity_prefers_platform_ids_and_falls_back_for_old_tracks",
+  "app-core::blocks::dislike_tests::empty_normalized_titles_fall_back_to_exact_match",
+  "app-core::blocks::dislike_tests::malformed_song_values_never_match",
+  "test_dislike::test_dislike_saves_skips_and_filters[artist-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[artist-list]",
+  "test_dislike::test_dislike_saves_skips_and_filters[versions-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[versions-list]",
+  "test_dislike::test_dislike_saves_skips_and_filters[exact-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[exact-list]",
+  "test_dislike::test_dislike_artist_picker_uses_selected_artist",
+]
+doubles = ["单元层只造输入；端到端只替换外部音乐目录/WAV，真实 Slint/HTTP/SQL/信令/解码不替换；不证明供应商推荐算法"]
+mutation = "旧 kind 不支持是协议行为 RED；恢复 id-only 匹配、只 lowercase、无歌手交集或静默取首歌手必须令相应断言失败；编译/环境/定位错误不算 RED"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "历史 artist/tag/track 规则；已有赞；设置页历史 id 规则恢复"
+observe = "旧规则仍生效、独立恢复；赞只写 verdict=1，不建立屏蔽规则；取消理由或多歌手选择不保存"
+tests = [
+  "app-core::blocks::tests::each_kind_matches_its_own_field",
+  "app-core::blocks::dislike_tests::legacy_artist_tag_and_track_rules_keep_working",
+  "test_dislike::test_dislike_cancel_and_existing_praise",
+  "test_dislike::test_dislike_legacy_id_rule_can_be_restored",
+]
+doubles = ["历史规则由独立数据库 SQL 建立前提，不替代恢复入口或过滤；标签菜单保留由真实列表菜单检查"]
+mutation = "错删历史规则、取消保存、赞新增屏蔽规则都会失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "真实桌面登录→日推点歌→抽屉不喜欢/列表上下文 Expand→理由→实际下一首；设置恢复；电台批次与重启"
+observe = "独立 SQL 规则/反馈行，created_at 到真实播放条下一首≤1秒，私有 monitor PCM 解出下一曲，日推及队列行过滤；重启持续隐藏，设置恢复后重载显示；电台当前批和新批隐藏"
+tests = [
+  "test_dislike::test_dislike_saves_skips_and_filters[artist-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[artist-list]",
+  "test_dislike::test_dislike_saves_skips_and_filters[versions-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[versions-list]",
+  "test_dislike::test_dislike_saves_skips_and_filters[exact-drawer]",
+  "test_dislike::test_dislike_saves_skips_and_filters[exact-list]",
+  "test_dislike::test_dislike_restart_persists_and_settings_unblock_restores",
+  "test_dislike::test_dislike_radio_batch_and_future_fetch",
+]
+doubles = ["Linux Xvfb/lavapipe/PulseAudio 为环境替身；真实客户端/服务端业务与落库、解码未替换；播放条1秒证明投影及时，PCM证明实际下一曲，不证明物理扬声器或PCM第一帧≤1秒", "列表 Expand 必须绑定真实长按的同一生产回调；不证明物理手指按住450ms的计时器"]
+mutation = "取消即时 next、只重载浏览列表、不删本地队列、不隐藏电台、只按原 id 过滤，必须令实际下一曲或行断言失败"
+
+[[ac]]
+id = "AC-2"
+kind = "regression"
+entry = "规则写入故障；原有真实遥控播放、暂停/继续、上下首、输出切换"
+observe = "失败显示横幅，规则/反馈均不残留且原曲继续响；既有播放控制的真实 PCM 仍正确"
+tests = [
+  "test_dislike::test_dislike_failed_save_keeps_playback_and_feedback",
+  "test_dislike::test_dislike_noncurrent_track_preserves_cursor",
+  "test_remote::test_previous_next",
+  "test_remote::test_pause_resume",
+  "test_remote::test_switch_output",
+]
+doubles = ["故障是本 testcase 私有库的 INSERT CHECK 拒绝；不改生产库/账号，也不伪造成功业务结果；既有 remote-behavior 环境替身同上"]
+mutation = "先切歌再保存、规则失败仍留点踩、破坏既有 next/输出路径会失败"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "真实桌面遥控器选择另一真实客户端输出→点歌→不喜欢→下一曲→seek到末尾→实际自动推进"
+observe = "组账号所属规则即时排除同名不同id，anchor_wall_us相对规则保存≤1秒，远端monitor PCM正确；随后媒体放完的组推进仍正确，源端和第三端静音"
+tests = ["test_dislike::test_dislike_remote_output_and_future_advance"]
+doubles = ["本条只覆盖 Android 与桌面共有的软件链路；小米13的入口、触控、安全区和原生输出仍须排时段补自动化真机证据，当前不构成完整AC-3验收"]
+mutation = "只改本地queue或显示、不让组按账号规则跳过同名id时，目标PCM/组引用必须失败；不以意图日志代替出声"

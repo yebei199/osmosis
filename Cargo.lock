@@ -265,6 +265,7 @@ name = "app-core"
 version = "0.2.2"
 dependencies = [
  "contract",
+ "serde_json",
  "similar-asserts",
 ]
 

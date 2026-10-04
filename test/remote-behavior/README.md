@@ -121,3 +121,9 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
 每个客户端的 HOME 也属于自己的证据目录，平台初始化与音乐下载不会访问宿主音乐目录。
+
+#181 的 `test_dislike.py` 从真实抽屉与列表上下文菜单验证三种不喜欢理由，观察私有库
+规则/反馈、当前列表和队列、重启/恢复及真实 PCM。列表 `Expand` 与长按共用生产回调，
+遮罩取消通过现有导航位置的 MCP 指针点击进入。它不证明物理手指长按的计时器或 Android
+原生端；小米13另排实机时段。开发入口为 `run.sh targeted test_dislike.py`，累计验收
+同时运行 app-core 屏蔽单元测试并生成既有 projection JUnit。

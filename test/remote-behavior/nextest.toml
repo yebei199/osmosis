@@ -1,6 +1,6 @@
 # 组状态与控制的定向证据,覆盖累计映射中的投影、seed 与回归。
 [profile.rb-projection]
-default-filter = '(binary_id(ui) & (test(music::tests::group::) | test(music::tests::downloads::))) | (package(app-desktop) & test(downloads::tests::))'
+default-filter = '(package(app-core) & test(blocks::)) | (binary_id(ui) & (test(music::tests::group::) | test(music::tests::downloads::))) | (package(app-desktop) & test(downloads::tests::))'
 retries = 0
 
 [profile.rb-projection.junit]
