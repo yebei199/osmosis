@@ -1112,12 +1112,15 @@ fn group_radio_due_at_sequence_end_with_loop_and_shuffle() {
         let revision = 3 + index as i64 * 2;
         deck.group
             .assume(Some(radio_state(revision - 1, false)));
+        // 每批首曲不同,避免测试应答夹具保留的在途去重挡掉下一次起播。
+        let first = format!("a-{index}");
         super::super::radio::begin(
             &ui,
             &deck,
             api::RadioMode::Fm,
-            batch_of(&deck, &["a", "b"]),
+            batch_of(&deck, &[&first, "b"]),
         );
+        assert_eq!(deck.group.intents().len(), index + 1);
         let mut remote = radio_state(revision, false);
         remote.version += 1;
         let now =
