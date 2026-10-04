@@ -75,11 +75,14 @@ async fn create_list_dedupe_and_delete() {
     .0;
     assert_eq!(again.id, artist.id, "同一条规则只有一行");
 
-    let listed =
-        list_blocks(State(state.clone()), account.clone())
-            .await
-            .expect("列规则该成功")
-            .0;
+    let listed = list_blocks(
+        State(state.clone()),
+        account.clone(),
+        Query(BlockCapabilities::default()),
+    )
+    .await
+    .expect("列规则该成功")
+    .0;
     assert_eq!(listed.rules.len(), 3);
 
     let status = delete_block(
@@ -91,10 +94,14 @@ async fn create_list_dedupe_and_delete() {
     .expect("删规则该成功");
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let listed = list_blocks(State(state), account)
-        .await
-        .expect("列规则该成功")
-        .0;
+    let listed = list_blocks(
+        State(state),
+        account,
+        Query(BlockCapabilities::default()),
+    )
+    .await
+    .expect("列规则该成功")
+    .0;
     assert_eq!(
         listed
             .rules

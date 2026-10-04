@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use contract::{
@@ -16,17 +16,34 @@ use server::store::blocks;
 
 use crate::{AppState, conn};
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct BlockCapabilities {
+    #[serde(default)]
+    song_rules: bool,
+}
+
 /// `GET /blocks` —— 这个账号的全部屏蔽规则。
 pub(crate) async fn list_blocks(
     State(state): State<AppState>,
     account: Account,
+    Query(capabilities): Query<BlockCapabilities>,
 ) -> Result<Json<BlockRulesDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
 
-    let rules = blocks::list(&mut conn, account.id)
+    let mut rules = blocks::list(&mut conn, account.id)
         .await
         .map_err(|err| error::map_error(&err))?;
 
+    if !capabilities.song_rules {
+        rules.retain(|rule| {
+            matches!(
+                rule.kind,
+                contract::BlockKind::Artist
+                    | contract::BlockKind::Tag
+                    | contract::BlockKind::Track
+            )
+        });
+    }
     Ok(Json(BlockRulesDto { rules }))
 }
 
@@ -36,10 +53,25 @@ pub(crate) async fn create_block(
     account: Account,
     Json(body): Json<NewBlockRuleDto>,
 ) -> Result<Json<BlockRuleDto>, Failure> {
-    let mut conn = conn(&state.pool).await?;
-
+    if let Some(track) = &body.disliked_track {
+        if body.kind != contract::BlockKind::Song
+            || track.platform.trim().is_empty()
+            || track.track_id.trim().is_empty()
+        {
+            return Err(error::map_error(
+                &server::error::AppError::Invalid(
+                    "点踩必须对应歌曲规则与有效曲目",
+                ),
+            ));
+        }
+    }
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| error::map_error(&err.into()))?;
     let created = blocks::create(
-        &mut conn,
+        &mut tx,
         account.id,
         body.kind,
         &body.value,
@@ -47,6 +79,22 @@ pub(crate) async fn create_block(
     )
     .await
     .map_err(|err| error::map_error(&err))?;
+    if let Some(track) = body.disliked_track {
+        server::store::feedback::set(
+            &mut tx,
+            account.id,
+            &server::store::playlist::TrackRef {
+                platform: track.platform,
+                track_id: track.track_id,
+            },
+            -1,
+        )
+        .await
+        .map_err(|err| error::map_error(&err))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|err| error::map_error(&err.into()))?;
 
     Ok(Json(created))
 }

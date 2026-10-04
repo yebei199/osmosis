@@ -22,6 +22,28 @@ pub async fn create(
             "屏蔽的对象不能为空",
         ));
     }
+    if matches!(
+        kind,
+        BlockKind::Song | BlockKind::SongVersions
+    ) {
+        let song = serde_json::from_str::<
+            contract::SongBlockDto,
+        >(value)
+        .map_err(|_| {
+            AppError::Invalid("歌曲屏蔽规则格式无效")
+        })?;
+        if song.title.trim().is_empty()
+            || song.artists.is_empty()
+            || song
+                .artists
+                .iter()
+                .any(|artist| artist.name.trim().is_empty())
+        {
+            return Err(AppError::Invalid(
+                "歌曲屏蔽规则缺少歌名或歌手",
+            ));
+        }
+    }
     let label = label
         .map(str::trim)
         .filter(|label| !label.is_empty())
