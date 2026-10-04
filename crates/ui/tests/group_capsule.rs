@@ -140,6 +140,21 @@ fn click_element(
     );
 }
 
+/// 零宽或零高的元素不能遮挡胶囊。
+fn positive_area(size: slint::LogicalSize) -> bool {
+    size.width > 0.0 && size.height > 0.0
+}
+
+/// 两段边界相接不算相交；同一规则用于横纵两轴。
+fn axis_overlap(
+    a_start: f32,
+    a_span: f32,
+    b_start: f32,
+    b_span: f32,
+) -> bool {
+    a_start < b_start + b_span && b_start < a_start + a_span
+}
+
 /// 取矩形相交，边界相接允许。
 fn overlaps(
     a: &testing::ElementHandle,
@@ -149,14 +164,10 @@ fn overlaps(
     let bp = b.absolute_position();
     let az = a.size();
     let bz = b.size();
-    az.width > 0.0
-        && az.height > 0.0
-        && bz.width > 0.0
-        && bz.height > 0.0
-        && ap.x < bp.x + bz.width
-        && bp.x < ap.x + az.width
-        && ap.y < bp.y + bz.height
-        && bp.y < ap.y + az.height
+    positive_area(az)
+        && positive_area(bz)
+        && axis_overlap(ap.x, az.width, bp.x, bz.width)
+        && axis_overlap(ap.y, az.height, bp.y, bz.height)
 }
 
 /// 胶囊与指针控件、输入框、具无障碍操作的组件都不相交。
