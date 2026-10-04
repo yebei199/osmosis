@@ -296,9 +296,20 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     assert 0 <= group["anchor_wall_us"] / 1_000_000 - saved["created_at"].timestamp() <= 1
     world.sound(world.one, "175003")
     world.silent(source, world.two)
-    source.ui.seek(88)
-    world.sound(world.one, "175004")
     assert_filtered(world, "exact")
+    daily(source.ui)
+    source.ui.activate(source.ui.must("TrackList::touch", "Other"), action="Expand")
+    activate(source.ui, "不喜欢…")
+    activate(source.ui, REASONS["exact"])
+    wait_until(lambda: len(rules(world)) == 2, "future group track blocked")
+    assert current_group_track(world) == "175003", "blocking a future entry must keep current audio"
+    world.sound(world.one, "175003")
+    source.ui.seek(88)
+    world.sound(world.one, "175005")
+    assert current_group_track(world) == "175005", (
+        "automatic group advance must skip blocked 175004"
+    )
+    world.silent(source, world.two)
 
 
 # 启动重新拉规则，设置页恢复重载目录。
