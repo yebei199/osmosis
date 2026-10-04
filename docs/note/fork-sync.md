@@ -1,8 +1,8 @@
 # 手动同步 fork
 
-本项目的 slint 走 `yebei199/slint` 的 `dev` 分支,它又把 femtovg 指到上游
-`femtovg/femtovg` 的 git master(femtovg#302 已合并,fork 已退役;等上游发出含
-#302 的版本后改回 crates.io)。fork 不自动跟进上游,需要时按本文跑一遍。
+本项目的 slint 走 `yebei199/slint` 的 `dev` 分支,当前基于上游正式 tag v1.18.1,
+保留窗口活动状态与安卓滚轮两条补丁。femtovg 0.27.0 已包含 femtovg#302,
+依赖已改回 crates.io。fork 不自动跟进上游,需要时按本文跑一遍。
 
 不上定时任务是刻意的:`master` 要保持从上游**纯快进**,而 GitHub 的定时 workflow
 只从默认分支读取,往 master 塞一个上游没有的 workflow 文件就把快进本身破坏了。
@@ -42,7 +42,6 @@ base 上重放,产出新 sha,新 tip 不是旧 tip 的后代,git 于是只接受
 | 文件 | 补丁 | 撤销条件 |
 |---|---|---|
 | `internal/core/api.rs` | `Window::is_active()` | 未提 PR,上游无等价物 |
-| `internal/renderers/femtovg/Cargo.toml` | femtovg 走上游 git 而非 crates.io | 上游发出含 femtovg#302 的版本 |
 | `internal/backends/android-activity/androidwindowadapter.rs` | 鼠标滚轮 `ACTION_SCROLL` 转 `PointerScrolled`,上游是 `todo!()`(#120,2026-09-23) | 上游实现同一分支 |
 
 ## 已删除的分支
@@ -117,12 +116,10 @@ git push origin upstream/master:refs/heads/master
 
 `push-guard` 会拦主分支,这是设计如此。确认要更新后重跑同一条命令。
 
-### 2. femtovg 跟进上游
+### 2. femtovg 已回到正式版
 
-fork 退役后没有重建步骤:femtovg 直接指上游 git master,跟进就是在 slint fork 里
-`cargo update -p femtovg` 再走第 3、4 步。上游发出含 #302 的版本后,把
-`internal/renderers/femtovg/Cargo.toml` 里的 git 依赖改回 crates.io,本文相关段落
-一并删掉。
+femtovg fork 已退役,Slint v1.18.1 使用 crates.io 的 0.27 系列,其中包含 #302。
+同步时沿用上游的正式版依赖,不再维护 git 来源补丁。
 
 ### 3. dev 合进上游
 
@@ -211,6 +208,9 @@ cd ~/RustroverProjects/slint-fork && git fetch upstream && git rev-list --count 
 
 ## 更新记录
 
+- 2026-10-04 dev merge 上游正式 tag v1.18.1(#179),保留窗口活动状态与安卓滚轮
+  两条补丁。femtovg 0.27.0 已包含 #302,其来源与 fork 锁文件取上游正式版。
+  `backup/dev-2026-10-04` 指同步前的 `e616040a3`。
 - 2026-09-24 web 废弃(#110),dev 快进一个 revert `e616040a3`,撤掉 wasm 定帧那条
   (`b72b30f8a`),不 merge 上游;`backup/dev-2026-09-24` 指上一个 tip `64d51f145`。
   apps/web 摘出 workspace 后 femtovg 不再进本仓库的锁文件。
