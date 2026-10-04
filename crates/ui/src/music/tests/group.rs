@@ -1194,3 +1194,102 @@ fn a_tap_while_this_device_sounds_goes_to_the_group() {
 
     assert_eq!(deck.group.intents(), vec!["play 1"]);
 }
+
+/// 暂停或换曲只更新面板，组版本递增且文案不变时保持胶囊。
+#[test]
+fn a_new_playback_version_keeps_the_notice_collapsed() {
+    use i_slint_backend_testing::{
+        ElementHandle, mock_elapsed_time,
+    };
+    use std::time::Duration;
+
+    let (ui, deck) = projection_window();
+    let mut group = state(&["pc"], true);
+    deck.group.assume(Some(group.clone()));
+    deck.group.paint_now(&ui);
+    let banner = ui.global::<Shell>().get_group_banner();
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-strip"
+        )
+        .next()
+        .is_some()
+    );
+    mock_elapsed_time(Duration::from_millis(4000));
+    mock_elapsed_time(Duration::from_millis(200));
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-capsule"
+        )
+        .next()
+        .is_some()
+    );
+    group.version += 1;
+    group.now.as_mut().expect("组正在播放").playing = false;
+    deck.group.assume(Some(group));
+    deck.group.paint_now(&ui);
+    deck.group.push_playback(&ui);
+    assert_eq!(
+        ui.global::<Shell>().get_group_banner(),
+        banner
+    );
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-capsule"
+        )
+        .next()
+        .is_some()
+    );
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-strip"
+        )
+        .next()
+        .is_none()
+    );
+    ElementHandle::find_by_accessible_label(&ui, "播放组")
+        .next()
+        .expect("胶囊存在")
+        .invoke_accessible_default_action();
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-panel"
+        )
+        .next()
+        .is_some()
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(
+            &ui,
+            "组: 已暂停"
+        )
+        .next()
+        .is_some()
+    );
+    let mut resumed = state(&["pc"], true);
+    resumed.version = 5;
+    deck.group.assume(Some(resumed));
+    deck.group.paint_now(&ui);
+    deck.group.push_playback(&ui);
+    assert!(
+        ElementHandle::find_by_element_id(
+            &ui,
+            "MainWindow::group-panel"
+        )
+        .next()
+        .is_some()
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(
+            &ui,
+            "组: 正在播放 x"
+        )
+        .next()
+        .is_some()
+    );
+}
