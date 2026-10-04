@@ -1,0 +1,18 @@
+# 依赖升级不新增产品行为；累计回归与小米 13 的硬件证据共同验收。
+
+[[ac]]
+id = "AC-1"
+none = "依赖解析的结构条件：核对 Slint 锁定提交包含 v1.18.1、无预发布版本，并保存 cargo update --dry-run 的零升级结果；证据随交接报告提交"
+
+[[ac]]
+id = "AC-2"
+none = "完整 final 计划的执行条件，由固定候选上的 verify-run plan 凭据证明，包含 accept.required 累计 all 的退出状态"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+entry = "真实客户端登录，从每日推荐列表或卡墙点歌，使用播放控制和个人页输出选择进入组内遥控"
+observe = "目标客户端实际解码输出对应曲目 PCM；控制端静音，暂停/继续及输出切换保持实际播放链；小米 13 的 debug 包登录、AudioTrack、播放页布局和 MCP 树另交硬件证据"
+tests = ["test_remote::test_core_pick[list]", "test_remote::test_core_pick[wall]", "test_remote::test_pause_resume", "test_remote::test_switch_output", "test_remote::test_silent_member_projects_group_track"]
+doubles = ["外部音乐目录与 WAV HTTP 为替身；真实业务服务、客户端、解码和输出不替换；桌面虚拟 GPU 与声卡不能证明 Android 原生扬声器、合成器像素或真实音乐上游，需小米 13 实测补齐"]
+mutation = "复用累计套件中的 send-request 和 execute-target 故障：关键链路失效时 test_core_pick[list] 的最终 PCM 断言失败；依赖升级本身不新增行为或制造人工 RED"
