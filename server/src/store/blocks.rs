@@ -121,7 +121,7 @@ pub async fn delete(
 
 /// 这首歌命不命中任一条规则。标签认的是 `facets.tags`,调用方得先填好聚合。
 ///
-/// 客户端的队列跳过(`app_core::blocks`)按同一个口径认,改一边要改另一边。
+/// 客户端与这里都调用 contract 的纯匹配，口径共用。
 pub fn hits(
     rules: &[BlockRuleDto],
     track: &TrackDto,
