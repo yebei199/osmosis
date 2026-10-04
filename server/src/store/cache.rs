@@ -246,7 +246,7 @@ pub async fn details_of(
     let rows: Vec<TrackRow> = sqlx::query_as(
         "SELECT d.platform, d.track_id, d.title, d.alias,
                 d.artists, d.cover, d.duration_ms,
-                d.album_id, d.album_name
+                d.album_id, d.album_name, d.artist_identities
          FROM UNNEST($1::text[]) WITH ORDINALITY AS asked (id, pos)
          JOIN platform_tracks d
            ON d.platform = $2 AND d.track_id = asked.id
@@ -275,7 +275,7 @@ pub async fn tracks_of(
     let rows: Vec<TrackRow> = sqlx::query_as(
         "SELECT d.platform, d.track_id, d.title, d.alias,
                 d.artists, d.cover, d.duration_ms,
-                d.album_id, d.album_name
+                d.album_id, d.album_name, d.artist_identities
          FROM platform_playlist_tracks m
          JOIN platform_tracks d
            ON d.platform = m.platform AND d.track_id = m.track_id
@@ -302,6 +302,8 @@ struct TrackRow {
     title: String,
     alias: Option<String>,
     artists: Vec<String>,
+    artist_identities:
+        sqlx::types::Json<Vec<contract::ArtistIdentityDto>>,
     cover: Option<String>,
     duration_ms: i64,
     album_id: Option<String>,
@@ -311,7 +313,7 @@ struct TrackRow {
 impl TrackRow {
     fn into_dto(self) -> TrackDto {
         TrackDto {
-            artist_identities: Vec::new(),
+            artist_identities: self.artist_identities.0,
             platform: self.platform,
             id: self.track_id,
             title: self.title,
@@ -341,7 +343,7 @@ pub async fn put_details(
         let mut query = QueryBuilder::new(
             "INSERT INTO platform_tracks
              (platform, track_id, title, alias, artists, cover, duration_ms,
-              album_id, album_name) ",
+              album_id, album_name, artist_identities) ",
         );
         query.push_values(chunk, |mut row, track| {
             row.push_bind(&track.platform)
@@ -356,13 +358,17 @@ pub async fn put_details(
                 )
                 .push_bind(
                     track.album.as_ref().map(|a| &a.name),
-                );
+                )
+                .push_bind(sqlx::types::Json(
+                    &track.artist_identities,
+                ));
         });
         query.push(
             " ON CONFLICT (platform, track_id) DO UPDATE SET
                 title = EXCLUDED.title,
                 alias = EXCLUDED.alias,
                 artists = EXCLUDED.artists,
+                artist_identities = EXCLUDED.artist_identities,
                 cover = EXCLUDED.cover,
                 duration_ms = EXCLUDED.duration_ms,
                 album_id = EXCLUDED.album_id,

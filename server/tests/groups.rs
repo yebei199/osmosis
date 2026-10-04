@@ -180,6 +180,7 @@ async fn radio_output_retains_the_group_revision_until_released()
                 now.queue_id,
                 revision,
                 &[EntryInput {
+                    artist_identities: Vec::new(),
                     platform: "netease".to_owned(),
                     track_id: "new-radio".to_owned(),
                     title: "新电台曲目".to_owned(),
@@ -265,6 +266,7 @@ async fn radio_output_retains_the_group_revision_until_released()
             now.queue_id,
             revision,
             &[EntryInput {
+                artist_identities: Vec::new(),
                 platform: "netease".to_owned(),
                 track_id: "next-radio".to_owned(),
                 title: "下一批".to_owned(),
@@ -332,6 +334,7 @@ async fn radio_output_collapse_retains_referenced_queues_only()
         account,
         "pc",
         &[EntryInput {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             track_id: "new-radio".to_owned(),
             title: "新电台".to_owned(),
@@ -391,6 +394,7 @@ async fn radio_output_concurrent_seed_and_publish_keep_committed_references_read
         account,
         "phone",
         &[EntryInput {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             track_id: "a".to_owned(),
             title: "a".to_owned(),
@@ -465,6 +469,7 @@ async fn radio_output_concurrent_seed_and_publish_keep_committed_references_read
             first.queue_id,
             revision,
             &[EntryInput {
+                artist_identities: Vec::new(),
                 platform: "netease".to_owned(),
                 track_id: "b".to_owned(),
                 title: "b".to_owned(),
@@ -661,6 +666,7 @@ async fn radio_output_reseeds_repaired_groups_in_both_entry_paths()
                 account,
                 "phone",
                 &[EntryInput {
+                    artist_identities: Vec::new(),
                     platform: "netease".to_owned(),
                     track_id: "current-radio".to_owned(),
                     title: "当前电台".to_owned(),
@@ -831,6 +837,7 @@ async fn radio_output_seed_validation_and_valid_playback_are_preserved()
         foreign,
         "pc",
         &[EntryInput {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             track_id: "foreign".to_owned(),
             title: "别人的歌".to_owned(),
@@ -942,6 +949,7 @@ async fn phone_and_pc(
     let inputs: Vec<EntryInput> = tracks()
         .iter()
         .map(|track| EntryInput {
+            artist_identities: Vec::new(),
             platform: track.platform.clone(),
             track_id: track.id.clone(),
             title: track.title.clone(),
@@ -1557,6 +1565,7 @@ async fn the_group_skips_a_blocked_track_on_advance_and_next()
     let inputs: Vec<EntryInput> = tracks()
         .iter()
         .map(|track| EntryInput {
+            artist_identities: Vec::new(),
             platform: track.platform.clone(),
             track_id: track.id.clone(),
             title: track.title.clone(),

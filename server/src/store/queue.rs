@@ -80,6 +80,7 @@ pub struct EntryInput {
     pub title: String,
     pub alias: Option<String>,
     pub artists: Vec<String>,
+    pub artist_identities: Vec<contract::ArtistIdentityDto>,
     pub cover: Option<String>,
     pub duration_ms: i64,
 }
@@ -96,6 +97,7 @@ pub struct Entry {
     pub title: String,
     pub alias: Option<String>,
     pub artists: Vec<String>,
+    pub artist_identities: Vec<contract::ArtistIdentityDto>,
     pub cover: Option<String>,
     pub duration_ms: i64,
 }
@@ -177,6 +179,7 @@ type EntryRow = (
     Vec<String>,
     Option<String>,
     i64,
+    sqlx::types::Json<Vec<contract::ArtistIdentityDto>>,
 );
 
 /// 一条报告行的原样形状,理由同 [`EntryRow`]。
@@ -389,7 +392,7 @@ pub async fn page(
 
     let rows: Vec<EntryRow> = sqlx::query_as(
         "SELECT entry_id, position, platform, track_id,
-                title, alias, artists, cover, duration_ms
+                title, alias, artists, cover, duration_ms, artist_identities
          FROM play_queue_entries
          WHERE queue_id = $1 AND revision = $2
          ORDER BY position
@@ -417,6 +420,7 @@ pub async fn page(
                     artists,
                     cover,
                     duration_ms,
+                    artist_identities,
                 )| Entry {
                     entry_id,
                     position,
@@ -427,6 +431,7 @@ pub async fn page(
                     artists,
                     cover,
                     duration_ms,
+                    artist_identities: artist_identities.0,
                 },
             )
             .collect(),
@@ -886,19 +891,26 @@ async fn insert_entries(
         })
         .collect();
 
+    let artist_identities: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            sqlx::types::Json(&entry.artist_identities)
+        })
+        .collect();
+
     sqlx::query(
         "INSERT INTO play_queue_entries
              (queue_id, revision, entry_id, position, platform, track_id,
-              title, alias, artists, cover, duration_ms)
+              title, alias, artists, cover, duration_ms, artist_identities)
          SELECT $1, $2, u.entry_id, u.position, u.platform, u.track_id,
                 u.title, u.alias,
                 ARRAY(SELECT jsonb_array_elements_text(u.artists)),
-                u.cover, u.duration_ms
+                u.cover, u.duration_ms, u.artist_identities
          FROM UNNEST($3::bigint[], $4::bigint[], $5::text[], $6::text[],
                      $7::text[], $8::text[], $9::jsonb[], $10::text[],
-                     $11::bigint[])
+                     $11::bigint[], $12::jsonb[])
               AS u(entry_id, position, platform, track_id,
-                   title, alias, artists, cover, duration_ms)",
+                   title, alias, artists, cover, duration_ms, artist_identities)",
     )
     .bind(queue_id)
     .bind(revision)
@@ -911,6 +923,7 @@ async fn insert_entries(
     .bind(&artists)
     .bind(&covers)
     .bind(&durations)
+    .bind(&artist_identities)
     .execute(conn)
     .await?;
 

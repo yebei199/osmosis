@@ -739,6 +739,7 @@ mod persistence {
         let inputs: Vec<EntryInput> = ["first", "second"]
             .into_iter()
             .map(|id| EntryInput {
+                artist_identities: Vec::new(),
                 platform: "netease".to_owned(),
                 track_id: id.to_owned(),
                 title: id.to_owned(),
