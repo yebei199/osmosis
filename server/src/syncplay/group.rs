@@ -775,7 +775,7 @@ fn same_batch(
 
 fn input(track: &TrackDto) -> EntryInput {
     EntryInput {
-        artist_identities: Vec::new(),
+        artist_identities: track.artist_identities.clone(),
         platform: track.platform.clone(),
         track_id: track.id.clone(),
         title: track.title.clone(),
