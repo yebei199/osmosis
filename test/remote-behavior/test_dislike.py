@@ -1,8 +1,10 @@
 """#181：真实不喜欢入口 → 规则/点踩落库 → 列表、队列与实际音频。"""
 
 import json
+import re
 import time
 import urllib.request
+from datetime import datetime
 from enum import Enum
 
 import pytest
@@ -203,6 +205,18 @@ def current_group_track(world):
     return entries[0]["track_id"] if entries else None
 
 
+# 读取真实服务端的 ready 提前记录，不伪造执行报告或锚点。
+def ready_report_time(world, entry_id):
+    for log in world.directory.glob("server-*.log"):
+        for raw in log.read_text().splitlines():
+            line = re.sub(r"\x1b\[[0-9;]*m", "", raw)
+            if "出声设备都就绪,起播提前" in line and re.search(
+                rf"\bentry_id={entry_id}\b", line
+            ):
+                return datetime.fromisoformat(line.split()[0]).timestamp()
+    return None
+
+
 def published_local_tracks(world):
     return world.sql(
         """WITH current_queue AS (
@@ -311,9 +325,23 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     open_reasons(source, "drawer")
     saved = choose(world, "exact")
     wait_until(lambda: current_group_track(world) == "175003", "group skips duplicate", timeout=1)
+    switched = wait_until(
+        lambda: playing_title(source.ui, "Song (Live)"), "group playback bar updates", timeout=1
+    )
+    saved_at = saved["created_at"].timestamp()
+    assert 0 <= switched - saved_at <= 1
     group = world.group()
-    assert 0 <= group["anchor_wall_us"] / 1_000_000 - saved["created_at"].timestamp() <= 1
+    initial_anchor = group["anchor_wall_us"] / 1_000_000
+    # 既有协议保留3秒预缓冲；250ms只覆盖保存事务到组意图的往返余量。
+    assert 0 <= initial_anchor - saved_at <= 3.25
     world.sound(world.one, "175003")
+    ready_at = wait_until(
+        lambda: ready_report_time(world, group["entry_id"]), "actual output ready report"
+    )
+    anchor = world.group()["anchor_wall_us"] / 1_000_000
+    assert 0.4 <= anchor - ready_at <= 0.6, "ready advances anchor to report time + 500ms"
+    assert anchor <= initial_anchor
+    assert anchor < saved_at + 3, "ready output must advance the original start wait"
     world.silent(source, world.two)
     assert_filtered(world, "exact")
     daily(source.ui)
