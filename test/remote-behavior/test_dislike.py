@@ -210,9 +210,7 @@ def ready_report_time(world, entry_id):
     for log in world.directory.glob("server-*.log"):
         for raw in log.read_text().splitlines():
             line = re.sub(r"\x1b\[[0-9;]*m", "", raw)
-            if "出声设备都就绪,起播提前" in line and re.search(
-                rf"\bentry_id={entry_id}\b", line
-            ):
+            if "出声设备都就绪,起播提前" in line and re.search(rf"\bentry_id={entry_id}\b", line):
                 return datetime.fromisoformat(line.split()[0]).timestamp()
     return None
 

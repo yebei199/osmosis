@@ -195,8 +195,9 @@ fn wire_sequence_end_is_independent_of_loop_and_shuffle() {
                     .as_mut()
                     .expect("playing group")
                     .entry_id = entry;
-                let dto = super::dto(&group, &entries)
-                    .expect("group state");
+                let dto =
+                    super::dto(&group, &entries, &list())
+                        .expect("group state");
                 let wire = serde_json::to_value(dto)
                     .expect("wire JSON");
                 assert_eq!(

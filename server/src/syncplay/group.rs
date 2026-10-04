@@ -255,7 +255,7 @@ pub async fn advance(
         .map_err(refused)?;
     if !rolled && !advanced {
         tx.commit().await?;
-        return Ok(dto(&group, &entries));
+        return Ok(dto(&group, &entries, &list));
     }
     tracing::info!(
         account,
@@ -330,7 +330,7 @@ pub async fn ready(
     .map_err(refused)?;
     if !rolled && !moved {
         tx.commit().await?;
-        return Ok(dto(&group, &entries));
+        return Ok(dto(&group, &entries, &list));
     }
     // 只是同一首提前开走,不是新起了一首:不再记一次 `play_events`。
     if !rolled {
@@ -425,9 +425,11 @@ pub async fn current(
     let entries =
         current_entries(&mut tx, account, &mut group)
             .await?;
+    let list = blocked_playlist(&mut tx, account, &entries)
+        .await?;
     tx.commit().await?;
-    group.roll(&playlist(&entries), wall_now_us());
-    Ok(dto(&group, &entries))
+    group.roll(&list, wall_now_us());
+    Ok(dto(&group, &entries, &list))
 }
 
 /// 起一个后台任务:先把服务端挂掉时还在放的组补暂停,之后兜底续播、记心跳。与进程同寿。
@@ -574,14 +576,15 @@ async fn commit(
         )
         .await?;
     }
+    let list =
+        blocked_playlist(&mut tx, account, entries).await?;
     let boundary = group.now.as_ref().and_then(|now| {
-        playlist(entries)
-            .duration_of(now.entry_id)
+        list.duration_of(now.entry_id)
             .and_then(|duration| now.deadline(duration))
     });
     rows::save(&mut tx, account, &group, boundary).await?;
     tx.commit().await?;
-    Ok(dto(&group, entries))
+    Ok(dto(&group, entries, &list))
 }
 
 /// 推给账号下每台在线设备。成员与否由收的那一侧看:不在组里的设备也要知道组在放什么
@@ -858,6 +861,7 @@ async fn blocked_playlist(
 fn dto(
     group: &Group,
     entries: &[Entry],
+    list: &Playlist,
 ) -> Option<GroupStateDto> {
     if group.is_vacant() {
         return None;
@@ -866,7 +870,6 @@ fn dto(
         (wall_now_us(), clock::now_us() as i64);
     let to_mono =
         |at: i64| (mono + (at - wall)).max(0) as u64;
-    let list = playlist(entries);
     let now = group.now.as_ref().and_then(|now| {
         let entry = entries
             .iter()
@@ -881,7 +884,7 @@ fn dto(
         };
         let next = now
             .boundary(duration)
-            .zip(now.follower(&list))
+            .zip(now.follower(list))
             .and_then(|(end, id)| {
                 let entry = entries
                     .iter()
@@ -901,7 +904,7 @@ fn dto(
             position_us,
             playing: now.playing,
             next,
-            at_end: now.at_end(&list),
+            at_end: now.at_end(list),
             shuffled: now.shuffled,
             loop_mode: now.loop_mode,
         })
