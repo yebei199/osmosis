@@ -188,13 +188,19 @@ export component MusicPage inherits VerticalLayout {
     init => { if (Downloads.active) { Downloads.show(); } else { Player.music-shown(); } }
 
     // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
-    if Shell.compact: music-bar := MusicBar {
+    if Shell.compact: HorizontalLayout {
+        spacing: 0px;
+        music-bar := MusicBar {
+            horizontal-stretch: 1;
         current: Downloads.active ? 5 : Shell.music-section;
         selected(section) => {
             Downloads.confirming = false;
             Downloads.active = section == 5;
             if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
         }
+    }
+        // 组状态存在时只让头部横向避开胶囊，独奏仍占满这一行。
+        if Shell.group-banner != "": Rectangle { width: 56px; }
     }
 
     HorizontalLayout {

@@ -1207,6 +1207,7 @@ fn a_new_playback_version_keeps_the_notice_collapsed() {
     let mut group = state(&["pc"], true);
     deck.group.assume(Some(group.clone()));
     deck.group.paint_now(&ui);
+    mock_elapsed_time(Duration::ZERO);
     let banner = ui.global::<Shell>().get_group_banner();
     assert!(
         ElementHandle::find_by_element_id(
@@ -1230,6 +1231,7 @@ fn a_new_playback_version_keeps_the_notice_collapsed() {
     group.now.as_mut().expect("组正在播放").playing = false;
     deck.group.assume(Some(group));
     deck.group.paint_now(&ui);
+    mock_elapsed_time(Duration::ZERO);
     deck.group.push_playback(&ui);
     assert_eq!(
         ui.global::<Shell>().get_group_banner(),
@@ -1275,6 +1277,7 @@ fn a_new_playback_version_keeps_the_notice_collapsed() {
     resumed.version = 5;
     deck.group.assume(Some(resumed));
     deck.group.paint_now(&ui);
+    mock_elapsed_time(Duration::ZERO);
     deck.group.push_playback(&ui);
     assert!(
         ElementHandle::find_by_element_id(
@@ -1287,7 +1290,7 @@ fn a_new_playback_version_keeps_the_notice_collapsed() {
     assert!(
         ElementHandle::find_by_accessible_label(
             &ui,
-            "组: 正在播放 x"
+            "组: 正在播放 歌 x"
         )
         .next()
         .is_some()

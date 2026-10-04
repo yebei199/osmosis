@@ -58,6 +58,7 @@ fn element(
     ui: &MainWindow,
     id: &str,
 ) -> testing::ElementHandle {
+    advance(0);
     testing::ElementHandle::find_by_element_id(ui, id)
         .next()
         .unwrap_or_else(|| panic!("找不到 {id}"))
@@ -65,6 +66,7 @@ fn element(
 
 /// 可见树决定当前形态，隐藏的旧元素不能冒充胶囊。
 fn present(ui: &MainWindow, id: &str) -> bool {
+    advance(0);
     testing::ElementHandle::find_by_element_id(ui, id)
         .next()
         .is_some()
@@ -516,6 +518,7 @@ fn a_pressed_notice_action_survives_the_collapse_deadline()
             button: PointerEventButton::Left,
         },
     );
+    advance(0);
     advance(5000);
     assert!(present(&ui, "MainWindow::group-strip"));
     ui.window().dispatch_event(
@@ -524,6 +527,7 @@ fn a_pressed_notice_action_survives_the_collapse_deadline()
             button: PointerEventButton::Left,
         },
     );
+    advance(0);
     advance(3900);
     assert!(present(&ui, "MainWindow::group-strip"));
     advance(100);
