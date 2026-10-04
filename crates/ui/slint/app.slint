@@ -862,7 +862,8 @@ export component MainWindow inherits Window {
                         overflow: elide;
                     }
                     Text {
-                        text: Shell.local-member ? "本机 · 组成员" : "本机 · 独奏";
+                        text: Shell.local-member ? "本机 · 出声端"
+                            : Shell.group-joinable ? "本机 · 独奏" : "本机 · 遥控端";
                         color: Theme.text-dim;
                     }
                     ListView {
@@ -876,7 +877,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                             }
                             Text {
-                                text: device.member ? "组成员" : "独奏";
+                                text: device.member ? "出声端" : "未出声";
                                 color: device.member ? Theme.accent-ink : Theme.text-dim;
                             }
                         }

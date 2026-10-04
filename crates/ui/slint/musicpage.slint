@@ -192,13 +192,13 @@ export component MusicPage inherits VerticalLayout {
         spacing: 0px;
         music-bar := MusicBar {
             horizontal-stretch: 1;
-        current: Downloads.active ? 5 : Shell.music-section;
-        selected(section) => {
-            Downloads.confirming = false;
-            Downloads.active = section == 5;
-            if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
+            current: Downloads.active ? 5 : Shell.music-section;
+            selected(section) => {
+                Downloads.confirming = false;
+                Downloads.active = section == 5;
+                if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
+            }
         }
-    }
         // 组状态存在时只让头部横向避开胶囊，独奏仍占满这一行。
         if Shell.group-banner != "": Rectangle { width: 56px; }
     }
