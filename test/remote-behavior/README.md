@@ -127,3 +127,4 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 遮罩取消通过现有导航位置的 MCP 指针点击进入。它不证明物理手指长按的计时器或 Android
 原生端；小米13另排实机时段。开发入口为 `run.sh targeted test_dislike.py`，累计验收
 同时运行 app-core 屏蔽单元测试并生成既有 projection JUnit。
+兼容用例固定旧版三枚举，检查缺省规则响应可解析，新客户端声明 song_rules 后可管理歌曲规则。
