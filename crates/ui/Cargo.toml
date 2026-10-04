@@ -43,6 +43,7 @@ slint-build.workspace = true
 
 # 只用来在测试里查子集字体的 cmap。slint 自己也依赖它,不引入新的下载。
 [dev-dependencies]
+serde_json = "1"
 ttf-parser = "0.25"
 similar-asserts.workspace = true
 tempfile.workspace = true

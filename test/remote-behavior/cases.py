@@ -181,6 +181,90 @@ def local_radio_seed_top_up(world):
     world.silent(source, world.two)
 
 
+# 组内 FM 从真实入口开,沿实际次序走到队尾,断言追加行与新增曲目 PCM。
+def group_radio_sequence_end_top_up(world, mode, shuffled):
+    source = world.controller
+    source.ui.output(world.one)
+    source.ui.radio()
+    world.sound(world.one, "175004")
+    for wanted_mode in ["all", "one"] if mode == "one" else ["all"] if mode == "all" else []:
+        source.ui.cycle_loop()
+        wait_until(
+            lambda wanted_mode=wanted_mode: world.group()["loop_mode"] == wanted_mode,
+            "radio loop " + wanted_mode,
+        )
+    if shuffled:
+        source.ui.shuffle()
+        wait_until(lambda: world.group()["shuffled"], "radio shuffle enabled")
+    seeded = world.group()
+    original = world.sql(
+        "SELECT entry_id, track_id FROM play_queue_entries WHERE queue_id=%s AND revision=%s ORDER BY position",
+        (seeded["queue_id"], seeded["revision"]),
+    )
+    assert len(original) == 3
+    tracks = {entry["entry_id"]: entry["track_id"] for entry in original}
+    order = seeded["play_order"] if shuffled else list(tracks)
+    for entry in order[1:]:
+        source.ui.transport("next")
+        world.sound(world.one, tracks[entry])
+
+    # 追加只能来自真实 radio → HTTP append → 数据库事务,不在夹具里改业务状态。
+    def extended():
+        row = world.group()
+        entries = world.sql(
+            "SELECT entry_id, track_id FROM play_queue_entries WHERE queue_id=%s AND revision=%s ORDER BY position",
+            (row["queue_id"], row["revision"]),
+        )
+        if (
+            row["queue_id"] == seeded["queue_id"]
+            and row["revision"] > seeded["revision"]
+            and len(entries) >= 6
+        ):
+            return row, entries
+        return None
+
+    row, entries = wait_until(extended, "group FM append at sequence end")
+    assert row["entry_id"] == order[-1]
+    sequence = row["play_order"] if shuffled else [entry["entry_id"] for entry in entries]
+    following = sequence[sequence.index(row["entry_id"]) + 1]
+    assert following not in tracks
+    wanted = next(entry["track_id"] for entry in entries if entry["entry_id"] == following)
+    if mode == "one":
+        source.ui.transport("next")
+    else:
+        source.ui.playback_options()
+        source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
+        source.ui.seek(world.media_duration - 5)
+    world.sound(world.one, wanted)
+    world.silent(source, world.two)
+
+
+# 非电台列表通过自然结束回卷,组队列身份和行数保持不变。
+def non_radio_list_loop_wraps_without_append(world):
+    remote_pick(world)
+    source = world.controller
+    source.ui.cycle_loop()
+    wait_until(lambda: world.group()["loop_mode"] == "all", "ordinary list loop")
+    original = world.group()
+    source.ui.transport("next")
+    world.sound(world.one, DAILY_IDS[1])
+    source.ui.transport("next")
+    world.sound(world.one, DAILY_IDS[2])
+    source.ui.playback_options()
+    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
+    source.ui.seek(world.media_duration - 5)
+    world.sound(world.one, DAILY_IDS[0])
+    row = world.group()
+    assert (row["queue_id"], row["revision"]) == (original["queue_id"], original["revision"])
+    entries = world.sql(
+        "SELECT count(*) AS total FROM play_queue_entries WHERE queue_id=%s AND revision=%s",
+        (row["queue_id"], row["revision"]),
+    )
+    assert entries[0]["total"] == 3
+    assert not any(call.get("method") == "GetPersonalFm" for call in world.media.calls)
+    world.silent(source, world.two)
+
+
 # 加入健康组时，源端的另一首本机曲目不能覆盖已有组播放。
 def healthy_group_ignores_unrelated_seed(world):
     remote_pick(world)
