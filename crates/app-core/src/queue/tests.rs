@@ -364,7 +364,7 @@ fn retaining_tracks_keeps_batch_current_and_play_order() {
     );
     assert_eq!(id_of(&queue), Some("2".to_owned()));
     assert_eq!(queue.order(), &[2, 1, 0]);
-    assert!(queue.shuffled());
+    assert!(queue.is_shuffled());
     assert_eq!(queue.loop_mode(), LoopMode::All);
     assert_eq!(
         queue.next(0).map(|track| track.id.clone()),
