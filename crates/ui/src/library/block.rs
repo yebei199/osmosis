@@ -128,6 +128,10 @@ fn refresh(set: &BlockSet, ui: &MainWindow) {
     let _ = slint::spawn_local(async move {
         match api::blocks().await {
             Ok(dto) => {
+                // 同一份规则不换 model，保住正在读取或点击的设置行。
+                if *set.borrow() == dto.rules {
+                    return;
+                }
                 *set.borrow_mut() = dto.rules;
                 if let Some(ui) = weak.upgrade() {
                     project(&set, &ui);
