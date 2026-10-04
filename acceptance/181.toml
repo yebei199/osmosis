@@ -76,7 +76,7 @@ mutation = "先切歌再保存、规则失败仍留点踩、破坏既有 next/�
 id = "AC-3"
 kind = "new"
 entry = "真实桌面遥控器选择另一真实客户端输出→点歌→不喜欢→下一曲→列表屏蔽未来条目→seek到末尾→实际自动推进"
-observe = "组账号所属规则即时排除同名不同id，组条目发布和遥控播放条相对规则保存≤1秒；锚点保留START_WAIT最多3秒（保存到组意图往返余量250ms），真实ready报告后按ready+500ms提前；远端monitor PCM正确；随后媒体放完的组推进跳过另行屏蔽的未来条目，源端和第三端静音"
-tests = ["test_dislike::test_dislike_remote_output_and_future_advance", "server::syncplay::group::tests::persistence::wire_tail_and_next_use_account_blocks"]
+observe = "组账号所属规则即时排除同名不同id，组条目发布和遥控播放条相对规则保存≤1秒；锚点保留START_WAIT最多3秒（保存到组意图往返余量250ms），真实ready报告后按ready+500ms提前；远端monitor PCM正确；随后媒体放完的组推进跳过另行屏蔽的未来条目，源端和第三端静音；唯一余下队尾屏蔽后HTTP组DTO的at_end=true/next=None"
+tests = ["test_dislike::test_dislike_remote_output_and_future_advance"]
 doubles = ["本条只覆盖 Android 与桌面共有的软件链路；组next/at_end以带账号屏蔽的同一队列投影验证；小米13的入口、触控、安全区和原生输出仍须排时段补自动化真机证据，当前不构成完整AC-3验收"]
 mutation = "只改本地queue或显示、不让组按账号规则跳过同名id时，目标PCM/组引用必须失败；不以意图日志代替出声"

@@ -43,14 +43,18 @@ class LegacyBlockKind(str, Enum):
     TRACK = "track"
 
 
-def read_blocks(world, path):
+def read_api(world, path):
     session = world.request("/login", {"username": world.username, "password": world.password})
     request = urllib.request.Request(
         f"http://127.0.0.1:{world.server_port}{path}",
         headers={"Authorization": "Bearer " + session["token"]},
     )
     with urllib.request.urlopen(request, timeout=8) as response:
-        return json.load(response)["rules"]
+        return json.load(response)
+
+
+def read_blocks(world, path):
+    return read_api(world, path)["rules"]
 
 
 # 只替换外部目录，声音仍由原有 WAV 字节独立编码曲目 id。
@@ -354,6 +358,15 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     assert current_group_track(world) == "175005", (
         "automatic group advance must skip blocked 175004"
     )
+    daily(source.ui)
+    source.ui.activate(source.ui.must("TrackList::touch", "Safe"), action="Expand")
+    activate(source.ui, "不喜欢…")
+    activate(source.ui, REASONS["exact"])
+    wait_until(lambda: len(rules(world)) == 3, "only remaining group tail blocked")
+    wire_now = read_api(world, "/group")["state"]["now"]
+    assert wire_now["track"]["id"] == "175005"
+    assert wire_now["at_end"] is True
+    assert wire_now["next"] is None, "wire preview must not announce blocked tail"
     world.silent(source, world.two)
 
 
