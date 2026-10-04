@@ -155,7 +155,6 @@ impl Queue {
                     .min(self.order.len().saturating_sub(1))
             });
         self.tracks = kept;
-        self.batch = self.batch.wrapping_add(1);
         true
     }
 
