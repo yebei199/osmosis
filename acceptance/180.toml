@@ -1,0 +1,34 @@
+# #180 自动收起组提示、胶囊和面板的用户路径。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实MainWindow接收组状态，模拟时钟推进；指针点击胶囊、面板动作和空白遮罩"
+observe = "3900ms仍展开，4200ms收为44px胶囊且组条不占高度；状态变化重新展开；面板列设备与输出，加入退出各走原回调"
+tests = ["ui::group_capsule::the_group_collapses_after_four_seconds_without_reserving_a_row", "ui::group_capsule::projected_group_changes_restart_the_full_notice", "ui::group_capsule::a_connection_fault_reopens_the_notice_without_a_text_change", "ui::group_capsule::clearing_the_group_closes_the_panel_and_cancels_the_notice", "ui::group_capsule::a_pointer_opens_the_device_panel_and_the_backdrop_closes_it", "ui::group_capsule::the_panel_routes_join_and_leave_through_the_existing_actions", "ui::group_capsule::an_open_panel_stays_open_while_group_details_change", "ui::group_capsule::a_pressed_notice_action_survives_the_collapse_deadline", "ui::music::tests::group::a_new_playback_version_keeps_the_notice_collapsed"]
+doubles = ["无头窗口和模拟时钟替代窗口系统；回调计数只证明UI路由，AC-3真机从MCP按钮到服务端组状态解除单独验证"]
+mutation = "保留旧常驻组条使4200ms胶囊与页面起点断言失败；把播放version用于重展会在暂停或恢复时破坏收起断言；移除遮罩或组动作使指针结果失败"
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "420宽四个壳页与六种音乐分区，1000宽600/800高导航，深浅两种主题"
+observe = "胶囊与实际触控、输入和导航矩形不相交；紧凑头部44px，仅有组时横向让出56px；图标24px且可见"
+tests = ["ui::group_capsule::the_compact_capsule_avoids_controls_on_every_shell_page", "ui::group_capsule::the_wide_capsule_avoids_navigation_even_in_a_short_window", "ui::group_capsule::the_compact_header_reserves_a_slot_only_while_a_group_exists", "ui::group_capsule::the_capsule_has_a_visible_icon_in_both_themes"]
+doubles = ["无头窗口安全区为0，矩形和opacity不能证明最终像素的颜色对比，Android非零inset与图标辨认由AC-2/AC-3补充"]
+mutation = "不让出右侧槽会与MusicBar键相交；采用旧34px行高或给独奏常驻留槽会失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "错误、下载和组状态同时出现后等待收起；原状态条套件、旧加入退出入口"
+observe = "错误与下载条恢复到无组时同一矩形，仍在流布局；原页面让位、登录/播放覆层和触控保留"
+tests = ["ui::group_capsule::collapsing_the_group_keeps_error_and_download_space", "ui::status_strips::every_strip_combination_reserves_space_in_both_layouts", "ui::status_strips::group_actions_have_a_full_touch_target", "ui::banner::a_solo_device_can_join_from_the_group_banner"]
+doubles = ["真实Slint布局；无窗口系统与GPU"]
+
+[[ac]]
+id = "AC-2"
+none = "交付合成器截图：1000与420各展开、收起、面板三态；像素证据在报告与日志引用，无头JUnit无法替代"
+
+[[ac]]
+id = "AC-3"
+none = "小米13自动MCP入口验证展开收起、非零安全区及指针面板退出；断言服务端组状态解除，硬件证据单独随交付报告提供"

@@ -17,7 +17,7 @@ LABELS = {
     "resume": "\u64ad\u653e",
     "next": "\u4e0b\u4e00\u9996",
     "prev": "\u4e0a\u4e00\u9996",
-    "leave": "\u9000\u51fa",
+    "leave": "\u9000\u51fa\u7ec4",
     "local": "\u8f93\u51fa\u5230 \u672c\u673a",
     "output": "\u8f93\u51fa\u5230 ",
     "join": "\u52a0\u5165 ",
@@ -345,6 +345,23 @@ class UI:
         self.playback_options()
         self.activate(self.must("DrawerRow::touch", "循环: ", True))
 
-    # 退出播放组使用常驻横幅的用户入口。
+    # 从收起后的胶囊打开面板，再点击面板内唯一的退出按钮。
     def leave(self):
-        self.activate(self.must("MainWindow::exit-touch", LABELS["leave"]))
+        self.activate(self.must("MainWindow::group-capsule"), pointer=True)
+        panel = self.must("MainWindow::group-panel")
+        buttons = self.call(
+            "query_element_descendants",
+            elementHandle=panel,
+            findAll=True,
+            queryStack=[{"matchElementTypeName": "HoverButton"}],
+        ).get("elementHandles", [])
+        matches = [
+            button
+            for button in buttons
+            if self.call("get_element_properties", elementHandle=button).get("accessibleLabel")
+            == LABELS["leave"]
+            and self.visible(button)
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(f"group panel requires one visible exit button: {len(matches)}")
+        self.activate(matches[0], pointer=True)

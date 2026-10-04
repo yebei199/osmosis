@@ -22,6 +22,7 @@ fn element(
     ui: &MainWindow,
     id: &str,
 ) -> testing::ElementHandle {
+    testing::mock_elapsed_time(std::time::Duration::ZERO);
     testing::ElementHandle::find_by_element_id(ui, id)
         .next()
         .unwrap_or_else(|| panic!("找不到 {id}"))
@@ -48,6 +49,13 @@ fn strips(ui: &MainWindow, mask: u8) {
         if mask & 4 != 0 { "下载中 42%" } else { "" }
             .into(),
     );
+    // 组提示由状态观察器展开；清除时让200ms收起动画落地再量布局。
+    testing::mock_elapsed_time(std::time::Duration::ZERO);
+    if mask & 2 == 0 {
+        testing::mock_elapsed_time(
+            std::time::Duration::from_millis(200),
+        );
+    }
 }
 
 fn click(
@@ -268,6 +276,9 @@ fn group_actions_have_a_full_touch_target() {
         [(true, "加入播放组"), (false, "退出")]
     {
         ui.global::<Shell>().set_group_joinable(joinable);
+        testing::mock_elapsed_time(
+            std::time::Duration::ZERO,
+        );
         let action = testing::ElementHandle::find_by_accessible_label(&ui, label).next().expect("组操作该存在");
         assert!(
             action.size().height >= 44.0,
