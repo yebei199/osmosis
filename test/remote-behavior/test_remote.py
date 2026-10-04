@@ -88,6 +88,21 @@ def test_local_radio_seed_top_up(world):
     cases.local_radio_seed_top_up(world)
 
 
+# 组内真实私人 FM 在顺序末尾续取,循环和随机都不能阻止 append。
+@pytest.mark.parametrize(
+    "mode,shuffled",
+    [("all", False), ("off", False), ("all", True), ("one", False)],
+    ids=["list-loop", "loop-off", "shuffled-loop", "single-loop"],
+)
+def test_group_radio_sequence_end_top_up(world, mode, shuffled):
+    cases.group_radio_sequence_end_top_up(world, mode, shuffled)
+
+
+# 普通列表在曲尾保持回卷,不得被电台续取机制接管。
+def test_non_radio_list_loop_wraps_without_append(world):
+    cases.non_radio_list_loop_wraps_without_append(world)
+
+
 # 健康组不能被无关本机 seed 覆盖。
 def test_healthy_group_ignores_unrelated_seed(world):
     cases.healthy_group_ignores_unrelated_seed(world)

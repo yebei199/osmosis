@@ -8896,6 +8896,7 @@ dependencies = [
  "log",
  "qrcode",
  "rodio",
+ "serde_json",
  "similar-asserts",
  "slint",
  "slint-build",
