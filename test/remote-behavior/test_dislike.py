@@ -430,12 +430,22 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     expected = ["Song (Live)", "Other", "Song", "Safe"]
     wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
     assert rows(source.ui) == expected
+    heard = wait_until(
+        lambda: world.sql(
+            "SELECT track_id FROM play_events WHERE account_id=%s AND track_id=%s",
+            (world.account, "175003"),
+        ),
+        "radio next track recorded as heard",
+    )
+    (world.directory / "dislike-radio-heard.json").write_text(json.dumps(heard))
     source.restart()
     source.ui.radio()
     wait_until(lambda: rows(source.ui), "new radio batch")
-    wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
-    assert rows(source.ui) == expected
-    world.sound(source, "175003", group=False)
+    # 新批次也排除刚实际播过的 Song (Live),不只排除命中规则的两条歌。
+    fresh = ["Other", "Song", "Safe"]
+    wait_until(lambda: rows(source.ui) == fresh, "new radio batch applies blocks and history")
+    assert rows(source.ui) == fresh
+    world.sound(source, "175004", group=False)
 
 
 # 写入失败必须回滚点踩且不移除/跳过当前曲；故障只存在本用例的私有库。
