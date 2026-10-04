@@ -34,6 +34,7 @@ tests = [
   "app-core::blocks::dislike_tests::legacy_artist_tag_and_track_rules_keep_working",
   "test_dislike::test_dislike_cancel_and_existing_praise",
   "test_dislike::test_dislike_legacy_id_rule_can_be_restored",
+  "test_dislike::test_dislike_rule_capability_preserves_old_client_response",
 ]
 doubles = ["历史规则由独立数据库 SQL 建立前提，不替代恢复入口或过滤；标签菜单保留由真实列表菜单检查"]
 mutation = "错删历史规则、取消保存、赞新增屏蔽规则都会失败"

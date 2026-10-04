@@ -2,6 +2,8 @@
 
 import json
 import time
+import urllib.request
+from enum import Enum
 
 import pytest
 
@@ -30,6 +32,23 @@ BLOCKED = {
     "exact": {"175001", "175002"},
 }
 NEXT = {"artist": "175005", "versions": "175004", "exact": "175003"}
+
+
+# 固定为已发布旧客户端认识的三个值，不从新生产枚举动态生成。
+class LegacyBlockKind(str, Enum):
+    ARTIST = "artist"
+    TAG = "tag"
+    TRACK = "track"
+
+
+def read_blocks(world, path):
+    session = world.request("/login", {"username": world.username, "password": world.password})
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{world.server_port}{path}",
+        headers={"Authorization": "Bearer " + session["token"]},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.load(response)["rules"]
 
 
 # 只替换外部目录，声音仍由原有 WAV 字节独立编码曲目 id。
@@ -460,3 +479,30 @@ def test_dislike_noncurrent_track_preserves_cursor(dislike_world):
     wait_until(lambda: published_local_tracks(world) == expected_ids, "remove noncurrent track")
     source.ui.transport("next")
     world.sound(source, "175002", group=False)
+
+
+# 旧列表响应必须可按固定旧枚举解析，新客户端声明能力后才能管理新规则。
+def test_dislike_rule_capability_preserves_old_client_response(dislike_world):
+    world = dislike_world
+    source = world.controller
+    source.ui.pick("list")
+    world.sound(source, "175001", group=False)
+    open_reasons(source, "drawer")
+    saved = choose(world, "exact")
+    world.sql(
+        "INSERT INTO block_rules (account_id, kind, value, label) VALUES (%s, 'track', %s, %s)",
+        (world.account, "175006", "Safe"),
+    )
+    legacy = read_blocks(world, "/blocks")
+    assert [LegacyBlockKind(rule["kind"]) for rule in legacy] == [LegacyBlockKind.TRACK]
+    assert legacy[0]["value"] == "175006"
+    current = read_blocks(world, "/blocks?song_rules=true")
+    assert {rule["kind"] for rule in current} == {"song", "track"}
+    with pytest.raises(ValueError):
+        [LegacyBlockKind(rule["kind"]) for rule in current]
+    # 启动刷新不能漏掉能力声明，否则设置页无法找到已保存的新规则。
+    source.restart()
+    daily(source.ui)
+    wait_until(lambda: rows(source.ui) == ["Song (Live)", "Other", "Song"], "all rules filtered")
+    activate(source.ui, "设置")
+    button(source.ui, "恢复 " + saved["label"])
