@@ -493,16 +493,25 @@ def test_dislike_rule_capability_preserves_old_client_response(dislike_world):
         "INSERT INTO block_rules (account_id, kind, value, label) VALUES (%s, 'track', %s, %s)",
         (world.account, "175006", "Safe"),
     )
+    artist_value = json.dumps({"platform": "netease", "id": "9", "name": "Artist C"})
+    world.sql(
+        "INSERT INTO block_rules (account_id, kind, value, label) VALUES (%s, 'artist', %s, %s)",
+        (world.account, artist_value, "Artist C"),
+    )
     legacy = read_blocks(world, "/blocks")
-    assert [LegacyBlockKind(rule["kind"]) for rule in legacy] == [LegacyBlockKind.TRACK]
+    assert [LegacyBlockKind(rule["kind"]) for rule in legacy] == [
+        LegacyBlockKind.TRACK,
+        LegacyBlockKind.ARTIST,
+    ]
+    assert legacy[1]["value"] == "Artist C", "old clients match artist rules by literal name"
     assert legacy[0]["value"] == "175006"
     current = read_blocks(world, "/blocks?song_rules=true")
-    assert {rule["kind"] for rule in current} == {"song", "track"}
+    assert {rule["kind"] for rule in current} == {"song", "track", "artist"}
     with pytest.raises(ValueError):
         [LegacyBlockKind(rule["kind"]) for rule in current]
     # 启动刷新不能漏掉能力声明，否则设置页无法找到已保存的新规则。
     source.restart()
     daily(source.ui)
-    wait_until(lambda: rows(source.ui) == ["Song (Live)", "Other", "Song"], "all rules filtered")
+    wait_until(lambda: rows(source.ui) == ["Song (Live)", "Other"], "all rules filtered")
     activate(source.ui, "设置")
     button(source.ui, "恢复 " + saved["label"])
