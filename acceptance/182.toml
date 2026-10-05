@@ -38,7 +38,7 @@ mutation = "去掉组点歌的 radio::follow 应答,电台区点歌用例 due �
 [[ac]]
 id = "AC-4"
 kind = "new"
-entry = "遥控端选远端出声开私人 FM,续过一批后在电台区(仍是起播三首)点第二首,再放到那一版最后一首"
+entry = "遥控端选远端出声开私人 FM,续过一批后在电台区(#186 起是共享歌单里还没听的那三首)点第二首,再放到那一版最后一首"
 observe = "点歌使组队列换一版;那一版真实 append 增加条目;目标 PCM 播所点曲目与后续曲目"
 tests = ["test_remote::test_group_radio_pick_on_list_keeps_top_up"]
 doubles = ["软件声卡和外部音乐目录,真实 UI、组路由、数据库和解码器保留"]

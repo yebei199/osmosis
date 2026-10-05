@@ -332,6 +332,7 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
 /// 筛过、分过组、或续歌后本机列表没跟着长,都会另起一版。
 pub(in crate::music) fn follow(
     deck: &Deck,
+    tracks: &[TrackDto],
 ) -> crate::sync::group::Then {
     if deck.views.current_source()
         != Some(ViewSource::Radio)
@@ -339,6 +340,10 @@ pub(in crate::music) fn follow(
     {
         return Box::new(|_| {});
     }
+    let picked: Vec<String> = tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
     let filter = app_core::facets::picks(
         deck.facets.borrow().chosen(),
     );
@@ -353,10 +358,18 @@ pub(in crate::music) fn follow(
         );
         let mut state = radio.inner.borrow_mut();
         state.shared = Some(queue);
+        // 点进组队列的这些交给播放了,续歌不再从共享歌单里挑它们(#186)
+        state.handed.extend(picked);
         state.filter = filter;
         state.told_dry = false;
         state.retry_at_ms = 0;
     })
+}
+
+/// 交给过播放的曲目 id,续歌不再挑它们。
+#[cfg(test)]
+pub(super) fn handed(deck: &Deck) -> HashSet<String> {
+    deck.radio.inner.borrow().handed.clone()
 }
 
 /// 电台还在放的话,它续歌带的筛选;不在放是 `None`。
@@ -535,6 +548,7 @@ fn top_up_shared(
         let added = tracks.len();
         let radio = deck.radio.clone();
         let settling = deck.clone();
+        let fm = mode == api::RadioMode::Fm;
         deck.group.append(
             &ui,
             queue,
@@ -556,6 +570,11 @@ fn top_up_shared(
                         &ui, &settling, added, false,
                         now_ms,
                     );
+                    // 电台区摆的是共享歌单:续上了就换成取回来的那份,
+                    // 不留着起播那一批等下一次信令
+                    if fm && added > 0 {
+                        show_list(&ui, &settling);
+                    }
                 }
             }),
         );

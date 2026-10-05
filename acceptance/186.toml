@@ -13,9 +13,9 @@ mutation = "删掉 more 里的 tell_radio_changed:两台收不到 RadioChanged,�
 id = "AC-1"
 kind = "new"
 entry = "电台在放、队列剩最后一首,客户端续歌"
-observe = "从共享歌单里挑还没交给播放、过得了续歌筛选的,次序照歌单"
-tests = ["ui::music::rules::tests::radio_tops_up_from_the_shared_list_skipping_what_was_handed"]
-doubles = ["纯函数,无网络"]
+observe = "从共享歌单里挑还没交给播放、过得了续歌筛选的,次序照歌单;组里在电台区点进组队列的也算交给过播放"
+tests = ["ui::music::rules::tests::radio_tops_up_from_the_shared_list_skipping_what_was_handed", "ui::music::tests::group::a_pick_on_the_radio_list_in_the_group_hands_its_tracks"]
+doubles = ["纯函数无网络;组那条用 Rust 无头 Deck,组应答由测试直接给"]
 mutation = "去掉 radio_unhanded 里对 handed 的过滤:续进来的会重复已交出的歌"
 
 [[ac]]

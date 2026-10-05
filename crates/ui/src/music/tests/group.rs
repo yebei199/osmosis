@@ -1200,6 +1200,23 @@ fn a_pick_on_the_radio_list_in_the_group_keeps_the_radio() {
     );
 }
 
+/// 遥控端在电台区点歌(#186):点进组队列的那些记作交给过播放,
+/// 续歌从共享歌单挑歌时不会把它们再续一遍。
+#[test]
+fn a_pick_on_the_radio_list_in_the_group_hands_its_tracks()
+{
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    group_radio_at_its_end(&ui, &deck, ViewSource::Radio);
+    let picked = batch_of(&deck, &["c", "d"]);
+
+    let then = super::super::radio::follow(&deck, &picked);
+    then(Ok(Some((7, 4))));
+
+    let handed = super::super::radio::handed(&deck);
+    assert!(handed.contains("c") && handed.contains("d"));
+}
+
 /// 组里在电台以外点歌:换出来的那一版不归电台,电台停续。
 #[test]
 fn a_pick_elsewhere_in_the_group_stops_the_radio() {
