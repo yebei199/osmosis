@@ -20,7 +20,15 @@ case "${1:-all}" in
         mkdir -p "$state"
         git rev-parse HEAD > "$state/last-green"
         ;;
-    # 按 base..head 挑累计场景子集；认不出改动时 selection.py 退回全量。理由落 results/selection.json。
+    # 门禁按 run.toml [select] 挑出子集后调这里：跑点名的 pytest 节点、Rust 投影与 status-ui，
+    # 写出与 all 相同的 JUnit。
+    subset)
+        shift
+        [[ $# -gt 0 ]] || { echo "usage: acceptance/run.sh subset <test>..." >&2; exit 2; }
+        nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' bash test/remote-behavior/run.sh subset "$@")"
+        run_status_ui
+        ;;
+    # 手动用：按 base..head 挑选，再按结果走 all 或 subset。理由落 results/selection.json。
     changed)
         [[ $# == 3 ]] || { echo "usage: acceptance/run.sh changed <base> <head>" >&2; exit 2; }
         mkdir -p test/remote-behavior/results
@@ -29,8 +37,7 @@ case "${1:-all}" in
             --out test/remote-behavior/results/selection.json --args)")
         [[ ${#suite_args[@]} -gt 0 ]] || { echo "selection produced no run arguments" >&2; exit 2; }
         cat test/remote-behavior/results/selection.json
-        nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' bash test/remote-behavior/run.sh "${suite_args[@]}")"
-        run_status_ui
+        exec bash "$0" "${suite_args[@]}"
         ;;
-    *) echo "usage: acceptance/run.sh [all|status-ui|download|changed <base> <head>]" >&2; exit 2 ;;
+    *) echo "usage: acceptance/run.sh [all|status-ui|download|subset <test>...|changed <base> <head>]" >&2; exit 2 ;;
 esac
