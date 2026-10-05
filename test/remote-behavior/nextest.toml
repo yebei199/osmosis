@@ -1,6 +1,7 @@
 # 组状态与控制的定向证据,覆盖累计映射中的投影、seed 与回归。
 [profile.rb-projection]
-default-filter = '(package(app-core) & test(blocks::)) | (binary_id(ui) & (test(music::tests::group::) | test(music::tests::downloads::))) | (package(app-desktop) & test(downloads::tests::))'
+# 服务端那两组(#186)打真 Postgres,与 `cargo test -p server` 同一个库(DATABASE_URL 或 just pg 那一个)。
+default-filter = '(package(app-core) & test(blocks::)) | (binary_id(ui) & (test(music::tests::group::) | test(music::tests::downloads::) | test(music::rules::tests::radio_))) | (package(app-desktop) & test(downloads::tests::)) | (binary_id(server::bin/server) & (test(routes::catalog::radio::shared_tests::) | test(routes::play::archive::tests::retention::)))'
 retries = 0
 
 [profile.rb-projection.junit]

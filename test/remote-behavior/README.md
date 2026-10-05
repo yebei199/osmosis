@@ -54,6 +54,8 @@ playing 上报，revision 取该上报实际应用的版本；至少四个新版
 `nextest.toml` 选择 `music::tests::group` 的 Rust 回归，包括本地播放入口、组开关投影、
 电台 seed 接管及拒绝迟到应答；夹具无声卡，调用真实状态机与投影函数，
 输入 Idle 与实际队列，不人为设置 `has_track`。
+#186 起还选共享电台歌单的服务端路由测试与存歌清理测试(打真 Postgres,对象存储用内存替身),
+以及电台从共享歌单续歌的挑选规则。
 它们只补快速层，不抵扣 Python 音频。完整 `run.sh` 生成独立 nextest JUnit 和
 pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit.xml`；
 `acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
