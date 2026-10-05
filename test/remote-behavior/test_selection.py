@@ -206,3 +206,11 @@ def test_deleted_binary_file_falls_back_to_full(repo):
     git(repo, "commit", "-q", "-m", "drop")
     result = select(repo, base, git(repo, "rev-parse", "HEAD"), map_path)
     assert result["mode"] == "full"
+
+
+# 退回全量时每个认不出的文件都要列出理由，不只第一个。
+def test_full_fallback_lists_every_unrecognized_file(repo):
+    result = run(repo, {"Cargo.lock": "lock2\n", "crates/ui/slint/app.slint": "x\n"})
+    assert result["mode"] == "full"
+    flagged = {r["file"] for r in result["reasons"] if r.get("full")}
+    assert flagged == {"Cargo.lock", "crates/ui/slint/app.slint"}

@@ -160,13 +160,19 @@ def select(repo, base, head, map_path=DEFAULT_MAP):
             lambda p: inside_bodies(repo, map_commit, head, p, functions[p]),
         )
         if picked is None:
-            result["reasons"].append({"file": path, "rule": why})
-            return full(result, f"{why}: {path}")
+            # 不提前返回：报告要列出每个认不出的文件。
+            result["reasons"].append({"file": path, "rule": why, "full": True})
+            continue
         # ponytail: 显式故障清单，地图里没有 mutate 的嵌套构建。
         faults = [f for f, (anchor, _) in FAULTS.items() if anchor == path]
         picked = picked + [f"test_remote.py::test_fault_sensitivity[{f}]" for f in faults]
         result["reasons"].append({"file": path, "rule": why, "tests": picked})
         tests.update(picked)
+    unknown = [r for r in result["reasons"] if r.get("full")]
+    if unknown:
+        return full(
+            result, f"{len(unknown)} unrecognized: " + ", ".join(r["file"] for r in unknown)
+        )
     modules = {t for t in tests if "::" not in t}
     tests = {t for t in tests if t.split("::")[0] not in modules or "::" not in t}
     for module in sorted(modules):
