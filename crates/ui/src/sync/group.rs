@@ -318,17 +318,7 @@ impl Group {
 
     // ── 意图(UI 线程)──
 
-    /// 点歌单、卡墙、搜索里的一首。同一首的意图还在路上就不再发,说一句。
-    pub fn play(
-        &self,
-        ui: &MainWindow,
-        tracks: Vec<app_core::TrackDto>,
-        index: usize,
-    ) {
-        self.play_then(ui, tracks, index, Box::new(|_| {}));
-    }
-
-    /// 同 [`Self::play`],应答之后调 `then`。
+    /// 点歌单、卡墙、搜索里的一首,应答之后调 `then`。同一首的意图还在路上就不再发,说一句。
     pub fn play_then(
         &self,
         ui: &MainWindow,
