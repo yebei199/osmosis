@@ -1233,7 +1233,10 @@ fn transport_in_the_group_keeps_the_radio() {
         moved.version += 2 * (step as u64 + 1);
         deck.group.assume(Some(moved));
         deck.group.answer(Ok(Some((7, 3))));
-        assert!(super::super::radio::due(&deck, 0), "{step}");
+        assert!(
+            super::super::radio::due(&deck, 0),
+            "{step}"
+        );
     }
 }
 

@@ -213,7 +213,10 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
     let mut state = deck.radio.inner.borrow_mut();
     let foreign = after == before && state.batch != after;
     // 组里由 [`follow`] 接,本机队列与电台无关
-    if state.mode.is_none() || foreign || deck.group.is_member() {
+    if state.mode.is_none()
+        || foreign
+        || deck.group.is_member()
+    {
         log::info!(
             "电台区点歌,电台不接:没开过或这一批不归它"
         );
