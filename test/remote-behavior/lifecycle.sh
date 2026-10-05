@@ -25,6 +25,10 @@ finish() {
     fi
     date -u +%FT%TZ > "$REMOTE_BEHAVIOR_ARTIFACTS/end.txt"
     echo "$result" > "$REMOTE_BEHAVIOR_ARTIFACTS/exit.txt"
+    # 只有 run.sh 设 artifact_root；保留失败不改本轮结论。
+    if [[ -n ${artifact_root:-} ]]; then
+        bash "$suite_dir/retention.sh" "$artifact_root" || echo 'retention failed; evidence left in place' >&2
+    fi
     echo "exit=$result artifacts=$REMOTE_BEHAVIOR_ARTIFACTS"
     exit "$result"
 }
