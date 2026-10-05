@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["test_remote.py", "test_position.py", "test_lifecycle.py", "test_download.py"]
+testpaths = ["test_remote.py", "test_position.py", "test_lifecycle.py", "test_download.py", "test_selection.py"]
 junit_family = "xunit2"
 addopts = "--strict-markers --strict-config"
 
