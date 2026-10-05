@@ -25,7 +25,6 @@ use crate::routes::catalog::catalog_cache::{
 };
 use crate::routes::library::for_account;
 use crate::routes::library::likes::import_once;
-use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
 /// `GET /playlists` —— 我们自己的歌单:置顶的「我的喜欢」,其后是本地歌单。
@@ -228,7 +227,8 @@ impl TracksBody {
     }
 }
 
-/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。加进来的排进预取队列(#147)。
+/// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。不排预取(#186):不是红心的
+/// 存进去一天没播就会被清掉。
 pub(crate) async fn add_playlist_tracks(
     State(state): State<AppState>,
     account: Account,
@@ -242,7 +242,6 @@ pub(crate) async fn add_playlist_tracks(
         .await
         .map_err(|err| error::map_error(&err))?;
     drop(conn);
-    prefetch::enqueue(&state, account.id, &refs).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -106,9 +106,9 @@ async fn in_playlist(
     .expect("加歌失败");
 }
 
-/// 清理只删「哪都不在、且三天没播」的;红心的、在歌单或日推里的、三天内播过的都留着。
+/// 清理删掉不是红心、且一天没播的,歌单与日推里的也删(#186);红心的、一天内播过的留着。
 #[tokio::test]
-async fn the_sweep_keeps_liked_and_recent_tracks() {
+async fn the_sweep_keeps_only_liked_and_recent_tracks() {
     let f = fixture("ar_sweep", false).await;
     let mut tx = f.state.pool.begin().await.unwrap();
     let old = testing::track_id("ar_sweep", 1);
@@ -138,19 +138,24 @@ async fn the_sweep_keeps_liked_and_recent_tracks() {
             .await;
     liked_by(&mut tx, &f.account, &liked).await;
     let recent_key =
-        stored_days_ago(&mut tx, &f.objects, &recent, 2)
+        stored_days_ago(&mut tx, &f.objects, &recent, 0)
             .await;
 
-    super::super::sweep(&mut tx, f.objects.as_ref())
-        .await
-        .expect("清理应当成功");
+    let (removed, _) =
+        super::super::sweep(&mut tx, f.objects.as_ref())
+            .await
+            .expect("清理应当成功");
 
+    assert!(
+        removed >= 3,
+        "至少删掉旧的、歌单里的、日推里的"
+    );
     assert_eq!(f.objects.get(&old_key), None);
     assert!(f.objects.get(&liked_key).is_some());
     assert!(f.objects.get(&recent_key).is_some());
-    // 普通歌单与当天日推里的也长期留着(#147)
-    assert!(f.objects.get(&listed_key).is_some());
-    assert!(f.objects.get(&picked_key).is_some());
+    // 普通歌单与当天日推里的不再长期留着(#186 推翻 #147)
+    assert_eq!(f.objects.get(&listed_key), None);
+    assert_eq!(f.objects.get(&picked_key), None);
     let left = |id: &str| {
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
@@ -304,7 +309,7 @@ async fn the_sweep_keeps_the_row_when_the_store_answers_5xx()
     assert_eq!(rows_of(&mut tx, &legacy).await, 1);
 }
 
-/// 取消红心从那一刻重新数三天,而不是按很久以前那次播放当场就删。
+/// 取消红心从那一刻重新数保留期,而不是按很久以前那次播放当场就删。
 #[tokio::test]
 async fn unliking_restarts_the_clock() {
     let f = fixture("ar_unlike", false).await;

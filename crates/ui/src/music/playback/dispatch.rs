@@ -185,7 +185,9 @@ fn to_group(
     let now = deck.group.now();
     let op = match intent {
         Intent::Play { tracks, index } => {
-            deck.group.play(ui, tracks, index);
+            let then =
+                crate::music::radio::follow(deck, &tracks);
+            deck.group.play_then(ui, tracks, index, then);
             return Dispatched::GroupSubmitted;
         }
         Intent::TogglePlay => {

@@ -1,4 +1,4 @@
-# #182:组电台到实际顺序末尾时续取,普通列表循环行为保持。
+# #182:组电台到实际顺序末尾时续取,普通列表循环行为保持;遥控端在电台区点歌后电台仍续。
 
 [[ac]]
 id = "AC-1"
@@ -25,3 +25,21 @@ observe = "软件自动验收证明 append 行数和目标解码 PCM;Android 原
 tests = ["test_remote::test_group_radio_sequence_end_top_up[list-loop]"]
 doubles = ["软件声卡和外部音乐目录不能证明 Android 或物理扬声器"]
 mutation = "恢复 next.is_none 判断,组版本和新增曲目 PCM 断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "组里开电台后,在电台区点一首(服务端另起一版)、切歌、暂停、拖动;以及在别处点歌"
+observe = "电台区点歌与传输操作之后放到批尾 radio::due 仍为真;别处点歌后为假"
+tests = ["ui::music::tests::group::a_pick_on_the_radio_list_in_the_group_keeps_the_radio", "ui::music::tests::group::transport_in_the_group_keeps_the_radio", "ui::music::tests::group::a_pick_elsewhere_in_the_group_stops_the_radio", "ui::music::tests::picking_elsewhere_still_stops_the_radio"]
+doubles = ["Rust 无头 Deck/组应答代服务端,只证明归属与 due"]
+mutation = "去掉组点歌的 radio::follow 应答,电台区点歌用例 due 断言失败"
+
+[[ac]]
+id = "AC-4"
+kind = "new"
+entry = "遥控端选远端出声开私人 FM,续过一批后在电台区(#186 起是共享歌单里还没听的那三首)点第二首,再放到那一版最后一首"
+observe = "点歌使组队列换一版;那一版真实 append 增加条目;目标 PCM 播所点曲目与后续曲目"
+tests = ["test_remote::test_group_radio_pick_on_list_keeps_top_up"]
+doubles = ["软件声卡和外部音乐目录,真实 UI、组路由、数据库和解码器保留"]
+mutation = "去掉组点歌的 radio::follow 应答,第二次 append 等待超时"

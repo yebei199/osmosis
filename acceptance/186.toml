@@ -1,0 +1,58 @@
+# #186:账号一份共享电台歌单、加载新歌、听过移出、新歌预取、RustFS 每日清理。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "同账号两台在线设备;一台 POST /radio/more(电台区「加载新歌」),两台随后 GET /radio/list"
+observe = "两台都收到 RadioChanged 信令;两台读到的歌单与加载应答一致;再加载一次是追加;已在歌单里的不重复加,一首没加上不广播"
+tests = ["server::bin/server::routes::catalog::radio::shared_tests::loading_more_appends_and_every_device_sees_the_same_list", "server::bin/server::routes::catalog::radio::shared_tests::a_track_already_listed_is_not_added_twice"]
+doubles = ["进程内假网易云上游代替 bang-dream;两台设备是名册里的两个信令收件端,不起真客户端;Postgres 与路由处理函数用真的"]
+mutation = "删掉 more 里的 tell_radio_changed:两台收不到 RadioChanged,第一条断言失败"
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "电台在放、队列剩最后一首,客户端续歌"
+observe = "从共享歌单里挑还没交给播放、过得了续歌筛选的,次序照歌单;组里在电台区点进组队列的也算交给过播放"
+tests = ["ui::music::rules::tests::radio_tops_up_from_the_shared_list_skipping_what_was_handed", "ui::music::tests::group::a_pick_on_the_radio_list_in_the_group_hands_its_tracks"]
+doubles = ["纯函数无网络;组那条用 Rust 无头 Deck,组应答由测试直接给"]
+mutation = "去掉 radio_unhanded 里对 handed 的过滤:续进来的会重复已交出的歌"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "共享歌单里的一首起播,客户端 POST /played"
+observe = "各台收到 RadioChanged;GET /radio/list 里它不在 tracks、在 heard;不在歌单里的歌播放不发通知"
+tests = ["server::bin/server::routes::catalog::radio::shared_tests::a_played_track_moves_to_heard", "server::bin/server::routes::catalog::radio::shared_tests::playing_something_else_does_not_notify"]
+doubles = ["信令收件端代替真设备;播放事件、歌单、路由用真的"]
+mutation = "radio::list 的 heard 恒为 false:听过的仍在 tracks,断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "POST /radio/more 追加了新歌"
+observe = "新加的每一首都进了 prefetch_jobs;队列任务存进桶那一段由既有的预取测试覆盖"
+tests = ["server::bin/server::routes::catalog::radio::shared_tests::new_tracks_are_queued_for_prefetch"]
+doubles = ["内存对象存储代替 RustFS(只用来打开预取开关)"]
+mutation = "删掉 more 里的 prefetch::enqueue:prefetch_jobs 为空"
+
+[[ac]]
+id = "AC-4"
+kind = "new"
+entry = "每日清理跑一轮:红心的、一天内听过的、歌单与日推里一天没听的、哪都不在一天没听的各一首"
+observe = "只剩红心与一天内听过的两首;对象与账一起删;日志记删了几首、留了几首"
+tests = ["server::bin/server::routes::play::archive::tests::retention::the_sweep_keeps_only_liked_and_recent_tracks"]
+doubles = ["内存对象存储代替 RustFS;用改 last_played_at 代替真实时钟流逝"]
+mutation = "expired_sql 里恢复「在歌单或日推里就不过期」:歌单与日推那两首仍在,断言失败"
+
+[[ac]]
+id = "AC-4"
+kind = "regression"
+entry = "清理遇到删不掉的对象、已经不在的对象、5xx、#147 前的 320k 存歌;取消红心"
+observe = "删不掉的行留着下一轮再来;已不在的行删掉;320k 一律清;取消红心从那一刻重新起算"
+tests = ["server::bin/server::routes::play::archive::tests::retention::the_sweep_keeps_the_row_when_the_object_cannot_be_deleted", "server::bin/server::routes::play::archive::tests::retention::the_sweep_forgets_a_row_whose_object_is_already_gone", "server::bin/server::routes::play::archive::tests::retention::the_sweep_keeps_the_row_when_the_store_answers_5xx", "server::bin/server::routes::play::archive::tests::retention::the_sweep_purges_the_old_high_copies", "server::bin/server::routes::play::archive::tests::retention::unliking_restarts_the_clock"]
+doubles = ["内存与假 S3 代替 RustFS"]
+
+[[ac]]
+id = "AC-5"
+none = "前提不成立:客户端没有持久音频缓存(stream-download 用临时存储),手动下载按用户裁决不动,本单不做(主路由裁决 1、2)"

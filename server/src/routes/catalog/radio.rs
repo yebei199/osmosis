@@ -15,8 +15,11 @@ use axum::{
     Json,
     extract::{Query, State},
 };
+use std::collections::HashSet;
+
 use contract::{
-    FacetDto, FacetPickDto, TrackDto, TracksDto,
+    FacetDto, FacetPickDto, RadioListDto, ServerSignal,
+    TrackDto, TracksDto,
 };
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -30,14 +33,18 @@ use server::bangdream::{
 };
 use server::error::{self, Failure};
 use server::store::account::Account;
+use server::store::cache;
 use server::store::history;
 use server::store::lyric::{self, LyricKind};
 use server::store::playlist::TrackRef;
+use server::store::radio;
+use server::syncplay::signaling;
 
 use super::lyric_probe;
 use super::search::remember_details;
 use crate::routes::library::for_account;
 use crate::routes::library::likes::netease_liked_id;
+use crate::routes::play::prefetch;
 use crate::{AppState, conn, fail};
 
 /// 一次请求最多问平台几回。
@@ -97,21 +104,8 @@ pub(crate) async fn radio(
     account: Account,
     Query(query): Query<RadioQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
-    let picks: Vec<FacetPickDto> = match &query.filter {
-        None => Vec::new(),
-        Some(raw) => {
-            serde_json::from_str(raw).map_err(|err| {
-                fail(&tonic::Status::invalid_argument(
-                    format!("筛选条件读不懂: {err}"),
-                ))
-            })?
-        }
-    };
-    let max_pulls = if picks.is_empty() {
-        MAX_PULLS
-    } else {
-        MAX_FILTERED_PULLS
-    };
+    let picks = parse_picks(query.filter.as_deref())?;
+    let max_pulls = pulls_for(&picks);
     let source = match query.mode {
         RadioMode::Fm => Source::Fm {
             // 问不到(网易云没登录、上游一时失败)不挡电台:私人 FM 自己也会报那个错
@@ -140,13 +134,185 @@ pub(crate) async fn radio(
         }
     };
 
-    let mut picked: Vec<TrackDto> = Vec::new();
+    let picked = gather(
+        &state,
+        &account,
+        &source,
+        &picks,
+        max_pulls,
+        &[],
+    )
+    .await?;
+
+    // 聚合在每批进来时已经填过(电台区也要分组筛选,#160)。藏掉几首不报:
+    // 电台本来就是挑剩下的,少的那几首换一批就补上了
+    Ok(Json(TracksDto {
+        tracks: picked,
+        unavailable: 0,
+        hidden: 0,
+    }))
+}
+
+/// 筛选条件,`[FacetPickDto]` 的 JSON。没有就是不筛。
+fn parse_picks(
+    raw: Option<&str>,
+) -> Result<Vec<FacetPickDto>, Failure> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(raw).map_err(|err| {
+        fail(&tonic::Status::invalid_argument(format!(
+            "筛选条件读不懂: {err}"
+        )))
+    })
+}
+
+/// 带筛选丢得多,问平台的上限放宽。
+fn pulls_for(picks: &[FacetPickDto]) -> usize {
+    if picks.is_empty() {
+        MAX_PULLS
+    } else {
+        MAX_FILTERED_PULLS
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MoreQuery {
+    /// 同 [`RadioQuery::filter`]。
+    pub(crate) filter: Option<String>,
+}
+
+/// `GET /radio/list` —— 这个账号那一份共享电台歌单(#186)。
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    account: Account,
+) -> Result<Json<RadioListDto>, Failure> {
+    Ok(Json(shared_list(&state, account.id).await?))
+}
+
+/// `POST /radio/more` —— 从私人 FM 拉一批新歌追加进共享歌单,交回追加之后的整份。
+/// 再带 `?filter=<JSON>` 就只加过得了筛选的(电台区选着 chip 续歌,#166)。
+///
+/// 加进来的立刻排进预取(存进 RustFS),并告诉账号下每台在线设备去重取。
+/// 一首都没加上就不广播:歌单没变。
+pub(crate) async fn more(
+    State(state): State<AppState>,
+    account: Account,
+    Query(query): Query<MoreQuery>,
+) -> Result<Json<RadioListDto>, Failure> {
+    let picks = parse_picks(query.filter.as_deref())?;
+    let before = shared_list(&state, account.id).await?;
+    let source = Source::Fm {
+        liked_playlist: netease_liked_id(&state, &account)
+            .await
+            .ok(),
+    };
+    let fresh = gather(
+        &state,
+        &account,
+        &source,
+        &picks,
+        pulls_for(&picks),
+        &before.tracks,
+    )
+    .await?;
+    if fresh.is_empty() {
+        return Ok(Json(before));
+    }
+    let refs: Vec<TrackRef> = fresh
+        .iter()
+        .map(|track| TrackRef {
+            platform: track.platform.clone(),
+            track_id: track.id.clone(),
+        })
+        .collect();
+    let added = {
+        let mut conn = conn(&state.pool).await?;
+        radio::append(&mut conn, account.id, &refs)
+            .await
+            .map_err(|err| error::map_error(&err))?
+    };
+    tracing::info!(added, "电台歌单追加了新歌");
+    prefetch::enqueue(&state, account.id, &refs).await;
+    tell_radio_changed(&state, account.id);
+    Ok(Json(shared_list(&state, account.id).await?))
+}
+
+/// 告诉账号下每台在线设备:电台歌单变了,去重取。
+pub(crate) fn tell_radio_changed(
+    state: &AppState,
+    account_id: i64,
+) {
+    signaling::tell_account(
+        &state.roster,
+        account_id,
+        &ServerSignal::RadioChanged,
+    );
+}
+
+/// 读出共享歌单,按听没听过分成两半,各自过一遍出口(填聚合、滤屏蔽规则)。
+/// 缓存里没有详情的跳过 —— 加进来时详情已经写过,缺的只会是平台后来不给了的。
+async fn shared_list(
+    state: &AppState,
+    account_id: i64,
+) -> Result<RadioListDto, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    let entries = radio::list(&mut conn, account_id)
+        .await
+        .map_err(|err| error::map_error(&err))?;
+    let ids: Vec<String> = entries
+        .iter()
+        .filter(|entry| entry.track.platform == NETEASE)
+        .map(|entry| entry.track.track_id.clone())
+        .collect();
+    let details =
+        cache::details_of(&mut conn, NETEASE, &ids)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+    drop(conn);
+    let heard: HashSet<&str> = entries
+        .iter()
+        .filter(|entry| entry.heard)
+        .map(|entry| entry.track.track_id.as_str())
+        .collect();
+    let (heard, unheard): (Vec<TrackDto>, Vec<TrackDto>) =
+        details.into_iter().partition(|track| {
+            heard.contains(track.id.as_str())
+        });
+    let shape = |tracks| {
+        for_account(
+            state,
+            account_id,
+            TracksDto {
+                tracks,
+                unavailable: 0,
+                hidden: 0,
+            },
+        )
+    };
+    Ok(RadioListDto {
+        tracks: shape(unheard).await.tracks,
+        heard: shape(heard).await.tracks,
+    })
+}
+
+/// 向平台拉新歌,丢掉听过、表过态的以及 `already` 里已有的,过一遍筛选,
+/// 攒够 [`ENOUGH`] 首或问满 `max_pulls` 回为止。交出的详情与当场探到的歌词记进库。
+async fn gather(
+    state: &AppState,
+    account: &Account,
+    source: &Source,
+    picks: &[FacetPickDto],
+    max_pulls: usize,
+    already: &[TrackDto],
+) -> Result<Vec<TrackDto>, Failure> {
+    let mut picked: Vec<TrackDto> = already.to_vec();
     let mut probed: Vec<(String, LyricKind)> = Vec::new();
     for pull in 1..=max_pulls {
-        let batch = source.pull(&state, &account).await?;
+        let batch = source.pull(state, account).await?;
         let fetched = batch.len();
         let fresh = keep_fresh(
-            &state,
+            state,
             account.id,
             batch,
             &picked,
@@ -157,21 +323,20 @@ pub(crate) async fn radio(
         let mut fresh = fresh;
         let asked = probed.len();
         probe_lyrics(
-            &state,
-            &account,
+            state,
+            account,
             &mut fresh,
-            &picks,
+            picks,
             &mut probed,
         )
         .await;
         let kept: Vec<TrackDto> = fresh
             .into_iter()
             .filter(|track| {
-                filter::passes(track, &picks, None)
+                filter::passes(track, picks, None)
             })
             .collect();
         tracing::info!(
-            mode = ?query.mode,
             pull,
             fetched,
             dropped = fetched - unheard,
@@ -180,20 +345,16 @@ pub(crate) async fn radio(
             "电台拉了一批"
         );
         picked.extend(kept);
-        if picked.len() >= ENOUGH || fetched == 0 {
+        if picked.len() - already.len() >= ENOUGH
+            || fetched == 0
+        {
             break;
         }
     }
-    remember_details(&state, &picked).await;
-    remember_lyrics(&state, &probed).await;
-
-    // 聚合在每批进来时已经填过(电台区也要分组筛选,#160)。藏掉几首不报:
-    // 电台本来就是挑剩下的,少的那几首换一批就补上了
-    Ok(Json(TracksDto {
-        tracks: picked,
-        unavailable: 0,
-        hidden: 0,
-    }))
+    let picked = picked.split_off(already.len());
+    remember_details(state, &picked).await;
+    remember_lyrics(state, &probed).await;
+    Ok(picked)
 }
 
 /// `tracks` 里还没探过歌词、其余维度已经过了筛选的当场探一次,
@@ -417,5 +578,7 @@ fn same(track: &TrackDto, key: &TrackRef) -> bool {
 
 mod filter;
 
+#[cfg(test)]
+mod shared_tests;
 #[cfg(test)]
 mod tests;

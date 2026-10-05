@@ -95,6 +95,17 @@ export global Player {
     callback loop-mode-set(int);
     // 以这一首为种子开心动模式电台(#159)。参数是正在放的那首的 id。
     callback radio-from(string);
+    // ── 共享电台歌单(#186) ──
+    // 电台区的「加载新歌」:服务端拉一批追加进账号那一份歌单。
+    callback radio-load-more();
+    // 电台区切到「已听过」/切回来。
+    callback radio-toggle-heard();
+    // 电台区此刻摆的是不是已听过的那些。唯一写者是 Rust。
+    in property <bool> radio-heard: false;
+    // 「加载新歌」在路上,按钮置灰。
+    in property <bool> radio-loading: false;
+    // 信令说账号的电台歌单变了。由 Rust 的信令那一侧触发,电台那一侧接。
+    callback radio-changed();
 
     // ── 分组与筛选(#160) ──
     // 规则在 app_core::facets,状态在 Rust(ui/src/music/facets.rs),这里只摆。

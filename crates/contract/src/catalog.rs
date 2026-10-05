@@ -81,6 +81,24 @@ impl TrackFacetsDto {
     }
 }
 
+/// `GET /radio/list` 与 `POST /radio/more` 的响应体(#186):这个账号那一份共享电台歌单,
+/// 所有设备读到的都一样。先加进来的在前。
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
+pub struct RadioListDto {
+    /// 还没听过的。
+    pub tracks: Vec<TrackDto>,
+    /// 听过的,电台区「已听过」摆它们。
+    pub heard: Vec<TrackDto>,
+}
+
 /// 电台续歌带的一个筛选条件(#166):歌单视图里选中的一个 chip。
 ///
 /// `label` 就是 chip 上那几个字(「有歌词」「3 分钟以内」……),同一维度内是或、

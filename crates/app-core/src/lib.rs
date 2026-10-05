@@ -32,7 +32,8 @@ pub use contract::{
     HealthDto, LoopModeDto, LyricDto, LyricKindDto,
     LyricLineDto, MAX_SIGNAL_BYTES, NewBlockRuleDto,
     NextEntryDto, OutputRouteDto, PlaylistDto,
-    PlaylistSource, RemotePlayState, TagDto, TagSource,
-    TrackDto, TrackFacetsDto, TracksDto, TransportOpDto,
-    artist_dislike, song_dislike, track_artists,
+    PlaylistSource, RadioListDto, RemotePlayState, TagDto,
+    TagSource, TrackDto, TrackFacetsDto, TracksDto,
+    TransportOpDto, artist_dislike, song_dislike,
+    track_artists,
 };

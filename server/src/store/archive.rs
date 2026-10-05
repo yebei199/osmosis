@@ -52,7 +52,7 @@ pub async fn find(
 
 /// 把「最后一次播放」拨到现在。返回这首存没存过 —— 存过就不必再下载一遍。
 ///
-/// 播放与取消红心都走这里:取消红心那一刻起重新数三天,而不是按很久以前那次
+/// 播放与取消红心都走这里:取消红心那一刻起重新数保留期,而不是按很久以前那次
 /// 播放算、当场就删。
 pub async fn touch(
     conn: &mut PgConnection,
@@ -135,12 +135,7 @@ pub async fn forget(
 fn rank_sql(platform: &str, track_id: &str) -> String {
     format!(
         "CASE
-         WHEN EXISTS (
-             SELECT 1 FROM local_playlist_tracks lt
-             JOIN local_playlists lp ON lp.id = lt.playlist_id
-             WHERE lp.system = '{liked}'
-               AND lt.platform = {platform} AND lt.track_id = {track_id}
-         ) THEN 0
+         WHEN {liked} THEN 0
          WHEN EXISTS (
              SELECT 1 FROM daily_picks d
              WHERE d.platform = {platform} AND d.track_id = {track_id}
@@ -150,38 +145,51 @@ fn rank_sql(platform: &str, track_id: &str) -> String {
              WHERE lt.platform = {platform} AND lt.track_id = {track_id}
          ) THEN 2
          ELSE {UNKEPT} END",
-        liked = liked::SYSTEM,
+        liked = liked_sql(platform, track_id),
     )
 }
 
-/// 哪个歌单、哪份日推里都不在的名次。只有这一档按保留期清扫。
+/// 哪个歌单、哪份日推里都不在的名次。
 pub const UNKEPT: i32 = 3;
 
 /// 「过期」的判定,[`expired`] 与 [`forget_if_expired`] 共用同一句 ——
 /// 两处各写一遍的话,挑出来的与真删的迟早是两拨。
 ///
-/// 不是按 `$2` 那一档要来的(#147 之前的 320k)一律过期。其余的:在我们任何
-/// 一个歌单里、或在当天日推里的长期留着(#147);都不在的,最后一次播放早于
-/// `$1` 秒之前就过期。
+/// 不是按 `$2` 那一档要来的(#147 之前的 320k)一律过期。其余的:只有红心的
+/// 永远留着;不是红心的,不管在不在歌单或日推里,最后一次播放早于 `$1` 秒之前
+/// 就过期(#186,用户推翻了 #147 的「歌单与日推长期留着」)。
 fn expired_sql() -> String {
     format!(
         "(quality <> $2 OR (
-             {rank} = {UNKEPT}
+             NOT {liked}
              AND last_played_at < now() - $1::bigint * interval '1 second'
          ))",
-        rank = rank_sql(
+        liked = liked_sql(
             "stored_tracks.platform",
             "stored_tracks.track_id"
         ),
     )
 }
 
-/// 秒数进 SQL。三天这种量级离 `i64` 的上限远得很,溢出只可能是调用方写错了。
+/// 任何一个账号红心过这首。参数同 [`rank_sql`]。
+fn liked_sql(platform: &str, track_id: &str) -> String {
+    format!(
+        "EXISTS (
+             SELECT 1 FROM local_playlist_tracks lt
+             JOIN local_playlists lp ON lp.id = lt.playlist_id
+             WHERE lp.system = '{liked}'
+               AND lt.platform = {platform} AND lt.track_id = {track_id}
+         )",
+        liked = liked::SYSTEM,
+    )
+}
+
+/// 秒数进 SQL。一天这种量级离 `i64` 的上限远得很,溢出只可能是调用方写错了。
 fn seconds(retain: Duration) -> i64 {
     i64::try_from(retain.as_secs()).unwrap_or(i64::MAX)
 }
 
-/// 不是按 `quality` 那一档要来的,以及哪都不在、且最后一次播放已经早于
+/// 不是按 `quality` 那一档要来的,以及不是红心、且最后一次播放已经早于
 /// `retain` 之前的那些。
 pub async fn expired(
     conn: &mut PgConnection,
@@ -282,6 +290,17 @@ pub async fn usage(
          FROM stored_tracks WHERE quality = $1",
     )
     .bind(quality)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// 桶里一共存了几首、占多少字节,不分档位。
+pub async fn count(
+    conn: &mut PgConnection,
+) -> Result<(i64, i64), AppError> {
+    Ok(sqlx::query_as(
+        "SELECT count(*), coalesce(sum(bytes), 0)::bigint FROM stored_tracks",
+    )
     .fetch_one(conn)
     .await?)
 }

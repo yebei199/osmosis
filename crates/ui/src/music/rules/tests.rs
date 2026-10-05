@@ -462,3 +462,39 @@ fn radio_tops_up_only_when_it_owns_the_batch_and_is_running_out()
         ..owns
     }));
 }
+
+/// 共享电台歌单续歌(#186):交给过播放的不再挑,选着筛选时只挑过得了的,次序照歌单。
+#[test]
+fn radio_tops_up_from_the_shared_list_skipping_what_was_handed()
+ {
+    let listed: Vec<TrackDto> =
+        ["1", "2", "3", "4"].map(track_with_id).to_vec();
+    let handed: std::collections::HashSet<String> =
+        ["1", "3"].map(str::to_owned).into();
+    let none = app_core::facets::Chosen::default();
+
+    let ids = |tracks: Vec<TrackDto>| {
+        tracks
+            .into_iter()
+            .map(|track| track.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(radio_unhanded(&listed, &handed, &none)),
+        vec!["2", "4"]
+    );
+
+    let mut chosen = app_core::facets::Chosen::default();
+    let key = app_core::facets::keys(
+        &listed[3],
+        app_core::facets::Facet::Duration,
+    )
+    .remove(0);
+    chosen.insert((app_core::facets::Facet::Duration, key));
+    let mut longer = listed.clone();
+    longer[1].duration_ms = 3_600_000;
+    assert_eq!(
+        ids(radio_unhanded(&longer, &handed, &chosen)),
+        vec!["4"]
+    );
+}

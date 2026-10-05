@@ -1,8 +1,9 @@
 //! 预取:把该存的曲目存进桶(要无损,给不出存最高可得,#152),不等谁去播它(#147)。
 //!
 //! 队列在 Postgres(`server::store::prefetch`),这里是入队的入口与后台 worker。
-//! 入队的时机:每日推荐取回来之后、我们的歌单加了曲目(含红心与导入)、
-//! `/played` 报上一首还没存的,以及进程起来时把所有歌单排一遍。
+//! 只排两类(#186):红心的(点红心、导入,以及进程起来时把「我的喜欢」排一遍)
+//! 和电台新歌(加进共享电台歌单的);外加 `/played` 报上一首还没存的。
+//! 普通歌单与日推不排:不是红心的存进去一天没播就被清掉,预先存只是白下一遍。
 //!
 //! 每个音源一组 worker、一个限速器:worker 数管同时下几首(边下边传,每首只占
 //! 路上那几块的内存,但与正在播放的那首抢出口带宽),限速器管多久问一次音源。
@@ -112,7 +113,7 @@ pub(crate) async fn enqueue(
     }
 }
 
-/// 起 worker,并把所有歌单排一遍(首次上线时就是全部存量)。没配对象存储就不起。
+/// 起 worker,并把「我的喜欢」排一遍(首次上线时就是全部存量)。没配对象存储就不起。
 pub(crate) fn spawn(
     state: &AppState,
     limits: Limits,
@@ -124,23 +125,21 @@ pub(crate) fn spawn(
     let seed = state.clone();
     tokio::spawn(async move {
         let queued = match seed.pool.acquire().await {
-            Ok(mut conn) => {
-                prefetch::enqueue_all_playlists(
-                    &mut conn,
-                    &archive::quality(),
-                )
-                .await
-                .map_err(|err| format!("{err:?}"))
-            }
+            Ok(mut conn) => prefetch::enqueue_all_liked(
+                &mut conn,
+                &archive::quality(),
+            )
+            .await
+            .map_err(|err| format!("{err:?}")),
             Err(err) => Err(err.to_string()),
         };
         match queued {
             Ok(queued) => tracing::info!(
                 queued,
-                "歌单里的曲目排进预取队列"
+                "红心的曲目排进预取队列"
             ),
             Err(err) => {
-                tracing::warn!(%err, "歌单排不进预取队列")
+                tracing::warn!(%err, "红心排不进预取队列")
             }
         }
     });

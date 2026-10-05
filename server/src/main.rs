@@ -530,7 +530,7 @@ async fn main() {
     );
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
-    // 没人红心、三天没播的存歌同理
+    // 没人红心、一天没播的存歌同理(#186)
     if let Some(archive) = &state.archive {
         routes::play::archive::spawn_sweeper(
             state.pool.clone(),
@@ -570,6 +570,15 @@ async fn main() {
         .route("/daily", get(daily))
         // 电台(#159):私人 FM 与心动两种模式,听过的丢掉
         .route("/radio", get(routes::catalog::radio::radio))
+        // 账号一份的共享电台歌单(#186):读,与「加载新歌」
+        .route(
+            "/radio/list",
+            get(routes::catalog::radio::list),
+        )
+        .route(
+            "/radio/more",
+            post(routes::catalog::radio::more),
+        )
         .route("/liked", get(liked))
         // 红心的**全量标识**,不分页。/liked 给的是一页曲目,回答不了
         // 「这一首红心没有」—— 而界面每一行都要问这个问题。

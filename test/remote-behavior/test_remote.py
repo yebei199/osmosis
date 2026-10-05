@@ -100,6 +100,11 @@ def test_group_radio_sequence_end_top_up(world, mode, shuffled):
     cases.group_radio_sequence_end_top_up(world, mode, shuffled)
 
 
+# 遥控端在电台区点歌换出的组队列仍归电台,到批尾照样续。
+def test_group_radio_pick_on_list_keeps_top_up(world):
+    cases.group_radio_pick_on_list_keeps_top_up(world)
+
+
 # 普通列表在曲尾保持回卷,不得被电台续取机制接管。
 def test_non_radio_list_loop_wraps_without_append(world):
     cases.non_radio_list_loop_wraps_without_append(world)
