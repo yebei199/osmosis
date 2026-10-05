@@ -449,10 +449,11 @@ docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
   debug 档 857MB,它存在的唯一理由是 MCP 要读元素树,不是拿来日常用的。
 - **桌面端不由 agent 装**。走 `nixos_config` 的
   `home/features/desktop/osmosis.nix`:agent 只抬 `version` 与那三个 SRI 哈希
-  (`.desktop` 与 `.svg` 内容没变时哈希沿用),**`nixos-rebuild` 由用户本人跑**。
+  (`.desktop` 与 `.svg` 内容没变时哈希沿用)。**推上 nixos_config 的 master 就自动部署**
+  (各主机的 self-switch 收到推送通知即追平,5 分钟 timer 兜底),不要叫用户 rebuild。
 - 哈希取自 release 的 `sha256sums.txt`,用 `nix hash convert --to sri` 转,写进去
-  之前用 `nix store prefetch-file` 实取核一遍 —— 否则 rebuild 会在半路撞
-  hash mismatch,而那时候人已经在等了。
+  之前用 `nix store prefetch-file` 实取核一遍 —— 否则自动部署会在半路撞
+  hash mismatch,桌面就停在旧版。
 
 判断「最新发的是哪一版」要带 `--sort=v:refname`,理由见
 [`docs/lesson/tooling.md`](docs/lesson/tooling.md)。

@@ -8,7 +8,7 @@ just rollout            # 最新的 release
 just rollout v0.1.15    # 指定 tag
 ```
 
-**不管的**:打 tag、出桌面二进制与镜像(CI 管)、`nixos-rebuild`(用户自己跑)、
+**不管的**:打 tag、出桌面二进制与镜像(CI 管)、部署桌面(推上 nixos_config 后各主机自动追平)、
 改 infra 仓库(交给 infra 会话)。
 
 **打 tag 之前**,要发的那个提交必须先过一次遥控行为全量(#185):在跑每晚全量的那台
