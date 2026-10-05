@@ -121,3 +121,36 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
 每个客户端的 HOME 也属于自己的证据目录，平台初始化与音乐下载不会访问宿主音乐目录。
+
+## 按改动挑场景与每晚全量（#185）
+
+`selection.py BASE HEAD` 读进版本库的 `coverage-map.json`，给出 base..head 该跑的
+pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制里的全部源文件（universe）
+和每个场景实际执行过的源文件。挑选规则：
+
+- 二进制里的 Rust 文件 → 地图上执行过它的场景；执行过它的场景一个都没有 → 不加场景；
+- 不进二进制的 Rust 测试代码、文档、安卓/web/iOS、xtask、experiments、`test/` 下别的
+  脚本、AC 映射 toml → 不加场景；
+- `test_<x>.py` → 整个模块；`mutate.py` → 全部 fault_sensitivity；
+  `mutate.FAULTS` 里的锚点文件 → 对应的那条 fault_sensitivity，其余时候不跑它；
+- 其他一律退回全量：Cargo.lock、Cargo.toml、build.rs、`.slint`、迁移、素材、nix、
+  justfile、共享测试设施（含 selection.py 自己），以及地图里没有的文件；地图缺失、
+  解析不了、生成提交不是 head 的祖先，同样全量。
+- 地图生成提交之后的改动一并计入，地图越旧选得越多；`test_lifecycle.py`、
+  `test_position.py`、`test_selection.py`、`test_covmap.py` 与矩阵断言每次都跑。
+
+已知上限：只靠文件粒度。一个文件里的 `const` 被别的文件内联使用、而它本身的函数
+没被某场景执行时，改这个常量不会选中该场景；新 trait impl 改变别处的方法解析同理。
+这类改动请直接跑全量。
+
+`acceptance/run.sh changed BASE HEAD` 是挑选后的运行入口：子集走 `run.sh subset`
+（带 Rust 投影回归），全量走 `run.sh all`，再跑 status-ui；挑选结果写进
+`results/selection.json`。
+
+`nightly.sh` 是每晚全量入口：`coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER`
+只给工作区 crate 插桩，每个世界按 pytest 节点把 profraw 写进自己的目录（`%c` 连续
+模式，被信号杀掉的进程也留下计数），全绿后 `covmap.py` 生成地图并记 last-green；
+失败打印 `<last-green>..<本次>` 可疑区间。状态目录默认在
+`~/.cache/osmosis-nightly`，可用 `OSMOSIS_NIGHTLY_STATE` 改。调度不在本仓库。
+`release-gate.sh <提交>` 只在 last-green 恰好是该提交时退 0，发版前用。
+新地图从 nightly 的 `runs/<时间>-<提交>/coverage-map.json` 拷进本目录提交。

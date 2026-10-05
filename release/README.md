@@ -11,6 +11,11 @@ just rollout v0.1.15    # 指定 tag
 **不管的**:打 tag、出桌面二进制与镜像(CI 管)、`nixos-rebuild`(用户自己跑)、
 改 infra 仓库(交给 infra 会话)。
 
+**打 tag 之前**,要发的那个提交必须先过一次遥控行为全量(#185):在跑每晚全量的那台
+机器上对候选提交跑 `test/remote-behavior/nightly.sh`,再跑
+`test/remote-behavior/release-gate.sh <候选提交>`,退 0 才打 tag。这道检查目前靠照着
+流程做,还没接进发版程序本身。
+
 ## 四步
 
 每步独立,某步失败只进结尾汇总,不拦后面的;有失败时退出码非零。

@@ -100,3 +100,24 @@ def test_coverage_outside_junit_fails(program, tmp_path):
     with pytest.raises(RuntimeError, match="absent from JUnit"):
         build(tmp_path / "profiles", junit(tmp_path / "j.xml", []), [binary], repo)
 
+
+# 发版门只放行 last-green 恰好等于候选提交的情况。
+@pytest.mark.parametrize("recorded", [None, "other", "head"])
+def test_release_gate_requires_green_candidate(program, tmp_path, recorded):
+    repo, _ = program
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    state = tmp_path / "state"
+    state.mkdir()
+    if recorded:
+        (state / "last-green").write_text((head if recorded == "head" else "0" * 40) + "\n")
+    gate = subprocess.run(
+        ["bash", str(SUITE / "release-gate.sh")],
+        cwd=repo,
+        env=os.environ | {"OSMOSIS_NIGHTLY_STATE": str(state)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (gate.returncode == 0) == (recorded == "head"), gate.stderr
