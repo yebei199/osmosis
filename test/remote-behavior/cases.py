@@ -268,7 +268,6 @@ def group_radio_pick_on_list_keeps_top_up(world):
 
     extended = wait_until(lambda: grown(seeded), "first FM append")
     source.ui.radio()
-    source.ui.activate(source.ui.must("WallView::view-list-btn"))
     wait_until(lambda: len(source.ui.elements("TrackList::touch")) == 3, "stale radio rows")
     source.ui.activate(source.ui.elements("TrackList::touch")[1], pointer=True)
     world.sound(world.one, "175005")
