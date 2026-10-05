@@ -258,12 +258,21 @@ def run_sh(*args):
 @pytest.mark.parametrize(
     ("given", "expected"),
     [
-        ("test_x::test_y", ["test_x.py::test_y"]),
-        ("test_p::test_q[a-b]", ["test_p.py::test_q[a-b]"]),
+        ("test_remote::test_y", ["test_remote.py::test_y"]),
+        ("test_remote::test_q[a-b]", ["test_remote.py::test_q[a-b]"]),
         ("app-core::blocks::t", []),
+        ("ui::music::tests::group::t", []),
+        ("server::bin/server::routes::t", []),
         ("test_a.py::test_b", ["test_a.py::test_b"]),
     ],
-    ids=["pytest-junit", "pytest-junit-param", "nextest", "pytest-node"],
+    ids=[
+        "pytest-junit",
+        "pytest-junit-param",
+        "nextest",
+        "nextest-ui",
+        "nextest-server",
+        "pytest-node",
+    ],
 )
 def test_subset_accepts_junit_ids(given, expected):
     out = run_sh("subset-args", given)

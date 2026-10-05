@@ -4,8 +4,8 @@
 id = "AC-1"
 kind = "new"
 entry = "acceptance/run.sh subset 收到 pytest JUnit ID、nextest ID、pytest 节点，或全部可略过的参数"
-observe = "test_x::test_y 转成 test_x.py::test_y；带 - 的 nextest ID 略过；pytest 节点原样；全部略过时 exit 0"
-tests = ["test_selection::test_subset_accepts_junit_ids[pytest-junit]", "test_selection::test_subset_accepts_junit_ids[pytest-junit-param]", "test_selection::test_subset_accepts_junit_ids[nextest]", "test_selection::test_subset_accepts_junit_ids[pytest-node]", "test_selection::test_subset_with_every_argument_skipped_exits_zero"]
+observe = "test_x::test_y 转成 test_x.py::test_y；前缀对不上 test/remote-behavior/ 下 test_ 文件的（nextest，含 ui::、server::）略过；pytest 节点原样；全部略过时 exit 0"
+tests = ["test_selection::test_subset_accepts_junit_ids[pytest-junit]", "test_selection::test_subset_accepts_junit_ids[pytest-junit-param]", "test_selection::test_subset_accepts_junit_ids[nextest]", "test_selection::test_subset_accepts_junit_ids[nextest-ui]", "test_selection::test_subset_accepts_junit_ids[nextest-server]", "test_selection::test_subset_accepts_junit_ids[pytest-node]", "test_selection::test_subset_with_every_argument_skipped_exits_zero"]
 doubles = []
 mutation = "去掉 subset_args 里的 .py 补全：pytest-junit 两条失败"
 

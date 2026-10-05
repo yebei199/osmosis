@@ -10,7 +10,10 @@ subset_args() {
     for arg in "$@"; do
         case "$arg" in
             *.py::*) printf '%s\n' "$arg" ;;
-            *::*) [[ ${arg%%::*} == *-* ]] || printf '%s\n' "${arg%%::*}.py::${arg#*::}" ;;
+            # 前缀补 .py 后在 test/remote-behavior/ 下真有这个 test_ 文件才算 pytest，否则是 nextest
+            # （ui::...、server::bin/server::... 不带 -；ui.py 是辅助模块，不是用例文件）。
+            test_*::*) [[ ! -f test/remote-behavior/${arg%%::*}.py ]] || printf '%s\n' "${arg%%::*}.py::${arg#*::}" ;;
+            *::*) ;;
             *) printf '%s\n' "$arg" ;;
         esac
     done
