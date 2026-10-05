@@ -18,8 +18,8 @@ use server::error;
 use server::error::Failure;
 use server::store::account::Account;
 use server::store::history;
-use server::store::radio;
 use server::store::playlist::TrackRef;
+use server::store::radio;
 
 use super::for_account;
 use super::likes::PageQuery;

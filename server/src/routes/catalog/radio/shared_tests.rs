@@ -48,8 +48,9 @@ fn online(
 
 /// 收件箱里有没有一条「电台歌单变了」。
 fn told(inbox: &mut mpsc::Receiver<ServerSignal>) -> bool {
-    std::iter::from_fn(|| inbox.try_recv().ok())
-        .any(|message| message == ServerSignal::RadioChanged)
+    std::iter::from_fn(|| inbox.try_recv().ok()).any(
+        |message| message == ServerSignal::RadioChanged,
+    )
 }
 
 /// 起一份带内存对象存储的 state(预取只在配了存储时入队),上游按顺序摆出 `batches`。
@@ -80,12 +81,15 @@ async fn fixture(
 /// AC-1:一台加载新歌,另一台收到通知,两台读到的歌单一样;再加载一次是追加。
 #[tokio::test]
 async fn loading_more_appends_and_every_device_sees_the_same_list()
-{
+ {
     let case = "radio_shared_more";
     let id = |n| track_id(case, n);
     let (state, account) = fixture(
         case,
-        vec![vec![id(1), id(2), id(3)], vec![id(4), id(5), id(6)]],
+        vec![
+            vec![id(1), id(2), id(3)],
+            vec![id(4), id(5), id(6)],
+        ],
     )
     .await;
     let mut phone = online(&state, account.id, "phone");
@@ -93,7 +97,10 @@ async fn loading_more_appends_and_every_device_sees_the_same_list()
 
     let empty =
         list(State(state.clone()), account.clone()).await;
-    assert_eq!(empty.expect("读歌单").0, RadioListDto::default());
+    assert_eq!(
+        empty.expect("读歌单").0,
+        RadioListDto::default()
+    );
 
     let first = more(
         State(state.clone()),
@@ -103,7 +110,10 @@ async fn loading_more_appends_and_every_device_sees_the_same_list()
     .await
     .expect("加载新歌")
     .0;
-    assert_eq!(ids(&first.tracks), vec![id(1), id(2), id(3)]);
+    assert_eq!(
+        ids(&first.tracks),
+        vec![id(1), id(2), id(3)]
+    );
     assert!(told(&mut phone) && told(&mut desk));
 
     let second = more(
@@ -132,9 +142,13 @@ async fn a_track_already_listed_is_not_added_twice() {
         vec![vec![id(1)], vec![id(1)], vec![id(1)]],
     )
     .await;
-    more(State(state.clone()), account.clone(), unfiltered())
-        .await
-        .unwrap();
+    more(
+        State(state.clone()),
+        account.clone(),
+        unfiltered(),
+    )
+    .await
+    .unwrap();
     let mut inbox = online(&state, account.id, "phone");
 
     let again = more(
@@ -156,10 +170,15 @@ async fn a_played_track_moves_to_heard() {
     let case = "radio_shared_heard";
     let id = |n| track_id(case, n);
     let (state, account) =
-        fixture(case, vec![vec![id(1), id(2), id(3)]]).await;
-    more(State(state.clone()), account.clone(), unfiltered())
-        .await
-        .unwrap();
+        fixture(case, vec![vec![id(1), id(2), id(3)]])
+            .await;
+    more(
+        State(state.clone()),
+        account.clone(),
+        unfiltered(),
+    )
+    .await
+    .unwrap();
     let mut inbox = online(&state, account.id, "desk");
 
     crate::routes::library::history::record_play(
@@ -207,7 +226,8 @@ async fn new_tracks_are_queued_for_prefetch() {
     let case = "radio_shared_prefetch";
     let id = |n| track_id(case, n);
     let (state, account) =
-        fixture(case, vec![vec![id(1), id(2), id(3)]]).await;
+        fixture(case, vec![vec![id(1), id(2), id(3)]])
+            .await;
 
     more(State(state.clone()), account, unfiltered())
         .await

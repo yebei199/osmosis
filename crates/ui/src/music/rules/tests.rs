@@ -466,7 +466,7 @@ fn radio_tops_up_only_when_it_owns_the_batch_and_is_running_out()
 /// 共享电台歌单续歌(#186):交给过播放的不再挑,选着筛选时只挑过得了的,次序照歌单。
 #[test]
 fn radio_tops_up_from_the_shared_list_skipping_what_was_handed()
-{
+ {
     let listed: Vec<TrackDto> =
         ["1", "2", "3", "4"].map(track_with_id).to_vec();
     let handed: std::collections::HashSet<String> =

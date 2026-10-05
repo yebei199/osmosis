@@ -137,7 +137,8 @@ pub async fn radio(
 }
 
 /// `GET /radio/list` —— 账号那一份共享电台歌单(#186),各台读到的一样。
-pub async fn radio_list() -> Result<RadioListDto, ApiError> {
+pub async fn radio_list() -> Result<RadioListDto, ApiError>
+{
     platform::get_json(format!("{}/radio/list", base_url()))
         .await
 }

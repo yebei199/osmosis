@@ -35,10 +35,10 @@ use server::error::{self, Failure};
 use server::store::account::Account;
 use server::store::cache;
 use server::store::history;
-use server::store::radio;
-use server::syncplay::signaling;
 use server::store::lyric::{self, LyricKind};
 use server::store::playlist::TrackRef;
+use server::store::radio;
+use server::syncplay::signaling;
 
 use super::lyric_probe;
 use super::search::remember_details;
@@ -265,9 +265,10 @@ async fn shared_list(
         .filter(|entry| entry.track.platform == NETEASE)
         .map(|entry| entry.track.track_id.clone())
         .collect();
-    let details = cache::details_of(&mut conn, NETEASE, &ids)
-        .await
-        .map_err(|err| error::map_error(&err))?;
+    let details =
+        cache::details_of(&mut conn, NETEASE, &ids)
+            .await
+            .map_err(|err| error::map_error(&err))?;
     drop(conn);
     let heard: HashSet<&str> = entries
         .iter()
@@ -275,9 +276,9 @@ async fn shared_list(
         .map(|entry| entry.track.track_id.as_str())
         .collect();
     let (heard, unheard): (Vec<TrackDto>, Vec<TrackDto>) =
-        details
-            .into_iter()
-            .partition(|track| heard.contains(track.id.as_str()));
+        details.into_iter().partition(|track| {
+            heard.contains(track.id.as_str())
+        });
     let shape = |tracks| {
         for_account(
             state,

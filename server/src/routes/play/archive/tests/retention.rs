@@ -146,7 +146,10 @@ async fn the_sweep_keeps_only_liked_and_recent_tracks() {
             .await
             .expect("清理应当成功");
 
-    assert!(removed >= 3, "至少删掉旧的、歌单里的、日推里的");
+    assert!(
+        removed >= 3,
+        "至少删掉旧的、歌单里的、日推里的"
+    );
     assert_eq!(f.objects.get(&old_key), None);
     assert!(f.objects.get(&liked_key).is_some());
     assert!(f.objects.get(&recent_key).is_some());

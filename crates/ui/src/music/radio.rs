@@ -83,8 +83,10 @@ impl State {
         self.told_dry = false;
         self.pulling = false;
         self.retry_at_ms = 0;
-        self.handed =
-            tracks.iter().map(|track| track.id.clone()).collect();
+        self.handed = tracks
+            .iter()
+            .map(|track| track.id.clone())
+            .collect();
     }
 }
 
@@ -107,11 +109,13 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
         player.on_radio_toggle_heard(move || {
             let Some(ui) = weak.upgrade() else { return };
             let heard = {
-                let mut state = deck.radio.inner.borrow_mut();
+                let mut state =
+                    deck.radio.inner.borrow_mut();
                 state.heard_view = !state.heard_view;
                 state.heard_view
             };
-            ui.global::<crate::Player>().set_radio_heard(heard);
+            ui.global::<crate::Player>()
+                .set_radio_heard(heard);
             show_list(&ui, &deck);
         });
     }
@@ -259,7 +263,8 @@ pub(super) fn begin(
             Box::new(move |queue| {
                 let queue = queue.ok().flatten();
                 if queue.is_some() {
-                    let mut state = radio.inner.borrow_mut();
+                    let mut state =
+                        radio.inner.borrow_mut();
                     state.restart(mode, &handed);
                     state.shared = queue;
                 }
@@ -309,9 +314,12 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
     state.told_dry = false;
     state.retry_at_ms = 0;
     let queued = deck.queue.borrow();
-    state
-        .handed
-        .extend(queued.tracks().iter().map(|track| track.id.clone()));
+    state.handed.extend(
+        queued
+            .tracks()
+            .iter()
+            .map(|track| track.id.clone()),
+    );
 }
 
 /// 电台还在放的话,它续歌带的筛选;不在放是 `None`。
@@ -623,10 +631,12 @@ async fn next_batch(
         (state.handed.clone(), state.chosen.clone())
     };
     let mut list = api::radio_list().await?;
-    let mut fresh = radio_unhanded(&list.tracks, &handed, &chosen);
+    let mut fresh =
+        radio_unhanded(&list.tracks, &handed, &chosen);
     if fresh.is_empty() {
         list = api::radio_more(filter).await?;
-        fresh = radio_unhanded(&list.tracks, &handed, &chosen);
+        fresh =
+            radio_unhanded(&list.tracks, &handed, &chosen);
     }
     remember(deck, list);
     Ok(fresh)
@@ -634,11 +644,9 @@ async fn next_batch(
 
 /// 这几首交给播放了,续歌不再挑它们。
 fn hand(deck: &Deck, tracks: &[TrackDto]) {
-    deck.radio
-        .inner
-        .borrow_mut()
-        .handed
-        .extend(tracks.iter().map(|track| track.id.clone()));
+    deck.radio.inner.borrow_mut().handed.extend(
+        tracks.iter().map(|track| track.id.clone()),
+    );
 }
 
 /// 记下刚取到的共享歌单。
@@ -673,7 +681,8 @@ fn show_list(ui: &MainWindow, deck: &Deck) {
     }
     let ticket =
         deck.views.begin_in_background(ViewSource::Radio);
-    let landing = deck.views.accept(&ticket, shown(deck), true);
+    let landing =
+        deck.views.accept(&ticket, shown(deck), true);
     // 同一视图换内容,不是换视图:走 show 而不是 project,选着的筛选与折叠不清(#160)
     if landing == Landing::Current
         && let Some(found) =
@@ -724,12 +733,18 @@ fn load_more(ui: &MainWindow, deck: &Deck) {
         ui.global::<Player>().set_radio_loading(false);
         match found {
             Ok(list) => {
-                let before =
-                    deck.radio.inner.borrow().list.tracks.len();
+                let before = deck
+                    .radio
+                    .inner
+                    .borrow()
+                    .list
+                    .tracks
+                    .len();
                 if list.tracks.len() <= before {
                     crate::notice::show(
                         &ui,
-                        "电台这会儿没有没听过的新歌".to_owned(),
+                        "电台这会儿没有没听过的新歌"
+                            .to_owned(),
                     );
                 }
                 remember(&deck, list);
@@ -762,7 +777,8 @@ fn follow_group_play(ui: &MainWindow, deck: &Deck) {
             && state.refreshed_for.as_deref()
                 != Some(now.track.id.as_str());
         if due {
-            state.refreshed_for = Some(now.track.id.clone());
+            state.refreshed_for =
+                Some(now.track.id.clone());
         }
         due
     };

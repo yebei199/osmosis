@@ -49,7 +49,8 @@ pub(crate) const RETAIN: Duration =
     Duration::from_secs(24 * 3600);
 
 /// 多久清一轮。用户定的每天一次(#186)。
-const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
+const SWEEP_EVERY: Duration =
+    Duration::from_secs(24 * 3600);
 
 /// 目前唯一的平台。别的平台的曲目不存 —— 取源只认网易云。
 pub(crate) const NETEASE: &str = "netease";

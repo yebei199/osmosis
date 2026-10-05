@@ -65,8 +65,7 @@ pub use auth::{login, logout, register};
 pub use catalog::{
     RadioMode, artist_tracks, daily, health, liked, lyric,
     play_source, radio, radio_list, radio_more,
-    search_artists, search_playlists,
-    search_tracks,
+    search_artists, search_playlists, search_tracks,
 };
 
 // wasm 这一期不做:浏览器里"落到本机"是另一套东西(File System Access

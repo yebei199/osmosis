@@ -84,7 +84,13 @@ impl TrackFacetsDto {
 /// `GET /radio/list` 与 `POST /radio/more` 的响应体(#186):这个账号那一份共享电台歌单,
 /// 所有设备读到的都一样。先加进来的在前。
 #[derive(
-    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
 )]
 pub struct RadioListDto {
     /// 还没听过的。
