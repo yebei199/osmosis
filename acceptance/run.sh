@@ -3,6 +3,19 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# 门禁 accept-check 会把交付自己的 JUnit ID 追在 [select].run 后面(#187)：
+# pytest 的 test_x::test_y 补成 test_x.py::test_y；nextest 的 crate-名::... 略过，subset 总会跑 Rust。
+subset_args() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            *.py::*) printf '%s\n' "$arg" ;;
+            *::*) [[ ${arg%%::*} == *-* ]] || printf '%s\n' "${arg%%::*}.py::${arg#*::}" ;;
+            *) printf '%s\n' "$arg" ;;
+        esac
+    done
+}
+
 run_status_ui() {
     nix-shell slint.nix --run 'cargo nextest run --locked -p ui --test group_capsule --test status_strips --test banner --test download --test login --test player_bar --test player_bar_reserve --test lyrics_page --test music_list_layout --config-file acceptance/nextest.toml --profile status-ui --no-tests fail'
 }
@@ -25,9 +38,13 @@ case "${1:-all}" in
     subset)
         shift
         [[ $# -gt 0 ]] || { echo "usage: acceptance/run.sh subset <test>..." >&2; exit 2; }
+        mapfile -t tests < <(subset_args "$@")
+        [[ ${#tests[@]} -gt 0 ]] || { echo "subset: every argument skipped, nothing to run"; exit 0; }
+        set -- "${tests[@]}"
         nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' bash test/remote-behavior/run.sh subset "$@")"
         run_status_ui
         ;;
+    subset-args) shift; subset_args "$@" ;;
     # 手动用：按 base..head 挑选，再按结果走 all 或 subset。理由落 results/selection.json。
     changed)
         [[ $# == 3 ]] || { echo "usage: acceptance/run.sh changed <base> <head>" >&2; exit 2; }
