@@ -379,6 +379,66 @@ async fn radio_output_collapse_retains_referenced_queues_only()
     drop_account(&pool, account).await;
 }
 
+/// 等独立种子连接确实进入锁等待,同时保留有界与任务未完成断言。
+async fn wait_for_seed_lock<T>(
+    pool: &PgPool,
+    actor_pid: i32,
+    adopting: &tokio::task::JoinHandle<T>,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1)) > 0")
+                .bind(actor_pid).fetch_one(pool).await.expect("查询本次事务等待");
+            if blocked { break; }
+            assert!(!adopting.is_finished(), "种子应与发布临界区交错");
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("种子应有界抵达数据库同步点");
+}
+
+/// 竞态只能提交可读引用或明确拒绝,拒绝时不能留下半个组。
+async fn assert_seed_outcome(
+    pool: &PgPool,
+    account: i64,
+    outcome: Result<
+        Option<GroupStateDto>,
+        server::error::AppError,
+    >,
+) {
+    match outcome {
+        Ok(Some(state)) => {
+            let now = state
+                .now
+                .expect("采用成功必须有有效播放引用");
+            let mut conn =
+                pool.acquire().await.expect("验证连接");
+            let entries = queue::whole(
+                &mut conn,
+                account,
+                now.queue_id,
+                now.revision,
+            )
+            .await
+            .expect("已提交组引用必须可读");
+            assert!(entries.iter().any(|entry| {
+                entry.entry_id == now.entry_id
+            }));
+        }
+        Err(server::error::AppError::NotFound) => {
+            assert!(
+                group::current(pool, account)
+                    .await
+                    .expect("拒绝后仍可读")
+                    .is_none(),
+                "被拒种子不提交半个组"
+            );
+        }
+        other => panic!(
+            "竞态只许成功采用有效版或明确拒绝过期种子: {other:?}"
+        ),
+    }
+}
+
 /// 用真实发布事务的队列锁编排种子采用,已提交组绝不能引用被回收版,两端有界完成。
 #[tokio::test]
 async fn radio_output_concurrent_seed_and_publish_keep_committed_references_readable()
@@ -451,16 +511,7 @@ async fn radio_output_concurrent_seed_and_publish_keep_committed_references_read
         )
         .await
     });
-    // 等数据库确认种子事务正在等锁;不靠 sleep 猜测是否到达临界区。
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let blocked: bool = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1)) > 0")
-                .bind(actor_pid).fetch_one(&pool).await.expect("查询本次事务等待");
-            if blocked { break; }
-            assert!(!adopting.is_finished(), "种子应与发布临界区交错");
-            tokio::task::yield_now().await;
-        }
-    }).await.expect("种子应有界抵达数据库同步点");
+    wait_for_seed_lock(&pool, actor_pid, &adopting).await;
     let mut revision = first.revision;
     for _ in 0..5 {
         revision = queue::publish(
@@ -491,38 +542,7 @@ async fn radio_output_concurrent_seed_and_publish_keep_committed_references_read
     .await
     .expect("种子请求应有界完成")
     .expect("种子任务未 panic");
-    match outcome {
-        Ok(Some(state)) => {
-            let now = state
-                .now
-                .expect("采用成功必须有有效播放引用");
-            let mut conn =
-                pool.acquire().await.expect("验证连接");
-            let entries = queue::whole(
-                &mut conn,
-                account,
-                now.queue_id,
-                now.revision,
-            )
-            .await
-            .expect("已提交组引用必须可读");
-            assert!(entries.iter().any(|entry| {
-                entry.entry_id == now.entry_id
-            }));
-        }
-        Err(server::error::AppError::NotFound) => {
-            assert!(
-                group::current(&pool, account)
-                    .await
-                    .expect("拒绝后仍可读")
-                    .is_none(),
-                "被拒种子不提交半个组"
-            );
-        }
-        other => panic!(
-            "竞态只许成功采用有效版或明确拒绝过期种子: {other:?}"
-        ),
-    }
+    assert_seed_outcome(&pool, account, outcome).await;
     actor.close().await;
     drop_account(&pool, account).await;
 }
