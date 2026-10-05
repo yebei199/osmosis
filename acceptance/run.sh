@@ -16,5 +16,17 @@ case "${1:-all}" in
         nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh all'
         run_status_ui
         ;;
-    *) echo "usage: acceptance/run.sh [all|status-ui|download]" >&2; exit 2 ;;
+    # 按 base..head 挑累计场景子集；认不出改动时 selection.py 退回全量。理由落 results/selection.json。
+    changed)
+        [[ $# == 3 ]] || { echo "usage: acceptance/run.sh changed <base> <head>" >&2; exit 2; }
+        mkdir -p test/remote-behavior/results
+        mapfile -t suite_args < <(nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' \
+            python3 test/remote-behavior/selection.py "$2" "$3" \
+            --out test/remote-behavior/results/selection.json --args)")
+        [[ ${#suite_args[@]} -gt 0 ]] || { echo "selection produced no run arguments" >&2; exit 2; }
+        cat test/remote-behavior/results/selection.json
+        nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' bash test/remote-behavior/run.sh "${suite_args[@]}")"
+        run_status_ui
+        ;;
+    *) echo "usage: acceptance/run.sh [all|status-ui|download|changed <base> <head>]" >&2; exit 2 ;;
 esac

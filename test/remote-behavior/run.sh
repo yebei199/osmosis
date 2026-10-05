@@ -5,12 +5,13 @@ repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
 mode=${1:-all}
-if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download && "$mode" != targeted ]]; then
-    echo 'usage: run.sh [all|list|radio|download|targeted <testcase>...]' >&2
+if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download && "$mode" != targeted && "$mode" != subset ]]; then
+    echo 'usage: run.sh [all|list|radio|download|targeted <testcase>...|subset <testcase>...]' >&2
     exit 2
 fi
 selected_tests=()
-if [[ "$mode" == targeted ]]; then
+# subset 是 selection.py 挑出的累计子集，和 all 一样带上 Rust 投影回归。
+if [[ "$mode" == targeted || "$mode" == subset ]]; then
     shift
     if [[ $# -eq 0 ]]; then
         echo 'targeted requires at least one testcase' >&2
@@ -86,7 +87,7 @@ run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
-if [[ "$mode" == all ]]; then
+if [[ "$mode" == all || "$mode" == subset ]]; then
     projection_junit="$repo_root/target/nextest/rb-projection/junit.xml"
     rm -f "$projection_junit"
     run_owned projection 3600 cargo nextest run --locked -p ui -p app-desktop \
@@ -100,7 +101,7 @@ tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi
 if [[ "$mode" == download ]]; then tests=("$suite_dir/test_download.py"); fi
-if [[ "$mode" == targeted ]]; then tests=("${selected_tests[@]}"); fi
+if [[ "$mode" == targeted || "$mode" == subset ]]; then tests=("${selected_tests[@]}"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \
