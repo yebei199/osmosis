@@ -138,8 +138,10 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 
 ## 按改动挑场景与每晚全量（#185）
 
-`selection.py BASE HEAD` 读进版本库的 `coverage-map.json`，给出 base..head 该跑的
-pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制里每个源文件的被插桩函数
+`selection.py BASE HEAD` 从 head 的提交里读 `coverage-map.json`（不读工作区），输出
+`accept-select/1` JSON：base..head 该跑的 pytest 节点和每个改动文件的判定。门禁按
+`acceptance/run.toml` 的 `[select]` 调它，再把子集交给 `acceptance/run.sh subset`
+（nixos_config#289）。地图记录生成提交、二进制里每个源文件的被插桩函数
 首末行（functions），和每个场景实际执行过的源文件。挑选规则：
 
 - 二进制里的 Rust 文件，改动（按地图提交的行号）全部落在函数体内 → 地图上执行过它的
@@ -160,9 +162,9 @@ pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制
 宏展开生成的函数（`macro_rules!` 等）不按函数体判断，落在宏定义里的改动会被当作
 函数体外而退回全量。
 
-`acceptance/run.sh changed BASE HEAD` 是挑选后的运行入口：子集走 `run.sh subset`
-（带 Rust 投影回归），全量走 `run.sh all`，再跑 status-ui；挑选结果写进
-`results/selection.json`。
+`acceptance/run.sh subset <节点>...` 跑子集：`run.sh subset`（带 Rust 投影回归）再加
+status-ui，写出与全量相同的三份 JUnit。`acceptance/run.sh changed BASE HEAD` 给人手用：
+先挑，再按结果走 `all` 或 `subset`，挑选结果写进 `results/selection.json`。
 
 全量（`run.sh all`，合回门禁与每晚全量走的同一条路径）顺带生成地图：
 `coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER` 只给工作区 crate 插桩，每个世界按

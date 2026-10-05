@@ -1,2 +1,15 @@
 command = ["bash", "acceptance/run.sh", "all"]
 junit = ["test/remote-behavior/results/junit.xml", "test/remote-behavior/results/projection-junit.xml", "target/nextest/status-ui/junit.xml"]
+
+# 按改动挑场景（#185，格式见 nixos_config#289）：门禁在 head 的干净检出里调
+# <command> <base> <head> 取 accept-select/1 JSON，子集交给 <run> <tests...>；
+# base..head 碰到 self 里的文件或本文件时不调选择器，直接全量。
+[select]
+command = ["python3", "test/remote-behavior/selection.py"]
+run = ["bash", "acceptance/run.sh", "subset"]
+self = [
+  "test/remote-behavior/selection.py",
+  "test/remote-behavior/mutate.py",
+  "acceptance/run.sh",
+  "test/remote-behavior/coverage-map.json",
+]
