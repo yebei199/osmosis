@@ -8,3 +8,11 @@ observe = "test_x::test_y 转成 test_x.py::test_y；带 - 的 nextest ID 略过
 tests = ["test_selection::test_subset_accepts_junit_ids[pytest-junit]", "test_selection::test_subset_accepts_junit_ids[pytest-junit-param]", "test_selection::test_subset_accepts_junit_ids[nextest]", "test_selection::test_subset_accepts_junit_ids[pytest-node]", "test_selection::test_subset_with_every_argument_skipped_exits_zero"]
 doubles = []
 mutation = "去掉 subset_args 里的 .py 补全：pytest-junit 两条失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "挑选器照旧给 subset 传 pytest 节点"
+observe = "test_x.py::test_y 原样交给 pytest"
+tests = ["test_selection::test_subset_accepts_junit_ids[pytest-node]"]
+doubles = []
