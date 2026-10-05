@@ -46,6 +46,9 @@ playing 上报，revision 取该上报实际应用的版本；至少四个新版
 `local-fm-premise.json`、`local-fm-publications.jsonl` 和 `transport-controls.jsonl`
 保留该前提；最终目标恢复旧曲、旧 entry 存在、追加/替换与静音判据保持不变。
 
+组电台在电台区点歌（#182）：续过一批后遥控端列表仍是起播三首，点第二首让服务端另起一版，
+断言那一版到批尾仍有真实 append。
+
 播放入口回归新增四个真实 Python testcase：FM/列表保留本地曲目离组后的可点击入口、
 真正空本机队列、组内非出声成员的全局投影。入口子树在至少六秒有效静音采集前后
 各核对一次，覆盖生产轮询刷新；音频执行用实际 PCM，新 checkpoint 只作辅助凭据。

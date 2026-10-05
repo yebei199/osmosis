@@ -239,6 +239,49 @@ def group_radio_sequence_end_top_up(world, mode, shuffled):
     world.silent(source, world.two)
 
 
+# 组电台续过一批后,遥控端电台区仍是起播那三首;点其中一首,服务端另起一版,
+# 那一版仍归电台,放到它的最后一首照样续(#182)。
+def group_radio_pick_on_list_keeps_top_up(world):
+    source = world.controller
+    source.ui.output(world.one)
+    source.ui.radio()
+    world.sound(world.one, "175004")
+    seeded = world.group()
+    for wanted in ["175005", "175006"]:
+        source.ui.transport("next")
+        world.sound(world.one, wanted)
+
+    # 查组此刻那一版的行数;续取只来自真实 radio → HTTP append。
+    def grown(base):
+        row = world.group()
+        entries = world.sql(
+            "SELECT count(*) AS total FROM play_queue_entries WHERE queue_id=%s AND revision=%s",
+            (row["queue_id"], row["revision"]),
+        )
+        if (
+            row["queue_id"] == base["queue_id"]
+            and row["revision"] > base["revision"]
+            and entries[0]["total"] >= 6
+        ):
+            return row
+        return None
+
+    extended = wait_until(lambda: grown(seeded), "first FM append")
+    source.ui.radio()
+    wait_until(lambda: len(source.ui.elements("TrackList::touch")) == 3, "stale radio rows")
+    source.ui.activate(source.ui.elements("TrackList::touch")[1], pointer=True)
+    world.sound(world.one, "175005")
+    picked = world.group()
+    assert (picked["queue_id"], picked["revision"]) != (
+        extended["queue_id"],
+        extended["revision"],
+    ), "stale radio list should republish the group queue"
+    source.ui.transport("next")
+    world.sound(world.one, "175006")
+    wait_until(lambda: grown(picked), "FM append after a radio-list pick")
+    world.silent(source, world.two)
+
+
 # 非电台列表通过自然结束回卷,组队列身份和行数保持不变。
 def non_radio_list_loop_wraps_without_append(world):
     remote_pick(world)

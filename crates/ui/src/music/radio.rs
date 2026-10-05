@@ -8,7 +8,8 @@
 //!
 //! 在组里时(#165)起播走组意图,「还是不是电台在放」改认组队列的版本:起播的应答里
 //! 那一版是电台的,续取走组意图追加进去、换到续上的那一版;有人点了别的歌,组队列换了
-//! 一版,电台就不再往里续。组按服务端的实际播放次序末尾标记续取,循环预告不影响续取。
+//! 一版,电台就不再往里续。在电台区点的那一下例外(#182):服务端换出来的那一版仍归电台
+//! (见 [`follow`])。组按服务端的实际播放次序末尾标记续取,循环预告不影响续取。
 //! 独奏电台切输出入组时,只有服务端采用同一 seed 且本机未换批才接管组队列。
 //! 续取仍由发起电台的设备负责,该设备下线或挂起时不会由其他成员代续。
 //!
@@ -301,7 +302,11 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
     let filter = app_core::facets::picks(&chosen);
     let mut state = deck.radio.inner.borrow_mut();
     let foreign = after == before && state.batch != after;
-    if state.mode.is_none() || foreign {
+    // 组里由 [`follow`] 接,本机队列与电台无关
+    if state.mode.is_none()
+        || foreign
+        || deck.group.is_member()
+    {
         log::info!(
             "电台区点歌,电台不接:没开过或这一批不归它"
         );
@@ -320,6 +325,38 @@ pub(super) fn adopt(deck: &Deck, before: u64) {
             .iter()
             .map(|track| track.id.clone()),
     );
+}
+
+/// 组里点歌的应答(#182):在电台区点的,换出来的那一版仍归电台,选着的筛选记下来;
+/// 别处点的不接,组换了一版电台就停续。列表与组队列逐首一致时服务端沿用原版,
+/// 筛过、分过组、或续歌后本机列表没跟着长,都会另起一版。
+pub(in crate::music) fn follow(
+    deck: &Deck,
+) -> crate::sync::group::Then {
+    if deck.views.current_source()
+        != Some(ViewSource::Radio)
+        || deck.radio.inner.borrow().mode.is_none()
+    {
+        return Box::new(|_| {});
+    }
+    let filter = app_core::facets::picks(
+        deck.facets.borrow().chosen(),
+    );
+    let radio = deck.radio.clone();
+    Box::new(move |reply| {
+        let Some(queue) = reply.ok().flatten() else {
+            return;
+        };
+        log::info!(
+            "电台接下组里这一版,筛选 {} 条",
+            filter.len()
+        );
+        let mut state = radio.inner.borrow_mut();
+        state.shared = Some(queue);
+        state.filter = filter;
+        state.told_dry = false;
+        state.retry_at_ms = 0;
+    })
 }
 
 /// 电台还在放的话,它续歌带的筛选;不在放是 `None`。
