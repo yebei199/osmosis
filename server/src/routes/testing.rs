@@ -221,7 +221,13 @@ pub(crate) fn expected_dto(
     title: &str,
 ) -> TrackDto {
     TrackDto {
-        artist_identities: Vec::new(),
+        artist_identities: vec![
+            contract::ArtistIdentityDto {
+                platform: "netease".to_owned(),
+                id: None,
+                name: "某人".to_owned(),
+            },
+        ],
         platform: "netease".to_owned(),
         id: id.to_owned(),
         title: title.to_owned(),
