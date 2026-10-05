@@ -18,6 +18,8 @@ from resources import World
 def world(request):
     artifact_root = Path(os.environ["REMOTE_BEHAVIOR_ARTIFACTS"])
     directory = Path(tempfile.mkdtemp(prefix="175-", dir=artifact_root))
+    # 并行时 JUnit 逐 testcase 指回它独占的资源目录。
+    request.node.user_properties.append(("artifacts", str(directory)))
     root = Path(__file__).resolve().parents[2]
     target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
     # 断连心跳最坏90s加重连抖动75s,素材覆盖该前提且不提前播完。
