@@ -3,7 +3,7 @@
 use contract::{
     ArtistSearchDto, FacetPickDto, HealthDto, LyricDto,
     PROTOCOL_VERSION, PlaySourceDto, PlaylistSearchDto,
-    SearchDto, TracksDto,
+    RadioListDto, SearchDto, TracksDto,
 };
 
 use crate::url::{
@@ -134,6 +134,32 @@ pub async fn radio(
         url.push_str(&crate::url::encode_component(&json));
     }
     platform::get_json(url).await
+}
+
+/// `GET /radio/list` —— 账号那一份共享电台歌单(#186),各台读到的一样。
+pub async fn radio_list() -> Result<RadioListDto, ApiError> {
+    platform::get_json(format!("{}/radio/list", base_url()))
+        .await
+}
+
+/// `POST /radio/more` —— 服务端从私人 FM 拉一批新歌追加进共享歌单,交回追加后的整份。
+/// `filter` 不空就只加过得了这些筛选的(#166)。
+pub async fn radio_more(
+    filter: &[FacetPickDto],
+) -> Result<RadioListDto, ApiError> {
+    let mut url = format!("{}/radio/more", base_url());
+    if !filter.is_empty() {
+        let json = serde_json::to_string(filter)
+            .expect("筛选条件总能序列化");
+        url.push_str("?filter=");
+        url.push_str(&crate::url::encode_component(&json));
+    }
+    platform::send_json::<(), RadioListDto>(
+        reqwest::Method::POST,
+        url,
+        None,
+    )
+    .await
 }
 
 /// `GET /liked` —— 我喜欢的音乐,取第一页。

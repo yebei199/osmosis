@@ -185,6 +185,20 @@ pub(super) struct RadioTurn {
     pub(super) retry_at_ms: u64,
 }
 
+/// 共享电台歌单里还能续进来的(#186):没交给过播放、过得了续歌的筛选,原次序。
+pub(super) fn radio_unhanded(
+    listed: &[TrackDto],
+    handed: &std::collections::HashSet<String>,
+    chosen: &app_core::facets::Chosen,
+) -> Vec<TrackDto> {
+    app_core::facets::filter(listed, chosen)
+        .into_iter()
+        .map(|index| &listed[index])
+        .filter(|track| !handed.contains(&track.id))
+        .cloned()
+        .collect()
+}
+
 /// 该不该续一批(#159):队列剩最后一首时续,两种模式共用这一个判据。
 pub(super) fn radio_due(turn: &RadioTurn) -> bool {
     turn.owns_batch

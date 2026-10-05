@@ -250,6 +250,17 @@ impl Group {
                     });
                 return;
             }
+            // 共享电台歌单变了(#186):电台那边自己去重取
+            Event::RadioChanged => {
+                let _ = self
+                    .inner
+                    .weak
+                    .upgrade_in_event_loop(|ui| {
+                        ui.global::<crate::Player>()
+                            .invoke_radio_changed();
+                    });
+                return;
+            }
             Event::DeviceReport { from, report } => {
                 let changed = lock(&self.inner.reports)
                     .insert(from.clone(), report.clone())

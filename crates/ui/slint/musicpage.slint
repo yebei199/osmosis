@@ -488,6 +488,28 @@ export component MusicPage inherits VerticalLayout {
 
             // 曲目列表。四种情况摆它:每日推荐、最近播放、
             // 搜索的歌曲页签,以及任何一层详情(歌单或歌手)——
+            // 电台区(#186):账号一份的共享歌单。「加载新歌」让服务端追加一批,
+            // 哪台加的所有设备都刷新;「已听过」切去摆听过的那些,还能点。
+            // 摆在空状态之上:「已听过」里一首都没有时,切回去的键不能跟着消失。
+            if Shell.music-section == 4
+                && Library.open-playlist-name == "":
+            radio-row := HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                radio-load-more := HoverButton {
+                    width: 96px;
+                    text: Player.radio-loading ? "加载中" : "加载新歌";
+                    enabled: !Player.radio-loading;
+                    clicked => { Player.radio-load-more(); }
+                }
+                radio-heard := HoverButton {
+                    width: 84px;
+                    text: Player.radio-heard ? "未听过" : "已听过";
+                    clicked => { Player.radio-toggle-heard(); }
+                }
+            }
+
             // 空状态:该有一批歌的地方一首都没有。大标题 +
             // 一个真动作(拉一批推荐);设计稿里的「打开本地
             // 文件夹」等入口等功能存在了再上(硬规则 8)。
