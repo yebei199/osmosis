@@ -125,10 +125,13 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 ## 按改动挑场景与每晚全量（#185）
 
 `selection.py BASE HEAD` 读进版本库的 `coverage-map.json`，给出 base..head 该跑的
-pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制里的全部源文件（universe）
-和每个场景实际执行过的源文件。挑选规则：
+pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制里每个源文件的被插桩函数
+首末行（functions），和每个场景实际执行过的源文件。挑选规则：
 
-- 二进制里的 Rust 文件 → 地图上执行过它的场景；执行过它的场景一个都没有 → 不加场景；
+- 二进制里的 Rust 文件，改动（按地图提交的行号）全部落在函数体内 → 地图上执行过它的
+  场景；执行过它的场景一个都没有 → 不加场景。只改注释或空行的段不算改动；
+- 同一文件里有任何一段落在函数体外（类型、derive、常量、函数签名、新增函数、impl 头）
+  → 全量：覆盖率不把 derive 展开和常量内联记作执行，按文件覆盖会漏选；
 - 不进二进制的 Rust 测试代码、文档、安卓/web/iOS、xtask、experiments、`test/` 下别的
   脚本、AC 映射 toml → 不加场景；
 - `test_<x>.py` → 整个模块；`mutate.py` → 全部 fault_sensitivity；
@@ -139,9 +142,9 @@ pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制
 - 地图生成提交之后的改动一并计入，地图越旧选得越多；`test_lifecycle.py`、
   `test_position.py`、`test_selection.py`、`test_covmap.py` 与矩阵断言每次都跑。
 
-已知上限：只靠文件粒度。一个文件里的 `const` 被别的文件内联使用、而它本身的函数
-没被某场景执行时，改这个常量不会选中该场景；新 trait impl 改变别处的方法解析同理。
-这类改动请直接跑全量。
+已知上限：函数体内的改动按文件挑，选中的是执行过该文件任一函数的场景，不细到函数。
+宏展开生成的函数（`macro_rules!` 等）不按函数体判断，落在宏定义里的改动会被当作
+函数体外而退回全量。
 
 `acceptance/run.sh changed BASE HEAD` 是挑选后的运行入口：子集走 `run.sh subset`
 （带 Rust 投影回归），全量走 `run.sh all`，再跑 status-ui；挑选结果写进

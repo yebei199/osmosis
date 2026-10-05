@@ -20,7 +20,8 @@ def git(repo, *args):
     ).stdout.strip()
 
 
-# 一个世界的全部进程合成一份 profile，按文件列出执行过至少一个函数的源文件。
+# 一个世界的全部进程合成一份 profile，按文件列出执行过至少一个函数的源文件，
+# 以及每个被插桩函数的首末行；selection.py 只把落在函数体内的改动交给覆盖判断。
 def executed(profiles, objects, repo):
     raws = sorted(profiles.glob("*.profraw"))
     if not raws or not any(raw.stat().st_size for raw in raws):
@@ -29,21 +30,24 @@ def executed(profiles, objects, repo):
     subprocess.run(
         ["llvm-profdata", "merge", "-sparse", *map(str, raws), "-o", str(merged)], check=True
     )
-    command = ["llvm-cov", "export", "-summary-only", "-instr-profile", str(merged)]
+    command = ["llvm-cov", "export", "-skip-expansions", "-instr-profile", str(merged)]
     for binary in objects:
         command += ["-object", str(binary)]
     report = json.loads(subprocess.run(command, check=True, capture_output=True).stdout)
-    universe, hits = set(), set()
+    ranges, hits = {}, set()
     for data in report["data"]:
-        for entry in data["files"]:
-            path = Path(entry["filename"])
-            if not path.is_relative_to(repo):
+        for function in data["functions"]:
+            path = Path(function["filenames"][0])
+            # 区域格式：行起、列起、行止、列止、次数、文件号、展开文件号、种类。
+            lines = [r for r in function["regions"] if r[5] == 0 and r[7] == 0]
+            if not path.is_relative_to(repo) or not lines:
                 continue
             name = path.relative_to(repo).as_posix()
-            universe.add(name)
-            if entry["summary"]["functions"]["covered"]:
+            span = (min(r[0] for r in lines), max(r[2] for r in lines))
+            ranges.setdefault(name, set()).add(span)
+            if function["count"]:
                 hits.add(name)
-    return universe, hits
+    return ranges, hits
 
 
 # JUnit 里每个起过世界的用例都必须有覆盖；没起世界的只依赖 Python，按模块挑。
@@ -56,11 +60,12 @@ def junit_nodes(junit):
 
 def build(profiles_root, junit, objects, repo):
     repo = Path(repo).resolve()
-    universe, scenarios = set(), {}
+    functions, scenarios = {}, {}
     for profiles in sorted(Path(profiles_root).glob("cov-*")):
         node = (profiles / "nodeid").read_text().strip()
-        files, hits = executed(profiles, objects, repo)
-        universe |= files
+        ranges, hits = executed(profiles, objects, repo)
+        for name, spans in ranges.items():
+            functions.setdefault(name, set()).update(spans)
         scenarios[node] = sorted(set(scenarios.get(node, ())) | hits)
     if not scenarios:
         raise RuntimeError("no world recorded coverage")
@@ -76,9 +81,25 @@ def build(profiles_root, junit, objects, repo):
         "generated": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         # 不起世界的用例：不执行二进制，只在自己的模块或共享设施改动时被选中。
         "unmapped": unmapped,
-        "universe": sorted(universe),
+        # 二进制里每个源文件的被插桩函数首末行，键集合就是地图认得的文件。
+        "functions": {
+            name: [list(span) for span in sorted(spans)]
+            for name, spans in sorted(functions.items())
+        },
         "scenarios": dict(sorted(scenarios.items())),
     }
+
+
+# 每个文件、每个场景各占一行，重新生成后的 git diff 才读得懂。
+def dump(data):
+    lines = []
+    for key, value in data.items():
+        if isinstance(value, dict):
+            body = ",\n".join(f"  {json.dumps(k)}: {json.dumps(v)}" for k, v in value.items())
+            lines.append(f"{json.dumps(key)}: {{\n{body}\n}}")
+        else:
+            lines.append(f"{json.dumps(key)}: {json.dumps(value)}")
+    return "{\n" + ",\n".join(lines) + "\n}\n"
 
 
 def main():
@@ -90,7 +111,7 @@ def main():
     args = parser.parse_args()
     repo = git(Path(__file__).parent, "rev-parse", "--show-toplevel")
     data = build(args.profiles, args.junit, args.object, repo)
-    Path(args.out).write_text(json.dumps(data, indent=1) + "\n")
+    Path(args.out).write_text(dump(data))
 
 
 if __name__ == "__main__":

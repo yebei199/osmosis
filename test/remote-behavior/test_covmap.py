@@ -1,12 +1,13 @@
 """覆盖地图生成：真插桩一个小程序，按世界目录归到 pytest 节点。"""
 
+import json
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from covmap import build
+from covmap import build, dump
 
 SUITE = Path(__file__).resolve().parent
 PROGRAM = """
@@ -80,7 +81,9 @@ def test_map_records_executed_files_per_node(program, tmp_path):
     run_world(binary, tmp_path / "profiles/cov-a", "test_remote.py::test_a")
     names = [("test_remote", "test_a"), ("test_remote", "test_plain"), ("test_position", "x")]
     data = build(tmp_path / "profiles", junit(tmp_path / "j.xml", names), [binary], repo)
-    assert data["universe"] == ["src/main.rs", "src/other.rs"]
+    assert sorted(data["functions"]) == ["src/main.rs", "src/other.rs"]
+    assert [3, 3] in data["functions"]["src/main.rs"]
+    assert json.loads(dump(data)) == data
     assert data["scenarios"] == {"test_remote.py::test_a": ["src/main.rs"]}
     assert data["unmapped"] == ["test_remote.py::test_plain"]
     assert len(data["commit"]) == 40

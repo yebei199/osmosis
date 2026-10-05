@@ -46,6 +46,9 @@ IGNORED = re.compile(
 # 不在二进制里的 Rust 测试代码；只由快速层与 status-ui 覆盖。
 RUST_TEST = re.compile(r"(.*/)?tests(/.*)?\.rs")
 SCENARIO_MODULE = re.compile(re.escape(SUITE) + r"(test_[a-z_]+\.py)")
+HUNK = re.compile(r"@@ -(\d+)(?:,(\d+))? ")
+# 只有注释或空白的改动不改变行为。
+INERT = re.compile(r"\s*(//.*)?")
 
 
 def git(repo, *args):
@@ -78,7 +81,7 @@ def load_map(repo, head, map_path):
     try:
         data = json.loads(Path(map_path).read_text())
         commit = data["commit"]
-        universe = set(data["universe"])
+        functions = {path: [tuple(r) for r in ranges] for path, ranges in data["functions"].items()}
         scenarios = {name: set(files) for name, files in data["scenarios"].items()}
     except FileNotFoundError:
         return None, f"coverage map missing: {map_path}"
@@ -92,12 +95,38 @@ def load_map(repo, head, map_path):
     )
     if ancestor.returncode:
         return None, f"coverage map stale: {commit} is not an ancestor of {head}"
-    return (commit, universe, scenarios), None
+    return (commit, functions, scenarios), None
+
+
+# 覆盖只认函数体：derive 展开、常量、类型和 impl 头都不计执行，改到它们就认不出影响面。
+# 每段改动（地图提交的行号）都须落在某个被插桩函数的首末行之间，且不碰首末行。
+def inside_bodies(repo, map_commit, head, path, ranges):
+    if not exists_at(repo, head, path):
+        return False
+    diff = git(repo, "diff", "-U0", "--no-renames", map_commit, head, "--", path)
+    hunks = []
+    for line in diff.splitlines():
+        match = HUNK.match(line)
+        if match:
+            start, count = int(match.group(1)), int(match.group(2) or 1)
+            hunks.append((start, count, []))
+        elif hunks and line[:1] in "+-" and not line.startswith(("+++", "---")):
+            hunks[-1][2].append(line[1:])
+    for start, count, text in hunks:
+        if all(INERT.fullmatch(t) for t in text):
+            continue
+        last = start if count == 0 else start + count - 1
+        lower = start if count == 0 else start - 1
+        if not any(first <= lower and last < end for first, end in ranges):
+            return False
+    return True
 
 
 # 单个文件的判定：返回选中的节点，或 None 表示认不出、须退回全量。
-def classify(path, universe, scenarios):
-    if path in universe:
+def classify(path, functions, scenarios, body_only):
+    if path in functions:
+        if not body_only(path):
+            return None, "change outside function bodies (types, derives, consts, signatures)"
         hits = sorted(name for name, files in scenarios.items() if path in files)
         return hits, "covered by these scenarios" if hits else "in binary, executed by no scenario"
     if path.endswith(".rs") and RUST_TEST.fullmatch(path):
@@ -118,13 +147,18 @@ def select(repo, base, head, map_path=DEFAULT_MAP):
     loaded, problem = load_map(repo, head, map_path)
     if problem:
         return full(result, problem)
-    map_commit, universe, scenarios = loaded
+    map_commit, functions, scenarios = loaded
     result["map_commit"] = map_commit
     # 地图之后的改动都让覆盖失真，和本次 base..head 一并计入。
     changed = changed_files(repo, base, head) | changed_files(repo, map_commit, head)
     tests = set(ALWAYS)
     for path in sorted(changed):
-        picked, why = classify(path, universe, scenarios)
+        picked, why = classify(
+            path,
+            functions,
+            scenarios,
+            lambda p: inside_bodies(repo, map_commit, head, p, functions[p]),
+        )
         if picked is None:
             result["reasons"].append({"file": path, "rule": why})
             return full(result, f"{why}: {path}")
