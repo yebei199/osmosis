@@ -96,10 +96,11 @@ pub async fn enqueue(
     .rows_affected())
 }
 
-/// 所有账号的所有本地歌单(含「我的喜欢」)里的曲目都排上。启动时跑一次。
+/// 所有账号「我的喜欢」里的曲目都排上。启动时跑一次。普通歌单不排:
+/// 不是红心的存进去一天没播就被清掉(#186),预先存它们只是白下一遍。
 ///
-/// 同一首在几个账号的歌单里,以其中 id 最小的那个账号的凭据去取。
-pub async fn enqueue_all_playlists(
+/// 同一首几个账号都红心了,以其中 id 最小的那个账号的凭据去取。
+pub async fn enqueue_all_liked(
     conn: &mut PgConnection,
     quality: &str,
 ) -> Result<u64, AppError> {
@@ -109,11 +110,12 @@ pub async fn enqueue_all_playlists(
                 t.platform, t.track_id, p.account_id
          FROM local_playlist_tracks t
          JOIN local_playlists p ON p.id = t.playlist_id
-         WHERE {NOT_STORED}
+         WHERE p.system = $2 AND {NOT_STORED}
          ORDER BY t.platform, t.track_id, p.account_id
          {REQUEUE}"
     ))
     .bind(quality)
+    .bind(crate::store::liked::SYSTEM)
     .execute(conn)
     .await?
     .rows_affected())

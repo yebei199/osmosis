@@ -25,7 +25,6 @@ use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
 use crate::routes::library::for_account;
-use crate::routes::play::prefetch;
 use crate::{AppState, fail};
 
 /// 搜索默认返回条数。
@@ -208,8 +207,8 @@ pub(crate) async fn search_playlists(
 
 /// `GET /daily` —— 今日推荐。
 ///
-/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。当天的这批排进预取队列
-/// (#147):取到就是日推刷新了,已在桶里的入队时就跳过。详情顺手写进缓存(#156)。
+/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。当天的这批记进日推
+/// (空间上限取舍时排在红心之后,#147),但不排预取(#186)。详情顺手写进缓存(#156)。
 pub(crate) async fn daily(
     State(state): State<AppState>,
     account: Account,
@@ -240,7 +239,6 @@ pub(crate) async fn daily(
         .collect();
     remember_details(&state, &tracks).await;
     remember_daily(&state, account.id, &refs).await;
-    prefetch::enqueue(&state, account.id, &refs).await;
 
     Ok(Json(
         for_account(
@@ -276,7 +274,7 @@ pub(crate) async fn remember_details(
     }
 }
 
-/// 记下这个账号当天的日推:保留规则要知道哪几首在里面(#147)。
+/// 记下这个账号当天的日推:桶满时谁先让位要知道哪几首在里面(#147)。
 /// 记不上只写日志,日推照样交出去。
 async fn remember_daily(
     state: &AppState,

@@ -1,5 +1,5 @@
 //! 预取队列:幂等入队、并发领取只领走一个、没办成的再入队重新排上、
-//! 重试用尽记 failed、启动时把歌单排一遍、已在桶里的不入队。
+//! 重试用尽记 failed、启动时只排红心、往歌单加歌不排(#186)、已在桶里的不入队。
 
 use std::time::Duration;
 
@@ -294,15 +294,21 @@ async fn retries_run_out_into_failed() {
     );
 }
 
-/// 启动时把所有歌单的曲目排上,以歌单主人的凭据去取。
+/// 启动时只排「我的喜欢」,以红心主人的凭据去取;普通歌单里的不排(#186)。
 #[tokio::test]
-async fn every_playlist_track_is_enqueued_at_startup() {
+async fn only_liked_tracks_are_enqueued_at_startup() {
     let pool = testing::pool().await;
     let account =
         testing::fresh_account(&pool, "pf_seed").await;
     let mut tx = pool.begin().await.unwrap();
     let p = platform("pf_seed");
-    let song = track(&p, "1");
+    let liked = track(&p, "1");
+    let listed = track(&p, "2");
+    server::store::liked::set(
+        &mut tx, account.id, &liked, true,
+    )
+    .await
+    .expect("点红心失败");
     let list = server::store::playlist::create(
         &mut tx, account.id, "预取",
     )
@@ -312,20 +318,76 @@ async fn every_playlist_track_is_enqueued_at_startup() {
         &mut tx,
         account.id,
         list.id,
-        std::slice::from_ref(&song),
+        std::slice::from_ref(&listed),
     )
     .await
     .unwrap();
 
-    prefetch::enqueue_all_playlists(&mut tx, "lossless")
+    prefetch::enqueue_all_liked(&mut tx, "lossless")
         .await
-        .expect("排歌单应当成功");
+        .expect("排红心应当成功");
 
     let job = prefetch::claim(&mut tx, &p, LEASE)
         .await
         .unwrap()
-        .expect("歌单里的歌应当排上了");
-    assert_eq!(job.account_id, account.id);
+        .expect("红心的歌应当排上了");
+    assert_eq!(
+        (job.account_id, job.track_id.as_str()),
+        (account.id, "1")
+    );
+    assert_eq!(job_state(&mut tx, &listed).await, None);
+}
+
+/// 往普通歌单加歌不排预取(#186):不是红心的存进去一天没播就会被清掉。
+#[tokio::test]
+async fn adding_to_a_playlist_queues_nothing() {
+    use axum::Json;
+    use axum::extract::{Path, State};
+
+    let pool = testing::pool().await;
+    let account =
+        testing::fresh_account(&pool, "pf_add").await;
+    let state = crate::AppState {
+        archive: Some(
+            crate::routes::play::archive::Archive::new(
+                std::sync::Arc::new(
+                    testing::MemoryObjects::default(),
+                ),
+            ),
+        ),
+        ..testing::state(
+            pool.clone(),
+            testing::unreachable_upstream(),
+        )
+    };
+    let list = {
+        let mut conn = pool.acquire().await.unwrap();
+        server::store::playlist::create(
+            &mut conn, account.id, "加歌",
+        )
+        .await
+        .expect("建歌单失败")
+    };
+    let id = testing::track_id("pf_add", 1);
+    let body = serde_json::from_value(serde_json::json!({
+        "tracks": [{"platform": "netease", "id": id}]
+    }))
+    .expect("请求体");
+
+    crate::routes::library::playlists::add_playlist_tracks(
+        State(state),
+        account,
+        Path(list.id),
+        Json(body),
+    )
+    .await
+    .expect("加歌应当成功");
+
+    let mut conn = pool.acquire().await.unwrap();
+    assert_eq!(
+        job_state(&mut conn, &track("netease", &id)).await,
+        None
+    );
 }
 
 /// 这条测试专用的一个 worker 限速器:额度给足,限速不是这里要测的。
