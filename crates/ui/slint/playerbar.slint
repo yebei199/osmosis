@@ -114,7 +114,10 @@ export component PlayerBar inherits Rectangle {
         liked: Player.now-liked;
         // 三态赞踩(#157),挨着喜欢那一行:红心管收藏,这两行管评价。
         feedback: Player.now-feedback;
-        feedback-toggled(v) => { Library.toggle-feedback(v); }
+        feedback-toggled(v) => {
+            if (v < 0) { root.drawer-open = false; Library.open-dislike(Player.now-id); }
+            else { Library.toggle-feedback(v); }
+        }
         like-toggled => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
         download-clicked => { Library.download-track(Player.now-id); }
         radio-clicked => {

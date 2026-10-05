@@ -30,6 +30,11 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
 acceptance/run.toml 与 CI 不使用局部模式。
 
+证据目录默认落在 `~/.cache/osmosis-remote-behavior/175-rb.*`。`run.sh` 退出时（含失败与中断）
+由 `retention.sh` 只保留最近 `REMOTE_BEHAVIOR_KEEP_RUNS`（默认 3）个运行：成功的删掉
+`build/` 与 `fault-*/{build,snapshot}`，失败的整目录保留，更早的整个删除。没有 `exit.txt` 且
+一天内改动过的目录视作正在运行，不删也不占名额；root 为空或 `/` 时拒绝执行。
+
 `run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
 的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
 验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
@@ -54,8 +59,10 @@ pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit
 `acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
 依赖由 Nix 显式声明；首轮设计审前未执行这些用例，也未修改生产。
 
-默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2` 限制软件 GPU 与编译资源，执行者
-获得更高额度后可以明确增加 worker；每个 testcase 独占资源，禁止自动重试和 worker 重启。
+默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2`。#184 在 12 核 pc2 上实测过并行：
+场景是 CPU 密集型（真实解码加三个软件渲染客户端），2 路总耗时反比串行长，2 路与 4 路都
+出现客户端音频落后挂钟的时序失败，并行收益被争用抵消，所以仍串行。每个 testcase 独占
+资源，JUnit 的 `artifacts` 属性指回它的资源目录；禁止自动重试和 worker 重启。
 私有 DB 只监听独占 Unix socket；业务服务、媒体和信令闸由内核分配空闲端口。
 固定 3000、8091 和单实例抽象 socket 仅存在于各客户端独占的 net namespace。
 每台另有独占 mount/UTS namespace、hostname 文件、状态目录、D-Bus、PulseAudio socket
@@ -121,6 +128,13 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
 每个客户端的 HOME 也属于自己的证据目录，平台初始化与音乐下载不会访问宿主音乐目录。
+
+#181 的 `test_dislike.py` 从真实抽屉与列表上下文菜单验证三种不喜欢理由，观察私有库
+规则/反馈、当前列表和队列、重启/恢复及真实 PCM。列表 `Expand` 与长按共用生产回调，
+遮罩取消通过现有导航位置的 MCP 指针点击进入。它不证明物理手指长按的计时器或 Android
+原生端；小米13另排实机时段。开发入口为 `run.sh targeted test_dislike.py`，累计验收
+同时运行 app-core 屏蔽单元测试并生成既有 projection JUnit。
+兼容用例固定旧版三枚举，检查缺省规则响应可解析，新客户端声明 song_rules 后可管理歌曲规则。
 
 ## 按改动挑场景与每晚全量（#185）
 

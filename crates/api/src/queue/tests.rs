@@ -11,6 +11,7 @@ fn entry(entry_id: i64) -> QueueEntryDto {
         entry_id,
         position: entry_id - 1,
         track: TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: entry_id.to_string(),
             title: format!("歌 {entry_id}"),

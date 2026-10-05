@@ -8,6 +8,7 @@ mod shuffle;
 
 fn track(id: usize) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         id: id.to_string(),
         title: format!("歌 {id}"),
@@ -343,4 +344,34 @@ fn nothing_blocked_behaves_like_plain_advance() {
         .map(|track| track.id.clone());
 
     assert_eq!(landed, Some("0".to_owned()));
+}
+
+/// 删除屏蔽条目仍属于同一批电台,并保住当前曲与实际播放次序。
+#[test]
+fn retaining_tracks_keeps_batch_current_and_play_order() {
+    let mut queue = Queue::new(batch(4), 2);
+    queue.replace(batch(4), 2);
+    queue.set_loop_mode(LoopMode::All);
+    assert!(queue.restore_order(vec![3, 2, 0, 1], true));
+    let original_batch = queue.batch();
+
+    assert!(queue.retain(|track| track.id != "0"));
+
+    assert_eq!(
+        queue.batch(),
+        original_batch,
+        "过滤不是换批,电台续取仍拥有这一批"
+    );
+    assert_eq!(id_of(&queue), Some("2".to_owned()));
+    assert_eq!(queue.order(), &[2, 1, 0]);
+    assert!(queue.is_shuffled());
+    assert_eq!(queue.loop_mode(), LoopMode::All);
+    assert_eq!(
+        queue.next(0).map(|track| track.id.clone()),
+        Some("1".to_owned())
+    );
+    assert!(queue.retain(|_| false));
+    assert_eq!(queue.batch(), original_batch);
+    assert!(queue.current().is_none());
+    assert!(queue.order().is_empty());
 }

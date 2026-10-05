@@ -97,6 +97,7 @@ mod tests {
 
     fn track() -> TrackDto {
         TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: "x".to_owned(),
             title: "x".to_owned(),

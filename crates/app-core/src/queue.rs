@@ -114,6 +114,50 @@ impl Queue {
         &self.tracks
     }
 
+    /// 真正移除命中条目，保留其余条目的播放次序和当前曲位置。
+    pub fn retain(
+        &mut self,
+        mut keep: impl FnMut(&TrackDto) -> bool,
+    ) -> bool {
+        let old_index = self.index();
+        let mut indices = vec![None; self.tracks.len()];
+        let mut kept = Vec::new();
+        for (index, track) in self.tracks.iter().enumerate()
+        {
+            if keep(track) {
+                indices[index] = Some(kept.len());
+                kept.push(track.clone());
+            }
+        }
+        if kept.len() == self.tracks.len() {
+            return false;
+        }
+        let current =
+            indices.get(old_index).copied().flatten();
+        let next_cursor = self.order
+            [..self.cursor.min(self.order.len())]
+            .iter()
+            .filter(|index| indices[**index].is_some())
+            .count();
+        self.order = self
+            .order
+            .iter()
+            .filter_map(|index| indices[*index])
+            .collect();
+        self.cursor = current
+            .and_then(|index| {
+                self.order
+                    .iter()
+                    .position(|item| *item == index)
+            })
+            .unwrap_or_else(|| {
+                next_cursor
+                    .min(self.order.len().saturating_sub(1))
+            });
+        self.tracks = kept;
+        true
+    }
+
     /// 正在放的那首在 [`Self::tracks`] 里的下标。空批时是 0。
     ///
     /// 不是 `cursor`:那是在**播放次序**里的位置,随机开着时与原始顺序对不上。

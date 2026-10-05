@@ -16,8 +16,9 @@ from resources import Client, World, wait_until
 
 # 只替换外部音源：提供可逐字节比较的 MP3，生产 server 与客户端照常传输。
 @pytest.fixture
-def download_world(monkeypatch):
+def download_world(monkeypatch, request):
     directory = Path(tempfile.mkdtemp(prefix="169-", dir=os.environ["REMOTE_BEHAVIOR_ARTIFACTS"]))
+    request.node.user_properties.append(("artifacts", str(directory)))
     track = directory / "source.mp3"
     subprocess.run(
         [
