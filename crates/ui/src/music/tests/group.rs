@@ -1163,6 +1163,80 @@ fn another_pick_in_the_group_stops_the_radio() {
     assert!(!super::super::radio::due(&deck, 0));
 }
 
+/// 组里开着电台、摆着 `source` 这个视图:电台那一版是第 3 版,正放到它的最后一首。
+fn group_radio_at_its_end(
+    ui: &MainWindow,
+    deck: &Deck,
+    source: ViewSource,
+) {
+    deck.group.assume(Some(radio_state(2, false)));
+    super::super::radio::begin(
+        ui,
+        deck,
+        api::RadioMode::Fm,
+        batch_of(deck, &["a", "b"]),
+    );
+    deck.group.assume(Some(radio_state(3, true)));
+    deck.group.answer(Ok(Some((7, 3))));
+    deck.views.begin(source);
+    assert!(super::super::radio::due(deck, 0));
+}
+
+/// 遥控端在电台区点一首(#182):列表与组队列对不上时服务端另起一版,那一版仍归电台,
+/// 放到最后一首照样续。
+#[test]
+fn a_pick_on_the_radio_list_in_the_group_keeps_the_radio() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    group_radio_at_its_end(&ui, &deck, ViewSource::Radio);
+
+    ui.global::<Player>().invoke_play("b".into());
+    deck.group.assume(Some(radio_state(4, true)));
+    deck.group.answer(Ok(Some((7, 4))));
+
+    assert!(
+        super::super::radio::due(&deck, 0),
+        "电台区点的那一版仍是电台的"
+    );
+}
+
+/// 组里在电台以外点歌:换出来的那一版不归电台,电台停续。
+#[test]
+fn a_pick_elsewhere_in_the_group_stops_the_radio() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    group_radio_at_its_end(&ui, &deck, ViewSource::Daily);
+
+    ui.global::<Player>().invoke_play("b".into());
+    deck.group.assume(Some(radio_state(4, true)));
+    deck.group.answer(Ok(Some((7, 4))));
+
+    assert!(!super::super::radio::due(&deck, 0));
+}
+
+/// 切歌、暂停续播、拖动不换组队列的版本,电台照续。
+#[test]
+fn transport_in_the_group_keeps_the_radio() {
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    group_radio_at_its_end(&ui, &deck, ViewSource::Radio);
+    let player = ui.global::<Player>();
+    let presses: [&dyn Fn(); 4] = [
+        &|| player.invoke_next_track(),
+        &|| player.invoke_prev_track(),
+        &|| player.invoke_toggle_play(),
+        &|| player.invoke_seek(0.5),
+    ];
+    for (step, press) in presses.into_iter().enumerate() {
+        press();
+        let mut moved = radio_state(3, true);
+        moved.version += 2 * (step as u64 + 1);
+        deck.group.assume(Some(moved));
+        deck.group.answer(Ok(Some((7, 3))));
+        assert!(super::super::radio::due(&deck, 0), "{step}");
+    }
+}
+
 /// 起播的组意图没成:电台不接组队列里的任何一版。
 #[test]
 fn a_failed_radio_start_in_the_group_owns_nothing() {
