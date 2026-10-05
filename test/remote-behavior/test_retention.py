@@ -16,6 +16,9 @@ def run_dir(root, name, exit_code, age):
     (path / "build" / "debug").mkdir(parents=True)
     (path / "build" / "debug" / "server").write_text("binary")
     (path / "junit.xml").write_text("<testsuites/>")
+    for heavy in ("build", "snapshot"):
+        (path / "fault-x" / heavy).mkdir(parents=True)
+    (path / "fault-x" / "patch.diff").write_text("diff")
     if exit_code is not None:
         (path / "exit.txt").write_text(f"{exit_code}\n")
     stamp = time.time() - age
@@ -50,8 +53,10 @@ def test_keeps_latest_runs_strips_success_build_keeps_failure(tmp_path):
     assert remaining == sorted([failed.name, old[4].name, old[3].name])
     for path in old[3:]:
         assert not (path / "build").exists()
+        assert sorted(item.name for item in (path / "fault-x").iterdir()) == ["patch.diff"]
         assert (path / "junit.xml").read_text() == "<testsuites/>"
     assert (failed / "build" / "debug" / "server").read_text() == "binary"
+    assert (failed / "fault-x" / "snapshot").is_dir()
     assert other.is_dir()
     assert outside.read_text() == "untouched"
 
@@ -109,3 +114,38 @@ def test_refuses_invalid_keep_count(tmp_path, keep):
     assert result.returncode != 0
     assert "REMOTE_BEHAVIOR_KEEP_RUNS" in result.stderr
     assert survivor.is_dir()
+
+
+# run.sh 的 EXIT trap 写完 exit.txt 后执行保留；没有 artifact_root 的调用方不受影响。
+@pytest.mark.parametrize("status", [0, 3], ids=["success", "failure"])
+def test_finish_trap_applies_retention(tmp_path, status):
+    current = run_dir(tmp_path, "current", None, 0)
+    stale = run_dir(tmp_path, "stale", 0, 10 * DAY)
+    shell = """set -euo pipefail
+suite_dir=$1
+artifact_root=$2
+export REMOTE_BEHAVIOR_ARTIFACTS=$3
+source "$suite_dir/lifecycle.sh"
+exit "$4"
+"""
+    env = dict(os.environ) | {"REMOTE_BEHAVIOR_KEEP_RUNS": "1"}
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            shell,
+            "183-finish",
+            str(SCRIPT.parent),
+            str(tmp_path),
+            str(current),
+            str(status),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == status, result.stderr
+    assert not stale.exists()
+    assert (current / "build").exists() == (status != 0)
+    assert (current / "exit.txt").read_text().strip() == str(status)

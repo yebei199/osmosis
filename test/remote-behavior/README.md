@@ -30,6 +30,11 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
 acceptance/run.toml 与 CI 不使用局部模式。
 
+证据目录默认落在 `~/.cache/osmosis-remote-behavior/175-rb.*`。`run.sh` 退出时（含失败与中断）
+由 `retention.sh` 只保留最近 `REMOTE_BEHAVIOR_KEEP_RUNS`（默认 3）个运行：成功的删掉
+`build/` 与 `fault-*/{build,snapshot}`，失败的整目录保留，更早的整个删除。没有 `exit.txt` 且
+一天内改动过的目录视作正在运行，不删也不占名额；root 为空或 `/` 时拒绝执行。
+
 `run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
 的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
 验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
