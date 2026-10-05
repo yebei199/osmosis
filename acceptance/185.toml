@@ -1,0 +1,43 @@
+# #185：按改动挑跨端场景，认不出就全量；recover_invalid 缩成覆盖数组；每晚全量与发版前检查。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "selection.py <base> <head> 对 diff 样例挑场景：只改某场景执行过的函数体、改 Cargo.lock/清单/build.rs/测试设施/.slint/迁移/新文件、地图缺失或过期、改 fault 锚点"
+observe = "只选中执行过该文件的场景；认不出的退回 full 并逐文件标 full；地图缺失或不是 head 的祖先退回 full；fault 锚点只选对应的 fault_sensitivity；输出是 accept-select/1 且与检出无关"
+tests = ["test_selection::test_only_covering_scenario_is_selected", "test_selection::test_shared_file_selects_every_covering_scenario", "test_selection::test_documentation_selects_only_cheap_checks", "test_selection::test_uncovered_binary_file_selects_nothing_extra", "test_selection::test_unrecognized_change_falls_back_to_full[lockfile]", "test_selection::test_unrecognized_change_falls_back_to_full[manifest]", "test_selection::test_unrecognized_change_falls_back_to_full[build-script]", "test_selection::test_unrecognized_change_falls_back_to_full[test-infra]", "test_selection::test_unrecognized_change_falls_back_to_full[selector]", "test_selection::test_unrecognized_change_falls_back_to_full[unknown-source]", "test_selection::test_unrecognized_change_falls_back_to_full[outside-body-const]", "test_selection::test_unrecognized_change_falls_back_to_full[signature]", "test_selection::test_unrecognized_change_falls_back_to_full[new-function]", "test_selection::test_unrecognized_change_falls_back_to_full[slint]", "test_selection::test_unrecognized_change_falls_back_to_full[migration]", "test_selection::test_missing_map_falls_back_to_full", "test_selection::test_map_not_ancestor_of_head_is_stale", "test_selection::test_changes_since_map_commit_are_included", "test_selection::test_fault_anchor_selects_its_sensitivity_case[execute-target]", "test_selection::test_fault_anchor_selects_its_sensitivity_case[protect-reference]", "test_selection::test_fault_anchor_selects_its_sensitivity_case[recover-reference]", "test_selection::test_fault_anchor_selects_its_sensitivity_case[send-request]", "test_selection::test_fault_sensitivity_skipped_without_anchor_change", "test_selection::test_mutation_driver_change_selects_every_fault", "test_selection::test_scenario_module_change_selects_whole_module", "test_selection::test_comment_outside_body_is_inert", "test_selection::test_deleted_binary_file_falls_back_to_full", "test_selection::test_output_is_the_accept_select_contract", "test_selection::test_every_changed_file_has_a_verdict[subset]", "test_selection::test_every_changed_file_has_a_verdict[full]"]
+doubles = ["临时 git 仓库与手写样例地图代替真实覆盖地图；挑选器本身、git diff 与 mutate.FAULTS 用真的"]
+mutation = "删掉 classify 里 body_only 的判断：outside-body-const、signature、new-function 三条不再退回全量"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "在 #181+#183+#184 合并树（Cargo.lock、.slint、迁移、共享设施都改了）上跑挑选器"
+observe = "退回 full，每个认不出的文件各有一条 full 判定，不止第一个；子集缩短的实跑等第一版地图"
+tests = ["test_selection::test_full_fallback_lists_every_unrecognized_file", "test_selection::test_every_changed_file_has_a_verdict[full]"]
+doubles = ["样例仓库代替合并树；合并树的真实输出另存在交回证据里"]
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "每晚全量入口 nightly.sh 调 acceptance/run.sh all：插桩跑全量、生成覆盖地图、记 last-green；发版前 release-gate.sh"
+observe = "世界的 profraw 按 pytest 节点归档，地图列出执行过函数的文件与函数首末行；没留下计数或不在 JUnit 里的节点拒绝出图；last-green 不等于候选时发版检查退非零"
+tests = ["test_covmap::test_map_records_executed_files_per_node", "test_covmap::test_world_without_profiles_fails", "test_covmap::test_coverage_outside_junit_fails", "test_covmap::test_release_gate_requires_green_candidate[None]", "test_covmap::test_release_gate_requires_green_candidate[other]", "test_covmap::test_release_gate_requires_green_candidate[head]"]
+doubles = ["插桩一个小 Rust 程序代替桌面端与服务端；整套每晚全量的实跑由 nixos_config 的 timer 产出"]
+mutation = "covmap 去掉 runtime-counter-relocation 或 %c：被 SIGKILL 的进程留不下计数，test_map_records_executed_files_per_node 失败"
+
+[[ac]]
+id = "AC-4"
+kind = "new"
+entry = "test_recover_invalid 由 3x2x2 全组合缩成 4 条"
+observe = "每种失效、进入顺序和 seed 取值至少出现一次，order 与 seed 两两组合全覆盖"
+tests = ["test_remote::test_recover_invalid_covers_every_value"]
+doubles = []
+
+[[ac]]
+id = "AC-4"
+kind = "regression"
+entry = "保留下来的 4 条失效恢复用例与 recover-reference 故障灵敏度"
+observe = "恢复后遥控仍有 PCM；revision-direct-playing 仍是 recover-reference 变异的 RED 用例"
+tests = ["test_remote::test_recover_invalid[revision-direct-playing]", "test_remote::test_recover_invalid[queue-recovered-playing]", "test_remote::test_recover_invalid[entry-direct-empty]", "test_remote::test_recover_invalid[revision-recovered-empty]", "test_remote::test_fault_sensitivity[recover-reference]"]
+doubles = ["沿用 175 的软件声卡与外部音乐目录替身"]
