@@ -217,34 +217,6 @@ fn report(
     crate::notice::show(ui, format!("{what}: {err}"));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 设置页的每一行带上类别字样,单曲显示标题而不是那串 id。
-    #[test]
-    fn rows_name_the_kind_and_show_the_label() {
-        let rows = to_rows(&[
-            BlockRuleDto {
-                id: "1".to_owned(),
-                kind: BlockKind::Track,
-                value: "123456".to_owned(),
-                label: "晴天".to_owned(),
-            },
-            BlockRuleDto {
-                id: "2".to_owned(),
-                kind: BlockKind::Artist,
-                value: "某人".to_owned(),
-                label: "某人".to_owned(),
-            },
-        ]);
-
-        assert_eq!(rows[0].label, "晴天");
-        assert_eq!(rows[0].kind, "单曲");
-        assert_eq!(rows[1].kind, "歌手");
-    }
-}
-
 /// 抽屉与列表菜单共用理由和多歌手选择，保存成功才通知音乐层。
 pub fn bind_dislike(
     ui: &MainWindow,
@@ -333,4 +305,32 @@ pub fn bind_dislike(
             );
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 设置页的每一行带上类别字样,单曲显示标题而不是那串 id。
+    #[test]
+    fn rows_name_the_kind_and_show_the_label() {
+        let rows = to_rows(&[
+            BlockRuleDto {
+                id: "1".to_owned(),
+                kind: BlockKind::Track,
+                value: "123456".to_owned(),
+                label: "晴天".to_owned(),
+            },
+            BlockRuleDto {
+                id: "2".to_owned(),
+                kind: BlockKind::Artist,
+                value: "某人".to_owned(),
+                label: "某人".to_owned(),
+            },
+        ]);
+
+        assert_eq!(rows[0].label, "晴天");
+        assert_eq!(rows[0].kind, "单曲");
+        assert_eq!(rows[1].kind, "歌手");
+    }
 }

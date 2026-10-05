@@ -63,17 +63,16 @@ pub(crate) async fn create_block(
     account: Account,
     Json(body): Json<NewBlockRuleDto>,
 ) -> Result<Json<BlockRuleDto>, Failure> {
-    if let Some(track) = &body.disliked_track {
-        if body.kind != contract::BlockKind::Song
+    if let Some(track) = &body.disliked_track
+        && (body.kind != contract::BlockKind::Song
             || track.platform.trim().is_empty()
-            || track.track_id.trim().is_empty()
-        {
-            return Err(error::map_error(
-                &server::error::AppError::Invalid(
-                    "点踩必须对应歌曲规则与有效曲目",
-                ),
-            ));
-        }
+            || track.track_id.trim().is_empty())
+    {
+        return Err(error::map_error(
+            &server::error::AppError::Invalid(
+                "点踩必须对应歌曲规则与有效曲目",
+            ),
+        ));
     }
     let mut tx = state
         .pool
