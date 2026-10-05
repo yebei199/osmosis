@@ -530,7 +530,7 @@ async fn main() {
     );
     // 久未出现的键要定期清掉,否则这几张表只涨不落。
     state.policies.spawn_cleanup();
-    // 没人红心、三天没播的存歌同理
+    // 没人红心、一天没播的存歌同理(#186)
     if let Some(archive) = &state.archive {
         routes::play::archive::spawn_sweeper(
             state.pool.clone(),

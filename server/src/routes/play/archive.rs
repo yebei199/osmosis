@@ -13,8 +13,8 @@
 //! 存最高可得:向音源要无损,给不出就存它给得出的最高那档,账上如实记档位;
 //! 以后给得出无损了,预取再办这首时换成无损、删掉旧的(#152,`docs/adr/0034`)。
 //!
-//! 在我们任何一个歌单里、或在当天日推里的长期留着;[`spawn_sweeper`] 每小时删一轮
-//! 哪都不在、且最后一次播放已满 [`RETAIN`] 的,以及 #147 之前按 320k 存的那批。
+//! 只有红心的长期留着;[`spawn_sweeper`] 每天删一轮不是红心、且最后一次播放已满
+//! [`RETAIN`] 的(歌单与日推里的也删,#186),以及 #147 之前按 320k 存的那批。
 //! 桶有空间上限(默认 [`DEFAULT_CAP_BYTES`]),超过时按「我的喜欢 → 日推 →
 //! 其他歌单 → 哪都不在」取舍,存不下的记日志,见 [`make_room`]。
 
@@ -43,15 +43,13 @@ use crate::{AppState, conn};
 #[cfg(test)]
 mod tests;
 
-/// 没人红心的歌,最后一次播放(或取消红心)之后留多久。用户定的三天(#126)。
+/// 没人红心的歌,最后一次播放(或取消红心)之后留多久。用户定的一天(#186,
+/// 取代 #126 的三天)。
 pub(crate) const RETAIN: Duration =
-    Duration::from_secs(3 * 24 * 3600);
+    Duration::from_secs(24 * 3600);
 
-/// 多久清一轮。
-///
-/// 保留期以天计,晚删一小时只多占三天的 1/72;而一轮只是一条走索引的查询
-/// 加几次 DELETE,一小时一次对库与 RustFS 都可以忽略。
-const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+/// 多久清一轮。用户定的每天一次(#186)。
+const SWEEP_EVERY: Duration = Duration::from_secs(24 * 3600);
 
 /// 目前唯一的平台。别的平台的曲目不存 —— 取源只认网易云。
 pub(crate) const NETEASE: &str = "netease";
@@ -521,7 +519,9 @@ pub(crate) async fn restart_clock(
     }
 }
 
-/// 清一轮:先删对象、再删那一行。返回删了几首。
+/// 清一轮:先删对象、再删那一行。返回删了几首、桶里还留几首。
+///
+/// 只动桶里的对象与 `stored_tracks` 的账,播放事件、红心、歌单一概不碰。
 ///
 /// 不是按 [`CACHE_TIER`] 要来的(#147 之前的 320k)不论保留期一并清掉。
 ///
@@ -530,7 +530,7 @@ pub(crate) async fn restart_clock(
 pub(crate) async fn sweep(
     conn: &mut PgConnection,
     objects: &dyn Objects,
-) -> Result<usize, String> {
+) -> Result<(usize, i64), String> {
     let expired =
         archive::expired(conn, RETAIN, &quality())
             .await
@@ -554,7 +554,10 @@ pub(crate) async fn sweep(
         .map_err(|err| format!("{err:?}"))?;
         removed += 1;
     }
-    Ok(removed)
+    let (kept, _) = archive::count(conn)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    Ok((removed, kept))
 }
 
 /// 启动时清一轮,之后每 [`SWEEP_EVERY`] 一轮。没配对象存储就不起。
@@ -566,7 +569,7 @@ pub(crate) fn spawn_sweeper(
     tokio::spawn(async move {
         let mut every = tokio::time::interval(SWEEP_EVERY);
         loop {
-            // 第一次 tick 立刻就绪:进程起来就清一轮,不必先等一小时
+            // 第一次 tick 立刻就绪:进程起来就清一轮,不必先等一天
             every.tick().await;
             let outcome = match pool.acquire().await {
                 Ok(mut conn) => {
@@ -575,10 +578,10 @@ pub(crate) fn spawn_sweeper(
                 Err(err) => Err(err.to_string()),
             };
             match outcome {
-                Ok(0) => {}
-                Ok(removed) => tracing::info!(
+                Ok((removed, kept)) => tracing::info!(
                     removed,
-                    "清掉了过期的存歌"
+                    kept,
+                    "清了一轮存歌"
                 ),
                 Err(err) => {
                     tracing::warn!(%err, "清理存歌失败")
