@@ -18,10 +18,12 @@ use server::error;
 use server::error::Failure;
 use server::store::account::Account;
 use server::store::history;
+use server::store::radio;
 use server::store::playlist::TrackRef;
 
 use super::for_account;
 use super::likes::PageQuery;
+use crate::routes::catalog::radio::tell_radio_changed;
 use crate::routes::catalog::search::remember_details;
 use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
@@ -49,6 +51,14 @@ pub(crate) async fn record_play(
     let id = history::record(&mut conn, account.id, &track)
         .await
         .map_err(|err| error::map_error(&err))?;
+
+    // 共享电台歌单里的一首听过了:各台的电台区要把它挪进「已听过」(#186)
+    if radio::holds(&mut conn, account.id, &track)
+        .await
+        .map_err(|err| error::map_error(&err))?
+    {
+        tell_radio_changed(&state, account.id);
+    }
 
     // 声音已经出来了,这首值得存:后台去,不等它(#126)
     archive::spawn_keep(&state, account, track);

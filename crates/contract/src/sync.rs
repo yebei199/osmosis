@@ -117,6 +117,10 @@ pub enum ServerSignal {
     },
     /// 同账号的 `from` 要本机把音量调成 `volume`(#151)。本机照自己调音量那样应用并存盘。
     SetVolume { from: String, volume: f32 },
+    /// 这个账号的共享电台歌单变了(加了新歌、有一首听过了,#186)。只是个信号,
+    /// 歌单本身走 `GET /radio/list` 去取 —— 整批曲目不该挤进信令(见 [`MAX_SIGNAL_BYTES`])。
+    /// 旧客户端解不出这条,照它的读循环直接跳过,不断连接。
+    RadioChanged,
 }
 
 #[cfg(test)]

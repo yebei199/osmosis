@@ -379,6 +379,18 @@ async fn accept_hello(
     None
 }
 
+/// 把 `message` 推给这个账号的全部在线设备。发不进去的连接已经死了,不管它。
+pub fn tell_account(
+    roster: &SharedRoster,
+    account: AccountId,
+    message: &ServerSignal,
+) {
+    let online = roster.lock().expect("名册锁中毒");
+    for sink in online.sinks(account) {
+        let _ = sink.try_send(message.clone());
+    }
+}
+
 /// 把某个账号的名册推给它自己的全部在线设备。
 ///
 /// 每次名册变化都推,不让客户端轮询:一台设备下线到别人发现之间的空窗期里,

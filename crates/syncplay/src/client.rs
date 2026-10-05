@@ -59,6 +59,8 @@ pub enum Event {
     },
     /// 同账号的 `from` 要本机把音量调成 `volume`(#151)。
     SetVolume { from: String, volume: f32 },
+    /// 账号的共享电台歌单变了,该重取一份(#186)。
+    RadioChanged,
 }
 
 /// 界面发给编排循环的指令。
@@ -515,6 +517,9 @@ fn accept(
         }
         ServerSignal::SetVolume { from, volume } => {
             events(Event::SetVolume { from, volume });
+        }
+        ServerSignal::RadioChanged => {
+            events(Event::RadioChanged);
         }
         // 握手应答在 `verify_handshake` 里已经读过了;校时的回话在 `serve` 里就地收下。
         ServerSignal::Welcome { .. }
