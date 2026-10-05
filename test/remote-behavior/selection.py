@@ -1,8 +1,10 @@
 """按 base..head 的改动从覆盖地图挑场景；认不出就退回全量，宁可多跑不许漏跑。
 
-用法：python selection.py BASE HEAD [--map PATH] [--out FILE] [--args]，输出一份 JSON：
-mode 是 subset 或 full；tests 是 run.sh subset 接受的 pytest 节点（full 时为空）；
-reasons 逐文件写明选中理由；fallback 写明退回全量的原因。
+用法：python selection.py BASE HEAD [--out FILE] [--args]，标准输出 accept-select/1 JSON
+（acceptance/run.toml 的 [select]，格式见 nixos_config#289）：mode 是 subset 或 full；
+tests 是 acceptance/run.sh subset 接受的 pytest 节点（full 时为空）；fallback 写明退回
+全量的原因；reasons 给每个改动文件一条，带 tests 或 "full": true。
+输出只取决于两个提交：地图从 head 的提交里读，不读工作区，不带路径与时间。
 --args 另外逐行打印 run.sh 的参数（all，或 subset 加节点），acceptance/run.sh changed 用它。
 """
 
@@ -16,7 +18,8 @@ from pathlib import Path
 from mutate import FAULTS
 
 SUITE = "test/remote-behavior/"
-DEFAULT_MAP = Path(__file__).with_name("coverage-map.json")
+MAP = SUITE + "coverage-map.json"
+SCHEMA = "accept-select/1"
 # 不起世界、几秒内跑完的检查，子集里总是带上。
 ALWAYS = (
     "test_lifecycle.py",
@@ -73,18 +76,27 @@ def exists_at(repo, commit, path):
     )
 
 
-def full(result, reason):
-    return result | {"mode": "full", "tests": [], "fallback": reason}
+def output(mode, tests, fallback, reasons):
+    return {
+        "schema": SCHEMA,
+        "mode": mode,
+        "tests": tests,
+        "fallback": fallback,
+        "reasons": reasons,
+    }
 
 
-def load_map(repo, head, map_path):
+def load_map(repo, head):
+    shown = subprocess.run(
+        ["git", "show", f"{head}:{MAP}"], cwd=repo, capture_output=True, text=True, check=False
+    )
+    if shown.returncode:
+        return None, f"coverage map missing at head: {MAP}"
     try:
-        data = json.loads(Path(map_path).read_text())
+        data = json.loads(shown.stdout)
         commit = data["commit"]
         functions = {path: [tuple(r) for r in ranges] for path, ranges in data["functions"].items()}
         scenarios = {name: set(files) for name, files in data["scenarios"].items()}
-    except FileNotFoundError:
-        return None, f"coverage map missing: {map_path}"
     except (ValueError, KeyError, TypeError) as error:
         return None, f"coverage map invalid: {error}"
     ancestor = subprocess.run(
@@ -123,7 +135,7 @@ def inside_bodies(repo, map_commit, head, path, ranges):
 
 
 # 单个文件的判定：返回选中的节点，或 None 表示认不出、须退回全量。
-def classify(path, functions, scenarios, body_only):
+def classify(path, functions, scenarios, body_only, present):
     if path in functions:
         if not body_only(path):
             return None, "change outside function bodies (types, derives, consts, signatures)"
@@ -137,62 +149,61 @@ def classify(path, functions, scenarios, body_only):
         return [f"test_remote.py::test_fault_sensitivity[{f}]" for f in FAULTS], "mutation driver"
     module = SCENARIO_MODULE.fullmatch(path)
     if module:
+        if not present(path):
+            return [], "scenario module removed at head"
         return [module.group(1)], "scenario module"
     return None, "unrecognized file"
 
 
-def select(repo, base, head, map_path=DEFAULT_MAP):
+def select(repo, base, head):
     repo = Path(repo)
-    result = {"base": base, "head": head, "map": str(map_path), "reasons": []}
-    loaded, problem = load_map(repo, head, map_path)
+    loaded, problem = load_map(repo, head)
     if problem:
-        return full(result, problem)
+        # 门禁核对每个改动文件都有判定，地图坏了也逐个标成认不出。
+        reasons = [
+            {"file": path, "rule": problem, "full": True}
+            for path in sorted(changed_files(repo, base, head))
+        ]
+        return output("full", [], problem, reasons)
     map_commit, functions, scenarios = loaded
-    result["map_commit"] = map_commit
     # 地图之后的改动都让覆盖失真，和本次 base..head 一并计入。
     changed = changed_files(repo, base, head) | changed_files(repo, map_commit, head)
-    tests = set(ALWAYS)
+    tests, reasons = set(ALWAYS), []
     for path in sorted(changed):
         picked, why = classify(
             path,
             functions,
             scenarios,
             lambda p: inside_bodies(repo, map_commit, head, p, functions[p]),
+            lambda p: exists_at(repo, head, p),
         )
         if picked is None:
             # 不提前返回：报告要列出每个认不出的文件。
-            result["reasons"].append({"file": path, "rule": why, "full": True})
+            reasons.append({"file": path, "rule": why, "full": True})
             continue
         # ponytail: 显式故障清单，地图里没有 mutate 的嵌套构建。
         faults = [f for f, (anchor, _) in FAULTS.items() if anchor == path]
         picked = picked + [f"test_remote.py::test_fault_sensitivity[{f}]" for f in faults]
-        result["reasons"].append({"file": path, "rule": why, "tests": picked})
+        reasons.append({"file": path, "rule": why, "tests": picked})
         tests.update(picked)
-    unknown = [r for r in result["reasons"] if r.get("full")]
+    unknown = [r["file"] for r in reasons if r.get("full")]
     if unknown:
-        return full(
-            result, f"{len(unknown)} unrecognized: " + ", ".join(r["file"] for r in unknown)
-        )
+        return output("full", [], f"{len(unknown)} unrecognized: " + ", ".join(unknown), reasons)
     modules = {t for t in tests if "::" not in t}
     tests = {t for t in tests if t.split("::")[0] not in modules or "::" not in t}
-    for module in sorted(modules):
-        if not exists_at(repo, head, SUITE + module):
-            tests.discard(module)
-            result["reasons"].append({"file": SUITE + module, "rule": "module removed at head"})
-    return result | {"mode": "subset", "tests": sorted(tests), "fallback": None}
+    return output("subset", sorted(tests), None, reasons)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("base")
     parser.add_argument("head")
-    parser.add_argument("--map", default=DEFAULT_MAP)
     parser.add_argument("--out", help="write the JSON here instead of stdout")
     parser.add_argument("--args", action="store_true", help="print run.sh arguments, one per line")
     args = parser.parse_args()
     repo = git(Path(__file__).parent, "rev-parse", "--show-toplevel").strip()
     base, head = (git(repo, "rev-parse", ref).strip() for ref in (args.base, args.head))
-    result = select(repo, base, head, args.map)
+    result = select(repo, base, head)
     text = json.dumps(result, indent=2) + "\n"
     if args.out:
         Path(args.out).write_text(text)
