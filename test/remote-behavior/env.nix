@@ -30,6 +30,8 @@ base.overrideAttrs (old: {
       iproute2
       xorg-server
       mesa
+      # 每晚全量生成覆盖地图；版本须与 rustc 自带的 LLVM 一致才读得懂 profraw。
+      rustc.llvmPackages.llvm
     ]);
   shellHook = (old.shellHook or "") + ''
     export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"

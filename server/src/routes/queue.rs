@@ -300,6 +300,9 @@ fn inputs(tracks: &[TrackDto]) -> Vec<EntryInput> {
             title: track.title.clone(),
             alias: track.alias.clone(),
             artists: track.artists.clone(),
+            artist_identities: track
+                .artist_identities
+                .clone(),
             cover: track.cover.clone(),
             duration_ms: track.duration_ms,
         })
@@ -319,6 +322,7 @@ fn as_entry(entry: Entry) -> QueueEntryDto {
         entry_id: entry.entry_id,
         position: entry.position,
         track: TrackDto {
+            artist_identities: entry.artist_identities,
             platform: entry.platform,
             id: entry.track_id,
             title: entry.title,

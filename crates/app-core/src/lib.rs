@@ -30,8 +30,9 @@ pub use contract::{
     DeviceDto, DeviceReportDto, FacetDto, FacetPickDto,
     GroupNowDto, GroupPickDto, GroupSeedDto, GroupStateDto,
     HealthDto, LoopModeDto, LyricDto, LyricKindDto,
-    LyricLineDto, MAX_SIGNAL_BYTES, NextEntryDto,
-    OutputRouteDto, PlaylistDto, PlaylistSource,
-    RemotePlayState, TagDto, TagSource, TrackDto,
-    TrackFacetsDto, TracksDto, TransportOpDto,
+    LyricLineDto, MAX_SIGNAL_BYTES, NewBlockRuleDto,
+    NextEntryDto, OutputRouteDto, PlaylistDto,
+    PlaylistSource, RemotePlayState, TagDto, TagSource,
+    TrackDto, TrackFacetsDto, TracksDto, TransportOpDto,
+    artist_dislike, song_dislike, track_artists,
 };

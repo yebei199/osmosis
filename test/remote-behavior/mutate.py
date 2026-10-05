@@ -61,6 +61,8 @@ def run_case(snapshot, target, directory, test):
         "REMOTE_BEHAVIOR_TARGET_DIR": str(target),
         "REMOTE_BEHAVIOR_ARTIFACTS": str(directory),
     }
+    # 变异二进制不是地图对应的那份，嵌套世界不进覆盖地图。
+    env.pop("REMOTE_BEHAVIOR_COVERAGE", None)
     xml = directory / "junit.xml"
     status = command(
         [
@@ -91,7 +93,7 @@ def run_case(snapshot, target, directory, test):
 
 # RED 必须是最终音频断言；恢复候选在同一个精确 testcase 上必须 GREEN。
 def verify(root: Path, artifacts: Path, fault: str):
-    directory = Path(tempfile.mkdtemp(prefix="fault-", dir=artifacts))
+    directory = Path(tempfile.mkdtemp(prefix=f"fault-{fault}-", dir=artifacts))
     snapshot = directory / "snapshot"
     candidate = os.environ["REMOTE_BEHAVIOR_COMMIT"]
     env = dict(os.environ)

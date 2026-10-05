@@ -57,6 +57,7 @@ pub(crate) async fn make_account(
 
 pub(crate) fn track(id: &str, title: &str) -> TrackDto {
     TrackDto {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         id: id.to_owned(),
         title: title.to_owned(),

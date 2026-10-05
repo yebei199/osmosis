@@ -7,8 +7,9 @@ import time
 import traceback
 from pathlib import Path
 
-import cases
 import pytest
+
+import cases
 from media import DURATION
 from resources import World
 
@@ -18,6 +19,8 @@ from resources import World
 def world(request):
     artifact_root = Path(os.environ["REMOTE_BEHAVIOR_ARTIFACTS"])
     directory = Path(tempfile.mkdtemp(prefix="175-", dir=artifact_root))
+    # 并行时 JUnit 逐 testcase 指回它独占的资源目录。
+    request.node.user_properties.append(("artifacts", str(directory)))
     root = Path(__file__).resolve().parents[2]
     target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
     # 断连心跳最坏90s加重连抖动75s,素材覆盖该前提且不提前播完。
@@ -112,15 +115,35 @@ def test_idle_group(world):
     cases.idle_group(world)
 
 
+RECOVER_AXES = {
+    "damage": ("queue", "revision", "entry"),
+    "order": ("direct", "recovered"),
+    "seed": ("playing", "empty"),
+}
+# #185 由 3x2x2 全组合缩为 4 条：每种失效至少一条，order 与 seed 两两组合全覆盖。
+# 三种失效只在 install_invalid 写入的列上不同，恢复路径都是服务端把整组引用清空，
+# 之后的分支只由 order 与 seed 决定，所以删掉的 8 条只是重复走同一恢复分支。
+# revision-direct-playing 是 mutate.py recover-reference 故障指向的用例，必须保留。
+RECOVER_CASES = (
+    ("revision", "direct", "playing"),
+    ("queue", "recovered", "playing"),
+    ("entry", "direct", "empty"),
+    ("revision", "recovered", "empty"),
+)
+
+
+# 删减后的矩阵仍让每个取值至少出现一次。
+def test_recover_invalid_covers_every_value():
+    for index, (axis, values) in enumerate(RECOVER_AXES.items()):
+        assert {case[index] for case in RECOVER_CASES} == set(values), axis
+    pairs = {(order, seed) for _, order, seed in RECOVER_CASES}
+    assert pairs == {(o, s) for o in RECOVER_AXES["order"] for s in RECOVER_AXES["seed"]}
+
+
 # 三种失效、两种进入顺序和有/无 seed 都覆盖恢复后的遥控旧功能。
 @pytest.mark.parametrize(
     ("damage", "order", "seed"),
-    [
-        pytest.param(damage, order, seed, id=f"{damage}-{order}-{seed}")
-        for damage in ("queue", "revision", "entry")
-        for order in ("direct", "recovered")
-        for seed in ("playing", "empty")
-    ],
+    [pytest.param(*case, id="-".join(case)) for case in RECOVER_CASES],
 )
 def test_recover_invalid(world, damage, order, seed):
     cases.recover_invalid(world, damage, order, seed)

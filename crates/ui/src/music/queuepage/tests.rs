@@ -6,6 +6,83 @@
 
 use super::*;
 
+/// 组队列的缓存按新规则隐藏与恢复,关闭页面仍更新总数,重开复用同一模型。
+#[test]
+fn block_refresh_reprojects_the_group_queue_cache() {
+    use crate::music::fixtures::*;
+    use similar_asserts::assert_eq;
+    use slint::Model as _;
+
+    let (ui, deck) = deck_window();
+    let current = track_with_id("a");
+    deck.group.assume(Some(app_core::GroupStateDto {
+        version: 1,
+        members: vec!["me".into(), "pc".into()],
+        outputs: vec!["pc".into()],
+        clock_epoch: 1,
+        now: Some(app_core::GroupNowDto {
+            queue_id: 7,
+            revision: 2,
+            entry_id: 12,
+            track: current.clone(),
+            anchor_us: 0,
+            position_us: 0,
+            playing: true,
+            next: None,
+            at_end: false,
+            shuffled: false,
+            loop_mode: app_core::LoopModeDto::Off,
+        }),
+    }));
+    deck.queue_mirror.put(
+        7,
+        2,
+        vec![(12, current), (13, track_with_id("b"))],
+    );
+    ui.global::<Viz>().set_queue_page_open(true);
+    refresh(&ui, &deck);
+    assert_eq!(ui.global::<Viz>().get_queue_total(), 2);
+
+    deck.blocks.borrow_mut().push(app_core::BlockRuleDto {
+        id: "blocked-b".into(),
+        kind: app_core::BlockKind::Track,
+        value: "b".into(),
+        label: "歌 b".into(),
+    });
+    crate::music::apply_blocks(&ui, &deck);
+    assert_eq!(ui.global::<Viz>().get_queue_total(), 1);
+    let model = ui.global::<Viz>().get_queue_rows();
+    assert_eq!(model.row_count(), 1);
+    assert_eq!(
+        model
+            .row_data(0)
+            .expect("未屏蔽的当前条目")
+            .id
+            .as_str(),
+        "12"
+    );
+
+    ui.global::<Viz>().set_queue_page_open(false);
+    deck.blocks.borrow_mut().clear();
+    crate::music::apply_blocks(&ui, &deck);
+    assert_eq!(ui.global::<Viz>().get_queue_total(), 2);
+    assert_eq!(model.row_count(), 1, "页面关闭时不重建行");
+    ui.global::<Viz>().set_queue_page_open(true);
+    refresh(&ui, &deck);
+    assert_eq!(model.row_count(), 2);
+    let mut first =
+        model.row_data(0).expect("恢复后的当前条目");
+    first.title = "保留模型".into();
+    model.set_row_data(0, first);
+    refresh(&ui, &deck);
+    assert_eq!(
+        model.row_data(0).expect("同版条目").title.as_str(),
+        "保留模型"
+    );
+    assert!(!ui.global::<Viz>().get_queue_loading());
+    assert!(deck.group.intents().is_empty());
+}
+
 /// 现编的号**永远是负数**,而服务端发的是 `BIGSERIAL`,永远为正。
 #[test]
 fn synthetic_ids_never_collide_with_real_ones() {

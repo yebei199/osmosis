@@ -123,7 +123,9 @@ pub use playlists::{
     set_liked, set_subscribed,
 };
 
-pub use blocks::{blocks, create_block, delete_block};
+pub use blocks::{
+    blocks, create_block, create_dislike, delete_block,
+};
 
 pub use tags::{
     create_tag, delete_tag, rename_tag, set_track_tag,

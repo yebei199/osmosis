@@ -102,8 +102,7 @@ async fn search_tracks(
 /// 把此刻摆着的那个视图重取一遍。
 ///
 /// 建、删屏蔽规则之后走这里(#161):隐藏在服务端出口做,界面上那一批是规则
-/// 变之前拿的。电台那一批就是正在放的队列,重拉等于换歌,所以不动 ——
-/// 命中的那几首由队列前进时跳过。
+/// 变之前拿的。电台重投影缓存批次并过滤，不重新取一批换歌。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
@@ -145,7 +144,14 @@ pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
             ViewSource::Search(keyword.clone()),
             search_tracks(keyword),
         ),
-        Some(ViewSource::Radio) | None => {}
+        Some(ViewSource::Radio) => {
+            if let Some(found) =
+                deck.views.show(ViewSource::Radio).tracks
+            {
+                show(ui, deck, found);
+            }
+        }
+        None => {}
     }
 }
 
@@ -649,8 +655,13 @@ pub(super) fn show_section(
 pub(super) fn show(
     ui: &MainWindow,
     deck: &Deck,
-    found: TracksDto,
+    mut found: TracksDto,
 ) {
+    let before = found.tracks.len();
+    found.tracks.retain(|track| {
+        !crate::library::block::hits(&deck.blocks, track)
+    });
+    found.hidden += before - found.tracks.len();
     // 平台给不出详情的、命中屏蔽规则的都没能进这一批。说一声,否则歌单静默变短
     ui.global::<Library>().set_unavailable_note(
         crate::library::playlist::unavailable_text(

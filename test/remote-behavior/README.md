@@ -30,6 +30,11 @@ uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ �
 纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
 acceptance/run.toml 与 CI 不使用局部模式。
 
+证据目录默认落在 `~/.cache/osmosis-remote-behavior/175-rb.*`。`run.sh` 退出时（含失败与中断）
+由 `retention.sh` 只保留最近 `REMOTE_BEHAVIOR_KEEP_RUNS`（默认 3）个运行：成功的删掉
+`build/` 与 `fault-*/{build,snapshot}`，失败的整目录保留，更早的整个删除。没有 `exit.txt` 且
+一天内改动过的目录视作正在运行，不删也不占名额；root 为空或 `/` 时拒绝执行。
+
 `run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
 的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
 验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
@@ -54,8 +59,10 @@ pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit
 `acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
 依赖由 Nix 显式声明；首轮设计审前未执行这些用例，也未修改生产。
 
-默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2` 限制软件 GPU 与编译资源，执行者
-获得更高额度后可以明确增加 worker；每个 testcase 独占资源，禁止自动重试和 worker 重启。
+默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2`。#184 在 12 核 pc2 上实测过并行：
+场景是 CPU 密集型（真实解码加三个软件渲染客户端），2 路总耗时反比串行长，2 路与 4 路都
+出现客户端音频落后挂钟的时序失败，并行收益被争用抵消，所以仍串行。每个 testcase 独占
+资源，JUnit 的 `artifacts` 属性指回它的资源目录；禁止自动重试和 worker 重启。
 私有 DB 只监听独占 Unix socket；业务服务、媒体和信令闸由内核分配空闲端口。
 固定 3000、8091 和单实例抽象 socket 仅存在于各客户端独占的 net namespace。
 每台另有独占 mount/UTS namespace、hostname 文件、状态目录、D-Bus、PulseAudio socket
@@ -121,3 +128,50 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 不随变异证据目录层级增长；日志、PCM、数据与输入摘要仍独立持久保留。
 所有进程停止后删除本轮runtime目录，路径及删除结果写入resources.json。
 每个客户端的 HOME 也属于自己的证据目录，平台初始化与音乐下载不会访问宿主音乐目录。
+
+#181 的 `test_dislike.py` 从真实抽屉与列表上下文菜单验证三种不喜欢理由，观察私有库
+规则/反馈、当前列表和队列、重启/恢复及真实 PCM。列表 `Expand` 与长按共用生产回调，
+遮罩取消通过现有导航位置的 MCP 指针点击进入。它不证明物理手指长按的计时器或 Android
+原生端；小米13另排实机时段。开发入口为 `run.sh targeted test_dislike.py`，累计验收
+同时运行 app-core 屏蔽单元测试并生成既有 projection JUnit。
+兼容用例固定旧版三枚举，检查缺省规则响应可解析，新客户端声明 song_rules 后可管理歌曲规则。
+
+## 按改动挑场景与每晚全量（#185）
+
+`selection.py BASE HEAD` 读进版本库的 `coverage-map.json`，给出 base..head 该跑的
+pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制里每个源文件的被插桩函数
+首末行（functions），和每个场景实际执行过的源文件。挑选规则：
+
+- 二进制里的 Rust 文件，改动（按地图提交的行号）全部落在函数体内 → 地图上执行过它的
+  场景；执行过它的场景一个都没有 → 不加场景。只改注释或空行的段不算改动；
+- 同一文件里有任何一段落在函数体外（类型、derive、常量、函数签名、新增函数、impl 头）
+  → 全量：覆盖率不把 derive 展开和常量内联记作执行，按文件覆盖会漏选；
+- 不进二进制的 Rust 测试代码、文档、安卓/web/iOS、xtask、experiments、`test/` 下别的
+  脚本、AC 映射 toml → 不加场景；
+- `test_<x>.py` → 整个模块；`mutate.py` → 全部 fault_sensitivity；
+  `mutate.FAULTS` 里的锚点文件 → 对应的那条 fault_sensitivity，其余时候不跑它；
+- 其他一律退回全量：Cargo.lock、Cargo.toml、build.rs、`.slint`、迁移、素材、nix、
+  justfile、共享测试设施（含 selection.py 自己），以及地图里没有的文件；地图缺失、
+  解析不了、生成提交不是 head 的祖先，同样全量。
+- 地图生成提交之后的改动一并计入，地图越旧选得越多；`test_lifecycle.py`、
+  `test_position.py`、`test_selection.py`、`test_covmap.py` 与矩阵断言每次都跑。
+
+已知上限：函数体内的改动按文件挑，选中的是执行过该文件任一函数的场景，不细到函数。
+宏展开生成的函数（`macro_rules!` 等）不按函数体判断，落在宏定义里的改动会被当作
+函数体外而退回全量。
+
+`acceptance/run.sh changed BASE HEAD` 是挑选后的运行入口：子集走 `run.sh subset`
+（带 Rust 投影回归），全量走 `run.sh all`，再跑 status-ui；挑选结果写进
+`results/selection.json`。
+
+全量（`run.sh all`，合回门禁与每晚全量走的同一条路径）顺带生成地图：
+`coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER` 只给工作区 crate 插桩，每个世界按
+pytest 节点把 profraw 写进自己的目录（`%c` 连续模式，被信号杀掉的进程也留下计数），
+全绿后 `covmap.py` 写出 `results/coverage-map.json`，日志里另有一行
+`coverage-map-gzip-base64:` 副本。`acceptance/run.sh all` 全绿后把 HEAD 记进状态目录的
+`last-green`（默认 `~/.cache/osmosis-nightly`，`OSMOSIS_NIGHTLY_STATE` 可改）。
+
+`nightly.sh` 是每晚全量入口：调 `acceptance/run.sh all`，记一行 `history.tsv`，失败打印
+`<last-green>..<本次>` 可疑区间，全绿时把地图留在 `runs/<时间>-<提交>/`。调度不在本仓库。
+`release-gate.sh <提交>` 只在 last-green 恰好是该提交时退 0，发版前用。
+新地图拷进本目录的 `coverage-map.json` 提交。

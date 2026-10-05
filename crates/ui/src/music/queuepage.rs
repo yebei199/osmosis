@@ -58,6 +58,9 @@ struct Mirrored {
 }
 
 impl QueueMirror {
+    pub(in crate::music) fn invalidate_rows(&self) {
+        self.shown.set(None);
+    }
     /// 手上这份是不是正好是要的那一版。
     fn holds(&self, queue_id: i64, revision: i64) -> bool {
         self.inner.borrow().as_ref().is_some_and(|held| {
@@ -209,9 +212,19 @@ fn refresh_group(ui: &MainWindow, deck: &Deck, open: bool) {
         .set_queue_current(now.entry_id.to_string().into());
 
     if deck.queue_mirror.holds(queue_id, revision) {
-        ui.global::<Viz>().set_queue_total(
-            deck.queue_mirror.rows().len() as i32,
-        );
+        let visible_rows = deck
+            .queue_mirror
+            .rows()
+            .into_iter()
+            .filter(|(_, track)| {
+                !crate::library::block::hits(
+                    &deck.blocks,
+                    track,
+                )
+            })
+            .collect::<Vec<_>>();
+        ui.global::<Viz>()
+            .set_queue_total(visible_rows.len() as i32);
         ui.global::<Viz>().set_queue_loading(false);
         if !open {
             return;
@@ -223,9 +236,7 @@ fn refresh_group(ui: &MainWindow, deck: &Deck, open: bool) {
             fill_covers(ui, deck);
             return;
         }
-        let rows: Vec<TrackRow> = deck
-            .queue_mirror
-            .rows()
+        let rows: Vec<TrackRow> = visible_rows
             .iter()
             .map(|(entry, track)| row(deck, *entry, track))
             .collect();
