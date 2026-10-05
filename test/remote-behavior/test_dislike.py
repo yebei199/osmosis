@@ -6,6 +6,7 @@ import time
 import urllib.request
 from datetime import datetime
 from enum import Enum
+from unittest.mock import Mock
 
 import pytest
 
@@ -113,22 +114,61 @@ def activate(ui, label):
     ui.activate(button(ui, label))
 
 
+# 列表刷新与 MCP 查询可交错,从同一份树快照取身份、标签及几何。
 def rows(ui, scope=None):
-    handles = (
-        ui.elements("TrackList::touch")
-        if scope is None
-        else ui.call(
-            "query_element_descendants",
-            elementHandle=scope,
-            findAll=True,
-            queryStack=[{"matchElementId": "TrackList::touch"}],
-        ).get("elementHandles", [])
-    )
-    return [
-        ui.call("get_element_properties", elementHandle=handle)["accessibleLabel"]
-        for handle in handles
-        if ui.visible(handle)
-    ]
+    snapshot = ui.call("get_element_tree", elementHandle=scope or ui.root, maxElements=10000)
+    assert not snapshot["truncated"], "cannot assert rows using a truncated element tree"
+    labels = []
+    for element in snapshot["elements"]:
+        if not any(item.get("id") == "TrackList::touch" for item in element["typeNamesAndIds"]):
+            continue
+        size = element["size"]
+        point = element["absolutePosition"]
+        if (
+            size["width"] > 0
+            and size["height"] > 0
+            and 0 <= point.get("x", 0) < 1100
+            and 0 <= point.get("y", 0) < 900
+        ):
+            labels.append(element["accessibleLabel"])
+    return labels
+
+
+# 刷新可销毁行句柄；一次树快照应同时给出标签与几何,不跨请求读旧句柄。
+def test_dislike_rows_use_one_atomic_snapshot():
+    ui = Mock(root="root")
+    snapshot = {
+        "truncated": False,
+        "elements": [
+            {
+                "typeNamesAndIds": [{"id": "TrackList::touch"}],
+                "accessibleLabel": "Song",
+                "absolutePosition": {"x": 10, "y": 20},
+                "size": {"width": 100, "height": 44},
+            },
+            {
+                "typeNamesAndIds": [{"id": "TrackList::touch"}],
+                "accessibleLabel": "Hidden",
+                "absolutePosition": {},
+                "size": {"width": 0, "height": 44},
+            },
+            {
+                "typeNamesAndIds": [{"id": "TrackList::touch"}],
+                "accessibleLabel": "Offscreen",
+                "absolutePosition": {"x": -100},
+                "size": {"width": 100, "height": 44},
+            },
+            {
+                "typeNamesAndIds": [{"id": "DrawerRow::touch"}],
+                "accessibleLabel": "Unrelated",
+                "absolutePosition": {},
+                "size": {"width": 100, "height": 44},
+            },
+        ],
+    }
+    ui.call.return_value = snapshot
+    assert rows(ui, "queue") == ["Song"]
+    ui.call.assert_called_once_with("get_element_tree", elementHandle="queue", maxElements=10000)
 
 
 def daily(ui):
