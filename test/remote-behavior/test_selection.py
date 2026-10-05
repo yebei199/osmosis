@@ -1,6 +1,7 @@
 """按改动挑场景的判据，夹具是临时 git 仓库加一份样例地图。"""
 
 import json
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -245,3 +246,32 @@ def test_every_changed_file_has_a_verdict(repo, changes):
     result = run(repo, changes)
     verdicts = {r["file"] for r in result["reasons"] if "tests" in r or r.get("full")}
     assert set(changes) <= verdicts
+
+
+RUN = Path(__file__).resolve().parents[2] / "acceptance" / "run.sh"
+
+
+def run_sh(*args):
+    return subprocess.run(["bash", RUN, *args], capture_output=True, text=True)
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("test_x::test_y", ["test_x.py::test_y"]),
+        ("test_p::test_q[a-b]", ["test_p.py::test_q[a-b]"]),
+        ("app-core::blocks::t", []),
+        ("test_a.py::test_b", ["test_a.py::test_b"]),
+    ],
+    ids=["pytest-junit", "pytest-junit-param", "nextest", "pytest-node"],
+)
+def test_subset_accepts_junit_ids(given, expected):
+    out = run_sh("subset-args", given)
+    assert out.returncode == 0
+    assert out.stdout.split() == expected
+
+
+def test_subset_with_every_argument_skipped_exits_zero():
+    out = run_sh("subset", "app-core::blocks::t", "ui-x::y")
+    assert out.returncode == 0, out.stderr
+    assert "nothing to run" in out.stdout
