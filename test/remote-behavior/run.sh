@@ -89,7 +89,7 @@ sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
 if [[ "$mode" == all ]]; then
     projection_junit="$repo_root/target/nextest/rb-projection/junit.xml"
     rm -f "$projection_junit"
-    run_owned projection 3600 cargo nextest run --locked -p ui -p app-desktop \
+    run_owned projection 3600 cargo nextest run --locked -p ui -p app-desktop -p app-core \
         --config 'profile.dev.package."*".opt-level=0' \
         --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR" \
         --config-file "$suite_dir/nextest.toml" --profile rb-projection --no-tests fail

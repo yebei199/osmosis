@@ -24,6 +24,12 @@ pub struct TrackDto {
     pub alias: Option<String>,
     /// 歌手名。保持列表形态 —— 怎么拼接是显示问题,属于 UI。
     pub artists: Vec<String>,
+    /// 平台身份供规则匹配；旧响应缺失时回退到名字。
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub artist_identities: Vec<crate::ArtistIdentityDto>,
     /// 封面图地址。平台没给就是 `None`,不用空串冒充。
     pub cover: Option<String>,
     /// 时长,毫秒。与上游同单位,不做换算。

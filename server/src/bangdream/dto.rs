@@ -89,6 +89,16 @@ pub fn liked_playlist_id(
 /// 把上游的一首歌翻成契约里的 [`TrackDto`]。
 pub fn track_to_dto(track: proto::Track) -> TrackDto {
     TrackDto {
+        artist_identities: track
+            .artists
+            .iter()
+            .map(|artist| contract::ArtistIdentityDto {
+                platform: platform_name(track.platform),
+                id: (!artist.id.is_empty())
+                    .then(|| artist.id.clone()),
+                name: artist.name.clone(),
+            })
+            .collect(),
         platform: platform_name(track.platform),
         id: track.id,
         title: track.title,

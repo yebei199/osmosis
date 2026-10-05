@@ -688,6 +688,60 @@ fn faceted_window(
     (ui, deck)
 }
 
+/// 屏蔽后重投影电台缓存,保留当前批次与视图,撤销后原曲重新可见。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn block_refresh_reprojects_the_cached_radio_batch() {
+    let (ui, deck) = faceted_window(ViewSource::Radio);
+    let (ticket, _) = deck.views.begin(ViewSource::Radio);
+    deck.views.accept(&ticket, faceted_batch(), true);
+    let rule = app_core::BlockRuleDto {
+        id: "blocked-a".into(),
+        kind: app_core::BlockKind::Track,
+        value: "a".into(),
+        label: "歌 a".into(),
+    };
+    deck.blocks.borrow_mut().push(rule);
+    reload_view(&ui, &deck);
+    assert_eq!(shown_ids(&ui), vec!["b", "c"]);
+    assert_eq!(
+        deck.views.current_source(),
+        Some(ViewSource::Radio)
+    );
+
+    deck.blocks.borrow_mut().clear();
+    reload_view(&ui, &deck);
+    assert_eq!(shown_ids(&ui), vec!["a", "b", "c"]);
+}
+
+/// 屏蔽后各取数视图仍刷新自己的来源,空视图与未缓存电台不伪造曲目。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn block_refresh_keeps_each_catalog_source() {
+    let (ui, deck) = deck_window();
+    reload_view(&ui, &deck);
+    assert!(deck.views.current_source().is_none());
+    for source in [
+        ViewSource::Daily,
+        ViewSource::Recent,
+        ViewSource::Playlist(
+            crate::library::playlist::Source::Local,
+            "7".into(),
+        ),
+        ViewSource::Artist("artist".into()),
+        ViewSource::Search("song".into()),
+        ViewSource::Radio,
+    ] {
+        deck.views.show(source.clone());
+        reload_view(&ui, &deck);
+        assert_eq!(
+            deck.views.current_source(),
+            Some(source)
+        );
+        assert!(deck.tracks.borrow().is_empty());
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn headers(ui: &MainWindow) -> Vec<String> {
     ui.global::<Player>()

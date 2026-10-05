@@ -104,6 +104,7 @@ async fn make_account(
 /// 一条上传的条目。展示信息带着走 —— 队列条目不向 `platform_tracks` 要详情。
 fn entry(id: &str) -> EntryInput {
     EntryInput {
+        artist_identities: Vec::new(),
         platform: "netease".to_owned(),
         track_id: id.to_owned(),
         title: format!("歌 {id}"),

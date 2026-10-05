@@ -22,6 +22,28 @@ pub async fn create(
             "屏蔽的对象不能为空",
         ));
     }
+    if matches!(
+        kind,
+        BlockKind::Song | BlockKind::SongVersions
+    ) {
+        let song = serde_json::from_str::<
+            contract::SongBlockDto,
+        >(value)
+        .map_err(|_| {
+            AppError::Invalid("歌曲屏蔽规则格式无效")
+        })?;
+        if song.title.trim().is_empty()
+            || song.artists.is_empty()
+            || song
+                .artists
+                .iter()
+                .any(|artist| artist.name.trim().is_empty())
+        {
+            return Err(AppError::Invalid(
+                "歌曲屏蔽规则缺少歌名或歌手",
+            ));
+        }
+    }
     let label = label
         .map(str::trim)
         .filter(|label| !label.is_empty())
@@ -99,20 +121,12 @@ pub async fn delete(
 
 /// 这首歌命不命中任一条规则。标签认的是 `facets.tags`,调用方得先填好聚合。
 ///
-/// 客户端的队列跳过(`app_core::blocks`)按同一个口径认,改一边要改另一边。
+/// 客户端与这里都调用 contract 的纯匹配，口径共用。
 pub fn hits(
     rules: &[BlockRuleDto],
     track: &TrackDto,
 ) -> bool {
-    rules.iter().any(|rule| match rule.kind {
-        BlockKind::Artist => {
-            track.artists.contains(&rule.value)
-        }
-        BlockKind::Tag => {
-            track.facets.tags.contains(&rule.value)
-        }
-        BlockKind::Track => track.id == rule.value,
-    })
+    contract::block_hits(rules, track)
 }
 
 /// 滤掉命中规则的,返回滤掉了几首。
@@ -130,6 +144,8 @@ fn kind_name(kind: BlockKind) -> &'static str {
         BlockKind::Artist => "artist",
         BlockKind::Tag => "tag",
         BlockKind::Track => "track",
+        BlockKind::Song => "song",
+        BlockKind::SongVersions => "song_versions",
     }
 }
 
@@ -138,6 +154,8 @@ fn parse_kind(stored: &str) -> Option<BlockKind> {
         "artist" => Some(BlockKind::Artist),
         "tag" => Some(BlockKind::Tag),
         "track" => Some(BlockKind::Track),
+        "song" => Some(BlockKind::Song),
+        "song_versions" => Some(BlockKind::SongVersions),
         _ => None,
     }
 }
@@ -161,6 +179,7 @@ mod tests {
         tags: &[&str],
     ) -> TrackDto {
         let mut track = TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".to_owned(),
             id: id.to_owned(),
             title: id.to_owned(),

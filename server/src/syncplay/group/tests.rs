@@ -163,6 +163,7 @@ fn wire_sequence_end_is_independent_of_loop_and_shuffle() {
     let entries: Vec<super::Entry> = (1..=3)
         .map(|id| super::Entry {
             entry_id: id,
+            artist_identities: Vec::new(),
             position: id - 1,
             platform: "netease".to_owned(),
             track_id: id.to_string(),
@@ -194,8 +195,9 @@ fn wire_sequence_end_is_independent_of_loop_and_shuffle() {
                     .as_mut()
                     .expect("playing group")
                     .entry_id = entry;
-                let dto = super::dto(&group, &entries)
-                    .expect("group state");
+                let dto =
+                    super::dto(&group, &entries, &list())
+                        .expect("group state");
                 let wire = serde_json::to_value(dto)
                     .expect("wire JSON");
                 assert_eq!(
@@ -806,6 +808,7 @@ mod persistence {
         let inputs: Vec<EntryInput> = ["first", "second"]
             .into_iter()
             .map(|id| EntryInput {
+                artist_identities: Vec::new(),
                 platform: "netease".to_owned(),
                 track_id: id.to_owned(),
                 title: id.to_owned(),
@@ -881,6 +884,46 @@ mod persistence {
                 .contains(&account)
         );
         (account, roster, inbox, state)
+    }
+
+    /// GET 与意图广播都按账号规则预告;唯一剩余条目被屏蔽时已到有效队尾。
+    #[tokio::test]
+    async fn wire_tail_and_next_use_account_blocks() {
+        isolated(|pool| async move {
+            for kind in ["track", "song", "song_versions"] {
+                let (account, roster, mut inbox, _) = playing_group(&pool, kind).await;
+                inbox.try_recv().expect("建组广播正对照");
+                sqlx::query("UPDATE play_groups SET anchor_wall_us = $2, boundary_wall_us = $2 + 205000000 WHERE account_id = $1")
+                    .bind(account).bind(wall_now_us()).execute(&pool).await.expect("当前首曲尚未结束");
+                sqlx::query("UPDATE play_queue_entries SET artists = ARRAY['Artist'] WHERE track_id = 'second'")
+                    .execute(&pool).await.expect("本schema队尾歌手前提");
+                let before = super::super::current(&pool, account).await.expect("真实GET入口").expect("组在");
+                let now = before.now.expect("首曲在放");
+                assert!(!now.at_end, "未屏蔽时仍有下一首");
+                assert_eq!(now.next.expect("未屏蔽预告").track.id, "second");
+                let value = if kind == "track" {
+                    "second".to_owned()
+                } else {
+                    serde_json::json!({"title": "second", "artists": [{"platform": "netease", "name": "Artist"}]}).to_string()
+                };
+                sqlx::query("INSERT INTO block_rules (account_id, kind, value, label) VALUES ($1, $2, $3, 'tail')")
+                    .bind(account).bind(kind).bind(value).execute(&pool).await.expect("本账号真实屏蔽行");
+                let read = super::super::current(&pool, account).await.expect("屏蔽后GET").expect("组仍在");
+                let now = read.now.expect("首曲不变");
+                assert_eq!(now.track.id, "first");
+                assert!(now.at_end, "{kind}: 有效队尾排除屏蔽条目");
+                assert!(now.next.is_none(), "{kind}: 不预告屏蔽条目");
+                let changed = apply(&pool, &roster, account, "phone", Intent::Transport(contract::TransportOpDto::Pause))
+                    .await.expect("真实暂停入口").expect("组保持");
+                let now = changed.now.expect("暂停首曲");
+                assert!(now.at_end);
+                assert!(now.next.is_none());
+                let ServerSignal::GroupState { state: Some(state) } = inbox.try_recv().expect("暂停广播") else {
+                    panic!("必须广播组状态");
+                };
+                assert!(state.now.expect("广播首曲").at_end);
+            }
+        }).await;
     }
 
     /// 空集合不造组;健康到期组推进精确条目,持久提交并广播相同新版本。

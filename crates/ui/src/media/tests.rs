@@ -14,6 +14,7 @@ mod helpers {
 
     pub fn track(id: &str) -> TrackDto {
         TrackDto {
+            artist_identities: Vec::new(),
             platform: "netease".into(),
             id: id.into(),
             title: format!("歌 {id}"),

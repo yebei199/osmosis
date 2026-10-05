@@ -94,6 +94,14 @@ export global Library {
     // 输入框在 `if` 里,Rust 引用不到它。
     callback create-track-tag(string);
 
+    // 不喜欢理由选择，两处入口共用同一份状态。
+    in-out property <bool> dislike-open: false;
+    in-out property <bool> dislike-pick-artist: false;
+    in property <[string]> dislike-artists: [];
+    callback open-dislike(string);
+    callback choose-dislike(int);
+    callback choose-dislike-artist(int);
+
     // ── 屏蔽规则(#161) ──
     // 当前详情页是哪位歌手的热门曲目。空串 = 不是歌手页。只有它与
     // open-playlist-name 对得上时才出「屏蔽该歌手」:点开歌单时名字就换了。

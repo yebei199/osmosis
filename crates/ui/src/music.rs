@@ -260,8 +260,15 @@ pub fn bind(
         ui,
         &deck.blocks,
         move |ui| {
-            reload_view(ui, &reviewing);
+            apply_blocks(ui, &reviewing);
         },
+    );
+    let (looking, updating) = (deck.clone(), deck.clone());
+    crate::library::block::bind_dislike(
+        ui,
+        &deck.blocks,
+        move |id| dislike_track(&looking, id),
+        move |ui| apply_blocks(ui, &updating),
     );
     // 赞踩(#157):独立于红心,只投影当前这一首。
     crate::library::feedback::bind(ui);
@@ -364,3 +371,50 @@ const WASM_NOTICE: &str = "Web 端暂不支持播放";
 mod fixtures;
 #[cfg(test)]
 mod tests;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dislike_track(
+    deck: &Deck,
+    id: &str,
+) -> Option<TrackDto> {
+    if let Some(now) =
+        deck.group.now().filter(|now| now.track.id == id)
+    {
+        return Some(now.track);
+    }
+    deck.queue
+        .borrow()
+        .tracks()
+        .iter()
+        .chain(deck.tracks.borrow().iter())
+        .find(|track| track.id == id)
+        .cloned()
+}
+
+/// 保存规则成功后先走同一条 Next 分派，再移除本机快照里的命中条目。
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_blocks(ui: &MainWindow, deck: &Deck) {
+    let current = if deck.group.is_member() {
+        deck.group.now().map(|now| now.track)
+    } else {
+        deck.queue.borrow().current().cloned()
+    };
+    if current.as_ref().is_some_and(|track| {
+        crate::library::block::hits(&deck.blocks, track)
+    }) {
+        dispatch(ui, deck, Intent::Next);
+    }
+    let changed = deck.queue.borrow_mut().retain(|track| {
+        !crate::library::block::hits(&deck.blocks, track)
+    });
+    if changed && !deck.group.is_member() {
+        let queue = deck.queue.borrow();
+        let (tracks, index) =
+            (queue.tracks().to_vec(), queue.index());
+        drop(queue);
+        publish_local_queue(ui, deck, tracks, index);
+    }
+    deck.queue_mirror.invalidate_rows();
+    queuepage::refresh(ui, deck);
+    reload_view(ui, deck);
+}
