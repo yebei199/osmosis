@@ -48,3 +48,11 @@ def test_pause_rejects_elapsed_time():
     bounds = resumed(before, after, Action(100.3, 100.4), 100.8, Action(111.0, 111.1))
     with pytest.raises(AssertionError, match="independent continuation"):
         check(before, after, bounds)
+
+
+# 录音批量落盘时窗口在不到其音频时长内读满，帧时间不能晚于读完时刻（#184，181 final-8）。
+def test_batched_capture_orders_before_next_action():
+    before = Observation((13,) * 7 + (14,) * 3, 409377.6296, 409378.7312)
+    after = Observation((19,) * 6 + (20,) * 4, 409383.4390, 409384.7411)
+    action = Action(409378.7497, 409379.3577)
+    check(before, after, continuation(before, after), action)

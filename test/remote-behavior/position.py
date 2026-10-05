@@ -17,13 +17,19 @@ class Observation:
     started: float
     ended: float
 
+    # 录音字节批量落盘时，窗口可能在不到其音频时长内读满；读完时刻 ended 是末帧的硬上界，
+    # 按 started 推出的时间越过它就整窗前移，首尾一起平移、不改窗口时长。
+    @property
+    def _shift(self):
+        return min(0.0, self.ended - self.started - len(self.seconds) * FRAME_SECONDS)
+
     @property
     def first_time(self):
-        return self.started + FRAME_SECONDS / 2
+        return self.started + FRAME_SECONDS / 2 + self._shift
 
     @property
     def last_time(self):
-        return self.started + (len(self.seconds) - 0.5) * FRAME_SECONDS
+        return self.started + (len(self.seconds) - 0.5) * FRAME_SECONDS + self._shift
 
     def __getitem__(self, index):
         return self.seconds[index]
