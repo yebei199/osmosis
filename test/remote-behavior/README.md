@@ -150,10 +150,14 @@ pytest 节点和逐文件理由（JSON）。地图记录生成提交、二进制
 （带 Rust 投影回归），全量走 `run.sh all`，再跑 status-ui；挑选结果写进
 `results/selection.json`。
 
-`nightly.sh` 是每晚全量入口：`coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER`
-只给工作区 crate 插桩，每个世界按 pytest 节点把 profraw 写进自己的目录（`%c` 连续
-模式，被信号杀掉的进程也留下计数），全绿后 `covmap.py` 生成地图并记 last-green；
-失败打印 `<last-green>..<本次>` 可疑区间。状态目录默认在
-`~/.cache/osmosis-nightly`，可用 `OSMOSIS_NIGHTLY_STATE` 改。调度不在本仓库。
+全量（`run.sh all`，合回门禁与每晚全量走的同一条路径）顺带生成地图：
+`coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER` 只给工作区 crate 插桩，每个世界按
+pytest 节点把 profraw 写进自己的目录（`%c` 连续模式，被信号杀掉的进程也留下计数），
+全绿后 `covmap.py` 写出 `results/coverage-map.json`，日志里另有一行
+`coverage-map-gzip-base64:` 副本。`acceptance/run.sh all` 全绿后把 HEAD 记进状态目录的
+`last-green`（默认 `~/.cache/osmosis-nightly`，`OSMOSIS_NIGHTLY_STATE` 可改）。
+
+`nightly.sh` 是每晚全量入口：调 `acceptance/run.sh all`，记一行 `history.tsv`，失败打印
+`<last-green>..<本次>` 可疑区间，全绿时把地图留在 `runs/<时间>-<提交>/`。调度不在本仓库。
 `release-gate.sh <提交>` 只在 last-green 恰好是该提交时退 0，发版前用。
-新地图从 nightly 的 `runs/<时间>-<提交>/coverage-map.json` 拷进本目录提交。
+新地图拷进本目录的 `coverage-map.json` 提交。

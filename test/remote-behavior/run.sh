@@ -22,7 +22,7 @@ if [[ "$mode" == targeted || "$mode" == subset ]]; then
     done
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
-for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon llvm-profdata llvm-cov; do
     command -v "$required" >/dev/null || { echo "missing dependency: $required" >&2; exit 2; }
 done
 if [[ $(id -u) == 0 ]]; then
@@ -78,10 +78,18 @@ print("pidfd and grpc/numpy/psycopg/pytest imports available")
 PY
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
-for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon llvm-profdata llvm-cov; do
     executable=$(command -v "$required")
     sha256sum "$executable" >> "$REMOTE_BEHAVIOR_ARTIFACTS/environment-sha256.txt"
 done
+# 全量顺带生成覆盖地图（#185）：只给工作区 crate 插桩，每个世界按 pytest 节点写 profraw。
+# 进程之外落下的 profraw（构建脚本、投影测试）收进 stray，不进地图。
+if [[ "$mode" == all ]]; then
+    export REMOTE_BEHAVIOR_COVERAGE="$REMOTE_BEHAVIOR_ARTIFACTS/coverage"
+    mkdir -p "$REMOTE_BEHAVIOR_COVERAGE/stray"
+    export RUSTC_WORKSPACE_WRAPPER="$suite_dir/coverage-rustc.sh"
+    export LLVM_PROFILE_FILE="$REMOTE_BEHAVIOR_COVERAGE/stray/%p-%m.profraw"
+fi
 run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
     -p app-desktop -p server --features app-desktop/mcp \
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
@@ -106,3 +114,14 @@ run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \
     --junitxml "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml"
+# 只有全绿才产出地图；日志里另打一行压缩副本，远端运行只带回日志时也取得回来。
+if [[ "$mode" == all ]]; then
+    run_owned covmap 1800 "$suite_python" "$suite_dir/covmap.py" \
+        --profiles "$REMOTE_BEHAVIOR_COVERAGE" --junit "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml" \
+        --object "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
+        --object "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" \
+        --out "$REMOTE_BEHAVIOR_ARTIFACTS/coverage-map.json"
+    mkdir -p "$suite_dir/results"
+    cp "$REMOTE_BEHAVIOR_ARTIFACTS/coverage-map.json" "$suite_dir/results/coverage-map.json"
+    echo "coverage-map-gzip-base64: $(gzip -9c "$suite_dir/results/coverage-map.json" | base64 -w0)"
+fi
