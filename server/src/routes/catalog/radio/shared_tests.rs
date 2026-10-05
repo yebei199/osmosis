@@ -142,7 +142,7 @@ async fn a_track_already_listed_is_not_added_twice() {
         vec![vec![id(1)], vec![id(1)], vec![id(1)]],
     )
     .await;
-    more(
+    let _ = more(
         State(state.clone()),
         account.clone(),
         unfiltered(),
@@ -172,7 +172,7 @@ async fn a_played_track_moves_to_heard() {
     let (state, account) =
         fixture(case, vec![vec![id(1), id(2), id(3)]])
             .await;
-    more(
+    let _ = more(
         State(state.clone()),
         account.clone(),
         unfiltered(),
@@ -181,7 +181,7 @@ async fn a_played_track_moves_to_heard() {
     .unwrap();
     let mut inbox = online(&state, account.id, "desk");
 
-    crate::routes::library::history::record_play(
+    let _ = crate::routes::library::history::record_play(
         State(state.clone()),
         account.clone(),
         Json(PlayedDto {
@@ -205,7 +205,7 @@ async fn playing_something_else_does_not_notify() {
     let (state, account) = fixture(case, vec![]).await;
     let mut inbox = online(&state, account.id, "desk");
 
-    crate::routes::library::history::record_play(
+    let _ = crate::routes::library::history::record_play(
         State(state),
         account,
         Json(PlayedDto {
@@ -229,9 +229,10 @@ async fn new_tracks_are_queued_for_prefetch() {
         fixture(case, vec![vec![id(1), id(2), id(3)]])
             .await;
 
-    more(State(state.clone()), account, unfiltered())
-        .await
-        .unwrap();
+    let _ =
+        more(State(state.clone()), account, unfiltered())
+            .await
+            .unwrap();
 
     let queued: Vec<String> = sqlx::query_scalar(
         "SELECT track_id FROM prefetch_jobs
