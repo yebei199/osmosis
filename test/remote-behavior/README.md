@@ -59,10 +59,10 @@ pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit
 `acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
 依赖由 Nix 显式声明；首轮设计审前未执行这些用例，也未修改生产。
 
-默认 `REMOTE_BEHAVIOR_JOBS=2`、`CARGO_BUILD_JOBS=2`。并行度按 #184 在 12 核 pc2 上的实测
-定：4 路时软件渲染把 CPU 压满，客户端音频落后挂钟超出容差；2 路失败更少。CI workflow
-的 GitHub runner 仍显式钉 1。每个 testcase 独占资源，JUnit 的 `artifacts` 属性指回它的
-资源目录；禁止自动重试和 worker 重启。
+默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2`。#184 在 12 核 pc2 上实测过并行：
+场景是 CPU 密集型（真实解码加三个软件渲染客户端），2 路总耗时反比串行长，2 路与 4 路都
+出现客户端音频落后挂钟的时序失败，并行收益被争用抵消，所以仍串行。每个 testcase 独占
+资源，JUnit 的 `artifacts` 属性指回它的资源目录；禁止自动重试和 worker 重启。
 私有 DB 只监听独占 Unix socket；业务服务、媒体和信令闸由内核分配空闲端口。
 固定 3000、8091 和单实例抽象 socket 仅存在于各客户端独占的 net namespace。
 每台另有独占 mount/UTS namespace、hostname 文件、状态目录、D-Bus、PulseAudio socket
