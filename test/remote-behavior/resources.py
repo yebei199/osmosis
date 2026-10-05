@@ -588,6 +588,13 @@ class World:
             )
         }
         self.env["WGPU_BACKEND"] = "vulkan"
+        coverage = os.environ.get("REMOTE_BEHAVIOR_COVERAGE")
+        if coverage:
+            # 每晚全量生成覆盖地图：按当前 pytest 节点分目录，%c 让被杀的进程也留下计数。
+            node = os.environ["PYTEST_CURRENT_TEST"].rsplit(" ", 1)[0]
+            profiles = Path(tempfile.mkdtemp(prefix="cov-", dir=coverage))
+            (profiles / "nodeid").write_text(node)
+            self.env["LLVM_PROFILE_FILE"] = str(profiles / "%p-%m%c.profraw")
 
     # 统一登记命令身份，部分初始化失败也能停止已起资源。
     def spawn(self, name, command, env=None, stdout=None, pass_fds=()):

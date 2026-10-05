@@ -7,8 +7,9 @@ import time
 import traceback
 from pathlib import Path
 
-import cases
 import pytest
+
+import cases
 from media import DURATION
 from resources import World
 

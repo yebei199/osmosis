@@ -1,8 +1,9 @@
 """按 base..head 的改动从覆盖地图挑场景；认不出就退回全量，宁可多跑不许漏跑。
 
-用法：python selection.py BASE HEAD [--map PATH]，标准输出一份 JSON：
+用法：python selection.py BASE HEAD [--map PATH] [--out FILE] [--args]，输出一份 JSON：
 mode 是 subset 或 full；tests 是 run.sh subset 接受的 pytest 节点（full 时为空）；
 reasons 逐文件写明选中理由；fallback 写明退回全量的原因。
+--args 另外逐行打印 run.sh 的参数（all，或 subset 加节点），acceptance/run.sh changed 用它。
 """
 
 import argparse
@@ -21,6 +22,7 @@ ALWAYS = (
     "test_lifecycle.py",
     "test_position.py",
     "test_selection.py",
+    "test_covmap.py",
     "test_remote.py::test_recover_invalid_covers_every_value",
 )
 # 这些路径不进桌面端与服务端二进制，也不被套件读取，改动不影响任何场景。
@@ -59,7 +61,10 @@ def changed_files(repo, base, head):
 def exists_at(repo, commit, path):
     return (
         subprocess.run(
-            ["git", "cat-file", "-e", f"{commit}:{path}"], cwd=repo, capture_output=True
+            ["git", "cat-file", "-e", f"{commit}:{path}"],
+            cwd=repo,
+            capture_output=True,
+            check=False,
         ).returncode
         == 0
     )
@@ -80,7 +85,10 @@ def load_map(repo, head, map_path):
     except (ValueError, KeyError, TypeError) as error:
         return None, f"coverage map invalid: {error}"
     ancestor = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, head], cwd=repo, capture_output=True
+        ["git", "merge-base", "--is-ancestor", commit, head],
+        cwd=repo,
+        capture_output=True,
+        check=False,
     )
     if ancestor.returncode:
         return None, f"coverage map stale: {commit} is not an ancestor of {head}"
@@ -139,11 +147,19 @@ def main():
     parser.add_argument("base")
     parser.add_argument("head")
     parser.add_argument("--map", default=DEFAULT_MAP)
+    parser.add_argument("--out", help="write the JSON here instead of stdout")
+    parser.add_argument("--args", action="store_true", help="print run.sh arguments, one per line")
     args = parser.parse_args()
     repo = git(Path(__file__).parent, "rev-parse", "--show-toplevel").strip()
     base, head = (git(repo, "rev-parse", ref).strip() for ref in (args.base, args.head))
-    json.dump(select(repo, base, head, args.map), sys.stdout, indent=2)
-    print()
+    result = select(repo, base, head, args.map)
+    text = json.dumps(result, indent=2) + "\n"
+    if args.out:
+        Path(args.out).write_text(text)
+    else:
+        sys.stdout.write(text)
+    if args.args:
+        print("\n".join(["all"] if result["mode"] == "full" else ["subset", *result["tests"]]))
 
 
 if __name__ == "__main__":

@@ -61,6 +61,8 @@ def run_case(snapshot, target, directory, test):
         "REMOTE_BEHAVIOR_TARGET_DIR": str(target),
         "REMOTE_BEHAVIOR_ARTIFACTS": str(directory),
     }
+    # 变异二进制不是地图对应的那份，嵌套世界不进覆盖地图。
+    env.pop("REMOTE_BEHAVIOR_COVERAGE", None)
     xml = directory / "junit.xml"
     status = command(
         [

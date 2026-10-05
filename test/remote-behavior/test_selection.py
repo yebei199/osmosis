@@ -4,6 +4,7 @@ import json
 import subprocess
 
 import pytest
+
 from mutate import FAULTS
 from selection import ALWAYS, select
 
