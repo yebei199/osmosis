@@ -1,0 +1,10 @@
+result=green
+commit=068bf8b1ab662610c76903b4f62f6e02cc92fe93
+date=2026-10-07T03:12:47+08:00
+host=pc2
+plan_id=sha256:2df9e395d7ccd6c220fce705238e342befba8923c400713f230eb8f3cbf96c91
+failed=
+log=pc1:/home/yb/.local/state/nightly/runs/20261007T030009.398490277/yebei199__osmosis/log
+range=
+notified=
+issue=
