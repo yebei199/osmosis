@@ -49,6 +49,15 @@ def change(snapshot, fault):
     path.write_text(source.replace(before, after, 1))
 
 
+# 本地路径的 crate（工作区成员）带「(/绝对路径)」；registry 与 git 依赖不带，算第三方。
+def third_party_compiles(log):
+    return [
+        line.strip()
+        for line in log.splitlines()
+        if line.strip().startswith("Compiling ") and " (/" not in line
+    ]
+
+
 # 每条命令记录时间、完整日志和真实退出码，超时不算行为 RED。
 def command(args, cwd, env, directory, name, timeout):
     return run_logged(args, cwd, env, directory, name, timeout)
@@ -159,6 +168,10 @@ def verify(root: Path, artifacts: Path, fault: str):
     ]
     if command(build, snapshot, env, directory, "build", 3600):
         raise RuntimeError("mutation did not compile; this is not a valid RED")
+    # 拷来的产物对第三方依赖必须全部命中；有一个重编就是缓存失效，不能悄悄变慢（#189）。
+    stale = third_party_compiles((directory / "build.log").read_text(errors="replace"))
+    if stale:
+        raise RuntimeError(f"产物缓存失效: 变异构建重编了 {len(stale)} 个第三方 crate，如 {stale[0]}")
     if command(
         ["sha256sum", str(target / "debug/osmosis-desktop"), str(target / "debug/server")],
         snapshot,
