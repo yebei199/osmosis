@@ -92,9 +92,22 @@ if [[ "$mode" == all ]]; then
     export RUSTC_WORKSPACE_WRAPPER="$suite_dir/coverage-rustc.sh"
     export LLVM_PROFILE_FILE="$REMOTE_BEHAVIOR_COVERAGE/stray/%p-%m.profraw"
 fi
+# 热种子（#189）：主构建从上一轮成功的产物起步。reflink 加保留时间戳，cargo 才认第三方依赖仍新鲜。
+# 读持共享锁、回写持排他锁，回写先拷到临时目录再 rename，别的轮次读不到半份。
+seed="$artifact_root/seed-target"
+seed_lock="$artifact_root/seed-target.lock"
+if [[ -d "$seed" && ! -e "$REMOTE_BEHAVIOR_TARGET_DIR" ]]; then
+    flock -s "$seed_lock" cp -a --reflink=auto "$seed" "$REMOTE_BEHAVIOR_TARGET_DIR"
+fi
 run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
     -p app-desktop -p server --features app-desktop/mcp \
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
+flock -x "$seed_lock" bash -c 'set -e
+    rm -rf -- "$2.new" "$2.old"
+    cp -a --reflink=auto -- "$1" "$2.new"
+    if [[ -d "$2" ]]; then mv -T -- "$2" "$2.old"; fi
+    mv -T -- "$2.new" "$2"
+    rm -rf -- "$2.old"' _ "$REMOTE_BEHAVIOR_TARGET_DIR" "$seed"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
 if [[ "$mode" == all || "$mode" == subset ]]; then
