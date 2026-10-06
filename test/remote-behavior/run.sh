@@ -44,6 +44,8 @@ if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
     exit 2
 fi
 export REMOTE_BEHAVIOR_TARGET_DIR="${REMOTE_BEHAVIOR_TARGET_DIR:-$REMOTE_BEHAVIOR_ARTIFACTS/build}"
+# 全局 build.build-dir 按工作区路径哈希把中间产物放到树外；钉回 target，拷贝与种子才带得走热缓存（#189）。
+export CARGO_BUILD_BUILD_DIR="$REMOTE_BEHAVIOR_TARGET_DIR"
 export SLINT_EMIT_DEBUG_INFO=1
 unset OSMOSIS_API_BASE SLINT_LIVE_PREVIEW
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"

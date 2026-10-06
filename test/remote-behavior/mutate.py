@@ -120,8 +120,17 @@ def verify(root: Path, artifacts: Path, fault: str):
         json.dumps({"candidate": candidate, "source": str(source_target)}, indent=2)
     )
     # 已结束的本轮构建复制到独有 target,不硬链接可写文件；变异仍重新编译。
+    # 必须保留时间戳：cargo 按 mtime 比依赖新旧，丢了就从 proc-macro2 起整树重编（#189）。
     if command(
-        ["cp", "--reflink=auto", "-R", "--dereference", str(source_target) + "/.", str(target)],
+        [
+            "cp",
+            "--reflink=auto",
+            "-R",
+            "--dereference",
+            "--preserve=timestamps",
+            str(source_target) + "/.",
+            str(target),
+        ],
         root,
         env,
         directory,
@@ -131,6 +140,8 @@ def verify(root: Path, artifacts: Path, fault: str):
         raise RuntimeError("cannot copy completed run-owned build")
     env.pop("OSMOSIS_API_BASE", None)
     env["SLINT_EMIT_DEBUG_INFO"] = "1"
+    # 中间产物跟着本场景的 target，不落到 run.sh 指定的主构建目录。
+    env["CARGO_BUILD_BUILD_DIR"] = str(target)
     build = [
         "cargo",
         "build",
