@@ -1,0 +1,35 @@
+# #189：变异构建与主构建复用热产物，第三方 crate 不再冷编。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "run.sh targeted 'test_remote.py::test_fault_sensitivity[send-request]'"
+observe = "变异构建 build.log 没有第三方 Compiling 行（mutate.py 检出即抛「产物缓存失效」），场景照常 RED 后 GREEN"
+tests = ["test_remote::test_fault_sensitivity[send-request]"]
+doubles = []
+mutation = "去掉 mutate.py 拷贝的 --preserve=timestamps：pc2 实测重编 403 个第三方 crate，场景以「产物缓存失效」失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "变异构建的故障注入与 RED/GREEN 判定"
+observe = "send-request 故障仍产生音频断言 RED，恢复候选 GREEN"
+tests = ["test_remote::test_fault_sensitivity[send-request]"]
+doubles = []
+
+[[ac]]
+id = "AC-2"
+none = "换 clone 路径连跑两次构建的耗时与重编量对比是一次性测量（pc2：679 个/14m35s 对 9 个工作区/1m03s），记在交回报告，不是可重跑断言"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "mutate.third_party_compiles 读变异构建的 build.log"
+observe = "registry 与 git 依赖的 Compiling 行算第三方，带 (/本地路径) 的工作区 crate 不算"
+tests = ["test_mutate::test_third_party_compiles_skips_workspace_paths"]
+doubles = []
+mutation = "把判据改成只认无括号的行：git 依赖那一行漏判，单测失败"
+
+[[ac]]
+id = "AC-4"
+none = "不跑全量是交付约束，没有可执行行为"
