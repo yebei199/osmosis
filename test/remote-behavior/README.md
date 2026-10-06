@@ -35,6 +35,15 @@ acceptance/run.toml 与 CI 不使用局部模式。
 `build/` 与 `fault-*/{build,snapshot}`，失败的整目录保留，更早的整个删除。没有 `exit.txt` 且
 一天内改动过的目录视作正在运行，不删也不占名额；root 为空或 `/` 时拒绝执行。
 
+主构建从热种子起步（#189）：种子在证据根下的 `seed-target/`，`run.sh` 构建前持
+`seed-target.lock` 的共享锁把它 reflink 克隆（保留时间戳）成本轮 target，构建成功后持排他锁
+先拷成 `seed-target.new` 再 rename 回写。`retention.sh` 只认 `175-rb.*`，种子不会被清，
+多占的几 GB 磁盘随它常驻；要强制冷编就删掉 `seed-target/`。`CARGO_BUILD_BUILD_DIR` 钉在
+target 上，中间产物才跟着克隆走。`all` 模式的插桩包装只改工作区 crate 的指纹，它与 subset
+交替运行时工作区 crate 会来回重编，第三方依赖不受影响。
+`mutate.py` 拷贝主构建时同样保留时间戳；变异构建的 `build.log` 里只要出现一行第三方 crate
+（不带 `(/本地路径)` 的 `Compiling`）就判场景失败并报「产物缓存失效」，阈值是 0。
+
 `run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
 的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
 验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
