@@ -1,0 +1,7 @@
+result=skipped
+commit=79eccc1845dae56e89fd496ef76047a748bd80b7
+date=2026-10-08T07:03:58+08:00
+host=
+plan_id=
+failed=
+log=pc1:/home/yb/.local/state/nightly/runs/20261008T030004.391803783/coordinator.log
