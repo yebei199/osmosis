@@ -467,9 +467,14 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     choose(world, "exact")
     world.sound(source, "175003", group=False)
     source.ui.music("radio")
-    expected = ["Song (Live)", "Other", "Song", "Safe"]
+    # #186:起播即移进「已听过」,所以正在放的 Song (Live) 不在未听过那一半。
+    expected = ["Other", "Song", "Safe"]
     wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
     assert rows(source.ui) == expected
+    # 「已听过」那一半同样过屏蔽规则:播过的 Song 被规则藏住,只剩 Song (Live)。
+    activate(source.ui, "已听过")
+    wait_until(lambda: rows(source.ui) == ["Song (Live)"], "heard half applies saved rule")
+    activate(source.ui, "未听过")
     heard = wait_until(
         lambda: world.sql(
             "SELECT track_id FROM play_events WHERE account_id=%s AND track_id=%s",
