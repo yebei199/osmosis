@@ -1,0 +1,18 @@
+# #190：电台不喜欢用例的预期跟上 #186「起播即移进已听过」，只改测试不改产品。
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "真实桌面电台起播 175001 → 抽屉「太难听了」→ 175003 起播 → 回电台区，再切「已听过」"
+observe = "未听过那一半恰为 Other/Song/Safe；已听过那一半恰为 Song (Live)，播过但命中规则的 Song 不出现；重启后新批次仍过规则与历史"
+tests = ["test_dislike::test_dislike_radio_batch_and_future_fetch"]
+doubles = ["Linux Xvfb/lavapipe/PulseAudio 为环境替身，外部目录由 DislikeMedia 供应；服务端、数据库、屏蔽规则与客户端电台区为生产实现"]
+mutation = "去掉 shared_list 对 heard 那一半的 for_account：被屏蔽的 Song 出现在已听过，断言失败"
+
+[[ac]]
+id = "AC-2"
+none = "根因是测试预期过时而非产品 bug（主路由 2026-10-07 裁定方案 A），此条只在产品 bug 时适用"
+
+[[ac]]
+id = "AC-3"
+none = "不跑全量是交付约束，没有可执行行为"
