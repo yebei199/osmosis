@@ -294,3 +294,58 @@ mod deck_side {
         );
     }
 }
+
+mod deck_races {
+    use std::num::NonZero;
+
+    use rodio::buffer::SamplesBuffer;
+
+    use super::deck::deck;
+
+    fn constant(
+        value: f32,
+        frames: usize,
+    ) -> SamplesBuffer {
+        SamplesBuffer::new(
+            NonZero::new(2).unwrap(),
+            NonZero::new(48_000).unwrap(),
+            vec![value; frames * 2],
+        )
+    }
+
+    /// F-002:新源还在槽里等着(界面线程正拿着槽)时旧源恰好放完，不能报「放完了」——
+    /// 自动续播看到它会再切一首。
+    #[test]
+    fn an_old_source_ending_before_the_new_one_is_taken_is_not_empty()
+     {
+        let (deck, mut source) = deck();
+        deck.play(constant(0.5, 2));
+        assert_eq!(source.next(), Some(0.5));
+        deck.play(constant(0.75, 100));
+        let held = deck.hold_slot();
+        for _ in 0..5 {
+            source.next();
+        }
+        assert!(
+            !deck.empty(),
+            "新源还没换上，旧源放完不算放完"
+        );
+        drop(held);
+        assert_eq!(source.next(), Some(0.75));
+        assert!(!deck.empty());
+    }
+
+    /// F-001:回调刚取走一次换源，紧接着又来一次(清空后马上点歌),下一次拉必须换上它。
+    /// 当初回调在锁外清「有待换源」的标记，夹在中间的那一次会永远躺在槽里;如今没有那个标记，
+    /// 槽里有没有东西只在锁里看。
+    #[test]
+    fn a_change_right_after_a_taken_one_is_taken_next() {
+        let (deck, mut source) = deck();
+        deck.play(constant(0.5, 100));
+        assert_eq!(source.next(), Some(0.5));
+        deck.clear();
+        deck.play(constant(0.75, 100));
+        assert_eq!(source.next(), Some(0.75));
+        assert!(!deck.empty());
+    }
+}

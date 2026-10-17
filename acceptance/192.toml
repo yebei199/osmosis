@@ -31,6 +31,8 @@ tests = [
   "audio::player::tests::deck_side::a_replaced_source_is_released_off_the_pulling_thread",
   "audio::player::tests::deck_side::it_plays_what_it_was_given_at_the_set_volume",
   "audio::player::tests::deck_side::clearing_or_running_out_leaves_it_empty_and_silent",
+  "audio::player::tests::deck_races::an_old_source_ending_before_the_new_one_is_taken_is_not_empty",
+  "audio::player::tests::deck_races::a_change_right_after_a_taken_one_is_taken_next",
 ]
 doubles = ["FakeFeed 与 SamplesBuffer 代替真媒体;测试线程拿锁扮演被抢走 CPU 的控制线程"]
 mutation = "DeckSource::take_change 改回阻塞 lock():pulling_never_waits_for_the_ui_thread 超时失败(已实测)"
