@@ -142,3 +142,155 @@ fn a_fresh_player_with_nothing_loaded_counts_as_paused() {
     assert!(shared.is_paused(), "手上没有源就是暂停");
     assert!(shared.idle(), "暂停着，声卡用不着");
 }
+
+// ── Deck:回调那一侧不等锁(#192) ──
+
+mod deck_side {
+    use std::num::NonZero;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use rodio::buffer::SamplesBuffer;
+
+    use super::deck::{DeckSource, deck};
+
+    /// 48kHz 立体声的一段常数采样，换源前后格式不变，`normalize` 原样放过。
+    fn constant(
+        value: f32,
+        frames: usize,
+    ) -> SamplesBuffer {
+        SamplesBuffer::new(
+            NonZero::new(2).unwrap(),
+            NonZero::new(48_000).unwrap(),
+            vec![value; frames * 2],
+        )
+    }
+
+    fn pull(source: &mut DeckSource, n: usize) -> Vec<f32> {
+        (0..n).map(|_| source.next().unwrap()).collect()
+    }
+
+    #[test]
+    fn it_plays_what_it_was_given_at_the_set_volume() {
+        let (deck, mut source) = deck();
+        assert_eq!(
+            pull(&mut source, 2),
+            vec![0.0; 2],
+            "没东西放是静音"
+        );
+        deck.play(constant(0.5, 4));
+        deck.set_volume(0.5);
+        assert_eq!(pull(&mut source, 2), vec![0.25; 2]);
+        assert!(!deck.empty());
+    }
+
+    #[test]
+    fn clearing_or_running_out_leaves_it_empty_and_silent()
+    {
+        let (deck, mut source) = deck();
+        deck.play(constant(0.5, 2));
+        assert_eq!(pull(&mut source, 4), vec![0.5; 4]);
+        assert_eq!(
+            pull(&mut source, 2),
+            vec![0.0; 2],
+            "放完了"
+        );
+        assert!(deck.empty());
+
+        deck.play(constant(0.5, 100));
+        pull(&mut source, 2);
+        deck.clear();
+        assert!(deck.empty());
+        assert_eq!(pull(&mut source, 2), vec![0.0; 2]);
+    }
+
+    /// 界面线程拿着换源的槽(正好在换歌、又被抢走了 CPU)时，回调照样拉得动，换源晚一点生效。
+    #[test]
+    fn pulling_never_waits_for_the_ui_thread() {
+        let (deck, mut source) = deck();
+        deck.play(constant(0.5, 1_000));
+        pull(&mut source, 2);
+        deck.play(constant(0.75, 1_000));
+        let held = deck.hold_slot();
+
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let got = pull(&mut source, 2);
+            let _ = done.send((got, source));
+        });
+        let (got, mut source) = finished
+            .recv_timeout(Duration::from_secs(1))
+            .expect("界面线程拿着槽的时候回调拉不动");
+        assert_eq!(
+            got,
+            vec![0.5; 2],
+            "换源还没取到，接着放旧的"
+        );
+        drop(held);
+        assert_eq!(pull(&mut source, 2), vec![0.75; 2]);
+    }
+
+    /// 换下来的旧源不在回调线程上析构：析构可能要还几 MB 缓冲给系统。
+    #[test]
+    fn a_replaced_source_is_released_off_the_pulling_thread()
+     {
+        struct Dropped(
+            SamplesBuffer,
+            Arc<AtomicBool>,
+            std::thread::ThreadId,
+        );
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.1.store(
+                    std::thread::current().id() == self.2,
+                    Ordering::Relaxed,
+                );
+            }
+        }
+        impl Iterator for Dropped {
+            type Item = f32;
+            fn next(&mut self) -> Option<f32> {
+                self.0.next()
+            }
+        }
+        impl rodio::Source for Dropped {
+            fn current_span_len(&self) -> Option<usize> {
+                None
+            }
+            fn channels(&self) -> rodio::ChannelCount {
+                self.0.channels()
+            }
+            fn sample_rate(&self) -> rodio::SampleRate {
+                self.0.sample_rate()
+            }
+            fn total_duration(&self) -> Option<Duration> {
+                None
+            }
+        }
+
+        let (deck, source) = deck();
+        let on_deck_thread =
+            Arc::new(AtomicBool::new(false));
+        deck.play(Dropped(
+            constant(0.5, 1_000),
+            on_deck_thread.clone(),
+            std::thread::current().id(),
+        ));
+        let puller = std::thread::spawn(move || {
+            let mut source = source;
+            pull(&mut source, 2);
+            source
+        });
+        let mut source = puller.join().unwrap();
+        deck.play(constant(0.75, 1_000));
+        std::thread::spawn(move || pull(&mut source, 2))
+            .join()
+            .unwrap();
+        deck.collect_for_test(Duration::ZERO);
+        assert!(
+            on_deck_thread.load(Ordering::Relaxed),
+            "旧源该在界面线程(Deck 这头)上释放"
+        );
+    }
+}
