@@ -84,6 +84,10 @@ sleep 2
 # 声音真的进了 null sink,而不是用户的扬声器
 linked=$(pw-link -l | grep -c "$sink" || true)
 
+# PipeWire 那一侧的旁证：sink 与探针两个节点的 ERR(PipeWire 自己数的欠载)。只作参考，不断言
+sleep $(( secs > 10 ? secs - 8 : 1 ))
+pw_side=$(timeout 10 pw-top -b -n 2 2>/dev/null | grep -E "$sink|load_probe|ALSA plug" | tail -n 3 || true)
+
 wait "$probe_pid" || true
 probe_pid=
 cat "$log"
@@ -94,6 +98,8 @@ echo "== 结果"
 echo "送声线程调度策略:${policy:-没找到 cpal_alsa_out}(1=FIFO 2=RR 0=普通)"
 echo "接到 null sink 的链接行数:$linked"
 echo "欠载:${xruns:-探针没跑完}"
+echo "PipeWire 那一侧(ERR 栏):"
+echo "${pw_side:-  没取到}"
 [ "$linked" -gt 0 ] || { echo "FAIL: 探针没接到 null sink"; fail=1; }
 [ "${policy:-}" = 1 ] || [ "${policy:-}" = 2 ] || { echo "FAIL: 送声线程不是实时策略"; fail=1; }
 [ "${xruns:-x}" = 0 ] || { echo "FAIL: 有欠载"; fail=1; }

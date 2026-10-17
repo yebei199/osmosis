@@ -126,6 +126,7 @@ fn start(
     broken: &Arc<AtomicBool>,
 ) -> Result<::cpal::Stream, AudioError> {
     let channels = u64::from(config.channels.max(1));
+    let rate = u64::from(config.sample_rate.max(1));
     let source = source.clone();
     let shared = shared.clone();
     let broken = broken.clone();
@@ -149,8 +150,13 @@ fn start(
                     .playback
                     .duration_since(&ts.callback)
                     .map_or(0, |d| d.as_nanos() as i64);
-                shared.block(now + delay, data.len() as u64 / channels);
+                let frames = data.len() as u64 / channels;
+                shared.block(now + delay, frames);
                 fill(&source, data);
+                shared.callback_took(
+                    monotonic_ns().saturating_sub(now) as u64,
+                    frames * 1_000_000_000 / rate,
+                );
             },
             move |error| {
                 log::warn!("cpal 输出出错: {error}");

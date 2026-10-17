@@ -811,3 +811,16 @@ fn diagnostics_are_queued_for_another_thread_to_log() {
     assert!(notes[0].contains("Starved"), "{notes:?}");
     assert!(shared.take_notes().is_empty(), "取过就没了");
 }
+
+/// 回调每块报一次自己花了多久：记最久的一块，超过这一块时长(预算)的数一次。
+#[test]
+fn slow_callbacks_are_counted_against_their_block_length() {
+    let shared = SyncShared::new();
+    shared.callback_took(5 * MS as u64, 20 * MS as u64);
+    shared.callback_took(25 * MS as u64, 20 * MS as u64);
+    shared.callback_took(10 * MS as u64, 20 * MS as u64);
+
+    let report = shared.report();
+    assert_eq!(report.callback_worst_ns, 25 * MS as u64);
+    assert_eq!(report.callbacks_late, 1);
+}

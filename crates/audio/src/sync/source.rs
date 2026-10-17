@@ -106,6 +106,9 @@ pub struct SyncShared {
     follower_stats: Mutex<Stats>,
     sounding: AtomicBool,
     starves: AtomicU64,
+    /// 输出回调填一块最久花了多久，和超过那一块时长的次数(见 [`SyncShared::callback_took`])。
+    callback_worst_ns: AtomicU64,
+    callbacks_late: AtomicU64,
     notes: mpsc::SyncSender<Note>,
     pending_notes: Mutex<mpsc::Receiver<Note>>,
     /// 最近一块：它第一帧的呈现时刻，与那一帧是媒体的第几纳秒(见 [`SyncShared::pairing`])。
@@ -120,6 +123,10 @@ pub struct Report {
     pub sounding: bool,
     /// 欠载过几次(一次欠载 = 连续拉不到数据的一段)。
     pub starves: u64,
+    /// 输出回调填一块最久花过多少纳秒。
+    pub callback_worst_ns: u64,
+    /// 输出回调填一块花的时间超过这一块本身时长的次数 —— 每一次都必然欠载。
+    pub callbacks_late: u64,
 }
 
 impl SyncShared {
@@ -138,6 +145,8 @@ impl SyncShared {
             follower_stats: Mutex::new(Stats::default()),
             sounding: AtomicBool::new(false),
             starves: AtomicU64::new(0),
+            callback_worst_ns: AtomicU64::new(0),
+            callbacks_late: AtomicU64::new(0),
             notes,
             pending_notes: Mutex::new(pending_notes),
             pairing: Mutex::new(None),
@@ -200,6 +209,27 @@ impl SyncShared {
             follower: *lock(&self.follower_stats),
             sounding: self.sounding.load(Ordering::Relaxed),
             starves: self.starves.load(Ordering::Relaxed),
+            callback_worst_ns: self
+                .callback_worst_ns
+                .load(Ordering::Relaxed),
+            callbacks_late: self
+                .callbacks_late
+                .load(Ordering::Relaxed),
+        }
+    }
+
+    /// 输出回调每块报一次：填这一块花了 `took_ns`,这一块本身长 `budget_ns`。只做原子操作，
+    /// 回调里调得起。满载卡顿时据此分清是回调自己慢，还是别处(#192)。
+    pub fn callback_took(
+        &self,
+        took_ns: u64,
+        budget_ns: u64,
+    ) {
+        self.callback_worst_ns
+            .fetch_max(took_ns, Ordering::Relaxed);
+        if took_ns > budget_ns {
+            self.callbacks_late
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
 
