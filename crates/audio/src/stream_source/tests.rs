@@ -167,3 +167,31 @@ fn seeking_as_a_feed_does_not_wait_for_the_verdict() {
     .expect_err("没有解码器就跳不了");
     assert!(matches!(err, SeekError::NotSupported { .. }));
 }
+
+/// 存量只在缓冲第一次装满之后才报(#192):起播预填那一段的低水位不是「满载下供不上」。
+#[test]
+fn the_level_is_reported_only_once_the_buffer_has_filled() {
+    use crate::sync::Feed;
+    let (_tx, rx) = mpsc::channel::<Sample>();
+    assert_eq!(
+        ChannelSource::new(rx).level(),
+        None,
+        "从没装满过"
+    );
+
+    let source = buffered_with(
+        rodio::source::SineWave::new(440.0),
+        64,
+    );
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(1);
+    let mut level = source.level();
+    while level.is_none()
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(5));
+        level = source.level();
+    }
+    let level = level.expect("缓冲装满之后该报存量");
+    assert!(level <= 64, "{level}");
+}

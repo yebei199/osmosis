@@ -162,6 +162,7 @@ where
         seek,
         state,
         level,
+        primed: std::cell::Cell::new(false),
     }
 }
 
@@ -204,6 +205,8 @@ pub struct ChannelSource {
     /// 通道里此刻有几个采样(解码线程送进一个加一，这头取走一个减一)。观测用(#192):
     /// 容量 5 秒不等于存着 5 秒。
     level: Arc<AtomicUsize>,
+    /// 这条通道装满过没有。起播预填那一段的存量不算低水位，装满之后才开始报。
+    primed: std::cell::Cell<bool>,
 }
 
 impl ChannelSource {
@@ -222,6 +225,7 @@ impl ChannelSource {
             seek,
             state: SeekState::default(),
             level: Arc::default(),
+            primed: std::cell::Cell::new(false),
         }
     }
 
@@ -335,8 +339,9 @@ impl ChannelSource {
         }
 
         self.state.begin();
-        // 旧通道连同里面的存货一起作废
+        // 旧通道连同里面的存货一起作废，新通道从预填重新算起
         self.level.store(0, Ordering::Relaxed);
+        self.primed.set(false);
         // 先换通道再等裁决:解码线程多半正卡在旧通道的 `send` 上,把旧接收端
         // 丢掉才是叫醒它的那一下,不然这一等必然走到超时。
         self.samples = rx;
@@ -394,8 +399,18 @@ impl crate::sync::Feed for ChannelSource {
         Source::sample_rate(self)
     }
 
+    /// 缓冲装满过之后才报(九成算满：回调一直在取，正好装满的那一刻不一定碰得上)。
     fn level(&self) -> Option<usize> {
-        Some(self.level.load(Ordering::Relaxed))
+        let level = self.level.load(Ordering::Relaxed);
+        if !self.primed.get() {
+            if self.capacity == 0
+                || level < self.capacity / 10 * 9
+            {
+                return None;
+            }
+            self.primed.set(true);
+        }
+        Some(level)
     }
 }
 
