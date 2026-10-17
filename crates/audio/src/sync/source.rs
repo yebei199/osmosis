@@ -33,10 +33,19 @@ pub enum Pulled {
 pub trait Feed: Send + 'static {
     fn pull(&mut self) -> Pulled;
     /// 跳到媒体的 `to` 处。之后拉出来的第一个采样就是那一刻的。
+    ///
+    /// 在实时的送声线程上调，不许等别的线程(#192)。
     fn seek(
         &mut self,
         to: Duration,
     ) -> Result<(), SeekError>;
+    /// 同 [`Feed::seek`],但调用方不在送声线程上，可以花一小会儿等出如实的裁决。
+    fn seek_and_wait(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
+        self.seek(to)
+    }
     fn channels(&self) -> ChannelCount;
     fn sample_rate(&self) -> SampleRate;
 }
@@ -477,7 +486,9 @@ impl<F: Feed> SyncSource<F> {
                 self.holding = None;
                 self.step = 1.0;
                 self.muted = true;
-                if let Err(e) = self.seek_to(to_frames) {
+                if let Err(e) =
+                    self.seek_to(to_frames, F::seek)
+                {
                     self.seek_failed(to_frames, &e);
                 }
                 true
@@ -514,15 +525,19 @@ impl<F: Feed> SyncSource<F> {
     ///
     /// 媒体跳到 `to` 所在那一帧的**开头**,读指针停在帧内的小数处 —— 手上的起点与读指针
     /// 得按同一种取整算:一个四舍五入、一个向下取整的话，差出的那一帧让下标成负数。
+    ///
+    /// `seek` 是媒体那一侧怎么跳：送声线程上用 [`Feed::seek`],别处可以用 [`Feed::seek_and_wait`]。
     fn seek_to(
         &mut self,
         to: f64,
+        seek: fn(&mut F, Duration) -> Result<(), SeekError>,
     ) -> Result<(), SeekError> {
         let to = to.max(0.0);
         let frame = to.floor();
-        self.feed.seek(Duration::from_secs_f64(
-            frame / self.rate,
-        ))?;
+        seek(
+            &mut self.feed,
+            Duration::from_secs_f64(frame / self.rate),
+        )?;
         self.recycle_all();
         self.partial.clear();
         self.front = frame as i64;
@@ -742,8 +757,8 @@ impl<F: Feed> SyncSource<F> {
             return;
         };
         drop(request);
-        let result =
-            self.seek_to(to.as_secs_f64() * self.rate);
+        let result = self
+            .seek_to(to.as_secs_f64() * self.rate, F::seek);
         if result.is_ok() {
             self.muted = false;
             self.step = 1.0;
@@ -785,12 +800,15 @@ impl<F: Feed> Source for SyncSource<F> {
         None
     }
 
+    /// 不在送声线程上调(交给 rodio 之前，见 `Player::play_from`),所以等得起媒体的裁决。
     fn try_seek(
         &mut self,
         to: Duration,
     ) -> Result<(), SeekError> {
-        let result =
-            self.seek_to(to.as_secs_f64() * self.rate);
+        let result = self.seek_to(
+            to.as_secs_f64() * self.rate,
+            F::seek_and_wait,
+        );
         if result.is_ok() {
             self.muted = false;
             self.step = 1.0;

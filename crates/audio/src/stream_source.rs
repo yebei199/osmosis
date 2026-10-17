@@ -49,8 +49,8 @@ pub(crate) type SeekRequest = (
 
 /// 等解码线程的裁决最多等这么久。
 ///
-/// **这是一段花在声卡回调里的时间**([`ChannelSource::try_seek`] 说明了为什么),
-/// 所以它有界。取 10ms 的两头理由:
+/// 只有 [`Source::try_seek`] 这条路等它;同步源在送声线程上走的是 [`crate::sync::Feed::seek`],
+/// 一点也不等(#192)。它当初是一段花在声卡回调里的时间,所以有界。取 10ms 的两头理由:
 ///
 /// - 下界:快失败(`ForwardOnly` 这类)根本不读网络,微秒级返回,整条路只是
 ///   两次线程唤醒。10ms 是它的十倍余量。
@@ -261,6 +261,21 @@ impl Source for ChannelSource {
         &mut self,
         pos: Duration,
     ) -> Result<(), SeekError> {
+        self.send_seek(pos)?
+            .recv_timeout(SEEK_VERDICT_WINDOW)
+            .unwrap_or(Ok(()))
+    }
+}
+
+impl ChannelSource {
+    /// 把跳转送去解码线程，换上新通道，交回等裁决的那一头。送不进去就当场报错。
+    fn send_seek(
+        &mut self,
+        pos: Duration,
+    ) -> Result<
+        mpsc::Receiver<Result<(), SeekError>>,
+        SeekError,
+    > {
         let (tx, rx) = mpsc::sync_channel(self.capacity);
         let (verdict, answer) = mpsc::channel();
         // 送不进去 = 那一头的解码线程已经收工了(或者从来没有)。
@@ -277,10 +292,7 @@ impl Source for ChannelSource {
         self.samples = rx;
         // 欠着的静音跟着旧通道一起作废,不然跳完还要先补完它
         self.silence = 0;
-
-        answer
-            .recv_timeout(SEEK_VERDICT_WINDOW)
-            .unwrap_or(Ok(()))
+        Ok(answer)
     }
 }
 
@@ -302,7 +314,19 @@ impl crate::sync::Feed for ChannelSource {
         }
     }
 
+    /// 同 [`Source::try_seek`],但不等裁决(#192):同步源在实时的送声线程上调它，那里一毫秒都
+    /// 不该等别的线程。快失败里「没有解码器」仍然当场报错;其余的(只进不退之类)和超时分支一样
+    /// 乐观放行，结论由 [`ChannelSource::seek_state`] 补上。
+    ///
+    /// 换的新通道仍在这里分配(按容量一次性开好)。跳转本来就静音一下，这一次分配不在常规路径上。
     fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
+        self.send_seek(to)?.try_recv().unwrap_or(Ok(()))
+    }
+
+    fn seek_and_wait(
         &mut self,
         to: Duration,
     ) -> Result<(), SeekError> {
