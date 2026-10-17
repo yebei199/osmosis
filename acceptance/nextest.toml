@@ -3,3 +3,15 @@ retries = 0
 
 [profile.status-ui.junit]
 path = "junit.xml"
+
+# audio crate 的验收单测(#192),见 run.sh 的 run_audio。
+[profile.audio]
+retries = 0
+
+[profile.audio.junit]
+path = "junit.xml"
+
+# --config-file 指到这里时不读 .config/nextest.toml,那边按墙钟断言的测试独占机器的规矩照抄一份
+[[profile.audio.overrides]]
+filter = "test(=loader::tests::stall::an_unstalled_stream_keeps_the_simulated_callback_on_time)"
+threads-required = "num-test-threads"
