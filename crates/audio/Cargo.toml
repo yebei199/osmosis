@@ -33,6 +33,11 @@ cpal = "0.17"
 # CLOCK_MONOTONIC 的原始读数:AAudio 的时间戳用的就是这个钟,`Instant` 不给出纪元。
 libc = "0.2"
 
+# 桌面把送声线程升实时要请 rtkit(见 src/output/rtkit.rs,#192)。纯 Rust 的 D-Bus,不要 libdbus;
+# 版本跟着 Cargo.lock 里已有的那份走(i-slint-backend-winit 与 apps/desktop 的 MPRIS 都用它)。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5"
+
 # 安卓直接用 NDK 的 AAudio:cpal 的 AAudio 后端给的两个时刻不是同一个钟(#137 ⑤ 调查)。
 # 与 cpal 依赖的是同一个 ndk 0.9。minSdk 是 29,api-level-28 的接口都在。
 [target.'cfg(target_os = "android")'.dependencies]

@@ -16,11 +16,11 @@ use crate::AudioError;
 use crate::clock::monotonic_ns;
 use crate::sync::SyncShared;
 
-/// 开流后最多等这么久，等回调线程报上它的调度策略。一块缓冲十几到几十毫秒，这是它的十几倍。
-const POLICY_WAIT: Duration = Duration::from_millis(500);
+/// 开流后最多等这么久，等回调线程报上它的线程号。一块缓冲十几到几十毫秒，这是它的十几倍。
+const TID_WAIT: Duration = Duration::from_millis(500);
 
-/// 回调线程还没报调度策略。
-const POLICY_UNKNOWN: i32 = -1;
+/// 回调线程还没报线程号。
+const TID_UNKNOWN: i32 = 0;
 
 /// 开流、交出混音器，然后守着流直到被叫停。
 pub(super) fn run(
@@ -129,17 +129,17 @@ fn start(
     let source = source.clone();
     let shared = shared.clone();
     let broken = broken.clone();
-    // cpal 升实时失败只往 stderr 打一行，日志里看不见;所以由回调线程自己报一次策略(#192)
-    let policy = Arc::new(AtomicI32::new(POLICY_UNKNOWN));
-    let seen = policy.clone();
+    // 回调线程第一块报出自己的线程号，持流线程据此替它升实时、查策略(#192)
+    let tid = Arc::new(AtomicI32::new(TID_UNKNOWN));
+    let reported = tid.clone();
     let stream = device
         .build_output_stream(
             config,
             move |data: &mut [f32], info: &::cpal::OutputCallbackInfo| {
-                if seen.load(Ordering::Relaxed) == POLICY_UNKNOWN {
-                    // SAFETY: 只读本线程的调度策略，没有指针参数
-                    let own = unsafe { libc::sched_getscheduler(0) };
-                    seen.store(own, Ordering::Relaxed);
+                if reported.load(Ordering::Relaxed) == TID_UNKNOWN {
+                    // SAFETY: 无参数，只读本线程的线程号;只在第一块调一次
+                    let own = unsafe { libc::gettid() };
+                    reported.store(own, Ordering::Relaxed);
                 }
                 let now = monotonic_ns();
                 let ts = info.timestamp();
@@ -170,22 +170,44 @@ fn start(
     stream
         .play()
         .map_err(|e| AudioError::Device(e.to_string()))?;
-    check_promotion(&policy);
+    promote(&tid);
     Ok(stream)
 }
 
-/// 等回调线程报上调度策略，不是实时就警告一行。播放照常继续：升不上去只是满载时会卡。
-fn check_promotion(policy: &AtomicI32) {
-    let deadline = Instant::now() + POLICY_WAIT;
-    let mut seen = policy.load(Ordering::Relaxed);
-    while seen == POLICY_UNKNOWN
-        && Instant::now() < deadline
-    {
+/// 等回调线程报上线程号，经 rtkit 把它升成实时，再查一次策略;哪一步不成就警告一行。
+/// 播放照常继续：升不上去只是满载时会卡。每开一次流做一次 —— 重开的流是新线程。
+fn promote(tid: &AtomicI32) {
+    let deadline = Instant::now() + TID_WAIT;
+    let mut seen = tid.load(Ordering::Relaxed);
+    while seen == TID_UNKNOWN && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
-        seen = policy.load(Ordering::Relaxed);
+        seen = tid.load(Ordering::Relaxed);
     }
-    let seen = (seen >= 0).then_some(seen);
-    match promotion_warning(seen) {
+    if seen == TID_UNKNOWN {
+        log::warn!(
+            "{}",
+            promotion_warning(None).unwrap_or_default()
+        );
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use super::rtkit;
+        let promoted = rtkit::SystemRtkit::connect()
+            .and_then(|rtkit| {
+                rtkit::promote(&rtkit, seen as u64)
+            });
+        if let Err(reason) = promoted {
+            log::warn!(
+                "送声线程没升上实时优先级({reason}),CPU 占满时声音会卡"
+            );
+            return;
+        }
+    }
+    // SAFETY: 只读该线程的调度策略，没有指针参数
+    let policy = unsafe { libc::sched_getscheduler(seen) };
+    match promotion_warning((policy >= 0).then_some(policy))
+    {
         Some(warning) => log::warn!("{warning}"),
         None => log::info!("送声线程已是实时优先级"),
     }

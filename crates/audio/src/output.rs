@@ -20,6 +20,8 @@ pub mod route;
 
 #[cfg(not(target_os = "android"))]
 mod cpal;
+#[cfg(target_os = "linux")]
+mod rtkit;
 #[cfg(not(target_os = "android"))]
 use self::cpal as backend;
 
@@ -142,7 +144,8 @@ pub(crate) fn fill(source: &SharedMixer, out: &mut [f32]) {
 pub(crate) fn promotion_warning(
     policy: Option<i32>,
 ) -> Option<String> {
-    match policy {
+    // 策略值里可能带着 SCHED_RESET_ON_FORK 这一位(rtkit 升的线程都带),比之前先摘掉
+    match policy.map(|p| p & !libc::SCHED_RESET_ON_FORK) {
         Some(libc::SCHED_FIFO | libc::SCHED_RR) => None,
         Some(other) => Some(format!(
             "送声线程没升上实时优先级(调度策略 {other}),CPU 占满时声音会卡;\
@@ -500,6 +503,13 @@ mod tests {
         );
         assert_eq!(
             promotion_warning(Some(libc::SCHED_RR)),
+            None
+        );
+        // rtkit 升的线程带着 SCHED_RESET_ON_FORK 这一位
+        assert_eq!(
+            promotion_warning(Some(
+                libc::SCHED_RR | libc::SCHED_RESET_ON_FORK
+            )),
             None
         );
     }
