@@ -48,7 +48,8 @@ fn main() {
     log::set_logger(&LOGGER).expect("logger 只装这一次");
     log::set_max_level(log::LevelFilter::Info);
 
-    let player = audio::Player::new().expect("开不了输出设备");
+    let player =
+        audio::Player::new().expect("开不了输出设备");
     let tone = audio::pcm::normalize(SineWave::new(440.0));
     player.play_feed(audio::buffered(tone));
 
@@ -57,5 +58,8 @@ fn main() {
         std::thread::sleep(Duration::from_secs(1));
         println!("xruns={}", XRUNS.load(Ordering::Relaxed));
     }
-    println!("done xruns={}", XRUNS.load(Ordering::Relaxed));
+    println!(
+        "done xruns={}",
+        XRUNS.load(Ordering::Relaxed)
+    );
 }

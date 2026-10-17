@@ -133,6 +133,27 @@ pub(crate) fn fill(source: &SharedMixer, out: &mut [f32]) {
     }
 }
 
+/// 送声线程的调度策略不是实时时，该打的那行警告;是实时返回 `None`。
+///
+/// `policy` 是回调线程上 `sched_getscheduler` 读到的值，`None` 表示开流后一块都没拉到、
+/// 没读成。普通策略的送声线程要和所有普通进程平分 CPU,满载(比如编译)时补缓冲晚一次
+/// 就是一下卡顿(#192)。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn promotion_warning(
+    policy: Option<i32>,
+) -> Option<String> {
+    match policy {
+        Some(libc::SCHED_FIFO | libc::SCHED_RR) => None,
+        Some(other) => Some(format!(
+            "送声线程没升上实时优先级(调度策略 {other}),CPU 占满时声音会卡;\
+             查 rtkit 是否在跑"
+        )),
+        None => Some(
+            "开流后没读到送声线程的调度策略，不知道它升没升上实时优先级".to_owned(),
+        ),
+    }
+}
+
 /// 开默认输出设备。流关在一条专属线程里：流对象不跨线程，断了也在那条线程上重开。
 pub(crate) fn open(
     shared: Arc<SyncShared>,
@@ -463,5 +484,29 @@ mod tests {
             ),
             Step::Close
         );
+    }
+
+    /// 送声线程升上了实时(FIFO/RR):不吭声。
+    #[test]
+    fn a_realtime_audio_thread_needs_no_warning() {
+        assert_eq!(
+            promotion_warning(Some(libc::SCHED_FIFO)),
+            None
+        );
+        assert_eq!(
+            promotion_warning(Some(libc::SCHED_RR)),
+            None
+        );
+    }
+
+    /// 没升上去(rtkit 拒了、没装)或者一块都没拉到：警告，说清楚满载时会卡。
+    #[test]
+    fn an_ordinary_or_unknown_audio_thread_is_warned_about()
+    {
+        let ordinary =
+            promotion_warning(Some(libc::SCHED_OTHER))
+                .expect("普通策略要警告");
+        assert!(ordinary.contains("实时"), "{ordinary}");
+        assert!(promotion_warning(None).is_some());
     }
 }
