@@ -3,7 +3,8 @@
 //! rodio 是「拉」(声卡回调向源要采样),而取字节可能卡在网络上。中间隔一条通道,
 //! 解码线程什么时候给,回调就什么时候有 —— 两者的落差正是本模块存在的理由。
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use rodio::source::SeekError;
@@ -108,6 +109,8 @@ where
     let (seek, requests) = mpsc::channel::<SeekRequest>();
     let state = SeekState::default();
     let reported = state.clone();
+    let level = Arc::new(AtomicUsize::new(0));
+    let filled = level.clone();
 
     std::thread::spawn(move || {
         // 这一帧里已经取走了几个采样。跳转要从帧边界上起跳，见 [`apply_seek`]。
@@ -132,6 +135,7 @@ where
                 (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
             if push(&tx, sample) {
+                filled.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
 
@@ -157,6 +161,7 @@ where
         capacity,
         seek,
         state,
+        level,
     }
 }
 
@@ -196,6 +201,9 @@ pub struct ChannelSource {
     /// 把跳转请求送去解码线程。解码线程收工之后这条通道就断了。
     seek: mpsc::Sender<SeekRequest>,
     state: SeekState,
+    /// 通道里此刻有几个采样(解码线程送进一个加一，这头取走一个减一)。观测用(#192):
+    /// 容量 5 秒不等于存着 5 秒。
+    level: Arc<AtomicUsize>,
 }
 
 impl ChannelSource {
@@ -213,6 +221,7 @@ impl ChannelSource {
             capacity: 0,
             seek,
             state: SeekState::default(),
+            level: Arc::default(),
         }
     }
 
@@ -234,7 +243,10 @@ impl Iterator for ChannelSource {
         }
 
         match self.samples.try_recv() {
-            Ok(sample) => Some(sample),
+            Ok(sample) => {
+                self.taken();
+                Some(sample)
+            }
             // 暂时没数据:发送端还在,只是网络抖了一下。给静音,**绝不返回 None** ——
             // 那对 rodio 就是"放完了",它会丢掉这个源,之后再来的包全打水漂。
             Err(mpsc::TryRecvError::Empty) => {
@@ -294,6 +306,16 @@ impl Source for ChannelSource {
 }
 
 impl ChannelSource {
+    /// 从通道里取走了一个采样。
+    fn taken(&self) {
+        // 换通道之后旧计数清了零，可能比实际少;别减成溢出
+        let _ = self.level.try_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |n| Some(n.saturating_sub(1)),
+        );
+    }
+
     /// 把跳转送去解码线程，换上新通道，交回等裁决的那一头。送不进去就当场报错。
     fn send_seek(
         &mut self,
@@ -313,6 +335,8 @@ impl ChannelSource {
         }
 
         self.state.begin();
+        // 旧通道连同里面的存货一起作废
+        self.level.store(0, Ordering::Relaxed);
         // 先换通道再等裁决:解码线程多半正卡在旧通道的 `send` 上,把旧接收端
         // 丢掉才是叫醒它的那一下,不然这一等必然走到超时。
         self.samples = rx;
@@ -330,7 +354,10 @@ impl crate::sync::Feed for ChannelSource {
     fn pull(&mut self) -> crate::sync::Pulled {
         use crate::sync::Pulled;
         match self.samples.try_recv() {
-            Ok(sample) => Pulled::Sample(sample),
+            Ok(sample) => {
+                self.taken();
+                Pulled::Sample(sample)
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 Pulled::Starved
             }
@@ -365,6 +392,10 @@ impl crate::sync::Feed for ChannelSource {
 
     fn sample_rate(&self) -> SampleRate {
         Source::sample_rate(self)
+    }
+
+    fn level(&self) -> Option<usize> {
+        Some(self.level.load(Ordering::Relaxed))
     }
 }
 

@@ -11,6 +11,7 @@
 # 脚本无论怎么退出(包括 Ctrl-C、断言失败)都停掉那个 scope、删掉 sink。
 #
 # 用法:test/audio-rt-load.sh [秒数，默认 120] [每核几个忙循环，默认 2]
+# PROFILE=release 用 release 档编探针(用户装的是 release;debug 档的回调慢得多)。默认 debug。
 # 需要 PipeWire(pw-cli、pw-link)、rtkit、systemd 用户实例。探针自己会编(cargo build)。
 set -euo pipefail
 
@@ -51,10 +52,27 @@ thread_policy() {
     return 1
 }
 
+# 一个进程每条线程的名字、线程号、调度策略(1=FIFO 2=RR 0=普通)和 RT 优先级(stat 第 40 栏)
+dump_threads() {
+    local pid=$1 task
+    for task in /proc/"$pid"/task/*; do
+        printf '  %-16s tid=%-8s policy=%s rtprio=%s\n' "$(cat "$task/comm" 2>/dev/null)" \
+            "${task##*/}" $(sed 's/.*) //' "$task/stat" | awk '{ print $39, $38 }')
+    done
+}
+
 echo "== 编探针"
-cargo build --manifest-path "$root/Cargo.toml" -p audio --example load_probe >"$log" 2>&1 \
+profile=${PROFILE:-debug}
+case "$profile" in
+    debug) build_flag= ;;
+    release) build_flag=--release ;;
+    *) echo "PROFILE 只认 debug 或 release"; exit 2 ;;
+esac
+# shellcheck disable=SC2086 # build_flag 为空时就是不传
+cargo build --manifest-path "$root/Cargo.toml" -p audio --example load_probe $build_flag >"$log" 2>&1 \
     || { cat "$log"; exit 1; }
-probe="$root/target/debug/examples/load_probe"
+probe="$root/target/$profile/examples/load_probe"
+echo "探针:$profile 档"
 
 echo "== 建 null sink $sink"
 pw-cli create-node adapter "{ factory.name=support.null-audio-sink node.name=$sink \
@@ -81,6 +99,10 @@ for _ in $(seq 50); do
     sleep 0.1
 done
 sleep 2
+echo "== 探针进程的线程"
+dump_threads "$probe_pid"
+echo "== PipeWire 服务端的线程(null sink 的图 driver 在这里)"
+dump_threads "$(pgrep -xo pipewire)"
 # 声音真的进了 null sink,而不是用户的扬声器
 linked=$(pw-link -l | grep -c "$sink" || true)
 

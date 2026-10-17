@@ -149,6 +149,11 @@ impl Player {
         self.shared.is_paused()
     }
 
+    /// 送声回调记下的事件(超时的块、欠载),按发生顺序。观测用(#192)。
+    pub fn sync_events(&self) -> Vec<crate::sync::Event> {
+        self.shared.events()
+    }
+
     /// 可视化分析器的共享句柄,UI 侧每帧取频谱/波形用。
     pub fn visualizer(&self) -> spectrum::Analyzer {
         self.viz.clone()

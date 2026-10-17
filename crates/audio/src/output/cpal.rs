@@ -14,7 +14,7 @@ use super::{
 };
 use crate::AudioError;
 use crate::clock::monotonic_ns;
-use crate::sync::SyncShared;
+use crate::sync::{CallbackBlock, SyncShared};
 
 /// 开流后最多等这么久，等回调线程报上它的线程号。一块缓冲十几到几十毫秒，这是它的十几倍。
 const TID_WAIT: Duration = Duration::from_millis(500);
@@ -129,6 +129,7 @@ fn start(
     let rate = u64::from(config.sample_rate.max(1));
     let source = source.clone();
     let shared = shared.clone();
+    let errors = shared.clone();
     let broken = broken.clone();
     // 回调线程第一块报出自己的线程号，持流线程据此替它升实时、查策略(#192)
     let tid = Arc::new(AtomicI32::new(TID_UNKNOWN));
@@ -143,6 +144,7 @@ fn start(
                     reported.store(own, Ordering::Relaxed);
                 }
                 let now = monotonic_ns();
+                let cpu = thread_cpu_ns();
                 let ts = info.timestamp();
                 // 算不出 delay(时钟倒退之类)就当 0:宁可让同步层看见一个偏小的延迟，
                 // 也不在回调里报错。
@@ -152,16 +154,29 @@ fn start(
                     .map_or(0, |d| d.as_nanos() as i64);
                 let frames = data.len() as u64 / channels;
                 shared.block(now + delay, frames);
-                fill(&source, data);
-                shared.callback_took(
-                    monotonic_ns().saturating_sub(now) as u64,
-                    frames * 1_000_000_000 / rate,
-                );
+                if !fill(&source, data) {
+                    shared.fill_missed();
+                }
+                shared.callback_block(CallbackBlock {
+                    start_ns: now,
+                    wall_ns: monotonic_ns().saturating_sub(now) as u64,
+                    cpu_ns: thread_cpu_ns().saturating_sub(cpu),
+                    budget_ns: frames * 1_000_000_000 / rate,
+                    frames,
+                    queued_frames: delay.max(0) as u64 * rate
+                        / 1_000_000_000,
+                });
             },
             move |error| {
+                // 错误回调也在送声线程上：欠载只计数，由持流线程写日志(#192)。欠载/超载(xrun)
+                // ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、呈现时刻从头估。
+                // 只有设备没了、或者流的配置作废了才重开。
+                if matches!(error, ::cpal::StreamError::BufferUnderrun) {
+                    errors.underrun(monotonic_ns());
+                    return;
+                }
+                errors.other_error();
                 log::warn!("cpal 输出出错: {error}");
-                // 欠载/超载(xrun)ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、
-                // 呈现时刻从头估。只有设备没了、或者流的配置作废了才重开。
                 if matches!(
                     error,
                     ::cpal::StreamError::DeviceNotAvailable
@@ -178,6 +193,25 @@ fn start(
         .map_err(|e| AudioError::Device(e.to_string()))?;
     promote(&tid);
     Ok(stream)
+}
+
+/// 本线程到此刻用掉的 CPU 时间(纳秒)。读不出来给 0。
+fn thread_cpu_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: 传进去的是栈上一个完整初始化的 timespec
+    let rc = unsafe {
+        libc::clock_gettime(
+            libc::CLOCK_THREAD_CPUTIME_ID,
+            &mut ts,
+        )
+    };
+    if rc != 0 {
+        return 0;
+    }
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
 /// 等回调线程报上线程号，经 rtkit 把它升成实时，再查一次策略;哪一步不成就警告一行。

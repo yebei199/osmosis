@@ -812,15 +812,51 @@ fn diagnostics_are_queued_for_another_thread_to_log() {
     assert!(shared.take_notes().is_empty(), "取过就没了");
 }
 
-/// 回调每块报一次自己花了多久：记最久的一块，超过这一块时长(预算)的数一次。
+/// 回调每块报一次：墙钟与线程 CPU 时间、距上一块开始多久、开始时队列里还剩几帧。超过块长的
+/// 那一块记一条事件(带两种时间，分得清是在算还是在等);欠载另记事件。都只做原子操作。
 #[test]
-fn slow_callbacks_are_counted_against_their_block_length() {
+fn callback_blocks_and_underruns_are_recorded() {
     let shared = SyncShared::new();
-    shared.callback_took(5 * MS as u64, 20 * MS as u64);
-    shared.callback_took(25 * MS as u64, 20 * MS as u64);
-    shared.callback_took(10 * MS as u64, 20 * MS as u64);
+    let block = |start_ms: i64,
+                 wall_ms: i64,
+                 cpu_ms: i64,
+                 queued| {
+        shared.callback_block(super::CallbackBlock {
+            start_ns: start_ms * MS,
+            wall_ns: (wall_ms * MS) as u64,
+            cpu_ns: (cpu_ms * MS) as u64,
+            budget_ns: (20 * MS) as u64,
+            frames: 960,
+            queued_frames: queued,
+        });
+    };
+    block(0, 5, 1, 1_900);
+    block(20, 25, 24, 1_000);
+    block(70, 3, 1, 1_800);
+    shared.underrun(75 * MS);
+    shared.fill_missed();
 
     let report = shared.report();
-    assert_eq!(report.callback_worst_ns, 25 * MS as u64);
+    assert_eq!(report.callback_worst_ns, (25 * MS) as u64);
+    assert_eq!(
+        report.callback_worst_cpu_ns,
+        (24 * MS) as u64
+    );
     assert_eq!(report.callbacks_late, 1);
+    assert_eq!(report.wake_gap_worst_ns, (50 * MS) as u64);
+    assert_eq!(report.queue_low_frames, 1_000);
+    assert_eq!(report.period_frames, 960);
+    assert_eq!(report.underruns, 1);
+    assert_eq!(report.fill_misses, 1);
+    assert_eq!(
+        shared.events(),
+        vec![
+            super::Event::Late {
+                at_ns: 20 * MS,
+                wall_ns: (25 * MS) as u64,
+                cpu_ns: (24 * MS) as u64,
+            },
+            super::Event::Underrun { at_ns: 75 * MS },
+        ]
+    );
 }

@@ -48,6 +48,10 @@ pub trait Feed: Send + 'static {
     }
     fn channels(&self) -> ChannelCount;
     fn sample_rate(&self) -> SampleRate;
+    /// 手上还缓冲着几个采样(观测用，#192)。说不出来就是 `None`。
+    fn level(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// 把任意 rodio 源当成媒体：它从不欠载，拉不出来就是放完了。
@@ -106,9 +110,8 @@ pub struct SyncShared {
     follower_stats: Mutex<Stats>,
     sounding: AtomicBool,
     starves: AtomicU64,
-    /// 输出回调填一块最久花了多久，和超过那一块时长的次数(见 [`SyncShared::callback_took`])。
-    callback_worst_ns: AtomicU64,
-    callbacks_late: AtomicU64,
+    /// 输出回调的观测(#192),见 [`SyncShared::callback_block`]。
+    callback: CallbackStats,
     notes: mpsc::SyncSender<Note>,
     pending_notes: Mutex<mpsc::Receiver<Note>>,
     /// 最近一块：它第一帧的呈现时刻，与那一帧是媒体的第几纳秒(见 [`SyncShared::pairing`])。
@@ -123,10 +126,121 @@ pub struct Report {
     pub sounding: bool,
     /// 欠载过几次(一次欠载 = 连续拉不到数据的一段)。
     pub starves: u64,
-    /// 输出回调填一块最久花过多少纳秒。
+    /// 输出回调填一块最久花过多少纳秒(墙钟)。
     pub callback_worst_ns: u64,
-    /// 输出回调填一块花的时间超过这一块本身时长的次数 —— 每一次都必然欠载。
+    /// 最久那一块花掉的线程 CPU 时间。与墙钟差不多 = 在算或在自旋;远小于墙钟 = 在等、缺页或被抢占。
+    pub callback_worst_cpu_ns: u64,
+    /// 填一块花的时间超过这一块本身时长的次数 —— 每一次都必然欠载。
     pub callbacks_late: u64,
+    /// 相邻两块开始之间最长隔了多久(回调被叫醒得晚)。
+    pub wake_gap_worst_ns: u64,
+    /// 回调开始时声卡队列里最少还剩几帧。
+    pub queue_low_frames: u64,
+    /// 最近一块的帧数(实际协商出的 period)。
+    pub period_frames: u64,
+    /// 声卡报的欠载(`BufferUnderrun`)次数。
+    pub underruns: u64,
+    /// 声卡报的别的错误。
+    pub other_errors: u64,
+    /// 回调拿不到混音器的锁、只好填静音的次数(不算在 `starves` 里)。
+    pub fill_misses: u64,
+    /// 媒体通道里最少时还剩几个采样(`Feed::level` 报得出来时;报不出是 `u64::MAX`)。
+    pub feed_low: u64,
+}
+
+/// 输出回调一块的观测，交给 [`SyncShared::callback_block`]。
+#[derive(Debug, Clone, Copy)]
+pub struct CallbackBlock {
+    /// 回调开始的单调时钟。
+    pub start_ns: i64,
+    pub wall_ns: u64,
+    /// 本线程在这一块里用掉的 CPU 时间。
+    pub cpu_ns: u64,
+    /// 这一块本身的时长。
+    pub budget_ns: u64,
+    pub frames: u64,
+    /// 开始时声卡队列里还剩几帧。
+    pub queued_frames: u64,
+}
+
+/// 回调线程记下的一件事，按发生顺序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    /// 填一块花得比块长还久。
+    Late {
+        at_ns: i64,
+        wall_ns: u64,
+        cpu_ns: u64,
+    },
+    /// 声卡报欠载。
+    Underrun { at_ns: i64 },
+}
+
+/// 最多记这么多件事，之后的丢掉(满载检查两分钟里该是个位数)。
+const EVENT_SLOTS: usize = 64;
+
+/// 输出回调那一侧的计数。全是原子量，回调里随便写;事件记在预先开好的槽里。
+#[derive(Debug)]
+struct CallbackStats {
+    worst_ns: AtomicU64,
+    worst_cpu_ns: AtomicU64,
+    late: AtomicU64,
+    last_start_ns: AtomicI64,
+    gap_worst_ns: AtomicU64,
+    queue_low: AtomicU64,
+    period: AtomicU64,
+    underruns: AtomicU64,
+    other_errors: AtomicU64,
+    fill_misses: AtomicU64,
+    feed_low: AtomicU64,
+    /// 每件事四个数：种类(1 = Late,2 = Underrun)、时刻、墙钟、CPU。
+    events: [[AtomicU64; 4]; EVENT_SLOTS],
+    event_count: AtomicU64,
+}
+
+impl Default for CallbackStats {
+    fn default() -> Self {
+        Self {
+            worst_ns: AtomicU64::new(0),
+            worst_cpu_ns: AtomicU64::new(0),
+            late: AtomicU64::new(0),
+            last_start_ns: AtomicI64::new(i64::MIN),
+            gap_worst_ns: AtomicU64::new(0),
+            queue_low: AtomicU64::new(u64::MAX),
+            period: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
+            other_errors: AtomicU64::new(0),
+            fill_misses: AtomicU64::new(0),
+            feed_low: AtomicU64::new(u64::MAX),
+            events: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
+            event_count: AtomicU64::new(0),
+        }
+    }
+}
+
+impl CallbackStats {
+    fn record(
+        &self,
+        kind: u64,
+        at_ns: i64,
+        wall: u64,
+        cpu: u64,
+    ) {
+        let slot = self
+            .event_count
+            .fetch_add(1, Ordering::Relaxed)
+            as usize;
+        let Some(event) = self.events.get(slot) else {
+            return;
+        };
+        event[1].store(at_ns as u64, Ordering::Relaxed);
+        event[2].store(wall, Ordering::Relaxed);
+        event[3].store(cpu, Ordering::Relaxed);
+        // 种类最后写：读的一方看到非零种类时，另外三个数已经写好
+        event[0].store(kind, Ordering::Release);
+    }
 }
 
 impl SyncShared {
@@ -145,8 +259,7 @@ impl SyncShared {
             follower_stats: Mutex::new(Stats::default()),
             sounding: AtomicBool::new(false),
             starves: AtomicU64::new(0),
-            callback_worst_ns: AtomicU64::new(0),
-            callbacks_late: AtomicU64::new(0),
+            callback: CallbackStats::default(),
             notes,
             pending_notes: Mutex::new(pending_notes),
             pairing: Mutex::new(None),
@@ -209,28 +322,108 @@ impl SyncShared {
             follower: *lock(&self.follower_stats),
             sounding: self.sounding.load(Ordering::Relaxed),
             starves: self.starves.load(Ordering::Relaxed),
-            callback_worst_ns: self
-                .callback_worst_ns
-                .load(Ordering::Relaxed),
-            callbacks_late: self
-                .callbacks_late
-                .load(Ordering::Relaxed),
+            callback_worst_ns: load(
+                &self.callback.worst_ns,
+            ),
+            callback_worst_cpu_ns: load(
+                &self.callback.worst_cpu_ns,
+            ),
+            callbacks_late: load(&self.callback.late),
+            wake_gap_worst_ns: load(
+                &self.callback.gap_worst_ns,
+            ),
+            queue_low_frames: load(
+                &self.callback.queue_low,
+            ),
+            period_frames: load(&self.callback.period),
+            underruns: load(&self.callback.underruns),
+            other_errors: load(&self.callback.other_errors),
+            fill_misses: load(&self.callback.fill_misses),
+            feed_low: load(&self.callback.feed_low),
         }
     }
 
-    /// 输出回调每块报一次：填这一块花了 `took_ns`,这一块本身长 `budget_ns`。只做原子操作，
-    /// 回调里调得起。满载卡顿时据此分清是回调自己慢，还是别处(#192)。
-    pub fn callback_took(
-        &self,
-        took_ns: u64,
-        budget_ns: u64,
-    ) {
-        self.callback_worst_ns
-            .fetch_max(took_ns, Ordering::Relaxed);
-        if took_ns > budget_ns {
-            self.callbacks_late
-                .fetch_add(1, Ordering::Relaxed);
+    /// 输出回调每块报一次(#192)。只做原子操作，回调里调得起。满载卡顿时据此分清是回调自己慢、
+    /// 叫醒得晚，还是别处。
+    pub fn callback_block(&self, block: CallbackBlock) {
+        let stats = &self.callback;
+        if stats
+            .worst_ns
+            .fetch_max(block.wall_ns, Ordering::Relaxed)
+            < block.wall_ns
+        {
+            stats
+                .worst_cpu_ns
+                .store(block.cpu_ns, Ordering::Relaxed);
         }
+        if block.wall_ns > block.budget_ns {
+            stats.late.fetch_add(1, Ordering::Relaxed);
+            stats.record(
+                1,
+                block.start_ns,
+                block.wall_ns,
+                block.cpu_ns,
+            );
+        }
+        let last = stats
+            .last_start_ns
+            .swap(block.start_ns, Ordering::Relaxed);
+        if last != i64::MIN {
+            stats.gap_worst_ns.fetch_max(
+                block.start_ns.saturating_sub(last).max(0)
+                    as u64,
+                Ordering::Relaxed,
+            );
+        }
+        stats.queue_low.fetch_min(
+            block.queued_frames,
+            Ordering::Relaxed,
+        );
+        stats.period.store(block.frames, Ordering::Relaxed);
+    }
+
+    /// 声卡报欠载。在回调线程上调。
+    pub fn underrun(&self, at_ns: i64) {
+        self.callback
+            .underruns
+            .fetch_add(1, Ordering::Relaxed);
+        self.callback.record(2, at_ns, 0, 0);
+    }
+
+    /// 声卡报了欠载以外的错误。
+    pub fn other_error(&self) {
+        self.callback
+            .other_errors
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 回调拿不到混音器的锁，这一块填了静音。
+    pub fn fill_missed(&self) {
+        self.callback
+            .fill_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// 回调线程记下的事，按发生顺序。
+    pub fn events(&self) -> Vec<Event> {
+        let count = (load(&self.callback.event_count)
+            as usize)
+            .min(EVENT_SLOTS);
+        self.callback.events[..count]
+            .iter()
+            .filter_map(|e| {
+                let at_ns = load(&e[1]) as i64;
+                match e[0].load(Ordering::Acquire) {
+                    1 => Some(Event::Late {
+                        at_ns,
+                        wall_ns: load(&e[2]),
+                        cpu_ns: load(&e[3]),
+                    }),
+                    2 => Some(Event::Underrun { at_ns }),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 
     /// 取走回调线程攒下的诊断，一条一行。持流线程每次醒来调一次，把它们写进日志。
@@ -293,6 +486,10 @@ fn lock<T>(
     mutex: &Mutex<T>,
 ) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn load(atomic: &AtomicU64) -> u64 {
+    atomic.load(Ordering::Relaxed)
 }
 
 /// 回调线程用的那一种：别人拿着就给 `None`,绝不等。中毒照 [`lock`] 的理由照样拿。
@@ -392,6 +589,12 @@ impl<F: Feed> SyncSource<F> {
             return;
         }
         self.seen_block = seq;
+        if let Some(level) = self.feed.level() {
+            self.shared
+                .callback
+                .feed_low
+                .fetch_min(level as u64, Ordering::Relaxed);
+        }
         let present = self
             .shared
             .block_present_ns

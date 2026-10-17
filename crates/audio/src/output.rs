@@ -123,15 +123,22 @@ impl Drop for Output {
 /// 回调从这里拉采样。同一时刻只有一条流在用它;重开时新流接着拉同一个混音器。
 pub(crate) type SharedMixer = Arc<Mutex<MixerSource>>;
 
-/// 把混音器的采样填进声卡的缓冲。锁拿不到(不该发生：同一时刻只有一条流)就填静音。
-pub(crate) fn fill(source: &SharedMixer, out: &mut [f32]) {
+/// 把混音器的采样填进声卡的缓冲。锁拿不到(不该发生：同一时刻只有一条流)就填静音、返回假。
+pub(crate) fn fill(
+    source: &SharedMixer,
+    out: &mut [f32],
+) -> bool {
     match source.try_lock() {
         Ok(mut source) => {
             for sample in out.iter_mut() {
                 *sample = source.next().unwrap_or(0.0);
             }
+            true
         }
-        Err(_) => out.fill(0.0),
+        Err(_) => {
+            out.fill(0.0);
+            false
+        }
     }
 }
 
@@ -197,6 +204,7 @@ pub(crate) fn watch<S>(
     let mut stream = first;
     let mut keeper = Keeper::default();
     let mut pulled_at = Instant::now();
+    let mut logged_underruns = shared.report().underruns;
     loop {
         let wait = if stream.is_none() && shared.idle() {
             IDLE_PULL_EVERY
@@ -211,9 +219,17 @@ pub(crate) fn watch<S>(
             Ok(Signal::Poke)
             | Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        // 回调线程不写日志(#192),它攒下的诊断由这里替它写
+        // 回调线程不写日志(#192),它攒下的诊断与欠载由这里替它写
         for line in shared.take_notes() {
             log::warn!("{line}");
+        }
+        let underruns = shared.report().underruns;
+        if underruns > logged_underruns {
+            log::warn!(
+                "声卡欠载 {} 次(累计 {underruns})",
+                underruns - logged_underruns
+            );
+            logged_underruns = underruns;
         }
         let step = keeper.step(
             Instant::now(),
