@@ -55,6 +55,7 @@ case "${1:-all}" in
             nix-shell test/remote-behavior/env.nix --run "$(printf '%q ' bash test/remote-behavior/run.sh subset "$@")"
         else
             # 一个 pytest 节点都没点名：照实写出空结果，不为此起整套遥控环境
+            echo "subset: every argument skipped, nothing to run in pytest"
             mkdir -p test/remote-behavior/results
             for junit in junit.xml projection-junit.xml; do
                 printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites tests="0"/>\n' \

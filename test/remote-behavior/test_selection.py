@@ -1,8 +1,8 @@
 """按改动挑场景的判据，夹具是临时 git 仓库加一份样例地图。"""
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -252,7 +252,7 @@ RUN = Path(__file__).resolve().parents[2] / "acceptance" / "run.sh"
 
 
 def run_sh(*args):
-    return subprocess.run(["bash", RUN, *args], capture_output=True, text=True)
+    return subprocess.run(["bash", RUN, *args], capture_output=True, text=True, check=False)
 
 
 @pytest.mark.parametrize(
@@ -281,6 +281,10 @@ def test_subset_accepts_junit_ids(given, expected):
 
 
 def test_subset_with_every_argument_skipped_exits_zero():
+    # Rust 组照跑(req-950);pytest 一侧不起环境，只写出空的 JUnit
     out = run_sh("subset", "app-core::blocks::t", "ui-x::y")
     assert out.returncode == 0, out.stderr
-    assert "nothing to run" in out.stdout
+    assert "nothing to run in pytest" in out.stdout
+    results = RUN.parents[1] / "test" / "remote-behavior" / "results"
+    for junit in ("junit.xml", "projection-junit.xml"):
+        assert 'tests="0"' in (results / junit).read_text()
