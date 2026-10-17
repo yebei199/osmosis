@@ -738,3 +738,76 @@ fn diagnostics_write_at_most_one_line_per_second_per_kind()
     );
     assert_eq!(throttle.hit(at(1_100)), None);
 }
+
+// ── 回调路径不等锁(#192) ──
+
+/// 跑在别的线程上拉 `n` 个采样，1 秒内拉不完就当它卡在锁上了。
+fn pulls_within_a_second(
+    mut source: SyncSource<FakeFeed>,
+    n: usize,
+) -> Option<SyncSource<FakeFeed>> {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        take(&mut source, n);
+        let _ = done.send(source);
+    });
+    finished.recv_timeout(Duration::from_secs(1)).ok()
+}
+
+/// 控制线程拿着同步状态的每一把锁时，声卡那边照样拉得动：拿不到就用上一次的值或跳过这一次。
+/// 实时线程等一个被抢走 CPU 的普通线程放锁，就是满载时的卡顿(优先级反转)。
+#[test]
+fn pulling_never_waits_for_a_lock_held_elsewhere() {
+    let shared = SyncShared::new();
+    let source = SyncSource::new(
+        FakeFeed::mono(10_000),
+        shared.clone(),
+    );
+    let _seek =
+        shared.request_seek(Duration::from_millis(50));
+    let held = shared.hold_locks();
+    shared.block(5_000 * MS, 4);
+
+    let source = pulls_within_a_second(source, 100)
+        .expect("拿着锁的时候拉不动：回调路径上有阻塞的锁");
+    drop(held);
+    drop(source);
+}
+
+/// 跳转请求赶上锁被占着：这一次不执行，留着;锁放了，下一次拉的时候照常执行。
+#[test]
+fn a_seek_request_waits_for_the_next_pull_when_its_lock_is_busy()
+ {
+    let shared = SyncShared::new();
+    let mut source = SyncSource::new(
+        FakeFeed::mono(1_000),
+        shared.clone(),
+    );
+    take(&mut source, 3);
+    let verdict =
+        shared.request_seek(Duration::from_millis(500));
+    let held = shared.hold_locks();
+    let mut source = pulls_within_a_second(source, 2)
+        .expect("拿着锁的时候拉不动");
+    drop(held);
+
+    assert_eq!(take(&mut source, 2), values(500, 2));
+    assert!(verdict.try_recv().expect("该有裁决").is_ok());
+}
+
+/// 诊断不在回调里写日志：事件排进队列，由持流线程取走再写。
+#[test]
+fn diagnostics_are_queued_for_another_thread_to_log() {
+    let shared = SyncShared::new();
+    let feed = FakeFeed {
+        starve_on: vec![2],
+        ..FakeFeed::mono(100)
+    };
+    let mut source = SyncSource::new(feed, shared.clone());
+    take(&mut source, 4);
+
+    let notes = shared.take_notes();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("Starved"), "{notes:?}");
+    assert!(shared.take_notes().is_empty(), "取过就没了");
+}

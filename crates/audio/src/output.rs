@@ -178,7 +178,8 @@ pub(crate) fn open(
     })
 }
 
-/// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开。
+/// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开;
+/// 每次醒来顺手把同步源攒下的诊断写进日志。
 ///
 /// `first` 是已经开好的那条流，`open` 开一条新的(桌面每次重新找默认设备)。流 drop 掉就是关了。
 /// `pull` 从混音器拉走这么长一段采样丢掉，见 [`IDLE_PULL_EVERY`]。
@@ -206,6 +207,10 @@ pub(crate) fn watch<S>(
             }
             Ok(Signal::Poke)
             | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        // 回调线程不写日志(#192),它攒下的诊断由这里替它写
+        for line in shared.take_notes() {
+            log::warn!("{line}");
         }
         let step = keeper.step(
             Instant::now(),
