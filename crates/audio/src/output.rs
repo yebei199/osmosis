@@ -1,7 +1,7 @@
 //! 输出后端的门面：开一条声卡流，从混音器拉采样，每块把呈现时刻报给同步层。
 //! 见 `output/README.md`。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -161,6 +161,50 @@ pub(crate) fn promotion_warning(
         None => Some(
             "开流后没读到送声线程的调度策略，不知道它升没升上实时优先级".to_owned(),
         ),
+    }
+}
+
+/// 等回调线程报上它的线程号(0 = 还没报),最多等 `wait`。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn wait_for_tid(
+    tid: &AtomicI32,
+    wait: Duration,
+) -> Option<i32> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let seen = tid.load(Ordering::Relaxed);
+        if seen != 0 {
+            return Some(seen);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// 把送声线程升实时的结局写成一行日志：`Ok` 记 info,`Err` 记警告。
+///
+/// `promote` 去请 rtkit,`policy` 事后查那条线程的调度策略。线程号没报上来就两样都不做。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn promotion_outcome(
+    tid: Option<i32>,
+    promote: impl FnOnce(i32) -> Result<(), String>,
+    policy: impl FnOnce(i32) -> i32,
+) -> Result<String, String> {
+    let Some(tid) = tid else {
+        return Err(
+            promotion_warning(None).unwrap_or_default()
+        );
+    };
+    promote(tid).map_err(|reason| {
+        format!("送声线程没升上实时优先级({reason}),CPU 占满时声音会卡")
+    })?;
+    let policy = policy(tid);
+    match promotion_warning((policy >= 0).then_some(policy))
+    {
+        Some(warning) => Err(warning),
+        None => Ok("送声线程已是实时优先级".to_owned()),
     }
 }
 
@@ -539,5 +583,53 @@ mod tests {
                 .expect("普通策略要警告");
         assert!(ordinary.contains("实时"), "{ordinary}");
         assert!(promotion_warning(None).is_some());
+    }
+
+    /// 回调报了线程号就拿到;等满了还没报，给 `None`。
+    #[test]
+    fn the_callback_thread_id_is_awaited_up_to_a_limit() {
+        let tid = AtomicI32::new(0);
+        assert_eq!(
+            wait_for_tid(&tid, Duration::from_millis(30)),
+            None
+        );
+        tid.store(42, Ordering::Relaxed);
+        assert_eq!(
+            wait_for_tid(&tid, Duration::ZERO),
+            Some(42)
+        );
+    }
+
+    /// 线程号、升级结果与之后查到的策略，合起来决定打哪一行;任何一步不成都是警告，不出错。
+    #[test]
+    fn the_promotion_outcome_names_what_went_wrong() {
+        let rr = |_| libc::SCHED_RR;
+        let ok = |_| Ok(());
+        assert!(promotion_outcome(Some(7), ok, rr).is_ok());
+
+        let no_tid =
+            promotion_outcome(None, ok, rr).unwrap_err();
+        assert!(no_tid.contains("没读到"), "{no_tid}");
+
+        let refused = promotion_outcome(
+            Some(7),
+            |_| Err("rtkit 拒绝".to_owned()),
+            rr,
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("rtkit 拒绝"),
+            "{refused}"
+        );
+
+        let still_other =
+            promotion_outcome(Some(7), ok, |_| {
+                libc::SCHED_OTHER
+            })
+            .unwrap_err();
+        assert!(
+            still_other.contains("调度策略 0"),
+            "{still_other}"
+        );
     }
 }

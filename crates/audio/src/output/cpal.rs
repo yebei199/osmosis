@@ -3,14 +3,15 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::mixer::Mixer;
 use rodio::{ChannelCount, SampleRate};
 
 use super::{
-    SharedMixer, Signal, fill, promotion_warning, watch,
+    SharedMixer, Signal, fill, promotion_outcome,
+    wait_for_tid, watch,
 };
 use crate::AudioError;
 use crate::clock::monotonic_ns;
@@ -217,38 +218,33 @@ fn thread_cpu_ns() -> u64 {
 /// 等回调线程报上线程号，经 rtkit 把它升成实时，再查一次策略;哪一步不成就警告一行。
 /// 播放照常继续：升不上去只是满载时会卡。每开一次流做一次 —— 重开的流是新线程。
 fn promote(tid: &AtomicI32) {
-    let deadline = Instant::now() + TID_WAIT;
-    let mut seen = tid.load(Ordering::Relaxed);
-    while seen == TID_UNKNOWN && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-        seen = tid.load(Ordering::Relaxed);
+    match promotion_outcome(
+        wait_for_tid(tid, TID_WAIT),
+        promote_thread,
+        scheduling_policy,
+    ) {
+        Ok(line) => log::info!("{line}"),
+        Err(line) => log::warn!("{line}"),
     }
-    if seen == TID_UNKNOWN {
-        log::warn!(
-            "{}",
-            promotion_warning(None).unwrap_or_default()
-        );
-        return;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use super::rtkit;
-        let promoted = rtkit::SystemRtkit::connect()
-            .and_then(|rtkit| {
-                rtkit::promote(&rtkit, seen as u64)
-            });
-        if let Err(reason) = promoted {
-            log::warn!(
-                "送声线程没升上实时优先级({reason}),CPU 占满时声音会卡"
-            );
-            return;
-        }
-    }
+}
+
+/// 请 rtkit 把线程 `tid` 升成实时。
+#[cfg(target_os = "linux")]
+fn promote_thread(tid: i32) -> Result<(), String> {
+    use super::rtkit;
+    rtkit::SystemRtkit::connect().and_then(|rtkit| {
+        rtkit::promote(&rtkit, tid as u64)
+    })
+}
+
+/// 别的平台没有 rtkit,只看策略。
+#[cfg(not(target_os = "linux"))]
+fn promote_thread(_: i32) -> Result<(), String> {
+    Ok(())
+}
+
+/// 线程 `tid` 此刻的调度策略，读不出是负数。
+fn scheduling_policy(tid: i32) -> i32 {
     // SAFETY: 只读该线程的调度策略，没有指针参数
-    let policy = unsafe { libc::sched_getscheduler(seen) };
-    match promotion_warning((policy >= 0).then_some(policy))
-    {
-        Some(warning) => log::warn!("{warning}"),
-        None => log::info!("送声线程已是实时优先级"),
-    }
+    unsafe { libc::sched_getscheduler(tid) }
 }
