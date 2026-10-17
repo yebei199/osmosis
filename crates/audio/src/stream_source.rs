@@ -131,7 +131,7 @@ where
             phase =
                 (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
-            if tx.send(sample).is_ok() {
+            if push(&tx, sample) {
                 continue;
             }
 
@@ -157,6 +157,32 @@ where
         capacity,
         seek,
         state,
+    }
+}
+
+/// 缓冲满时解码线程隔多久再试一次。满着的缓冲有 5 秒存货，回调 2ms 只取走一百来帧。
+const FULL_RETRY: Duration = Duration::from_millis(2);
+
+/// 送一个采样进通道，满了就睡一会儿再试。接收端没了(换通道、换歌)返回假。
+///
+/// 不用阻塞的 `send`:发送端停在通道上时，接收端每取一个采样都要去叫醒它，std 的通道叫醒
+/// 那一步要拿一把互斥锁(`SyncWaker::notify`)。取采样的是实时的送声线程，它不该和解码线程
+/// 抢锁(#192)。缓冲平时就是满的，所以这正是常态。
+fn push(
+    tx: &mpsc::SyncSender<Sample>,
+    mut sample: Sample,
+) -> bool {
+    loop {
+        match tx.try_send(sample) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Full(back)) => {
+                sample = back;
+                std::thread::sleep(FULL_RETRY);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return false;
+            }
+        }
     }
 }
 
