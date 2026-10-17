@@ -132,7 +132,8 @@ replace_hash() {
 
 step_nixos() {
     local sums asset hex sri got url
-    if [ -n "$(git -C "$NIXOS_CONFIG" status --porcelain)" ]; then
+    # 未跟踪文件(别的工具的状态目录)不挡:下面 commit -am 只碰已跟踪文件。
+    if [ -n "$(git -C "$NIXOS_CONFIG" status --porcelain --untracked-files=no)" ]; then
         fail "nixos_config: 工作树不干净,没动它(别的会话可能在写)"
         return
     fi
