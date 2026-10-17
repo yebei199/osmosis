@@ -3,7 +3,8 @@
 //! rodio 是「拉」(声卡回调向源要采样),而取字节可能卡在网络上。中间隔一条通道,
 //! 解码线程什么时候给,回调就什么时候有 —— 两者的落差正是本模块存在的理由。
 
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use rodio::source::SeekError;
@@ -49,8 +50,8 @@ pub(crate) type SeekRequest = (
 
 /// 等解码线程的裁决最多等这么久。
 ///
-/// **这是一段花在声卡回调里的时间**([`ChannelSource::try_seek`] 说明了为什么),
-/// 所以它有界。取 10ms 的两头理由:
+/// 只有 [`Source::try_seek`] 这条路等它;同步源在送声线程上走的是 [`crate::sync::Feed::seek`],
+/// 一点也不等(#192)。它当初是一段花在声卡回调里的时间,所以有界。取 10ms 的两头理由:
 ///
 /// - 下界:快失败(`ForwardOnly` 这类)根本不读网络,微秒级返回,整条路只是
 ///   两次线程唤醒。10ms 是它的十倍余量。
@@ -108,6 +109,8 @@ where
     let (seek, requests) = mpsc::channel::<SeekRequest>();
     let state = SeekState::default();
     let reported = state.clone();
+    let level = Arc::new(AtomicUsize::new(0));
+    let filled = level.clone();
 
     std::thread::spawn(move || {
         // 这一帧里已经取走了几个采样。跳转要从帧边界上起跳，见 [`apply_seek`]。
@@ -131,7 +134,8 @@ where
             phase =
                 (phase + 1) % usize::from(OUTPUT_CHANNELS);
             // 缓冲满了就在这儿等 —— 背压落在这条线程上,不落在声卡回调上。
-            if tx.send(sample).is_ok() {
+            if push(&tx, sample) {
+                filled.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
 
@@ -157,6 +161,34 @@ where
         capacity,
         seek,
         state,
+        level,
+        primed: std::cell::Cell::new(false),
+    }
+}
+
+/// 缓冲满时解码线程隔多久再试一次。满着的缓冲有 5 秒存货，回调 2ms 只取走一百来帧。
+const FULL_RETRY: Duration = Duration::from_millis(2);
+
+/// 送一个采样进通道，满了就睡一会儿再试。接收端没了(换通道、换歌)返回假。
+///
+/// 不用阻塞的 `send`:发送端停在通道上时，接收端每取一个采样都要去叫醒它，std 的通道叫醒
+/// 那一步要拿一把互斥锁(`SyncWaker::notify`)。取采样的是实时的送声线程，它不该和解码线程
+/// 抢锁(#192)。缓冲平时就是满的，所以这正是常态。
+fn push(
+    tx: &mpsc::SyncSender<Sample>,
+    mut sample: Sample,
+) -> bool {
+    loop {
+        match tx.try_send(sample) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Full(back)) => {
+                sample = back;
+                std::thread::sleep(FULL_RETRY);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return false;
+            }
+        }
     }
 }
 
@@ -170,6 +202,11 @@ pub struct ChannelSource {
     /// 把跳转请求送去解码线程。解码线程收工之后这条通道就断了。
     seek: mpsc::Sender<SeekRequest>,
     state: SeekState,
+    /// 通道里此刻有几个采样(解码线程送进一个加一，这头取走一个减一)。观测用(#192):
+    /// 容量 5 秒不等于存着 5 秒。
+    level: Arc<AtomicUsize>,
+    /// 这条通道装满过没有。起播预填那一段的存量不算低水位，装满之后才开始报。
+    primed: std::cell::Cell<bool>,
 }
 
 impl ChannelSource {
@@ -187,6 +224,8 @@ impl ChannelSource {
             capacity: 0,
             seek,
             state: SeekState::default(),
+            level: Arc::default(),
+            primed: std::cell::Cell::new(false),
         }
     }
 
@@ -208,7 +247,10 @@ impl Iterator for ChannelSource {
         }
 
         match self.samples.try_recv() {
-            Ok(sample) => Some(sample),
+            Ok(sample) => {
+                self.taken();
+                Some(sample)
+            }
             // 暂时没数据:发送端还在,只是网络抖了一下。给静音,**绝不返回 None** ——
             // 那对 rodio 就是"放完了",它会丢掉这个源,之后再来的包全打水漂。
             Err(mpsc::TryRecvError::Empty) => {
@@ -261,6 +303,31 @@ impl Source for ChannelSource {
         &mut self,
         pos: Duration,
     ) -> Result<(), SeekError> {
+        self.send_seek(pos)?
+            .recv_timeout(SEEK_VERDICT_WINDOW)
+            .unwrap_or(Ok(()))
+    }
+}
+
+impl ChannelSource {
+    /// 从通道里取走了一个采样。
+    fn taken(&self) {
+        // 换通道之后旧计数清了零，可能比实际少;别减成溢出
+        let _ = self.level.try_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |n| Some(n.saturating_sub(1)),
+        );
+    }
+
+    /// 把跳转送去解码线程，换上新通道，交回等裁决的那一头。送不进去就当场报错。
+    fn send_seek(
+        &mut self,
+        pos: Duration,
+    ) -> Result<
+        mpsc::Receiver<Result<(), SeekError>>,
+        SeekError,
+    > {
         let (tx, rx) = mpsc::sync_channel(self.capacity);
         let (verdict, answer) = mpsc::channel();
         // 送不进去 = 那一头的解码线程已经收工了(或者从来没有)。
@@ -272,15 +339,15 @@ impl Source for ChannelSource {
         }
 
         self.state.begin();
+        // 旧通道连同里面的存货一起作废，新通道从预填重新算起
+        self.level.store(0, Ordering::Relaxed);
+        self.primed.set(false);
         // 先换通道再等裁决:解码线程多半正卡在旧通道的 `send` 上,把旧接收端
         // 丢掉才是叫醒它的那一下,不然这一等必然走到超时。
         self.samples = rx;
         // 欠着的静音跟着旧通道一起作废,不然跳完还要先补完它
         self.silence = 0;
-
-        answer
-            .recv_timeout(SEEK_VERDICT_WINDOW)
-            .unwrap_or(Ok(()))
+        Ok(answer)
     }
 }
 
@@ -292,7 +359,10 @@ impl crate::sync::Feed for ChannelSource {
     fn pull(&mut self) -> crate::sync::Pulled {
         use crate::sync::Pulled;
         match self.samples.try_recv() {
-            Ok(sample) => Pulled::Sample(sample),
+            Ok(sample) => {
+                self.taken();
+                Pulled::Sample(sample)
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 Pulled::Starved
             }
@@ -302,7 +372,19 @@ impl crate::sync::Feed for ChannelSource {
         }
     }
 
+    /// 同 [`Source::try_seek`],但不等裁决(#192):同步源在实时的送声线程上调它，那里一毫秒都
+    /// 不该等别的线程。快失败里「没有解码器」仍然当场报错;其余的(只进不退之类)和超时分支一样
+    /// 乐观放行，结论由 [`ChannelSource::seek_state`] 补上。
+    ///
+    /// 换的新通道仍在这里分配(按容量一次性开好)。跳转本来就静音一下，这一次分配不在常规路径上。
     fn seek(
+        &mut self,
+        to: Duration,
+    ) -> Result<(), SeekError> {
+        self.send_seek(to)?.try_recv().unwrap_or(Ok(()))
+    }
+
+    fn seek_and_wait(
         &mut self,
         to: Duration,
     ) -> Result<(), SeekError> {
@@ -315,6 +397,20 @@ impl crate::sync::Feed for ChannelSource {
 
     fn sample_rate(&self) -> SampleRate {
         Source::sample_rate(self)
+    }
+
+    /// 缓冲装满过之后才报(九成算满：回调一直在取，正好装满的那一刻不一定碰得上)。
+    fn level(&self) -> Option<usize> {
+        let level = self.level.load(Ordering::Relaxed);
+        if !self.primed.get() {
+            if self.capacity == 0
+                || level < self.capacity / 10 * 9
+            {
+                return None;
+            }
+            self.primed.set(true);
+        }
+        Some(level)
     }
 }
 

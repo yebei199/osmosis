@@ -132,3 +132,66 @@ fn a_seek_starts_the_new_channel_on_the_left_channel() {
     let first = first_real_sample(&mut source);
     assert_eq!(first, Some(LEFT));
 }
+
+/// 同步源在实时的送声线程上调 `Feed::seek`(#192):它不等解码线程的裁决，送出请求就回来。
+/// 结论照旧由 `SeekState` 补上;没有解码器这种快失败仍然当场报错。
+#[test]
+fn seeking_as_a_feed_does_not_wait_for_the_verdict() {
+    use crate::sync::Feed;
+    let mut source = buffered_with(
+        Marker {
+            at: 0.0,
+            seekable: true,
+            delay: Duration::from_millis(200),
+        },
+        8,
+    );
+
+    let started = std::time::Instant::now();
+    Feed::seek(&mut source, Duration::from_secs(3))
+        .expect("能跳的源该收下这次跳转");
+    let waited = started.elapsed();
+
+    assert!(
+        waited < SEEK_VERDICT_WINDOW / 2,
+        "送声线程上等了 {waited:?}"
+    );
+    assert!(source.seek_state().is_seeking());
+    assert!(pull_until(&mut source, 3.0).is_some());
+
+    let (_tx, rx) = mpsc::channel::<Sample>();
+    let err = Feed::seek(
+        &mut ChannelSource::new(rx),
+        Duration::from_secs(3),
+    )
+    .expect_err("没有解码器就跳不了");
+    assert!(matches!(err, SeekError::NotSupported { .. }));
+}
+
+/// 存量只在缓冲第一次装满之后才报(#192):起播预填那一段的低水位不是「满载下供不上」。
+#[test]
+fn the_level_is_reported_only_once_the_buffer_has_filled() {
+    use crate::sync::Feed;
+    let (_tx, rx) = mpsc::channel::<Sample>();
+    assert_eq!(
+        ChannelSource::new(rx).level(),
+        None,
+        "从没装满过"
+    );
+
+    let source = buffered_with(
+        rodio::source::SineWave::new(440.0),
+        64,
+    );
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(1);
+    let mut level = source.level();
+    while level.is_none()
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(5));
+        level = source.level();
+    }
+    let level = level.expect("缓冲装满之后该报存量");
+    assert!(level <= 64, "{level}");
+}

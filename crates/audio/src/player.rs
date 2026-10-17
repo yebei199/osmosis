@@ -1,8 +1,8 @@
 //! 播放器:一个常驻的输出设备,加上音量与位置的读写。
 //!
 //! 出声的是自己开的声卡流(`crate::output`),每块报出呈现时刻;放的每一路都包一层
-//! [`SyncSource`]:位置、跳转、暂停归它,rodio 的 `Player` 只管排队与音量,且始终是
-//! 「放着」的(#137 ⑤)。
+//! [`SyncSource`]:位置、跳转、暂停归它。换源与音量归 [`deck::Deck`] —— 当初用的是 rodio 的
+//! `Player`,它在送声回调里阻塞地拿控制锁，满载时实时线程会被普通线程卡住(#192)。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +11,8 @@ use crate::sync::{
     Feed, SourceFeed, SyncShared, SyncSource, Target,
 };
 use crate::{AudioError, output, pcm, spectrum};
+
+mod deck;
 
 /// 等同步源给跳转裁决最多等多久。
 ///
@@ -25,7 +27,7 @@ pub struct Player {
     /// 声卡流。drop 掉声音就断了,所以必须留着。暂停久了它自己关流,要出声时靠
     /// [`output::Output::poke`] 叫它马上重开(#138)。
     output: output::Output,
-    player: rodio::Player,
+    deck: deck::Deck,
     /// 可视化的频谱分析器,每次换源在 [`Self::play`] 里接上新支路。
     viz: spectrum::Analyzer,
     /// 当前这一路的同步状态:时间线、位置、暂停。换源不换它。
@@ -37,13 +39,12 @@ impl Player {
     pub fn new() -> Result<Self, AudioError> {
         let shared = fresh_shared();
         let output = output::open(shared.clone())?;
-        let player =
-            rodio::Player::connect_new(&output.mixer);
-        player.play();
+        let (deck, source) = deck::deck();
+        output.mixer.add(source);
 
         Ok(Self {
             output,
-            player,
+            deck,
             viz: spectrum::Analyzer::new(),
             shared,
         })
@@ -85,9 +86,7 @@ impl Player {
         let (tap, rx) =
             pcm::Tee::new(source, spectrum::TAP_CAPACITY);
         self.viz.attach(rx, channels);
-        self.player.clear();
-        self.player.append(tap);
-        self.player.play();
+        self.deck.play(tap);
     }
 
     /// 同 [`Self::play`],但从 `at` 开始;`playing` 为假就停在那里等人按播放。
@@ -150,6 +149,11 @@ impl Player {
         self.shared.is_paused()
     }
 
+    /// 送声回调记下的事件(超时的块、欠载),按发生顺序。观测用(#192)。
+    pub fn sync_events(&self) -> Vec<crate::sync::Event> {
+        self.shared.events()
+    }
+
     /// 可视化分析器的共享句柄,UI 侧每帧取频谱/波形用。
     pub fn visualizer(&self) -> spectrum::Analyzer {
         self.viz.clone()
@@ -157,7 +161,7 @@ impl Player {
 
     /// 停止并清空队列。
     pub fn stop(&self) {
-        self.player.clear();
+        self.deck.clear();
         self.shared.pause();
     }
 
@@ -172,14 +176,13 @@ impl Player {
     /// 调用错了编译器还拦不住。
     pub fn resume(&self) {
         self.shared.resume();
-        self.player.play();
         self.output.poke();
     }
 
     /// 当前源放空了没有。控制条靠它区分"暂停中"(false)与"放完了"(true),
     /// 自动续播靠它知道该切下一首了。
     pub fn empty(&self) -> bool {
-        self.player.empty()
+        self.deck.empty()
     }
 
     /// 已经放到第几秒。
@@ -217,12 +220,12 @@ impl Player {
 
     /// 当前音量,0.0 到 1.0。
     pub fn volume(&self) -> f32 {
-        self.player.volume()
+        self.deck.volume()
     }
 
     /// 调音量。超出范围的值先夹再设(见 [`clamped_volume`])。
     pub fn set_volume(&self, volume: f32) {
-        self.player.set_volume(clamped_volume(volume));
+        self.deck.set_volume(clamped_volume(volume));
     }
 }
 

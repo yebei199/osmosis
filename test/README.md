@@ -8,6 +8,14 @@
 环境、入口及证明边界见 [remote-behavior/README.md](remote-behavior/README.md)。
 当前为 #175 审前材料，尚未执行。
 
+## audio-rt-load.sh —— CPU 占满时送声线程还欠不欠载(#192)
+
+`test/audio-rt-load.sh [秒数=120] [每核忙循环数=2]` 用普通优先级的忙循环占满所有核,
+同时让 `crates/audio/examples/load_probe` 照生产的路子放正弦波,断言 cpal 报的欠载为 0、
+`cpal_alsa_out` 线程是 FIFO/RR。声音只进脚本临时建的 PipeWire null sink,不改默认输出,
+没声卡也能跑;负载关在 `systemd-run --user --scope` 里,任何方式退出都收掉 scope 与 sink。
+需要 PipeWire 与 rtkit。改动前的代码上 60 秒报 589 次欠载、策略为 0。
+
 ## radio-output-e2e.sh —— 损坏组切 pc1 输出能接续当前电台吗(#174)
 
 `bash test/radio-output-e2e.sh direct|recovered|idle` 从真实电台入口起播,再在个人页点击

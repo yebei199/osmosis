@@ -1,17 +1,27 @@
 //! 桌面输出：cpal。呈现时刻 = 回调那一刻的单调时钟 + cpal 给出的 `playback − callback`
 //! (ALSA `snd_pcm_status` 的 delay;PipeWire 桌面上走的是 pipewire-alsa 插件)。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use ::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rodio::mixer::Mixer;
 use rodio::{ChannelCount, SampleRate};
 
-use super::{SharedMixer, Signal, fill, watch};
+use super::{
+    SharedMixer, Signal, fill, promotion_outcome,
+    wait_for_tid, watch,
+};
 use crate::AudioError;
 use crate::clock::monotonic_ns;
-use crate::sync::SyncShared;
+use crate::sync::{CallbackBlock, SyncShared};
+
+/// 开流后最多等这么久，等回调线程报上它的线程号。一块缓冲十几到几十毫秒，这是它的十几倍。
+const TID_WAIT: Duration = Duration::from_millis(500);
+
+/// 回调线程还没报线程号。
+const TID_UNKNOWN: i32 = 0;
 
 /// 开流、交出混音器，然后守着流直到被叫停。
 pub(super) fn run(
@@ -117,14 +127,25 @@ fn start(
     broken: &Arc<AtomicBool>,
 ) -> Result<::cpal::Stream, AudioError> {
     let channels = u64::from(config.channels.max(1));
+    let rate = u64::from(config.sample_rate.max(1));
     let source = source.clone();
     let shared = shared.clone();
+    let errors = shared.clone();
     let broken = broken.clone();
+    // 回调线程第一块报出自己的线程号，持流线程据此替它升实时、查策略(#192)
+    let tid = Arc::new(AtomicI32::new(TID_UNKNOWN));
+    let reported = tid.clone();
     let stream = device
         .build_output_stream(
             config,
             move |data: &mut [f32], info: &::cpal::OutputCallbackInfo| {
+                if reported.load(Ordering::Relaxed) == TID_UNKNOWN {
+                    // SAFETY: 无参数，只读本线程的线程号;只在第一块调一次
+                    let own = unsafe { libc::gettid() };
+                    reported.store(own, Ordering::Relaxed);
+                }
                 let now = monotonic_ns();
+                let cpu = thread_cpu_ns();
                 let ts = info.timestamp();
                 // 算不出 delay(时钟倒退之类)就当 0:宁可让同步层看见一个偏小的延迟，
                 // 也不在回调里报错。
@@ -132,13 +153,31 @@ fn start(
                     .playback
                     .duration_since(&ts.callback)
                     .map_or(0, |d| d.as_nanos() as i64);
-                shared.block(now + delay, data.len() as u64 / channels);
-                fill(&source, data);
+                let frames = data.len() as u64 / channels;
+                shared.block(now + delay, frames);
+                if !fill(&source, data) {
+                    shared.fill_missed();
+                }
+                shared.callback_block(CallbackBlock {
+                    start_ns: now,
+                    wall_ns: monotonic_ns().saturating_sub(now) as u64,
+                    cpu_ns: thread_cpu_ns().saturating_sub(cpu),
+                    budget_ns: frames * 1_000_000_000 / rate,
+                    frames,
+                    queued_frames: delay.max(0) as u64 * rate
+                        / 1_000_000_000,
+                });
             },
             move |error| {
+                // 错误回调也在送声线程上：欠载只计数，由持流线程写日志(#192)。欠载/超载(xrun)
+                // ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、呈现时刻从头估。
+                // 只有设备没了、或者流的配置作废了才重开。
+                if matches!(error, ::cpal::StreamError::BufferUnderrun) {
+                    errors.underrun(monotonic_ns());
+                    return;
+                }
+                errors.other_error();
                 log::warn!("cpal 输出出错: {error}");
-                // 欠载/超载(xrun)ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、
-                // 呈现时刻从头估。只有设备没了、或者流的配置作废了才重开。
                 if matches!(
                     error,
                     ::cpal::StreamError::DeviceNotAvailable
@@ -153,5 +192,59 @@ fn start(
     stream
         .play()
         .map_err(|e| AudioError::Device(e.to_string()))?;
+    promote(&tid);
     Ok(stream)
+}
+
+/// 本线程到此刻用掉的 CPU 时间(纳秒)。读不出来给 0。
+fn thread_cpu_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: 传进去的是栈上一个完整初始化的 timespec
+    let rc = unsafe {
+        libc::clock_gettime(
+            libc::CLOCK_THREAD_CPUTIME_ID,
+            &mut ts,
+        )
+    };
+    if rc != 0 {
+        return 0;
+    }
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
+/// 等回调线程报上线程号，经 rtkit 把它升成实时，再查一次策略;哪一步不成就警告一行。
+/// 播放照常继续：升不上去只是满载时会卡。每开一次流做一次 —— 重开的流是新线程。
+fn promote(tid: &AtomicI32) {
+    match promotion_outcome(
+        wait_for_tid(tid, TID_WAIT),
+        promote_thread,
+        scheduling_policy,
+    ) {
+        Ok(line) => log::info!("{line}"),
+        Err(line) => log::warn!("{line}"),
+    }
+}
+
+/// 请 rtkit 把线程 `tid` 升成实时。
+#[cfg(target_os = "linux")]
+fn promote_thread(tid: i32) -> Result<(), String> {
+    use super::rtkit;
+    rtkit::SystemRtkit::connect().and_then(|rtkit| {
+        rtkit::promote(&rtkit, tid as u64)
+    })
+}
+
+/// 别的平台没有 rtkit,只看策略。
+#[cfg(not(target_os = "linux"))]
+fn promote_thread(_: i32) -> Result<(), String> {
+    Ok(())
+}
+
+/// 线程 `tid` 此刻的调度策略，读不出是负数。
+fn scheduling_policy(tid: i32) -> i32 {
+    // SAFETY: 只读该线程的调度策略，没有指针参数
+    unsafe { libc::sched_getscheduler(tid) }
 }

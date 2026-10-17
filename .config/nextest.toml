@@ -1,0 +1,6 @@
+# 按墙钟断言耗时的测试独占整台机器跑:和别的测试进程并行时，余量只有 1ms 左右的断言
+# 会被 CPU 争抢顶过线(#192 的交付凭据就挂在这上面;base 上同样只有这点余量)。
+# 不放宽预算 —— 预算本身是在验链路跟不跟得上实时。
+[[profile.default.overrides]]
+filter = "test(=loader::tests::stall::an_unstalled_stream_keeps_the_simulated_callback_on_time)"
+threads-required = "num-test-threads"

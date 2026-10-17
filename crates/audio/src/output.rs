@@ -1,7 +1,7 @@
 //! 输出后端的门面：开一条声卡流，从混音器拉采样，每块把呈现时刻报给同步层。
 //! 见 `output/README.md`。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -20,6 +20,8 @@ pub mod route;
 
 #[cfg(not(target_os = "android"))]
 mod cpal;
+#[cfg(target_os = "linux")]
+mod rtkit;
 #[cfg(not(target_os = "android"))]
 use self::cpal as backend;
 
@@ -121,15 +123,88 @@ impl Drop for Output {
 /// 回调从这里拉采样。同一时刻只有一条流在用它;重开时新流接着拉同一个混音器。
 pub(crate) type SharedMixer = Arc<Mutex<MixerSource>>;
 
-/// 把混音器的采样填进声卡的缓冲。锁拿不到(不该发生：同一时刻只有一条流)就填静音。
-pub(crate) fn fill(source: &SharedMixer, out: &mut [f32]) {
+/// 把混音器的采样填进声卡的缓冲。锁拿不到(不该发生：同一时刻只有一条流)就填静音、返回假。
+pub(crate) fn fill(
+    source: &SharedMixer,
+    out: &mut [f32],
+) -> bool {
     match source.try_lock() {
         Ok(mut source) => {
             for sample in out.iter_mut() {
                 *sample = source.next().unwrap_or(0.0);
             }
+            true
         }
-        Err(_) => out.fill(0.0),
+        Err(_) => {
+            out.fill(0.0);
+            false
+        }
+    }
+}
+
+/// 送声线程的调度策略不是实时时，该打的那行警告;是实时返回 `None`。
+///
+/// `policy` 是回调线程上 `sched_getscheduler` 读到的值，`None` 表示开流后一块都没拉到、
+/// 没读成。普通策略的送声线程要和所有普通进程平分 CPU,满载(比如编译)时补缓冲晚一次
+/// 就是一下卡顿(#192)。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn promotion_warning(
+    policy: Option<i32>,
+) -> Option<String> {
+    // 策略值里可能带着 SCHED_RESET_ON_FORK 这一位(rtkit 升的线程都带),比之前先摘掉
+    match policy.map(|p| p & !libc::SCHED_RESET_ON_FORK) {
+        Some(libc::SCHED_FIFO | libc::SCHED_RR) => None,
+        Some(other) => Some(format!(
+            "送声线程没升上实时优先级(调度策略 {other}),CPU 占满时声音会卡;\
+             查 rtkit 是否在跑"
+        )),
+        None => Some(
+            "开流后没读到送声线程的调度策略，不知道它升没升上实时优先级".to_owned(),
+        ),
+    }
+}
+
+/// 等回调线程报上它的线程号(0 = 还没报),最多等 `wait`。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn wait_for_tid(
+    tid: &AtomicI32,
+    wait: Duration,
+) -> Option<i32> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let seen = tid.load(Ordering::Relaxed);
+        if seen != 0 {
+            return Some(seen);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// 把送声线程升实时的结局写成一行日志：`Ok` 记 info,`Err` 记警告。
+///
+/// `promote` 去请 rtkit,`policy` 事后查那条线程的调度策略。线程号没报上来就两样都不做。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn promotion_outcome(
+    tid: Option<i32>,
+    promote: impl FnOnce(i32) -> Result<(), String>,
+    policy: impl FnOnce(i32) -> i32,
+) -> Result<String, String> {
+    let Some(tid) = tid else {
+        return Err(
+            promotion_warning(None).unwrap_or_default()
+        );
+    };
+    promote(tid).map_err(|reason| {
+        format!("送声线程没升上实时优先级({reason}),CPU 占满时声音会卡")
+    })?;
+    let policy = policy(tid);
+    match promotion_warning((policy >= 0).then_some(policy))
+    {
+        Some(warning) => Err(warning),
+        None => Ok("送声线程已是实时优先级".to_owned()),
     }
 }
 
@@ -157,7 +232,8 @@ pub(crate) fn open(
     })
 }
 
-/// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开。
+/// 持流线程的等待循环：收到关闭就走;暂停够久就关流，要出声了再开;流断了就重开;
+/// 每次醒来顺手把同步源攒下的诊断写进日志。
 ///
 /// `first` 是已经开好的那条流，`open` 开一条新的(桌面每次重新找默认设备)。流 drop 掉就是关了。
 /// `pull` 从混音器拉走这么长一段采样丢掉，见 [`IDLE_PULL_EVERY`]。
@@ -172,6 +248,7 @@ pub(crate) fn watch<S>(
     let mut stream = first;
     let mut keeper = Keeper::default();
     let mut pulled_at = Instant::now();
+    let mut logged_underruns = shared.report().underruns;
     loop {
         let wait = if stream.is_none() && shared.idle() {
             IDLE_PULL_EVERY
@@ -185,6 +262,18 @@ pub(crate) fn watch<S>(
             }
             Ok(Signal::Poke)
             | Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        // 回调线程不写日志(#192),它攒下的诊断与欠载由这里替它写
+        for line in shared.take_notes() {
+            log::warn!("{line}");
+        }
+        let underruns = shared.report().underruns;
+        if underruns > logged_underruns {
+            log::warn!(
+                "声卡欠载 {} 次(累计 {underruns})",
+                underruns - logged_underruns
+            );
+            logged_underruns = underruns;
         }
         let step = keeper.step(
             Instant::now(),
@@ -462,6 +551,85 @@ mod tests {
                 true
             ),
             Step::Close
+        );
+    }
+
+    /// 送声线程升上了实时(FIFO/RR):不吭声。
+    #[test]
+    fn a_realtime_audio_thread_needs_no_warning() {
+        assert_eq!(
+            promotion_warning(Some(libc::SCHED_FIFO)),
+            None
+        );
+        assert_eq!(
+            promotion_warning(Some(libc::SCHED_RR)),
+            None
+        );
+        // rtkit 升的线程带着 SCHED_RESET_ON_FORK 这一位
+        assert_eq!(
+            promotion_warning(Some(
+                libc::SCHED_RR | libc::SCHED_RESET_ON_FORK
+            )),
+            None
+        );
+    }
+
+    /// 没升上去(rtkit 拒了、没装)或者一块都没拉到：警告，说清楚满载时会卡。
+    #[test]
+    fn an_ordinary_or_unknown_audio_thread_is_warned_about()
+    {
+        let ordinary =
+            promotion_warning(Some(libc::SCHED_OTHER))
+                .expect("普通策略要警告");
+        assert!(ordinary.contains("实时"), "{ordinary}");
+        assert!(promotion_warning(None).is_some());
+    }
+
+    /// 回调报了线程号就拿到;等满了还没报，给 `None`。
+    #[test]
+    fn the_callback_thread_id_is_awaited_up_to_a_limit() {
+        let tid = AtomicI32::new(0);
+        assert_eq!(
+            wait_for_tid(&tid, Duration::from_millis(30)),
+            None
+        );
+        tid.store(42, Ordering::Relaxed);
+        assert_eq!(
+            wait_for_tid(&tid, Duration::ZERO),
+            Some(42)
+        );
+    }
+
+    /// 线程号、升级结果与之后查到的策略，合起来决定打哪一行;任何一步不成都是警告，不出错。
+    #[test]
+    fn the_promotion_outcome_names_what_went_wrong() {
+        let rr = |_| libc::SCHED_RR;
+        let ok = |_| Ok(());
+        assert!(promotion_outcome(Some(7), ok, rr).is_ok());
+
+        let no_tid =
+            promotion_outcome(None, ok, rr).unwrap_err();
+        assert!(no_tid.contains("没读到"), "{no_tid}");
+
+        let refused = promotion_outcome(
+            Some(7),
+            |_| Err("rtkit 拒绝".to_owned()),
+            rr,
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("rtkit 拒绝"),
+            "{refused}"
+        );
+
+        let still_other =
+            promotion_outcome(Some(7), ok, |_| {
+                libc::SCHED_OTHER
+            })
+            .unwrap_err();
+        assert!(
+            still_other.contains("调度策略 0"),
+            "{still_other}"
         );
     }
 }
