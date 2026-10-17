@@ -1,0 +1,58 @@
+# #192(req-950):CPU 占满时桌面放歌不卡。送声线程经 rtkit 升实时，回调路径上不再阻塞地等锁。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "桌面开声卡流(output::cpal::start):回调第一块报出线程号，持流线程请 rtkit 升实时，再查一次策略"
+observe = "按 rtkit 的 MaxRealtimePriority 和 RTTimeUSecMax 夹出优先级与 RLIMIT_RTTIME;升不上、读不到线程号、策略不是 FIFO/RR 时各打一行警告，不出错;带 SCHED_RESET_ON_FORK 的 RR 也算实时"
+tests = [
+  "audio::output::rtkit::tests::requests_stay_within_what_rtkit_allows",
+  "audio::output::rtkit::tests::a_refusal_is_reported_not_raised",
+  "audio::output::tests::a_realtime_audio_thread_needs_no_warning",
+  "audio::output::tests::an_ordinary_or_unknown_audio_thread_is_warned_about",
+  "audio::output::tests::the_callback_thread_id_is_awaited_up_to_a_limit",
+  "audio::output::tests::the_promotion_outcome_names_what_went_wrong",
+]
+doubles = ["假 Rtkit(实现同一个 trait,不碰 D-Bus);真 rtkit 与真线程策略由 test/audio-rt-load.sh 实测(RR)"]
+mutation = "promote 里不先 limit_rttime:requests_stay_within_what_rtkit_allows 断言调用顺序失败;去掉 SCHED_RESET_ON_FORK 掩码:a_realtime_audio_thread_needs_no_warning 失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "送声回调拉同步源与 Deck 的那一侧，控制线程/界面线程同时拿着各自的锁"
+observe = "拿着锁时回调照样在 1 秒内拉完：时间线沿用上一次，跳转留到下一帧，换源晚一点生效;诊断进队列不在回调里写日志;跳转不等裁决;换下的旧源在界面线程释放"
+tests = [
+  "audio::sync::tests::pulling_never_waits_for_a_lock_held_elsewhere",
+  "audio::sync::tests::a_seek_request_waits_for_the_next_pull_when_its_lock_is_busy",
+  "audio::sync::tests::diagnostics_are_queued_for_another_thread_to_log",
+  "audio::sync::tests::callback_blocks_and_underruns_are_recorded",
+  "audio::stream_source::tests::seeking_as_a_feed_does_not_wait_for_the_verdict",
+  "audio::player::tests::deck_side::pulling_never_waits_for_the_ui_thread",
+  "audio::player::tests::deck_side::a_replaced_source_is_released_off_the_pulling_thread",
+  "audio::player::tests::deck_side::it_plays_what_it_was_given_at_the_set_volume",
+  "audio::player::tests::deck_side::clearing_or_running_out_leaves_it_empty_and_silent",
+]
+doubles = ["FakeFeed 与 SamplesBuffer 代替真媒体;测试线程拿锁扮演被抢走 CPU 的控制线程"]
+mutation = "DeckSource::take_change 改回阻塞 lock():pulling_never_waits_for_the_ui_thread 超时失败(已实测)"
+
+[[ac]]
+id = "AC-2"
+kind = "regression"
+entry = "原有的同步播放、跳转、起播定位、暂停与欠载计数"
+observe = "行为不变：跳转裁决如实回来，起播定位不从 0:00 响，欠载不推进位置"
+tests = [
+  "audio::sync::tests::a_seek_request_is_carried_out_on_the_next_pull",
+  "audio::sync::tests::a_starved_feed_does_not_advance_the_position",
+  "audio::sync::tests::a_seek_that_fails_is_not_retried_every_block",
+  "audio::player::tests::starting_from_a_position_never_plays_the_beginning",
+  "audio::stream_source::tests::a_channel_without_a_decoder_cannot_be_seeked",
+]
+doubles = ["FakeFeed 与 Marker 代替真媒体"]
+
+[[ac]]
+id = "AC-3"
+none = "满载检查 test/audio-rt-load.sh 要 PipeWire、rtkit 并占满全部核，不进日间门禁;改动前 589 次/60s、改动后 release 0 次/120s 的日志在交回报告里"
+
+[[ac]]
+id = "AC-4"
+none = "用户在装机版上边编译边听，发版后由用户验"
