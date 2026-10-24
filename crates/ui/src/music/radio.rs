@@ -187,7 +187,7 @@ pub(super) fn start(
     };
     let action = Action::begin("radio");
     let on_screen = Section::from_index(
-        ui.global::<Shell>().get_music_section(),
+        ui.global::<Shell>().get_destination(),
     ) == Section::Radio
         && ui
             .global::<crate::Library>()
@@ -225,7 +225,7 @@ pub(super) fn open(ui: &MainWindow, deck: &Deck) {
         show_section(
             ui,
             deck,
-            ui.global::<Shell>().get_music_section(),
+            ui.global::<Shell>().get_destination(),
         );
         // 别的设备可能加过新歌、听过几首:摆出手上那份的同时重取一次
         refresh(ui, deck);

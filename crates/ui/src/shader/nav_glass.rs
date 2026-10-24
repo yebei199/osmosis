@@ -6,7 +6,7 @@
 //! shader 对三个圆角矩形取 smooth-union 拉出胶着的颈;静止时重合成单块。
 //! 两种版式共用这一套,差别只在移动轴:侧栏沿 y,底栏沿 x。唯一真相在 app.slint。
 //!
-//! 这块背景**只在切 tab 的转场期间重渲**:转场结束后 Slint 继续合成最后一帧纹理,
+//! 这块背景**只在切目的地 的转场期间重渲**:转场结束后 Slint 继续合成最后一帧纹理,
 //! 沿用仓库既有的 render-active 省电取向(不主动重绘)。
 //!
 //! 这里唯一需要单测的核心逻辑,是那道省电门 —— 判断"这一帧要不要重渲导航纹理"。
@@ -40,7 +40,7 @@ pub struct NavGlassControls {
     pub thick: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。同一套数学,轴对调(#70)。
     pub horizontal: bool,
-    /// 三球的整体缩放,1 常态、0 缩没。侧栏底部两颗自 #71 起是 glass 圆钮、
+    /// 三球的整体缩放,1 常态、0 缩没。侧栏沉底那两行(个人、设置)不在轨道上、
     /// 不在轨道上,选中它们时水滴化掉,免得上面还亮着一格。
     pub ball: f32,
     /// 深色主题。导航背景是自绘的,采不到背后的像素,主题只能这样传进去。
@@ -141,7 +141,7 @@ mod tests {
     //
     // 上面几条钉的是判据本身,下面几条钉的是**判据都问到了没有**:
     // 主题、球体缩放、条尺寸各是一个独立的入口,漏掉哪一个,那一样变了
-    // 画面就不跟,要等下一次切 tab 才补上 —— 而那不会报错。
+    // 画面就不跟,要等下一次切目的地 才补上 —— 而那不会报错。
 
     use std::cell::RefCell;
     use std::time::Duration;
@@ -163,7 +163,7 @@ mod tests {
         let ui = MainWindow::new().expect("建不出主窗口");
         ui.global::<Session>().set_logged_in(true);
         ui.global::<Shell>().set_compact(false);
-        ui.global::<Shell>().set_current_tab(1);
+        ui.global::<Shell>().set_destination(0);
         // 三球是 animate 属性:先读一遍建立静止态,免得首帧读到的是半路的值。
         i_slint_backend_testing::mock_elapsed_time(
             Duration::from_millis(900),
@@ -257,7 +257,7 @@ mod tests {
     /// 换了明暗要重渲,哪怕三球一动没动。
     ///
     /// 侧栏背景是这条 pass 自绘的,采不到背后的像素。不认主题的话,拨完
-    /// 深色开关侧栏仍是旧配色,要等下一次切 tab 才跟上。
+    /// 深色开关侧栏仍是旧配色,要等下一次切目的地才跟上。
     #[test]
     fn flipping_the_theme_alone_still_renders() {
         let ui = nav_window();
@@ -280,11 +280,16 @@ mod tests {
 
     /// 水滴化掉那一下也要重渲,哪怕槽位没动。
     ///
-    /// 切到侧栏底部两颗圆钮(#71)时三球停在原处,只有球体缩放在变。
+    /// 切到侧栏沉底那两行(#71)时三球停在原处,只有球体缩放在变。
     /// 不认它的话水滴就化不掉,停在最后一格主项上不动。
     #[test]
     fn melting_the_droplet_alone_still_renders() {
         let ui = nav_window();
+        // 从轨道最后一行(已下载)出发:沉底那两行的水滴就停在这一行上。
+        ui.global::<Shell>().set_destination(5);
+        i_slint_backend_testing::mock_elapsed_time(
+            Duration::from_millis(900),
+        );
         let renders = Renders::default();
         let mut selector = NavSelector::default();
 
@@ -292,11 +297,11 @@ mod tests {
         let before = renders.last();
         assert_eq!(
             before.ball, 1.0,
-            "停在 Music 时水滴是满的"
+            "停在已下载时水滴是满的"
         );
 
-        // 2 是个人主页 —— 圆钮不在水滴轨道上,槽位不动、只有它缩没。
-        ui.global::<Shell>().set_current_tab(2);
+        // 7 是个人 —— 沉底那组不在水滴轨道上,槽位不动、只有它缩没。
+        ui.global::<Shell>().set_destination(7);
         i_slint_backend_testing::mock_elapsed_time(
             Duration::from_millis(900),
         );
@@ -315,7 +320,7 @@ mod tests {
     /// 只有缩放系数变了(窗口挪到另一块屏)也要重渲。
     ///
     /// 三球位置存的是逻辑像素,换屏时它们一个字都不变;不认条的物理尺寸的话,
-    /// 侧栏会一直沿用旧 DPI 那张纹理,直到下一次切 tab。
+    /// 侧栏会一直沿用旧 DPI 那张纹理,直到下一次切目的地。
     #[test]
     fn a_scale_change_alone_still_renders() {
         let ui = nav_window();
@@ -367,7 +372,7 @@ mod tests {
 /// 选中器的跨帧省电门:上一帧的三球逻辑位置、条的物理尺寸、明暗与球体缩放。
 ///
 /// 这四样都进判据 —— 静止时 Slint 复用上一帧 `nav-bg`,漏掉哪一样,那一样变了
-/// 画面就不跟,要等下一次切 tab 才补上。
+/// 画面就不跟,要等下一次切目的地 才补上。
 #[derive(Default)]
 pub struct NavSelector {
     last_ll: Option<(f32, f32, f32)>,
@@ -389,7 +394,7 @@ impl NavSelector {
             -> Option<slint::Image>,
     ) -> bool {
         // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
-        // 常驻,与下面播放页视觉的门相互独立:只在切 tab 的 metaball 还在走
+        // 常驻,与下面播放页视觉的门相互独立:只在切目的地 的 metaball 还在走
         // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
         // 轴的事全在 .slint 那侧算完,这里只搬数(#70)。
         if ui.get_nav_visible() {
@@ -404,11 +409,11 @@ impl NavSelector {
                 self.last_size != Some((strip_w, strip_h));
             // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
             // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
-            // 要等下一次切 tab 才跟上。
+            // 要等下一次切目的地才跟上。
             let dark = ui.global::<Theme>().get_dark();
             let theme_changed =
                 self.last_dark != Some(dark);
-            // 球体缩放同理:切到侧栏底部那两颗圆钮时槽位不动、只有它在变
+            // 球体缩放同理:切到侧栏沉底那两行时槽位不动、只有它在变
             // (#71),不认它的话水滴就化不掉,停在原地不动。
             let ball = ui.get_nav_ball();
             let ball_changed = self.last_ball != Some(ball);

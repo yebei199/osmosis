@@ -99,6 +99,8 @@ export component HoverButton inherits Rectangle {
 // 不写死高度:竖排侧栏里由使用处给 68px,横排底栏里由布局撑满栏高。
 export component NavItem inherits Rectangle {
     in property <string> label;
+    // 读屏念的那句。底栏上显示简称(「推荐」),对外仍报全名(「每日推荐」)。
+    in property <string> a11y-label: root.label;
     in property <string> icon;
     in property <bool> active;
     // 选中高亮是否已由背后的 GPU 液态玻璃提供。为真时(GPU 构建)自己让开 active 底,
@@ -141,6 +143,11 @@ export component NavItem inherits Rectangle {
 
     touch := TouchArea {
         clicked => { root.clicked(); }
+        accessible-role: tab;
+        accessible-label: root.a11y-label;
+        accessible-checkable: true;
+        accessible-checked: root.active;
+        accessible-action-default => { root.clicked(); }
     }
 }
 

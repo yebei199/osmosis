@@ -21,8 +21,7 @@ fn nav_window() -> MainWindow {
     ui
 }
 
-/// 底栏第 i 项的横向范围。四项都是同一个 `NavItem`,标签是内部的 `Text`
-/// (设置页的标题也叫「设置」,按标签找会先撞上那个),所以按元素 id 取、按序号分。
+/// 底栏第 i 格的横向范围。五格都是同一个 `NavItem`,按元素 id 取、按序号分。
 fn item_span(ui: &MainWindow, i: usize) -> (f32, f32) {
     let item = testing::ElementHandle::find_by_element_id(
         ui,
@@ -34,14 +33,44 @@ fn item_span(ui: &MainWindow, i: usize) -> (f32, f32) {
     (x, x + item.size().width)
 }
 
+/// 侧栏里叫这个名字的那一行的纵向范围,相对侧栏顶(条首)。
+fn row_span(ui: &MainWindow, label: &str) -> (f32, f32) {
+    let row = testing::ElementHandle::find_by_element_id(
+        ui,
+        "SideNavRow::touch",
+    )
+    .find(|e| {
+        e.accessible_label().is_some_and(|s| s == label)
+    })
+    .unwrap_or_else(|| panic!("侧栏里找不到「{label}」"));
+    let top = testing::ElementHandle::find_by_element_id(
+        ui,
+        "SideNavRow::touch",
+    )
+    .next()
+    .expect("侧栏一行都没有");
+    // 第一行离条首是 nav-pad(8px):用它反推条首,不依赖状态条有多高。
+    let origin = top.absolute_position().y - 8.0;
+    let y = row.absolute_position().y - origin;
+    (y, y + row.size().height)
+}
+
 /// 读一遍三球位置。Slint 的 animate 要属性**先被求值过**才有旧值可动:
-/// 真机上渲染循环每帧都读,测试里得自己补这一下,否则切 tab 只会瞬移。
+/// 真机上渲染循环每帧都读,测试里得自己补这一下,否则切换只会瞬移。
 fn observe(ui: &MainWindow) {
     let _ = (
         ui.get_nav_lead(),
         ui.get_nav_lag(),
         ui.get_nav_drop(),
+        ui.get_nav_ball(),
     );
+}
+
+fn go(ui: &MainWindow, destination: i32) {
+    observe(ui);
+    ui.global::<Shell>().set_destination(destination);
+    // 最慢那颗是 680ms,给足时间让三球都到位。
+    testing::mock_elapsed_time(Duration::from_millis(900));
 }
 
 /// 紧凑版式的底栏把自己的横条几何回写给 seam:宽由布局量出,
@@ -52,7 +81,7 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
     assert!(!ui.get_nav_horizontal(), "宽版式该是竖条");
     assert_eq!(
         ui.get_nav_strip_w(),
-        96.0,
+        168.0,
         "宽版式的条宽就是侧栏宽"
     );
 
@@ -73,50 +102,65 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
     );
 }
 
-/// 水滴落在当前选中项上:切 tab、动画走完后,头球中心落在那一格的
-/// 横向范围内。四项等分,格心算错一格不报错,只会让水滴停在隔壁。
+/// 水滴落在当前选中格上;「更多」里的目的地落在第五格。
 #[test]
 fn the_droplet_lands_on_the_selected_bottom_item() {
     let ui = nav_window();
     ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
-    for tab in 0..4 {
-        observe(&ui);
-        ui.global::<Shell>().set_current_tab(tab);
-        // 最慢那颗是 680ms,给足时间让三球都到位。
-        testing::mock_elapsed_time(Duration::from_millis(
-            900,
-        ));
-
-        let (left, right) = item_span(&ui, tab as usize);
+    for (slot, destination) in
+        [(0, 0), (1, 2), (2, 6), (3, 1), (4, 4), (4, 8)]
+    {
+        go(&ui, destination);
+        let (left, right) = item_span(&ui, slot);
         let lead = ui.get_nav_lead();
         assert!(
             lead > left && lead < right,
-            "tab {tab} 的头球该落在 {left}..{right} 之间,实得 {lead}"
+            "目的地 {destination} 的头球该落在第 {slot} 格 {left}..{right},实得 {lead}"
         );
     }
 }
 
-/// 侧栏底部两颗退出水滴轨道(#71):选中个人/设置时水滴停在最后一格主项的
-/// 位置上并缩没(球体缩放归零),不再滑到栏底;切回来又长出来。
+/// 侧栏轨道上七行(两组之间隔一段),水滴落在选中那一行上。
 #[test]
-fn the_droplet_melts_away_for_the_bottom_round_keys() {
+fn the_droplet_lands_on_the_selected_sidebar_row() {
     let ui = nav_window();
 
-    observe(&ui);
-    ui.global::<Shell>().set_current_tab(1);
-    testing::mock_elapsed_time(Duration::from_millis(900));
+    for (label, destination) in [
+        ("电台", 4),
+        ("搜索", 2),
+        ("我喜欢", 6),
+        ("我的歌单", 1),
+        ("最近播放", 3),
+        ("已下载", 5),
+        ("每日推荐", 0),
+    ] {
+        go(&ui, destination);
+        let (top, bottom) = row_span(&ui, label);
+        let lead = ui.get_nav_lead();
+        assert!(
+            lead > top && lead < bottom,
+            "「{label}」的头球该落在 {top}..{bottom},实得 {lead}"
+        );
+    }
+}
+
+/// 侧栏沉底那两行退出水滴轨道(#71 的规则沿用):选中个人/设置时水滴停在
+/// 轨道最后一行(已下载)上并缩没,不滑到栏底;切回来又长出来。
+#[test]
+fn the_droplet_melts_away_for_the_bottom_rows() {
+    let ui = nav_window();
+
+    go(&ui, 5);
     assert!(
         ui.get_nav_ball() > 0.9,
-        "停在 Music 时水滴该是满的,实得 {}",
+        "停在已下载时水滴该是满的,实得 {}",
         ui.get_nav_ball()
     );
-    let on_music = ui.get_nav_lead();
+    let on_downloads = ui.get_nav_lead();
 
-    observe(&ui);
-    ui.global::<Shell>().set_current_tab(3);
-    testing::mock_elapsed_time(Duration::from_millis(900));
+    go(&ui, 8);
     assert_eq!(
         ui.get_nav_ball(),
         0.0,
@@ -124,77 +168,69 @@ fn the_droplet_melts_away_for_the_bottom_round_keys() {
     );
     assert_eq!(
         ui.get_nav_lead(),
-        on_music,
-        "水滴不该滑到栏底,该停在最后一格主项上"
+        on_downloads,
+        "水滴不该滑到栏底,该停在轨道最后一行上"
     );
 
-    observe(&ui);
-    ui.global::<Shell>().set_current_tab(0);
-    testing::mock_elapsed_time(Duration::from_millis(900));
+    go(&ui, 0);
     assert!(
         ui.get_nav_ball() > 0.9,
-        "切回主项该重新长出来,实得 {}",
+        "切回轨道上的目的地该重新长出来,实得 {}",
         ui.get_nav_ball()
     );
 }
 
-/// 底栏那四格不受影响:紧凑版式里个人/设置仍在轨道上,水滴照走。
+/// 底栏五格全在轨道上:紧凑版式里停在设置,水滴照走到「更多」那格。
 #[test]
-fn the_bottom_bar_keeps_all_four_slots_on_the_track() {
+fn the_bottom_bar_keeps_all_five_slots_on_the_track() {
     let ui = nav_window();
     ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
-    observe(&ui);
-    ui.global::<Shell>().set_current_tab(3);
-    testing::mock_elapsed_time(Duration::from_millis(900));
+    go(&ui, 8);
 
     assert!(
         ui.get_nav_ball() > 0.9,
-        "底栏四格都在轨道上,水滴不该缩没"
+        "底栏五格都在轨道上,水滴不该缩没"
     );
-    let (left, right) = item_span(&ui, 3);
+    let (left, right) = item_span(&ui, 4);
     let lead = ui.get_nav_lead();
     assert!(
         lead > left && lead < right,
-        "底栏的头球该落在第四格 {left}..{right},实得 {lead}"
+        "底栏的头球该落在第五格 {left}..{right},实得 {lead}"
     );
 }
 
-/// 圆钮报得出自己开着还是关着 —— 它是 tab,读屏软件得念出「已选中」,
-/// 而不是只有一个亮圆;点一下切到那一页,换掉 NavItem 之后这条线不能断。
+/// 沉底那两行报得出自己开着还是关着 —— 它们是 tab,读屏软件得念出「已选中」;
+/// 点一下切到那一页。
 #[test]
-fn the_bottom_round_keys_are_checkable_tabs() {
+fn the_bottom_rows_are_checkable_tabs() {
     let ui = nav_window();
-    // 停在 Home:个人主页没建,「个人」这个标签全应用只有侧栏那颗。
-    ui.global::<Shell>().set_current_tab(0);
 
-    let key =
-        testing::ElementHandle::find_by_accessible_label(
-            &ui, "个人",
+    let row = || {
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "SideNavRow::touch",
         )
-        .next()
-        .expect("侧栏底部找不到「个人」圆钮");
-    assert_eq!(
-        key.accessible_checkable(),
-        Some(true),
-        "它是 tab,得报得出有没有被选中"
-    );
-    assert_eq!(
-        key.accessible_checked(),
-        Some(false),
-        "还没切过去,该是关着的"
-    );
+        .find(|e| {
+            e.accessible_label()
+                .is_some_and(|s| s == "个人")
+        })
+        .expect("侧栏底部找不到「个人」")
+    };
+    assert_eq!(row().accessible_checkable(), Some(true));
+    assert_eq!(row().accessible_checked(), Some(false));
 
-    key.invoke_accessible_default_action();
+    row().invoke_accessible_default_action();
     assert_eq!(
-        ui.global::<Shell>().get_current_tab(),
-        2,
-        "点一下该切到个人主页"
+        ui.global::<Shell>().get_destination(),
+        7,
+        "点一下该切到个人"
     );
+    assert_eq!(row().accessible_checked(), Some(true));
 }
 
-/// 三球中途仍拉得开:切 tab 的半途读三个位置,头球最靠前、小水滴最靠后。
+/// 三球中途仍拉得开:切换的半途读三个位置,头球最靠前、小水滴最靠后。
 /// 颈就是这个先后差被 smin 连出来的,时长差没了就退化成一整块平移。
 #[test]
 fn the_three_balls_stay_strung_out_mid_transition() {
@@ -204,7 +240,7 @@ fn the_three_balls_stay_strung_out_mid_transition() {
 
     // 从最左边一格往最右边走,只走一小段:头球 240ms、尾球 440ms、小水滴 680ms。
     observe(&ui);
-    ui.global::<Shell>().set_current_tab(3);
+    ui.global::<Shell>().set_destination(8);
     testing::mock_elapsed_time(Duration::from_millis(120));
 
     let lead = ui.get_nav_lead();

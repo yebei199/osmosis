@@ -91,14 +91,32 @@ name_of() {
   esac
 }
 
-# 个人页:输出芯片摆在那里(已经开着就不动)。桌面是侧栏底部头像那颗 RoundControl,安卓是底栏第三格。
+# labelled_on <设备> <元素 id> <全名> —— 无障碍标签恰好是这个名字的那一个。
+labelled_on() {
+  local h
+  for h in $(handles "$1" "$2"); do
+    [ "$(label_of "$1" "$h" | sed 's/ checked$//; s/ $//')" = "$3" ] && { echo "$h"; return; }
+  done
+}
+
+# go_on <设备> <全名> —— 去一级目的地(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+go_on() {
+  local h
+  h=$(labelled_on "$1" SideNavRow::touch "$2")
+  [ -n "$h" ] || h=$(labelled_on "$1" NavItem::touch "$2")
+  if [ -z "$h" ]; then
+    click "$1" "$(labelled_on "$1" NavItem::touch 更多)"
+    sleep 1
+    h=$(labelled_on "$1" MorePanel::item "$2")
+  fi
+  [ -n "$h" ] || { echo "$1 上找不到目的地「$2」" >&2; exit 1; }
+  click "$1" "$h"
+}
+
+# 个人页:输出芯片摆在那里(已经开着就不动)。
 open_profile() {
-  # 头像那颗键是开关:已经在个人页上时再按一下反而把它关掉。
   [ -n "$(handles "$1" OutputChip::touch)" ] && return
-  case "$(kind "$1")" in
-    ns) click "$1" "$(handles "$1" RoundControl::touch | head -1)" ;;
-    android) click "$1" "$(handles "$1" NavItem::touch | sed -n 3p)" ;;
-  esac
+  go_on "$1" 个人
   sleep 1.5
 }
 
@@ -141,7 +159,7 @@ plays() {
 play_locally() {
   local dev=$1 before idx
   before=$(plays)
-  click "$dev" "$(handles "$dev" NavItem::touch | sed -n 2p)"; sleep 1.5
+  go_on "$dev" 每日推荐; sleep 1.5
   click "$dev" "$(handles "$dev" WallView::view-list-btn | head -1)"; sleep 1.5
   # 同一行正在放时再点是多余的点击,不会重新起播 —— 两行轮着点,见 pick-e2e.sh。
   for idx in 1 2; do

@@ -10,8 +10,9 @@ use ui::Player;
 use ui::Session;
 use ui::Shell;
 
-/// 除播放页外的四个页签。播放页是覆层,由 `play-page-open` 单开。
-const PAGE_TABS: [i32; 4] = [0, 1, 2, 3];
+/// 除播放页外的各类页面,按目的地编号取代表:每日推荐、我的歌单、我喜欢
+/// (音乐页的三种摆法)、个人、设置。播放页是覆层,由 `play-page-open` 单开。
+const PAGE_TABS: [i32; 5] = [0, 1, 6, 7, 8];
 
 fn key(
     ui: &MainWindow,

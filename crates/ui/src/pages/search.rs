@@ -257,8 +257,9 @@ mod tests {
             crate::pages::account::NETEASE_UNBOUND_TEXT
         );
         assert_eq!(
-            ui.global::<crate::Shell>().get_banner_tab(),
-            2,
+            ui.global::<crate::Shell>()
+                .get_banner_destination(),
+            7,
             "这一句该能点进个人页"
         );
     }

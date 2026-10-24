@@ -34,6 +34,32 @@ call() {
   | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
 }
 
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
+
 # 第 n 个匹配元素的句柄,从窗口根往下找(`if`/`for` 里长出来的也找得到)。
 handle() {
   call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}" \
@@ -91,28 +117,21 @@ group_by_artist() {
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
 root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
 
-# 复位:收起播放页,进音乐页的第 $1 个分区(按摆放位置:0 每日推荐、2 我的歌单)。
+# 复位:收起播放页,去目的地 $1(全名,如「每日推荐」「我的歌单」)。
 reset() {
-  local item music
   for _ in 1 2 3; do
     [ -n "$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":false,\"queryStack\":[{\"matchElementTypeName\":\"PlayPage\"}]}" \
       | python3 -c 'import json,sys; print("y" if json.load(sys.stdin).get("elementHandles") else "")')" ] || break
     call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
     sleep 1
   done
-  music=$(handle "NavItem::touch" 1)
-  must "$music" "音乐入口"
-  call click_element "{\"elementHandle\":$music}" >/dev/null
-  item=$(handle "MusicRail::item-touch" "$1")
-  [ -n "$item" ] || item=$(handle "MusicBar::item-touch" "$1")
-  must "$item" "音乐页第 $(($1 + 1)) 个分区"
-  call click_element "{\"elementHandle\":$item}" >/dev/null
+  go_to "$1"
   sleep 2
 }
 
 case "$MODE" in
   liked)
-    reset 2
+    reset 我的歌单
     liked=$(handle "PlaylistList::touch" 0)
     must "$liked" "歌单列表第一行(「我喜欢的」)"
     act "$liked"
@@ -133,7 +152,7 @@ case "$MODE" in
     echo "  「我喜欢的」按歌手:$got 堆,库里歌手去重 $want"
     ;;
   wall)
-    reset 0
+    reset 每日推荐
     wall_btn=$(handle "WallView::view-wall-btn")
     must "$wall_btn" "卡墙开关(非 GPU 构建没有卡墙)"
     act "$wall_btn"

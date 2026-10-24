@@ -12,7 +12,7 @@ fn every_page_carries_the_same_bar() {
     let ui = playing_app();
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         assert!(
             present(&ui, "PlayerBar::capsule"),
             "tab {tab} 上该有控制条"
@@ -34,7 +34,7 @@ fn the_bar_geometry_is_identical_everywhere() {
     let mut seen: Vec<(i32, f32, f32, f32, f32)> = vec![];
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         let (_, _, _, h) = bar_box(&ui).expect("该有条");
         seen.push((
             tab,
@@ -66,7 +66,7 @@ fn the_bar_inset_is_identical_everywhere() {
     let mut insets: Vec<(i32, f32)> = vec![];
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         let (x, _, w, _) = bar_box(&ui).expect("该有条");
         // 右内缩;左内缩由居中保证与它相等。
         insets.push((tab, window_w - (x + w)));
@@ -89,7 +89,7 @@ fn previous_track_is_reachable_from_every_page() {
     let ui = playing_app();
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         assert!(
             key(&ui, "上一首").is_some(),
             "tab {tab} 上该能切上一首"
@@ -102,7 +102,7 @@ fn previous_track_is_reachable_from_every_page() {
 #[test]
 fn a_narrow_container_shrinks_the_title_not_the_keys() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     narrow(&ui);
 
     let window_w = ui.window().size().width as f32
@@ -126,7 +126,7 @@ fn a_narrow_container_shrinks_the_title_not_the_keys() {
 #[test]
 fn a_narrow_bar_keeps_the_title_and_drops_the_clock() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     narrow(&ui);
 
     let title = ids(&ui, "PlayerBar::title")
@@ -148,7 +148,7 @@ fn a_narrow_bar_keeps_the_title_and_drops_the_clock() {
 #[test]
 fn a_wide_bar_shows_the_clock() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     assert!(
         present(&ui, "PlayerBar::clock"),
         "宽版式下该看得见时间读数"
@@ -162,7 +162,7 @@ fn no_bar_anywhere_without_a_track() {
     ui.global::<Player>().set_has_track(false);
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         assert!(
             !present(&ui, "PlayerBar::capsule"),
             "tab {tab} 上没歌不该摆条"
@@ -175,7 +175,7 @@ fn no_bar_anywhere_without_a_track() {
 #[test]
 fn the_three_face_rotation_is_gone() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
 
     for label in ["翻到播放", "翻到模式", "翻到同播"]
     {
@@ -197,7 +197,7 @@ fn the_three_face_rotation_is_gone() {
 #[test]
 fn the_cover_toggles_the_play_page() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
 
     // 钉到封面元素本身:此前有一颗专用箭头键也叫这个标签,
     // 只按标签找会匹配到它,测不出「封面兼任入口」。
@@ -241,7 +241,7 @@ fn the_cover_toggles_the_play_page() {
 #[test]
 fn the_play_page_has_exactly_one_seek_surface() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     ui.global::<Shell>().set_play_page_open(true);
 
     assert!(
@@ -255,7 +255,7 @@ fn the_play_page_has_exactly_one_seek_surface() {
 #[test]
 fn the_time_readout_appears_once() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     ui.global::<Shell>().set_play_page_open(true);
 
     assert!(
@@ -271,7 +271,7 @@ fn the_time_readout_appears_once() {
 #[test]
 fn each_bar_mirrors_its_size_into_its_own_slot() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     let _ = key(&ui, "上一首");
 
     assert!(

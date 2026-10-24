@@ -5,8 +5,8 @@
 // single-instance lock does not collide with a dev instance on the user's
 // desktop. grim reads the pixels. The user's niri never sees a window.
 //
-//   bun test/headless/headless.ts shot [--out dist/shot.png] [--width W] [--height H] [--tab T] [--bin B]
-//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--backend-port P] [--forward P1,P2] [--width W] [--height H] [--tab T] [--bin B] [--log F|-] [--state D]
+//   bun test/headless/headless.ts shot [--out dist/shot.png] [--width W] [--height H] [--dest D] [--bin B]
+//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--backend-port P] [--forward P1,P2] [--width W] [--height H] [--dest D] [--bin B] [--log F|-] [--state D]
 //   bun test/headless/headless.ts capture --dir D --out F
 //
 // `run` stays in the foreground (default dir: a fresh one under the cache, `--log -`
@@ -37,7 +37,7 @@ export type Options = {
   dir: string;
   width: number;
   height: number;
-  tab: string;
+  dest: string;
   bin: string;
   mcpPort?: number;
   backendPort: number;
@@ -215,7 +215,7 @@ export async function start(o: Options): Promise<Session> {
         TMPDIR: tmp,
         // OSMOSIS_REAL_AUDIO=1 is the user asking to hear it; anything else stays silent.
         ...(process.env.OSMOSIS_REAL_AUDIO === "1" ? {} : { PIPEWIRE_NODE: nullSink() }),
-        OSMOSIS_TAB: o.tab,
+        OSMOSIS_DESTINATION: o.dest,
         SLINT_MCP_PORT: String(NS_MCP_PORT),
         ...o.env,
         WAYLAND_DISPLAY: sockets.wayland,
@@ -281,7 +281,7 @@ function options(f: Record<string, string>, dir: string): Options {
     dir,
     width: int(f.width, DEFAULT_WIDTH, "width"),
     height: int(f.height, DEFAULT_HEIGHT, "height"),
-    tab: f.tab || "0",
+    dest: f.dest || "0",
     bin: resolve(f.bin ?? join(root, "target/debug/osmosis-desktop")),
     mcpPort: f["mcp-port"] ? int(f["mcp-port"], 0, "mcp-port") : undefined,
     backendPort: int(f["backend-port"], BACKEND_PORT, "backend-port"),

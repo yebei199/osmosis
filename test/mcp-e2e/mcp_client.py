@@ -161,6 +161,19 @@ class Client:
         """按完整无障碍标签选择，不依赖组件名称或位置。"""
         return Locator(self, label=label, index=index, role=role)
 
+    def destination(self, name: str) -> None:
+        """按全名去一级目的地(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+
+        限定元素 id 再比标签:控制条的抽屉键也叫「更多」,只按标签会点错。
+        """
+        for element_id in ("SideNavRow::touch", "NavItem::touch"):
+            entry = Locator(self, element_id=element_id, label=name)
+            if entry.all():
+                entry.click()
+                return
+        Locator(self, element_id="NavItem::touch", label="更多").click()
+        Locator(self, element_id="MorePanel::item", label=name).click()
+
     def screenshot(self, destination: Path | str) -> None:
         """有像素来源时用它，否则保存 MCP 返回的 PNG 图片块。"""
         if self.pixels is not None:

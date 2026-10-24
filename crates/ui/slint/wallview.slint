@@ -14,8 +14,7 @@ export component WallView inherits VerticalLayout {
     // #66 列表 ⇄ 卡墙的二选一开关。只在每日推荐分区、
     // GPU 构建下出现 —— 别的分区没有墙可切。
     if Shell.wall-supported
-        && Shell.current-tab == 1
-        && Shell.music-section == 0
+        && Shell.destination == 0
         && Library.open-playlist-name == ""
         && Player.tracks.length > 0:
     HorizontalLayout {

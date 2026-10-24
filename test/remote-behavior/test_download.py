@@ -210,13 +210,7 @@ def test_trial_download_keeps_existing_refusal(download_world):
 
 # 已下载入口沿音乐 tab 与同一分段条走，避免直接构造管理状态。
 def open_downloads(client):
-    client.ui.call("dispatch_key_event", windowHandle=client.ui.window, text="\x1b")
-    navigation = client.ui.elements("NavItem::touch")
-    client.ui.activate(navigation[1], pointer=True)
-    handle = client.ui.find("MusicRail::item-touch", "已下载")
-    if handle is None:
-        handle = client.ui.must("MusicBar::item-touch", "已下载")
-    client.ui.activate(handle)
+    client.ui.destination("已下载")
     client.ui.must("DownloadManager::keyword")
 
 

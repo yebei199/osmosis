@@ -38,6 +38,32 @@ call() {
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
   | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
 }
+
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
 sql() { docker exec "$PG_CONTAINER" psql -U slint -d osmosis -tAc "$1" | tr -d '[:space:]'; }
 fail() { echo "$MODE: 失败 —— $1" >&2; exit 1; }
 
@@ -127,15 +153,8 @@ sounding() {
 refusals() { sed 's/\x1b\[[0-9;]*m//g' "$SERVER_LOG" | grep "/group/outputs" | grep -c "status=400" || true; }
 
 if [ "$MODE" = dead ]; then
-  music=$(nth "NavItem::touch" 1)
-  [ -n "$music" ] || fail "找不到音乐入口"
-  call click_element "{\"elementHandle\":$music}" >/dev/null
-  sleep 1
-  # 第一个分区是列表(形状照 test/pick-e2e.sh 的 reset 0)
-  item=$(nth "MusicRail::item-touch" 0)
-  [ -n "$item" ] || item=$(nth "MusicBar::item-touch" 0)
-  [ -n "$item" ] || fail "找不到音乐页的第一个分区"
-  call click_element "{\"elementHandle\":$item}" >/dev/null
+  # 每日推荐是列表(形状照 test/pick-e2e.sh 的 reset)
+  go_to 每日推荐
   for _ in $(seq 1 15); do
     sleep 1
     [ -z "$(nth "TrackList::touch" 0)" ] || break
@@ -160,11 +179,7 @@ if [ "$MODE" = dead ]; then
   echo "  本机在出声"
 else
   before=$(refusals)
-  # 宽版式是右上角的「个人」圆键;紧凑版式(手机)是底栏第三项,没挂标签
-  tab=$(labelled "RoundControl::touch" "个人")
-  [ -n "$tab" ] || tab=$(nth "NavItem::touch" 2)
-  [ -n "$tab" ] || fail "找不到「个人」"
-  call click_element "{\"elementHandle\":$tab}" >/dev/null
+  go_to 个人
   sleep 2
   join=$(labelled "MemberToggle::touch" "加入 " "加入 本机")
   [ -n "$join" ] || fail "个人页上没有「加入 <另一台>」:另一台不在线?"

@@ -276,7 +276,7 @@ fn leaving_downloads_preserves_playback_and_browse_state() {
     assert_eq!(marker.get(), 1);
     assert_eq!(*deck.tracks.borrow(), before);
     assert_eq!(
-        ui.global::<crate::Shell>().get_music_section(),
+        ui.global::<crate::Shell>().get_destination(),
         0
     );
 }

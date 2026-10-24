@@ -394,8 +394,9 @@ mod tests {
             NETEASE_UNBOUND_TEXT
         );
         assert_eq!(
-            ui.global::<crate::Shell>().get_banner_tab(),
-            2,
+            ui.global::<crate::Shell>()
+                .get_banner_destination(),
+            7,
             "这一句该能点进个人页"
         );
     }
@@ -421,7 +422,8 @@ mod tests {
             "该照旧报出是哪件事失败了"
         );
         assert_eq!(
-            ui.global::<crate::Shell>().get_banner_tab(),
+            ui.global::<crate::Shell>()
+                .get_banner_destination(),
             -1,
             "没有去处的提示不该点得动"
         );

@@ -22,8 +22,8 @@ pub const REST_AMP: f32 = 0.12;
 // handoff-shaders.md §10;这里给它们名字,免得驱动块里散着裸数字。
 /// 一次性高光,正弦流场中心线加逐通道色散。
 pub const VARIANT_RIBBON: f32 = 0.0;
-/// 域扭曲 fbm 加星点格,开销最高,一屏一颗。
-pub const VARIANT_NEBULA: f32 = 1.0;
+// 1.0 是星云(nebula):曾是 Home 空槽的底,随 Home 删除(adr/0036)。着色器里那条分支还在,
+// 这里不留名字 —— 没有调用点的常量只会让人以为它还在用。
 /// 域扭曲加 plume,`reveal` 沿 x 开闸保住左侧文字区。长条与胶囊用它。
 pub const VARIANT_FLUID: f32 = 2.0;
 /// 低密度底加折射亮边,开销最低,次要按钮可整屏铺。
@@ -111,34 +111,6 @@ pub fn fluid_or_progress(
         0.0
     };
     (VARIANT_PROGRESS, p)
-}
-
-/// 侧栏底部那两颗圆钮的一槽(#71)。尺寸与 widgets.slint 的 `RoundControl`
-/// 默认直径一致,改那边要同步这里。
-///
-/// 选中那颗把振幅拉满,另一颗停在低位:水滴的轨道不覆盖这两格,亮度就是
-/// 它们表达「我被选中」的全部手段。两颗共用一张图会连这点差别都没有,
-/// 所以各渲各的 —— 44×44 一槽,代价可以忽略。
-pub fn nav_key_slot(
-    scale: f32,
-    seed: f32,
-    selected: bool,
-    colors: [[f32; 3]; 4],
-) -> AuroraBtnSlotControls {
-    AuroraBtnSlotControls {
-        w: 44.0 * scale,
-        h: 44.0 * scale,
-        radius: 22.0 * scale,
-        seed,
-        speed: 0.7,
-        amp: if selected { 1.0 } else { 0.35 },
-        mode: 1.0,
-        bands: 3.0,
-        variant: VARIANT_GLASS,
-        progress: 0.0,
-        pointer: (0.5, 0.5),
-        colors,
-    }
 }
 
 /// 恢复开关并接上设置页的拨动。值的真相在 `api::settings`,跟设备走。

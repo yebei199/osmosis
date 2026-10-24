@@ -83,7 +83,7 @@ fn the_banner_shows_up_only_when_there_is_something_to_say()
 /// **有去处的提示点得动**,点完把自己收掉。
 ///
 /// 「网易云未登录」这一句的解法在个人页。只说不给路的话,用户读完还得
-/// 自己在四个页签里翻 —— 而他正是因为不知道该去哪儿才看到这句话。
+/// 自己在九个目的地里翻 —— 而他正是因为不知道该去哪儿才看到这句话。
 #[test]
 fn a_banner_with_somewhere_to_go_takes_you_there() {
     testing::init_no_event_loop();
@@ -92,7 +92,7 @@ fn a_banner_with_somewhere_to_go_takes_you_there() {
     ui.global::<Shell>().set_banner_text(
         "网易云未登录,去个人页扫码绑定".into(),
     );
-    ui.global::<Shell>().set_banner_tab(2);
+    ui.global::<Shell>().set_banner_destination(7);
 
     let jump = testing::ElementHandle::find_by_element_id(
         &ui,
@@ -103,8 +103,8 @@ fn a_banner_with_somewhere_to_go_takes_you_there() {
     jump.invoke_accessible_default_action();
 
     assert_eq!(
-        ui.global::<Shell>().get_current_tab(),
-        2,
+        ui.global::<Shell>().get_destination(),
+        7,
         "该把人送到个人页"
     );
     assert!(

@@ -23,8 +23,7 @@ fn music_page(
         .set_size(slint::LogicalSize::new(width, height));
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_compact(false);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(section);
+    ui.global::<Shell>().set_destination(section);
     ui
 }
 
@@ -97,20 +96,29 @@ fn the_new_playlist_row_holds_its_input() {
 fn the_list_layer_reaches_the_bottom_outside_the_daily_section()
  {
     let ui = music_page(1000.0, 700.0, 1);
-    let rail = element(&ui, "MusicPage::music-rail");
+    // 侧栏竖条(music-rail)随一级导航移出了音乐页(MEO-1876),量尺换成页面本身:
+    // 没有控制条时页底留常规页边距 16px。
+    let page =
+        testing::ElementHandle::find_by_element_type_name(
+            &ui,
+            "MusicPage",
+        )
+        .next()
+        .expect("音乐页该在");
+    let floor = bottom(&page) - 16.0;
     let list = element(&ui, "MusicPage::playlist-list");
     assert_eq!(
         bottom(&list),
-        bottom(&rail),
+        floor,
         "歌单列表底下多了一条缝"
     );
 
-    ui.global::<Shell>().set_music_section(3);
+    ui.global::<Shell>().set_destination(3);
     one_track(&ui);
     let list = element(&ui, "MusicPage::track-list");
     assert_eq!(
         bottom(&list),
-        bottom(&rail),
+        floor,
         "最近播放列表底下多了一条缝"
     );
 }

@@ -1,136 +1,197 @@
-// Music 页内部的二级导航。
+// 一级导航(MEO-1876,docs/adr/0038),外加搜索结果的三个页签。
 //
-// 主导航仍然只有 Home 与 Music 两个 tab(见 CONTEXT.md「播放页」那条的同一个
-// 理由:导航位是稀缺的)。音乐那一页里的六个去处放在这一层,宽版式是可收缩的
-// 竖栏,紧凑版式是顶部的一条分段条 —— 同一组条目,两种摆法。
+// 九个目的地平级,没有 Home,也没有音乐页里的第二套导航。宽版式是带字的侧栏,
+// 紧凑版式是「四格 + 更多」的底栏,「更多」点开一块平铺面板。
 //
-// 紧凑版式不做抽屉:抽屉要手势、遮罩、动画一整套,而一行分段条就能把各分区摆下。
-
-// 各个分区。**唯一真相** —— 竖栏与横条都 `for` 它,免得两处各抄一份标签,
-// 改了一处忘另一处。顺序是摆放顺序,`id` 是编号,Rust 侧按编号决定拉什么。
-// 两者分开是因为电台(#159)要摆在每日推荐之后,而插进下标 1 会让已有分区的
-// 编号全体挪位 —— 界面与测试里按编号判分区的地方有几十处。
+// 编号沿用原音乐分区的 id(0 每日推荐、1 我的歌单、2 搜索、3 最近播放、4 电台、
+// 5 已下载),后加的接着排(6 我喜欢、7 个人、8 设置)。编号与摆放顺序分开:
+// Rust 侧与测试里按编号判目的地的地方有几十处,插队会让它们全体挪位。
 import { Theme } from "theme.slint";
+import { Shell } from "globals/shell.slint";
 
-export struct MusicSection {
-    // 编号,即 Shell.music-section 的取值。
+export struct Destination {
+    // 编号,即 Shell.destination 的取值。
     id: int,
+    // 全名。读屏念它、MCP 脚本按它找 —— 底栏显示简称时也报全名。
     label: string,
-    // 竖栏收起后显示的短标签。显式给而不是截 label 的首字:
-    // 截取是猜(Slint 的 string 也没有 substring),显式是决定。
+    // 底栏上显示的字。底栏一格只有窗口宽的五分之一,四个字摆不下。
     short: string,
+    icon: string,
 }
 
-export global MusicSections {
-    out property <[MusicSection]> items: [
-        { id: 0, label: "每日推荐", short: "荐" },
-        { id: 4, label: "电台", short: "台" },
-        { id: 1, label: "我的歌单", short: "单" },
-        { id: 2, label: "搜索", short: "搜" },
-        { id: 3, label: "最近播放", short: "近" },
-        { id: 5, label: "已下载", short: "下" },
+export global Destinations {
+    // 侧栏三组,从上到下。分组之间只留视觉间隔,没有父级页面。
+    out property <[Destination]> listen: [
+        { id: 0, label: "每日推荐", short: "推荐", icon: "M4 6 L20 6 L20 20 L4 20 Z M4 10 L20 10 M8 3 L8 7 M16 3 L16 7" },
+        { id: 4, label: "电台", short: "电台", icon: "M4 9 L20 9 L20 20 L4 20 Z M7 9 L17 4 M14 14.5 A2.5 2.5 0 1 1 19 14.5 A2.5 2.5 0 1 1 14 14.5 M7 13 L11 13 M7 16 L11 16" },
+        { id: 2, label: "搜索", short: "搜索", icon: "M10.5 4 A6.5 6.5 0 1 1 10.5 17 A6.5 6.5 0 1 1 10.5 4 M15.5 15.5 L20 20" },
     ];
-}
+    out property <[Destination]> library: [
+        { id: 6, label: "我喜欢", short: "我喜欢", icon: "M12 20 C5 15 3 11.5 3 8.5 C3 6 5 4 7.5 4 C9.5 4 11 5.2 12 7 C13 5.2 14.5 4 16.5 4 C19 4 21 6 21 8.5 C21 11.5 19 15 12 20 Z" },
+        { id: 1, label: "我的歌单", short: "歌单", icon: "M4 6 L20 6 M4 11 L20 11 M4 16 L13 16 M17 14 L17 20 L21 18" },
+        { id: 3, label: "最近播放", short: "最近", icon: "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 M12 7 L12 12 L15.5 14" },
+        { id: 5, label: "已下载", short: "已下载", icon: "M12 4 L12 15 M7 10 L12 15 L17 10 M5 19 L19 19" },
+    ];
+    // 沉底那组。
+    out property <[Destination]> account: [
+        { id: 7, label: "个人", short: "个人", icon: "M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4 20 C4 16 8 14 12 14 C16 14 20 16 20 20" },
+        { id: 8, label: "设置", short: "设置", icon: "M12 9 A3 3 0 1 1 12 15 A3 3 0 1 1 12 9 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M19.1 4.9 L17 7 M7 17 L4.9 19.1" },
+    ];
 
-// 宽版式的竖栏。收起后只剩一列窄条,当前分区仍然选中 ——
-// 收起是「少占地方」,不是「回到默认页」。
-export component MusicRail inherits Rectangle {
-    in property <int> current;
-    in-out property <bool> collapsed: false;
+    // 紧凑版式底栏的四格与「更多」面板里的五项,从上面三组里取,标签不另抄一份。
+    out property <[Destination]> bar: [listen[0], listen[2], library[0], library[1]];
+    out property <[Destination]> more: [listen[1], library[2], library[3], account[0], account[1]];
+    out property <Destination> more-entry: {
+        id: -1, label: "更多", short: "更多",
+        icon: "M4 12 A1.6 1.6 0 1 1 7.2 12 A1.6 1.6 0 1 1 4 12 M10.4 12 A1.6 1.6 0 1 1 13.6 12 A1.6 1.6 0 1 1 10.4 12 M16.8 12 A1.6 1.6 0 1 1 20 12 A1.6 1.6 0 1 1 16.8 12",
+    };
 
-    callback selected(int);
+    in-out property <bool> more-open: false;
+    // 当前页在「更多」面板里:那时底栏亮的是「更多」。
+    out property <bool> in-more: Shell.destination == 4 || Shell.destination == 3
+        || Shell.destination == 5 || Shell.destination == 7 || Shell.destination == 8;
 
-    width: root.collapsed ? 40px : 132px;
-    background: Theme.overlay-weak;
-    border-radius: 10px;
-    animate width { duration: 180ms; easing: ease-out; }
+    // 某个目的地的全名。紧凑版式的页头用它。
+    public pure function label-of(id: int) -> string {
+        if (id == 0) { return listen[0].label; }
+        if (id == 4) { return listen[1].label; }
+        if (id == 2) { return listen[2].label; }
+        if (id == 6) { return library[0].label; }
+        if (id == 1) { return library[1].label; }
+        if (id == 3) { return library[2].label; }
+        if (id == 5) { return library[3].label; }
+        if (id == 7) { return account[0].label; }
+        return account[1].label;
+    }
 
-    VerticalLayout {
-        padding: 6px;
-        spacing: 4px;
-        alignment: start;
-
-        // 收起/展开。图标用箭头方向表意,收起时不写字 —— 那一列只有 40px 宽。
-        toggle := TouchArea {
-            height: 28px;
-
-            Text {
-                text: root.collapsed ? "»" : "«";
-                color: Theme.text-dim;
-                font-size: 16px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-
-            clicked => { root.collapsed = !root.collapsed; }
-        }
-
-        for item in MusicSections.items: Rectangle {
-            height: 34px;
-            border-radius: 8px;
-            background: root.current == item.id ? Theme.accent.with-alpha(0.2)
-                : (item-touch.has-hover ? Theme.overlay : transparent);
-            animate background { duration: 140ms; easing: ease-out; }
-
-            item-touch := TouchArea {
-                clicked => { root.selected(item.id); }
-                // 读屏与 MCP 脚本按名字找它(#159):按位置找的话,插进一个分区就全体错位。
-                accessible-role: tab;
-                accessible-label: item.label;
-                accessible-action-default => { root.selected(item.id); }
-            }
-
-            // 收起时只留一个字。画图标要五张 path,而它们此刻还不存在。
-            Text {
-                text: root.collapsed ? item.short : item.label;
-                font-family: "Maple Mono NF CN";
-                color: root.current == item.id ? Theme.accent-ink : Theme.text-dim;
-                font-size: 13px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
+    // 去某个目的地。侧栏、底栏、更多面板、横幅跳转都走这一处;
+    // 该取什么数归 Rust(music/list.rs 的 load_section)。
+    public function go(id: int) {
+        self.more-open = false;
+        Shell.destination = id;
+        Shell.select-section(id);
     }
 }
 
-// 紧凑版式的顶部分段条。五个词一行摆得下,不必抽屉。
-export component MusicBar inherits Rectangle {
-    in property <int> current;
+// 侧栏一行:图标 + 全名。选中态由背后的水滴提供(GPU 构建),否则自己画底。
+export component SideNavRow inherits Rectangle {
+    in property <Destination> item;
+    in property <bool> active;
+    in property <bool> gpu-selected;
+    callback clicked;
 
-    callback selected(int);
-
-    height: 44px;
-    background: Theme.overlay-weak;
     border-radius: 10px;
+    background: root.gpu-selected
+        ? (touch.has-hover ? Theme.overlay : transparent)
+        : (root.active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
+    animate background { duration: 120ms; easing: ease-out; }
 
     HorizontalLayout {
-        padding: 3px;
-        spacing: 3px;
+        padding-left: 14px;
+        padding-right: 10px;
+        spacing: 12px;
 
-        for item in MusicSections.items: Rectangle {
-            horizontal-stretch: 1;
-            border-radius: 7px;
-            background: root.current == item.id ? Theme.accent.with-alpha(0.2) : transparent;
-            animate background { duration: 140ms; easing: ease-out; }
-
-            // 有 id 才能被 MCP 脚本按 id 找到(#113),与宽版式那个同名。
-            item-touch := TouchArea {
-                clicked => { root.selected(item.id); }
-                // 读屏与 MCP 脚本按名字找它(#159):按位置找的话,插进一个分区就全体错位。
-                accessible-role: tab;
-                accessible-label: item.label;
-                accessible-action-default => { root.selected(item.id); }
+        VerticalLayout {
+            alignment: center;
+            Path {
+                width: 20px;
+                height: 20px;
+                viewbox-width: 24;
+                viewbox-height: 24;
+                commands: root.item.icon;
+                stroke: root.active ? Theme.accent : Theme.text-dim;
+                stroke-width: 1.8px;
+                fill: transparent;
             }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.item.label;
+            font-family: "Maple Mono NF CN";
+            color: root.active ? Theme.text : Theme.text-dim;
+            font-size: 14px;
+            font-weight: root.active ? 700 : 500;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
 
-            Text {
-                text: item.label;
-                font-family: "Maple Mono NF CN";
-                color: root.current == item.id ? Theme.accent-ink : Theme.text-dim;
-                font-size: 12px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+        accessible-role: tab;
+        accessible-label: root.item.label;
+        accessible-checkable: true;
+        accessible-checked: root.active;
+        accessible-action-default => { root.clicked(); }
+    }
+}
+
+// 「更多」面板:贴着底栏上沿的一块平铺,五项一行。点一项直达并收起;
+// 点面板外面也收起。不常驻,所以不是第二根导航条。
+export component MorePanel inherits Rectangle {
+    background: Theme.shadow.with-alpha(0.4);
+
+    TouchArea {
+        clicked => { Destinations.more-open = false; }
+    }
+
+    Rectangle {
+        x: 12px;
+        width: parent.width - 24px;
+        height: 92px;
+        y: parent.height - self.height - 12px;
+        background: Theme.surface;
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: Theme.divider;
+
+        // 吞掉面板上的点击,免得落到下面那层收起面板。
+        TouchArea {}
+
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 6px;
+
+            for entry in Destinations.more: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 12px;
+                background: Shell.destination == entry.id ? Theme.raised
+                    : (item.has-hover ? Theme.hover : transparent);
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Path {
+                            width: 22px;
+                            height: 22px;
+                            viewbox-width: 24;
+                            viewbox-height: 24;
+                            commands: entry.icon;
+                            stroke: Shell.destination == entry.id ? Theme.accent : Theme.text-dim;
+                            stroke-width: 1.8px;
+                            fill: transparent;
+                        }
+                    }
+                    Text {
+                        text: entry.label;
+                        font-family: "Maple Mono NF CN";
+                        color: Shell.destination == entry.id ? Theme.text : Theme.text-dim;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                item := TouchArea {
+                    clicked => { Destinations.go(entry.id); }
+                    accessible-role: tab;
+                    accessible-label: entry.label;
+                    accessible-checkable: true;
+                    accessible-checked: Shell.destination == entry.id;
+                    accessible-action-default => { Destinations.go(entry.id); }
+                }
             }
         }
     }
@@ -138,9 +199,7 @@ export component MusicBar inherits Rectangle {
 
 // 搜索结果的三个页签:歌曲 / 歌手 / 歌单。
 //
-// 与上面那条分段条形状一样但不是同一个:那条选的是「音乐页的哪个分区」,
-// 这条选的是「搜索结果里看哪一类」。合成一个带参数的组件会让两个不相干的
-// 决定共用一份状态,而它们各自变各自的。
+// 选的是「搜索结果里看哪一类」,与导航无关,只是同住一个文件。
 export struct SearchTab {
     label: string,
 }

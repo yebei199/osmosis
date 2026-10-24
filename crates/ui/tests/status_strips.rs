@@ -13,8 +13,8 @@ fn window(width: f32) -> MainWindow {
         .set_size(slint::LogicalSize::new(width, 800.0));
     ui.global::<Shell>().set_compact(width < 600.0);
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Shell>().set_destination(1);
     ui
 }
 
@@ -88,7 +88,7 @@ fn search_text_survives_opening_and_closing_the_play_page()
         for mask in [0, 7] {
             let ui = window(width);
             strips(&ui, mask);
-            ui.global::<Shell>().set_music_section(2);
+            ui.global::<Shell>().set_destination(2);
             let keyword =
                 element(&ui, "MusicPage::keyword");
             keyword.set_accessible_value("retained query");
@@ -187,7 +187,7 @@ fn every_strip_combination_reserves_space_in_both_layouts()
     for width in [420.0, 1000.0] {
         let ui = window(width);
         let page_id = if width < 600.0 {
-            "MusicPage::music-bar"
+            "MusicPage::page-title"
         } else {
             "MusicPage::playlist-list"
         };

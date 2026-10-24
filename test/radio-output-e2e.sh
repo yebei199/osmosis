@@ -29,6 +29,32 @@ call() {
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
  | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]; assert not r.get("isError"), r; print(r["content"][0]["text"])'
 }
+
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
 refresh() {
  win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
  root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["rootElementHandle"]))')
@@ -53,11 +79,7 @@ act() {
 }
 profile() {
  refresh
- local h
- h=$(labelled "RoundControl::touch" "个人")
- [ -n "$h" ] || h=$(nth "NavItem::touch" 2)
- [ -n "$h" ] || exit 1
- call click_element "{\"elementHandle\":$h}" >/dev/null
+ go_to 个人
 }
 radio() {
  PORT="$PORT" PG_CONTAINER="$PG_CONTAINER" ADB="adb -s ${ANDROID_SERIAL:-unused}" bash "$(dirname "$0")/radio-e2e.sh" fm

@@ -231,7 +231,7 @@ fn a_prefetched_track_is_only_used_for_its_own_track() {
     );
 }
 
-/// 四个编号各自认出自己的分区,认不出的落回每日推荐 ——
+/// 九个编号各自认出自己的目的地,认不出的落回每日推荐 ——
 /// 那是开局那一页,总比留在原地什么都不发生强。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
@@ -242,6 +242,11 @@ fn each_section_knows_what_to_load() {
     assert_eq!(Section::from_index(1), Section::Playlists);
     assert_eq!(Section::from_index(2), Section::Search);
     assert_eq!(Section::from_index(3), Section::Recent);
+    assert_eq!(Section::from_index(4), Section::Radio);
+    assert_eq!(Section::from_index(5), Section::Downloads);
+    assert_eq!(Section::from_index(6), Section::Liked);
+    assert_eq!(Section::from_index(7), Section::Profile);
+    assert_eq!(Section::from_index(8), Section::Settings);
     assert_eq!(Section::from_index(99), Section::Daily);
     assert_eq!(Section::from_index(-1), Section::Daily);
 }
@@ -257,7 +262,7 @@ fn only_the_daily_section_stamps_the_day() {
     let (ui, deck) = deck_window();
     let weak = ui.as_weak();
 
-    for section in [1, 2, 3] {
+    for section in [1, 2, 3, 6, 7, 8] {
         load_section(&weak, &deck, section);
         assert!(
             deck.last_daily.get().is_none(),
@@ -953,4 +958,51 @@ fn the_radio_list_is_grouped_too() {
         app_core::facets::Facet::Artist.index(),
     );
     assert_eq!(ui.global::<Player>().get_pile_count(), 3);
+}
+
+/// 开电台时用户站在哪,决定这批歌摆上屏还是只进电台自己那份。返回开完之后摆着的视图。
+///
+/// 只看 `start` 同步做完的那一段:请求在 spawn 出去的协程里,这台窗口不推进它,
+/// 不发 HTTP。
+#[cfg(not(target_arch = "wasm32"))]
+fn view_after_radio_start(
+    destination: i32,
+    open_playlist: &str,
+) -> Option<ViewSource> {
+    let (ui, deck) = deck_window();
+    ui.global::<Shell>().set_destination(destination);
+    ui.global::<crate::Library>()
+        .set_open_playlist_name(open_playlist.into());
+    super::radio::start(&ui, &deck, api::RadioMode::Fm);
+    deck.views.current_source()
+}
+
+/// 站在电台区:电台那份当场切上屏,先是加载态。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_on_its_page_shows_it() {
+    assert_eq!(
+        view_after_radio_start(Section::Radio as i32, ""),
+        Some(ViewSource::Radio)
+    );
+}
+
+/// 在别的目的地开(播放页的心动模式):眼前那页不换。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_elsewhere_keeps_the_page() {
+    assert_eq!(
+        view_after_radio_start(Section::Daily as i32, ""),
+        None
+    );
+}
+
+/// 电台区里正开着一张歌单:也不把它换掉。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_over_an_open_playlist_keeps_it() {
+    assert_eq!(
+        view_after_radio_start(Section::Radio as i32, "夜"),
+        None
+    );
 }

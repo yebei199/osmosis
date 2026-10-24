@@ -471,15 +471,16 @@ desktop-exit-check:
 # 在看不见的无头显示里起一个干净的桌面实例,截下合成器输出的像素,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
-# tab 指定开局页(0=Home、1=Music):`just shot 420 1` 直接截紧凑版的 Music 页 ——
-# 不必再靠 MCP 模拟点击切页。窗口高固定 900。
+# dest 指定开局目的地(编号见 crates/ui/slint/musicnav.slint 的 Destinations,
+# 0=每日推荐、8=设置):`just shot 420 8` 直接截紧凑版的设置页 —— 不必再靠 MCP 模拟点击切页。
+# 窗口高固定 900。
 #
 # 无头 sway 借 GPU 渲染节点合成,wgpu 纹理是真的;应用在自己的网络命名空间里,单实例锁
 # 不和用户开着的实例打架,所以不必先杀实例,也不抢用户桌面的焦点(MEO-1900,
 # 细节见 test/headless/README.md)。MCP 的 take_screenshot 也采得到 wgpu 纹理
 # (AGENTS.md 2026-08-13 实测),判「画出来没有」够用;逐像素比对认这条。
 [group('桌面')]
-shot width="" tab="0":
+shot width="" dest="0":
     # 先编译再启动:否则「等窗口」会把几分钟的编译时间也等进去,看着像卡死。
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    nix-shell slint.nix --run 'bun test/headless/headless.ts shot --out dist/shot.png --width "{{width}}" --tab "{{tab}}"'
+    nix-shell slint.nix --run 'bun test/headless/headless.ts shot --out dist/shot.png --width "{{width}}" --dest "{{dest}}"'

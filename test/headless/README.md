@@ -13,7 +13,7 @@ pasta 的独立网络命名空间里连上它,用 grim 抓像素。用户的 nir
 `OSMOSIS_RENDER_NODE` 可覆盖)。
 
 ```sh
-bun test/headless/headless.ts shot --out dist/shot.png --width 420 --height 900 --tab 1
+bun test/headless/headless.ts shot --out dist/shot.png --width 420 --height 900 --dest 8
 bun test/headless/headless.ts run --dir <目录> --mcp-port 8091   # 前台常驻,SIGTERM 收尾
 bun test/headless/headless.ts capture --dir <目录> --out a.png    # 从常驻会话抓一张
 nix-shell slint.nix --run 'bun test/headless/check.ts'           # AC 检查,真起一遍

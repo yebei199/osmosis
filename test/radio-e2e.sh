@@ -54,6 +54,32 @@ call() {
   | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
 }
 
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
+
 # 从 from 往下找 id 的元素,第 n 个(缺省第一个;-1 是最后一个)。找不到给空串。
 nth() {
   call query_element_descendants "{\"elementHandle\":$1,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$2\"}]}" \
@@ -171,9 +197,7 @@ for _ in 1 2 3 4; do
   sleep 1.5
 done
 [ -z "$(nth "$root" "PlayPage::queue-entry-touch")" ] || { echo "收不起播放页" >&2; exit 1; }
-music=$(nth "$root" "NavItem::touch" 1)
-must "$music" "音乐入口"
-call click_element "{\"elementHandle\":$music}" >/dev/null
+go_to 每日推荐
 sleep 1
 
 # 开电台之前这个账号听过的全部歌。私人 FM 之前没放过歌的话,起播之后再认账号 ——
@@ -190,10 +214,7 @@ played_before=$(played)
 queue_before=$(queue_row)
 
 if [ "$MODE" != heart ]; then
-  item=$(labelled "MusicRail::item-touch" "电台")
-  [ -n "$item" ] || item=$(labelled "MusicBar::item-touch" "电台")
-  must "$item" "「电台」分区"
-  act "$item"
+  go_to 电台
 else
   [ -n "$who" ] || { echo "heart: 要先在放一首歌(它是种子)" >&2; exit 1; }
   press "RoundControl::touch" "更多"

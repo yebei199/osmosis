@@ -1,4 +1,4 @@
-//! 播放组从完整提示收成胶囊，指针面板和壳页控件共享真实布局。
+//! 播放组从完整提示收成胶囊，指针面板和各页控件共享真实布局。
 
 use std::{cell::Cell, rc::Rc, time::Duration};
 
@@ -18,8 +18,7 @@ fn window(width: f32, height: f32) -> MainWindow {
         .set_size(slint::LogicalSize::new(width, height));
     ui.global::<Shell>().set_compact(width < 600.0);
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_destination(1);
     ui.global::<Player>().set_tracks(ModelRc::new(
         VecModel::from(vec![TrackRow {
             id: "track".into(),
@@ -181,6 +180,7 @@ fn assert_clear(ui: &MainWindow) {
         "TouchArea",
         "LineEdit",
         "NavItem",
+        "SideNavRow",
         "RoundControl",
         "HoverButton",
     ] {
@@ -342,18 +342,16 @@ fn the_panel_routes_join_and_leave_through_the_existing_actions()
     }
 }
 
-/// 胶囊不能盖住420宽下的任何壳页头部控件，包括搜索与六种音乐分区。
+/// 胶囊不能盖住420宽下任何目的地的头部控件。
 #[test]
-fn the_compact_capsule_avoids_controls_on_every_shell_page()
-{
+fn the_compact_capsule_avoids_controls_on_every_destination()
+ {
     testing::init_no_event_loop();
-    for tab in 0..4 {
-        for section in 0..6 {
+    for destination in 0..9 {
+        {
             let ui = window(420.0, 800.0);
-            ui.global::<Shell>().set_current_tab(tab);
-            ui.global::<Shell>().set_music_section(section);
-            ui.global::<ui::Downloads>()
-                .set_active(section == 5);
+            ui.global::<Shell>()
+                .set_destination(destination);
             collapse(&ui);
             assert_clear(&ui);
             let capsule =
@@ -367,25 +365,26 @@ fn the_compact_capsule_avoids_controls_on_every_shell_page()
     }
 }
 
-/// 宽版600高时，胶囊与上下两组导航和各音乐分区操作都分开。
+/// 宽版最矮(520高)时，胶囊仍夹在侧栏轨道七行与沉底两行之间，不压任何一行。
 #[test]
 fn the_wide_capsule_avoids_navigation_even_in_a_short_window()
  {
     testing::init_no_event_loop();
-    for height in [600.0, 800.0] {
-        for section in 0..6 {
+    for height in [520.0, 800.0] {
+        for destination in 0..9 {
             let ui = window(1000.0, height);
-            ui.global::<Shell>().set_music_section(section);
-            ui.global::<ui::Downloads>()
-                .set_active(section == 5);
+            ui.global::<Shell>()
+                .set_destination(destination);
             collapse(&ui);
             assert_clear(&ui);
             let capsule =
                 element(&ui, "MainWindow::group-capsule");
-            assert_eq!(capsule.absolute_position().x, 26.0);
+            // 侧栏 168 宽,胶囊 44,水平居中。
+            assert_eq!(capsule.absolute_position().x, 62.0);
+            // nav-pad 8 + 七行 × (44 + 4) + 分组间隔 18 + 8。
             assert_eq!(
                 capsule.absolute_position().y,
-                164.0
+                370.0
             );
         }
     }
@@ -398,19 +397,19 @@ fn the_compact_header_reserves_a_slot_only_while_a_group_exists()
     testing::init_no_event_loop();
     let ui = window(420.0, 800.0);
     let full_width =
-        element(&ui, "MusicPage::music-bar").size().width;
+        element(&ui, "MusicPage::page-title").size().width;
     assert_eq!(
-        element(&ui, "MusicPage::music-bar").size().height,
+        element(&ui, "MusicPage::page-title").size().height,
         44.0
     );
     collapse(&ui);
     assert_eq!(
-        element(&ui, "MusicPage::music-bar").size().width,
+        element(&ui, "MusicPage::page-title").size().width,
         full_width - 56.0
     );
     ui.global::<Shell>().set_group_banner("".into());
     assert_eq!(
-        element(&ui, "MusicPage::music-bar").size().width,
+        element(&ui, "MusicPage::page-title").size().width,
         full_width
     );
 }

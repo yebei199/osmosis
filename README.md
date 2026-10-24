@@ -1,12 +1,11 @@
 # Osmosis
 
-Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device」这条
-多端融合架构立住:一个进程、一块显存、一条类型系统,UI 与 3D 之间什么都不隔,
-一份代码出 desktop / android / web。音乐应用是它的首个载体,搜歌、边下边播、
-多设备遥控、封面点云,每一项都在真实产品的压力下检验这套架构;这条更贵的路
-买到了什么、还能长成什么,见 [`docs/note/vision.md`](docs/note/vision.md)。
-载体自己的路线(应用内 AI 助手、从听过看过的内容攒生词表、资讯与视频源)
-继续往前走,但项目存在的理由是架构本身。
+Osmosis 是一个带 3D 视觉的音乐播放器:搜歌、边下边播、多设备遥控、封面点云与卡墙。
+它建在「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device」这条多端融合
+架构上:一个进程、一块显存、一条类型系统,UI 与 3D 之间什么都不隔,一份代码出
+desktop / android。这条更贵的路买到了什么、还能长成什么,见
+[`docs/note/vision.md`](docs/note/vision.md)。路线上还有一个应用内 AI 助手,
+它也是音乐功能:把播放器已有的能力当工具调。
 
 **端**:
 
@@ -25,11 +24,9 @@ Osmosis 要把「[Slint](https://slint.dev) UI + Bevy 3D + 同一个 wgpu device
 | 遥控                    | 能用。一台设备选另一台当输出,那台自己拉流出声       |
 | 多设备同步出声          | 重做中(#137)。旧的 WebRTC 同播已删               |
 | 3D 可视化               | 能用(desktop / android)。播放页的封面点云          |
-| AI agent                | 未开工。形态已定:应用内助手,把应用已有能力当工具调 |
-| 背单词                  | 未开工。词从应用内的内容里抽,不做独立词库          |
-| 内容源接入(资讯 / 视频) | 未开工                                             |
+| AI 助手                 | 未开工。形态已定:应用内助手,把播放器已有能力当工具调 |
 
-后三行是载体路线的意图,一行代码都还没有;任务总账在 [`docs/TODO.md`](docs/TODO.md)。
+最后一行是路线上的意图,一行代码都还没有;任务总账在 [`docs/TODO.md`](docs/TODO.md)。
 
 界面有两种**版式**,由运行时窗口宽度切换(< 600px 导航在底部,否则在左侧竖栏),桌面上把窗口
 拖窄就能看到移动端的样子,见 [`docs/adr/0007`](docs/adr/0007-layout-mode-by-width-not-by-platform.md)。

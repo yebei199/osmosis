@@ -90,9 +90,9 @@ def sample(args):
 
 
 def section(args, index):
-    """分区只用显示名，不依赖 MusicRail/MusicBar 组件或下标。"""
+    """目的地只用全名，不依赖组件下标。"""
     wanted = {0: "每日推荐", 1: "我的歌单"}[index]
-    args.client.by_label(wanted).click()
+    args.client.destination(wanted)
 
 
 def open_playlist(args, name=None, index=None):
@@ -175,14 +175,8 @@ def step_aba(args, out):
 
 
 def step_relogin(args, out):
-    # 宽版式的设置是侧栏底下那颗带标签的圆钮;紧凑版式是底栏第四格(Nav.items 两项
-    # 之后接着排 bottom-items,设置是其中第二项)
-    """保留旧壳设置入口的重新登录兼容场景。"""
-    tabs = handles(args, "NavItem::touch")
-    to_settings = button(args, "设置") or (tabs[3] if len(tabs) > 3 else None)
-    if to_settings is None:
-        sys.exit("等不到设置入口")
-    click(args, to_settings)
+    """从设置页退出再登录。"""
+    args.client.destination("设置")
     logout = wait_for("退出登录键", lambda: button(args, "退出登录"))
     click(args, logout)
     wait_for("登录页", lambda: handles(args, "LoginPage::username"))
@@ -190,9 +184,6 @@ def step_relogin(args, out):
     subprocess.run(
         [str(Path(__file__).resolve().parent.parent / "mcp-login.sh")], check=True, env=env
     )
-    legacy_music = handles(args, "NavItem::touch")
-    if len(legacy_music) > 1:
-        click(args, legacy_music[1])
     section(args, 1)
     open_playlist(args, name=LIKED)
     ok, _, _ = watch(args, "relogin", out)
