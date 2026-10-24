@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from pick import run_pick
+from pick import escape, run_pick
 from views import step_aba, step_enter
 
 
@@ -19,6 +19,8 @@ def test_pick(mcp, mode):
 @pytest.mark.live
 def test_views(mcp, tmp_path):
     """真实 enter 与 ABA 路径采样，禁止任何一帧混入外来曲目。"""
+    if mcp.elements([{"matchElementTypeName": "PlayPage"}]):
+        escape(mcp)
     args = argparse.Namespace(client=mcp, watch=12, port=8091)
     with (tmp_path / "views.jsonl").open("w") as out:
         assert step_enter(args, out)

@@ -5,6 +5,7 @@ import io
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import NotRequired, TypedDict
 
 import pytest
 from PIL import Image
@@ -12,10 +13,29 @@ from PIL import Image
 from mcp_client import Client, McpError, expect
 
 
+class ProtocolState(TypedDict):
+    """协议替身的可变观察状态，每个 fixture 独占。"""
+
+    sse: bool
+    error: str | None
+    queries: int
+    clicks: int
+    image: str
+    stale: NotRequired[bool]
+    requests: list[dict[str, object]]
+
+
 @pytest.fixture
 def endpoint():
     """每个用例独占 HTTP 服务和状态，结束后等待线程退出。"""
-    state = {"sse": False, "error": None, "queries": 0, "clicks": 0}
+    state: ProtocolState = {
+        "sse": False,
+        "error": None,
+        "queries": 0,
+        "clicks": 0,
+        "image": "",
+        "requests": [],
+    }
     stream = io.BytesIO()
     Image.new("RGB", (10, 10), "black").save(stream, format="PNG")
     state["image"] = base64.b64encode(stream.getvalue()).decode()
@@ -23,14 +43,14 @@ def endpoint():
     class Handler(BaseHTTPRequestHandler):
         """实现必要的 MCP 边界，业务判定仍调用真实库。"""
 
-        def log_message(self, *args):
+        def log_message(self, format: str, *args: object) -> None:
             """禁止 HTTP 日志混入测试结果。"""
 
         def do_POST(self):
             """按工具返回协议数据，可注入 SSE 或错误。"""
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             name = body["params"]["name"]
-            state.setdefault("requests", []).append(body["params"])
+            state["requests"].append(body["params"])
             values = {
                 "list_windows": {"windowHandles": [1]},
                 "get_window_properties": {"rootElementHandle": 2},
@@ -46,7 +66,7 @@ def endpoint():
             content = [{"type": "text", "text": json.dumps(values.get(name, {}))}]
             if name == "take_screenshot":
                 content = [{"type": "image", "data": state["image"], "mimeType": "image/png"}]
-            result = {"content": content}
+            result: dict[str, object] = {"content": content}
             if name == "get_element_properties" and state.get("stale"):
                 state["stale"] = False
                 result = {

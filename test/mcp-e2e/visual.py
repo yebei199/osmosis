@@ -25,7 +25,11 @@ def compare(actual, baseline, diff, *, channel_threshold=8, ratio_threshold=0.00
         canvas.save(diff)
         raise AssertionError(f"screenshot size changed: {expected.size} -> {image.size}")
     delta = ImageChops.difference(image, expected)
-    changed = sum(max(pixel) > channel_threshold for pixel in delta.getdata())
+    channels = delta.split()
+    maximum = channels[0]
+    for channel in channels[1:]:
+        maximum = ImageChops.lighter(maximum, channel)
+    changed = sum(maximum.histogram()[channel_threshold + 1 :])
     ratio = changed / (image.width * image.height)
     if ratio > ratio_threshold:
         delta.convert("RGB").save(diff)
