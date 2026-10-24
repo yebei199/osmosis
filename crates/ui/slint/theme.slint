@@ -145,3 +145,64 @@ export global Theme {
     out property <color> danger-line: root.dark ? #7a4f4a : #d9a9a2;
     out property <color> danger-text: root.dark ? #f2dcd8 : #6b2a22;
 }
+
+// —— 形状、字号、间距、动效、阴影的档位(MEO-1877)——
+//
+// 和色板同一个道理:页面上只写 Radius.md、TextSize.body,不写 14px。档位从改之前的
+// 分布里取最常用的几个值当锚点,一次性的值往最近的一档归。`crates/ui/tests/literals.rs`
+// 在 .slint 里扫字面圆角、字号、时长,豁免逐条带理由。
+
+export global Radius {
+    // 行、小按钮、缩略图。
+    out property <length> sm: 8px;
+    // 卡片、输入框、面板。
+    out property <length> md: 14px;
+    // 浮层、大卡。
+    out property <length> lg: 22px;
+    // 药丸与正圆:取多大都行,渲染时夹到短边一半。头像、圆钮这种「半径等于尺寸一半」
+    // 的也走它,别再按像素归档 —— 那样尺寸一改就不圆了。
+    out property <length> pill: 999px;
+}
+
+export global TextSize {
+    // 角标、时长、次要说明。
+    out property <length> caption: 11px;
+    out property <length> small: 12px;
+    // 正文与列表行。
+    out property <length> body: 14px;
+    // 区块标题、歌名。
+    out property <length> title: 17px;
+    out property <length> headline: 22px;
+    // 页面大标题。
+    out property <length> display: 32px;
+}
+
+export global Space {
+    out property <length> xs: 4px;
+    out property <length> sm: 8px;
+    out property <length> md: 12px;
+    out property <length> lg: 16px;
+    out property <length> xl: 24px;
+}
+
+export global Motion {
+    // 悬停、按下、选中这类即时反馈。
+    out property <duration> fast: 140ms;
+    // 展开、收起、换页。
+    out property <duration> medium: 280ms;
+    // 大块位移与淡入。
+    out property <duration> slow: 500ms;
+    // 主曲线。
+    out property <easing> ease: ease-out;
+    // 按下回弹、弹出:有意冲过头再落回,是手感不是随手调的值。
+    out property <easing> spring: cubic-bezier(0.56, 1.35, 0.52, 1.0);
+}
+
+export global Elevation {
+    // 贴着底的小浮起(文字描边那种)。
+    out property <length> low-blur: 6px;
+    out property <length> low-y: 2px;
+    // 浮在内容上的面板与控制条。
+    out property <length> high-blur: 30px;
+    out property <length> high-y: 14px;
+}
