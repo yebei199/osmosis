@@ -6,14 +6,13 @@ mod download;
 mod facets;
 mod fonts;
 mod group_capsule;
-mod home;
 mod liked;
 mod login;
 mod lyrics_page;
 mod music_list_layout;
-mod music_nav;
 mod music_page_highlight;
 mod nav_glass;
+mod navigation;
 #[path = "player_bar/main.rs"]
 mod player_bar;
 mod player_bar_reserve;
