@@ -1,0 +1,47 @@
+# 公共 MCP 机制的协议替身不代替真实应用样板；正式基准等 S3。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "pytest 插件连接 HTTP MCP，故意破坏元素截图后执行视觉断言"
+observe = "退出码为 1，自动保存截图、元素树及像素差异图"
+tests = ["test_visual::test_broken_element_produces_all_failure_artifacts"]
+doubles = ["随机端口协议服务提供确定截图，只证明公共库与 pytest 机制"]
+mutation = "临时白色基准对黑色元素截图使真实 pytest 子进程失败，去掉失败钩子则最终产物断言失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+entry = "真实本机 MCP 客户端从音乐页，分别走列表/卡墙三连点与 views enter/ABA"
+observe = "起播恰好一次且发布一次或新增检查点；views 最终集合非空且采样无外来曲目"
+tests = ["test_scenarios::test_pick[list]", "test_scenarios::test_pick[wall]", "test_scenarios::test_views"]
+doubles = ["仅外部音乐提供方复用 remote-behavior/media.py 的确定音源及真实 gRPC；桌面、生产 server、独立 Postgres 和 MCP 不替换"]
+mutation = "库中 play_events 或发布计数超限、views 采样出现最终集合外曲目均使场景失败"
+
+[[ac]]
+id = "AC-2"
+kind = "regression"
+entry = "公共库替换旧协议、发布判据保持不变"
+observe = "JSON/SSE 动态选择器、错误传播与发布/检查点边界保持成立"
+tests = [
+  "test_acceptance::test_unselected_suites_have_empty_results_without_erasing_selected_tests",
+  "test_local_app::test_shared_virtual_sink_is_idempotent_and_survives_fixture_cleanup",
+  "test_local_app::test_process_is_reaped_when_setup_fails",
+  "test_local_app::test_independent_runs_have_distinct_container_names",
+  "test_local_app::test_database_is_removed_when_setup_fails",
+  "test_local_app::test_failed_container_creation_keeps_original_error",
+  "test_local_app::test_port_guard_refuses_live_listener_but_allows_closed_connections",
+  "test_local_app::test_database_and_state_belong_to_this_run",
+  "test_client::test_label_selector_can_require_button_role",
+  "test_client::test_dynamic_selectors_wait_and_click_once[False]",
+  "test_client::test_dynamic_selectors_wait_and_click_once[True]",
+  "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[1-1-old-True]",
+  "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[1-0-new-True]",
+  "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[1-0-old-False]",
+  "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[2-1-old-False]",
+  "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[1-2-new-False]",
+]
+doubles = ["HTTP 协议服务和 UI/数据库边界替身；真实产品链路由同 AC 的 live 用例验证"]
+
+[[ac]]
+id = "AC-3"
+none = "文档审查：test/README.md 说明新增 pytest 用例、失败产物和基准更新，不添加文字匹配测试"

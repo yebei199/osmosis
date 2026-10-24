@@ -1,5 +1,71 @@
 # test —— 端到端脚本与浏览器侧的对照页
 
+## mcp-e2e/: 公共 MCP 库与 pytest 样板
+
+库负责连接、动态 id / 无障碍标签选择、等待断言与失败产物，旧 pick/views 入口调用同一实现。
+默认样板只替换外部音乐提供方：复用 remote-behavior/media.py 的确定音源和真实 gRPC，桌面、
+生产 server、Postgres、MCP 点击与查库断言均真实执行。每个 app 用例独立创建容器、账号和状态目录，
+准备互不相交的日推、系统「我的喜欢」及另一个歌单；结束或初始化失败时按资源身份清理。
+不会修改 .env 中的真实账号，也不把协议替身测试当成产品 UI 验收。
+
+所有 fixture 桌面启动前都调用 test/null-sink.ts，并用返回的节点名设置 PIPEWIRE_NODE。
+共享 null sink 幂等且不由 fixture 删除，不从真实声卡出声、不改系统默认输出。测试验证幂等性和子进程的真实环境。
+
+前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
+3000/8091 因当前编译期地址而必须独占，app 用例串行运行；端口被占直接失败，不杀其他会话。
+依赖由 uv.lock 固定。验收分流入口按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
+
+```sh
+# 只跑库、像素机制、资源生命周期和迁移判据：
+uv run --project test/mcp-e2e pytest test/mcp-e2e/test_client.py test/mcp-e2e/test_visual.py test/mcp-e2e/test_acceptance.py test/mcp-e2e/test_local_app.py test/mcp-e2e/test_scenarios.py -m 'not app'
+# 隔离环境验证真实列表、卡墙和 views；分流入口负责构建，不访问真实网易：
+bun test/mcp-e2e/accept-run.ts subset 'test_scenarios::test_pick[list]' 'test_scenarios::test_pick[wall]' test_scenarios::test_views
+# 可选真实上游模式：调用者先起后端、GPU debug 桌面并登录到音乐页，不进入默认验收：
+uv run --project test/mcp-e2e pytest test/mcp-e2e/test_scenarios.py -m app --mcp-live --mcp-url http://127.0.0.1:8091/mcp
+```
+
+真实上游模式要求推荐有至少两首、系统「我的喜欢」与另一个歌单非空，账号没有其他端续播；
+数据库环境沿旧 pick 入口的 PG_CONTAINER / PG_DB。网易网络、凭据与人工维护的数据可能使它失败，
+这种失败不阻塞默认隔离验收。曾在当前代理会话观察到外部 DNS operation not permitted、连接
+no route to host，这只说明该次会话的访问结果，不能推断整台机器的网络状况。
+
+新增用例放在本目录的 test_*.py，声明 mcp 参数即可使用公共 fixture；需要隔离真实应用时标记
+pytest.mark.app，并用 scenario_env 将数据库断言指向本轮容器。新模块还需登记到 accept-run.ts
+的模块集合及相关 acceptance 映射。测试逻辑不要直接构造被测的播放结果。
+
+```python
+import pytest
+
+@pytest.mark.app
+def test_daily_wall(mcp):
+    # 每次操作重新定位；等待只重试读取，点击本身只发送一次。
+    mcp.by_label("每日推荐", role="Button").click()
+    mcp.by_id("WallView::wall-area").handle()
+```
+
+标签选择使用 mcp.by_label("每日推荐")；标题和按钮同名时加 role="Button"。
+属性读取用 properties()，外部真相源用 mcp_client.expect 的 equals 参数作有界断言。
+分区只认无障碍标签，样板不依赖 Home、NavItem 下标或 MusicRail/MusicBar 组件名。
+views 默认覆盖 enter/ABA；relogin 留在旧 CLI 兼容路径，等 S1 后再迁。
+
+pytest 失败自动保存 screenshot.png 与 element-tree.json，采集错误另存 capture-errors.txt，
+不覆盖原断言。视觉断言 mcp.expect_screenshot(baseline_path, tmp_path) 超限还保存 diff.png。
+--mcp-artifacts 指定每轮独立产物的父目录；验收入口也接受 MCP_ARTIFACTS 环境变量。
+插件入口是 mcp_pytest；其他目录复用时将库目录放入 PYTHONPATH 并用 -p mcp_pytest。
+
+像素规则是任一 RGBA 通道差 > 8 算变化，变化像素占比 > 0.1% 判失败，等于阈值通过。
+缺基准、尺寸变化直接失败，不自动接受新图；失败输出差异图，缺基准时没有可比较图。
+正式基准等 S3 合回后生成，本轮只在测试临时目录造图。GPU 不稳时，用相同的软件渲染配置、
+窗口尺寸和状态采集 actual.png，S3 收尾复核阈值后再显式执行唯一的基准重生成命令：
+
+```sh
+uv run --project test/mcp-e2e python test/mcp-e2e/visual.py update actual.png test/mcp-e2e/baselines/example.png
+```
+
+创建正式 baselines 目录前先补职责 README。更新命令只复制已校验图片，不启动应用、不切渲染器；
+采图使用 mcp.screenshot(actual_path)。本轮仓库没有正式基准，故意改变临时截图的 pytest 子进程
+验证了非零退出及三份失败产物，不能将它表述为真实产品 UI 已经通过。
+
 ## remote-behavior/ —— 三个真实客户端的遥控音频验收
 
 独立 Linux 显示、namespace、数据库及音频服务，MCP 驱动列表、卡墙和遥控操作，
@@ -156,7 +222,7 @@ PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,�
 命令由 `ADB` 给(缺省 `adb`):桌面实例在 namespace 里时够不到宿主的 adb,要写成能够到的
 命令,够不到就直接失败,不静默跳过。
 
-每一项开头都先复位:收起播放页、回到音乐页、选这一项要的分区;队列页那一项看播放页与队列页
+每一项从已打开的音乐页起步，先收起播放页、按标签选这一项要的分区;队列页那一项看播放页与队列页
 是不是已经开着,开着就直接用。所以连着跑四项(`list → wall → search → queue`)与单独跑
 一项结果一样,不依赖上一项留下的页面。
 
