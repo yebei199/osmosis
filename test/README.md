@@ -8,11 +8,16 @@
 准备互不相交的日推、系统「我的喜欢」及另一个歌单；结束或初始化失败时按资源身份清理。
 不会修改 .env 中的真实账号，也不把协议替身测试当成产品 UI 验收。
 
+fixture 桌面开在 test/headless/ 的无头显示里（MEO-1900）：用户桌面不出窗口、不抢焦点，
+MCP 从 pasta 网络命名空间转发到随机宿主端口，所以和用户开着的 8091 实例并存。
+截图（视觉断言与失败产物）取无头合成器的像素（Client.pixels），不走 MCP take_screenshot，
+可以后台或无人值守跑。
+
 所有 fixture 桌面启动前都调用 test/null-sink.ts，并用返回的节点名设置 PIPEWIRE_NODE。
 共享 null sink 幂等且不由 fixture 删除，不从真实声卡出声、不改系统默认输出。测试验证幂等性和子进程的真实环境。
 
 前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
-3000/8091 因当前编译期地址而必须独占，app 用例串行运行；端口被占直接失败，不杀其他会话。
+3000 因当前编译期地址而必须独占，app 用例串行运行；端口被占直接失败，不杀其他会话。
 依赖由 uv.lock 固定。验收分流入口按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
 
 ```sh
@@ -65,6 +70,12 @@ uv run --project test/mcp-e2e python test/mcp-e2e/visual.py update actual.png te
 创建正式 baselines 目录前先补职责 README。更新命令只复制已校验图片，不启动应用、不切渲染器；
 采图使用 mcp.screenshot(actual_path)。本轮仓库没有正式基准，故意改变临时截图的 pytest 子进程
 验证了非零退出及三份失败产物，不能将它表述为真实产品 UI 已经通过。
+
+## headless/ —— 桌面实例开在看不见的显示里
+
+`just shot`、`just desktop-dev` 和上面的夹具都经它起实例；检查脚本
+`bun test/headless/check.ts`（在 slint.nix 环境里跑）判焦点不变、无新窗口、无真实音频链路、
+GPU 纹理在、与已有实例并存、AI 会话守卫。见 [headless/README.md](headless/README.md)。
 
 ## remote-behavior/ —— 三个真实客户端的遥控音频验收
 
