@@ -1,4 +1,6 @@
 # 构建配置与测试入口重组，不改变产品逻辑或既有测试内容。
+regression = "none: 本任务只调整构建配置与测试入口，不改产品逻辑或既有测试内容；原用例集合与执行结果由 AC-3 的语义审查证据核对。"
+
 [[ac]]
 id = "AC-1"
 none = "semantic review / no executable behavior：普通 UI 集成测试单产物小于 2GB；证据为 .dispatch/MEO-1880-final-du.log，实测 203,538,432 字节。该测量不使用覆盖率产物，严格前后比较随夜间观察补充。"
