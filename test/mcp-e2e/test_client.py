@@ -30,6 +30,7 @@ def endpoint():
             """按工具返回协议数据，可注入 SSE 或错误。"""
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             name = body["params"]["name"]
+            state.setdefault("requests", []).append(body["params"])
             values = {
                 "list_windows": {"windowHandles": [1]},
                 "get_window_properties": {"rootElementHandle": 2},
@@ -46,6 +47,17 @@ def endpoint():
             if name == "take_screenshot":
                 content = [{"type": "image", "data": state["image"], "mimeType": "image/png"}]
             result = {"content": content}
+            if name == "get_element_properties" and state.get("stale"):
+                state["stale"] = False
+                result = {
+                    "isError": True,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Element handle refers to element that was destroyed",
+                        }
+                    ],
+                }
             if state["error"] == "tool":
                 result["isError"] = True
             reply = {"jsonrpc": "2.0", "id": body["id"], "result": result}
@@ -79,6 +91,10 @@ def test_dynamic_selectors_wait_and_click_once(endpoint, sse):
     client = Client(url, timeout=0.2, interval=0.001)
     client.by_id("TrackList::touch").click()
     assert state["queries"] >= 2
+    assert any(
+        request["arguments"].get("queryStack") == [{"matchElementId": "TrackList::touch"}]
+        for request in state["requests"]
+    )
     assert state["clicks"] == 1
     assert client.by_label("Play").properties()["accessibleLabel"] == "Play"
 
@@ -123,3 +139,30 @@ def test_capture_errors_preserve_original_failure(endpoint, tmp_path):
     state["error"] = "tool"
     Client(url).capture(tmp_path)
     assert "list_windows" in (tmp_path / "capture-errors.txt").read_text()
+
+
+def test_stale_read_requeries_but_does_not_replay_click(endpoint):
+    """元素重建时只重新读取，点击仍只发送一次。"""
+    url, state = endpoint
+    state["stale"] = True
+    client = Client(url, timeout=1, interval=0.001)
+    assert client.by_label("Play").properties()["accessibleLabel"] == "Play"
+    client.by_id("TrackList::touch").click()
+    assert state["clicks"] == 1
+
+
+def test_loopback_ignores_http_proxy(endpoint, monkeypatch):
+    """机器代理配置不能把本机 MCP 请求送向外网。"""
+    url, _ = endpoint
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    monkeypatch.setenv("no_proxy", "")
+    assert Client(url).call("list_windows")["windowHandles"] == [1]
+
+
+def test_missing_label_times_out_instead_of_clicking_other_element(endpoint):
+    """错误标签不能退回列表首项误点。"""
+    url, state = endpoint
+    client = Client(url, timeout=0.05, interval=0.001)
+    with pytest.raises(AssertionError):
+        client.by_label("Missing").click()
+    assert state["clicks"] == 0

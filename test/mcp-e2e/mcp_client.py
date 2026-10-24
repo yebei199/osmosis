@@ -13,12 +13,19 @@ class McpError(RuntimeError):
     """保留协议或工具错误，禁止视作空选择器。"""
 
 
+class StaleHandle(McpError):
+    """只读查询遇到元素重建时允许重新定位。"""
+
+
 def expect(probe, *, equals=True, timeout=30, interval=0.2):
     """轮询外部真相源，超时报告最后值；不自动重发用户动作。"""
     deadline = time.monotonic() + timeout
     observed = None
     while True:
-        observed = probe()
+        try:
+            observed = probe()
+        except StaleHandle as error:
+            observed = error
         if observed == equals:
             return observed
         if time.monotonic() >= deadline:
@@ -76,6 +83,9 @@ class Client:
                 raise McpError(f"{name}: {reply['error']}")
             result = reply["result"]
             if result.get("isError"):
+                message = str(result)
+                if "Invalid handle" in message or "element that was destroyed" in message:
+                    raise StaleHandle(f"{name}: {result}")
                 raise McpError(f"{name}: {result}")
             return result["content"]
         except (
@@ -216,7 +226,16 @@ class Locator:
 
     def properties(self):
         """读取最新匹配元素属性。"""
-        return self.client.call("get_element_properties", elementHandle=self.handle())
+        result = None
+
+        def read():
+            """读属性遇到失效句柄时重新从选择器开始。"""
+            nonlocal result
+            result = self.client.call("get_element_properties", elementHandle=self.handle())
+            return True
+
+        expect(read, timeout=self.client.timeout, interval=self.client.interval)
+        return result
 
     def click(self):
         """只发一次点击，不因响应或用户状态延迟重复提交。"""

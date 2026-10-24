@@ -2,6 +2,7 @@
 
 import hashlib
 import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,10 @@ def pytest_runtest_makereport(item, call):
     if not report.failed or client is None:
         return
     identifier = hashlib.sha256(item.nodeid.encode()).hexdigest()[:16]
-    directory = Path(item.config.getoption("--mcp-artifacts")) / identifier
+    base = Path(item.config.getoption("--mcp-artifacts"))
+    base.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix=f"{identifier}-", dir=base))
+    report.sections.append(("MCP artifacts", str(directory)))
     client.capture(directory)
     if client.last_diff and client.last_diff.is_file():
         shutil.copyfile(client.last_diff, directory / "diff.png")
