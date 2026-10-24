@@ -25,7 +25,7 @@ run_audio() {
 }
 
 run_status_ui() {
-    nix-shell slint.nix --run 'cargo nextest run --locked -p ui --test main --config-file acceptance/nextest.toml --profile status-ui --no-tests fail'
+    nix-shell slint.nix --run 'cargo nextest run --locked -p ui --test main -E "test(/^((group_capsule|status_strips|banner|download|login|player_bar|player_bar_reserve|lyrics_page|music_list_layout)::)/)" --config-file acceptance/nextest.toml --profile status-ui --no-tests fail'
 }
 
 case "${1:-all}" in
