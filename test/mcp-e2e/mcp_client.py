@@ -33,6 +33,28 @@ def expect(probe, *, equals=True, timeout=30, interval=0.2):
         time.sleep(interval)
 
 
+def read_message(response):
+    """读取一条 JSON/SSE 消息，持续 SSE 连接在完整事件后即可返回。"""
+    if response.headers.get_content_type() == "text/event-stream":
+        data = []
+        for encoded_line in response:
+            line = encoded_line.decode().rstrip("\r\n")
+            if not line and data:
+                break
+            if line.startswith("data:"):
+                data.append(line[5:].lstrip())
+        raw = "\n".join(data)
+    else:
+        raw = response.read().decode()
+    if raw.lstrip().startswith(("event:", "data:", ":")):
+        messages = [
+            "\n".join(line[5:].lstrip() for line in event.splitlines() if line.startswith("data:"))
+            for event in raw.split("\n\n")
+        ]
+        raw = next(message for message in messages if message)
+    return raw
+
+
 class Client:
     """连接调用者指定的应用，不隐式启动进程或改变环境。"""
 
@@ -69,15 +91,7 @@ class Client:
         )
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
-                raw = response.read().decode()
-            if raw.lstrip().startswith(("event:", "data:", ":")):
-                messages = [
-                    "\n".join(
-                        line[5:].lstrip() for line in event.splitlines() if line.startswith("data:")
-                    )
-                    for event in raw.split("\n\n")
-                ]
-                raw = next(message for message in messages if message)
+                raw = read_message(response)
             reply = json.loads(raw)
             if reply.get("error"):
                 raise McpError(f"{name}: {reply['error']}")

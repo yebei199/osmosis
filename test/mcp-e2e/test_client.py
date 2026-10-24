@@ -22,6 +22,7 @@ class ProtocolState(TypedDict):
     clicks: int
     image: str
     stale: NotRequired[bool]
+    release: NotRequired[threading.Event]
     requests: list[dict[str, object]]
 
 
@@ -89,8 +90,14 @@ def endpoint():
             if state["sse"]:
                 raw = f"event: message\ndata: {raw}\n\n"
             self.send_response(200)
+            if state["sse"]:
+                self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             self.wfile.write(raw.encode())
+            self.wfile.flush()
+            release = state.get("release")
+            if release is not None:
+                release.wait(timeout=2)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever)
@@ -186,3 +193,15 @@ def test_missing_label_times_out_instead_of_clicking_other_element(endpoint):
     with pytest.raises(AssertionError):
         client.by_label("Missing").click()
     assert state["clicks"] == 0
+
+
+def test_sse_returns_result_without_waiting_for_stream_close(endpoint):
+    """SSE 工具结果应在事件结束时返回，不等待持续连接关闭。"""
+    url, state = endpoint
+    state["sse"] = True
+    release = threading.Event()
+    state["release"] = release
+    try:
+        assert Client(url, timeout=0.2).call("list_windows")["windowHandles"] == [1]
+    finally:
+        release.set()
