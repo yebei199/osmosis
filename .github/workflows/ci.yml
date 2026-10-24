@@ -155,8 +155,12 @@ jobs:
       # 语义明确,不依赖 config 与 manifest 谁覆盖谁。
       #
       # 这些都不在 default-members 里,单独点名 —— 裸 `cargo test` 只编不测。
-      - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0'
-      - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
+      # nextest 隔离合并后的 UI 测试；doctest 仍由 cargo test 执行。
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --locked --config 'profile.dev.package."*".opt-level=0'
+      - run: cargo test --locked --doc --config 'profile.dev.package."*".opt-level=0'
+      - run: cargo nextest run --locked --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
+      - run: cargo test --locked --doc --config 'profile.dev.package."*".opt-level=0' -p audio -p syncplay -p server -p xtask
 
   clippy:
     name: clippy

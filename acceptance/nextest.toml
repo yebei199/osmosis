@@ -1,4 +1,5 @@
 [profile.status-ui]
+default-filter = "test(/^((group_capsule|status_strips|banner|download|login|player_bar|player_bar_reserve|lyrics_page|music_list_layout)::)/)"
 retries = 0
 
 [profile.status-ui.junit]
