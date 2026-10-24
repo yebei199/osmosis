@@ -146,6 +146,14 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 判据只认应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面会被两头骗:
 惰性渲染下没有输入就不重绘,而画面变了也可能是别的东西在动。
 
+## 测试不出声:一律进虚拟声卡
+
+用户 2026-10-24 定:测试时绝不从真实声卡出声。`just desktop-dev` 和 `just shot` 已经默认把声音导进
+`test/null-sink.ts` 建的 null sink;自己写的夹具、脚本、裸跑二进制,先
+`PIPEWIRE_NODE=$(bun test/null-sink.ts)` 再起应用。只有用户本人要亲耳听时才带
+`OSMOSIS_REAL_AUDIO=1`。真机(手机、平板)的扬声器不在这条机制里,在手机上测要先把媒体音量
+调到 0,或者问用户。
+
 ## 后台任务:起新的之前先停旧的
 
 **每次要起后台任务(`just desktop-dev*`、`just web-dev`、`cargo build`、`cargo run -p server`)
