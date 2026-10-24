@@ -1,5 +1,5 @@
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
 profile = "default"
 
 # 交叉编译 target。`just ci` 会逐个 check 它们,列在这里让 rustup 自动装上,
