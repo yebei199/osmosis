@@ -215,9 +215,10 @@ export component MainWindow inherits Window {
     out property <length> nav-lag: root.nav-target;
     // 第三颗:小水滴,最慢的那份(§11 三球;系数差用时长差实现)。
     out property <length> nav-drop: root.nav-target;
+    // 三颗球的时长必须两两拉开,收进同一档就成了两颗叠在一起(nav_glass 测试钉着)。
     animate nav-lead { duration: Motion.medium; easing: Motion.ease; }
     animate nav-lag { duration: Motion.slow; easing: Motion.ease; }
-    animate nav-drop { duration: Motion.slow; easing: Motion.ease; }
+    animate nav-drop { duration: Motion.slow * 1.4; easing: Motion.ease; }
     // render3d 每帧(转场期间)渲出的导航背景纹理。非 GPU 构建恒为空图(width 0),
     // 两种版式都退回 Slint 平底 + NavItem 自带高亮。
     in-out property <image> nav-bg;
