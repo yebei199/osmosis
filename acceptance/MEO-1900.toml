@@ -36,3 +36,16 @@ tests = [
 ]
 doubles = ["环境变量经闭包注入，不改进程环境"]
 mutation = "去掉相对名判定则 claude_on_user_wayland_is_refused 失败"
+
+[[ac]]
+id = "AC-4"
+kind = "regression"
+entry = "S4 夹具改为无头启动后，原有资源生命周期与 MCP 客户端合同"
+observe = "进程回收、端口守卫、共享 null sink、失败产物照旧成立"
+tests = [
+  "test_local_app::test_process_is_reaped_when_setup_fails",
+  "test_local_app::test_port_guard_refuses_live_listener_but_allows_closed_connections",
+  "test_local_app::test_shared_virtual_sink_is_idempotent_and_survives_fixture_cleanup",
+  "test_client::test_failure_capture_writes_screenshot_and_tree",
+]
+doubles = ["随机端口协议服务与真实 PipeWire；不起桌面"]
