@@ -100,10 +100,11 @@ fn the_list_layer_reaches_the_bottom_outside_the_daily_section()
     // 没有控制条时页底留常规页边距 16px。
     let page =
         testing::ElementHandle::find_by_element_type_name(
-        &ui, "MusicPage",
-    )
-    .next()
-    .expect("音乐页该在");
+            &ui,
+            "MusicPage",
+        )
+        .next()
+        .expect("音乐页该在");
     let floor = bottom(&page) - 16.0;
     let list = element(&ui, "MusicPage::playlist-list");
     assert_eq!(
