@@ -1,4 +1,4 @@
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Space, Radius, TextSize } from "theme.slint";
 import { Library } from "globals/library.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
@@ -19,12 +19,12 @@ export component WallView inherits VerticalLayout {
         && Player.tracks.length > 0:
     HorizontalLayout {
         alignment: end;
-        spacing: 6px;
+        spacing: Space.xs;
         height: 26px;
 
         view-list-btn := Rectangle {
             width: 56px;
-            border-radius: 13px;
+            border-radius: Radius.pill;
             background: Shell.view-wall
                 ? Theme.surface : Theme.accent;
             accessible-role: button;
@@ -34,8 +34,8 @@ export component WallView inherits VerticalLayout {
             }
             Text {
                 text: "列表";
-                font-family: "Maple Mono NF CN";
-                font-size: 12px;
+                font-family: Type.body;
+                font-size: TextSize.small;
                 color: Shell.view-wall
                     ? Theme.text-dim
                     : Theme.accent-text;
@@ -51,7 +51,7 @@ export component WallView inherits VerticalLayout {
         }
         view-wall-btn := Rectangle {
             width: 56px;
-            border-radius: 13px;
+            border-radius: Radius.pill;
             background: Shell.view-wall
                 ? Theme.accent : Theme.surface;
             accessible-role: button;
@@ -63,8 +63,8 @@ export component WallView inherits VerticalLayout {
             }
             Text {
                 text: "卡墙";
-                font-family: "Maple Mono NF CN";
-                font-size: 12px;
+                font-family: Type.body;
+                font-size: TextSize.small;
                 color: Shell.view-wall
                     ? Theme.accent-text
                     : Theme.text-dim;
@@ -121,8 +121,8 @@ export component WallView inherits VerticalLayout {
             x: 4px;
             y: 0;
             text: "拖动翻找 · 点两下播放 · 滚轮上下";
-            font-family: "Maple Mono NF CN";
-            font-size: 11px;
+            font-family: Type.body;
+            font-size: TextSize.caption;
             color: Theme.text-dim;
         }
         wall-touch := TouchArea {
