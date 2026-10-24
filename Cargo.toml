@@ -117,7 +117,10 @@ panic = "abort"
 # 生成完整 DWARF —— 实测 target/debug 因此涨到 113G,而其中的变量与类型信息只有
 # 拿调试器步进依赖源码时才用得上,那不是这个项目的调试方式。行号表保住 backtrace
 # 里的 `file:line`,函数名本来就在符号表里,不受影响。
-# 本地 crate 不在此列,它们仍是 `profile.dev` 默认的 `debug = 2`。
+# 本地 crate 也只留行号表，test 继承 dev，避免 UI 测试产物重复携带完整类型信息。
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 3
 debug = "line-tables-only"
