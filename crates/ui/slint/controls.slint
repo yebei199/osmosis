@@ -4,7 +4,7 @@
 // 跨形态复用的零件:环形键迷你条与完整条都用,输出设备区在抽屉与个人页里。
 
 import { DeviceRow } from "types.slint";
-import { Theme } from "theme.slint";
+import { Theme, Radius, Motion, TextSize, Space, Type } from "theme.slint";
 import { Shell } from "globals/shell.slint";
 import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
 
@@ -73,11 +73,11 @@ component OutputChip inherits Rectangle {
 
     width: chip-label.preferred-width + 24px;
     height: 30px;
-    border-radius: 15px;
+    border-radius: Radius.pill;
     background: root.selected
         ? Theme.accent
         : (touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak);
-    animate background { duration: 140ms; easing: ease-out; }
+    animate background { duration: Motion.fast; easing: Motion.ease; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -95,7 +95,7 @@ component OutputChip inherits Rectangle {
     chip-label := Text {
         text: root.label;
         color: root.selected ? Theme.accent-text : Theme.text;
-        font-size: 12px;
+        font-size: TextSize.small;
         vertical-alignment: center;
         horizontal-alignment: center;
     }
@@ -110,14 +110,14 @@ component MemberToggle inherits Rectangle {
 
     width: 24px;
     height: 24px;
-    border-radius: 12px;
+    border-radius: Radius.pill;
     background: touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak;
-    animate background { duration: 140ms; easing: ease-out; }
+    animate background { duration: Motion.fast; easing: Motion.ease; }
 
     Text {
         text: root.member ? "−" : "+";
         color: root.member ? Theme.accent : Theme.text-faint;
-        font-size: 14px;
+        font-size: TextSize.body;
         vertical-alignment: center;
         horizontal-alignment: center;
     }
@@ -141,24 +141,24 @@ export component OutputStrip inherits VerticalLayout {
     in property <string> current;
     callback set-output(string);
 
-    spacing: 4px;
+    spacing: Space.xs;
 
     HorizontalLayout {
-        spacing: 8px;
+        spacing: Space.sm;
 
         VerticalLayout {
             alignment: center;
             Text {
                 text: "输出";
-                font-family: "Maple Mono NF CN";
+                font-family: Type.body;
                 color: Theme.text-faint;
-                font-size: 12px;
+                font-size: TextSize.small;
             }
         }
 
         HorizontalLayout {
             alignment: center;
-            spacing: 2px;
+            spacing: Space.xs;
             OutputChip {
                 label: "本机";
                 selected: root.current == "";
@@ -176,7 +176,7 @@ export component OutputStrip inherits VerticalLayout {
 
         for device in root.devices: HorizontalLayout {
             alignment: center;
-            spacing: 2px;
+            spacing: Space.xs;
             OutputChip {
                 label: device.name;
                 selected: root.current == device.id;
@@ -202,7 +202,7 @@ export component OutputStrip inherits VerticalLayout {
     if Shell.group-text != "": group-label := Text {
         text: Shell.group-text;
         color: Theme.text-faint;
-        font-size: 12px;
+        font-size: TextSize.small;
         wrap: word-wrap;
     }
 }
