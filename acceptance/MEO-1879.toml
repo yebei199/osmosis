@@ -14,7 +14,7 @@ kind = "new"
 entry = "真实本机 MCP 客户端从音乐页，分别走列表/卡墙三连点与 views enter/ABA"
 observe = "起播恰好一次且发布一次或新增检查点；views 最终集合非空且采样无外来曲目"
 tests = ["test_scenarios::test_pick[list]", "test_scenarios::test_pick[wall]", "test_scenarios::test_views"]
-doubles = []
+doubles = ["仅外部音乐提供方复用 remote-behavior/media.py 的确定音源及真实 gRPC；桌面、生产 server、独立 Postgres 和 MCP 不替换"]
 mutation = "库中 play_events 或发布计数超限、views 采样出现最终集合外曲目均使场景失败"
 
 [[ac]]
@@ -23,6 +23,13 @@ kind = "regression"
 entry = "公共库替换旧协议、发布判据保持不变"
 observe = "JSON/SSE 动态选择器、错误传播与发布/检查点边界保持成立"
 tests = [
+  "test_local_app::test_process_is_reaped_when_setup_fails",
+  "test_local_app::test_independent_runs_have_distinct_container_names",
+  "test_local_app::test_database_is_removed_when_setup_fails",
+  "test_local_app::test_failed_container_creation_keeps_original_error",
+  "test_local_app::test_port_guard_refuses_live_listener_but_allows_closed_connections",
+  "test_local_app::test_database_and_state_belong_to_this_run",
+  "test_client::test_label_selector_can_require_button_role",
   "test_client::test_dynamic_selectors_wait_and_click_once[False]",
   "test_client::test_dynamic_selectors_wait_and_click_once[True]",
   "test_scenarios::test_pick_preserves_publication_or_checkpoint_contract[1-1-old-True]",

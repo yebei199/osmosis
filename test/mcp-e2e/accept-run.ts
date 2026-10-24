@@ -13,6 +13,7 @@ const modules = new Set([
   'test_visual',
   'test_scenarios',
   'test_acceptance',
+  'test_local_app',
 ]);
 
 // 子命令失败立即传播，不能产出部分通过的验收结果。
@@ -51,6 +52,27 @@ const local = tests
 const remote = tests.filter(
   (test) => mcpNode(test) === undefined,
 );
+// 桌面使用与 desktop-dev 相同的指纹，防止验到旧二进制或缺元素调试信息。
+const needsApp =
+  mode === 'all' ||
+  local.some(
+    (node) =>
+      node === 'test/mcp-e2e/test_scenarios.py' ||
+      node.includes('::test_pick[') ||
+      node.endsWith('::test_views') ||
+      node.endsWith(
+        '::test_database_and_state_belong_to_this_run',
+      ),
+  );
+if (needsApp) {
+  run([
+    'nix-shell',
+    'slint.nix',
+    '--run',
+    'env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 cargo build --locked -p app-desktop --features mcp,slint/live-preview',
+  ]);
+  run(['cargo', 'build', '--locked', '-p', 'server']);
+}
 if (mode === 'all' || local.length > 0) {
   run([
     'uv',
@@ -60,6 +82,9 @@ if (mode === 'all' || local.length > 0) {
     'pytest',
     ...(mode === 'all' ? ['test/mcp-e2e'] : local),
     '--junitxml=test/mcp-e2e/results/junit.xml',
+    '--mcp-artifacts',
+    process.env.MCP_ARTIFACTS ??
+      'test/mcp-e2e/results/artifacts',
   ]);
 }
 if (mode === 'all' || remote.length > 0) {

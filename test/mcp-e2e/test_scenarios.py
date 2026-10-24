@@ -1,7 +1,6 @@
 """迁移样板的真应用入口；执行时由调用者提供独占应用与数据库。"""
 
 import argparse
-import os
 
 import pytest
 
@@ -9,14 +8,14 @@ from pick import escape, run_pick
 from views import step_aba, step_enter
 
 
-@pytest.mark.live
+@pytest.mark.app
 @pytest.mark.parametrize("mode", ["list", "wall"])
-def test_pick(mcp, mode):
+def test_pick(mcp, mode, scenario_env):
     """经真实列表或卡墙三连点，断言数据库只起播并发布一次。"""
-    run_pick(mcp, mode, os.environ)
+    run_pick(mcp, mode, scenario_env)
 
 
-@pytest.mark.live
+@pytest.mark.app
 def test_views(mcp, tmp_path):
     """真实 enter 与 ABA 路径采样，禁止任何一帧混入外来曲目。"""
     if mcp.elements([{"matchElementTypeName": "PlayPage"}]):

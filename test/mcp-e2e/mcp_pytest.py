@@ -12,6 +12,7 @@ from mcp_client import Client
 
 def pytest_addoption(parser):
     """应用端点及产物路径由调用者显式提供。"""
+    parser.addoption("--mcp-live", action="store_true", help="连接调用者拥有的真实上游环境")
     parser.addoption("--mcp-url", default="http://127.0.0.1:8091/mcp")
     parser.addoption("--mcp-artifacts", default="results/mcp-failures")
 
@@ -19,6 +20,8 @@ def pytest_addoption(parser):
 @pytest.fixture
 def mcp(request):
     """每个用例独享客户端状态。"""
+    if request.node.get_closest_marker("app") and not request.config.getoption("--mcp-live"):
+        return request.getfixturevalue("local_app").client
     return Client(request.config.getoption("--mcp-url"))
 
 

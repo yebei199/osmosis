@@ -27,8 +27,8 @@ from pathlib import Path
 
 from mcp_client import Client, StaleHandle, expect
 
-# 兼容旧账号中的系统收藏歌单名称。
-LIKED = "我喜欢的"
+# 当前生产 API 的系统收藏歌单显示名。
+LIKED = "我的喜欢"
 ROWS = 4  # 每次采样读前几行:一次采样要 1 + ROWS 次调用,多读就慢
 
 
