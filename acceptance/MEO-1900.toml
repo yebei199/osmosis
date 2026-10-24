@@ -1,0 +1,38 @@
+# 无头显示截图与 AI 会话显示守卫。AC-1..3 要真合成器、GPU 和 niri 会话，CI 与本门禁的 runner
+# 里都没有；由 test/headless/check.ts 在开发机上实跑判定（输出逐项 ok/FAIL，退出码非零即失败）。
+[[ac]]
+id = "AC-1"
+none = "需要用户的 niri 会话与 PipeWire：test/headless/check.ts 判截图前后焦点窗口 id 与窗口集合不变、应用进程没有连到 osmosis_test_sink 以外的音频链路"
+
+[[ac]]
+id = "AC-2"
+none = "需要 GPU 渲染节点：test/headless/check.ts 判无头截图中央区颜色数与非黑占比，纯色或缺纹理即失败"
+
+[[ac]]
+id = "AC-3"
+none = "需要真合成器：test/headless/check.ts 先常驻一个无头实例，再跑 shot，判两边都成功、常驻实例存活、capture 仍可取图"
+
+[[ac]]
+id = "AC-4"
+kind = "new"
+entry = "S4 夹具与公共 MCP 客户端的截图入口"
+observe = "设了像素来源时视觉断言和失败产物都取它的图，来源失败报 McpError"
+tests = ["test_client::test_pixel_source_replaces_mcp_screenshot"]
+doubles = ["随机端口协议服务；像素来源用内存生成的图代替 grim"]
+mutation = "screenshot 忽略 pixels 时失败产物尺寸变回 10x10，断言失败"
+
+[[ac]]
+id = "AC-5"
+kind = "new"
+entry = "debug 构建启动时的显示守卫"
+observe = "AI 会话变量在且显示是用户桌面（相对名、XDG_RUNTIME_DIR 下、X11）时拒绝；无头会话路径或 OSMOSIS_SHOW_WINDOW=1 放行；非 AI 会话不受影响"
+tests = [
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::human_session_is_never_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::claude_on_user_wayland_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::codex_on_user_wayland_absolute_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::ai_on_x11_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::ai_on_headless_session_is_allowed",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::explicit_switch_lets_ai_show_the_window",
+]
+doubles = ["环境变量经闭包注入，不改进程环境"]
+mutation = "去掉相对名判定则 claude_on_user_wayland_is_refused 失败"
