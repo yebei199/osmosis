@@ -1,0 +1,12 @@
+[project]
+name = "osmosis-mcp-e2e"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pytest>=8.4,<9", "pillow>=11,<13"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = ["live: 独占调用者指定的真实应用和开发数据库，必须串行运行"]
+
+[tool.ruff]
+line-length = 100
