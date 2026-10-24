@@ -41,3 +41,7 @@ local.properties
 # 共享的、进版本库;这一份是每台机器各自的
 /.claude/settings.local.json
 /test/remote-behavior/results/
+
+# MCP 验收 JUnit 与失败产物不进版本库。
+/test/mcp-e2e/results/
+/results/
