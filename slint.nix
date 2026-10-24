@@ -38,6 +38,8 @@ in
 pkgs.mkShell {
   nativeBuildInputs = [
     pkgs.pkg-config
+    # 合并后的 UI 测试由 nextest 逐条起进程，ci-test 与定向验证共用。
+    pkgs.cargo-nextest
     # web 废弃(#110)后 wasm-bindgen-cli 已撤;复活时加回,版本要与 Cargo.lock 里的
     # wasm-bindgen 完全一致,否则 CLI 拒绝生成胶水代码。python3 给测试脚本起静态服务器。
     pkgs.python3
