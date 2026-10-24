@@ -1,0 +1,10 @@
+result=incomplete
+commit=db35322c75120dc080e6a26d7e8d63fd746f3543
+date=2026-10-25T03:23:56+08:00
+host=
+plan_id=
+failed=
+log=pc3:/home/yb/.local/state/nightly/runs/20261025T030003.807285220/coordinator.log
+reason=rust final-check: environment not ready: missing cargo subcommands: cargo-clippy
+notified=
+env_issue=
