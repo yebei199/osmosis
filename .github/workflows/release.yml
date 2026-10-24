@@ -126,7 +126,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev protobuf-compiler dbus zstd
 
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
 
       # OSMOSIS_API_BASE 是 crates/api 的 option_env!,编译期烘进二进制;

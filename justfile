@@ -69,10 +69,13 @@ ci-fmt:
 # 桌面链路:单测 + clippy(-D warnings,和 CI 一致),外加 server 与 xtask
 [group('ci')]
 ci-test: pg rustfs
-    nix-shell slint.nix --run 'cargo test --locked'
+    # nextest 每条测试独立进程，UI 合并成一个产物后仍隔离 Slint 的全局状态。
+    nix-shell slint.nix --run 'cargo nextest run --locked'
+    nix-shell slint.nix --run 'cargo test --locked --doc'
     # 能力层与服务端都不在 default-members 里(它们由 ui 注入,不是它的依赖树入口),
     # 裸 `cargo test` 只编不测。不点名的话,同播那三条端到端测试一次都不会跑。
-    nix-shell slint.nix --run 'cargo test --locked -p audio -p syncplay -p server -p xtask'
+    nix-shell slint.nix --run 'cargo nextest run --locked -p audio -p syncplay -p server -p xtask'
+    nix-shell slint.nix --run 'cargo test --locked --doc -p audio -p syncplay -p server -p xtask'
     nix-shell slint.nix --run 'cargo clippy --locked --all-targets -- -D warnings'
     nix-shell slint.nix --run 'cargo clippy --locked --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
 
