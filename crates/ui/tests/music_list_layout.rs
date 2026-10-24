@@ -303,3 +303,42 @@ fn compact_list_ends_above_the_bars() {
         top(&bar)
     );
 }
+
+/// 窗口先小后大(真实启动就是这样):列表跟着变宽,不卡在第一次排版的宽度上。
+/// 实测曾在 1400 与 1900 下都停在 599px。
+#[test]
+fn track_list_follows_a_growing_window() {
+    let ui = music_page(632.0, 900.0, 0);
+    one_track(&ui);
+    let narrow =
+        element(&ui, "MusicPage::track-list").size().width;
+
+    ui.window()
+        .set_size(slint::LogicalSize::new(1400.0, 900.0));
+    ui.global::<Shell>().set_wide(true);
+    let wide =
+        element(&ui, "MusicPage::track-list").size().width;
+    assert!(wide > narrow + 500.0, "窄 {narrow} 宽 {wide}");
+}
+
+/// 分组条在场时列表照样铺满内容区(MEO-1878)。实测分组条那一排药丸的
+/// 宽度把整列卡在 599px,1232px 的内容区右半边全空。
+#[test]
+fn the_facet_bar_does_not_cap_the_list_width() {
+    let ui = music_page(1400.0, 900.0, 6);
+    ui.global::<Shell>().set_wide(true);
+    let labels: Vec<slint::SharedString> =
+        ["不分组", "歌手", "专辑"].map(Into::into).to_vec();
+    ui.global::<Player>().set_grouping_labels(
+        ModelRc::new(VecModel::from(labels)),
+    );
+    ui.global::<Player>().set_facets_enabled(true);
+    one_track(&ui);
+
+    let list = element(&ui, "MusicPage::track-list");
+    assert!(
+        list.size().width > 1100.0,
+        "列表只有 {}",
+        list.size().width
+    );
+}
