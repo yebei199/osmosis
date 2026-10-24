@@ -1,6 +1,11 @@
 // 为累计验收增加 MCP 库的集合；旧遥控集合仍交原入口执行。
 
-import { resolve } from 'node:path';
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // 固定以本脚本所在仓库解析路径，兼容调用者工作目录。
@@ -34,6 +39,23 @@ function mcpNode(test: string): string | undefined {
   if (!modules.has(name)) return undefined;
   return `test/mcp-e2e/${name}.py${rest.length ? `::${rest.join('::')}` : ''}`;
 }
+
+// 未选中套件以零用例表示，本轮未执行的旧结果不能混进判定。
+function emptyResult(path: string): void {
+  const file = resolve(root, path);
+  if (!file.startsWith(`${root}/`))
+    throw new Error(
+      `JUnit path outside repository: ${path}`,
+    );
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    '<?xml version="1.0" encoding="UTF-8"?><testsuites tests="0"/>',
+  );
+}
+
+// 当前集合的真实 JUnit，不能被未选中套件的占位覆盖。
+const localJunit = 'test/mcp-e2e/results/junit.xml';
 
 // day gate 只执行点名集合；nightly 的 all 才调用旧累计入口。
 const [mode, ...tests] = process.argv.slice(2);
@@ -81,7 +103,7 @@ if (mode === 'all' || local.length > 0) {
     'test/mcp-e2e',
     'pytest',
     ...(mode === 'all' ? ['test/mcp-e2e'] : local),
-    '--junitxml=test/mcp-e2e/results/junit.xml',
+    `--junitxml=${localJunit}`,
     '--mcp-artifacts',
     process.env.MCP_ARTIFACTS ??
       'test/mcp-e2e/results/artifacts',
@@ -90,3 +112,23 @@ if (mode === 'all' || local.length > 0) {
 if (mode === 'all' || remote.length > 0) {
   run(['bash', 'acceptance/run.sh', mode, ...remote]);
 }
+
+if (mode !== 'all' && remote.length === 0) {
+  const outputs = Bun.TOML.parse(
+    readFileSync(
+      resolve(root, 'acceptance/run.toml'),
+      'utf8',
+    ),
+  ).junit;
+  if (!Array.isArray(outputs))
+    throw new Error(
+      'acceptance/run.toml: junit must be an array',
+    );
+  for (const output of outputs) {
+    if (typeof output !== 'string')
+      throw new Error('JUnit path must be a string');
+    if (output !== localJunit) emptyResult(output);
+  }
+}
+if (mode !== 'all' && local.length === 0)
+  emptyResult(localJunit);
