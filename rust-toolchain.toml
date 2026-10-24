@@ -20,4 +20,5 @@ components = [
     "rust-src", # 标准库源码(跳转查看源码必备)
     "clippy",   # 代码检查
     "rustfmt",  # 代码格式化
+    "llvm-tools-preview", # 定向测试的覆盖率与 CRAP 检查使用同版 LLVM
 ]
