@@ -76,34 +76,23 @@ class Resources:
         )
 
     def virtual_audio(self):
-        """先创建 null sink，再允许桌面启动；清理顺序在桌面退出之后。"""
-        name = self.container + "-null"
-        self.stack.callback(self.remove_sink, name)
-        properties = (
-            "{ factory.name=support.null-audio-sink node.name="
-            + name
-            + " media.class=Audio/Sink object.linger=true audio.position=[FL FR] }"
-        )
-        subprocess.run(
-            ["pw-cli", "create-node", "adapter", properties],
-            check=True,
-            capture_output=True,
-            timeout=10,
-        )
+        """统一入口保证共享 null sink 就绪，fixture 不删除它。"""
+        script = Path(__file__).resolve().parents[2] / "test/null-sink.ts"
+        name = subprocess.run(
+            ["bun", str(script)], check=True, capture_output=True, text=True, timeout=10
+        ).stdout.strip()
         node = wait_ready(lambda: self.sink_id(name), timeout=5)
         (self.directory / "audio-route.json").write_text(
-            json.dumps({"sink": name, "node_id": node, "environment": {"PIPEWIRE_NODE": name}})
+            json.dumps(
+                {
+                    "sink": name,
+                    "node_id": node,
+                    "shared": True,
+                    "environment": {"PIPEWIRE_NODE": name},
+                }
+            )
         )
         return name
-
-    def remove_sink(self, name: str):
-        """只销毁本轮创建的 sink；不依赖节点编号跨生命周期稳定。"""
-        node = self.sink_id(name)
-        if node is not None:
-            subprocess.run(
-                ["pw-cli", "destroy", str(node)], check=True, capture_output=True, timeout=10
-            )
-            wait_ready(lambda: self.sink_id(name) is None, timeout=5)
 
     def database(self):
         """Postgres 使用随机容器名和宿主端口，不挂真实数据卷。"""
@@ -274,6 +263,7 @@ class LocalApp:
             ],
             env,
         )
+        self.app_process = app
         wait_ready(
             lambda: (
                 "Slint MCP server listening"

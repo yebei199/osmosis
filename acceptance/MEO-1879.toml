@@ -24,7 +24,7 @@ entry = "公共库替换旧协议、发布判据保持不变"
 observe = "JSON/SSE 动态选择器、错误传播与发布/检查点边界保持成立"
 tests = [
   "test_acceptance::test_unselected_suites_have_empty_results_without_erasing_selected_tests",
-  "test_local_app::test_virtual_sink_is_owned_and_removed_on_failure",
+  "test_local_app::test_shared_virtual_sink_is_idempotent_and_survives_fixture_cleanup",
   "test_local_app::test_process_is_reaped_when_setup_fails",
   "test_local_app::test_independent_runs_have_distinct_container_names",
   "test_local_app::test_database_is_removed_when_setup_fails",

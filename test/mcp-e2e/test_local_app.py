@@ -93,10 +93,12 @@ def test_port_guard_refuses_live_listener_but_allows_closed_connections():
     require_free(port)
 
 
-def test_virtual_sink_is_owned_and_removed_on_failure(tmp_path):
-    """每轮创建独有的真实 null sink，异常退出也必须销毁它。"""
+def test_shared_virtual_sink_is_idempotent_and_survives_fixture_cleanup(tmp_path):
+    """共享入口幂等，fixture 异常退出后不删除其他测试也会使用的 sink。"""
     with pytest.raises(RuntimeError, match="after sink"), Resources(tmp_path) as resources:
         sink = resources.virtual_audio()
         assert resources.sink_id(sink) is not None
         raise RuntimeError("after sink")
-    assert resources.sink_id(sink) is None
+    assert resources.sink_id(sink) is not None
+    with Resources(tmp_path / "again") as second:
+        assert second.virtual_audio() == sink
