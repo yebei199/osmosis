@@ -77,10 +77,16 @@ def show_view(client, mode):
     escape(client)
     toggle = "WallView::view-wall-btn" if mode == "wall" else "WallView::view-list-btn"
     button = client.by_id(toggle)
-    if button.all():
+    if mode == "wall":
+        # 开关要等这一批歌到了才出现:切到每日推荐会重取一次推荐,立刻查会扑空。
+        # 有界等待,GPU 构建里真没有开关时照样超时失败。
+        try:
+            button.handle()
+        except AssertionError as missing:
+            raise AssertionError("wall requires GPU build and wall toggle") from missing
         button.action("Default_")
-    elif mode == "wall":
-        raise AssertionError("wall requires GPU build and wall toggle")
+    elif button.all():
+        button.action("Default_")
     client.by_id("WallView::wall-area" if mode == "wall" else "TrackList::touch").handle()
 
 
