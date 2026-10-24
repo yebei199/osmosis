@@ -114,12 +114,15 @@ if (mode === 'all' || remote.length > 0) {
 }
 
 if (mode !== 'all' && remote.length === 0) {
-  const outputs = Bun.TOML.parse(
+  const configuration = Bun.TOML.parse(
     readFileSync(
       resolve(root, 'acceptance/run.toml'),
       'utf8',
     ),
-  ).junit;
+  );
+  if (!('junit' in configuration))
+    throw new Error('acceptance/run.toml: missing junit');
+  const outputs = configuration.junit;
   if (!Array.isArray(outputs))
     throw new Error(
       'acceptance/run.toml: junit must be an array',
