@@ -281,10 +281,16 @@ class LocalApp:
             "--log",
             str(self.directory / "desktop.log"),
         ]
+        # nix-shell 自己要用调用者的缓存与配置目录（换成本轮的空目录它会去下载 flake 注册表）；
+        # 本轮目录只在 shell 里交给应用。
+        own = {key: env[key] for key in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME")}
+        nix_env = {key: value for key, value in env.items() if key not in own}
+        nix_env.update({key: os.environ[key] for key in own if key in os.environ})
+        inner = ["env", *(f"{key}={value}" for key, value in own.items()), *command]
         app = self.resources.spawn(
             "headless",
-            ["nix-shell", str(self.root / "slint.nix"), "--run", "exec " + shlex.join(command)],
-            env,
+            ["nix-shell", str(self.root / "slint.nix"), "--run", "exec " + shlex.join(inner)],
+            nix_env,
         )
         self.app_process = app
         self.client.pixels = self.capture_pixels
