@@ -1,0 +1,12 @@
+# 构建配置与测试入口重组，不改变产品逻辑或既有测试内容。
+[[ac]]
+id = "AC-1"
+none = "semantic review / no executable behavior：普通 UI 集成测试单产物小于 2GB；证据为 .dispatch/MEO-1880-final-du.log，实测 203,538,432 字节。该测量不使用覆盖率产物，严格前后比较随夜间观察补充。"
+
+[[ac]]
+id = "AC-2"
+none = "已由主路由裁决 7-11432 转为合回后的夜间观察项，不阻挡本次交付；改前使用 c18880c，改后使用合回后的 master，由主路由安排。"
+
+[[ac]]
+id = "AC-3"
+none = "semantic review / no executable behavior：既有测试内容保持不变，27 个集成目标合为 1 个，167 条名称逐条对齐；.dispatch/MEO-1880-final-list.json 与 .dispatch/MEO-1880-existing-baseline-list.json 保存清单，.dispatch/MEO-1880-final-du.log 保存数量结论。验收入口原九组的 78 条集合比对见 .dispatch/MEO-1880-acceptance-selection.log。本次所选范围 584 条通过、1 条既有主题实验 ignore，原始输出见 .dispatch/MEO-1880-check-test.log，通过凭据为 .dispatch/MEO-1880-verify-receipt-3；这些证据不替代主路由的最终级门禁或完整 CI 结论。"
