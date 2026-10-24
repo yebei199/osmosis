@@ -141,12 +141,14 @@ class Client:
     def elements(self, query):
         """从最新窗口根查动态 if/for 元素。"""
         root = self.call("get_window_properties", windowHandle=self.window())["rootElementHandle"]
-        return (
+        handles = (
             self.call(
                 "query_element_descendants", elementHandle=root, findAll=True, queryStack=query
             ).get("elementHandles")
             or []
         )
+        # MCP 的递归管线可能多次返回同一元素，列表下标只认不同句柄。
+        return list({json.dumps(handle, sort_keys=True): handle for handle in handles}.values())
 
     def by_id(self, element_id: str, index: int = 0) -> "Locator":
         """构建惰性 id 选择器，每次操作重新解析。"""

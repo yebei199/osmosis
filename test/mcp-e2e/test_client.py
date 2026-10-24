@@ -22,6 +22,7 @@ class ProtocolState(TypedDict):
     clicks: int
     image: str
     stale: NotRequired[bool]
+    duplicate: NotRequired[bool]
     release: NotRequired[threading.Event]
     requests: list[dict[str, object]]
 
@@ -60,7 +61,11 @@ def endpoint():
             }
             if name == "query_element_descendants":
                 state["queries"] += 1
-                values[name] = {"elementHandles": [3] if state["queries"] >= 2 else []}
+                values[name] = {
+                    "elementHandles": ([3, 3] if state.get("duplicate") else [3])
+                    if state["queries"] >= 2
+                    else []
+                }
             if name == "click_element":
                 state["clicks"] += 1
                 values[name] = {}
@@ -205,3 +210,13 @@ def test_sse_returns_result_without_waiting_for_stream_close(endpoint):
         assert Client(url, timeout=0.2).call("list_windows")["windowHandles"] == [1]
     finally:
         release.set()
+
+
+def test_duplicate_handles_are_one_element(endpoint):
+    """真实递归查询会重复返回句柄，index 必须对应不同元素。"""
+    url, state = endpoint
+    state["duplicate"] = True
+    state["queries"] = 2
+    client = Client(url)
+    assert client.by_id("TrackList::touch").all() == [3]
+    assert client.by_label("Play").all() == [3]
