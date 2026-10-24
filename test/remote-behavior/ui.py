@@ -22,6 +22,8 @@ LABELS = {
     "output": "\u8f93\u51fa\u5230 ",
     "join": "\u52a0\u5165 ",
     "refresh": "\u6362\u4e00\u6279\u63a8\u8350",
+    "more": "\u66f4\u591a",
+    "downloads": "\u5df2\u4e0b\u8f7d",
 }
 
 
@@ -188,27 +190,21 @@ class UI:
         wait_until(lambda: not self.elements("LoginPage::username"), "login completion")
 
     # Escape 沿用已有 pick-e2e 的收起动作，随后进入音乐主 tab。
-    def music(self, section="daily"):
+    # 一级目的地按全名找(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+    def destination(self, label):
         self.call("dispatch_key_event", windowHandle=self.window, text="\x1b")
-        navigation = self.elements("NavItem::touch")
-        if len(navigation) < 2:
-            raise RuntimeError("music navigation is absent")
-        self.activate(navigation[1], pointer=True)
-        handle = self.find("MusicRail::item-touch", LABELS[section])
+        handle = self.find("SideNavRow::touch", label) or self.find("NavItem::touch", label)
         if not handle:
-            handle = self.must("MusicBar::item-touch", LABELS[section])
-        self.activate(handle)
+            self.activate(self.must("NavItem::touch", LABELS["more"]), pointer=True)
+            handle = self.must("MorePanel::item", label)
+        self.activate(handle, pointer=True)
+
+    def music(self, section="daily"):
+        self.destination(LABELS[section])
 
     # 出声选择从个人页的同一 OutputChip 进入。
     def profile(self):
-        self.call("dispatch_key_event", windowHandle=self.window, text="\x1b")
-        handle = self.find("RoundControl::touch", LABELS["profile"])
-        if not handle:
-            navigation = self.elements("NavItem::touch")
-            if len(navigation) < 3:
-                raise RuntimeError("profile navigation is absent")
-            handle = navigation[2]
-        self.activate(handle, pointer=True)
+        self.destination(LABELS["profile"])
 
     # 设备名使用本轮 hostname 前缀，真实客户端的 PID 后缀由 UI 提供。
     def output(self, client):

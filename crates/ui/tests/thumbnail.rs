@@ -39,7 +39,7 @@ fn music_page_with(rows: Vec<TrackRow>) -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
     ui

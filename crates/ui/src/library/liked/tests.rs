@@ -307,7 +307,7 @@ fn press(ui: &MainWindow, label: &str) {
 fn liking_from_the_drawer_marks_the_list_row_too() {
     let ui = window_with(Vec::new());
     ui.global::<crate::Session>().set_logged_in(true);
-    ui.global::<crate::Shell>().set_current_tab(1);
+    ui.global::<crate::Shell>().set_destination(0);
     ui.global::<Player>().set_has_track(true);
     ui.global::<Player>().set_tracks(ModelRc::new(
         VecModel::from(vec![

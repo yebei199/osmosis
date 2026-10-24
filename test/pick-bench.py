@@ -88,15 +88,29 @@ def played_count(container):
     return int(out.stdout.strip() or 0)
 
 
+def labelled(port, win, element_id, label):
+    for handle in handles(port, win, element_id):
+        props = mcp(port, "get_element_properties", {"elementHandle": handle})
+        if isinstance(props, dict) and props.get("accessibleLabel") == label:
+            return handle
+    return None
+
+
 def open_section(port, win, section):
-    # 上一轮卡墙起播后开着播放页,先收起来,不然分区与歌单都点不到。
+    # 上一轮卡墙起播后开着播放页,先收起来,不然目的地与歌单都点不到。
     mcp(port, "dispatch_key_event", {"windowHandle": win, "text": "\u001b"})
     time.sleep(1)
-    mcp(port, "click_element", {"elementHandle": must(port, win, "NavItem::touch", 1)})
-    rail = handles(port, win, "MusicRail::item-touch") or handles(port, win, "MusicBar::item-touch")
-    if len(rail) <= section:
-        sys.exit(f"分区 {section} 不存在")
-    mcp(port, "click_element", {"elementHandle": rail[section]})
+    # 一级目的地按全名找(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+    target = labelled(port, win, "SideNavRow::touch", section) or labelled(port, win, "NavItem::touch", section)
+    if target is None:
+        more = labelled(port, win, "NavItem::touch", "更多")
+        if more is not None:
+            mcp(port, "click_element", {"elementHandle": more})
+            time.sleep(1)
+            target = labelled(port, win, "MorePanel::item", section)
+    if target is None:
+        sys.exit(f"目的地「{section}」不存在")
+    mcp(port, "click_element", {"elementHandle": target})
     time.sleep(3)
 
 
@@ -261,9 +275,9 @@ def main():
     d = sub.add_parser("drive")
     d.add_argument("--port", type=int, default=8091)
     d.add_argument("--mode", choices=["list", "wall"], default="list")
-    d.add_argument("--section", type=int, default=0, help="音乐页分区下标,0 是每日推荐")
+    d.add_argument("--section", default="每日推荐", help="一级目的地的全名,如「每日推荐」「我的歌单」")
     d.add_argument("--output", help="先在抽屉里选输出设备:本机,或设备名的一部分(遥控那台)")
-    d.add_argument("--playlist", type=int, help="配 --section 1:先进第几张歌单")
+    d.add_argument("--playlist", type=int, help="配 --section 我的歌单:先进第几张歌单")
     d.add_argument("--picks", default="0,1,0", help="依次点第几首;重复的下标是缓存命中那一下")
     d.add_argument("--settle", type=float, default=8, help="起播后静置几秒再点下一首")
     d.add_argument("--timeout", type=float, default=60)

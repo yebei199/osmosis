@@ -22,8 +22,8 @@ fn search_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(2);
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Shell>().set_destination(2);
     // 摆一首歌:曲目列表只在有歌时出现,一首都没有时让位给空状态(#116)。
     // 这里问的是「哪一类结果摆在哪」,不是空态。
     ui.global::<Player>().set_tracks(slint::ModelRc::new(
@@ -57,7 +57,7 @@ fn the_tabs_appear_only_in_the_search_section() {
     assert!(present(&ui, "MusicPage::search-tabs"));
 
     for section in [0, 1, 3] {
-        ui.global::<Shell>().set_music_section(section);
+        ui.global::<Shell>().set_destination(section);
         assert!(
             !present(&ui, "MusicPage::search-tabs"),
             "分区 {section} 不该有搜索页签"

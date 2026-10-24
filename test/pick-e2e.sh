@@ -45,6 +45,32 @@ call() {
   | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
 }
 
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
+
 # 第 n 个匹配元素的句柄;一个都没有就返回空串。
 #
 # 从窗口根往下按 id 找,不用 find_elements_by_id:那个找不到 `if` / `for` 里长出来的元素
@@ -189,20 +215,14 @@ queue_open() {
 # 留下的样子 —— 连着跑 list → wall → search → queue 时,卡墙起播会打开播放页,队列页也会
 # 一直开着(收起播放页不关它),下一项就找不到自己的入口(#142 N-3)。
 reset() {
-  local section=$1 music item
+  local section=$1
   for _ in 1 2 3; do
     [ -n "$(present PlayPage)" ] || break
     call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
     sleep 1
   done
   [ -z "$(present PlayPage)" ] || { echo "收不起播放页" >&2; exit 1; }
-  music=$(handle "NavItem::touch" 1)
-  must "$music" "音乐入口"
-  call click_element "{\"elementHandle\":$music}" >/dev/null
-  item=$(handle "MusicRail::item-touch" "$section")
-  [ -n "$item" ] || item=$(handle "MusicBar::item-touch" "$section")
-  must "$item" "音乐页第 $((section + 1)) 个位置的分区"
-  call click_element "{\"elementHandle\":$item}" >/dev/null
+  go_to "$section"
   sleep 2
 }
 
@@ -274,7 +294,7 @@ root=$(call get_window_properties "{\"windowHandle\":$win}" | python3 -c 'import
 
 # 复位:播放页收起 → 音乐页 → 搜索分区(search)或每日推荐(其余)。
 # 给的是分区键在条上的**位置**,不是分区编号:电台(#159)摆在每日推荐之后,搜索排第四。
-[ "$MODE" = search ] && reset 3 || reset 0
+[ "$MODE" = search ] && reset 搜索 || reset 每日推荐
 
 # 点中的若正是在放的那首,界面按多余的点击丢掉它,账本自然不动 ——
 # 所以两个候选轮着试,只固定点一首的话第二次跑必然失败。

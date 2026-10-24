@@ -24,8 +24,8 @@ fn playlist_page() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Shell>().set_destination(1);
     ui
 }
 
@@ -64,7 +64,7 @@ fn the_new_playlist_row_lives_on_the_playlist_list() {
     assert!(present(&ui, "MusicPage::new-playlist-row"));
 
     for section in [0, 2, 3] {
-        ui.global::<Shell>().set_music_section(section);
+        ui.global::<Shell>().set_destination(section);
         assert!(
             !present(&ui, "MusicPage::new-playlist-row"),
             "分区 {section} 不该有新建歌单"
@@ -72,7 +72,7 @@ fn the_new_playlist_row_lives_on_the_playlist_list() {
     }
 
     // 进了详情也不该有:那一层要建的不是歌单
-    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_destination(1);
     opened_local(&ui);
     assert!(!present(&ui, "MusicPage::new-playlist-row"));
 }
@@ -204,6 +204,6 @@ fn rows_can_be_removed_only_inside_a_local_playlist() {
     // 每日推荐同理:那一批根本不属于任何可改的集合
     ui.global::<Library>()
         .set_open_playlist_name("".into());
-    ui.global::<Shell>().set_music_section(0);
+    ui.global::<Shell>().set_destination(0);
     assert!(!present(&ui, "TrackList::remove-hit"));
 }

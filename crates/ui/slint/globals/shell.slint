@@ -4,9 +4,9 @@ import { Library } from "library.slint";
 import { Player } from "player.slint";
 import { Session } from "session.slint";
 
-// 壳级的状态面:调试读数、GPU 纹理槽、设备名册、卡墙、封面取色与横幅。
+// 窗口级的状态面:当前目的地、调试读数、GPU 纹理槽、设备名册、卡墙、封面取色与横幅。
 //
-// **不含版式与导航几何**(compact、nav-* 那一整簇、current-tab) —— 它们要读
+// **不含导航几何**(nav-* 那一整簇) —— 它们要读
 // root.width / root.height / safe-area-insets,global 拿不到窗口上下文,
 // 那批留在 MainWindow。这条界线见 docs/adr/0027。
 export global Shell {
@@ -27,20 +27,16 @@ export global Shell {
     in-out property <length> viz-bar-h: 0px;
     // 播放页次要动作(视觉预设、收起)共用的 glass 底。两颗同尺寸,渲一张够。
     in property <image> viz-glass-bg;
-    // 侧栏底部那两颗圆钮的 glass 底(#71)。这两颗各渲各的:选中的那颗要更亮,
-    // 共用一张就分不出谁被选中了。
-    in property <image> nav-key-a-bg;
-    in property <image> nav-key-b-bg;
 
     // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
     // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
     // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
     in-out property <string> banner-text;
-    // 这句提示点下去该去哪一页,-1 = 点不了。
+    // 这句提示点下去该去哪个目的地(destination 的编号),-1 = 点不了。
     //
     // 「网易云没绑」那一句要能直达个人页:说出问题却不给去处,用户只能自己
-    // 在四个页签里找(见 ui/src/account.rs 的 report-failure)。
-    in-out property <int> banner-tab: -1;
+    // 在九个目的地里找(见 ui/src/account.rs 的 report-failure)。
+    in-out property <int> banner-destination: -1;
 
     // 下载在进行到哪一步:「下载中 42%」「已存到 音乐/osmosis」。空串 = 没有下载。
     //
@@ -88,11 +84,7 @@ export global Shell {
 
     in-out property <bool> aurora-buttons-on: true;
     callback aurora-buttons-toggled();
-    in property <image> home-slot-bg;
     in property <image> empty-daily-bg;
-    in-out property <bool> home-slot-hover: false;
-    in-out property <float> home-slot-px: 0.72;
-    in-out property <float> home-slot-py: 0.5;
     in-out property <bool> empty-daily-hover: false;
     in-out property <float> empty-daily-px: 0.72;
     in-out property <float> empty-daily-py: 0.5;
@@ -108,8 +100,7 @@ export global Shell {
     // 墙可见的总判据。列表与开关都照它排布。
     out property <bool> wall-visible: wall-supported
         && wall-showing
-        && current-tab == 1
-        && music-section == 0
+        && destination == 0
         && Library.open-playlist-name == ""
         && Player.tracks.length > 0;
     // 指针镜像(逻辑像素,换算物理在 Rust);场区尺寸由元素回写。
@@ -133,12 +124,10 @@ export global Shell {
     in property <color> aurora-cover-deep;
     in property <color> aurora-cover-soft;
 
-    in-out property <int> current-tab: 0;
-
-    in-out property <int> music-section: 0;
-    // 宽版式竖栏收起没有。私有于界面 —— Rust 不关心用户把栏收没收。
-    in-out property <bool> rail-collapsed: false;
-    // 换了分区。Rust 据此去取对应的一批歌。
+    // 当前在哪个一级目的地。编号见 musicnav.slint 的 Destinations;
+    // 启动落在每日推荐(MEO-1876)。
+    in-out property <int> destination: 0;
+    // 换了目的地。Rust 据此去取对应的一批歌(music/list.rs 的 load_section)。
     callback select-section(int);
 
     in-out property <bool> play-page-open: false;
@@ -149,15 +138,14 @@ export global Shell {
     out property <bool> music-empty: Player.tracks.length == 0
         && Player.chosen-count == 0
         && (Library.open-playlist-name != ""
-            || music-section == 0
-            || music-section == 3
-            || (music-section == 2 && Library.search-tab == 0));
-    // 两颗光带按钮此刻在不在屏幕上(#153):看不见的不画。播放页是盖满全窗的覆层。
-    out property <bool> home-slot-shown: Session.logged-in
-        && current-tab == 0
-        && !play-page-open;
+            || destination == 0
+            || destination == 3
+            || destination == 6
+            || (destination == 2 && Library.search-tab == 0));
+    // 光带按钮此刻在不在屏幕上(#153):看不见的不画。播放页是盖满全窗的覆层。
+    // 已下载、个人、设置不摆音乐列表,空状态也就不在。
     out property <bool> empty-daily-shown: Session.logged-in
-        && current-tab == 1
+        && destination != 5 && destination < 7
         && music-empty
         && !Player.tracks-loading
         && !play-page-open;

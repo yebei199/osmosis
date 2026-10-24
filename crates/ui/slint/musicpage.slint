@@ -4,7 +4,7 @@ import { Palette } from "std-widgets.slint";
 import { Theme, Type } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
 import { HoverButton } from "widgets.slint";
-import { MusicBar, MusicRail, SearchTabBar } from "musicnav.slint";
+import { Destinations, SearchTabBar } from "musicnav.slint";
 import { FacetBar, TrackList } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
@@ -29,8 +29,11 @@ export struct DownloadRow {
 
 // 音乐模块持有状态；平台权限与目录操作由 Rust 回调完成。
 export global Downloads {
-    in-out property <bool> active: false;
+    // 已下载是一级目的地之一(编号 5),这里只是它的投影。
+    out property <bool> active: Shell.destination == 5;
     in-out property <bool> confirming: false;
+    // 离开这一页就收起删除确认,回来不该还挂着上次那个框。
+    changed active => { self.confirming = false; }
     in property <[DownloadRow]> rows;
     in property <string> total;
     in property <string> note;
@@ -167,13 +170,14 @@ export component DownloadManager inherits Rectangle {
     }
 }
 
-// 音乐页(tab 1):二级导航、搜索、歌单详情、卡墙与列表,以及两套控制条。
+// 音乐页:每日推荐到已下载这七个目的地共用的一页 —— 搜索、歌单详情、卡墙与列表。
+// 导航不在这里,它在窗口那一层(musicnav.slint,MEO-1876)。
 //
 // 属性面全在 global 里,这一页因此不从窗口根接一个字段 —— 拆出来时
 // 一处转发都不必写(见 docs/adr/0027)。
 export component MusicPage inherits VerticalLayout {
     padding: 16px;
-    // 控制条不在这一页里 —— 它是壳持有的那一根,一个实例管四个页签
+    // 控制条不在这一页里 —— 它是窗口持有的那一根,一个实例管所有目的地
     // (app.slint,docs/adr/0029)。条在时页底让出它那一块,免得列表最后
     // 几行藏在条底下;条不在就一分不留,凭空的空白看起来就是渲染坏了
     // (#116)。条件与 app.slint 摆条那一行是同一个。
@@ -185,19 +189,25 @@ export component MusicPage inherits VerticalLayout {
     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
     // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
     // 「当天拉过就不动」的判断在 Rust 侧,搜索结果因此不会被冲掉。
-    init => { if (Downloads.active) { Downloads.show(); } else { Player.music-shown(); } }
+    // 已下载的列表由切过来那一下的 load_section 刷新,这里不重复喊。
+    init => { if (!Downloads.active) { Player.music-shown(); } }
 
-    // 紧凑版式:分段条在顶部。竖栏在这个宽度上会把内容挤没。
+    // 紧凑版式没有侧栏,页头写当前目的地的全名:从「更多」进来时底栏亮的是
+    // 「更多」,不写的话看不出自己在哪一页。
     if Shell.compact: HorizontalLayout {
         spacing: 0px;
-        music-bar := MusicBar {
+        // 44px 与播放组胶囊同高:胶囊收起后就落在这一行的右端。
+        page-title := Text {
             horizontal-stretch: 1;
-            current: Downloads.active ? 5 : Shell.music-section;
-            selected(section) => {
-                Downloads.confirming = false;
-                Downloads.active = section == 5;
-                if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
-            }
+            height: 44px;
+            text: Destinations.label-of(Shell.destination);
+            accessible-role: text;
+            accessible-label: self.text;
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: 22px;
+            color: Theme.text;
+            vertical-alignment: center;
         }
         // 组状态存在时只让头部横向避开胶囊，独奏仍占满这一行。
         if Shell.group-banner != "": Rectangle { width: 56px; }
@@ -206,17 +216,6 @@ export component MusicPage inherits VerticalLayout {
     HorizontalLayout {
         vertical-stretch: 1;
         spacing: 12px;
-
-        // 宽版式:可收缩竖栏。
-        if !Shell.compact: music-rail := MusicRail {
-            current: Downloads.active ? 5 : Shell.music-section;
-            collapsed <=> Shell.rail-collapsed;
-            selected(section) => {
-            Downloads.confirming = false;
-            Downloads.active = section == 5;
-            if (section == 5) { Downloads.show(); } else { Shell.select-section(section); }
-        }
-        }
 
         if Downloads.active: downloads-manager := DownloadManager {
             horizontal-stretch: 1;
@@ -229,7 +228,7 @@ export component MusicPage inherits VerticalLayout {
             // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
             // 常驻一个空框会让人以为那三页也要先搜一下。
             // 进了歌手详情也收起来:那一层有自己的标题行与返回键。
-            if Shell.music-section == 2
+            if Shell.destination == 2
                 && Library.open-playlist-name == "":
             HorizontalLayout {
                 spacing: 8px;
@@ -250,7 +249,7 @@ export component MusicPage inherits VerticalLayout {
 
             // 搜索结果的三个页签。与搜索框同进同出 ——
             // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
-            if Shell.music-section == 2
+            if Shell.destination == 2
                 && Library.open-playlist-name == "":
             search-tabs := SearchTabBar {
                 current: Library.search-tab;
@@ -428,7 +427,7 @@ export component MusicPage inherits VerticalLayout {
             // Rust 引用不到它。
             // 行高不写死,跟着 LineEdit 走:它实际 56px 高,钉成 32px
             // 就溢出来压住列表首行(#130)。
-            if Shell.music-section == 1
+            if Shell.destination == 1
                 && Library.open-playlist-name == "":
             new-playlist-row := HorizontalLayout {
                 spacing: 8px;
@@ -452,7 +451,7 @@ export component MusicPage inherits VerticalLayout {
             }
 
             // 歌单分区的列表那一层。
-            if Shell.music-section == 1
+            if Shell.destination == 1
                 && Library.open-playlist-name == "":
             playlist-list := PlaylistList {
                 vertical-stretch: 1;
@@ -463,7 +462,7 @@ export component MusicPage inherits VerticalLayout {
             }
 
             // 搜索的歌手页签。
-            if Shell.music-section == 2
+            if Shell.destination == 2
                 && Library.open-playlist-name == ""
                 && Library.search-tab == 1:
             artist-list := ArtistList {
@@ -475,7 +474,7 @@ export component MusicPage inherits VerticalLayout {
 
             // 搜索的歌单页签。与「我的歌单」同一个组件、
             // 不同的一份数据 —— 点开走的也是同一条路。
-            if Shell.music-section == 2
+            if Shell.destination == 2
                 && Library.open-playlist-name == ""
                 && Library.search-tab == 2:
             found-playlist-list := PlaylistList {
@@ -491,7 +490,7 @@ export component MusicPage inherits VerticalLayout {
             // 电台区(#186):账号一份的共享歌单。「加载新歌」让服务端追加一批,
             // 哪台加的所有设备都刷新;「已听过」切去摆听过的那些,还能点。
             // 摆在空状态之上:「已听过」里一首都没有时,切回去的键不能跟着消失。
-            if Shell.music-section == 4
+            if Shell.destination == 4
                 && Library.open-playlist-name == "":
             radio-row := HorizontalLayout {
                 spacing: 8px;
@@ -598,15 +597,16 @@ export component MusicPage inherits VerticalLayout {
             // 于是卡墙也能筛;选了分组 Rust 会把卡墙切回列表。
             if Player.facets-enabled
                 && (Library.open-playlist-name != ""
-                    || Shell.music-section == 0
-                    || Shell.music-section == 3
-                    || Shell.music-section == 4):
+                    || Shell.destination == 0
+                    || Shell.destination == 3
+                    || Shell.destination == 4
+                    || Shell.destination == 6):
             facet-bar := FacetBar { }
 
             // 墙只在每日推荐分区才有东西可摆。别处也实例化的话,
             // 空的它仍占一格 12px 间距,列表底下凭空多一条缝(#130)。
             if Shell.wall-supported
-                && Shell.music-section == 0
+                && Shell.destination == 0
                 && Library.open-playlist-name == "":
             WallView { }
 
@@ -616,10 +616,11 @@ export component MusicPage inherits VerticalLayout {
             // 空状态:两个都在的话各分一截,下半页是一张空列表(#116)。
             if Player.tracks.length > 0
                 && (Library.open-playlist-name != ""
-                    || Shell.music-section == 0
-                    || Shell.music-section == 3
-                    || Shell.music-section == 4
-                    || (Shell.music-section == 2
+                    || Shell.destination == 0
+                    || Shell.destination == 3
+                    || Shell.destination == 4
+                    || Shell.destination == 6
+                    || (Shell.destination == 2
                         && Library.search-tab == 0))
                 && !Shell.wall-visible:
             track-list := TrackList {
@@ -627,7 +628,7 @@ export component MusicPage inherits VerticalLayout {
                 tracks: Player.tracks;
                 current: Player.now-id;
                 // 最近播放画成时间轴,别的分区还是平列表。
-                timeline: Shell.music-section == 3
+                timeline: Shell.destination == 3
                     && Library.open-playlist-name == "";
                 // 只有本地歌单的内容能移出去
                 removable: Library.open-playlist-local;

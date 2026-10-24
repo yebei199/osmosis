@@ -38,8 +38,8 @@ fn daily_with(rows: Vec<TrackRow>) -> MainWindow {
         .set_size(slint::LogicalSize::new(1200.0, 900.0));
     ui.global::<Session>().set_logged_in(true);
     ui.global::<Shell>().set_compact(false);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(0);
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Shell>().set_destination(0);
     let labels: Vec<SharedString> =
         ["不分组", "歌手", "专辑"]
             .into_iter()

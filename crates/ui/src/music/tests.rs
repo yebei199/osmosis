@@ -231,7 +231,7 @@ fn a_prefetched_track_is_only_used_for_its_own_track() {
     );
 }
 
-/// 四个编号各自认出自己的分区,认不出的落回每日推荐 ——
+/// 九个编号各自认出自己的目的地,认不出的落回每日推荐 ——
 /// 那是开局那一页,总比留在原地什么都不发生强。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
@@ -242,6 +242,11 @@ fn each_section_knows_what_to_load() {
     assert_eq!(Section::from_index(1), Section::Playlists);
     assert_eq!(Section::from_index(2), Section::Search);
     assert_eq!(Section::from_index(3), Section::Recent);
+    assert_eq!(Section::from_index(4), Section::Radio);
+    assert_eq!(Section::from_index(5), Section::Downloads);
+    assert_eq!(Section::from_index(6), Section::Liked);
+    assert_eq!(Section::from_index(7), Section::Profile);
+    assert_eq!(Section::from_index(8), Section::Settings);
     assert_eq!(Section::from_index(99), Section::Daily);
     assert_eq!(Section::from_index(-1), Section::Daily);
 }
@@ -257,7 +262,7 @@ fn only_the_daily_section_stamps_the_day() {
     let (ui, deck) = deck_window();
     let weak = ui.as_weak();
 
-    for section in [1, 2, 3] {
+    for section in [1, 2, 3, 6, 7, 8] {
         load_section(&weak, &deck, section);
         assert!(
             deck.last_daily.get().is_none(),

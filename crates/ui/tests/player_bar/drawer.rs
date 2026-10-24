@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn the_drawer_starts_closed_and_toggles() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
 
     assert!(
         !present(&ui, "PlayerBar::drawer"),
@@ -36,7 +36,7 @@ fn the_drawer_starts_closed_and_toggles() {
 #[test]
 fn the_drawer_holds_the_modes() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
 
     assert!(
         key(&ui, "随机播放").is_none(),
@@ -72,7 +72,7 @@ fn listed_devices_show_up_only_as_outputs() {
     use slint::{ModelRc, VecModel};
 
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     ui.global::<Shell>().set_devices(ModelRc::new(
         VecModel::from(vec![ui::DeviceRow {
             id: "pc1".into(),
@@ -113,7 +113,7 @@ fn the_drawer_grows_upward_and_never_moves_the_bar() {
     let ui = playing_app();
 
     for tab in PAGE_TABS {
-        ui.global::<Shell>().set_current_tab(tab);
+        ui.global::<Shell>().set_destination(tab);
         check_drawer_grows_upward(
             &ui,
             &format!("tab {tab}"),
@@ -157,7 +157,7 @@ fn check_drawer_grows_upward(ui: &MainWindow, page: &str) {
 #[test]
 fn the_drawer_is_identical_everywhere() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     let outside = drawer_shape(&ui);
 
     ui.global::<Shell>().set_play_page_open(true);
@@ -174,7 +174,7 @@ fn the_drawer_is_identical_everywhere() {
 #[test]
 fn a_real_click_reaches_the_drawer_rows() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -203,7 +203,7 @@ fn a_real_click_reaches_the_drawer_rows() {
 #[test]
 fn a_real_click_still_reaches_the_main_bar() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -229,7 +229,7 @@ fn a_real_click_still_reaches_the_main_bar() {
 #[test]
 fn a_real_click_outside_closes_the_drawer() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -249,7 +249,7 @@ fn a_real_click_outside_closes_the_drawer() {
 #[test]
 fn a_toggle_states_itself_in_words_not_only_in_color() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -277,7 +277,7 @@ fn a_toggle_states_itself_in_words_not_only_in_color() {
 #[test]
 fn the_loop_row_names_all_three_states() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -300,7 +300,7 @@ fn the_loop_row_names_all_three_states() {
 #[test]
 fn a_toggle_asks_without_setting_the_property() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -327,7 +327,7 @@ fn a_toggle_asks_without_setting_the_property() {
 #[test]
 fn the_main_bar_stays_usable_while_the_drawer_is_open() {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     key(&ui, "更多")
         .expect("找不到抽屉键")
         .invoke_accessible_default_action();
@@ -356,7 +356,7 @@ fn the_main_bar_stays_usable_while_the_drawer_is_open() {
 /// 开着抽屉、正在放 `id` 这一首。
 fn drawer_playing(id: &str) -> MainWindow {
     let ui = playing_app();
-    ui.global::<Shell>().set_current_tab(1);
+    ui.global::<Shell>().set_destination(0);
     ui.global::<Player>().set_now_id(id.into());
     key(&ui, "更多")
         .expect("找不到抽屉键")

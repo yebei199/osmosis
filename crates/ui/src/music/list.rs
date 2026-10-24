@@ -166,15 +166,15 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     ui.global::<Player>()
         .on_daily(move || fetch_daily(&weak, &daily));
 
-    // 二级导航换了分区。四个分区各自对应一次取数,映射写在**一处** ——
-    // 分散在四个回调里的话,加第五个分区时必然漏掉某一处。
+    // 换了目的地。各目的地对应的取数映射写在**一处**(load_section)——
+    // 分散在各个回调里的话,加一个目的地时必然漏掉某一处。
     let sectioned = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Shell>().on_select_section(
         move |section| {
             if let Some(ui) = weak.upgrade() {
                 ui.global::<Shell>()
-                    .set_music_section(section);
+                    .set_destination(section);
                 // 换分区回到歌单**列表**那一层。不清的话,从别处回到「我的歌单」
                 // 看到的是上次点开的那个歌单 —— 这一节的入口行为就不稳定了。
                 ui.global::<Library>()
@@ -267,7 +267,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             show_section(
                 &ui,
                 &closing,
-                ui.global::<Shell>().get_music_section(),
+                ui.global::<Shell>().get_destination(),
             );
         }
     });
@@ -309,7 +309,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     });
 }
 
-/// Music 页的分区。编号即 `musicnav.slint` 里 `MusicSections.items` 各项的 `id`。
+/// 一级目的地。编号即 `musicnav.slint` 里 `Destinations` 各项的 `id`。
 ///
 /// 两处手工对齐:那边加一项,这里就要多一个分支。做成枚举而不是散在各处的
 /// 魔数,是为了让「漏了一个分区」变成编译错误而不是运行时的一片空白。
@@ -323,13 +323,20 @@ pub enum Section {
     /// 电台(#159)。编号 4 是后加的:摆在每日推荐之后,编号不插队,
     /// 已有四个分区的编号因此一个没动。
     Radio,
+    /// 已下载:本机文件,由 `downloads` 模块自己列。
+    Downloads,
+    /// 我喜欢(MEO-1876):账号的红心,与歌单列表里那一行是同一份数据。
+    Liked,
+    /// 个人与设置:不摆曲目,进页时各页自己取数。
+    Profile,
+    Settings,
 }
 
 // 门要加在 impl 上,不能只加在方法上:方法没了,`impl Section` 这行还在,
 // 而 wasm 上根本没有 Section 这个类型(见上面枚举的同一道门)。
 #[cfg(not(target_arch = "wasm32"))]
 impl Section {
-    /// 由界面给的编号认出分区。认不出的编号当每日推荐 ——
+    /// 由界面给的编号认出目的地。认不出的编号当每日推荐 ——
     /// 那是开局那一页,总比留在原地什么都不发生强。
     pub fn from_index(index: i32) -> Self {
         match index {
@@ -337,12 +344,25 @@ impl Section {
             2 => Self::Search,
             3 => Self::Recent,
             4 => Self::Radio,
+            5 => Self::Downloads,
+            6 => Self::Liked,
+            7 => Self::Profile,
+            8 => Self::Settings,
             _ => Self::Daily,
         }
     }
 }
 
-/// 换到某个分区时该取什么。
+/// 「我喜欢」这一视图。红心没有歌单 id(它是账号的属性),视图键用固定的一个。
+#[cfg(not(target_arch = "wasm32"))]
+fn liked_view() -> ViewSource {
+    ViewSource::Playlist(
+        crate::library::playlist::Source::Liked,
+        "liked".to_owned(),
+    )
+}
+
+/// 换到某个目的地时该取什么。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn load_section(
     weak: &slint::Weak<MainWindow>,
@@ -375,6 +395,30 @@ pub(super) fn load_section(
                 );
             }
         }
+        Section::Liked => {
+            fetch_cached_into(
+                weak,
+                deck,
+                Action::begin("liked"),
+                liked_view(),
+                crate::library::playlist::cached_tracks_of(
+                    crate::library::playlist::Source::Liked,
+                    "",
+                ),
+                crate::library::playlist::tracks_of(
+                    crate::library::playlist::Source::Liked,
+                    "",
+                ),
+            );
+        }
+        Section::Downloads => {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<crate::Downloads>()
+                    .invoke_show();
+            }
+        }
+        // 个人页进页时自己取统计(pages/profile.rs),设置页没有要取的
+        Section::Profile | Section::Settings => {}
         // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。
         // 摆的是上一次搜到的那批(没搜过就是空的)。
         Section::Search => {
@@ -423,7 +467,7 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
     // 补拉,在后台进推荐自己那份,不把用户正在看的歌单换掉(#137 ④)。
     let on_screen = weak.upgrade().is_some_and(|ui| {
         Section::from_index(
-            ui.global::<Shell>().get_music_section(),
+            ui.global::<Shell>().get_destination(),
         ) == Section::Daily
             && ui
                 .global::<Library>()
@@ -626,8 +670,12 @@ pub(super) fn show_section(
         Section::Recent => Some(ViewSource::Recent),
         Section::Radio => Some(ViewSource::Radio),
         Section::Search => deck.views.latest_search(),
-        // 歌单分区摆的是歌单列表,曲目区不出现
-        Section::Playlists => return,
+        Section::Liked => Some(liked_view()),
+        // 歌单分区摆的是歌单列表,曲目区不出现;另外三个不摆曲目
+        Section::Playlists
+        | Section::Downloads
+        | Section::Profile
+        | Section::Settings => return,
     };
     match source {
         Some(source) => {

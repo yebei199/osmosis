@@ -449,8 +449,8 @@ desktop-exit-check:
 # 起一个干净的桌面实例,截下**真实窗口像素**,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
-# tab 指定开局页(0=Home、1=Music):`just shot 420 1` 直接截紧凑版的 Music 页 ——
-# 不必再靠 MCP 模拟点击切页。
+# dest 指定开局目的地(编号见 crates/ui/slint/musicnav.slint 的 Destinations,
+# 0=每日推荐、8=设置):`just shot 420 8` 直接截紧凑版的设置页 —— 不必再靠 MCP 模拟点击切页。
 #
 # 为什么必须有这条 recipe:
 # 1. 不先杀干净,旧实例的窗口还在,AI 截到的是**上一版**的界面,浑然不觉;
@@ -458,7 +458,7 @@ desktop-exit-check:
 #    在它眼里恒为纯黑,据此判断「没渲染出来」是错的。真实像素只能靠合成器抓
 #    (niri screenshot-window)。
 [group('桌面')]
-shot width="" tab="0":
+shot width="" dest="0":
     #!/usr/bin/env bash
     set -euo pipefail
     just desktop-kill
@@ -466,7 +466,7 @@ shot width="" tab="0":
     nix-shell slint.nix --run 'cargo build -p app-desktop'
     # 日志与 marker 放 mktemp 出的目录:固定的 /tmp 路径会被同机并行的另一次 shot 覆盖(#136)
     tmp=$(mktemp -d)
-    OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
+    OSMOSIS_DESTINATION={{dest}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
     for _ in $(seq 30); do
         id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break

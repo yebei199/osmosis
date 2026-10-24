@@ -242,7 +242,7 @@ fn loading_a_batch_into_the_queue_leaves_the_browse_list_alone()
 fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist()
  {
     let (ui, deck) = deck_window_pumped();
-    ui.global::<crate::Shell>().set_music_section(1);
+    ui.global::<crate::Shell>().set_destination(1);
     ui.global::<crate::Library>()
         .set_open_playlist_name("我喜欢的".into());
     visit(&ui, &deck, liked()).send(Ok(batch(&["l1"])));
@@ -272,7 +272,7 @@ fn a_daily_pulled_in_the_background_does_not_take_over_an_open_playlist()
 #[test]
 fn a_daily_pulled_while_on_the_daily_section_is_shown() {
     let (ui, deck) = deck_window_pumped();
-    ui.global::<crate::Shell>().set_music_section(0);
+    ui.global::<crate::Shell>().set_destination(0);
 
     let (daily, answer) = late();
     fetch_daily_from(

@@ -693,7 +693,7 @@ mod tests {
             &frame_loop.wall.clone(),
         );
         let shell = ui.global::<Shell>();
-        shell.set_current_tab(1);
+        shell.set_destination(0);
         shell.set_wall_field_w(400.0);
         shell.set_wall_field_h(300.0);
         let tracks = Rc::new(slint::VecModel::from(vec![

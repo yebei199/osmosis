@@ -36,7 +36,7 @@ fn entering_the_profile_asks_for_stats() {
         counter.set(counter.get() + 1);
     });
 
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
     // 无头下条件元素惰性实例化,init 在第一次元素查询时才触发;
     // 查一下页面里的任意元素,把实例化逼出来。
     let _ = present(&ui, "ProfilePage::stats-row");
@@ -48,7 +48,7 @@ fn entering_the_profile_asks_for_stats() {
 #[test]
 fn stat_cards_wait_for_the_data() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
 
     ui.global::<Profile>().set_loaded(false);
     assert!(!present(&ui, "ProfilePage::stats-row"));
@@ -64,7 +64,7 @@ fn stat_cards_wait_for_the_data() {
 #[test]
 fn the_netease_section_swaps_the_code_for_the_nickname() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
 
     assert!(
         present(&ui, "ProfilePage::netease-code"),
@@ -96,7 +96,7 @@ fn the_netease_section_swaps_the_code_for_the_nickname() {
 #[test]
 fn the_unbind_button_reaches_rust() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
     ui.global::<Profile>().set_netease_bound(true);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -124,7 +124,7 @@ fn the_unbind_button_reaches_rust() {
 fn the_output_device_can_be_picked_without_a_track() {
     let ui = window();
     ui.global::<Player>().set_has_track(false);
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
 
     assert!(
         present(&ui, "ProfilePage::output-strip"),
@@ -166,7 +166,7 @@ fn the_output_device_can_be_picked_without_a_track() {
 #[test]
 fn the_player_bar_does_not_eat_the_bottom_of_the_profile() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
     ui.global::<Profile>().set_loaded(true);
 
     ui.global::<Player>().set_has_track(false);
@@ -188,7 +188,7 @@ fn the_player_bar_does_not_eat_the_bottom_of_the_profile() {
 #[test]
 fn the_reserved_space_clears_the_gap_under_the_bar_too() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
     ui.global::<Profile>().set_loaded(true);
 
     ui.global::<Player>().set_has_track(false);
@@ -206,7 +206,7 @@ fn the_reserved_space_clears_the_gap_under_the_bar_too() {
 #[test]
 fn nothing_is_reserved_when_no_track_is_playing() {
     let ui = window();
-    ui.global::<Shell>().set_current_tab(2);
+    ui.global::<Shell>().set_destination(7);
     ui.global::<Profile>().set_loaded(true);
     ui.global::<Player>().set_has_track(false);
 

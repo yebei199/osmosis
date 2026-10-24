@@ -15,7 +15,7 @@ fn settings_page() -> MainWindow {
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
     // 设置页是 tab 3(个人主页插在 2)。
-    ui.global::<Shell>().set_current_tab(3);
+    ui.global::<Shell>().set_destination(8);
     ui.global::<Shell>().set_compact(false);
     ui
 }

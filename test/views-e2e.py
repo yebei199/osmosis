@@ -109,9 +109,23 @@ def sample(args):
     return {"t": round(time.time(), 3), "titles": [t for t in titles if t], "loading": loading}
 
 
-def section(args, index):
-    items = wait_for("分区导航", lambda: handles(args, "MusicRail::item-touch") or handles(args, "MusicBar::item-touch"))
-    click(args, items[index])
+def labelled(args, element_id, wanted):
+    return next((h for h in handles(args, element_id) if label(args, h) == wanted), None)
+
+
+def section(args, name):
+    """去一级目的地(MEO-1876),按全名:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。"""
+    def find():
+        found = labelled(args, "SideNavRow::touch", name) or labelled(args, "NavItem::touch", name)
+        if found is None:
+            more = labelled(args, "NavItem::touch", "更多")
+            if more is not None:
+                click(args, more)
+                time.sleep(1)
+                found = labelled(args, "MorePanel::item", name)
+        return found
+
+    click(args, wait_for(f"目的地「{name}」", find))
 
 
 def open_playlist(args, name=None, index=None):
@@ -138,12 +152,8 @@ def open_playlist(args, name=None, index=None):
 
 
 def to_music(args):
-    if handles(args, "MusicRail::item-touch") or handles(args, "MusicBar::item-touch"):
-        return
-    # 主导航第二格就是音乐(Nav.items 的下标 1);找不到再退到 Home 页上的音乐磁贴
-    tabs = handles(args, "NavItem::touch")
-    music = tabs[1] if len(tabs) > 1 else wait_for("音乐入口", lambda: button(args, "音乐"))
-    click(args, music)
+    # 没有 Home 了(MEO-1876):登录后就在音乐的目的地上,回每日推荐即可
+    section(args, "每日推荐")
 
 
 def watch(args, step, out):
@@ -165,14 +175,14 @@ def watch(args, step, out):
 
 
 def step_enter(args, out):
-    section(args, 0)
+    section(args, "每日推荐")
     # GPU 构建的推荐分区默认是卡墙,曲目行不在元素树里;切到列表才读得到歌名
     as_list = wait_for("推荐分区", lambda: handles(args, "WallView::view-list-btn") or sample(args)["titles"])
     if isinstance(as_list, list) and as_list and isinstance(as_list[0], dict):
         click(args, as_list[0])
     daily = set(wait_for("每日推荐的曲目", lambda: sample(args)["titles"]))
     print(f"enter: 每日推荐前几首 {sorted(daily)}")
-    section(args, 1)
+    section(args, "我的歌单")
     open_playlist(args, name=LIKED)
     ok, liked, bad = watch(args, "enter", out)
     leaked = [t for s in bad for t in s["foreign"] if t in daily]
@@ -182,31 +192,25 @@ def step_enter(args, out):
 
 
 def step_aba(args, out):
-    section(args, 1)
+    section(args, "我的歌单")
     open_playlist(args, name=LIKED)
-    section(args, 1)
+    section(args, "我的歌单")
     open_playlist(args, index=1)
-    section(args, 1)
+    section(args, "我的歌单")
     open_playlist(args, name=LIKED)
     ok, _, _ = watch(args, "aba", out)
     return ok
 
 
 def step_relogin(args, out):
-    # 宽版式的设置是侧栏底下那颗带标签的圆钮;紧凑版式是底栏第四格(Nav.items 两项
-    # 之后接着排 bottom-items,设置是其中第二项)
-    tabs = handles(args, "NavItem::touch")
-    to_settings = button(args, "设置") or (tabs[3] if len(tabs) > 3 else None)
-    if to_settings is None:
-        sys.exit("等不到设置入口")
-    click(args, to_settings)
+    section(args, "设置")
     logout = wait_for("退出登录键", lambda: button(args, "退出登录"))
     click(args, logout)
     wait_for("登录页", lambda: handles(args, "LoginPage::username"))
     env = dict(os.environ, PORT=str(args.port))
     subprocess.run([os.path.join(os.path.dirname(__file__), "mcp-login.sh")], check=True, env=env)
     to_music(args)
-    section(args, 1)
+    section(args, "我的歌单")
     open_playlist(args, name=LIKED)
     ok, _, _ = watch(args, "relogin", out)
     return ok

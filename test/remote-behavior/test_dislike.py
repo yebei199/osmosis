@@ -185,7 +185,7 @@ def long_press(client):
 
 def cancel(client):
     # 在遮罩下面的导航位置发送真实指针点击，命中的是菜单外遮罩。
-    handles = client.ui.elements("NavItem::touch")
+    handles = client.ui.elements("SideNavRow::touch") or client.ui.elements("NavItem::touch")
     assert handles, "existing navigation is required for outside-click coordinates"
     client.ui.activate(handles[0], pointer=True)
     assert all(

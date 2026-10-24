@@ -23,8 +23,8 @@ fn playlists_section() -> MainWindow {
     testing::init_no_event_loop();
     let ui = MainWindow::new().expect("建不出主窗口");
     ui.global::<Session>().set_logged_in(true);
-    ui.global::<Shell>().set_current_tab(1);
-    ui.global::<Shell>().set_music_section(1);
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Shell>().set_destination(1);
     ui
 }
 
@@ -81,7 +81,7 @@ fn going_back_returns_to_the_list() {
         .set_open_playlist_name("".into());
 
     assert_eq!(
-        ui.global::<Shell>().get_music_section(),
+        ui.global::<Shell>().get_destination(),
         1,
         "返回是退一层,不是换一节"
     );

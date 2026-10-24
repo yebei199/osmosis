@@ -6,13 +6,6 @@
 // 字段一律是**已经格式化好的字符串**:歌手怎么拼、时长怎么写由 Rust 侧决定
 // 并测过,`.slint` 里不做任何计算。
 
-// 导航的三项。**唯一真相** —— 侧栏(宽版式)和底栏(紧凑版式)都 `for` 它,
-// 免得两处各抄一份图标 path,改了一处忘另一处。
-export struct NavEntry {
-    label: string,
-    icon: string, // SVG path 数据,viewbox 24×24
-}
-
 // 个人主页「常听歌手」的一条。ratio 已在 Rust 侧按榜首归一,0..=1。
 export struct ArtistRankRow {
     name: string,

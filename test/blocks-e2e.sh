@@ -143,6 +143,32 @@ call() {
   | python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]["content"][0]; print(r.get("text",""))'
 }
 
+# 一级目的地(MEO-1876)按全名点过去:宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
+nav_labelled() {
+  local hs h
+  hs=$(call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}")
+  for h in $(echo "$hs" | python3 -c 'import json,sys; [print(json.dumps(h, separators=(",",":"))) for h in json.load(sys.stdin).get("elementHandles") or []]'); do
+    if [ "$(call get_element_properties "{\"elementHandle\":$h}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accessibleLabel") or "")')" = "$2" ]; then
+      echo "$h"; return
+    fi
+  done
+}
+go_to() {
+  local h
+  h=$(nav_labelled SideNavRow::touch "$1")
+  [ -n "$h" ] || h=$(nav_labelled NavItem::touch "$1")
+  if [ -z "$h" ]; then
+    h=$(nav_labelled NavItem::touch 更多)
+    if [ -n "$h" ]; then
+      call click_element "{\"elementHandle\":$h}" >/dev/null
+      sleep 1
+      h=$(nav_labelled MorePanel::item "$1")
+    fi
+  fi
+  [ -n "$h" ] || { echo "找不到目的地「$1」" >&2; exit 1; }
+  call click_element "{\"elementHandle\":$h}" >/dev/null
+}
+
 handle() {
   call query_element_descendants "{\"elementHandle\":$root,\"findAll\":true,\"queryStack\":[{\"matchElementId\":\"$1\"}]}" \
   | python3 -c "
@@ -185,9 +211,7 @@ to_music() {
     call dispatch_key_event "{\"windowHandle\":$win,\"text\":\"\\u001b\"}" >/dev/null
     sleep 1
   done
-  music=$(handle "NavItem::touch" 1)
-  must "$music" "音乐入口"
-  call click_element "{\"elementHandle\":$music}" >/dev/null
+  go_to 每日推荐
   sleep 2
 }
 
@@ -238,16 +262,8 @@ queue() {
 
 settings() {
   attach
-  local nav before restore
-  # 底栏(窄版式)四格都是 NavItem;宽版式的设置沉在侧栏底,是一颗标签为「设置」的圆钮
-  nav=$(handle "NavItem::touch" 3)
-  if [ -n "$nav" ]; then
-    call click_element "{\"elementHandle\":$nav}" >/dev/null
-  else
-    nav=$(labelled "设置")
-    must "$nav" "设置入口"
-    act "$nav"
-  fi
+  local before restore
+  go_to 设置
   sleep 2
   before=$(sql "select count(*) from block_rules;")
   [ "$before" -ge 1 ] || fail "库里没有规则可恢复,先跑一次 queue"
