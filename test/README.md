@@ -17,7 +17,8 @@ MCP 从 pasta 网络命名空间转发到随机宿主端口，所以和用户开
 共享 null sink 幂等且不由 fixture 删除，不从真实声卡出声、不改系统默认输出。测试验证幂等性和子进程的真实环境。
 
 前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
-3000 因当前编译期地址而必须独占，app 用例串行运行；端口被占直接失败，不杀其他会话。
+server 用随机宿主端口，pasta 把应用命名空间里烘进去的 127.0.0.1:3000 接过去，所以宿主的 3000
+被别的开发后端占着也照跑（MEO-1900）；app 用例串行运行，不杀其他会话。
 依赖由 uv.lock 固定。验收分流入口按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
 
 ```sh

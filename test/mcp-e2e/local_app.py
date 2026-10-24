@@ -206,7 +206,7 @@ class LocalApp:
     def request(self, path: str, body=None):
         """HTTP 只用于本轮数据准备，不替代被测的点击和播放。"""
         request = urllib.request.Request(
-            "http://127.0.0.1:3000" + path,
+            f"http://127.0.0.1:{self.server_port}" + path,
             data=None if body is None else json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
@@ -219,7 +219,9 @@ class LocalApp:
 
     def start(self):
         """准备隔离数据后经 MCP 登录、进入音乐页。"""
-        require_free(3000)
+        # server 用随机宿主端口；pasta 把应用命名空间里烘进去的 127.0.0.1:3000 接到它，
+        # 宿主的 3000 被别的开发后端占着也不影响本轮。
+        self.server_port = free_port()
         mcp_port = free_port()
         self.client = Client(f"http://127.0.0.1:{mcp_port}/mcp", timeout=60)
         database_url = self.resources.database()
@@ -247,7 +249,7 @@ class LocalApp:
             PIPEWIRE_NODE=self.audio_sink,
             DATABASE_URL=database_url,
             BANG_DREAM_ADDR=f"http://127.0.0.1:{media.grpc_port}",
-            BIND="127.0.0.1:3000",
+            BIND=f"127.0.0.1:{self.server_port}",
             INVITE_CODE=self.username,
             XDG_STATE_HOME=str(self.state),
             XDG_CACHE_HOME=str(self.directory / "cache"),
@@ -270,6 +272,8 @@ class LocalApp:
             str(self.headless),
             "--mcp-port",
             str(mcp_port),
+            "--backend-port",
+            str(self.server_port),
             "--bin",
             str(self.root / "target/debug/osmosis-desktop"),
             "--state",

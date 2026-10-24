@@ -6,7 +6,7 @@
 // desktop. grim reads the pixels. The user's niri never sees a window.
 //
 //   bun test/headless/headless.ts shot [--out dist/shot.png] [--width W] [--height H] [--tab T] [--bin B]
-//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--width W] [--height H] [--tab T] [--bin B] [--log F|-] [--state D]
+//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--backend-port P] [--width W] [--height H] [--tab T] [--bin B] [--log F|-] [--state D]
 //   bun test/headless/headless.ts capture --dir D --out F
 //
 // `run` stays in the foreground (default dir: a fresh one under the cache, `--log -`
@@ -23,7 +23,9 @@ const root = resolve(import.meta.dir, "../..");
 const OUTPUT = "HEADLESS-1";
 // MCP port inside the namespace; the host side is whatever --mcp-port says.
 const NS_MCP_PORT = 8091;
-// Debug builds bake 127.0.0.1:3000; pasta maps the namespace's 3000 to the host's.
+// Debug builds bake 127.0.0.1:3000; pasta maps the namespace's 3000 to the host's
+// --backend-port (default the same 3000), so a fixture can run its own server
+// on any free host port beside a dev server that holds the host's 3000.
 const BACKEND_PORT = 3000;
 const WINDOW_TIMEOUT_MS = 120_000;
 // Frames the app gets after its window appears before a shot is taken.
@@ -38,6 +40,7 @@ export type Options = {
   tab: string;
   bin: string;
   mcpPort?: number;
+  backendPort: number;
   log?: string;
   // XDG_STATE_HOME used as is; without it the session gets a copy of the dev state.
   state?: string;
@@ -202,7 +205,7 @@ export async function start(o: Options): Promise<Session> {
   mkdirSync(tmp, { recursive: true });
   const forward = o.mcpPort ? `${o.mcpPort}:${NS_MCP_PORT}` : "none";
   const pasta = Bun.spawn(
-    ["pasta", "--config-net", "-f", "-q", "--host-lo-to-ns-lo", "-T", String(BACKEND_PORT), "-t", forward, "-u", "none", "-U", "none", "--", o.bin],
+    ["pasta", "--config-net", "-f", "-q", "--host-lo-to-ns-lo", "-T", `${BACKEND_PORT}:${o.backendPort}`, "-t", forward, "-u", "none", "-U", "none", "--", o.bin],
     {
       env: cleanEnv({
         XDG_STATE_HOME: o.state ?? stateCopy(o.dir),
@@ -277,6 +280,7 @@ function options(f: Record<string, string>, dir: string): Options {
     tab: f.tab || "0",
     bin: resolve(f.bin ?? join(root, "target/debug/osmosis-desktop")),
     mcpPort: f["mcp-port"] ? int(f["mcp-port"], 0, "mcp-port") : undefined,
+    backendPort: int(f["backend-port"], BACKEND_PORT, "backend-port"),
     log: f.log && f.log !== "-" ? resolve(f.log) : f.log,
     state: f.state ? resolve(f.state) : undefined,
   };
