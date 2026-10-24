@@ -42,8 +42,14 @@ def test_database_and_state_belong_to_this_run(local_app):
     # 窗口在本轮的无头显示里，不在用户桌面上。
     import json
 
+    import os
+
     session = json.loads((local_app.headless / "session.json").read_text())
-    assert Path(session["wayland"]).is_relative_to(local_app.directory)
+    wayland = Path(session["wayland"])
+    # 套接字在本轮无头会话自己的短目录里（sun_path 放不下产物目录），不是用户的显示。
+    assert wayland.is_socket()
+    assert wayland.parent != Path(os.environ["XDG_RUNTIME_DIR"])
+    assert wayland.parent.name.startswith("osmosis-headless-")
     shot = local_app.directory / "headless-shot.png"
     local_app.client.screenshot(shot)
     assert shot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
