@@ -249,11 +249,57 @@ fn wide_columns_follow_the_ratio_not_the_text() {
 
     let album = element(&ui, "TrackList::album-cell");
     let artists = element(&ui, "TrackList::artists-cell");
+    // 行要铺满列表:1232px 的内容区里,专辑那 3/10 至少两百多像素。
+    // 实测曾经整行缩到文字最小宽,两列各 113px。
+    assert!(
+        album.size().width > 250.0,
+        "专辑列只有 {}",
+        album.size().width
+    );
     assert!(
         (album.size().width - artists.size().width).abs()
             < 1.0,
         "歌手 {} 专辑 {}",
         artists.size().width,
         album.size().width
+    );
+}
+
+/// 手机版式里列表在底栏与控制条之上收住(MEO-1878):最后一行的红心
+/// 不被任何一条压住。量的是边,不是截图。
+#[test]
+fn compact_list_ends_above_the_bars() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+    ui.window()
+        .set_size(slint::LogicalSize::new(420.0, 900.0));
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_compact(true);
+    ui.global::<Shell>().set_destination(6);
+    let rows: Vec<TrackRow> = (0..40)
+        .map(|i| TrackRow {
+            id: i.to_string().into(),
+            title: format!("第 {i} 首").into(),
+            ..Default::default()
+        })
+        .collect();
+    ui.global::<Player>()
+        .set_tracks(ModelRc::new(VecModel::from(rows)));
+    ui.global::<Player>().set_has_track(true);
+
+    let list = element(&ui, "MusicPage::track-list");
+    let nav = element(&ui, "MainWindow::bottom-bar");
+    let bar = element(&ui, "PlayerBar::capsule");
+    assert!(
+        bottom(&list) <= top(&nav),
+        "列表底 {} 底栏顶 {}",
+        bottom(&list),
+        top(&nav)
+    );
+    assert!(
+        bottom(&list) <= top(&bar),
+        "列表底 {} 控制条顶 {}",
+        bottom(&list),
+        top(&bar)
     );
 }

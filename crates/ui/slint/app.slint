@@ -605,7 +605,7 @@ export component MainWindow inherits Window {
                     // ── 底栏(紧凑版式)──
                     // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
                     // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
-                    if Shell.compact: Rectangle {
+                    if Shell.compact: bottom-bar := Rectangle {
                         height: root.nav-bar-h;
                         // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
                         background: Theme.base;

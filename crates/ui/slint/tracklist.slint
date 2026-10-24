@@ -50,6 +50,9 @@ export component TrackList inherits ListView {
     for row[i] in root.tracks: Rectangle {
         // 堆头(#160)比歌矮一截,没有卡片底,读起来是分隔而不是又一首歌。
         height: row.header ? 44px : 56px;
+        // 行宽钉在可见宽度上。ListView 按行的 preferred 宽排视口,宽屏三列的
+        // preferred 归零之后,不钉的话整行缩成文字最小宽(MEO-1878)。
+        width: root.visible-width;
 
         // 就是它在响 —— 与 root.current 绑的那一首比对,空串不算(见上面
         // `current` 的注释)。background/border/无障碍态共用同一个判断,
@@ -306,9 +309,14 @@ export component TrackList inherits ListView {
 
 // 一颗药丸。紧凑版式下触摸区 44px 高(docs/design.md「版式」),画出来的仍是
 // 细细一条 —— 44px 的实心药丸一排下来像一行按钮。
-component Pill inherits Rectangle {
+//
+// 电台页的「加载新歌」「已听过」也用它(MEO-1878):同一页上两种按钮形状
+// 读着像两个应用。那两颗是动作不是开关,checkable 关掉。
+export component Pill inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
+    in property <bool> checkable: true;
+    in property <bool> enabled: true;
     // 只给读屏的补充说明,不上屏。
     in property <string> description;
     callback clicked;
@@ -317,10 +325,12 @@ component Pill inherits Rectangle {
     width: label.preferred-width + 24px;
     accessible-role: button;
     accessible-label: root.text;
-    accessible-checkable: true;
-    accessible-checked: root.selected;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checkable && root.selected;
+    accessible-enabled: root.enabled;
     accessible-description: root.description;
-    accessible-action-default => { root.clicked(); }
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    opacity: root.enabled ? 1 : 0.5;
 
     Rectangle {
         y: (parent.height - self.height) / 2;
@@ -341,9 +351,16 @@ component Pill inherits Rectangle {
         vertical-alignment: center;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
+}
+
+// 横滑行右缘的渐隐:还有内容在右边。只是提示,不挡点击。
+component OverflowFade inherits Rectangle {
+    width: 40px;
+    background: @linear-gradient(90deg, Theme.base.with-alpha(0) 0%, Theme.base 100%);
 }
 
 export component FacetBar inherits VerticalLayout {
@@ -353,8 +370,11 @@ export component FacetBar inherits VerticalLayout {
 
     spacing: 2px;
 
-    Flickable {
-        height: root.row-height;
+    // 两排都能横滑,但手机上看不出来:最后一颗被齐刷刷切掉,像是没有了。
+    // 右边还有没露出来的药丸时,盖一道渐隐提示「还能往左划」(MEO-1878)。
+    Rectangle {
+    height: root.row-height;
+    groups-flick := Flickable {
         content-width: groups.preferred-width;
         groups := HorizontalLayout {
             spacing: 6px;
@@ -374,9 +394,12 @@ export component FacetBar inherits VerticalLayout {
             }
         }
     }
+    if groups-flick.content-x > groups-flick.width - groups-flick.content-width + 1px: OverflowFade { x: parent.width - self.width; }
+    }
 
-    if root.filters-open || Player.chosen-count > 0: Flickable {
-        height: root.row-height;
+    if root.filters-open || Player.chosen-count > 0: Rectangle {
+    height: root.row-height;
+    chips-flick := Flickable {
         content-width: chip-row.preferred-width;
         chip-row := HorizontalLayout {
             spacing: 6px;
@@ -386,6 +409,8 @@ export component FacetBar inherits VerticalLayout {
                 clicked => { Player.toggle-chip(i); }
             }
         }
+    }
+    if chips-flick.content-x > chips-flick.width - chips-flick.content-width + 1px: chips-fade := OverflowFade { x: parent.width - self.width; }
     }
 
     // 筛空了:说清楚是筛选的结果,不摆开局那句「点一首歌开始」。
