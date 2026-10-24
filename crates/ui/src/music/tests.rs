@@ -959,3 +959,50 @@ fn the_radio_list_is_grouped_too() {
     );
     assert_eq!(ui.global::<Player>().get_pile_count(), 3);
 }
+
+/// 开电台时用户站在哪,决定这批歌摆上屏还是只进电台自己那份。返回开完之后摆着的视图。
+///
+/// 只看 `start` 同步做完的那一段:请求在 spawn 出去的协程里,这台窗口不推进它,
+/// 不发 HTTP。
+#[cfg(not(target_arch = "wasm32"))]
+fn view_after_radio_start(
+    destination: i32,
+    open_playlist: &str,
+) -> Option<ViewSource> {
+    let (ui, deck) = deck_window();
+    ui.global::<Shell>().set_destination(destination);
+    ui.global::<crate::Library>()
+        .set_open_playlist_name(open_playlist.into());
+    super::radio::start(&ui, &deck, api::RadioMode::Fm);
+    deck.views.current_source()
+}
+
+/// 站在电台区:电台那份当场切上屏,先是加载态。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_on_its_page_shows_it() {
+    assert_eq!(
+        view_after_radio_start(Section::Radio as i32, ""),
+        Some(ViewSource::Radio)
+    );
+}
+
+/// 在别的目的地开(播放页的心动模式):眼前那页不换。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_elsewhere_keeps_the_page() {
+    assert_eq!(
+        view_after_radio_start(Section::Daily as i32, ""),
+        None
+    );
+}
+
+/// 电台区里正开着一张歌单:也不把它换掉。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn starting_the_radio_over_an_open_playlist_keeps_it() {
+    assert_eq!(
+        view_after_radio_start(Section::Radio as i32, "夜"),
+        None
+    );
+}
