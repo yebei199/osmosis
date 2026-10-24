@@ -190,6 +190,9 @@ export component TrackList inherits ListView {
             // 中等与紧凑宽度仍是歌名上、歌手下的两行。
             VerticalLayout {
                 horizontal-stretch: Shell.wide ? 4 : 1;
+                // 宽屏的三列按比例分,不按文字长短分:preferred 归零,宽度全由 stretch
+                // 决定(否则长歌名长歌手吃掉整行,「—」的专辑列只剩十几像素)。
+                preferred-width: Shell.wide ? 0px : self.min-width;
                 alignment: center;
                 spacing: 2px;
 
@@ -213,6 +216,7 @@ export component TrackList inherits ListView {
             }
             if Shell.wide && !row.header: artists-cell := Text {
                 horizontal-stretch: 3;
+                preferred-width: 0px;
                 text: row.artists;
                 color: Theme.text-dim;
                 font-size: 13px;
@@ -221,6 +225,7 @@ export component TrackList inherits ListView {
             }
             if Shell.wide && !row.header: album-cell := Text {
                 horizontal-stretch: 3;
+                preferred-width: 0px;
                 text: row.album;
                 color: Theme.text-dim;
                 font-size: 13px;

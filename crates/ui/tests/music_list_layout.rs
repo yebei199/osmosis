@@ -231,3 +231,29 @@ fn settings_page_centers_its_column() {
 fn profile_page_centers_its_column() {
     assert_column_centered(7, "ProfilePage::column");
 }
+
+/// 列宽按 4:3:3 分,不随文字长短走:歌名歌手很长、专辑是「—」时,
+/// 专辑列仍与歌手列一样宽。实测曾是歌手 228px、专辑 17px。
+#[test]
+fn wide_columns_follow_the_ratio_not_the_text() {
+    let ui = music_page(1400.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    ui.global::<Player>().set_tracks(ModelRc::new(VecModel::from(vec![TrackRow {
+        id: "1".into(),
+        title: "一首名字非常非常长的歌,长到足够把整列都撑开还要再多出一截来".into(),
+        artists: "歌手甲 / 歌手乙 / 歌手丙 / 歌手丁 / 歌手戊 / 歌手己".into(),
+        album: "—".into(),
+        duration: "3:41".into(),
+        ..Default::default()
+    }])));
+
+    let album = element(&ui, "TrackList::album-cell");
+    let artists = element(&ui, "TrackList::artists-cell");
+    assert!(
+        (album.size().width - artists.size().width).abs()
+            < 1.0,
+        "歌手 {} 专辑 {}",
+        artists.size().width,
+        album.size().width
+    );
+}
