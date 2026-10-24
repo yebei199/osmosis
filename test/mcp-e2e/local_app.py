@@ -163,6 +163,13 @@ def wait_ready(probe, process=None, timeout=60):
     raise AssertionError(f"resource not ready: {last}")
 
 
+def free_port() -> int:
+    """宿主侧 MCP 端口随机分配，和用户开着的 8091 实例并存。"""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def require_free(port: int):
     """编译期固定的本机后端端口必须独占，不能误连别的会话。"""
     with socket.socket() as listener:
@@ -199,7 +206,7 @@ class LocalApp:
     def request(self, path: str, body=None):
         """HTTP 只用于本轮数据准备，不替代被测的点击和播放。"""
         request = urllib.request.Request(
-            "http://127.0.0.1:3000" + path,
+            f"http://127.0.0.1:{self.server_port}" + path,
             data=None if body is None else json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
@@ -212,8 +219,11 @@ class LocalApp:
 
     def start(self):
         """准备隔离数据后经 MCP 登录、进入音乐页。"""
-        require_free(3000)
-        require_free(8091)
+        # server 用随机宿主端口；pasta 把应用命名空间里烘进去的 127.0.0.1:3000 接到它，
+        # 宿主的 3000 被别的开发后端占着也不影响本轮。
+        self.server_port = free_port()
+        mcp_port = free_port()
+        self.client = Client(f"http://127.0.0.1:{mcp_port}/mcp", timeout=60)
         database_url = self.resources.database()
         wait_ready(lambda: self.sql("select 1") == "1")
         media = media_class(self.root)(self.root, self.directory)
@@ -239,12 +249,11 @@ class LocalApp:
             PIPEWIRE_NODE=self.audio_sink,
             DATABASE_URL=database_url,
             BANG_DREAM_ADDR=f"http://127.0.0.1:{media.grpc_port}",
-            BIND="127.0.0.1:3000",
+            BIND=f"127.0.0.1:{self.server_port}",
             INVITE_CODE=self.username,
             XDG_STATE_HOME=str(self.state),
             XDG_CACHE_HOME=str(self.directory / "cache"),
             XDG_CONFIG_HOME=str(self.directory / "config"),
-            SLINT_MCP_PORT="8091",
         )
         server = self.resources.spawn("server", [str(self.root / "target/debug/server")], env)
         wait_ready(lambda: self.request("/health"), server)
@@ -253,17 +262,41 @@ class LocalApp:
             {"username": self.username, "password": self.username, "invite": self.username},
         )
         self.seed_playlists()
+        # 应用开在无头显示里（test/headless/），不在用户桌面出窗口；截图取合成器像素。
+        self.headless = self.directory / "headless"
+        command = [
+            "bun",
+            str(self.root / "test/headless/headless.ts"),
+            "run",
+            "--dir",
+            str(self.headless),
+            "--mcp-port",
+            str(mcp_port),
+            "--backend-port",
+            str(self.server_port),
+            # 媒体替身的 HTTP 在宿主回环的随机端口上，应用直接取音频，要接进命名空间。
+            "--forward",
+            str(media.http.server_port),
+            "--bin",
+            str(self.root / "target/debug/osmosis-desktop"),
+            "--state",
+            str(self.state),
+            "--log",
+            str(self.directory / "desktop.log"),
+        ]
+        # nix-shell 自己要用调用者的缓存与配置目录（换成本轮的空目录它会去下载 flake 注册表）；
+        # 本轮目录只在 shell 里交给应用。
+        own = {key: env[key] for key in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME")}
+        nix_env = {key: value for key, value in env.items() if key not in own}
+        nix_env.update({key: os.environ[key] for key in own if key in os.environ})
+        inner = ["env", *(f"{key}={value}" for key, value in own.items()), *command]
         app = self.resources.spawn(
-            "desktop",
-            [
-                "nix-shell",
-                str(self.root / "slint.nix"),
-                "--run",
-                "exec " + shlex.quote(str(self.root / "target/debug/osmosis-desktop")),
-            ],
-            env,
+            "headless",
+            ["nix-shell", str(self.root / "slint.nix"), "--run", "exec " + shlex.join(inner)],
+            nix_env,
         )
         self.app_process = app
+        self.client.pixels = self.capture_pixels
         wait_ready(
             lambda: (
                 "Slint MCP server listening"
@@ -285,6 +318,30 @@ class LocalApp:
             self.client.by_label("音乐", role="Button").click()
         self.client.by_label("每日推荐").handle()
         return self
+
+    def capture_pixels(self, destination: Path):
+        """从本轮无头会话的合成器输出抓图，和真实窗口同一条合成路径。"""
+        subprocess.run(
+            [
+                "nix-shell",
+                str(self.root / "slint.nix"),
+                "--run",
+                shlex.join(
+                    [
+                        "bun",
+                        str(self.root / "test/headless/headless.ts"),
+                        "capture",
+                        "--dir",
+                        str(self.headless),
+                        "--out",
+                        str(destination),
+                    ]
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
 
     def seed_playlists(self):
         """在独有数据库准备两个互不相交的集合，业务读取仍走生产 API。"""

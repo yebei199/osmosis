@@ -28,7 +28,15 @@ docs_synced_at: fba905d
 操作陷阱记在 [`docs/lesson/`](docs/lesson/)。
 以下只记**别人踩过、不写下来就会再踩一遍**的操作陷阱。
 
-## 两条总则:调试走 MCP,像素走 niri
+## 三条总则:实例开在无头显示里,调试走 MCP,像素走无头合成器
+
+**AI 起的桌面实例一律开在看不见的无头显示里**(MEO-1900,用户 2026-10-24:「你怎么又开始
+抢占焦点,而不是在后台运行测试了?」)。`just desktop-dev`、`just shot` 和 `test/mcp-e2e` 的夹具
+默认就走 `test/headless/`(无头 sway + GPU 渲染节点 + pasta 网络命名空间 + null sink),用户桌面
+上不出窗口、不抢焦点。只有用户本人要看窗口时才带 `OSMOSIS_SHOW_WINDOW=1`。这条不靠记:
+debug 构建在 Claude Code / Codex 会话里(`CLAUDECODE`、`CODEX_THREAD_ID`、`CODEX_SESSION_ID`)
+没带开关就拒绝开到真实桌面,见 `apps/desktop/src/display_guard.rs`。裸跑二进制也要经
+`bun test/headless/headless.ts run`,用法见 [`test/headless/README.md`](test/headless/README.md)。
 
 **调试与交互一律走 MCP。** `just desktop-dev` 已经把 MCP 焊在里面
 (feature `mcp` + 构建期 `SLINT_EMIT_DEBUG_INFO` + 运行期 `SLINT_MCP_PORT`,缺一不可),
@@ -51,7 +59,7 @@ curl -s -X POST http://127.0.0.1:8091/mcp \
 
 参数名用 camelCase(`elementHandle`、`matchElementTypeName`),写错会原地告诉你有哪些字段。
 
-**逐像素为准的那张图靠 niri 抓窗口**,即 `just shot`。MCP 的截图现在也能看见 GPU 画面
+**逐像素为准的那张图靠无头 sway 的合成器输出**,即 `just shot`(grim 抓 `HEADLESS-1`)。MCP 的截图现在也能看见 GPU 画面
 (见下一节第 4 条),判断「画出来了没有」够用;比颜色、比合成结果时才需要合成器那张。
 
 ## 验证 UI 改动:`just shot` 与 MCP
@@ -61,7 +69,13 @@ just shot        # 宽版式(左侧导航栏)
 just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600px 即触发
 ```
 
-产物在 `dist/shot.png`,是**合成器抓的真实窗口像素**。不要手搓这套流程,三个坑全在里面:
+产物在 `dist/shot.png`,是**无头合成器输出的像素**:应用开在看不见的无头 sway 里,不抢用户
+焦点、不必先杀用户开着的实例(它在自己的网络命名空间里,单实例锁不打架)。窗口高固定 900,
+基准图也只在无头下生成,回归只和无头比。`just desktop-dev` 起着的会话要截当前画面,用
+`bun test/headless/headless.ts capture --dir <启动时打印的会话目录> --out a.png`。
+
+以前的 `shot` 在用户的 niri 上开窗、聚焦、`screenshot-window`,下面三个坑是那时踩的;
+无头之后 1、3 仍适用于 `desktop-kill` 和裸跑二进制:
 
 **1. `pkill -f app-desktop` 会杀掉你自己的 shell。**
 `-f` 匹配整条命令行,而**你自己那条命令行里就有 "app-desktop" 这几个字**
@@ -145,6 +159,12 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 
 判据只认应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面会被两头骗:
 惰性渲染下没有输入就不重绘,而画面变了也可能是别的东西在动。
+
+## 不在用户桌面上开窗口
+
+用户 2026-10-24 定:AI 跑测试、做验证,不许在用户的真实显示上开 osmosis 窗口——niri 会把焦点
+抢过去。`just shot` 现在仍然要聚焦窗口,执行者不许用。在 S6(MEO-1900)把 `desktop-dev` 和测试夹具
+改成默认无头、并加上程序守卫之前,需要窗口的验证先停一停,只做不需要窗口的部分。
 
 ## 测试不出声:一律进虚拟声卡
 

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -80,6 +81,8 @@ class Client:
             else urllib.request.build_opener()
         )
         self.last_diff = None
+        # 像素来源：None 时用 MCP 的 take_screenshot；无头会话换成合成器输出（grim）。
+        self.pixels = None
 
     def content(self, name: str, **arguments: object):
         """保留图片块；兼容单响应 JSON 与标准 SSE data 消息。"""
@@ -172,7 +175,13 @@ class Client:
         Locator(self, element_id="MorePanel::item", label=name).click()
 
     def screenshot(self, destination: Path | str) -> None:
-        """保存 MCP 返回的 PNG 图片块。"""
+        """有像素来源时用它，否则保存 MCP 返回的 PNG 图片块。"""
+        if self.pixels is not None:
+            try:
+                self.pixels(Path(destination))
+            except (OSError, subprocess.SubprocessError) as error:
+                raise McpError(f"screenshot: pixel source failed: {error}") from error
+            return
         blocks = self.content("take_screenshot", windowHandle=self.window())
         try:
             data = next(block["data"] for block in blocks if block["type"] == "image")

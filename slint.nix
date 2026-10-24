@@ -49,6 +49,11 @@ pkgs.mkShell {
     # 不声明的话它只是碰巧在开发机的 PATH 上,而那种依赖坏掉时的现象是
     # 「换一台机器测试就红」,报错还只说找不到命令。
     pkgs.ffmpeg
+    # 无头截图(test/headless/):sway 的 headless 后端借 GPU 渲染节点合成,pasta 给应用一个
+    # 独立网络命名空间(单实例锁按命名空间区分),grim 从无头输出抓像素。
+    pkgs.sway
+    pkgs.passt
+    pkgs.grim
   ];
   buildInputs = runtimeLibs;
 
