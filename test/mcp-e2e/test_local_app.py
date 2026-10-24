@@ -28,6 +28,11 @@ def test_independent_runs_have_distinct_container_names(tmp_path):
 @pytest.mark.app
 def test_database_and_state_belong_to_this_run(local_app):
     """实际容器、账号与状态目录独立，fixture 不写真实账号或默认状态树。"""
+    from pathlib import Path
+
+    environment = Path(f"/proc/{local_app.app_process.pid}/environ").read_bytes().split(b"\0")
+    assert b"PIPEWIRE_NODE=" + local_app.audio_sink.encode() in environment
+    assert local_app.resources.sink_id(local_app.audio_sink) is not None
     assert local_app.environment["PG_CONTAINER"] == local_app.resources.container
     assert local_app.environment["PG_CONTAINER"] != "osmosis-pg"
     assert local_app.sql("select count(*) from accounts") == "1"
@@ -86,3 +91,12 @@ def test_port_guard_refuses_live_listener_but_allows_closed_connections():
             connection.close()
             assert client.recv(1) == b""
     require_free(port)
+
+
+def test_virtual_sink_is_owned_and_removed_on_failure(tmp_path):
+    """每轮创建独有的真实 null sink，异常退出也必须销毁它。"""
+    with pytest.raises(RuntimeError, match="after sink"), Resources(tmp_path) as resources:
+        sink = resources.virtual_audio()
+        assert resources.sink_id(sink) is not None
+        raise RuntimeError("after sink")
+    assert resources.sink_id(sink) is None

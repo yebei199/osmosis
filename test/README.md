@@ -8,7 +8,10 @@
 准备互不相交的日推、系统「我的喜欢」及另一个歌单；结束或初始化失败时按资源身份清理。
 不会修改 .env 中的真实账号，也不把协议替身测试当成产品 UI 验收。
 
-前提：Linux 桌面会话、Docker，以及已缓存在本机的 postgres:17-alpine 镜像。
+所有 fixture 桌面启动前都创建独有 PipeWire null sink，并用 PIPEWIRE_NODE 定向；桌面退出后
+销毁 sink，不从真实声卡出声，不改系统默认输出。生命周期测试也验证异常退出后的 sink 回收。
+
+前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
 3000/8091 因当前编译期地址而必须独占，app 用例串行运行；端口被占直接失败，不杀其他会话。
 依赖由 uv.lock 固定。验收分流入口按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
 
