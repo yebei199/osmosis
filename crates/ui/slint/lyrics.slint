@@ -4,7 +4,7 @@
 // 走一套字形管线,要么不做。焦点行满亮满大,每远一行淡一档、小一档,视线
 // 一眼落回「现在在哪」—— 那正是景深在这里要办的事。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Space, Radius, TextSize } from "theme.slint";
 import { LyricRow } from "types.slint";
 import { OutlinedText } from "widgets.slint";
 
@@ -74,13 +74,13 @@ export component LyricsPage inherits Rectangle {
     VerticalLayout {
         spacing: 0px;
         if root.has-translation: HorizontalLayout {
-            padding: 16px;
+            padding: Space.lg;
             alignment: end;
             // 翻译开关。只在真有译文时出现 —— 一个永远切不出东西的开关比没有更糟。
             translation-toggle := Rectangle {
                 width: 64px;
                 height: 44px;
-                border-radius: 22px;
+                border-radius: Radius.pill;
                 background: root.translation-on
                     ? Theme.accent.with-alpha(0.22)
                     : Theme.overlay;
@@ -96,7 +96,7 @@ export component LyricsPage inherits Rectangle {
                 Text {
                     text: "翻译";
                     font-family: Type.mono;
-                    font-size: 12px;
+                    font-size: TextSize.small;
                     color: root.translation-on
                         ? Theme.accent-text
                         : Theme.immersive-text-dim;
@@ -113,10 +113,10 @@ export component LyricsPage inherits Rectangle {
             vertical-stretch: 1;
             VerticalLayout {
                 alignment: center;
-                spacing: 6px;
+                spacing: Space.xs;
 
                 for row in root.rows: VerticalLayout {
-                    spacing: 2px;
+                    spacing: Space.xs;
                     // 整行按距离淡出。焦点行满亮,三行开外只剩一层底噪。
                     opacity: max(0.08, 1 - Math.abs(row.offset) * root.fade-step);
 
@@ -149,7 +149,7 @@ export component LyricsPage inherits Rectangle {
                         height: 20px;
                         text: row.translation;
                         text-color: Theme.immersive-text-dim;
-                        font-size: 13px;
+                        font-size: TextSize.small;
                         vertical-alignment: top;
                         wrap: word-wrap;
                     }

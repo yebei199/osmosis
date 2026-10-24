@@ -4,7 +4,7 @@
 // 已屏蔽(#161)、快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
 // 没有数据源的卡不上屏(硬规则 8)。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Radius, Motion, Space, TextSize } from "theme.slint";
 import { SectionCard, DayNightSwitch } from "widgets.slint";
 import { BarMetrics } from "playerbar.slint";
 import { Library } from "globals/library.slint";
@@ -18,9 +18,9 @@ component PillToggle inherits Rectangle {
 
     width: 44px;
     height: 26px;
-    border-radius: 13px;
+    border-radius: Radius.pill;
     background: root.on ? Theme.accent : Theme.overlay;
-    animate background { duration: 120ms; easing: ease-out; }
+    animate background { duration: Motion.fast; easing: Motion.ease; }
     accessible-role: checkbox;
     accessible-label: root.label;
     accessible-checked: root.on;
@@ -31,9 +31,9 @@ component PillToggle inherits Rectangle {
         y: 4px;
         width: 18px;
         height: 18px;
-        border-radius: 9px;
+        border-radius: Radius.pill;
         background: root.on ? Theme.accent-text : Theme.text-dim;
-        animate x { duration: 120ms; easing: ease-out; }
+        animate x { duration: Motion.fast; easing: Motion.ease; }
     }
     TouchArea {
         mouse-cursor: pointer;
@@ -72,7 +72,7 @@ export component SettingsPage inherits Flickable {
         y: 26px;
         width: min(root.width - 52px, 640px);
         alignment: start;
-        spacing: 14px;
+        spacing: Space.md;
         // 控制条压在页面底部,「检查更新」是这一页常见的最后一个可点项。
         // 留在 padding 而不是 content-height 上,理由同 profile.slint。
         padding-bottom: root.bar-visible
@@ -83,7 +83,7 @@ export component SettingsPage inherits Flickable {
             text: "设置";
             font-family: Type.display-cjk;
             font-weight: 900;
-            font-size: 30px;
+            font-size: TextSize.display;
             color: Theme.text;
         }
 
@@ -93,15 +93,15 @@ export component SettingsPage inherits Flickable {
             // 日月开关是主题区的主视觉(从控制簇迁来,#68):拨=显式明/暗。
             // 跟随系统时它显示当前生效态,拨动即退出跟随。
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
                     Text {
                         text: "深浅主题";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text;
                     }
                 }
@@ -115,15 +115,15 @@ export component SettingsPage inherits Flickable {
             }
 
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
                     Text {
                         text: "跟随系统";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text;
                     }
                 }
@@ -140,21 +140,21 @@ export component SettingsPage inherits Flickable {
             }
             Text {
                 text: "跟随系统当前只在桌面端生效,其他端按深色处理";
-                font-family: "Maple Mono NF CN";
-                font-size: 11px;
+                font-family: Type.body;
+                font-size: TextSize.caption;
                 color: Theme.text-faint;
             }
 
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
                     Text {
                         text: "动态极光按钮";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text;
                     }
                 }
@@ -166,8 +166,8 @@ export component SettingsPage inherits Flickable {
             }
             Text {
                 text: "关掉就是纯色实底,不跑任何 shader";
-                font-family: "Maple Mono NF CN";
-                font-size: 11px;
+                font-family: Type.body;
+                font-size: TextSize.caption;
                 color: Theme.text-faint;
             }
         }
@@ -176,18 +176,18 @@ export component SettingsPage inherits Flickable {
             kicker: "账号";
 
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
-                // 中点两侧的空由 spacing 给,不靠字形:等宽字体里「·」占一整格,
-                // 两边的空格又各占一格,420 下读着像挤在一起(MEO-1878)。
+                // 中点两侧的空由 spacing 给,不靠字形:字形与空格的宽随字体变,
+                // 420 下读着像挤在一起(MEO-1878)。
                 signed-in := HorizontalLayout {
                     alignment: start;
                     horizontal-stretch: 1;
-                    spacing: 6px;
+                    spacing: Space.sm;
                     for part in ["已登录", "·", "本设备"]: Text {
                         text: part;
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: part == "·" ? Theme.text-dim : Theme.text;
                         vertical-alignment: center;
                     }
@@ -195,7 +195,7 @@ export component SettingsPage inherits Flickable {
                 logout-button := Rectangle {
                     width: logout-label.preferred-width + 32px;
                     height: 34px;
-                    border-radius: 999px;
+                    border-radius: Radius.pill;
                     background: logout-touch.has-hover ? Theme.hover : Theme.overlay-weak;
                     border-width: 1px;
                     border-color: Theme.divider;
@@ -206,8 +206,8 @@ export component SettingsPage inherits Flickable {
 
                     logout-label := Text {
                         text: "退出登录";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -227,35 +227,35 @@ export component SettingsPage inherits Flickable {
 
             if Library.blocks.length == 0: Text {
                 text: "还没有屏蔽任何歌手、标签或歌曲";
-                font-family: "Maple Mono NF CN";
-                font-size: 12px;
+                font-family: Type.body;
+                font-size: TextSize.small;
                 color: Theme.text-faint;
             }
 
             for row in Library.blocks: HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
                     Text {
                         text: row.label;
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text;
                         overflow: elide;
                     }
                     Text {
                         text: row.kind;
-                        font-family: "Maple Mono NF CN";
-                        font-size: 11px;
+                        font-family: Type.body;
+                        font-size: TextSize.caption;
                         color: Theme.text-faint;
                     }
                 }
                 unblock-button := Rectangle {
                     width: unblock-label.preferred-width + 32px;
                     height: 34px;
-                    border-radius: 999px;
+                    border-radius: Radius.pill;
                     background: unblock-touch.has-hover ? Theme.hover : Theme.overlay-weak;
                     border-width: 1px;
                     border-color: Theme.divider;
@@ -266,8 +266,8 @@ export component SettingsPage inherits Flickable {
 
                     unblock-label := Text {
                         text: "恢复";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -287,14 +287,14 @@ export component SettingsPage inherits Flickable {
                 Text {
                     horizontal-stretch: 1;
                     text: "收起播放页";
-                    font-family: "Maple Mono NF CN";
-                    font-size: 13px;
+                    font-family: Type.body;
+                    font-size: TextSize.small;
                     color: Theme.text;
                 }
                 Text {
                     text: "Esc / Back";
                     font-family: Type.mono;
-                    font-size: 12px;
+                    font-size: TextSize.small;
                     color: Theme.text-dim;
                 }
             }
@@ -306,26 +306,26 @@ export component SettingsPage inherits Flickable {
             Text {
                 text: root.about-line;
                 font-family: Type.mono;
-                font-size: 12px;
+                font-size: TextSize.small;
                 color: Theme.text-dim;
             }
             Text {
                 text: root.tier-line;
                 font-family: Type.mono;
-                font-size: 12px;
+                font-size: TextSize.small;
                 color: Theme.text-dim;
             }
 
             HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 1;
                     Text {
                         text: root.update-status;
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text;
                         wrap: word-wrap;
                     }
@@ -333,7 +333,7 @@ export component SettingsPage inherits Flickable {
                 if root.update-action != "": update-button := Rectangle {
                     width: update-label.preferred-width + 32px;
                     height: 34px;
-                    border-radius: 999px;
+                    border-radius: Radius.pill;
                     background: update-touch.has-hover ? Theme.hover : Theme.overlay-weak;
                     border-width: 1px;
                     border-color: Theme.divider;
@@ -344,8 +344,8 @@ export component SettingsPage inherits Flickable {
 
                     update-label := Text {
                         text: root.update-action;
-                        font-family: "Maple Mono NF CN";
-                        font-size: 13px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;
                         vertical-alignment: center;

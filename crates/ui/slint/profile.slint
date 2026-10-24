@@ -4,7 +4,7 @@
 // 没有数据源(事件流只记起播,不记听了多久),这里是本月播放次数;
 // 「口味画像」的流派维度同样无数据,已定改为常听歌手 —— 不编数字。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Radius, Space, TextSize } from "theme.slint";
 import { SectionCard, HoverButton } from "widgets.slint";
 import { OutputStrip } from "controls.slint";
 import { BarMetrics } from "playerbar.slint";
@@ -18,26 +18,26 @@ component StatCard inherits Rectangle {
     in property <int> tint;
 
     background: Theme.surface;
-    border-radius: 18px;
+    border-radius: Radius.md;
     border-width: 1px;
     border-color: Theme.overlay;
     horizontal-stretch: 1;
 
     VerticalLayout {
-        padding: 18px;
-        spacing: 4px;
+        padding: Space.lg;
+        spacing: Space.xs;
 
         Text {
             text: root.value;
             font-family: Type.body;
-            font-size: 30px;
+            font-size: TextSize.display;
             font-weight: 700;
             color: Theme.hues-bright[root.tint];
         }
         Text {
             text: root.label;
-            font-family: "Maple Mono NF CN";
-            font-size: 12px;
+            font-family: Type.body;
+            font-size: TextSize.small;
             color: Theme.text-dim;
         }
     }
@@ -79,7 +79,7 @@ export component ProfilePage inherits Flickable {
         y: 26px;
         width: min(root.width - 52px, 720px);
         alignment: start;
-        spacing: 14px;
+        spacing: Space.md;
         // 控制条压在页面底部,而这一页的最后一行正是「输出设备」——
         // 那两颗芯片是**进遥控器模式的唯一入口**。不为条留出这一块的话,
         // 它们看得见、点不着,而 Flickable 也救不回来:可滚的余量比条身
@@ -94,7 +94,7 @@ export component ProfilePage inherits Flickable {
 
         // 头像 + 名字。头像是副色板渐变占位:账号没有头像这回事,先不装有。
         HorizontalLayout {
-            spacing: 16px;
+            spacing: Space.lg;
             alignment: start;
 
             VerticalLayout {
@@ -102,7 +102,7 @@ export component ProfilePage inherits Flickable {
                 Rectangle {
                     width: 64px;
                     height: 64px;
-                    border-radius: 32px;
+                    border-radius: Radius.pill;
                     background: @linear-gradient(150deg, Theme.hues-bright[3], Theme.hues-deep[3]);
                 }
             }
@@ -111,7 +111,7 @@ export component ProfilePage inherits Flickable {
                 // 账号名是用户起的任意文本,不指定字体、走系统回退。
                 Text {
                     text: root.username;
-                    font-size: 26px;
+                    font-size: TextSize.headline;
                     font-weight: 700;
                     color: Theme.text;
                 }
@@ -120,13 +120,13 @@ export component ProfilePage inherits Flickable {
 
         if root.error-text != "": Text {
             text: root.error-text;
-            font-family: "Maple Mono NF CN";
-            font-size: 13px;
+            font-family: Type.body;
+            font-size: TextSize.small;
             color: Theme.text-dim;
         }
 
         if root.loaded: stats-row := HorizontalLayout {
-            spacing: 14px;
+            spacing: Space.md;
 
             StatCard {
                 value: root.month-plays;
@@ -149,13 +149,13 @@ export component ProfilePage inherits Flickable {
             kicker: "常听歌手";
 
             for artist[i] in root.top-artists: HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 // 歌手名来自平台,任意 CJK,走系统字体。
                 Text {
                     width: 96px;
                     text: artist.name;
-                    font-size: 13px;
+                    font-size: TextSize.small;
                     color: Theme.text;
                     overflow: elide;
                 }
@@ -164,13 +164,13 @@ export component ProfilePage inherits Flickable {
                     horizontal-stretch: 1;
                     Rectangle {
                         height: 9px;
-                        border-radius: 4.5px;
+                        border-radius: Radius.pill;
                         background: Theme.overlay-weak;
                         Rectangle {
                             x: 0;
                             width: parent.width * artist.ratio;
                             height: parent.height;
-                            border-radius: 4.5px;
+                            border-radius: Radius.pill;
                             background: @linear-gradient(90deg, Theme.hues-deep[i], Theme.hues-bright[i]);
                         }
                     }
@@ -178,7 +178,7 @@ export component ProfilePage inherits Flickable {
                 Text {
                     text: artist.plays-text;
                     font-family: Type.mono;
-                    font-size: 11px;
+                    font-size: TextSize.caption;
                     color: Theme.text-faint;
                 }
             }
@@ -190,7 +190,7 @@ export component ProfilePage inherits Flickable {
             kicker: "网易云";
 
             if root.netease-bound: HorizontalLayout {
-                spacing: 12px;
+                spacing: Space.md;
 
                 VerticalLayout {
                     alignment: center;
@@ -198,7 +198,7 @@ export component ProfilePage inherits Flickable {
                     // 昵称来自平台,任意 CJK,走系统字体。
                     netease-name := Text {
                         text: root.netease-nickname;
-                        font-size: 15px;
+                        font-size: TextSize.body;
                         color: Theme.text;
                         overflow: elide;
                     }
@@ -212,7 +212,7 @@ export component ProfilePage inherits Flickable {
             }
 
             if !root.netease-bound: VerticalLayout {
-                spacing: 10px;
+                spacing: Space.sm;
                 alignment: start;
 
                 // 码是黑白定死的,不跟主题走:扫码器认的是对比度,
@@ -232,8 +232,8 @@ export component ProfilePage inherits Flickable {
 
                 Text {
                     text: root.netease-hint;
-                    font-family: "Maple Mono NF CN";
-                    font-size: 13px;
+                    font-family: Type.body;
+                    font-size: TextSize.small;
                     color: Theme.text-dim;
                     wrap: word-wrap;
                 }
@@ -241,8 +241,8 @@ export component ProfilePage inherits Flickable {
                 if root.on-phone: Text {
                     // 文案照 issue #96 原样写,不自行改写
                     text: "用另一台已登录网易云的手机扫";
-                    font-family: "Maple Mono NF CN";
-                    font-size: 12px;
+                    font-family: Type.body;
+                    font-size: TextSize.small;
                     color: Theme.text-faint;
                     wrap: word-wrap;
                 }
@@ -267,8 +267,8 @@ export component ProfilePage inherits Flickable {
 
             if root.devices.length == 0: Text {
                 text: "没有其他设备";
-                font-family: "Maple Mono NF CN";
-                font-size: 13px;
+                font-family: Type.body;
+                font-size: TextSize.small;
                 color: Theme.text-faint;
             }
         }

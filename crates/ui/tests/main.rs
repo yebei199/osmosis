@@ -7,6 +7,7 @@ mod facets;
 mod fonts;
 mod group_capsule;
 mod liked;
+mod literals;
 mod login;
 mod lyrics_page;
 mod music_list_layout;

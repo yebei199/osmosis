@@ -8,7 +8,7 @@
 // (按 `queue_id`/`revision` 从服务端拉)。一条路径两种情形,Rust 那侧不写
 // 成两套(见 `music::queuepage`)。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Space, TextSize } from "theme.slint";
 import { TrackRow } from "types.slint";
 import { TrackList } from "tracklist.slint";
 import { BarMetrics } from "playerbar.slint";
@@ -43,9 +43,9 @@ export component QueuePage inherits Rectangle {
     }
 
     VerticalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        padding-top: 14px;
+        padding-left: Space.md;
+        padding-right: Space.md;
+        padding-top: Space.md;
         // 底部两段都要让,少一段都会把末尾几行变成看得见、点不着:
         //
         // - **手势条**(`safe-bottom`)。桌面上恒 0,只有真机上看得见,
@@ -56,17 +56,17 @@ export component QueuePage inherits Rectangle {
         //   就顶在下缘上,而被盖住的正是最难注意到的**末尾**那几行。
         padding-bottom: root.safe-bottom
             + BarMetrics.page-reserve;
-        spacing: 10px;
+        spacing: Space.sm;
 
         HorizontalLayout {
             height: 24px;
-            spacing: 8px;
+            spacing: Space.sm;
 
             Text {
                 text: "播放队列";
                 color: Theme.immersive-text;
-                font-family: "Maple Mono NF CN";
-                font-size: Shell.compact ? 15px : 17px;
+                font-family: Type.body;
+                font-size: Shell.compact ? TextSize.body : TextSize.title;
                 vertical-alignment: center;
             }
             Text {
@@ -74,8 +74,8 @@ export component QueuePage inherits Rectangle {
                     ? "正在取…"
                     : "共 " + root.total + " 首";
                 color: Theme.immersive-text-dim;
-                font-family: "Maple Mono NF CN";
-                font-size: 13px;
+                font-family: Type.body;
+                font-size: TextSize.small;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
             }
@@ -86,8 +86,8 @@ export component QueuePage inherits Rectangle {
         if root.rows.length == 0: queue-empty := Text {
             text: root.loading ? "正在取队列…" : "队列是空的";
             color: Theme.immersive-text-dim;
-            font-family: "Maple Mono NF CN";
-            font-size: 14px;
+            font-family: Type.body;
+            font-size: TextSize.body;
             horizontal-alignment: center;
             vertical-stretch: 1;
             vertical-alignment: center;
