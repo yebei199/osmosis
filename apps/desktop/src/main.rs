@@ -7,6 +7,7 @@
 //!
 //! 运行:`nix-shell slint.nix --run "cargo run -p app-desktop"`
 
+mod display_guard;
 mod downloads;
 mod log_file;
 mod mpris;
@@ -20,6 +21,13 @@ fn main() {
     // 它会把 bevy 的着色器编译与管线创建错误一起弄哑,见 Cargo.toml 里 bevy 那段。
     // 除了 stderr 还写一份进状态目录(#145),见 log_file.rs。
     log_file::init();
+
+    // AI 会话里的 debug 实例只许开在无头显示里,不抢用户桌面的焦点(MEO-1900)。
+    #[cfg(debug_assertions)]
+    if let Err(msg) = display_guard::check(|k| std::env::var(k).ok()) {
+        eprintln!("{msg}");
+        std::process::exit(2);
+    }
 
     // 启动锁在**一切之前**:两个实例会抢同一块声卡各放各的歌,而 MCP 那个固定
     // 端口只有先起来的抢得到 —— 调试时连上的可能是上次忘了关的那个实例。
