@@ -56,7 +56,7 @@ def endpoint():
             values = {
                 "list_windows": {"windowHandles": [1]},
                 "get_window_properties": {"rootElementHandle": 2},
-                "get_element_properties": {"accessibleLabel": "Play"},
+                "get_element_properties": {"accessibleLabel": "Play", "accessibleRole": "Button"},
                 "get_element_tree": {"elements": ["Play"]},
             }
             if name == "query_element_descendants":
@@ -220,3 +220,11 @@ def test_duplicate_handles_are_one_element(endpoint):
     client = Client(url)
     assert client.by_id("TrackList::touch").all() == [3]
     assert client.by_label("Play").all() == [3]
+
+
+def test_label_selector_can_require_button_role(endpoint):
+    """登录标题和提交按钮可同名，调用者必须能限定交互角色。"""
+    url, state = endpoint
+    client = Client(url)
+    client.by_label("Play", role="Button").click()
+    assert state["clicks"] == 1

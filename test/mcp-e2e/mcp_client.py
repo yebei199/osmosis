@@ -154,9 +154,9 @@ class Client:
         """构建惰性 id 选择器，每次操作重新解析。"""
         return Locator(self, element_id=element_id, index=index)
 
-    def by_label(self, label: str, index: int = 0) -> "Locator":
+    def by_label(self, label: str, index: int = 0, *, role: str | None = None) -> "Locator":
         """按完整无障碍标签选择，不依赖组件名称或位置。"""
-        return Locator(self, label=label, index=index)
+        return Locator(self, label=label, index=index, role=role)
 
     def screenshot(self, destination: Path | str) -> None:
         """保存 MCP 返回的 PNG 图片块。"""
@@ -219,11 +219,13 @@ class Locator:
         element_id: str | None = None,
         label: str | None = None,
         index: int = 0,
+        role: str | None = None,
     ) -> None:
         """id 或标签二选一，index 用于稳定的曲目列表行。"""
         if index < 0:
             raise ValueError("index must be non-negative")
         self.client, self.element_id, self.label, self.index = client, element_id, label, index
+        self.role = role
 
     def all(self):
         """查询实时匹配元素；标签通过属性读取匹配。"""
@@ -234,14 +236,14 @@ class Locator:
         )
         handles = self.client.elements(query)
         if self.label is not None:
-            handles = [
-                handle
-                for handle in handles
-                if self.client.call("get_element_properties", elementHandle=handle).get(
-                    "accessibleLabel"
-                )
-                == self.label
-            ]
+            matched = []
+            for handle in handles:
+                properties = self.client.call("get_element_properties", elementHandle=handle)
+                if properties.get("accessibleLabel") == self.label and (
+                    self.role is None or properties.get("accessibleRole") == self.role
+                ):
+                    matched.append(handle)
+            handles = matched
         return handles
 
     def handle(self):
