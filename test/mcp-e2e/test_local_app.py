@@ -39,6 +39,14 @@ def test_database_and_state_belong_to_this_run(local_app):
     assert local_app.sql("select username from accounts") == local_app.username
     assert local_app.state.is_relative_to(local_app.directory)
     expect(lambda: local_app.state.exists())
+    # 窗口在本轮的无头显示里，不在用户桌面上。
+    import json
+
+    session = json.loads((local_app.headless / "session.json").read_text())
+    assert Path(session["wayland"]).is_relative_to(local_app.directory)
+    shot = local_app.directory / "headless-shot.png"
+    local_app.client.screenshot(shot)
+    assert shot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_database_is_removed_when_setup_fails(tmp_path):

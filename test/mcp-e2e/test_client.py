@@ -154,6 +154,18 @@ def test_failure_capture_writes_screenshot_and_tree(endpoint, tmp_path):
     assert "Play" in (tmp_path / "element-tree.json").read_text()
 
 
+def test_pixel_source_replaces_mcp_screenshot(endpoint, tmp_path):
+    """设了像素来源（无头会话的合成器输出）就用它，视觉断言和失败产物都走这条。"""
+    url, _ = endpoint
+    client = Client(url)
+    client.pixels = lambda destination: Image.new("RGB", (7, 5), "red").save(destination)
+    client.capture(tmp_path)
+    assert Image.open(tmp_path / "screenshot.png").size == (7, 5)
+    client.pixels = lambda destination: (_ for _ in ()).throw(OSError("grim gone"))
+    with pytest.raises(McpError, match="pixel source"):
+        client.screenshot(tmp_path / "broken.png")
+
+
 def test_connection_failure_is_explicit():
     """未监听的本机端点不能变成空成功。"""
     import socket

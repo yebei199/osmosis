@@ -163,6 +163,13 @@ def wait_ready(probe, process=None, timeout=60):
     raise AssertionError(f"resource not ready: {last}")
 
 
+def free_port() -> int:
+    """宿主侧 MCP 端口随机分配，和用户开着的 8091 实例并存。"""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def require_free(port: int):
     """编译期固定的本机后端端口必须独占，不能误连别的会话。"""
     with socket.socket() as listener:
@@ -213,7 +220,8 @@ class LocalApp:
     def start(self):
         """准备隔离数据后经 MCP 登录、进入音乐页。"""
         require_free(3000)
-        require_free(8091)
+        mcp_port = free_port()
+        self.client = Client(f"http://127.0.0.1:{mcp_port}/mcp", timeout=60)
         database_url = self.resources.database()
         wait_ready(lambda: self.sql("select 1") == "1")
         media = media_class(self.root)(self.root, self.directory)
@@ -244,7 +252,6 @@ class LocalApp:
             XDG_STATE_HOME=str(self.state),
             XDG_CACHE_HOME=str(self.directory / "cache"),
             XDG_CONFIG_HOME=str(self.directory / "config"),
-            SLINT_MCP_PORT="8091",
         )
         server = self.resources.spawn("server", [str(self.root / "target/debug/server")], env)
         wait_ready(lambda: self.request("/health"), server)
@@ -253,17 +260,30 @@ class LocalApp:
             {"username": self.username, "password": self.username, "invite": self.username},
         )
         self.seed_playlists()
+        # 应用开在无头显示里（test/headless/），不在用户桌面出窗口；截图取合成器像素。
+        self.headless = self.directory / "headless"
+        command = [
+            "bun",
+            str(self.root / "test/headless/headless.ts"),
+            "run",
+            "--dir",
+            str(self.headless),
+            "--mcp-port",
+            str(mcp_port),
+            "--bin",
+            str(self.root / "target/debug/osmosis-desktop"),
+            "--state",
+            str(self.state),
+            "--log",
+            str(self.directory / "desktop.log"),
+        ]
         app = self.resources.spawn(
-            "desktop",
-            [
-                "nix-shell",
-                str(self.root / "slint.nix"),
-                "--run",
-                "exec " + shlex.quote(str(self.root / "target/debug/osmosis-desktop")),
-            ],
+            "headless",
+            ["nix-shell", str(self.root / "slint.nix"), "--run", "exec " + shlex.join(command)],
             env,
         )
         self.app_process = app
+        self.client.pixels = self.capture_pixels
         wait_ready(
             lambda: (
                 "Slint MCP server listening"
@@ -285,6 +305,30 @@ class LocalApp:
             self.client.by_label("音乐", role="Button").click()
         self.client.by_label("每日推荐").handle()
         return self
+
+    def capture_pixels(self, destination: Path):
+        """从本轮无头会话的合成器输出抓图，和真实窗口同一条合成路径。"""
+        subprocess.run(
+            [
+                "nix-shell",
+                str(self.root / "slint.nix"),
+                "--run",
+                shlex.join(
+                    [
+                        "bun",
+                        str(self.root / "test/headless/headless.ts"),
+                        "capture",
+                        "--dir",
+                        str(self.headless),
+                        "--out",
+                        str(destination),
+                    ]
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
 
     def seed_playlists(self):
         """在独有数据库准备两个互不相交的集合，业务读取仍走生产 API。"""
