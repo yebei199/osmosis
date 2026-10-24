@@ -1,4 +1,4 @@
-import { Theme } from "theme.slint";
+import { Theme, Motion } from "theme.slint";
 
 // 玻璃拟态基元:一层极光背景 + 一张玻璃卡片。
 //
@@ -32,7 +32,7 @@ export component AuroraBackground inherits Rectangle {
     property <color> warm: root.cover-active ? root.cover-warm.with-alpha(0.58) : Theme.aurora-warm;
     property <color> deep: root.cover-active ? root.cover-deep.with-alpha(0.55) : Theme.aurora-deep;
     property <color> soft: root.cover-active ? root.cover-soft.with-alpha(0.42) : Theme.aurora-soft;
-    animate warm, deep, soft { duration: 400ms; easing: ease-out; }
+    animate warm, deep, soft { duration: Motion.slow; easing: Motion.ease; }
 
     // x/y 不接受百分比(只有 width/height 接受),所以位置写成父尺寸的表达式。
     //
@@ -131,8 +131,8 @@ export component GlassCard inherits Rectangle {
         background: @radial-gradient(circle, Theme.glass-sheen 0%, Theme.glass-sheen.with-alpha(0) 70%);
         opacity: touch.has-hover ? 1 : 0;
         animate opacity {
-            duration: 240ms;
-            easing: ease-out;
+            duration: Motion.medium;
+            easing: Motion.ease;
         }
     }
 

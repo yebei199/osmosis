@@ -1,7 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Palette } from "std-widgets.slint";
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Space, TextSize, Radius } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
 import { HoverButton } from "widgets.slint";
 import { Destinations, SearchTabBar } from "musicnav.slint";
@@ -49,9 +49,9 @@ export global Downloads {
 // 管理器只显示本机文件；每行点击切换选择，不发起播放。
 export component DownloadManager inherits Rectangle {
     VerticalLayout {
-        spacing: 8px;
+        spacing: Space.sm;
         HorizontalLayout {
-            spacing: 8px;
+            spacing: Space.sm;
             keyword := LineEdit {
                 horizontal-stretch: 1;
                 placeholder-text: "搜索歌名、歌手或文件名";
@@ -69,14 +69,14 @@ export component DownloadManager inherits Rectangle {
             text: Downloads.total;
             accessible-label: self.text;
             color: Theme.text-dim;
-            font-size: 13px;
+            font-size: TextSize.small;
         }
         if Downloads.note != "": Text {
             text: Downloads.note;
             accessible-label: self.text;
             color: Theme.text-dim;
             wrap: word-wrap;
-            font-size: 13px;
+            font-size: TextSize.small;
         }
         HorizontalLayout {
             Text {
@@ -104,14 +104,14 @@ export component DownloadManager inherits Rectangle {
             vertical-stretch: 1;
             content-width: self.width;
             VerticalLayout {
-                spacing: 4px;
+                spacing: Space.xs;
                 for row in Downloads.rows: Rectangle {
                     height: 64px;
                     background: row.selected ? Theme.accent.with-alpha(0.15) : Theme.overlay-weak;
-                    border-radius: 8px;
+                    border-radius: Radius.sm;
                     HorizontalLayout {
-                        padding: 8px;
-                        spacing: 8px;
+                        padding: Space.sm;
+                        spacing: Space.sm;
                         Text {
                             width: 24px;
                             text: row.selected ? "✓" : "○";
@@ -121,9 +121,9 @@ export component DownloadManager inherits Rectangle {
                         VerticalLayout {
                             horizontal-stretch: 1;
                             Text { text: row.title; color: Theme.text; overflow: elide; }
-                            Text { text: row.artist == "" ? row.file-name : row.artist; color: Theme.text-dim; font-size: 12px; overflow: elide; }
+                            Text { text: row.artist == "" ? row.file-name : row.artist; color: Theme.text-dim; font-size: TextSize.small; overflow: elide; }
                         }
-                        Text { text: row.size; color: Theme.text-dim; font-size: 12px; vertical-alignment: center; }
+                        Text { text: row.size; color: Theme.text-dim; font-size: TextSize.small; vertical-alignment: center; }
                     }
                     entry-touch := TouchArea {
                         enabled: !Downloads.busy;
@@ -147,17 +147,17 @@ export component DownloadManager inherits Rectangle {
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2);
             VerticalLayout {
-                padding: 16px;
-                spacing: 12px;
+                padding: Space.lg;
+                spacing: Space.md;
                 Text {
                     text: "删除选中的 " + Downloads.selected-count + " 首歌曲？";
                     color: Theme.text;
                     wrap: word-wrap;
-                    font-size: 17px;
+                    font-size: TextSize.title;
                 }
-                Text { text: "本机文件将被删除，无法撤销。"; color: Theme.text-dim; wrap: word-wrap; font-size: 13px; }
+                Text { text: "本机文件将被删除，无法撤销。"; color: Theme.text-dim; wrap: word-wrap; font-size: TextSize.small; }
                 HorizontalLayout {
-                    spacing: 8px;
+                    spacing: Space.sm;
                     cancel-button := HoverButton { width: (parent.width - 8px) / 2; height: 40px; text: "取消"; clicked => { Downloads.confirming = false; } }
                     confirm-button := HoverButton {
                         width: (parent.width - 8px) / 2; height: 40px; text: "确认删除";
@@ -176,7 +176,7 @@ export component DownloadManager inherits Rectangle {
 // 属性面全在 global 里,这一页因此不从窗口根接一个字段 —— 拆出来时
 // 一处转发都不必写(见 docs/adr/0027)。
 export component MusicPage inherits VerticalLayout {
-    padding: 16px;
+    padding: Space.lg;
     // 控制条不在这一页里 —— 它是窗口持有的那一根,一个实例管所有目的地
     // (app.slint,docs/adr/0029)。条在时页底让出它那一块,免得列表最后
     // 几行藏在条底下;条不在就一分不留,凭空的空白看起来就是渲染坏了
@@ -184,7 +184,7 @@ export component MusicPage inherits VerticalLayout {
     padding-bottom: Player.has-track && !Shell.play-page-open
         ? BarMetrics.page-reserve
         : 16px;
-    spacing: 12px;
+    spacing: Space.md;
 
     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
     // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
@@ -205,7 +205,7 @@ export component MusicPage inherits VerticalLayout {
             accessible-label: self.text;
             font-family: Type.display-cjk;
             font-weight: 900;
-            font-size: 22px;
+            font-size: TextSize.headline;
             color: Theme.text;
             vertical-alignment: center;
         }
@@ -215,7 +215,7 @@ export component MusicPage inherits VerticalLayout {
 
     HorizontalLayout {
         vertical-stretch: 1;
-        spacing: 12px;
+        spacing: Space.md;
 
         if Downloads.active: downloads-manager := DownloadManager {
             horizontal-stretch: 1;
@@ -223,7 +223,7 @@ export component MusicPage inherits VerticalLayout {
 
         if !Downloads.active: VerticalLayout {
             horizontal-stretch: 1;
-            spacing: 12px;
+            spacing: Space.md;
 
             // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
             // 常驻一个空框会让人以为那三页也要先搜一下。
@@ -231,7 +231,7 @@ export component MusicPage inherits VerticalLayout {
             if Shell.destination == 2
                 && Library.open-playlist-name == "":
             HorizontalLayout {
-                spacing: 8px;
+                spacing: Space.sm;
 
                 // 歌名是任意 CJK,不能指定子集字体,
                 // 否则输入的字大多不在子集里,直接是豆腐块。
@@ -262,9 +262,9 @@ export component MusicPage inherits VerticalLayout {
             // 高度钉死,免得文案变长把下面的列表顶来顶去。
             Text {
                 text: Player.playback-text;
-                font-family: "Maple Mono NF CN";
+                font-family: Type.body;
                 color: Theme.text-dim;
-                font-size: 13px;
+                font-size: TextSize.small;
                 height: 20px;
                 vertical-alignment: center;
                 overflow: elide;
@@ -277,7 +277,7 @@ export component MusicPage inherits VerticalLayout {
             // 就说不清了。
             if Library.open-playlist-name != "":
             playlist-header := HorizontalLayout {
-                spacing: 8px;
+                spacing: Space.sm;
                 height: 28px;
 
                 back := TouchArea {
@@ -286,7 +286,7 @@ export component MusicPage inherits VerticalLayout {
                     Text {
                         text: "‹";
                         color: Theme.text-dim;
-                        font-size: 20px;
+                        font-size: TextSize.headline;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -302,7 +302,7 @@ export component MusicPage inherits VerticalLayout {
                     Rectangle {
                         width: 28px;
                         height: 28px;
-                        border-radius: 5px;
+                        border-radius: Radius.sm;
                         clip: true;
 
                         Image {
@@ -319,7 +319,7 @@ export component MusicPage inherits VerticalLayout {
                 if !Library.renaming: Text {
                     text: Library.open-playlist-name;
                     color: Theme.text;
-                    font-size: 15px;
+                    font-size: TextSize.body;
                     horizontal-stretch: 1;
                     vertical-alignment: center;
                     overflow: elide;
@@ -370,7 +370,7 @@ export component MusicPage inherits VerticalLayout {
                 // 标题行会溢出去压住下面的分组条
                 block-artist-button := Rectangle {
                     width: block-artist-label.preferred-width + 24px;
-                    border-radius: 999px;
+                    border-radius: Radius.pill;
                     background: block-artist-touch.has-hover ? Theme.hover : Theme.overlay-weak;
                     border-width: 1px;
                     border-color: Theme.divider;
@@ -382,8 +382,8 @@ export component MusicPage inherits VerticalLayout {
 
                     block-artist-label := Text {
                         text: "屏蔽该歌手";
-                        font-family: "Maple Mono NF CN";
-                        font-size: 12px;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -430,7 +430,7 @@ export component MusicPage inherits VerticalLayout {
             if Shell.destination == 1
                 && Library.open-playlist-name == "":
             new-playlist-row := HorizontalLayout {
-                spacing: 8px;
+                spacing: Space.sm;
 
                 new-name := LineEdit {
                     horizontal-stretch: 1;
@@ -493,7 +493,7 @@ export component MusicPage inherits VerticalLayout {
             if Shell.destination == 4
                 && Library.open-playlist-name == "":
             radio-row := HorizontalLayout {
-                spacing: 8px;
+                spacing: Space.sm;
                 alignment: start;
 
                 radio-load-more := HoverButton {
@@ -516,7 +516,7 @@ export component MusicPage inherits VerticalLayout {
             empty-state := VerticalLayout {
                 vertical-stretch: 1;
                 alignment: center;
-                spacing: 12px;
+                spacing: Space.md;
 
                 // 这个视图还一份都没有、正在取:说「在路上」,不说「一首都没有」,
                 // 也不摆换一批推荐 —— 那会把人从正在进的视图拽走(#137 ④)。
@@ -524,8 +524,8 @@ export component MusicPage inherits VerticalLayout {
                     text: "正在取这一页的歌…";
                     accessible-role: text;
                     accessible-label: self.text;
-                    font-family: "Maple Mono NF CN";
-                    font-size: 14px;
+                    font-family: Type.body;
+                    font-size: TextSize.body;
                     color: Theme.text-dim;
                     horizontal-alignment: center;
                 }
@@ -534,14 +534,14 @@ export component MusicPage inherits VerticalLayout {
                     text: "点一首歌开始";
                     font-family: Type.display-cjk;
                     font-weight: 900;
-                    font-size: 34px;
+                    font-size: TextSize.display;
                     color: Theme.text;
                     horizontal-alignment: center;
                 }
                 if !Player.tracks-loading: Text {
                     text: "点云在待机,选一首它就活过来";
-                    font-family: "Maple Mono NF CN";
-                    font-size: 13px;
+                    font-family: Type.body;
+                    font-size: TextSize.small;
                     color: Theme.text-dim;
                     horizontal-alignment: center;
                 }
@@ -552,7 +552,7 @@ export component MusicPage inherits VerticalLayout {
                         // 走的话两边会各算各的。
                         width: 150px;
                         height: 38px;
-                        border-radius: 999px;
+                        border-radius: Radius.pill;
                         clip: true;
                         background: empty-daily-touch.has-hover
                             ? Theme.accent.darker(0.2) : Theme.accent;
@@ -569,8 +569,8 @@ export component MusicPage inherits VerticalLayout {
 
                         empty-daily-label := Text {
                             text: "换一批推荐";
-                            font-family: "Maple Mono NF CN";
-                            font-size: 14px;
+                            font-family: Type.body;
+                            font-size: TextSize.body;
                             // 光带底是深的,字换近白;关掉开关回 accent 实底的深墨。
                             color: Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0
                                 ? Theme.immersive-text : Theme.accent-text;

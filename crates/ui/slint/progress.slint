@@ -4,7 +4,7 @@
 // 松手才把最终比例交出去,免得一次拖动打出几十次请求。
 // (音量是例外:每动一下就该听见,那正是人调音量时在等的反馈。)
 
-import { Theme } from "theme.slint";
+import { Theme, Space, Radius, Motion, Type, TextSize } from "theme.slint";
 
 
 // 进度条:已放到哪、还能拖。
@@ -44,33 +44,33 @@ export component ProgressBar inherits Rectangle {
 
     VerticalLayout {
         alignment: root.slim ? center : start;
-        spacing: 3px;
+        spacing: Space.xs;
 
         groove := Rectangle {
             height: 4px;
             background: Theme.overlay;
-            border-radius: 2px;
+            border-radius: Radius.pill;
             // 细轨档平时隐身,指过来或拖着才现形 —— 环形键已经报着进度,
             // 这条只在要精确落点的那一刻出现。
             opacity: !root.slim || root.pinned || seek-touch.has-hover || root.dragging ? 1 : 0;
-            animate opacity { duration: 120ms; easing: ease-out; }
+            animate opacity { duration: Motion.fast; easing: Motion.ease; }
 
             Rectangle {
                 x: 0;
                 width: parent.width * clamp(root.shown, 0.0, 1.0);
                 height: parent.height;
                 background: Theme.accent;
-                border-radius: 2px;
+                border-radius: Radius.pill;
             }
         }
 
         if !root.slim: Text {
             text: root.buffering ? "缓冲中…" : root.text;
-            font-family: "Maple Mono NF CN";
+            font-family: Type.mono;
             // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
             // 说明「还在动」的东西。
             color: root.buffering ? Theme.accent : Theme.text-dim;
-            font-size: 11px;
+            font-size: TextSize.caption;
             horizontal-alignment: center;
         }
     }
@@ -112,21 +112,21 @@ export component VolumeControl inherits HorizontalLayout {
 
     property <bool> open: false;
 
-    spacing: 6px;
+    spacing: Space.xs;
 
     VerticalLayout {
         alignment: center;
         Rectangle {
             width: 32px;
             height: 32px;
-            border-radius: 16px;
+            border-radius: Radius.pill;
             background: speaker.has-hover ? Theme.overlay : transparent;
 
             Text {
                 // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
                 text: root.volume <= 0.001 ? "🔇"
                     : root.volume < 0.5 ? "🔈" : "🔊";
-                font-size: 15px;
+                font-size: TextSize.body;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
@@ -160,14 +160,14 @@ export component VolumeControl inherits HorizontalLayout {
                 y: (parent.height - 4px) / 2;
                 height: 4px;
                 background: Theme.overlay;
-                border-radius: 2px;
+                border-radius: Radius.pill;
 
                 Rectangle {
                     x: 0;
                     width: parent.width * clamp(root.volume, 0.0, 1.0);
                     height: parent.height;
                     background: Theme.accent;
-                    border-radius: 2px;
+                    border-radius: Radius.pill;
                 }
             }
 

@@ -6,7 +6,7 @@
 
 // 入口卡片用它透出背后的极光。
 import { GlassCard } from "glass.slint";
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Radius, Space, TextSize, Motion } from "theme.slint";
 
 import { OutlinedText, DayNightSwitch } from "textfx.slint";
 export { OutlinedText, DayNightSwitch }
@@ -16,19 +16,19 @@ export component SectionCard inherits Rectangle {
     in property <string> kicker;
 
     background: Theme.surface;
-    border-radius: 18px;
+    border-radius: Radius.md;
     border-width: 1px;
     border-color: Theme.overlay;
 
     VerticalLayout {
-        padding: 20px;
-        spacing: 14px;
+        padding: Space.lg;
+        spacing: Space.md;
 
         Text {
             text: root.kicker;
             font-family: Type.display-cjk;
             font-weight: 900;
-            font-size: 12px;
+            font-size: TextSize.small;
             color: Theme.accent;
         }
 
@@ -54,21 +54,21 @@ export component HoverButton inherits Rectangle {
 
     height: 56px;
     width: 220px;
-    border-radius: 14px;
+    border-radius: Radius.md;
     opacity: root.enabled ? 1.0 : 0.5;
     background: down ? Theme.accent.darker(0.55) : hovered ? Theme.accent.darker(0.25) : Theme.accent.darker(0.4);
     drop-shadow-color: Theme.accent.darker(0.4).with-alpha(0.5);
     drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
     drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
     animate background, drop-shadow-blur, drop-shadow-offset-y {
-        duration: 160ms;
-        easing: ease-out;
+        duration: Motion.fast;
+        easing: Motion.ease;
     }
 
     Text {
         text: root.text;
         color: Theme.accent-text;
-        font-size: 18px;
+        font-size: TextSize.title;
         font-weight: 600;
     }
 
@@ -108,15 +108,15 @@ export component NavItem inherits Rectangle {
     in property <bool> gpu-selected;
     callback clicked;
 
-    border-radius: 12px;
+    border-radius: Radius.md;
     background: root.gpu-selected
         ? (touch.has-hover ? Theme.overlay : transparent)
         : (active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
-    animate background { duration: 120ms; easing: ease-out; }
+    animate background { duration: Motion.fast; easing: Motion.ease; }
 
     VerticalLayout {
         alignment: center;
-        spacing: 4px;
+        spacing: Space.xs;
 
         HorizontalLayout {
             alignment: center;
@@ -135,7 +135,7 @@ export component NavItem inherits Rectangle {
         Text {
             text: root.label;
             color: active ? Theme.text : Theme.text-dim;
-            font-size: 12px;
+            font-size: TextSize.small;
             font-weight: active ? 700 : 500;
             horizontal-alignment: center;
         }
@@ -179,7 +179,7 @@ export component RoundControl inherits Rectangle {
             : (root.transparent-base ? transparent : Theme.divider));
     border-width: 1px;
     border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.overlay;
-    animate background, border-color { duration: 120ms; easing: ease-out; }
+    animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
     if root.backdrop.width > 0: Image {
         width: 100%;

@@ -15,7 +15,7 @@
 // 三面轮换随棱柱一起退场(#83 not planned):它是给棱柱当面的,棱柱撤回后
 // 只剩代价 —— 每面内容不一样多、宽度就不一样,翻一次面条变一次长。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Elevation, Radius, Motion, Space, TextSize } from "theme.slint";
 import { RoundControl } from "widgets.slint";
 import { RingControl } from "controls.slint";
 import { ProgressBar } from "progress.slint";
@@ -139,8 +139,8 @@ export component PlayerBar inherits Rectangle {
         background: Theme.surface.with-alpha(0.9);
         border-width: 1px;
         border-color: Theme.glass-edge;
-        drop-shadow-blur: 30px;
-        drop-shadow-offset-y: 14px;
+        drop-shadow-blur: Elevation.high-blur;
+        drop-shadow-offset-y: Elevation.high-y;
         drop-shadow-color: Theme.glass-shadow;
 
         // 尺寸回写给 GPU 背景通道。覆层那份走另一槽 —— 两条可能同时在场,
@@ -168,7 +168,7 @@ export component PlayerBar inherits Rectangle {
                 cover := Rectangle {
                     width: root.cover-size;
                     height: root.cover-size;
-                    border-radius: 11px;
+                    border-radius: Radius.sm;
                     clip: true;
 
                     // 无障碍属性长在封面本身,而不是底下那层 TouchArea ——
@@ -193,7 +193,7 @@ export component PlayerBar inherits Rectangle {
                         height: 100%;
                         background: cover-touch.has-hover
                             ? Theme.accent.with-alpha(0.22) : transparent;
-                        animate background { duration: 120ms; easing: ease-out; }
+                        animate background { duration: Motion.fast; easing: Motion.ease; }
                     }
 
                     cover-touch := TouchArea {
@@ -211,16 +211,16 @@ export component PlayerBar inherits Rectangle {
             // 一个「…」——两次实拍才试出这个顺序。
             VerticalLayout {
                 alignment: center;
-                spacing: 2px;
+                spacing: Space.xs;
                 horizontal-stretch: 1;
 
                 HorizontalLayout {
-                    spacing: 8px;
+                    spacing: Space.sm;
                     title := Text {
                         horizontal-stretch: 1;
                         text: Viz.now-title;
                         color: Theme.text;
-                        font-size: 14px;
+                        font-size: TextSize.body;
                         font-weight: 600;
                         overflow: elide;
                     }
@@ -232,14 +232,14 @@ export component PlayerBar inherits Rectangle {
                         font-family: Type.mono;
                         text: Player.buffering ? "缓冲中…" : Player.progress-text;
                         color: Player.buffering ? Theme.accent : Theme.text-dim;
-                        font-size: 12px;
+                        font-size: TextSize.small;
                         vertical-alignment: bottom;
                     }
                 }
                 Text {
                     text: Viz.now-artists;
                     color: Theme.text-dim;
-                    font-size: 12px;
+                    font-size: TextSize.small;
                     overflow: elide;
                 }
             }

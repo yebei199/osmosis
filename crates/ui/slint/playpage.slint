@@ -1,6 +1,6 @@
 import { Palette } from "std-widgets.slint";
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Motion, Radius, TextSize, Space } from "theme.slint";
 import { LyricRow } from "types.slint";
 import { OutlinedText } from "widgets.slint";
 import { PlayerBar } from "playerbar.slint";
@@ -72,7 +72,7 @@ export component PlayPage inherits FocusScope {
         source: Viz.viz-scene;
         // 歌词页打开时退成背景光:整页字压在一片满亮的粒子上读不动(#73)。
         opacity: Viz.lyrics-page-open ? 0.3 : 1.0;
-        animate opacity { duration: 260ms; easing: ease-out; }
+        animate opacity { duration: Motion.medium; easing: Motion.ease; }
     }
 
     // §8 的扫描线与噪点 2026-08-13 定为去除(#74):复古质感与产品方向不合。
@@ -106,7 +106,7 @@ export component PlayPage inherits FocusScope {
                           0px, max(0px, root.height - self.height));
             width: Shell.compact ? 132px : 160px;
             height: 36px;
-            border-radius: 10px;
+            border-radius: Radius.sm;
             background: Theme.immersive.with-alpha(0.62);
             border-width: 1px;
             border-color: Theme.immersive-text.with-alpha(0.22);
@@ -115,7 +115,7 @@ export component PlayPage inherits FocusScope {
                 width: parent.width - 20px;
                 text: Viz.now-title;
                 color: Theme.immersive-text;
-                font-size: 13px;
+                font-size: TextSize.small;
                 horizontal-alignment: center;
                 overflow: elide;
             }
@@ -171,7 +171,7 @@ export component PlayPage inherits FocusScope {
         // display 字体只有拉丁字形;中文歌名按字形回退,得到的是
         // 「拉丁 display + 中文系统字」的混排,与设计稿一致。
         font-family: Type.display-latin;
-        font-size: Shell.compact ? 26px : 34px;
+        font-size: Shell.compact ? TextSize.headline : TextSize.display;
     }
     if !Viz.lyrics-page-open: OutlinedText {
         y: root.viz-title-y + 46px;
@@ -179,7 +179,7 @@ export component PlayPage inherits FocusScope {
         height: 20px;
         text: Viz.now-artists;
         text-color: Theme.immersive-text-dim;
-        font-size: 14px;
+        font-size: TextSize.body;
     }
 
     // 队列页的入口(#109 AC-15)。与歌名歌手同一条规矩:歌词页或队列页
@@ -194,13 +194,13 @@ export component PlayPage inherits FocusScope {
         height: 26px;
         x: (root.width - self.width) / 2;
         background: Theme.overlay;
-        border-radius: 13px;
+        border-radius: Radius.pill;
 
         Text {
             text: "队列 · " + Viz.queue-total;
             color: Theme.immersive-text-dim;
-            font-family: "Maple Mono NF CN";
-            font-size: 12px;
+            font-family: Type.body;
+            font-size: TextSize.small;
             horizontal-alignment: center;
             vertical-alignment: center;
             width: 100%;
@@ -220,9 +220,9 @@ export component PlayPage inherits FocusScope {
         width: 100%;
         height: 18px;
         text: "加载中…";
-        font-family: "Maple Mono NF CN";
+        font-family: Type.body;
         text-color: Theme.immersive-accent;
-        font-size: 13px;
+        font-size: TextSize.small;
     }
 
     // 歌词:当前行 + 译文,居中排在歌名下方;画在粒子之上,不参与深度合成
@@ -240,7 +240,7 @@ export component PlayPage inherits FocusScope {
         VerticalLayout {
             height: 100%;
             alignment: start;
-            spacing: 10px;
+            spacing: Space.sm;
 
         // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
         // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
@@ -250,7 +250,7 @@ export component PlayPage inherits FocusScope {
             height: root.viz-lyric-line-h;
             text: Viz.lyric-line;
             text-color: Theme.immersive-text.brighter(0.1);
-            font-size: Shell.compact ? 21px : 30px;
+            font-size: Shell.compact ? TextSize.headline : TextSize.display;
             // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
             // 只是一圈灰边,拉不开对比。
             outline: 2px;
@@ -262,7 +262,7 @@ export component PlayPage inherits FocusScope {
             height: root.viz-lyric-tr-h;
             text: Viz.lyric-translation;
             text-color: Theme.immersive-text-dim.brighter(0.1);
-            font-size: Shell.compact ? 14px : 16px;
+            font-size: Shell.compact ? TextSize.body : TextSize.title;
             // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
             // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
             // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
@@ -287,7 +287,7 @@ export component PlayPage inherits FocusScope {
         y: root.safe-top;
         width: 100%;
         height: root.height - root.safe-top;
-        animate x { duration: 280ms; easing: ease-out; }
+        animate x { duration: Motion.medium; easing: Motion.ease; }
         rows: Viz.lyric-rows;
         has-translation: Viz.lyric-has-translation;
         browse <=> Viz.lyric-browse;
@@ -301,7 +301,7 @@ export component PlayPage inherits FocusScope {
         y: root.safe-top;
         width: 100%;
         height: root.height - root.safe-top;
-        animate x { duration: 280ms; easing: ease-out; }
+        animate x { duration: Motion.medium; easing: Motion.ease; }
         rows: Viz.queue-rows;
         current: Viz.queue-current;
         total: Viz.queue-total;

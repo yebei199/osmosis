@@ -1,0 +1,25 @@
+# MEO-1877 界面档位:圆角、字号、间距、时长、阴影收进 theme.slint,正文回到 Figtree。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "crates/ui/slint 下除 theme.slint 外的全部 .slint 源码"
+observe = "没有非零字面圆角、字号、时长或字体族名,豁免表为空;故意写进去的四种字面值各报一条,token、0 值、算式与注释不误报"
+tests = ["ui::main::literals::slint_sources_use_tokens_not_literals", "ui::main::literals::guard_flags_planted_literals", "ui::main::literals::guard_accepts_tokens_and_zero"]
+doubles = ["扫源码文本,不经渲染;不证明像素"]
+mutation = "在任一页面写回 border-radius: 10px 或 duration: 200ms,第一条断言失败"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "导航三颗球在侧栏间移动的半途"
+observe = "头球在前、尾球居中、小水滴在后,时长归档后仍两两拉开"
+tests = ["ui::main::nav_glass::the_three_balls_stay_strung_out_mid_transition", "ui::main::nav_glass::the_droplet_lands_on_the_selected_sidebar_row"]
+doubles = ["无头后端与模拟时钟"]
+
+[[ac]]
+id = "AC-2"
+none = "正文字体是 Figtree 由截图证明:改后拉丁字母与数字从等宽变比例、时长读数为等宽(.dispatch/MEO-1877-shots/compare2/);源码层面 Maple Mono 已清零由 AC-1 的守卫钉住。i-slint-backend-testing 不导出 font-family,没有可点名的单条测试"
+
+[[ac]]
+id = "AC-3"
+none = "逐页改前改后截图是人工审查证据:无头、已登录,9 个目的地 x 宽/420,.dispatch/MEO-1877-shots/compare2/,不能由无头 JUnit 替代"

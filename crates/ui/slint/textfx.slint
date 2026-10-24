@@ -8,7 +8,7 @@
 
 // 入口卡片用它透出背后的极光。
 import { GlassCard } from "glass.slint";
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Motion, Elevation } from "theme.slint";
 
 
 // 描边文字。播放页专用 —— 那里的字压在**封面**上,而封面是任意亮度的照片:
@@ -88,7 +88,7 @@ export component DayNightSwitch inherits Rectangle {
     border-radius: self.height / 2;
     clip: true;
     background: root.night ? #191e32 : #4685c0;
-    animate background { duration: 700ms; easing: ease-in-out; }
+    animate background { duration: Motion.slow; easing: Motion.ease; }
 
     // 光晕:三层同心白圈跟着滑块走,昼夜都在,给按钮一点"发光体"的存在感。
     for halo[i] in [66px, 88px, 110px]: Rectangle {
@@ -99,7 +99,7 @@ export component DayNightSwitch inherits Rectangle {
         opacity: 0.20 - i * 0.07;
         x: knob.x + knob.width / 2 - self.width / 2;
         y: knob.y + knob.height / 2 - self.height / 2;
-        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate x { duration: Motion.slow; easing: Motion.spring; }
     }
 
     // 云:三团白圆压在下缘,白天在场,入夜整体沉出画面。
@@ -108,7 +108,7 @@ export component DayNightSwitch inherits Rectangle {
         width: 100%;
         height: 100%;
         y: root.night ? root.height : 0;
-        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate y { duration: Motion.slow; easing: Motion.spring; }
 
         for cloud[i] in [
             { cx: 52px, cy: 26px, d: 26px },
@@ -122,7 +122,7 @@ export component DayNightSwitch inherits Rectangle {
             opacity: 0.9;
             x: cloud.cx - self.width / 2 + (touch.has-hover && !root.night ? 5px : 0px);
             y: cloud.cy - self.height / 2 + 6px;
-            animate x { duration: 400ms; easing: ease-out; }
+            animate x { duration: Motion.slow; easing: Motion.ease; }
         }
     }
 
@@ -132,7 +132,7 @@ export component DayNightSwitch inherits Rectangle {
         width: 100%;
         height: 100%;
         y: root.night ? 0 : -root.height;
-        animate y { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+        animate y { duration: Motion.slow; easing: Motion.spring; }
 
         for star[i] in [
             { sx: 14px, sy: 8px, d: 7px },
@@ -149,7 +149,7 @@ export component DayNightSwitch inherits Rectangle {
             // 四角星:四段二次曲线,腰收向圆心 —— 原作 Shape 的形状。
             commands: "M 5 0 Q 5 5 10 5 Q 5 5 5 10 Q 5 5 0 5 Q 5 5 5 0 Z";
             fill: white;
-            animate x { duration: 400ms; easing: ease-out; }
+            animate x { duration: Motion.slow; easing: Motion.ease; }
         }
     }
 
@@ -168,12 +168,12 @@ export component DayNightSwitch inherits Rectangle {
             : (touch.has-hover ? knob.start-x + 4px : knob.start-x);
         border-radius: self.width / 2;
         background: root.night ? #c3c8d2 : #ffc323;
-        drop-shadow-blur: 6px;
+        drop-shadow-blur: Elevation.low-blur;
         drop-shadow-offset-x: 1px;
-        drop-shadow-offset-y: 2px;
+        drop-shadow-offset-y: Elevation.low-y;
         drop-shadow-color: Theme.shadow.with-alpha(0.5);
-        animate x { duration: 500ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
-        animate background { duration: 500ms; easing: ease-in-out; }
+        animate x { duration: Motion.slow; easing: Motion.spring; }
+        animate background { duration: Motion.slow; easing: Motion.ease; }
 
         // 太阳高光:偏心一点的亮斑,夜里淡出。
         Rectangle {
@@ -184,7 +184,7 @@ export component DayNightSwitch inherits Rectangle {
             border-radius: self.width / 2;
             background: #ffe650;
             opacity: root.night ? 0 : 0.6;
-            animate opacity { duration: 500ms; }
+            animate opacity { duration: Motion.slow; }
         }
 
         // 陨石坑:三个灰圆,白天淡出,并跟着原作绕月心转 -90° 入场。
@@ -197,8 +197,8 @@ export component DayNightSwitch inherits Rectangle {
             width: 100%;
             height: 100%;
             opacity: root.night ? 1 : 0;
-            animate opacity { duration: 300ms; }
-            animate spin { duration: 300ms; easing: cubic-bezier(0.56, 1.35, 0.52, 1.0); }
+            animate opacity { duration: Motion.medium; }
+            animate spin { duration: Motion.medium; easing: Motion.spring; }
 
             for crater[i] in [
                 { r: 9.06px, a: 263.66deg, d: 7px },
