@@ -1,0 +1,18 @@
+[project]
+name = "osmosis-mcp-e2e"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=9.0.3,<10",
+    "pillow>=13,<14",
+    "grpcio>=1.84.1",
+    "grpcio-tools>=1.84.1",
+    "numpy>=2.5.4",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = ["app: 独占本机 3000/8091 的真实桌面与隔离数据库，串行运行", "live: 独占调用者指定的真实应用和开发数据库，必须串行运行"]
+
+[tool.ruff]
+line-length = 100

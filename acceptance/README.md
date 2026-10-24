@@ -8,3 +8,5 @@ JUnit；遥控测试实现、素材、隔离资源与原始证据归 `test/remot
 回归合同，`177.toml` 保留顶部状态条与歌词头部合同。`run.sh` 的 `all` 运行累计套件，
 `status-ui` 只运行本轮 UI 套件并生成 JUnit，`changed <base> <head>` 按改动挑累计子集（规则见 `test/remote-behavior/README.md`）。`just ci-remote` 与 forge 使用 Nix 固定引用的部署检查器消费这些文件。
 当前材料仍处于审前，尚无功能通过结论。
+
+MCP 子集由 test/mcp-e2e/accept-run.ts 承接真实应用 fixture 和公共库结果。未选中套件生成零用例报告，避免混入旧结果；本轮映射要求的用例仍须在真实 JUnit 中通过。
