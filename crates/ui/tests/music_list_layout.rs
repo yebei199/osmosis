@@ -208,3 +208,26 @@ fn music_page_is_capped_and_centered() {
         "左 {left_gap} 右 {right_gap}"
     );
 }
+
+/// 设置与个人页的那一列在宽窗口里居中(MEO-1878),不贴左留下右半边空白。
+fn assert_column_centered(dest: i32, id: &str) {
+    let ui = music_page(1900.0, 900.0, dest);
+    let column = element(&ui, id);
+    let page_left = 168.0 + (1900.0 - 168.0 - 1400.0) / 2.0;
+    let left_gap = column.absolute_position().x - page_left;
+    let right_gap = page_left + 1400.0 - right(&column);
+    assert!(
+        (left_gap - right_gap).abs() < 1.0,
+        "{id} 左 {left_gap} 右 {right_gap}"
+    );
+}
+
+#[test]
+fn settings_page_centers_its_column() {
+    assert_column_centered(8, "SettingsPage::column");
+}
+
+#[test]
+fn profile_page_centers_its_column() {
+    assert_column_centered(7, "ProfilePage::column");
+}

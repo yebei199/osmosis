@@ -74,7 +74,8 @@ export component ProfilePage inherits Flickable {
     content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
-        x: 26px;
+        // 宽窗口里居中(MEO-1878):贴左摆的话,720px 之外的右半边全是空白。
+        x: max(26px, (root.width - self.width) / 2);
         y: 26px;
         width: min(root.width - 52px, 720px);
         alignment: start;

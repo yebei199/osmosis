@@ -67,7 +67,8 @@ export component SettingsPage inherits Flickable {
     init => { Library.refresh-blocks(); }
 
     column := VerticalLayout {
-        x: 26px;
+        // 宽窗口里居中(MEO-1878):贴左摆的话,640px 之外的右半边全是空白。
+        x: max(26px, (root.width - self.width) / 2);
         y: 26px;
         width: min(root.width - 52px, 640px);
         alignment: start;
