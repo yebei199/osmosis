@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 description = "界面的声明,以及界面与客户端领域之间的双向绑定"
+autotests = false
+
+[[test]]
+name = "main"
+path = "tests/main.rs"
 
 [dependencies]
 # ui 是组装点:它把 api 的请求函数注入 app-core,二者互不相识。

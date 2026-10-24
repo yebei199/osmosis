@@ -13,7 +13,9 @@
 # 那个区分再无意义,合并成这一个。
 #
 # 固定用 <nixpkgs>,以跟随宿主机使用的同一个 channel。
-{ pkgs ? import <nixpkgs> { } }:
+{
+  pkgs ? import <nixpkgs> { },
+}:
 let
   # winit/femtovg 在运行期 dlopen 这些库——必须出现在 LD_LIBRARY_PATH
   # 里,只是链接是不够的。fontconfig/freetype 在构建期还会被 pkg-config 找到。
@@ -38,6 +40,8 @@ in
 pkgs.mkShell {
   nativeBuildInputs = [
     pkgs.pkg-config
+    # 合并后的 UI 测试由 nextest 逐条起进程，ci-test 与定向验证共用。
+    pkgs.cargo-nextest
     # web 废弃(#110)后 wasm-bindgen-cli 已撤;复活时加回,版本要与 Cargo.lock 里的
     # wasm-bindgen 完全一致,否则 CLI 拒绝生成胶水代码。python3 给测试脚本起静态服务器。
     pkgs.python3

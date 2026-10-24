@@ -163,8 +163,10 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 ## 不在用户桌面上开窗口
 
 用户 2026-10-24 定:AI 跑测试、做验证,不许在用户的真实显示上开 osmosis 窗口——niri 会把焦点
-抢过去。`just shot` 现在仍然要聚焦窗口,执行者不许用。在 S6(MEO-1900)把 `desktop-dev` 和测试夹具
-改成默认无头、并加上程序守卫之前,需要窗口的验证先停一停,只做不需要窗口的部分。
+抢过去。MEO-1900 起这由程序保证:`just desktop-dev`、`just shot` 和 `test/mcp-e2e` 的夹具默认都跑在
+`test/headless/` 的无头 sway 里(独立网络命名空间、虚拟声卡),MCP 照旧在 8091;debug 构建在 AI 会话里
+被要求开到用户真实显示上时直接拒绝启动(`apps/desktop/src/display_guard.rs`)。只有用户本人要看
+窗口时才带 `OSMOSIS_SHOW_WINDOW=1`。
 
 ## 测试不出声:一律进虚拟声卡
 

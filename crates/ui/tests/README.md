@@ -8,6 +8,10 @@
 一个文件对应一块界面行为(`liked.rs` 红心、`thumbnail.rs` 封面槽位、`facets.rs` 分组条、
 `queue_page.rs` 队列覆层……),不是一个 `.slint` 文件对一个测试文件。
 
+`main.rs` 将这些模块链接成一个集成测试产物，Cargo 只注册这个入口。
+测试用 nextest 逐条起进程，隔离 Slint 后端初始化与全局状态；本地和 CI 的入口见
+根目录 `justfile` 的 `ci-test`。定向运行用 `cargo nextest run -p ui --test main -E 'test(banner::)'`。
+
 ## 不负责
 
 - 像素级外观(颜色、描边、间距实测)——测试框架不导出通用属性读取,只有
