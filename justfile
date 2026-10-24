@@ -107,13 +107,28 @@ ci-boundaries:
 # 残留的那个变量会被 option_env! 烘进去,悄悄连到别处;清掉而不是显式设成 local_api,
 # 是为了和 `just shot`、裸 cargo build 共用同一份构建指纹,来回切不重编。
 #
-# 声音默认进虚拟声卡(test/null-sink.ts 建的 null sink),不从真实声卡出声:这条配方
-# 多半是 AI 在跑测试时起的(用户 2026-10-24:「测试的时候给我用虚拟声卡,别用真实发声」)。
-# 要亲耳听,带 `OSMOSIS_REAL_AUDIO=1 just desktop-dev`。
+# 默认开在**看不见的无头显示**里(test/headless/,MEO-1900):用户桌面上不出窗口、不抢焦点,
+# 和用户自己开着的实例并存。MCP 照旧转发到 8091,驱动和验证的方式不变;热重载照常
+# (判据仍是日志里那行 `Reloaded component`)。要截当前画面:
+# `bun test/headless/headless.ts capture --dir <启动时打印的会话目录> --out a.png`。
+# 用户本人要看窗口时带 `OSMOSIS_SHOW_WINDOW=1 just desktop-dev`,开到真实桌面;
+# debug 构建在 AI 会话里没带这个开关就拒绝开到真实桌面(apps/desktop/src/display_guard.rs)。
+#
+# 声音默认进虚拟声卡(test/null-sink.ts 建的 null sink),不从真实声卡出声
+# (用户 2026-10-24:「测试的时候给我用虚拟声卡,别用真实发声」)。
+# 要亲耳听,带 `OSMOSIS_REAL_AUDIO=1`。
 [group('三端')]
 [group('桌面')]
 desktop-dev extra="": local-backend-up (mcp-port-free desktop_mcp_port)
-    node=$([ "${OSMOSIS_REAL_AUDIO:-}" = 1 ] || bun test/null-sink.ts) && env -u OSMOSIS_API_BASE ${node:+PIPEWIRE_NODE=$node} SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    feats='mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+    if [ "${OSMOSIS_SHOW_WINDOW:-}" = 1 ]; then
+        node=$([ "${OSMOSIS_REAL_AUDIO:-}" = 1 ] || bun test/null-sink.ts)
+        env -u OSMOSIS_API_BASE ${node:+PIPEWIRE_NODE=$node} SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run "SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features $feats"
+    else
+        env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run "cargo build -p app-desktop --features $feats && exec bun test/headless/headless.ts run --mcp-port {{desktop_mcp_port}} --log -"
+    fi
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 已废弃(#110),现在跑不通:apps/web 不是 workspace 成员。配方留着当复活路径 ——
@@ -453,53 +468,18 @@ desktop-exit-check:
     nix-shell slint.nix --run 'cargo build -p app-desktop'
     nix-shell slint.nix --run 'test/desktop-close-exit.sh target/debug/osmosis-desktop focused unfocused'
 
-# 起一个干净的桌面实例,截下**真实窗口像素**,存到 dist/shot.png。
+# 在看不见的无头显示里起一个干净的桌面实例,截下合成器输出的像素,存到 dist/shot.png。
 #
 # width 给逻辑像素宽度即可切版式:`just shot 420` 看紧凑版(底部导航),`just shot` 看宽版。
 # tab 指定开局页(0=Home、1=Music):`just shot 420 1` 直接截紧凑版的 Music 页 ——
-# 不必再靠 MCP 模拟点击切页。
+# 不必再靠 MCP 模拟点击切页。窗口高固定 900。
 #
-# 为什么必须有这条 recipe:
-# 1. 不先杀干净,旧实例的窗口还在,AI 截到的是**上一版**的界面,浑然不觉;
-# 2. MCP 的 take_screenshot 走软件渲染器,**采不到 wgpu 纹理** —— 播放页的粒子与 warp
-#    在它眼里恒为纯黑,据此判断「没渲染出来」是错的。真实像素只能靠合成器抓
-#    (niri screenshot-window)。
+# 无头 sway 借 GPU 渲染节点合成,wgpu 纹理是真的;应用在自己的网络命名空间里,单实例锁
+# 不和用户开着的实例打架,所以不必先杀实例,也不抢用户桌面的焦点(MEO-1900,
+# 细节见 test/headless/README.md)。MCP 的 take_screenshot 也采得到 wgpu 纹理
+# (AGENTS.md 2026-08-13 实测),判「画出来没有」够用;逐像素比对认这条。
 [group('桌面')]
 shot width="" tab="0":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    just desktop-kill
-    # 先编译再启动:否则「等窗口」的循环会把几分钟的编译时间也等进去,看着像卡死。
+    # 先编译再启动:否则「等窗口」会把几分钟的编译时间也等进去,看着像卡死。
     nix-shell slint.nix --run 'cargo build -p app-desktop'
-    # 日志与 marker 放 mktemp 出的目录:固定的 /tmp 路径会被同机并行的另一次 shot 覆盖(#136)
-    tmp=$(mktemp -d)
-    # 截图用不着声音:进虚拟声卡,不从真实声卡出声。
-    PIPEWIRE_NODE=$(bun test/null-sink.ts) OSMOSIS_TAB={{tab}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
-    for _ in $(seq 30); do
-        id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
-        [ -n "$id" ] && break
-        sleep 1
-    done
-    [ -n "${id:-}" ] || { echo "窗口没起来,见 $tmp/shot.log" >&2; exit 1; }
-    if [ -n "{{width}}" ]; then
-        niri msg action set-window-width --id "$id" {{width}}
-        sleep 1
-    fi
-    # **必须先把窗口摆到眼前**:合成器不给不可见窗口发 frame callback,Slint 就不重绘
-    # (fps 读数会是 0),而 screenshot-window 抓的是它最后一次提交的缓冲 —— 于是你看到的
-    # 是几次 resize 之前的旧画面,改了相机/布局却"纹丝不动",查半天。
-    niri msg action focus-window --id "$id"
-    sleep 2
-    mkdir -p dist
-    # niri 是**异步**落盘的:紧跟着 `ls -t` 会挑到上一张旧图,于是你以为改动没生效,
-    # 实际是在看历史。用一个 marker 文件卡住时间,只接受比它新的 png。
-    touch "$tmp/marker"
-    niri msg action screenshot-window --id "$id"
-    for _ in $(seq 20); do
-        shot=$(find ~/Pictures/Screenshots -name '*.png' -newer "$tmp/marker" | head -1)
-        [ -n "$shot" ] && break
-        sleep 0.5
-    done
-    [ -n "${shot:-}" ] || { echo "截图没落盘" >&2; exit 1; }
-    mv "$shot" dist/shot.png
-    echo "dist/shot.png  ← 窗口 $id,$(niri msg --json windows | jq -r --arg i "$id" '.[]|select(.id==($i|tonumber))|.layout.window_size|join("x")') 逻辑像素"
+    nix-shell slint.nix --run 'bun test/headless/headless.ts shot --out dist/shot.png --width "{{width}}" --tab "{{tab}}"'
