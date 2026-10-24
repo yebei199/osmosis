@@ -5,6 +5,8 @@ import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from http.client import HTTPResponse
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,7 +19,13 @@ class StaleHandle(McpError):
     """只读查询遇到元素重建时允许重新定位。"""
 
 
-def expect(probe, *, equals=True, timeout=30, interval=0.2):
+def expect(
+    probe: Callable[[], object],
+    *,
+    equals: object = True,
+    timeout: float = 30,
+    interval: float = 0.2,
+) -> object:
     """轮询外部真相源，超时报告最后值；不自动重发用户动作。"""
     deadline = time.monotonic() + timeout
     observed = None
@@ -33,7 +41,7 @@ def expect(probe, *, equals=True, timeout=30, interval=0.2):
         time.sleep(interval)
 
 
-def read_message(response):
+def read_message(response: HTTPResponse) -> str:
     """读取一条 JSON/SSE 消息，持续 SSE 连接在完整事件后即可返回。"""
     if response.headers.get_content_type() == "text/event-stream":
         data = []
@@ -58,7 +66,9 @@ def read_message(response):
 class Client:
     """连接调用者指定的应用，不隐式启动进程或改变环境。"""
 
-    def __init__(self, url="http://127.0.0.1:8091/mcp", *, timeout=30, interval=0.2):
+    def __init__(
+        self, url: str = "http://127.0.0.1:8091/mcp", *, timeout: float = 30, interval: float = 0.2
+    ) -> None:
         """保存有界请求及轮询参数。"""
         if timeout <= 0 or interval <= 0:
             raise ValueError("timeout and interval must be positive")
@@ -71,7 +81,7 @@ class Client:
         )
         self.last_diff = None
 
-    def content(self, name, **arguments):
+    def content(self, name: str, **arguments: object):
         """保留图片块；兼容单响应 JSON 与标准 SSE data 消息。"""
         body = json.dumps(
             {
@@ -113,7 +123,7 @@ class Client:
         ) as error:
             raise McpError(f"{name}: invalid MCP response: {error}") from error
 
-    def call(self, name, **arguments):
+    def call(self, name: str, **arguments: object):
         """解码工具文本 JSON，空响应或非 JSON 文本均报错。"""
         blocks = self.content(name, **arguments)
         try:
@@ -138,15 +148,15 @@ class Client:
             or []
         )
 
-    def by_id(self, element_id, index=0):
+    def by_id(self, element_id: str, index: int = 0) -> "Locator":
         """构建惰性 id 选择器，每次操作重新解析。"""
         return Locator(self, element_id=element_id, index=index)
 
-    def by_label(self, label, index=0):
+    def by_label(self, label: str, index: int = 0) -> "Locator":
         """按完整无障碍标签选择，不依赖组件名称或位置。"""
         return Locator(self, label=label, index=index)
 
-    def screenshot(self, destination):
+    def screenshot(self, destination: Path | str) -> None:
         """保存 MCP 返回的 PNG 图片块。"""
         blocks = self.content("take_screenshot", windowHandle=self.window())
         try:
@@ -155,7 +165,7 @@ class Client:
         except (ValueError, KeyError, StopIteration) as error:
             raise McpError("screenshot: missing PNG image block") from error
 
-    def capture(self, directory):
+    def capture(self, directory: Path | str) -> None:
         """独立采集树与截图，采集失败记录错误，不掩盖原始断言。"""
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
@@ -185,7 +195,7 @@ class Client:
         if errors:
             (directory / "capture-errors.txt").write_text("\n".join(errors))
 
-    def expect_screenshot(self, baseline, directory):
+    def expect_screenshot(self, baseline: Path | str, directory: Path | str) -> None:
         """视觉断言保留差异路径，pytest 失败钩子负责汇总。"""
         from visual import compare
 
@@ -200,7 +210,14 @@ class Client:
 class Locator:
     """只保存查询条件，避免长期持有可失效的元素句柄。"""
 
-    def __init__(self, client, *, element_id=None, label=None, index=0):
+    def __init__(
+        self,
+        client: Client,
+        *,
+        element_id: str | None = None,
+        label: str | None = None,
+        index: int = 0,
+    ) -> None:
         """id 或标签二选一，index 用于稳定的曲目列表行。"""
         if index < 0:
             raise ValueError("index must be non-negative")
@@ -255,7 +272,7 @@ class Locator:
         """只发一次点击，不因响应或用户状态延迟重复提交。"""
         return self.client.call("click_element", elementHandle=self.handle())
 
-    def action(self, action):
+    def action(self, action: str):
         """卡墙经无障碍动作操作，不量坐标。"""
         return self.client.call(
             "invoke_accessibility_action", elementHandle=self.handle(), action=action

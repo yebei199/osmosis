@@ -7,7 +7,14 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 
-def compare(actual, baseline, diff, *, channel_threshold=8, ratio_threshold=0.001):
+def compare(
+    actual: Path | str,
+    baseline: Path | str,
+    diff: Path | str,
+    *,
+    channel_threshold: int = 8,
+    ratio_threshold: float = 0.001,
+) -> None:
     """任一通道差严格大于阈值算变化，变化占比严格超限才失败。"""
     actual, baseline, diff = Path(actual), Path(baseline), Path(diff)
     if not baseline.is_file():
@@ -36,7 +43,7 @@ def compare(actual, baseline, diff, *, channel_threshold=8, ratio_threshold=0.00
         raise AssertionError(f"changed pixel ratio {ratio:.6f} > {ratio_threshold}; diff: {diff}")
 
 
-def update_baseline(actual, baseline):
+def update_baseline(actual: Path | str, baseline: Path | str) -> None:
     """校验图片后显式复制，不由失败比较隐式创建。"""
     with Image.open(actual) as image:
         image.verify()
