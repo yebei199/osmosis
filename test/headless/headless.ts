@@ -6,7 +6,7 @@
 // desktop. grim reads the pixels. The user's niri never sees a window.
 //
 //   bun test/headless/headless.ts shot [--out dist/shot.png] [--width W] [--height H] [--tab T] [--bin B]
-//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--backend-port P] [--width W] [--height H] [--tab T] [--bin B] [--log F|-] [--state D]
+//   bun test/headless/headless.ts run [--dir D] [--mcp-port P] [--backend-port P] [--forward P1,P2] [--width W] [--height H] [--tab T] [--bin B] [--log F|-] [--state D]
 //   bun test/headless/headless.ts capture --dir D --out F
 //
 // `run` stays in the foreground (default dir: a fresh one under the cache, `--log -`
@@ -41,6 +41,8 @@ export type Options = {
   bin: string;
   mcpPort?: number;
   backendPort: number;
+  // More host loopback ports the app must reach (e.g. a fixture's media server).
+  forward: number[];
   log?: string;
   // XDG_STATE_HOME used as is; without it the session gets a copy of the dev state.
   state?: string;
@@ -206,7 +208,7 @@ export async function start(o: Options): Promise<Session> {
   mkdirSync(tmp, { recursive: true });
   const forward = o.mcpPort ? `${o.mcpPort}:${NS_MCP_PORT}` : "none";
   const pasta = Bun.spawn(
-    ["pasta", "--config-net", "-f", "-q", "--host-lo-to-ns-lo", "-T", `${BACKEND_PORT}:${o.backendPort}`, "-t", forward, "-u", "none", "-U", "none", "--", o.bin],
+    ["pasta", "--config-net", "-f", "-q", "--host-lo-to-ns-lo", "-T", [`${BACKEND_PORT}:${o.backendPort}`, ...o.forward].join(","), "-t", forward, "-u", "none", "-U", "none", "--", o.bin],
     {
       env: cleanEnv({
         XDG_STATE_HOME: o.state ?? stateCopy(o.dir),
@@ -283,6 +285,10 @@ function options(f: Record<string, string>, dir: string): Options {
     bin: resolve(f.bin ?? join(root, "target/debug/osmosis-desktop")),
     mcpPort: f["mcp-port"] ? int(f["mcp-port"], 0, "mcp-port") : undefined,
     backendPort: int(f["backend-port"], BACKEND_PORT, "backend-port"),
+    forward: (f.forward ?? "")
+      .split(",")
+      .filter((p) => p !== "")
+      .map((p) => int(p, 0, "forward")),
     log: f.log && f.log !== "-" ? resolve(f.log) : f.log,
     state: f.state ? resolve(f.state) : undefined,
   };

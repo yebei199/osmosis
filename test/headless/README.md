@@ -22,7 +22,8 @@ nix-shell slint.nix --run 'bun test/headless/check.ts'           # AC 检查,真
 为什么这么拼:niri 只给可见窗口发 frame callback,不聚焦就截到旧画面;应用的单实例锁是
 abstract socket,按网络命名空间区分,换一个命名空间才起得了第二个。命名空间里的
 `127.0.0.1:3000` 由 pasta 接到宿主的本机后端(`--backend-port` 指宿主端口,缺省 3000;测试夹具
-给自己那份 server 的随机端口,宿主 3000 被别人占着也不碍事),MCP 端口用 `--mcp-port` 转发出来。
+给自己那份 server 的随机端口,宿主 3000 被别人占着也不碍事),MCP 端口用 `--mcp-port` 转发出来。应用要直连的其他宿主回环端口(如夹具的媒体替身)用
+`--forward P1,P2` 接进命名空间,同号映射。
 
 登录态:会话目录里放一份 `~/.local/state/osmosis-dev` 的副本当 `XDG_STATE_HOME`,不写回。
 

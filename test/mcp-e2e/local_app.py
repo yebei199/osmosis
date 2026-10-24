@@ -274,6 +274,9 @@ class LocalApp:
             str(mcp_port),
             "--backend-port",
             str(self.server_port),
+            # 媒体替身的 HTTP 在宿主回环的随机端口上，应用直接取音频，要接进命名空间。
+            "--forward",
+            str(media.http.server_port),
             "--bin",
             str(self.root / "target/debug/osmosis-desktop"),
             "--state",
