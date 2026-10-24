@@ -24,7 +24,9 @@ fn main() {
 
     // AI 会话里的 debug 实例只许开在无头显示里,不抢用户桌面的焦点(MEO-1900)。
     #[cfg(debug_assertions)]
-    if let Err(msg) = display_guard::check(|k| std::env::var(k).ok()) {
+    if let Err(msg) =
+        display_guard::check(|k| std::env::var(k).ok())
+    {
         eprintln!("{msg}");
         std::process::exit(2);
     }
