@@ -103,10 +103,14 @@ ci-boundaries:
 # 连本机后端(local_api),没起就在编译前失败。`env -u OSMOSIS_API_BASE`:shell 里
 # 残留的那个变量会被 option_env! 烘进去,悄悄连到别处;清掉而不是显式设成 local_api,
 # 是为了和 `just shot`、裸 cargo build 共用同一份构建指纹,来回切不重编。
+#
+# 声音默认进虚拟声卡(test/null-sink.ts 建的 null sink),不从真实声卡出声:这条配方
+# 多半是 AI 在跑测试时起的(用户 2026-10-24:「测试的时候给我用虚拟声卡,别用真实发声」)。
+# 要亲耳听,带 `OSMOSIS_REAL_AUDIO=1 just desktop-dev`。
 [group('三端')]
 [group('桌面')]
 desktop-dev extra="": local-backend-up (mcp-port-free desktop_mcp_port)
-    env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
+    node=$([ "${OSMOSIS_REAL_AUDIO:-}" = 1 ] || bun test/null-sink.ts) && env -u OSMOSIS_API_BASE ${node:+PIPEWIRE_NODE=$node} SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 nix-shell slint.nix --run 'SLINT_MCP_PORT={{desktop_mcp_port}} cargo run -p app-desktop --features mcp,slint/live-preview{{ if extra != "" { "," + extra } else { "" } }}'
 
 # 网页版:编译 wasm + 生成胶水代码 + 起静态服务器,浏览器开 http://127.0.0.1:8073(见 web_port)
 # 已废弃(#110),现在跑不通:apps/web 不是 workspace 成员。配方留着当复活路径 ——
@@ -466,7 +470,8 @@ shot width="" dest="0":
     nix-shell slint.nix --run 'cargo build -p app-desktop'
     # 日志与 marker 放 mktemp 出的目录:固定的 /tmp 路径会被同机并行的另一次 shot 覆盖(#136)
     tmp=$(mktemp -d)
-    OSMOSIS_DESTINATION={{dest}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
+    # 截图用不着声音:进虚拟声卡,不从真实声卡出声。
+    PIPEWIRE_NODE=$(bun test/null-sink.ts) OSMOSIS_DESTINATION={{dest}} nix-shell slint.nix --run 'setsid target/debug/osmosis-desktop' > "$tmp/shot.log" 2>&1 &
     for _ in $(seq 30); do
         id=$(niri msg --json windows | jq -r '.[] | select(.title=="Osmosis") | .id' | head -1)
         [ -n "$id" ] && break

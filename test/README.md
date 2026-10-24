@@ -8,6 +8,14 @@
 环境、入口及证明边界见 [remote-behavior/README.md](remote-behavior/README.md)。
 当前为 #175 审前材料，尚未执行。
 
+## null-sink.ts —— 测试和开发实例一律不从真实声卡出声
+
+`PIPEWIRE_NODE=$(bun test/null-sink.ts) <应用>`:确保 PipeWire 里有一个叫 `osmosis_test_sink` 的
+null sink,然后打印它的名字。调用是幂等的(`object.linger` 让它一直留到 PipeWire 重启);两个优先级
+都压到 1,所以它永远不会抢成默认输出。`just desktop-dev` 和 `just shot` 默认就走它
+(用户 2026-10-24:「测试的时候给我用虚拟声卡,别用真实发声」)。要亲耳听就带上
+`OSMOSIS_REAL_AUDIO=1`,这个开关只对 `desktop-dev` 生效。自己写的夹具或脚本要起应用的,同样先调它。
+
 ## audio-rt-load.sh —— CPU 占满时送声线程还欠不欠载(#192)
 
 `test/audio-rt-load.sh [秒数=120] [每核忙循环数=2]` 用普通优先级的忙循环占满所有核,
