@@ -178,14 +178,18 @@ export component SettingsPage inherits Flickable {
             HorizontalLayout {
                 spacing: 12px;
 
-                VerticalLayout {
-                    alignment: center;
+                // 中点两侧的空由 spacing 给,不靠字形:等宽字体里「·」占一整格,
+                // 两边的空格又各占一格,420 下读着像挤在一起(MEO-1878)。
+                signed-in := HorizontalLayout {
+                    alignment: start;
                     horizontal-stretch: 1;
-                    Text {
-                        text: "已登录 · 本设备";
+                    spacing: 6px;
+                    for part in ["已登录", "·", "本设备"]: Text {
+                        text: part;
                         font-family: "Maple Mono NF CN";
                         font-size: 13px;
-                        color: Theme.text;
+                        color: part == "·" ? Theme.text-dim : Theme.text;
+                        vertical-alignment: center;
                     }
                 }
                 logout-button := Rectangle {
