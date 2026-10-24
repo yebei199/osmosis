@@ -67,7 +67,8 @@ export component SettingsPage inherits Flickable {
     init => { Library.refresh-blocks(); }
 
     column := VerticalLayout {
-        x: 26px;
+        // 宽窗口里居中(MEO-1878):贴左摆的话,640px 之外的右半边全是空白。
+        x: max(26px, (root.width - self.width) / 2);
         y: 26px;
         width: min(root.width - 52px, 640px);
         alignment: start;
@@ -177,14 +178,18 @@ export component SettingsPage inherits Flickable {
             HorizontalLayout {
                 spacing: Space.md;
 
-                VerticalLayout {
-                    alignment: center;
+                // 中点两侧的空由 spacing 给,不靠字形:字形与空格的宽随字体变,
+                // 420 下读着像挤在一起(MEO-1878)。
+                signed-in := HorizontalLayout {
+                    alignment: start;
                     horizontal-stretch: 1;
-                    Text {
-                        text: "已登录 · 本设备";
+                    spacing: Space.sm;
+                    for part in ["已登录", "·", "本设备"]: Text {
+                        text: part;
                         font-family: Type.body;
                         font-size: TextSize.small;
-                        color: Theme.text;
+                        color: part == "·" ? Theme.text-dim : Theme.text;
+                        vertical-alignment: center;
                     }
                 }
                 logout-button := Rectangle {

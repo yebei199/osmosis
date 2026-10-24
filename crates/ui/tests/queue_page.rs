@@ -34,6 +34,7 @@ fn queue_window(rows: usize) -> MainWindow {
             id: format!("{}", 100 + at).into(),
             title: format!("第 {at} 首").into(),
             artists: "某人".into(),
+            album: String::new().into(),
             duration: "3:00".into(),
             loading: false,
             liked: false,

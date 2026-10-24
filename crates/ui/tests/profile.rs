@@ -65,6 +65,7 @@ fn stat_cards_wait_for_the_data() {
 fn the_netease_section_swaps_the_code_for_the_nickname() {
     let ui = window();
     ui.global::<Shell>().set_destination(7);
+    ui.global::<Profile>().set_netease_qr(qr_image());
 
     assert!(
         present(&ui, "ProfilePage::netease-code"),
@@ -86,6 +87,25 @@ fn the_netease_section_swaps_the_code_for_the_nickname() {
     assert!(
         !present(&ui, "ProfilePage::netease-code"),
         "绑上了就别再摆码 —— 那张码已经没用了"
+    );
+}
+
+/// 一张二维码大小的图(内容无所谓,只要宽不为 0)。
+fn qr_image() -> slint::Image {
+    slint::Image::from_rgba8(slint::SharedPixelBuffer::new(
+        4, 4,
+    ))
+}
+
+/// 没绑、码也还没取到(或取失败):不留 180px 的空方块(MEO-1878)。
+#[test]
+fn the_netease_section_leaves_no_hole_without_a_code() {
+    let ui = window();
+    ui.global::<Shell>().set_destination(7);
+
+    assert!(
+        !present(&ui, "ProfilePage::netease-code"),
+        "没有码就别占一块空方块"
     );
 }
 

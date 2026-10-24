@@ -33,6 +33,7 @@ fn one_track(ui: &MainWindow) {
             id: "1".into(),
             title: "甜甜的".into(),
             artists: "本兮".into(),
+            album: "Hello World".into(),
             duration: "3:41".into(),
             loading: false,
             liked: false,
@@ -145,6 +146,199 @@ fn the_track_list_spans_the_column_in_landscape() {
         right(&list),
         right(&content) - 16.0,
         "曲目列表宽 {},没铺满内容列",
+        list.size().width
+    );
+}
+
+/// 宽屏(MEO-1878):歌手与专辑各占一列,专辑格写的是专辑名。
+#[test]
+fn wide_layout_splits_the_row_into_columns() {
+    let ui = music_page(1400.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    one_track(&ui);
+
+    let album = element(&ui, "TrackList::album-cell");
+    let artists = element(&ui, "TrackList::artists-cell");
+    assert!(
+        album.size().width > 100.0,
+        "专辑列太窄:{}",
+        album.size().width
+    );
+    assert!(
+        artists.absolute_position().x
+            < album.absolute_position().x,
+        "歌手列该在专辑列左边"
+    );
+}
+
+/// 中等宽度没有多列,仍是歌名上、歌手下。
+#[test]
+fn medium_layout_keeps_two_lines() {
+    let ui = music_page(800.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(false);
+    one_track(&ui);
+
+    assert!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "TrackList::album-cell"
+        )
+        .next()
+        .is_none()
+    );
+}
+
+/// 内容区不超过 1400px,居中摆在侧栏右边的空间里。
+#[test]
+fn music_page_is_capped_and_centered() {
+    let ui = music_page(1900.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    one_track(&ui);
+
+    let page = element(&ui, "MainWindow::music-page");
+    assert!(
+        (page.size().width - 1400.0).abs() < 0.5,
+        "宽 {}",
+        page.size().width
+    );
+    let left_gap = page.absolute_position().x - 168.0;
+    let right_gap = 1900.0 - right(&page);
+    assert!(
+        (left_gap - right_gap).abs() < 1.0,
+        "左 {left_gap} 右 {right_gap}"
+    );
+}
+
+/// 设置与个人页的那一列在宽窗口里居中(MEO-1878),不贴左留下右半边空白。
+fn assert_column_centered(dest: i32, id: &str) {
+    let ui = music_page(1900.0, 900.0, dest);
+    let column = element(&ui, id);
+    let page_left = 168.0 + (1900.0 - 168.0 - 1400.0) / 2.0;
+    let left_gap = column.absolute_position().x - page_left;
+    let right_gap = page_left + 1400.0 - right(&column);
+    assert!(
+        (left_gap - right_gap).abs() < 1.0,
+        "{id} 左 {left_gap} 右 {right_gap}"
+    );
+}
+
+#[test]
+fn settings_page_centers_its_column() {
+    assert_column_centered(8, "SettingsPage::column");
+}
+
+#[test]
+fn profile_page_centers_its_column() {
+    assert_column_centered(7, "ProfilePage::column");
+}
+
+/// 列宽按 4:3:3 分,不随文字长短走:歌名歌手很长、专辑是「—」时,
+/// 专辑列仍与歌手列一样宽。实测曾是歌手 228px、专辑 17px。
+#[test]
+fn wide_columns_follow_the_ratio_not_the_text() {
+    let ui = music_page(1400.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    ui.global::<Player>().set_tracks(ModelRc::new(VecModel::from(vec![TrackRow {
+        id: "1".into(),
+        title: "一首名字非常非常长的歌,长到足够把整列都撑开还要再多出一截来".into(),
+        artists: "歌手甲 / 歌手乙 / 歌手丙 / 歌手丁 / 歌手戊 / 歌手己".into(),
+        album: "—".into(),
+        duration: "3:41".into(),
+        ..Default::default()
+    }])));
+
+    let album = element(&ui, "TrackList::album-cell");
+    let artists = element(&ui, "TrackList::artists-cell");
+    // 行要铺满列表:1232px 的内容区里,专辑那 3/10 至少两百多像素。
+    // 实测曾经整行缩到文字最小宽,两列各 113px。
+    assert!(
+        album.size().width > 250.0,
+        "专辑列只有 {}",
+        album.size().width
+    );
+    assert!(
+        (album.size().width - artists.size().width).abs()
+            < 1.0,
+        "歌手 {} 专辑 {}",
+        artists.size().width,
+        album.size().width
+    );
+}
+
+/// 手机版式里列表在底栏与控制条之上收住(MEO-1878):最后一行的红心
+/// 不被任何一条压住。量的是边,不是截图。
+#[test]
+fn compact_list_ends_above_the_bars() {
+    testing::init_no_event_loop();
+    let ui = MainWindow::new().expect("建不出主窗口");
+    ui.window()
+        .set_size(slint::LogicalSize::new(420.0, 900.0));
+    ui.global::<Session>().set_logged_in(true);
+    ui.global::<Shell>().set_compact(true);
+    ui.global::<Shell>().set_destination(6);
+    let rows: Vec<TrackRow> = (0..40)
+        .map(|i| TrackRow {
+            id: i.to_string().into(),
+            title: format!("第 {i} 首").into(),
+            ..Default::default()
+        })
+        .collect();
+    ui.global::<Player>()
+        .set_tracks(ModelRc::new(VecModel::from(rows)));
+    ui.global::<Player>().set_has_track(true);
+
+    let list = element(&ui, "MusicPage::track-list");
+    let nav = element(&ui, "MainWindow::bottom-bar");
+    let bar = element(&ui, "PlayerBar::capsule");
+    assert!(
+        bottom(&list) <= top(&nav),
+        "列表底 {} 底栏顶 {}",
+        bottom(&list),
+        top(&nav)
+    );
+    assert!(
+        bottom(&list) <= top(&bar),
+        "列表底 {} 控制条顶 {}",
+        bottom(&list),
+        top(&bar)
+    );
+}
+
+/// 窗口先小后大(真实启动就是这样):列表跟着变宽,不卡在第一次排版的宽度上。
+/// 实测曾在 1400 与 1900 下都停在 599px。
+#[test]
+fn track_list_follows_a_growing_window() {
+    let ui = music_page(632.0, 900.0, 0);
+    one_track(&ui);
+    let narrow =
+        element(&ui, "MusicPage::track-list").size().width;
+
+    ui.window()
+        .set_size(slint::LogicalSize::new(1400.0, 900.0));
+    ui.global::<Shell>().set_wide(true);
+    let wide =
+        element(&ui, "MusicPage::track-list").size().width;
+    assert!(wide > narrow + 500.0, "窄 {narrow} 宽 {wide}");
+}
+
+/// 分组条在场时列表照样铺满内容区(MEO-1878)。实测分组条那一排药丸的
+/// 宽度把整列卡在 599px,1232px 的内容区右半边全空。
+#[test]
+fn the_facet_bar_does_not_cap_the_list_width() {
+    let ui = music_page(1400.0, 900.0, 6);
+    ui.global::<Shell>().set_wide(true);
+    let labels: Vec<slint::SharedString> =
+        ["不分组", "歌手", "专辑"].map(Into::into).to_vec();
+    ui.global::<Player>().set_grouping_labels(
+        ModelRc::new(VecModel::from(labels)),
+    );
+    ui.global::<Player>().set_facets_enabled(true);
+    one_track(&ui);
+
+    let list = element(&ui, "MusicPage::track-list");
+    assert!(
+        list.size().width > 1100.0,
+        "列表只有 {}",
         list.size().width
     );
 }

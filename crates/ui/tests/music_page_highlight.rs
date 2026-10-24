@@ -17,6 +17,7 @@ fn row(id: &str) -> TrackRow {
         id: id.into(),
         title: format!("曲{id}").into(),
         artists: "人".into(),
+        album: String::new().into(),
         duration: "03:00".into(),
         loading: false,
         liked: false,

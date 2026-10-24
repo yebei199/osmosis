@@ -74,7 +74,8 @@ export component ProfilePage inherits Flickable {
     content-height: column.preferred-height + 52px;
 
     column := VerticalLayout {
-        x: 26px;
+        // 宽窗口里居中(MEO-1878):贴左摆的话,720px 之外的右半边全是空白。
+        x: max(26px, (root.width - self.width) / 2);
         y: 26px;
         width: min(root.width - 52px, 720px);
         alignment: start;
@@ -216,7 +217,9 @@ export component ProfilePage inherits Flickable {
 
                 // 码是黑白定死的,不跟主题走:扫码器认的是对比度,
                 // 深色底上的浅色码有一半的机器扫不出来。
-                netease-code := Image {
+                // 没有码(还在取、或者取失败)就不占位:空着 180px 的方块,
+                // 卡片中间就是一大块空白,只剩底下一行报错(MEO-1878)。
+                if root.netease-qr.width > 0: netease-code := Image {
                     width: 180px;
                     height: 180px;
                     image-fit: contain;

@@ -35,7 +35,7 @@ import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { NavItem, RoundControl, HoverButton } from "widgets.slint";
 import { PlayerBar, BarMetrics } from "playerbar.slint";
-import { Theme, Type, Motion, Space, Radius, TextSize } from "theme.slint";
+import { Theme, Type, Motion, Space, Radius, TextSize, Layout } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
 export { Theme }
@@ -112,8 +112,11 @@ export component MainWindow inherits Window {
     // in-out 而不是私有:无头测试里 `set_size` 不驱动 `width`,版式因此推不出来。
     // 开放它之后测试能直接给定版式,验的是「这个版式该摆哪个导航」——
     // 「宽度推出版式」那半由下面两行自己保证,不在测试覆盖内。
-    init => { Shell.compact = root.width < 600px; }
-    changed width => { Shell.compact = root.width < 600px; }
+    init => { Shell.compact = root.width < Layout.compact; Shell.wide = root.width >= Layout.wide; }
+    changed width => { Shell.compact = root.width < Layout.compact; Shell.wide = root.width >= Layout.wide; }
+    // 内容区的最大宽度(MEO-1878)。再宽就两侧居中留白:歌名列被拉到上千像素,
+    // 眼睛要横跨整屏才对得上同一行的时长。极光背景仍铺满,只有页面收窄。
+    property <length> content-max-w: Layout.content-max;
 
     // ── 播放页(CONTEXT.md「播放页」):控制条展开的全窗沉浸层 ──
     // 展开/收起全在 .slint 内部;操作类功能仍由覆层里的 ControlCluster 走同一组
@@ -520,7 +523,8 @@ export component MainWindow inherits Window {
 
                             // 个人主页(目的地 7)。进页即取统计,判断在 Rust 侧。
                             if Shell.destination == 7: ProfilePage {
-                                width: 100%;
+                                width: min(parent.width, root.content-max-w);
+                                x: (parent.width - self.width) / 2;
                                 height: 100%;
                                 // 与下面摆控制条那一行是同一个条件 —— 条在不在,
                                 // 决定这一页底部要不要多留出它那一块。
@@ -547,7 +551,8 @@ export component MainWindow inherits Window {
 
                             // 设置(目的地 8,侧栏沉底最后一行)。
                             if Shell.destination == 8: SettingsPage {
-                                width: 100%;
+                                width: min(parent.width, root.content-max-w);
+                                x: (parent.width - self.width) / 2;
                                 height: 100%;
                                 // 与下面摆控制条那一行是同一个条件,理由同个人页。
                                 bar-visible: Player.has-track && !Shell.play-page-open;
@@ -564,7 +569,11 @@ export component MainWindow inherits Window {
 
                             // 其余七个目的地共用音乐页。整页可滚,不裹玻璃卡片 ——
                             // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                            if Shell.destination < 7: MusicPage { }
+                            if Shell.destination < 7: music-page := MusicPage {
+                                width: min(parent.width, root.content-max-w);
+                                height: 100%;
+                                x: (parent.width - self.width) / 2;
+                            }
 
                             // 控制条:窗口持有、跨目的地常驻(CONTEXT.md「控制条」)。
                             // **一个实例管所有目的地** —— 不是每页各摆一根:各摆一根就有各自的
@@ -600,7 +609,7 @@ export component MainWindow inherits Window {
                     // ── 底栏(紧凑版式)──
                     // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
                     // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
-                    if Shell.compact: Rectangle {
+                    if Shell.compact: bottom-bar := Rectangle {
                         height: root.nav-bar-h;
                         // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
                         background: Theme.base;

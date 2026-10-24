@@ -8,7 +8,7 @@
 
 import { ListView } from "std-widgets.slint";
 import { TrackRow } from "types.slint";
-import { Theme, Radius, Motion, Space, TextSize, Type } from "theme.slint";
+import { Theme, Radius, Motion, Space, TextSize, Type, Layout } from "theme.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
 
@@ -50,6 +50,9 @@ export component TrackList inherits ListView {
     for row[i] in root.tracks: Rectangle {
         // 堆头(#160)比歌矮一截,没有卡片底,读起来是分隔而不是又一首歌。
         height: row.header ? 44px : 56px;
+        // 行宽钉在可见宽度上。ListView 按行的 preferred 宽排视口,宽屏三列的
+        // preferred 归零之后,不钉的话整行缩成文字最小宽(MEO-1878)。
+        width: root.visible-width;
 
         // 就是它在响 —— 与 root.current 绑的那一首比对,空串不算(见上面
         // `current` 的注释)。background/border/无障碍态共用同一个判断,
@@ -186,8 +189,13 @@ export component TrackList inherits ListView {
                 }
             }
 
+            // 宽屏(MEO-1878)拆成 歌名 | 歌手 | 专辑 三列,比例 4:3:3;
+            // 中等与紧凑宽度仍是歌名上、歌手下的两行。
             VerticalLayout {
-                horizontal-stretch: 1;
+                horizontal-stretch: Shell.wide ? 4 : 1;
+                // 宽屏的三列按比例分,不按文字长短分:preferred 归零,宽度全由 stretch
+                // 决定(否则长歌名长歌手吃掉整行,「—」的专辑列只剩十几像素)。
+                preferred-width: Shell.wide ? 0px : self.min-width;
                 alignment: center;
                 spacing: Space.xs;
 
@@ -202,12 +210,30 @@ export component TrackList inherits ListView {
                     font-weight: row.header ? 700 : 400;
                     overflow: elide;
                 }
-                if !row.header: Text {
+                if !row.header && !Shell.wide: Text {
                     text: row.artists;
                     color: Theme.text-dim;
                     font-size: TextSize.small;
                     overflow: elide;
                 }
+            }
+            if Shell.wide && !row.header: artists-cell := Text {
+                horizontal-stretch: 3;
+                preferred-width: 0px;
+                text: row.artists;
+                color: Theme.text-dim;
+                font-size: TextSize.small;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if Shell.wide && !row.header: album-cell := Text {
+                horizontal-stretch: 3;
+                preferred-width: 0px;
+                text: row.album;
+                color: Theme.text-dim;
+                font-size: TextSize.small;
+                vertical-alignment: center;
+                overflow: elide;
             }
             // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
             if !row.header: heart := TouchArea {
@@ -252,6 +278,9 @@ export component TrackList inherits ListView {
                 color: row.loading ? Theme.accent-ink.darker(0.15) : Theme.text-dim;
                 font-size: TextSize.small;
                 vertical-alignment: center;
+                // 宽屏里时长是一整列,定宽右对齐,各行的数字才竖着对齐。
+                width: Shell.wide && !row.header ? Layout.duration-col : self.preferred-width;
+                horizontal-alignment: Shell.wide && !row.header ? right : left;
             }
 
             // 堆头的折叠指示:展开朝下,折起朝右。画成矢量,不用 ▾ 这类字形 ——
@@ -280,9 +309,14 @@ export component TrackList inherits ListView {
 
 // 一颗药丸。紧凑版式下触摸区 44px 高(docs/design.md「版式」),画出来的仍是
 // 细细一条 —— 44px 的实心药丸一排下来像一行按钮。
-component Pill inherits Rectangle {
+//
+// 电台页的「加载新歌」「已听过」也用它(MEO-1878):同一页上两种按钮形状
+// 读着像两个应用。那两颗是动作不是开关,checkable 关掉。
+export component Pill inherits Rectangle {
     in property <string> text;
     in property <bool> selected;
+    in property <bool> checkable: true;
+    in property <bool> enabled: true;
     // 只给读屏的补充说明,不上屏。
     in property <string> description;
     callback clicked;
@@ -291,10 +325,12 @@ component Pill inherits Rectangle {
     width: label.preferred-width + 24px;
     accessible-role: button;
     accessible-label: root.text;
-    accessible-checkable: true;
-    accessible-checked: root.selected;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checkable && root.selected;
+    accessible-enabled: root.enabled;
     accessible-description: root.description;
-    accessible-action-default => { root.clicked(); }
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    opacity: root.enabled ? 1 : 0.5;
 
     Rectangle {
         y: (parent.height - self.height) / 2;
@@ -315,9 +351,16 @@ component Pill inherits Rectangle {
         vertical-alignment: center;
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
+}
+
+// 横滑行右缘的渐隐:还有内容在右边。只是提示,不挡点击。
+component OverflowFade inherits Rectangle {
+    width: 40px;
+    background: @linear-gradient(90deg, Theme.base.with-alpha(0) 0%, Theme.base 100%);
 }
 
 export component FacetBar inherits VerticalLayout {
@@ -327,8 +370,15 @@ export component FacetBar inherits VerticalLayout {
 
     spacing: Space.xs;
 
-    Flickable {
-        height: root.row-height;
+    // 两排都能横滑,但手机上看不出来:最后一颗被齐刷刷切掉,像是没有了。
+    // 右边还有没露出来的药丸时,盖一道渐隐提示「还能往左划」(MEO-1878)。
+    Rectangle {
+    height: root.row-height;
+    groups-flick := Flickable {
+        // 显式铺满:不写的话 Flickable 把药丸那一排的宽当成自己的上限报给
+        // 外层,整列(连同底下的列表)被卡在那一排的宽度上(MEO-1878)。
+        width: 100%;
+        height: 100%;
         content-width: groups.preferred-width;
         groups := HorizontalLayout {
             spacing: Space.xs;
@@ -348,9 +398,16 @@ export component FacetBar inherits VerticalLayout {
             }
         }
     }
+    if groups-flick.content-x > groups-flick.width - groups-flick.content-width + 1px: OverflowFade { x: parent.width - self.width; }
+    }
 
-    if root.filters-open || Player.chosen-count > 0: Flickable {
-        height: root.row-height;
+    if root.filters-open || Player.chosen-count > 0: Rectangle {
+    height: root.row-height;
+    chips-flick := Flickable {
+        // 显式铺满:不写的话 Flickable 把药丸那一排的宽当成自己的上限报给
+        // 外层,整列(连同底下的列表)被卡在那一排的宽度上(MEO-1878)。
+        width: 100%;
+        height: 100%;
         content-width: chip-row.preferred-width;
         chip-row := HorizontalLayout {
             spacing: Space.xs;
@@ -360,6 +417,8 @@ export component FacetBar inherits VerticalLayout {
                 clicked => { Player.toggle-chip(i); }
             }
         }
+    }
+    if chips-flick.content-x > chips-flick.width - chips-flick.content-width + 1px: chips-fade := OverflowFade { x: parent.width - self.width; }
     }
 
     // 筛空了:说清楚是筛选的结果,不摆开局那句「点一首歌开始」。

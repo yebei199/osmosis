@@ -25,6 +25,7 @@ fn row(id: &str, liked: bool) -> TrackRow {
         id: id.into(),
         title: "曲".into(),
         artists: "人".into(),
+        album: String::new().into(),
         duration: "03:00".into(),
         loading: false,
         liked,

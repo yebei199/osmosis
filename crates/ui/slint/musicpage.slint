@@ -5,7 +5,7 @@ import { Theme, Type, Space, TextSize, Radius } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
 import { HoverButton } from "widgets.slint";
 import { Destinations, SearchTabBar } from "musicnav.slint";
-import { FacetBar, TrackList } from "tracklist.slint";
+import { FacetBar, Pill, TrackList } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { WallView } from "wallview.slint";
@@ -496,15 +496,19 @@ export component MusicPage inherits VerticalLayout {
                 spacing: Space.sm;
                 alignment: start;
 
-                radio-load-more := HoverButton {
-                    width: 96px;
+                // 药丸,与分组条同一形状(MEO-1878)。「加载新歌」是本页的主动作,实心;
+                // 「已听过」是视图切换,切过去时亮起。
+                radio-load-more := Pill {
                     text: Player.radio-loading ? "加载中" : "加载新歌";
+                    selected: true;
+                    checkable: false;
                     enabled: !Player.radio-loading;
                     clicked => { Player.radio-load-more(); }
                 }
-                radio-heard := HoverButton {
-                    width: 84px;
+                radio-heard := Pill {
                     text: Player.radio-heard ? "未听过" : "已听过";
+                    selected: Player.radio-heard;
+                    checkable: false;
                     clicked => { Player.radio-toggle-heard(); }
                 }
             }

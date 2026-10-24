@@ -169,4 +169,7 @@ export global Shell {
     changed system-prefers-dark => { system-scheme-changed(); }
 
     in-out property <bool> compact;
+    // 宽屏版式(窗口 ≥ 1000px,MEO-1878):列表拆成 歌名 | 歌手 | 专辑 | 时长 多列。
+    // 与 compact 同由 MainWindow 按宽度赋值。
+    in-out property <bool> wide;
 }

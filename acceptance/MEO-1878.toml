@@ -1,0 +1,34 @@
+# MEO-1878 自适应版式:宽屏多列、内容区最大宽度、逐页修空白。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实 MainWindow 无头启动,按 420/800/1400/1900 给定窗口宽与版式,进音乐页、个人页、设置页"
+observe = "≥1000px 列表拆成 歌名|歌手|专辑|时长 多列,4:3:3 按比例分且铺满列表,没专辑写「—」;中等宽度仍两行;分组条不卡住列表宽;内容区最宽 1400 居中;个人/设置那一列居中;紧凑版列表在底栏与控制条之上收住;网易云卡没码不留空方块"
+tests = [
+  "ui::main::music_list_layout::wide_layout_splits_the_row_into_columns",
+  "ui::main::music_list_layout::medium_layout_keeps_two_lines",
+  "ui::main::music_list_layout::wide_columns_follow_the_ratio_not_the_text",
+  "ui::main::music_list_layout::track_list_follows_a_growing_window",
+  "ui::main::music_list_layout::the_facet_bar_does_not_cap_the_list_width",
+  "ui::main::music_list_layout::music_page_is_capped_and_centered",
+  "ui::main::music_list_layout::settings_page_centers_its_column",
+  "ui::main::music_list_layout::profile_page_centers_its_column",
+  "ui::main::music_list_layout::compact_list_ends_above_the_bars",
+  "ui::main::profile::the_netease_section_leaves_no_hole_without_a_code",
+  "ui::music::rules::tests::a_track_with_an_album_shows_its_name",
+  "ui::music::rules::tests::a_track_without_an_album_shows_a_dash",
+]
+doubles = ["无头后端量元素几何,曲目是手造的 TrackRow;不证明合成器像素。四宽度截图与 MCP 实测在开发机上另做,见交回报告"]
+mutation = "去掉三列的 preferred-width: 0px、行宽的 visible-width 或分组条 Flickable 的 width: 100%,对应的宽度断言失败;Shell.wide 不赋值则专辑列不出现"
+
+[[ac]]
+id = "AC-1"
+kind = "regression"
+entry = "网易云绑定与解绑切换"
+observe = "没绑且有码时摆码、绑上换成昵称"
+tests = ["ui::main::profile::the_netease_section_swaps_the_code_for_the_nickname"]
+doubles = ["无头后端,码用内存生成的 4x4 图"]
+
+[[ac]]
+id = "AC-2"
+none = "真机复核紧凑版式:按主路由裁决(7-12284)等 MEO-1922 修好后由主路由安排,本轮不做"
