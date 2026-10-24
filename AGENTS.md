@@ -146,6 +146,12 @@ justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的
 判据只认应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面会被两头骗:
 惰性渲染下没有输入就不重绘,而画面变了也可能是别的东西在动。
 
+## 不在用户桌面上开窗口
+
+用户 2026-10-24 定:AI 跑测试、做验证,不许在用户的真实显示上开 osmosis 窗口——niri 会把焦点
+抢过去。`just shot` 现在仍然要聚焦窗口,执行者不许用。在 S6(MEO-1900)把 `desktop-dev` 和测试夹具
+改成默认无头、并加上程序守卫之前,需要窗口的验证先停一停,只做不需要窗口的部分。
+
 ## 测试不出声:一律进虚拟声卡
 
 用户 2026-10-24 定:测试时绝不从真实声卡出声。`just desktop-dev` 和 `just shot` 已经默认把声音导进
