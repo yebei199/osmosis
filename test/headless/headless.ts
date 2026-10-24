@@ -15,7 +15,7 @@
 // inside `nix-shell slint.nix`: sway, pasta, grim and the app's libraries come
 // from there.
 import { accessSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync, type Subprocess } from "bun";
 
@@ -163,9 +163,9 @@ function swayConfig(o: Options): string {
 
 export async function start(o: Options): Promise<Session> {
   if (!existsSync(o.bin)) throw new Error(`${o.bin} missing; build it first (cargo build -p app-desktop)`);
-  const runtime = join(o.dir, "run");
-  rmSync(runtime, { recursive: true, force: true });
-  mkdirSync(runtime, { recursive: true, mode: 0o700 });
+  // Sockets live in a short directory of their own: a unix socket path must fit
+  // in 108 bytes, and a session dir under a test's artifact tree does not.
+  const runtime = mkdtempSync(join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "osmosis-headless-"));
   // "-" streams the app log to our own stdout/stderr (desktop-dev wants it live).
   const log = o.log === "-" ? "inherit" : Bun.file(o.log ?? join(o.dir, "desktop.log"));
   const swayLog = join(o.dir, "sway.log");
@@ -198,6 +198,7 @@ export async function start(o: Options): Promise<Session> {
     );
   } catch (e) {
     sway.kill("SIGKILL");
+    rmSync(runtime, { recursive: true, force: true });
     throw new Error(`${(e as Error).message}; see ${swayLog}`);
   }
 
@@ -254,6 +255,7 @@ export async function stop(s: Session): Promise<void> {
     if (!(await exitsWithin(p, 5_000))) p.kill("SIGKILL");
     await p.exited;
   }
+  rmSync(dirname(s.info.wayland), { recursive: true, force: true });
 }
 
 function parse(argv: string[]): Record<string, string> {
