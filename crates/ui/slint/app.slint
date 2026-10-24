@@ -61,6 +61,9 @@ export { Downloads }
 import { PlayPage } from "playpage.slint";
 
 export component MainWindow inherits Window {
+    // 没写 font-family 的字一律走正文字体;Figtree 缺的 CJK 字形由系统字体补。
+    // 不设的话落到系统默认字体,这台开发机上就是等宽的 Maple Mono(MEO-1877 F-001)。
+    default-font-family: Type.body;
     // 只观察需要提醒的组投影，播放版本、曲目与进度不重新展开。
     property <string> group-notice-state: Shell.group-banner + "\n" + Shell.output-text
         + "\n" + Shell.group-text + (Shell.group-joinable ? "join" : "leave")
