@@ -8,7 +8,7 @@
 // 抽屉里有的是横向空间,所以三态直接写字:「循环: 列表」比让人辨认图标里
 // 那个小小的 1 靠谱得多。
 
-import { Theme, Type } from "theme.slint";
+import { Theme, Type, Radius, Motion, Space, TextSize, Elevation } from "theme.slint";
 import { DeviceRow } from "types.slint";
 import { OutputStrip } from "controls.slint";
 import { VolumeControl } from "progress.slint";
@@ -49,14 +49,14 @@ export component DrawerRow inherits Rectangle {
     callback clicked();
 
     height: DrawerMetrics.row-h;
-    border-radius: 10px;
+    border-radius: Radius.sm;
     background: touch.has-hover ? Theme.hover : transparent;
-    animate background { duration: 120ms; easing: ease-out; }
+    animate background { duration: Motion.fast; easing: Motion.ease; }
 
     HorizontalLayout {
-        padding-left: 8px;
-        padding-right: 12px;
-        spacing: 12px;
+        padding-left: Space.sm;
+        padding-right: Space.md;
+        spacing: Space.md;
 
         // 图标芯片:开着填强调色、图标反白;关着透底描边。
         // 这是本行唯一的状态视觉,不靠图标自身的明暗。
@@ -65,11 +65,11 @@ export component DrawerRow inherits Rectangle {
             chip := Rectangle {
                 width: 32px;
                 height: 32px;
-                border-radius: 8px;
+                border-radius: Radius.sm;
                 background: root.checked ? Theme.accent : transparent;
                 border-width: 1px;
                 border-color: root.checked ? Theme.accent : Theme.overlay;
-                animate background, border-color { duration: 140ms; easing: ease-out; }
+                animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
                 Path {
                     width: 18px;
@@ -91,7 +91,7 @@ export component DrawerRow inherits Rectangle {
             Text {
                 text: root.title;
                 color: Theme.text;
-                font-size: 14px;
+                font-size: TextSize.body;
                 overflow: elide;
             }
         }
@@ -102,7 +102,7 @@ export component DrawerRow inherits Rectangle {
                 text: root.state;
                 font-family: Type.mono;
                 color: root.checked ? Theme.accent : Theme.text-faint;
-                font-size: 12px;
+                font-size: TextSize.small;
             }
         }
     }
@@ -153,12 +153,12 @@ export component Drawer inherits Rectangle {
     callback volume-changed(float);
     callback set-output(string);
 
-    border-radius: 16px;
+    border-radius: Radius.md;
     background: Theme.surface.with-alpha(0.96);
     border-width: 1px;
     border-color: Theme.glass-edge;
-    drop-shadow-blur: 30px;
-    drop-shadow-offset-y: 14px;
+    drop-shadow-blur: Elevation.high-blur;
+    drop-shadow-offset-y: Elevation.high-y;
     drop-shadow-color: Theme.glass-shadow;
 
     height: DrawerMetrics.total-h;
@@ -258,16 +258,16 @@ export component Drawer inherits Rectangle {
         // 音量:抽屉里有地方,滑块常驻,不必再点开一层。
         HorizontalLayout {
             height: DrawerMetrics.row-h;
-            padding-left: 8px;
-            padding-right: 12px;
-            spacing: 12px;
+            padding-left: Space.sm;
+            padding-right: Space.md;
+            spacing: Space.md;
             VerticalLayout {
                 alignment: center;
                 horizontal-stretch: 1;
                 Text {
                     text: "音量";
                     color: Theme.text;
-                    font-size: 14px;
+                    font-size: TextSize.body;
                 }
             }
             VerticalLayout {
@@ -287,10 +287,10 @@ export component Drawer inherits Rectangle {
 
         // 输出设备:点歌之前先选它。
         HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 12px;
-            padding-top: 4px;
-            padding-bottom: 4px;
+            padding-left: Space.sm;
+            padding-right: Space.md;
+            padding-top: Space.xs;
+            padding-bottom: Space.xs;
             alignment: start;
             OutputStrip {
                 devices: root.devices;
