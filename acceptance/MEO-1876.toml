@@ -1,0 +1,38 @@
+# MEO-1876 纯音乐播放器:九个平级一级目的地取代 Home 与两层导航。
+[[ac]]
+id = "AC-1"
+kind = "new"
+entry = "真实 MainWindow 无头启动,不设 OSMOSIS_DESTINATION"
+observe = "启动落在每日推荐,元素树里没有 Home 与瓦片元素"
+tests = ["ui::main::navigation::launch_lands_on_daily_without_a_home"]
+doubles = ["无头后端与模拟时钟替代窗口系统/GPU;不证明真机像素"]
+mutation = "把 Shell.destination 初值改成别的目的地,或留下 Home 块,断言失败"
+
+[[ac]]
+id = "AC-2"
+none = "cargo test -p ui 由交付检查 targeted.rust-test 证明(.dispatch/MEO-1876-verify-receipt-10);完整 CI 配方归夜间窗口,不是可点名的单条测试"
+
+[[ac]]
+id = "AC-3"
+kind = "new"
+entry = "真实 MainWindow,宽版式点侧栏每一行;紧凑版式点底栏与「更多」面板每一项"
+observe = "侧栏 9 项按三组顺序且标签为全名,点一行直达;底栏为推荐/搜索/我喜欢/歌单/更多,面板列出其余 5 项,点一项直达并收起,无障碍标签报全名"
+tests = ["ui::main::navigation::the_sidebar_lists_nine_destinations_in_order", "ui::main::navigation::every_sidebar_row_goes_straight_to_its_page", "ui::main::navigation::liked_and_settings_show_their_own_pages", "ui::main::navigation::the_bottom_bar_has_four_destinations_and_more", "ui::main::navigation::more_opens_a_flat_panel_that_jumps_and_closes", "ui::main::navigation::bottom_bar_destinations_report_their_ids"]
+doubles = ["无头后端;无障碍默认动作替代真实指针,不证明命中测试与像素"]
+mutation = "调换 Destinations 数组顺序、底栏标签改用简称或 go() 不收起面板,对应断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+entry = "切换目的地时正在播放;水滴导航在侧栏与底栏上移动"
+observe = "切页不打断播放;水滴落在选中项,沉底两行时缩没;分组胶囊在每个目的地都避开控件"
+tests = ["ui::main::navigation::switching_destinations_does_not_disturb_playback", "ui::main::nav_glass::the_droplet_lands_on_the_selected_sidebar_row", "ui::main::nav_glass::the_droplet_lands_on_the_selected_bottom_item", "ui::main::nav_glass::the_droplet_melts_away_for_the_bottom_rows", "ui::main::nav_glass::the_bottom_bar_keeps_all_five_slots_on_the_track", "ui::main::group_capsule::the_compact_capsule_avoids_controls_on_every_destination"]
+doubles = ["无头后端,只证明 Slint 界面层与导出的水滴几何,不证明 GPU 着色器像素"]
+
+[[ac]]
+id = "AC-4"
+none = "桌面宽/窄与真机的点歌和逐个目的地切换是实机证据:桌面由 S4 夹具 test_pick[list]/test_pick[wall]/test_views 通过(.dispatch/MEO-1876-accept-run-2.log)与截图复核提供;真机待 MEO-1919,不能由无头 JUnit 替代"
+
+[[ac]]
+id = "AC-5"
+none = "semantic review / no executable behavior:文档改写(ADR 0036 取代 0024、修订 0029、CONTEXT.md、design.md、README),由审查核对"
