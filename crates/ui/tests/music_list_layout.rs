@@ -33,6 +33,7 @@ fn one_track(ui: &MainWindow) {
             id: "1".into(),
             title: "甜甜的".into(),
             artists: "本兮".into(),
+            album: "Hello World".into(),
             duration: "3:41".into(),
             loading: false,
             liked: false,
@@ -146,5 +147,64 @@ fn the_track_list_spans_the_column_in_landscape() {
         right(&content) - 16.0,
         "曲目列表宽 {},没铺满内容列",
         list.size().width
+    );
+}
+
+/// 宽屏(MEO-1878):歌手与专辑各占一列,专辑格写的是专辑名。
+#[test]
+fn wide_layout_splits_the_row_into_columns() {
+    let ui = music_page(1400.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    one_track(&ui);
+
+    let album = element(&ui, "TrackList::album-cell");
+    let artists = element(&ui, "TrackList::artists-cell");
+    assert!(
+        album.size().width > 100.0,
+        "专辑列太窄:{}",
+        album.size().width
+    );
+    assert!(
+        artists.absolute_position().x
+            < album.absolute_position().x,
+        "歌手列该在专辑列左边"
+    );
+}
+
+/// 中等宽度没有多列,仍是歌名上、歌手下。
+#[test]
+fn medium_layout_keeps_two_lines() {
+    let ui = music_page(800.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(false);
+    one_track(&ui);
+
+    assert!(
+        testing::ElementHandle::find_by_element_id(
+            &ui,
+            "TrackList::album-cell"
+        )
+        .next()
+        .is_none()
+    );
+}
+
+/// 内容区不超过 1400px,居中摆在侧栏右边的空间里。
+#[test]
+fn music_page_is_capped_and_centered() {
+    let ui = music_page(1900.0, 900.0, 0);
+    ui.global::<Shell>().set_wide(true);
+    one_track(&ui);
+
+    let page = element(&ui, "MainWindow::music-page");
+    assert!(
+        (page.size().width - 1400.0).abs() < 0.5,
+        "宽 {}",
+        page.size().width
+    );
+    let left_gap = page.absolute_position().x - 168.0;
+    let right_gap = 1900.0 - right(&page);
+    assert!(
+        (left_gap - right_gap).abs() < 1.0,
+        "左 {left_gap} 右 {right_gap}"
     );
 }

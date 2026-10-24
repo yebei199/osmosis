@@ -19,6 +19,8 @@ export struct TrackRow {
     id: string,
     title: string,
     artists: string,
+    // 专辑名,宽屏多列才摆(MEO-1878)。没有专辑是「—」,由 Rust 填好。
+    album: string,
     duration: string,
     // 这一首正在加载。网络慢时点了看不出反应,用户就会连点 —— 状态行那句
     // 「加载中…」在列表上方、13px 灰字,离手指太远(见 crates/ui/src/music.rs)。

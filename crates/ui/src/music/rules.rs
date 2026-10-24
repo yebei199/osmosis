@@ -7,6 +7,9 @@ use super::*;
 /// 多歌手之间的分隔符。
 pub(super) const ARTIST_SEPARATOR: &str = " / ";
 
+/// 没有专辑时专辑那一格写什么。
+pub(super) const NO_ALBUM: &str = "—";
+
 /// 一秒有多少毫秒。
 pub(super) const MILLIS_PER_SECOND: i64 = 1_000;
 
@@ -34,6 +37,16 @@ pub(super) const PREFETCH_AFTER: core::time::Duration =
 /// 服务端保持列表形态是对的 —— 用「/」还是「&」是显示问题,只有界面知道。
 pub fn join_artists(artists: &[String]) -> String {
     artists.join(ARTIST_SEPARATOR)
+}
+
+/// 专辑名写成一格。没有专辑写「—」:空着的格子读起来像没加载完。
+pub fn format_album(
+    album: Option<&app_core::AlbumRefDto>,
+) -> String {
+    album.map_or_else(
+        || NO_ALBUM.to_owned(),
+        |album| album.name.clone(),
+    )
 }
 
 /// 毫秒时长写成 `分:秒`。
@@ -222,6 +235,8 @@ pub(super) fn to_rows(
             id: track.id.clone().into(),
             title: track.title.clone().into(),
             artists: join_artists(&track.artists).into(),
+            album: format_album(track.album.as_ref())
+                .into(),
             duration: format_duration(track.duration_ms)
                 .into(),
             loading: loading == Some(track.id.as_str()),

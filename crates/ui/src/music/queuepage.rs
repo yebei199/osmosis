@@ -353,6 +353,7 @@ fn row(
         id: entry_id.to_string().into(),
         title: track.title.clone().into(),
         artists: join_artists(&track.artists).into(),
+        album: format_album(track.album.as_ref()).into(),
         duration: format_duration(track.duration_ms).into(),
         loading: false,
         liked: false,

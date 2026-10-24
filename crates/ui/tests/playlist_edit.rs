@@ -44,6 +44,7 @@ fn one_track(ui: &MainWindow) {
             id: "1".into(),
             title: "甜甜的".into(),
             artists: "本兮".into(),
+            album: String::new().into(),
             duration: "3:41".into(),
             loading: false,
             liked: false,

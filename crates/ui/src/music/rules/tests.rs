@@ -498,3 +498,22 @@ fn radio_tops_up_from_the_shared_list_skipping_what_was_handed()
         vec!["4"]
     );
 }
+
+/// 宽屏多列里的专辑一格(MEO-1878):有专辑写专辑名。
+#[test]
+fn a_track_with_an_album_shows_its_name() {
+    let mut track = track_with_id("1");
+    track.album = Some(app_core::AlbumRefDto {
+        id: "a1".into(),
+        name: "Hello World".into(),
+    });
+    let rows = to_rows(&[track], None);
+    assert_eq!(rows[0].album.as_str(), "Hello World");
+}
+
+/// 没专辑(单曲、下架)写「—」,不留空格 —— 空着的格子读起来像没加载完。
+#[test]
+fn a_track_without_an_album_shows_a_dash() {
+    let rows = to_rows(&[track_with_id("1")], None);
+    assert_eq!(rows[0].album.as_str(), "—");
+}

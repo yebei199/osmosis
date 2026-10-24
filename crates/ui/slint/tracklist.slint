@@ -186,8 +186,10 @@ export component TrackList inherits ListView {
                 }
             }
 
+            // 宽屏(MEO-1878)拆成 歌名 | 歌手 | 专辑 三列,比例 4:3:3;
+            // 中等与紧凑宽度仍是歌名上、歌手下的两行。
             VerticalLayout {
-                horizontal-stretch: 1;
+                horizontal-stretch: Shell.wide ? 4 : 1;
                 alignment: center;
                 spacing: 2px;
 
@@ -202,12 +204,28 @@ export component TrackList inherits ListView {
                     font-weight: row.header ? 700 : 400;
                     overflow: elide;
                 }
-                if !row.header: Text {
+                if !row.header && !Shell.wide: Text {
                     text: row.artists;
                     color: Theme.text-dim;
                     font-size: 12px;
                     overflow: elide;
                 }
+            }
+            if Shell.wide && !row.header: artists-cell := Text {
+                horizontal-stretch: 3;
+                text: row.artists;
+                color: Theme.text-dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if Shell.wide && !row.header: album-cell := Text {
+                horizontal-stretch: 3;
+                text: row.album;
+                color: Theme.text-dim;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
             }
             // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
             if !row.header: heart := TouchArea {
@@ -252,6 +270,9 @@ export component TrackList inherits ListView {
                 color: row.loading ? Theme.accent-ink.darker(0.15) : Theme.text-dim;
                 font-size: 12px;
                 vertical-alignment: center;
+                // 宽屏里时长是一整列,定宽右对齐,各行的数字才竖着对齐。
+                width: Shell.wide && !row.header ? 56px : self.preferred-width;
+                horizontal-alignment: Shell.wide && !row.header ? right : left;
             }
 
             // 堆头的折叠指示:展开朝下,折起朝右。画成矢量,不用 ▾ 这类字形 ——
