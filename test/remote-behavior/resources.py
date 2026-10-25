@@ -54,6 +54,15 @@ def wait_until(predicate, label, timeout=TIMEOUT):
     raise TimeoutError(f"not ready: {label}")
 
 
+# 元组保留命中时的值，空列表等假值快照也能返回；不在等待之后重读。
+def wait_for_snapshot(read, matches, label, timeout=TIMEOUT):
+    def observe():
+        snapshot = read()
+        return (snapshot,) if matches(snapshot) else None
+
+    return wait_until(observe, label, timeout=timeout)[0]
+
+
 # 读取本进程持有的实际监听 socket，server 可绑定 port 0。
 def listener_port(process):
     process.alive()
@@ -675,8 +684,7 @@ class World:
                 ],
                 pass_fds=(output.fileno(),),
             )
-        wait_until(lambda: display_file.read_text().strip(), "Xvfb display")
-        self.display = ":" + display_file.read_text().strip()
+        self.display = ":" + wait_until(lambda: display_file.read_text().strip(), "Xvfb display")
         self.username = self.directory.name
         self.password = self.directory.name + "-password"
         self.request(

@@ -14,7 +14,7 @@ import pytest
 
 import resources
 from media import Media
-from resources import wait_until
+from resources import wait_for_snapshot, wait_until
 from test_remote import world as base_world  # noqa: F401
 
 REASONS = {
@@ -668,8 +668,10 @@ def assert_filtered(world, reason):
     ui = world.controller.ui
     daily(ui)
     expected = [CATALOG[key][0] for key in CATALOG if key not in BLOCKED[reason]]
-    wait_until(lambda: rows(ui) == expected, "daily applies saved rule")
-    assert rows(ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(ui), lambda value: value == expected, "daily applies saved rule"
+    )
+    assert observed == expected
     activate(ui, "展开播放页")
     ui.activate(ui.must("PlayPage::queue-entry-touch"), pointer=True)
 
@@ -684,8 +686,10 @@ def assert_filtered(world, reason):
         return visible[0] if len(visible) == 1 else None
 
     queue = wait_until(visible_queue, "visible queue page")
-    wait_until(lambda: rows(ui, queue) == expected, "queue applies saved rule")
-    assert rows(ui, queue) == expected, "existing queue must hide every matching entry"
+    observed = wait_for_snapshot(
+        lambda: rows(ui, queue), lambda value: value == expected, "queue applies saved rule"
+    )
+    assert observed == expected, "existing queue must hide every matching entry"
     ui.call("dispatch_key_event", windowHandle=ui.window, text="\x1b")
 
 
@@ -780,17 +784,22 @@ def test_dislike_restart_persists_and_settings_unblock_restores(dislike_world):
     world.sound(source, "175004", group=False)
     source.restart()
     daily(source.ui)
-    wait_until(lambda: rows(source.ui) == ["Other", "Song", "Safe"], "restart loads saved rules")
-    assert rows(source.ui) == ["Other", "Song", "Safe"]
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == ["Other", "Song", "Safe"],
+        "restart loads saved rules",
+    )
+    assert observed == ["Other", "Song", "Safe"]
     activate(source.ui, "设置")
     activate(source.ui, "恢复 " + saved["label"])
     wait_until(lambda: not rules(world), "unblocked rule deleted")
     daily(source.ui)
-    wait_until(
-        lambda: rows(source.ui) == [value[0] for value in CATALOG.values()],
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda snapshot: snapshot == [value[0] for value in CATALOG.values()],
         "unblock reload completes",
     )
-    assert rows(source.ui) == [value[0] for value in CATALOG.values()]
+    assert observed == [value[0] for value in CATALOG.values()]
 
 
 # 放弃理由/多歌手选择都不得偷偷保存；现有赞保留为反馈，不新增规则。
@@ -810,8 +819,8 @@ def test_dislike_cancel_and_existing_praise(dislike_world):
     assert not rules(world) and not feedback(world)
     source.ui.playback_options()
     activate(source.ui, "点赞")
-    wait_until(lambda: feedback(world), "existing praise saved")
-    assert feedback(world) == [{"track_id": "175001", "verdict": 1}]
+    observed = wait_until(lambda: feedback(world), "existing praise saved")
+    assert observed == [{"track_id": "175001", "verdict": 1}]
     assert not rules(world)
     world.sound(source, "175001", group=False)
 
@@ -828,8 +837,10 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     source.ui.music("radio")
     # #186:起播即移进「已听过」,所以正在放的 Song (Live) 不在未听过那一半。
     expected = ["Other", "Song", "Safe"]
-    wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui), lambda value: value == expected, "radio applies saved rule"
+    )
+    assert observed == expected
     # 「已听过」那一半同样过屏蔽规则:播过的 Song 被规则藏住,只剩 Song (Live)。
     activate(source.ui, "已听过")
     wait_until(lambda: rows(source.ui) == ["Song (Live)"], "heard half applies saved rule")
@@ -844,12 +855,41 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     (world.directory / "dislike-radio-heard.json").write_text(json.dumps(heard))
     source.restart()
     source.ui.radio()
-    wait_until(lambda: rows(source.ui), "new radio batch")
-    # 新批次也排除刚实际播过的 Song (Live),不只排除命中规则的两条歌。
-    fresh = ["Other", "Song", "Safe"]
-    wait_until(lambda: rows(source.ui) == fresh, "new radio batch applies blocks and history")
-    assert rows(source.ui) == fresh
     world.sound(source, "175004", group=False)
+    heard = wait_until(
+        lambda: world.sql(
+            "SELECT track_id FROM play_events WHERE account_id=%s AND track_id=%s",
+            (world.account, "175004"),
+        ),
+        "restarted radio track recorded as heard",
+    )
+    (world.directory / "dislike-radio-restart-heard.json").write_text(json.dumps(heard))
+    # acceptance/186.toml AC-2：起播即移入 heard，两个分区来自同一份应答。
+    expected_ids = {"tracks": ["175005", "175006"], "heard": ["175003", "175004"]}
+
+    def partitions():
+        snapshot = read_api(world, "/radio/list")
+        return {key: [track["id"] for track in snapshot[key]] for key in expected_ids}
+
+    observed = wait_for_snapshot(
+        partitions, lambda value: value == expected_ids, "radio blocks and history in both halves"
+    )
+    assert observed == expected_ids
+    (world.directory / "dislike-radio-partitions.json").write_text(json.dumps(observed))
+    fresh = ["Song", "Safe"]
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == fresh,
+        "new radio batch applies blocks and history",
+    )
+    assert observed == fresh
+    activate(source.ui, "已听过")
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == ["Song (Live)", "Other"],
+        "restarted heard half applies saved rule",
+    )
+    assert observed == ["Song (Live)", "Other"]
 
 
 # 写入失败必须回滚点踩且不移除/跳过当前曲；故障只存在本用例的私有库。
@@ -883,8 +923,12 @@ def test_dislike_artist_picker_uses_selected_artist(dislike_world):
     world.sound(source, "175002", group=False)
     daily(source.ui)
     expected = [CATALOG[key][0] for key in CATALOG if key != "175001"]
-    wait_until(lambda: rows(source.ui) == expected, "selected artist or legacy rule filtered")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == expected,
+        "selected artist or legacy rule filtered",
+    )
+    assert observed == expected
 
 
 # 老账号的按 id 规则继续过滤和展示，恢复时不误删其他规则。
@@ -898,17 +942,22 @@ def test_dislike_legacy_id_rule_can_be_restored(dislike_world):
     source.restart()
     daily(source.ui)
     expected = [CATALOG[key][0] for key in CATALOG if key != "175001"]
-    wait_until(lambda: rows(source.ui) == expected, "selected artist or legacy rule filtered")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == expected,
+        "selected artist or legacy rule filtered",
+    )
+    assert observed == expected
     activate(source.ui, "设置")
     activate(source.ui, "恢复 Legacy Song")
     wait_until(lambda: not rules(world), "legacy rule restored")
     daily(source.ui)
-    wait_until(
-        lambda: rows(source.ui) == [value[0] for value in CATALOG.values()],
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda snapshot: snapshot == [value[0] for value in CATALOG.values()],
         "unblock reload completes",
     )
-    assert rows(source.ui) == [value[0] for value in CATALOG.values()]
+    assert observed == [value[0] for value in CATALOG.values()]
 
 
 # 屏蔽非当前曲目不能跳歌；删掉中间条目后，下一首仍是当前曲目的原后继。
