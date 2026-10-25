@@ -104,7 +104,7 @@ def button(ui, label):
         element["handle"]
         for element in tree(ui)
         if element.get("accessibleLabel") == label
-        and element.get("accessibleRole") in ("Button", "Checkbox")
+        and element.get("accessibleRole") in ("Button", "Checkbox", "Tab")
         and ui.visible(element["handle"])
     ]
     assert len(matches) == 1, f"expected one visible button {label!r}, got {len(matches)}"
@@ -113,6 +113,37 @@ def button(ui, label):
 
 def activate(ui, label):
     ui.activate(button(ui, label))
+
+
+@pytest.mark.parametrize("role", ["Button", "Checkbox", "Tab"])
+def test_dislike_control_locator_uses_visible_interactive_role(tmp_path, role):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.return_value = {
+        "truncated": False,
+        "elements": [
+            {"handle": "text", "accessibleLabel": "设置", "accessibleRole": "Text"},
+            {"handle": "hidden", "accessibleLabel": "设置", "accessibleRole": "Tab"},
+            {"handle": "target", "accessibleLabel": "设置", "accessibleRole": role},
+        ],
+    }
+    ui.visible.side_effect = lambda handle: handle != "hidden"
+    activate(ui, "设置")
+    ui.activate.assert_called_once_with("target")
+
+
+def test_dislike_control_locator_rejects_ambiguous_labels(tmp_path):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.return_value = {
+        "truncated": False,
+        "elements": [
+            {"handle": handle, "accessibleLabel": "设置", "accessibleRole": "Tab"}
+            for handle in ("first", "second")
+        ],
+    }
+    ui.visible.return_value = True
+    with pytest.raises(AssertionError, match="got 2"):
+        activate(ui, "设置")
+    ui.activate.assert_not_called()
 
 
 # 列表刷新与 MCP 查询可交错,从同一份树快照取身份、标签及几何。
