@@ -4,6 +4,7 @@ import json
 import re
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from unittest.mock import Mock
@@ -244,6 +245,113 @@ def playing_title(ui, title):
     return None
 
 
+# 保存前定位；后续只读同一实例，失效重定位仍计入绝对观测时间。
+class PlaybackBar:
+    def __init__(self, ui):
+        self.ui = ui
+        self.relocated = False
+        self.handle = self.locate()
+
+    def locate(self):
+        handles = self.ui.call(
+            "query_element_descendants",
+            elementHandle=self.ui.root,
+            findAll=True,
+            queryStack=[{"matchElementTypeName": "PlayerBar"}],
+        ).get("elementHandles", [])
+        visible = [handle for handle in handles if self.ui.visible(handle)]
+        assert len(visible) == 1, f"expected one visible playback bar, got {len(visible)}"
+        return visible[0]
+
+    def playing(self, title):
+        try:
+            return self.read(title)
+        except RuntimeError as error:
+            if self.relocated or "Invalid handle" not in str(error):
+                raise
+            self.relocated = True
+            self.handle = self.locate()
+            return self.read(title)
+
+    def read(self, title):
+        started = time.time()
+        try:
+            result = self.ui.call("get_element_tree", elementHandle=self.handle, maxElements=1000)
+        except RuntimeError as error:
+            self.record({"started_at": started, "observed_at": time.time(), "error": str(error)})
+            raise
+        observed_at = time.time()
+        assert not result["truncated"]
+        labels = [item.get("accessibleLabel") for item in result["elements"]]
+        self.record({"started_at": started, "observed_at": observed_at, "labels": labels})
+        return observed_at if title in labels and "暂停" in labels else None
+
+    def record(self, observation):
+        with (self.ui.client.directory / "dislike-playback-observations.jsonl").open("a") as log:
+            log.write(json.dumps(observation, ensure_ascii=False) + "\n")
+
+
+def test_playback_bar_reads_prepared_handle_once_per_poll(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.side_effect = lambda name, **kwargs: (
+        {"elementHandles": ["bar"]}
+        if name == "query_element_descendants"
+        else {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song (Live)"}, {"accessibleLabel": "暂停"}],
+        }
+    )
+    ui.visible.return_value = True
+    bar = PlaybackBar(ui)
+    ui.call.reset_mock()
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song (Live)") == 12.5
+    ui.call.assert_called_once_with("get_element_tree", elementHandle="bar", maxElements=1000)
+    ui.visible.assert_called_once_with("bar")
+
+
+def test_playback_bar_relocates_only_once_without_adjusting_time(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["old"]},
+        RuntimeError("Invalid handle"),
+        {"elementHandles": ["new"]},
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song (Live)"}, {"accessibleLabel": "暂停"}],
+        },
+        RuntimeError("Invalid handle"),
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 15.0)
+    assert bar.playing("Song (Live)") == 15.0
+    with pytest.raises(RuntimeError, match="Invalid handle"):
+        bar.playing("Song (Live)")
+    assert ui.call.call_count == 5
+
+
+def test_playback_bar_preserves_old_title_and_observation_time(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["bar"]},
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song"}, {"accessibleLabel": "暂停"}],
+        },
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song (Live)") is None
+    observations = [
+        json.loads(line)
+        for line in (tmp_path / "dislike-playback-observations.jsonl").read_text().splitlines()
+    ]
+    assert observations[-1]["observed_at"] == 12.5
+    assert observations[-1]["labels"] == ["Song", "暂停"]
+
+
 def open_reasons(client, entry):
     if entry == "drawer":
         client.ui.playback_options()
@@ -362,10 +470,11 @@ def test_dislike_saves_skips_and_filters(dislike_world, entry, reason):
     source.ui.pick("list")
     world.sound(source, "175001", group=False)
     open_reasons(source, entry)
+    bar = PlaybackBar(source.ui)
     saved = choose(world, reason)
     wanted = NEXT[reason]
     switched = wait_until(
-        lambda: playing_title(source.ui, CATALOG[wanted][0]),
+        lambda: bar.playing(CATALOG[wanted][0]),
         "next song UI after saved rule",
         timeout=1,
     )
@@ -397,11 +506,20 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     source.ui.pick("list")
     world.sound(world.one, "175001")
     open_reasons(source, "drawer")
+    bar = PlaybackBar(source.ui)
     saved = choose(world, "exact")
-    wait_until(lambda: current_group_track(world) == "175003", "group skips duplicate", timeout=1)
-    switched = wait_until(
-        lambda: playing_title(source.ui, "Song (Live)"), "group playback bar updates", timeout=1
-    )
+    with ThreadPoolExecutor(max_workers=2) as observers:
+        title = observers.submit(
+            wait_until, lambda: bar.playing("Song (Live)"), "group playback bar updates", timeout=1
+        )
+        group_track = observers.submit(
+            wait_until,
+            lambda: current_group_track(world) == "175003",
+            "group skips duplicate",
+            timeout=1,
+        )
+        switched = title.result()
+        group_track.result()
     saved_at = saved["created_at"].timestamp()
     assert 0 <= switched - saved_at <= 1
     group = world.group()
