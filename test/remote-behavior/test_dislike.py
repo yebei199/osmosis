@@ -50,7 +50,8 @@ def read_api(world, path):
         f"http://127.0.0.1:{world.server_port}{path}",
         headers={"Authorization": "Bearer " + session["token"]},
     )
-    with urllib.request.urlopen(request, timeout=8) as response:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=8) as response:
         return json.load(response)
 
 

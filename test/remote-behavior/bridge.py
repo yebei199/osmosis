@@ -15,7 +15,8 @@ def main():
             "Accept": "application/json, text/event-stream",
         },
     )
-    with urllib.request.urlopen(request, timeout=8) as response:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=8) as response:
         result = json.load(response)
     print(json.dumps(result))
 

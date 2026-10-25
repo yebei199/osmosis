@@ -197,10 +197,19 @@ def test_cleanup_preserves_unrelated_process(tmp_path):
         unrelated.wait(timeout=10)
 
 
-# 父进程代理不可达时，真实 World.request 仍须直连本轮独占的本机服务。
+# 父进程代理不可达时，夹具请求与验收读取仍须直连本轮独占的本机服务。
 def test_local_service_request_ignores_parent_proxy(tmp_path):
     (tmp_path / "health").write_text('{"status":"ok","protocol_version":7}')
-    handler = partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+
+    # 登录响应只提供读取 helper 所需的 token，连接仍经过真实 HTTP 服务。
+    class LocalServiceHandler(SimpleHTTPRequestHandler):
+        # 本回归只验代理隔离，不验产品登录逻辑。
+        def do_POST(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"token":"fixture"}')
+
+    handler = partial(LocalServiceHandler, directory=str(tmp_path))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -220,10 +229,13 @@ def test_local_service_request_ignores_parent_proxy(tmp_path):
             source = """import json,sys
 from pathlib import Path
 from resources import World
+from test_dislike import read_api
 world = World(Path.cwd(), Path(sys.argv[1]), Path('unused'), Path('unused'))
 world.server_port = int(sys.argv[2])
+world.username = 'fixture'
+world.password = 'fixture'
 try:
-    print(json.dumps(world.request('/health')))
+    print(json.dumps([world.request('/health'), read_api(world, '/health')]))
 finally:
     world.close()
 """
@@ -236,7 +248,10 @@ finally:
                 check=False,
             )
             assert result.returncode == 0, result.stderr
-            assert json.loads(result.stdout) == {"status": "ok", "protocol_version": 7}
+            assert json.loads(result.stdout) == [
+                {"status": "ok", "protocol_version": 7},
+                {"status": "ok", "protocol_version": 7},
+            ]
     finally:
         server.shutdown()
         worker.join(timeout=5)
