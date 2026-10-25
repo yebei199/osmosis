@@ -176,6 +176,8 @@ def verify(root: Path, artifacts: Path, fault: str):
     env["SLINT_EMIT_DEBUG_INFO"] = "1"
     # 中间产物跟着本场景的 target，不落到 run.sh 指定的主构建目录。
     env["CARGO_BUILD_BUILD_DIR"] = str(target)
+    # 两个根包保持候选的依赖 feature 并集，只生成被变异的那个二进制。
+    binary = "server" if component == "server" else "osmosis-desktop"
     build = [
         "cargo",
         "build",
@@ -183,12 +185,16 @@ def verify(root: Path, artifacts: Path, fault: str):
         "--config",
         'profile.dev.package."*".opt-level=0',
         "-p",
-        component,
+        "app-desktop",
+        "-p",
+        "server",
+        "--bin",
+        binary,
+        "--features",
+        "app-desktop/mcp",
         "--target-dir",
         str(target),
     ]
-    if component == "app-desktop":
-        build.extend(["--features", "mcp"])
     if command(build, snapshot, env, directory, "build", 3600):
         raise RuntimeError("mutation did not compile; this is not a valid RED")
     build_record = directory / "build.json"

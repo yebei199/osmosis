@@ -54,7 +54,7 @@ def mutation_world(tmp_path, monkeypatch):
 
 def install_build_boundary(monkeypatch, tamper=None):
     original = mutate.command
-    builds, runs = [], []
+    builds, runs, compiled = [], [], []
 
     # 仅替换编译器和真实音频世界；git、复制、摘要与身份校验走实际文件系统。
     def command(args, cwd, env, directory, name, timeout):
@@ -62,10 +62,17 @@ def install_build_boundary(monkeypatch, tamper=None):
             return original(args, cwd, env, directory, name, timeout)
         builds.append(args)
         target = Path(args[args.index("--target-dir") + 1])
-        for index, arg in enumerate(args[:-1]):
-            if arg == "-p":
-                binary = "osmosis-desktop" if args[index + 1] == "app-desktop" else "server"
-                (target / "debug" / binary).write_bytes(b"rebuilt " + binary.encode())
+        if "--bin" in args:
+            binaries = [args[args.index("--bin") + 1]]
+        else:
+            binaries = [
+                "osmosis-desktop" if args[index + 1] == "app-desktop" else "server"
+                for index, arg in enumerate(args[:-1])
+                if arg == "-p"
+            ]
+        for binary in binaries:
+            compiled.append(binary)
+            (target / "debug" / binary).write_bytes(b"rebuilt " + binary.encode())
         (directory / "build.log").write_text("")
         (directory / "build.json").write_text(json.dumps({"command": args, "exit": 0}))
         if tamper in ("source", "copy"):
@@ -88,18 +95,17 @@ def install_build_boundary(monkeypatch, tamper=None):
 
     monkeypatch.setattr(mutate, "command", command)
     monkeypatch.setattr(mutate, "run_case", run_case)
-    return builds, runs
+    return builds, runs, compiled
 
 
 # 四个现有故障仍各跑 RED/GREEN；非目标组件不得随克隆路径重新编译。
 @pytest.mark.parametrize("fault", list(mutate.FAULTS))
 def test_mutation_reuses_other_component_and_records_identity(mutation_world, monkeypatch, fault):
     root, source_target, artifacts = mutation_world
-    builds, runs = install_build_boundary(monkeypatch)
+    builds, runs, compiled = install_build_boundary(monkeypatch)
     mutate.verify(root, artifacts, fault)
     expected = "server" if mutate.FAULTS[fault][0].startswith("server/") else "app-desktop"
-    packages = [args[i + 1] for args in builds for i, arg in enumerate(args[:-1]) if arg == "-p"]
-    assert packages == [expected]
+    assert compiled == ["server" if expected == "server" else "osmosis-desktop"]
     directory = next(artifacts.iterdir())
     binary = "osmosis-desktop" if expected == "server" else "server"
     source = source_target / "debug" / binary
@@ -120,7 +126,7 @@ def test_mutation_reuses_other_component_and_records_identity(mutation_world, mo
 @pytest.mark.parametrize("tamper", ["source", "copy", "after_red"])
 def test_reused_binary_change_refuses_behavior_run(mutation_world, monkeypatch, tamper):
     root, _, artifacts = mutation_world
-    _, runs = install_build_boundary(monkeypatch, tamper)
+    _, runs, _ = install_build_boundary(monkeypatch, tamper)
     with pytest.raises(RuntimeError, match="reused binary"):
         mutate.verify(root, artifacts, "protect-reference")
     assert runs == (["red"] if tamper == "after_red" else [])
