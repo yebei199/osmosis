@@ -242,6 +242,7 @@ class Client:
             "XDG_RUNTIME_DIR": str(runtime),
             "TMPDIR": str(self.directory / "tmp"),
             "DISPLAY": world.display,
+            "OSMOSIS_ISOLATED_DISPLAY": world.display,
             "SLINT_MCP_PORT": "8091",
             "RUST_LOG": "info,ui=debug",
         }

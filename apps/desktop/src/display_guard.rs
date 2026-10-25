@@ -28,8 +28,15 @@ pub fn check(
     if shown || !AI_SESSION_VARS.iter().any(|k| set(k)) {
         return Ok(());
     }
-    if set("DISPLAY") {
-        return Err(REFUSAL);
+    // 仅供自起 Xvfb 的测试夹具声明自己的显示，不能放行其他 X 显示。
+    if let Some(display) =
+        env("DISPLAY").filter(|v| !v.is_empty())
+    {
+        if env("OSMOSIS_ISOLATED_DISPLAY").as_deref()
+            != Some(display.as_str())
+        {
+            return Err(REFUSAL);
+        }
     }
     let Some(wayland) =
         env("WAYLAND_DISPLAY").filter(|v| !v.is_empty())
@@ -107,6 +114,58 @@ mod tests {
                 ("CODEX_SESSION_ID", "s"),
                 ("DISPLAY", ":0")
             ])
+            .is_err()
+        );
+    }
+
+    // 自起 Xvfb 的精确显示声明允许测试实例启动。
+    #[test]
+    fn matching_isolated_x11_display_is_allowed() {
+        assert!(
+            run(&[
+                ("CODEX_SESSION_ID", "s"),
+                ("DISPLAY", ":42"),
+                ("OSMOSIS_ISOLATED_DISPLAY", ":42"),
+            ])
+            .is_ok()
+        );
+    }
+
+    // 声明另一个显示不能放行当前 X 显示。
+    #[test]
+    fn mismatched_isolated_x11_display_is_refused() {
+        assert!(
+            run(&[
+                ("CLAUDECODE", "1"),
+                ("DISPLAY", ":42"),
+                ("OSMOSIS_ISOLATED_DISPLAY", ":43"),
+            ])
+            .is_err()
+        );
+    }
+
+    // X 隔离声明不能改变用户 Wayland 显示的拒绝条件。
+    #[test]
+    fn isolated_x11_does_not_allow_user_wayland() {
+        assert!(
+            run(&[
+                RT,
+                ("CLAUDECODE", "1"),
+                ("DISPLAY", ":42"),
+                ("OSMOSIS_ISOLATED_DISPLAY", ":42"),
+                ("WAYLAND_DISPLAY", "wayland-1"),
+            ])
+            .is_err()
+        );
+    }
+
+    // 只有 DISPLAY、没有隔离声明时仍然拒绝 AI 开窗。
+    #[test]
+    fn undeclared_x11_display_is_refused() {
+        assert!(
+            run(
+                &[("CLAUDECODE", "1"), ("DISPLAY", ":42"),]
+            )
             .is_err()
         );
     }
