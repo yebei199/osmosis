@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -263,17 +264,21 @@ class PlaybackBar:
         assert len(visible) == 1, f"expected one visible playback bar, got {len(visible)}"
         return visible[0]
 
-    def playing(self, title):
+    def playing(self, title, artist=None):
         try:
-            return self.read(title)
+            return self.read(title, artist)
         except RuntimeError as error:
-            if self.relocated or "Invalid handle" not in str(error):
+            invalid_handle = any(
+                message in str(error)
+                for message in ("Invalid handle", "element that was destroyed")
+            )
+            if self.relocated or not invalid_handle:
                 raise
             self.relocated = True
             self.handle = self.locate()
-            return self.read(title)
+            return self.read(title, artist)
 
-    def read(self, title):
+    def read(self, title, artist):
         started = time.time()
         try:
             result = self.ui.call("get_element_tree", elementHandle=self.handle, maxElements=1000)
@@ -284,7 +289,8 @@ class PlaybackBar:
         assert not result["truncated"]
         labels = [item.get("accessibleLabel") for item in result["elements"]]
         self.record({"started_at": started, "observed_at": observed_at, "labels": labels})
-        return observed_at if title in labels and "暂停" in labels else None
+        matches_artist = artist is None or artist in labels
+        return observed_at if title in labels and "暂停" in labels and matches_artist else None
 
     def record(self, observation):
         with (self.ui.client.directory / "dislike-playback-observations.jsonl").open("a") as log:
@@ -310,23 +316,24 @@ def test_playback_bar_reads_prepared_handle_once_per_poll(tmp_path, monkeypatch)
     ui.visible.assert_called_once_with("bar")
 
 
-def test_playback_bar_relocates_only_once_without_adjusting_time(tmp_path, monkeypatch):
+@pytest.mark.parametrize("error", ["Invalid handle", "element that was destroyed"])
+def test_playback_bar_relocates_only_once_without_adjusting_time(tmp_path, monkeypatch, error):
     ui = Mock(root="root", client=Mock(directory=tmp_path))
     ui.visible.return_value = True
     ui.call.side_effect = [
         {"elementHandles": ["old"]},
-        RuntimeError("Invalid handle"),
+        RuntimeError(error),
         {"elementHandles": ["new"]},
         {
             "truncated": False,
             "elements": [{"accessibleLabel": "Song (Live)"}, {"accessibleLabel": "暂停"}],
         },
-        RuntimeError("Invalid handle"),
+        RuntimeError(error),
     ]
     bar = PlaybackBar(ui)
     monkeypatch.setattr(time, "time", lambda: 15.0)
     assert bar.playing("Song (Live)") == 15.0
-    with pytest.raises(RuntimeError, match="Invalid handle"):
+    with pytest.raises(RuntimeError, match=error):
         bar.playing("Song (Live)")
     assert ui.call.call_count == 5
 
@@ -350,6 +357,28 @@ def test_playback_bar_preserves_old_title_and_observation_time(tmp_path, monkeyp
     ]
     assert observations[-1]["observed_at"] == 12.5
     assert observations[-1]["labels"] == ["Song", "暂停"]
+
+
+def test_playback_bar_distinguishes_same_title_with_target_artist(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["bar"]},
+        {
+            "truncated": False,
+            "elements": [
+                {"accessibleLabel": value} for value in ("Song", "Artist A / Artist B", "暂停")
+            ],
+        },
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": value} for value in ("Song", "Artist C", "暂停")],
+        },
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song", "Artist C") is None
+    assert bar.playing("Song", "Artist C") == 12.5
 
 
 def open_reasons(client, entry):
@@ -435,6 +464,116 @@ def choose(world, reason):
     return saved[0]
 
 
+# 保存动作与核查期间持续观察，第一次匹配的原始时间不能被收尾工作替换。
+def choose_and_watch(world, reason, group=False):
+    bar = PlaybackBar(world.controller.ui)
+    title, artists = CATALOG[NEXT[reason]]
+    artist = " / ".join(name for _, name in artists)
+    started, stop = threading.Event(), threading.Event()
+
+    def observe():
+        started.set()
+        while not stop.is_set():
+            switched = bar.playing(title, artist)
+            if switched is not None:
+                return switched
+            stop.wait(resources.POLL)
+        return None
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="dislike-watch") as observer:
+        observation = observer.submit(observe)
+        try:
+            assert started.wait(resources.TIMEOUT), "playback observer did not start"
+            saved = choose(world, reason)
+            if group:
+                wait_until(
+                    lambda: current_group_track(world) == NEXT[reason],
+                    "group skips duplicate",
+                    timeout=1,
+                )
+            # 库时间决定截止；在途读取保留完成时间，由调用方的一秒断言判断。
+            remaining = max(0, saved["created_at"].timestamp() + 1 - time.time())
+            try:
+                observation.result(timeout=remaining)
+            except TimeoutError:
+                if observation.done():
+                    observation.result()
+        finally:
+            stop.set()
+    switched = observation.result()
+    if switched is None:
+        raise TimeoutError("playback observer did not see the next playing title before stopping")
+    assert switched >= saved["created_at"].timestamp(), (
+        "next title observed before the rule was saved"
+    )
+    return saved, switched
+
+
+def test_saved_playback_observer_runs_during_choose_and_keeps_first_time(monkeypatch):
+    polled = threading.Event()
+    clock = {"now": 100.1}
+    saved = {"created_at": datetime.fromtimestamp(100.0)}
+    bar = Mock()
+
+    def playing(*args):
+        polled.set()
+        return 100.25
+
+    def save(*args):
+        assert polled.wait(1), "title observation did not start before choose"
+        clock["now"] = 101.5
+        return saved
+
+    bar.playing.side_effect = playing
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    monkeypatch.setattr(time, "time", lambda: clock["now"])
+    assert choose_and_watch(Mock(), "exact") == (saved, 100.25)
+
+
+def test_saved_playback_observer_rejects_a_match_before_rule_save(monkeypatch):
+    bar = Mock()
+    bar.playing.return_value = 99.9
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    with pytest.raises(AssertionError, match="before the rule was saved"):
+        choose_and_watch(Mock(), "exact")
+
+
+def test_saved_playback_observer_stops_if_choose_fails(monkeypatch):
+    polled = threading.Event()
+    bar = Mock()
+    bar.playing.side_effect = lambda *args: polled.set()
+
+    def save(*args):
+        assert polled.wait(1), "title observation did not start before choose"
+        raise ValueError("rule save failed")
+
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    with pytest.raises(ValueError, match="rule save failed"):
+        choose_and_watch(Mock(), "exact")
+    assert not any(thread.name.startswith("dislike-watch") for thread in threading.enumerate())
+
+
+def test_saved_playback_observer_fails_without_a_title_observation(monkeypatch):
+    bar = Mock()
+    bar.playing.return_value = None
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    monkeypatch.setattr(time, "time", lambda: 102.0)
+    with pytest.raises(TimeoutError, match="playback observer did not see"):
+        choose_and_watch(Mock(), "exact")
+
+
 # 当前批、未来重载以及设置页撤销分别观察，不以一次过滤替代全部结果。
 def assert_filtered(world, reason):
     ui = world.controller.ui
@@ -470,14 +609,8 @@ def test_dislike_saves_skips_and_filters(dislike_world, entry, reason):
     source.ui.pick("list")
     world.sound(source, "175001", group=False)
     open_reasons(source, entry)
-    bar = PlaybackBar(source.ui)
-    saved = choose(world, reason)
+    saved, switched = choose_and_watch(world, reason)
     wanted = NEXT[reason]
-    switched = wait_until(
-        lambda: bar.playing(CATALOG[wanted][0]),
-        "next song UI after saved rule",
-        timeout=1,
-    )
     elapsed = switched - saved["created_at"].timestamp()
     (world.directory / "dislike-latency.json").write_text(
         json.dumps(
@@ -506,20 +639,7 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     source.ui.pick("list")
     world.sound(world.one, "175001")
     open_reasons(source, "drawer")
-    bar = PlaybackBar(source.ui)
-    saved = choose(world, "exact")
-    with ThreadPoolExecutor(max_workers=2) as observers:
-        title = observers.submit(
-            wait_until, lambda: bar.playing("Song (Live)"), "group playback bar updates", timeout=1
-        )
-        group_track = observers.submit(
-            wait_until,
-            lambda: current_group_track(world) == "175003",
-            "group skips duplicate",
-            timeout=1,
-        )
-        switched = title.result()
-        group_track.result()
+    saved, switched = choose_and_watch(world, "exact", group=True)
     saved_at = saved["created_at"].timestamp()
     assert 0 <= switched - saved_at <= 1
     group = world.group()
