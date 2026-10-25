@@ -264,9 +264,16 @@ class PlaybackBar:
         assert len(visible) == 1, f"expected one visible playback bar, got {len(visible)}"
         return visible[0]
 
+    # acceptance/181.toml：「created_at 到真实播放条下一首≤1秒」；「播放条1秒证明投影及时，PCM证明实际下一曲」，计时不含播放态。
+    def projected(self, title, artist=None):
+        return self.observe(title, artist, require_playing=False)
+
     def playing(self, title, artist=None):
+        return self.observe(title, artist, require_playing=True)
+
+    def observe(self, title, artist, require_playing):
         try:
-            return self.read(title, artist)
+            return self.read(title, artist, require_playing)
         except RuntimeError as error:
             invalid_handle = any(
                 message in str(error)
@@ -276,21 +283,36 @@ class PlaybackBar:
                 raise
             self.relocated = True
             self.handle = self.locate()
-            return self.read(title, artist)
+            return self.read(title, artist, require_playing)
 
-    def read(self, title, artist):
+    def read(self, title, artist, require_playing):
         started = time.time()
         try:
             result = self.ui.call("get_element_tree", elementHandle=self.handle, maxElements=1000)
         except RuntimeError as error:
-            self.record({"started_at": started, "observed_at": time.time(), "error": str(error)})
+            self.record(
+                {
+                    "started_at": started,
+                    "observed_at": time.time(),
+                    "require_playing": require_playing,
+                    "error": str(error),
+                }
+            )
             raise
         observed_at = time.time()
         assert not result["truncated"]
         labels = [item.get("accessibleLabel") for item in result["elements"]]
-        self.record({"started_at": started, "observed_at": observed_at, "labels": labels})
+        self.record(
+            {
+                "started_at": started,
+                "observed_at": observed_at,
+                "require_playing": require_playing,
+                "labels": labels,
+            }
+        )
         matches_artist = artist is None or artist in labels
-        return observed_at if title in labels and "暂停" in labels and matches_artist else None
+        matches_play_state = not require_playing or "暂停" in labels
+        return observed_at if title in labels and matches_artist and matches_play_state else None
 
     def record(self, observation):
         with (self.ui.client.directory / "dislike-playback-observations.jsonl").open("a") as log:
@@ -379,6 +401,22 @@ def test_playback_bar_distinguishes_same_title_with_target_artist(tmp_path, monk
     monkeypatch.setattr(time, "time", lambda: 12.5)
     assert bar.playing("Song", "Artist C") is None
     assert bar.playing("Song", "Artist C") == 12.5
+
+
+def test_playback_bar_times_projection_while_buffering_without_claiming_playback(
+    tmp_path, monkeypatch
+):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    buffering = {
+        "truncated": False,
+        "elements": [{"accessibleLabel": value} for value in ("Other", "Artist A", "播放")],
+    }
+    ui.call.side_effect = [{"elementHandles": ["bar"]}, buffering, buffering]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.projected("Other", "Artist A") == 12.5
+    assert bar.playing("Other", "Artist A") is None
 
 
 def open_reasons(client, entry):
@@ -474,7 +512,7 @@ def choose_and_watch(world, reason, group=False):
     def observe():
         started.set()
         while not stop.is_set():
-            switched = bar.playing(title, artist)
+            switched = bar.projected(title, artist)
             if switched is not None:
                 return switched
             stop.wait(resources.POLL)
@@ -502,10 +540,16 @@ def choose_and_watch(world, reason, group=False):
             stop.set()
     switched = observation.result()
     if switched is None:
-        raise TimeoutError("playback observer did not see the next playing title before stopping")
+        raise TimeoutError(
+            "playback observer did not see the next track projection before stopping"
+        )
     assert switched >= saved["created_at"].timestamp(), (
         "next title observed before the rule was saved"
     )
+    assert 0 <= switched - saved["created_at"].timestamp() <= 1, (
+        "next-track projection exceeded one second"
+    )
+    wait_until(lambda: bar.playing(title, artist), "next song playback state")
     return saved, switched
 
 
@@ -524,7 +568,8 @@ def test_saved_playback_observer_runs_during_choose_and_keeps_first_time(monkeyp
         clock["now"] = 101.5
         return saved
 
-    bar.playing.side_effect = playing
+    bar.projected.side_effect = playing
+    bar.playing.return_value = 101.6
     monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
     monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
     monkeypatch.setattr(time, "time", lambda: clock["now"])
@@ -533,7 +578,7 @@ def test_saved_playback_observer_runs_during_choose_and_keeps_first_time(monkeyp
 
 def test_saved_playback_observer_rejects_a_match_before_rule_save(monkeypatch):
     bar = Mock()
-    bar.playing.return_value = 99.9
+    bar.projected.return_value = 99.9
     monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
     monkeypatch.setitem(
         choose_and_watch.__globals__,
@@ -547,7 +592,7 @@ def test_saved_playback_observer_rejects_a_match_before_rule_save(monkeypatch):
 def test_saved_playback_observer_stops_if_choose_fails(monkeypatch):
     polled = threading.Event()
     bar = Mock()
-    bar.playing.side_effect = lambda *args: polled.set()
+    bar.projected.side_effect = lambda *args: polled.set()
 
     def save(*args):
         assert polled.wait(1), "title observation did not start before choose"
@@ -562,7 +607,7 @@ def test_saved_playback_observer_stops_if_choose_fails(monkeypatch):
 
 def test_saved_playback_observer_fails_without_a_title_observation(monkeypatch):
     bar = Mock()
-    bar.playing.return_value = None
+    bar.projected.return_value = None
     monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
     monkeypatch.setitem(
         choose_and_watch.__globals__,
@@ -571,6 +616,50 @@ def test_saved_playback_observer_fails_without_a_title_observation(monkeypatch):
     )
     monkeypatch.setattr(time, "time", lambda: 102.0)
     with pytest.raises(TimeoutError, match="playback observer did not see"):
+        choose_and_watch(Mock(), "exact")
+
+
+def test_saved_playback_waits_for_play_state_without_replacing_projection_time(monkeypatch):
+    polled = threading.Event()
+    state = {"playing": False}
+    saved = {"created_at": datetime.fromtimestamp(100.0)}
+    bar = Mock()
+    bar.projected.side_effect = lambda *args: polled.set() or 100.25
+
+    def playing(*args):
+        state["playing"] = True
+        return 101.5
+
+    def save(*args):
+        assert polled.wait(1)
+        return saved
+
+    bar.playing.side_effect = playing
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    monkeypatch.setattr(time, "time", lambda: 100.5)
+    assert choose_and_watch(Mock(), "exact") == (saved, 100.25)
+    assert state["playing"], "projection alone must not prove actual play state"
+
+
+def test_saved_playback_fails_when_play_state_never_follows_projection(monkeypatch):
+    bar = Mock()
+    bar.projected.return_value = 100.25
+    bar.playing.return_value = None
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    monkeypatch.setattr(time, "time", lambda: 100.5)
+    original_wait = wait_until
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "wait_until",
+        lambda predicate, label: original_wait(predicate, label, timeout=0.01),
+    )
+    with pytest.raises(TimeoutError, match="next song playback state"):
         choose_and_watch(Mock(), "exact")
 
 
