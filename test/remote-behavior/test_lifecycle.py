@@ -3,8 +3,12 @@
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -191,3 +195,49 @@ def test_cleanup_preserves_unrelated_process(tmp_path):
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=10)
+
+
+# 父进程代理不可达时，真实 World.request 仍须直连本轮独占的本机服务。
+def test_local_service_request_ignores_parent_proxy(tmp_path):
+    (tmp_path / "health").write_text('{"status":"ok","protocol_version":7}')
+    handler = partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        with socket.socket() as unavailable_proxy:
+            unavailable_proxy.bind(("127.0.0.1", 0))
+            proxy_url = f"http://127.0.0.1:{unavailable_proxy.getsockname()[1]}"
+            env = dict(os.environ) | {
+                "PYTHONPATH": str(SUITE),
+                "http_proxy": proxy_url,
+                "https_proxy": proxy_url,
+                "HTTP_PROXY": proxy_url,
+                "HTTPS_PROXY": proxy_url,
+                "no_proxy": "",
+                "NO_PROXY": "",
+            }
+            source = """import json,sys
+from pathlib import Path
+from resources import World
+world = World(Path.cwd(), Path(sys.argv[1]), Path('unused'), Path('unused'))
+world.server_port = int(sys.argv[2])
+try:
+    print(json.dumps(world.request('/health')))
+finally:
+    world.close()
+"""
+            result = subprocess.run(
+                [sys.executable, "-c", source, str(tmp_path), str(server.server_port)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == {"status": "ok", "protocol_version": 7}
+    finally:
+        server.shutdown()
+        worker.join(timeout=5)
+        server.server_close()

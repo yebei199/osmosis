@@ -723,7 +723,8 @@ class World:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=8) as response:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=8) as response:
             return json.load(response)
 
     # SQL 参数化且数据库独有，生命周期现场只在此库制造。
