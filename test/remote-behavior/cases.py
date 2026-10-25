@@ -127,8 +127,6 @@ def shuffle_and_loop_projection(world):
         wait_until(lambda label=label: source.ui.loop_label() == label, "controller " + label)
         wait_until(lambda label=label: world.one.ui.loop_label() == label, "output " + label)
     # 单曲循环必须在曲尾真的重播同一首,音频秒码回到开头。
-    source.ui.playback_options()
-    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
     source.ui.seek(world.media_duration - 5)
     world.sound(world.one, wanted, position=world.media_duration - 5, position_started=time.time())
     repeated = wait_until(
@@ -232,8 +230,6 @@ def group_radio_sequence_end_top_up(world, mode, shuffled):
     if mode == "one":
         source.ui.transport("next")
     else:
-        source.ui.playback_options()
-        source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
         source.ui.seek(world.media_duration - 5)
     world.sound(world.one, wanted)
     world.silent(source, world.two)
@@ -308,8 +304,6 @@ def non_radio_list_loop_wraps_without_append(world):
     world.sound(world.one, DAILY_IDS[1])
     source.ui.transport("next")
     world.sound(world.one, DAILY_IDS[2])
-    source.ui.playback_options()
-    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
     source.ui.seek(world.media_duration - 5)
     world.sound(world.one, DAILY_IDS[0])
     row = world.group()

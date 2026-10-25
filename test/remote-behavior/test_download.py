@@ -140,6 +140,7 @@ def start_download(world, mode, outcome, index=0):
 
     wait_until(open_drawer, "current playback drawer")
     client.ui.activate(client.ui.must("DrawerRow::touch", "下载这一首"))
+    client.ui.close_playback_options()
     return client.directory / "home/Music/osmosis"
 
 
@@ -208,7 +209,7 @@ def test_trial_download_keeps_existing_refusal(download_world):
     assert list(directory.iterdir()) == [], "trial response became a saved song"
 
 
-# 已下载入口沿音乐 tab 与同一分段条走，避免直接构造管理状态。
+# 已下载沿一级导航进入，避免直接构造管理状态。
 def open_downloads(client):
     client.ui.destination("已下载")
     client.ui.must("DownloadManager::keyword")

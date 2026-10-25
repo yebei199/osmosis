@@ -189,9 +189,10 @@ class UI:
         self.activate(self.login_submit(page), pointer=True)
         wait_until(lambda: not self.elements("LoginPage::username"), "login completion")
 
-    # Escape 沿用已有 pick-e2e 的收起动作，随后进入音乐主 tab。
+    # 抽屉显式收起；Escape 只负责收播放页，不能替代抽屉按钮。
     # 一级目的地按全名找(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
     def destination(self, label):
+        self.close_playback_options()
         self.call("dispatch_key_event", windowHandle=self.window, text="\x1b")
         handle = self.find("SideNavRow::touch", label) or self.find("NavItem::touch", label)
         if not handle:
@@ -234,6 +235,7 @@ class UI:
 
     # 控制条的可访问标签随真实播放状态改变。
     def transport(self, operation):
+        self.close_playback_options()
         try:
             handle = self.must("RoundControl::touch", LABELS[operation])
         except TimeoutError:
@@ -294,6 +296,7 @@ class UI:
 
     # seek 位置基于元素实时几何，进入 ProgressBar 的真实指针处理。
     def seek(self, seconds):
+        self.close_playback_options()
         handle = self.must("ProgressBar::seek-touch")
         p = self.call("get_element_properties", elementHandle=handle)
         point = p["absolutePosition"]
@@ -315,6 +318,21 @@ class UI:
     def playback_options(self):
         if not self.find("DrawerRow::touch", "随机播放"):
             self.activate(self.must("RoundControl::touch", "更多"))
+
+    # 遮罩会消费条外的第一次点击，先走真实关闭按钮并确认状态再离开。
+    def close_playback_options(self):
+        close = self.find("RoundControl::touch", "收起更多")
+        if close is None:
+            return
+        self.activate(close, pointer=True)
+
+        def closed():
+            more = self.find("RoundControl::touch", "更多")
+            return more is not None and not self.call(
+                "get_element_properties", elementHandle=more
+            ).get("accessibleChecked", False)
+
+        wait_until(closed, "playback drawer closed")
 
     # 读取真实可访问状态,不以服务端的状态替代按钮显示。
     def shuffle_checked(self):
@@ -343,6 +361,7 @@ class UI:
 
     # 从收起后的胶囊打开面板，再点击面板内唯一的退出按钮。
     def leave(self):
+        self.close_playback_options()
         self.activate(self.must("MainWindow::group-capsule"), pointer=True)
         panel = self.must("MainWindow::group-panel")
         buttons = self.call(
