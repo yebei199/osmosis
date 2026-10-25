@@ -31,12 +31,10 @@ pub fn check(
     // 仅供自起 Xvfb 的测试夹具声明自己的显示，不能放行其他 X 显示。
     if let Some(display) =
         env("DISPLAY").filter(|v| !v.is_empty())
-    {
-        if env("OSMOSIS_ISOLATED_DISPLAY").as_deref()
+        && env("OSMOSIS_ISOLATED_DISPLAY").as_deref()
             != Some(display.as_str())
-        {
-            return Err(REFUSAL);
-        }
+    {
+        return Err(REFUSAL);
     }
     let Some(wayland) =
         env("WAYLAND_DISPLAY").filter(|v| !v.is_empty())
