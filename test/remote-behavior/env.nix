@@ -1,9 +1,7 @@
 # 复用项目开发 shell，追加本套件自己的隔离与软件音频依赖。
+# 与嵌套启动的 slint.nix 同用宿主 channel，避免 proc-macro 构建与加载时 glibc 不一致。
 {
-  pkgs ? import (builtins.fetchTarball {
-    url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1070934.1927682e0d80/nixexprs.tar.xz";
-    sha256 = "sha256-sDGcZgdRVR58ceKz0RmkBtdUomBvu5vzbf6Aw5rUCo0=";
-  }) { },
+  pkgs ? import <nixpkgs> { },
 }:
 let
   base = import ../../slint.nix { inherit pkgs; };
