@@ -129,16 +129,7 @@ def start_download(world, mode, outcome, index=0):
     wait_until(lambda: bool(world.sql("SELECT id FROM play_events")), "selected track play event")
     world.media.download_mode = outcome
 
-    def open_drawer():
-        try:
-            client.ui.activate(client.ui.must("RoundControl::touch", "更多"))
-            return True
-        except RuntimeError as error:
-            if "element that was destroyed" not in str(error):
-                raise
-            return False
-
-    wait_until(open_drawer, "current playback drawer")
+    client.ui.activate(client.ui.must("RoundControl::touch", "更多"))
     client.ui.activate(client.ui.must("DrawerRow::touch", "下载这一首"))
     client.ui.close_playback_options()
     return client.directory / "home/Music/osmosis"

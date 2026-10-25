@@ -105,20 +105,37 @@ class UI:
     # 几何只用于选屏内实例和控件相对拖动，不持久保存坐标。
     def visible(self, handle):
         p = self.call("get_element_properties", elementHandle=handle)
+        return self.visible_properties(p)
+
+    @staticmethod
+    def visible_properties(p):
         x, y = p["absolutePosition"].get("x", 0), p["absolutePosition"].get("y", 0)
         size = p["size"]
         return size["width"] > 0 and size["height"] > 0 and 0 <= x < 1100 and 0 <= y < 900
 
-    # 多个 PlayerBar 实例时限定屏内控件，并拒绝无匹配。
+    # 动态控件销毁后只从根重查一次；标签与可见性共用快照，不重放动作。
     def find(self, element_id, label=None, prefix=False):
-        for handle in self.elements(element_id):
-            properties = self.call("get_element_properties", elementHandle=handle)
-            value = properties.get("accessibleLabel") or ""
-            if label is not None and not (value.startswith(label) if prefix else value == label):
-                continue
-            if self.visible(handle):
-                return handle
-        return None
+        for rescanned in (False, True):
+            for handle in self.elements(element_id):
+                try:
+                    properties = self.call("get_element_properties", elementHandle=handle)
+                except RuntimeError as error:
+                    expired = any(
+                        message in str(error)
+                        for message in ("Invalid handle", "element that was destroyed")
+                    )
+                    if rescanned or not expired:
+                        raise
+                    break
+                value = properties.get("accessibleLabel") or ""
+                if label is not None and not (
+                    value.startswith(label) if prefix else value == label
+                ):
+                    continue
+                if self.visible_properties(properties):
+                    return handle
+            else:
+                return None
 
     # 必需入口缺失是初始化/测试设计失败，不能认作 RED。
     def must(self, element_id, label=None, prefix=False):
