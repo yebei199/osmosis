@@ -1,5 +1,6 @@
 """在固定临时快照中施加单一故障，以真实 pytest 音频失败确认灵敏度。"""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -61,6 +62,20 @@ def third_party_compiles(log):
 # 每条命令记录时间、完整日志和真实退出码，超时不算行为 RED。
 def command(args, cwd, env, directory, name, timeout):
     return run_logged(args, cwd, env, directory, name, timeout)
+
+
+def binary_hash(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+# 来源和副本都钉在拷贝前的身份；不能把后来的改写当成新的候选。
+def check_reused(binaries):
+    for binary in binaries:
+        for key in ("source", "path"):
+            path = Path(binary[key])
+            if binary_hash(path) != binary["sha256"]:
+                raise RuntimeError(f"reused binary changed: {path}")
 
 
 # 定向套件仍运行真实世界；限制为一个 testcase，避免无关失败污染证明。
@@ -125,6 +140,16 @@ def verify(root: Path, artifacts: Path, fault: str):
     target = directory / "build"
     source_target = Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"])
     target.mkdir()
+    component = "server" if FAULTS[fault][0].startswith("server/") else "app-desktop"
+    reused_name = "osmosis-desktop" if component == "server" else "server"
+    source_binary = source_target / "debug" / reused_name
+    reused = [
+        {
+            "source": str(source_binary),
+            "path": str(target / "debug" / reused_name),
+            "sha256": binary_hash(source_binary),
+        }
+    ]
     (directory / "build-source.json").write_text(
         json.dumps({"candidate": candidate, "source": str(source_target)}, indent=2)
     )
@@ -158,16 +183,18 @@ def verify(root: Path, artifacts: Path, fault: str):
         "--config",
         'profile.dev.package."*".opt-level=0',
         "-p",
-        "app-desktop",
-        "-p",
-        "server",
-        "--features",
-        "app-desktop/mcp",
+        component,
         "--target-dir",
         str(target),
     ]
+    if component == "app-desktop":
+        build.extend(["--features", "mcp"])
     if command(build, snapshot, env, directory, "build", 3600):
         raise RuntimeError("mutation did not compile; this is not a valid RED")
+    build_record = directory / "build.json"
+    record = json.loads(build_record.read_text())
+    record["reused"] = reused
+    build_record.write_text(json.dumps(record, indent=2))
     # 拷来的产物对第三方依赖必须全部命中；有一个重编就是缓存失效，不能悄悄变慢（#189）。
     stale = third_party_compiles((directory / "build.log").read_text(errors="replace"))
     if stale:
@@ -182,6 +209,7 @@ def verify(root: Path, artifacts: Path, fault: str):
     ):
         raise RuntimeError("cannot record mutation binary identity")
     test = FAULTS[fault][1]
+    check_reused(reused)
     status, case = run_case(snapshot, target, directory / "red", test)
     failure = case.find("failure")
     wanted = "175004" if fault in ("recover-reference", "protect-reference") else "175001"
@@ -195,6 +223,7 @@ def verify(root: Path, artifacts: Path, fault: str):
         or f"audio: one did not output {wanted}:" not in failure_text
     ):
         raise AssertionError("mutation must fail a final PCM assertion, not setup/compilation/skip")
+    check_reused(reused)
     green_status, green = run_case(
         root, Path(os.environ["REMOTE_BEHAVIOR_TARGET_DIR"]), directory / "restored", test
     )
