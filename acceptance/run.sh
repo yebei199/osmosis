@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # 累计验收与独立 UI 套件共用入口，开发时可只选状态条回归。
 set -euo pipefail
+if [[ ${1:-all} != subset-args ]] && (( $(ps -o ni= -p "$$") != 0 )); then
+    echo 'behavior tests require normal priority; do not wrap this entry in nice' >&2
+    exit 2
+fi
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # 门禁 accept-check 会把交付自己的 JUnit ID 追在 [select].run 后面(#187)：
@@ -21,10 +26,12 @@ subset_args() {
 
 # audio crate 的验收单测(#192):播放链路的锁与升实时，单元测试就钉得住，不需要窗口
 run_audio() {
+    nix-shell slint.nix --run 'nice -n 19 cargo nextest run --locked -p audio --lib --config-file acceptance/nextest.toml --profile audio --no-tests fail --no-run'
     nix-shell slint.nix --run 'cargo nextest run --locked -p audio --lib --config-file acceptance/nextest.toml --profile audio --no-tests fail'
 }
 
 run_status_ui() {
+    nix-shell slint.nix --run 'nice -n 19 cargo nextest run --locked -p ui --test main -E "test(/^((group_capsule|status_strips|banner|download|login|player_bar|player_bar_reserve|lyrics_page|music_list_layout)::)/)" --config-file acceptance/nextest.toml --profile status-ui --no-tests fail --no-run'
     nix-shell slint.nix --run 'cargo nextest run --locked -p ui --test main -E "test(/^((group_capsule|status_strips|banner|download|login|player_bar|player_bar_reserve|lyrics_page|music_list_layout)::)/)" --config-file acceptance/nextest.toml --profile status-ui --no-tests fail'
 }
 

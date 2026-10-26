@@ -179,6 +179,9 @@ def verify(root: Path, artifacts: Path, fault: str):
     # 两个根包保持候选的依赖 feature 并集，只生成被变异的那个二进制。
     binary = "server" if component == "server" else "osmosis-desktop"
     build = [
+        "nice",
+        "-n",
+        "19",
         "cargo",
         "build",
         "--locked",

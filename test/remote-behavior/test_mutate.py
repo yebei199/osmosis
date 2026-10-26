@@ -58,7 +58,7 @@ def install_build_boundary(monkeypatch, tamper=None):
 
     # 仅替换编译器和真实音频世界；git、复制、摘要与身份校验走实际文件系统。
     def command(args, cwd, env, directory, name, timeout):
-        if args[0] != "cargo":
+        if args[0] != "cargo" and args[:4] != ["nice", "-n", "19", "cargo"]:
             return original(args, cwd, env, directory, name, timeout)
         builds.append(args)
         target = Path(args[args.index("--target-dir") + 1])
@@ -105,6 +105,7 @@ def test_mutation_reuses_other_component_and_records_identity(mutation_world, mo
     builds, runs, compiled = install_build_boundary(monkeypatch)
     mutate.verify(root, artifacts, fault)
     expected = "server" if mutate.FAULTS[fault][0].startswith("server/") else "app-desktop"
+    assert builds[0][:4] == ["nice", "-n", "19", "cargo"]
     assert compiled == ["server" if expected == "server" else "osmosis-desktop"]
     directory = next(artifacts.iterdir())
     binary = "osmosis-desktop" if expected == "server" else "server"
