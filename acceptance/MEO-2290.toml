@@ -1,0 +1,56 @@
+# cpal POLLERR：回调替身验证恢复链。真实 ALSA 故障后的录音证据仍需单独取得。
+
+[[ac]]
+id = "AC-1"
+kind = "new"
+layer = "final"
+entry = "真实 cpal StreamError 输入生产错误入口，再由持流线程 watch 重开"
+observe = "旧流先 drop，同一个 mixer 重开后产生非零 PCM，组锚点保持；连续重开按指数退避到上限"
+tests = [
+  "audio::output::cpal::tests::pollerr_reopens_after_dropping_the_old_stream_and_preserves_pcm_and_anchor",
+  "audio::output::tests::repeated_reopens_back_off_and_a_healthy_stream_resets_the_budget",
+]
+doubles = ["流对象和错误来源代替 ALSA 设备；真实 mixer、错误入口、watch 和 SyncShared，不能证明 PipeWire 故障后的实际录音恢复"]
+mutation = "保留旧 BackendSpecific 分支不置 broken，恢复链测试断言未重开；ready 恒真时退避边界测试失败"
+
+[[ac]]
+id = "AC-2"
+kind = "new"
+layer = "final"
+entry = "持流线程读取累计回调错误与重开失败数"
+observe = "同窗百万次错误不提前产日志，窗末只交出一次增量，空窗无日志，持续重开失败同样有界"
+tests = [
+  "audio::output::tests::error_and_reopen_failure_logs_grow_with_windows_instead_of_callbacks",
+  "audio::output::tests::persistent_open_failures_are_summarized_and_stop_remains_responsive",
+]
+doubles = ["注入 Instant 与累计计数，不依赖墙钟等待"]
+mutation = "窗口改成每次交出计数，第一次窗内断言失败"
+
+[[ac]]
+id = "AC-3"
+kind = "regression"
+layer = "final"
+entry = "cpal 回调输入偶发错误、成功块、xrun、设备失效"
+observe = "单次后端错误不重开，成功块与跨窗打断错误串，xrun 只计数，设备失效仍立即请求重开"
+tests = [
+  "audio::output::cpal::tests::sustained_backend_errors_break_the_stream_but_one_error_and_xruns_do_not",
+  "audio::output::cpal::tests::separated_backend_errors_never_accumulate_into_a_disconnect",
+  "audio::output::cpal::tests::invalid_devices_still_request_immediate_reopen",
+]
+doubles = ["真实 StreamError 枚举代替设备错误来源，注入成功块编号与单调时间"]
+mutation = "所有 BackendSpecific 立刻置 broken，单次错误断言失败；不重置错误串，成功块和 xrun 边界断言失败"
+
+[[ac]]
+id = "AC-4"
+kind = "regression"
+layer = "final"
+entry = "既有音频同步单测与遥控播放的暂停恢复、输出切换"
+observe = "同步播放、起播定位、欠载计数与遥控播放链保持原行为"
+tests = [
+  "audio::sync::tests::a_starved_feed_does_not_advance_the_position",
+  "audio::player::tests::starting_from_a_position_never_plays_the_beginning",
+  "audio::sync::tests::closing_the_output_forgets_the_last_pairing",
+  "test_remote::test_pause_resume",
+  "test_remote::test_switch_output",
+]
+doubles = ["音频单测的 FakeFeed；遥控夹具的独立后端和 null sink"]
