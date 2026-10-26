@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # 完整 CI 入口；所有资源由 pytest 世界登记，失败仍保留证据。
 set -euo pipefail
+if (( $(ps -o ni= -p "$$") != 0 )); then
+    echo 'behavior tests require normal priority; do not wrap this entry in nice' >&2
+    exit 2
+fi
 repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
@@ -48,7 +52,7 @@ export REMOTE_BEHAVIOR_TARGET_DIR="${REMOTE_BEHAVIOR_TARGET_DIR:-$REMOTE_BEHAVIO
 export CARGO_BUILD_BUILD_DIR="$REMOTE_BEHAVIOR_TARGET_DIR"
 export SLINT_EMIT_DEBUG_INFO=1
 unset OSMOSIS_API_BASE SLINT_LIVE_PREVIEW
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 export REMOTE_BEHAVIOR_JOBS="${REMOTE_BEHAVIOR_JOBS:-1}"
 if ! [[ "$REMOTE_BEHAVIOR_JOBS" =~ ^[1-9][0-9]*$ ]]; then
     echo 'REMOTE_BEHAVIOR_JOBS must be a positive integer' >&2
@@ -99,7 +103,7 @@ seed_lock="$artifact_root/seed-target.lock"
 if [[ -d "$seed" && ! -e "$REMOTE_BEHAVIOR_TARGET_DIR" ]]; then
     flock -s "$seed_lock" cp -a --reflink=auto "$seed" "$REMOTE_BEHAVIOR_TARGET_DIR"
 fi
-run_owned build 3600 cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
+run_owned build 3600 nice -n 19 cargo build --locked --config 'profile.dev.package."*".opt-level=0' \
     -p app-desktop -p server --features app-desktop/mcp \
     --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR"
 flock -x "$seed_lock" bash -c 'set -e
@@ -113,6 +117,10 @@ sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
 if [[ "$mode" == all || "$mode" == subset ]]; then
     projection_junit="$repo_root/target/nextest/rb-projection/junit.xml"
     rm -f "$projection_junit"
+    run_owned projection-build 3600 nice -n 19 cargo nextest run --no-run --locked -p ui -p app-desktop -p app-core -p server \
+        --config 'profile.dev.package."*".opt-level=0' \
+        --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR" \
+        --config-file "$suite_dir/nextest.toml" --profile rb-projection --no-tests fail
     run_owned projection 3600 cargo nextest run --locked -p ui -p app-desktop -p app-core -p server \
         --config 'profile.dev.package."*".opt-level=0' \
         --target-dir "$REMOTE_BEHAVIOR_TARGET_DIR" \

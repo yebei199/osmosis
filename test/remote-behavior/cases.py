@@ -6,7 +6,7 @@ from pathlib import Path
 
 from media import DAILY_IDS
 from position import act
-from resources import AudioFailure, wait_until
+from resources import AudioFailure, wait_for_snapshot, wait_until
 
 
 # 首条纵向用例从空组选择目标，再从真实列表/卡墙起播。
@@ -105,10 +105,9 @@ def shuffle_and_loop_projection(world):
     remote_pick(world)
     source = world.controller
     source.ui.shuffle()
-    wait_until(lambda: world.group()["shuffled"], "group shuffle enabled")
+    row = wait_for_snapshot(world.group, lambda value: value["shuffled"], "group shuffle enabled")
     wait_until(source.ui.shuffle_checked, "controller shuffle checked")
     wait_until(world.one.ui.shuffle_checked, "output shuffle checked")
-    row = world.group()
     order = row["play_order"]
     at = order.index(row["entry_id"])
     next_entry = order[(at + 1) % len(order)]
@@ -127,8 +126,6 @@ def shuffle_and_loop_projection(world):
         wait_until(lambda label=label: source.ui.loop_label() == label, "controller " + label)
         wait_until(lambda label=label: world.one.ui.loop_label() == label, "output " + label)
     # 单曲循环必须在曲尾真的重播同一首,音频秒码回到开头。
-    source.ui.playback_options()
-    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
     source.ui.seek(world.media_duration - 5)
     world.sound(world.one, wanted, position=world.media_duration - 5, position_started=time.time())
     repeated = wait_until(
@@ -187,16 +184,19 @@ def group_radio_sequence_end_top_up(world, mode, shuffled):
     source.ui.output(world.one)
     source.ui.radio()
     world.sound(world.one, "175004")
+    seeded = world.group()
     for wanted_mode in ["all", "one"] if mode == "one" else ["all"] if mode == "all" else []:
         source.ui.cycle_loop()
-        wait_until(
-            lambda wanted_mode=wanted_mode: world.group()["loop_mode"] == wanted_mode,
+        seeded = wait_for_snapshot(
+            world.group,
+            lambda value, wanted_mode=wanted_mode: value["loop_mode"] == wanted_mode,
             "radio loop " + wanted_mode,
         )
     if shuffled:
         source.ui.shuffle()
-        wait_until(lambda: world.group()["shuffled"], "radio shuffle enabled")
-    seeded = world.group()
+        seeded = wait_for_snapshot(
+            world.group, lambda value: value["shuffled"], "radio shuffle enabled"
+        )
     original = world.sql(
         "SELECT entry_id, track_id FROM play_queue_entries WHERE queue_id=%s AND revision=%s ORDER BY position",
         (seeded["queue_id"], seeded["revision"]),
@@ -232,8 +232,6 @@ def group_radio_sequence_end_top_up(world, mode, shuffled):
     if mode == "one":
         source.ui.transport("next")
     else:
-        source.ui.playback_options()
-        source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
         source.ui.seek(world.media_duration - 5)
     world.sound(world.one, wanted)
     world.silent(source, world.two)
@@ -302,14 +300,13 @@ def non_radio_list_loop_wraps_without_append(world):
     remote_pick(world)
     source = world.controller
     source.ui.cycle_loop()
-    wait_until(lambda: world.group()["loop_mode"] == "all", "ordinary list loop")
-    original = world.group()
+    original = wait_for_snapshot(
+        world.group, lambda value: value["loop_mode"] == "all", "ordinary list loop"
+    )
     source.ui.transport("next")
     world.sound(world.one, DAILY_IDS[1])
     source.ui.transport("next")
     world.sound(world.one, DAILY_IDS[2])
-    source.ui.playback_options()
-    source.ui.activate(source.ui.must("RoundControl::touch", "收起更多"))
     source.ui.seek(world.media_duration - 5)
     world.sound(world.one, DAILY_IDS[0])
     row = world.group()
@@ -434,16 +431,17 @@ def recover_invalid(world, damage, order, seed):
     install_invalid(world, damage)
     if order == "recovered":
         source.restart()
-        wait_until(
-            lambda: (
-                world.group()["queue_id"] is None
-                and world.group()["revision"] is None
-                and world.group()["entry_id"] is None
+        recovered = wait_for_snapshot(
+            world.group,
+            lambda value: (
+                value["queue_id"] is None
+                and value["revision"] is None
+                and value["entry_id"] is None
             ),
             "persisted recovery",
         )
         # 服务端清空已经落库，还须证明对应版本到达真实客户端。
-        version = world.group()["version"]
+        version = recovered["version"]
         marker = f"\u7ec4\u72b6\u6001: \u7b2c {version} \u7248,"
         wait_until(
             lambda: marker in Path(source.process.log.name).read_text(), "recovered client state"
@@ -665,12 +663,12 @@ def last_output_reconnect(world):
     world.one.gate.cut()
     world.silent(*world.clients)
     # 闸保留服务端半连接,等待生产 30s×两次容忍的最坏相位清退。
-    wait_until(
-        lambda: not world.group()["playing"],
+    paused = wait_for_snapshot(
+        world.group,
+        lambda value: not value["playing"],
         "last output removal pauses group",
         timeout=100,
-    )
-    paused = world.group().copy()
+    ).copy()
     world.one.gate.heal()
     # 真实客户端60s退避带±25%抖动,先等暂停版本到达再点击继续。
     marker = f"组状态: 第 {paused['version']} 版,"
@@ -715,8 +713,10 @@ def server_restart(world):
     prior = world.group().copy()
     world.restart_server()
     world.silent(*world.clients)
-    wait_until(lambda: not world.group()["playing"], "server restart pause")
-    assert world.group()["version"] >= prior["version"]
+    paused = wait_for_snapshot(
+        world.group, lambda value: not value["playing"], "server restart pause"
+    )
+    assert paused["version"] >= prior["version"]
     world.controller.ui.transport("resume")
     world.sound(world.one, DAILY_IDS[0])
     world.silent(world.controller, world.two)

@@ -5,6 +5,10 @@
 #   last-green  最近一次全绿的提交；history.tsv  每轮的时间、提交、结果；runs/  每轮日志与地图。
 # OSMOSIS_NIGHTLY_PRINT_MAP=1 时把地图打到标准输出，供 remote-run 这类只带回输出的调用取回。
 set -euo pipefail
+if (( $(ps -o ni= -p "$$") != 0 )); then
+    echo 'behavior tests require normal priority; do not wrap this entry in nice' >&2
+    exit 2
+fi
 repo=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 cd "$repo"
 state=${OSMOSIS_NIGHTLY_STATE:-${XDG_CACHE_HOME:-$HOME/.cache}/osmosis-nightly}

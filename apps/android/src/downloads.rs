@@ -264,7 +264,9 @@ fn parse_entries(
         ));
     }
     fields
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|entry| {
             let size = entry[2]
                 .parse::<u64>()

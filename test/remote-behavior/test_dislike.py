@@ -2,8 +2,10 @@
 
 import json
 import re
+import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from unittest.mock import Mock
@@ -12,7 +14,7 @@ import pytest
 
 import resources
 from media import Media
-from resources import wait_until
+from resources import wait_for_snapshot, wait_until
 from test_remote import world as base_world  # noqa: F401
 
 REASONS = {
@@ -50,7 +52,8 @@ def read_api(world, path):
         f"http://127.0.0.1:{world.server_port}{path}",
         headers={"Authorization": "Bearer " + session["token"]},
     )
-    with urllib.request.urlopen(request, timeout=8) as response:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=8) as response:
         return json.load(response)
 
 
@@ -103,7 +106,7 @@ def button(ui, label):
         element["handle"]
         for element in tree(ui)
         if element.get("accessibleLabel") == label
-        and element.get("accessibleRole") in ("Button", "Checkbox")
+        and element.get("accessibleRole") in ("Button", "Checkbox", "Tab")
         and ui.visible(element["handle"])
     ]
     assert len(matches) == 1, f"expected one visible button {label!r}, got {len(matches)}"
@@ -112,6 +115,37 @@ def button(ui, label):
 
 def activate(ui, label):
     ui.activate(button(ui, label))
+
+
+@pytest.mark.parametrize("role", ["Button", "Checkbox", "Tab"])
+def test_dislike_control_locator_uses_visible_interactive_role(tmp_path, role):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.return_value = {
+        "truncated": False,
+        "elements": [
+            {"handle": "text", "accessibleLabel": "设置", "accessibleRole": "Text"},
+            {"handle": "hidden", "accessibleLabel": "设置", "accessibleRole": "Tab"},
+            {"handle": "target", "accessibleLabel": "设置", "accessibleRole": role},
+        ],
+    }
+    ui.visible.side_effect = lambda handle: handle != "hidden"
+    activate(ui, "设置")
+    ui.activate.assert_called_once_with("target")
+
+
+def test_dislike_control_locator_rejects_ambiguous_labels(tmp_path):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.return_value = {
+        "truncated": False,
+        "elements": [
+            {"handle": handle, "accessibleLabel": "设置", "accessibleRole": "Tab"}
+            for handle in ("first", "second")
+        ],
+    }
+    ui.visible.return_value = True
+    with pytest.raises(AssertionError, match="got 2"):
+        activate(ui, "设置")
+    ui.activate.assert_not_called()
 
 
 # 列表刷新与 MCP 查询可交错,从同一份树快照取身份、标签及几何。
@@ -212,6 +246,179 @@ def playing_title(ui, title):
     return None
 
 
+# 保存前定位；后续只读同一实例，失效重定位仍计入绝对观测时间。
+class PlaybackBar:
+    def __init__(self, ui):
+        self.ui = ui
+        self.relocated = False
+        self.handle = self.locate()
+
+    def locate(self):
+        handles = self.ui.call(
+            "query_element_descendants",
+            elementHandle=self.ui.root,
+            findAll=True,
+            queryStack=[{"matchElementTypeName": "PlayerBar"}],
+        ).get("elementHandles", [])
+        visible = [handle for handle in handles if self.ui.visible(handle)]
+        assert len(visible) == 1, f"expected one visible playback bar, got {len(visible)}"
+        return visible[0]
+
+    # acceptance/181.toml：「created_at 到真实播放条下一首≤1秒」；「播放条1秒证明投影及时，PCM证明实际下一曲」，计时不含播放态。
+    def projected(self, title, artist=None):
+        return self.observe(title, artist, require_playing=False)
+
+    def playing(self, title, artist=None):
+        return self.observe(title, artist, require_playing=True)
+
+    def observe(self, title, artist, require_playing):
+        try:
+            return self.read(title, artist, require_playing)
+        except RuntimeError as error:
+            invalid_handle = any(
+                message in str(error)
+                for message in ("Invalid handle", "element that was destroyed")
+            )
+            if self.relocated or not invalid_handle:
+                raise
+            self.relocated = True
+            self.handle = self.locate()
+            return self.read(title, artist, require_playing)
+
+    def read(self, title, artist, require_playing):
+        started = time.time()
+        try:
+            result = self.ui.call("get_element_tree", elementHandle=self.handle, maxElements=1000)
+        except RuntimeError as error:
+            self.record(
+                {
+                    "started_at": started,
+                    "observed_at": time.time(),
+                    "require_playing": require_playing,
+                    "error": str(error),
+                }
+            )
+            raise
+        observed_at = time.time()
+        assert not result["truncated"]
+        labels = [item.get("accessibleLabel") for item in result["elements"]]
+        self.record(
+            {
+                "started_at": started,
+                "observed_at": observed_at,
+                "require_playing": require_playing,
+                "labels": labels,
+            }
+        )
+        matches_artist = artist is None or artist in labels
+        matches_play_state = not require_playing or "暂停" in labels
+        return observed_at if title in labels and matches_artist and matches_play_state else None
+
+    def record(self, observation):
+        with (self.ui.client.directory / "dislike-playback-observations.jsonl").open("a") as log:
+            log.write(json.dumps(observation, ensure_ascii=False) + "\n")
+
+
+def test_playback_bar_reads_prepared_handle_once_per_poll(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.call.side_effect = lambda name, **kwargs: (
+        {"elementHandles": ["bar"]}
+        if name == "query_element_descendants"
+        else {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song (Live)"}, {"accessibleLabel": "暂停"}],
+        }
+    )
+    ui.visible.return_value = True
+    bar = PlaybackBar(ui)
+    ui.call.reset_mock()
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song (Live)") == 12.5
+    ui.call.assert_called_once_with("get_element_tree", elementHandle="bar", maxElements=1000)
+    ui.visible.assert_called_once_with("bar")
+
+
+@pytest.mark.parametrize("error", ["Invalid handle", "element that was destroyed"])
+def test_playback_bar_relocates_only_once_without_adjusting_time(tmp_path, monkeypatch, error):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["old"]},
+        RuntimeError(error),
+        {"elementHandles": ["new"]},
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song (Live)"}, {"accessibleLabel": "暂停"}],
+        },
+        RuntimeError(error),
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 15.0)
+    assert bar.playing("Song (Live)") == 15.0
+    with pytest.raises(RuntimeError, match=error):
+        bar.playing("Song (Live)")
+    assert ui.call.call_count == 5
+
+
+def test_playback_bar_preserves_old_title_and_observation_time(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["bar"]},
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": "Song"}, {"accessibleLabel": "暂停"}],
+        },
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song (Live)") is None
+    observations = [
+        json.loads(line)
+        for line in (tmp_path / "dislike-playback-observations.jsonl").read_text().splitlines()
+    ]
+    assert observations[-1]["observed_at"] == 12.5
+    assert observations[-1]["labels"] == ["Song", "暂停"]
+
+
+def test_playback_bar_distinguishes_same_title_with_target_artist(tmp_path, monkeypatch):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    ui.call.side_effect = [
+        {"elementHandles": ["bar"]},
+        {
+            "truncated": False,
+            "elements": [
+                {"accessibleLabel": value} for value in ("Song", "Artist A / Artist B", "暂停")
+            ],
+        },
+        {
+            "truncated": False,
+            "elements": [{"accessibleLabel": value} for value in ("Song", "Artist C", "暂停")],
+        },
+    ]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.playing("Song", "Artist C") is None
+    assert bar.playing("Song", "Artist C") == 12.5
+
+
+def test_playback_bar_times_projection_while_buffering_without_claiming_playback(
+    tmp_path, monkeypatch
+):
+    ui = Mock(root="root", client=Mock(directory=tmp_path))
+    ui.visible.return_value = True
+    buffering = {
+        "truncated": False,
+        "elements": [{"accessibleLabel": value} for value in ("Other", "Artist A", "播放")],
+    }
+    ui.call.side_effect = [{"elementHandles": ["bar"]}, buffering, buffering]
+    bar = PlaybackBar(ui)
+    monkeypatch.setattr(time, "time", lambda: 12.5)
+    assert bar.projected("Other", "Artist A") == 12.5
+    assert bar.playing("Other", "Artist A") is None
+
+
 def open_reasons(client, entry):
     if entry == "drawer":
         client.ui.playback_options()
@@ -295,13 +502,176 @@ def choose(world, reason):
     return saved[0]
 
 
+# 保存动作与核查期间持续观察，第一次匹配的原始时间不能被收尾工作替换。
+def choose_and_watch(world, reason, group=False):
+    bar = PlaybackBar(world.controller.ui)
+    title, artists = CATALOG[NEXT[reason]]
+    artist = " / ".join(name for _, name in artists)
+    started, stop = threading.Event(), threading.Event()
+
+    def observe():
+        started.set()
+        while not stop.is_set():
+            switched = bar.projected(title, artist)
+            if switched is not None:
+                return switched
+            stop.wait(resources.POLL)
+        return None
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="dislike-watch") as observer:
+        observation = observer.submit(observe)
+        try:
+            assert started.wait(resources.TIMEOUT), "playback observer did not start"
+            saved = choose(world, reason)
+            if group:
+                wait_until(
+                    lambda: current_group_track(world) == NEXT[reason],
+                    "group skips duplicate",
+                    timeout=1,
+                )
+            # 库时间决定截止；在途读取保留完成时间，由调用方的一秒断言判断。
+            remaining = max(0, saved["created_at"].timestamp() + 1 - time.time())
+            try:
+                observation.result(timeout=remaining)
+            except TimeoutError:
+                if observation.done():
+                    observation.result()
+        finally:
+            stop.set()
+    switched = observation.result()
+    if switched is None:
+        raise TimeoutError(
+            "playback observer did not see the next track projection before stopping"
+        )
+    assert switched >= saved["created_at"].timestamp(), (
+        "next title observed before the rule was saved"
+    )
+    assert 0 <= switched - saved["created_at"].timestamp() <= 1, (
+        "next-track projection exceeded one second"
+    )
+    wait_until(lambda: bar.playing(title, artist), "next song playback state")
+    return saved, switched
+
+
+def test_saved_playback_observer_runs_during_choose_and_keeps_first_time(monkeypatch):
+    polled = threading.Event()
+    clock = {"now": 100.1}
+    saved = {"created_at": datetime.fromtimestamp(100.0)}
+    bar = Mock()
+
+    def playing(*args):
+        polled.set()
+        return 100.25
+
+    def save(*args):
+        assert polled.wait(1), "title observation did not start before choose"
+        clock["now"] = 101.5
+        return saved
+
+    bar.projected.side_effect = playing
+    bar.playing.return_value = 101.6
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    monkeypatch.setattr(time, "time", lambda: clock["now"])
+    assert choose_and_watch(Mock(), "exact") == (saved, 100.25)
+
+
+def test_saved_playback_observer_rejects_a_match_before_rule_save(monkeypatch):
+    bar = Mock()
+    bar.projected.return_value = 99.9
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    with pytest.raises(AssertionError, match="before the rule was saved"):
+        choose_and_watch(Mock(), "exact")
+
+
+def test_saved_playback_observer_stops_if_choose_fails(monkeypatch):
+    polled = threading.Event()
+    bar = Mock()
+    bar.projected.side_effect = lambda *args: polled.set()
+
+    def save(*args):
+        assert polled.wait(1), "title observation did not start before choose"
+        raise ValueError("rule save failed")
+
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    with pytest.raises(ValueError, match="rule save failed"):
+        choose_and_watch(Mock(), "exact")
+    assert not any(thread.name.startswith("dislike-watch") for thread in threading.enumerate())
+
+
+def test_saved_playback_observer_fails_without_a_title_observation(monkeypatch):
+    bar = Mock()
+    bar.projected.return_value = None
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    monkeypatch.setattr(time, "time", lambda: 102.0)
+    with pytest.raises(TimeoutError, match="playback observer did not see"):
+        choose_and_watch(Mock(), "exact")
+
+
+def test_saved_playback_waits_for_play_state_without_replacing_projection_time(monkeypatch):
+    polled = threading.Event()
+    state = {"playing": False}
+    saved = {"created_at": datetime.fromtimestamp(100.0)}
+    bar = Mock()
+    bar.projected.side_effect = lambda *args: polled.set() or 100.25
+
+    def playing(*args):
+        state["playing"] = True
+        return 101.5
+
+    def save(*args):
+        assert polled.wait(1)
+        return saved
+
+    bar.playing.side_effect = playing
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(choose_and_watch.__globals__, "choose", save)
+    monkeypatch.setattr(time, "time", lambda: 100.5)
+    assert choose_and_watch(Mock(), "exact") == (saved, 100.25)
+    assert state["playing"], "projection alone must not prove actual play state"
+
+
+def test_saved_playback_fails_when_play_state_never_follows_projection(monkeypatch):
+    bar = Mock()
+    bar.projected.return_value = 100.25
+    bar.playing.return_value = None
+    monkeypatch.setitem(choose_and_watch.__globals__, "PlaybackBar", lambda ui: bar)
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "choose",
+        lambda *args: {"created_at": datetime.fromtimestamp(100.0)},
+    )
+    monkeypatch.setattr(time, "time", lambda: 100.5)
+    original_wait = wait_until
+    monkeypatch.setitem(
+        choose_and_watch.__globals__,
+        "wait_until",
+        lambda predicate, label: original_wait(predicate, label, timeout=0.01),
+    )
+    with pytest.raises(TimeoutError, match="next song playback state"):
+        choose_and_watch(Mock(), "exact")
+
+
 # 当前批、未来重载以及设置页撤销分别观察，不以一次过滤替代全部结果。
 def assert_filtered(world, reason):
     ui = world.controller.ui
     daily(ui)
     expected = [CATALOG[key][0] for key in CATALOG if key not in BLOCKED[reason]]
-    wait_until(lambda: rows(ui) == expected, "daily applies saved rule")
-    assert rows(ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(ui), lambda value: value == expected, "daily applies saved rule"
+    )
+    assert observed == expected
     activate(ui, "展开播放页")
     ui.activate(ui.must("PlayPage::queue-entry-touch"), pointer=True)
 
@@ -316,8 +686,10 @@ def assert_filtered(world, reason):
         return visible[0] if len(visible) == 1 else None
 
     queue = wait_until(visible_queue, "visible queue page")
-    wait_until(lambda: rows(ui, queue) == expected, "queue applies saved rule")
-    assert rows(ui, queue) == expected, "existing queue must hide every matching entry"
+    observed = wait_for_snapshot(
+        lambda: rows(ui, queue), lambda value: value == expected, "queue applies saved rule"
+    )
+    assert observed == expected, "existing queue must hide every matching entry"
     ui.call("dispatch_key_event", windowHandle=ui.window, text="\x1b")
 
 
@@ -330,13 +702,8 @@ def test_dislike_saves_skips_and_filters(dislike_world, entry, reason):
     source.ui.pick("list")
     world.sound(source, "175001", group=False)
     open_reasons(source, entry)
-    saved = choose(world, reason)
+    saved, switched = choose_and_watch(world, reason)
     wanted = NEXT[reason]
-    switched = wait_until(
-        lambda: playing_title(source.ui, CATALOG[wanted][0]),
-        "next song UI after saved rule",
-        timeout=1,
-    )
     elapsed = switched - saved["created_at"].timestamp()
     (world.directory / "dislike-latency.json").write_text(
         json.dumps(
@@ -365,11 +732,7 @@ def test_dislike_remote_output_and_future_advance(dislike_world):
     source.ui.pick("list")
     world.sound(world.one, "175001")
     open_reasons(source, "drawer")
-    saved = choose(world, "exact")
-    wait_until(lambda: current_group_track(world) == "175003", "group skips duplicate", timeout=1)
-    switched = wait_until(
-        lambda: playing_title(source.ui, "Song (Live)"), "group playback bar updates", timeout=1
-    )
+    saved, switched = choose_and_watch(world, "exact", group=True)
     saved_at = saved["created_at"].timestamp()
     assert 0 <= switched - saved_at <= 1
     group = world.group()
@@ -421,17 +784,22 @@ def test_dislike_restart_persists_and_settings_unblock_restores(dislike_world):
     world.sound(source, "175004", group=False)
     source.restart()
     daily(source.ui)
-    wait_until(lambda: rows(source.ui) == ["Other", "Song", "Safe"], "restart loads saved rules")
-    assert rows(source.ui) == ["Other", "Song", "Safe"]
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == ["Other", "Song", "Safe"],
+        "restart loads saved rules",
+    )
+    assert observed == ["Other", "Song", "Safe"]
     activate(source.ui, "设置")
     activate(source.ui, "恢复 " + saved["label"])
     wait_until(lambda: not rules(world), "unblocked rule deleted")
     daily(source.ui)
-    wait_until(
-        lambda: rows(source.ui) == [value[0] for value in CATALOG.values()],
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda snapshot: snapshot == [value[0] for value in CATALOG.values()],
         "unblock reload completes",
     )
-    assert rows(source.ui) == [value[0] for value in CATALOG.values()]
+    assert observed == [value[0] for value in CATALOG.values()]
 
 
 # 放弃理由/多歌手选择都不得偷偷保存；现有赞保留为反馈，不新增规则。
@@ -451,8 +819,8 @@ def test_dislike_cancel_and_existing_praise(dislike_world):
     assert not rules(world) and not feedback(world)
     source.ui.playback_options()
     activate(source.ui, "点赞")
-    wait_until(lambda: feedback(world), "existing praise saved")
-    assert feedback(world) == [{"track_id": "175001", "verdict": 1}]
+    observed = wait_until(lambda: feedback(world), "existing praise saved")
+    assert observed == [{"track_id": "175001", "verdict": 1}]
     assert not rules(world)
     world.sound(source, "175001", group=False)
 
@@ -469,8 +837,10 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     source.ui.music("radio")
     # #186:起播即移进「已听过」,所以正在放的 Song (Live) 不在未听过那一半。
     expected = ["Other", "Song", "Safe"]
-    wait_until(lambda: rows(source.ui) == expected, "radio applies saved rule")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui), lambda value: value == expected, "radio applies saved rule"
+    )
+    assert observed == expected
     # 「已听过」那一半同样过屏蔽规则:播过的 Song 被规则藏住,只剩 Song (Live)。
     activate(source.ui, "已听过")
     wait_until(lambda: rows(source.ui) == ["Song (Live)"], "heard half applies saved rule")
@@ -485,12 +855,41 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
     (world.directory / "dislike-radio-heard.json").write_text(json.dumps(heard))
     source.restart()
     source.ui.radio()
-    wait_until(lambda: rows(source.ui), "new radio batch")
-    # 新批次也排除刚实际播过的 Song (Live),不只排除命中规则的两条歌。
-    fresh = ["Other", "Song", "Safe"]
-    wait_until(lambda: rows(source.ui) == fresh, "new radio batch applies blocks and history")
-    assert rows(source.ui) == fresh
     world.sound(source, "175004", group=False)
+    heard = wait_until(
+        lambda: world.sql(
+            "SELECT track_id FROM play_events WHERE account_id=%s AND track_id=%s",
+            (world.account, "175004"),
+        ),
+        "restarted radio track recorded as heard",
+    )
+    (world.directory / "dislike-radio-restart-heard.json").write_text(json.dumps(heard))
+    # acceptance/186.toml AC-2：起播即移入 heard，两个分区来自同一份应答。
+    expected_ids = {"tracks": ["175005", "175006"], "heard": ["175003", "175004"]}
+
+    def partitions():
+        snapshot = read_api(world, "/radio/list")
+        return {key: [track["id"] for track in snapshot[key]] for key in expected_ids}
+
+    observed = wait_for_snapshot(
+        partitions, lambda value: value == expected_ids, "radio blocks and history in both halves"
+    )
+    assert observed == expected_ids
+    (world.directory / "dislike-radio-partitions.json").write_text(json.dumps(observed))
+    fresh = ["Song", "Safe"]
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == fresh,
+        "new radio batch applies blocks and history",
+    )
+    assert observed == fresh
+    activate(source.ui, "已听过")
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == ["Song (Live)", "Other"],
+        "restarted heard half applies saved rule",
+    )
+    assert observed == ["Song (Live)", "Other"]
 
 
 # 写入失败必须回滚点踩且不移除/跳过当前曲；故障只存在本用例的私有库。
@@ -524,8 +923,12 @@ def test_dislike_artist_picker_uses_selected_artist(dislike_world):
     world.sound(source, "175002", group=False)
     daily(source.ui)
     expected = [CATALOG[key][0] for key in CATALOG if key != "175001"]
-    wait_until(lambda: rows(source.ui) == expected, "selected artist or legacy rule filtered")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == expected,
+        "selected artist or legacy rule filtered",
+    )
+    assert observed == expected
 
 
 # 老账号的按 id 规则继续过滤和展示，恢复时不误删其他规则。
@@ -539,17 +942,22 @@ def test_dislike_legacy_id_rule_can_be_restored(dislike_world):
     source.restart()
     daily(source.ui)
     expected = [CATALOG[key][0] for key in CATALOG if key != "175001"]
-    wait_until(lambda: rows(source.ui) == expected, "selected artist or legacy rule filtered")
-    assert rows(source.ui) == expected
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda value: value == expected,
+        "selected artist or legacy rule filtered",
+    )
+    assert observed == expected
     activate(source.ui, "设置")
     activate(source.ui, "恢复 Legacy Song")
     wait_until(lambda: not rules(world), "legacy rule restored")
     daily(source.ui)
-    wait_until(
-        lambda: rows(source.ui) == [value[0] for value in CATALOG.values()],
+    observed = wait_for_snapshot(
+        lambda: rows(source.ui),
+        lambda snapshot: snapshot == [value[0] for value in CATALOG.values()],
         "unblock reload completes",
     )
-    assert rows(source.ui) == [value[0] for value in CATALOG.values()]
+    assert observed == [value[0] for value in CATALOG.values()]
 
 
 # 屏蔽非当前曲目不能跳歌；删掉中间条目后，下一首仍是当前曲目的原后继。

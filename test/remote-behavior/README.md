@@ -8,8 +8,13 @@ namespace 承接桌面单实例锁与编译期 API 地址；每个客户端使�
 定义，`cases.py` 实现用户路径。`ui.py` 沿用既有 MCP；`resources.py` 登记与回收本轮资源；
 `media.py` 只供应外部目录和确定素材，同时独立识别 monitor PCM；`bridge.py` 在目标
 namespace 请求该客户端的 MCP。
+行为入口必须以正常优先级启动，拒绝继承 nice；编译单独使用 nice 19 和四个构建任务。
+nextest 先以 `--no-run` 完成低优先级编译，再以原参数正常运行，客户端与服务端不继承编译优先级。
 测试失败保留资源日志与 PCM，临时进程和数据库仍精确清理。`mutate.py` 只改临时固定快照，
 保留每一种独立变异的 patch 和行为失败结果。
+
+动态列表和组状态用 `resources.wait_for_snapshot` 返回等待命中的快照，断言不再重新读取。
+`test_resources.py` 验证命中值、空值、超时及错误传播；动作后对另一真相源的检查仍独立进行。
 
 不验证 Android 原生集成、物理扬声器或全部声卡驱动。#175 测试设计已经审过，正在执行
 真实链路验证；运行结果与未决项以本树 `.dispatch/175-handoff-*` 的固定候选报告为准，

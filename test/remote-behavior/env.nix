@@ -1,9 +1,7 @@
 # 复用项目开发 shell，追加本套件自己的隔离与软件音频依赖。
+# 与嵌套启动的 slint.nix 同用宿主 channel，避免 proc-macro 构建与加载时 glibc 不一致。
 {
-  pkgs ? import (builtins.fetchTarball {
-    url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1070934.1927682e0d80/nixexprs.tar.xz";
-    sha256 = "sha256-sDGcZgdRVR58ceKz0RmkBtdUomBvu5vzbf6Aw5rUCo0=";
-  }) { },
+  pkgs ? import <nixpkgs> { },
 }:
 let
   base = import ../../slint.nix { inherit pkgs; };
@@ -16,9 +14,9 @@ base.overrideAttrs (old: {
   nativeBuildInputs =
     (old.nativeBuildInputs or [ ])
     ++ (with pkgs; [
-      cargo
       cargo-nextest
-      rustc
+      # cargo/rustc 由 rustup 读取仓库钉版，不能被 nixpkgs 的工具链覆盖。
+      rustup
       uv
       python3
       passt
@@ -30,10 +28,10 @@ base.overrideAttrs (old: {
       iproute2
       xorg-server
       mesa
-      # 每晚全量生成覆盖地图；版本须与 rustc 自带的 LLVM 一致才读得懂 profraw。
-      rustc.llvmPackages.llvm
     ]);
   shellHook = (old.shellHook or "") + ''
+    # 覆盖率工具跟随同一 rustup 工具链的 llvm-tools-preview。
+    export PATH="$(dirname "$(rustc --print target-libdir)")/bin:$PATH"
     export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
     export REMOTE_BEHAVIOR_PYTHON="${pkgs.python3}/bin/python3"
     export SLINT_WGPU_CPU=1

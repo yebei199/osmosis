@@ -27,6 +27,10 @@ LABELS = {
 }
 
 
+class RejectedHandleError(RuntimeError):
+    """MCP 明确在动作派发之前拒绝了失效句柄。"""
+
+
 # namespace 内的 HTTP 请求保留生产 UI 事件分派与网络路径。
 class UI:
     def __init__(self, client):
@@ -75,7 +79,27 @@ class UI:
                 )
             raise ConnectionError(f"MCP bridge failed ({result.returncode}): {result.stderr}")
         reply = json.loads(result.stdout)
+        with (self.client.directory / "mcp-responses.jsonl").open("a") as log:
+            log.write(
+                json.dumps({"tool": name, "arguments": safe_arguments, "reply": reply}) + "\n"
+            )
         if reply.get("error") or reply.get("result", {}).get("isError"):
+            rejected = reply.get("result", {})
+            messages = [item.get("text") for item in rejected.get("content", [])]
+            if (
+                name in ("click_element", "invoke_accessibility_action")
+                and rejected.get("isError")
+                and any(
+                    message
+                    in (
+                        f"Error: Element handle for {name} refers to element that was destroyed",
+                        "Error: Invalid handle",
+                        "Invalid handle",
+                    )
+                    for message in messages
+                )
+            ):
+                raise RejectedHandleError(f"MCP {name}: {reply}")
             raise RuntimeError(f"MCP {name}: {reply}")
         return json.loads(reply["result"]["content"][0]["text"])
 
@@ -105,20 +129,44 @@ class UI:
     # 几何只用于选屏内实例和控件相对拖动，不持久保存坐标。
     def visible(self, handle):
         p = self.call("get_element_properties", elementHandle=handle)
+        return self.visible_properties(p)
+
+    @staticmethod
+    def visible_properties(p):
         x, y = p["absolutePosition"].get("x", 0), p["absolutePosition"].get("y", 0)
         size = p["size"]
         return size["width"] > 0 and size["height"] > 0 and 0 <= x < 1100 and 0 <= y < 900
 
-    # 多个 PlayerBar 实例时限定屏内控件，并拒绝无匹配。
+    # 动态控件销毁后只从根重查一次；标签与可见性共用快照，不重放动作。
     def find(self, element_id, label=None, prefix=False):
-        for handle in self.elements(element_id):
-            properties = self.call("get_element_properties", elementHandle=handle)
-            value = properties.get("accessibleLabel") or ""
-            if label is not None and not (value.startswith(label) if prefix else value == label):
-                continue
-            if self.visible(handle):
-                return handle
-        return None
+        for rescanned in (False, True):
+            for handle in self.elements(element_id):
+                try:
+                    properties = self.call("get_element_properties", elementHandle=handle)
+                except RuntimeError as error:
+                    expired = any(
+                        message in str(error)
+                        for message in ("Invalid handle", "element that was destroyed")
+                    )
+                    if rescanned or not expired:
+                        raise
+                    break
+                value = properties.get("accessibleLabel") or ""
+                if label is not None and not (
+                    value.startswith(label) if prefix else value == label
+                ):
+                    continue
+                if self.visible_properties(properties):
+                    if not hasattr(self, "_action_targets"):
+                        self._action_targets = {}
+                    self._action_targets[json.dumps(handle, sort_keys=True)] = (
+                        element_id,
+                        label,
+                        prefix,
+                    )
+                    return handle
+            else:
+                return None
 
     # 必需入口缺失是初始化/测试设计失败，不能认作 RED。
     def must(self, element_id, label=None, prefix=False):
@@ -126,10 +174,29 @@ class UI:
 
     # 列表行走真实命中分派，语义按钮走控件声明的无障碍动作。
     def activate(self, handle, pointer=False, action="Default_"):
-        if pointer:
-            self.call("click_element", elementHandle=handle)
-        else:
-            self.call("invoke_accessibility_action", elementHandle=handle, action=action)
+        tool = "click_element" if pointer else "invoke_accessibility_action"
+        arguments = {} if pointer else {"action": action}
+        try:
+            self.call(tool, elementHandle=handle, **arguments)
+        except RejectedHandleError as error:
+            target = getattr(self, "_action_targets", {}).get(json.dumps(handle, sort_keys=True))
+            if target is None:
+                raise
+            fresh = self.must(*target)
+            with (self.client.directory / "ui-action-reissues.jsonl").open("a") as log:
+                log.write(
+                    json.dumps(
+                        {
+                            "rejected": handle,
+                            "error": str(error),
+                            "target": target,
+                            "reissued": fresh,
+                            "tool": tool,
+                        }
+                    )
+                    + "\n"
+                )
+            self.call(tool, elementHandle=fresh, **arguments)
 
     # 标签在 HoverButton 根，点击落在同一按钮的唯一可见 touch。
     def login_submit(self, page):
@@ -189,9 +256,10 @@ class UI:
         self.activate(self.login_submit(page), pointer=True)
         wait_until(lambda: not self.elements("LoginPage::username"), "login completion")
 
-    # Escape 沿用已有 pick-e2e 的收起动作，随后进入音乐主 tab。
+    # 抽屉显式收起；Escape 只负责收播放页，不能替代抽屉按钮。
     # 一级目的地按全名找(MEO-1876):宽版式在侧栏,紧凑版式在底栏或「更多」面板里。
     def destination(self, label):
+        self.close_playback_options()
         self.call("dispatch_key_event", windowHandle=self.window, text="\x1b")
         handle = self.find("SideNavRow::touch", label) or self.find("NavItem::touch", label)
         if not handle:
@@ -234,6 +302,7 @@ class UI:
 
     # 控制条的可访问标签随真实播放状态改变。
     def transport(self, operation):
+        self.close_playback_options()
         try:
             handle = self.must("RoundControl::touch", LABELS[operation])
         except TimeoutError:
@@ -294,6 +363,7 @@ class UI:
 
     # seek 位置基于元素实时几何，进入 ProgressBar 的真实指针处理。
     def seek(self, seconds):
+        self.close_playback_options()
         handle = self.must("ProgressBar::seek-touch")
         p = self.call("get_element_properties", elementHandle=handle)
         point = p["absolutePosition"]
@@ -313,8 +383,44 @@ class UI:
 
     # 展开常驻控制条的更多菜单,复用语义按钮定位开关。
     def playback_options(self):
-        if not self.find("DrawerRow::touch", "随机播放"):
-            self.activate(self.must("RoundControl::touch", "更多"))
+        self.open_playback_options()
+
+    # 只对确认关闭的开关发动作；成功后等展开，不用重复点击纠正状态。
+    def open_playback_options(self):
+        toggle = self.find("RoundControl::touch", "收起更多") or self.must(
+            "RoundControl::touch", "更多"
+        )
+        if self.call("get_element_properties", elementHandle=toggle).get(
+            "accessibleChecked", False
+        ):
+            return
+        self.activate(toggle)
+
+        def opened():
+            toggle = self.find("RoundControl::touch", "收起更多")
+            return (
+                toggle is not None
+                and self.call("get_element_properties", elementHandle=toggle).get(
+                    "accessibleChecked", False
+                )
+            ) or self.find("DrawerRow::touch")
+
+        wait_until(opened, "playback drawer open")
+
+    # 遮罩会消费条外的第一次点击，先走真实关闭按钮并确认状态再离开。
+    def close_playback_options(self):
+        close = self.find("RoundControl::touch", "收起更多")
+        if close is None:
+            return
+        self.activate(close, pointer=True)
+
+        def closed():
+            more = self.find("RoundControl::touch", "更多")
+            return more is not None and not self.call(
+                "get_element_properties", elementHandle=more
+            ).get("accessibleChecked", False)
+
+        wait_until(closed, "playback drawer closed")
 
     # 读取真实可访问状态,不以服务端的状态替代按钮显示。
     def shuffle_checked(self):
@@ -343,6 +449,7 @@ class UI:
 
     # 从收起后的胶囊打开面板，再点击面板内唯一的退出按钮。
     def leave(self):
+        self.close_playback_options()
         self.activate(self.must("MainWindow::group-capsule"), pointer=True)
         panel = self.must("MainWindow::group-panel")
         buttons = self.call(

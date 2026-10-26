@@ -54,6 +54,15 @@ def wait_until(predicate, label, timeout=TIMEOUT):
     raise TimeoutError(f"not ready: {label}")
 
 
+# 元组保留命中时的值，空列表等假值快照也能返回；不在等待之后重读。
+def wait_for_snapshot(read, matches, label, timeout=TIMEOUT):
+    def observe():
+        snapshot = read()
+        return (snapshot,) if matches(snapshot) else None
+
+    return wait_until(observe, label, timeout=timeout)[0]
+
+
 # 读取本进程持有的实际监听 socket，server 可绑定 port 0。
 def listener_port(process):
     process.alive()
@@ -242,6 +251,7 @@ class Client:
             "XDG_RUNTIME_DIR": str(runtime),
             "TMPDIR": str(self.directory / "tmp"),
             "DISPLAY": world.display,
+            "OSMOSIS_ISOLATED_DISPLAY": world.display,
             "SLINT_MCP_PORT": "8091",
             "RUST_LOG": "info,ui=debug",
         }
@@ -674,8 +684,7 @@ class World:
                 ],
                 pass_fds=(output.fileno(),),
             )
-        wait_until(lambda: display_file.read_text().strip(), "Xvfb display")
-        self.display = ":" + display_file.read_text().strip()
+        self.display = ":" + wait_until(lambda: display_file.read_text().strip(), "Xvfb display")
         self.username = self.directory.name
         self.password = self.directory.name + "-password"
         self.request(
@@ -723,7 +732,8 @@ class World:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=8) as response:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=8) as response:
             return json.load(response)
 
     # SQL 参数化且数据库独有，生命周期现场只在此库制造。

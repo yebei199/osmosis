@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from media import DAILY_IDS, Media
-from resources import Client, World, wait_until
+from resources import Client, World, wait_for_snapshot, wait_until
 
 
 # 只替换外部音源：提供可逐字节比较的 MP3，生产 server 与客户端照常传输。
@@ -129,17 +129,9 @@ def start_download(world, mode, outcome, index=0):
     wait_until(lambda: bool(world.sql("SELECT id FROM play_events")), "selected track play event")
     world.media.download_mode = outcome
 
-    def open_drawer():
-        try:
-            client.ui.activate(client.ui.must("RoundControl::touch", "更多"))
-            return True
-        except RuntimeError as error:
-            if "element that was destroyed" not in str(error):
-                raise
-            return False
-
-    wait_until(open_drawer, "current playback drawer")
+    client.ui.open_playback_options()
     client.ui.activate(client.ui.must("DrawerRow::touch", "下载这一首"))
+    client.ui.close_playback_options()
     return client.directory / "home/Music/osmosis"
 
 
@@ -159,8 +151,11 @@ def banner_text(client):
 def test_download_creates_complete_mp3(download_world, mode):
     world, content, _, _ = download_world
     directory = start_download(world, mode, "complete")
-    wait_until(lambda: directory.exists() and bool(list(directory.glob("*.mp3"))), "published mp3")
-    files = list(directory.iterdir())
+    files = wait_for_snapshot(
+        lambda: list(directory.iterdir()) if directory.exists() else [],
+        lambda value: any(path.suffix == ".mp3" for path in value),
+        "published mp3",
+    )
     assert len(files) == 1, "download left extra pending files"
     assert files[0].read_bytes() == content
     probe = subprocess.run(
@@ -208,7 +203,7 @@ def test_trial_download_keeps_existing_refusal(download_world):
     assert list(directory.iterdir()) == [], "trial response became a saved song"
 
 
-# 已下载入口沿音乐 tab 与同一分段条走，避免直接构造管理状态。
+# 已下载沿一级导航进入，避免直接构造管理状态。
 def open_downloads(client):
     client.ui.destination("已下载")
     client.ui.must("DownloadManager::keyword")
@@ -269,11 +264,15 @@ def assert_download_total(client, count, size):
 def test_download_manager_search_and_delete_selected_track(download_world, mode):
     world, _, _, _ = download_world
     directory = start_download(world, mode, "complete")
-    wait_until(lambda: len(list(directory.glob("*.mp3"))) == 1, "first publication")
-    first = next(directory.glob("*.mp3"))
+    published = wait_for_snapshot(
+        lambda: list(directory.glob("*.mp3")), lambda value: len(value) == 1, "first publication"
+    )
+    first = published[0]
     start_download(world, "list", "complete", index=1)
-    wait_until(lambda: len(list(directory.glob("*.mp3"))) == 2, "second publication")
-    second = next(path for path in directory.glob("*.mp3") if path != first)
+    published = wait_for_snapshot(
+        lambda: list(directory.glob("*.mp3")), lambda value: len(value) == 2, "second publication"
+    )
+    second = next(path for path in published if path != first)
     originals = {path: path.read_bytes() for path in (first, second)}
     outside = directory.parent / "178-outside.mp3"
     outside.write_bytes(b"outside-sentinel")
@@ -309,8 +308,10 @@ def test_download_manager_cancel_then_delete_multiple(download_world):
     directory = start_download(world, "list", "complete")
     wait_until(lambda: len(list(directory.glob("*.mp3"))) == 1, "first publication")
     start_download(world, "list", "complete", index=1)
-    wait_until(lambda: len(list(directory.glob("*.mp3"))) == 2, "second publication")
-    originals = {path: path.read_bytes() for path in directory.glob("*.mp3")}
+    published = wait_for_snapshot(
+        lambda: list(directory.glob("*.mp3")), lambda value: len(value) == 2, "second publication"
+    )
+    originals = {path: path.read_bytes() for path in published}
     outside = directory.parent / "178-outside.mp3"
     outside.write_bytes(b"outside-sentinel")
     client = world.controller
