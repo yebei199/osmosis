@@ -199,3 +199,32 @@ def test_find_preserves_label_and_visibility_filters(label, prefix, width, x, wa
     assert instance.find("DrawerRow::touch", label, prefix) == wanted
     assert len(scans) == 1
 
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_mcp_reply_is_recorded_before_result_or_error(tmp_path, monkeypatch, failed):
+    import json
+    from types import SimpleNamespace
+
+    instance = UI.__new__(UI)
+    instance.client = SimpleNamespace(directory=tmp_path, process=Mock(), app_pid=123, env={})
+    reply = (
+        {"error": {"message": "Invalid handle"}}
+        if failed
+        else {"result": {"content": [{"text": '{"accessibleChecked": true}'}]}}
+    )
+    monkeypatch.setattr(
+        controls.subprocess,
+        "run",
+        Mock(return_value=SimpleNamespace(returncode=0, stdout=json.dumps(reply))),
+    )
+    if failed:
+        with pytest.raises(RuntimeError, match="Invalid handle"):
+            instance.call("get_element_properties", elementHandle="more")
+    else:
+        assert instance.call("get_element_properties", elementHandle="more") == {
+            "accessibleChecked": True
+        }
+    entry = json.loads((tmp_path / "mcp-responses.jsonl").read_text())
+    assert entry["tool"] == "get_element_properties"
+    assert entry["arguments"] == {"elementHandle": "more"}
+    assert entry["reply"] == reply

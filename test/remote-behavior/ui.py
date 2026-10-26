@@ -75,6 +75,10 @@ class UI:
                 )
             raise ConnectionError(f"MCP bridge failed ({result.returncode}): {result.stderr}")
         reply = json.loads(result.stdout)
+        with (self.client.directory / "mcp-responses.jsonl").open("a") as log:
+            log.write(
+                json.dumps({"tool": name, "arguments": safe_arguments, "reply": reply}) + "\n"
+            )
         if reply.get("error") or reply.get("result", {}).get("isError"):
             raise RuntimeError(f"MCP {name}: {reply}")
         return json.loads(reply["result"]["content"][0]["text"])
