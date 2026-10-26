@@ -109,7 +109,8 @@ def test_property_handle_expiration_rescans_root_once(message, method):
     reads = [
         c.kwargs["elementHandle"]
         for c in instance.call.call_args_list
-             if c.args == ("get_element_properties",)]
+        if c.args == ("get_element_properties",)
+    ]
     assert reads == ["old", "fresh"]
     actions = [
         c for c in instance.call.call_args_list if c.args == ("invoke_accessibility_action",)
@@ -141,11 +142,12 @@ def test_persistent_expiration_fails_after_one_rescan():
 @pytest.mark.parametrize(
     "error",
     [
-    RuntimeError("invalid RPC arguments"),
-    RuntimeError("element destroyed in an unrelated RPC"),
-    ConnectionError("bridge failed"),
-    ValueError("malformed reply"),
-])
+        RuntimeError("invalid RPC arguments"),
+        RuntimeError("element destroyed in an unrelated RPC"),
+        ConnectionError("bridge failed"),
+        ValueError("malformed reply"),
+    ],
+)
 def test_other_property_errors_propagate_without_rescan(error):
     instance, scans = query_ui(iter([error]))
     with pytest.raises(type(error)) as raised:
@@ -183,15 +185,17 @@ def test_expired_click_is_not_replayed():
 @pytest.mark.parametrize(
     "label,prefix,width,x,wanted",
     [
-    ("下载这一首", False, 100, 10, "old"),
-    ("下载", True, 100, 10, "old"),
-    ("其他", False, 100, 10, None),
-    ("下载这一首", False, 0, 10, None),
-    ("下载这一首", False, 100, 2000, None),
-    ("下载这一首", False, 100, -1, None),
-])
+        ("下载这一首", False, 100, 10, "old"),
+        ("下载", True, 100, 10, "old"),
+        ("其他", False, 100, 10, None),
+        ("下载这一首", False, 0, 10, None),
+        ("下载这一首", False, 100, 2000, None),
+        ("下载这一首", False, 100, -1, None),
+    ],
+)
 def test_find_preserves_label_and_visibility_filters(label, prefix, width, x, wanted):
     properties = visible_properties(width=width, x=x)
     instance, scans = query_ui(iter([properties, properties]))
     assert instance.find("DrawerRow::touch", label, prefix) == wanted
     assert len(scans) == 1
+
