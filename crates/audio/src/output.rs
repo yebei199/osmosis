@@ -28,6 +28,84 @@ use self::cpal as backend;
 /// 持流的那条线程多久醒一次，看流是不是断了要重开。
 const WATCH_EVERY: Duration = Duration::from_millis(250);
 
+/// 反复断流时最多每四秒重开一次。
+const REOPEN_BACKOFF_MAX: Duration = Duration::from_secs(4);
+/// 错误日志窗口，也用作恢复初始重试预算所需的健康运行时间。
+const ERROR_WINDOW: Duration = Duration::from_secs(1);
+
+/// 持流线程的重试节奏。
+#[derive(Default)]
+struct ReopenBackoff {
+    /// 上次尝试时刻；没有尝试过就允许立即开流。
+    attempted_at: Option<Instant>,
+    /// 本次尝试后至少等多久。
+    delay: Duration,
+}
+
+impl ReopenBackoff {
+    /// 此刻是否允许尝试开流。
+    fn ready(&self, now: Instant) -> bool {
+        self.attempted_at.is_none_or(|at| {
+            now.duration_since(at) >= self.delay
+        })
+    }
+    /// 记录一次尝试，失败与刚开好就断的流共用预算。
+    fn attempted(&mut self, now: Instant) {
+        self.delay = if self.attempted_at.is_none() {
+            WATCH_EVERY
+        } else {
+            (self.delay * 2).min(REOPEN_BACKOFF_MAX)
+        };
+        self.attempted_at = Some(now);
+    }
+    /// 连续健康运行后恢复初始重试间隔。
+    fn healthy(&mut self, now: Instant) {
+        if self.attempted_at.is_some_and(|at| {
+            now.duration_since(at) >= ERROR_WINDOW
+        }) {
+            *self = Self::default();
+        }
+    }
+}
+
+/// 由持流线程合并回调错误与重开失败。
+struct ErrorWindow {
+    /// 上次汇总的时刻和两个累计计数。
+    since: Instant,
+    errors: u64,
+    failures: u64,
+}
+
+impl ErrorWindow {
+    /// 从当前累计值开始，避免把旧错误重复报出。
+    fn new(now: Instant, errors: u64) -> Self {
+        Self {
+            since: now,
+            errors,
+            failures: 0,
+        }
+    }
+    /// 只在窗口结束时交出有变化的计数。
+    fn take(
+        &mut self,
+        now: Instant,
+        errors: u64,
+        failures: u64,
+    ) -> Option<(u64, u64)> {
+        if now.duration_since(self.since) < ERROR_WINDOW {
+            return None;
+        }
+        let delta = (
+            errors.saturating_sub(self.errors),
+            failures.saturating_sub(self.failures),
+        );
+        self.since = now;
+        self.errors = errors;
+        self.failures = failures;
+        (delta != (0, 0)).then_some(delta)
+    }
+}
+
 /// 暂停多久之后关流。
 ///
 /// 流开着就得一直送静音，声卡与 PipeWire 图因此不休眠(#138)。关早了也不好：重开要几十到上百
@@ -249,6 +327,11 @@ pub(crate) fn watch<S>(
     let mut keeper = Keeper::default();
     let mut pulled_at = Instant::now();
     let mut logged_underruns = shared.report().underruns;
+    let mut backoff = ReopenBackoff::default();
+    let mut error_window =
+        ErrorWindow::new(Instant::now(), 0);
+    let mut open_failures = 0;
+    let mut last_open_error = None;
     loop {
         let wait = if stream.is_none() && shared.idle() {
             IDLE_PULL_EVERY
@@ -275,6 +358,23 @@ pub(crate) fn watch<S>(
             );
             logged_underruns = underruns;
         }
+        let now = Instant::now();
+        if let Some((errors, failures)) = error_window.take(
+            now,
+            shared.report().other_errors,
+            open_failures,
+        ) {
+            log::warn!(
+                "近 {}s 输出出错 {errors} 次，重开失败 {failures} 次，最近开流错误: {}",
+                ERROR_WINDOW.as_secs(),
+                last_open_error.as_deref().unwrap_or("无")
+            );
+        }
+        if stream.is_some()
+            && !broken.load(Ordering::Relaxed)
+        {
+            backoff.healthy(now);
+        }
         let step = keeper.step(
             Instant::now(),
             stream.is_some(),
@@ -292,20 +392,23 @@ pub(crate) fn watch<S>(
                 );
             }
             Step::Open | Step::Reopen => {
-                if step == Step::Reopen {
-                    log::warn!("输出流断了，重开");
-                } else {
-                    log::info!("要出声了，重开输出流");
-                }
                 // 先关旧的：同一时刻只许一条流拉混音器
                 stream = None;
+                // 清掉失效的呈现配对，组时间线继续沿用原锚点。
+                shared.output_closed();
+                if !backoff.ready(now) {
+                    continue;
+                }
+                backoff.attempted(now);
                 broken.store(false, Ordering::Relaxed);
                 match open() {
                     Ok(fresh) => stream = Some(fresh),
-                    // 流留在关着：下一次醒来还要出声就再开
-                    Err(error) => log::warn!(
-                        "开输出流失败，稍后再试: {error}"
-                    ),
+                    // 流留在关着：还要出声就按退避期限再开
+                    Err(error) => {
+                        open_failures += 1;
+                        last_open_error =
+                            Some(error.to_string());
+                    }
                 }
             }
         }
@@ -324,8 +427,175 @@ pub(crate) fn watch<S>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use similar_asserts::assert_eq;
+
+    std::thread_local! {
+        /// 每条测试线程只收自己的日志，避免并行测试串扰。
+        static CAPTURED: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    /// 只收本线程明确启用的日志，其余测试不受影响。
+    struct TestLogger;
+    impl log::Log for TestLogger {
+        /// 级别由 log 的全局过滤器判断。
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+        /// 只格式化当前测试主动收集的记录。
+        fn log(&self, record: &log::Record<'_>) {
+            CAPTURED.with(|capture| {
+                if let Some(lines) =
+                    capture.borrow_mut().as_mut()
+                {
+                    lines.push(record.args().to_string());
+                }
+            });
+        }
+        /// 内存记录没有待刷出的缓冲。
+        fn flush(&self) {}
+    }
 
     const SEC: Duration = Duration::from_secs(1);
+
+    /// 真 watch 持续开流失败时也只按窗写日志，Stop 不会被退避阻塞。
+    #[test]
+    fn persistent_open_failures_are_summarized_and_stop_remains_responsive()
+     {
+        static LOGGER: TestLogger = TestLogger;
+        static INIT: std::sync::Once =
+            std::sync::Once::new();
+        INIT.call_once(|| {
+            log::set_logger(&LOGGER)
+                .expect("install test logger");
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        CAPTURED.with(|capture| {
+            *capture.borrow_mut() = Some(Vec::new())
+        });
+        let shared = SyncShared::new();
+        let (tx, rx) = mpsc::channel();
+        tx.send(Signal::Poke).expect("poke");
+        let stop = std::thread::spawn(move || {
+            // 用真实等待验证 watch 的通道和计时集成；窗口边界由上面的可控时钟测试覆盖。
+            std::thread::sleep(Duration::from_millis(1300));
+            tx.send(Signal::Stop)
+                .expect("watch still running");
+        });
+        let mut attempts = 0;
+        let start = Instant::now();
+        watch(
+            &rx,
+            &shared,
+            &AtomicBool::new(false),
+            None::<()>,
+            || {
+                attempts += 1;
+                Err(AudioError::Device(
+                    "test device unavailable".into(),
+                ))
+            },
+            |_| {
+                panic!(
+                    "active playback must not discard PCM"
+                )
+            },
+        );
+        stop.join().expect("stop thread");
+        let lines = CAPTURED.with(|capture| {
+            capture.borrow_mut().take().expect("capture")
+        });
+        assert!(
+            attempts >= 2,
+            "failure path was not repeated"
+        );
+        assert!(
+            !lines.is_empty(),
+            "failure summary missing"
+        );
+        assert!(
+            lines.len() < attempts,
+            "each failure still logs: {lines:?}"
+        );
+        assert!(
+            lines.len() as u64 <= start.elapsed().as_secs(),
+            "more than one summary per window: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| line
+                .contains("test device unavailable")),
+            "last device failure lost: {lines:?}"
+        );
+    }
+
+    /// 重开风暴按指数退避，Poke 也不能绕过期限，健康一秒后复位。
+    #[test]
+    fn repeated_reopens_back_off_and_a_healthy_stream_resets_the_budget()
+     {
+        let mut backoff = ReopenBackoff::default();
+        let mut now = Instant::now();
+        for millis in
+            [250, 500, 1000, 2000, 4000, 4000, 4000]
+        {
+            assert!(backoff.ready(now));
+            backoff.attempted(now);
+            assert!(!backoff.ready(
+                now + Duration::from_millis(millis - 1)
+            ));
+            now += Duration::from_millis(millis);
+            assert!(backoff.ready(now));
+        }
+        backoff.healthy(now);
+        backoff.attempted(now);
+        assert!(
+            backoff.ready(now + Duration::from_millis(250))
+        );
+    }
+
+    /// 百万次回调错误和持续开流失败按窗汇总，空窗不产生日志。
+    #[test]
+    fn error_and_reopen_failure_logs_grow_with_windows_instead_of_callbacks()
+     {
+        let now = Instant::now();
+        let mut window = ErrorWindow::new(now, 0);
+        for count in 1..=1_000_000 {
+            assert_eq!(
+                window.take(
+                    now + Duration::from_millis(500),
+                    count,
+                    count
+                ),
+                None
+            );
+        }
+        assert_eq!(
+            window.take(now + SEC, 1_000_000, 1_000_000),
+            Some((1_000_000, 1_000_000))
+        );
+        assert_eq!(
+            window.take(
+                now + 2 * SEC,
+                1_000_000,
+                1_000_000
+            ),
+            None
+        );
+        assert_eq!(
+            window.take(
+                now + 3 * SEC,
+                1_000_001,
+                1_000_001
+            ),
+            Some((1, 1))
+        );
+        assert_eq!(
+            window.take(
+                now + 3 * SEC,
+                1_000_001,
+                1_000_001
+            ),
+            None
+        );
+    }
 
     /// 在另一条线程上跑持流循环，流一开始是关着的(`None`)。返回叫停它的发送端和线程句柄。
     fn spawn_watch(
