@@ -193,7 +193,8 @@ class UI:
                             "reissued": fresh,
                             "tool": tool,
                         }
-                    ) + "\n"
+                    )
+                    + "\n"
                 )
             self.call(tool, elementHandle=fresh, **arguments)
 
