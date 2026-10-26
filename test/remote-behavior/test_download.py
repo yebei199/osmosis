@@ -129,13 +129,7 @@ def start_download(world, mode, outcome, index=0):
     wait_until(lambda: bool(world.sql("SELECT id FROM play_events")), "selected track play event")
     world.media.download_mode = outcome
 
-    more = client.ui.must("RoundControl::touch", "更多")
-    before = client.ui.call("get_element_properties", elementHandle=more)
-    client.ui.activate(more)
-    after = client.ui.call("get_element_properties", elementHandle=more)
-    (client.directory / "download-drawer-toggle.json").write_text(
-        json.dumps({"before": before, "after": after}, ensure_ascii=False)
-    )
+    client.ui.open_playback_options()
     client.ui.activate(client.ui.must("DrawerRow::touch", "下载这一首"))
     client.ui.close_playback_options()
     return client.directory / "home/Music/osmosis"

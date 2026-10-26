@@ -228,3 +228,107 @@ def test_mcp_reply_is_recorded_before_result_or_error(tmp_path, monkeypatch, fai
     assert entry["tool"] == "get_element_properties"
     assert entry["arguments"] == {"elementHandle": "more"}
     assert entry["reply"] == reply
+
+
+@pytest.mark.parametrize("pointer", [False, True])
+@pytest.mark.parametrize("rejections", [0, 1, 2])
+def test_rejected_action_relocates_once(tmp_path, pointer, rejections):
+    from types import SimpleNamespace
+
+    instance, scans = query_ui(iter([visible_properties(), visible_properties()]))
+    instance.client = SimpleNamespace(directory=tmp_path)
+    original = instance.call.side_effect
+    actions = []
+
+    def call(tool, **arguments):
+        if tool in ("click_element", "invoke_accessibility_action"):
+            actions.append((tool, arguments))
+            if len(actions) <= rejections:
+                raise controls.RejectedHandleError("server rejected destroyed handle")
+            return {}
+        return original(tool, **arguments)
+
+    instance.call.side_effect = call
+    handle = instance.find("DrawerRow::touch", "下载这一首")
+    if rejections == 2:
+        with pytest.raises(controls.RejectedHandleError):
+            instance.activate(handle, pointer=pointer)
+    else:
+        instance.activate(handle, pointer=pointer)
+    assert len(actions) == (1 if rejections == 0 else 2)
+    assert len(scans) == (1 if rejections == 0 else 2)
+    assert actions[0][1]["elementHandle"] == "old"
+    if rejections:
+        assert actions[1][1]["elementHandle"] == "fresh"
+        assert (tmp_path / "ui-action-reissues.jsonl").exists()
+
+
+@pytest.mark.parametrize("already_open", [False, True])
+@pytest.mark.parametrize("works", [False, True])
+def test_open_drawer_checks_state_without_replaying(already_open, works, monkeypatch):
+    instance = UI.__new__(UI)
+    state = {"open": already_open}
+
+    def find(element_id, label=None, prefix=False):
+        if element_id == "RoundControl::touch" and label == (
+            "收起更多" if state["open"] else "更多"
+        ):
+            return "toggle"
+        return None
+
+    def activate(handle):
+        assert handle == "toggle"
+        if works:
+            state["open"] = True
+
+    instance.find = Mock(side_effect=find)
+    instance.call = Mock(side_effect=lambda *a, **k: {"accessibleChecked": state["open"]})
+    instance.activate = Mock(side_effect=activate)
+    original_wait = controls.wait_until
+    monkeypatch.setattr(
+        controls, "wait_until", lambda fn, label: original_wait(fn, label, timeout=0.01)
+    )
+    if not already_open and not works:
+        with pytest.raises(TimeoutError, match="playback drawer open"):
+            instance.open_playback_options()
+    else:
+        instance.open_playback_options()
+    assert instance.activate.call_count == (0 if already_open else 1)
+
+
+@pytest.mark.parametrize(
+    "tool", ["invoke_accessibility_action", "click_element", "get_element_properties"]
+)
+@pytest.mark.parametrize("message", ["destroyed", "Invalid handle", "transport timeout"])
+def test_only_explicit_action_handle_refusal_allows_reissue(tmp_path, monkeypatch, tool, message):
+    import json
+    from types import SimpleNamespace
+
+    text = (
+        f"Error: Element handle for {tool} refers to element that was destroyed"
+        if message == "destroyed"
+        else message
+    )
+    reply = {"result": {"isError": True, "content": [{"text": text}]}}
+    instance = UI.__new__(UI)
+    instance.client = SimpleNamespace(directory=tmp_path, process=Mock(), app_pid=123, env={})
+    monkeypatch.setattr(
+        controls.subprocess,
+        "run",
+        Mock(return_value=SimpleNamespace(returncode=0, stdout=json.dumps(reply))),
+    )
+    with pytest.raises(RuntimeError) as caught:
+        instance.call(tool, elementHandle="old")
+    assert isinstance(caught.value, controls.RejectedHandleError) == (
+        tool != "get_element_properties" and message != "transport timeout"
+    )
+
+
+def test_rejected_action_without_stable_target_is_not_guessed():
+    instance = UI.__new__(UI)
+    error = controls.RejectedHandleError("Invalid handle")
+    instance.call = Mock(side_effect=error)
+    with pytest.raises(controls.RejectedHandleError) as caught:
+        instance.activate("unknown")
+    assert caught.value is error
+    instance.call.assert_called_once()

@@ -27,6 +27,10 @@ LABELS = {
 }
 
 
+class RejectedHandleError(RuntimeError):
+    """MCP 明确在动作派发之前拒绝了失效句柄。"""
+
+
 # namespace 内的 HTTP 请求保留生产 UI 事件分派与网络路径。
 class UI:
     def __init__(self, client):
@@ -80,6 +84,22 @@ class UI:
                 json.dumps({"tool": name, "arguments": safe_arguments, "reply": reply}) + "\n"
             )
         if reply.get("error") or reply.get("result", {}).get("isError"):
+            rejected = reply.get("result", {})
+            messages = [item.get("text") for item in rejected.get("content", [])]
+            if (
+                name in ("click_element", "invoke_accessibility_action")
+                and rejected.get("isError")
+                and any(
+                    message
+                    in (
+                        f"Error: Element handle for {name} refers to element that was destroyed",
+                        "Error: Invalid handle",
+                        "Invalid handle",
+                    )
+                    for message in messages
+                )
+            ):
+                raise RejectedHandleError(f"MCP {name}: {reply}")
             raise RuntimeError(f"MCP {name}: {reply}")
         return json.loads(reply["result"]["content"][0]["text"])
 
@@ -137,6 +157,13 @@ class UI:
                 ):
                     continue
                 if self.visible_properties(properties):
+                    if not hasattr(self, "_action_targets"):
+                        self._action_targets = {}
+                    self._action_targets[json.dumps(handle, sort_keys=True)] = (
+                        element_id,
+                        label,
+                        prefix,
+                    )
                     return handle
             else:
                 return None
@@ -147,10 +174,28 @@ class UI:
 
     # 列表行走真实命中分派，语义按钮走控件声明的无障碍动作。
     def activate(self, handle, pointer=False, action="Default_"):
-        if pointer:
-            self.call("click_element", elementHandle=handle)
-        else:
-            self.call("invoke_accessibility_action", elementHandle=handle, action=action)
+        tool = "click_element" if pointer else "invoke_accessibility_action"
+        arguments = {} if pointer else {"action": action}
+        try:
+            self.call(tool, elementHandle=handle, **arguments)
+        except RejectedHandleError as error:
+            target = getattr(self, "_action_targets", {}).get(json.dumps(handle, sort_keys=True))
+            if target is None:
+                raise
+            fresh = self.must(*target)
+            with (self.client.directory / "ui-action-reissues.jsonl").open("a") as log:
+                log.write(
+                    json.dumps(
+                        {
+                            "rejected": handle,
+                            "error": str(error),
+                            "target": target,
+                            "reissued": fresh,
+                            "tool": tool,
+                        }
+                    ) + "\n"
+                )
+            self.call(tool, elementHandle=fresh, **arguments)
 
     # 标签在 HoverButton 根，点击落在同一按钮的唯一可见 touch。
     def login_submit(self, page):
@@ -337,8 +382,29 @@ class UI:
 
     # 展开常驻控制条的更多菜单,复用语义按钮定位开关。
     def playback_options(self):
-        if not self.find("DrawerRow::touch", "随机播放"):
-            self.activate(self.must("RoundControl::touch", "更多"))
+        self.open_playback_options()
+
+    # 只对确认关闭的开关发动作；成功后等展开，不用重复点击纠正状态。
+    def open_playback_options(self):
+        toggle = self.find("RoundControl::touch", "收起更多") or self.must(
+            "RoundControl::touch", "更多"
+        )
+        if self.call("get_element_properties", elementHandle=toggle).get(
+            "accessibleChecked", False
+        ):
+            return
+        self.activate(toggle)
+
+        def opened():
+            toggle = self.find("RoundControl::touch", "收起更多")
+            return (
+                toggle is not None
+                and self.call("get_element_properties", elementHandle=toggle).get(
+                    "accessibleChecked", False
+                )
+            ) or self.find("DrawerRow::touch")
+
+        wait_until(opened, "playback drawer open")
 
     # 遮罩会消费条外的第一次点击，先走真实关闭按钮并确认状态再离开。
     def close_playback_options(self):
