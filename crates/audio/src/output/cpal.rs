@@ -1,7 +1,9 @@
 //! 桌面输出：cpal。呈现时刻 = 回调那一刻的单调时钟 + cpal 给出的 `playback − callback`
 //! (ALSA `snd_pcm_status` 的 delay;PipeWire 桌面上走的是 pipewire-alsa 插件)。
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU64, Ordering,
+};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -22,6 +24,69 @@ const TID_WAIT: Duration = Duration::from_millis(500);
 
 /// 回调线程还没报线程号。
 const TID_UNKNOWN: i32 = 0;
+
+/// 错误回调的连续错误状态。
+#[derive(Default)]
+struct ErrorBurst {
+    /// 这一串错误的起始时刻和期间最后见到的成功块号。
+    since: i64,
+    block: u64,
+    /// 饱和计数避免忙循环溢出。
+    count: u32,
+}
+
+/// 一秒内八次且没有成功数据块，远高于偶发错误的密度。
+const BACKEND_ERROR_LIMIT: u32 = 8;
+/// 超过一秒的错误不累计为同一串。
+const BACKEND_ERROR_WINDOW_NS: i64 = 1_000_000_000;
+
+impl ErrorBurst {
+    /// 和真实 cpal 回调共用的错误入口；成功块编号用于打断错误串。
+    fn record(
+        &mut self,
+        error: ::cpal::StreamError,
+        shared: &SyncShared,
+        broken: &AtomicBool,
+        now: i64,
+        block: u64,
+    ) {
+        if matches!(
+            error,
+            ::cpal::StreamError::BufferUnderrun
+        ) {
+            self.count = 0;
+            shared.underrun(now);
+            return;
+        }
+        shared.other_error();
+        if matches!(
+            error,
+            ::cpal::StreamError::DeviceNotAvailable
+                | ::cpal::StreamError::StreamInvalidated
+        ) {
+            broken.store(true, Ordering::Relaxed);
+            return;
+        }
+        if matches!(
+            error,
+            ::cpal::StreamError::BackendSpecific { .. }
+        ) {
+            if self.count == 0
+                || block != self.block
+                || now.saturating_sub(self.since)
+                    >= BACKEND_ERROR_WINDOW_NS
+            {
+                self.since = now;
+                self.block = block;
+                self.count = 0;
+            }
+            self.count = self.count.saturating_add(1);
+            if self.count >= BACKEND_ERROR_LIMIT {
+                broken.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+}
 
 /// 开流、交出混音器，然后守着流直到被叫停。
 pub(super) fn run(
@@ -135,6 +200,10 @@ fn start(
     // 回调线程第一块报出自己的线程号，持流线程据此替它升实时、查策略(#192)
     let tid = Arc::new(AtomicI32::new(TID_UNKNOWN));
     let reported = tid.clone();
+    // 数据和错误回调可能在不同线程；成功块号只负责打断连续错误。
+    let blocks = Arc::new(AtomicU64::new(0));
+    let successful = blocks.clone();
+    let mut burst = ErrorBurst::default();
     let stream = device
         .build_output_stream(
             config,
@@ -167,24 +236,11 @@ fn start(
                     queued_frames: delay.max(0) as u64 * rate
                         / 1_000_000_000,
                 });
+                successful.fetch_add(1, Ordering::Relaxed);
             },
             move |error| {
-                // 错误回调也在送声线程上：欠载只计数，由持流线程写日志(#192)。欠载/超载(xrun)
-                // ALSA 自己会恢复，流还在走;当成断了去重开反倒让声音断一截、呈现时刻从头估。
-                // 只有设备没了、或者流的配置作废了才重开。
-                if matches!(error, ::cpal::StreamError::BufferUnderrun) {
-                    errors.underrun(monotonic_ns());
-                    return;
-                }
-                errors.other_error();
-                log::warn!("cpal 输出出错: {error}");
-                if matches!(
-                    error,
-                    ::cpal::StreamError::DeviceNotAvailable
-                        | ::cpal::StreamError::StreamInvalidated
-                ) {
-                    broken.store(true, Ordering::Relaxed);
-                }
+                // 回调只计数和标坏，日志由持流线程按窗汇总。
+                burst.record(error, &errors, &broken, monotonic_ns(), blocks.load(Ordering::Relaxed));
             },
             None,
         )
@@ -247,4 +303,199 @@ fn promote_thread(_: i32) -> Result<(), String> {
 fn scheduling_policy(tid: i32) -> i32 {
     // SAFETY: 只读该线程的调度策略，没有指针参数
     unsafe { libc::sched_getscheduler(tid) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use similar_asserts::assert_eq;
+
+    /// 使用真正的 cpal 后端错误类型复现 POLLERR 回调。
+    fn pollerr() -> ::cpal::StreamError {
+        ::cpal::StreamError::BackendSpecific {
+            err: ::cpal::BackendSpecificError {
+                description:
+                    "alsa::poll() returned POLLERR".into(),
+            },
+        }
+    }
+
+    /// 同一秒内持续报错必须标坏；偶发单次和 xrun 保持现有行为。
+    #[test]
+    fn sustained_backend_errors_break_the_stream_but_one_error_and_xruns_do_not()
+     {
+        let shared = SyncShared::new();
+        let broken = AtomicBool::new(false);
+        let mut burst = ErrorBurst::default();
+        burst.record(pollerr(), &shared, &broken, 0, 0);
+        assert!(!broken.load(Ordering::Relaxed));
+        for n in 1..8 {
+            burst.record(
+                pollerr(),
+                &shared,
+                &broken,
+                n * 1_000_000,
+                0,
+            );
+        }
+        assert!(
+            broken.load(Ordering::Relaxed),
+            "POLLERR 回调忙循环没有请求重开"
+        );
+        assert_eq!(shared.report().other_errors, 8);
+
+        broken.store(false, Ordering::Relaxed);
+        for _ in 0..100 {
+            burst.record(
+                ::cpal::StreamError::BufferUnderrun,
+                &shared,
+                &broken,
+                10_000_000,
+                0,
+            );
+        }
+        assert!(!broken.load(Ordering::Relaxed));
+        assert_eq!(shared.report().underruns, 100);
+        assert_eq!(shared.report().other_errors, 8);
+    }
+
+    /// 超出时间窗、成功数据块和 xrun 都打断连续后端错误，避免无故切流。
+    #[test]
+    fn separated_backend_errors_never_accumulate_into_a_disconnect()
+     {
+        let shared = SyncShared::new();
+        let broken = AtomicBool::new(false);
+        let mut burst = ErrorBurst::default();
+        for n in 0..20 {
+            burst.record(
+                pollerr(),
+                &shared,
+                &broken,
+                n * 1_000_000_000,
+                0,
+            );
+        }
+        assert!(!broken.load(Ordering::Relaxed));
+        for block in 1..20 {
+            for _ in 0..7 {
+                burst.record(
+                    pollerr(),
+                    &shared,
+                    &broken,
+                    21_000_000_000,
+                    block,
+                );
+            }
+        }
+        assert!(!broken.load(Ordering::Relaxed));
+        for _ in 0..20 {
+            burst.record(
+                ::cpal::StreamError::BufferUnderrun,
+                &shared,
+                &broken,
+                22_000_000_000,
+                20,
+            );
+            for _ in 0..7 {
+                burst.record(
+                    pollerr(),
+                    &shared,
+                    &broken,
+                    22_000_000_000,
+                    20,
+                );
+            }
+        }
+        assert!(!broken.load(Ordering::Relaxed));
+    }
+
+    /// 设备或配置失效沿用立即重开的策略。
+    #[test]
+    fn invalid_devices_still_request_immediate_reopen() {
+        for error in [
+            ::cpal::StreamError::DeviceNotAvailable,
+            ::cpal::StreamError::StreamInvalidated,
+        ] {
+            let shared = SyncShared::new();
+            let broken = AtomicBool::new(false);
+            ErrorBurst::default()
+                .record(error, &shared, &broken, 0, 0);
+            assert!(broken.load(Ordering::Relaxed));
+        }
+    }
+
+    /// 真回调入口驱动真 watch；只替换声卡流，重开后同一个 mixer 继续产生 PCM，组锚点不动。
+    #[test]
+    fn pollerr_reopens_after_dropping_the_old_stream_and_preserves_pcm_and_anchor()
+     {
+        use crate::sync::{Anchor, Target};
+        use rodio::buffer::SamplesBuffer;
+
+        /// drop 次数证明开新流之前旧流已经释放。
+        struct Stream(Arc<std::sync::atomic::AtomicU64>);
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let shared = SyncShared::new();
+        let target = Target::Follow {
+            anchor: Anchor {
+                at_ns: 42,
+                media_ns: 9_000_000_000,
+            },
+            playing: true,
+            start_ns: 0,
+        };
+        shared.set_target(target);
+        let (mixer, source) = rodio::mixer::mixer(
+            ChannelCount::new(2).expect("stereo"),
+            SampleRate::new(48000).expect("rate"),
+        );
+        mixer.add(SamplesBuffer::new(
+            ChannelCount::new(2).expect("stereo"),
+            SampleRate::new(48000).expect("rate"),
+            vec![0.5; 48000],
+        ));
+        let source = Arc::new(Mutex::new(source));
+        let broken = AtomicBool::new(false);
+        let mut burst = ErrorBurst::default();
+        for n in 0..8 {
+            burst.record(pollerr(), &shared, &broken, n, 0);
+        }
+        let drops =
+            Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (tx, rx) = mpsc::channel();
+        tx.send(Signal::Poke).expect("poke");
+        // 即使修复退化也会在有界时间退出，不挂住整组测试。
+        let stop = tx.clone();
+        let timeout = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(1));
+            let _ = stop.send(Signal::Stop);
+        });
+        let mut pcm = [0.0; 128];
+        let mut opened = false;
+        watch(
+            &rx,
+            &shared,
+            &broken,
+            Some(Stream(drops.clone())),
+            || {
+                assert_eq!(
+                    drops.load(Ordering::Relaxed),
+                    1
+                );
+                assert!(fill(&source, &mut pcm));
+                shared.block(monotonic_ns(), 64);
+                opened = true;
+                tx.send(Signal::Stop).expect("stop");
+                Ok(Stream(drops.clone()))
+            },
+            |_| panic!("播放中不能空拉"),
+        );
+        timeout.join().expect("timer");
+        assert!(opened, "持续 POLLERR 后没有重开");
+        assert!(pcm.iter().any(|sample| *sample != 0.0));
+        assert_eq!(shared.target(), target);
+    }
 }
