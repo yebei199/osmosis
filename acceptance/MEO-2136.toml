@@ -1,0 +1,58 @@
+# 发版流程由主路由验收；本分支的显示守卫变更与测试设施回归分别记录。
+[[ac]]
+id = "AC-1"
+none = "发版门禁与交付记录：CI 日志见 MEO-2136 评论 7-16503；最终确认 nightly 全绿及 release-gate 由 MEO-2240 一次性豁免，E2E 证据见 7-16101、7-16503。合回凭据仍须通过正式检查计划，由主路由核验。"
+
+[[ac]]
+id = "AC-2"
+none = "发布流程：主路由合回、打 v0.2.7 tag 后，核验 GitHub Release 的桌面 zst、sha256sums、.desktop、.svg 与 APK 全部存在。本分支交回时尚未发布。"
+
+[[ac]]
+id = "AC-3"
+none = "部署流程：主路由 rollout 后核验本机 osmosis-desktop 的真实路径指向 0.2.7，并确认一层导航、纯音乐界面。本分支交回时尚未部署。"
+
+[[ac]]
+id = "AC-4"
+kind = "regression"
+layer = "final"
+entry = "AI 会话里启动 debug 桌面实例时调用显示守卫"
+observe = "DISPLAY 与 OSMOSIS_ISOLATED_DISPLAY 精确相等才放行隔离 X11；未声明或不相等时拒绝。用户 Wayland 仍拒绝，无头 Wayland、人工会话及显式展示开关仍放行。"
+tests = [
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::human_session_is_never_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::claude_on_user_wayland_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::codex_on_user_wayland_absolute_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::ai_on_x11_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::matching_isolated_x11_display_is_allowed",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::mismatched_isolated_x11_display_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::isolated_x11_does_not_allow_user_wayland",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::undeclared_x11_display_is_refused",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::ai_on_headless_session_is_allowed",
+  "app-desktop::bin/osmosis-desktop::display_guard::tests::explicit_switch_lets_ai_show_the_window",
+]
+doubles = ["环境变量由闭包注入，不改变进程环境、不打开窗口；证明守卫返回 Ok 或 Err，不证明真实 Xvfb 的渲染"]
+
+[[ac]]
+id = "AC-5"
+none = "安卓下载清单解析的 lint 等价改写：长度仍须为 4 的倍数，每四个字段仍组成一条记录，行为不变。证据为 app-android 的 clippy、Android 目标检查及包测试检查，见 7-16503 与正式交回计划。当前主机测试中 app-android 没有可运行单测，不将桌面下载测试冒充安卓解析测试。"
+
+# 受影响的既有行为：MCP 句柄与动作处理、故障注入复用、资源清理、选测及观察等待。
+# 这些文件的完整开发证据留在交回材料，dev 层不要求最终门禁重跑真实 World。
+[[ac]]
+id = "AC-6"
+kind = "regression"
+layer = "dev"
+entry = "test/remote-behavior 的 test_ui.py、test_mutate.py、test_lifecycle.py、test_selection.py、test_resources.py 单测入口"
+observe = "过期句柄有界重定位，超时动作不重放；复用产物身份受检；失败和取消回收自有资源；选测保持覆盖判定；等待返回命中的同一份快照。编译低优先级，行为检查拒绝继承低优先级。"
+tests = [
+  "test_ui::test_query_error_is_not_retried",
+  "test_ui::test_expired_click_is_not_replayed",
+  "test_ui::test_persistent_expiration_fails_after_one_rescan",
+  "test_mutate::test_third_party_compiles_skips_workspace_paths",
+  "test_lifecycle::test_partial_initialization_cleans_registered_resource",
+  "test_lifecycle::test_native_suite_build_failure_does_not_start_tests",
+  "test_lifecycle::test_ci_nextest_builds_low_and_runs_normally",
+  "test_selection::test_only_covering_scenario_is_selected",
+  "test_selection::test_documentation_selects_only_cheap_checks",
+  "test_resources::test_snapshot_wait_still_times_out_when_nothing_matches",
+]
+doubles = ["MCP 与构建命令使用替身，生命周期单测使用临时子进程，选测使用临时 Git 仓库；不启动真实 World，不证明播放音频或用户端到端路径"]
