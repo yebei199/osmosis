@@ -142,61 +142,99 @@ mod bounded {
         args: &[&str],
         budget: Duration,
     ) -> Option<String> {
+        let (mut child, stdout) =
+            read_stdout(start(program, args)?)?;
+        let deadline = Instant::now() + budget;
+        let Some(status) = wait_until(&mut child, deadline)
+        else {
+            log::warn!("{program} {budget:?} 内没答，杀掉");
+            abandon(child, Some(&stdout));
+            return None;
+        };
+        let out =
+            collect(program, &child, &stdout, deadline)?;
+        status.success().then(|| {
+            String::from_utf8_lossy(&out).into_owned()
+        })
+    }
+
+    /// 起子进程，自成一个进程组;还有没收场的后台活就不起。
+    fn start(
+        program: &str,
+        args: &[&str],
+    ) -> Option<Child> {
         if LINGERING.load(Ordering::Acquire) > 0 {
             return None;
         }
-        let mut child = Command::new(program)
+        Command::new(program)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .process_group(0)
             .spawn()
-            .ok()?;
-        let mut stdout = child.stdout.take()?;
+            .ok()
+    }
+
+    /// 读线程收到的 stdout。
+    type Stdout = mpsc::Receiver<std::io::Result<Vec<u8>>>;
+
+    /// 起读线程收 stdout。起不来就放弃子进程。
+    fn read_stdout(
+        mut child: Child,
+    ) -> Option<(Child, Stdout)> {
+        let Some(mut pipe) = child.stdout.take() else {
+            abandon(child, None);
+            return None;
+        };
         let (sender, receiver) = mpsc::channel();
         LINGERING.fetch_add(1, Ordering::AcqRel);
         let reader = std::thread::Builder::new()
             .name("route-read".into())
             .spawn(move || {
                 let mut out = Vec::new();
-                let read = stdout
-                    .read_to_end(&mut out)
-                    .map(|_| out);
+                let read =
+                    pipe.read_to_end(&mut out).map(|_| out);
                 // 先减计数再交结果：收到结果的一方据此确知读线程已收场
                 LINGERING.fetch_sub(1, Ordering::AcqRel);
                 let _ = sender.send(read);
             });
         if reader.is_err() {
             LINGERING.fetch_sub(1, Ordering::AcqRel);
-            kill_group(&child);
-            reap(child);
+            abandon(child, None);
             return None;
         }
-        let deadline = Instant::now() + budget;
-        let Some(status) = wait_until(&mut child, deadline)
-        else {
-            log::warn!("{program} {budget:?} 内没答，杀掉");
-            kill_group(&child);
-            reap(child);
-            // 写端随进程关掉，读线程马上收场;不等它的话下一条命令会被 `LINGERING` 挡掉
-            let _ = receiver.recv_timeout(READ_GRACE);
-            return None;
-        };
+        Some((child, receiver))
+    }
+
+    /// 进程退了，在剩下的预算里(至少 `READ_GRACE`)收 stdout。收不到说明子孙还攥着写端，杀整组。
+    fn collect(
+        program: &str,
+        child: &Child,
+        stdout: &Stdout,
+        deadline: Instant,
+    ) -> Option<Vec<u8>> {
         let left = deadline
             .saturating_duration_since(Instant::now())
             .max(READ_GRACE);
-        let Ok(read) = receiver.recv_timeout(left) else {
+        let read = stdout.recv_timeout(left).ok();
+        if read.is_none() {
             log::warn!(
                 "{program} 退了但 stdout 没读完，杀掉它留下的进程"
             );
-            kill_group(&child);
-            return None;
-        };
-        let out = read.ok()?;
-        status.success().then(|| {
-            String::from_utf8_lossy(&out).into_owned()
-        })
+            kill_group(child);
+        }
+        read?.ok()
+    }
+
+    /// 放弃一个没答的子进程：杀整组、回收，再给读线程一点时间收场 —— 写端随进程关掉，
+    /// 它马上就读到 EOF;不等的话下一条命令会被 `LINGERING` 挡掉。
+    fn abandon(child: Child, stdout: Option<&Stdout>) {
+        kill_group(&child);
+        reap(child);
+        if let Some(stdout) = stdout {
+            let _ = stdout.recv_timeout(READ_GRACE);
+        }
     }
 
     /// 等子进程退，最晚到 `deadline`。没退或查不了就是 `None`。
@@ -205,17 +243,18 @@ mod bounded {
         deadline: Instant,
     ) -> Option<std::process::ExitStatus> {
         loop {
-            match child.try_wait() {
-                Ok(Some(status)) => return Some(status),
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(POLL);
-                }
-                Ok(None) => return None,
-                Err(error) => {
+            let status = child
+                .try_wait()
+                .inspect_err(|error| {
                     log::warn!("等子进程失败: {error}");
-                    return None;
-                }
+                })
+                .ok()?;
+            if status.is_some()
+                || Instant::now() >= deadline
+            {
+                return status;
             }
+            std::thread::sleep(POLL);
         }
     }
 
