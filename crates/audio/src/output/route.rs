@@ -3,7 +3,12 @@
 //! 多台一起出声的合同只对「电脑扬声器 + 手机扬声器」做过声学校准;蓝牙、有线的输出延迟没测过，
 //! 界面要把这类成员标成「该路由未校准,不保证同步」。查一次要起一两个进程(桌面)或走一趟 JNI
 //! (安卓),所以结论记五秒。查不出来就是 `None`,界面不替它下结论。
+//!
+//! 调用方是界面每秒一次的定时回调，所以 `current` 从不等探测：它只读快照，快照到期就在后台起一次
+//! 探测，这一轮照旧交回快照。MEO-2848:蓝牙通道出错时 `wpctl inspect` 卡了几分钟，同步探测把整个
+//! 回调连同进度、续播、媒体状态一起堵死。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -18,41 +23,143 @@ pub enum Route {
 /// 结论记多久。插拔耳机、连蓝牙之后最迟这么久界面就跟上。
 const REFRESH: Duration = Duration::from_secs(5);
 
+/// 单条命令最多等多久。正常的 `wpctl inspect` / `pactl get-default-sink` 几十毫秒就答;
+/// 两条加起来不到 `REFRESH`,一次探测在下一次该起之前就收场。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+const COMMAND_BUDGET: Duration =
+    Duration::from_millis(1500);
+
+/// 快照多老就不再发布。正常情况下快照最老是 `REFRESH` 加一次探测(桌面最多两个 `COMMAND_BUDGET`);
+/// 超过这个数说明探测线程起不来，或卡在没有超时的地方(安卓的 JNI),这时报未知，不拿几分钟前的
+/// 设备冒充现在。
+const STALE: Duration = Duration::from_secs(12);
+
 static CACHE: Mutex<Option<(Instant, Option<Route>)>> =
     Mutex::new(None);
 
-/// 此刻的输出路由。
+/// 有一次探测在跑。并发的刷新请求都并进这一次，同一时刻最多一个探测。
+static PROBING: AtomicBool = AtomicBool::new(false);
+
+/// 此刻的输出路由。不阻塞：锁只在读写快照时拿一下，探测在后台线程里跑。
 pub fn current() -> Option<Route> {
+    let snapshot = *CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if snapshot
+        .is_none_or(|(at, _)| at.elapsed() >= REFRESH)
+    {
+        spawn_probe();
+    }
+    match snapshot {
+        Some((at, route)) if at.elapsed() < STALE => route,
+        _ => None,
+    }
+}
+
+/// 后台探一次，结论写回快照。已有一次在跑就什么也不做。
+fn spawn_probe() {
+    if PROBING
+        .compare_exchange(
+            false,
+            true,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("route-probe".into())
+        .spawn(probe);
+    if let Err(error) = spawned {
+        log::warn!("起不了路由探测线程: {error}");
+        PROBING.store(false, Ordering::Release);
+    }
+}
+
+/// 探测线程的身子：探一次、写快照、放开占位。
+fn probe() {
+    // 线程收场(包括 panic)时放开占位，下一轮才起得了新的
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            PROBING.store(false, Ordering::Release);
+        }
+    }
+    let _release = Release;
+    let route = detect();
     let mut cache = CACHE
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    if let Some((at, route)) = *cache
-        && at.elapsed() < REFRESH
-    {
-        return route;
-    }
-    let route = detect();
     // 变了才记一行：扬声器在界面上不标注，路由探测有没有在干活只能从日志看
     if cache.is_none_or(|(_, before)| before != route) {
         log::info!("输出路由: {route:?}");
     }
     *cache = Some((Instant::now(), route));
-    route
 }
 
 /// 桌面：问 PipeWire 默认 sink 叫什么。
 #[cfg(not(target_os = "android"))]
 fn detect() -> Option<Route> {
     detect_with(&|program, args| {
-        let out = std::process::Command::new(program)
-            .args(args)
-            .output()
-            .ok()?;
-        out.status.success().then(|| {
-            String::from_utf8_lossy(&out.stdout)
-                .into_owned()
-        })
+        run_bounded(program, args, COMMAND_BUDGET)
     })
+}
+
+/// 跑一条命令，最多等 `budget`;成功时交回 stdout。超时就杀掉并 `wait` 回收，不留僵尸、不攒进程。
+/// stdout 由读线程收，输出写满管道也不会把子进程卡住;子进程一死写端就关，读线程跟着收场。
+#[cfg(not(target_os = "android"))]
+fn run_bounded(
+    program: &str,
+    args: &[&str],
+    budget: Duration,
+) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    /// 两次查子进程退没退之间睡多久。比命令正常的应答时间短，又不至于空转。
+    const POLL: Duration = Duration::from_millis(10);
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        stdout.read_to_end(&mut out).map(|_| out)
+    });
+    let deadline = Instant::now() + budget;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(POLL);
+            }
+            Ok(None) => {
+                log::warn!(
+                    "{program} {budget:?} 内没答，杀掉"
+                );
+                break None;
+            }
+            Err(error) => {
+                log::warn!("等 {program} 失败: {error}");
+                break None;
+            }
+        }
+    };
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let out = reader.join().ok()?.ok()?;
+    status?
+        .success()
+        .then(|| String::from_utf8_lossy(&out).into_owned())
 }
 
 /// 先问 `wpctl`(WirePlumber,纯 PipeWire 桌面必有),再问 `pactl`(pipewire-pulse);两个都不在
