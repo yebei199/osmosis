@@ -194,5 +194,4 @@ pytest 节点把 profraw 写进自己的目录（`%c` 连续模式，被信号�
 
 `nightly.sh` 是每晚全量入口：调 `acceptance/run.sh all`，记一行 `history.tsv`，失败打印
 `<last-green>..<本次>` 可疑区间，全绿时把地图留在 `runs/<时间>-<提交>/`。调度不在本仓库。
-`release-gate.sh <提交>` 只在 last-green 恰好是该提交时退 0，发版前用。
 新地图拷进本目录的 `coverage-map.json` 提交。
