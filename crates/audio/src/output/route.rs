@@ -29,7 +29,8 @@ const REFRESH: Duration = Duration::from_secs(5);
 const COMMAND_BUDGET: Duration =
     Duration::from_millis(1500);
 
-/// 快照多老就不再发布。正常情况下快照最老是 `REFRESH` 加一次探测(桌面最多两个 `COMMAND_BUDGET`);
+/// 快照多老就不再发布。正常情况下快照最老是 `REFRESH` 加一次探测(桌面两条命令各
+/// `COMMAND_BUDGET` 加杀后的回收等待，约四秒);
 /// 超过这个数说明探测线程起不来，或卡在没有超时的地方(安卓的 JNI),这时报未知，不拿几分钟前的
 /// 设备冒充现在。
 const STALE: Duration = Duration::from_secs(12);
@@ -89,77 +90,174 @@ fn probe() {
     }
     let _release = Release;
     let route = detect();
-    let mut cache = CACHE
+    let before = CACHE
         .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    // 变了才记一行：扬声器在界面上不标注，路由探测有没有在干活只能从日志看
-    if cache.is_none_or(|(_, before)| before != route) {
+        .unwrap_or_else(PoisonError::into_inner)
+        .replace((Instant::now(), route));
+    // 变了才记一行：扬声器在界面上不标注，路由探测有没有在干活只能从日志看。放了锁再写日志，
+    // 日志卡住也卡不到界面那一侧
+    if before.is_none_or(|(_, before)| before != route) {
         log::info!("输出路由: {route:?}");
     }
-    *cache = Some((Instant::now(), route));
 }
 
 /// 桌面：问 PipeWire 默认 sink 叫什么。
 #[cfg(not(target_os = "android"))]
 fn detect() -> Option<Route> {
     detect_with(&|program, args| {
-        run_bounded(program, args, COMMAND_BUDGET)
+        bounded::run(program, args, COMMAND_BUDGET)
     })
 }
 
-/// 跑一条命令，最多等 `budget`;成功时交回 stdout。超时就杀掉并 `wait` 回收，不留僵尸、不攒进程。
-/// stdout 由读线程收，输出写满管道也不会把子进程卡住;子进程一死写端就关，读线程跟着收场。
+/// 限时跑外部命令。探测线程在这里的每一处等待都有上限：子进程杀不死时交给后台回收，
+/// 探测线程照样收场，下一轮还起得来。
 #[cfg(not(target_os = "android"))]
-fn run_bounded(
-    program: &str,
-    args: &[&str],
-    budget: Duration,
-) -> Option<String> {
+mod bounded {
     use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     /// 两次查子进程退没退之间睡多久。比命令正常的应答时间短，又不至于空转。
     const POLL: Duration = Duration::from_millis(10);
 
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        stdout.read_to_end(&mut out).map(|_| out)
-    });
-    let deadline = Instant::now() + budget;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(POLL);
-            }
-            Ok(None) => {
-                log::warn!(
-                    "{program} {budget:?} 内没答，杀掉"
-                );
-                break None;
-            }
-            Err(error) => {
-                log::warn!("等 {program} 失败: {error}");
-                break None;
+    /// SIGKILL 之后等它退多久。正常几毫秒就退;卡在内核里(D 状态)的进程信号要等系统调用返回
+    /// 才生效，等不起。
+    const REAP_GRACE: Duration = Duration::from_millis(500);
+
+    /// 进程退了以后，stdout 最少再等多久读完。
+    const READ_GRACE: Duration = Duration::from_millis(100);
+
+    /// 还没收场的后台活：杀了还没退、交给后台回收的子进程，加上还没读到 EOF 的读线程。
+    /// 不为零就不再起新命令 —— 卡住的进程或读线程一轮攒一个，不如这段时间直接报未知。
+    static LINGERING: AtomicUsize = AtomicUsize::new(0);
+
+    /// 跑一条命令，最多等 `budget`;成功时交回 stdout。超时就连同它起的子孙(同一进程组)一起杀掉并回收。
+    /// stdout 由读线程收，输出写满管道也不会把子进程卡住;读线程等不到 EOF(子孙还攥着写端)
+    /// 时同样杀整组。读线程算进 `LINGERING`,真有子孙逃出进程组、一直攥着写端，也只卡住这一个。
+    pub(super) fn run(
+        program: &str,
+        args: &[&str],
+        budget: Duration,
+    ) -> Option<String> {
+        if LINGERING.load(Ordering::Acquire) > 0 {
+            return None;
+        }
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .ok()?;
+        let mut stdout = child.stdout.take()?;
+        let (sender, receiver) = mpsc::channel();
+        LINGERING.fetch_add(1, Ordering::AcqRel);
+        let reader = std::thread::Builder::new()
+            .name("route-read".into())
+            .spawn(move || {
+                let mut out = Vec::new();
+                let read = stdout
+                    .read_to_end(&mut out)
+                    .map(|_| out);
+                // 先减计数再交结果：收到结果的一方据此确知读线程已收场
+                LINGERING.fetch_sub(1, Ordering::AcqRel);
+                let _ = sender.send(read);
+            });
+        if reader.is_err() {
+            LINGERING.fetch_sub(1, Ordering::AcqRel);
+            kill_group(&child);
+            reap(child);
+            return None;
+        }
+        let deadline = Instant::now() + budget;
+        let Some(status) = wait_until(&mut child, deadline)
+        else {
+            log::warn!("{program} {budget:?} 内没答，杀掉");
+            kill_group(&child);
+            reap(child);
+            // 写端随进程关掉，读线程马上收场;不等它的话下一条命令会被 `LINGERING` 挡掉
+            let _ = receiver.recv_timeout(READ_GRACE);
+            return None;
+        };
+        let left = deadline
+            .saturating_duration_since(Instant::now())
+            .max(READ_GRACE);
+        let Ok(read) = receiver.recv_timeout(left) else {
+            log::warn!(
+                "{program} 退了但 stdout 没读完，杀掉它留下的进程"
+            );
+            kill_group(&child);
+            return None;
+        };
+        let out = read.ok()?;
+        status.success().then(|| {
+            String::from_utf8_lossy(&out).into_owned()
+        })
+    }
+
+    /// 等子进程退，最晚到 `deadline`。没退或查不了就是 `None`。
+    fn wait_until(
+        child: &mut Child,
+        deadline: Instant,
+    ) -> Option<std::process::ExitStatus> {
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(POLL);
+                }
+                Ok(None) => return None,
+                Err(error) => {
+                    log::warn!("等子进程失败: {error}");
+                    return None;
+                }
             }
         }
-    };
-    if status.is_none() {
-        let _ = child.kill();
-        let _ = child.wait();
     }
-    let out = reader.join().ok()?.ok()?;
-    status?
-        .success()
-        .then(|| String::from_utf8_lossy(&out).into_owned())
+
+    /// 杀子进程所在的整个进程组(`process_group(0)` 让组号等于它的 pid)。
+    fn kill_group(child: &Child) {
+        let Ok(group) = libc::pid_t::try_from(child.id())
+        else {
+            return;
+        };
+        // SAFETY:kill 只读两个整数参数，不碰内存。组号是我们起的子进程的 pid,组里还有进程时
+        // 内核不会把它分给别人;组里没人了，这一枪打空。
+        unsafe {
+            libc::kill(-group, libc::SIGKILL);
+        }
+    }
+
+    /// 回收杀掉的子进程，不留僵尸。`REAP_GRACE` 内没退就交给后台线程去等，探测线程不陪它卡着。
+    fn reap(mut child: Child) {
+        let id = child.id();
+        if wait_until(
+            &mut child,
+            Instant::now() + REAP_GRACE,
+        )
+        .is_some()
+        {
+            return;
+        }
+        log::warn!(
+            "子进程 {id} 杀了 {REAP_GRACE:?} 还没回收，交给后台"
+        );
+        LINGERING.fetch_add(1, Ordering::AcqRel);
+        let spawned = std::thread::Builder::new()
+            .name("route-reap".into())
+            .spawn(move || {
+                let _ = child.wait();
+                LINGERING.fetch_sub(1, Ordering::AcqRel);
+            });
+        if spawned.is_err() {
+            // 线程都起不来，就让计数留着：之后报未知，不再起新进程
+            log::warn!("起不了回收线程，路由探测停用");
+        }
+    }
 }
 
 /// 先问 `wpctl`(WirePlumber,纯 PipeWire 桌面必有),再问 `pactl`(pipewire-pulse);两个都不在
