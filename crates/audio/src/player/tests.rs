@@ -337,7 +337,7 @@ mod deck_races {
 
     /// F-001:回调刚取走一次换源，紧接着又来一次(清空后马上点歌),下一次拉必须换上它。
     /// 当初回调在锁外清「有待换源」的标记，夹在中间的那一次会永远躺在槽里;如今没有那个标记，
-    /// 槽里有没有东西只在锁里看。
+    /// 槽里有没有东西只在锁里看。换源等这一帧放完才生效(MEO-2193),所以「下一次」是下一帧。
     #[test]
     fn a_change_right_after_a_taken_one_is_taken_next() {
         let (deck, mut source) = deck();
@@ -345,7 +345,146 @@ mod deck_races {
         assert_eq!(source.next(), Some(0.5));
         deck.clear();
         deck.play(constant(0.75, 100));
+        assert_eq!(
+            source.next(),
+            Some(0.5),
+            "这一帧的右声道仍是旧源"
+        );
         assert_eq!(source.next(), Some(0.75));
         assert!(!deck.empty());
+    }
+}
+
+/// MEO-2193:回调拉到一帧中间(左声道已出、右声道未出)时换歌，新歌的左声道不能落进右声道的槽。
+/// 换源只在帧边界生效，否则这一首从头到尾左右对调，直到下一次换源碰巧又落在奇数位上。
+mod deck_frames {
+    use std::num::NonZero;
+
+    use rodio::buffer::SamplesBuffer;
+
+    use super::deck::deck;
+
+    const LEFT: f32 = 0.25;
+    const RIGHT: f32 = -0.5;
+
+    /// 左右声道取不同常数的立体声源，读出来一眼看出有没有对调。
+    fn stereo(frames: usize) -> SamplesBuffer {
+        SamplesBuffer::new(
+            NonZero::new(2).unwrap(),
+            NonZero::new(48_000).unwrap(),
+            [LEFT, RIGHT].repeat(frames),
+        )
+    }
+
+    #[test]
+    fn a_change_taken_mid_frame_starts_the_new_source_on_the_left_channel()
+     {
+        let (deck, mut source) = deck();
+        deck.play(stereo(100));
+        assert_eq!(source.next(), Some(LEFT));
+        deck.play(stereo(100));
+        let out: Vec<f32> = (1..9)
+            .map(|_| source.next().unwrap())
+            .collect();
+        assert_eq!(
+            out,
+            vec![
+                RIGHT, LEFT, RIGHT, LEFT, RIGHT, LEFT,
+                RIGHT, LEFT
+            ],
+            "下标 0 起偶数位是左声道"
+        );
+    }
+
+    #[test]
+    fn a_clear_taken_mid_frame_keeps_the_next_source_aligned()
+     {
+        let (deck, mut source) = deck();
+        deck.play(stereo(100));
+        assert_eq!(source.next(), Some(LEFT));
+        deck.clear();
+        assert_eq!(
+            source.next(),
+            Some(RIGHT),
+            "清空等这一帧放完"
+        );
+        assert_eq!(source.next(), Some(0.0));
+        assert_eq!(source.next(), Some(0.0));
+        deck.play(stereo(100));
+        let out: Vec<f32> = (0..4)
+            .map(|_| source.next().unwrap())
+            .collect();
+        assert_eq!(out, vec![LEFT, RIGHT, LEFT, RIGHT]);
+    }
+}
+
+/// MEO-2193 的时序面：回调线程按块拉、每个采样做点慢活(像带覆盖率插桩的 dev 构建),
+/// 界面线程同时一首接一首地换。换源落在填块中途的那些次，新源都必须从左声道开始。
+mod deck_frame_race {
+    use std::num::NonZero;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    use rodio::buffer::SamplesBuffer;
+
+    use super::deck::deck;
+
+    const LEFT: f32 = 0.25;
+    const RIGHT: f32 = -0.5;
+    /// 一块的帧数，桌面 PipeWire 常见的 10ms@48kHz。
+    const BLOCK_FRAMES: usize = 480;
+    const SWITCHES: usize = 300;
+
+    fn stereo() -> SamplesBuffer {
+        SamplesBuffer::new(
+            NonZero::new(2).unwrap(),
+            NonZero::new(48_000).unwrap(),
+            [LEFT, RIGHT].repeat(48_000),
+        )
+    }
+
+    /// 每个采样耗一点 CPU,让填块占满大半个周期，换源大概率落在块中间。
+    fn slow_work() {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_nanos(200)
+        {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[test]
+    fn switching_while_a_slow_callback_is_filling_never_swaps_channels()
+     {
+        let (deck, mut source) = deck();
+        deck.play(stereo());
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let puller = std::thread::spawn(move || {
+            let mut swapped = 0_usize;
+            let mut block = vec![0.0_f32; BLOCK_FRAMES * 2];
+            while !stopped.load(Ordering::Relaxed) {
+                for sample in &mut block {
+                    *sample = source.next().unwrap();
+                    slow_work();
+                }
+                swapped += block
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .filter(|[left, right]| {
+                        *left == RIGHT || *right == LEFT
+                    })
+                    .count();
+            }
+            swapped
+        });
+        for _ in 0..SWITCHES {
+            deck.play(stereo());
+            std::thread::sleep(Duration::from_micros(700));
+        }
+        stop.store(true, Ordering::Relaxed);
+        let swapped = puller.join().unwrap();
+        assert_eq!(swapped, 0, "有 {swapped} 帧左右对调");
     }
 }
