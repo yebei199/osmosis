@@ -1,0 +1,11 @@
+result=red
+commit=4ab5159d40c009aff4d5656f4829843e7ff641b8
+date=2026-10-31T04:22:28+08:00
+host=pc3
+plan_id=sha256:2fce06c107bc9b706da9d1c92b0a4575cdfa3c968c261d246285d6c14d3876f0
+failed=accept.required
+log=pc3:/home/yb/.local/state/nightly/runs/20261031T030000.431192885/yebei199__osmosis/log
+range=79eccc1845dae56e89fd496ef76047a748bd80b7..4ab5159d40c009aff4d5656f4829843e7ff641b8
+notified=
+issue=193
+reason=
