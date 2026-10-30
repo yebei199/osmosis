@@ -41,7 +41,7 @@ case "${1:-all}" in
     download)
         nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh download'
         ;;
-    # 全绿记进 last-green，供 nightly.sh 算可疑区间、release-gate.sh 卡发版。
+    # 全绿记进 last-green，供 nightly.sh 算可疑区间。
     all)
         nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh all'
         run_status_ui

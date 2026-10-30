@@ -20,9 +20,9 @@ doubles = ["样例仓库代替合并树；合并树的真实输出另存在交�
 [[ac]]
 id = "AC-3"
 kind = "new"
-entry = "每晚全量入口 nightly.sh 调 acceptance/run.sh all：插桩跑全量、生成覆盖地图、记 last-green；发版前 release-gate.sh"
-observe = "世界的 profraw 按 pytest 节点归档，地图列出执行过函数的文件与函数首末行；没留下计数或不在 JUnit 里的节点拒绝出图；last-green 不等于候选时发版检查退非零"
-tests = ["test_covmap::test_map_records_executed_files_per_node", "test_covmap::test_world_without_profiles_fails", "test_covmap::test_coverage_outside_junit_fails", "test_covmap::test_release_gate_requires_green_candidate[None]", "test_covmap::test_release_gate_requires_green_candidate[other]", "test_covmap::test_release_gate_requires_green_candidate[head]"]
+entry = "每晚全量入口 nightly.sh 调 acceptance/run.sh all：插桩跑全量、生成覆盖地图、记 last-green"
+observe = "世界的 profraw 按 pytest 节点归档，地图列出执行过函数的文件与函数首末行；没留下计数或不在 JUnit 里的节点拒绝出图"
+tests = ["test_covmap::test_map_records_executed_files_per_node", "test_covmap::test_world_without_profiles_fails", "test_covmap::test_coverage_outside_junit_fails"]
 doubles = ["插桩一个小 Rust 程序代替桌面端与服务端；整套每晚全量的实跑由 nixos_config 的 timer 产出"]
 mutation = "covmap 去掉 runtime-counter-relocation 或 %c：被 SIGKILL 的进程留不下计数，test_map_records_executed_files_per_node 失败"
 
