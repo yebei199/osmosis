@@ -53,6 +53,8 @@ pub(crate) struct DeckSource {
     current: Option<Boxed>,
     /// 手上这一路的代次。
     current_gen: u64,
+    /// 下一个采样落在一帧里的第几个声道。换源只在 0 处生效(MEO-2193)。
+    channel: u16,
     retired: mpsc::SyncSender<Boxed>,
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn deck() -> (Deck, DeckSource) {
             shared,
             current: None,
             current_gen: 0,
+            channel: 0,
             retired,
         },
     )
@@ -198,7 +201,12 @@ impl Iterator for DeckSource {
 
     /// 永不返回 `None`:没东西放就给静音 —— 混音器会把结束了的源摘掉，之后再换源就没人拉了。
     fn next(&mut self) -> Option<Sample> {
-        self.take_change();
+        // 只在帧边界换源：回调可能停在一帧中间(左声道出了、右声道没出),那时换上的新源
+        // 第一个采样是左声道，却会落进右声道的槽，这一首就左右对调到下一次换源(MEO-2193)。
+        if self.channel == 0 {
+            self.take_change();
+        }
+        self.channel = (self.channel + 1) % OUTPUT_CHANNELS;
         let Some(current) = self.current.as_mut() else {
             return Some(0.0);
         };
