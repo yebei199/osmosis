@@ -1,4 +1,4 @@
-"""REMOTE-BEHAVIOR-1 的可收集测试，JUnit 名称与验收映射逐一对应。"""
+"""REMOTE-BEHAVIOR-1 的可收集测试。"""
 
 import json
 import os

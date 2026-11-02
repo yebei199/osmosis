@@ -264,7 +264,7 @@ class PlaybackBar:
         assert len(visible) == 1, f"expected one visible playback bar, got {len(visible)}"
         return visible[0]
 
-    # acceptance/181.toml：「created_at 到真实播放条下一首≤1秒」；「播放条1秒证明投影及时，PCM证明实际下一曲」，计时不含播放态。
+    # #181：「created_at 到真实播放条下一首≤1秒」；「播放条1秒证明投影及时，PCM证明实际下一曲」，计时不含播放态。
     def projected(self, title, artist=None):
         return self.observe(title, artist, require_playing=False)
 
@@ -864,7 +864,7 @@ def test_dislike_radio_batch_and_future_fetch(dislike_world):
         "restarted radio track recorded as heard",
     )
     (world.directory / "dislike-radio-restart-heard.json").write_text(json.dumps(heard))
-    # acceptance/186.toml AC-2：起播即移入 heard，两个分区来自同一份应答。
+    # #186：起播即移入 heard，两个分区来自同一份应答。
     expected_ids = {"tracks": ["175005", "175006"], "heard": ["175003", "175004"]}
 
     def partitions():

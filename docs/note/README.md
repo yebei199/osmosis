@@ -4,7 +4,7 @@
 为什么这么定)。一篇讲一件事，结论写在前面，比 `docs/lesson/` 的单条经验长，也不像
 `docs/adr/` 那样只记已经做出的架构决定。
 
-不放：待办(在 forge 的 issue 上)、术语(`CONTEXT.md`)、架构决策(`docs/adr/`)、UI 硬规则
+不放：待办(`docs/TODO.md`)、术语(`CONTEXT.md`)、架构决策(`docs/adr/`)、UI 硬规则
 (`docs/design.md`)。
 
 笔记里写到的文件路径、命令和选项名要跟代码对得上，对不上就在同一个变更里改掉。

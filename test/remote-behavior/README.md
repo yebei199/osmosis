@@ -16,14 +16,10 @@ nextest 先以 `--no-run` 完成低优先级编译，再以原参数正常运行
 动态列表和组状态用 `resources.wait_for_snapshot` 返回等待命中的快照，断言不再重新读取。
 `test_resources.py` 验证命中值、空值、超时及错误传播；动作后对另一真相源的检查仍独立进行。
 
-不验证 Android 原生集成、物理扬声器或全部声卡驱动。#175 测试设计已经审过，正在执行
-真实链路验证；运行结果与未决项以本树 `.dispatch/175-handoff-*` 的固定候选报告为准，
-不能将设计通过视作功能通过。设计见 `.dispatch/175-tests-t2.md`。
+不验证 Android 原生集成、物理扬声器或全部声卡驱动。
 
-审后运行入口为 `just ci-remote`，完整 `just ci` 也包含它。CI workflow 的非 draft PR
-事件及 `workflow_dispatch` 执行相同 Nix shell 和部署检查器，检查器消费
-`acceptance/run.toml` 后调用 `run.sh`，不新增 push 触发。
-实施者重编译仍使用派工已有的 remote-run/verify-run 空闲机器，不在 pc1 本地运行。
+运行：`nix-shell test/remote-behavior/env.nix --run 'bash test/remote-behavior/run.sh all'`。
+它不在 `just ci` 与 CI workflow 里，按需手动跑。
 
 `env.nix` 固定 nixpkgs tarball 和内容哈希，复用 `slint.nix` 的 native 库，额外声明
 pasta、PulseAudio、ALSA pulse plugin、PostgreSQL、Xvfb、lavapipe、namespace 工具和 protoc。
@@ -32,8 +28,7 @@ Linux，使用普通用户。缺依赖、缺 namespace 或 GPU adapter、初始�
 没有 skip 路径。CI 的 AppArmor 配置只发生在一次性 runner。
 uv 显式选择 Nix Python 并禁用 managed Python，grpc wheel 的 libstdc++ 由 Nix 声明。
 资源启动前实际核验 pidfd 与依赖导入；缺能力直接失败。`run.sh list` 仅选首条真实列表
-纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合，
-acceptance/run.toml 与 CI 不使用局部模式。
+纵向用例，`run.sh radio` 仅选旧电台引用保护用例；默认仍执行完整集合。
 
 证据目录默认落在 `~/.cache/osmosis-remote-behavior/175-rb.*`。`run.sh` 退出时（含失败与中断）
 由 `retention.sh` 只保留最近 `REMOTE_BEHAVIOR_KEEP_RUNS`（默认 3）个运行：成功的删掉
@@ -44,14 +39,12 @@ acceptance/run.toml 与 CI 不使用局部模式。
 `seed-target.lock` 的共享锁把它 reflink 克隆（保留时间戳）成本轮 target，构建成功后持排他锁
 先拷成 `seed-target.new` 再 rename 回写。`retention.sh` 只认 `175-rb.*`，种子不会被清，
 多占的几 GB 磁盘随它常驻；要强制冷编就删掉 `seed-target/`。`CARGO_BUILD_BUILD_DIR` 钉在
-target 上，中间产物才跟着克隆走。`all` 模式的插桩包装只改工作区 crate 的指纹，它与 subset
-交替运行时工作区 crate 会来回重编，第三方依赖不受影响。
+target 上，中间产物才跟着克隆走。
 `mutate.py` 拷贝主构建时同样保留时间戳；变异构建的 `build.log` 里只要出现一行第三方 crate
 （不带 `(/本地路径)` 的 `Compiling`）就判场景失败并报「产物缓存失效」，阈值是 0。
 
 `run.sh targeted test_remote.py::<用例名>...` 只选择点名的 Python 用例，用于开发阶段
-的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变，
-验收映射门禁仍执行全部映射，完整验收按交付候选的统一检查计划执行。
+的局部验证；缺少用例名或没有收集到测试都会失败。默认 `all` 的累计集合保持不变。
 
 电台引用保护先向目标转交并暂停，保存原 queue/revision/entry。源端离组经有界确认后
 打开电台，再明确点击一次处于暂停态的真实播放按钮；导航本身不保证继续。PCM 确认
@@ -75,8 +68,8 @@ playing 上报，revision 取该上报实际应用的版本；至少四个新版
 以及电台从共享歌单续歌的挑选规则。
 它们只补快速层，不抵扣 Python 音频。完整 `run.sh` 生成独立 nextest JUnit 和
 pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit.xml`；
-`acceptance/run.toml` 声明两者，失败、缺结果或空选择均非零。nextest 无重试，
-依赖由 Nix 显式声明；首轮设计审前未执行这些用例，也未修改生产。
+失败、缺结果或空选择均非零。nextest 无重试，
+依赖由 Nix 显式声明。
 
 默认 `REMOTE_BEHAVIOR_JOBS=1`、`CARGO_BUILD_JOBS=2`。#184 在 12 核 pc2 上实测过并行：
 场景是 CPU 密集型（真实解码加三个软件渲染客户端），2 路总耗时反比串行长，2 路与 4 路都
@@ -106,15 +99,8 @@ wrapper 报告的 PID 必须等于实际持有的命令 PID，才用于音频绑
 夹在请求发出和新首帧之间。操作后 DB 不参与独立边界的推导，断言失败不重试。
 `test_position.py` 的构造反例仅验证判据，不能抵扣真实路径与 PCM 证据。
 
-根 `acceptance/175.toml` 使用正式格式 `[[ac]]` 与 doubles 列表，保留全部回归项。
-映射 ID 采用 `JUnit classname::name`，每个实际 testcase 身份唯一，多个 AC 可引用同一证据。
-`pytest --junitxml` 的真实结果原样保留于独占 artifacts，并复制到 run.toml 声明的相对路径。
-部署检查器先删除声明路径的旧结果，再运行完整映射集合，拒绝缺项、skip、失败或重试成绿。
-Nix 固定部署检查器的提交和 SHA256，无仓库自写校验器。nextest 仅增加本次投影证据，
-没有迁移无关 Rust 套件。采集、位置与清理机制项也进入实际 pytest 集合与映射。
-
 运行入口打印 `artifacts=`，证据留在该独占临时目录：原始 PCM、UI 动作（填充值去除）、
-媒体输入哈希、环境/候选哈希、命令日志、进程退出凭据、JUnit 与验收核对结果。
+媒体输入哈希、环境/候选哈希、命令日志、进程退出凭据、JUnit。
 四种变异分别在独立 clone 修改一个故障点，保留 patch、编译日志及定向 RED/GREEN JUnit。
 证据目录建立于持久 XDG cache 下的 osmosis-remote-behavior，或明确指定的
 REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix TMPDIR。
@@ -125,7 +111,7 @@ REMOTE_BEHAVIOR_ARTIFACT_ROOT；每次独占，不使用退出即删除的 Nix T
 父端断开 IPC 也触发回收。`lifecycle.sh` 是 run.sh 与轻量取消测试共同使用的 shell
 收口入口；外层 TERM/INT、嵌套 pytest 超时和部分初始化失败都进入此路径。
 退出/超时/取消状态与清理结果分开记录，日志与 PCM 留供复核。`test_lifecycle.py` 验证机制，
-不替代音频业务证明；轻量验证命令与故障场景见 t2 设计文书。
+不替代音频业务证明。
 强制 SIGKILL guardian 或宿主失联无法保证收口，必须以资源凭据判未完成，不声称已清理。
 
 断连闸保留 server 半连接以触发真实心跳清退；最后输出端用例等待上限
@@ -154,44 +140,3 @@ PostgreSQL、D-Bus、PulseAudio及XDG runtime socket使用本轮mkdtemp短目录
 原生端；小米13另排实机时段。开发入口为 `run.sh targeted test_dislike.py`，累计验收
 同时运行 app-core 屏蔽单元测试并生成既有 projection JUnit。
 兼容用例固定旧版三枚举，检查缺省规则响应可解析，新客户端声明 song_rules 后可管理歌曲规则。
-
-## 按改动挑场景与每晚全量（#185）
-
-`selection.py BASE HEAD` 从 head 的提交里读 `coverage-map.json`（不读工作区），输出
-`accept-select/1` JSON：base..head 该跑的 pytest 节点和每个改动文件的判定。门禁按
-`acceptance/run.toml` 的 `[select]` 调它，再把子集交给 `acceptance/run.sh subset`
-（nixos_config#289）。地图记录生成提交、二进制里每个源文件的被插桩函数
-首末行（functions），和每个场景实际执行过的源文件。挑选规则：
-
-- 二进制里的 Rust 文件，改动（按地图提交的行号）全部落在函数体内 → 地图上执行过它的
-  场景；执行过它的场景一个都没有 → 不加场景。只改注释或空行的段不算改动；
-- 同一文件里有任何一段落在函数体外（类型、derive、常量、函数签名、新增函数、impl 头）
-  → 全量：覆盖率不把 derive 展开和常量内联记作执行，按文件覆盖会漏选；
-- 不进二进制的 Rust 测试代码、文档、安卓/web/iOS、xtask、experiments、`test/` 下别的
-  脚本、AC 映射 toml → 不加场景；
-- `test_<x>.py` → 整个模块；`mutate.py` → 全部 fault_sensitivity；
-  `mutate.FAULTS` 里的锚点文件 → 对应的那条 fault_sensitivity，其余时候不跑它；
-- 其他一律退回全量：Cargo.lock、Cargo.toml、build.rs、`.slint`、迁移、素材、nix、
-  justfile、共享测试设施（含 selection.py 自己），以及地图里没有的文件；地图缺失、
-  解析不了、生成提交不是 head 的祖先，同样全量。
-- 地图生成提交之后的改动一并计入，地图越旧选得越多；`test_lifecycle.py`、
-  `test_position.py`、`test_selection.py`、`test_covmap.py` 与矩阵断言每次都跑。
-
-已知上限：函数体内的改动按文件挑，选中的是执行过该文件任一函数的场景，不细到函数。
-宏展开生成的函数（`macro_rules!` 等）不按函数体判断，落在宏定义里的改动会被当作
-函数体外而退回全量。
-
-`acceptance/run.sh subset <节点>...` 跑子集：`run.sh subset`（带 Rust 投影回归）再加
-status-ui，写出与全量相同的三份 JUnit。`acceptance/run.sh changed BASE HEAD` 给人手用：
-先挑，再按结果走 `all` 或 `subset`，挑选结果写进 `results/selection.json`。
-
-全量（`run.sh all`，合回门禁与每晚全量走的同一条路径）顺带生成地图：
-`coverage-rustc.sh` 作为 `RUSTC_WORKSPACE_WRAPPER` 只给工作区 crate 插桩，每个世界按
-pytest 节点把 profraw 写进自己的目录（`%c` 连续模式，被信号杀掉的进程也留下计数），
-全绿后 `covmap.py` 写出 `results/coverage-map.json`，日志里另有一行
-`coverage-map-gzip-base64:` 副本。`acceptance/run.sh all` 全绿后把 HEAD 记进状态目录的
-`last-green`（默认 `~/.cache/osmosis-nightly`，`OSMOSIS_NIGHTLY_STATE` 可改）。
-
-`nightly.sh` 是每晚全量入口：调 `acceptance/run.sh all`，记一行 `history.tsv`，失败打印
-`<last-green>..<本次>` 可疑区间，全绿时把地图留在 `runs/<时间>-<提交>/`。调度不在本仓库。
-新地图拷进本目录的 `coverage-map.json` 提交。

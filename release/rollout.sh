@@ -158,9 +158,9 @@ step_nixos() {
 
     # 资产改名后(如 #163 桌面加 .zst 后缀)首次 rollout,nix 文件里还是旧文件名的
     # url 行:replace_hash 找不到就原样跳过、不报错,version 却已经抬了,结果是
-    # 版本号对、哈希全是旧的,照常提交推送,自动部署才 404(AC-4)。先把每个
+    # 版本号对、哈希全是旧的,照常提交推送,自动部署才 404。先把每个
     # 资产的 url 行都核对存在,任何一个缺失就整体拒绝、一个字都不改——不要在这里
-    # 自动去改 nixos_config 的 url:那是主路由在发布首个压缩版时该做的事。
+    # 自动去改 nixos_config 的 url:资产改名后的首次发布由人手动同步它。
     for asset in "${desktop_assets[@]}"; do
         grep -qF "/$asset\"" "$file" \
             || { fail "nixos_config: $nix_file 里没有 $asset 的 url 行,资产改名后需要先手动同步"; return; }

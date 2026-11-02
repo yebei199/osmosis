@@ -84,7 +84,6 @@ docker/            Docker 构建工作流(给没有 nix 的机器);见 docker/RE
 Android.nix        NixOS 本机原生工具链(nix-shell)
 xtask/             构建逻辑(`cargo xtask android`),容器/本机通用
 release/           把已发布的 release 推到各设备与 nixos_config(`just rollout`)
-acceptance/        逐 issue 行为验收映射与统一 JUnit 运行声明
 test/remote-behavior/  真实客户端遥控音频测试、独占环境与故障验证
 ```
 

@@ -5,10 +5,6 @@
 }:
 let
   base = import ../../slint.nix { inherit pkgs; };
-  acceptCheck = builtins.fetchurl {
-    url = "https://git.cryptorust.uk/sibyl/nixos_config/raw/commit/ab618e265a9c85869c24f22c117363a5991c9836/home/features/development/ai_cli/skills/tdd/scripts/accept-check.py";
-    sha256 = "a2224521120d8af0933cec4701f01f20b169198b8da890532d143035b272892a";
-  };
 in
 base.overrideAttrs (old: {
   nativeBuildInputs =
@@ -30,9 +26,6 @@ base.overrideAttrs (old: {
       mesa
     ]);
   shellHook = (old.shellHook or "") + ''
-    # 覆盖率工具跟随同一 rustup 工具链的 llvm-tools-preview。
-    export PATH="$(dirname "$(rustc --print target-libdir)")/bin:$PATH"
-    export REMOTE_BEHAVIOR_ACCEPT_CHECK="${acceptCheck}"
     export REMOTE_BEHAVIOR_PYTHON="${pkgs.python3}/bin/python3"
     export SLINT_WGPU_CPU=1
     export ALSA_PLUGIN_DIR="${pkgs.alsa-plugins}/lib/alsa-lib"

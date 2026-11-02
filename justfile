@@ -41,13 +41,8 @@ _default:
 # 本地跑一遍 CI 会跑的全部检查。dev 上的 push 不触发 CI,提交前跑这个
 # 与 .github/workflows/ci.yml 一一对应,命令逐字相同
 [group('ci')]
-ci: ci-fmt ci-test ci-cross ci-boundaries ci-remote
+ci: ci-fmt ci-test ci-cross ci-boundaries
     @echo "==> CI 全部通过"
-
-# 遥控行为套件：独立软件显示/音频与真实三客户端，缺能力非零。
-[group('ci')]
-ci-remote:
-    nix-shell test/remote-behavior/env.nix --run 'python "$REMOTE_BEHAVIOR_ACCEPT_CHECK" run'
 
 # 不套 nix-shell:slint.nix 给的是 fontconfig、alsa 这类原生库,rustfmt 一个都不用,
 # 而 Rust 工具链本来就来自外面的环境。CI 那个 fmt job 同样什么都不装
@@ -389,6 +384,19 @@ mcp-android: local-backend-up android-not-production mcp-forward android-reverse
     env -u OSMOSIS_API_BASE nix-shell Android.nix --run 'PROFILE=debug SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT={{mcp_port}} FEATURES=mcp CARGO_TARGET_DIR=target-android cargo xtask android'
     {{just_executable()}} dev-adb install -r {{apk}}
     {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
+
+# test/mcp-e2e 的 pytest 用例(见 test/README.md)。不带参数跑整个目录,带参数是 pytest 节点,
+# 如 `just mcp-e2e 'test/mcp-e2e/test_scenarios.py::test_pick[list]'`。
+# 先按 desktop-dev 的构建指纹编桌面与 server:夹具起的是 target/debug 里那份,不先编就验到旧二进制。
+[group('mcp')]
+[positional-arguments]
+mcp-e2e *tests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nix-shell slint.nix --run 'env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 cargo build --locked -p app-desktop --features mcp,slint/live-preview'
+    cargo build --locked -p server
+    [[ $# -gt 0 ]] || set -- test/mcp-e2e
+    uv run --project test/mcp-e2e pytest "$@" --mcp-artifacts "${MCP_ARTIFACTS:-test/mcp-e2e/results/artifacts}"
 
 # 杀掉所有跑着的桌面实例。三处静默失败等着:
 #

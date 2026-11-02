@@ -33,8 +33,7 @@ local.properties
 # 别提交 —— 服务面向公网,邀请码进了历史就等于没有邀请码
 /.env
 
-# issue-dispatch 往 worktree 里放的返工结论文件。不忽略的话它会以游离文件
-# 出现在实施者的树里,被 `git add -A` 顺手带进提交
+# 已撤掉的旧 AI 工作流留在本地工作树里的产物目录,不进版本库
 /.dispatch/
 
 # Claude Code 的本机设置(哪些 MCP server 在这台机器上开着)。settings.json 是

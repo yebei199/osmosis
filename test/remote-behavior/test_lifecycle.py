@@ -293,47 +293,11 @@ process.exit(args.includes("--no-run") ? Number(process.env.MEO_TEST_FAIL_BUILD 
     return env, journal
 
 
-@pytest.mark.parametrize("profile", ["status-ui", "audio"])
-def test_native_suite_compiles_low_then_runs_at_normal_priority(priority_tools, profile):
+def test_behavior_entry_refuses_inherited_low_priority(priority_tools):
     env, journal = priority_tools
     result = subprocess.run(
-        ["bash", str(SUITE.parents[1] / "acceptance/run.sh"), profile],
+        ["nice", "-n", "19", "bash", str(SUITE / "run.sh"), "all"],
         env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    calls = [json.loads(line) for line in journal.read_text().splitlines()]
-    assert len(calls) == 2
-    assert "--no-run" in calls[0]["args"]
-    assert "--no-run" not in calls[1]["args"]
-    assert [call["nice"] for call in calls] == [19, 0]
-    assert [call["jobs"] for call in calls] == ["4", "4"]
-
-
-def test_native_suite_build_failure_does_not_start_tests(priority_tools):
-    env, journal = priority_tools
-    result = subprocess.run(
-        ["bash", str(SUITE.parents[1] / "acceptance/run.sh"), "audio"],
-        env=env | {"MEO_TEST_FAIL_BUILD": "7"},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 7
-    calls = [json.loads(line) for line in journal.read_text().splitlines()]
-    assert len(calls) == 1 and "--no-run" in calls[0]["args"]
-
-
-@pytest.mark.parametrize("entry", ["nightly.sh", "run.sh", "acceptance"])
-def test_behavior_entry_refuses_inherited_low_priority(priority_tools, tmp_path, entry):
-    env, journal = priority_tools
-    script = SUITE.parents[1] / "acceptance/run.sh" if entry == "acceptance" else SUITE / entry
-    state = tmp_path / "nightly-state"
-    result = subprocess.run(
-        ["nice", "-n", "19", "bash", str(script), "all"],
-        env=env | {"OSMOSIS_NIGHTLY_STATE": str(state)},
         capture_output=True,
         text=True,
         check=False,
@@ -341,7 +305,6 @@ def test_behavior_entry_refuses_inherited_low_priority(priority_tools, tmp_path,
     assert result.returncode != 0
     assert "normal priority" in result.stderr
     assert not journal.exists()
-    assert not state.exists()
 
 
 def test_ci_nextest_builds_low_and_runs_normally(priority_tools):

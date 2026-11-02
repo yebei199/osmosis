@@ -28,17 +28,16 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
 | `server/` | axum 后端,把 bang-dream(独立仓库)的 gRPC 翻成 HTTP/JSON;`proto/` 是上游契约副本,`migrations/` 是 Postgres |
 | `xtask/` | 构建逻辑(`cargo xtask android`、`boundaries`) |
 | `test/` | 端到端脚本、`headless/`(无头 sway 夹具)、`mcp-e2e/`、`remote-behavior/` |
-| `acceptance/` | 逐 issue 的 AC→测试映射,`just ci-remote` 消费 |
 | `release/` | `just rollout`:把已发布版本推到各设备与 nixos_config |
 | `docs/note/` | 操作手册与调查记录;日常命令和验证的坑在 [`dev-workflow.md`](docs/note/dev-workflow.md) |
-| `.agents/` | 给门禁工具读的声明:`services`(测试要的本地端口)、`derived`(提交进库的生成物 glob) |
 
 ## 会咬人的事实
 
 - **门禁是 `just ci`**,逐字对应 `.github/workflows/ci.yml`(fmt、nextest+clippy `-D warnings`、
-  android 交叉 clippy、boundaries、remote-behavior)。CI 只在非 draft PR 和手动触发时跑,
+  android 交叉 clippy、boundaries)。CI 只在非 draft PR 和手动触发时跑,
   直接 push 任何分支(含 master)都没有 CI。`ci-test` 依赖 Docker 里的 Postgres(`just pg`)
-  与 RustFS(`just rustfs`)。
+  与 RustFS(`just rustfs`)。`test/remote-behavior/` 与 `test/mcp-e2e/`(`just mcp-e2e`)不在其中,
+  按需手动跑。
 - **裸 `cargo build/test` 只走 `default-members`**(桌面链路)。`audio`、`syncplay`、`server`、
   `xtask` 要 `-p` 点名才会测;`apps/android` 在宿主 target 上编不过,只经 `cargo xtask android`
   或 `--target aarch64-linux-android`。

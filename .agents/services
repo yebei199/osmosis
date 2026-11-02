@@ -1,2 +1,0 @@
-# server/tests 的 DEFAULT_DATABASE_URL：postgres://slint:devonly@127.0.0.1:5432/osmosis（起库：just pg）
-127.0.0.1:5432

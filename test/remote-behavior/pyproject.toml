@@ -19,8 +19,6 @@ testpaths = [
   "test_download.py",
   "test_dislike.py",
   "test_retention.py",
-  "test_selection.py",
-  "test_covmap.py",
 ]
 junit_family = "xunit2"
 addopts = "--strict-markers --strict-config"

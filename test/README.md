@@ -19,13 +19,13 @@ MCP 从 pasta 网络命名空间转发到随机宿主端口，所以和用户开
 前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
 server 用随机宿主端口，pasta 把应用命名空间里烘进去的 127.0.0.1:3000 接过去，所以宿主的 3000
 被别的开发后端占着也照跑（MEO-1900）；app 用例串行运行，不杀其他会话。
-依赖由 uv.lock 固定。验收分流入口按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
+依赖由 uv.lock 固定。`just mcp-e2e` 先按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
 
 ```sh
 # 只跑库、像素机制、资源生命周期和迁移判据：
-uv run --project test/mcp-e2e pytest test/mcp-e2e/test_client.py test/mcp-e2e/test_visual.py test/mcp-e2e/test_acceptance.py test/mcp-e2e/test_local_app.py test/mcp-e2e/test_scenarios.py -m 'not app'
-# 隔离环境验证真实列表、卡墙和 views；分流入口负责构建，不访问真实网易：
-bun test/mcp-e2e/accept-run.ts subset 'test_scenarios::test_pick[list]' 'test_scenarios::test_pick[wall]' test_scenarios::test_views
+uv run --project test/mcp-e2e pytest test/mcp-e2e/test_client.py test/mcp-e2e/test_visual.py test/mcp-e2e/test_local_app.py test/mcp-e2e/test_scenarios.py -m 'not app'
+# 隔离环境验证真实列表、卡墙和 views；配方负责构建，不访问真实网易：
+just mcp-e2e 'test/mcp-e2e/test_scenarios.py::test_pick[list]' 'test/mcp-e2e/test_scenarios.py::test_pick[wall]' test/mcp-e2e/test_scenarios.py::test_views
 # 可选真实上游模式：调用者先起后端、GPU debug 桌面并登录到音乐页，不进入默认验收：
 uv run --project test/mcp-e2e pytest test/mcp-e2e/test_scenarios.py -m app --mcp-live --mcp-url http://127.0.0.1:8091/mcp
 ```
@@ -36,8 +36,7 @@ uv run --project test/mcp-e2e pytest test/mcp-e2e/test_scenarios.py -m app --mcp
 no route to host，这只说明该次会话的访问结果，不能推断整台机器的网络状况。
 
 新增用例放在本目录的 test_*.py，声明 mcp 参数即可使用公共 fixture；需要隔离真实应用时标记
-pytest.mark.app，并用 scenario_env 将数据库断言指向本轮容器。新模块还需登记到 accept-run.ts
-的模块集合及相关 acceptance 映射。测试逻辑不要直接构造被测的播放结果。
+pytest.mark.app，并用 scenario_env 将数据库断言指向本轮容器。测试逻辑不要直接构造被测的播放结果。
 
 ```python
 import pytest
@@ -56,7 +55,7 @@ views 默认覆盖 enter/ABA；relogin 留在旧 CLI 兼容路径，等 S1 后�
 
 pytest 失败自动保存 screenshot.png 与 element-tree.json，采集错误另存 capture-errors.txt，
 不覆盖原断言。视觉断言 mcp.expect_screenshot(baseline_path, tmp_path) 超限还保存 diff.png。
---mcp-artifacts 指定每轮独立产物的父目录；验收入口也接受 MCP_ARTIFACTS 环境变量。
+--mcp-artifacts 指定每轮独立产物的父目录；`just mcp-e2e` 从 MCP_ARTIFACTS 环境变量取它。
 插件入口是 mcp_pytest；其他目录复用时将库目录放入 PYTHONPATH 并用 -p mcp_pytest。
 
 像素规则是任一 RGBA 通道差 > 8 算变化，变化像素占比 > 0.1% 判失败，等于阈值通过。
@@ -82,9 +81,8 @@ GPU 纹理在、与已有实例并存、AI 会话守卫。见 [headless/README.m
 
 独立 Linux 显示、namespace、数据库及音频服务，MCP 驱动列表、卡墙和遥控操作，
 实际 PCM 区分曲目与时间位置。覆盖恢复和生命周期回归，四个独立变异证明故障灵敏度。
-`just ci-remote` 纳入 `just ci` 与 PR/workflow_dispatch 的 CI；缺依赖和采集失败均非零。
+不在 `just ci` 与 CI 里，入口 `run.sh` 按需手动跑；缺依赖和采集失败均非零。
 环境、入口及证明边界见 [remote-behavior/README.md](remote-behavior/README.md)。
-当前为 #175 审前材料，尚未执行。
 
 ## null-sink.ts —— 测试和开发实例一律不从真实声卡出声
 
@@ -162,7 +160,7 @@ HOME=$iso XDG_DATA_HOME=$iso/.local/share XDG_STATE_HOME=$iso/.local/state test/
 两条路各起一次:`env -i` 的干净环境直接跑 `~/.local/bin/osmosis-desktop`,以及以用户
 会话管理器的环境(`systemd-run --user`)跑 `gtk-launch io.github.osmosis`(菜单那条路)。
 判据是 niri 报出 Osmosis 窗口、那个进程的 `/proc/<pid>/maps` 里有 libvulkan,不看观感。
-要一个在跑的 niri 会话和显卡,所以不进 `just ci`;装过的二进制要先编好,编译照规矩去编译机。
+要一个在跑的 niri 会话和显卡,所以不进 `just ci`;装过的二进制要先编好。
 
 ## desktop-close-exit.sh —— 关窗后进程走不走(#15、#132)
 

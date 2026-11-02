@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 完整 CI 入口；所有资源由 pytest 世界登记，失败仍保留证据。
+# 遥控行为套件入口；所有资源由 pytest 世界登记，失败仍保留证据。
 set -euo pipefail
 if (( $(ps -o ni= -p "$$") != 0 )); then
     echo 'behavior tests require normal priority; do not wrap this entry in nice' >&2
@@ -9,13 +9,12 @@ repo_root=$(git rev-parse --show-toplevel)
 suite_dir="$repo_root/test/remote-behavior"
 cd "$repo_root"
 mode=${1:-all}
-if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download && "$mode" != targeted && "$mode" != subset ]]; then
-    echo 'usage: run.sh [all|list|radio|download|targeted <testcase>...|subset <testcase>...]' >&2
+if [[ "$mode" != all && "$mode" != list && "$mode" != radio && "$mode" != download && "$mode" != targeted ]]; then
+    echo 'usage: run.sh [all|list|radio|download|targeted <testcase>...]' >&2
     exit 2
 fi
 selected_tests=()
-# subset 是 selection.py 挑出的累计子集，和 all 一样带上 Rust 投影回归。
-if [[ "$mode" == targeted || "$mode" == subset ]]; then
+if [[ "$mode" == targeted ]]; then
     shift
     if [[ $# -eq 0 ]]; then
         echo 'targeted requires at least one testcase' >&2
@@ -26,7 +25,7 @@ if [[ "$mode" == targeted || "$mode" == subset ]]; then
     done
 fi
 : "${REMOTE_BEHAVIOR_PYTHON:?use the suite Nix shell to select a pidfd-capable Python}"
-for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon llvm-profdata llvm-cov; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     command -v "$required" >/dev/null || { echo "missing dependency: $required" >&2; exit 2; }
 done
 if [[ $(id -u) == 0 ]]; then
@@ -38,9 +37,6 @@ artifact_root=${REMOTE_BEHAVIOR_ARTIFACT_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/o
 mkdir -p "$artifact_root"
 REMOTE_BEHAVIOR_ARTIFACTS=$(mktemp -d "$artifact_root/175-rb.XXXXXXXX")
 echo "artifacts=$REMOTE_BEHAVIOR_ARTIFACTS"
-if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-    echo "artifacts=$REMOTE_BEHAVIOR_ARTIFACTS" >> "$GITHUB_OUTPUT"
-fi
 export REMOTE_BEHAVIOR_COMMIT
 REMOTE_BEHAVIOR_COMMIT=$(git rev-parse HEAD)
 if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
@@ -84,18 +80,10 @@ print("pidfd and grpc/numpy/psycopg/pytest imports available")
 PY
 git rev-parse HEAD > "$REMOTE_BEHAVIOR_ARTIFACTS/candidate.txt"
 sha256sum Cargo.lock "$suite_dir/uv.lock" server/proto/music/v1/music.proto > "$REMOTE_BEHAVIOR_ARTIFACTS/input-sha256.txt"
-for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon llvm-profdata llvm-cov; do
+for required in cargo cargo-nextest uv pasta pulseaudio pactl parec initdb postgres pg_isready Xvfb unshare nsenter mount ip dbus-daemon; do
     executable=$(command -v "$required")
     sha256sum "$executable" >> "$REMOTE_BEHAVIOR_ARTIFACTS/environment-sha256.txt"
 done
-# 全量顺带生成覆盖地图（#185）：只给工作区 crate 插桩，每个世界按 pytest 节点写 profraw。
-# 进程之外落下的 profraw（构建脚本、投影测试）收进 stray，不进地图。
-if [[ "$mode" == all ]]; then
-    export REMOTE_BEHAVIOR_COVERAGE="$REMOTE_BEHAVIOR_ARTIFACTS/coverage"
-    mkdir -p "$REMOTE_BEHAVIOR_COVERAGE/stray"
-    export RUSTC_WORKSPACE_WRAPPER="$suite_dir/coverage-rustc.sh"
-    export LLVM_PROFILE_FILE="$REMOTE_BEHAVIOR_COVERAGE/stray/%p-%m.profraw"
-fi
 # 热种子（#189）：主构建从上一轮成功的产物起步。reflink 加保留时间戳，cargo 才认第三方依赖仍新鲜。
 # 读持共享锁、回写持排他锁，回写先拷到临时目录再 rename，别的轮次读不到半份。
 seed="$artifact_root/seed-target"
@@ -114,7 +102,7 @@ flock -x "$seed_lock" bash -c 'set -e
     rm -rf -- "$2.old"' _ "$REMOTE_BEHAVIOR_TARGET_DIR" "$seed"
 sha256sum "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
     "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" > "$REMOTE_BEHAVIOR_ARTIFACTS/binary-sha256.txt"
-if [[ "$mode" == all || "$mode" == subset ]]; then
+if [[ "$mode" == all ]]; then
     projection_junit="$repo_root/target/nextest/rb-projection/junit.xml"
     rm -f "$projection_junit"
     run_owned projection-build 3600 nice -n 19 cargo nextest run --no-run --locked -p ui -p app-desktop -p app-core -p server \
@@ -132,19 +120,8 @@ tests=("$suite_dir")
 if [[ "$mode" == list ]]; then tests=("$suite_dir/test_remote.py::test_core_pick[list]"); fi
 if [[ "$mode" == radio ]]; then tests=("$suite_dir/test_remote.py::test_radio_publication_preserves_group_reference"); fi
 if [[ "$mode" == download ]]; then tests=("$suite_dir/test_download.py"); fi
-if [[ "$mode" == targeted || "$mode" == subset ]]; then tests=("${selected_tests[@]}"); fi
+if [[ "$mode" == targeted ]]; then tests=("${selected_tests[@]}"); fi
 run_owned pytest 7200 "$suite_python" -m pytest --rootdir "$suite_dir" \
     "${tests[@]}" -n "$REMOTE_BEHAVIOR_JOBS" --max-worker-restart=0 \
     --basetemp "$REMOTE_BEHAVIOR_ARTIFACTS/pytest-tmp" \
     --junitxml "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml"
-# 只有全绿才产出地图；日志里另打一行压缩副本，远端运行只带回日志时也取得回来。
-if [[ "$mode" == all ]]; then
-    run_owned covmap 1800 "$suite_python" "$suite_dir/covmap.py" \
-        --profiles "$REMOTE_BEHAVIOR_COVERAGE" --junit "$REMOTE_BEHAVIOR_ARTIFACTS/junit.xml" \
-        --object "$REMOTE_BEHAVIOR_TARGET_DIR/debug/osmosis-desktop" \
-        --object "$REMOTE_BEHAVIOR_TARGET_DIR/debug/server" \
-        --out "$REMOTE_BEHAVIOR_ARTIFACTS/coverage-map.json"
-    mkdir -p "$suite_dir/results"
-    cp "$REMOTE_BEHAVIOR_ARTIFACTS/coverage-map.json" "$suite_dir/results/coverage-map.json"
-    echo "coverage-map-gzip-base64: $(gzip -9c "$suite_dir/results/coverage-map.json" | base64 -w0)"
-fi
