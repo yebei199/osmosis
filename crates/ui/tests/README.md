@@ -18,4 +18,4 @@
   `accessible_*`、`size`、`absolute_position`、`computed_opacity` 这几个公开口子,
   断言只能落在这些上面,或落在能间接观察到的数据/几何变化上。
 - 真机专属的行为(手势条、真实触摸)——那要 `just mcp-android` 配真机跑,
-  见仓库根 `AGENTS.md`。
+  见 `docs/note/dev-workflow.md`「验证的坑」。

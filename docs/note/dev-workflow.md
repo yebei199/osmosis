@@ -119,7 +119,7 @@ Slint 1.17 起,MCP server 可以**编译进应用自身**(`slint/mcp` feature)�
 开给 localhost 上的任何进程,开发时值,发出去不值。
 
 ```sh
-just desktop-dev      # 桌面端,MCP 默认开在 127.0.0.1:8090
+just desktop-dev      # 桌面端,MCP 默认开在 127.0.0.1:8091
 ```
 
 客户端那一侧由仓库根的 [`.mcp.json`](../../.mcp.json) 声明(名为 `slint-app`),
@@ -135,13 +135,9 @@ just mcp-android      # 烧入端口重编 APK + 装机 + adb forward + 启动
 这里用的是 `adb forward` 而非 `adb reverse`:MCP server 跑在**手机**里,是开发机要连
 进去,方向与转发 `server-dev` 的那次相反。
 
-> **玩完手机记得撤转发**:`adb forward` 会一直占着 8090。之后再跑 `just desktop-dev*`,
-> slint 绑不上端口时**只在日志里留一行 `Address already in use` 就继续跑**,app 一切正常
-> —— 而 AI 客户端按 `.mcp.json` 连 127.0.0.1:8090,连上的是**手机里的旧 APK**,读到的
-> 元素树和截图全是手机的,浑然不觉。踩过一次,查了半天。
->
-> 现在 `desktop-dev*` 前置了一道端口守卫,占用时直接失败并点名占用者,不会再静默降级。
-> 撤转发:`adb forward --remove tcp:8090`。
+桌面(8091)与真机(8090)各占一个端口,两边可以同时开着。`.mcp.json` 里 `slint-app` 指桌面、
+`slint-android` 指手机。slint 绑不上端口时只在日志里留一行 `Address already in use` 就继续跑,
+所以 `just desktop-dev*` 前置了端口守卫,占用时直接失败并点名占用者。
 
 Slint 1.17 本身在 android 上**没接** MCP:桌面走 `i-slint-backend-selector`,它设完
 platform 会顺手调 `mcp_server::init()`;而 `slint::android::init()` 直接调
@@ -165,3 +161,90 @@ android 侧 `SLINT_MCP_PORT` 是构建期的 —— APK 由系统启动,进程�
 
 `mcp` feature 默认关闭:它会把测试后端和软件渲染器编进二进制。别跑 `--all-features`,
 那会把它拖进来。
+
+## 验证的坑
+
+这些都是静默失败:不报错,只让人误判「改动没生效」或「功能不可用」。
+
+### 实例与进程
+
+- 包名 `app-desktop`,进程名 `osmosis-desktop`。拿包名去 `pkill`、去跑 `target/debug/app-desktop`
+  都不报错,只是没杀掉、没启动。`pkill -f app-desktop` 还会匹配到自己那条命令行,连父 shell
+  一起杀掉。用 `just desktop-kill`(按进程名精确匹配)。
+- 旧实例没退干净时,截图、元素树读到的都是旧进程。
+- `cargo build | tail` 会把输出攒到进程结束才吐,中途看起来和吊死一样;全量重定向进文件再读。
+  `ps`/`pgrep` 在这台机上的结果不可单独采信;判死活看任务完成通知、日志在长、产物时间戳变新。
+- 首次进 nix 环境(尤其 `Android.nix` 的 gradle)可能静默下载几百 MiB。
+- 两个构建抢同一个产物目录时,后完成的覆盖前者,时间戳和日志都看不出异常。测量前核对产物
+  时间戳。
+
+### 截图与像素
+
+- `just shot [宽度]` 的产物 `dist/shot.png` 是无头 sway 合成器的输出(窗口高固定 900),基准图
+  只在无头下生成。`just desktop-dev` 起着的会话用
+  `bun test/headless/headless.ts capture --dir <会话目录> --out a.png` 抓当前画面。
+- MCP 的 `take_screenshot` 采得到导入的 wgpu 纹理,判「画出来了没有」够用;颜色与合成的逐像素
+  比对以 `just shot` 为准。真机上它报 Skia 包装错误,改用 `adb shell screencap`(物理像素,
+  逻辑坐标乘 scale)。
+- 选探针前确认它头顶没有东西:侧栏和光带按钮被 `nav-bg` 等导入纹理盖着,而这些纹理只在 GPU
+  构建里非空,于是「非 GPU 构建生效、GPU 构建不生效」可能只是探针被盖住。内容区的实底元素安全。
+- 遮挡是否生效看卡片那 1px 边框在不在(`magick dist/shot.png -format "%[pixel:p{x,y}]" info:`),
+  不看观感:粒子挡住卡片与玻璃透出粒子肉眼分不开。看不出效果时先确认取景,再怀疑管线。
+- 元素在不在,以 `crates/ui/tests/` 里 `find_by_element_id` 为准;MCP 只证明「你连的那份树里没有」。
+  会话启动时桌面没跑,工具列表里只剩 `slint-android`(1080x2400、scale 2.75),很容易当成桌面;
+  拿 `adb shell wm size` 对一下。
+- MCP 客户端没连上时,端点就是普通 HTTP:`POST http://127.0.0.1:8091/mcp` 发 JSON-RPC
+  (`Accept: application/json, text/event-stream`),参数名 camelCase。
+- 端到端脚本按元素 id 找控件,断言落在库里的行、量出的尺寸或状态上;样板是 `test/pick-e2e.sh`。
+
+### `.slint` 热重载
+
+- `SLINT_LIVE_PREVIEW` 是构建期变量(slint 编译器读它决定生成哪套代码),只在运行时带上则产物
+  里没有热重载,改 `.slint` 毫无反应。`just desktop-dev` 一条命令覆盖构建与运行。
+- 文件监听器收不到 `sed -i`(写临时文件再 rename,inode 变了);要原地截断写。
+- 判据是日志里的 `Reloaded component MainWindow from <路径>`。惰性渲染下没有输入就不重绘。
+
+### 真机
+
+- 开发装机走 `just mcp-android`(debug 档,MCP 读得到元素树);发布件走 `just android-build`。
+  `target-android/` 按 profile 分树。仓库改过路径后旧树的 `CMakeCache.txt` 记着老路径,走 cmake
+  的 `-sys` crate 会编不过,删掉那棵树。
+- 安卓配方的 adb 都带序列号:多台在线又没设 `ANDROID_SERIAL` 时拒绝;debug 包按
+  `ro.product.model` 拒装到生产平板。`adb reverse`/`forward` 挂在 adb 连接上,无线 adb 换端口或
+  拔插后要重跑 `just mcp-android`(或 `just mcp-forward android-reverse`),否则启动即信令错误。
+- 锁屏时 `screencap` 出 0 字节、`get_window_properties` 的 `size` 为空,那不是 MCP 坏了。解锁:
+
+  ```sh
+  set -a; source .env; set +a
+  adb shell input keyevent KEYCODE_WAKEUP
+  adb shell input swipe 540 2200 540 600 200   # 不上滑 PIN 键盘不出来
+  adb shell input text "$ANDROID_DEVICE_PIN"
+  adb shell input keyevent KEYCODE_ENTER
+  ```
+
+  `wm dismiss-keyguard` 过不去。验证期间 `adb shell svc power stayon usb`,收尾 `stayon false`。
+- 服务端会把旧会话判失效,应用停在登录页。走 MCP 填 `LoginPage::username` /
+  `LoginPage::password`(值取 `.env` 的 `TEST_USERNAME` / `TEST_PASSWORD`),按无障碍标签「登录」点提交。
+- MIUI 的 `INSTALL_FAILED_USER_RESTRICTED` 多半不是开关关了(`getprop persist.security.adbinstall`
+  为 `1` 就是开着),而是安全中心的确认页(`AdbInstallActivity`)十来秒没人点就按取消处理。无线 adb
+  上一次 `uiautomator dump` 往返约 2.3s,host 端轮询追不上,检测和点击要在手机上用 `sh` 跑;bounds
+  只能从匹配到的那个 `<node>` 里取:
+
+  ```sh
+  X=$ANDROID_SERIAL
+  adb -s "$X" shell input keyevent KEYCODE_WAKEUP
+  adb -s "$X" install -r dist/osmosis-debug.apk & ip=$!
+  adb -s "$X" shell sh -c '
+  for i in $(seq 1 40); do
+    dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
+      uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+      node=$(grep -oE "<node[^>]*text=\"(继续安装|安装)\"[^>]*>" /sdcard/ui.xml | head -1)
+      bounds=$(echo "$node" | grep -oE "bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" | grep -oE "[0-9]+")
+      set -- $bounds
+      [ $# -eq 4 ] && { input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
+    }
+    sleep 1
+  done
+  '
+  wait $ip
+  ```

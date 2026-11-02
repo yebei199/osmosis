@@ -14,7 +14,7 @@ desktop_mcp_port := "8091"
 # 发行构建烘进二进制的服务端地址(crates/api 的 option_env!,编译期生效)。
 # 两个后端跑在 main-vps 的 k3s 上(infra#67);music.cryptorust.uk 经 Cloudflare Tunnel 公网可达(infra#83),
 # music.k3s.cryptorust.uk:32443 是 tailnet 内的直连入口,两者同一 backend。
-# 规则:**debug 连本机后端,release 连这里**,两者不能一样(AGENTS.md「debug 连哪个后端」)。
+# 规则:**debug 连本机后端,release 连这里**,两者不能一样(AGENTS.md)。
 # 只有 release 配方(android-build / desktop-install)读它;dev 配方(desktop-dev / mcp-android)
 # 反而把这个变量清掉,落回 crates/api 的缺省 local_api。
 api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
@@ -480,7 +480,7 @@ desktop-exit-check:
 # 无头 sway 借 GPU 渲染节点合成,wgpu 纹理是真的;应用在自己的网络命名空间里,单实例锁
 # 不和用户开着的实例打架,所以不必先杀实例,也不抢用户桌面的焦点(MEO-1900,
 # 细节见 test/headless/README.md)。MCP 的 take_screenshot 也采得到 wgpu 纹理
-# (AGENTS.md 2026-08-13 实测),判「画出来没有」够用;逐像素比对认这条。
+# (docs/note/dev-workflow.md「验证的坑」),判「画出来没有」够用;逐像素比对认这条。
 [group('桌面')]
 shot width="" dest="0":
     # 先编译再启动:否则「等窗口」会把几分钟的编译时间也等进去,看着像卡死。

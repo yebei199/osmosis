@@ -1,493 +1,76 @@
----
-docs_synced_at: fba905d
----
-
 # AGENTS.md
 
-给在本仓库里干活的 AI 助手。
+## 这是什么
 
-## 这个项目在干什么
+Osmosis:一个带 3D 视觉的音乐播放器(搜歌、边下边播、多设备遥控、封面点云与卡墙),
+建在「Slint UI + Bevy 3D + 同一个 wgpu device」上,一份 Rust 代码出 linux 桌面与 android,
+外加一个 axum 后端。用户自己的项目,发行件装在用户自己的桌面、平板和手机上。产品叙述见
+[`README.md`](README.md),术语 [`CONTEXT.md`](CONTEXT.md),架构决策 [`docs/adr/`](docs/adr/),
+UI 硬规则 [`docs/design.md`](docs/design.md),待办 [`docs/TODO.md`](docs/TODO.md)。
 
-把「Slint UI + Bevy 3D + 同一个 wgpu device」这条多端融合架构立住:一个进程、
-一块显存、一条类型系统,一份代码出 desktop / android / web。产品是一个带 3D 视觉的
-音乐播放器,用真实产品的压力检验它。完整叙述在 [`README.md`](README.md) 开头,能力上限的
-推演在 [`docs/note/vision.md`](docs/note/vision.md)。
+## 结构
 
-## 五问速查
+Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 0001/0002):
+`apps/* → ui → {app-core, api, syncplay} → contract`;`audio` 由 `ui` 注入;
+`apps/{desktop,android} → render3d` 不经过 `ui`。
 
-| 问 | 答 |
+| 路径 | 内容 |
 |---|---|
-| 这是什么 | 见上节;完整版在 [`README.md`](README.md) |
-| 结构在哪 | [`README.md`](README.md)「目录结构」:cargo workspace,依赖方向严格单向 |
-| 什么不能碰 | 依赖方向反向永久禁止;`[patch.crates-io]` 只写远程地址;`ANDROID_DEVICE_PIN` 不进任何进版本库的文件;UI 硬规则在 [`docs/design.md`](docs/design.md) |
-| web / iOS 怎么办 | 废弃(2026-09-21 用户定,#110),已摘出 workspace,代码留着备复活。这两端不做兼容,新代码遇到它们可以直接 `cfg(not(target_arch = "wasm32"))` 跳过,不必为它们设计接口 |
-| 待办在哪 | [`docs/TODO.md`](docs/TODO.md) |
-| 怎么验 | `just ci` 逐字复述 CI,`dev` 分支的 push 不触发 CI,它是唯一防线;UI 改动用 `just shot` 与 MCP,贴屏幕边/随窗口变形的几何还要真机复核(`just mcp-android`),见下文 |
-
-术语在 [`CONTEXT.md`](CONTEXT.md),架构决策在 [`docs/adr/`](docs/adr/),
-操作陷阱记在 [`docs/lesson/`](docs/lesson/)。
-以下只记**别人踩过、不写下来就会再踩一遍**的操作陷阱。
-
-## 三条总则:实例开在无头显示里,调试走 MCP,像素走无头合成器
-
-**AI 起的桌面实例一律开在看不见的无头显示里**(MEO-1900,用户 2026-10-24:「你怎么又开始
-抢占焦点,而不是在后台运行测试了?」)。`just desktop-dev`、`just shot` 和 `test/mcp-e2e` 的夹具
-默认就走 `test/headless/`(无头 sway + GPU 渲染节点 + pasta 网络命名空间 + null sink),用户桌面
-上不出窗口、不抢焦点。只有用户本人要看窗口时才带 `OSMOSIS_SHOW_WINDOW=1`。这条不靠记:
-debug 构建在 Claude Code / Codex 会话里(`CLAUDECODE`、`CODEX_THREAD_ID`、`CODEX_SESSION_ID`)
-没带开关就拒绝开到真实桌面,见 `apps/desktop/src/display_guard.rs`。裸跑二进制也要经
-`bun test/headless/headless.ts run`,用法见 [`test/headless/README.md`](test/headless/README.md)。
-
-**调试与交互一律走 MCP。** `just desktop-dev` 已经把 MCP 焊在里面
-(feature `mcp` + 构建期 `SLINT_EMIT_DEBUG_INFO` + 运行期 `SLINT_MCP_PORT`,缺一不可),
-不必记参数、也不必另起一条配方。要验证一个改动有没有生效,先想的应该是「读元素树 /
-模拟点击 / 量尺寸」,而不是「截张图看看」。它能:
-
-- `get_element_tree`、`query_element_descendants` —— 界面里到底有什么,而不是你以为有什么
-- `click_element`、`set_element_value`、`dispatch_key_event` —— 真的走一遍用户路径
-- `get_element_properties` —— 元素的真实尺寸与位置(LineEdit 实际 56px 高,不是你以为的 32px)
-
-会话启动时 app 没跑的话,`.mcp.json` 里的 `slint-app` 不会连上,工具列表里也就没有它。
-**别因此放弃**——那是个普通的 HTTP 端点,直接打 JSON-RPC 即可:
-
-```sh
-curl -s -X POST http://127.0.0.1:8091/mcp \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-参数名用 camelCase(`elementHandle`、`matchElementTypeName`),写错会原地告诉你有哪些字段。
-
-**逐像素为准的那张图靠无头 sway 的合成器输出**,即 `just shot`(grim 抓 `HEADLESS-1`)。MCP 的截图现在也能看见 GPU 画面
-(见下一节第 4 条),判断「画出来了没有」够用;比颜色、比合成结果时才需要合成器那张。
-
-## 验证 UI 改动:`just shot` 与 MCP
-
-```sh
-just shot        # 宽版式(左侧导航栏)
-just shot 420    # 紧凑版式(底部导航栏)—— 逻辑像素宽度,< 600px 即触发
-```
-
-产物在 `dist/shot.png`,是**无头合成器输出的像素**:应用开在看不见的无头 sway 里,不抢用户
-焦点、不必先杀用户开着的实例(它在自己的网络命名空间里,单实例锁不打架)。窗口高固定 900,
-基准图也只在无头下生成,回归只和无头比。`just desktop-dev` 起着的会话要截当前画面,用
-`bun test/headless/headless.ts capture --dir <启动时打印的会话目录> --out a.png`。
-
-以前的 `shot` 在用户的 niri 上开窗、聚焦、`screenshot-window`,下面三个坑是那时踩的;
-无头之后 1、3 仍适用于 `desktop-kill` 和裸跑二进制:
-
-**1. `pkill -f app-desktop` 会杀掉你自己的 shell。**
-`-f` 匹配整条命令行,而**你自己那条命令行里就有 "app-desktop" 这几个字**
-(`pkill -f app-desktop && cargo build -p app-desktop`)。于是 pkill 把自己的父 shell 也算作
-命中,整条命令带着退出码 144 消失。用 `pkill -x osmosis-desktop`(按进程名精确匹配),或者直接
-`just desktop-kill`。
-
-**2. 进程名是 `osmosis-desktop`,不是包名 `app-desktop`。**
-`apps/desktop/Cargo.toml` 里 `[package] name = "app-desktop"` 但 `[[bin]] name =
-"osmosis-desktop"`。拿包名去 `pkill` / 去跑 `target/debug/app-desktop`,**都不报错**
-—— 只是没杀掉、没启动,而你还在对着十几分钟前的**老进程**截图,以为自己的改动没生效。
-
-**3. 旧实例不杀干净,你截到的是上一版界面。**
-同时跑两个 app,就有两个 "Osmosis" 窗口;更阴的是 MCP server 绑不上端口时**只在日志里
-留一行 `Address already in use` 就继续跑**,AI 客户端按 `.mcp.json` 连过去,连上的是**旧进程**。
-元素树、截图全是旧的,一切看起来"改了没生效"。
-
-**4. GPU 构建里,你看的那一层可能不是真的。**
-
-*你看不见自己改的东西*:`.slint` 元素会被导入的纹理盖住。侧栏那句
-`Image { source: root.nav-bg; width: 100%; height: 100% }` 遮住了 `background: #0b0d13`,而
-`nav-bg` **只有 GPU 构建才有真纹理**(其余是空图,宽度 0,谁也盖不住)。拿侧栏底色当探针,就会
-得到"非 GPU 构建生效、GPU 构建不生效" —— **区分两组的是探针,不是被测的功能**。据此查过一个
-不存在的 bug,四轮。选探针前先确认它头顶没东西:内容区实底元素(如 accent 绿
-`#8fc46a` 的按钮)安全;侧栏不安全,空状态按钮自光带按钮落地后也被
-导入纹理盖着,同样不能当探针。
-
-**MCP 的 `take_screenshot` 现在采得到导入的 wgpu 纹理**(2026-08-13 实测:桌面的卡墙封面与
-光带按钮、真机的播放页点云与 fluid 条底都出得来)。这条曾经是反的 —— 旧文档说它恒为纯黑 ——
-按那句话去断言"3D 没渲染出来"现在会得出错误结论。判断「画出来了没有」用它就够。
-
-像素级的比对仍以 `just shot` 为准:那是合成器抓的真实窗口,MCP 出的是 Slint 自己渲的一张图,
-两者的颜色与合成不保证逐像素相同。量尺寸也归 MCP:`get_element_properties` 会告诉你 LineEdit
-其实有 56px 高,而不是你以为的 32px。
-
-## 端到端验证走 MCP,断言写进脚本
-
-跨了界面、api、server、数据库的链路(起播上报、登录、点播),单元测试够不着,**但也不该
-交给人去点**。用应用内嵌的 MCP 驱动界面,拿一个真相源当断言,整条写成能重跑的脚本:
-
-- 驱动:`find_elements_by_id` / `query_element_descendants` 找控件再 `click_element`,
-  **按元素 id 找,不量坐标** —— 坐标随版式与窗口尺寸变,量出来的脚本活不过一次改版;
-- 断言:数据库的行数、`get_element_properties` 量出来的尺寸、`assert` 得到的状态,
-  不是截图,也不是"我看着对";
-- 客户端没连上 app(会话启动时 app 没跑)就直接打 JSON-RPC,见上文那段 curl。
-
-现成的一份:[`test/pick-e2e.sh`](test/pick-e2e.sh) —— 在列表或卡墙上点一首歌,断言
-`play_events` 恰好多一行、队列只发布一次。抄它的形状写新的。
-
-## 判断遮挡有没有生效:量卡片边框,别看观感
-
-封面卡被粒子挡住时,肉眼很难和「玻璃透出那颗粒子」区分开 —— 两者都是「卡片区域里
-有一块亮色」。判据是**卡片那 1px 边框在不在**:
-
-```sh
-magick dist/shot.png -format "%[pixel:p{851,1055}]" info:   # 亮线 → 卡片在上
-magick dist/shot.png -format "%[pixel:p{851,1070}]" info:   # 与背景同色 → 物体在上,遮挡生效
-```
-
-(坐标随窗口尺寸变,先用红色清除色把卡片矩形量出来再取点。)
-
-按观感判过一次,判反了,又倒回去查了三轮管线 —— 相机、alpha 合成、深度清除值 —— 才发现
-管线从第一帧起就是对的,近处物体只是没落进卡片矩形。**看不出效果时先确认取景,再怀疑管线。**
-
-## `.slint` 热重载:`desktop-dev` 有
-
-bevy 只是把自己的 wgpu device 和纹理交给 Slint,不干扰 live-preview。
-得出过相反的结论,是探针选错(见上一节第 4 条),不是功能问题。
-
-验它有两个静默陷阱,踩上就会误判成"功能不可用":
-
-**1. `SLINT_LIVE_PREVIEW` 是构建期变量,不是运行期开关。**
-`internal/compiler/generator/rust.rs` 在 slint 编译器里读它,决定生成哪套代码。只在跑二进制时
-带上 → 产物里压根没有热重载机制 → 界面照常启动、改 `.slint` 毫无反应、**不报任何错**。
-justfile 的 `desktop-dev` 写成 `SLINT_LIVE_PREVIEW=1 cargo run ...` 是对的:一条命令同时覆盖
-构建和运行。分开 build 再 run 就两步都得带。nix-shell 会正常透传它。
-
-**2. 用 `sed -i` 改 `.slint`,文件监听器收不到。**
-`sed -i` 是「写临时文件 + rename」,inode 变了。必须**原地截断写**:
-`sed ... "$bak" > /tmp/new && cat /tmp/new > 目标文件`,再用 `stat -c %i` 前后对比确认 inode 没变。
-
-判据只认应用日志里的 `Reloaded component MainWindow from <绝对路径>`。光看画面会被两头骗:
-惰性渲染下没有输入就不重绘,而画面变了也可能是别的东西在动。
-
-## 不在用户桌面上开窗口
-
-用户 2026-10-24 定:AI 跑测试、做验证,不许在用户的真实显示上开 osmosis 窗口——niri 会把焦点
-抢过去。MEO-1900 起这由程序保证:`just desktop-dev`、`just shot` 和 `test/mcp-e2e` 的夹具默认都跑在
-`test/headless/` 的无头 sway 里(独立网络命名空间、虚拟声卡),MCP 照旧在 8091;debug 构建在 AI 会话里
-被要求开到用户真实显示上时直接拒绝启动(`apps/desktop/src/display_guard.rs`)。只有用户本人要看
-窗口时才带 `OSMOSIS_SHOW_WINDOW=1`。
-
-## 测试不出声:一律进虚拟声卡
-
-用户 2026-10-24 定:测试时绝不从真实声卡出声。`just desktop-dev` 和 `just shot` 已经默认把声音导进
-`test/null-sink.ts` 建的 null sink;自己写的夹具、脚本、裸跑二进制,先
-`PIPEWIRE_NODE=$(bun test/null-sink.ts)` 再起应用。只有用户本人要亲耳听时才带
-`OSMOSIS_REAL_AUDIO=1`。真机(手机、平板)的扬声器不在这条机制里,在手机上测要先把媒体音量
-调到 0,或者问用户。
-
-## 后台任务:起新的之前先停旧的
-
-**每次要起后台任务(`just desktop-dev*`、`just web-dev`、`cargo build`、`cargo run -p server`)
-之前,先看一眼自己已有的后台任务,把同类的停掉再起**,否则一轮对话下来会攒出一串重复实例:
-端口被占、`target/` 互相覆盖、截图截到老窗口,而这些失败全是静默的。
-
-停任务只结束你启动的那条命令,不一定收走它的子进程 —— 再确认一次:
-
-```sh
-just desktop-kill                                       # 桌面实例(dev 构建 + 装机版两个名字都杀)
-ps aux | grep -E "[c]argo|[n]ix-shell|[w]asm-bindgen"   # 构建残留
-```
-
-`pkill -f app-desktop` 会连你自己的 shell 一起杀,原因见上文第 1 条。
-
-## 后台构建:同一时刻只留一个,并且验证产物真的更新了
-
-wasm 构建要 5~8 分钟,期间很容易再起一个。
-
-不这么做时,失败是**静默的**,四种都真实发生过:
-
-**1. 两个构建抢同一个 `target/`。**后完成的那个会用它自己的产物覆盖 `dist/`。如果它编的是旧
-代码,你就在旧产物上验证新改动,而时间戳、日志全都看不出异常。
-
-**2. 用 `;` 或 `&&` 把构建和 `just web-dev` 串成一个后台任务,停任务时会连坐。**
-停掉"只是在读日志"的那个任务,SIGTERM 把整条 recipe 一起带走,日志里只留一行
-`recipe web-dev was terminated by signal 15`。更阴的是旧 server 还在往同一个日志文件写访问
-记录,日志看着一切正常。**构建和分发要拆成两个独立任务。**
-
-**3. shell 的工作目录会留在上一条命令的位置。**一条命令里 `cd` 到子目录之后,下一条命令
-里的 `git checkout crates/...`、`cp apps/web/index.html dist/web/` 全都找不到路径而失败 ——
-而如果它们是用 `&&` 串起来的,**整条链会在这里停住,构建根本没跑**。产物于是停在上一版。
-本次排查里发生过两次,其中一次量出来的数与上一轮几乎相同,看不出任何异常,差点当成
-新结论。每条要改文件的命令都显式从仓库根开始。
-
-**4. 测量之前先核对产物的时间戳。**
-
-```sh
-ls -la --time-style=+%H:%M:%S dist/web/app_web_bg.wasm
-```
-
-改了源码却量到旧产物,症状与"改动无效"完全一样,而后者会让你去推翻一个其实正确的假设。
-
-**5. `| tail -10` 会让你误判编译范围。**只保留 10 行的话,"某个 crate 有没有重编"根本看不到。
-把完整日志重定向到文件,要看多少自己 grep。
-
-## 后台任务:怎么知道它是死是活
-
-`ps` 与 `pgrep` 时灵时不灵:2026-08-11 实测 `osmosis-desktop` 占着端口而 `pgrep` 查无
-此进程,2026-08-13 同一台机上 `pgrep -x osmosis-desktop` 与 `ps -o lstart` 又都正常。
-所以两个方向都不能单独采信 —— 拿 `pgrep` 的空结果当"已经退了"会一路错下去。判死活以这三条
-为准:任务完成通知、落盘日志在长、产物时间戳变新。
-
-**重构建命令不要接管道。**`cargo build | tail` 这类写法里,输出会被管道攒到进程结束才吐,
-中途永远是空的,看起来和吊死一模一样。全量重定向进文件(`> log 2>&1`),再去读那个文件。
-
-**首次进 nix 环境可能要下几百 MiB**(gradle 那套尤其),期间毫无输出。以为卡住而杀掉,
-下次还得重下。
-
-分发 wasm 时,`just web-dev` 的 recipe 容易被信号打断,手动跑更稳:
-
-```sh
-nix-shell slint.nix --run 'wasm-bindgen target/wasm32-unknown-unknown/release/app_web.wasm \
-    --target web --no-typescript --out-dir dist/web'
-cp apps/web/index.html test/*.html dist/web/
-```
-
-**叫人去浏览器验证之前,必须确认 `dist/web/app_web_bg.wasm` 比
-`target/wasm32-unknown-unknown/release/app_web.wasm` 新**:
-
-```sh
-[ dist/web/app_web_bg.wasm -nt target/wasm32-unknown-unknown/release/app_web.wasm ] \
-    && echo 新 || echo 旧
-```
-
-跳过这一步,对方测的就是上一版产物 —— URL 参数被无视、开关"不生效",而你会去怀疑代码。
-
-## 天花板存在时,否定结果不算排除
-
-排查性能时尤其致命:Slint 在 wasm 上曾有个 16ms 定时器把帧率压在 60,在它被拆掉之前,
-所有"减少工作量"的实验(降分辨率、关 MSAA、空转)都必然"无效",而那些否定结论全是假的。
-先找瓶颈在哪一层,再拿实验去排除东西。
-
-## debug 连哪个后端
-
-**debug 连本机后端,release 连生产后端,两者不能一样**(用户 2026-09-23 定的,#119)。
-地址烘在编译期(`crates/api` 的 `base_url()`),应用启动时日志第一屏写一行
-`服务端: <地址>`,桌面看 stderr,手机看 `adb logcat -s osmosis`。
-
-登录态、设置、设备 id 跟着后端分目录(#127):没烘地址的构建落在
-`~/.local/state/osmosis-dev/`(安卓是私有目录下的 `osmosis-dev/`),装机版仍是
-`osmosis/`。开发实例因此删不到装机版的会话;要清开发那份登录,只动 `osmosis-dev/`。
-
-| 构建 | 配方 | 连哪 |
-|---|---|---|
-| debug | `just desktop-dev`、`just mcp-android` | `http://127.0.0.1:3000`,本机 `server-dev` |
-| release | `just android-build`、`just desktop-install` | justfile 的 `api_base`,生产 |
-
-**先起本机后端**,两个终端各一条:`just bang-dream` 与 `just server-dev`(自带 Postgres
-容器)。没起的话两条 debug 配方在编译前就失败并照抄这段起法,不会编完几分钟才发现点不了歌。
-
-bang-dream 在开发机上有两份 checkout,`BANG_DREAM_REPO` 的默认值 `../bang-dream` 两份都
-不指:带网易云凭据(`data/credentials/`)、真正该跑的是 `~/projects/bang_dream`,
-`~/RustroverProjects/bang-dream` 只用来读代码,没有 `data/`。所以起它要写成
-`BANG_DREAM_REPO=~/projects/bang_dream just bang-dream`,或者把这个变量写进 `.env`。
-
-守卫与设备选择的逻辑有一份不碰真机的回归检查:`test/dev-recipes.sh`。
-
-**手机经 PC 连本机后端**:手机上的 `127.0.0.1` 是手机自己,`mcp-android` 已自带
-`adb reverse tcp:3000 tcp:3000` 把它接到开发机。reverse 和 forward 都挂在 adb 连接上,
-**无线 adb 换了端口或者拔插过线,就重跑一次 `mcp-android`**(或单补
-`just mcp-forward android-reverse`),否则启动即「遥控连接失败:信令错误」。
-
-**设备选择**:安卓配方的 adb 全都带序列号。开发机与平板常同时在线,不设
-`ANDROID_SERIAL` 又不止一台时配方拒绝并列出设备;debug 包认 `ro.product.model`,
-拒装到生产平板 NP06J 上。
-
-为什么 release 不能也连本机:release 包装在平板和日常手机上,离开这台 PC 就没有
-3000;反过来 debug 连生产,调试时的点歌、登录、测试数据全写进生产库。
-
-## 界面报「查询失败」时,先看 3000 上跑的是哪天的 server
-
-`server` 不在 default-members 里,裸 `cargo build` 从不编它,于是本机 3000 上那个
-进程可能是好几天前起的。新加的路由它没有,客户端拿到 404,界面只说一句「查询失败」——
-看起来和「这个功能还没做」一模一样。个人主页的统计就这样被当成"后端聚合还没写"过一次,
-而 `/stats` 早就在 `server/src/main.rs` 里了。
-
-```sh
-ss -ltnp "sport = :3000"            # 谁在跑
-ps -o lstart= -p <pid>              # 什么时候起的
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/stats
-```
-
-## MCP 的两个端口:桌面 8091,真机 8090
-
-两边可能同时开着,所以各占一个号(justfile 头部的 `desktop_mcp_port` 与 `mcp_port`),
-`.mcp.json` 里也是两条:`slint-app` 指桌面,`slint-android` 指手机。
-
-真机那个号**烧在 APK 里**(`apps/android/src/lib.rs` 的 `option_env!`),改它要重出包;
-要挪就挪桌面那个。`just mcp-android` 建的 `adb forward tcp:8090` 留着不碍事,不必每次撤。
-
-真机上 MCP 的 `take_screenshot` 会报 Skia 包装错误 —— 元素树、点击、填值都好用,
-唯独截图走 `adb shell screencap`(物理像素,scale 2.75,逻辑坐标乘 2.75 才对得上图)。
-
-`just desktop-dev*` 仍前置端口守卫:桌面那个号被占时直接失败并点名占用者。分号之后
-再撞上多半是上一个桌面实例没退干净,`just desktop-kill`。
-
-**先确认工具连的是哪一台,再读它的答案。** 会话启动时桌面没跑,工具列表里就只有
-`slint-android`;它答得飞快、窗口 1080x2400、scale 2.75,很容易当成桌面窗口接着用,而
-那是手机,装的可能是几小时前的包。据此判过「桌面上新加的元素不存在」,查了一小时,
-真相是手机上的包还没有那个元素。**两条硬判据**:`adb shell wm size` 与工具报的窗口尺寸
-对得上就是手机;元素在不在最终以 `crates/ui/tests/` 里 `i-slint-backend-testing` 的
-`find_by_element_id` 为准(见 [`docs/lesson/tooling.md`](docs/lesson/tooling.md))。
-
-## 装到真机上的是哪个档
-
-开发装机走 `just mcp-android`,它把 native 库编成 **debug** 档。别拿
-`just android-build`(release)的包去调界面:slint 的元素调试信息只在 debug 档
-生成,release 包在手机上跑起来 MCP 只截得到图、`get_element_tree` 一个元素也查不到,
-于是点按钮只能从全分辨率截图上量坐标,慢且容易点空。
-
-代价是 APK 大得多(实测 debug 756MB 对 release 110MB),编译也更久。发布件仍走
-`android-build`。
-
-`target-android` 下的产物是按 profile 分开的两棵树,换档不会互相覆盖。仓库改过名的话
-旧树里的 `CMakeCache.txt` 还记着老路径,走 cmake 的 `-sys` crate 会直接编不过(当初撞上的是
-同播的 `audiopus_sys`,#137 已删)—— 删掉那棵树重来。
-
-出包不必带 `ABIS`:默认只编 arm64-v8a。armeabi-v7a 有意不在默认里 —— skia-bindings
-没有 armv7 的预编译产物,回退全量编 skia 还要 `ANDROID_NDK`,而 `Android.nix` 没导出它
-(issue #47)。显式 `ABIS="armeabi-v7a"` 仍会撞上这一条,先解决 NDK 那步再说。
-
-## 有一类界面 bug 桌面必然看不见
-
-导航条、控制条这类**贴着屏幕边、或随窗口变形**的几何,桌面只能用来快速迭代,结论要在真机上
-再看一遍。两个原因都不是偶然:
-
-- **safe-area inset 桌面恒 0**。底栏高是 `64px + insets.bottom`,手机上多出来的那段是手势条。
-  凡是拿「整条的高」当可用厚度算的几何,桌面上恰好等于 64、手机上多出四十几像素,画出来就
-  压到手势条上。要传的是可用厚度,不要从目标纹理尺寸反推。
-- **长宽比不同**。桌面窗口宽而扁,手机竖屏窄而高。同一个按归一化 uv 算的着色器(fluid 的
-  羽流、navglass 的融合半径),两种比例下覆盖的区域完全不同:桌面上亮核落在时间读数那边,
-  手机上正好压在随机键与循环键上,图标读不出来。
-
-2026-08-12 的第六轮验收一次踩到三个,全是这两条的直接后果。
-
-## 真机的锁屏密码
-
-在 `.env` 的 `ANDROID_DEVICE_PIN`(该文件在 `.gitignore` 里,不进版本库)。装 APK、
-重新授权 USB 调试、翻通知栏都要先解锁,而屏幕过一会儿就自己锁上。
-
-```sh
-set -a; source .env; set +a
-adb shell input keyevent KEYCODE_WAKEUP
-adb shell input swipe 540 2200 540 600 200   # 少了这步 PIN 键盘不出来,input text 打进空气
-adb shell input text "$ANDROID_DEVICE_PIN"
-adb shell input keyevent KEYCODE_ENTER
-```
-
-`wm dismiss-keyguard` 过不去这道锁,别试。锁着时的症状认得出来:`screencap` 出
-**0 字节**(锁屏壁纸还截得到,进到安全层就全黑或空),应用的 slint 窗口
-`get_window_properties` 里 `size` 是空的 —— 那不是 MCP 坏了,是画面根本没上屏。
-验证期间用 `adb shell svc power stayon usb` 顶住熄屏,收尾记得 `stayon false`。
-
-**不要把这个值写进任何进版本库的文件**,包括提交信息、issue 与注释。要引用它就引用
-这个变量名。
-
-## 真机上的应用登录
-
-服务端不时把旧会话判失效(装新 APK 后 logcat 见「会话被服务端判为失效」),应用
-就停在登录页。测试账号在同一个 `.env`:`TEST_USERNAME` / `TEST_PASSWORD`,照着
-锁屏那节的规矩,只引用变量名。
-
-填表走 MCP(8090):`find_elements_by_id` 找 `LoginPage::username` /
-`LoginPage::password`,`set_element_value` 灌值,再按无障碍标签「登录」点提交键。
-(曾经那颗键用子 Text 而不是 `text` 属性,标签为空、只能从截图量坐标 ——
-HoverButton 的标签绑的是属性,塞子 Text 画得出来但读屏念不出,别再犯。)
-
-## MIUI 装不上
-
-`adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`,**先别叫人去动开关**。
-2026-09-24 实测:「开发者选项 → USB 安装」是开着的(`adb shell getprop persist.security.adbinstall`
-为 `1`),真正的原因是 MIUI 每次 adb 装包都会在屏幕上弹安全中心的确认页
-(`com.miui.securitycenter/com.miui.permcenter.install.AdbInstallActivity`),几秒内没人点
-「继续安装」就按「用户取消」处理。手机边上没人时,装包的同时盯着前台窗口,一出现就用
-uiautomator 找按钮点掉。
-
-**检测→dump→算坐标→点这一整段必须推到手机上用 `sh` 跑,不能留在 host 端轮询**(#168):
-无线 adb 上一次 `uiautomator dump` 往返约 2.3s,而确认框只活 11-12s ——
-host 端每轮「发 dumpsys → 等回包 → 发 dump 命令 → 等回包」的网络延迟摞起来,追不上就被
-MIUI 当「用户没点」按取消处理。手机本地跑同一段 `sh`,dump 与解析都发生在设备上,
-省掉这些往返。
-
-bounds 的抓取也要限定在**匹配到的那个 `<node>` 标签内**,不能让 `[^>]*bounds="[^"]+"`
-这种写法把标签里其他数字属性(`index`、`resource-id` 里的编号等)一起吃进
-`grep -oE '[0-9]+'` 的结果 —— 那样 `set -- $b` 摆进来的四个数字就不是矩形的四个角,
-点的位置也就偏了(#153 报过的点歪,原因就是这个)。
-
-```sh
-X=$ANDROID_SERIAL
-adb -s "$X" shell input keyevent KEYCODE_WAKEUP
-adb -s "$X" install -r dist/osmosis-debug.apk & ip=$!
-adb -s "$X" shell sh -c '
-for i in $(seq 1 40); do
-  dumpsys window | grep -m1 mCurrentFocus | grep -q AdbInstallActivity && {
-    uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-    node=$(grep -oE "<node[^>]*text=\"(继续安装|安装)\"[^>]*>" /sdcard/ui.xml | head -1)
-    bounds=$(echo "$node" | grep -oE "bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" | grep -oE "[0-9]+")
-    set -- $bounds
-    [ $# -eq 4 ] && { input tap $(( ($1+$3)/2 )) $(( ($2+$4)/2 )); break; }
-  }
-  sleep 1
-done
-'
-wait $ip
-```
-
-只有 `getprop` 读出来不是 `1` 时,才是开关真的关了(它联网校验后会自己回退),那时才要人到手机上
-关掉再打开。
-
-## `[patch.crates-io]` 只写远程地址
-
-`Cargo.toml` 的 patch 永远指向 `git = "https://github.com/yebei199/..."`,不写
-`path = "../slint-fork/..."` —— 哪怕只是临时验证一下再改回来。本机路径进了仓库,CI 和
-docker 就拉不到,而本地 `cargo check` 照样通过,谁都发现不了。
-
-同步 fork 时因此是**先推 fork,再验本仓库**:fork 的 `dev` 推上去,本仓库
-`cargo update -p slint -p slint-build` 跟进锁文件,然后才跑验证。推之前先建当日的
-`backup/dev-<日期>`,验证不过就从它回滚重来。
-
-`dev` 靠 **merge 上游**跟进,不 rebase,因此推送永远是快进 —— 推之前 `--dry-run`
-一次,需要 `--force` 就说明中途做了 rebase 或 amend,停下来查,别顺手加 force。
-代价是历史里会留下被上游顶掉的死 commit,所以补丁清单以 `Cargo.toml` 里
-`[patch.crates-io]` 上方那段注释为准,不看 `git log`。步骤见 `docs/note/fork-sync.md`。
-
-## 发版与实机:门禁绿不算完
-
-**行为变更必须有一次实机通过的证据才算做完。** 门禁绿、单元测试绿、集成测试绿,
-三样加起来只证明代码自洽,不证明用户按下去有反应 —— 2026-09-21 就是这么发了三个
-版本而用户一首歌都点不出来:store 层 21 条测试全绿、门禁 EXIT=0、tag 都打出去了,
-那一整天**没有任何一次真的点歌**。后来补的「本机端到端」也不算数,那是 `curl` 打
-`POST /queues`,没有界面、没有点击、没有一声响。
-
-所以判据写死三条,缺一条就不算验过:
-
-- **走用户路径**。从用户真会点的那个入口进去(卡墙就是卡墙,列表就是列表),不是
-  从中间状态直接构造,更不是拿 HTTP 请求代替点击。两条路径不互相顶替 —— #109 的
-  AC-1 验的是列表,而用户日常在卡墙上点,那条路从头到尾没人验过。
-- **有真相源**。服务端日志里的 `play(队列 …)`、库里的行、`dumpsys audio` 里
-  `state:started` 的那条 AudioTrack。不看截图,不看「我觉得对」。
-- **在真机上**。桌面必然看不见的那一类见上面那节;而「点了有没有声」这件事,
-  桌面和真机都要各过一次。
-
-**播放链路的改动,证据还得能重跑**:`test/pick-e2e.sh list` 与 `test/pick-e2e.sh wall`
-(#113),列表与卡墙两条路各一条,MCP 驱动、查库断言,连点三下只许起播一次、发布一次。
-请用户拿手指点一遍不算 —— 那一晚为此来回了五轮,而下一次改动时没人会再点一遍。
-
-### 发版之后装什么档
-
-- **平板与安卓装 release**(`just android-build`,默认只编 arm64-v8a)。开发用的
-  debug 档 857MB,它存在的唯一理由是 MCP 要读元素树,不是拿来日常用的。
-- **桌面端不由 agent 装**。走 `nixos_config` 的
-  `home/features/desktop/osmosis.nix`:agent 只抬 `version` 与那三个 SRI 哈希
-  (`.desktop` 与 `.svg` 内容没变时哈希沿用)。**推上 nixos_config 的 master 就自动部署**
-  (各主机的 self-switch 收到推送通知即追平,5 分钟 timer 兜底),不要叫用户 rebuild。
-- 哈希取自 release 的 `sha256sums.txt`,用 `nix hash convert --to sri` 转,写进去
-  之前用 `nix store prefetch-file` 实取核一遍 —— 否则自动部署会在半路撞
-  hash mismatch,桌面就停在旧版。
-
-判断「最新发的是哪一版」要带 `--sort=v:refname`,理由见
-[`docs/lesson/tooling.md`](docs/lesson/tooling.md)。
-
-## 提交前
-
-`just ci` 逐字复述 `.github/workflows/ci.yml`。`dev` 分支的 push 不触发 CI,这是唯一的防线。
+| `crates/contract` | 线上格式,只依赖 serde |
+| `crates/app-core` | 客户端领域状态与规则;不依赖 slint、不做 IO、不认识 `api` |
+| `crates/api` | HTTP 客户端;`Send` 约束关在这里 |
+| `crates/audio`、`crates/syncplay` | 出声;设备间信令(在线名册、遥控) |
+| `crates/render3d` | bevy 在共享 wgpu device 上离屏渲染成 `slint::Image` |
+| `crates/ui` | `.slint` 界面(`slint/`)+ 组装点;`tests/` 是无头 UI 测试 |
+| `apps/desktop` | 桌面入口,包名 `app-desktop`,二进制与进程名 `osmosis-desktop` |
+| `apps/android` | android 入口(cdylib)+ `gradle/` |
+| `apps/web`、`apps/ios` | 废弃,不是 workspace 成员;新代码不必兼容它们 |
+| `server/` | axum 后端,把 bang-dream(独立仓库)的 gRPC 翻成 HTTP/JSON;`proto/` 是上游契约副本,`migrations/` 是 Postgres |
+| `xtask/` | 构建逻辑(`cargo xtask android`、`boundaries`) |
+| `test/` | 端到端脚本、`headless/`(无头 sway 夹具)、`mcp-e2e/`、`remote-behavior/` |
+| `acceptance/` | 逐 issue 的 AC→测试映射,`just ci-remote` 消费 |
+| `release/` | `just rollout`:把已发布版本推到各设备与 nixos_config |
+| `docs/note/` | 操作手册与调查记录;日常命令和验证的坑在 [`dev-workflow.md`](docs/note/dev-workflow.md) |
+| `.agents/` | 给门禁工具读的声明:`services`(测试要的本地端口)、`derived`(提交进库的生成物 glob) |
+
+## 会咬人的事实
+
+- **门禁是 `just ci`**,逐字对应 `.github/workflows/ci.yml`(fmt、nextest+clippy `-D warnings`、
+  android 交叉 clippy、boundaries、remote-behavior)。CI 只在非 draft PR 和手动触发时跑,
+  直接 push 任何分支(含 master)都没有 CI。`ci-test` 依赖 Docker 里的 Postgres(`just pg`)
+  与 RustFS(`just rustfs`)。
+- **裸 `cargo build/test` 只走 `default-members`**(桌面链路)。`audio`、`syncplay`、`server`、
+  `xtask` 要 `-p` 点名才会测;`apps/android` 在宿主 target 上编不过,只经 `cargo xtask android`
+  或 `--target aarch64-linux-android`。
+- **原生依赖来自 `nix-shell slint.nix`(桌面)与 `Android.nix`(安卓)**;工具链钉在
+  `rust-toolchain.toml`。android 产物在 `target-android/`,默认只编 arm64-v8a;armv7 缺 skia
+  预编译且 `Android.nix` 不导出 NDK。不要设 `RUSTFLAGS`:它进依赖指纹,会让每个入口各维护一棵
+  依赖树。cargo 中间产物在全局 `build.build-dir`(`~/.cargo/config.toml`,仓库外)。
+- **重构建命令不能前台跑**:`.claude/hooks/no-foreground-builds.sh` 会拒绝前台的 nix-shell、
+  交叉编译和 `just ci*/shot/android-*`。
+- **`[patch.crates-io]` 只写远程 git 地址**(slint fork 的 `dev` 分支)。本机 `path =` 本地照样
+  通过,CI 和 docker 拉不到。fork 补丁清单以 `Cargo.toml` 里那段注释为准,同步见
+  [`docs/note/fork-sync.md`](docs/note/fork-sync.md)。
+- **后端地址烘在编译期**(`crates/api` 的 `option_env!("OSMOSIS_API_BASE")`)。debug 配方清掉它,
+  连本机 `127.0.0.1:3000`(`just server-dev` + `just bang-dream`);release 配方烘 justfile 的
+  `api_base`(生产)。两者不能一样。没烘地址的构建把登录态存在 `osmosis-dev/`,装机版在 `osmosis/`。
+- **`server` 不在 default-members**,本机 3000 上可能跑着几天前的进程;新路由 404 时界面只说
+  「查询失败」。
+- **应用内嵌 MCP**:桌面 8091、真机 8090(真机端口经 `option_env!` 烧进 APK),`.mcp.json` 两条
+  各指一台。只有 debug 档(`just desktop-dev`、`just mcp-android`)带元素调试信息;release 包里
+  元素树是空的。
+- **AI 会话里的 debug 桌面构建拒绝开到真实显示**(`apps/desktop/src/display_guard.rs` 认
+  `CLAUDECODE`/`CODEX_*`);`just desktop-dev`、`just shot`、e2e 夹具跑在 `test/headless/` 的无头 sway
+  里,声音进 `test/null-sink.ts` 的 null sink。真机扬声器不在这套机制里。
+- **桌面上 safe-area inset 恒为 0、长宽比与手机相反**:贴屏幕边或随窗口变形的几何,桌面结论不
+  代表真机。
+- **发版**:版本在 `Cargo.toml` 的 `workspace.package.version`;推 `v*` tag 触发
+  `release.yml`,只出桌面二进制与服务端镜像;APK、设备安装与 nixos_config 的 pin
+  (`home/features/desktop/osmosis.nix`)归 `just rollout`。桌面端由 nixos_config 部署,不由本仓库安装。
+
+## 边界
+
+- 依赖方向不得反向。
+- `.env`(gitignored)里的 `ANDROID_DEVICE_PIN`、`TEST_USERNAME`/`TEST_PASSWORD` 与邀请码只按变量名
+  引用,值不进任何入库文件、提交信息、issue 或注释。
+- 用户本人要看窗口或听声音时才用 `OSMOSIS_SHOW_WINDOW=1` / `OSMOSIS_REAL_AUDIO=1`。

@@ -532,5 +532,5 @@ femtovg = { path = "../femtovg-debug" }
 "本次没用到"的管线丢掉。只要一帧里有两次用不同管线集合的 `render()`,两次就互相清空。
 对我们只值 0.19ms/帧,没提上游。
 
-后台构建与产物验证的坑另见 [`AGENTS.md`](../../AGENTS.md) 的「后台构建」一节——
+后台构建与产物验证的坑另见 [`docs/note/dev-workflow.md`](../note/dev-workflow.md) 的「验证的坑」一节——
 本次排查有四轮因为验证的是旧产物而作废。

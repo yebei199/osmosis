@@ -157,7 +157,7 @@ fn build_ui(
     );
     // 开局停在哪个目的地。默认每日推荐,`OSMOSIS_DESTINATION` 覆盖它 —— 那是调试开关,
     // 截图配方靠它直接截到某一页,不必再靠 MCP 模拟点击(那条路上有一串
-    // 静默失败的坑,见 AGENTS.md)。没设或设歪了就留在每日推荐。
+    // 静默失败的坑,见 docs/note/dev-workflow.md「验证的坑」)。没设或设歪了就留在每日推荐。
     // 走 `go` 而不是直接写编号:那一页该取的数要跟着取。
     if let Ok(destination) =
         std::env::var("OSMOSIS_DESTINATION")

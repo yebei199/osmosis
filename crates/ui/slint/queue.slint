@@ -28,7 +28,7 @@ export component QueuePage inherits Rectangle {
     // 前者该说「正在取」,而两种在界面上长得一样的话,用户会以为歌没了。
     in property <bool> loading;
     // 手机底部那条手势条。**桌面上恒 0**,所以这一段只有真机上看得见
-    // (AGENTS.md「有一类界面 bug 桌面必然看不见」)。
+    // (AGENTS.md「会咬人的事实」里 safe-area 那条)。
     in property <length> safe-bottom;
 
     callback pick(string);

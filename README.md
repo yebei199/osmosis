@@ -32,7 +32,7 @@ desktop / android。这条更贵的路买到了什么、还能长成什么,见
 拖窄就能看到移动端的样子,见 [`docs/adr/0007`](docs/adr/0007-layout-mode-by-width-not-by-platform.md)。
 
 **提交前跑 `just ci`** —— 它逐字复述 `.github/workflows/ci.yml` 的命令序列。
-`dev` 分支上的 push 不触发 CI,这是唯一的防线。
+CI 只在 PR 上跑,直接 push 的改动没有 CI,这是唯一的防线。
 
 **发布**:推一个 `v*` tag(如 `v0.1.0`)触发 `.github/workflows/release.yml`,
 产出 `osmosis-desktop-x86_64-linux.zst`(zstd -19 压缩)、`io.github.osmosis.desktop`、
@@ -49,7 +49,7 @@ NixOS 侧由 `nixos_config` 的 `fetchurl` 钉住这份产物、解压后消费�
 | UI 的设计原则与硬规则          | [`docs/design.md`](docs/design.md)                       |
 | 接下来要做什么                 | [`docs/TODO.md`](docs/TODO.md)                           |
 | 怎么装机、调试、看界面、打 APK | [`docs/note/dev-workflow.md`](docs/note/dev-workflow.md) |
-| AI 助手在本仓库怎么干活        | [`AGENTS.md`](AGENTS.md)                                 |
+| AI 助手要先知道的结构与事实    | [`AGENTS.md`](AGENTS.md)                                 |
 
 ## 目录结构
 

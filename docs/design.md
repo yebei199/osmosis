@@ -235,4 +235,4 @@ vignette 收边,把注意力拢回中心。
 ## 怎么验
 
 改动的验证手段(`just shot` 截真实像素、MCP 读元素树与量尺寸、`.slint` 热重载)
-全在 [`AGENTS.md`](../AGENTS.md),那里还记着每个工具会在哪骗人。
+在 [`docs/note/dev-workflow.md`](note/dev-workflow.md),它的「验证的坑」一节记着每个工具会在哪骗人。

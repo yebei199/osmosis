@@ -46,7 +46,7 @@ fn the_login_page_is_shown_only_when_logged_out() {
 ///
 /// 曾经它是唯一不走 HoverButton `text` 属性、自己塞子 Text 的调用点,
 /// 标签因此为空:读屏念不出它,真机驱动只能从截图上量坐标点
-/// (AGENTS.md「真机上的应用登录」记的就是这次绕行)。
+/// (docs/note/dev-workflow.md「真机」一节的登录条目)。
 #[test]
 fn the_submit_button_answers_to_its_label() {
     testing::init_no_event_loop();
