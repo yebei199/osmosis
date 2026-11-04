@@ -125,6 +125,14 @@ debug = "line-tables-only"
 opt-level = 3
 debug = "line-tables-only"
 
+# agent 的编译与逻辑测试:依赖不优化,冷构建 532s 降到 207s。bevy 在这一档运行很慢,
+# 3D 帧率和手感不能用它验证;产物在 target/agent,与 dev 不共用。入口是 just agent-build/agent-test。
+[profile.agent]
+inherits = "dev"
+
+[profile.agent.package."*"]
+opt-level = 0
+
 # Slint 走 yebei199/slint 的 dev 分支(上游 v1.18.1 + 两条本地补丁)。
 # 两条各自的去向不同,合并进上游后要逐条撤:
 #

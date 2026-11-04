@@ -25,20 +25,18 @@
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS builder
 # protoc 生成 bang-dream 的 gRPC 客户端(server/build.rs);gcc-aarch64-linux-gnu 既是
 # 交叉链接器,也是 cc crate 编译 C 依赖(rustls 的 ring/aws-lc)时用的编译器。
-# clang 仍然要装:build script 是给**宿主**目标 x86_64 编的,而 .cargo/config.toml
-# 给那个目标指定了 clang 作链接器。少了它,serde/libc 这些的 build script 先炸。
+# .cargo/config.toml 不再指定 x86_64 链接器,宿主 build script 走默认 cc;clang 暂留未清。
 # libc6-dev-arm64-cross 提供 aarch64 的 glibc 启动文件(Scrt1.o/crti.o):
 # gcc-aarch64-linux-gnu 只有编译器,没有目标平台的 libc,少了它最后一步链接才报错。
 RUN apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler clang gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
     && rm -rf /var/lib/apt/lists/*
-# 注意 .cargo/config.toml 只给 x86_64-unknown-linux-gnu 指定了 clang 链接器,
-# 交叉目标不受它影响,这里给的是 aarch64 自己那一份。
+# 这里给的是 aarch64 交叉目标自己那一份链接器。
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
 WORKDIR /src
 COPY . .
-# 必须在 COPY 之后:rust-toolchain.toml 会把 rustup 切到它指定的 stable 工具链,
+# 必须在 COPY 之后:rust-toolchain.toml 会把 rustup 切到它钉住的工具链,
 # 那是与镜像自带的默认工具链不同的一份。装在 COPY 之前等于装给了没人用的那份,
 # 报错是 E0463 找不到 core,离"少了个 target"很远。
 RUN rustup target add aarch64-unknown-linux-gnu

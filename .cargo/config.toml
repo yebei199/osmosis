@@ -3,14 +3,17 @@
 # 拼出「空 wrapper + 空格 + rustc」去 exec,覆盖率整个跑不了 —— 所以不再留空串。
 # 若全局 sccache 回来,去 ~/.cargo/config.toml 删它,别在这里用空串对冲。
 
-# 覆盖全局 config 里写死的 /nix/store/…-clang-wrapper-21.1.8/bin/clang。链接器路径
-# 进 cargo 指纹,store hash 随 clang 升版本一变,整棵依赖树就得重编 —— 本仓库
-# profile.dev.package."*" 把依赖全编成 -O3,那是几分钟而不是几秒。从 PATH 解析后
-# 指纹只跟"clang"这个字符串走,nix-shell 内外都能命中。
-# 只覆盖 linker 这一个键:全局的 rustflags(-fuse-ld=mold)按表逐键合并,仍然生效。
-# 同样的坑上面 rustc-wrapper 那段已经吃过一次 —— 全局配置里的 store 路径都是雷。
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
+# x86_64 的链接器不在这里写:全局 config 的 clang-mold 带着 mold,在这里写 "clang" 会把
+# mold 盖掉退回 GNU ld(增量构建 25s 对 9s,这个 599M 的二进制几乎全部时间都在链接)。
+
+# 下面三项都要 nightly,工具链钉在 rust-toolchain.toml。rustflags 写在这里而不是环境变量:
+# 每个入口拿到同一份,不会像 RUSTFLAGS 那样各自维护一棵依赖树。
+[unstable]
+build-dir-new-layout = true
+fine-grain-locking = true
+
+[build]
+rustflags = ["-Zthreads=8"]
 
 [alias]
 # 构建逻辑写在 xtask/ 里,不是 shell 脚本。用法:`cargo xtask android`

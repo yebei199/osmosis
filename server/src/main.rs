@@ -622,10 +622,7 @@ async fn main() {
             get(platform_playlist_tracks),
         )
         // 账号级自定义标签(#158),同一首歌在哪个歌单里都一样
-        .route(
-            "/tags",
-            get(list_tags).post(create_tag),
-        )
+        .route("/tags", get(list_tags).post(create_tag))
         .route(
             "/tags/{id}",
             axum::routing::patch(rename_tag)

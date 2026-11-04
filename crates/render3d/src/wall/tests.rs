@@ -205,9 +205,9 @@ fn cards_beyond_this_frames_count_are_hidden() {
         Visibility::Visible,
         "这一帧还在的卡不该被藏"
     );
-    for idx in 1..3 {
+    for &card in &wall.cards[1..3] {
         assert_eq!(
-            vis(wall.cards[idx]),
+            vis(card),
             Visibility::Hidden,
             "多出来的实体必须藏掉,否则墙上留下上一帧的幽灵卡"
         );

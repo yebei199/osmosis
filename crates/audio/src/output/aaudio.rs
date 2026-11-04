@@ -106,16 +106,27 @@ fn start(
         .sample_rate(OUTPUT_SAMPLE_RATE as i32)
         .performance_mode(AudioPerformanceMode::LowLatency)
         .data_callback(Box::new(
-            move |stream: &AudioStream, data: *mut c_void, frames: i32| {
-                let rate = i64::from(stream.sample_rate().max(1));
-                let present = match stream.timestamp(Clockid::Monotonic) {
+            move |stream: &AudioStream,
+                  data: *mut c_void,
+                  frames: i32| {
+                let rate =
+                    i64::from(stream.sample_rate().max(1));
+                let present = match stream
+                    .timestamp(Clockid::Monotonic)
+                {
                     Ok(ts) => {
                         ts.time_nanoseconds
-                            + (written - ts.frame_position) * 1_000_000_000 / rate
+                            + (written - ts.frame_position)
+                                * 1_000_000_000
+                                / rate
                     }
                     Err(_) => {
                         monotonic_ns()
-                            + i64::from(stream.buffer_size_in_frames()) * 1_000_000_000
+                            + i64::from(
+                                stream
+                                    .buffer_size_in_frames(
+                                    ),
+                            ) * 1_000_000_000
                                 / rate
                     }
                 };
