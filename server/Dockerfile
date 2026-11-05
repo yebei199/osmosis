@@ -19,8 +19,8 @@
 # S3_PUBLIC_ENDPOINT(签给客户端的链接用,默认同上)、S3_BUCKET、S3_ACCESS_KEY_ID、
 # S3_SECRET_ACCESS_KEY、S3_REGION(默认 us-east-1)。设了 S3_ENDPOINT 却缺桶或凭据,启动即失败。
 # 同一组里的上限(#147,都有默认值):ARCHIVE_CAP_GB(桶的空间上限,十进制 GB,默认 85)、
-# PREFETCH_WORKERS(预取同时存几首,默认 2)、PREFETCH_NETEASE_PER_MINUTE(每分钟最多问网易云
-# 几次,默认 20)。
+# PREFETCH_WORKERS(预取同时存几首,默认 1)、PREFETCH_NETEASE_INTERVAL_SECS(两次问网易云
+# 至少隔几秒,默认 180)。
 
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS builder
 # protoc 生成 bang-dream 的 gRPC 客户端(server/build.rs);gcc-aarch64-linux-gnu 既是

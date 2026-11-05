@@ -6,8 +6,10 @@ use std::time::Duration;
 use similar_asserts::assert_eq;
 use sqlx::PgConnection;
 
+use server::store::history;
 use server::store::playlist::TrackRef;
 use server::store::prefetch::{self, Job, Unfinished};
+use server::store::radio;
 
 use crate::routes::testing;
 
@@ -144,6 +146,53 @@ async fn a_track_stored_below_lossless_is_enqueued_again() {
     .unwrap();
 
     assert_eq!(queued, 1);
+}
+
+/// 没听的电台歌先领,按歌单次序;听过的不再插队,和别的一样按入队次序。
+#[tokio::test]
+async fn unheard_radio_tracks_are_claimed_first() {
+    let pool = testing::pool().await;
+    let owner =
+        testing::fresh_account(&pool, "pf_radio_first")
+            .await;
+    let mut tx = pool.begin().await.unwrap();
+    let p = platform("pf_radio_first");
+    let first = track(&p, "z");
+    let second = track(&p, "y");
+    let heard = track(&p, "b");
+    let liked = track(&p, "a");
+    prefetch::enqueue(
+        &mut tx,
+        owner.id,
+        &[
+            liked.clone(),
+            heard.clone(),
+            second.clone(),
+            first.clone(),
+        ],
+        "lossless",
+    )
+    .await
+    .unwrap();
+    radio::append(
+        &mut tx,
+        owner.id,
+        &[heard.clone(), first.clone(), second.clone()],
+    )
+    .await
+    .unwrap();
+    history::record(&mut tx, owner.id, &heard)
+        .await
+        .unwrap();
+
+    let mut claimed = Vec::new();
+    while let Some(job) =
+        prefetch::claim(&mut tx, &p, LEASE).await.unwrap()
+    {
+        claimed.push(job.track_id);
+    }
+
+    assert_eq!(claimed, vec!["z", "y", "a", "b"]);
 }
 
 /// 两个 worker 同时来领一个任务:只有一个领到;领走的在租约内不会再被领。

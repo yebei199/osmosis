@@ -18,7 +18,9 @@ use crate::routes::testing::{
     upstream_track,
 };
 
-use super::{MoreQuery, REFILL, list, more};
+use super::{
+    MoreQuery, REFILL, TOP_UP_BELOW, list, more, top_up,
+};
 
 fn ids(tracks: &[contract::TrackDto]) -> Vec<String> {
     tracks.iter().map(|track| track.id.clone()).collect()
@@ -316,4 +318,49 @@ async fn new_tracks_are_queued_for_prefetch() {
     .await
     .unwrap();
     assert_eq!(queued, vec![id(1), id(2), id(3)]);
+}
+
+/// 未听的不够:服务端自己补,不等客户端来要。
+#[tokio::test]
+async fn a_short_list_is_topped_up_by_the_server() {
+    let case = "radio_shared_top_up";
+    let id = |n| track_id(case, n);
+    let (state, account) =
+        fixture(case, vec![vec![id(1), id(2)]]).await;
+
+    top_up(&state, &account).await.expect("补歌");
+
+    let now = list(State(state), account).await.unwrap().0;
+    assert_eq!(ids(&now.tracks), vec![id(1), id(2)]);
+}
+
+/// 未听的够多就不问平台:补歌也是一趟上游请求。
+#[tokio::test]
+async fn a_full_list_is_left_alone() {
+    let case = "radio_shared_full";
+    let id = |n| track_id(case, n);
+    let (state, account) = fixture(
+        case,
+        vec![
+            (1..=REFILL).map(id).collect(),
+            (REFILL + 1..=REFILL * 2).map(id).collect(),
+            vec![id(REFILL * 2 + 1)],
+        ],
+    )
+    .await;
+    for _ in 0..2 {
+        let _ = more(
+            State(state.clone()),
+            account.clone(),
+            unfiltered(),
+        )
+        .await
+        .unwrap();
+    }
+    const { assert!(REFILL * 2 >= TOP_UP_BELOW) };
+
+    top_up(&state, &account).await.expect("看一眼");
+
+    let now = list(State(state), account).await.unwrap().0;
+    assert_eq!(now.tracks.len(), REFILL * 2);
 }

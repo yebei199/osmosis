@@ -7,6 +7,7 @@
 //!
 //! 每个音源一组 worker、一个限速器:worker 数管同时下几首(边下边传,每首只占
 //! 路上那几块的内存,但与正在播放的那首抢出口带宽),限速器管多久问一次音源。
+//! 问得慢是有意的:网易云会随机回「网络环境存在风险」,歌靠提前存,不靠问得快。
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -44,30 +45,29 @@ const IDLE: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Limits {
     pub(crate) workers: usize,
-    pub(crate) per_minute: NonZeroU32,
+    /// 两次问音源之间至少隔多久。
+    pub(crate) interval: Duration,
 }
 
 impl Limits {
-    /// 两首同时存足够跟上,再多只是和播放抢带宽;每分钟二十首,
-    /// 981 首的「我的喜欢」一小时左右排完,不至于把网易云问烦。
+    /// 三分钟一次,差不多一首歌的长度,一个 worker 足够。
     pub(crate) const DEFAULT: Self = Self {
-        workers: 2,
-        per_minute: NonZeroU32::new(20).expect("非零"),
+        workers: 1,
+        interval: Duration::from_secs(180),
     };
 
-    /// 由环境变量 `PREFETCH_WORKERS`、`PREFETCH_NETEASE_PER_MINUTE` 覆盖默认值。
+    /// 由环境变量 `PREFETCH_WORKERS`、`PREFETCH_NETEASE_INTERVAL_SECS` 覆盖默认值。
     /// 写成零或不是数的,用默认值并记一行。
     pub(crate) fn from_env() -> Self {
         let workers = env_number("PREFETCH_WORKERS")
             .and_then(|n| usize::try_from(n.get()).ok())
             .unwrap_or(Self::DEFAULT.workers);
-        let per_minute =
-            env_number("PREFETCH_NETEASE_PER_MINUTE")
-                .unwrap_or(Self::DEFAULT.per_minute);
-        Self {
-            workers,
-            per_minute,
-        }
+        let interval =
+            env_number("PREFETCH_NETEASE_INTERVAL_SECS")
+                .map_or(Self::DEFAULT.interval, |secs| {
+                    Duration::from_secs(secs.get().into())
+                });
+        Self { workers, interval }
     }
 }
 
@@ -146,13 +146,14 @@ pub(crate) fn spawn(
 
     tracing::info!(
         workers = limits.workers,
-        per_minute = limits.per_minute.get(),
+        interval_secs = limits.interval.as_secs(),
         "预取 worker 起来了"
     );
     let limiter: Arc<DefaultDirectRateLimiter> =
-        Arc::new(RateLimiter::direct(Quota::per_minute(
-            limits.per_minute,
-        )));
+        Arc::new(RateLimiter::direct(
+            Quota::with_period(limits.interval)
+                .expect("间隔不为零"),
+        ));
     for _ in 0..limits.workers {
         let state = state.clone();
         let limiter = limiter.clone();

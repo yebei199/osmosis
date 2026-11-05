@@ -20,6 +20,7 @@ use axum::{
     extract::{Query, State},
 };
 use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use contract::{
@@ -71,6 +72,14 @@ pub(crate) const ENOUGH: usize = 3;
 
 /// 给共享歌单补歌时攒到多少首为止。一首歌三四分钟,够放一个多小时再来问平台。
 pub(crate) const REFILL: usize = 20;
+
+/// 未听的少于这么多首,服务端自己补一批。预取三分钟存一首,新歌要排在够远的后面,
+/// 放到它时才已经存好。
+pub(crate) const TOP_UP_BELOW: usize = 30;
+
+/// 正在后台补歌的账号。切歌快时 `/played` 接连到,一个账号同时只补一趟。
+static TOPPING_UP: LazyLock<Mutex<HashSet<i64>>> =
+    LazyLock::new(Mutex::default);
 
 /// 补歌时 FM 不够,以几首听过的歌为种子接心动模式。心动一回给几十首,一两回足够。
 const REFILL_SEEDS: usize = 2;
@@ -246,10 +255,51 @@ pub(crate) async fn more(
 ) -> Result<Json<RadioListDto>, Failure> {
     let picks = parse_picks(query.filter.as_deref())?;
     let before = shared_list(&state, account.id).await?;
+    Ok(Json(
+        load_more(&state, &account, &picks, before).await?,
+    ))
+}
+
+/// 听着电台时后台看一眼存量,不够就补。补不到只记日志:客户端见底时还会自己来要。
+pub(crate) fn spawn_top_up(
+    state: &AppState,
+    account: Account,
+) {
+    if !TOPPING_UP.lock().unwrap().insert(account.id) {
+        return;
+    }
+    let state = state.clone();
+    tokio::spawn(async move {
+        if top_up(&state, &account).await.is_err() {
+            tracing::warn!("电台后台补歌没成");
+        }
+        TOPPING_UP.lock().unwrap().remove(&account.id);
+    });
+}
+
+/// 未听的少于 [`TOP_UP_BELOW`] 首就补一批。
+async fn top_up(
+    state: &AppState,
+    account: &Account,
+) -> Result<(), Failure> {
+    let before = shared_list(state, account.id).await?;
+    if before.tracks.len() < TOP_UP_BELOW {
+        load_more(state, account, &[], before).await?;
+    }
+    Ok(())
+}
+
+/// 补一批进共享歌单,排进预取,通知各台,交回追加之后的整份。
+async fn load_more(
+    state: &AppState,
+    account: &Account,
+    picks: &[FacetPickDto],
+    before: RadioListDto,
+) -> Result<RadioListDto, Failure> {
     let fresh =
-        refill(&state, &account, &picks, &before).await?;
+        refill(state, account, picks, &before).await?;
     if fresh.is_empty() {
-        return Ok(Json(before));
+        return Ok(before);
     }
     let refs: Vec<TrackRef> = fresh
         .iter()
@@ -265,9 +315,9 @@ pub(crate) async fn more(
             .map_err(|err| error::map_error(&err))?
     };
     tracing::info!(added, "电台歌单追加了新歌");
-    prefetch::enqueue(&state, account.id, &refs).await;
-    tell_radio_changed(&state, account.id);
-    Ok(Json(shared_list(&state, account.id).await?))
+    prefetch::enqueue(state, account.id, &refs).await;
+    tell_radio_changed(state, account.id);
+    shared_list(state, account.id).await
 }
 
 /// 补歌的来源,先问的在前:私人 FM,以最近听过的歌为种子的心动模式,当天日推。

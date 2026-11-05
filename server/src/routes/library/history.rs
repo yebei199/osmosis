@@ -23,7 +23,9 @@ use server::store::radio;
 
 use super::for_account;
 use super::likes::PageQuery;
-use crate::routes::catalog::radio::tell_radio_changed;
+use crate::routes::catalog::radio::{
+    spawn_top_up, tell_radio_changed,
+};
 use crate::routes::catalog::search::remember_details;
 use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
@@ -58,6 +60,7 @@ pub(crate) async fn record_play(
         .map_err(|err| error::map_error(&err))?
     {
         tell_radio_changed(&state, account.id);
+        spawn_top_up(&state, account.clone());
     }
 
     // 声音已经出来了,这首值得存:后台去,不等它(#126)
