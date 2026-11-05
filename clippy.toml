@@ -6,3 +6,6 @@ too-many-arguments-threshold = 7
 too-large-for-stack = 100
 max-fn-params-bools = 4
 cognitive-complexity-threshold = 28
+allow-unwrap-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = true
