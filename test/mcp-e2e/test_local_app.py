@@ -41,7 +41,6 @@ def test_database_and_state_belong_to_this_run(local_app):
     expect(lambda: local_app.state.exists())
     # 窗口在本轮的无头显示里，不在用户桌面上。
     import json
-
     import os
 
     session = json.loads((local_app.headless / "session.json").read_text())
