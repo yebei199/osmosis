@@ -1,0 +1,93 @@
+// 已屏蔽页(#161):命中的歌在所有列表里隐藏,队列与电台跳过。
+//
+// 规则按当初的屏蔽原因分组,在这里恢复 —— 歌曲菜单与歌手页只管建。
+
+import { Theme, Type, Radius, Space, TextSize } from "theme.slint";
+import { SectionCard } from "widgets.slint";
+import { BarMetrics } from "playerbar.slint";
+import { Library } from "globals/library.slint";
+
+export component BlockedPage inherits Flickable {
+    // 控制条此刻在不在,条件与 app.slint 摆条那一行是同一个(见 settings.slint 同名属性)。
+    in property <bool> bar-visible;
+
+    content-height: column.preferred-height + 52px;
+
+    // 每次进页都重拉:启动时那次可能还没登录,别的设备也可能加过
+    init => { Library.refresh-blocks(); }
+
+    column := VerticalLayout {
+        // 宽窗口里居中,理由同设置页。
+        x: max(26px, (root.width - self.width) / 2);
+        y: 26px;
+        width: min(root.width - 52px, 640px);
+        alignment: start;
+        spacing: Space.md;
+        padding-bottom: root.bar-visible
+            ? BarMetrics.page-reserve
+            : 0;
+
+        Text {
+            text: "已屏蔽";
+            font-family: Type.display-cjk;
+            font-weight: 900;
+            font-size: TextSize.display;
+            color: Theme.text;
+        }
+
+        Text {
+            text: Library.block-groups.length == 0
+                ? "还没有屏蔽任何歌手、标签或歌曲"
+                : "这些歌不会出现在列表里,队列和电台也会跳过";
+            font-family: Type.body;
+            font-size: TextSize.small;
+            color: Theme.text-dim;
+            wrap: word-wrap;
+        }
+
+        for group in Library.block-groups: SectionCard {
+            kicker: group.reason;
+
+            for row in group.rows: HorizontalLayout {
+                spacing: Space.md;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: row.label;
+                        font-family: Type.body;
+                        font-size: TextSize.small;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                }
+                unblock-button := Rectangle {
+                    width: unblock-label.preferred-width + 32px;
+                    height: 34px;
+                    border-radius: Radius.pill;
+                    background: unblock-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    border-width: 1px;
+                    border-color: Theme.divider;
+                    // a11y 在根上:无头测试按元素 id 找到的是这一层
+                    accessible-role: button;
+                    accessible-label: "恢复 " + row.label;
+                    accessible-action-default => { Library.unblock(row.id); }
+
+                    unblock-label := Text {
+                        text: "恢复";
+                        font-family: Type.body;
+                        font-size: TextSize.small;
+                        color: Theme.text-dim;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    unblock-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { Library.unblock(row.id); }
+                    }
+                }
+            }
+        }
+    }
+}

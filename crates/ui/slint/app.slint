@@ -54,6 +54,7 @@ import { Destinations, SideNavRow, MorePanel } from "musicnav.slint";
 export { Destinations }
 import { TrackList } from "tracklist.slint";
 import { SettingsPage } from "settings.slint";
+import { BlockedPage } from "blocked.slint";
 import { ProfilePage } from "profile.slint";
 import { LyricsPage } from "lyrics.slint";
 import { MusicPage, Downloads } from "musicpage.slint";
@@ -149,7 +150,11 @@ export component MainWindow inherits Window {
     // 侧栏分组之间的间隔(每日推荐那组 | 我喜欢那组)。
     property <length> nav-group-gap: 18px;
     // 单个导航项高,也是选中块的参考高。out:Rust 读它定块尺寸。
-    out property <length> nav-slot-h: 44px;
+    // 平时 44px;窗口矮到排不下十行加组胶囊时(最小高 520)一起收,而不是让沉底组压上胶囊。
+    // 124px 是行之外的全部:上下内边距、十行的间距、分组间隔、胶囊与它的留白。
+    out property <length> nav-slot-h: max(36px, min(44px, (root.height
+        - root.safe-area-insets.top - root.safe-area-insets.bottom - 124px)
+        / (Destinations.listen.length + Destinations.library.length + Destinations.account.length)));
     // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
     // 带字的侧栏:最长的名字是四个字,加图标与内边距。
     out property <length> nav-w: 168px;
@@ -184,8 +189,8 @@ export component MainWindow inherits Window {
     out property <length> nav-cross: root.nav-thick / 2;
 
     // 侧栏的轨道:上面两组七行(Destinations.listen 与 library),摆放顺序即轨道下标。
-    // 沉底那组(个人、设置)不在轨道上(#71 的规则沿用):选中它们时水滴停在最后
-    // 一格(已下载)上并缩没,那两行自己画选中底。
+    // 沉底那组(个人、已屏蔽、设置)不在轨道上(#71 的规则沿用):选中它们时水滴停在最后
+    // 一格(已下载)上并缩没,那几行自己画选中底。
     property <int> nav-listen-count: Destinations.listen.length;
     property <int> nav-track-index: Shell.destination == 0 ? 0
         : Shell.destination == 4 ? 1
@@ -565,6 +570,14 @@ export component MainWindow inherits Window {
                                 aurora-toggled => { Shell.aurora-buttons-toggled(); }
                                 theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
                                 logout => { Session.logout(); }
+                            }
+
+                            // 已屏蔽(目的地 9)。规则按原因分组,在这里恢复。
+                            if Shell.destination == 9: BlockedPage {
+                                width: min(parent.width, root.content-max-w);
+                                x: (parent.width - self.width) / 2;
+                                height: 100%;
+                                bar-visible: Player.has-track && !Shell.play-page-open;
                             }
 
                             // 其余七个目的地共用音乐页。整页可滚,不裹玻璃卡片 ——
@@ -969,7 +982,7 @@ export component MainWindow inherits Window {
         // ── 屏蔽哪个标签(#161) ──
         //
         // 点一行就建一条标签规则并关掉。与标签选择器同一个外形,但不勾选:
-        // 屏蔽是一下子的决定,撤销在设置页「已屏蔽」里。
+        // 屏蔽是一下子的决定,撤销在「已屏蔽」页里。
         if Library.block-tag-picker-open: block-tag-picker := Rectangle {
             width: 100%;
             height: 100%;

@@ -424,13 +424,13 @@ fn playback_copy_only_uses_subset_glyphs() {
     }
 }
 
-/// 电台续取(#159):电台还握着这一批、剩下不到一首、没有一次在路上,才续。
+/// 电台续取(#159):电台还握着这一批、快见底、没有一次在路上,才续。
 #[test]
 fn radio_tops_up_only_when_it_owns_the_batch_and_is_running_out()
  {
     let owns = RadioTurn {
         owns_batch: true,
-        remaining: 1,
+        remaining: RADIO_LOW_WATER,
         pulling: false,
         now_ms: 10_000,
         retry_at_ms: 0,
@@ -441,9 +441,9 @@ fn radio_tops_up_only_when_it_owns_the_batch_and_is_running_out()
         ..owns
     }));
 
-    // 还剩两首:不急
+    // 还有余量:不急
     assert!(!radio_due(&RadioTurn {
-        remaining: 2,
+        remaining: RADIO_LOW_WATER + 1,
         ..owns
     }));
     // 用户点了别的歌,队列换批了:电台不再往里续
@@ -516,4 +516,32 @@ fn a_track_with_an_album_shows_its_name() {
 fn a_track_without_an_album_shows_a_dash() {
     let rows = to_rows(&[track_with_id("1")], None);
     assert_eq!(rows[0].album.as_str(), "—");
+}
+
+/// 推荐日在北京时间早上 6 点换,不是零点:零点到六点取到的还是昨天那批。
+#[test]
+fn the_daily_day_turns_over_at_six_in_beijing() {
+    use chrono::TimeZone as _;
+    let beijing = |day, hour| {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 11, day, hour, 0, 0)
+            .single()
+            .expect("合法时刻")
+            - chrono::Duration::hours(8)
+    };
+
+    assert_eq!(
+        daily_day(beijing(5, 5)),
+        daily_day(beijing(4, 12)),
+        "凌晨五点还是昨天那批"
+    );
+    assert_ne!(
+        daily_day(beijing(5, 6)),
+        daily_day(beijing(5, 5)),
+        "六点换批"
+    );
+    assert_eq!(
+        daily_day(beijing(5, 23)),
+        daily_day(beijing(5, 6)),
+    );
 }

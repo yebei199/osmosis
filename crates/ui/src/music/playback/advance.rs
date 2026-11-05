@@ -125,5 +125,6 @@ pub(in crate::music) fn after_advance(
         // 「投影过期」换个地方犯(见 crate::notice 的模块注释)。
         ui.global::<Player>()
             .set_now_id(slint::SharedString::new());
+        crate::music::radio::ran_dry(deck);
     }
 }

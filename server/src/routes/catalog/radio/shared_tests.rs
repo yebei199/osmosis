@@ -18,7 +18,7 @@ use crate::routes::testing::{
     upstream_track,
 };
 
-use super::{MoreQuery, list, more};
+use super::{MoreQuery, REFILL, list, more};
 
 fn ids(tracks: &[contract::TrackDto]) -> Vec<String> {
     tracks.iter().map(|track| track.id.clone()).collect()
@@ -87,8 +87,8 @@ async fn loading_more_appends_and_every_device_sees_the_same_list()
     let (state, account) = fixture(
         case,
         vec![
-            vec![id(1), id(2), id(3)],
-            vec![id(4), id(5), id(6)],
+            (1..=REFILL).map(id).collect(),
+            vec![id(REFILL + 1), id(REFILL + 2)],
         ],
     )
     .await;
@@ -112,7 +112,8 @@ async fn loading_more_appends_and_every_device_sees_the_same_list()
     .0;
     assert_eq!(
         ids(&first.tracks),
-        vec![id(1), id(2), id(3)]
+        (1..=REFILL).map(id).collect::<Vec<_>>(),
+        "攒够一批就停,不把平台问空"
     );
     assert!(told(&mut phone) && told(&mut desk));
 
@@ -126,7 +127,7 @@ async fn loading_more_appends_and_every_device_sees_the_same_list()
     .0;
     assert_eq!(
         ids(&second.tracks),
-        (1..=6).map(id).collect::<Vec<_>>()
+        (1..=REFILL + 2).map(id).collect::<Vec<_>>()
     );
     let seen = list(State(state), account).await.unwrap().0;
     assert_eq!(seen, second);
@@ -196,6 +197,78 @@ async fn a_played_track_moves_to_heard() {
     let now = list(State(state), account).await.unwrap().0;
     assert_eq!(ids(&now.tracks), vec![id(1), id(3)]);
     assert_eq!(ids(&now.heard), vec![id(2)]);
+}
+
+/// 歌单抽干了、私人 FM 也一首新歌都给不出:以听过的歌为种子接心动,补满一批。
+/// 线上就是这样见底的,未听 0 首、已听 401 首。
+#[tokio::test]
+async fn a_dry_fm_is_refilled_from_heart_mode() {
+    let case = "radio_shared_heart_refill";
+    let id = |n| track_id(case, n);
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let mut fake =
+        FakeUpstream::logged_in_with("nuid", Vec::new());
+    fake.playlists =
+        vec![testing::liked_playlist("liked-7")];
+    fake.fm_batches
+        .lock()
+        .unwrap()
+        .push_back(vec![upstream_track(&id(1), "新")]);
+    fake.listed = (2..=REFILL + 10)
+        .map(|n| upstream_track(&id(n), "心动"))
+        .collect();
+    let state = AppState {
+        archive: Some(Archive::new(Arc::new(
+            MemoryObjects::default(),
+        ))),
+        ..testing::state(
+            pool,
+            testing::serve(fake.clone()).await,
+        )
+    };
+
+    let first = more(
+        State(state.clone()),
+        account.clone(),
+        unfiltered(),
+    )
+    .await
+    .expect("补歌")
+    .0;
+    assert_eq!(
+        first.tracks.len(),
+        REFILL,
+        "没听过种子也靠日推补满"
+    );
+    assert!(
+        fake.heart_asks().is_empty(),
+        "没有听过的歌就没有种子"
+    );
+
+    let _ = crate::routes::library::history::record_play(
+        State(state.clone()),
+        account.clone(),
+        Json(PlayedDto {
+            platform: "netease".to_owned(),
+            track_id: id(1),
+        }),
+    )
+    .await
+    .expect("报播放");
+    let second = more(State(state), account, unfiltered())
+        .await
+        .expect("再补")
+        .0;
+
+    let asks = fake.heart_asks();
+    assert_eq!(asks[0].seed_track_id, id(1));
+    assert_eq!(asks[0].playlist_id, "liked-7");
+    assert_eq!(
+        second.tracks.len(),
+        REFILL + 9,
+        "心动给的新歌都进了歌单,听过的那首不算"
+    );
 }
 
 /// 不在电台歌单里的歌播了,不打扰各台。

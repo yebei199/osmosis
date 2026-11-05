@@ -247,6 +247,7 @@ fn each_section_knows_what_to_load() {
     assert_eq!(Section::from_index(6), Section::Liked);
     assert_eq!(Section::from_index(7), Section::Profile);
     assert_eq!(Section::from_index(8), Section::Settings);
+    assert_eq!(Section::from_index(9), Section::Blocked);
     assert_eq!(Section::from_index(99), Section::Daily);
     assert_eq!(Section::from_index(-1), Section::Daily);
 }
@@ -262,7 +263,7 @@ fn only_the_daily_section_stamps_the_day() {
     let (ui, deck) = deck_window();
     let weak = ui.as_weak();
 
-    for section in [1, 2, 3, 6, 7, 8] {
+    for section in [1, 2, 3, 6, 7, 8, 9] {
         load_section(&weak, &deck, section);
         assert!(
             deck.last_daily.get().is_none(),
@@ -273,7 +274,7 @@ fn only_the_daily_section_stamps_the_day() {
     load_section(&weak, &deck, 0);
     assert_eq!(
         deck.last_daily.get(),
-        Some(chrono::Local::now().date_naive()),
+        Some(daily_day(chrono::Utc::now())),
         "推荐分区要戳上今天,否则一失败就会每次进页面都重打一次"
     );
 }
@@ -291,7 +292,7 @@ fn an_unknown_section_falls_back_to_the_daily_one() {
 
     assert_eq!(
         deck.last_daily.get(),
-        Some(chrono::Local::now().date_naive()),
+        Some(daily_day(chrono::Utc::now())),
         "认不出的编号该当推荐处理"
     );
 }
@@ -1005,4 +1006,62 @@ fn starting_the_radio_over_an_open_playlist_keeps_it() {
         view_after_radio_start(Section::Radio as i32, "夜"),
         None
     );
+}
+
+/// 电台放空了不算完(线上症状:无歌可放之后再也不续):还是它这一批就接着等。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_radio_that_ran_dry_keeps_looking_for_tracks() {
+    let (ui, deck) = deck_window();
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        vec![track_with_id("a")],
+    );
+
+    super::after_advance(&ui, &deck, false);
+
+    assert!(super::radio::stalled(&deck));
+    assert!(super::radio::due(&deck, u64::MAX));
+}
+
+/// 一直等不到新歌就放弃:没人听的机器不该整夜问平台。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_stalled_radio_gives_up_after_its_tries() {
+    let (ui, deck) = deck_window();
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        vec![track_with_id("a")],
+    );
+    super::after_advance(&ui, &deck, false);
+
+    for _ in 0..100 {
+        super::radio::settle(&ui, &deck, 0, false, 0);
+    }
+
+    assert!(!super::radio::stalled(&deck));
+}
+
+/// 用户点了别的歌,这一批不归电台了,放空也不等。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_queue_that_is_not_the_radios_does_not_stall() {
+    let (ui, deck) = deck_window();
+    super::radio::begin(
+        &ui,
+        &deck,
+        api::RadioMode::Fm,
+        vec![track_with_id("a")],
+    );
+    deck.queue
+        .borrow_mut()
+        .replace(vec![track_with_id("b")], 0);
+
+    super::after_advance(&ui, &deck, false);
+
+    assert!(!super::radio::stalled(&deck));
 }

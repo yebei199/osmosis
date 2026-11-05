@@ -521,9 +521,15 @@ pub(in crate::music) fn start_progress_tick(
         PROGRESS_TICK,
         move || {
             let Some(ui) = weak.upgrade() else { return };
-            if ui.global::<Player>().get_is_playing() {
+            let playing =
+                ui.global::<Player>().get_is_playing();
+            if playing {
                 tick_progress(&ui, &deck);
-                // 电台的队列快放完了就续一批(#159)
+            }
+            // 电台的队列快放完了就续一批(#159);放空了也要接着找
+            if playing
+                || crate::music::radio::stalled(&deck)
+            {
                 crate::music::radio::top_up(&ui, &deck);
             }
         },

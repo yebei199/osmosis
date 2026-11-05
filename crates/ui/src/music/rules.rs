@@ -171,7 +171,17 @@ pub fn is_redundant_tap(
     }
 }
 
-/// 当日推荐该不该拉。`last` 是上次拉取的日期,`today` 是今天。
+/// 此刻算哪一天的推荐。网易云的日推在北京时间早上 6 点换批,不是零点:按日历算的话,
+/// 零点到六点取到的昨天那批会被当成今天的,之后一整天都不再取。
+/// 北京时间是 UTC+8,往回退 6 小时,合起来是 UTC+2 的日期。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn daily_day(
+    now: chrono::DateTime<chrono::Utc>,
+) -> chrono::NaiveDate {
+    (now + chrono::Duration::hours(2)).date_naive()
+}
+
+/// 当日推荐该不该拉。`last` 是上次拉取的那个推荐日,`today` 是此刻的(见 [`daily_day`])。
 ///
 /// 相等就不拉,于是搜完歌切出去再回来,搜索结果不会被推荐冲掉 —— 三个入口
 /// (搜索/推荐/红心)填的是同一个列表,拉一次就整批换掉。
@@ -212,10 +222,14 @@ pub(super) fn radio_unhanded(
         .collect()
 }
 
-/// 该不该续一批(#159):队列剩最后一首时续,两种模式共用这一个判据。
+/// 当前这首之后只剩这么几首就续。等到最后一首才问,平台慢一点或一回没问到,
+/// 歌就放空了;留几首的余量够重试好几轮。
+pub(super) const RADIO_LOW_WATER: usize = 5;
+
+/// 该不该续一批(#159):队列快见底时续,两种模式共用这一个判据。
 pub(super) fn radio_due(turn: &RadioTurn) -> bool {
     turn.owns_batch
-        && turn.remaining <= 1
+        && turn.remaining <= RADIO_LOW_WATER
         && !turn.pulling
         && turn.now_ms >= turn.retry_at_ms
 }

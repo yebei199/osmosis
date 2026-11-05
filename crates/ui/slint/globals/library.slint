@@ -1,4 +1,4 @@
-import { PlaylistRow, ArtistRow, TagRow, BlockRow } from "../types.slint";
+import { PlaylistRow, ArtistRow, TagRow, BlockGroup } from "../types.slint";
 
 // 曲库那一面:我的歌单、歌单详情的写操作、搜索结果与红心。
 //
@@ -113,8 +113,8 @@ export global Library {
     // 菜单里点「屏蔽 tag…」开的那个选择器。列的是 all-tags,与标签选择器共用
     // 那一张表(开之前同样喊一次 open-tag-picker 把它填上)。
     in-out property <bool> block-tag-picker-open: false;
-    // 设置页「已屏蔽」那一列,以及点「恢复」删掉其中一条。
-    in property <[BlockRow]> blocks: [];
+    // 「已屏蔽」页按原因分的组,以及点「恢复」删掉其中一条。
+    in property <[BlockGroup]> block-groups: [];
     callback unblock(string);
     // 重拉一次规则。设置页打开时喊:登录前拉的那次不带 token。
     callback refresh-blocks();

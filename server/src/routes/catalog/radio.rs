@@ -8,6 +8,10 @@
 //! 带着筛选来的(#166,电台区选了 chip 再点歌)在排除之后再按筛选过一道;
 //! 筛选越窄丢得越多,上限放到 [`MAX_FILTERED_PULLS`]。
 //!
+//! 共享歌单一次补 [`REFILL`] 首:私人 FM 一回只给 3 首,听得久的账号几乎全被上面的
+//! 过滤丢光,只靠它歌单会被抽干(线上见过未听 0 首、已听 401 首)。FM 问满还不够,
+//! 就以最近听过的歌为种子接心动模式,再不够接当天日推;一个来源失败不挡下一个。
+//!
 //! 新歌多半还没探过歌词,每批都当场探一次(见 [`probe_lyrics`]),不等后台队列:
 //! 不带筛选的起播那一批也探,电台区一摆出来就有「有歌词」可选。
 
@@ -16,6 +20,7 @@ use axum::{
     extract::{Query, State},
 };
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use contract::{
     FacetDto, FacetPickDto, RadioListDto, ServerSignal,
@@ -27,6 +32,7 @@ use serde::Deserialize;
 use server::bangdream::{
     self,
     proto::{
+        GetDailyRecommendationsRequest,
         GetIntelligenceListRequest, GetPersonalFmRequest,
         Platform,
     },
@@ -63,6 +69,16 @@ const PROBES_AT_ONCE: usize = 4;
 /// 攒到这么多首就不再问。私人 FM 一批通常 3 首,丢掉任何一首就再问一回。
 pub(crate) const ENOUGH: usize = 3;
 
+/// 给共享歌单补歌时攒到多少首为止。一首歌三四分钟,够放一个多小时再来问平台。
+pub(crate) const REFILL: usize = 20;
+
+/// 补歌时 FM 不够,以几首听过的歌为种子接心动模式。心动一回给几十首,一两回足够。
+const REFILL_SEEDS: usize = 2;
+
+/// 补歌最多花多久。客户端读超时 10 秒,而平台问一回就要一两秒:到点不再开新的一问,
+/// 手上有多少交多少,留出时间给还在路上的那一问。
+const REFILL_BUDGET: Duration = Duration::from_secs(6);
+
 /// 心动模式问平台要几首。平台不把它当上限(要 5 首回过 145 首),
 /// 只是个必填字段,下游按实际返回量处理。
 const HEART_COUNT: i32 = 50;
@@ -95,6 +111,29 @@ enum Source {
         seed: String,
         playlist_id: String,
     },
+    /// 当天日推:补歌的最后一道,不要种子。
+    Daily {
+        liked_playlist: Option<String>,
+    },
+}
+
+/// 这一趟要攒多少。
+#[derive(Clone, Copy)]
+struct Goal {
+    /// 最多问平台几回。
+    pulls: usize,
+    /// 攒到这么多首就不再问。
+    enough: usize,
+    /// 不带筛选时最多留几首:心动一回几十首,多的不探歌词也不记。
+    cap: usize,
+    /// 过了这一刻不再问平台,歌词也不当场探。
+    deadline: Option<Instant>,
+}
+
+impl Goal {
+    fn late(&self) -> bool {
+        self.deadline.is_some_and(|at| Instant::now() >= at)
+    }
 }
 
 /// `GET /radio?mode=fm` / `GET /radio?mode=heart&seed=<曲目 id>` —— 一批没听过的新歌。
@@ -105,7 +144,12 @@ pub(crate) async fn radio(
     Query(query): Query<RadioQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
     let picks = parse_picks(query.filter.as_deref())?;
-    let max_pulls = pulls_for(&picks);
+    let goal = Goal {
+        pulls: pulls_for(&picks),
+        enough: ENOUGH,
+        cap: usize::MAX,
+        deadline: None,
+    };
     let source = match query.mode {
         RadioMode::Fm => Source::Fm {
             // 问不到(网易云没登录、上游一时失败)不挡电台:私人 FM 自己也会报那个错
@@ -139,7 +183,7 @@ pub(crate) async fn radio(
         &account,
         &source,
         &picks,
-        max_pulls,
+        goal,
         &[],
     )
     .await?;
@@ -190,7 +234,7 @@ pub(crate) async fn list(
     Ok(Json(shared_list(&state, account.id).await?))
 }
 
-/// `POST /radio/more` —— 从私人 FM 拉一批新歌追加进共享歌单,交回追加之后的整份。
+/// `POST /radio/more` —— 补一批新歌进共享歌单,交回追加之后的整份(来源见 [`refill`])。
 /// 再带 `?filter=<JSON>` 就只加过得了筛选的(电台区选着 chip 续歌,#166)。
 ///
 /// 加进来的立刻排进预取(存进 RustFS),并告诉账号下每台在线设备去重取。
@@ -202,20 +246,8 @@ pub(crate) async fn more(
 ) -> Result<Json<RadioListDto>, Failure> {
     let picks = parse_picks(query.filter.as_deref())?;
     let before = shared_list(&state, account.id).await?;
-    let source = Source::Fm {
-        liked_playlist: netease_liked_id(&state, &account)
-            .await
-            .ok(),
-    };
-    let fresh = gather(
-        &state,
-        &account,
-        &source,
-        &picks,
-        pulls_for(&picks),
-        &before.tracks,
-    )
-    .await?;
+    let fresh =
+        refill(&state, &account, &picks, &before).await?;
     if fresh.is_empty() {
         return Ok(Json(before));
     }
@@ -236,6 +268,80 @@ pub(crate) async fn more(
     prefetch::enqueue(&state, account.id, &refs).await;
     tell_radio_changed(&state, account.id);
     Ok(Json(shared_list(&state, account.id).await?))
+}
+
+/// 补歌的来源,先问的在前:私人 FM,以最近听过的歌为种子的心动模式,当天日推。
+/// 红心歌单 id 问不到时心动没法问,跳过它。
+fn refill_sources(
+    liked_playlist: Option<String>,
+    heard: &[TrackDto],
+) -> Vec<Source> {
+    let mut sources = vec![Source::Fm {
+        liked_playlist: liked_playlist.clone(),
+    }];
+    if let Some(playlist_id) = &liked_playlist {
+        sources.extend(
+            heard.iter().rev().take(REFILL_SEEDS).map(
+                |track| Source::Heart {
+                    seed: track.id.clone(),
+                    playlist_id: playlist_id.clone(),
+                },
+            ),
+        );
+    }
+    sources.push(Source::Daily { liked_playlist });
+    sources
+}
+
+/// 依次问各来源,攒够 [`REFILL`] 首为止。一个来源失败只记日志,全都一首没给才报错。
+async fn refill(
+    state: &AppState,
+    account: &Account,
+    picks: &[FacetPickDto],
+    before: &RadioListDto,
+) -> Result<Vec<TrackDto>, Failure> {
+    let liked_playlist =
+        netease_liked_id(state, account).await.ok();
+    let deadline = Instant::now() + REFILL_BUDGET;
+    let mut known = before.tracks.clone();
+    let mut failed = None;
+    for source in
+        refill_sources(liked_playlist, &before.heard)
+    {
+        let room = REFILL.saturating_sub(
+            known.len() - before.tracks.len(),
+        );
+        let goal = Goal {
+            pulls: source.pulls(picks),
+            enough: room,
+            cap: room,
+            deadline: Some(deadline),
+        };
+        // 到点了但一首都没有时还是往下问:空手回去,电台就真没歌放了
+        let got = known.len() > before.tracks.len();
+        if room == 0 || (goal.late() && got) {
+            break;
+        }
+        match gather(
+            state, account, &source, picks, goal, &known,
+        )
+        .await
+        {
+            Ok(found) => known.extend(found),
+            Err(failure) => {
+                tracing::warn!(
+                    source = source.name(),
+                    "电台补歌这一路没问到"
+                );
+                failed.get_or_insert(failure);
+            }
+        }
+    }
+    let fresh = known.split_off(before.tracks.len());
+    match failed {
+        Some(failure) if fresh.is_empty() => Err(failure),
+        _ => Ok(fresh),
+    }
 }
 
 /// 告诉账号下每台在线设备:电台歌单变了,去重取。
@@ -297,19 +403,38 @@ async fn shared_list(
 }
 
 /// 向平台拉新歌,丢掉听过、表过态的以及 `already` 里已有的,过一遍筛选,
-/// 攒够 [`ENOUGH`] 首或问满 `max_pulls` 回为止。交出的详情与当场探到的歌词记进库。
+/// 攒够 `goal` 或问满回数为止。交出的详情与当场探到的歌词记进库。
+/// 问到一半失败时已攒到的照样交出去,一首都没有才报错。
 async fn gather(
     state: &AppState,
     account: &Account,
     source: &Source,
     picks: &[FacetPickDto],
-    max_pulls: usize,
+    goal: Goal,
     already: &[TrackDto],
 ) -> Result<Vec<TrackDto>, Failure> {
     let mut picked: Vec<TrackDto> = already.to_vec();
     let mut probed: Vec<(String, LyricKind)> = Vec::new();
-    for pull in 1..=max_pulls {
-        let batch = source.pull(state, account).await?;
+    for pull in 1..=goal.pulls {
+        if pull > 1 && goal.late() {
+            break;
+        }
+        let batch = match source.pull(state, account).await
+        {
+            Ok(batch) => batch,
+            Err(failure)
+                if picked.len() == already.len() =>
+            {
+                return Err(failure);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    pull,
+                    "电台拉到一半失败,交出已攒到的"
+                );
+                break;
+            }
+        };
         let fetched = batch.len();
         let fresh = keep_fresh(
             state,
@@ -321,15 +446,23 @@ async fn gather(
         .await?;
         let unheard = fresh.len();
         let mut fresh = fresh;
+        if picks.is_empty() {
+            fresh.truncate(goal.cap.saturating_sub(
+                picked.len() - already.len(),
+            ));
+        }
+        let considered = fresh.len();
         let asked = probed.len();
-        probe_lyrics(
-            state,
-            account,
-            &mut fresh,
-            picks,
-            &mut probed,
-        )
-        .await;
+        if !goal.late() {
+            probe_lyrics(
+                state,
+                account,
+                &mut fresh,
+                picks,
+                &mut probed,
+            )
+            .await;
+        }
         let kept: Vec<TrackDto> = fresh
             .into_iter()
             .filter(|track| {
@@ -340,12 +473,12 @@ async fn gather(
             pull,
             fetched,
             dropped = fetched - unheard,
-            filtered = unheard - kept.len(),
+            filtered = considered - kept.len(),
             probed = probed.len() - asked,
             "电台拉了一批"
         );
         picked.extend(kept);
-        if picked.len() - already.len() >= ENOUGH
+        if picked.len() - already.len() >= goal.enough
             || fetched == 0
         {
             break;
@@ -442,12 +575,30 @@ impl Source {
     /// 平台红心歌单的 id,排除红心过的歌时认它在缓存里的那份。
     fn liked_playlist(&self) -> Option<&str> {
         match self {
-            Self::Fm { liked_playlist } => {
+            Self::Fm { liked_playlist }
+            | Self::Daily { liked_playlist } => {
                 liked_playlist.as_deref()
             }
             Self::Heart { playlist_id, .. } => {
                 Some(playlist_id)
             }
+        }
+    }
+
+    /// 补歌时这一路最多问几回。只有 FM 一回给得少,要多问。
+    fn pulls(&self, picks: &[FacetPickDto]) -> usize {
+        match self {
+            Self::Fm { .. } => pulls_for(picks),
+            Self::Heart { .. } | Self::Daily { .. } => 1,
+        }
+    }
+
+    /// 日志里的名字。
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Fm { .. } => "fm",
+            Self::Heart { .. } => "heart",
+            Self::Daily { .. } => "daily",
         }
     }
 
@@ -492,6 +643,20 @@ impl Source {
                     .into_inner()
                     .tracks
             }
+            Self::Daily { .. } => discover
+                .get_daily_recommendations(
+                    bangdream::as_user(
+                        account,
+                        GetDailyRecommendationsRequest {
+                            platform: Platform::Netease
+                                as i32,
+                        },
+                    ),
+                )
+                .await
+                .map_err(|status| fail(&status))?
+                .into_inner()
+                .tracks,
         };
 
         Ok(tracks

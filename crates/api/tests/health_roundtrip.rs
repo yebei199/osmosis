@@ -30,7 +30,7 @@ async fn protected_route_without_token_is_rejected() {
     api::session::clear();
 
     assert!(
-        api::daily().await.is_err(),
+        api::daily(String::new()).await.is_err(),
         "没有登录态却拿到了每日推荐"
     );
 }
@@ -63,7 +63,9 @@ async fn protected_route_with_token_succeeds() {
             .expect("登录失败");
     }
 
-    api::daily().await.expect("登录后仍取不到每日推荐");
+    api::daily(String::new())
+        .await
+        .expect("登录后仍取不到每日推荐");
 
     api::logout().await.expect("登出失败");
 }

@@ -1,5 +1,5 @@
 //! 屏蔽规则的客户端侧(#161):手上一份规则,队列前进时拿它跳过命中的歌;
-//! 歌曲菜单、歌手页的「屏蔽」与设置页「已屏蔽」的「恢复」也在这里接。
+//! 歌曲菜单、歌手页的「屏蔽」与「已屏蔽」页的「恢复」也在这里接。
 //!
 //! 服务端过滤未来响应；本地规则同时供已有队列和电台批次过滤。
 //! 保存成功才通知 music 切歌、移除条目并刷新，失败保持播放。
@@ -10,6 +10,7 @@ use std::rc::Rc;
 use app_core::{BlockKind, BlockRuleDto, TrackDto};
 use slint::{ComponentHandle, VecModel};
 
+use crate::BlockGroup;
 use crate::BlockRow;
 use crate::Library;
 use crate::MainWindow;
@@ -100,17 +101,48 @@ pub fn bind(
     });
 }
 
-/// 设置页「已屏蔽」那一列的行,先建的在前。
-pub fn to_rows(rules: &[BlockRuleDto]) -> Vec<BlockRow> {
-    rules
+/// 「已屏蔽」页按屏蔽原因分的组,次序见 [`REASONS`]。没有规则的原因不出现;
+/// 组里先建的在前。
+pub fn to_groups(
+    rules: &[BlockRuleDto],
+) -> Vec<BlockGroup> {
+    REASONS
         .iter()
-        .map(|rule| BlockRow {
-            id: rule.id.as_str().into(),
-            label: rule.label.as_str().into(),
-            kind: kind_text(rule.kind).into(),
+        .filter_map(|(kind, reason)| {
+            let rows: Vec<BlockRow> = rules
+                .iter()
+                .filter(|rule| rule.kind == *kind)
+                .map(|rule| BlockRow {
+                    id: rule.id.as_str().into(),
+                    label: rule.label.as_str().into(),
+                })
+                .collect();
+            (!rows.is_empty()).then(|| BlockGroup {
+                reason: format!(
+                    "{reason} · {}",
+                    rows.len()
+                )
+                .into(),
+                rows: slint::ModelRc::new(VecModel::from(
+                    rows,
+                )),
+            })
         })
         .collect()
 }
+
+/// 每种规则对应的屏蔽原因。前三条是「不想听」对话框里选的那句话,原样摆回来;
+/// 规则的种类就记着当初选的是哪句,不用另存一列。
+const REASONS: [(BlockKind, &str); 5] = [
+    (BlockKind::Artist, "不想再听这个歌手"),
+    (
+        BlockKind::SongVersions,
+        "不想再听这首歌（含其他版本）",
+    ),
+    (BlockKind::Song, "太难听了"),
+    (BlockKind::Track, "屏蔽这一首"),
+    (BlockKind::Tag, "屏蔽这个标签"),
+];
 
 fn kind_text(kind: BlockKind) -> &'static str {
     match kind {
@@ -177,7 +209,7 @@ fn create_rule(
         match created {
             Ok(rule) => {
                 let text = format!(
-                    "已屏蔽{}「{}」,可在设置里恢复",
+                    "已屏蔽{}「{}」,可在「已屏蔽」页恢复",
                     kind_text(rule.kind),
                     rule.label
                 );
@@ -199,9 +231,11 @@ fn create_rule(
 }
 
 fn project(set: &BlockSet, ui: &MainWindow) {
-    ui.global::<Library>().set_blocks(slint::ModelRc::new(
-        VecModel::from(to_rows(&set.borrow())),
-    ));
+    ui.global::<Library>().set_block_groups(
+        slint::ModelRc::new(VecModel::from(to_groups(
+            &set.borrow(),
+        ))),
+    );
 }
 
 /// 报一次失败。走横幅,不走播放状态行(见 `crate::notice`)。
@@ -311,26 +345,59 @@ pub fn bind_dislike(
 mod tests {
     use super::*;
 
-    /// 设置页的每一行带上类别字样,单曲显示标题而不是那串 id。
+    fn rule(
+        id: &str,
+        kind: BlockKind,
+        label: &str,
+    ) -> BlockRuleDto {
+        BlockRuleDto {
+            id: id.to_owned(),
+            kind,
+            value: "123456".to_owned(),
+            label: label.to_owned(),
+        }
+    }
+
+    fn labels(group: &BlockGroup) -> Vec<String> {
+        use slint::Model as _;
+        group
+            .rows
+            .iter()
+            .map(|row| row.label.to_string())
+            .collect()
+    }
+
+    /// 同一原因的规则进同一组,组带条数,单曲显示标题而不是那串 id。
     #[test]
-    fn rows_name_the_kind_and_show_the_label() {
-        let rows = to_rows(&[
-            BlockRuleDto {
-                id: "1".to_owned(),
-                kind: BlockKind::Track,
-                value: "123456".to_owned(),
-                label: "晴天".to_owned(),
-            },
-            BlockRuleDto {
-                id: "2".to_owned(),
-                kind: BlockKind::Artist,
-                value: "某人".to_owned(),
-                label: "某人".to_owned(),
-            },
+    fn rules_are_grouped_by_the_reason_they_were_blocked_for()
+     {
+        let groups = to_groups(&[
+            rule("1", BlockKind::Song, "晴天"),
+            rule("2", BlockKind::Artist, "某人"),
+            rule("3", BlockKind::Song, "七里香"),
         ]);
 
-        assert_eq!(rows[0].label, "晴天");
-        assert_eq!(rows[0].kind, "单曲");
-        assert_eq!(rows[1].kind, "歌手");
+        assert_eq!(groups.len(), 2, "没有规则的原因不出现");
+        assert_eq!(
+            groups[0].reason,
+            "不想再听这个歌手 · 1"
+        );
+        assert_eq!(labels(&groups[0]), ["某人"]);
+        assert_eq!(groups[1].reason, "太难听了 · 2");
+        assert_eq!(labels(&groups[1]), ["晴天", "七里香"]);
+    }
+
+    /// 五种规则都有原因:漏一种,那种规则就在页面上消失、再也恢复不了。
+    #[test]
+    fn every_kind_of_rule_has_a_reason() {
+        let groups = to_groups(&[
+            rule("1", BlockKind::Artist, "a"),
+            rule("2", BlockKind::Tag, "b"),
+            rule("3", BlockKind::Track, "c"),
+            rule("4", BlockKind::Song, "d"),
+            rule("5", BlockKind::SongVersions, "e"),
+        ]);
+
+        assert_eq!(groups.len(), 5);
     }
 }

@@ -80,6 +80,17 @@ fn settings_page_reserves_room_for_the_bar() {
     );
 }
 
+#[test]
+fn blocked_page_reserves_room_for_the_bar() {
+    let ui = window(9);
+
+    assert!(
+        column_reserve(&ui, "BlockedPage::column")
+            >= BAR_RESERVE,
+        "已屏蔽页忘了照 BarMetrics.page-reserve 留空"
+    );
+}
+
 /// 音乐页不是 Flickable,留空进根的 padding-bottom —— 量法照 #116:
 /// 歌单列表底边到页面底边的距离,有条要比没条宽出 `page-reserve` 那么多。
 #[test]
@@ -144,6 +155,7 @@ fn every_destination_is_either_covered_or_exempted() {
         ("MusicPage", 7),
         ("ProfilePage", 1),
         ("SettingsPage", 1),
+        ("BlockedPage", 1),
     ];
     // 豁免:无。卡墙是每日推荐里的一种视图,不是单独的目的地。
     let exempted: [&str; 0] = [];

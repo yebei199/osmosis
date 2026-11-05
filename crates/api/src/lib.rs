@@ -133,7 +133,7 @@ pub use tags::{
 };
 
 // 「先画上次那份」的读端(#123)。
-pub use catalog::{cached_daily, cached_liked};
+pub use catalog::{cached_daily, cached_liked, last_daily};
 pub use playlists::{
     cached_liked_ids, cached_platform_playlist_tracks,
     cached_playlist_tracks, cached_playlists,

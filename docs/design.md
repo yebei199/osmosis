@@ -35,7 +35,7 @@ handoff 冲突时,以本文件为准 —— handoff 是冻结的交付稿,本文
 
 ## 导航
 
-Osmosis 是带 3D 视觉的音乐播放器,导航只有一层:九个平级的目的地(见 CONTEXT
+Osmosis 是带 3D 视觉的音乐播放器,导航只有一层:十个平级的目的地(见 CONTEXT
 「目的地」,[`adr/0036`](adr/0036-one-level-of-music-destinations.md))。启动落在每日推荐。
 
 - **宽版式导航**(≥ 600px):左侧 168px 带字侧栏,一行 44px,图标加全名。从上到下
@@ -207,6 +207,7 @@ vignette 收边,把注意力拢回中心。
 | 歌词页 | 横向滑出,景深歌词,可拖浏览 | `lyrics.slint`、`app-core` 的 `lyric::window` |
 | 空状态 | 点云待机 + 三个动作,未登录不拦人 | `musicpage.slint` |
 | 设置 | 分组导航 + 卡片流,主题三选一 | `theme.rs`、`api::settings` |
+| 已屏蔽 | 规则按屏蔽原因分组,逐条恢复 | `blocked.slint`、`library/block.rs` |
 | 个人主页 | 四统计卡 + 常听歌手 Top 5(流派无数据源,用歌手维度) | `account.rs`、server 聚合 |
 
 各页的精确尺寸、间距、阴影数值在 [`design/handoff-readme.md`](design/handoff-readme.md),

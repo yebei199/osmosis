@@ -371,7 +371,7 @@ fn the_wide_capsule_avoids_navigation_even_in_a_short_window()
  {
     testing::init_no_event_loop();
     for height in [520.0, 800.0] {
-        for destination in 0..9 {
+        for destination in 0..10 {
             let ui = window(1000.0, height);
             ui.global::<Shell>()
                 .set_destination(destination);
@@ -381,11 +381,16 @@ fn the_wide_capsule_avoids_navigation_even_in_a_short_window()
                 element(&ui, "MainWindow::group-capsule");
             // 侧栏 168 宽,胶囊 44,水平居中。
             assert_eq!(capsule.absolute_position().x, 62.0);
-            // nav-pad 8 + 七行 × (44 + 4) + 分组间隔 18 + 8。
+            // nav-pad 8 + 七行 × (行高 + 4) + 分组间隔 18 + 8。
+            // 行高平时 44,窗口矮时收到排得下十行加胶囊。
+            let slot = ui.get_nav_slot_h();
             assert_eq!(
                 capsule.absolute_position().y,
-                370.0
+                8.0 + 7.0 * (slot + 4.0) + 18.0 + 8.0
             );
+            if height == 800.0 {
+                assert_eq!(slot, 44.0, "够高时行高不变");
+            }
         }
     }
 }

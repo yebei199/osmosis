@@ -129,7 +129,7 @@ struct Deck {
     /// 曲目行的缩略图。与 `artwork` 是两套:那边按歌单 id 存全量取,
     /// 这边按封面 URL 存、只取滑进可见区的那些(见 crate::imagery::thumbnail)。
     thumbnails: crate::imagery::thumbnail::Thumbnails,
-    /// 上次拉当日推荐的日期。推荐是**当天**的,跨过零点就过期(见 [`daily_is_due`])。
+    /// 上次拉当日推荐的推荐日。跨过换批的时刻就过期(见 [`daily_day`]、[`daily_is_due`])。
     /// 只活在进程里 —— 重启重拉一次,不落盘。
     last_daily:
         Rc<std::cell::Cell<Option<chrono::NaiveDate>>>,

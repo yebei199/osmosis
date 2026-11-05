@@ -1,4 +1,4 @@
-//! 电台(#159):私人 FM 与心动模式起播,以及队列剩最后一首时续一批。
+//! 电台(#159):私人 FM 与心动模式起播,以及队列快见底时续一批。
 //!
 //! 电台不是另一套队列:起播就是一次普通点歌(整批进队列),续取是往同一批
 //! 队尾追加,再把新的一版发布到服务端。「还是不是电台在放」靠队列的批号认 ——
@@ -17,6 +17,8 @@
 //! 让服务端追加一批,信令说歌单变了就重取。续歌先从共享歌单里挑还没交给播放的,
 //! 挑不出再让服务端加载一批。听过的不在歌单主列表里,切到「已听过」才摆它们。
 //! 心动模式仍按设备各自拉,不进共享歌单。
+//!
+//! 本机队列真放空了电台也不算完(见 [`ran_dry`]):接着找歌,续上就自己接着放。
 
 use std::collections::HashSet;
 
@@ -29,6 +31,13 @@ use crate::runtime::trace::Action;
 
 /// 续取失败或一首新歌都没续上之后,隔多久再试。每秒一趟的轮询不能每秒问一次平台。
 const RETRY_AFTER_MS: u64 = 30_000;
+
+/// 续上了之后隔多久才再问。服务端一回只续上几首时,水位线还没过,不隔一下就是连着问平台。
+const NEXT_PULL_AFTER_MS: u64 = 10_000;
+
+/// 放空之后最多再试几回。每回隔 [`RETRY_AFTER_MS`],合起来等五分钟就放弃:
+/// 没人听的机器不该整夜问平台。
+const STALLED_TRIES: u8 = 10;
 
 /// 带着筛选续歌,服务端问满上限仍一首不剩时的提示(#166)。
 const DRY_NOTICE: &str = "按当前筛选暂时找不到新歌";
@@ -64,6 +73,8 @@ struct State {
     loading: bool,
     /// 私人 FM 已经交给播放的曲目 id。续歌只从共享歌单里挑还没交出去的。
     handed: HashSet<String>,
+    /// 队列放空了,还在等新歌:续上就接着放。值是还能再试几回,0 是没在等。
+    stalled: u8,
     /// 组里在放的、已经为它重取过歌单的那首。组的起播由服务端记,不经 `/played`,
     /// 于是没有信令说它听过了,本机见它开播就自己重取一次。
     refreshed_for: Option<String>,
@@ -84,6 +95,7 @@ impl State {
         self.told_dry = false;
         self.pulling = false;
         self.retry_at_ms = 0;
+        self.stalled = 0;
         self.handed = tracks
             .iter()
             .map(|track| track.id.clone())
@@ -444,7 +456,24 @@ fn remaining(deck: &Deck) -> usize {
     }
 }
 
-/// 每秒一趟:电台的队列只剩最后一首就续一批。
+/// 本机队列放到头了。还是电台在放就接着等新歌:进度那一趟只在播放时才喊
+/// [`top_up`],放空之后没有这一下,电台就再也不续了。
+pub(in crate::music) fn ran_dry(deck: &Deck) {
+    if owns_batch(deck) && !deck.group.is_member() {
+        log::info!("电台放空了,等新歌");
+        let mut state = deck.radio.inner.borrow_mut();
+        state.stalled = STALLED_TRIES;
+        state.retry_at_ms = 0;
+    }
+}
+
+/// 电台在等新歌。用户点了别的歌,这一批不归它了,也就不等了。
+pub(in crate::music) fn stalled(deck: &Deck) -> bool {
+    deck.radio.inner.borrow().stalled > 0
+        && owns_batch(deck)
+}
+
+/// 每秒一趟:电台的队列快见底就续一批。
 pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
     if deck.group.is_member() {
         follow_group_play(ui, deck);
@@ -494,6 +523,13 @@ pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
             && let Some(ui) = weak.upgrade()
         {
             republish(&ui, &deck, &mode);
+            if std::mem::take(
+                &mut deck.radio.inner.borrow_mut().stalled,
+            ) > 0
+            {
+                log::info!("电台等到了新歌,接着放");
+                advance_auto(&ui, &deck);
+            }
         }
     })
     .expect("event loop must be running");
@@ -583,7 +619,7 @@ fn top_up_shared(
 }
 
 /// 一趟续取落定:放下「在路上」,没续上就冷却,筛选续不出新歌时说一次。
-fn settle(
+pub(super) fn settle(
     ui: &MainWindow,
     deck: &Deck,
     added: usize,
@@ -595,7 +631,9 @@ fn settle(
         state.pulling = false;
         if added == 0 {
             state.retry_at_ms = now_ms + RETRY_AFTER_MS;
+            state.stalled = state.stalled.saturating_sub(1);
         } else {
+            state.retry_at_ms = now_ms + NEXT_PULL_AFTER_MS;
             state.told_dry = false;
         }
         let tell = dry && !state.told_dry;

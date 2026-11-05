@@ -1,6 +1,6 @@
 //! 一级导航的界面行为(MEO-1876)。无头跑,与 controls.rs 同一套路。
 //!
-//! 九个目的地平级:没有 Home,也没有音乐页里那第二套导航。这里钉的是
+//! 十个目的地平级:没有 Home,也没有音乐页里那第二套导航。这里钉的是
 //! 「摆了哪几项、什么顺序、点了去哪」—— 顺序与命名是用户在 MEO-1884 拍的板。
 //! 标签一律断言全名:读屏念的、MCP 脚本按名字找的都是它,底栏上显示简称也一样。
 
@@ -12,7 +12,7 @@ use ui::Session;
 use ui::Shell;
 use ui::Viz;
 
-const WIDE_ORDER: [&str; 9] = [
+const WIDE_ORDER: [&str; 10] = [
     "每日推荐",
     "电台",
     "搜索",
@@ -21,12 +21,19 @@ const WIDE_ORDER: [&str; 9] = [
     "最近播放",
     "已下载",
     "个人",
+    "已屏蔽",
     "设置",
 ];
 const BAR_ORDER: [&str; 5] =
     ["每日推荐", "搜索", "我喜欢", "我的歌单", "更多"];
-const MORE_ORDER: [&str; 5] =
-    ["电台", "最近播放", "已下载", "个人", "设置"];
+const MORE_ORDER: [&str; 6] = [
+    "电台",
+    "最近播放",
+    "已下载",
+    "个人",
+    "已屏蔽",
+    "设置",
+];
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -92,7 +99,7 @@ fn launch_lands_on_daily_without_a_home() {
 
 /// 宽版式侧栏九项,顺序与分组照 MEO-1884;第二套导航不在。
 #[test]
-fn the_sidebar_lists_nine_destinations_in_order() {
+fn the_sidebar_lists_ten_destinations_in_order() {
     let ui = window(false);
 
     assert_eq!(
@@ -121,6 +128,7 @@ fn every_sidebar_row_goes_straight_to_its_page() {
         ("已下载", 5),
         ("个人", 7),
         ("设置", 8),
+        ("已屏蔽", 9),
         ("每日推荐", 0),
     ] {
         find(&ui, "SideNavRow::touch", label)
@@ -233,4 +241,64 @@ fn switching_destinations_does_not_disturb_playback() {
         "紅蓮華"
     );
     assert!(ui.global::<Player>().get_is_playing());
+}
+
+/// 已屏蔽是单独一页:规则按原因分组摆出来,点「恢复」喊的是那一条;设置页不再摆它。
+#[test]
+fn the_blocked_page_lists_rules_by_reason_and_restores_them()
+ {
+    let ui = window(false);
+    let row = |id: &str, label: &str| ui::BlockRow {
+        id: id.into(),
+        label: label.into(),
+    };
+    let group = |reason: &str, rows: Vec<ui::BlockRow>| {
+        ui::BlockGroup {
+            reason: reason.into(),
+            rows: slint::ModelRc::new(
+                slint::VecModel::from(rows),
+            ),
+        }
+    };
+    ui.global::<ui::Library>().set_block_groups(
+        slint::ModelRc::new(slint::VecModel::from(vec![
+            group(
+                "不想再听这个歌手 · 1",
+                vec![row("1", "某人")],
+            ),
+            group("太难听了 · 1", vec![row("2", "晴天")]),
+        ])),
+    );
+    let restored = std::rc::Rc::new(
+        std::cell::RefCell::new(String::new()),
+    );
+    let seen = restored.clone();
+    ui.global::<ui::Library>().on_unblock(move |id| {
+        *seen.borrow_mut() = id.to_string();
+    });
+
+    find(&ui, "SideNavRow::touch", "设置")
+        .invoke_accessible_default_action();
+    assert!(
+        testing::ElementHandle::find_by_accessible_label(
+            &ui,
+            "恢复 晴天"
+        )
+        .next()
+        .is_none(),
+        "设置页不再摆屏蔽规则"
+    );
+
+    find(&ui, "SideNavRow::touch", "已屏蔽")
+        .invoke_accessible_default_action();
+    assert!(present(&ui, "BlockedPage::column"));
+    testing::ElementHandle::find_by_accessible_label(
+        &ui,
+        "恢复 晴天",
+    )
+    .next()
+    .expect("规则该摆在已屏蔽页")
+    .invoke_accessible_default_action();
+
+    assert_eq!(*restored.borrow(), "2");
 }

@@ -261,6 +261,16 @@ impl Views {
         state.touch(key).shown()
     }
 
+    /// 扔掉一个视图手上那份:它过期了,再摆只会骗人。在路上的那次取数不受影响。
+    pub(crate) fn forget(&self, source: ViewSource) {
+        let account = self.account();
+        let mut state = self.state.borrow_mut();
+        let key = ViewKey { account, source };
+        if let Some(index) = state.find(&key) {
+            state.entries[index].tracks = None;
+        }
+    }
+
     /// 此刻摆的是哪个视图,没有就是 `None`。
     pub(crate) fn current_source(
         &self,

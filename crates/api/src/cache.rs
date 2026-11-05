@@ -165,15 +165,23 @@ pub(crate) async fn fetch<
     url: String,
 ) -> Result<T, ApiError> {
     let fresh: T = platform::get_json(url.clone()).await?;
-    // 序列化与写盘一起挪到后台,再把值原样带回来 —— 近千首的歌单不在 UI 线程上编码
+    keep(url, fresh).await
+}
+
+/// 把 `value` 记在 `url` 这个键下,再原样交回。
+// 序列化与写盘一起挪到后台 —— 近千首的歌单不在 UI 线程上编码
+pub(crate) async fn keep<T: Serialize + Send + 'static>(
+    url: String,
+    value: T,
+) -> Result<T, ApiError> {
     let stored = platform::off_thread(move || {
-        if let Ok(body) = serde_json::to_string(&fresh)
+        if let Ok(body) = serde_json::to_string(&value)
             && let Some(cache) = shared()
             && let Ok(cache) = cache.lock()
         {
             cache.put(&url, &body);
         }
-        fresh
+        value
     })
     .await;
     stored.ok_or_else(|| {

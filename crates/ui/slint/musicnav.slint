@@ -1,10 +1,10 @@
 // 一级导航(MEO-1876,docs/adr/0038),外加搜索结果的三个页签。
 //
-// 九个目的地平级,没有 Home,也没有音乐页里的第二套导航。宽版式是带字的侧栏,
+// 十个目的地平级,没有 Home,也没有音乐页里的第二套导航。宽版式是带字的侧栏,
 // 紧凑版式是「四格 + 更多」的底栏,「更多」点开一块平铺面板。
 //
 // 编号沿用原音乐分区的 id(0 每日推荐、1 我的歌单、2 搜索、3 最近播放、4 电台、
-// 5 已下载),后加的接着排(6 我喜欢、7 个人、8 设置)。编号与摆放顺序分开:
+// 5 已下载),后加的接着排(6 我喜欢、7 个人、8 设置、9 已屏蔽)。编号与摆放顺序分开:
 // Rust 侧与测试里按编号判目的地的地方有几十处,插队会让它们全体挪位。
 import { Theme, Radius, Motion, Space, Type, TextSize } from "theme.slint";
 import { Shell } from "globals/shell.slint";
@@ -35,12 +35,13 @@ export global Destinations {
     // 沉底那组。
     out property <[Destination]> account: [
         { id: 7, label: "个人", short: "个人", icon: "M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4 20 C4 16 8 14 12 14 C16 14 20 16 20 20" },
+        { id: 9, label: "已屏蔽", short: "已屏蔽", icon: "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 M5.6 5.6 L18.4 18.4" },
         { id: 8, label: "设置", short: "设置", icon: "M12 9 A3 3 0 1 1 12 15 A3 3 0 1 1 12 9 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M19.1 4.9 L17 7 M7 17 L4.9 19.1" },
     ];
 
-    // 紧凑版式底栏的四格与「更多」面板里的五项,从上面三组里取,标签不另抄一份。
+    // 紧凑版式底栏的四格与「更多」面板里的六项,从上面三组里取,标签不另抄一份。
     out property <[Destination]> bar: [listen[0], listen[2], library[0], library[1]];
-    out property <[Destination]> more: [listen[1], library[2], library[3], account[0], account[1]];
+    out property <[Destination]> more: [listen[1], library[2], library[3], account[0], account[1], account[2]];
     out property <Destination> more-entry: {
         id: -1, label: "更多", short: "更多",
         icon: "M4 12 A1.6 1.6 0 1 1 7.2 12 A1.6 1.6 0 1 1 4 12 M10.4 12 A1.6 1.6 0 1 1 13.6 12 A1.6 1.6 0 1 1 10.4 12 M16.8 12 A1.6 1.6 0 1 1 20 12 A1.6 1.6 0 1 1 16.8 12",
@@ -49,7 +50,8 @@ export global Destinations {
     in-out property <bool> more-open: false;
     // 当前页在「更多」面板里:那时底栏亮的是「更多」。
     out property <bool> in-more: Shell.destination == 4 || Shell.destination == 3
-        || Shell.destination == 5 || Shell.destination == 7 || Shell.destination == 8;
+        || Shell.destination == 5 || Shell.destination == 7 || Shell.destination == 8
+        || Shell.destination == 9;
 
     // 某个目的地的全名。紧凑版式的页头用它。
     public pure function label-of(id: int) -> string {
@@ -61,7 +63,8 @@ export global Destinations {
         if (id == 3) { return library[2].label; }
         if (id == 5) { return library[3].label; }
         if (id == 7) { return account[0].label; }
-        return account[1].label;
+        if (id == 9) { return account[1].label; }
+        return account[2].label;
     }
 
     // 去某个目的地。侧栏、底栏、更多面板、横幅跳转都走这一处;

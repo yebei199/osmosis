@@ -300,13 +300,43 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.global::<Player>().on_music_shown(move || {
         // 当天拉过就什么都不做 —— 搜完歌切出去再回来,搜索结果因此保得住。
-        if daily_is_due(
-            shown.last_daily.get().as_ref(),
-            &chrono::Local::now().date_naive(),
-        ) {
+        if daily_stale(&shown) {
             fetch_daily(&weak, &shown);
         }
     });
+
+    // 进程可以活好几天,而进页才取的话,一直停在推荐页就永远是旧的那批:
+    // 平板和桌面开着过夜、手机从后台切回来,都不会再进一次页。
+    let watched = deck.clone();
+    let weak = ui.as_weak();
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        DAILY_POLL,
+        move || {
+            if watched.views.account() != 0
+                && daily_stale(&watched)
+            {
+                fetch_daily(&weak, &watched);
+            }
+        },
+    );
+    // ponytail: 与自动续播那趟一样与进程同寿,leak 掉省一条回收通道。
+    Box::leak(Box::new(timer));
+}
+
+/// 多久看一眼推荐换批了没有。只比一个日期,不碰网络。
+#[cfg(not(target_arch = "wasm32"))]
+const DAILY_POLL: core::time::Duration =
+    core::time::Duration::from_secs(60);
+
+/// 手上的推荐不是此刻这个推荐日的。
+#[cfg(not(target_arch = "wasm32"))]
+fn daily_stale(deck: &Deck) -> bool {
+    daily_is_due(
+        deck.last_daily.get().as_ref(),
+        &daily_day(chrono::Utc::now()),
+    )
 }
 
 /// 一级目的地。编号即 `musicnav.slint` 里 `Destinations` 各项的 `id`。
@@ -330,6 +360,8 @@ pub enum Section {
     /// 个人与设置:不摆曲目,进页时各页自己取数。
     Profile,
     Settings,
+    /// 已屏蔽:规则列表,页面自己取数。
+    Blocked,
 }
 
 // 门要加在 impl 上,不能只加在方法上:方法没了,`impl Section` 这行还在,
@@ -348,6 +380,7 @@ impl Section {
             6 => Self::Liked,
             7 => Self::Profile,
             8 => Self::Settings,
+            9 => Self::Blocked,
             _ => Self::Daily,
         }
     }
@@ -418,7 +451,9 @@ pub(super) fn load_section(
             }
         }
         // 个人页进页时自己取统计(pages/profile.rs),设置页没有要取的
-        Section::Profile | Section::Settings => {}
+        Section::Profile
+        | Section::Settings
+        | Section::Blocked => {}
         // 搜索不自动取:没有关键词,打一次空搜索只会得到一片空白。
         // 摆的是上一次搜到的那批(没搜过就是空的)。
         Section::Search => {
@@ -429,22 +464,54 @@ pub(super) fn load_section(
     }
 }
 
-/// 拉当日推荐,并记下拉取的日期。
+/// 拉当日推荐,并记下拉取的推荐日。
 ///
-/// 日期在**发出**请求时就戳上,而不是等结果回来:失败了也算今天试过,
+/// 日子在**发出**请求时就戳上,而不是等结果回来:失败了也算今天试过,
 /// 否则请求一失败,此后每次进 Music 页都会再打一次。手动按 Daily 仍能重试。
+///
+/// 磁盘上只有今天那份才先上屏。断网取不到时才退回上次那份,并明说它是旧的 ——
+/// 会话失效这类不是网络的错照常往外报。
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn fetch_daily(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
 ) {
+    let day = daily_day(chrono::Utc::now()).to_string();
+    let notify = weak.clone();
     fetch_daily_from(
         weak,
         deck,
-        api::cached_daily(),
-        async { api::daily().await },
+        api::cached_daily(day.clone()),
+        async move {
+            match api::daily(day).await {
+                Err(
+                    error @ api::ApiError::Transport(_),
+                ) => {
+                    let Some(old) = api::last_daily().await
+                    else {
+                        return Err(error);
+                    };
+                    log::warn!(
+                        "日推取不到,摆上次那份: {error}"
+                    );
+                    if let Some(ui) = notify.upgrade() {
+                        crate::notice::show(
+                            &ui,
+                            STALE_DAILY_NOTICE.to_owned(),
+                        );
+                    }
+                    Ok(old)
+                }
+                found => found,
+            }
+        },
     );
 }
+
+/// 断网时拿旧推荐顶上时说的话。
+#[cfg(not(target_arch = "wasm32"))]
+const STALE_DAILY_NOTICE: &str =
+    "今日推荐取不到,先摆上次那份";
 
 /// [`fetch_daily`] 的本体,请求由调用方给(测试要自己决定它何时回来)。
 #[cfg(not(target_arch = "wasm32"))]
@@ -460,8 +527,11 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
             Output = Result<TracksDto, api::ApiError>,
         > + 'static,
 {
-    deck.last_daily
-        .set(Some(chrono::Local::now().date_naive()));
+    let day = daily_day(chrono::Utc::now());
+    // 换了推荐日:内存里那份是上一批,不再摆出来
+    if deck.last_daily.replace(Some(day)) != Some(day) {
+        deck.views.forget(ViewSource::Daily);
+    }
     let action = Action::begin("daily");
     // 推荐正摆在眼前(推荐分区、没开详情)才切过去;否则是进 Music 页时的
     // 补拉,在后台进推荐自己那份,不把用户正在看的歌单换掉(#137 ④)。
@@ -675,7 +745,8 @@ pub(super) fn show_section(
         Section::Playlists
         | Section::Downloads
         | Section::Profile
-        | Section::Settings => return,
+        | Section::Settings
+        | Section::Blocked => return,
     };
     match source {
         Some(source) => {

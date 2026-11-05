@@ -99,11 +99,11 @@ fn stall_enabled() -> bool {
         || option_env!("OSMOSIS_STALL").is_some()
 }
 
-/// 最大目的地编号:8 = 设置(编号表见 `musicnav.slint` 的 `Destinations`)。
+/// 最大目的地编号:9 = 已屏蔽(编号表见 `musicnav.slint` 的 `Destinations`)。
 ///
 /// 与那张表手工对齐 —— Slint 的全局属性不能当 Rust 常量用,加目的地时两处都要动。
-/// 加漏了的症状是「`OSMOSIS_DESTINATION=9` 静默停在设置页」。
-const MAX_DESTINATION: i32 = 8;
+/// 加漏了的症状是「`OSMOSIS_DESTINATION=9` 静默停在别的页」。
+const MAX_DESTINATION: i32 = 9;
 
 /// 创建窗口并完成所有领域状态绑定。[`run`] 与 [`run_with_renderers`] 的公共前半段。
 ///

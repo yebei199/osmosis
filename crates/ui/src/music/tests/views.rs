@@ -285,3 +285,62 @@ fn a_daily_pulled_while_on_the_daily_section_is_shown() {
 
     assert_eq!(shown_ids(&ui), ids(&["d1"]));
 }
+
+/// 换了推荐日:昨天那批不再摆出来,哪怕新的还在路上(用户报的「进去总是旧的」)。
+#[test]
+fn yesterdays_daily_is_not_shown_while_todays_is_loading() {
+    let (ui, deck) = deck_window_pumped();
+    ui.global::<crate::Shell>().set_destination(0);
+    let (daily, answer) = late();
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
+    daily.send(Ok(batch(&["yesterday"])));
+    assert_eq!(shown_ids(&ui), ids(&["yesterday"]));
+
+    let day = deck.last_daily.get().expect("戳过推荐日");
+    deck.last_daily.set(day.pred_opt());
+    let (daily, answer) = late();
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
+    assert_eq!(
+        shown_ids(&ui),
+        ids(&[]),
+        "旧的那批不该上屏"
+    );
+
+    daily.send(Ok(batch(&["today"])));
+    assert_eq!(shown_ids(&ui), ids(&["today"]));
+}
+
+/// 同一个推荐日里重进:手上那份先摆着,不闪加载态。
+#[test]
+fn the_same_days_daily_stays_on_screen_while_refreshing() {
+    let (ui, deck) = deck_window_pumped();
+    ui.global::<crate::Shell>().set_destination(0);
+    let (daily, answer) = late();
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
+    daily.send(Ok(batch(&["d1"])));
+
+    let (_pending, answer) = late();
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        answer,
+    );
+
+    assert_eq!(shown_ids(&ui), ids(&["d1"]));
+}

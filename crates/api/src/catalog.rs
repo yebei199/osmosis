@@ -86,14 +86,42 @@ pub async fn play_source(
     platform::get_json(play_url(track_id)).await
 }
 
-/// `GET /daily` —— 今日推荐。成功的那份记进本地缓存。
-pub async fn daily() -> Result<TracksDto, ApiError> {
-    cache::fetch(daily_url()).await
+/// 本地缓存里的日推,连同它是哪一天的。推荐隔天就是另一批,不认日子的话
+/// 每天第一次进来先摆的都是昨天那份。旧版存的裸列表解不出来,当没有。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DailySnapshot {
+    day: String,
+    tracks: TracksDto,
 }
 
-/// 上一次 [`daily`] 取到的那份,没有就是 `None`。不碰网络。
-pub async fn cached_daily() -> Option<TracksDto> {
-    cache::recall(daily_url()).await
+/// `GET /daily` —— 今日推荐。成功的那份连同 `day` 记进本地缓存。
+pub async fn daily(
+    day: String,
+) -> Result<TracksDto, ApiError> {
+    let tracks: TracksDto =
+        platform::get_json(daily_url()).await?;
+    let kept = cache::keep(
+        daily_url(),
+        DailySnapshot { day, tracks },
+    )
+    .await?;
+    Ok(kept.tracks)
+}
+
+/// [`daily`] 记下的 `day` 那一天的推荐,别的日子是 `None`。不碰网络。
+pub async fn cached_daily(
+    day: String,
+) -> Option<TracksDto> {
+    let kept: DailySnapshot =
+        cache::recall(daily_url()).await?;
+    (kept.day == day).then_some(kept.tracks)
+}
+
+/// 最近一次记下的推荐,不管哪一天。断网时才拿它顶。不碰网络。
+pub async fn last_daily() -> Option<TracksDto> {
+    let kept: DailySnapshot =
+        cache::recall(daily_url()).await?;
+    Some(kept.tracks)
 }
 
 fn daily_url() -> String {
