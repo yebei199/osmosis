@@ -38,13 +38,16 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
   直接 push 任何分支(含 master)都没有 CI。`ci-test` 依赖 Docker 里的 Postgres(`just pg`)
   与 RustFS(`just rustfs`)。`test/remote-behavior/` 与 `test/mcp-e2e/`(`just mcp-e2e`)不在其中,
   按需手动跑。
+- **agent 只验证编译和逻辑时用 `just agent-build`、`just agent-test`**:依赖不优化,冷构建快一倍多,
+  但 bevy 运行很慢,3D 帧率和手感要用 dev 档验证。
 - **裸 `cargo build/test` 只走 `default-members`**(桌面链路)。`audio`、`syncplay`、`server`、
   `xtask` 要 `-p` 点名才会测;`apps/android` 在宿主 target 上编不过,只经 `cargo xtask android`
   或 `--target aarch64-linux-android`。
 - **原生依赖来自 `nix-shell slint.nix`(桌面)与 `Android.nix`(安卓)**;工具链钉在
   `rust-toolchain.toml`。android 产物在 `target-android/`,默认只编 arm64-v8a;armv7 缺 skia
-  预编译且 `Android.nix` 不导出 NDK。不要设 `RUSTFLAGS`:它进依赖指纹,会让每个入口各维护一棵
-  依赖树。cargo 中间产物在全局 `build.build-dir`(`~/.cargo/config.toml`,仓库外)。
+  预编译且 `Android.nix` 不导出 NDK。不要设 `RUSTFLAGS` 环境变量:它进依赖指纹,会让每个入口各维护
+  一棵依赖树,而且会盖掉 `.cargo/config.toml` 里的 `-Zthreads`。工具链是钉住的 nightly,新布局、细粒度锁和
+  `-Zthreads` 都依赖它。x86_64 链接器由全局 `clang-mold` 提供,不要在仓库里覆盖。cargo 中间产物在全局 `build.build-dir`(`~/.cargo/config.toml`,仓库外)。
 - **重构建命令不能前台跑**:`.claude/hooks/no-foreground-builds.sh` 会拒绝前台的 nix-shell、
   交叉编译和 `just ci*/shot/android-*`。
 - **`[patch.crates-io]` 只写远程 git 地址**(slint fork 的 `dev` 分支)。本机 `path =` 本地照样

@@ -76,6 +76,13 @@ ci-test: pg rustfs
     CARGO_BUILD_JOBS=4 nix-shell slint.nix --run 'nice -n 19 cargo clippy --locked --all-targets -- -D warnings'
     CARGO_BUILD_JOBS=4 nix-shell slint.nix --run 'nice -n 19 cargo clippy --locked --all-targets -p audio -p syncplay -p server -p xtask -- -D warnings'
 
+# agent 的快速档(profile.agent,见 Cargo.toml):只验证编译和逻辑,不替代 `just ci`
+agent-build *args:
+    nix-shell slint.nix --run 'nice -n 19 cargo build --locked --profile agent {{args}}'
+
+agent-test *args:
+    nix-shell slint.nix --run 'nice -n 19 cargo nextest run --locked --cargo-profile agent {{args}}'
+
 # 本地跑不动的端,至少保证能编译。android 的 build.rs 要 platform jar,故走 Android.nix
 # web / iOS 已冻结(#105),不在此列 —— 解冻前不再为它们付编译税
 #

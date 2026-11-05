@@ -424,7 +424,7 @@ mod tests {
 
         let mut cx =
             Context::from_waker(core::task::Waker::noop());
-        let mut future = Box::pin(future);
+        let mut future = std::pin::pin!(future);
         loop {
             if let Poll::Ready(value) =
                 future.as_mut().poll(&mut cx)

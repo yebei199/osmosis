@@ -18,6 +18,9 @@
 //! 必须在建窗口**之前**调 —— 再把 `move || scene.render_viz_frame()` 交给
 //! `ui::run_with_renderers`。
 
+// AsBindGroup 的 SystemParam 推导经 wgpu 的 Send/Sync 链超过默认的 128 层。
+#![recursion_limit = "256"]
+
 mod aurorabtn;
 mod navglass;
 pub use aurorabtn::{

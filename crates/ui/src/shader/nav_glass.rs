@@ -75,6 +75,91 @@ pub fn nav_transition_active(
     }
 }
 
+/// 选中器的跨帧省电门:上一帧的三球逻辑位置、条的物理尺寸、明暗与球体缩放。
+///
+/// 这四样都进判据 —— 静止时 Slint 复用上一帧 `nav-bg`,漏掉哪一样,那一样变了
+/// 画面就不跟,要等下一次切目的地 才补上。
+#[derive(Default)]
+pub struct NavSelector {
+    last_ll: Option<(f32, f32, f32)>,
+    last_size: Option<(f32, f32)>,
+    last_dark: Option<bool>,
+    last_ball: Option<f32>,
+}
+
+impl NavSelector {
+    /// 这一帧要不要重渲选中器;要就渲一张推给界面。交回这一帧渲了没有 ——
+    /// 渲了就要再来一帧让它上屏(转场本身由 Slint 的动画驱动着出帧)。
+    pub fn tick(
+        &mut self,
+        ui: &MainWindow,
+        scale: f32,
+        nav_frame: &mut impl FnMut(
+            &NavGlassControls,
+        )
+            -> Option<slint::Image>,
+    ) -> bool {
+        // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
+        // 常驻,与下面播放页视觉的门相互独立:只在切目的地 的 metaball 还在走
+        // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
+        // 轴的事全在 .slint 那侧算完,这里只搬数(#70)。
+        if ui.get_nav_visible() {
+            let lead = ui.get_nav_lead();
+            let lag = ui.get_nav_lag();
+            let drop = ui.get_nav_drop();
+            let strip_w =
+                (ui.get_nav_strip_w() * scale).max(1.0);
+            let strip_h =
+                (ui.get_nav_strip_h() * scale).max(1.0);
+            let size_changed =
+                self.last_size != Some((strip_w, strip_h));
+            // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
+            // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
+            // 要等下一次切目的地才跟上。
+            let dark = ui.global::<Theme>().get_dark();
+            let theme_changed =
+                self.last_dark != Some(dark);
+            // 球体缩放同理:切到侧栏沉底那两行时槽位不动、只有它在变
+            // (#71),不认它的话水滴就化不掉,停在原地不动。
+            let ball = ui.get_nav_ball();
+            let ball_changed = self.last_ball != Some(ball);
+            if nav_transition_active(
+                lead,
+                lag,
+                drop,
+                self.last_ll,
+            ) || size_changed
+                || theme_changed
+                || ball_changed
+            {
+                if let Some(img) =
+                    (nav_frame)(&NavGlassControls {
+                        strip_w,
+                        strip_h,
+                        lead: lead * scale,
+                        lag: lag * scale,
+                        drop: drop * scale,
+                        cross: ui.get_nav_cross() * scale,
+                        slot: ui.get_nav_slot() * scale,
+                        thick: ui.get_nav_thick() * scale,
+                        horizontal: ui.get_nav_horizontal(),
+                        ball,
+                        dark,
+                    })
+                {
+                    ui.set_nav_bg(img);
+                }
+                self.last_ll = Some((lead, lag, drop));
+                self.last_dark = Some(dark);
+                self.last_ball = Some(ball);
+                self.last_size = Some((strip_w, strip_h));
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use similar_asserts::assert_eq;
@@ -366,90 +451,5 @@ mod tests {
             "交白卷也算问过了,静止的下一帧不该再问一次"
         );
         assert_eq!(ui.get_nav_bg().size().width, 0);
-    }
-}
-
-/// 选中器的跨帧省电门:上一帧的三球逻辑位置、条的物理尺寸、明暗与球体缩放。
-///
-/// 这四样都进判据 —— 静止时 Slint 复用上一帧 `nav-bg`,漏掉哪一样,那一样变了
-/// 画面就不跟,要等下一次切目的地 才补上。
-#[derive(Default)]
-pub struct NavSelector {
-    last_ll: Option<(f32, f32, f32)>,
-    last_size: Option<(f32, f32)>,
-    last_dark: Option<bool>,
-    last_ball: Option<f32>,
-}
-
-impl NavSelector {
-    /// 这一帧要不要重渲选中器;要就渲一张推给界面。交回这一帧渲了没有 ——
-    /// 渲了就要再来一帧让它上屏(转场本身由 Slint 的动画驱动着出帧)。
-    pub fn tick(
-        &mut self,
-        ui: &MainWindow,
-        scale: f32,
-        nav_frame: &mut impl FnMut(
-            &NavGlassControls,
-        )
-            -> Option<slint::Image>,
-    ) -> bool {
-        // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
-        // 常驻,与下面播放页视觉的门相互独立:只在切目的地 的 metaball 还在走
-        // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
-        // 轴的事全在 .slint 那侧算完,这里只搬数(#70)。
-        if ui.get_nav_visible() {
-            let lead = ui.get_nav_lead();
-            let lag = ui.get_nav_lag();
-            let drop = ui.get_nav_drop();
-            let strip_w =
-                (ui.get_nav_strip_w() * scale).max(1.0);
-            let strip_h =
-                (ui.get_nav_strip_h() * scale).max(1.0);
-            let size_changed =
-                self.last_size != Some((strip_w, strip_h));
-            // 主题也要进判据:侧栏背景是这条 pass 自绘的,而这道门静止时
-            // 复用上一帧纹理 —— 不认主题的话,换了明暗侧栏仍是旧配色,
-            // 要等下一次切目的地才跟上。
-            let dark = ui.global::<Theme>().get_dark();
-            let theme_changed =
-                self.last_dark != Some(dark);
-            // 球体缩放同理:切到侧栏沉底那两行时槽位不动、只有它在变
-            // (#71),不认它的话水滴就化不掉,停在原地不动。
-            let ball = ui.get_nav_ball();
-            let ball_changed = self.last_ball != Some(ball);
-            if nav_transition_active(
-                lead,
-                lag,
-                drop,
-                self.last_ll,
-            ) || size_changed
-                || theme_changed
-                || ball_changed
-            {
-                if let Some(img) =
-                    (nav_frame)(&NavGlassControls {
-                        strip_w,
-                        strip_h,
-                        lead: lead * scale,
-                        lag: lag * scale,
-                        drop: drop * scale,
-                        cross: ui.get_nav_cross() * scale,
-                        slot: ui.get_nav_slot() * scale,
-                        thick: ui.get_nav_thick() * scale,
-                        horizontal: ui.get_nav_horizontal(),
-                        ball,
-                        dark,
-                    })
-                {
-                    ui.set_nav_bg(img);
-                }
-                self.last_ll = Some((lead, lag, drop));
-                self.last_dark = Some(dark);
-                self.last_ball = Some(ball);
-                self.last_size = Some((strip_w, strip_h));
-                return true;
-            }
-        }
-        false
     }
 }
