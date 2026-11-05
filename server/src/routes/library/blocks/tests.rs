@@ -238,7 +238,6 @@ async fn rules_hide_tracks_at_every_outlet_until_removed() {
             .expect("日推")
             .0;
     assert_eq!(ids(&today.tracks), clean);
-    assert_eq!(today.hidden, 2);
 
     let search = || {
         search_tracks(
@@ -269,8 +268,122 @@ async fn rules_hide_tracks_at_every_outlet_until_removed() {
             .await
             .expect("日推")
             .0;
-    assert_eq!(today.tracks.len(), 3, "规则删了,歌该回来");
-    assert_eq!(today.hidden, 0);
+    assert_eq!(
+        ids(&today.tracks),
+        clean,
+        "日推在入列时就丢了屏蔽的,规则删了也不回来"
+    );
     let found = search().await.expect("搜索").0;
     assert_eq!(found.tracks.len(), 3);
+}
+
+/// 屏蔽生效到底(ADR 0037):解除红心,电台与日推里拿掉,预取撤掉,桶里那份删掉。
+#[tokio::test]
+async fn blocking_a_track_clears_it_everywhere() {
+    use std::sync::Arc;
+
+    use server::objects::Objects as _;
+    use server::store::archive as ledger;
+
+    use crate::routes::play::archive::{Archive, quality};
+    use crate::routes::testing::{
+        MemoryObjects, track_id, upstream_track,
+    };
+
+    let case = "blocks_purge";
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let objects = Arc::new(MemoryObjects::default());
+    let state = AppState {
+        archive: Some(Archive::new(objects.clone())),
+        ..testing::state(
+            pool.clone(),
+            testing::serve(FakeUpstream::default()).await,
+        )
+    };
+    let id = track_id(case, 1);
+    let track = TrackRef {
+        platform: "netease".to_owned(),
+        track_id: id.clone(),
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    cache::put_details(
+        &mut conn,
+        &[server::bangdream::track_to_dto(upstream_track(
+            &id, "吵",
+        ))],
+    )
+    .await
+    .unwrap();
+    let refs = std::slice::from_ref(&track);
+    liked::set(&mut conn, account.id, &track, true)
+        .await
+        .unwrap();
+    radio::append(&mut conn, account.id, refs)
+        .await
+        .unwrap();
+    daily::add(&mut conn, account.id, refs).await.unwrap();
+    prefetch::enqueue(&mut conn, account.id, refs, "other")
+        .await
+        .unwrap();
+    let key = format!("tracks/{id}.flac");
+    objects
+        .put(
+            &key,
+            server::objects::whole(vec![1u8, 2, 3]),
+            3,
+            "audio/flac",
+        )
+        .await
+        .unwrap();
+    ledger::record(
+        &mut conn,
+        &ledger::StoredTrack {
+            platform: "netease".to_owned(),
+            track_id: id.clone(),
+            quality: quality(),
+            object_key: key.clone(),
+            format: "flac".to_owned(),
+            bit_rate: 999_000,
+            bytes: 3,
+            tier: "lossless".to_owned(),
+            bits_per_sample: None,
+            sample_rate: None,
+        },
+    )
+    .await
+    .unwrap();
+    blocks::create(
+        &mut conn,
+        account.id,
+        BlockKind::Track,
+        &id,
+        None,
+    )
+    .await
+    .unwrap();
+
+    purge(&state, account.id).await.expect("清屏蔽");
+
+    assert!(
+        !liked::refs(&mut conn, account.id)
+            .await
+            .unwrap()
+            .contains(&track)
+    );
+    assert_eq!(
+        radio::list_all(&mut conn, account.id)
+            .await
+            .unwrap(),
+        Vec::new()
+    );
+    let jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM prefetch_jobs WHERE track_id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(jobs, 0);
+    assert_eq!(objects.get(&key), None);
 }

@@ -29,6 +29,7 @@ use contract::{
 };
 use futures_util::StreamExt;
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use server::bangdream::{
     self,
@@ -39,7 +40,7 @@ use server::bangdream::{
     },
 };
 use server::error::{self, Failure};
-use server::store::account::Account;
+use server::store::account::{self, Account};
 use server::store::cache;
 use server::store::history;
 use server::store::lyric::{self, LyricKind};
@@ -48,7 +49,7 @@ use server::store::radio;
 use server::syncplay::signaling;
 
 use super::lyric_probe;
-use super::search::remember_details;
+use super::search::{refresh_daily, remember_details};
 use crate::routes::library::for_account;
 use crate::routes::library::likes::netease_liked_id;
 use crate::routes::play::prefetch;
@@ -73,9 +74,12 @@ pub(crate) const ENOUGH: usize = 3;
 /// 给共享歌单补歌时攒到多少首为止。一首歌三四分钟,够放一个多小时再来问平台。
 pub(crate) const REFILL: usize = 20;
 
-/// 未听的少于这么多首,服务端自己补一批。预取三分钟存一首,新歌要排在够远的后面,
-/// 放到它时才已经存好。
-pub(crate) const TOP_UP_BELOW: usize = 30;
+/// 电台与日推合起来未听的少于这么多首,服务端自己补一批。用户定的 500。
+/// 预取三分钟存一首,新歌要排在够远的后面,放到它时才已经存好。
+pub(crate) const TOP_UP_BELOW: usize = 500;
+
+/// 后台多久看一眼存量:补电台,取当天日推。
+const STOCK_EVERY: Duration = Duration::from_secs(1800);
 
 /// 正在后台补歌的账号。切歌快时 `/played` 接连到,一个账号同时只补一趟。
 static TOPPING_UP: LazyLock<Mutex<HashSet<i64>>> =
@@ -260,6 +264,51 @@ pub(crate) async fn more(
     ))
 }
 
+/// 每隔 [`STOCK_EVERY`] 替用过电台或日推的账号备货,不等谁打开客户端。
+pub(crate) fn spawn_stocker(
+    state: &AppState,
+    stop: &CancellationToken,
+) {
+    let state = state.clone();
+    let stop = stop.clone();
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(STOCK_EVERY);
+        while stop
+            .run_until_cancelled(every.tick())
+            .await
+            .is_some()
+        {
+            if let Err(err) = stock(&state).await {
+                tracing::warn!(%err, "后台备货没做成");
+            }
+        }
+    });
+}
+
+async fn stock(state: &AppState) -> Result<(), String> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|err| err.to_string())?;
+    let accounts = radio::listeners(&mut conn)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    for id in accounts {
+        let Some(found) = account::find(&mut conn, id)
+            .await
+            .map_err(|err| format!("{err:?}"))?
+        else {
+            continue;
+        };
+        if refresh_daily(state, &found).await.is_err() {
+            tracing::warn!(account = id, "后台取日推没成");
+        }
+        spawn_top_up(state, found);
+    }
+    Ok(())
+}
+
 /// 听着电台时后台看一眼存量,不够就补。补不到只记日志:客户端见底时还会自己来要。
 pub(crate) fn spawn_top_up(
     state: &AppState,
@@ -270,20 +319,30 @@ pub(crate) fn spawn_top_up(
     }
     let state = state.clone();
     tokio::spawn(async move {
-        if top_up(&state, &account).await.is_err() {
+        if top_up(&state, &account, TOP_UP_BELOW)
+            .await
+            .is_err()
+        {
             tracing::warn!("电台后台补歌没成");
         }
         TOPPING_UP.lock().unwrap().remove(&account.id);
     });
 }
 
-/// 未听的少于 [`TOP_UP_BELOW`] 首就补一批。
+/// 电台与日推合起来未听的少于 `below` 首就补一批。
 async fn top_up(
     state: &AppState,
     account: &Account,
+    below: usize,
 ) -> Result<(), Failure> {
-    let before = shared_list(state, account.id).await?;
-    if before.tracks.len() < TOP_UP_BELOW {
+    let unheard = {
+        let mut conn = conn(&state.pool).await?;
+        radio::unheard_total(&mut conn, account.id)
+            .await
+            .map_err(|err| error::map_error(&err))?
+    };
+    if unheard < below {
+        let before = shared_list(state, account.id).await?;
         load_more(state, account, &[], before).await?;
     }
     Ok(())
@@ -412,10 +471,22 @@ async fn shared_list(
     state: &AppState,
     account_id: i64,
 ) -> Result<RadioListDto, Failure> {
+    let entries = {
+        let mut conn = conn(&state.pool).await?;
+        radio::list(&mut conn, account_id)
+            .await
+            .map_err(|err| error::map_error(&err))?
+    };
+    split_heard(state, account_id, entries).await
+}
+
+/// 把歌单条目分成没听的和听过的,配上详情,各自过一遍出口。电台与日推共用。
+pub(crate) async fn split_heard(
+    state: &AppState,
+    account_id: i64,
+    entries: Vec<radio::Entry>,
+) -> Result<RadioListDto, Failure> {
     let mut conn = conn(&state.pool).await?;
-    let entries = radio::list(&mut conn, account_id)
-        .await
-        .map_err(|err| error::map_error(&err))?;
     let ids: Vec<String> = entries
         .iter()
         .filter(|entry| entry.track.platform == NETEASE)

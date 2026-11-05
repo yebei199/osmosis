@@ -195,6 +195,60 @@ async fn unheard_radio_tracks_are_claimed_first() {
     assert_eq!(claimed, vec!["z", "y", "a", "b"]);
 }
 
+/// 命中屏蔽规则的任务不下载,行直接删掉。
+#[tokio::test]
+async fn a_blocked_job_is_dropped_without_storing() {
+    let case = "pf_blocked";
+    let pool = testing::pool().await;
+    let owner = testing::fresh_account(&pool, case).await;
+    let state = testing::state(
+        pool.clone(),
+        testing::serve(testing::FakeUpstream::default())
+            .await,
+    );
+    let id = testing::track_id(case, 1);
+    let song = track("netease", &id);
+    let mut conn = pool.acquire().await.unwrap();
+    server::store::cache::put_details(
+        &mut conn,
+        &[server::bangdream::track_to_dto(
+            testing::upstream_track(&id, "吵"),
+        )],
+    )
+    .await
+    .unwrap();
+    server::store::blocks::create(
+        &mut conn,
+        owner.id,
+        contract::BlockKind::Track,
+        &id,
+        None,
+    )
+    .await
+    .unwrap();
+    prefetch::enqueue(
+        &mut conn,
+        owner.id,
+        std::slice::from_ref(&song),
+        "lossless",
+    )
+    .await
+    .unwrap();
+
+    super::run(
+        &state,
+        &Job {
+            platform: song.platform.clone(),
+            track_id: id.clone(),
+            account_id: owner.id,
+            attempts: 1,
+        },
+    )
+    .await;
+
+    assert_eq!(job_state(&mut conn, &song).await, None);
+}
+
 /// 两个 worker 同时来领一个任务:只有一个领到;领走的在租约内不会再被领。
 #[tokio::test]
 async fn concurrent_claims_take_a_job_once() {

@@ -51,8 +51,8 @@ use routes::catalog::netease::{
     create_qr, qr_state, status as netease_status, unbind,
 };
 use routes::catalog::search::{
-    artist_tracks, daily, search_artists, search_playlists,
-    search_tracks,
+    artist_tracks, daily, daily_heard, search_artists,
+    search_playlists, search_tracks,
 };
 use routes::library::blocks::{
     create_block, delete_block, list_blocks,
@@ -556,6 +556,7 @@ async fn main() {
     );
     // 缓存里每首歌探一次有没有歌词,歌单分类视图要它(#156)
     routes::catalog::lyric_probe::spawn(&state, &stop);
+    routes::catalog::radio::spawn_stocker(&state, &stop);
 
     let app = Router::new()
         .route("/health", get(health))
@@ -568,6 +569,7 @@ async fn main() {
         // 搜到的歌手点下去听什么 —— 平台此刻认为的热门那几首
         .route("/artists/{id}/tracks", get(artist_tracks))
         .route("/daily", get(daily))
+        .route("/daily/heard", get(daily_heard))
         // 电台(#159):私人 FM 与心动两种模式,听过的丢掉
         .route("/radio", get(routes::catalog::radio::radio))
         // 账号一份的共享电台歌单(#186):读,与「加载新歌」

@@ -1,15 +1,21 @@
-//! 每个账号最近一次取到的每日推荐(#147)。
+//! 每个账号累积的每日推荐(ADR 0037)。
 //!
-//! 只为桶满时谁先让位记它(见 [`super::archive`] 的名次;#186 起不再管保留期,
-//! 也不排预取):日推的真相在平台,这里只是「最近一次取到的是哪几首」。
+//! 和电台歌单同一套逻辑:推过的一直留着,没听的摆在主列表,听过的归「已听过」,
+//! 红心的不再摆。新的一批在前,批内按平台给的次序。
 
-use sqlx::{Connection, PgConnection};
+use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::liked;
 use crate::store::playlist::TrackRef;
+use crate::store::radio::Entry;
 
-/// 把这个账号的日推整批换成 `tracks`。一个事务:换到一半失败不会只剩半批。
-pub async fn replace(
+/// 当前推荐日。网易云北京时间 6 点换批,即 UTC+2 的日期。
+const TODAY: &str =
+    "(now() AT TIME ZONE 'UTC' + interval '2 hours')::date";
+
+/// 把 `tracks` 记成今天推的。以前推过的挪到今天这批。
+pub async fn add(
     conn: &mut PgConnection,
     account_id: i64,
     tracks: &[TrackRef],
@@ -24,25 +30,105 @@ pub async fn replace(
         })
         .unzip();
 
-    let mut tx = conn.begin().await?;
-    sqlx::query(
-        "DELETE FROM daily_picks WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "INSERT INTO daily_picks (account_id, platform, track_id)
-         SELECT $1, platform, track_id
-         FROM unnest($2::text[], $3::text[]) AS t (platform, track_id)
-         ON CONFLICT DO NOTHING",
-    )
+    sqlx::query(&format!(
+        "INSERT INTO daily_picks (account_id, platform, track_id, day)
+         SELECT $1, platform, track_id, {TODAY}
+         FROM unnest($2::text[], $3::text[]) WITH ORDINALITY
+              AS t (platform, track_id, place)
+         ORDER BY place
+         ON CONFLICT (account_id, platform, track_id)
+         DO UPDATE SET day = EXCLUDED.day"
+    ))
     .bind(account_id)
     .bind(platforms)
     .bind(ids)
-    .execute(&mut *tx)
+    .execute(conn)
     .await?;
-    tx.commit().await?;
+
+    Ok(())
+}
+
+/// 今天这批取过没有。取过就不必再问平台。
+pub async fn has_today(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<bool, AppError> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS (
+             SELECT 1 FROM daily_picks
+             WHERE account_id = $1 AND day = {TODAY}
+         )"
+    ))
+    .bind(account_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// 整份日推,不含这个账号红心的。新的一批在前。
+pub async fn list(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<Vec<Entry>, AppError> {
+    let rows: Vec<(String, String, bool)> =
+        sqlx::query_as(&format!(
+            "SELECT d.platform, d.track_id, EXISTS (
+                 SELECT 1 FROM play_events AS pe
+                 WHERE pe.account_id = d.account_id
+                   AND pe.platform = d.platform
+                   AND pe.track_id = d.track_id
+             )
+             FROM daily_picks AS d
+             WHERE d.account_id = $1 AND NOT {liked}
+             ORDER BY d.day DESC, d.id",
+            liked = liked::of_account_sql("d"),
+        ))
+        .bind(account_id)
+        .fetch_all(conn)
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(platform, track_id, heard)| Entry {
+            track: TrackRef { platform, track_id },
+            heard,
+        })
+        .collect())
+}
+
+/// 这首在不在这个账号的日推里。
+pub async fn holds(
+    conn: &mut PgConnection,
+    account_id: i64,
+    track: &TrackRef,
+) -> Result<bool, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM daily_picks
+             WHERE account_id = $1 AND platform = $2 AND track_id = $3
+         )",
+    )
+    .bind(account_id)
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// 从这个账号的日推里拿掉一首。
+pub async fn remove(
+    conn: &mut PgConnection,
+    account_id: i64,
+    track: &TrackRef,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "DELETE FROM daily_picks
+         WHERE account_id = $1 AND platform = $2 AND track_id = $3",
+    )
+    .bind(account_id)
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .execute(conn)
+    .await?;
 
     Ok(())
 }

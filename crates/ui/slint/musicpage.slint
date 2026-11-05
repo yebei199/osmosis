@@ -513,6 +513,21 @@ export component MusicPage inherits VerticalLayout {
                 }
             }
 
+            // 日推和电台同一套:没听的摆主列表,听过的切到这里看。
+            if Shell.destination == 0
+                && Library.open-playlist-name == "":
+            daily-row := HorizontalLayout {
+                spacing: Space.sm;
+                alignment: start;
+
+                daily-heard := Pill {
+                    text: Player.daily-heard ? "未听过" : "已听过";
+                    selected: Player.daily-heard;
+                    checkable: false;
+                    clicked => { Player.daily-toggle-heard(); }
+                }
+            }
+
             // 空状态:该有一批歌的地方一首都没有。大标题 +
             // 一个真动作(拉一批推荐);设计稿里的「打开本地
             // 文件夹」等入口等功能存在了再上(硬规则 8)。

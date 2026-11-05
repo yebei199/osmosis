@@ -328,7 +328,9 @@ async fn a_short_list_is_topped_up_by_the_server() {
     let (state, account) =
         fixture(case, vec![vec![id(1), id(2)]]).await;
 
-    top_up(&state, &account).await.expect("补歌");
+    top_up(&state, &account, TOP_UP_BELOW)
+        .await
+        .expect("补歌");
 
     let now = list(State(state), account).await.unwrap().0;
     assert_eq!(ids(&now.tracks), vec![id(1), id(2)]);
@@ -357,9 +359,10 @@ async fn a_full_list_is_left_alone() {
         .await
         .unwrap();
     }
-    const { assert!(REFILL * 2 >= TOP_UP_BELOW) };
 
-    top_up(&state, &account).await.expect("看一眼");
+    top_up(&state, &account, REFILL * 2)
+        .await
+        .expect("看一眼");
 
     let now = list(State(state), account).await.unwrap().0;
     assert_eq!(now.tracks.len(), REFILL * 2);

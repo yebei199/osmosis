@@ -102,6 +102,9 @@ export global Player {
     callback radio-toggle-heard();
     // 电台区此刻摆的是不是已听过的那些。唯一写者是 Rust。
     in property <bool> radio-heard: false;
+    // 日推区切到「已听过」/切回来,和电台区同一个用法。
+    callback daily-toggle-heard();
+    in-out property <bool> daily-heard: false;
     // 「加载新歌」在路上,按钮置灰。
     in property <bool> radio-loading: false;
     // 信令说账号的电台歌单变了。由 Rust 的信令那一侧触发,电台那一侧接。

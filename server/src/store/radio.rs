@@ -6,6 +6,7 @@
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::liked;
 use crate::store::playlist::TrackRef;
 
 /// 歌单里的一首。
@@ -48,25 +49,27 @@ pub async fn append(
     Ok(done.rows_affected())
 }
 
-/// 整份歌单,先加的在前。
+/// 整份歌单,不含这个账号红心的:红心的已经永久存着,不必再摆。先加的在前。
 pub async fn list(
     conn: &mut PgConnection,
     account_id: i64,
 ) -> Result<Vec<Entry>, AppError> {
-    let rows: Vec<(String, String, bool)> = sqlx::query_as(
-        "SELECT r.platform, r.track_id, EXISTS (
-             SELECT 1 FROM play_events AS pe
-             WHERE pe.account_id = r.account_id
-               AND pe.platform = r.platform
-               AND pe.track_id = r.track_id
-         )
-         FROM radio_tracks AS r
-         WHERE r.account_id = $1
-         ORDER BY r.id",
-    )
-    .bind(account_id)
-    .fetch_all(conn)
-    .await?;
+    let rows: Vec<(String, String, bool)> =
+        sqlx::query_as(&format!(
+            "SELECT r.platform, r.track_id, EXISTS (
+                 SELECT 1 FROM play_events AS pe
+                 WHERE pe.account_id = r.account_id
+                   AND pe.platform = r.platform
+                   AND pe.track_id = r.track_id
+             )
+             FROM radio_tracks AS r
+             WHERE r.account_id = $1 AND NOT {liked}
+             ORDER BY r.id",
+            liked = liked::of_account_sql("r"),
+        ))
+        .bind(account_id)
+        .fetch_all(conn)
+        .await?;
 
     Ok(rows
         .into_iter()
@@ -75,6 +78,89 @@ pub async fn list(
             heard,
         })
         .collect())
+}
+
+/// 这个账号电台与日推合起来还有几首没听的,同一首只算一次。
+pub async fn unheard_total(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<usize, AppError> {
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM (
+             SELECT account_id, platform, track_id FROM radio_tracks
+             UNION
+             SELECT account_id, platform, track_id FROM daily_picks
+         ) AS m
+         WHERE m.account_id = $1 AND NOT {liked} AND NOT EXISTS (
+             SELECT 1 FROM play_events AS pe
+             WHERE pe.account_id = m.account_id
+               AND pe.platform = m.platform
+               AND pe.track_id = m.track_id
+         )",
+        liked = liked::of_account_sql("m"),
+    ))
+    .bind(account_id)
+    .fetch_one(conn)
+    .await?;
+
+    Ok(usize::try_from(total).unwrap_or(usize::MAX))
+}
+
+/// 这个账号电台与日推里的全部曲目,不管听没听过、红没红心。
+pub async fn list_all(
+    conn: &mut PgConnection,
+    account_id: i64,
+) -> Result<Vec<TrackRef>, AppError> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT platform, track_id FROM radio_tracks
+         WHERE account_id = $1
+         UNION
+         SELECT platform, track_id FROM daily_picks
+         WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_all(conn)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(platform, track_id)| TrackRef {
+            platform,
+            track_id,
+        })
+        .collect())
+}
+
+/// 用过电台或日推的账号:后台补歌只替它们跑。
+pub async fn listeners(
+    conn: &mut PgConnection,
+) -> Result<Vec<i64>, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT account_id FROM radio_tracks
+         UNION
+         SELECT account_id FROM daily_picks",
+    )
+    .fetch_all(conn)
+    .await?)
+}
+
+/// 从这个账号的电台歌单里拿掉一首。
+pub async fn remove(
+    conn: &mut PgConnection,
+    account_id: i64,
+    track: &TrackRef,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "DELETE FROM radio_tracks
+         WHERE account_id = $1 AND platform = $2 AND track_id = $3",
+    )
+    .bind(account_id)
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .execute(conn)
+    .await?;
+
+    Ok(())
 }
 
 /// 这首在不在这个账号的电台歌单里。

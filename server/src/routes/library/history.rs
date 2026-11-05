@@ -17,9 +17,9 @@ use server::bangdream::{
 use server::error;
 use server::error::Failure;
 use server::store::account::Account;
-use server::store::history;
 use server::store::playlist::TrackRef;
 use server::store::radio;
+use server::store::{daily, history};
 
 use super::for_account;
 use super::likes::PageQuery;
@@ -54,11 +54,15 @@ pub(crate) async fn record_play(
         .await
         .map_err(|err| error::map_error(&err))?;
 
-    // 共享电台歌单里的一首听过了:各台的电台区要把它挪进「已听过」(#186)
-    if radio::holds(&mut conn, account.id, &track)
-        .await
-        .map_err(|err| error::map_error(&err))?
-    {
+    // 电台或日推里的一首听过了:各台要把它挪进「已听过」(#186)
+    let listed =
+        radio::holds(&mut conn, account.id, &track)
+            .await
+            .map_err(|err| error::map_error(&err))?
+            || daily::holds(&mut conn, account.id, &track)
+                .await
+                .map_err(|err| error::map_error(&err))?;
+    if listed {
         tell_radio_changed(&state, account.id);
         spawn_top_up(&state, account.clone());
     }

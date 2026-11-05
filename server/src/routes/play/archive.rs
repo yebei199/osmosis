@@ -13,8 +13,9 @@
 //! 存最高可得:向音源要无损,给不出就存它给得出的最高那档,账上如实记档位;
 //! 以后给得出无损了,预取再办这首时换成无损、删掉旧的(#152,`docs/adr/0034`)。
 //!
-//! 只有红心的长期留着;[`spawn_sweeper`] 每天删一轮不是红心、且最后一次播放已满
-//! [`RETAIN`] 的(歌单与日推里的也删,#186),以及 #147 之前按 320k 存的那批。
+//! 留多久见 ADR 0037:红心永久,电台与日推里没听的留到听或被 [`POOL_CAP_BYTES`]
+//! 挤出去,其余的听过当天结束就删。[`spawn_sweeper`] 每小时清一轮,连带 #147 之前
+//! 按 320k 存的那批。
 //! 桶有空间上限(默认 [`DEFAULT_CAP_BYTES`]),超过时按「我的喜欢 → 日推 →
 //! 其他歌单 → 哪都不在」取舍,存不下的记日志,见 [`make_room`]。
 
@@ -43,14 +44,12 @@ use crate::{AppState, conn};
 #[cfg(test)]
 mod tests;
 
-/// 没人红心的歌,最后一次播放(或取消红心)之后留多久。用户定的一天(#186,
-/// 取代 #126 的三天)。
-pub(crate) const RETAIN: Duration =
-    Duration::from_secs(24 * 3600);
+/// 未听池的上限,用户定的 20 GB。超出的按存入先后删音频,歌名留在歌单里,
+/// 听到时再取。红心不算在内。
+pub(crate) const POOL_CAP_BYTES: i64 = 20_000_000_000;
 
-/// 多久清一轮。用户定的每天一次(#186)。
-const SWEEP_EVERY: Duration =
-    Duration::from_secs(24 * 3600);
+/// 多久清一轮。按小时清,听过的歌才能在当天结束后不久就删掉。
+const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 
 /// 目前唯一的平台。别的平台的曲目不存 —— 取源只认网易云。
 pub(crate) const NETEASE: &str = "netease";
@@ -532,10 +531,9 @@ pub(crate) async fn sweep(
     conn: &mut PgConnection,
     objects: &dyn Objects,
 ) -> Result<(usize, i64), String> {
-    let expired =
-        archive::expired(conn, RETAIN, &quality())
-            .await
-            .map_err(|err| format!("{err:?}"))?;
+    let expired = archive::expired(conn, &quality())
+        .await
+        .map_err(|err| format!("{err:?}"))?;
 
     let mut removed = 0;
     for track in expired {
@@ -548,17 +546,78 @@ pub(crate) async fn sweep(
         archive::forget_if_expired(
             conn,
             &track,
-            RETAIN,
             &quality(),
         )
         .await
         .map_err(|err| format!("{err:?}"))?;
         removed += 1;
     }
+    removed +=
+        trim_pool(conn, objects, POOL_CAP_BYTES).await?;
     let (kept, _) = archive::count(conn)
         .await
         .map_err(|err| format!("{err:?}"))?;
     Ok((removed, kept))
+}
+
+/// 未听池超过 `cap` 就从最早存的删起,返回删了几首。只删音频,歌单里的行不动。
+pub(crate) async fn trim_pool(
+    conn: &mut PgConnection,
+    objects: &dyn Objects,
+    cap: i64,
+) -> Result<usize, String> {
+    let pool = archive::pool(conn)
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    let sizes: Vec<i64> =
+        pool.iter().map(|track| track.bytes).collect();
+    let used = sizes.iter().sum();
+    let count =
+        make_room(used, 0, cap, &sizes).unwrap_or(0);
+
+    let mut removed = 0;
+    for track in &pool[..count] {
+        if let Err(err) =
+            objects.delete(&track.object_key).await
+        {
+            tracing::warn!(key = %track.object_key, %err, "删不掉未听池的对象,下一轮再来");
+            continue;
+        }
+        archive::forget(conn, track)
+            .await
+            .map_err(|err| format!("{err:?}"))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+/// 这首被屏蔽了:桶里那份删掉。还有人红心它就留着,红心是永久保存。
+pub(crate) async fn drop_blocked(
+    state: &AppState,
+    conn: &mut PgConnection,
+    track: &TrackRef,
+) -> Result<(), String> {
+    let Some(archive_store) = state.archive.as_ref() else {
+        return Ok(());
+    };
+    let Some(stored) = archive::unliked_copy(
+        conn,
+        &track.platform,
+        &track.track_id,
+        &quality(),
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))?
+    else {
+        return Ok(());
+    };
+    archive_store
+        .objects
+        .delete(&stored.object_key)
+        .await?;
+    archive::forget(conn, &stored)
+        .await
+        .map_err(|err| format!("{err:?}"))
 }
 
 /// 启动时清一轮,之后每 [`SWEEP_EVERY`] 一轮。没配对象存储就不起。

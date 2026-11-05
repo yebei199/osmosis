@@ -110,6 +110,20 @@ pub async fn count(
     Ok(n.try_into().unwrap_or(i32::MAX))
 }
 
+/// 别名 `row` 那一行(带 account_id、platform、track_id)这个账号红心了。
+pub(crate) fn of_account_sql(row: &str) -> String {
+    format!(
+        "EXISTS (
+             SELECT 1 FROM local_playlist_tracks lt
+             JOIN local_playlists lp ON lp.id = lt.playlist_id
+             WHERE lp.system = '{SYSTEM}'
+               AND lp.account_id = {row}.account_id
+               AND lt.platform = {row}.platform
+               AND lt.track_id = {row}.track_id
+         )"
+    )
+}
+
 /// 点心或取消。重复点心、取消一首没有的,都不报错:两次的意图是同一个。
 pub async fn set(
     conn: &mut PgConnection,

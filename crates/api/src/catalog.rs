@@ -164,6 +164,15 @@ pub async fn radio(
     platform::get_json(url).await
 }
 
+/// `GET /daily/heard` —— 日推里听过的,日推页「已听过」摆它们。
+pub async fn daily_heard() -> Result<TracksDto, ApiError> {
+    platform::get_json(format!(
+        "{}/daily/heard",
+        base_url()
+    ))
+    .await
+}
+
 /// `GET /radio/list` —— 账号那一份共享电台歌单(#186),各台读到的一样。
 pub async fn radio_list() -> Result<RadioListDto, ApiError>
 {

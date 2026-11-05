@@ -220,9 +220,33 @@ async fn step(
     }
 }
 
+/// 这首命中了任务所属账号的屏蔽规则。查不了就当没命中,下载不算灾难。
+async fn blocked(state: &AppState, job: &Job) -> bool {
+    let track = job.track();
+    let Ok(mut conn) = state.pool.acquire().await else {
+        return false;
+    };
+    crate::routes::library::blocks::hits(
+        &mut conn,
+        job.account_id,
+        std::slice::from_ref(&track),
+    )
+    .await
+    .is_ok_and(|hits| !hits.is_empty())
+}
+
 /// 办一个已经领到的任务:存,再按结果删行、记原因或退避。
 pub(crate) async fn run(state: &AppState, job: &Job) {
     let track = job.track();
+    if blocked(state, job).await {
+        if let Ok(mut conn) = state.pool.acquire().await
+            && let Err(err) =
+                prefetch::finish(&mut conn, job).await
+        {
+            tracing::warn!(track_id = %job.track_id, ?err, "屏蔽的任务删不掉");
+        }
+        return;
+    }
     let outcome = match state.pool.acquire().await {
         Ok(mut conn) => {
             account::find(&mut conn, job.account_id)

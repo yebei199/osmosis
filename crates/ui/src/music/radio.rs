@@ -138,6 +138,16 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
         player.on_radio_changed(move || {
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &deck);
+                // 这条信令也管日推:听过一首要挪进「已听过」
+                if matches!(
+                    deck.views.current_source(),
+                    Some(
+                        ViewSource::Daily
+                            | ViewSource::DailyHeard
+                    )
+                ) {
+                    super::list::fetch_daily(&weak, &deck);
+                }
             }
         });
     }

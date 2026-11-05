@@ -127,7 +127,8 @@ pub async fn enqueue_all_liked(
 /// 按音源领:每个音源有自己的 worker 与限速。`SKIP LOCKED`:几个 worker 同时
 /// 来领,各拿各的,不排队等同一行。
 ///
-/// 还没听的电台歌先领,按歌单次序:它们马上要放,而限速下红心要排好几个小时。
+/// 还没听的日推先领,再是没听的电台歌(按歌单次序):它们马上要放,而限速下红心
+/// 要排好几个小时。
 pub async fn claim(
     conn: &mut PgConnection,
     platform: &str,
@@ -140,7 +141,17 @@ pub async fn claim(
          WHERE (platform, track_id) = (
              SELECT platform, track_id FROM prefetch_jobs
              WHERE platform = $2 AND state = 'queued' AND run_after <= now()
-             ORDER BY (
+             ORDER BY NOT EXISTS (
+                 SELECT 1 FROM daily_picks AS d
+                 WHERE d.platform = prefetch_jobs.platform
+                   AND d.track_id = prefetch_jobs.track_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM play_events AS pe
+                       WHERE pe.account_id = d.account_id
+                         AND pe.platform = d.platform
+                         AND pe.track_id = d.track_id
+                   )
+             ), (
                  SELECT min(r.id) FROM radio_tracks AS r
                  WHERE r.platform = prefetch_jobs.platform
                    AND r.track_id = prefetch_jobs.track_id
@@ -160,6 +171,23 @@ pub async fn claim(
     .bind(platform)
     .fetch_optional(conn)
     .await?)
+}
+
+/// 这首不必再取了(屏蔽):不管排着还是领着,行删掉。
+pub async fn cancel(
+    conn: &mut PgConnection,
+    track: &TrackRef,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "DELETE FROM prefetch_jobs
+         WHERE platform = $1 AND track_id = $2",
+    )
+    .bind(&track.platform)
+    .bind(&track.track_id)
+    .execute(conn)
+    .await?;
+
+    Ok(())
 }
 
 /// 办成了:删掉这一行。

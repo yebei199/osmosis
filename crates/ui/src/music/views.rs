@@ -21,6 +21,8 @@ const CAPACITY: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ViewSource {
     Daily,
+    /// 日推里听过的那些。
+    DailyHeard,
     Recent,
     /// 电台区:电台正在放的那一批(#159)。
     Radio,

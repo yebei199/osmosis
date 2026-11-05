@@ -5,8 +5,8 @@ use axum::{
     extract::{Path, Query, State},
 };
 use contract::{
-    ArtistSearchDto, PlaylistSearchDto, SearchDto,
-    TrackDto, TracksDto,
+    ArtistSearchDto, PlaylistSearchDto, RadioListDto,
+    SearchDto, TrackDto, TracksDto,
 };
 use serde::Deserialize;
 
@@ -18,14 +18,16 @@ use server::bangdream::{
         SearchPlaylistsRequest, SearchTracksRequest,
     },
 };
-use server::error::Failure;
+use server::error::{self, Failure};
 use server::store::account::Account;
 use server::store::cache;
 use server::store::daily as daily_picks;
 use server::store::playlist::TrackRef;
 
+use super::radio::split_heard;
 use crate::routes::library::for_account;
-use crate::{AppState, fail};
+use crate::routes::play::prefetch;
+use crate::{AppState, conn, fail};
 
 /// 搜索默认返回条数。
 pub(crate) const DEFAULT_SEARCH_LIMIT: i32 = 30;
@@ -205,18 +207,72 @@ pub(crate) async fn search_playlists(
     }))
 }
 
-/// `GET /daily` —— 今日推荐。
+/// `GET /daily` —— 累积的每日推荐里还没听的,新的一批在前(ADR 0037)。
 ///
-/// 上游直接给完整曲目,不像 [`liked`] 那样只给标识。当天的这批记进日推
-/// (空间上限取舍时排在红心之后,#147),但不排预取(#186)。详情顺手写进缓存(#156)。
+/// 问不到平台时有多少交多少,一首都没有才报错。
 pub(crate) async fn daily(
     State(state): State<AppState>,
     account: Account,
 ) -> Result<Json<TracksDto>, Failure> {
+    let refreshed = refresh_daily(&state, &account).await;
+    let list = daily_list(&state, account.id).await?;
+    if let Err(failure) = refreshed
+        && list.tracks.is_empty()
+        && list.heard.is_empty()
+    {
+        return Err(failure);
+    }
+    Ok(Json(TracksDto {
+        tracks: list.tracks,
+        unavailable: 0,
+        hidden: 0,
+    }))
+}
+
+/// `GET /daily/heard` —— 日推里听过的,日推页「已听过」摆它们。
+pub(crate) async fn daily_heard(
+    State(state): State<AppState>,
+    account: Account,
+) -> Result<Json<TracksDto>, Failure> {
+    let list = daily_list(&state, account.id).await?;
+    Ok(Json(TracksDto {
+        tracks: list.heard,
+        unavailable: 0,
+        hidden: 0,
+    }))
+}
+
+async fn daily_list(
+    state: &AppState,
+    account_id: i64,
+) -> Result<RadioListDto, Failure> {
+    let entries = {
+        let mut conn = conn(&state.pool).await?;
+        daily_picks::list(&mut conn, account_id)
+            .await
+            .map_err(|err| error::map_error(&err))?
+    };
+    split_heard(state, account_id, entries).await
+}
+
+/// 今天这批还没取就向平台要,屏蔽的直接丢,其余记进累积的日推并排预取。
+pub(crate) async fn refresh_daily(
+    state: &AppState,
+    account: &Account,
+) -> Result<(), Failure> {
+    {
+        let mut conn = conn(&state.pool).await?;
+        if daily_picks::has_today(&mut conn, account.id)
+            .await
+            .map_err(|err| error::map_error(&err))?
+        {
+            return Ok(());
+        }
+    }
     let mut discover = state.upstream.discover.clone();
     let response = discover
         .get_daily_recommendations(bangdream::as_user(
-            &account,
+            account,
             GetDailyRecommendationsRequest {
                 platform: Platform::Netease as i32,
             },
@@ -230,28 +286,41 @@ pub(crate) async fn daily(
         .into_iter()
         .map(bangdream::track_to_dto)
         .collect();
-    let refs: Vec<TrackRef> = tracks
+    remember_details(state, &tracks).await;
+    let shown = for_account(
+        state,
+        account.id,
+        TracksDto {
+            tracks,
+            unavailable: 0,
+            hidden: 0,
+        },
+    )
+    .await;
+    let refs: Vec<TrackRef> = shown
+        .tracks
         .iter()
         .map(|track| TrackRef {
             platform: track.platform.clone(),
             track_id: track.id.clone(),
         })
         .collect();
-    remember_details(&state, &tracks).await;
-    remember_daily(&state, account.id, &refs).await;
-
-    Ok(Json(
-        for_account(
-            &state,
-            account.id,
-            TracksDto {
-                tracks,
-                unavailable: 0,
-                hidden: 0,
-            },
-        )
-        .await,
-    ))
+    {
+        let mut conn = conn(&state.pool).await?;
+        daily_picks::add(&mut conn, account.id, &refs)
+            .await
+            .map_err(|err| error::map_error(&err))?;
+    }
+    let fresh = daily_list(state, account.id).await?.tracks;
+    let unheard: Vec<TrackRef> = fresh
+        .iter()
+        .map(|track| TrackRef {
+            platform: track.platform.clone(),
+            track_id: track.id.clone(),
+        })
+        .collect();
+    prefetch::enqueue(state, account.id, &unheard).await;
+    Ok(())
 }
 
 /// 把列表里出现的曲目详情写进 `platform_tracks`(#156):分类视图要的专辑、
@@ -271,26 +340,6 @@ pub(crate) async fn remember_details(
     };
     if let Err(err) = written {
         tracing::warn!(%err, "曲目详情写不进缓存");
-    }
-}
-
-/// 记下这个账号当天的日推:桶满时谁先让位要知道哪几首在里面(#147)。
-/// 记不上只写日志,日推照样交出去。
-async fn remember_daily(
-    state: &AppState,
-    account_id: i64,
-    tracks: &[TrackRef],
-) {
-    let remembered = match state.pool.acquire().await {
-        Ok(mut conn) => daily_picks::replace(
-            &mut conn, account_id, tracks,
-        )
-        .await
-        .map_err(|err| format!("{err:?}")),
-        Err(err) => Err(err.to_string()),
-    };
-    if let Err(err) = remembered {
-        tracing::warn!(%err, "记不下当天的日推");
     }
 }
 

@@ -106,7 +106,8 @@ async fn in_playlist(
     .expect("加歌失败");
 }
 
-/// 清理删掉不是红心、且一天没播的,歌单与日推里的也删(#186);红心的、一天内播过的留着。
+/// 清理(ADR 0037):红心的留着,今天播过的留着,日推里没听的留着;其余的删,
+/// 普通歌单里的和听过的日推也删。
 #[tokio::test]
 async fn the_sweep_keeps_only_liked_and_recent_tracks() {
     let f = fixture("ar_sweep", false).await;
@@ -123,11 +124,31 @@ async fn the_sweep_keeps_only_liked_and_recent_tracks() {
     let picked_key =
         stored_days_ago(&mut tx, &f.objects, &picked, 4)
             .await;
-    server::store::daily::replace(
+    let heard = testing::track_id("ar_sweep", 6);
+    let heard_key =
+        stored_days_ago(&mut tx, &f.objects, &heard, 4)
+            .await;
+    server::store::daily::add(
         &mut tx,
         f.account.id,
-        &[netease(&picked)],
+        &[netease(&picked), netease(&heard)],
     )
+    .await
+    .unwrap();
+    server::store::history::record(
+        &mut tx,
+        f.account.id,
+        &netease(&heard),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE stored_tracks
+         SET last_played_at = now() - interval '4 days'
+         WHERE track_id = $1",
+    )
+    .bind(&heard)
+    .execute(&mut *tx)
     .await
     .unwrap();
 
@@ -148,14 +169,17 @@ async fn the_sweep_keeps_only_liked_and_recent_tracks() {
 
     assert!(
         removed >= 3,
-        "至少删掉旧的、歌单里的、日推里的"
+        "至少删掉旧的、歌单里的、听过的日推"
     );
     assert_eq!(f.objects.get(&old_key), None);
     assert!(f.objects.get(&liked_key).is_some());
     assert!(f.objects.get(&recent_key).is_some());
-    // 普通歌单与当天日推里的不再长期留着(#186 推翻 #147)
     assert_eq!(f.objects.get(&listed_key), None);
-    assert_eq!(f.objects.get(&picked_key), None);
+    assert_eq!(f.objects.get(&heard_key), None);
+    assert!(
+        f.objects.get(&picked_key).is_some(),
+        "没听的日推等人来听"
+    );
     let left = |id: &str| {
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM stored_tracks WHERE track_id = $1",
@@ -327,13 +351,9 @@ async fn unliking_restarts_the_clock() {
     .expect("取消红心应当成功");
 
     let mut conn = f.state.pool.acquire().await.unwrap();
-    let expired = ledger::expired(
-        &mut conn,
-        super::super::RETAIN,
-        &quality(),
-    )
-    .await
-    .unwrap();
+    let expired = ledger::expired(&mut conn, &quality())
+        .await
+        .unwrap();
     assert!(
         expired.iter().all(|track| track.track_id != id),
         "刚取消红心的歌不该算过期"
@@ -363,7 +383,7 @@ async fn ranks_follow_liked_then_daily_then_playlists() {
     let id = |n| testing::track_id("ar_rank", n);
     liked_by(&mut tx, &f.account, &id(1)).await;
     in_playlist(&mut tx, &f.account, &id(3)).await;
-    server::store::daily::replace(
+    server::store::daily::add(
         &mut tx,
         f.account.id,
         &[netease(&id(1)), netease(&id(2))],
@@ -381,10 +401,10 @@ async fn ranks_follow_liked_then_daily_then_playlists() {
     }
     assert_eq!(ranks, vec![0, 1, 2, ledger::UNKEPT]);
 
-    server::store::daily::replace(
+    server::store::history::record(
         &mut tx,
         f.account.id,
-        &[netease(&id(4))],
+        &netease(&id(2)),
     )
     .await
     .unwrap();
@@ -394,6 +414,54 @@ async fn ranks_follow_liked_then_daily_then_playlists() {
             .unwrap(),
         ledger::UNKEPT
     );
+}
+
+/// 未听池超了上限:从最早存的删音频,日推里的行留着,听到时再取。红心的不算在内。
+#[tokio::test]
+async fn the_pool_loses_its_oldest_audio_but_keeps_the_title()
+ {
+    let f = fixture("ar_pool", false).await;
+    let mut tx = f.state.pool.begin().await.unwrap();
+    let id = |n| testing::track_id("ar_pool", n);
+    let first =
+        stored_days_ago(&mut tx, &f.objects, &id(1), 0)
+            .await;
+    let second =
+        stored_days_ago(&mut tx, &f.objects, &id(2), 0)
+            .await;
+    let liked =
+        stored_days_ago(&mut tx, &f.objects, &id(3), 0)
+            .await;
+    liked_by(&mut tx, &f.account, &id(3)).await;
+    server::store::daily::add(
+        &mut tx,
+        f.account.id,
+        &[
+            netease(&id(1)),
+            netease(&id(2)),
+            netease(&id(3)),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let removed = super::super::trim_pool(
+        &mut tx,
+        f.objects.as_ref(),
+        4096,
+    )
+    .await
+    .expect("挤未听池应当成功");
+
+    assert_eq!(removed, 1);
+    assert_eq!(f.objects.get(&first), None);
+    assert!(f.objects.get(&second).is_some());
+    assert!(f.objects.get(&liked).is_some());
+    let kept =
+        server::store::daily::list(&mut tx, f.account.id)
+            .await
+            .unwrap();
+    assert_eq!(kept.len(), 2, "歌名留着,红心的不摆");
 }
 
 /// 为名次靠前的让位时,只请名次在它之后的;越靠后越先,同名次里最久没播的先。

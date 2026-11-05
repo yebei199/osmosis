@@ -108,7 +108,9 @@ pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     let action = Action::begin("reload");
     match deck.views.current_source() {
-        Some(ViewSource::Daily) => fetch_daily(&weak, deck),
+        Some(
+            ViewSource::Daily | ViewSource::DailyHeard,
+        ) => fetch_daily(&weak, deck),
         Some(ViewSource::Recent) => fetch_into(
             &weak,
             deck,
@@ -165,6 +167,17 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
     let weak = ui.as_weak();
     ui.global::<Player>()
         .on_daily(move || fetch_daily(&weak, &daily));
+    let toggled = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<crate::Player>().on_daily_toggle_heard(
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let player = ui.global::<crate::Player>();
+            player
+                .set_daily_heard(!player.get_daily_heard());
+            fetch_daily(&weak, &toggled);
+        },
+    );
 
     // 换了目的地。各目的地对应的取数映射写在**一处**(load_section)——
     // 分散在各个回调里的话,加一个目的地时必然漏掉某一处。
@@ -476,6 +489,19 @@ pub(super) fn fetch_daily(
     weak: &slint::Weak<MainWindow>,
     deck: &Deck,
 ) {
+    if weak
+        .upgrade()
+        .is_some_and(|ui| showing_daily_heard(&ui))
+    {
+        fetch_into(
+            weak,
+            deck,
+            Action::begin("daily"),
+            ViewSource::DailyHeard,
+            api::daily_heard(),
+        );
+        return;
+    }
     let day = daily_day(chrono::Utc::now()).to_string();
     let notify = weak.clone();
     fetch_daily_from(
@@ -506,6 +532,19 @@ pub(super) fn fetch_daily(
             }
         },
     );
+}
+
+/// 日推区正摆在眼前,且切到了「已听过」。别处的补拉不能把用户看的列表换掉。
+#[cfg(not(target_arch = "wasm32"))]
+fn showing_daily_heard(ui: &MainWindow) -> bool {
+    ui.global::<crate::Player>().get_daily_heard()
+        && Section::from_index(
+            ui.global::<Shell>().get_destination(),
+        ) == Section::Daily
+        && ui
+            .global::<Library>()
+            .get_open_playlist_name()
+            .is_empty()
 }
 
 /// 断网时拿旧推荐顶上时说的话。
@@ -736,6 +775,9 @@ pub(super) fn show_section(
     section: i32,
 ) {
     let source = match Section::from_index(section) {
+        Section::Daily if showing_daily_heard(ui) => {
+            Some(ViewSource::DailyHeard)
+        }
         Section::Daily => Some(ViewSource::Daily),
         Section::Recent => Some(ViewSource::Recent),
         Section::Radio => Some(ViewSource::Radio),

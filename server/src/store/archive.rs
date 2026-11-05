@@ -4,8 +4,6 @@
 //! 字节在桶里,这里只记账 —— 对象的增删由 `routes::play::archive` 编排,
 //! 这一层不认识 S3。
 
-use std::time::Duration;
-
 use sqlx::PgConnection;
 
 use crate::error::AppError;
@@ -128,7 +126,7 @@ pub async fn forget(
     Ok(())
 }
 
-/// 一首曲目在空间上限取舍里的名次,越小越先留(#147):「我的喜欢」0、当天日推 1、
+/// 一首曲目在空间上限取舍里的名次,越小越先留(#147):「我的喜欢」0、未听池 1、
 /// 其他歌单 2、哪都不在 [`UNKEPT`]。任何一个账号的都算。
 ///
 /// `platform`、`track_id` 是 SQL 表达式(列名或参数),不是值。
@@ -136,16 +134,14 @@ fn rank_sql(platform: &str, track_id: &str) -> String {
     format!(
         "CASE
          WHEN {liked} THEN 0
-         WHEN EXISTS (
-             SELECT 1 FROM daily_picks d
-             WHERE d.platform = {platform} AND d.track_id = {track_id}
-         ) THEN 1
+         WHEN {pool} THEN 1
          WHEN EXISTS (
              SELECT 1 FROM local_playlist_tracks lt
              WHERE lt.platform = {platform} AND lt.track_id = {track_id}
          ) THEN 2
          ELSE {UNKEPT} END",
         liked = liked_sql(platform, track_id),
+        pool = pool_sql(platform, track_id),
     )
 }
 
@@ -155,19 +151,44 @@ pub const UNKEPT: i32 = 3;
 /// 「过期」的判定,[`expired`] 与 [`forget_if_expired`] 共用同一句 ——
 /// 两处各写一遍的话,挑出来的与真删的迟早是两拨。
 ///
-/// 不是按 `$2` 那一档要来的(#147 之前的 320k)一律过期。其余的:只有红心的
-/// 永远留着;不是红心的,不管在不在歌单或日推里,最后一次播放早于 `$1` 秒之前
-/// 就过期(#186,用户推翻了 #147 的「歌单与日推长期留着」)。
+/// 规则见 ADR 0037。不是按 `$1` 那一档要来的(#147 之前的 320k)一律过期。其余的:
+/// 红心永久留着,未听池留到听或被挤出去,其他的最后一次播放早于北京时间今天零点就过期。
 fn expired_sql() -> String {
     format!(
-        "(quality <> $2 OR (
-             NOT {liked}
-             AND last_played_at < now() - $1::bigint * interval '1 second'
+        "(quality <> $1 OR (
+             NOT {liked} AND NOT {pool}
+             AND last_played_at < date_trunc(
+                 'day', now() AT TIME ZONE 'Asia/Shanghai'
+             ) AT TIME ZONE 'Asia/Shanghai'
          ))",
         liked = liked_sql(
             "stored_tracks.platform",
             "stored_tracks.track_id"
         ),
+        pool = pool_sql(
+            "stored_tracks.platform",
+            "stored_tracks.track_id"
+        ),
+    )
+}
+
+/// 这首在未听池里:在谁的电台或日推里,而那个人还没听过。参数同 [`rank_sql`]。
+fn pool_sql(platform: &str, track_id: &str) -> String {
+    format!(
+        "EXISTS (
+             SELECT 1 FROM (
+                 SELECT account_id, platform, track_id FROM radio_tracks
+                 UNION ALL
+                 SELECT account_id, platform, track_id FROM daily_picks
+             ) AS m
+             WHERE m.platform = {platform} AND m.track_id = {track_id}
+               AND NOT EXISTS (
+                   SELECT 1 FROM play_events AS pe
+                   WHERE pe.account_id = m.account_id
+                     AND pe.platform = m.platform
+                     AND pe.track_id = m.track_id
+               )
+         )"
     )
 }
 
@@ -184,24 +205,60 @@ fn liked_sql(platform: &str, track_id: &str) -> String {
     )
 }
 
-/// 秒数进 SQL。一天这种量级离 `i64` 的上限远得很,溢出只可能是调用方写错了。
-fn seconds(retain: Duration) -> i64 {
-    i64::try_from(retain.as_secs()).unwrap_or(i64::MAX)
-}
-
-/// 不是按 `quality` 那一档要来的,以及不是红心、且最后一次播放已经早于
-/// `retain` 之前的那些。
+/// 该删的那些,判定见 [`expired_sql`]。
 pub async fn expired(
     conn: &mut PgConnection,
-    retain: Duration,
     quality: &str,
 ) -> Result<Vec<StoredTrack>, AppError> {
     Ok(sqlx::query_as(&format!(
         "SELECT {COLUMNS} FROM stored_tracks WHERE {}",
         expired_sql()
     ))
-    .bind(seconds(retain))
     .bind(quality)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// 桶里这首的那一份,但谁红心了它就不算。
+pub async fn unliked_copy(
+    conn: &mut PgConnection,
+    platform: &str,
+    track_id: &str,
+    quality: &str,
+) -> Result<Option<StoredTrack>, AppError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLUMNS} FROM stored_tracks
+         WHERE platform = $1 AND track_id = $2 AND quality = $3
+           AND NOT {liked}",
+        liked = liked_sql(
+            "stored_tracks.platform",
+            "stored_tracks.track_id"
+        ),
+    ))
+    .bind(platform)
+    .bind(track_id)
+    .bind(quality)
+    .fetch_optional(conn)
+    .await?)
+}
+
+/// 存在桶里的未听池,先存的在前:超出上限时从头挤掉。红心的不算。
+pub async fn pool(
+    conn: &mut PgConnection,
+) -> Result<Vec<StoredTrack>, AppError> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {COLUMNS} FROM stored_tracks
+         WHERE NOT {liked} AND {pool}
+         ORDER BY stored_at, track_id",
+        liked = liked_sql(
+            "stored_tracks.platform",
+            "stored_tracks.track_id"
+        ),
+        pool = pool_sql(
+            "stored_tracks.platform",
+            "stored_tracks.track_id"
+        ),
+    ))
     .fetch_all(conn)
     .await?)
 }
@@ -213,15 +270,13 @@ pub async fn expired(
 pub async fn forget_if_expired(
     conn: &mut PgConnection,
     track: &StoredTrack,
-    retain: Duration,
     quality: &str,
 ) -> Result<(), AppError> {
     sqlx::query(&format!(
         "DELETE FROM stored_tracks
-         WHERE platform = $3 AND track_id = $4 AND quality = $5 AND {}",
+         WHERE platform = $2 AND track_id = $3 AND quality = $4 AND {}",
         expired_sql()
     ))
-    .bind(seconds(retain))
     .bind(quality)
     .bind(&track.platform)
     .bind(&track.track_id)
