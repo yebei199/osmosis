@@ -228,7 +228,7 @@ impl TracksBody {
 }
 
 /// `POST /playlists/{id}/tracks` —— 往本地歌单加曲目。不排预取(#186):不是红心的
-/// 存进去一天没播就会被清掉。
+/// 听过当天结束就会被清掉。
 pub(crate) async fn add_playlist_tracks(
     State(state): State<AppState>,
     account: Account,

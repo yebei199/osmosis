@@ -9,6 +9,10 @@
 那四项定为**不做**,理由记在
 [change_log/2026-08-11/card-wall.md](change_log/2026-08-11/card-wall.md) 的 Known Cuts。
 
+## 待观察
+
+- [ ] 网易云风控拒绝率与 0.2.11 没验证的几项:[netease-play-risk-control.md](note/netease-play-risk-control.md)
+
 ## 载体路线(未开工,一行代码都没有)
 
 - [ ] AI agent:应用内助手,把应用已有能力当工具调
