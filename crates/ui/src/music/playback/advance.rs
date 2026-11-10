@@ -89,16 +89,19 @@ pub(in crate::music) fn advance(
 }
 
 /// 播完一首的自动推进:与手动只差队列入口 —— 单曲循环时留在本曲重放。
+/// 日推、电台那一批里已经听过的(哪台设备上听的都算)也跳过,见 `music::heard`。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn advance_auto(
     ui: &MainWindow,
     deck: &Deck,
 ) {
+    let heard = crate::music::heard::skipper(deck);
     let has_next = deck
         .queue
         .borrow_mut()
         .advance_auto_skipping(shuffle_seed(), |track| {
             crate::library::block::hits(&deck.blocks, track)
+                || heard(track)
         })
         .is_some();
     after_advance(ui, deck, has_next);

@@ -288,6 +288,13 @@ fn to_local(
                     && *deck.queue.borrow().tracks()
                         == tracks;
             play_batch(ui, deck, tracks.clone(), index);
+            if deck.views.current_source()
+                == Some(ViewSource::Daily)
+            {
+                deck.heard
+                    .mark_daily(deck.queue.borrow().batch());
+                crate::music::heard::refresh(deck);
+            }
             if unchanged {
                 checkpoint(deck, index);
             } else {

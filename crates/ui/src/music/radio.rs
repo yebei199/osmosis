@@ -135,6 +135,8 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
         player.on_radio_changed(move || {
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &deck);
+                // 有一首刚听过:放着的那一批后面若有它,自动续播要跳过
+                super::heard::refresh(&deck);
                 // 这条信令也管日推:听过一首要挪进「已听过」
                 if matches!(
                     deck.views.current_source(),
@@ -429,7 +431,7 @@ pub(in crate::music) fn seed_handoff(
 }
 
 /// 队列还是电台起播的那一批;在组里是组此刻那一版还是电台的。
-fn owns_batch(deck: &Deck) -> bool {
+pub(super) fn owns_batch(deck: &Deck) -> bool {
     let state = deck.radio.inner.borrow();
     if state.mode.is_none() {
         return false;

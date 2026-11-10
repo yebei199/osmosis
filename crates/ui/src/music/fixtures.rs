@@ -249,6 +249,7 @@ fn make_deck_window() -> (super::MainWindow, super::Deck) {
         current_play: Rc::new(RefCell::new(None)),
         listen_clock: Rc::default(),
         reveal_now: Rc::default(),
+        heard: Default::default(),
         radio: Default::default(),
     };
 

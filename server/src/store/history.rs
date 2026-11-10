@@ -125,6 +125,30 @@ pub async fn settle(
     Ok(fresh.then_some(TrackRef { platform, track_id }))
 }
 
+/// `ids`(都是 `platform` 的)里这个账号听过的那些,顺序照 `ids`。
+pub async fn heard_among(
+    conn: &mut PgConnection,
+    account_id: i64,
+    platform: &str,
+    ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT t.id
+         FROM unnest($3::text[]) WITH ORDINALITY AS t (id, n)
+         WHERE EXISTS (
+             SELECT 1 FROM heard_tracks AS h
+             WHERE h.account_id = $1 AND h.platform = $2
+               AND h.track_id = t.id
+         )
+         ORDER BY t.n",
+    )
+    .bind(account_id)
+    .bind(platform)
+    .bind(ids)
+    .fetch_all(conn)
+    .await?)
+}
+
 /// `tracks` 里这个账号「听过或表过态」的那些,顺序照 `tracks`。电台要丢掉它们:
 ///
 /// - 播放过:事件流里出现过,不看听没听完(#159);

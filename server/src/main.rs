@@ -672,6 +672,8 @@ async fn main() {
             "/played/{id}/listened",
             axum::routing::patch(report_listened),
         )
+        // 这几首里哪些听过了(见 `server::heard`):自动续播跳过别的设备听过的
+        .route("/heard", post(routes::library::history::heard_among))
         .route("/recent", get(recent))
         .route("/stats", get(stats))
         // 赞踩独立于红心(#157):红心管收藏,这条管评价,与 /liked/{track_id}

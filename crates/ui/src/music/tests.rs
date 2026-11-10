@@ -1160,3 +1160,58 @@ fn opening_daily_scrolls_to_the_track_now_playing() {
     assert_eq!(ui.global::<Player>().get_list_scroll_to(), 2.0 * row);
     assert!(!deck.reveal_now.get(), "只滚这一次");
 }
+
+// ── 自动续播跳过别处听过的(用户 2026-11-10 的 5)──
+
+#[cfg(not(target_arch = "wasm32"))]
+fn queue_now(deck: &Deck) -> Option<String> {
+    deck.queue.borrow().current().map(|track| track.id.clone())
+}
+
+/// 日推那一批里 b 在别的设备上听过了:放完 a 自动接 c。点名 b 照样放。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn auto_advance_skips_a_daily_track_heard_elsewhere() {
+    let (ui, deck) = deck_window();
+    let tracks: Vec<TrackDto> =
+        ["a", "b", "c"].into_iter().map(track_with_id).collect();
+    deck.views.show(ViewSource::Daily);
+    dispatch(
+        &ui,
+        &deck,
+        Intent::Play {
+            tracks: tracks.clone(),
+            index: 0,
+        },
+    );
+    deck.heard.learn(["b".to_owned()]);
+
+    super::advance_auto(&ui, &deck);
+    assert_eq!(queue_now(&deck).as_deref(), Some("c"));
+
+    dispatch(&ui, &deck, Intent::Play { tracks, index: 1 });
+    assert_eq!(queue_now(&deck).as_deref(), Some("b"));
+}
+
+/// 不是日推、电台起播的那一批(歌单、搜索):听过的照放。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn heard_tracks_still_play_in_other_batches() {
+    let (ui, deck) = deck_window();
+    deck.views.show(ViewSource::Recent);
+    dispatch(
+        &ui,
+        &deck,
+        Intent::Play {
+            tracks: ["a", "b", "c"]
+                .into_iter()
+                .map(track_with_id)
+                .collect(),
+            index: 0,
+        },
+    );
+    deck.heard.learn(["b".to_owned()]);
+
+    super::advance_auto(&ui, &deck);
+    assert_eq!(queue_now(&deck).as_deref(), Some("b"));
+}

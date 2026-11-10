@@ -32,6 +32,9 @@ mod downloads;
 #[cfg(not(target_arch = "wasm32"))]
 mod facets;
 mod feed;
+// 日推、电台那一批里已经听过的:自动续播跳过(用户 2026-11-10)。
+#[cfg(not(target_arch = "wasm32"))]
+mod heard;
 mod list;
 mod notice;
 mod queuepage;
@@ -182,6 +185,8 @@ struct Deck {
     listen_clock: Rc<std::cell::Cell<ListenClock>>,
     /// 日推刚被打开:下一次摆出日推的行时,滚到在放的那一首(见 `list::push_rows`)。
     reveal_now: Rc<std::cell::Cell<bool>>,
+    /// 日推、电台那一批里服务端说已经听过的(见 [`heard`])。
+    heard: heard::Heard,
     /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
     radio: radio::Radio,
 }
@@ -255,6 +260,7 @@ pub fn bind(
         current_play: Rc::new(RefCell::new(None)),
         listen_clock: Rc::default(),
         reveal_now: Rc::default(),
+        heard: heard::Heard::default(),
         radio: radio::Radio::default(),
     };
 

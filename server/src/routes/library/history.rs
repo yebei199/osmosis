@@ -7,7 +7,7 @@ use axum::{
 };
 use contract::{
     ListenedDto, PlayedAckDto, PlayedDto, StatsDto,
-    TopArtistDto, TracksDto,
+    TopArtistDto, TrackIdsDto, TracksDto,
 };
 
 use server::bangdream::{
@@ -85,6 +85,27 @@ pub(crate) async fn report_listened(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /heard` —— 给的这几首里,这个账号听过的那些(用户 2026-11-10 的口径)。
+///
+/// 日推、电台起播的那一批放着放着,里面的歌可能在别的设备上听过了;自动续播
+/// 到它之前问一句,听过的跳过。只有网易云一个平台,与 `/liked/ids` 同一处待办。
+pub(crate) async fn heard_among(
+    State(state): State<AppState>,
+    account: Account,
+    Json(body): Json<TrackIdsDto>,
+) -> Result<Json<TrackIdsDto>, Failure> {
+    let mut conn = conn(&state.pool).await?;
+    let track_ids = history::heard_among(
+        &mut conn,
+        account.id,
+        "netease",
+        &body.track_ids,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?;
+    Ok(Json(TrackIdsDto { track_ids }))
 }
 
 /// `GET /recent` —— 最近播放,曲目详情由上游补全。

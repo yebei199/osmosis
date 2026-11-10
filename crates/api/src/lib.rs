@@ -103,7 +103,7 @@ pub use group::{
 };
 
 pub use history::{
-    recent, record_play, report_listened, stats,
+    heard_among, recent, record_play, report_listened, stats,
 };
 
 pub use netease::{

@@ -152,6 +152,8 @@ pub(in crate::music) fn play_current(
     // 迁移过来的那一首不从头放(见 `migrate`)。当场取走:这一份只属于这一次起播,
     // 留到下一首就会让一首新点的歌从半路开始。
     let start = deck.start_at.take();
+    // 这一批后面的歌可能已经在别的设备上听过了:趁这一首在放,问一句(见 `music::heard`)
+    crate::music::heard::refresh(deck);
 
     let deck = deck.clone();
     let weak = ui.as_weak();

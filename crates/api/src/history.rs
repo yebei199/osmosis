@@ -2,7 +2,7 @@
 
 use contract::{
     ListenedDto, PlayedAckDto, PlayedDto, StatsDto,
-    TracksDto,
+    TrackIdsDto, TracksDto,
 };
 
 use crate::{ApiError, base_url, platform};
@@ -25,6 +25,19 @@ pub async fn record_play(
         }),
     )
     .await
+}
+
+/// `POST /heard` —— `track_ids` 里这个账号已经听过的那些(在哪台设备上听的都算)。
+pub async fn heard_among(
+    track_ids: Vec<String>,
+) -> Result<Vec<String>, ApiError> {
+    let heard: TrackIdsDto = platform::send_json(
+        reqwest::Method::POST,
+        format!("{}/heard", base_url()),
+        Some(TrackIdsDto { track_ids }),
+    )
+    .await?;
+    Ok(heard.track_ids)
 }
 
 /// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157)。

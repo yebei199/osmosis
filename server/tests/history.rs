@@ -557,3 +557,36 @@ async fn known_among_picks_only_this_accounts_plays() {
 
     assert_eq!(played, vec![track("1"), track("3")]);
 }
+
+/// 自动续播问「这几首哪些听过了」:只答听够了的,顺序照问的。
+#[tokio::test]
+async fn heard_among_answers_only_heard_tracks() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "hs_among").await;
+    for (id, listened) in [("1", 200_000), ("2", 1_000), ("3", 150_000)] {
+        let event =
+            history::record(&mut tx, account.id, &track(id))
+                .await
+                .unwrap();
+        history::settle(
+            &mut tx,
+            account.id,
+            &PlayRef::Event(event),
+            listened,
+            200_000,
+        )
+        .await
+        .unwrap();
+    }
+
+    let heard = history::heard_among(
+        &mut tx,
+        account.id,
+        "netease",
+        &["3".to_owned(), "2".to_owned(), "1".to_owned(), "4".to_owned()],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(heard, vec!["3".to_owned(), "1".to_owned()]);
+}
