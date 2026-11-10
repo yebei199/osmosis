@@ -209,6 +209,31 @@ impl Now {
     }
 }
 
+/// `before` 这一段播放(这一首长 `duration_us`)到 `after` 这一版结束了没有;结束了交出它
+/// 听到了第几微秒,服务端据此判「听过」(见 `crate::heard`)。
+///
+/// 结束是:组散了、换了一条、从头重起(单曲循环、「上一首」回到开头),或放到这一首末尾
+/// 停下。暂停、跳转、续播、提前开走都还是同一段,不算。听了多久按时间线上的位置算 ——
+/// 组里没有逐秒累计,往前拖过去的那一段也算进去。
+pub fn ended(
+    before: &Now,
+    duration_us: u64,
+    after: Option<&Now>,
+    at: i64,
+) -> Option<u64> {
+    let over = after.is_none_or(|after| {
+        after.entry_id != before.entry_id
+            || (after.playing
+                && after.position_us == 0
+                && after.anchor_wall_us
+                    != before.anchor_wall_us)
+            || (before.playing
+                && !after.playing
+                && after.position_us >= duration_us)
+    });
+    over.then(|| before.position_at(at, duration_us))
+}
+
 impl Group {
     pub fn includes(&self, device: &str) -> bool {
         self.members.iter().any(|id| id == device)

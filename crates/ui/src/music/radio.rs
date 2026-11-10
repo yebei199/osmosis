@@ -75,9 +75,6 @@ struct State {
     handed: HashSet<String>,
     /// 队列放空了,还在等新歌:续上就接着放。值是还能再试几回,0 是没在等。
     stalled: u8,
-    /// 组里在放的、已经为它重取过歌单的那首。组的起播由服务端记,不经 `/played`,
-    /// 于是没有信令说它听过了,本机见它开播就自己重取一次。
-    refreshed_for: Option<String>,
 }
 
 impl State {
@@ -485,9 +482,6 @@ pub(in crate::music) fn stalled(deck: &Deck) -> bool {
 
 /// 每秒一趟:电台的队列快见底就续一批。
 pub(super) fn top_up(ui: &MainWindow, deck: &Deck) {
-    if deck.group.is_member() {
-        follow_group_play(ui, deck);
-    }
     let now_ms = crate::sync::group::now_ms();
     if !due(deck, now_ms) {
         return;
@@ -864,29 +858,4 @@ fn load_more(ui: &MainWindow, deck: &Deck) {
         }
     })
     .expect("event loop must be running");
-}
-
-/// 组里开播了共享歌单里的一首(#186):服务端记了这次播放,本机重取一次,
-/// 让它挪进「已听过」。每首只取一次。
-fn follow_group_play(ui: &MainWindow, deck: &Deck) {
-    let Some(now) = deck.group.now() else { return };
-    let due = {
-        let mut state = deck.radio.inner.borrow_mut();
-        let listed = state
-            .list
-            .tracks
-            .iter()
-            .any(|track| track.id == now.track.id);
-        let due = listed
-            && state.refreshed_for.as_deref()
-                != Some(now.track.id.as_str());
-        if due {
-            state.refreshed_for =
-                Some(now.track.id.clone());
-        }
-        due
-    };
-    if due {
-        refresh(ui, deck);
-    }
 }

@@ -25,6 +25,8 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::error::AppError;
 use crate::store::group as rows;
+use crate::store::history::PlayRef;
+use crate::store::playlist::TrackRef;
 use crate::store::queue::{self, Entry, EntryInput};
 use crate::store::{blocks, facets};
 use crate::syncplay::clock;
@@ -81,7 +83,7 @@ pub async fn apply(
     let mut entries =
         current_entries(&mut tx, account, &mut group)
             .await?;
-    let before = started(&group);
+    let before = started(&group, &entries);
     group.roll(
         &blocked_playlist(&mut tx, account, &entries)
             .await?,
@@ -225,10 +227,14 @@ pub async fn apply(
             at,
         );
     }
-    let state =
+    let state = publish(
+        pool,
+        roster,
+        account,
         commit(tx, account, before, group, &entries)
-            .await?;
-    broadcast(roster, account, &state);
+            .await?,
+    )
+    .await;
     Ok(state)
 }
 
@@ -248,7 +254,7 @@ pub async fn advance(
             .await?;
     let list = blocked_playlist(&mut tx, account, &entries)
         .await?;
-    let before = started(&group);
+    let before = started(&group, &entries);
     let rolled = group.roll(&list, at);
     let advanced = group
         .advance(device, &list, entry_id, version, at)
@@ -263,10 +269,14 @@ pub async fn advance(
         entry_id,
         "出声设备放完,组推进到下一首"
     );
-    let state =
+    let state = publish(
+        pool,
+        roster,
+        account,
         commit(tx, account, before, group, &entries)
-            .await?;
-    broadcast(roster, account, &state);
+            .await?,
+    )
+    .await;
     Ok(state)
 }
 
@@ -313,7 +323,7 @@ pub async fn ready(
             .await?;
     let list = blocked_playlist(&mut tx, account, &entries)
         .await?;
-    let mut before = started(&group);
+    let mut before = started(&group, &entries);
     let rolled = group.roll(&list, at);
     let ready = mark_ready(account, version, device);
     let moved = {
@@ -334,7 +344,7 @@ pub async fn ready(
     }
     // 只是同一首提前开走,不是新起了一首:不再记一次 `play_events`。
     if !rolled {
-        before = started(&group);
+        before = started(&group, &entries);
     }
     tracing::info!(
         account,
@@ -342,10 +352,14 @@ pub async fn ready(
         entry_id,
         "出声设备都就绪,起播提前"
     );
-    let state =
+    let state = publish(
+        pool,
+        roster,
+        account,
         commit(tx, account, before, group, &entries)
-            .await?;
-    broadcast(roster, account, &state);
+            .await?,
+    )
+    .await;
     Ok(state)
 }
 
@@ -368,7 +382,7 @@ pub async fn device_left(
     }
     let at = wall_now_us();
     let list = playlist(&entries);
-    let before = started(&group);
+    let before = started(&group, &entries);
     let rolled = group.roll(&list, at);
     let paused = {
         let online = roster.lock().expect("名册锁中毒");
@@ -388,10 +402,14 @@ pub async fn device_left(
         paused,
         "出声设备出册,组状态随之更新"
     );
-    let state =
+    publish(
+        pool,
+        roster,
+        account,
         commit(tx, account, before, group, &entries)
-            .await?;
-    broadcast(roster, account, &state);
+            .await?,
+    )
+    .await;
     Ok(())
 }
 
@@ -496,7 +514,7 @@ pub async fn pause_stranded_one(
     let entries =
         current_entries(&mut tx, account, &mut group)
             .await?;
-    let before = started(&group);
+    let before = started(&group, &entries);
     if !group.pause_if_silent(
         &playlist(&entries),
         |_| false,
@@ -510,6 +528,7 @@ pub async fn pause_stranded_one(
         at,
         "上次服务端退出时组还在放:暂停在最后一次心跳那一刻"
     );
+    // 停在这里不是一段播放的结束(到末尾才算),启动时也没有设备可通知:不补记
     commit(tx, account, before, group, &entries).await?;
     Ok(true)
 }
@@ -532,35 +551,53 @@ async fn roll_due(
         let list =
             blocked_playlist(&mut tx, account, &entries)
                 .await?;
-        let before = started(&group);
+        let before = started(&group, &entries);
         if !group.roll(&list, wall_now_us()) {
             tx.commit().await?;
             continue;
         }
-        let state =
+        publish(
+            pool,
+            roster,
+            account,
             commit(tx, account, before, group, &entries)
-                .await?;
-        broadcast(roster, account, &state);
+                .await?,
+        )
+        .await;
     }
     Ok(())
+}
+
+/// 一次提交的结果:新状态,以及因此结束了的那一段播放(没有就是 `None`)。
+struct Committed {
+    state: Option<GroupStateDto>,
+    ended: Option<Ended>,
+}
+
+/// 结束了的一段播放:哪首、听到第几毫秒、这首多长。
+struct Ended {
+    track: TrackRef,
+    listened_ms: i64,
+    duration_ms: i64,
 }
 
 /// 版本加一、写回、提交,换成线上的样子。
 ///
 /// 这一版若是新起播的一首(换了条目或重新从头放),顺手记一条起播(`play_events`):
 /// 组里几台一起响还是那一次,由服务端记,就不必再挑一台设备来报(#137 ⑤ 的 AC-5.4)。
+/// 改之前那一段因此结束了的,交给 [`publish`] 去判听过(见 [`timeline::ended`])。
 async fn commit(
     mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
     account: AccountId,
-    before: Option<(i64, i64)>,
+    before: Option<Before>,
     mut group: Group,
     entries: &[Entry],
-) -> Result<Option<GroupStateDto>, AppError> {
+) -> Result<Committed, AppError> {
     group.version += 1;
     if let Some(now) = &group.now
         && now.playing
         && now.position_us == 0
-        && before
+        && before.as_ref().map(Before::key)
             != Some((now.entry_id, now.anchor_wall_us))
         && let Some(entry) = entries
             .iter()
@@ -569,13 +606,26 @@ async fn commit(
         crate::store::history::record(
             &mut tx,
             account,
-            &crate::store::playlist::TrackRef {
+            &TrackRef {
                 platform: entry.platform.clone(),
                 track_id: entry.track_id.clone(),
             },
         )
         .await?;
     }
+    let ended = before.and_then(|before| {
+        let listened_us = timeline::ended(
+            &before.now,
+            before.duration_us,
+            group.now.as_ref(),
+            wall_now_us(),
+        )?;
+        Some(Ended {
+            track: before.track?,
+            listened_ms: (listened_us / 1_000) as i64,
+            duration_ms: (before.duration_us / 1_000) as i64,
+        })
+    });
     let list =
         blocked_playlist(&mut tx, account, entries).await?;
     let boundary = group.now.as_ref().and_then(|now| {
@@ -584,7 +634,36 @@ async fn commit(
     });
     rows::save(&mut tx, account, &group, boundary).await?;
     tx.commit().await?;
-    Ok(dto(&group, entries, &list))
+    Ok(Committed {
+        state: dto(&group, entries, &list),
+        ended,
+    })
+}
+
+/// 提交之后:新状态推给各台,结束了的那一段补记听了多久(与独奏走同一个
+/// [`crate::heard::settle`],听过了就通知各台)。补记失败只记日志 —— 组的状态已经改成了,
+/// 不能因为统计没写上就让这一下意图报错。
+async fn publish(
+    pool: &PgPool,
+    roster: &SharedRoster,
+    account: AccountId,
+    committed: Committed,
+) -> Option<GroupStateDto> {
+    broadcast(roster, account, &committed.state);
+    if let Some(ended) = committed.ended
+        && let Err(error) = crate::heard::settle(
+            pool,
+            roster,
+            account,
+            &PlayRef::LatestOf(ended.track),
+            ended.listened_ms,
+            ended.duration_ms,
+        )
+        .await
+    {
+        tracing::debug!(?error, "组里放完的那一首没补记上");
+    }
+    committed.state
 }
 
 /// 推给账号下每台在线设备。成员与否由收的那一侧看:不在组里的设备也要知道组在放什么
@@ -804,12 +883,40 @@ fn track_of(entry: &Entry) -> TrackDto {
     }
 }
 
-/// 这一刻放的是哪一条、锚在哪 —— 与改完之后比,认出「新起播了一首」。
-fn started(group: &Group) -> Option<(i64, i64)> {
-    group
-        .now
-        .as_ref()
-        .map(|now| (now.entry_id, now.anchor_wall_us))
+/// 改之前在放的那一段:它的时间线、是哪首歌、多长。与改完之后比,认出「新起播了一首」
+/// 与「这一段结束了」。条目要在改之前认:换了一批之后旧条目就不在 `entries` 里了。
+#[derive(Debug, Clone)]
+struct Before {
+    now: timeline::Now,
+    track: Option<TrackRef>,
+    duration_us: u64,
+}
+
+impl Before {
+    /// 哪一条、锚在哪 —— 认「新起播了一首」的那把钥匙。
+    fn key(&self) -> (i64, i64) {
+        (self.now.entry_id, self.now.anchor_wall_us)
+    }
+}
+
+fn started(
+    group: &Group,
+    entries: &[Entry],
+) -> Option<Before> {
+    let now = group.now.clone()?;
+    let entry = entries
+        .iter()
+        .find(|entry| entry.entry_id == now.entry_id);
+    Some(Before {
+        track: entry.map(|entry| TrackRef {
+            platform: entry.platform.clone(),
+            track_id: entry.track_id.clone(),
+        }),
+        duration_us: entry.map_or(0, |entry| {
+            entry.duration_ms.max(0) as u64 * 1_000
+        }),
+        now,
+    })
 }
 
 fn playlist(entries: &[Entry]) -> Playlist {

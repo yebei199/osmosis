@@ -1688,3 +1688,91 @@ async fn the_group_skips_a_blocked_track_on_advance_and_next()
     );
     drop_account(&pool, account).await;
 }
+
+/// 组里放完一首也走「听过」那唯一一条写入口(`server::heard`):听够了就记成听过,
+/// 它在电台里,各台收到 `RadioChanged`。没听够就切走的不算。
+#[tokio::test]
+async fn a_track_the_group_finishes_is_heard_and_everyone_is_told() {
+    use server::store::history;
+    use server::store::playlist::TrackRef;
+
+    let pool = connect().await;
+    let account = account(&pool, "heard").await;
+    let (roster, mut inboxes) =
+        online(account, &["phone", "pc"]);
+    let netease = |id: &str| TrackRef {
+        platform: "netease".to_owned(),
+        track_id: id.to_owned(),
+    };
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        server::store::radio::append(
+            &mut conn,
+            account,
+            &[netease("b"), netease("c")],
+        )
+        .await
+        .unwrap();
+        // 种子那一首是 pc 独奏时起播的,起播由它记过
+        history::record(&mut conn, account, &netease("b"))
+            .await
+            .unwrap();
+    }
+    // 从 b 的 30 秒处接着放(200 秒的歌);拨到 150 秒,过半
+    let seeded = phone_and_pc(&pool, &roster, account).await;
+    let sought = group::apply(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        Intent::Transport(TransportOpDto::Seek {
+            position_ms: 150_000,
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(sought.version > seeded.version);
+    for inbox in &mut inboxes {
+        while inbox.try_recv().is_ok() {}
+    }
+
+    // 跳转锚在半秒之后,锚点之前位置就停在 150 秒:立刻切下一首也是听到了 150 秒
+    group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Transport(TransportOpDto::Next),
+    )
+    .await
+    .unwrap();
+    // c 刚起播就被切回去,没听够
+    group::apply(
+        &pool,
+        &roster,
+        account,
+        "phone",
+        Intent::Transport(TransportOpDto::Prev),
+    )
+    .await
+    .unwrap();
+
+    let heard: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM heard_tracks WHERE account_id = $1",
+    )
+    .bind(account)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(heard, vec!["b".to_owned()]);
+    for inbox in &mut inboxes {
+        let told = std::iter::from_fn(|| inbox.try_recv().ok())
+            .filter(|message| {
+                *message == ServerSignal::RadioChanged
+            })
+            .count();
+        assert_eq!(told, 1, "每台收到一次「电台变了」");
+    }
+    drop_account(&pool, account).await;
+}

@@ -669,6 +669,57 @@ fn a_stuck_output_only_delays_the_start_up_to_the_cap() {
     );
 }
 
+/// 一段播放什么时候算结束(交给服务端判听过):换歌、从头重起、放到末尾停下算,
+/// 暂停、跳转不算;结束时交出听到的位置。
+#[test]
+fn a_play_ends_on_a_change_of_track_or_a_restart_not_on_pause_or_seek()
+{
+    // jump 锚在 0 + START_WAIT_US;从那之后 60 秒
+    let start = START_WAIT_US;
+    let at = start + 60 * SEC;
+    let playing = group();
+    let before = now(&playing).clone();
+
+    let mut paused = playing.clone();
+    paused.pause("pc", &list(), at).unwrap();
+    let mut sought = playing.clone();
+    sought.seek("pc", 10 * SEC as u64, at).unwrap();
+    let mut next = playing.clone();
+    next.step("pc", &list(), 1, at).unwrap();
+    let mut restarted = playing.clone();
+    restarted.step("pc", &list(), -1, at).unwrap();
+    let mut left = playing.clone();
+    left.leave("phone");
+    left.leave("pc");
+
+    let ended = |after: &Group| {
+        ended(&before, TRACK, after.now.as_ref(), at)
+    };
+    assert_eq!(ended(&paused), None);
+    assert_eq!(ended(&sought), None);
+    assert_eq!(ended(&next), Some(60 * SEC as u64));
+    assert_eq!(ended(&restarted), Some(60 * SEC as u64));
+    assert_eq!(ended(&left), Some(60 * SEC as u64));
+}
+
+/// 放到队尾停在末尾也是结束,听到的是整首。
+#[test]
+fn halting_at_the_tail_ends_the_play() {
+    let mut group = group();
+    group
+        .jump("phone", (7, 1), &list(), 3, 0, 42)
+        .unwrap();
+    let before = now(&group).clone();
+    let at = START_WAIT_US + TRACK as i64 + ADVANCE_GRACE_US;
+
+    assert!(group.roll(&list(), at));
+
+    assert_eq!(
+        ended(&before, TRACK, group.now.as_ref(), at),
+        Some(TRACK)
+    );
+}
+
 /// 私有周期入口扫描整个池,因此每条真库测试使用自己的 schema 和全部连接。
 mod persistence {
     use std::future::Future;
