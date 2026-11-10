@@ -264,6 +264,10 @@ fn queue_routes(state: &AppState) -> Router {
     let read = Router::new()
         .route("/queues/{id}", get(queue_page))
         .route("/queues/{id}/head", get(queue_head))
+        .route(
+            "/devices/{device_id}/queue",
+            get(routes::queue::device_queue),
+        )
         .route_layer(guard(
             state.policies.queue_read.clone(),
         ))

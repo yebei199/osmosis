@@ -250,6 +250,7 @@ fn make_deck_window() -> (super::MainWindow, super::Deck) {
         listen_clock: Rc::default(),
         reveal_now: Rc::default(),
         heard: Default::default(),
+        restored: Rc::default(),
         radio: Default::default(),
     };
 

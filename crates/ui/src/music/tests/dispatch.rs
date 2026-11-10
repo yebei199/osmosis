@@ -470,7 +470,7 @@ fn healthy_deck_window() -> (MainWindow, Deck) {
     (ui, deck)
 }
 
-/// 非空源暂停与继续仍操作真实播放器，不能把每次播放键都误判为 Replay。
+/// 非空源暂停与继续仍操作真实播放器，不能把每次播放键都误判为 Replay;暂停留一个检查点。
 #[cfg(target_os = "linux")]
 #[test]
 fn local_toggle_pauses_and_resumes_the_existing_source() {
@@ -514,9 +514,10 @@ fn local_toggle_pauses_and_resumes_the_existing_source() {
                 (Some(41), Some(7), Some(7))
             );
             assert_eq!(deck.execution.publishes(), 0);
+            // 暂停存一次检查点(停在哪,重启后从那接着),继续不存
             assert_eq!(
                 deck.execution.stamp().1,
-                before + 1
+                before + 2
             );
             assert!(deck.group.intents().is_empty());
         },

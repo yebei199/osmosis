@@ -11,7 +11,7 @@ use contract::{
 };
 
 use crate::url::{
-    queue_head_url, queue_intent_url, queue_page_url,
+    device_queue_url, queue_head_url, queue_intent_url, queue_page_url,
     queue_report_url, queue_revisions_url, queues_url,
 };
 use crate::{ApiError, platform};
@@ -67,6 +67,14 @@ pub async fn queue_head(
     queue_id: i64,
 ) -> Result<QueueHeadDto, ApiError> {
     platform::get_json(queue_head_url(queue_id)).await
+}
+
+/// `GET /devices/{device_id}/queue` —— 这台设备自己那个队列的概况,没建过是 `None`。
+/// 独奏重启后从这里找回队列与放到哪。
+pub async fn device_queue(
+    device_id: &str,
+) -> Result<Option<QueueHeadDto>, ApiError> {
+    platform::get_json(device_queue_url(device_id)).await
 }
 
 /// `POST /queues/{id}/intent` —— 记下「请播这一条」。

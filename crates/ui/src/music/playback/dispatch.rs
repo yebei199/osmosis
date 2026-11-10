@@ -522,14 +522,28 @@ pub(in crate::music) fn checkpoint(
         return;
     };
 
-    let (order, round, position_ms) = {
+    let (order, round) = {
         let queue = deck.queue.borrow();
         let order: Vec<i64> = queue
             .order()
             .iter()
             .filter_map(|at| deck.execution.entry_at(*at))
             .collect();
-        (order, queue.round(), 0)
+        (order, queue.round())
+    };
+    // 放到哪、停着没有照实报:重启之后的恢复就从这一秒接着(见 `restore`)。
+    // 刚换歌、新的还没出声时播放器是空的,那是这一首的开头。
+    let (position_ms, state) = match deck.player.as_ref() {
+        Ok(player) if !player.empty() => (
+            i64::try_from(player.position().as_millis())
+                .unwrap_or(i64::MAX),
+            if player.is_paused() {
+                app_core::RemotePlayState::Paused
+            } else {
+                app_core::RemotePlayState::Playing
+            },
+        ),
+        _ => (0, app_core::RemotePlayState::Playing),
     };
     let play_order = deck.execution.order_to_report(&order);
     let (epoch, state_seq) = deck.execution.stamp();
@@ -542,7 +556,7 @@ pub(in crate::music) fn checkpoint(
         play_order,
         round: round as i64,
         position_ms,
-        state: app_core::RemotePlayState::Playing,
+        state,
         operation: None,
     };
 
@@ -629,6 +643,8 @@ pub(in crate::music) fn execute(
                 player.pause();
             }
             ui.global::<Player>().set_is_playing(false);
+            // 停在哪记下来:关掉应用再开,从这里接着
+            checkpoint(deck, deck.queue.borrow().index());
         }
         Command::Resume => {
             if let Ok(player) = deck.player.as_ref() {

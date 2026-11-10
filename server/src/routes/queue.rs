@@ -199,6 +199,30 @@ pub(crate) async fn queue_head(
     }))
 }
 
+/// `GET /devices/{device_id}/queue` —— 这台设备自己那个队列的概况,没有是 `null`。
+///
+/// 独奏重启后的恢复从这里找回队列、放到哪一条、哪一秒(用户 2026-11-10):设备 id
+/// 跨重启不变,而客户端不记 `queue_id`。
+pub(crate) async fn device_queue(
+    State(state): State<AppState>,
+    account: Account,
+    Path(device_id): Path<String>,
+) -> Result<Json<Option<QueueHeadDto>>, Failure> {
+    let mut conn = crate::conn(&state.pool).await?;
+    let Some(queue_id) = queue::latest_for_device(
+        &mut conn, account.id, &device_id,
+    )
+    .await
+    .map_err(|err| error::map_error(&err))?
+    else {
+        return Ok(Json(None));
+    };
+    let Json(head) =
+        queue_head(State(state), account, Path(queue_id))
+            .await?;
+    Ok(Json(Some(head)))
+}
+
 /// `POST /queues/{id}/intent` —— 记下「请播这一条」。
 ///
 /// 与真的开始播分开:意图落库只说明这一下没丢,**不说明音箱在响**。

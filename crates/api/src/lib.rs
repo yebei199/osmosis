@@ -112,7 +112,8 @@ pub use netease::{
 };
 
 pub use queue::{
-    create_queue, fetch_queue, publish_queue, queue_head,
+    create_queue, device_queue, fetch_queue, publish_queue,
+    queue_head,
     queue_page, report_queue_state, set_queue_intent,
 };
 

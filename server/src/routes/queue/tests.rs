@@ -21,8 +21,9 @@ use similar_asserts::assert_eq;
 use crate::routes::testing;
 
 use super::{
-    PageQuery, create_queue, publish_queue, queue_head,
-    queue_page, report_queue_state, set_queue_intent,
+    PageQuery, create_queue, device_queue, publish_queue,
+    queue_head, queue_page, report_queue_state,
+    set_queue_intent,
 };
 
 /// 被控端那台。队列归属于播放会话 / 输出设备,不是账号。
@@ -613,4 +614,68 @@ async fn a_stale_report_is_answered_as_not_accepted() {
     .0;
 
     assert!(!ack.accepted, "旧 epoch 的报告该被拒收");
+}
+
+/// 重启后的恢复按设备 id 找回自己那个队列:放到哪一条、哪一秒、停着没有都在。
+/// 没建过队列的设备答 `null`。
+#[tokio::test]
+async fn a_device_finds_its_queue_and_last_position() {
+    let (state, account) =
+        state_for("q_http_device").await;
+    let none = device_queue(
+        State(state.clone()),
+        account.clone(),
+        Path(PC1.to_owned()),
+    )
+    .await
+    .expect("查设备队列应该成功")
+    .0;
+    assert_eq!(none, None);
+
+    let published = create_queue(
+        State(state.clone()),
+        account.clone(),
+        Json(CreateQueueDto {
+            device_id: PC1.to_owned(),
+            tracks: vec![track("a"), track("b")],
+        }),
+    )
+    .await
+    .expect("建队列应该成功")
+    .0;
+    let mut paused = report(300, 1, published.revision);
+    paused.entry_id = Some(published.entry_ids[1]);
+    paused.position_ms = 61_000;
+    paused.state = RemotePlayState::Paused;
+    let ack = report_queue_state(
+        State(state.clone()),
+        account.clone(),
+        Path(published.queue_id),
+        Json(paused),
+    )
+    .await
+    .expect("写报告应该成功")
+    .0;
+    assert!(ack.accepted);
+
+    let head = device_queue(
+        State(state),
+        account,
+        Path(PC1.to_owned()),
+    )
+    .await
+    .expect("查设备队列应该成功")
+    .0
+    .expect("该有队列");
+
+    let report = head.report.expect("该有报告");
+    assert_eq!(head.queue_id, published.queue_id);
+    assert_eq!(
+        (report.entry_id, report.position_ms, report.state),
+        (
+            Some(published.entry_ids[1]),
+            61_000,
+            RemotePlayState::Paused
+        )
+    );
 }

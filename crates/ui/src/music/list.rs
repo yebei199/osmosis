@@ -316,6 +316,10 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
         if daily_stale(&shown) {
             fetch_daily(&weak, &shown);
         }
+        // 重启之后接着上次那一首(停着,不自己放)
+        if let Some(ui) = weak.upgrade() {
+            restore(&ui, &shown);
+        }
     });
 
     // 进程可以活好几天,而进页才取的话,一直停在推荐页就永远是旧的那批:

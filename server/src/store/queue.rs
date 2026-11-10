@@ -712,6 +712,24 @@ async fn current_for_device(
     Ok(row)
 }
 
+/// 这台设备最新的那个队列,没有是 `None`。只读,不锁:重启后的恢复用它找回自己那一份。
+pub async fn latest_for_device(
+    conn: &mut PgConnection,
+    account_id: i64,
+    device_id: &str,
+) -> Result<Option<i64>, AppError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM play_queues
+         WHERE account_id = $1 AND device_id = $2
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(account_id)
+    .bind(device_id)
+    .fetch_optional(conn)
+    .await?)
+}
+
 /// 每台设备只留最新那条,其余的收掉。
 ///
 /// 它们是「客户端记不住自己的 `queue_id`」这个洞漏下的残留:每一条都占着

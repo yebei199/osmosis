@@ -1215,3 +1215,99 @@ fn heard_tracks_still_play_in_other_batches() {
     super::advance_auto(&ui, &deck);
     assert_eq!(queue_now(&deck).as_deref(), Some("b"));
 }
+
+// ── 独奏重启后接着上次(用户 2026-11-10 的 6)──
+
+#[cfg(not(target_arch = "wasm32"))]
+fn saved_head(
+    entry_id: Option<i64>,
+    play_order: Option<Vec<i64>>,
+) -> api::QueueHeadDto {
+    api::QueueHeadDto {
+        queue_id: 9,
+        revision: 2,
+        total: 3,
+        intent: None,
+        report: Some(api::QueueReportDto {
+            device_id: "pc".to_owned(),
+            epoch: 1,
+            state_seq: 4,
+            applied_revision: 2,
+            entry_id,
+            play_order,
+            round: 0,
+            position_ms: 61_500,
+            state: app_core::RemotePlayState::Paused,
+            operation: None,
+        }),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn saved_entries() -> Vec<api::QueueEntryDto> {
+    ["a", "b", "c"]
+        .into_iter()
+        .enumerate()
+        .map(|(at, id)| api::QueueEntryDto {
+            entry_id: 100 + at as i64,
+            position: at as i64,
+            track: track_with_id(id),
+        })
+        .collect()
+}
+
+/// 检查点说停在第二首的 61.5 秒:恢复成那一首那一秒;随机次序照存的那份。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_saved_checkpoint_resumes_at_its_track_and_second() {
+    let resume = super::resume_from(
+        &saved_head(Some(101), Some(vec![102, 101, 100])),
+        saved_entries(),
+    )
+    .expect("该恢复");
+
+    assert_eq!(resume.index, 1);
+    assert_eq!(resume.order, Some(vec![2, 1, 0]));
+    assert_eq!(
+        resume.position,
+        core::time::Duration::from_millis(61_500)
+    );
+    assert_eq!(resume.entry_ids, vec![100, 101, 102]);
+}
+
+/// 没有检查点、或检查点指的条目不在这一版里:不瞎猜。原序的次序不当成随机。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_unusable_checkpoint_does_not_resume() {
+    assert_eq!(
+        super::resume_from(&saved_head(Some(7), None), saved_entries()),
+        None
+    );
+    let natural = super::resume_from(
+        &saved_head(Some(100), Some(vec![100, 101, 102])),
+        saved_entries(),
+    )
+    .expect("该恢复");
+    assert_eq!(natural.order, None);
+}
+
+/// 恢复是停着的:装回队列、指着那一首,不自己出声。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn restoring_points_at_the_track_without_playing() {
+    let (ui, deck) = deck_window();
+    let resume = super::resume_from(
+        &saved_head(Some(101), None),
+        saved_entries(),
+    )
+    .expect("该恢复");
+
+    super::apply(&ui, &deck, 9, 2, resume);
+
+    assert_eq!(
+        deck.queue.borrow().current().map(|t| t.id.clone()),
+        Some("b".to_owned())
+    );
+    assert_eq!(deck.execution.identity().0, Some(9));
+    assert!(!ui.global::<Player>().get_is_playing());
+}

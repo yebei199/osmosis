@@ -187,6 +187,8 @@ struct Deck {
     reveal_now: Rc<std::cell::Cell<bool>>,
     /// 日推、电台那一批里服务端说已经听过的(见 [`heard`])。
     heard: heard::Heard,
+    /// 这个进程已经试过(或正在)找回上次的队列(见 `playback::restore`)。
+    restored: Rc<std::cell::Cell<bool>>,
     /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
     radio: radio::Radio,
 }
@@ -261,6 +263,7 @@ pub fn bind(
         listen_clock: Rc::default(),
         reveal_now: Rc::default(),
         heard: heard::Heard::default(),
+        restored: Rc::default(),
         radio: radio::Radio::default(),
     };
 

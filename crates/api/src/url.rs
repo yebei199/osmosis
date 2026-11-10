@@ -193,6 +193,10 @@ pub(crate) fn queue_revisions_url(queue_id: i64) -> String {
     format!("{}/queues/{queue_id}/revisions", base_url())
 }
 
+pub(crate) fn device_queue_url(device_id: &str) -> String {
+    format!("{}/devices/{device_id}/queue", base_url())
+}
+
 pub(crate) fn queue_head_url(queue_id: i64) -> String {
     format!("{}/queues/{queue_id}/head", base_url())
 }

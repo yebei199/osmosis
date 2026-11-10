@@ -330,6 +330,8 @@ pub(in crate::music) fn start_auto_advance(
     // 上次报过的那一首。起播上报搭这趟轮询的车,判据见 `play_to_report`。
     let reported: RefCell<Option<(String, String)>> =
         RefCell::new(None);
+    // 离上次存检查点过了几趟。放着的时候隔一阵存一次,重启后从附近接着。
+    let since_checkpoint = std::cell::Cell::new(0u32);
 
     timer.start(
         slint::TimerMode::Repeated,
@@ -392,8 +394,27 @@ pub(in crate::music) fn start_auto_advance(
             // 几台一起响还是那一次。组里的起播由服务端记(#142);本机照样过一遍
             // 判据、记住这一首,退出组之后才不会把正在放的这一首再记一次。
             let following = follows_the_group(&deck);
-            if let Some((platform, id)) =
-                play_to_report(&state, &mut reported.borrow_mut())
+            // 停在暂停上的那一首(重启后恢复的、迁移过来停着的)还没出声:不算起播,
+            // 也不记住它 —— 按下播放之后的下一趟才报
+            let paused = deck
+                .player
+                .as_ref()
+                .as_ref()
+                .is_ok_and(audio::Player::is_paused);
+            if !following && !paused {
+                let ticks = since_checkpoint.get() + 1;
+                since_checkpoint.set(ticks % CHECKPOINT_EVERY);
+                if ticks == CHECKPOINT_EVERY
+                    && matches!(state, PlaybackState::Playing(_))
+                {
+                    checkpoint(&deck, deck.queue.borrow().index());
+                }
+            }
+            if !paused
+                && let Some((platform, id)) = play_to_report(
+                    &state,
+                    &mut reported.borrow_mut(),
+                )
                 && !following
             {
                 // 这首多长,报上起播成功后记下来 —— 换歌时用它补记听了多久
@@ -472,6 +493,10 @@ pub(in crate::music) fn start_auto_advance(
     // 真要按页开关时再把它挂到 Deck 上管理。
     Box::leak(Box::new(timer));
 }
+
+/// 放着的时候每隔几趟自动续播轮询(一秒一趟)存一次检查点。
+#[cfg(not(target_arch = "wasm32"))]
+const CHECKPOINT_EVERY: u32 = 15;
 
 /// 上一段播放累计听了多久,报给服务端(#157);服务端据此判这首听没听过。
 /// **调用方必须在 `player.stop()` 之前调这个** —— 停完之后 `position()` 读到的是
