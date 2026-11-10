@@ -73,6 +73,9 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
 ## 边界
 
 - 依赖方向不得反向。
+- 只在主 checkout 上串行开发:不开 git worktree,也不让几个 agent 同时改代码。
+  几条开发线会争用同一个 target 产物槽位，互相覆盖，测试结果因此可能假红，也可能假绿。
+  只读调查可以并行。
 - `.env`(gitignored)里的 `ANDROID_DEVICE_PIN`、`TEST_USERNAME`/`TEST_PASSWORD` 与邀请码只按变量名
   引用,值不进任何入库文件、提交信息、issue 或注释。
 - 用户本人要看窗口或听声音时才用 `OSMOSIS_SHOW_WINDOW=1` / `OSMOSIS_REAL_AUDIO=1`。
