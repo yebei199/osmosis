@@ -421,7 +421,7 @@ pub(super) fn load_section(
 ) {
     match Section::from_index(section) {
         Section::Daily => fetch_daily(weak, deck),
-        // 点开即播私人 FM;电台已经在放 FM 就只摆出来,不重开一批
+        // 什么都没放才开私人 FM;有歌在放(电台的或别的)就只摆出来,不打断
         Section::Radio => {
             if let Some(ui) = weak.upgrade() {
                 radio::open(&ui, deck);

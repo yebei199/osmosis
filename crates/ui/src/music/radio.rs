@@ -237,12 +237,16 @@ pub(super) fn start(
     }
 }
 
-/// 电台区被点开:电台已经在放私人 FM 就只摆出来,否则开私人 FM。
+/// 电台区被点开:只在什么都没放时开私人 FM(用户 2026-11-10:点开电台不打断正在
+/// 放的歌)。电台已经在放私人 FM、或别的什么正在放,就只把共享歌单摆出来。
 pub(super) fn open(ui: &MainWindow, deck: &Deck) {
-    if owns_batch(deck)
+    let fm_playing = owns_batch(deck)
         && deck.radio.inner.borrow().mode
-            == Some(api::RadioMode::Fm)
-    {
+            == Some(api::RadioMode::Fm);
+    let player = ui.global::<Player>();
+    let something_playing =
+        player.get_is_playing() || player.get_now_loading();
+    if fm_playing || something_playing {
         show_section(
             ui,
             deck,

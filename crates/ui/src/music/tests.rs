@@ -1353,3 +1353,37 @@ fn the_daily_list_is_split_by_day_but_not_on_the_wall() {
     ui.global::<Player>().invoke_rows_reshaped();
     assert!(headers(&ui).is_empty());
 }
+
+// ── 点开电台不打断正在放的(用户 2026-11-10 的 9)──
+
+/// 有歌在放:点开电台只摆歌单,不另开一批私人 FM。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn opening_radio_does_not_interrupt_what_is_playing() {
+    let (ui, deck) = deck_window();
+    ui.global::<Shell>().set_destination(4);
+    ui.global::<Player>().set_is_playing(true);
+
+    super::radio::open(&ui, &deck);
+
+    assert_eq!(deck.views.current_source(), Some(ViewSource::Radio));
+    assert!(
+        !ui.global::<Player>().get_tracks_loading(),
+        "只摆手上那份,没去取一批来放"
+    );
+}
+
+/// 什么都没放:点开电台开私人 FM。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn opening_radio_with_nothing_playing_starts_fm() {
+    let (ui, deck) = deck_window();
+    ui.global::<Shell>().set_destination(4);
+
+    super::radio::open(&ui, &deck);
+
+    assert!(
+        ui.global::<Player>().get_tracks_loading(),
+        "什么都没放:开私人 FM,取一批"
+    );
+}
