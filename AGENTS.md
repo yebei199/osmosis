@@ -38,8 +38,10 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
   直接 push 任何分支(含 master)都没有 CI。`ci-test` 依赖 Docker 里的 Postgres(`just pg`)
   与 RustFS(`just rustfs`)。`test/remote-behavior/` 与 `test/mcp-e2e/`(`just mcp-e2e`)不在其中,
   按需手动跑。
-- **agent 只验证编译和逻辑时用 `just agent-build`、`just agent-test`**:依赖不优化,冷构建快一倍多,
-  但 bevy 运行很慢,3D 帧率和手感要用 dev 档验证。
+- **开发时只跑快速检查，测试留给夜里的 CI**:改完跑 `just agent-check`(cargo check
+  `--all-targets`,带 `-p server` 等点名非默认成员)。`just agent-test`、`just ci*`、整套服务端测试
+  白天都不跑。本机同一时刻只开一个 cargo 构建，截图、运行用的构建也算在内。
+  agent 档依赖不优化，冷构建快一倍多，但 bevy 运行很慢,3D 帧率和手感要用 dev 档验证。
 - **裸 `cargo build/test` 只走 `default-members`**(桌面链路)。`audio`、`syncplay`、`server`、
   `xtask` 要 `-p` 点名才会测;`apps/android` 在宿主 target 上编不过,只经 `cargo xtask android`
   或 `--target aarch64-linux-android`。

@@ -80,6 +80,11 @@ ci-test: pg rustfs
 agent-build *args:
     nix-shell slint.nix --run 'nice -n 19 cargo build --locked --profile agent {{args}}'
 
+# 白天开发的唯一检查。--all-targets 不能省：单点 -p ui 时少了测试依赖带进来的 slint feature,
+# 生成代码会报 load_image_from_embedded_data 找不到
+agent-check *args:
+    nix-shell slint.nix --run 'nice -n 19 cargo check --locked --profile agent --all-targets {{args}}'
+
 agent-test *args:
     nix-shell slint.nix --run 'nice -n 19 cargo nextest run --locked --cargo-profile agent {{args}}'
 
