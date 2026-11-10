@@ -121,6 +121,11 @@ pub(in crate::music) fn after_advance(
     } else {
         // 放完的这一首也是一次结束:听了多久照样补记,服务端据此判听过。
         report_previous_listened(deck);
+        // 声音也要停:循环关着在最后一首按「下一首」、或正在放的被屏蔽了,播放器里
+        // 还有源,只清界面的话耳朵还在听那一首。放完了的这一停是零长度的。
+        if let Ok(player) = deck.player.as_ref() {
+            player.stop();
+        }
         // 状态机也要停:不停的话它仍是 Playing,自动续播每秒都会再撞进来。
         deck.playback.borrow_mut().stop();
         ui.global::<Player>()

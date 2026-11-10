@@ -800,3 +800,35 @@ fn local_volume_callback_clamps_without_group_transport() {
     assert_eq!(deck.execution.publishes(), 0);
     assert!(deck.group.intents().is_empty());
 }
+
+/// 循环关着、在最后一首按「下一首」:界面清掉,播放器也真的停下,不在背后接着响。
+#[cfg(target_os = "linux")]
+#[test]
+fn next_past_the_last_track_stops_the_sound() {
+    with_null_audio(
+        "music::tests::dispatch::next_past_the_last_track_stops_the_sound",
+        || {
+            let (ui, deck) = healthy_deck_window();
+            let batch = batch_of(&deck, &["a", "b"]);
+            deck.queue.borrow_mut().replace(batch, 1);
+            let player = deck
+                .player
+                .as_ref()
+                .as_ref()
+                .expect("健康播放器");
+            player.play(rodio::source::Zero::new(
+                rodio::ChannelCount::new(2)
+                    .expect("两声道"),
+                rodio::SampleRate::new(48_000)
+                    .expect("固定样本率"),
+            ));
+            assert!(!player.empty());
+
+            ui.global::<Player>().invoke_next_track();
+
+            assert!(player.empty(), "放空了还在响");
+            assert_eq!(ui.global::<Player>().get_now_id(), "");
+            assert!(!ui.global::<Player>().get_is_playing());
+        },
+    );
+}
