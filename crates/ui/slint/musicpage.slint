@@ -3,13 +3,12 @@ import { Palette } from "std-widgets.slint";
 
 import { Theme, Type, Space, TextSize, Radius } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
-import { HoverButton } from "widgets.slint";
+import { HoverButton, Sheet } from "widgets.slint";
 import { Destinations, SearchTabBar } from "musicnav.slint";
 import { FacetBar, Pill, TrackList } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
 import { WallView } from "wallview.slint";
-import { GlassCard } from "glass.slint";
 import { LineEdit } from "std-widgets.slint";
 import { Library } from "globals/library.slint";
 import { Player } from "globals/player.slint";
@@ -107,7 +106,7 @@ export component DownloadManager inherits Rectangle {
                 spacing: Space.xs;
                 for row in Downloads.rows: Rectangle {
                     height: 64px;
-                    background: row.selected ? Theme.accent.with-alpha(0.15) : Theme.overlay-weak;
+                    background: row.selected ? Theme.accent.with-alpha(0.15) : Theme.hover;
                     border-radius: Radius.sm;
                     HorizontalLayout {
                         padding: Space.sm;
@@ -141,7 +140,7 @@ export component DownloadManager inherits Rectangle {
     if Downloads.confirming: confirmation := Rectangle {
         background: #00000088;
         TouchArea {}
-        GlassCard {
+        Sheet {
             width: min(parent.width - 24px, 360px);
             height: 180px;
             x: (parent.width - self.width) / 2;
@@ -369,9 +368,9 @@ export component MusicPage inherits VerticalLayout {
                 block-artist-button := Rectangle {
                     width: block-artist-label.preferred-width + 24px;
                     border-radius: Radius.pill;
-                    background: block-artist-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    background: block-artist-touch.has-hover ? Theme.hover : Theme.hover;
                     border-width: 1px;
-                    border-color: Theme.divider;
+                    border-color: Theme.line;
                     accessible-role: button;
                     accessible-label: "屏蔽该歌手";
                     accessible-action-default => {

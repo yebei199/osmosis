@@ -24,7 +24,7 @@ export component ArtistList inherits ListView {
         Rectangle {
             y: 2px;
             height: 52px;
-            background: touch.has-hover ? Theme.overlay : Theme.overlay-weak;
+            background: touch.has-hover ? Theme.press : Theme.hover;
             border-radius: Radius.sm;
             animate background { duration: Motion.fast; easing: Motion.ease; }
         }

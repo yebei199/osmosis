@@ -18,7 +18,7 @@ component PillToggle inherits Rectangle {
     width: 44px;
     height: 26px;
     border-radius: Radius.pill;
-    background: root.on ? Theme.accent : Theme.overlay;
+    background: root.on ? Theme.accent : Theme.press;
     animate background { duration: Motion.fast; easing: Motion.ease; }
     accessible-role: checkbox;
     accessible-label: root.label;
@@ -185,9 +185,9 @@ export component SettingsPage inherits Flickable {
                     width: logout-label.preferred-width + 32px;
                     height: 34px;
                     border-radius: Radius.pill;
-                    background: logout-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    background: logout-touch.has-hover ? Theme.hover : Theme.hover;
                     border-width: 1px;
-                    border-color: Theme.divider;
+                    border-color: Theme.line;
                     // a11y 在根上,理由同 ThemeSegment。
                     accessible-role: button;
                     accessible-label: "退出登录";
@@ -257,9 +257,9 @@ export component SettingsPage inherits Flickable {
                     width: update-label.preferred-width + 32px;
                     height: 34px;
                     border-radius: Radius.pill;
-                    background: update-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    background: update-touch.has-hover ? Theme.hover : Theme.hover;
                     border-width: 1px;
-                    border-color: Theme.divider;
+                    border-color: Theme.line;
                     // a11y 在根上,理由同退出登录。
                     accessible-role: button;
                     accessible-label: root.update-action;

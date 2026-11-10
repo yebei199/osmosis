@@ -85,7 +85,7 @@ export component SideNavRow inherits Rectangle {
 
     border-radius: Radius.sm;
     background: root.gpu-selected
-        ? (touch.has-hover ? Theme.overlay : transparent)
+        ? (touch.has-hover ? Theme.press : transparent)
         : (root.active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
@@ -131,7 +131,7 @@ export component SideNavRow inherits Rectangle {
 // 「更多」面板:贴着底栏上沿的一块平铺,五项一行。点一项直达并收起;
 // 点面板外面也收起。不常驻,所以不是第二根导航条。
 export component MorePanel inherits Rectangle {
-    background: Theme.shadow.with-alpha(0.4);
+    background: Theme.scrim.with-alpha(0.4);
 
     TouchArea {
         clicked => { Destinations.more-open = false; }
@@ -145,7 +145,7 @@ export component MorePanel inherits Rectangle {
         background: Theme.surface;
         border-radius: Radius.md;
         border-width: 1px;
-        border-color: Theme.divider;
+        border-color: Theme.line;
 
         // 吞掉面板上的点击,免得落到下面那层收起面板。
         TouchArea {}
@@ -220,7 +220,7 @@ export component SearchTabBar inherits Rectangle {
     callback selected(int);
 
     height: 30px;
-    background: Theme.overlay-weak;
+    background: Theme.hover;
     border-radius: Radius.sm;
 
     HorizontalLayout {

@@ -68,7 +68,7 @@ export component DrawerRow inherits Rectangle {
                 border-radius: Radius.sm;
                 background: root.checked ? Theme.accent : transparent;
                 border-width: 1px;
-                border-color: root.checked ? Theme.accent : Theme.overlay;
+                border-color: root.checked ? Theme.accent : Theme.press;
                 animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
                 Path {
@@ -155,10 +155,10 @@ export component Drawer inherits Rectangle {
     border-radius: Radius.md;
     background: Theme.surface.with-alpha(0.96);
     border-width: 1px;
-    border-color: Theme.glass-edge;
-    drop-shadow-blur: Elevation.high-blur;
-    drop-shadow-offset-y: Elevation.high-y;
-    drop-shadow-color: Theme.glass-shadow;
+    border-color: Theme.edge;
+    drop-shadow-blur: Elevation.float-blur;
+    drop-shadow-offset-y: Elevation.float-y;
+    drop-shadow-color: Elevation.float-color;
 
     height: DrawerMetrics.total-h;
 

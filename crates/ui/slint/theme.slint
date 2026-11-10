@@ -36,18 +36,39 @@ export global Theme {
     in-out property <int> mode: 0;
 
     // —— 常驻界面的表面,由深到浅 ——
+    //
+    // 中性色带强调色的色相(136–146°),不是冷灰:一屏的底和绿是一家人。
+    // 深色下每一档约差 4.5 L*。
 
-    // 窗口底。音乐页会用 base 盖住它,播放页会用 immersive 盖住它,
-    // 露出来的只有边角。
-    out property <color> window: root.dark ? #0b100c : #e9ece6;
-    // 音乐页的底。
-    out property <color> base: root.dark ? #0e130f : #f2f5ee;
-    // 卡片、面板、控制条。
-    out property <color> surface: root.dark ? #131a14 : #ffffff;
-    // 选中的那一项。
-    out property <color> raised: root.dark ? #1e2b1f : #dde7d6;
-    // 悬停。
-    out property <color> hover: root.dark ? #18211a : #eaf0e5;
+    // 窗口底:内容面板与导航后面的那层地,也是底栏。
+    out property <color> window: root.dark ? #050806 : #e2e8df;
+    // 内容面板。离窗口边 8px、圆角 20,分隔靠它而不是一整片绿。
+    out property <color> base: root.dark ? #0f1612 : #f8faf6;
+    // 卡片、搜索框、开关型 chip。
+    out property <color> surface: root.dark ? #17201a : #ffffff;
+    // 浮起来的东西:控制条、抽屉、提示、分段控件选中的那一格。浅色下靠阴影浮起。
+    out property <color> raised: root.dark ? #1f2a23 : #ffffff;
+    // 凹进去的东西:分段控件的槽、键帽、报错原文框。
+    out property <color> sunken: root.dark ? #0a0f0c : #eef2eb;
+
+    // —— 叠加与线 ——
+    //
+    // 深色下往上叠一层带绿的白,浅色下往下叠墨 —— 同一个语义,方向相反。
+
+    // 行悬停、抽屉里的动作块。
+    out property <color> hover: root.dark ? #d6ffde0d : #18301c0b;
+    // 按下;关着的开关的槽。
+    out property <color> press: root.dark ? #d6ffde17 : #18301c16;
+    // 细线。
+    out property <color> line: root.dark ? #d6ffde13 : #18301c17;
+    // 粗一档的线:chip 描边、滑轨。
+    out property <color> line-strong: root.dark ? #d6ffde24 : #18301c29;
+    // 浮起表面上沿那 1px 的内高光。
+    out property <color> edge: root.dark ? #d6ffde0f : #ffffffe6;
+    // 抽屉开着时压在页面上的那层。
+    out property <color> scrim: root.dark ? #0205038c : #14241638;
+    // 内容面板顶上 260px 的一抹渐变,页头因此有一层空气。
+    out property <color> header-wash: root.dark ? #142219 : #ecf3e6;
 
     // —— 沉浸层:播放页那块压在封面与点云上的底 ——
 
@@ -55,68 +76,45 @@ export global Theme {
     // 点云:点云的颜色逐颗取自封面,亮底会把它冲掉。既然底钉死,压在它上面的
     // 字也必须钉死 —— 用会翻的 token 的话,浅色主题下就是深字压深底
     // (歌名曾经是 1.23:1)。`crates/ui/tests/theme.rs` 把这条钉住了。
-    out property <color> immersive: #0a1210;
-    // 浮在沉浸层上的小面板(可视化预设那个)。
-    out property <color> immersive-panel: #101a15ee;
-    out property <color> immersive-text: #eaf3e2;
-    out property <color> immersive-text-dim: #9aa0b4;
-    out property <color> immersive-accent: #8fc46a;
-    // 沉浸层上的边线。往上叠白 —— 底永远是深的,不存在"反过来"的情况。
-    out property <color> immersive-line: #ffffff1f;
+    out property <color> immersive: #060c09;
+    out property <color> immersive-text: #f1f6ef;
+    out property <color> immersive-dim: #f1f6ef9e;
+    out property <color> immersive-faint: #f1f6ef57;
+    out property <color> immersive-line: #ffffff24;
+    // 沉浸层上的强调(进度弧、红心):深色那一档的绿,不随主题翻。
+    out property <color> immersive-accent: #9dd672;
+    // 沉浸层上那根控制条的底。
+    out property <color> immersive-raised: #16201aeb;
 
     // —— 字,由强到弱 ——
 
-    out property <color> text: root.dark ? #e6e8ef : #1c2419;
-    out property <color> text-dim: root.dark ? #9aa0b4 : #5a6356;
-    // 最弱的一档:没点亮的红心、时长这类"在那儿但别看我"的字。
-    out property <color> text-faint: root.dark ? #6f7688 : #8d968a;
+    out property <color> text: root.dark ? #ebf2ec : #111a13;
+    out property <color> text-dim: root.dark ? #a0afa4 : #4b5a4f;
+    // 最弱的一档:时长、计数这类「在那儿但别看我」的字。**从不单独承载意义。**
+    out property <color> text-faint: root.dark ? #6b796f : #829086;
 
     // —— 强调 ——
 
-    // 绿是这个 app 的身份色,也是**唯一的强调色**(docs/adr/0023):按钮、
-    // 选中态、链接只用它,副色板不承担语义。浅色下要压深一档,不然在纸白底上糊掉。
-    out property <color> accent: root.dark ? #8fc46a : #4f7a3f;
-    // 压在**强调色实底**上的字(HoverButton 的标签、沉浸层上那个预设面板)。
-    // 绿的明度高,这里是深墨而不是近白 —— 琥珀年代的近白压绿底只有 1.9:1
-    // (docs/adr/0023),tests/theme.rs 里有守卫。
-    out property <color> accent-text: root.dark ? #0f2410 : #f2f7ec;
-    // **中性底上**表示"选中/强调"的字与图标:控制条那几颗键、栏目的当前项、
-    // 加载中那一行。与上面那个分开是因为它压的底会跟着主题翻 ——
-    // 合成一个的话,浅色下的浅字会压在浅底上,整排控制键凭空消失。
-    out property <color> accent-ink: root.dark ? #8fc46a : #35521f;
+    // 绿是这个 app 的身份色,也是**唯一的强调色**(docs/adr/0023):主按钮、开着的开关、
+    // 进度、均衡条只用它,副色板不承担语义。浅色下压深一档,不然在纸白底上糊掉。
+    out property <color> accent: root.dark ? #9dd672 : #3d7d29;
+    // 压在**强调色实底**上的字与图标。深色下是深墨(10.6:1),浅色下是近白。
+    out property <color> accent-text: root.dark ? #0b1a06 : #f4fbef;
+    // **中性底上**表示「选中/强调」的字与图标:在放的那一行、当前目的地的图标、
+    // 点亮的红心。与上面那个分开是因为它压的底会跟着主题翻。
+    out property <color> accent-ink: root.dark ? #9dd672 : #2e6a1d;
+    // 选中的 chip、「已喜欢」那块的底。
+    out property <color> accent-wash: root.dark ? #9dd67221 : #3d7d291a;
+    // 选中的 chip 与聚焦的输入框的描边。
+    out property <color> accent-line: root.dark ? #9dd67273 : #3d7d2973;
 
-    // —— 叠加与线 ——
+    // —— 出错 ——
     //
-    // 深色下往上叠白,浅色下往下叠黑 —— 同一个语义,方向相反。
+    // 只给出错提示那颗图标用,自成一族、不跟强调色共用:共用了就没法只调它。
+    out property <color> danger: root.dark ? #ff9180 : #c0412e;
+    out property <color> danger-wash: root.dark ? #ff918024 : #c0412e1a;
 
-    out property <color> overlay-weak: root.dark ? #ffffff08 : #00000008;
-    out property <color> overlay: root.dark ? #ffffff14 : #00000014;
-    out property <color> divider: root.dark ? #ffffff10 : #00000012;
-
-    out property <color> shadow: #000000;
-
-    // —— 极光与玻璃(`glass.slint`)——
-    //
-    // 玻璃是半透明的,**背后没东西就等于没有玻璃**;极光就是专门用来被透过的
-    // 那层内容。深色下它是暗底叠绿光斑,浅色下反过来:亮底叠更浅的绿光斑 ——
-    // 光斑的色相两套一样,变的是明度与浓度,不然换个主题连身份都变了。
-
-    out property <color> aurora-base: root.dark ? #131a14 : #eef2e8;
-    // 苔绿、深林、浅葱三团。alpha 带在颜色里,渐变的外圈用 `with-alpha(0)` 取同色透明端。
-    out property <color> aurora-warm: root.dark ? #3f7a4a9c : #bcd6a4b0;
-    out property <color> aurora-deep: root.dark ? #2b5c3f95 : #a3c9ada0;
-    out property <color> aurora-soft: root.dark ? #86b98c66 : #d8ead0aa;
-
-    // 玻璃本身。深色下往上叠白,浅色下叠得更白**而不是**叠黑:玻璃的观感来自
-    // "比背后更亮的一层薄雾",叠黑会读成一块脏玻璃。
-    out property <color> glass-fill: root.dark ? #ffffff1f : #ffffff8c;
-    out property <color> glass-edge: root.dark ? #ffffff3d : #ffffffcc;
-    out property <color> glass-inner: root.dark ? #ffffff40 : #ffffffd9;
-    out property <color> glass-sheen: root.dark ? #ffffff2b : #ffffff73;
-    // 悬浮阴影。浅色下要淡得多 —— 同样的黑在亮底上重得多。
-    out property <color> glass-shadow: root.dark ? #00000073 : #0000001f;
-
-    // —— 副色板:12 对渐变端点,只做封面占位、卡墙卡片、波形条、统计数字 ——
+    // —— 副色板:12 对渐变端点,只做封面占位、卡墙卡片、统计数字 ——
     //
     // **不承担任何界面语义**(docs/design.md 硬规则 6):按钮、选中态、链接、
     // 状态色永远只用 accent。取用规则 `hues-bright[i % 12]` 配 `hues-deep[i % 12]`,
@@ -129,15 +127,19 @@ export global Theme {
         #8fc46a, #6fc2a8, #c3d96a, #a08fd9, #d98fa0, #6fa8d9,
         #d9c46a, #8fd9c4, #8f9fd9, #d9958f, #8fd9b4, #bdd98f,
     ];
+}
 
-    // —— 语义色 ——
-
-    // 红心点亮的那个红。两套里是同一个：它表示的是"喜欢",不是明暗。
-    out property <color> liked: #d96c8a;
-
-    out property <color> danger-surface: root.dark ? #33201fee : #fbe3e0;
-    out property <color> danger-line: root.dark ? #7a4f4a : #d9a9a2;
-    out property <color> danger-text: root.dark ? #f2dcd8 : #6b2a22;
+// 玻璃:唯一的招牌材质,**只用在三处** —— 播放键(封面镜头)、在放那一行的缩略图、
+// 导航指示器。别处一律不透明(docs/design.md「材质」)。
+// 层次:上下渐变的底 + 1px 边 + 上沿内高光 + 一道投影 + 一个椭圆高光子元素。
+export global Glass {
+    out property <color> top: Theme.dark ? #ffffff29 : #fffffff2;
+    out property <color> bottom: Theme.dark ? #ffffff09 : #ffffff8c;
+    out property <color> rim: Theme.dark ? #ffffff12 : #18301c14;
+    out property <color> hi: Theme.dark ? #ffffff3d : #ffffff;
+    out property <color> spec: Theme.dark ? #ffffff8c : #ffffffe6;
+    out property <color> shadow: Theme.dark ? #0000008c : #14281638;
+    out property <color> tint: Theme.dark ? #9dd67229 : #3d7d291a;
 }
 
 // —— 形状、字号、间距、动效、阴影的档位(MEO-1877)——
@@ -145,18 +147,6 @@ export global Theme {
 // 和色板同一个道理:页面上只写 Radius.md、TextSize.body,不写 14px。档位从改之前的
 // 分布里取最常用的几个值当锚点,一次性的值往最近的一档归。`crates/ui/tests/literals.rs`
 // 在 .slint 里扫字面圆角、字号、时长,豁免逐条带理由。
-
-export global Radius {
-    // 行、小按钮、缩略图。
-    out property <length> sm: 8px;
-    // 卡片、输入框、面板。
-    out property <length> md: 14px;
-    // 浮层、大卡。
-    out property <length> lg: 22px;
-    // 药丸与正圆:取多大都行,渲染时夹到短边一半。头像、圆钮这种「半径等于尺寸一半」
-    // 的也走它,别再按像素归档 —— 那样尺寸一改就不圆了。
-    out property <length> pill: 999px;
-}
 
 // 字号阶梯(docs/design.md「字体」)。字重只有 400 / 600 / 700 三档,没有 500。
 export global TextSize {
@@ -206,44 +196,115 @@ export global Tracking {
     out property <length> hero: -1.2px;
 }
 
+export global Radius {
+    // 40px 的缩略图。
+    out property <length> xs: 6px;
+    // 行、导航行。
+    out property <length> sm: 10px;
+    // 抽屉里的动作块。
+    out property <length> md: 14px;
+    // 内容面板、卡片、提示。
+    out property <length> lg: 20px;
+    // 抽屉。
+    out property <length> xl: 28px;
+    // 药丸与正圆:取多大都行,渲染时夹到短边一半。头像、圆钮这种「半径等于尺寸一半」
+    // 的也走它,别再按像素归档 —— 那样尺寸一改就不圆了。
+    out property <length> pill: 999px;
+}
+
+// 4 的倍数。数字开头的名字 Slint 不认,两倍三倍写成 xxl / xxxl。
 export global Space {
+    out property <length> xxs: 2px;
     out property <length> xs: 4px;
     out property <length> sm: 8px;
     out property <length> md: 12px;
     out property <length> lg: 16px;
     out property <length> xl: 24px;
+    out property <length> xxl: 32px;
+    out property <length> xxxl: 48px;
 }
 
-// 版式的几个分界与上限(MEO-1878)。三档版式由窗口宽推出:< compact 是手机底栏版式,
-// ≥ wide 是列表拆多列的宽屏版式,中间是侧栏加两行列表。
+// 版式的分界、上限与几块常驻件的尺寸(MEO-1878)。三档版式由窗口宽推出:< compact 是
+// 手机底栏版式,≥ wide 是列表拆多列的宽屏版式,中间是侧栏加两行列表。
 export global Layout {
     // 600 是 Material 的标准断点,见 docs/adr/0007。
     out property <length> compact: 600px;
     out property <length> wide: 1000px;
     // 内容区最宽多少。再宽就两侧居中留白,一行歌名到时长不至于横跨整屏。
     out property <length> content-max: 1400px;
+    // 设置页那一栏最宽多少。
+    out property <length> column-max: 680px;
+    // 侧栏宽。
+    out property <length> nav-w: 224px;
+    // 内容面板离窗口边的那一圈。
+    out property <length> gutter: 8px;
+    // 页面四周的留白:宽版式左右 32、顶上 36;紧凑版式左右 16、顶上安全区再加 14。
+    out property <length> page-x: 32px;
+    out property <length> page-top: 36px;
+    out property <length> page-x-compact: 16px;
+    out property <length> page-top-compact: 14px;
+    // 曲目一行多高。
+    out property <length> row-h: 56px;
+    out property <length> row-h-compact: 64px;
+    // 控制条最宽多少、多高。
+    out property <length> bar-w: 760px;
+    out property <length> bar-h: 72px;
+    out property <length> bar-h-compact: 64px;
+    // 底栏的图标带多高,手势条的 inset 另加。
+    out property <length> tab-h: 64px;
     // 宽屏里时长那一列的定宽,各行的数字才竖着对齐。
-    out property <length> duration-col: 56px;
+    out property <length> duration-col: 48px;
 }
 
+// 动效。弹簧取自 unicat-switch 的积分器(质量 1,步长 1/240 s),Slint 的 `animate`
+// 用下面这些三次贝塞尔近似;要靠速度的(拖动松手、挤压拉伸)由 Rust 从
+// `runtime::pace` 那条唤醒路驱动。`calm` 是设置页「动态效果」关掉的样子:
+// 所有弹簧临界阻尼、200ms 落定,不回弹。
 export global Motion {
-    // 悬停、按下、选中这类即时反馈。
-    out property <duration> fast: 140ms;
-    // 展开、收起、换页。
+    // 「动态效果」关着。**只有 Rust 写它**(真相在 api::settings)。
+    in property <bool> calm: false;
+
+    // 悬停的底色、颜色变化。
+    out property <duration> fast: 160ms;
+    // 抽屉打开、提示进场、换页淡入。
     out property <duration> medium: 280ms;
-    // 大块位移与淡入。
-    out property <duration> slow: 500ms;
-    // 主曲线。
-    out property <easing> ease: ease-out;
-    // 按下回弹、弹出:有意冲过头再落回,是手感不是随手调的值。
-    out property <easing> spring: cubic-bezier(0.56, 1.35, 0.52, 1.0);
+    out property <easing> ease: cubic-bezier(0.2, 0, 0, 1);
+
+    // 按下缩到 0.92(镜头、按钮、chip):k420 c26,冲过头 7.6%。
+    out property <duration> press: root.calm ? 200ms : 300ms;
+    out property <easing> press-ease: root.calm ? ease-out : cubic-bezier(0.3, 1.5, 0.45, 1);
+    // 悬停时镜头朝指针偏 ≤ 4px:k220 c22,3%。
+    out property <duration> lean: root.calm ? 200ms : 360ms;
+    out property <easing> lean-ease: root.calm ? ease-out : cubic-bezier(0.3, 1.3, 0.5, 1);
+    // 开关的钮、播放暂停换图、选中 chip:k190 c15,13%。
+    out property <duration> spring: root.calm ? 200ms : 520ms;
+    out property <easing> spring-ease: root.calm ? ease-out : cubic-bezier(0.3, 1.4, 0.45, 1.2);
+    // 导航指示器先动的那条边(lead)与后跟的那条边(trail):两条边各走各的弹簧,
+    // 走起来先拉长再落定 —— unicat 那颗球的拉伸,用声明式写出来。
+    out property <duration> lead: root.calm ? 200ms : 420ms;
+    out property <duration> trail: root.calm ? 200ms : 620ms;
+    out property <easing> lead-ease: root.calm ? ease-out : cubic-bezier(0.3, 1.4, 0.45, 1.1);
+    // 换主题时颜色跟着 unicat 的天色走,临界阻尼。
+    out property <duration> theme: 1200ms;
+    out property <easing> theme-ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+// 阴影的三档。每个元素最多一道外投影、一道内阴影加一圈边,设计稿从不叠更多。
+// 浅色下颜色淡得多:同样的黑在亮底上重得多。负的 spread 让浮起的东西只在下方落影,
+// 只有 Skia 画得出(无头测试的软件渲染没有阴影)。
 export global Elevation {
-    // 贴着底的小浮起(文字描边那种)。
-    out property <length> low-blur: 6px;
-    out property <length> low-y: 2px;
-    // 浮在内容上的面板与控制条。
-    out property <length> high-blur: 30px;
-    out property <length> high-y: 14px;
+    // 面板、设置卡、最佳匹配卡。
+    out property <length> card-y: 1px;
+    out property <length> card-blur: 2px;
+    out property <color> card-color: Theme.dark ? #00000059 : #14281614;
+    // 控制条。
+    out property <length> float-y: 18px;
+    out property <length> float-blur: 40px;
+    out property <length> float-spread: Theme.dark ? -14px : -16px;
+    out property <color> float-color: Theme.dark ? #000000cc : #14281652;
+    // 抽屉、提示。
+    out property <length> overlay-y: 30px;
+    out property <length> overlay-blur: Theme.dark ? 70px : 64px;
+    out property <length> overlay-spread: Theme.dark ? -18px : -20px;
+    out property <color> overlay-color: Theme.dark ? #000000d9 : #14281661;
 }

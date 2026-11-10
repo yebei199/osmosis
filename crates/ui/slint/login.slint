@@ -8,8 +8,7 @@
 
 import { LineEdit } from "std-widgets.slint";
 
-import { AuroraBackground, GlassCard } from "glass.slint";
-import { HoverButton } from "widgets.slint";
+import { HoverButton, Sheet } from "widgets.slint";
 import { Theme, Space, TextSize } from "theme.slint";
 
 export component LoginPage inherits Rectangle {
@@ -29,12 +28,9 @@ export component LoginPage inherits Rectangle {
     callback login(string, string);
     callback register(string, string, string);
 
-    AuroraBackground {
-        width: 100%;
-        height: 100%;
-    }
+    background: Theme.window;
 
-    GlassCard {
+    Sheet {
         width: min(root.width - 48px, 360px);
         height: form.preferred-height + 48px;
         x: (root.width - self.width) / 2;
@@ -76,7 +72,7 @@ export component LoginPage inherits Rectangle {
             // 失败说明。有话说才占位置 —— 常驻一个空行会把布局撑得莫名其妙。
             if root.error-text != "": error := Text {
                 text: root.error-text;
-                color: Theme.danger-text;
+                color: Theme.text;
                 font-size: TextSize.small;
                 wrap: word-wrap;
                 horizontal-alignment: center;

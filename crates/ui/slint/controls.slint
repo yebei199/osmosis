@@ -32,8 +32,8 @@ export component RingControl inherits Rectangle {
     background: @conic-gradient(
         Theme.accent 0deg,
         Theme.accent clamp(root.ratio, 0.0, 1.0) * 360deg,
-        Theme.overlay clamp(root.ratio, 0.0, 1.0) * 360deg,
-        Theme.overlay 360deg);
+        Theme.press clamp(root.ratio, 0.0, 1.0) * 360deg,
+        Theme.press 360deg);
 
     inner := Rectangle {
         width: root.inner-diameter;
@@ -76,7 +76,7 @@ component OutputChip inherits Rectangle {
     border-radius: Radius.pill;
     background: root.selected
         ? Theme.accent
-        : (touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak);
+        : (touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.hover);
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
     touch := TouchArea {
@@ -111,7 +111,7 @@ component MemberToggle inherits Rectangle {
     width: 24px;
     height: 24px;
     border-radius: Radius.pill;
-    background: touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.overlay-weak;
+    background: touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.hover;
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
     Text {

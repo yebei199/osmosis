@@ -83,7 +83,7 @@ export component LyricsPage inherits Rectangle {
                 border-radius: Radius.pill;
                 background: root.translation-on
                     ? Theme.accent.with-alpha(0.22)
-                    : Theme.overlay;
+                    : Theme.press;
                 border-width: 1px;
                 border-color: Theme.immersive-line;
 
@@ -98,7 +98,7 @@ export component LyricsPage inherits Rectangle {
                     font-size: TextSize.small;
                     color: root.translation-on
                         ? Theme.accent-text
-                        : Theme.immersive-text-dim;
+                        : Theme.immersive-dim;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -147,7 +147,7 @@ export component LyricsPage inherits Rectangle {
                         x: 24px;
                         height: 20px;
                         text: row.translation;
-                        text-color: Theme.immersive-text-dim;
+                        text-color: Theme.immersive-dim;
                         font-size: TextSize.small;
                         vertical-alignment: top;
                         wrap: word-wrap;

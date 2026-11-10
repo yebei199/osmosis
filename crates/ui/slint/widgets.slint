@@ -4,9 +4,7 @@
 // 用,也能被播放页覆层用。与页面分开,是为了让「页面在摆什么」与「零件长什么样」
 // 不必在同一屏里读。
 
-// 入口卡片用它透出背后的极光。
-import { GlassCard } from "glass.slint";
-import { Theme, Type, Radius, Space, TextSize, Motion } from "theme.slint";
+import { Theme, Radius, Space, TextSize, Motion, Elevation } from "theme.slint";
 
 import { OutlinedText, DayNightSwitch } from "textfx.slint";
 export { OutlinedText, DayNightSwitch }
@@ -18,7 +16,7 @@ export component SectionCard inherits Rectangle {
     background: Theme.surface;
     border-radius: Radius.md;
     border-width: 1px;
-    border-color: Theme.overlay;
+    border-color: Theme.press;
 
     VerticalLayout {
         padding: Space.lg;
@@ -109,7 +107,7 @@ export component NavItem inherits Rectangle {
 
     border-radius: Radius.md;
     background: root.gpu-selected
-        ? (touch.has-hover ? Theme.overlay : transparent)
+        ? (touch.has-hover ? Theme.press : transparent)
         : (active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
@@ -174,10 +172,10 @@ export component RoundControl inherits Rectangle {
     height: root.diameter;
     border-radius: self.width / 2;
     background: touch.pressed ? Theme.accent.darker(0.2).with-alpha(0.31)
-        : (touch.has-hover ? Theme.overlay
-            : (root.transparent-base ? transparent : Theme.divider));
+        : (touch.has-hover ? Theme.press
+            : (root.transparent-base ? transparent : Theme.line));
     border-width: 1px;
-    border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.overlay;
+    border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.press;
     animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
     if root.backdrop.width > 0: Image {
@@ -217,4 +215,19 @@ export component RoundControl inherits Rectangle {
         accessible-checked: root.checked;
         accessible-action-default => { root.clicked(); }
     }
+}
+
+// 浮在页面上的一块:登录表单、删除确认这类对话框。raised 底、overlay 那档阴影。
+export component Sheet inherits Rectangle {
+    background: Theme.raised;
+    border-radius: Radius.lg;
+    border-width: Theme.dark ? 0px : 1px;
+    border-color: Theme.line;
+    inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+    inner-shadow-color: Theme.dark ? Theme.edge : transparent;
+    drop-shadow-offset-y: Elevation.overlay-y;
+    drop-shadow-blur: Elevation.overlay-blur;
+    drop-shadow-spread: Elevation.overlay-spread;
+    drop-shadow-color: Elevation.overlay-color;
+    @children
 }

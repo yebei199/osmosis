@@ -422,8 +422,14 @@ fn login_background_fills_the_window_while_the_form_avoids_strips()
         ui.global::<Session>().set_logged_in(false);
         for mask in 0..8 {
             strips(&ui, mask);
-            let background = testing::ElementHandle::find_by_element_type_name(&ui, "AuroraBackground")
-                .next().expect("登录页该有极光背景");
+            // 登录页自己就是那块底(Theme.window),整块铺满窗口。
+            let background =
+                testing::ElementHandle::find_by_element_id(
+                    &ui,
+                    "MainWindow::login-page",
+                )
+                .next()
+                .expect("没登录时该有登录页");
             assert_eq!(
                 background.absolute_position().y,
                 0.0,

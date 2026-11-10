@@ -138,10 +138,10 @@ export component PlayerBar inherits Rectangle {
         border-radius: self.height / 2;
         background: Theme.surface.with-alpha(0.9);
         border-width: 1px;
-        border-color: Theme.glass-edge;
-        drop-shadow-blur: Elevation.high-blur;
-        drop-shadow-offset-y: Elevation.high-y;
-        drop-shadow-color: Theme.glass-shadow;
+        border-color: Theme.edge;
+        drop-shadow-blur: Elevation.float-blur;
+        drop-shadow-offset-y: Elevation.float-y;
+        drop-shadow-color: Elevation.float-color;
 
         // 尺寸回写给 GPU 背景通道。覆层那份走另一槽 —— 两条可能同时在场,
         // 共用一槽会互相踩掉对方的尺寸。

@@ -20,7 +20,7 @@ component StatCard inherits Rectangle {
     background: Theme.surface;
     border-radius: Radius.md;
     border-width: 1px;
-    border-color: Theme.overlay;
+    border-color: Theme.press;
     horizontal-stretch: 1;
 
     VerticalLayout {
@@ -162,7 +162,7 @@ export component ProfilePage inherits Flickable {
                     Rectangle {
                         height: 9px;
                         border-radius: Radius.pill;
-                        background: Theme.overlay-weak;
+                        background: Theme.hover;
                         Rectangle {
                             x: 0;
                             width: parent.width * artist.ratio;

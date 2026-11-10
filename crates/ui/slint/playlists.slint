@@ -22,7 +22,7 @@ export component PlaylistList inherits ListView {
         Rectangle {
             y: 2px;
             height: 56px;
-            background: touch.has-hover ? Theme.overlay : Theme.overlay-weak;
+            background: touch.has-hover ? Theme.press : Theme.hover;
             border-radius: Radius.sm;
             animate background { duration: Motion.fast; easing: Motion.ease; }
         }
@@ -47,7 +47,7 @@ export component PlaylistList inherits ListView {
                     width: 40px;
                     height: 40px;
                     border-radius: Radius.sm;
-                    background: Theme.divider;
+                    background: Theme.line;
                     clip: true;
 
                     if row.cover.width > 0: Image {
@@ -89,7 +89,7 @@ export component PlaylistList inherits ListView {
                     width: badge.preferred-width + 16px;
                     height: 22px;
                     border-radius: Radius.pill;
-                    background: Theme.overlay;
+                    background: Theme.press;
                     badge := Text {
                         text: "只读";
                         color: Theme.text-faint;

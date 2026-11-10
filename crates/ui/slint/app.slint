@@ -9,8 +9,6 @@ import "@osmosis-fonts/osmosis-sans-700.ttf";
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
 import { LineEdit, ListView, Palette } from "std-widgets.slint";
 
-// 玻璃拟态:供 Home / Server 页透出颜色的极光背景,以及装内容的玻璃卡片。
-import { AuroraBackground, GlassCard } from "glass.slint";
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
 // 数据结构与 Nav 留在这里:它们是本窗口与 Rust 之间的契约,不是可复用的零件。
@@ -217,8 +215,8 @@ export component MainWindow inherits Window {
     out property <length> nav-drop: root.nav-target;
     // 三颗球的时长必须两两拉开,收进同一档就成了两颗叠在一起(nav_glass 测试钉着)。
     animate nav-lead { duration: Motion.medium; easing: Motion.ease; }
-    animate nav-lag { duration: Motion.slow; easing: Motion.ease; }
-    animate nav-drop { duration: Motion.slow * 1.4; easing: Motion.ease; }
+    animate nav-lag { duration: Motion.spring; easing: Motion.ease; }
+    animate nav-drop { duration: Motion.spring * 1.4; easing: Motion.ease; }
     // render3d 每帧(转场期间)渲出的导航背景纹理。非 GPU 构建恒为空图(width 0),
     // 两种版式都退回 Slint 平底 + NavItem 自带高亮。
     in-out property <image> nav-bg;
@@ -290,10 +288,10 @@ export component MainWindow inherits Window {
                     spacing: Space.sm;
                     if Shell.banner-text != "": banner := Rectangle {
                         height: 44px;
-                        background: Theme.danger-surface;
+                        background: Theme.raised;
                         border-radius: Radius.sm;
                         border-width: 1px;
-                        border-color: Theme.danger-line;
+                        border-color: Theme.danger;
 
                         // 有去处的提示可以点整块。摆在内容**之前**,于是右边那颗关闭键仍在它
                         // 上面 —— 反过来的话,想关掉提示会变成跳页。
@@ -322,7 +320,7 @@ export component MainWindow inherits Window {
                             accessible-label: Shell.banner-text;
                                 // 文案是硬编码中文,与状态行同一套子集字体。
                                 font-size: TextSize.small;
-                                color: Theme.danger-text;
+                                color: Theme.text;
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
                                 overflow: elide;
@@ -370,7 +368,7 @@ export component MainWindow inherits Window {
                                     width: exit-label.preferred-width + 20px;
                                     height: 44px;
                                     border-radius: Radius.pill;
-                                    background: exit-touch.has-hover ? Theme.accent : Theme.overlay-weak;
+                                    background: exit-touch.has-hover ? Theme.accent : Theme.hover;
                                     animate background { duration: Motion.fast; easing: Motion.ease; }
 
                                     exit-touch := TouchArea {
@@ -402,7 +400,7 @@ export component MainWindow inherits Window {
                         background: Theme.surface.with-alpha(0.96);
                         border-radius: Radius.sm;
                         border-width: 1px;
-                        border-color: Theme.overlay;
+                        border-color: Theme.press;
 
                         HorizontalLayout {
                             padding-left: Space.md;
@@ -501,16 +499,9 @@ export component MainWindow inherits Window {
                         content := Rectangle {
                             horizontal-stretch: 1;
 
-                            // 极光背景:玻璃卡片透出来的颜色全来自这里。3D 页不铺 —— 那边背后是
-                            // bevy 画面,本来就有内容可透。
-                            AuroraBackground {
-                                width: 100%;
-                                height: 100%;
-                                // §4:封面取色喂极光。颜色由 aurora.rs 取好推进来。
-                                cover-active: Shell.aurora-cover-active;
-                                cover-warm: Shell.aurora-cover-warm;
-                                cover-deep: Shell.aurora-cover-deep;
-                                cover-soft: Shell.aurora-cover-soft;
+                            // 内容的底。整窗的极光光斑已退场(docs/design.md「材质」):分隔靠面板,不靠一片绿。
+                            Rectangle {
+                                background: Theme.base;
                             }
 
                             // 个人主页(目的地 7)。进页即取统计,判断在 Rust 侧。
@@ -701,7 +692,7 @@ export component MainWindow inherits Window {
         if root.group-panel-open && Shell.group-banner != "": Rectangle {
             width: 100%;
             height: 100%;
-            background: Theme.shadow.with-alpha(0.5);
+            background: Theme.scrim.with-alpha(0.5);
             TouchArea { clicked => { root.group-panel-open = false; } }
 
             group-panel := Rectangle {
@@ -712,7 +703,7 @@ export component MainWindow inherits Window {
                 background: Theme.surface;
                 border-radius: Radius.md;
                 border-width: 1px;
-                border-color: Theme.overlay;
+                border-color: Theme.press;
                 TouchArea { }
 
                 group-body := VerticalLayout {
@@ -823,7 +814,7 @@ export component MainWindow inherits Window {
                 background: Theme.surface;
                 border-radius: Radius.md;
                 border-width: 1px;
-                border-color: Theme.overlay;
+                border-color: Theme.press;
 
                 // 挡住底下那块「点别处关掉」的区域 —— 没有它,点菜单自己也会把菜单关掉。
                 TouchArea { }
@@ -843,7 +834,7 @@ export component MainWindow inherits Window {
                         height: 44px;
                         border-radius: Radius.sm;
                         background: download-touch.has-hover
-                            ? Theme.accent : Theme.overlay-weak;
+                            ? Theme.accent : Theme.hover;
                         animate background { duration: Motion.fast; easing: Motion.ease; }
 
                         download-touch := TouchArea {
@@ -875,7 +866,7 @@ export component MainWindow inherits Window {
                         height: 44px;
                         border-radius: Radius.sm;
                         background: tag-touch.has-hover
-                            ? Theme.accent : Theme.overlay-weak;
+                            ? Theme.accent : Theme.hover;
                         animate background { duration: Motion.fast; easing: Motion.ease; }
 
                         tag-touch := TouchArea {
@@ -905,7 +896,7 @@ export component MainWindow inherits Window {
                         height: 44px;
                         border-radius: Radius.sm;
                         background: block-track-touch.has-hover
-                            ? Theme.accent : Theme.overlay-weak;
+                            ? Theme.accent : Theme.hover;
                         animate background { duration: Motion.fast; easing: Motion.ease; }
 
                         block-track-touch := TouchArea {
@@ -935,7 +926,7 @@ export component MainWindow inherits Window {
                         height: 44px;
                         border-radius: Radius.sm;
                         background: block-tag-touch.has-hover
-                            ? Theme.accent : Theme.overlay-weak;
+                            ? Theme.accent : Theme.hover;
                         animate background { duration: Motion.fast; easing: Motion.ease; }
 
                         block-tag-touch := TouchArea {
@@ -986,7 +977,7 @@ export component MainWindow inherits Window {
                 background: Theme.surface;
                 border-radius: Radius.md;
                 border-width: 1px;
-                border-color: Theme.overlay;
+                border-color: Theme.press;
 
                 TouchArea { }
 
@@ -1012,7 +1003,7 @@ export component MainWindow inherits Window {
                         for row[i] in Library.all-tags: Rectangle {
                             height: 40px;
                             border-radius: Radius.sm;
-                            background: block-row-touch.has-hover ? Theme.overlay-weak : transparent;
+                            background: block-row-touch.has-hover ? Theme.hover : transparent;
 
                             block-row-touch := TouchArea {
                                 mouse-cursor: pointer;
@@ -1066,7 +1057,7 @@ export component MainWindow inherits Window {
                 background: Theme.surface;
                 border-radius: Radius.md;
                 border-width: 1px;
-                border-color: Theme.overlay;
+                border-color: Theme.press;
 
                 TouchArea { }
 
@@ -1114,7 +1105,7 @@ export component MainWindow inherits Window {
                                         border-radius: Radius.sm;
                                         background: row.applied ? Theme.accent : transparent;
                                         border-width: 1.5px;
-                                        border-color: row.applied ? Theme.accent : Theme.overlay;
+                                        border-color: row.applied ? Theme.accent : Theme.press;
                                         animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
                                         if row.applied: Path {
@@ -1154,7 +1145,7 @@ export component MainWindow inherits Window {
                             width: 56px;
                             border-radius: Radius.sm;
                             background: create-tag-touch.has-hover
-                                ? Theme.accent : Theme.overlay-weak;
+                                ? Theme.accent : Theme.hover;
 
                             create-tag-touch := TouchArea {
                                 mouse-cursor: pointer;

@@ -85,7 +85,7 @@ export component TrackList inherits ListView {
                 : row.loading ? Theme.accent.with-alpha(0.15)
                 : (parent.is-current
                     ? Theme.accent.with-alpha(0.22)
-                    : (touch.has-hover ? Theme.overlay : Theme.overlay-weak));
+                    : (touch.has-hover ? Theme.press : Theme.hover));
             border-radius: Radius.sm;
             border-width: row.loading || parent.is-current ? 1px : 0;
             border-color: Theme.accent.with-alpha(0.4);
@@ -171,7 +171,7 @@ export component TrackList inherits ListView {
                     x: (parent.width - 2px) / 2;
                     width: 2px;
                     height: 100%;
-                    background: Theme.overlay;
+                    background: Theme.press;
                 }
                 Rectangle {
                     width: i == 0 ? 12px : 8px;
@@ -179,7 +179,7 @@ export component TrackList inherits ListView {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     border-radius: self.width / 2;
-                    background: i == 0 ? Theme.accent : Theme.overlay;
+                    background: i == 0 ? Theme.accent : Theme.press;
                     // 最新那条的光晕:一圈半透明的强调色描边。
                     border-width: i == 0 ? 4px : 0;
                     border-color: Theme.accent.with-alpha(0.18);
@@ -194,7 +194,7 @@ export component TrackList inherits ListView {
                     width: 40px;
                     height: 40px;
                     border-radius: Radius.sm;
-                    background: Theme.divider;
+                    background: Theme.line;
                     clip: true;
 
                     if row.cover.width > 0: Image {
@@ -258,7 +258,7 @@ export component TrackList inherits ListView {
 
                 Text {
                     text: row.liked ? "♥" : "♡";
-                    color: row.liked ? Theme.liked : Theme.text-faint;
+                    color: row.liked ? Theme.accent-ink : Theme.text-faint;
                     font-size: TextSize.title;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -354,7 +354,7 @@ export component Pill inherits Rectangle {
         border-radius: Radius.pill;
         background: root.selected
             ? Theme.accent
-            : (touch.has-hover ? Theme.overlay : Theme.surface);
+            : (touch.has-hover ? Theme.press : Theme.surface);
     }
     label := Text {
         // 药丸自己已经报了标签,字不再报一遍

@@ -48,7 +48,7 @@ export component ProgressBar inherits Rectangle {
 
         groove := Rectangle {
             height: 4px;
-            background: Theme.overlay;
+            background: Theme.press;
             border-radius: Radius.pill;
             // 细轨档平时隐身,指过来或拖着才现形 —— 环形键已经报着进度,
             // 这条只在要精确落点的那一刻出现。
@@ -119,7 +119,7 @@ export component VolumeControl inherits HorizontalLayout {
             width: 32px;
             height: 32px;
             border-radius: Radius.pill;
-            background: speaker.has-hover ? Theme.overlay : transparent;
+            background: speaker.has-hover ? Theme.press : transparent;
 
             Text {
                 // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
@@ -158,7 +158,7 @@ export component VolumeControl inherits HorizontalLayout {
             Rectangle {
                 y: (parent.height - 4px) / 2;
                 height: 4px;
-                background: Theme.overlay;
+                background: Theme.press;
                 border-radius: Radius.pill;
 
                 Rectangle {

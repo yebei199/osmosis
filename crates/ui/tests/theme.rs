@@ -37,9 +37,26 @@ fn luminance(c: slint::Color) -> f32 {
         + 0.0722 * channel(c.blue())
 }
 
-/// WCAG 的对比度,1.0 到 21.0。
+/// 半透明的前景叠在背景上之后的颜色(沉浸层的弱字是带 alpha 的白)。
+fn over(
+    fg: slint::Color,
+    bg: slint::Color,
+) -> slint::Color {
+    let a = f32::from(fg.alpha()) / 255.0;
+    let mix = |f: u8, b: u8| {
+        (f32::from(f) * a + f32::from(b) * (1.0 - a))
+            .round() as u8
+    };
+    slint::Color::from_rgb_u8(
+        mix(fg.red(), bg.red()),
+        mix(fg.green(), bg.green()),
+        mix(fg.blue(), bg.blue()),
+    )
+}
+
+/// WCAG 的对比度,1.0 到 21.0。前景带 alpha 时先叠到背景上。
 fn contrast(fg: slint::Color, bg: slint::Color) -> f32 {
-    let (a, b) = (luminance(fg), luminance(bg));
+    let (a, b) = (luminance(over(fg, bg)), luminance(bg));
     let (hi, lo) = if a > b { (a, b) } else { (b, a) };
     (hi + 0.05) / (lo + 0.05)
 }
@@ -47,9 +64,10 @@ fn contrast(fg: slint::Color, bg: slint::Color) -> f32 {
 /// WCAG AA 对正文的要求。
 const AA: f32 = 4.5;
 
-/// 一对前景/背景,以及它在界面上是什么。
+/// 一对前景/背景,以及它在界面上是什么,要求多少。
 struct Pair {
     what: &'static str,
+    min: f32,
     fg: fn(&Theme) -> slint::Color,
     bg: fn(&Theme) -> slint::Color,
 }
@@ -77,10 +95,10 @@ fn failures(
         for p in pairs {
             let ratio =
                 contrast((p.fg)(&theme), (p.bg)(&theme));
-            if ratio < AA {
+            if ratio < p.min {
                 bad.push(format!(
-                    "{which}下「{}」只有 {ratio:.2}:1,要 {AA}:1",
-                    p.what
+                    "{which}下「{}」只有 {ratio:.2}:1,要 {}:1",
+                    p.what, p.min
                 ));
             }
         }
@@ -96,21 +114,25 @@ fn failures(
 fn chrome_text_is_legible_in_both_themes() {
     let pairs = [
         Pair {
+            min: AA,
             what: "主字 / 音乐页底",
             fg: |t| t.get_text(),
             bg: |t| t.get_base(),
         },
         Pair {
+            min: AA,
             what: "主字 / 卡片面",
             fg: |t| t.get_text(),
             bg: |t| t.get_surface(),
         },
         Pair {
+            min: AA,
             what: "弱字 / 音乐页底",
             fg: |t| t.get_text_dim(),
             bg: |t| t.get_base(),
         },
         Pair {
+            min: AA,
             what: "弱字 / 卡片面",
             fg: |t| t.get_text_dim(),
             bg: |t| t.get_surface(),
@@ -119,17 +141,20 @@ fn chrome_text_is_legible_in_both_themes() {
             // 绿色 accent 的明度远高于琥珀,近白字压上去只有约 1.9:1,
             // 所以 accent-text 反转成了深墨(docs/adr/0023)。这对就是那次
             // 反转的守卫:再把它改回浅字,这里当场红。
+            min: AA,
             what: "强调实底上的字 / 强调底",
             fg: |t| t.get_accent_text(),
             bg: |t| t.get_accent(),
         },
         Pair {
+            min: AA,
             what: "控制键图标 / 卡片面",
             fg: |t| t.get_accent_ink(),
             bg: |t| t.get_surface(),
         },
         Pair {
-            what: "控制键图标 / 选中项",
+            min: AA,
+            what: "在放那一行的歌名 / 浮起的表面",
             fg: |t| t.get_accent_ink(),
             bg: |t| t.get_raised(),
         },
@@ -148,24 +173,28 @@ fn chrome_text_is_legible_in_both_themes() {
 fn immersive_text_does_not_follow_the_theme() {
     let pairs = [
         Pair {
+            min: AA,
             what: "歌名 / 沉浸底",
             fg: |t| t.get_immersive_text(),
             bg: |t| t.get_immersive(),
         },
         Pair {
+            min: AA,
             what: "歌手与译文 / 沉浸底",
-            fg: |t| t.get_immersive_text_dim(),
+            fg: |t| t.get_immersive_dim(),
             bg: |t| t.get_immersive(),
         },
         Pair {
+            min: AA,
             what: "加载提示 / 沉浸底",
             fg: |t| t.get_immersive_accent(),
             bg: |t| t.get_immersive(),
         },
         Pair {
-            what: "预设项 / 浮起的小面板",
-            fg: |t| t.get_immersive_text_dim(),
-            bg: |t| t.get_immersive_panel(),
+            min: AA,
+            what: "条上的歌手 / 沉浸层的控制条",
+            fg: |t| t.get_immersive_dim(),
+            bg: |t| t.get_immersive_raised(),
         },
     ];
 
@@ -181,11 +210,10 @@ fn immersive_text_does_not_follow_the_theme() {
             (|t: &Theme| t.get_immersive())
                 as fn(&Theme) -> slint::Color,
         ),
-        ("immersive-panel", |t| t.get_immersive_panel()),
+        ("immersive-raised", |t| t.get_immersive_raised()),
         ("immersive-text", |t| t.get_immersive_text()),
-        ("immersive-text-dim", |t| {
-            t.get_immersive_text_dim()
-        }),
+        ("immersive-dim", |t| t.get_immersive_dim()),
+        ("immersive-faint", |t| t.get_immersive_faint()),
         ("immersive-accent", |t| t.get_immersive_accent()),
         ("immersive-line", |t| t.get_immersive_line()),
     ] {
@@ -200,30 +228,15 @@ fn immersive_text_does_not_follow_the_theme() {
     }
 }
 
-/// **最弱那一档字够不够,还没定,所以这条挂着。**
+/// **最弱那一档字只做读数,判据 3:1。**
 ///
-/// `text-faint` 现在用在三处,而它们不是同一类东西:没点亮的红心是**图标**
-/// (WCAG 对非文字组件是 3:1),时长与个人页输出设备卡上的「没有其他设备」是**文字**(4.5:1)。
-/// 量到的(压音乐页底):
-///
-/// | | 深色 | 浅色 |
-/// |---|---|---|
-/// | `text-faint` | 4.19:1 | 2.71:1 |
-///
-/// 深色那个是**既有的**,不是明暗主题这轮引入的。三条路各有代价,等定:
-///
-/// - 统一提到 4.5 —— 浅色下 `text-faint` 与 `text-dim` 的亮度只差 0.027
-///   (作为对照,`text` 与 `text-dim` 差 0.107),三档字会塌成两档半
-/// - 把那两处文字改用 `text-dim`,`text-faint` 只剩图标、判据降到 3:1 ——
-///   深色一个字节不用改,浅色调到 3.04 仍与 `text-dim` 差 0.128
-/// - 砍掉这一档,全用 `text-dim`
-///
-/// 定了之后这条测试要么删掉、要么按选中的判据改写并去掉 `#[ignore]`。
+/// `text-faint` 只给时长、计数、日期这类有别的路径也读得到的数字用,从不单独承载
+/// 意义(docs/design.md「颜色」),所以按 WCAG 对非正文的 3:1 量,而不是 4.5:1。
 #[test]
-#[ignore = "text-faint 的判据未定,见文档注释"]
 fn the_faintest_text_is_legible() {
     let pairs = [Pair {
-        what: "最弱字 / 音乐页底",
+        what: "最弱字 / 内容面板",
+        min: 3.0,
         fg: |t| t.get_text_faint(),
         bg: |t| t.get_base(),
     }];
@@ -232,13 +245,14 @@ fn the_faintest_text_is_legible() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// 错误横幅自成一套,同样两边都要合格。
+/// 出错提示那颗图标:压在它自己那一圈底上,也压在浮起的提示上,都要读得出来。
 #[test]
-fn the_danger_banner_is_legible_in_both_themes() {
+fn the_danger_icon_is_legible_in_both_themes() {
     let pairs = [Pair {
-        what: "横幅文字 / 横幅底",
-        fg: |t| t.get_danger_text(),
-        bg: |t| t.get_danger_surface(),
+        what: "出错图标 / 提示的底",
+        min: 3.0,
+        fg: |t| t.get_danger(),
+        bg: |t| t.get_raised(),
     }];
 
     let bad = failures(&window(), &pairs);

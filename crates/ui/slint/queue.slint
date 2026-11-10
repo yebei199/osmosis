@@ -72,7 +72,7 @@ export component QueuePage inherits Rectangle {
                 text: root.loading
                     ? "正在取…"
                     : "共 " + root.total + " 首";
-                color: Theme.immersive-text-dim;
+                color: Theme.immersive-dim;
                 font-size: TextSize.small;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
@@ -83,7 +83,7 @@ export component QueuePage inherits Rectangle {
         // 用户会以为自己的歌没了。
         if root.rows.length == 0: queue-empty := Text {
             text: root.loading ? "正在取队列…" : "队列是空的";
-            color: Theme.immersive-text-dim;
+            color: Theme.immersive-dim;
             font-size: TextSize.body;
             horizontal-alignment: center;
             vertical-stretch: 1;

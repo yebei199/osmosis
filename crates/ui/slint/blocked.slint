@@ -63,9 +63,9 @@ export component BlockedPage inherits Flickable {
                     width: unblock-label.preferred-width + 32px;
                     height: 34px;
                     border-radius: Radius.pill;
-                    background: unblock-touch.has-hover ? Theme.hover : Theme.overlay-weak;
+                    background: unblock-touch.has-hover ? Theme.hover : Theme.hover;
                     border-width: 1px;
-                    border-color: Theme.divider;
+                    border-color: Theme.line;
                     // a11y 在根上:无头测试按元素 id 找到的是这一层
                     accessible-role: button;
                     accessible-label: "恢复 " + row.label;
