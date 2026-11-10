@@ -374,7 +374,8 @@ async fn blocking_a_track_clears_it_everywhere() {
         "屏蔽不删红心"
     );
     let liked_now = || {
-        let (state, account) = (state.clone(), account.clone());
+        let (state, account) =
+            (state.clone(), account.clone());
         async move {
             crate::routes::library::likes::liked(
                 State(state),
@@ -407,12 +408,19 @@ async fn blocking_a_track_clears_it_everywhere() {
     assert_eq!(jobs, 0);
     assert_eq!(objects.get(&key), None);
 
-    blocks::delete(&mut conn, account.id, rule.id.parse().unwrap())
-        .await
-        .unwrap();
+    blocks::delete(
+        &mut conn,
+        account.id,
+        rule.id.parse().unwrap(),
+    )
+    .await
+    .unwrap();
     let back = liked_now().await;
     assert_eq!(
-        back.tracks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+        back.tracks
+            .iter()
+            .map(|t| t.id.clone())
+            .collect::<Vec<_>>(),
         vec![id.clone()],
         "规则删了,红心原样回来"
     );

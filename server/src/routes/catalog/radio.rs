@@ -518,19 +518,21 @@ pub(crate) async fn split_heard(
         )
     };
     // 日推的推荐日挂到每一首上(列表分「今天」「昨天」),出口填完聚合之后再挂
-    let days: std::collections::HashMap<&str, &str> = entries
-        .iter()
-        .filter_map(|entry| {
-            Some((
-                entry.track.track_id.as_str(),
-                entry.picked_on.as_deref()?,
-            ))
-        })
-        .collect();
+    let days: std::collections::HashMap<&str, &str> =
+        entries
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry.track.track_id.as_str(),
+                    entry.picked_on.as_deref()?,
+                ))
+            })
+            .collect();
     let dated = |mut tracks: Vec<TrackDto>| {
         for track in &mut tracks {
-            track.facets.picked_on =
-                days.get(track.id.as_str()).map(|day| (*day).to_owned());
+            track.facets.picked_on = days
+                .get(track.id.as_str())
+                .map(|day| (*day).to_owned());
         }
         tracks
     };

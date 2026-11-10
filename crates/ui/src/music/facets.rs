@@ -79,7 +79,10 @@ impl FacetState {
                 &self.chosen,
                 &self.collapsed,
                 |day| {
-                    day_label(day, daily_day(chrono::Utc::now()))
+                    day_label(
+                        day,
+                        daily_day(chrono::Utc::now()),
+                    )
                 },
             )
         {

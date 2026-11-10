@@ -1087,13 +1087,15 @@ fn a_queue_that_is_not_the_radios_does_not_stall() {
 /// 日推摆着、选了「夜」:刷新时筛选留着,磁盘上那份旧的一帧都不摆。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn refreshing_the_shown_daily_keeps_chips_and_skips_the_disk_copy() {
+fn refreshing_the_shown_daily_keeps_chips_and_skips_the_disk_copy()
+ {
     let (ui, deck) = deck_window_pumped();
     super::facets::bind(&ui, &deck);
     deck.last_daily
         .set(Some(daily_day(chrono::Utc::now())));
     ui.global::<Shell>().set_destination(0);
-    let (ticket, shown) = deck.views.begin(ViewSource::Daily);
+    let (ticket, shown) =
+        deck.views.begin(ViewSource::Daily);
     project(&ui, &deck, shown);
     deck.views.accept(&ticket, faceted_batch(), true);
     show(&ui, &deck, faceted_batch());
@@ -1117,7 +1119,11 @@ fn refreshing_the_shown_daily_keeps_chips_and_skips_the_disk_copy() {
         },
     );
 
-    assert_eq!(*seen.borrow(), vec!["c"], "等网络时摆着内存里那份");
+    assert_eq!(
+        *seen.borrow(),
+        vec!["c"],
+        "等网络时摆着内存里那份"
+    );
     assert_eq!(ui.global::<Player>().get_chosen_count(), 1);
     assert_eq!(shown_ids(&ui), vec!["c"]);
 }
@@ -1135,7 +1141,10 @@ fn a_row_leaving_above_keeps_the_visible_row_in_place() {
     fresh.tracks.remove(0);
     show(&ui, &deck, fresh);
 
-    assert_eq!(ui.global::<Player>().get_list_scroll_to(), row);
+    assert_eq!(
+        ui.global::<Player>().get_list_scroll_to(),
+        row
+    );
 }
 
 /// 打开日推:滚到在放的那一首,上面留一行。
@@ -1157,7 +1166,10 @@ fn opening_daily_scrolls_to_the_track_now_playing() {
         async { Ok(batch(&["a", "b", "c", "d", "e"])) },
     );
 
-    assert_eq!(ui.global::<Player>().get_list_scroll_to(), 2.0 * row);
+    assert_eq!(
+        ui.global::<Player>().get_list_scroll_to(),
+        2.0 * row
+    );
     assert!(!deck.reveal_now.get(), "只滚这一次");
 }
 
@@ -1165,7 +1177,10 @@ fn opening_daily_scrolls_to_the_track_now_playing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn queue_now(deck: &Deck) -> Option<String> {
-    deck.queue.borrow().current().map(|track| track.id.clone())
+    deck.queue
+        .borrow()
+        .current()
+        .map(|track| track.id.clone())
 }
 
 /// 日推那一批里 b 在别的设备上听过了:放完 a 自动接 c。点名 b 照样放。
@@ -1173,8 +1188,10 @@ fn queue_now(deck: &Deck) -> Option<String> {
 #[test]
 fn auto_advance_skips_a_daily_track_heard_elsewhere() {
     let (ui, deck) = deck_window();
-    let tracks: Vec<TrackDto> =
-        ["a", "b", "c"].into_iter().map(track_with_id).collect();
+    let tracks: Vec<TrackDto> = ["a", "b", "c"]
+        .into_iter()
+        .map(track_with_id)
+        .collect();
     deck.views.show(ViewSource::Daily);
     dispatch(
         &ui,
@@ -1280,7 +1297,10 @@ fn a_saved_checkpoint_resumes_at_its_track_and_second() {
 #[test]
 fn an_unusable_checkpoint_does_not_resume() {
     assert_eq!(
-        super::resume_from(&saved_head(Some(7), None), saved_entries()),
+        super::resume_from(
+            &saved_head(Some(7), None),
+            saved_entries()
+        ),
         None
     );
     let natural = super::resume_from(
@@ -1318,8 +1338,9 @@ fn restoring_points_at_the_track_without_playing() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn daily_days_read_as_today_yesterday_or_a_date() {
-    let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 10)
-        .expect("日子");
+    let today =
+        chrono::NaiveDate::from_ymd_opt(2026, 11, 10)
+            .expect("日子");
     let label = |day| super::facets::day_label(day, today);
 
     assert_eq!(label("2026-11-10"), "今天");
@@ -1337,16 +1358,22 @@ fn the_daily_list_is_split_by_day_but_not_on_the_wall() {
     let today = daily_day(chrono::Utc::now());
     let yesterday = today - chrono::Duration::days(1);
     let mut picks = batch(&["a", "b", "c"]);
-    for (track, day) in
-        picks.tracks.iter_mut().zip([today, today, yesterday])
+    for (track, day) in picks
+        .tracks
+        .iter_mut()
+        .zip([today, today, yesterday])
     {
         track.facets.picked_on = Some(day.to_string());
     }
-    let (_ticket, shown) = deck.views.begin(ViewSource::Daily);
+    let (_ticket, shown) =
+        deck.views.begin(ViewSource::Daily);
     project(&ui, &deck, shown);
     show(&ui, &deck, picks);
 
-    assert_eq!(headers(&ui), vec!["今天 2 首", "昨天 1 首"]);
+    assert_eq!(
+        headers(&ui),
+        vec!["今天 2 首", "昨天 1 首"]
+    );
     assert_eq!(queue_ids(&deck), vec!["a", "b", "c"]);
 
     ui.global::<Shell>().set_view_wall(true);
@@ -1366,7 +1393,10 @@ fn opening_radio_does_not_interrupt_what_is_playing() {
 
     super::radio::open(&ui, &deck);
 
-    assert_eq!(deck.views.current_source(), Some(ViewSource::Radio));
+    assert_eq!(
+        deck.views.current_source(),
+        Some(ViewSource::Radio)
+    );
     assert!(
         !ui.global::<Player>().get_tracks_loading(),
         "只摆手上那份,没去取一批来放"

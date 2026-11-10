@@ -103,7 +103,8 @@ pub use group::{
 };
 
 pub use history::{
-    heard_among, recent, record_play, report_listened, stats,
+    heard_among, recent, record_play, report_listened,
+    stats,
 };
 
 pub use netease::{
@@ -113,8 +114,8 @@ pub use netease::{
 
 pub use queue::{
     create_queue, device_queue, fetch_queue, publish_queue,
-    queue_head,
-    queue_page, report_queue_state, set_queue_intent,
+    queue_head, queue_page, report_queue_state,
+    set_queue_intent,
 };
 
 pub use playlists::{

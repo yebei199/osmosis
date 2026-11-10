@@ -623,7 +623,8 @@ async fn commit(
         Some(Ended {
             track: before.track?,
             listened_ms: (listened_us / 1_000) as i64,
-            duration_ms: (before.duration_us / 1_000) as i64,
+            duration_ms: (before.duration_us / 1_000)
+                as i64,
         })
     });
     let list =

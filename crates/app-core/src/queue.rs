@@ -322,9 +322,10 @@ impl Queue {
                     .cursor
                     .checked_sub(offset)
                     .or_else(|| {
-                        (self.loop_mode == LoopMode::All).then(
-                            || self.cursor + len - offset,
-                        )
+                        (self.loop_mode == LoopMode::All)
+                            .then(|| {
+                                self.cursor + len - offset
+                            })
                     })
                 else {
                     break;

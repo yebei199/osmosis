@@ -40,7 +40,10 @@ pub const HEARD_AFTER_MS: i64 = 240_000;
 /// 听过的判据:累计听了时长的一半以上,或满 [`HEARD_AFTER_MS`],先到哪条算哪条。
 /// 时长未知(0)时只看后一条。
 #[must_use]
-pub fn is_heard(listened_ms: i64, duration_ms: i64) -> bool {
+pub fn is_heard(
+    listened_ms: i64,
+    duration_ms: i64,
+) -> bool {
     listened_ms >= HEARD_AFTER_MS
         || (duration_ms > 0
             && listened_ms.saturating_mul(2) >= duration_ms)
@@ -83,8 +86,9 @@ pub async fn settle(
         PlayRef::Event(id) => (Some(*id), None),
         PlayRef::LatestOf(track) => (None, Some(track)),
     };
-    let row: Option<(String, String, i64)> = sqlx::query_as(
-        "UPDATE play_events
+    let row: Option<(String, String, i64)> =
+        sqlx::query_as(
+            "UPDATE play_events
          SET listened_ms = GREATEST(listened_ms, $4),
              duration_ms = $5
          WHERE account_id = $1 AND id = COALESCE($2, (
@@ -93,17 +97,18 @@ pub async fn settle(
                AND platform = $3 AND track_id = $6
          ))
          RETURNING platform, track_id, listened_ms",
-    )
-    .bind(account_id)
-    .bind(event)
-    .bind(track.map(|track| track.platform.as_str()))
-    .bind(listened_ms)
-    .bind(duration_ms)
-    .bind(track.map(|track| track.track_id.as_str()))
-    .fetch_optional(&mut *conn)
-    .await?;
+        )
+        .bind(account_id)
+        .bind(event)
+        .bind(track.map(|track| track.platform.as_str()))
+        .bind(listened_ms)
+        .bind(duration_ms)
+        .bind(track.map(|track| track.track_id.as_str()))
+        .fetch_optional(&mut *conn)
+        .await?;
 
-    let Some((platform, track_id, listened_ms)) = row else {
+    let Some((platform, track_id, listened_ms)) = row
+    else {
         return Err(AppError::NotFound);
     };
     if !is_heard(listened_ms, duration_ms) {

@@ -620,8 +620,7 @@ async fn a_stale_report_is_answered_as_not_accepted() {
 /// 没建过队列的设备答 `null`。
 #[tokio::test]
 async fn a_device_finds_its_queue_and_last_position() {
-    let (state, account) =
-        state_for("q_http_device").await;
+    let (state, account) = state_for("q_http_device").await;
     let none = device_queue(
         State(state.clone()),
         account.clone(),

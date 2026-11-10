@@ -11,8 +11,9 @@ use contract::{
 };
 
 use crate::url::{
-    device_queue_url, queue_head_url, queue_intent_url, queue_page_url,
-    queue_report_url, queue_revisions_url, queues_url,
+    device_queue_url, queue_head_url, queue_intent_url,
+    queue_page_url, queue_report_url, queue_revisions_url,
+    queues_url,
 };
 use crate::{ApiError, platform};
 

@@ -1692,7 +1692,8 @@ async fn the_group_skips_a_blocked_track_on_advance_and_next()
 /// 组里放完一首也走「听过」那唯一一条写入口(`server::heard`):听够了就记成听过,
 /// 它在电台里,各台收到 `RadioChanged`。没听够就切走的不算。
 #[tokio::test]
-async fn a_track_the_group_finishes_is_heard_and_everyone_is_told() {
+async fn a_track_the_group_finishes_is_heard_and_everyone_is_told()
+ {
     use server::store::history;
     use server::store::playlist::TrackRef;
 
@@ -1719,7 +1720,8 @@ async fn a_track_the_group_finishes_is_heard_and_everyone_is_told() {
             .unwrap();
     }
     // 从 b 的 30 秒处接着放(200 秒的歌);拨到 150 秒,过半
-    let seeded = phone_and_pc(&pool, &roster, account).await;
+    let seeded =
+        phone_and_pc(&pool, &roster, account).await;
     let sought = group::apply(
         &pool,
         &roster,
@@ -1767,11 +1769,12 @@ async fn a_track_the_group_finishes_is_heard_and_everyone_is_told() {
     .unwrap();
     assert_eq!(heard, vec!["b".to_owned()]);
     for inbox in &mut inboxes {
-        let told = std::iter::from_fn(|| inbox.try_recv().ok())
-            .filter(|message| {
-                *message == ServerSignal::RadioChanged
-            })
-            .count();
+        let told =
+            std::iter::from_fn(|| inbox.try_recv().ok())
+                .filter(|message| {
+                    *message == ServerSignal::RadioChanged
+                })
+                .count();
         assert_eq!(told, 1, "每台收到一次「电台变了」");
     }
     drop_account(&pool, account).await;

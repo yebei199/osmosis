@@ -211,7 +211,8 @@ async fn yesterdays_unheard_picks_stay() {
 /// 以前推过、今天又推的歌挪到今天这批,排在今天这批里它该在的位置,
 /// 不因为留着旧行号插到今天真正新推的前面。
 #[tokio::test]
-async fn a_track_recommended_again_takes_its_place_in_todays_batch() {
+async fn a_track_recommended_again_takes_its_place_in_todays_batch()
+ {
     let case = "daily_again";
     let pool = testing::pool().await;
     let account = testing::fresh_account(&pool, case).await;
@@ -221,9 +222,13 @@ async fn a_track_recommended_again_takes_its_place_in_todays_batch() {
         track_id: id(n),
     };
     let mut conn = pool.acquire().await.unwrap();
-    server::store::daily::add(&mut conn, account.id, &[at(1), at(2)])
-        .await
-        .unwrap();
+    server::store::daily::add(
+        &mut conn,
+        account.id,
+        &[at(1), at(2)],
+    )
+    .await
+    .unwrap();
     sqlx::query(
         "UPDATE daily_picks SET day = day - 1 WHERE account_id = $1",
     )
@@ -232,15 +237,20 @@ async fn a_track_recommended_again_takes_its_place_in_todays_batch() {
     .await
     .unwrap();
 
-    server::store::daily::add(&mut conn, account.id, &[at(3), at(1)])
-        .await
-        .unwrap();
+    server::store::daily::add(
+        &mut conn,
+        account.id,
+        &[at(3), at(1)],
+    )
+    .await
+    .unwrap();
 
-    let order: Vec<String> = server::store::daily::list(&mut conn, account.id)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|entry| entry.track.track_id)
-        .collect();
+    let order: Vec<String> =
+        server::store::daily::list(&mut conn, account.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.track.track_id)
+            .collect();
     assert_eq!(order, vec![id(3), id(1), id(2)]);
 }

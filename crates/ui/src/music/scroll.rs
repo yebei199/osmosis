@@ -46,22 +46,28 @@ pub(super) fn anchored(
     new: &[Line],
 ) -> Option<f32> {
     let old_tops = tops(old);
-    let first = old_tops
-        .iter()
-        .zip(old)
-        .position(|(top, (_, height))| top + height > scroll)?;
+    let first = old_tops.iter().zip(old).position(
+        |(top, (_, height))| top + height > scroll,
+    )?;
     let new_tops = tops(new);
     old.iter().zip(&old_tops).skip(first).find_map(
         |((key, _), old_top)| {
-            let at = new.iter().position(|(id, _)| id == key)?;
-            Some((new_tops[at] - (old_top - scroll)).max(0.0))
+            let at =
+                new.iter().position(|(id, _)| id == key)?;
+            Some(
+                (new_tops[at] - (old_top - scroll))
+                    .max(0.0),
+            )
         },
     )
 }
 
 /// `key` 那一行露出来该滚到哪:让它上面还露一行,看得出它不是第一首。
 /// 不在列表里是 `None`。
-pub(super) fn reveal(lines: &[Line], key: &str) -> Option<f32> {
+pub(super) fn reveal(
+    lines: &[Line],
+    key: &str,
+) -> Option<f32> {
     let at = lines.iter().position(|(id, _)| id == key)?;
     let tops = tops(lines);
     let above =
@@ -103,12 +109,15 @@ mod tests {
     use super::*;
 
     fn rows(ids: &[&str]) -> Vec<Line> {
-        ids.iter().map(|id| ((*id).to_owned(), 10.0)).collect()
+        ids.iter()
+            .map(|id| ((*id).to_owned(), 10.0))
+            .collect()
     }
 
     /// 上面少了一首:眼前那一行不跟着往上跳。
     #[test]
-    fn a_row_removed_above_does_not_move_the_visible_rows() {
+    fn a_row_removed_above_does_not_move_the_visible_rows()
+    {
         let old = rows(&["a", "b", "c", "d", "e"]);
         let new = rows(&["a", "c", "d", "e"]);
 
@@ -130,7 +139,11 @@ mod tests {
     #[test]
     fn a_different_batch_is_not_anchored() {
         assert_eq!(
-            anchored(&rows(&["a", "b"]), 5.0, &rows(&["c"])),
+            anchored(
+                &rows(&["a", "b"]),
+                5.0,
+                &rows(&["c"])
+            ),
             None
         );
     }

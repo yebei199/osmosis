@@ -502,9 +502,9 @@ pub(super) fn fetch_daily(
             == Some(ViewSource::DailyHeard)
             && deck.views.holds(&ViewSource::DailyHeard)
         {
-            let ticket = deck
-                .views
-                .begin_in_background(ViewSource::DailyHeard);
+            let ticket = deck.views.begin_in_background(
+                ViewSource::DailyHeard,
+            );
             land(
                 weak,
                 deck,
@@ -896,7 +896,10 @@ pub(super) fn push_rows(
     // 换之前记下眼前那一行,换完滚回它原来的位置(见 `scroll`)。
     let scrolled = scroll::current(ui);
     let before = (scrolled > 0.0).then(|| {
-        scroll::lines(ui, ui.global::<Player>().get_tracks().iter())
+        scroll::lines(
+            ui,
+            ui.global::<Player>().get_tracks().iter(),
+        )
     });
     let after = scroll::lines(ui, rows.iter().cloned());
     ui.global::<Player>()
@@ -904,7 +907,8 @@ pub(super) fn push_rows(
     // 日推刚打开、第一次摆出行:滚到在放的那首,不在列表里就不动
     let revealing = deck.reveal_now.get()
         && !after.is_empty()
-        && deck.views.current_source() == Some(ViewSource::Daily);
+        && deck.views.current_source()
+            == Some(ViewSource::Daily);
     let target = if revealing {
         deck.reveal_now.set(false);
         scroll::reveal(

@@ -200,8 +200,10 @@ pub(crate) async fn purge(
         prefetch::cancel(conn, track)
             .await
             .map_err(text)?;
-        archive::drop_blocked(state, conn, account_id, track)
-            .await?;
+        archive::drop_blocked(
+            state, conn, account_id, track,
+        )
+        .await?;
     }
     if !blocked.is_empty() {
         tell_radio_changed(state, account_id);

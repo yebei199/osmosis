@@ -28,20 +28,28 @@ pub(in crate::music) fn resume_from(
     entries: Vec<QueueEntryDto>,
 ) -> Option<Resume> {
     let report = head.report.as_ref()?;
-    let entry_ids: Vec<i64> =
-        entries.iter().map(|entry| entry.entry_id).collect();
+    let entry_ids: Vec<i64> = entries
+        .iter()
+        .map(|entry| entry.entry_id)
+        .collect();
     let index = entry_ids
         .iter()
         .position(|id| Some(*id) == report.entry_id)?;
-    let order = report.play_order.as_ref().and_then(|order| {
-        let order: Option<Vec<usize>> = order
-            .iter()
-            .map(|id| entry_ids.iter().position(|e| e == id))
-            .collect();
-        order.filter(|order| {
-            order.iter().enumerate().any(|(at, i)| at != *i)
-        })
-    });
+    let order =
+        report.play_order.as_ref().and_then(|order| {
+            let order: Option<Vec<usize>> = order
+                .iter()
+                .map(|id| {
+                    entry_ids.iter().position(|e| e == id)
+                })
+                .collect();
+            order.filter(|order| {
+                order
+                    .iter()
+                    .enumerate()
+                    .any(|(at, i)| at != *i)
+            })
+        });
     Some(Resume {
         tracks: entries
             .into_iter()
@@ -59,7 +67,10 @@ pub(in crate::music) fn resume_from(
 /// 进程里第一次进音乐页时找回上次的队列。手上已经有歌、或在组里,就不动。
 /// 取不到(没登录、断网)下次进页再试。
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::music) fn restore(ui: &MainWindow, deck: &Deck) {
+pub(in crate::music) fn restore(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
     if deck.restored.replace(true) || !idle(deck) {
         return;
     }
@@ -76,18 +87,21 @@ pub(in crate::music) fn restore(ui: &MainWindow, deck: &Deck) {
                 return;
             }
         };
-        let entries =
-            match api::fetch_queue(head.queue_id, head.revision)
-                .await
-            {
-                Ok(entries) => entries,
-                Err(error) => {
-                    log::debug!("取上次的队列没成: {error}");
-                    deck.restored.set(false);
-                    return;
-                }
-            };
-        let Some(resume) = resume_from(&head, entries) else {
+        let entries = match api::fetch_queue(
+            head.queue_id,
+            head.revision,
+        )
+        .await
+        {
+            Ok(entries) => entries,
+            Err(error) => {
+                log::debug!("取上次的队列没成: {error}");
+                deck.restored.set(false);
+                return;
+            }
+        };
+        let Some(resume) = resume_from(&head, entries)
+        else {
             return;
         };
         // 等网络的这几秒里用户可能已经点了歌、或进了组:那就不恢复了
@@ -95,7 +109,13 @@ pub(in crate::music) fn restore(ui: &MainWindow, deck: &Deck) {
         if !idle(&deck) {
             return;
         }
-        apply(&ui, &deck, head.queue_id, head.revision, resume);
+        apply(
+            &ui,
+            &deck,
+            head.queue_id,
+            head.revision,
+            resume,
+        );
     });
 }
 
@@ -119,11 +139,17 @@ pub(in crate::music) fn apply(
         resume.index + 1,
         resume.position
     );
-    deck.queue.borrow_mut().replace(resume.tracks, resume.index);
+    deck.queue
+        .borrow_mut()
+        .replace(resume.tracks, resume.index);
     if let Some(order) = resume.order {
         deck.queue.borrow_mut().restore_order(order, true);
     }
-    deck.execution.adopt(queue_id, revision, resume.entry_ids);
+    deck.execution.adopt(
+        queue_id,
+        revision,
+        resume.entry_ids,
+    );
     deck.start_at.set(Some(Start {
         at: resume.position,
         playing: false,

@@ -400,13 +400,20 @@ pub fn by_day(
     collapsed: &HashSet<String>,
     label: impl Fn(&str) -> String,
 ) -> Option<Vec<Line>> {
-    if tracks.iter().all(|track| track.facets.picked_on.is_none()) {
+    if tracks
+        .iter()
+        .all(|track| track.facets.picked_on.is_none())
+    {
         return None;
     }
     let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
     for index in filter(tracks, chosen) {
         let day = label(
-            tracks[index].facets.picked_on.as_deref().unwrap_or(""),
+            tracks[index]
+                .facets
+                .picked_on
+                .as_deref()
+                .unwrap_or(""),
         );
         match runs.last_mut() {
             Some((last, members)) if *last == day => {
@@ -427,7 +434,10 @@ pub fn by_day(
                 let shown: Vec<Line> = if folded {
                     Vec::new()
                 } else {
-                    members.into_iter().map(Line::Track).collect()
+                    members
+                        .into_iter()
+                        .map(Line::Track)
+                        .collect()
                 };
                 std::iter::once(header).chain(shown)
             })
@@ -877,11 +887,21 @@ mod tests {
             dated("c", "2026-11-09"),
         ];
         let label = |day: &str| {
-            if day == "2026-11-10" { "今天" } else { "昨天" }.to_owned()
+            if day == "2026-11-10" {
+                "今天"
+            } else {
+                "昨天"
+            }
+            .to_owned()
         };
 
-        let lines = by_day(&tracks, &Chosen::new(), &HashSet::new(), label)
-            .expect("日推该分段");
+        let lines = by_day(
+            &tracks,
+            &Chosen::new(),
+            &HashSet::new(),
+            label,
+        )
+        .expect("日推该分段");
         let folded = by_day(
             &tracks,
             &Chosen::new(),
@@ -890,11 +910,12 @@ mod tests {
         )
         .expect("日推该分段");
 
-        let header = |label: &str, count, collapsed| Line::Header {
-            label: label.to_owned(),
-            count,
-            collapsed,
-        };
+        let header =
+            |label: &str, count, collapsed| Line::Header {
+                label: label.to_owned(),
+                count,
+                collapsed,
+            };
         assert_eq!(
             lines,
             vec![
@@ -907,10 +928,19 @@ mod tests {
         );
         assert_eq!(
             folded,
-            vec![header("今天", 2, true), header("昨天", 1, false), Line::Track(2)]
+            vec![
+                header("今天", 2, true),
+                header("昨天", 1, false),
+                Line::Track(2)
+            ]
         );
         assert_eq!(
-            by_day(&[track("x")], &Chosen::new(), &HashSet::new(), label),
+            by_day(
+                &[track("x")],
+                &Chosen::new(),
+                &HashSet::new(),
+                label
+            ),
             None
         );
     }

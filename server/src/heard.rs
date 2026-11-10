@@ -38,10 +38,9 @@ pub async fn settle(
     else {
         return Ok(false);
     };
-    let listed =
-        radio::holds(&mut conn, account, &track).await?
-            || daily::holds(&mut conn, account, &track)
-                .await?;
+    let listed = radio::holds(&mut conn, account, &track)
+        .await?
+        || daily::holds(&mut conn, account, &track).await?;
     if listed {
         signaling::tell_account(
             roster,

@@ -4,8 +4,8 @@
 
 use server::error::AppError;
 use server::store::account::{Account, register};
-use server::store::playlist::TrackRef;
 use server::store::history::PlayRef;
+use server::store::playlist::TrackRef;
 use server::store::{db, history};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -426,7 +426,8 @@ fn heard_is_half_the_track_or_four_minutes() {
 
 /// 听够了才记成听过,只记一次;没听够、只起播的都不算。
 #[tokio::test]
-async fn settle_marks_heard_once_and_only_past_the_threshold() {
+async fn settle_marks_heard_once_and_only_past_the_threshold()
+ {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_heard").await;
 
@@ -478,13 +479,19 @@ async fn settle_marks_heard_once_and_only_past_the_threshold() {
     .unwrap();
     assert_eq!(
         (skipped, first, again, heard),
-        (None, Some(track("1")), None, vec!["1".to_owned()])
+        (
+            None,
+            Some(track("1")),
+            None,
+            vec!["1".to_owned()]
+        )
     );
 }
 
 /// 组里没有行号:认这首最近的一次起播,两次补记取大的。
 #[tokio::test]
-async fn settle_latest_of_a_track_keeps_the_larger_report() {
+async fn settle_latest_of_a_track_keeps_the_larger_report()
+{
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_latest").await;
 
@@ -563,11 +570,16 @@ async fn known_among_picks_only_this_accounts_plays() {
 async fn heard_among_answers_only_heard_tracks() {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_among").await;
-    for (id, listened) in [("1", 200_000), ("2", 1_000), ("3", 150_000)] {
-        let event =
-            history::record(&mut tx, account.id, &track(id))
-                .await
-                .unwrap();
+    for (id, listened) in
+        [("1", 200_000), ("2", 1_000), ("3", 150_000)]
+    {
+        let event = history::record(
+            &mut tx,
+            account.id,
+            &track(id),
+        )
+        .await
+        .unwrap();
         history::settle(
             &mut tx,
             account.id,
@@ -583,7 +595,12 @@ async fn heard_among_answers_only_heard_tracks() {
         &mut tx,
         account.id,
         "netease",
-        &["3".to_owned(), "2".to_owned(), "1".to_owned(), "4".to_owned()],
+        &[
+            "3".to_owned(),
+            "2".to_owned(),
+            "1".to_owned(),
+            "4".to_owned(),
+        ],
     )
     .await
     .unwrap();

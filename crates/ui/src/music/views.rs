@@ -264,7 +264,10 @@ impl Views {
     }
 
     /// 这个视图手上有没有一份(不切过去)。
-    pub(crate) fn holds(&self, source: &ViewSource) -> bool {
+    pub(crate) fn holds(
+        &self,
+        source: &ViewSource,
+    ) -> bool {
         let account = self.account();
         self.state.borrow().entries.iter().any(|entry| {
             entry.key.account == account

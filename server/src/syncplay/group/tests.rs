@@ -673,7 +673,7 @@ fn a_stuck_output_only_delays_the_start_up_to_the_cap() {
 /// 暂停、跳转不算;结束时交出听到的位置。
 #[test]
 fn a_play_ends_on_a_change_of_track_or_a_restart_not_on_pause_or_seek()
-{
+ {
     // jump 锚在 0 + START_WAIT_US;从那之后 60 秒
     let start = START_WAIT_US;
     let at = start + 60 * SEC;
@@ -706,11 +706,10 @@ fn a_play_ends_on_a_change_of_track_or_a_restart_not_on_pause_or_seek()
 #[test]
 fn halting_at_the_tail_ends_the_play() {
     let mut group = group();
-    group
-        .jump("phone", (7, 1), &list(), 3, 0, 42)
-        .unwrap();
+    group.jump("phone", (7, 1), &list(), 3, 0, 42).unwrap();
     let before = now(&group).clone();
-    let at = START_WAIT_US + TRACK as i64 + ADVANCE_GRACE_US;
+    let at =
+        START_WAIT_US + TRACK as i64 + ADVANCE_GRACE_US;
 
     assert!(group.roll(&list(), at));
 
@@ -743,15 +742,35 @@ fn prev_matches_the_solo_rule_in_app_core() {
         facets: Default::default(),
     };
     for at in 1..=3 {
-        for mode in [LoopModeDto::Off, LoopModeDto::All, LoopModeDto::One] {
-            for blocked in [None, Some(1), Some(2), Some(3)] {
+        for mode in [
+            LoopModeDto::Off,
+            LoopModeDto::All,
+            LoopModeDto::One,
+        ] {
+            for blocked in [None, Some(1), Some(2), Some(3)]
+            {
                 for played in [SEC, 5 * SEC] {
-                    let list = blocked.map_or_else(list, blocking);
+                    let list =
+                        blocked.map_or_else(list, blocking);
                     let mut group = group();
-                    group.jump("phone", (7, 1), &list, at, 0, 42).unwrap();
+                    group
+                        .jump(
+                            "phone",
+                            (7, 1),
+                            &list,
+                            at,
+                            0,
+                            42,
+                        )
+                        .unwrap();
                     group.set_loop("phone", mode).unwrap();
                     group
-                        .step("phone", &list, -1, START_WAIT_US + played)
+                        .step(
+                            "phone",
+                            &list,
+                            -1,
+                            START_WAIT_US + played,
+                        )
                         .unwrap();
 
                     let mut queue = app_core::Queue::new(
@@ -759,16 +778,33 @@ fn prev_matches_the_solo_rule_in_app_core() {
                         (at - 1) as usize,
                     );
                     queue.set_loop_mode(match mode {
-                        LoopModeDto::Off => app_core::LoopMode::Off,
-                        LoopModeDto::All => app_core::LoopMode::All,
-                        LoopModeDto::One => app_core::LoopMode::One,
+                        LoopModeDto::Off => {
+                            app_core::LoopMode::Off
+                        }
+                        LoopModeDto::All => {
+                            app_core::LoopMode::All
+                        }
+                        LoopModeDto::One => {
+                            app_core::LoopMode::One
+                        }
                     });
                     let solo = queue
                         .back(
-                            Duration::from_micros(played as u64),
-                            |track| Some(track.id.parse().unwrap()) == blocked,
+                            Duration::from_micros(
+                                played as u64,
+                            ),
+                            |track| {
+                                Some(
+                                    track
+                                        .id
+                                        .parse()
+                                        .unwrap(),
+                                ) == blocked
+                            },
                         )
-                        .map(|track| track.id.parse::<i64>().unwrap());
+                        .map(|track| {
+                            track.id.parse::<i64>().unwrap()
+                        });
 
                     assert_eq!(
                         Some(now(&group).entry_id),

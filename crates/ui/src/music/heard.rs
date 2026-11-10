@@ -51,8 +51,9 @@ pub(super) fn skipper(
 ) -> impl Fn(&TrackDto) -> bool + use<> {
     let ids = sourced(deck).then(|| deck.heard.ids.clone());
     move |track| {
-        ids.as_ref()
-            .is_some_and(|ids| ids.borrow().contains(&track.id))
+        ids.as_ref().is_some_and(|ids| {
+            ids.borrow().contains(&track.id)
+        })
     }
 }
 

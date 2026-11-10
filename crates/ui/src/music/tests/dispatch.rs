@@ -827,8 +827,13 @@ fn next_past_the_last_track_stops_the_sound() {
             ui.global::<Player>().invoke_next_track();
 
             assert!(player.empty(), "放空了还在响");
-            assert_eq!(ui.global::<Player>().get_now_id(), "");
-            assert!(!ui.global::<Player>().get_is_playing());
+            assert_eq!(
+                ui.global::<Player>().get_now_id(),
+                ""
+            );
+            assert!(
+                !ui.global::<Player>().get_is_playing()
+            );
         },
     );
 }
