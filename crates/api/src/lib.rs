@@ -155,8 +155,9 @@ pub use contract::{
 // 队列那一组同理:ui 要发的请求体、要读的响应体,以及两侧共用的那两个上限,
 // 都从取数的这一层见到(`docs/adr/0031`)。
 pub use contract::{
-    MAX_QUEUE_ENTRIES, QUEUE_PAGE_LIMIT, QueueEntryDto,
-    QueueHeadDto, QueueIntentDto, QueueIntentState,
-    QueueOperationOutcomeDto, QueuePageDto, QueueRefDto,
-    QueueReportAckDto, QueueReportDto, SetQueueIntentDto,
+    MAX_QUEUE_ENTRIES, PlayProgressDto, QUEUE_PAGE_LIMIT,
+    QueueEntryDto, QueueHeadDto, QueueIntentDto,
+    QueueIntentState, QueueOperationOutcomeDto,
+    QueuePageDto, QueueRefDto, QueueReportAckDto,
+    QueueReportDto, SetQueueIntentDto,
 };

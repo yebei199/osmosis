@@ -1287,6 +1287,10 @@ fn saved_head(
             position_ms: 61_500,
             state: app_core::RemotePlayState::Paused,
             operation: None,
+            play: Some(api::PlayProgressDto {
+                play_event_id: 77,
+                listened_ms: 100_000,
+            }),
         }),
     }
 }
@@ -1361,6 +1365,59 @@ fn restoring_points_at_the_track_without_playing() {
     );
     assert_eq!(deck.execution.identity().0, Some(9));
     assert!(!ui.global::<Player>().get_is_playing());
+}
+
+/// 恢复接着停下那一段算:同一行起播事件,累计从存下的 100 秒往上加,按下播放出声时
+/// 不另记一次起播。跨着重启听够了也算听过(用户 2026-11-10)。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn restoring_continues_the_play_that_was_stopped() {
+    let (ui, deck) = deck_window();
+    let resume = super::resume_from(
+        &saved_head(Some(101), None),
+        saved_entries(),
+    )
+    .expect("该恢复");
+
+    super::apply(&ui, &deck, 9, 2, resume);
+
+    let play =
+        (*deck.current_play.borrow()).expect("接着那一行");
+    assert_eq!(play.id, 77);
+    assert!(play.continued, "出声时不另记起播");
+    let clock = deck
+        .listen_clock
+        .get()
+        .observe(core::time::Duration::from_millis(63_500));
+    assert_eq!(clock.listened_ms(), 102_000);
+}
+
+/// 检查点报听了多久,事件行留在手上:下一次检查点、这一段结束时还接着报同一行。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_checkpoint_reports_the_play_without_letting_it_go() {
+    let (_ui, deck) = deck_window();
+    let play = super::CurrentPlay {
+        id: 5,
+        duration_ms: 200_000,
+        continued: false,
+    };
+    deck.current_play.replace(Some(play));
+    deck.listen_clock.set(super::ListenClock::resumed(
+        30_000,
+        core::time::Duration::ZERO,
+    ));
+
+    super::checkpoint(&deck, 0);
+
+    assert_eq!(*deck.current_play.borrow(), Some(play));
+    assert_eq!(
+        super::report_listened_so_far(&deck),
+        Some(api::PlayProgressDto {
+            play_event_id: 5,
+            listened_ms: 30_000,
+        })
+    );
 }
 
 // ── 日推按推荐日分段(用户 2026-11-10 的 7)──

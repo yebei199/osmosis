@@ -425,8 +425,16 @@ pub(in crate::music) fn start_auto_advance(
                     }
                     _ => 0,
                 };
+                // 恢复时接过来的那一行已经记过起播:接着往它上累计,不另记一次
+                let continued = deck
+                    .current_play
+                    .borrow_mut()
+                    .as_mut()
+                    .is_some_and(|play| {
+                        core::mem::take(&mut play.continued)
+                    });
                 let current_play = deck.current_play.clone();
-                slint::spawn_local(async move {
+                (!continued).then(|| slint::spawn_local(async move {
                     match api::record_play(&platform, &id)
                         .await
                     {
@@ -435,6 +443,7 @@ pub(in crate::music) fn start_auto_advance(
                                 CurrentPlay {
                                     id: ack.id,
                                     duration_ms,
+                                    continued: false,
                                 },
                             ));
                         }
@@ -445,7 +454,7 @@ pub(in crate::music) fn start_auto_advance(
                         }
                     }
                 })
-                .expect("event loop must be running");
+                .expect("event loop must be running"));
             }
 
             // 断流先判:两个出口在同一刻都可能成立,而断了就不该切歌 ——
@@ -503,7 +512,7 @@ const CHECKPOINT_EVERY: u32 = 15;
 /// 清零后的状态,最后那不到一秒就记不上。
 ///
 /// 手上没有挂着的事件行(还没报上起播、或已经报过一次)就什么都不做 ——
-/// `take()` 保证同一段播放只报一次,不会因为连着两次切歌各报一遍半截的数字。
+/// `take()` 保证这一段结束后不会再往它那一行上报:下一段的累计是从零起的。
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::music) fn report_previous_listened(
     deck: &Deck,
@@ -513,18 +522,45 @@ pub(in crate::music) fn report_previous_listened(
     else {
         return;
     };
-    let Ok(player) = deck.player.as_ref() else {
-        return;
-    };
-    let clock =
-        deck.listen_clock.get().observe(player.position());
-    deck.listen_clock.set(clock);
-    let listened_ms = clock.listened_ms();
+    send_listened(current, listened_now(deck));
+}
+
+/// 在放的这一段到此刻累计听了多久,补记给服务端,事件行留在手上:检查点(每 15 秒、
+/// 暂停时)都报一次,进程被杀也只丢最后一小段。服务端同一行取大的,每次都判一遍听没
+/// 听过。交回这一段的进度,检查点带着它,重启后接着这一行累计。
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::music) fn report_listened_so_far(
+    deck: &Deck,
+) -> Option<api::PlayProgressDto> {
+    let current = (*deck.current_play.borrow())?;
+    let listened_ms = listened_now(deck);
+    send_listened(current, listened_ms);
+    Some(api::PlayProgressDto {
+        play_event_id: current.id,
+        listened_ms,
+    })
+}
+
+/// 把播放器此刻的位置记进听歌时钟,读出累计听了多少毫秒。
+#[cfg(not(target_arch = "wasm32"))]
+fn listened_now(deck: &Deck) -> i64 {
+    if let Ok(player) = deck.player.as_ref() {
+        deck.listen_clock.set(
+            deck.listen_clock
+                .get()
+                .observe(player.position()),
+        );
+    }
+    deck.listen_clock.get().listened_ms()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn send_listened(play: CurrentPlay, listened_ms: i64) {
     slint::spawn_local(async move {
         if let Err(error) = api::report_listened(
-            current.id,
+            play.id,
             listened_ms,
-            current.duration_ms,
+            play.duration_ms,
         )
         .await
         {

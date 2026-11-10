@@ -145,6 +145,8 @@ pub struct Report {
     pub round: i64,
     pub position_ms: i64,
     pub play_state: String,
+    /// 在放的这一段的起播事件与累计听了多久(毫秒),见 `contract::PlayProgressDto`。
+    pub play: Option<(i64, i64)>,
 }
 
 /// 一页条目,连同这一版一共有多少条。
@@ -193,6 +195,8 @@ type ReportRow = (
     i64,
     i64,
     String,
+    Option<i64>,
+    Option<i64>,
 );
 
 /// 新建一个队列,条目成为它的第一版。
@@ -515,7 +519,8 @@ pub async fn head(
 
     let report: Option<ReportRow> = sqlx::query_as(
         "SELECT device_id, epoch, state_seq, applied_revision, entry_id,
-                play_order, round, position_ms, play_state
+                play_order, round, position_ms, play_state,
+                play_event_id, listened_ms
          FROM play_queue_reports WHERE queue_id = $1",
     )
     .bind(queue_id)
@@ -554,6 +559,8 @@ pub async fn head(
                 round,
                 position_ms,
                 play_state,
+                play_event_id,
+                listened_ms,
             )| Report {
                 device_id,
                 epoch,
@@ -564,6 +571,7 @@ pub async fn head(
                 round,
                 position_ms,
                 play_state,
+                play: play_event_id.zip(listened_ms),
             },
         ),
     })
@@ -653,8 +661,9 @@ pub async fn record_report(
     let done = sqlx::query(
         "INSERT INTO play_queue_reports
              (queue_id, device_id, epoch, state_seq, applied_revision,
-              entry_id, play_order, round, position_ms, play_state)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              entry_id, play_order, round, position_ms, play_state,
+              play_event_id, listened_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (queue_id) DO UPDATE SET
              device_id = excluded.device_id,
              epoch = excluded.epoch,
@@ -666,6 +675,8 @@ pub async fn record_report(
              round = excluded.round,
              position_ms = excluded.position_ms,
              play_state = excluded.play_state,
+             play_event_id = excluded.play_event_id,
+             listened_ms = excluded.listened_ms,
              reported_at = now()
          WHERE (excluded.epoch, excluded.state_seq)
              > (play_queue_reports.epoch, play_queue_reports.state_seq)",
@@ -680,6 +691,8 @@ pub async fn record_report(
     .bind(report.round)
     .bind(report.position_ms)
     .bind(&report.play_state)
+    .bind(report.play.map(|(event, _)| event))
+    .bind(report.play.map(|(_, listened)| listened))
     .execute(&mut **tx)
     .await?;
 

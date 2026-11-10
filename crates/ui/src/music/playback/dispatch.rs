@@ -516,6 +516,8 @@ pub(in crate::music) fn checkpoint(
     deck: &Deck,
     index: usize,
 ) {
+    // 听了多久先报:这一批还没同步上去、检查点存不了时也照样记
+    let play = report_listened_so_far(deck);
     let (Some(queue_id), _, Some(applied_revision)) =
         deck.execution.identity()
     else {
@@ -559,6 +561,7 @@ pub(in crate::music) fn checkpoint(
         position_ms,
         state,
         operation: None,
+        play,
     };
 
     let _ = slint::spawn_local(async move {

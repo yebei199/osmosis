@@ -131,6 +131,7 @@ fn report(
         round: 0,
         position_ms: 0,
         play_state: "playing".to_owned(),
+        play: None,
     }
 }
 
@@ -719,6 +720,53 @@ async fn a_report_without_an_order_keeps_the_stored_one() {
         "不带排列的报告不该把库里那份清掉"
     );
     assert_eq!(stored.position_ms, 1_000);
+}
+
+/// 检查点带着在放的这一段(起播事件、累计听了多久):读回来原样,重启后的恢复靠它接着
+/// 那一行累计。下一条检查点不带(换了歌、新的还没报上起播)就清掉,不把上一首的留给新的。
+#[tokio::test]
+async fn a_report_carries_the_play_in_progress() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "q_play").await;
+    let published = queue::create(
+        &mut tx,
+        account.id,
+        PC1,
+        &[entry("a")],
+    )
+    .await
+    .expect("发布队列应该成功");
+    let stored =
+        async |tx: &mut Transaction<'static, Postgres>| {
+            queue::head(tx, account.id, published.queue_id)
+                .await
+                .expect("读队列头应该成功")
+                .report
+                .expect("该有一份报告")
+                .play
+        };
+
+    let mut playing = report(200, 1, published.revision);
+    playing.play = Some((41, 95_000));
+    queue::record_report(
+        &mut tx,
+        account.id,
+        published.queue_id,
+        &playing,
+    )
+    .await
+    .expect("写报告应该成功");
+    assert_eq!(stored(&mut tx).await, Some((41, 95_000)));
+
+    queue::record_report(
+        &mut tx,
+        account.id,
+        published.queue_id,
+        &report(200, 2, published.revision),
+    )
+    .await
+    .expect("写报告应该成功");
+    assert_eq!(stored(&mut tx).await, None);
 }
 
 /// 播放端还停在旧版本上时,那个版本不能被回收掉(`docs/adr/0031` 五)。

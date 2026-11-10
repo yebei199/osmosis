@@ -7,10 +7,13 @@ use super::*;
 /// 起播上报成功后记住,换歌或停下时用它补记听了多久 —— 见
 /// `playback::transport` 的 `report_previous_listened`。
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CurrentPlay {
     pub(super) id: i64,
     pub(super) duration_ms: i64,
+    /// 这一行是重启前那个进程记的,恢复时接了过来(见 `playback::restore`):
+    /// 按下播放出声时不另记一次起播,接着往这一行上累计。出过一次声就放下。
+    pub(super) continued: bool,
 }
 
 /// 这一段播放**累计**听了多久(用户 2026-11-10:听过 = 听满一半或 240 秒,算的是
@@ -29,6 +32,19 @@ impl ListenClock {
     /// 两次读位置之间,正常播放最多能走多远。轮询一秒一次,留出主线程卡顿的余量。
     const MAX_STEP: core::time::Duration =
         core::time::Duration::from_secs(3);
+
+    /// 接着重启前那一段:已经听了 `listened_ms`,位置从 `at` 起算。
+    pub(super) fn resumed(
+        listened_ms: i64,
+        at: core::time::Duration,
+    ) -> Self {
+        Self {
+            listened: core::time::Duration::from_millis(
+                u64::try_from(listened_ms).unwrap_or(0),
+            ),
+            last: at,
+        }
+    }
 
     /// 读到此刻的位置,把正常走过的那一段记上。
     #[must_use]

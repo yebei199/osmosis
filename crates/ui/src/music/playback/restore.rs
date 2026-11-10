@@ -21,6 +21,8 @@ pub(in crate::music) struct Resume {
     /// 随机时的播放次序(曲目下标);不随机是 `None`。
     pub(in crate::music) order: Option<Vec<usize>>,
     pub(in crate::music) position: Duration,
+    /// 停下那一段的起播事件与累计听了多久:接着往那一行上累计。
+    pub(in crate::music) play: Option<api::PlayProgressDto>,
 }
 
 pub(in crate::music) fn resume_from(
@@ -61,6 +63,7 @@ pub(in crate::music) fn resume_from(
         position: Duration::from_millis(
             u64::try_from(report.position_ms).unwrap_or(0),
         ),
+        play: report.play,
     })
 }
 
@@ -155,6 +158,24 @@ pub(in crate::music) fn apply(
         playing: false,
     }));
     play_current(ui, deck);
+    // 停下那一段接着算:同一行起播事件、累计接着往上加,跨着重启听够了也算听过。
+    // 要在 `play_current` 之后 —— 它会把上一段的事件行与时钟清掉。
+    if let Some(play) = resume.play {
+        let duration_ms = deck
+            .queue
+            .borrow()
+            .current()
+            .map_or(0, |track| track.duration_ms);
+        deck.current_play.replace(Some(CurrentPlay {
+            id: play.play_event_id,
+            duration_ms,
+            continued: true,
+        }));
+        deck.listen_clock.set(ListenClock::resumed(
+            play.listened_ms,
+            resume.position,
+        ));
+    }
     mark_sync(ui, deck);
     push_media(ui, deck);
 }

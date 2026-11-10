@@ -181,6 +181,25 @@ pub struct QueueReportDto {
     pub position_ms: i64,
     pub state: RemotePlayState,
     pub operation: Option<QueueOperationOutcomeDto>,
+    /// 在放的这一段的起播事件与到这一刻累计听了多久。重启后恢复时接着这一行累计,
+    /// 跨着重启听够了也算听过。还没报上起播时没有。
+    #[serde(default)]
+    pub play: Option<PlayProgressDto>,
+}
+
+/// 一段播放到某一刻的进度:哪一条起播事件(`play_events` 的行号)、累计听了多少毫秒。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+)]
+pub struct PlayProgressDto {
+    pub play_event_id: i64,
+    pub listened_ms: i64,
 }
 
 /// 一份报告收没收下。

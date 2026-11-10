@@ -22,11 +22,11 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use contract::{
-    CreateQueueDto, PublishQueueDto, QueueEntryDto,
-    QueueHeadDto, QueueIntentDto, QueueIntentState,
-    QueuePageDto, QueueRefDto, QueueReportAckDto,
-    QueueReportDto, RemotePlayState, SetQueueIntentDto,
-    TrackDto,
+    CreateQueueDto, PlayProgressDto, PublishQueueDto,
+    QueueEntryDto, QueueHeadDto, QueueIntentDto,
+    QueueIntentState, QueuePageDto, QueueRefDto,
+    QueueReportAckDto, QueueReportDto, RemotePlayState,
+    SetQueueIntentDto, TrackDto,
 };
 use serde::Deserialize;
 
@@ -285,6 +285,9 @@ pub(crate) async fn report_queue_state(
             position_ms: body.position_ms,
             play_state: play_state_name(body.state)
                 .to_owned(),
+            play: body.play.map(|play| {
+                (play.play_event_id, play.listened_ms)
+            }),
         },
     )
     .await
@@ -385,6 +388,14 @@ fn as_report(report: Report) -> QueueReportDto {
         // 操作下场不回给读的人:它是写那一刻的一次性汇报,
         // 已经落在 `intent.state` 上了。
         operation: None,
+        play: report.play.map(
+            |(play_event_id, listened_ms)| {
+                PlayProgressDto {
+                    play_event_id,
+                    listened_ms,
+                }
+            },
+        ),
     }
 }
 
