@@ -1291,6 +1291,7 @@ fn saved_head(
                 play_event_id: 77,
                 listened_ms: 100_000,
             }),
+            source: None,
         }),
     }
 }
@@ -1390,6 +1391,42 @@ fn restoring_continues_the_play_that_was_stopped() {
         .get()
         .observe(core::time::Duration::from_millis(63_500));
     assert_eq!(clock.listened_ms(), 102_000);
+}
+
+/// 日推、电台起播的那一批,重启恢复后还是日推、电台的:接着跳过听过的、接着续电台;
+/// 检查点照样报出它的来源,下一次重启也接得上。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_restored_daily_or_radio_queue_keeps_its_source() {
+    let (_ui, deck) = deck_window();
+    for source in [
+        api::QueueSourceDto::Daily,
+        api::QueueSourceDto::Fm,
+        api::QueueSourceDto::Heart {
+            seed: "a".to_owned(),
+        },
+    ] {
+        let mut head = saved_head(Some(101), None);
+        head.report.as_mut().expect("有检查点").source =
+            Some(source.clone());
+        let resume =
+            super::resume_from(&head, saved_entries())
+                .expect("该恢复");
+        deck.queue
+            .borrow_mut()
+            .replace(resume.tracks.clone(), resume.index);
+
+        super::heard::resume_source(
+            &deck,
+            resume.source.as_ref().expect("带着来源"),
+        );
+
+        assert!(super::heard::sourced(&deck), "{source:?}");
+        assert_eq!(
+            super::heard::source(&deck),
+            Some(source)
+        );
+    }
 }
 
 /// 检查点报听了多久,事件行留在手上:下一次检查点、这一段结束时还接着报同一行。

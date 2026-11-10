@@ -132,6 +132,7 @@ fn report(
         position_ms: 0,
         play_state: "playing".to_owned(),
         play: None,
+        source: None,
     }
 }
 
@@ -722,8 +723,9 @@ async fn a_report_without_an_order_keeps_the_stored_one() {
     assert_eq!(stored.position_ms, 1_000);
 }
 
-/// 检查点带着在放的这一段(起播事件、累计听了多久):读回来原样,重启后的恢复靠它接着
-/// 那一行累计。下一条检查点不带(换了歌、新的还没报上起播)就清掉,不把上一首的留给新的。
+/// 检查点带着在放的这一段(起播事件、累计听了多久)与这一批的来源:读回来原样,重启后的
+/// 恢复靠它接着那一行累计、接着当电台或日推的批次。下一条检查点不带(换了歌、新的还没
+/// 报上起播;换了一批别处点的)就清掉,不把上一首、上一批的留给新的。
 #[tokio::test]
 async fn a_report_carries_the_play_in_progress() {
     let mut tx = tx().await;
@@ -743,11 +745,14 @@ async fn a_report_carries_the_play_in_progress() {
                 .expect("读队列头应该成功")
                 .report
                 .expect("该有一份报告")
-                .play
         };
 
     let mut playing = report(200, 1, published.revision);
     playing.play = Some((41, 95_000));
+    playing.source =
+        Some(contract::QueueSourceDto::Heart {
+            seed: "a".to_owned(),
+        });
     queue::record_report(
         &mut tx,
         account.id,
@@ -756,7 +761,14 @@ async fn a_report_carries_the_play_in_progress() {
     )
     .await
     .expect("写报告应该成功");
-    assert_eq!(stored(&mut tx).await, Some((41, 95_000)));
+    let carried = stored(&mut tx).await;
+    assert_eq!(carried.play, Some((41, 95_000)));
+    assert_eq!(
+        carried.source,
+        Some(contract::QueueSourceDto::Heart {
+            seed: "a".to_owned()
+        })
+    );
 
     queue::record_report(
         &mut tx,
@@ -766,7 +778,11 @@ async fn a_report_carries_the_play_in_progress() {
     )
     .await
     .expect("写报告应该成功");
-    assert_eq!(stored(&mut tx).await, None);
+    let cleared = stored(&mut tx).await;
+    assert_eq!(
+        (cleared.play, cleared.source),
+        (None, None)
+    );
 }
 
 /// 播放端还停在旧版本上时,那个版本不能被回收掉(`docs/adr/0031` 五)。

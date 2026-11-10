@@ -562,6 +562,7 @@ pub(in crate::music) fn checkpoint(
         state,
         operation: None,
         play,
+        source: crate::music::heard::source(deck),
     };
 
     let _ = slint::spawn_local(async move {

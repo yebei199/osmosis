@@ -288,6 +288,7 @@ pub(crate) async fn report_queue_state(
             play: body.play.map(|play| {
                 (play.play_event_id, play.listened_ms)
             }),
+            source: body.source,
         },
     )
     .await
@@ -396,6 +397,7 @@ fn as_report(report: Report) -> QueueReportDto {
                 }
             },
         ),
+        source: report.source,
     }
 }
 

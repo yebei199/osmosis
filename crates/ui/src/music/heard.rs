@@ -42,6 +42,51 @@ pub(super) fn sourced(deck: &Deck) -> bool {
         || radio::owns_batch(deck)
 }
 
+/// 队列此刻这一批从哪儿起播。检查点带着它,重启后恢复时据此接着当日推或电台的批次
+/// (见 [`resume_source`])。
+pub(super) fn source(
+    deck: &Deck,
+) -> Option<api::QueueSourceDto> {
+    if deck.heard.daily_batch.get()
+        == Some(deck.queue.borrow().batch())
+    {
+        return Some(api::QueueSourceDto::Daily);
+    }
+    radio::mode_now(deck).map(|mode| match mode {
+        api::RadioMode::Fm => api::QueueSourceDto::Fm,
+        api::RadioMode::Heart { seed } => {
+            api::QueueSourceDto::Heart { seed }
+        }
+    })
+}
+
+/// 重启后恢复出来的这一批是从 `source` 起播的:接着当日推或电台的批次 —— 自动续播
+/// 照旧跳过听过的,电台快放完照旧续歌。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn resume_source(
+    deck: &Deck,
+    source: &api::QueueSourceDto,
+) {
+    match source {
+        api::QueueSourceDto::Daily => {
+            deck.heard
+                .mark_daily(deck.queue.borrow().batch());
+        }
+        api::QueueSourceDto::Fm => {
+            radio::resume(deck, api::RadioMode::Fm);
+        }
+        api::QueueSourceDto::Heart { seed } => {
+            radio::resume(
+                deck,
+                api::RadioMode::Heart {
+                    seed: seed.clone(),
+                },
+            )
+        }
+    }
+    refresh(deck);
+}
+
 /// 自动续播该跳过哪些:这一批是日推或电台的,其中已经听过的。**只在循环关着时跳**:
 /// 列表循环里每一首都会重听,跳过听过的就只剩一首来回放;单曲循环放的就是点名的那首。
 ///

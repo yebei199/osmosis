@@ -451,6 +451,27 @@ pub(super) fn owns_batch(deck: &Deck) -> bool {
     }
 }
 
+/// 本机此刻这一批归哪种电台(独奏时);不归电台是 `None`。
+pub(super) fn mode_now(
+    deck: &Deck,
+) -> Option<api::RadioMode> {
+    if deck.group.is_member() || !owns_batch(deck) {
+        return None;
+    }
+    deck.radio.inner.borrow().mode.clone()
+}
+
+/// 重启后恢复出来的这一批是 `mode` 电台起播的:接着当电台的批次。上一轮的筛选不在
+/// 检查点里,续歌不带筛选。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn resume(deck: &Deck, mode: api::RadioMode) {
+    let tracks = deck.queue.borrow().tracks().to_vec();
+    let batch = deck.queue.borrow().batch();
+    let mut state = deck.radio.inner.borrow_mut();
+    state.restart(mode, &tracks);
+    state.batch = batch;
+}
+
 /// 组此刻那一版组队列。
 fn shared_now(deck: &Deck) -> Option<(i64, i64)> {
     deck.group.now().map(|now| (now.queue_id, now.revision))

@@ -159,5 +159,5 @@ pub use contract::{
     QueueEntryDto, QueueHeadDto, QueueIntentDto,
     QueueIntentState, QueueOperationOutcomeDto,
     QueuePageDto, QueueRefDto, QueueReportAckDto,
-    QueueReportDto, SetQueueIntentDto,
+    QueueReportDto, QueueSourceDto, SetQueueIntentDto,
 };

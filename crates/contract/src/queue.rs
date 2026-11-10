@@ -185,6 +185,21 @@ pub struct QueueReportDto {
     /// 跨着重启听够了也算听过。还没报上起播时没有。
     #[serde(default)]
     pub play: Option<PlayProgressDto>,
+    /// 这一批是从哪儿起播的。重启后恢复时据此接着当日推或电台的批次。
+    #[serde(default)]
+    pub source: Option<QueueSourceDto>,
+}
+
+/// 一批歌是从哪儿起播的:日推、私人 FM、心动模式(以 `seed` 这首为起点)。
+/// 别处点的(歌单、搜索)不算,没有来源。
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueueSourceDto {
+    Daily,
+    Fm,
+    Heart { seed: String },
 }
 
 /// 一段播放到某一刻的进度:哪一条起播事件(`play_events` 的行号)、累计听了多少毫秒。

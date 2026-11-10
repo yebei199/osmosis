@@ -23,6 +23,9 @@ pub(in crate::music) struct Resume {
     pub(in crate::music) position: Duration,
     /// 停下那一段的起播事件与累计听了多久:接着往那一行上累计。
     pub(in crate::music) play: Option<api::PlayProgressDto>,
+    /// 这一批从哪儿起播:日推、电台的批次恢复后接着当日推、电台的。
+    pub(in crate::music) source:
+        Option<api::QueueSourceDto>,
 }
 
 pub(in crate::music) fn resume_from(
@@ -64,6 +67,7 @@ pub(in crate::music) fn resume_from(
             u64::try_from(report.position_ms).unwrap_or(0),
         ),
         play: report.play,
+        source: report.source.clone(),
     })
 }
 
@@ -153,6 +157,9 @@ pub(in crate::music) fn apply(
         revision,
         resume.entry_ids,
     );
+    if let Some(source) = &resume.source {
+        crate::music::heard::resume_source(deck, source);
+    }
     deck.start_at.set(Some(Start {
         at: resume.position,
         playing: false,

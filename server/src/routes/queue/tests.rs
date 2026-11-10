@@ -62,6 +62,7 @@ fn report(
         state: RemotePlayState::Playing,
         operation: None,
         play: None,
+        source: None,
     }
 }
 
