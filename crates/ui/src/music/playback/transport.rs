@@ -63,6 +63,7 @@ pub(in crate::music) fn play_current(
     // 播放页的歌名与封面。旧封面立刻清掉 —— 新歌配旧图比空着更误导。
     ui.global::<Player>()
         .set_now_id(track.id.clone().into());
+    reveal_now_playing(ui, deck);
     ui.global::<Viz>()
         .set_now_title(track.title.clone().into());
     ui.global::<Viz>().set_now_artists(
@@ -291,6 +292,7 @@ fn push_stopped(ui: &MainWindow, deck: &Deck) {
     }
     ui.global::<Player>().set_has_track(track.is_some());
     ui.global::<Player>().set_now_id(id.into());
+    reveal_now_playing(ui, deck);
     ui.global::<Player>().set_is_playing(false);
     ui.global::<Player>().set_now_loading(false);
     ui.global::<Player>().set_buffering(false);

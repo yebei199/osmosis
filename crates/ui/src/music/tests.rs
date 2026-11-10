@@ -1173,6 +1173,45 @@ fn opening_daily_scrolls_to_the_track_now_playing() {
     assert!(!deck.reveal_now.get(), "只滚这一次");
 }
 
+/// 重启后先打开日推、恢复后才知道在放哪首:行先到就等它,它一到就滚过去,仍只滚一次。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn daily_scrolls_to_the_restored_track_once_it_is_known() {
+    let (ui, deck) = deck_window_pumped();
+    super::facets::bind(&ui, &deck);
+    deck.last_daily
+        .set(Some(daily_day(chrono::Utc::now())));
+    ui.global::<Shell>().set_destination(0);
+    let row = ui.global::<Player>().get_track_row_height();
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        async { Ok(batch(&["x", "y", "z", "a", "b"])) },
+    );
+    assert_eq!(
+        ui.global::<Player>().get_list_scroll_to(),
+        0.0
+    );
+    assert!(
+        deck.reveal_now.get(),
+        "还不知道在放哪首,接着等"
+    );
+
+    let resume = super::resume_from(
+        &saved_head(Some(101), None),
+        saved_entries(),
+    )
+    .expect("该恢复");
+    super::apply(&ui, &deck, 9, 2, resume);
+
+    assert_eq!(
+        ui.global::<Player>().get_list_scroll_to(),
+        3.0 * row
+    );
+    assert!(!deck.reveal_now.get(), "只滚这一次");
+}
+
 // ── 自动续播跳过别处听过的(用户 2026-11-10 的 5)──
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -794,6 +794,12 @@ pub(super) fn project(
     // 上一个视图滚到哪与这一批无关
     deck.facets.borrow_mut().leave_view();
     scroll::scroll_to(ui, 0.0);
+    // 等着滚到在放那首的是日推那一次打开;换去别的视图,这一次就作废
+    if deck.views.current_source()
+        != Some(ViewSource::Daily)
+    {
+        deck.reveal_now.set(false);
+    }
     let empty = || TracksDto {
         tracks: Vec::new(),
         unavailable: 0,
@@ -904,21 +910,11 @@ pub(super) fn push_rows(
     let after = scroll::lines(ui, rows.iter().cloned());
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
-    // 日推刚打开、第一次摆出行:滚到在放的那首,不在列表里就不动
-    let revealing = deck.reveal_now.get()
-        && !after.is_empty()
-        && deck.views.current_source()
-            == Some(ViewSource::Daily);
-    let target = if revealing {
-        deck.reveal_now.set(false);
-        scroll::reveal(
-            &after,
-            ui.global::<Player>().get_now_id().as_str(),
-        )
-    } else {
-        before.and_then(|before| {
+    let target = match due_reveal(ui, deck, &after) {
+        Some(reveal) => reveal,
+        None => before.and_then(|before| {
             scroll::anchored(&before, scrolled, &after)
-        })
+        }),
     };
     if let Some(to) = target
         && (to - scrolled).abs() >= 0.5
@@ -929,6 +925,44 @@ pub(super) fn push_rows(
     // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
     // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。
     deck.thumbnails.apply(ui);
+}
+
+/// 日推刚打开、还等着滚到在放的那首:行摆出来了、在放的是哪首也知道了(重启后要等
+/// 恢复)才算数 —— 两样谁后到谁触发。交回该滚到哪(不在列表里是 `None`,不动),并放下
+/// 这个等待:一次打开只滚一次。还缺一样就交 `None`,接着等。
+fn due_reveal(
+    ui: &MainWindow,
+    deck: &Deck,
+    lines: &[scroll::Line],
+) -> Option<Option<f32>> {
+    let now = ui.global::<Player>().get_now_id();
+    if !deck.reveal_now.get()
+        || lines.is_empty()
+        || now.is_empty()
+        || deck.views.current_source()
+            != Some(ViewSource::Daily)
+    {
+        return None;
+    }
+    deck.reveal_now.set(false);
+    Some(scroll::reveal(lines, now.as_str()))
+}
+
+/// 在放的那首刚换了(或重启后刚恢复出来):日推正等着滚到它的话,现在滚。
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn reveal_now_playing(
+    ui: &MainWindow,
+    deck: &Deck,
+) {
+    let lines = scroll::lines(
+        ui,
+        ui.global::<Player>().get_tracks().iter(),
+    );
+    if let Some(Some(to)) = due_reveal(ui, deck, &lines)
+        && (to - scroll::current(ui)).abs() >= 0.5
+    {
+        scroll::scroll_to(ui, to);
+    }
 }
 
 /// 只改加载态变了的那一两行,不换模型(#137 ⑥)。
