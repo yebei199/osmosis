@@ -42,6 +42,23 @@ export component TrackList inherits ListView {
     callback long-press(string, string);
     // 点了一个堆头(#160):折叠或展开它。参数是堆名。
     callback toggle-pile(string);
+    // 滚到内容顶端往下 `scroll-to-y` 那里:`scroll-seq` 与 `scroll-done` 不等就是
+    // 还有一次没滚。`scroll-done` 由外面接到一个比列表活得久的地方 —— 列表随
+    // 「有没有歌」重建,请求可能发在它建出来之前,建出来、内容有了高度再补滚;
+    // 已经滚过的,重建时不再滚一遍。兜底在这里做:不滚出内容的底,也不滚到顶之上。
+    in property <length> scroll-to-y: 0px;
+    in property <int> scroll-seq: 0;
+    in-out property <int> scroll-done: 0;
+    function apply-scroll() {
+        if (root.scroll-done != root.scroll-seq && root.content-height > 0) {
+            root.content-y = max(
+                min(0px, root.visible-height - root.content-height),
+                -root.scroll-to-y);
+            root.scroll-done = root.scroll-seq;
+        }
+    }
+    changed scroll-seq => { root.apply-scroll(); }
+    changed content-height => { root.apply-scroll(); }
 
     vertical-stretch: 1;
 
@@ -49,7 +66,7 @@ export component TrackList inherits ListView {
     // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
     for row[i] in root.tracks: Rectangle {
         // 堆头(#160)比歌矮一截,没有卡片底,读起来是分隔而不是又一首歌。
-        height: row.header ? 44px : 56px;
+        height: row.header ? Player.pile-row-height : Player.track-row-height;
         // 行宽钉在可见宽度上。ListView 按行的 preferred 宽排视口,宽屏三列的
         // preferred 归零之后,不钉的话整行缩成文字最小宽(MEO-1878)。
         width: root.visible-width;

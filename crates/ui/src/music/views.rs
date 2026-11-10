@@ -263,6 +263,16 @@ impl Views {
         state.touch(key).shown()
     }
 
+    /// 这个视图手上有没有一份(不切过去)。
+    pub(crate) fn holds(&self, source: &ViewSource) -> bool {
+        let account = self.account();
+        self.state.borrow().entries.iter().any(|entry| {
+            entry.key.account == account
+                && entry.key.source == *source
+                && entry.tracks.is_some()
+        })
+    }
+
     /// 扔掉一个视图手上那份:它过期了,再摆只会骗人。在路上的那次取数不受影响。
     pub(crate) fn forget(&self, source: ViewSource) {
         let account = self.account();

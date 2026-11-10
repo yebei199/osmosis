@@ -40,6 +40,8 @@ mod radio;
 mod report;
 mod rules;
 #[cfg(not(target_arch = "wasm32"))]
+mod scroll;
+#[cfg(not(target_arch = "wasm32"))]
 mod views;
 // 放哪一首:控制条、传输层、自动续播。
 mod playback;

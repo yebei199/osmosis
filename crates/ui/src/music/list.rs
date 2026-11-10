@@ -493,13 +493,31 @@ pub(super) fn fetch_daily(
         .upgrade()
         .is_some_and(|ui| showing_daily_heard(&ui))
     {
-        fetch_into(
-            weak,
-            deck,
-            Action::begin("daily"),
-            ViewSource::DailyHeard,
-            api::daily_heard(),
-        );
+        // 已经摆着「已听过」:原地换内容,筛选与折叠留着(同下面的日推)
+        if deck.views.current_source()
+            == Some(ViewSource::DailyHeard)
+            && deck.views.holds(&ViewSource::DailyHeard)
+        {
+            let ticket = deck
+                .views
+                .begin_in_background(ViewSource::DailyHeard);
+            land(
+                weak,
+                deck,
+                Action::begin("daily"),
+                ticket,
+                async { None },
+                api::daily_heard(),
+            );
+        } else {
+            fetch_into(
+                weak,
+                deck,
+                Action::begin("daily"),
+                ViewSource::DailyHeard,
+                api::daily_heard(),
+            );
+        }
         return;
     }
     let day = daily_day(chrono::Utc::now()).to_string();
@@ -583,7 +601,19 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
                 .get_open_playlist_name()
                 .is_empty()
     });
-    if on_screen {
+    // 内存里已经有今天这份(换了推荐日的那份上面已经扔了):磁盘上那份只会更旧,
+    // 先摆它就是一闪旧行
+    let held = deck.views.holds(&ViewSource::Daily);
+    let cached = async move {
+        if held { None } else { cached.await }
+    };
+    // 日推正摆着、又取一次(信令、定时、按钮):同一视图换内容,不是换视图。
+    // 走 `show` 不走 `project`,选着的筛选与折叠不清(#160,与电台区同一个理由)
+    let refreshing = on_screen
+        && held
+        && deck.views.current_source()
+            == Some(ViewSource::Daily);
+    if on_screen && !refreshing {
         fetch_cached_into(
             weak,
             deck,
@@ -754,8 +784,10 @@ pub(super) fn project(
     shown: Shown,
 ) {
     ui.global::<Player>().set_tracks_loading(shown.loading);
-    // 换了视图:上一批歌的 chip 与折叠不带过来(#160)
+    // 换了视图:上一批歌的 chip 与折叠不带过来(#160),也从顶上看起 ——
+    // 上一个视图滚到哪与这一批无关
     deck.facets.borrow_mut().leave_view();
+    scroll::scroll_to(ui, 0.0);
     let empty = || TracksDto {
         tracks: Vec::new(),
         unavailable: 0,
@@ -854,8 +886,21 @@ pub(super) fn push_rows(
     // 心在行还是 Vec 的时候就标好 —— 换上模型之后再整表重标,近千行的歌单
     // 就是近千次 row_data / set_row_data(#117)。
     crate::library::liked::mark(&deck.liked, &mut rows);
+    // 模型整个换掉,视口的像素偏移却不变:上面多一行少一行,眼前的歌就跳一行。
+    // 换之前记下眼前那一行,换完滚回它原来的位置(见 `scroll`)。
+    let scrolled = scroll::current(ui);
+    let before = (scrolled > 0.0).then(|| {
+        scroll::lines(ui, ui.global::<Player>().get_tracks().iter())
+    });
+    let after = scroll::lines(ui, rows.iter().cloned());
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
+    if let Some(to) = before
+        .and_then(|before| scroll::anchored(&before, scrolled, &after))
+        && (to - scrolled).abs() >= 0.5
+    {
+        scroll::scroll_to(ui, to);
+    }
     crate::library::liked::project_now(&deck.liked, ui);
     // 同理:模型是整个换掉的,新模型里每一行的图都是空的。手上已经有的
     // 那些立刻摆回去,不然标一次加载态就会让满屏封面闪一下。

@@ -13,6 +13,20 @@ export global Player {
     // 当前视图还没有任何一份曲目,正在取。空列表此时说的是「在路上」,
     // 不是「一首都没有」。
     in property <bool> tracks-loading: false;
+    // 曲目列表一行多高:歌与堆头。列表照它摆,Rust 照它算第几行在哪(换模型时
+    // 把眼前那一行钉住、打开日推时滚到在放的那一行),两边只有这一份数。
+    out property <length> track-row-height: 56px;
+    out property <length> pile-row-height: 44px;
+    // 音乐页曲目列表滚到哪(ListView 的 content-y,往下滚为负)。列表自己写,
+    // Rust 只读。
+    in-out property <length> list-scroll-y: 0px;
+    // 叫列表滚到「内容顶端往下 list-scroll-to」那里:Rust 写目标,再把序号加一。
+    // 用序号而不是直接写 content-y:那一刻列表可能还没建出来,也要由它自己按
+    // 内容高度兜住不滚出头。
+    in property <length> list-scroll-to: 0px;
+    in property <int> list-scroll-seq: 0;
+    // 列表已经照哪一个序号滚过了。列表写,列表重建时据此不重滚。
+    in-out property <int> list-scroll-done: 0;
     // 播放状态的一行文案,由 Rust 根据 app-core 的 PlaybackState 渲染后推送。
     //
     // **只放状态的投影,不放一次性提示**。投影会随状态重算,永远等于此刻的真相;

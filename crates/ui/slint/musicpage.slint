@@ -646,6 +646,12 @@ export component MusicPage inherits VerticalLayout {
                 vertical-stretch: 1;
                 tracks: Player.tracks;
                 current: Player.now-id;
+                // 换模型时钉住眼前那一行、打开日推时滚到在放那一行(见 ui/src/music/list.rs)
+                scroll-to-y: Player.list-scroll-to;
+                scroll-seq: Player.list-scroll-seq;
+                scroll-done <=> Player.list-scroll-done;
+                changed content-y => { Player.list-scroll-y = self.content-y; }
+                init => { Player.list-scroll-y = self.content-y; }
                 // 最近播放画成时间轴,别的分区还是平列表。
                 timeline: Shell.destination == 3
                     && Library.open-playlist-name == "";

@@ -1081,3 +1081,59 @@ fn a_queue_that_is_not_the_radios_does_not_stall() {
 
     assert!(!super::radio::stalled(&deck));
 }
+
+// ── 日推原地刷新(用户 2026-11-10 的 3、4)──
+
+/// 日推摆着、选了「夜」:刷新时筛选留着,磁盘上那份旧的一帧都不摆。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn refreshing_the_shown_daily_keeps_chips_and_skips_the_disk_copy() {
+    let (ui, deck) = deck_window_pumped();
+    super::facets::bind(&ui, &deck);
+    deck.last_daily
+        .set(Some(daily_day(chrono::Utc::now())));
+    ui.global::<Shell>().set_destination(0);
+    let (ticket, shown) = deck.views.begin(ViewSource::Daily);
+    project(&ui, &deck, shown);
+    deck.views.accept(&ticket, faceted_batch(), true);
+    show(&ui, &deck, faceted_batch());
+    ui.global::<Player>()
+        .invoke_toggle_chip(chip_index(&ui, "夜 1"));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let probe = seen.clone();
+    let weak = ui.as_weak();
+
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { Some(batch(&["stale"])) },
+        async move {
+            if let Some(ui) = weak.upgrade() {
+                *probe.borrow_mut() = shown_ids(&ui);
+            }
+            let mut fresh = faceted_batch();
+            fresh.tracks.push(track_with_id("d"));
+            Ok(fresh)
+        },
+    );
+
+    assert_eq!(*seen.borrow(), vec!["c"], "等网络时摆着内存里那份");
+    assert_eq!(ui.global::<Player>().get_chosen_count(), 1);
+    assert_eq!(shown_ids(&ui), vec!["c"]);
+}
+
+/// 上面少了一首(听过了挪走):眼前那一行不跟着跳。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_row_leaving_above_keeps_the_visible_row_in_place() {
+    let (ui, deck) = faceted_window(ViewSource::Daily);
+    let row = ui.global::<Player>().get_track_row_height();
+    // 视口顶在第三行 c
+    ui.global::<Player>().set_list_scroll_y(-2.0 * row);
+
+    let mut fresh = faceted_batch();
+    fresh.tracks.remove(0);
+    show(&ui, &deck, fresh);
+
+    assert_eq!(ui.global::<Player>().get_list_scroll_to(), row);
+}
