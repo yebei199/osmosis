@@ -73,6 +73,10 @@ pub struct TrackFacetsDto {
     pub lyric_kind: Option<LyricKindDto>,
     /// 打上的标签名。
     pub tags: Vec<String>,
+    /// 日推里这一首是哪一天推的(`YYYY-MM-DD`,推荐日按北京时间 6 点换)。只有
+    /// `/daily` 与 `/daily/heard` 填,列表据此分出「今天」「昨天」。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picked_on: Option<String>,
 }
 
 impl TrackFacetsDto {

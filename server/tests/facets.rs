@@ -148,6 +148,7 @@ async fn every_facet_is_aggregated() {
             skip_rate: Some(33),
             lyric_kind: Some(LyricKindDto::Translated),
             tags: vec!["夜".to_owned(), "雨".to_owned()],
+            picked_on: None,
         }
     );
 }

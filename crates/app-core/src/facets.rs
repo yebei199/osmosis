@@ -390,6 +390,51 @@ pub fn arrange(
         .collect()
 }
 
+/// 不分组时的日推:按推荐日(`TrackFacetsDto::picked_on`)切成几段,每段一个堆头,
+/// 段内保持原次序(服务端已经按推荐日新到旧排好)。堆头写什么由 `label` 给
+/// (「今天」「昨天」由界面按此刻的日子说),折叠也认它。一首都不带推荐日
+/// (不是日推)是 `None`,照平列表摆。
+pub fn by_day(
+    tracks: &[TrackDto],
+    chosen: &Chosen,
+    collapsed: &HashSet<String>,
+    label: impl Fn(&str) -> String,
+) -> Option<Vec<Line>> {
+    if tracks.iter().all(|track| track.facets.picked_on.is_none()) {
+        return None;
+    }
+    let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
+    for index in filter(tracks, chosen) {
+        let day = label(
+            tracks[index].facets.picked_on.as_deref().unwrap_or(""),
+        );
+        match runs.last_mut() {
+            Some((last, members)) if *last == day => {
+                members.push(index);
+            }
+            _ => runs.push((day, vec![index])),
+        }
+    }
+    Some(
+        runs.into_iter()
+            .flat_map(|(label, members)| {
+                let folded = collapsed.contains(&label);
+                let header = Line::Header {
+                    count: members.len(),
+                    collapsed: folded,
+                    label,
+                };
+                let shown: Vec<Line> = if folded {
+                    Vec::new()
+                } else {
+                    members.into_iter().map(Line::Track).collect()
+                };
+                std::iter::once(header).chain(shown)
+            })
+            .collect(),
+    )
+}
+
 /// 点一首歌时排进队列的那一批:摆出来的次序,每首只一次(多标签的歌出现在
 /// 几堆里,队列里不该放几遍)。折起来的堆也算 —— 筛选决定了「这一批」,
 /// 折叠只是看不看得见。
@@ -816,5 +861,57 @@ mod tests {
                 Some(facet)
             );
         }
+    }
+
+    /// 日推按推荐日分段:段内原次序,堆头是给的说法;折起来的段只剩堆头。
+    #[test]
+    fn daily_tracks_are_split_by_their_day() {
+        let dated = |id: &str, day: &str| {
+            let mut track = track(id);
+            track.facets.picked_on = Some(day.to_owned());
+            track
+        };
+        let tracks = [
+            dated("a", "2026-11-10"),
+            dated("b", "2026-11-10"),
+            dated("c", "2026-11-09"),
+        ];
+        let label = |day: &str| {
+            if day == "2026-11-10" { "今天" } else { "昨天" }.to_owned()
+        };
+
+        let lines = by_day(&tracks, &Chosen::new(), &HashSet::new(), label)
+            .expect("日推该分段");
+        let folded = by_day(
+            &tracks,
+            &Chosen::new(),
+            &HashSet::from(["今天".to_owned()]),
+            label,
+        )
+        .expect("日推该分段");
+
+        let header = |label: &str, count, collapsed| Line::Header {
+            label: label.to_owned(),
+            count,
+            collapsed,
+        };
+        assert_eq!(
+            lines,
+            vec![
+                header("今天", 2, false),
+                Line::Track(0),
+                Line::Track(1),
+                header("昨天", 1, false),
+                Line::Track(2),
+            ]
+        );
+        assert_eq!(
+            folded,
+            vec![header("今天", 2, true), header("昨天", 1, false), Line::Track(2)]
+        );
+        assert_eq!(
+            by_day(&[track("x")], &Chosen::new(), &HashSet::new(), label),
+            None
+        );
     }
 }

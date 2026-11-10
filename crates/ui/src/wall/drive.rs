@@ -528,6 +528,8 @@ pub(crate) fn bind(
             ui.global::<Shell>().set_wall_showing(true);
         }
         ui.global::<Shell>().set_view_wall(to_wall);
+        drop(d);
+        ui.global::<crate::Player>().invoke_rows_reshaped();
     });
 }
 

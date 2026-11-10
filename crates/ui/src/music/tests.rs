@@ -1311,3 +1311,45 @@ fn restoring_points_at_the_track_without_playing() {
     assert_eq!(deck.execution.identity().0, Some(9));
     assert!(!ui.global::<Player>().get_is_playing());
 }
+
+// ── 日推按推荐日分段(用户 2026-11-10 的 7)──
+
+/// 推荐日的说法:今天、昨天、几月几号,跨年带年份。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn daily_days_read_as_today_yesterday_or_a_date() {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 10)
+        .expect("日子");
+    let label = |day| super::facets::day_label(day, today);
+
+    assert_eq!(label("2026-11-10"), "今天");
+    assert_eq!(label("2026-11-09"), "昨天");
+    assert_eq!(label("2026-11-01"), "11月1日");
+    assert_eq!(label("2025-12-31"), "2025年12月31日");
+}
+
+/// 日推列表按推荐日分段,卡墙那一摆不分(墙上一行是一张卡)。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_daily_list_is_split_by_day_but_not_on_the_wall() {
+    let (ui, deck) = deck_window();
+    super::facets::bind(&ui, &deck);
+    let today = daily_day(chrono::Utc::now());
+    let yesterday = today - chrono::Duration::days(1);
+    let mut picks = batch(&["a", "b", "c"]);
+    for (track, day) in
+        picks.tracks.iter_mut().zip([today, today, yesterday])
+    {
+        track.facets.picked_on = Some(day.to_string());
+    }
+    let (_ticket, shown) = deck.views.begin(ViewSource::Daily);
+    project(&ui, &deck, shown);
+    show(&ui, &deck, picks);
+
+    assert_eq!(headers(&ui), vec!["今天 2 首", "昨天 1 首"]);
+    assert_eq!(queue_ids(&deck), vec!["a", "b", "c"]);
+
+    ui.global::<Shell>().set_view_wall(true);
+    ui.global::<Player>().invoke_rows_reshaped();
+    assert!(headers(&ui).is_empty());
+}

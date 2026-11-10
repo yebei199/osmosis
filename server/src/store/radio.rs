@@ -16,6 +16,8 @@ pub struct Entry {
     pub track: TrackRef,
     /// 这个账号听过它(见 [`history::is_heard`])。
     pub heard: bool,
+    /// 日推里是哪一天推的(`YYYY-MM-DD`);电台的是 `None`。
+    pub picked_on: Option<String>,
 }
 
 /// 把 `tracks` 按给定次序追加到队尾。已经在里面的跳过。返回新加了几首。
@@ -73,6 +75,7 @@ pub async fn list(
         .map(|(platform, track_id, heard)| Entry {
             track: TrackRef { platform, track_id },
             heard,
+            picked_on: None,
         })
         .collect())
 }

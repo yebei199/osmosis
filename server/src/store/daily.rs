@@ -15,7 +15,8 @@ use crate::store::radio::Entry;
 const TODAY: &str =
     "(now() AT TIME ZONE 'UTC' + interval '2 hours')::date";
 
-/// 把 `tracks` 记成今天推的。以前推过的挪到今天这批。
+/// 把 `tracks` 记成今天推的。以前推过的挪到今天这批,并按今天这批里的次序重排:
+/// 留着旧 `id` 的话,重推的歌会排在今天真正新推的前面。
 pub async fn add(
     conn: &mut PgConnection,
     account_id: i64,
@@ -38,7 +39,8 @@ pub async fn add(
               AS t (platform, track_id, place)
          ORDER BY place
          ON CONFLICT (account_id, platform, track_id)
-         DO UPDATE SET day = EXCLUDED.day"
+         DO UPDATE SET day = EXCLUDED.day, id = EXCLUDED.id
+         WHERE daily_picks.day <> EXCLUDED.day"
     ))
     .bind(account_id)
     .bind(platforms)
@@ -70,9 +72,9 @@ pub async fn list(
     conn: &mut PgConnection,
     account_id: i64,
 ) -> Result<Vec<Entry>, AppError> {
-    let rows: Vec<(String, String, bool)> =
+    let rows: Vec<(String, String, bool, String)> =
         sqlx::query_as(&format!(
-            "SELECT d.platform, d.track_id, {heard}
+            "SELECT d.platform, d.track_id, {heard}, d.day::text
              FROM daily_picks AS d
              WHERE d.account_id = $1 AND NOT {liked}
              ORDER BY d.day DESC, d.id",
@@ -85,9 +87,10 @@ pub async fn list(
 
     Ok(rows
         .into_iter()
-        .map(|(platform, track_id, heard)| Entry {
+        .map(|(platform, track_id, heard, day)| Entry {
             track: TrackRef { platform, track_id },
             heard,
+            picked_on: Some(day),
         })
         .collect())
 }

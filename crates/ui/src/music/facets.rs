@@ -28,6 +28,8 @@ pub(super) struct FacetState {
     /// 按摆出来的次序;`toggle-chip` 的下标指它。
     chips: Vec<Chip>,
     collapsed: HashSet<String>,
+    /// 日推按推荐日分段摆。卡墙摆着时不分:墙上一行就是一张卡,堆头没有卡可当。
+    days: bool,
     /// 上一次推上去几行(堆头也算)。只改加载态时拿它判断模型还是不是这一份。
     rows: Cell<usize>,
 }
@@ -68,6 +70,21 @@ impl FacetState {
     }
 
     fn arranged(&self) -> Vec<Line> {
+        // 日推不分组时按推荐日分段:今天、昨天……(堆头的说法见 `day_label`)
+        if self.enabled
+            && self.days
+            && self.grouping.is_none()
+            && let Some(lines) = facets::by_day(
+                &self.all,
+                &self.chosen,
+                &self.collapsed,
+                |day| {
+                    day_label(day, daily_day(chrono::Utc::now()))
+                },
+            )
+        {
+            return lines;
+        }
         if self.enabled {
             facets::arrange(
                 &self.all,
@@ -179,6 +196,33 @@ impl FacetState {
     }
 }
 
+/// 日推的推荐日怎么说:今天、昨天,再早写几月几号,跨年带上年份。认不出的照原样。
+pub(super) fn day_label(
+    day: &str,
+    today: chrono::NaiveDate,
+) -> String {
+    use chrono::Datelike;
+
+    let Ok(date) =
+        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
+    else {
+        return day.to_owned();
+    };
+    match (today - date).num_days() {
+        0 => "今天".to_owned(),
+        1 => "昨天".to_owned(),
+        _ if date.year() == today.year() => {
+            format!("{}月{}日", date.month(), date.day())
+        }
+        _ => format!(
+            "{}年{}月{}日",
+            date.year(),
+            date.month(),
+            date.day()
+        ),
+    }
+}
+
 /// 堆头那一行:没有 id(点播认不出它),时长那一格写这一堆几首。
 fn header_row(
     label: String,
@@ -196,6 +240,8 @@ fn header_row(
 
 /// 按当前状态重排一遍:队列那一批、列表的行、分组条。
 pub(super) fn relayout(ui: &MainWindow, deck: &Deck) {
+    deck.facets.borrow_mut().days =
+        !ui.global::<Shell>().get_view_wall();
     let batch = deck.facets.borrow().batch();
     *deck.tracks.borrow_mut() = batch;
     let loading =
@@ -256,6 +302,15 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
             }
         }
         relayout(&ui, &chipped);
+    });
+
+    // 列表 ⇄ 卡墙:日推的日子堆头只在列表里摆,换了摆法就重排
+    let reshaped = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_rows_reshaped(move || {
+        if let Some(ui) = weak.upgrade() {
+            relayout(&ui, &reshaped);
+        }
     });
 
     let folded = deck.clone();

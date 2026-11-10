@@ -143,4 +143,6 @@ export global Player {
     callback toggle-chip(int);
     // 参数是堆名。
     callback toggle-pile(string);
+    // 列表与卡墙换了摆法:行要重排(日推的日子堆头只在列表里有)。
+    callback rows-reshaped();
 }

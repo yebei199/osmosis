@@ -133,6 +133,8 @@ impl Row {
                 .as_deref()
                 .and_then(lyric_kind),
             tags: self.tags,
+            // 推荐日不是聚合,日推的出口自己挂
+            picked_on: None,
         }
     }
 }
