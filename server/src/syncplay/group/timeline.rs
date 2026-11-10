@@ -45,6 +45,9 @@ pub struct Now {
     pub loop_mode: LoopModeDto,
     /// 随机时的播放次序(条目号)。不随机时是空的,次序就是队列原序。
     pub order: Vec<i64>,
+    /// 这一段的起播事件(`play_events` 的行号),结束时补记的就是它。还没起播、或已经
+    /// 补记过的是 `None`,结束时不补。
+    pub play_event: Option<i64>,
 }
 
 /// 组的全局状态。
@@ -147,6 +150,7 @@ impl Now {
         self.position_us = 0;
         self.anchor_wall_us = at;
         self.playing = true;
+        self.play_event = None;
     }
 
     /// 播放次序:随机时是记下的那份,否则是队列原序。
@@ -365,6 +369,7 @@ impl Group {
     }
 
     /// 组从发起那台本机正在放的那一份接着放(`position_us`、在不在放),锚在 `at`。
+    /// 还是本机起播的那一段,起播事件 `play_event` 跟着过来。
     pub fn seed(
         &mut self,
         queue: (i64, i64),
@@ -372,11 +377,15 @@ impl Group {
         entry_id: i64,
         from: (u64, bool),
         at: i64,
+        play_event: Option<i64>,
     ) -> Result<(), Refusal> {
         if !list.contains(entry_id) {
             return Err(Refusal::NoSuchEntry);
         }
         self.place(queue, list, entry_id, from, at, 0);
+        if let Some(now) = &mut self.now {
+            now.play_event = play_event;
+        }
         Ok(())
     }
 
@@ -418,6 +427,7 @@ impl Group {
             shuffled,
             loop_mode,
             order,
+            play_event: None,
         });
     }
 

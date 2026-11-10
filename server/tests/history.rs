@@ -4,7 +4,6 @@
 
 use server::error::AppError;
 use server::store::account::{Account, register};
-use server::store::history::PlayRef;
 use server::store::playlist::TrackRef;
 use server::store::{db, history};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -368,11 +367,7 @@ async fn settle_fills_in_the_row() {
             .await
             .expect("记录应该成功");
     history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::Event(id),
-        9_000,
-        200_000,
+        &mut tx, account.id, id, 9_000, 200_000,
     )
     .await
     .expect("补记应该成功");
@@ -401,14 +396,9 @@ async fn settle_is_scoped_to_the_account() {
         history::record(&mut tx, theirs.id, &track("1"))
             .await
             .expect("记录应该成功");
-    let result = history::settle(
-        &mut tx,
-        mine.id,
-        &PlayRef::Event(id),
-        1_000,
-        2_000,
-    )
-    .await;
+    let result =
+        history::settle(&mut tx, mine.id, id, 1_000, 2_000)
+            .await;
 
     assert!(matches!(result, Err(AppError::NotFound)));
 }
@@ -436,11 +426,7 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
             .await
             .unwrap();
     let skipped = history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::Event(short),
-        30_000,
-        200_000,
+        &mut tx, account.id, short, 30_000, 200_000,
     )
     .await
     .unwrap();
@@ -452,20 +438,12 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
             .await
             .unwrap();
     let first = history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::Event(full),
-        150_000,
-        200_000,
+        &mut tx, account.id, full, 150_000, 200_000,
     )
     .await
     .unwrap();
     let again = history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::Event(full),
-        200_000,
-        200_000,
+        &mut tx, account.id, full, 200_000, 200_000,
     )
     .await
     .unwrap();
@@ -488,10 +466,9 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
     );
 }
 
-/// 组里没有行号:认这首最近的一次起播,两次补记取大的。
+/// 同一行补记几次取大的(独奏在放时隔一阵报一次累计);别的行不动。
 #[tokio::test]
-async fn settle_latest_of_a_track_keeps_the_larger_report()
-{
+async fn settle_keeps_the_larger_report_of_its_own_row() {
     let mut tx = tx().await;
     let account = make_account(&mut tx, "hs_latest").await;
 
@@ -504,20 +481,12 @@ async fn settle_latest_of_a_track_keeps_the_larger_report()
             .await
             .unwrap();
     history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::Event(latest),
-        120_000,
-        200_000,
+        &mut tx, account.id, latest, 120_000, 200_000,
     )
     .await
     .unwrap();
     history::settle(
-        &mut tx,
-        account.id,
-        &PlayRef::LatestOf(track("1")),
-        5_000,
-        200_000,
+        &mut tx, account.id, latest, 5_000, 200_000,
     )
     .await
     .unwrap();
@@ -536,7 +505,6 @@ async fn settle_latest_of_a_track_keeps_the_larger_report()
     );
 }
 
-/// 电台的听过过滤(#159):只认本账号的事件,顺序照给进来的那批。
 #[tokio::test]
 async fn known_among_picks_only_this_accounts_plays() {
     let mut tx = tx().await;
@@ -581,11 +549,7 @@ async fn heard_among_answers_only_heard_tracks() {
         .await
         .unwrap();
         history::settle(
-            &mut tx,
-            account.id,
-            &PlayRef::Event(event),
-            listened,
-            200_000,
+            &mut tx, account.id, event, listened, 200_000,
         )
         .await
         .unwrap();

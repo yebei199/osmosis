@@ -812,17 +812,13 @@ pub(crate) async fn hear(
     account_id: i64,
     track: &server::store::playlist::TrackRef,
 ) {
-    use server::store::history::{self, PlayRef};
+    use server::store::history;
 
     let event = history::record(conn, account_id, track)
         .await
         .expect("记起播");
     history::settle(
-        conn,
-        account_id,
-        &PlayRef::Event(event),
-        200_000,
-        200_000,
+        conn, account_id, event, 200_000, 200_000,
     )
     .await
     .expect("补记听完");

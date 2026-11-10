@@ -24,11 +24,12 @@ type Row = (
     bool,
     String,
     Vec<i64>,
+    Option<i64>,
 );
 
 const COLUMNS: &str = "version, members, outputs, queue_id, revision,
      entry_id, playing, position_us, anchor_wall_us, shuffled,
-     loop_mode, play_order";
+     loop_mode, play_order, play_event_id";
 
 /// 读一个账号的组。从来没有过组时是 `None`。
 pub async fn load(
@@ -102,6 +103,7 @@ pub async fn save(
              playing = $8, position_us = $9, anchor_wall_us = $10,
              boundary_wall_us = $11, shuffled = $12,
              loop_mode = $13, play_order = $14,
+             play_event_id = $15,
              alive_wall_us = CASE WHEN $5 IS NULL THEN NULL ELSE alive_wall_us END
          WHERE account_id = $1",
     )
@@ -121,6 +123,7 @@ pub async fn save(
         now.map_or(LoopModeDto::Off, |now| now.loop_mode),
     ))
     .bind(now.map_or(Vec::new(), |now| now.order.clone()))
+    .bind(now.and_then(|now| now.play_event))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -181,6 +184,7 @@ fn from_row(row: Row) -> Group {
         shuffled,
         loop_mode,
         order,
+        play_event,
     ) = row;
     let now = match (queue_id, revision, entry_id) {
         (
@@ -197,6 +201,7 @@ fn from_row(row: Row) -> Group {
             shuffled,
             loop_mode: loop_mode_of(&loop_mode),
             order,
+            play_event,
         }),
         _ => None,
     };

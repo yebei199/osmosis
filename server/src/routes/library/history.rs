@@ -18,7 +18,7 @@ use server::error;
 use server::error::Failure;
 use server::heard;
 use server::store::account::Account;
-use server::store::history::{self, PlayRef};
+use server::store::history;
 use server::store::playlist::TrackRef;
 
 use super::for_account;
@@ -74,7 +74,7 @@ pub(crate) async fn report_listened(
         &state.pool,
         &state.roster,
         account.id,
-        &PlayRef::Event(play_event_id),
+        play_event_id,
         body.listened_ms,
         body.duration_ms,
     )

@@ -182,6 +182,11 @@ fn local_seed(
             player.position().as_millis() as u64
         }),
         playing: player.is_some_and(is_sounding),
+        play_event_id: deck
+            .current_play
+            .borrow()
+            .as_ref()
+            .map(|play| play.id),
     }))
 }
 

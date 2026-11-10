@@ -517,6 +517,7 @@ fn a_seed_carries_on_from_the_local_playback() {
             2,
             (30 * SEC as u64, true),
             5 * SEC,
+            None,
         )
         .unwrap();
 
@@ -985,6 +986,7 @@ mod persistence {
                     entry_id: queue.entry_ids[0],
                     position_ms: 0,
                     playing: true,
+                    play_event_id: None,
                 }),
             },
         )

@@ -497,6 +497,7 @@ async fn radio_output_concurrent_seed_and_publish_keep_committed_references_read
         entry_id: first.entry_ids[0],
         position_ms: 30_000,
         playing: true,
+        play_event_id: None,
     };
     let adopting = tokio::spawn(async move {
         group::apply(
@@ -713,6 +714,7 @@ async fn radio_output_reseeds_repaired_groups_in_both_entry_paths()
                             entry_id: local.entry_ids[0],
                             position_ms: 30_000,
                             playing: true,
+                            play_event_id: None,
                         },
                     ),
                 },
@@ -841,6 +843,7 @@ async fn radio_output_seed_validation_and_valid_playback_are_preserved()
                 entry_id: -1,
                 position_ms: 0,
                 playing: false,
+                play_event_id: None,
             }),
         },
     )
@@ -915,6 +918,7 @@ async fn radio_output_seed_validation_and_valid_playback_are_preserved()
                     entry_id,
                     position_ms: 0,
                     playing: true,
+                    play_event_id: None,
                 }),
             },
         )
@@ -966,6 +970,18 @@ async fn phone_and_pc(
     roster: &SharedRoster,
     account: i64,
 ) -> GroupStateDto {
+    seed_from_pc(pool, roster, account, 1, None).await
+}
+
+/// 同 [`phone_and_pc`],从 pc 本机这一批的第 `at` 条的 30 秒处接着放;pc 本机那一段的
+/// 起播事件是 `play_event`。
+async fn seed_from_pc(
+    pool: &PgPool,
+    roster: &SharedRoster,
+    account: i64,
+    at: usize,
+    play_event: Option<i64>,
+) -> GroupStateDto {
     let inputs: Vec<EntryInput> = tracks()
         .iter()
         .map(|track| EntryInput {
@@ -996,9 +1012,10 @@ async fn phone_and_pc(
             seed: Some(GroupSeedDto {
                 queue_id: seeded.queue_id,
                 revision: seeded.revision,
-                entry_id: seeded.entry_ids[1],
+                entry_id: seeded.entry_ids[at],
                 position_ms: 30_000,
                 playing: true,
+                play_event_id: play_event,
             }),
         },
     )
@@ -1629,6 +1646,7 @@ async fn the_group_skips_a_blocked_track_on_advance_and_next()
                 entry_id: seeded.entry_ids[0],
                 position_ms: 0,
                 playing: true,
+                play_event_id: None,
             }),
         },
     )
@@ -1705,7 +1723,7 @@ async fn a_track_the_group_finishes_is_heard_and_everyone_is_told()
         platform: "netease".to_owned(),
         track_id: id.to_owned(),
     };
-    {
+    let played = {
         let mut conn = pool.acquire().await.unwrap();
         server::store::radio::append(
             &mut conn,
@@ -1717,11 +1735,17 @@ async fn a_track_the_group_finishes_is_heard_and_everyone_is_told()
         // 种子那一首是 pc 独奏时起播的,起播由它记过
         history::record(&mut conn, account, &netease("b"))
             .await
-            .unwrap();
-    }
+            .unwrap()
+    };
     // 从 b 的 30 秒处接着放(200 秒的歌);拨到 150 秒,过半
-    let seeded =
-        phone_and_pc(&pool, &roster, account).await;
+    let seeded = seed_from_pc(
+        &pool,
+        &roster,
+        account,
+        1,
+        Some(played),
+    )
+    .await;
     let sought = group::apply(
         &pool,
         &roster,
@@ -1777,5 +1801,158 @@ async fn a_track_the_group_finishes_is_heard_and_everyone_is_told()
                 .count();
         assert_eq!(told, 1, "每台收到一次「电台变了」");
     }
+    drop_account(&pool, account).await;
+}
+
+/// 这个账号这一首的每一次起播与补记的听了多久,按起播先后。
+async fn plays_of(
+    pool: &PgPool,
+    account: i64,
+    track_id: &str,
+) -> Vec<(i64, Option<i64>)> {
+    sqlx::query_as(
+        "SELECT id, listened_ms FROM play_events
+         WHERE account_id = $1 AND track_id = $2 ORDER BY id",
+    )
+    .bind(account)
+    .bind(track_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// pc 独奏时记下的这一首的起播,组从它接着放。
+async fn solo_play(
+    pool: &PgPool,
+    account: i64,
+    track_id: &str,
+) -> i64 {
+    let mut conn = pool.acquire().await.unwrap();
+    server::store::history::record(
+        &mut conn,
+        account,
+        &server::store::playlist::TrackRef {
+            platform: "netease".to_owned(),
+            track_id: track_id.to_owned(),
+        },
+    )
+    .await
+    .unwrap()
+}
+
+async fn steer(
+    pool: &PgPool,
+    roster: &SharedRoster,
+    account: i64,
+    op: TransportOpDto,
+) -> GroupStateDto {
+    group::apply(
+        pool,
+        roster,
+        account,
+        "phone",
+        Intent::Transport(op),
+    )
+    .await
+    .expect("控制该成")
+    .expect("组该在")
+}
+
+/// 「上一首」回到开头是同一首的新一段:补记落在结束的那一段自己那一行,不落在刚为
+/// 新一段记的那一行。
+#[tokio::test]
+async fn restarting_a_track_settles_the_play_that_ended() {
+    let pool = connect().await;
+    let account = account(&pool, "restart").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let played = solo_play(&pool, account, "b").await;
+    seed_from_pc(&pool, &roster, account, 1, Some(played))
+        .await;
+    steer(
+        &pool,
+        &roster,
+        account,
+        TransportOpDto::Seek {
+            position_ms: 150_000,
+        },
+    )
+    .await;
+
+    steer(&pool, &roster, account, TransportOpDto::Prev)
+        .await;
+
+    let plays = plays_of(&pool, account, "b").await;
+    assert_eq!(plays.len(), 2, "回到开头另记一次起播");
+    assert_eq!(plays[0], (played, Some(150_000)));
+    assert_eq!(plays[1].1, None, "新的一段还没结束");
+    drop_account(&pool, account).await;
+}
+
+/// 放到队尾停下时补记一次;再从头重放,那一段不再补第二次,也不补到重放的那一行上。
+#[tokio::test]
+async fn a_play_halted_at_the_end_settles_once() {
+    let pool = connect().await;
+    let account = account(&pool, "halted").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    let played = solo_play(&pool, account, "c").await;
+    let seeded = seed_from_pc(
+        &pool,
+        &roster,
+        account,
+        2,
+        Some(played),
+    )
+    .await;
+    let entry =
+        seeded.now.as_ref().expect("该有歌").entry_id;
+    let halted = group::advance(
+        &pool,
+        &roster,
+        account,
+        "pc",
+        entry,
+        seeded.version as i64,
+    )
+    .await
+    .expect("报放完该成")
+    .expect("组该在");
+    assert!(!halted.now.expect("停在队尾").playing);
+    let settled = plays_of(&pool, account, "c").await;
+    assert_eq!(settled.len(), 1);
+    assert!(
+        settled[0].1.is_some_and(|ms| ms >= 30_000),
+        "停下时补记了: {settled:?}"
+    );
+
+    steer(&pool, &roster, account, TransportOpDto::Resume)
+        .await;
+
+    let plays = plays_of(&pool, account, "c").await;
+    assert_eq!(plays.len(), 2, "从头重放另记一次起播");
+    assert_eq!(plays[0], settled[0], "停下那一段只补一次");
+    assert_eq!(plays[1].1, None, "重放的那一段还没结束");
+    drop_account(&pool, account).await;
+}
+
+/// 新起一首还没出声(锚点在等出声设备取流)就被切走:那一段什么都不补。
+#[tokio::test]
+async fn a_track_skipped_before_it_sounded_settles_nothing()
+{
+    let pool = connect().await;
+    let account = account(&pool, "unsounded").await;
+    let (roster, _inboxes) =
+        online(account, &["phone", "pc"]);
+    seed_from_pc(&pool, &roster, account, 0, None).await;
+
+    steer(&pool, &roster, account, TransportOpDto::Next)
+        .await;
+    steer(&pool, &roster, account, TransportOpDto::Next)
+        .await;
+
+    let plays = plays_of(&pool, account, "b").await;
+    assert_eq!(plays.len(), 1);
+    assert_eq!(plays[0].1, None, "一声没出,不算跳过");
     drop_account(&pool, account).await;
 }

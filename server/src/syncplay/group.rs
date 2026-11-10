@@ -25,7 +25,6 @@ use sqlx::{PgConnection, PgPool};
 
 use crate::error::AppError;
 use crate::store::group as rows;
-use crate::store::history::PlayRef;
 use crate::store::playlist::TrackRef;
 use crate::store::queue::{self, Entry, EntryInput};
 use crate::store::{blocks, facets};
@@ -163,6 +162,7 @@ pub async fn apply(
                             seed.playing,
                         ),
                         at,
+                        seed.play_event_id,
                     )
                     .map_err(refused)?;
             }
@@ -574,18 +574,20 @@ struct Committed {
     ended: Option<Ended>,
 }
 
-/// 结束了的一段播放:哪首、听到第几毫秒、这首多长。
+/// 结束了的一段播放:它的起播事件、听到第几毫秒、这首多长。
 struct Ended {
-    track: TrackRef,
+    play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
 }
 
 /// 版本加一、写回、提交,换成线上的样子。
 ///
-/// 这一版若是新起播的一首(换了条目或重新从头放),顺手记一条起播(`play_events`):
-/// 组里几台一起响还是那一次,由服务端记,就不必再挑一台设备来报(#137 ⑤ 的 AC-5.4)。
-/// 改之前那一段因此结束了的,交给 [`publish`] 去判听过(见 [`timeline::ended`])。
+/// 这一版若是新起播的一首(换了条目或重新从头放),顺手记一条起播(`play_events`),
+/// 行号挂在 [`timeline::Now::play_event`] 上:组里几台一起响还是那一次,由服务端记,
+/// 就不必再挑一台设备来报(#137 ⑤ 的 AC-5.4)。改之前那一段因此结束了的
+/// (见 [`timeline::ended`]),交给 [`publish`] 补记它自己那一行;补记一次就摘掉行号,
+/// 停在末尾之后再开走不会补第二次。没起过播、或一声没出就被切走的那一段什么都不补。
 async fn commit(
     mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
     account: AccountId,
@@ -594,7 +596,30 @@ async fn commit(
     entries: &[Entry],
 ) -> Result<Committed, AppError> {
     group.version += 1;
-    if let Some(now) = &group.now
+    let ended = before.as_ref().and_then(|before| {
+        let play_event_id = before.now.play_event?;
+        let listened_us = timeline::ended(
+            &before.now,
+            before.duration_us,
+            group.now.as_ref(),
+            wall_now_us(),
+        )?;
+        Some(Ended {
+            play_event_id,
+            listened_ms: (listened_us / 1_000) as i64,
+            duration_ms: (before.duration_us / 1_000)
+                as i64,
+        })
+    });
+    if let Some(ended) = &ended
+        && let Some(now) = &mut group.now
+        && now.play_event == Some(ended.play_event_id)
+    {
+        now.play_event = None;
+    }
+    // 还没出声就被切走的(锚点还没到)什么都不补:它既不是听过也不是跳过
+    let ended = ended.filter(|ended| ended.listened_ms > 0);
+    if let Some(now) = &mut group.now
         && now.playing
         && now.position_us == 0
         && before.as_ref().map(Before::key)
@@ -603,30 +628,18 @@ async fn commit(
             .iter()
             .find(|e| e.entry_id == now.entry_id)
     {
-        crate::store::history::record(
-            &mut tx,
-            account,
-            &TrackRef {
-                platform: entry.platform.clone(),
-                track_id: entry.track_id.clone(),
-            },
-        )
-        .await?;
+        now.play_event = Some(
+            crate::store::history::record(
+                &mut tx,
+                account,
+                &TrackRef {
+                    platform: entry.platform.clone(),
+                    track_id: entry.track_id.clone(),
+                },
+            )
+            .await?,
+        );
     }
-    let ended = before.and_then(|before| {
-        let listened_us = timeline::ended(
-            &before.now,
-            before.duration_us,
-            group.now.as_ref(),
-            wall_now_us(),
-        )?;
-        Some(Ended {
-            track: before.track?,
-            listened_ms: (listened_us / 1_000) as i64,
-            duration_ms: (before.duration_us / 1_000)
-                as i64,
-        })
-    });
     let list =
         blocked_playlist(&mut tx, account, entries).await?;
     let boundary = group.now.as_ref().and_then(|now| {
@@ -656,7 +669,7 @@ async fn publish(
             pool,
             roster,
             account,
-            &PlayRef::LatestOf(ended.track),
+            ended.play_event_id,
             ended.listened_ms,
             ended.duration_ms,
         )
@@ -884,12 +897,11 @@ fn track_of(entry: &Entry) -> TrackDto {
     }
 }
 
-/// 改之前在放的那一段:它的时间线、是哪首歌、多长。与改完之后比,认出「新起播了一首」
+/// 改之前在放的那一段:它的时间线、这首多长。与改完之后比,认出「新起播了一首」
 /// 与「这一段结束了」。条目要在改之前认:换了一批之后旧条目就不在 `entries` 里了。
 #[derive(Debug, Clone)]
 struct Before {
     now: timeline::Now,
-    track: Option<TrackRef>,
     duration_us: u64,
 }
 
@@ -909,10 +921,6 @@ fn started(
         .iter()
         .find(|entry| entry.entry_id == now.entry_id);
     Some(Before {
-        track: entry.map(|entry| TrackRef {
-            platform: entry.platform.clone(),
-            track_id: entry.track_id.clone(),
-        }),
         duration_us: entry.map_or(0, |entry| {
             entry.duration_ms.max(0) as u64 * 1_000
         }),

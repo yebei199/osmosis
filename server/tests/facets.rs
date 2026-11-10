@@ -77,7 +77,7 @@ async fn play(
         history::settle(
             tx,
             account.id,
-            &history::PlayRef::Event(event),
+            event,
             listened_ms,
             200_000,
         )

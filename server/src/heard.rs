@@ -9,20 +9,20 @@ use contract::ServerSignal;
 use sqlx::PgPool;
 
 use crate::error::AppError;
-use crate::store::history::{self, PlayRef};
+use crate::store::history;
 use crate::store::{daily, radio};
 use crate::syncplay::signaling::{
     self, AccountId, SharedRoster,
 };
 
-/// 补记 `play` 听了 `listened_ms`(这首长 `duration_ms`)。
+/// 补记 `play_event_id` 那一次播放听了 `listened_ms`(这首长 `duration_ms`)。
 ///
 /// 返回这一下有没有让电台或日推里的一首变成听过 —— 调用方据此看要不要补歌。
 pub async fn settle(
     pool: &PgPool,
     roster: &SharedRoster,
     account: AccountId,
-    play: &PlayRef,
+    play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
 ) -> Result<bool, AppError> {
@@ -30,7 +30,7 @@ pub async fn settle(
     let Some(track) = history::settle(
         &mut conn,
         account,
-        play,
+        play_event_id,
         listened_ms,
         duration_ms,
     )

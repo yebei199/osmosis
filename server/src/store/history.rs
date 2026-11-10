@@ -62,48 +62,30 @@ pub(crate) fn heard_sql(row: &str) -> String {
     )
 }
 
-/// 补记听了多久的是哪一次播放。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlayRef {
-    /// 起播上报交回的那一行(独奏)。
-    Event(i64),
-    /// 这首最近的一次起播(组里:起播由服务端记,手上没有行号)。
-    LatestOf(TrackRef),
-}
-
-/// 补记一次播放听了多久,并判它听没听过。新听过的交回那一首,已经听过或没听够的交 `None`。
+/// 补记 `play_event_id` 那一次播放听了多久,并判它听没听过。新听过的交回那一首,
+/// 已经听过或没听够的交 `None`。
 ///
 /// 只认自己账号的行,别人的行按不存在回答(与 [`crate::store::playlist::rename`]
-/// 同一个理由)。同一行补记两次取大的:组里出声设备与服务端可能各报一次。
+/// 同一个理由)。同一行补记几次取大的:独奏在放的过程中隔一阵报一次累计。
 pub async fn settle(
     conn: &mut PgConnection,
     account_id: i64,
-    play: &PlayRef,
+    play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
 ) -> Result<Option<TrackRef>, AppError> {
-    let (event, track) = match play {
-        PlayRef::Event(id) => (Some(*id), None),
-        PlayRef::LatestOf(track) => (None, Some(track)),
-    };
     let row: Option<(String, String, i64)> =
         sqlx::query_as(
             "UPDATE play_events
-         SET listened_ms = GREATEST(listened_ms, $4),
-             duration_ms = $5
-         WHERE account_id = $1 AND id = COALESCE($2, (
-             SELECT max(id) FROM play_events
-             WHERE account_id = $1
-               AND platform = $3 AND track_id = $6
-         ))
+         SET listened_ms = GREATEST(listened_ms, $3),
+             duration_ms = $4
+         WHERE account_id = $1 AND id = $2
          RETURNING platform, track_id, listened_ms",
         )
         .bind(account_id)
-        .bind(event)
-        .bind(track.map(|track| track.platform.as_str()))
+        .bind(play_event_id)
         .bind(listened_ms)
         .bind(duration_ms)
-        .bind(track.map(|track| track.track_id.as_str()))
         .fetch_optional(&mut *conn)
         .await?;
 

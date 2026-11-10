@@ -180,6 +180,10 @@ pub struct GroupSeedDto {
     pub entry_id: i64,
     pub position_ms: u64,
     pub playing: bool,
+    /// 本机这一段的起播事件(`play_events` 的行号):组接着放的还是这一段,结束时补记它。
+    /// 本机还没报上起播时没有。
+    #[serde(default)]
+    pub play_event_id: Option<i64>,
 }
 
 /// `POST /group/leave`:本机退出组,回到独奏。
