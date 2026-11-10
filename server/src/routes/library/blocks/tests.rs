@@ -277,7 +277,8 @@ async fn rules_hide_tracks_at_every_outlet_until_removed() {
     assert_eq!(found.tracks.len(), 3);
 }
 
-/// 屏蔽生效到底(ADR 0037):解除红心,电台与日推里拿掉,预取撤掉,桶里那份删掉。
+/// 屏蔽生效到底(ADR 0037):电台与日推里拿掉,预取撤掉,桶里那份删掉;红心留着,
+/// 「我喜欢」里藏起来,规则删了就回来(用户 2026-11-10)。
 #[tokio::test]
 async fn blocking_a_track_clears_it_everywhere() {
     use std::sync::Arc;
@@ -353,7 +354,7 @@ async fn blocking_a_track_clears_it_everywhere() {
     )
     .await
     .unwrap();
-    blocks::create(
+    let rule = blocks::create(
         &mut conn,
         account.id,
         BlockKind::Track,
@@ -366,10 +367,29 @@ async fn blocking_a_track_clears_it_everywhere() {
     purge(&state, account.id).await.expect("清屏蔽");
 
     assert!(
-        !liked::refs(&mut conn, account.id)
+        liked::refs(&mut conn, account.id)
             .await
             .unwrap()
-            .contains(&track)
+            .contains(&track),
+        "屏蔽不删红心"
+    );
+    let liked_now = || {
+        let (state, account) = (state.clone(), account.clone());
+        async move {
+            crate::routes::library::likes::liked(
+                State(state),
+                account,
+            )
+            .await
+            .expect("读我喜欢")
+            .0
+        }
+    };
+    let hidden = liked_now().await;
+    assert_eq!(
+        (hidden.tracks.len(), hidden.hidden),
+        (0, 1),
+        "「我喜欢」里藏起来"
     );
     assert_eq!(
         radio::list_all(&mut conn, account.id)
@@ -386,4 +406,14 @@ async fn blocking_a_track_clears_it_everywhere() {
     .unwrap();
     assert_eq!(jobs, 0);
     assert_eq!(objects.get(&key), None);
+
+    blocks::delete(&mut conn, account.id, rule.id.parse().unwrap())
+        .await
+        .unwrap();
+    let back = liked_now().await;
+    assert_eq!(
+        back.tracks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+        vec![id.clone()],
+        "规则删了,红心原样回来"
+    );
 }

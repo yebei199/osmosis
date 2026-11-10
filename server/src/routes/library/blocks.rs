@@ -160,8 +160,11 @@ pub(crate) async fn hits(
     Ok(hit)
 }
 
-/// 屏蔽在服务端生效到底(ADR 0037):命中的解除红心、从电台与日推拿掉、不再排预取、
-/// 桶里那份删掉。规则解除后这些歌不会自己回来。
+/// 屏蔽在服务端生效到底(ADR 0037):命中的从电台与日推拿掉、不再排预取、桶里那份删掉。
+///
+/// **红心不动**(用户 2026-11-10:屏蔽只是藏起来):「我喜欢」在出口按规则藏
+/// ([`crate::routes::library::for_account`]),规则解除就原样回来。电台与日推里拿掉的
+/// 不回来(ADR 0037)。
 pub(crate) async fn purge(
     state: &AppState,
     account_id: i64,
@@ -188,9 +191,6 @@ pub(crate) async fn purge(
         .await
         .map_err(text)?;
     for track in &blocked {
-        liked::set(conn, account_id, track, false)
-            .await
-            .map_err(text)?;
         radio::remove(conn, account_id, track)
             .await
             .map_err(text)?;
@@ -200,7 +200,8 @@ pub(crate) async fn purge(
         prefetch::cancel(conn, track)
             .await
             .map_err(text)?;
-        archive::drop_blocked(state, conn, track).await?;
+        archive::drop_blocked(state, conn, account_id, track)
+            .await?;
     }
     if !blocked.is_empty() {
         tell_radio_changed(state, account_id);

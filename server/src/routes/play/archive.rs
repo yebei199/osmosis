@@ -591,17 +591,20 @@ pub(crate) async fn trim_pool(
     Ok(removed)
 }
 
-/// 这首被屏蔽了:桶里那份删掉。还有人红心它就留着,红心是永久保存。
+/// `account_id` 屏蔽了这首:桶里那份删掉。还有别人红心它就留着,红心是永久保存;
+/// 屏蔽者自己的红心不拦(屏蔽只是藏起来,解除后再听时现取)。
 pub(crate) async fn drop_blocked(
     state: &AppState,
     conn: &mut PgConnection,
+    account_id: i64,
     track: &TrackRef,
 ) -> Result<(), String> {
     let Some(archive_store) = state.archive.as_ref() else {
         return Ok(());
     };
-    let Some(stored) = archive::unliked_copy(
+    let Some(stored) = archive::copy_unliked_by_others(
         conn,
+        account_id,
         &track.platform,
         &track.track_id,
         &quality(),

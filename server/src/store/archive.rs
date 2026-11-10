@@ -215,9 +215,11 @@ pub async fn expired(
     .await?)
 }
 
-/// 桶里这首的那一份,但谁红心了它就不算。
-pub async fn unliked_copy(
+/// 桶里这首的那一份,但别的账号红心了它就不算 —— 那是别人永久留着的。
+/// `account_id` 自己的红心不拦:屏蔽了它的人红心还留着(只是藏起来),音频照删。
+pub async fn copy_unliked_by_others(
     conn: &mut PgConnection,
+    account_id: i64,
     platform: &str,
     track_id: &str,
     quality: &str,
@@ -225,15 +227,18 @@ pub async fn unliked_copy(
     Ok(sqlx::query_as(&format!(
         "SELECT {COLUMNS} FROM stored_tracks
          WHERE platform = $1 AND track_id = $2 AND quality = $3
-           AND NOT {liked}",
-        liked = liked_sql(
-            "stored_tracks.platform",
-            "stored_tracks.track_id"
-        ),
+           AND NOT EXISTS (
+               SELECT 1 FROM local_playlist_tracks lt
+               JOIN local_playlists lp ON lp.id = lt.playlist_id
+               WHERE lp.system = '{liked}' AND lp.account_id <> $4
+                 AND lt.platform = $1 AND lt.track_id = $2
+           )",
+        liked = liked::SYSTEM,
     ))
     .bind(platform)
     .bind(track_id)
     .bind(quality)
+    .bind(account_id)
     .fetch_optional(conn)
     .await?)
 }
