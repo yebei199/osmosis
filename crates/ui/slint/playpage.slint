@@ -170,7 +170,6 @@ export component PlayPage inherits FocusScope {
         text-color: Theme.immersive-text;
         // display 字体只有拉丁字形;中文歌名按字形回退,得到的是
         // 「拉丁 display + 中文系统字」的混排,与设计稿一致。
-        font-family: Type.display-latin;
         font-size: Shell.compact ? TextSize.headline : TextSize.display;
     }
     if !Viz.lyrics-page-open: OutlinedText {
@@ -199,7 +198,6 @@ export component PlayPage inherits FocusScope {
         Text {
             text: "队列 · " + Viz.queue-total;
             color: Theme.immersive-text-dim;
-            font-family: Type.body;
             font-size: TextSize.small;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -220,7 +218,6 @@ export component PlayPage inherits FocusScope {
         width: 100%;
         height: 18px;
         text: "加载中…";
-        font-family: Type.body;
         text-color: Theme.immersive-accent;
         font-size: TextSize.small;
     }

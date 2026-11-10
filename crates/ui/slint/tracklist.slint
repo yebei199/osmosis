@@ -291,7 +291,6 @@ export component TrackList inherits ListView {
             // 而正在加载时时长不是用户在等的信息。
             Text {
                 text: row.loading ? "加载中…" : row.duration;
-                font-family: row.loading ? Type.body : Type.mono;
                 color: row.loading ? Theme.accent-ink.darker(0.15) : Theme.text-dim;
                 font-size: TextSize.small;
                 vertical-alignment: center;
@@ -361,7 +360,6 @@ export component Pill inherits Rectangle {
         // 药丸自己已经报了标签,字不再报一遍
         accessible-role: none;
         text: root.text;
-        font-family: Type.body;
         font-size: TextSize.small;
         color: root.selected ? Theme.accent-text : Theme.text-dim;
         horizontal-alignment: center;
@@ -443,7 +441,6 @@ export component FacetBar inherits VerticalLayout {
         text: "没有符合筛选的歌";
         accessible-role: text;
         accessible-label: self.text;
-        font-family: Type.body;
         font-size: TextSize.small;
         color: Theme.text-dim;
         horizontal-alignment: center;

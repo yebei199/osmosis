@@ -65,7 +65,6 @@ export component QueuePage inherits Rectangle {
             Text {
                 text: "播放队列";
                 color: Theme.immersive-text;
-                font-family: Type.body;
                 font-size: Shell.compact ? TextSize.body : TextSize.title;
                 vertical-alignment: center;
             }
@@ -74,7 +73,6 @@ export component QueuePage inherits Rectangle {
                     ? "正在取…"
                     : "共 " + root.total + " 首";
                 color: Theme.immersive-text-dim;
-                font-family: Type.body;
                 font-size: TextSize.small;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
@@ -86,7 +84,6 @@ export component QueuePage inherits Rectangle {
         if root.rows.length == 0: queue-empty := Text {
             text: root.loading ? "正在取队列…" : "队列是空的";
             color: Theme.immersive-text-dim;
-            font-family: Type.body;
             font-size: TextSize.body;
             horizontal-alignment: center;
             vertical-stretch: 1;

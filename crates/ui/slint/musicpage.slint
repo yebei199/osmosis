@@ -203,8 +203,7 @@ export component MusicPage inherits VerticalLayout {
             text: Destinations.label-of(Shell.destination);
             accessible-role: text;
             accessible-label: self.text;
-            font-family: Type.display-cjk;
-            font-weight: 900;
+            font-weight: 700;
             font-size: TextSize.headline;
             color: Theme.text;
             vertical-alignment: center;
@@ -262,7 +261,6 @@ export component MusicPage inherits VerticalLayout {
             // 高度钉死,免得文案变长把下面的列表顶来顶去。
             Text {
                 text: Player.playback-text;
-                font-family: Type.body;
                 color: Theme.text-dim;
                 font-size: TextSize.small;
                 height: 20px;
@@ -382,7 +380,6 @@ export component MusicPage inherits VerticalLayout {
 
                     block-artist-label := Text {
                         text: "屏蔽该歌手";
-                        font-family: Type.body;
                         font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;
@@ -543,7 +540,6 @@ export component MusicPage inherits VerticalLayout {
                     text: "正在取这一页的歌…";
                     accessible-role: text;
                     accessible-label: self.text;
-                    font-family: Type.body;
                     font-size: TextSize.body;
                     color: Theme.text-dim;
                     horizontal-alignment: center;
@@ -551,15 +547,13 @@ export component MusicPage inherits VerticalLayout {
 
                 if !Player.tracks-loading: Text {
                     text: "点一首歌开始";
-                    font-family: Type.display-cjk;
-                    font-weight: 900;
+                    font-weight: 700;
                     font-size: TextSize.display;
                     color: Theme.text;
                     horizontal-alignment: center;
                 }
                 if !Player.tracks-loading: Text {
                     text: "点云在待机,选一首它就活过来";
-                    font-family: Type.body;
                     font-size: TextSize.small;
                     color: Theme.text-dim;
                     horizontal-alignment: center;
@@ -588,7 +582,6 @@ export component MusicPage inherits VerticalLayout {
 
                         empty-daily-label := Text {
                             text: "换一批推荐";
-                            font-family: Type.body;
                             font-size: TextSize.body;
                             // 光带底是深的,字换近白;关掉开关回 accent 实底的深墨。
                             color: Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0

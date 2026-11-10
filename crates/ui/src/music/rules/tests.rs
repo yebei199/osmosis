@@ -324,8 +324,9 @@ fn playback_copy_only_uses_subset_glyphs() {
     use api::ApiError;
     use audio::AudioError;
 
-    const CJK_SUBSET: &[u8] =
-        include_bytes!("../../../fonts/cjk-subset.ttf");
+    const CJK_SUBSET: &[u8] = include_bytes!(
+        "../../../fonts/desktop/osmosis-sans-400.ttf"
+    );
 
     let face = ttf_parser::Face::parse(CJK_SUBSET, 0)
         .expect("子集字体应能被解析");

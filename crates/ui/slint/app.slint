@@ -1,20 +1,10 @@
-// 最小化单窗口手机 UI:一个点击计数器。
-// 计数值保存在 Rust 一侧(crates/app-core),以 property 形式推送到这里;
-// 按钮点击通过 `bump` 回调传回去。
+// 主窗口:导航、内容面板、控制条与各种浮层摆在哪。
 
-// slint 自带的 Inter 没有汉字,wasm 上又没有系统字体可回退,健康状态那行中文
-// 会渲染成豆腐块。这里内嵌一份裁到只剩所需字符的子集(见 `just font-subset`),
-// 由 slint 编译器把字节打进产物,再按 family 名引用。
-import "../fonts/cjk-subset.ttf";
-
-// 改版字体四件(见 docs/design.md「字体」,族名统一从 theme.slint 的 Type 取):
-// 中文标题走思源宋体 Heavy 子集,拉丁标题 Caprasimo,正文 Figtree,读数 DM Mono。
-import "../fonts/cjk-title-subset.otf";
-import "../fonts/caprasimo.ttf";
-import "../fonts/figtree-400.ttf";
-import "../fonts/figtree-600.ttf";
-import "../fonts/figtree-700.ttf";
-import "../fonts/dm-mono.ttf";
+// 界面唯一的字族 Osmosis Sans(三档字重)。`@osmosis-fonts` 由 build.rs 按目标平台指到
+// fonts/desktop(合并了中日韩子集)或 fonts/android(只有拉丁,中文走系统 Noto Sans CJK)。
+import "@osmosis-fonts/osmosis-sans-400.ttf";
+import "@osmosis-fonts/osmosis-sans-600.ttf";
+import "@osmosis-fonts/osmosis-sans-700.ttf";
 
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
 import { LineEdit, ListView, Palette } from "std-widgets.slint";
@@ -62,9 +52,8 @@ export { Downloads }
 import { PlayPage } from "playpage.slint";
 
 export component MainWindow inherits Window {
-    // 没写 font-family 的字一律走正文字体;Figtree 缺的 CJK 字形由系统字体补。
     // 不设的话落到系统默认字体,这台开发机上就是等宽的 Maple Mono(MEO-1877 F-001)。
-    default-font-family: Type.body;
+    default-font-family: Type.sans;
     // 只观察需要提醒的组投影，播放版本、曲目与进度不重新展开。
     property <string> group-notice-state: Shell.group-banner + "\n" + Shell.output-text
         + "\n" + Shell.group-text + (Shell.group-joinable ? "join" : "leave")
@@ -332,7 +321,6 @@ export component MainWindow inherits Window {
                             accessible-role: text;
                             accessible-label: Shell.banner-text;
                                 // 文案是硬编码中文,与状态行同一套子集字体。
-                                font-family: Type.body;
                                 font-size: TextSize.small;
                                 color: Theme.danger-text;
                                 vertical-alignment: center;
@@ -399,7 +387,6 @@ export component MainWindow inherits Window {
 
                                     exit-label := Text {
                                         text: Shell.group-joinable ? "加入" : "退出";
-                                        font-family: Type.body;
                                         font-size: TextSize.small;
                                         color: exit-touch.has-hover ? Theme.accent-text : Theme.text;
                                         vertical-alignment: center;
@@ -874,7 +861,6 @@ export component MainWindow inherits Window {
 
                         Text {
                             text: "下载";
-                            font-family: Type.body;
                             font-size: TextSize.body;
                             color: download-touch.has-hover
                                 ? Theme.accent-text : Theme.text;
@@ -905,7 +891,6 @@ export component MainWindow inherits Window {
 
                         Text {
                             text: "标签…";
-                            font-family: Type.body;
                             font-size: TextSize.body;
                             color: tag-touch.has-hover
                                 ? Theme.accent-text : Theme.text;
@@ -936,7 +921,6 @@ export component MainWindow inherits Window {
 
                         Text {
                             text: "不喜欢…";
-                            font-family: Type.body;
                             font-size: TextSize.body;
                             color: block-track-touch.has-hover
                                 ? Theme.accent-text : Theme.text;
@@ -967,7 +951,6 @@ export component MainWindow inherits Window {
 
                         Text {
                             text: "屏蔽 tag…";
-                            font-family: Type.body;
                             font-size: TextSize.body;
                             color: block-tag-touch.has-hover
                                 ? Theme.accent-text : Theme.text;

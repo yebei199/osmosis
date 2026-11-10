@@ -66,7 +66,6 @@ export component ProgressBar inherits Rectangle {
 
         if !root.slim: Text {
             text: root.buffering ? "缓冲中…" : root.text;
-            font-family: Type.mono;
             // 缓冲时提亮:这一行在别的时候是背景信息,那一刻却是唯一
             // 说明「还在动」的东西。
             color: root.buffering ? Theme.accent : Theme.text-dim;

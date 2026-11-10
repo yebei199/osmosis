@@ -18,18 +18,12 @@
 // 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
 // 决定的三个亮度,分开写迟早会有一个忘了改。
 
-// 字体族名收在这里,页面上只写 Type.xxx,不写字面族名。
-// 四个角色的分工与「中文标题为什么不是 Caprasimo」见 docs/design.md「字体」。
+// 界面只有一族字:Osmosis Sans = Figtree(拉丁与数字,tnum 冻进去了)+ Noto Sans CJK SC
+// (汉字、假名、谚文),构建期合并成一个族名(crates/ui/fonts/build.py,docs/design.md「字体」)。
+// 一个族名的意义:Slint 不必为中文走进系统回退链 —— 这台桌面上那条链的第一个中文字体是
+// Maple Mono,界面就成了等宽观感。窗口根的 default-font-family 设它,页面上不再写 font-family。
 export global Type {
-    // 中文大标题:思源宋体 Heavy 子集(Google 发行名 Noto Serif CJK SC)。
-    // 子集只含硬编码标题字,动态中文(歌名、歌手名)不要用它。
-    out property <string> display-cjk: "Noto Serif CJK SC";
-    // 拉丁与数字的大标题。没有中文字形,中文场景一律走 display-cjk。
-    out property <string> display-latin: "Caprasimo";
-    // 正文与界面。中文回落到系统字体(wasm 上回落 cjk-subset)。
-    out property <string> body: "Figtree";
-    // 时长、进度、版本号、标签:一切等宽读数。
-    out property <string> mono: "DM Mono";
+    out property <string> sans: "Osmosis Sans";
 }
 
 export global Theme {
@@ -164,17 +158,52 @@ export global Radius {
     out property <length> pill: 999px;
 }
 
+// 字号阶梯(docs/design.md「字体」)。字重只有 400 / 600 / 700 三档,没有 500。
 export global TextSize {
-    // 角标、时长、次要说明。
-    out property <length> caption: 11px;
-    out property <length> small: 12px;
-    // 正文与列表行。
+    // 表头、音质标签、底栏标签。配 Weight.semibold 与 Tracking.label。
+    out property <length> micro: 11px;
+    // 设置页分组名、计数、日期。
+    out property <length> caption: 12px;
+    // 歌手、专辑、说明行、chip、小按钮。
+    out property <length> small: 13px;
+    // 导航、条上的歌名、按钮、正文。
     out property <length> body: 14px;
-    // 区块标题、歌名。
+    // 列表里的歌名、设置行的标题。
+    out property <length> row: 15px;
+    // 区块标题(最佳匹配、歌曲)、品牌字。
     out property <length> title: 17px;
+    // 空状态标题。
     out property <length> headline: 22px;
-    // 页面大标题。
-    out property <length> display: 32px;
+    // 页面标题,窄于 600px 时。
+    out property <length> display-compact: 28px;
+    // 页面标题(每日推荐、我喜欢、设置……),每一页都有。
+    out property <length> display: 34px;
+    // 播放页歌名(紧凑版式 32px,即 hero-compact)。
+    out property <length> hero: 48px;
+    out property <length> hero-compact: 32px;
+    // 歌词当前行。
+    out property <length> lyric: 30px;
+    out property <length> lyric-compact: 22px;
+}
+
+export global Weight {
+    out property <int> regular: 400;
+    out property <int> semibold: 600;
+    out property <int> bold: 700;
+}
+
+// 字距。大字收紧,小号的标签放开。
+export global Tracking {
+    // 11–12px 的西文与数字标签,+0.08em。
+    out property <length> label: 0.9px;
+    // 中文小标题(设置页的「外观」「账号」),+0.12em。
+    out property <length> cjk-label: 1.5px;
+    out property <length> title: -0.1px;
+    out property <length> headline: -0.2px;
+    out property <length> display-compact: -0.4px;
+    out property <length> display: -0.6px;
+    out property <length> hero-compact: -0.6px;
+    out property <length> hero: -1.2px;
 }
 
 export global Space {

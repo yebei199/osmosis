@@ -175,33 +175,15 @@ web-stop:
     # 只有 curl 连不上才算真关掉:模式写错、还有第二个实例、进程赖着不死,都在这里现原形。
     for i in 1 2 3 4 5 6; do curl -sf -o /dev/null --max-time 1 http://127.0.0.1:{{ web_port }}/ || exit 0; sleep 0.5; done; echo "端口 {{ web_port }} 仍在应答,没关掉" >&2; exit 1
 
-# 重裁中文子集字体。slint 内嵌的 Inter 没有汉字,wasm 上又没有系统字体可回退,
-# 所以 crates/ui/slint/app.slint 用 `import` 内嵌这份子集(20MB → 28KB)。
-# 改了界面上的中文文案后跑一遍,把新字符补进 --text —— 注意 api::ApiError 的
-# Display 也会原样显示到界面上。ASCII 一并裁入,好让中英混排的那行文案整体落在
-# 同一个字体上,不依赖逐字形回退。
-# 漏字不会静默:cargo test -p ui 的 describe_only_uses_subset_glyphs 会报出缺哪个字。
-# name-IDs 13/14 是 OFL 的许可声明,必须随子集一起分发,故显式保留。
+# 重新生成界面唯一的字族 Osmosis Sans(crates/ui/fonts/build.py,docs/design.md「字体」):
+# 桌面三件 = Figtree + Noto Sans CJK SC 按标准字符集(GB2312、JIS X 0208、Big5 一级、
+# KS X 1001 谚文)裁出的子集,合并成一个族名;安卓三件只有 Figtree,中文走系统字体。
+# 末尾那行把开发缓存里的歌名、歌手名过一遍子集,漏了几个字以数字报出来。
+# 中日韩那一半取自 nixpkgs 的 noto-fonts-cjk-sans(可变字体集),fc-match 找它。
 [group('工具')]
 font-subset:
-    nix-shell -p python3Packages.fonttools --run "pyftsubset \
-      $(fc-match -f '%{file}' 'Maple Mono NF CN:style=Regular') \
-      --text='未查询中服务端协议失败网络错误响应格式版本不匹配本机·…,点一首歌开加载正在播放音频设备流解码始端暂不支持同播推给台收听连接上信令载荷线消息队列完了没有其他选个用缓冲置外观主题深浅色跟随系统账号退出登录已快捷桌面按处理生效当前页起月过续次天只读云待活来它就换批荐动态极光钮画零重绘拖翻找双击滚轮进度卡墙表视图输被遥控管停状期到下这还经存乐试片段整可写的条目句柄认联回那制太长时发去、。体先入准划原取复好媒恢择排新止知确移第继自计调道里该路由校保证步是意或切结束刚才执行些与组声能改' \
-      --unicodes=U+0020-007E \
-      --layout-features= --no-hinting --desubroutinize \
-      --notdef-outline --name-IDs+=13,14 \
-      --output-file=crates/ui/fonts/cjk-subset.ttf"
-    @ls -la crates/ui/fonts/cjk-subset.ttf
-
-# 重裁中文**标题**字体(思源宋体 Heavy,系统发行名 Noto Serif CJK SC)。
-# 标题字符集的唯一真相在 crates/ui/tests/fonts.rs 的 CJK_TITLES:新增页面标题
-# 先加那里,再跑这条;漏裁由同一个测试报红。拉丁三件(Caprasimo/Figtree/DM Mono)
-# 已提交仓库,一般不需重生成;要重下时把三个源文件放进一个目录,
-# 作为参数传给 regen.py(见脚本头部注释)。
-[group('工具')]
-font-title-subset:
-    nix-shell -p python3Packages.fonttools --run "python3 crates/ui/fonts/regen.py"
-    @ls -la crates/ui/fonts/cjk-title-subset.otf
+    nix-shell -p python3Packages.fonttools -p noto-fonts-cjk-sans -p fontconfig --run "python3 crates/ui/fonts/build.py"
+    @ls -la crates/ui/fonts/desktop crates/ui/fonts/android
 
 # 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
 # 数据在命名卷里,容器删了也还在。

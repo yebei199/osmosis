@@ -14,7 +14,30 @@ fn main() {
         || std::env::var("SLINT_EMIT_DEBUG_INFO")
             .is_ok_and(|v| v != "0" && !v.is_empty());
 
+    // 字族按目标平台分两份(fonts/build.py):桌面带合并好的中日韩子集,安卓只带拉丁,
+    // 中文由系统的 Noto Sans CJK 接 —— 同一个设计,不必再背十几兆。
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS")
+        .unwrap_or_default();
+    let side = if target_os == "android" {
+        "android"
+    } else {
+        "desktop"
+    };
+    let fonts = std::path::Path::new(
+        &std::env::var("CARGO_MANIFEST_DIR")
+            .expect("cargo sets CARGO_MANIFEST_DIR"),
+    )
+    .join("fonts")
+    .join(side);
+    println!("cargo:rerun-if-changed={}", fonts.display());
+
     let config = slint_build::CompilerConfiguration::new()
+        .with_library_paths(
+            std::collections::HashMap::from([(
+                "osmosis-fonts".to_owned(),
+                fonts,
+            )]),
+        )
         // Material 风格在 Android 上缩放效果最好,且支持深色主题。
         // 注意:style 是编译期选定的,六端目前共用这一种。
         .with_style("material".into())

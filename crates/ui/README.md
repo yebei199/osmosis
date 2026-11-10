@@ -141,12 +141,10 @@ src/ 下按职责分成六个目录,哪一组负责什么见 `src/README.md`;下
   双击 —— 触摸屏收不到双击,理由写在 `should_play` 的文档里。墙在动或有卡面要传时报 `busy`,
   渲染循环据此要下一帧;静止的墙只在活跃期内照渲,之后定格(`docs/adr/0035`)。
 - `src/runtime/frame_stats.rs`:诚实即时帧率计,运行期 `OSMOSIS_FPS` 开关。
-- `fonts/`:内嵌字体。两份中文子集(正文 `cjk-subset.ttf`、标题
-  `cjk-title-subset.otf`,思源宋体 Heavy)加拉丁三件
-  (Caprasimo / Figtree / DM Mono),族名统一从 `theme.slint` 的 `Type`
-  全局取,重生成走 `just font-subset` 与 `just font-title-subset`
-  (`fonts/regen.py`)。硬编码中文必须落在对应子集里,`cargo test -p ui`
-  的 glyph 测试守着;平台数据(歌名等)不指定字体、走系统字体。
+- `fonts/`:界面唯一的字族 Osmosis Sans(Figtree + Noto Sans CJK SC,tnum 冻进数字),
+  `desktop/` 合并了按标准字符集裁的中日韩子集,`android/` 只有拉丁、中文走系统字体;
+  build.rs 按目标平台把 `@osmosis-fonts` 指到其一。重生成走 `just font-subset`
+  (`fonts/build.py`),`tests/fonts.rs` 守着族名、字重、等宽数字与硬编码文案的覆盖。
 - `tests/banner.rs`:断流横幅的界面行为,无头跑(`i-slint-backend-testing`
   的软件后端 + 模拟时钟,不要窗口也不要显卡)。补的是纯函数够不着的那一半 ——
   文案对不对是 `describe_stream_loss` 的事,看不看得见是 `.slint` 里那句

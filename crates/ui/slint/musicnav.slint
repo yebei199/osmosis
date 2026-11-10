@@ -110,7 +110,6 @@ export component SideNavRow inherits Rectangle {
         Text {
             horizontal-stretch: 1;
             text: root.item.label;
-            font-family: Type.body;
             color: root.active ? Theme.text : Theme.text-dim;
             font-size: TextSize.body;
             font-weight: root.active ? 700 : 500;
@@ -179,7 +178,6 @@ export component MorePanel inherits Rectangle {
                     }
                     Text {
                         text: entry.label;
-                        font-family: Type.body;
                         color: Shell.destination == entry.id ? Theme.text : Theme.text-dim;
                         font-size: TextSize.small;
                         horizontal-alignment: center;
@@ -241,7 +239,6 @@ export component SearchTabBar inherits Rectangle {
 
             Text {
                 text: item.label;
-                font-family: Type.body;
                 color: root.current == i ? Theme.accent-ink : Theme.text-dim;
                 font-size: TextSize.small;
                 horizontal-alignment: center;

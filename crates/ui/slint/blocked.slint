@@ -29,8 +29,7 @@ export component BlockedPage inherits Flickable {
 
         Text {
             text: "已屏蔽";
-            font-family: Type.display-cjk;
-            font-weight: 900;
+            font-weight: 700;
             font-size: TextSize.display;
             color: Theme.text;
         }
@@ -39,7 +38,6 @@ export component BlockedPage inherits Flickable {
             text: Library.block-groups.length == 0
                 ? "还没有屏蔽任何歌手、标签或歌曲"
                 : "这些歌不会出现在列表里,队列和电台也会跳过";
-            font-family: Type.body;
             font-size: TextSize.small;
             color: Theme.text-dim;
             wrap: word-wrap;
@@ -56,7 +54,6 @@ export component BlockedPage inherits Flickable {
                     horizontal-stretch: 1;
                     Text {
                         text: row.label;
-                        font-family: Type.body;
                         font-size: TextSize.small;
                         color: Theme.text;
                         overflow: elide;
@@ -76,7 +73,6 @@ export component BlockedPage inherits Flickable {
 
                     unblock-label := Text {
                         text: "恢复";
-                        font-family: Type.body;
                         font-size: TextSize.small;
                         color: Theme.text-dim;
                         horizontal-alignment: center;

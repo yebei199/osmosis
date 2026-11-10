@@ -237,8 +237,9 @@ mod tests {
     /// 本模块吐出的中文必须在子集字体里。新增文案忘了重跑 `just font-subset` 就红。
     #[test]
     fn group_copy_only_uses_subset_glyphs() {
-        const CJK_SUBSET: &[u8] =
-            include_bytes!("../../../fonts/cjk-subset.ttf");
+        const CJK_SUBSET: &[u8] = include_bytes!(
+            "../../../fonts/desktop/osmosis-sans-400.ttf"
+        );
         let face = ttf_parser::Face::parse(CJK_SUBSET, 0)
             .expect("子集字体应能被解析");
 

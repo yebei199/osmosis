@@ -29,14 +29,12 @@ component StatCard inherits Rectangle {
 
         Text {
             text: root.value;
-            font-family: Type.body;
             font-size: TextSize.display;
             font-weight: 700;
             color: Theme.hues-bright[root.tint];
         }
         Text {
             text: root.label;
-            font-family: Type.body;
             font-size: TextSize.small;
             color: Theme.text-dim;
         }
@@ -120,7 +118,6 @@ export component ProfilePage inherits Flickable {
 
         if root.error-text != "": Text {
             text: root.error-text;
-            font-family: Type.body;
             font-size: TextSize.small;
             color: Theme.text-dim;
         }
@@ -177,7 +174,6 @@ export component ProfilePage inherits Flickable {
                 }
                 Text {
                     text: artist.plays-text;
-                    font-family: Type.mono;
                     font-size: TextSize.caption;
                     color: Theme.text-faint;
                 }
@@ -232,7 +228,6 @@ export component ProfilePage inherits Flickable {
 
                 Text {
                     text: root.netease-hint;
-                    font-family: Type.body;
                     font-size: TextSize.small;
                     color: Theme.text-dim;
                     wrap: word-wrap;
@@ -241,7 +236,6 @@ export component ProfilePage inherits Flickable {
                 if root.on-phone: Text {
                     // 文案照 issue #96 原样写,不自行改写
                     text: "用另一台已登录网易云的手机扫";
-                    font-family: Type.body;
                     font-size: TextSize.small;
                     color: Theme.text-faint;
                     wrap: word-wrap;
@@ -267,7 +261,6 @@ export component ProfilePage inherits Flickable {
 
             if root.devices.length == 0: Text {
                 text: "没有其他设备";
-                font-family: Type.body;
                 font-size: TextSize.small;
                 color: Theme.text-faint;
             }

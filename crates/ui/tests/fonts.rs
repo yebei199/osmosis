@@ -1,98 +1,104 @@
-//! 字体资产的覆盖自检:标题字体必须盖住每一个硬编码的中文标题,
-//! 拉丁三件必须盖住 ASCII 可见区。
+//! 字体资产自检:界面只有一族「Osmosis Sans」(docs/design.md「字体」)。
 //!
-//! 设计稿的 display 字体 Caprasimo 没有中文字形,中文大标题走思源宋体
-//! (系统里的名字是 Noto Serif CJK SC)的 Heavy 子集。子集是预裁的,
-//! 新增页面标题而忘了重跑 `just font-title-subset`,这里就红,
-//! 并报出缺的是哪个字。动态文本(歌名、歌手名)不在此列:
-//! 它们是平台给的任意 CJK,走系统字体回退。
+//! 桌面那三件是 Figtree 与 Noto Sans CJK SC 按标准字符集合并的成品,安卓那三件只有
+//! Figtree(中文走系统的 Noto Sans CJK)。重新生成走 `just font-subset`。
+//! 歌名、歌手名是平台给的任意文字,不在这里守:子集按标准字符集裁,不按今天的曲库裁,
+//! 漏字看 `just font-subset` 末尾那行覆盖报告。
 
 use std::path::Path;
 
-/// 界面上所有硬编码的中文标题与区块题。每上一个新页面,把它的标题加进来,
-/// 然后重跑 `just font-title-subset`。
-const CJK_TITLES: &[&str] = &[
-    // 一级目的地(紧凑版式的页头写全名,MEO-1876)
-    "每日推荐",
-    "电台",
-    "搜索",
-    "我喜欢",
-    "我的歌单",
-    "最近播放",
-    "已下载",
-    "个人",
-    "红心",
-    "新建歌单",
-    // 空状态
-    "点一首歌开始",
-    // 设置
-    "设置",
-    "外观",
-    "账号与授权",
-    "缓存与存储",
-    "快捷键",
-    "关于",
-    // 个人主页
-    "个人主页",
-    "常听歌手",
-    "已连接平台",
-];
+const WEIGHTS: [u16; 3] = [400, 600, 700];
 
 fn font(path: &str) -> Vec<u8> {
     let full =
         Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     std::fs::read(&full).unwrap_or_else(|e| {
-        panic!("字体文件 {} 应存在(重跑 just 里的字体配方):{e}", full.display())
+        panic!(
+            "字体文件 {} 应存在(重跑 just font-subset):{e}",
+            full.display()
+        )
     })
 }
 
-fn assert_covers(
-    font_bytes: &[u8],
-    name: &str,
+fn faces() -> Vec<(String, Vec<u8>)> {
+    ["desktop", "android"]
+        .iter()
+        .flat_map(|side| {
+            WEIGHTS.iter().map(move |w| {
+                let name = format!(
+                    "fonts/{side}/osmosis-sans-{w}.ttf"
+                );
+                let bytes = font(&name);
+                (name, bytes)
+            })
+        })
+        .collect()
+}
+
+fn missing(
+    face: &ttf_parser::Face,
     text: impl Iterator<Item = char>,
-) {
-    let face = ttf_parser::Face::parse(font_bytes, 0)
-        .unwrap_or_else(|e| {
-            panic!("{name} 应能被解析:{e}")
-        });
-    let missing: Vec<char> = text
+) -> Vec<char> {
+    let mut out: Vec<char> = text
         .filter(|c| {
             !c.is_whitespace()
                 && face.glyph_index(*c).is_none()
         })
         .collect();
-    assert!(
-        missing.is_empty(),
-        "{name} 缺字形:{missing:?}"
-    );
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
-/// 中文标题子集盖住全部硬编码标题。
+/// 每一件都叫 Osmosis Sans,字重对得上,ASCII 可见区不缺字。
 #[test]
-fn title_subset_covers_every_hardcoded_title() {
-    let bytes = font("fonts/cjk-title-subset.otf");
-    assert_covers(
-        &bytes,
-        "cjk-title-subset.otf",
-        CJK_TITLES.iter().flat_map(|s| s.chars()),
-    );
+fn every_face_is_osmosis_sans_and_covers_ascii() {
+    for (name, bytes) in faces() {
+        let face = ttf_parser::Face::parse(&bytes, 0)
+            .unwrap_or_else(|e| {
+                panic!("{name} 应能解析:{e}")
+            });
+        let family = face
+            .names()
+            .into_iter()
+            .find(|n| {
+                n.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+                    && n.is_unicode()
+            })
+            .and_then(|n| n.to_string());
+        assert_eq!(
+            family.as_deref(),
+            Some("Osmosis Sans"),
+            "{name}"
+        );
+        assert!(
+            name.contains(
+                &face.weight().to_number().to_string()
+            ),
+            "{name} 的 usWeightClass 是 {}",
+            face.weight().to_number()
+        );
+        let lost =
+            missing(&face, (0x20u8..0x7f).map(char::from));
+        assert!(lost.is_empty(), "{name} 缺字形:{lost:?}");
+    }
 }
 
-/// 拉丁三件各自盖住 ASCII 可见区:标题、正文、等宽读数都不许缺字。
+/// 数字是等宽的:tnum 冻进了 cmap,时长与「1:13 / 4:14」不靠等宽字体也对得齐。
 #[test]
-fn latin_fonts_cover_visible_ascii() {
-    for name in [
-        "fonts/caprasimo.ttf",
-        "fonts/figtree-400.ttf",
-        "fonts/figtree-600.ttf",
-        "fonts/figtree-700.ttf",
-        "fonts/dm-mono.ttf",
-    ] {
-        let bytes = font(name);
-        assert_covers(
-            &bytes,
-            name,
-            (0x20u8..0x7f).map(char::from),
+fn digits_are_tabular() {
+    for (name, bytes) in faces() {
+        let face =
+            ttf_parser::Face::parse(&bytes, 0).unwrap();
+        let widths: Vec<u16> = ('0'..='9')
+            .map(|c| {
+                let id = face.glyph_index(c).unwrap();
+                face.glyph_hor_advance(id).unwrap()
+            })
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "{name} 的数字宽度不一:{widths:?}"
         );
     }
 }

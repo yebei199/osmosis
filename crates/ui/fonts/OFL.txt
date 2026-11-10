@@ -1,4 +1,8 @@
-Copyright 2022 The Maple Mono Project Authors (https://github.com/subframe7536/maple-font)
+Copyright 2022 The Figtree Project Authors (https://github.com/erikdkennedy/figtree)
+Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. Noto Sans CJK.
+
+Both halves of Osmosis Sans (fonts/desktop, fonts/android) are built from these two fonts by build.py;
+the merged family is a Modified Version under the OFL and is not named with either Reserved Font Name.
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

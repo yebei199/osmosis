@@ -1,8 +1,8 @@
 use super::*;
 
 /// 钉住会显示给用户的那句文案。措辞一改这里就红 —— 这是特性:
-/// 文案里的每个汉字都必须在 `crates/ui/fonts/cjk-subset.ttf` 里,
-/// 改了措辞就得重跑 `just font-subset`,否则 web 端显示成豆腐块。
+/// 文案里的每个汉字都必须在 `crates/ui/fonts/desktop/osmosis-sans-400.ttf` 里,
+/// 那个子集按标准字符集裁,生僻字才会漏。
 #[test]
 fn mismatch_message_contains_both_versions() {
     let err = ApiError::VersionMismatch {

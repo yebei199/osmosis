@@ -229,7 +229,6 @@ export component PlayerBar inherits Rectangle {
                     if root.show-time: clock := Text {
                         horizontal-stretch: 0;
                         min-width: root.time-w;
-                        font-family: Type.mono;
                         text: Player.buffering ? "缓冲中…" : Player.progress-text;
                         color: Player.buffering ? Theme.accent : Theme.text-dim;
                         font-size: TextSize.small;

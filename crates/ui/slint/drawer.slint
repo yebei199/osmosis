@@ -100,7 +100,6 @@ export component DrawerRow inherits Rectangle {
             alignment: center;
             state-text := Text {
                 text: root.state;
-                font-family: Type.mono;
                 color: root.checked ? Theme.accent : Theme.text-faint;
                 font-size: TextSize.small;
             }

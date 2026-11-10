@@ -74,7 +74,6 @@ export component PlaylistList inherits ListView {
                 }
                 Text {
                     text: row.subtitle;
-                    font-family: Type.body;
                     color: Theme.text-dim;
                     font-size: TextSize.small;
                     overflow: elide;
@@ -93,7 +92,6 @@ export component PlaylistList inherits ListView {
                     background: Theme.overlay;
                     badge := Text {
                         text: "只读";
-                        font-family: Type.body;
                         color: Theme.text-faint;
                         font-size: TextSize.caption;
                         horizontal-alignment: center;
@@ -107,7 +105,6 @@ export component PlaylistList inherits ListView {
             Text {
                 text: row.source == 0 ? "红心"
                     : row.source == 2 ? "本地" : "平台";
-                font-family: Type.body;
                 color: Theme.text-faint;
                 font-size: TextSize.caption;
                 vertical-alignment: center;
