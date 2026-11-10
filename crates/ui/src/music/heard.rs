@@ -3,7 +3,7 @@
 //! 听过是账号的事,不是这台设备的:同一批在手机上放着,其中一首在电脑上听完了,
 //! 手机放到它时不该再放一遍。所以每起播一首、每收到一次「电台变了」,就把这一批
 //! 还没放到的那些拿去问服务端(`POST /heard`),答回来的记下。只在自动续播时跳:
-//! 用户点名的那一首照放,手动「下一首」也照常往下走。
+//! 用户点名的那一首照放,手动「下一首」也照常往下走。循环开着(列表或单曲)不跳。
 //!
 //! 只认日推与电台起播的批次 —— 歌单、搜索里的歌听没听过,与放不放它无关。
 
@@ -42,14 +42,18 @@ pub(super) fn sourced(deck: &Deck) -> bool {
         || radio::owns_batch(deck)
 }
 
-/// 自动续播该跳过哪些:这一批是日推或电台的,其中已经听过的。
+/// 自动续播该跳过哪些:这一批是日推或电台的,其中已经听过的。**只在循环关着时跳**:
+/// 列表循环里每一首都会重听,跳过听过的就只剩一首来回放;单曲循环放的就是点名的那首。
 ///
 /// 判这一批是不是日推、电台的要读队列,所以在推进**之前**判好 —— 推进时队列正被
 /// 可变借着。
 pub(super) fn skipper(
     deck: &Deck,
 ) -> impl Fn(&TrackDto) -> bool + use<> {
-    let ids = sourced(deck).then(|| deck.heard.ids.clone());
+    let looping = deck.queue.borrow().loop_mode()
+        != app_core::LoopMode::Off;
+    let ids = (sourced(deck) && !looping)
+        .then(|| deck.heard.ids.clone());
     move |track| {
         ids.as_ref().is_some_and(|ids| {
             ids.borrow().contains(&track.id)

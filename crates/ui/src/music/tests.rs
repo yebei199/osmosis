@@ -1210,6 +1210,37 @@ fn auto_advance_skips_a_daily_track_heard_elsewhere() {
     assert_eq!(queue_now(&deck).as_deref(), Some("b"));
 }
 
+/// 循环开着不跳听过的:列表循环里每首都会重听,单曲循环放的就是点名那首。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn heard_tracks_are_not_skipped_while_looping() {
+    let (ui, deck) = deck_window();
+    deck.views.show(ViewSource::Daily);
+    dispatch(
+        &ui,
+        &deck,
+        Intent::Play {
+            tracks: ["a", "b", "c"]
+                .into_iter()
+                .map(track_with_id)
+                .collect(),
+            index: 0,
+        },
+    );
+    deck.heard.learn(["b".to_owned(), "a".to_owned()]);
+    deck.queue
+        .borrow_mut()
+        .set_loop_mode(app_core::LoopMode::All);
+    super::advance_auto(&ui, &deck);
+    assert_eq!(queue_now(&deck).as_deref(), Some("b"));
+
+    deck.queue
+        .borrow_mut()
+        .set_loop_mode(app_core::LoopMode::One);
+    super::advance_auto(&ui, &deck);
+    assert_eq!(queue_now(&deck).as_deref(), Some("b"));
+}
+
 /// 不是日推、电台起播的那一批(歌单、搜索):听过的照放。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
