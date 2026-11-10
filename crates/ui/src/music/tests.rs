@@ -1137,3 +1137,26 @@ fn a_row_leaving_above_keeps_the_visible_row_in_place() {
 
     assert_eq!(ui.global::<Player>().get_list_scroll_to(), row);
 }
+
+/// 打开日推:滚到在放的那一首,上面留一行。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn opening_daily_scrolls_to_the_track_now_playing() {
+    let (ui, deck) = deck_window_pumped();
+    super::facets::bind(&ui, &deck);
+    deck.last_daily
+        .set(Some(daily_day(chrono::Utc::now())));
+    ui.global::<Shell>().set_destination(0);
+    ui.global::<Player>().set_now_id("d".into());
+    let row = ui.global::<Player>().get_track_row_height();
+
+    fetch_daily_from(
+        &ui.as_weak(),
+        &deck,
+        async { None },
+        async { Ok(batch(&["a", "b", "c", "d", "e"])) },
+    );
+
+    assert_eq!(ui.global::<Player>().get_list_scroll_to(), 2.0 * row);
+    assert!(!deck.reveal_now.get(), "只滚这一次");
+}

@@ -59,6 +59,16 @@ pub(super) fn anchored(
     )
 }
 
+/// `key` 那一行露出来该滚到哪:让它上面还露一行,看得出它不是第一首。
+/// 不在列表里是 `None`。
+pub(super) fn reveal(lines: &[Line], key: &str) -> Option<f32> {
+    let at = lines.iter().position(|(id, _)| id == key)?;
+    let tops = tops(lines);
+    let above =
+        at.checked_sub(1).map_or(0.0, |prev| lines[prev].1);
+    Some((tops[at] - above).max(0.0))
+}
+
 /// 每一行顶边离内容顶端多远。
 fn tops(lines: &[Line]) -> Vec<f32> {
     lines
@@ -123,5 +133,15 @@ mod tests {
             anchored(&rows(&["a", "b"]), 5.0, &rows(&["c"])),
             None
         );
+    }
+
+    /// 在放的那一行上面留一行。
+    #[test]
+    fn reveal_leaves_one_row_above() {
+        let lines = rows(&["a", "b", "c", "d"]);
+
+        assert_eq!(reveal(&lines, "c"), Some(10.0));
+        assert_eq!(reveal(&lines, "a"), Some(0.0));
+        assert_eq!(reveal(&lines, "z"), None);
     }
 }

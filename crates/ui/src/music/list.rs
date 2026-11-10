@@ -614,6 +614,8 @@ pub(super) fn fetch_daily_from<Cached, Fut>(
         && deck.views.current_source()
             == Some(ViewSource::Daily);
     if on_screen && !refreshing {
+        // 打开日推:在放的那首还没听够就还在列表里,滚到它(听过的口径见 CONTEXT.md)
+        deck.reveal_now.set(true);
         fetch_cached_into(
             weak,
             deck,
@@ -895,8 +897,22 @@ pub(super) fn push_rows(
     let after = scroll::lines(ui, rows.iter().cloned());
     ui.global::<Player>()
         .set_tracks(ModelRc::new(VecModel::from(rows)));
-    if let Some(to) = before
-        .and_then(|before| scroll::anchored(&before, scrolled, &after))
+    // 日推刚打开、第一次摆出行:滚到在放的那首,不在列表里就不动
+    let revealing = deck.reveal_now.get()
+        && !after.is_empty()
+        && deck.views.current_source() == Some(ViewSource::Daily);
+    let target = if revealing {
+        deck.reveal_now.set(false);
+        scroll::reveal(
+            &after,
+            ui.global::<Player>().get_now_id().as_str(),
+        )
+    } else {
+        before.and_then(|before| {
+            scroll::anchored(&before, scrolled, &after)
+        })
+    };
+    if let Some(to) = target
         && (to - scrolled).abs() >= 0.5
     {
         scroll::scroll_to(ui, to);
