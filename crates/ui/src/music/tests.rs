@@ -1434,6 +1434,23 @@ fn opening_radio_does_not_interrupt_what_is_playing() {
     );
 }
 
+/// 暂停着(或重启后恢复)的那一首也不换掉:点开电台只摆歌单。
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn opening_radio_keeps_a_paused_queue() {
+    let (ui, deck) = deck_window();
+    ui.global::<Shell>().set_destination(4);
+    deck.queue
+        .borrow_mut()
+        .replace(vec![track_with_id("a")], 0);
+    ui.global::<Player>().set_is_playing(false);
+
+    super::radio::open(&ui, &deck);
+
+    assert!(!ui.global::<Player>().get_tracks_loading());
+    assert_eq!(queue_now(&deck).as_deref(), Some("a"));
+}
+
 /// 什么都没放:点开电台开私人 FM。
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
