@@ -22,7 +22,7 @@ pub use global::{Effective, GlobalGroup, Sound, Standing};
 pub use health::{Health, HealthState, refresh};
 pub use lyric::{LyricWindow, current_line, window};
 pub use playback::{Playback, PlaybackState, play};
-pub use queue::{LoopMode, Queue};
+pub use queue::{LoopMode, Queue, RESTART_AFTER};
 
 /// 从 `contract` 透传,免得 UI 层为了一个 DTO 再声明一次依赖。
 pub use contract::{

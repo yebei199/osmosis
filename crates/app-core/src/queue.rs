@@ -8,7 +8,12 @@
 //! 洗牌的随机种子由调用方传入:本 crate 要能编到 wasm 且保持确定性可测,
 //! 不引 `rand` —— `ui` 那侧用 `RandomState` 造种子,一行的事。
 
+use core::time::Duration;
+
 use contract::TrackDto;
+
+/// 「上一首」在这一首放过多久之后改成回到开头(与组里服务端的 `RESTART_AFTER_US` 同值)。
+pub const RESTART_AFTER: Duration = Duration::from_secs(3);
 
 /// 循环模式。三态与 MPRIS 的 `LoopStatus`(None/Playlist/Track)
 /// 及安卓 `REPEAT_MODE` 一一对应,上报时无损。
@@ -296,13 +301,40 @@ impl Queue {
         None
     }
 
-    /// 回到刚才放过的那首。随机模式下也成立 —— 走的是 `order`,
-    /// 不是批序减一。队首之前是 `None`,位置不动。
-    pub fn previous(&mut self) -> Option<&TrackDto> {
-        if self.cursor == 0 || self.order.is_empty() {
-            return None;
+    /// 手动「上一首」,与组里服务端那份同一条规则(`server::syncplay::group::timeline`
+    /// 的 `step`,两边各写一份,服务端有对拍测试钉住):
+    ///
+    /// - 这一首已经放过 [`RESTART_AFTER`]:回到这一首开头;
+    /// - 否则退到刚才放过的那首(走 `order`,随机时也对),跳过 `skip` 认出的
+    ///   (屏蔽规则可能是装进队列之后才建的);列表循环在队首回卷到队尾;
+    /// - 往回再没有可放的(队首、其余都被跳过):回到这一首开头。
+    ///
+    /// 交出的是接下来该从头放的那首 —— 回到开头时就是当前这首。空批是 `None`。
+    pub fn back(
+        &mut self,
+        played: Duration,
+        skip: impl Fn(&TrackDto) -> bool,
+    ) -> Option<&TrackDto> {
+        let len = self.order.len();
+        if played <= RESTART_AFTER {
+            for offset in 1..=len {
+                let Some(at) = self
+                    .cursor
+                    .checked_sub(offset)
+                    .or_else(|| {
+                        (self.loop_mode == LoopMode::All).then(
+                            || self.cursor + len - offset,
+                        )
+                    })
+                else {
+                    break;
+                };
+                if !skip(&self.tracks[self.order[at]]) {
+                    self.cursor = at;
+                    break;
+                }
+            }
         }
-        self.cursor -= 1;
         self.current()
     }
 

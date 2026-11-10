@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use similar_asserts::assert_eq;
 
 use super::*;
@@ -83,16 +85,64 @@ fn peek_next_at_the_end_of_the_queue_is_none() {
     assert!(queue.peek_next().is_none());
 }
 
-/// 上一首回到**刚才放过的那首**。
+/// 刚开头不久的「上一首」回到**刚才放过的那首**。
 #[test]
-fn previous_returns_to_the_track_just_played() {
+fn back_returns_to_the_track_just_played() {
     let mut queue = Queue::new(batch(4), 0);
     queue.next(0);
     queue.next(0);
 
     assert_eq!(
-        queue.previous().map(|t| t.id.clone()),
+        queue.back(Duration::ZERO, |_| false).map(|t| t.id.clone()),
         Some("1".to_owned())
+    );
+}
+
+/// 这一首放过三秒以上:「上一首」回到这一首开头,不换歌。
+#[test]
+fn back_after_a_while_restarts_the_current_track() {
+    let mut queue = Queue::new(batch(4), 2);
+
+    assert_eq!(
+        queue
+            .back(Duration::from_secs(4), |_| false)
+            .map(|t| t.id.clone()),
+        Some("2".to_owned())
+    );
+}
+
+/// 往回也跳过屏蔽的;往回全被跳过就回到这一首开头。
+#[test]
+fn back_skips_blocked_tracks() {
+    let mut queue = Queue::new(batch(4), 3);
+
+    assert_eq!(
+        queue
+            .back(Duration::ZERO, |t| t.id == "2")
+            .map(|t| t.id.clone()),
+        Some("1".to_owned())
+    );
+    assert_eq!(
+        queue
+            .back(Duration::ZERO, |t| t.id != "1")
+            .map(|t| t.id.clone()),
+        Some("1".to_owned())
+    );
+}
+
+/// 列表循环在队首回卷到队尾;不循环时队首的「上一首」重放这一首。
+#[test]
+fn back_at_the_start_wraps_only_when_looping_all() {
+    let mut queue = Queue::new(batch(3), 0);
+    assert_eq!(
+        queue.back(Duration::ZERO, |_| false).map(|t| t.id.clone()),
+        Some("0".to_owned())
+    );
+
+    queue.set_loop_mode(LoopMode::All);
+    assert_eq!(
+        queue.back(Duration::ZERO, |_| false).map(|t| t.id.clone()),
+        Some("2".to_owned())
     );
 }
 
@@ -109,13 +159,12 @@ fn next_at_the_end_returns_none_and_stays() {
     );
 }
 
-/// 边界:第一首之前没有上一首。
+/// 空批没有可放的。
 #[test]
-fn previous_at_the_start_returns_none() {
-    let mut queue = Queue::new(batch(3), 0);
+fn back_on_an_empty_queue_is_none() {
+    let mut queue = Queue::default();
 
-    assert!(queue.previous().is_none());
-    assert_eq!(id_of(&queue), Some("0".to_owned()));
+    assert!(queue.back(Duration::ZERO, |_| false).is_none());
 }
 
 /// 换一批就整个换队列:cursor 重置,旧批消失。

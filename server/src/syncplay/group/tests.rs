@@ -720,6 +720,67 @@ fn halting_at_the_tail_ends_the_play() {
     );
 }
 
+/// 「上一首」两边各写一份(ADR 0001):组里是这里的 `step`,独奏是 `app_core::Queue::back`。
+/// 拿客户端那份当标尺,所有位置、循环、屏蔽、放了多久的组合都对一遍,漂了就红。
+#[test]
+fn prev_matches_the_solo_rule_in_app_core() {
+    use core::time::Duration;
+
+    assert_eq!(
+        app_core::RESTART_AFTER,
+        Duration::from_micros(RESTART_AFTER_US)
+    );
+    let track = |id: i64| app_core::TrackDto {
+        artist_identities: Vec::new(),
+        platform: "netease".to_owned(),
+        id: id.to_string(),
+        title: String::new(),
+        alias: None,
+        artists: Vec::new(),
+        cover: None,
+        duration_ms: 100_000,
+        album: None,
+        facets: Default::default(),
+    };
+    for at in 1..=3 {
+        for mode in [LoopModeDto::Off, LoopModeDto::All, LoopModeDto::One] {
+            for blocked in [None, Some(1), Some(2), Some(3)] {
+                for played in [SEC, 5 * SEC] {
+                    let list = blocked.map_or_else(list, blocking);
+                    let mut group = group();
+                    group.jump("phone", (7, 1), &list, at, 0, 42).unwrap();
+                    group.set_loop("phone", mode).unwrap();
+                    group
+                        .step("phone", &list, -1, START_WAIT_US + played)
+                        .unwrap();
+
+                    let mut queue = app_core::Queue::new(
+                        (1..=3).map(track).collect(),
+                        (at - 1) as usize,
+                    );
+                    queue.set_loop_mode(match mode {
+                        LoopModeDto::Off => app_core::LoopMode::Off,
+                        LoopModeDto::All => app_core::LoopMode::All,
+                        LoopModeDto::One => app_core::LoopMode::One,
+                    });
+                    let solo = queue
+                        .back(
+                            Duration::from_micros(played as u64),
+                            |track| Some(track.id.parse().unwrap()) == blocked,
+                        )
+                        .map(|track| track.id.parse::<i64>().unwrap());
+
+                    assert_eq!(
+                        Some(now(&group).entry_id),
+                        solo,
+                        "在第 {at} 条,{mode:?},屏蔽 {blocked:?},放了 {played}us"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// 私有周期入口扫描整个池,因此每条真库测试使用自己的 schema 和全部连接。
 mod persistence {
     use std::future::Future;
