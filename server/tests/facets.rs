@@ -74,10 +74,10 @@ async fn play(
         .await
         .expect("记起播");
     if let Some(listened_ms) = listened_ms {
-        history::report_listened(
+        history::settle(
             tx,
             account.id,
-            event,
+            &history::PlayRef::Event(event),
             listened_ms,
             200_000,
         )

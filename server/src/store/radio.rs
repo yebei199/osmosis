@@ -1,11 +1,12 @@
 //! 每个账号一份共享的电台歌单(#186):成员与加入次序。
 //!
-//! 详情不在这里,借 [`super::cache`];听没听过也不存,读的时候看 `play_events`
-//! (与电台拉新歌时丢听过的同一个判据,#159)。听过的行留着,「已听过」要摆它们。
+//! 详情不在这里,借 [`super::cache`];听没听过也不存,读的时候看
+//! [`history::heard_sql`]。听过的行留着,「已听过」要摆它们。
 
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::history;
 use crate::store::liked;
 use crate::store::playlist::TrackRef;
 
@@ -13,7 +14,7 @@ use crate::store::playlist::TrackRef;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub track: TrackRef,
-    /// 这个账号播放过它。
+    /// 这个账号听过它(见 [`history::is_heard`])。
     pub heard: bool,
 }
 
@@ -56,15 +57,11 @@ pub async fn list(
 ) -> Result<Vec<Entry>, AppError> {
     let rows: Vec<(String, String, bool)> =
         sqlx::query_as(&format!(
-            "SELECT r.platform, r.track_id, EXISTS (
-                 SELECT 1 FROM play_events AS pe
-                 WHERE pe.account_id = r.account_id
-                   AND pe.platform = r.platform
-                   AND pe.track_id = r.track_id
-             )
+            "SELECT r.platform, r.track_id, {heard}
              FROM radio_tracks AS r
              WHERE r.account_id = $1 AND NOT {liked}
              ORDER BY r.id",
+            heard = history::heard_sql("r"),
             liked = liked::of_account_sql("r"),
         ))
         .bind(account_id)
@@ -91,12 +88,8 @@ pub async fn unheard_total(
              UNION
              SELECT account_id, platform, track_id FROM daily_picks
          ) AS m
-         WHERE m.account_id = $1 AND NOT {liked} AND NOT EXISTS (
-             SELECT 1 FROM play_events AS pe
-             WHERE pe.account_id = m.account_id
-               AND pe.platform = m.platform
-               AND pe.track_id = m.track_id
-         )",
+         WHERE m.account_id = $1 AND NOT {liked} AND NOT {heard}",
+        heard = history::heard_sql("m"),
         liked = liked::of_account_sql("m"),
     ))
     .bind(account_id)

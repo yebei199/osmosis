@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use contract::{
-    DeviceDto, PlayedDto, RadioListDto, ServerSignal,
+    DeviceDto, ListenedDto, PlayedDto, RadioListDto,
+    ServerSignal,
 };
 use similar_asserts::assert_eq;
 use tokio::sync::mpsc;
@@ -167,9 +168,40 @@ async fn a_track_already_listed_is_not_added_twice() {
     assert!(!told(&mut inbox));
 }
 
-/// AC-2:听过一首,它从歌单挪进「已听过」,各台收到通知。
+/// 起播 `track_id`,再补记听了 `listened_ms`(这首长 200 秒)。
+async fn listen(
+    state: &AppState,
+    account: &server::store::account::Account,
+    track_id: String,
+    listened_ms: i64,
+) {
+    let ack = crate::routes::library::history::record_play(
+        State(state.clone()),
+        account.clone(),
+        Json(PlayedDto {
+            platform: "netease".to_owned(),
+            track_id,
+        }),
+    )
+    .await
+    .expect("报播放")
+    .0;
+    crate::routes::library::history::report_listened(
+        State(state.clone()),
+        account.clone(),
+        Path(ack.id),
+        Json(ListenedDto {
+            listened_ms,
+            duration_ms: 200_000,
+        }),
+    )
+    .await
+    .expect("补记听了多久");
+}
+
+/// AC-2:听够了一首(过半),它从歌单挪进「已听过」,各台收到通知。
 #[tokio::test]
-async fn a_played_track_moves_to_heard() {
+async fn a_track_heard_through_moves_to_heard() {
     let case = "radio_shared_heard";
     let id = |n| track_id(case, n);
     let (state, account) =
@@ -184,21 +216,46 @@ async fn a_played_track_moves_to_heard() {
     .unwrap();
     let mut inbox = online(&state, account.id, "desk");
 
-    let _ = crate::routes::library::history::record_play(
-        State(state.clone()),
-        account.clone(),
-        Json(PlayedDto {
-            platform: "netease".to_owned(),
-            track_id: id(2),
-        }),
-    )
-    .await
-    .expect("报播放");
+    listen(&state, &account, id(2), 100_000).await;
 
     assert!(told(&mut inbox));
     let now = list(State(state), account).await.unwrap().0;
     assert_eq!(ids(&now.tracks), vec![id(1), id(3)]);
     assert_eq!(ids(&now.heard), vec![id(2)]);
+}
+
+/// 出声那一刻不算听过,听了一点就切走也不算:歌留在主列表,各台不被打扰。
+#[tokio::test]
+async fn starting_or_skipping_early_is_not_hearing() {
+    let case = "radio_shared_skipped";
+    let id = |n| track_id(case, n);
+    let (state, account) =
+        fixture(case, vec![vec![id(1), id(2)]]).await;
+    let _ = more(
+        State(state.clone()),
+        account.clone(),
+        unfiltered(),
+    )
+    .await
+    .unwrap();
+    let mut inbox = online(&state, account.id, "desk");
+
+    let _ = crate::routes::library::history::record_play(
+        State(state.clone()),
+        account.clone(),
+        Json(PlayedDto {
+            platform: "netease".to_owned(),
+            track_id: id(1),
+        }),
+    )
+    .await
+    .expect("报播放");
+    listen(&state, &account, id(2), 99_999).await;
+
+    assert!(!told(&mut inbox));
+    let now = list(State(state), account).await.unwrap().0;
+    assert_eq!(ids(&now.tracks), vec![id(1), id(2)]);
+    assert!(now.heard.is_empty());
 }
 
 /// 歌单抽干了、私人 FM 也一首新歌都给不出:以听过的歌为种子接心动,补满一批。
@@ -248,16 +305,7 @@ async fn a_dry_fm_is_refilled_from_heart_mode() {
         "没有听过的歌就没有种子"
     );
 
-    let _ = crate::routes::library::history::record_play(
-        State(state.clone()),
-        account.clone(),
-        Json(PlayedDto {
-            platform: "netease".to_owned(),
-            track_id: id(1),
-        }),
-    )
-    .await
-    .expect("报播放");
+    listen(&state, &account, id(1), 200_000).await;
     let second = more(State(state), account, unfiltered())
         .await
         .expect("再补")
@@ -273,23 +321,15 @@ async fn a_dry_fm_is_refilled_from_heart_mode() {
     );
 }
 
-/// 不在电台歌单里的歌播了,不打扰各台。
+/// 不在电台歌单里的歌听完了,不打扰各台。
 #[tokio::test]
 async fn playing_something_else_does_not_notify() {
     let case = "radio_shared_quiet";
     let (state, account) = fixture(case, vec![]).await;
     let mut inbox = online(&state, account.id, "desk");
 
-    let _ = crate::routes::library::history::record_play(
-        State(state),
-        account,
-        Json(PlayedDto {
-            platform: "netease".to_owned(),
-            track_id: track_id(case, 1),
-        }),
-    )
-    .await
-    .expect("报播放");
+    listen(&state, &account, track_id(case, 1), 200_000)
+        .await;
 
     assert!(!told(&mut inbox));
 }

@@ -182,13 +182,9 @@ fn pool_sql(platform: &str, track_id: &str) -> String {
                  SELECT account_id, platform, track_id FROM daily_picks
              ) AS m
              WHERE m.platform = {platform} AND m.track_id = {track_id}
-               AND NOT EXISTS (
-                   SELECT 1 FROM play_events AS pe
-                   WHERE pe.account_id = m.account_id
-                     AND pe.platform = m.platform
-                     AND pe.track_id = m.track_id
-               )
-         )"
+               AND NOT {heard}
+         )",
+        heard = crate::store::history::heard_sql("m"),
     )
 }
 

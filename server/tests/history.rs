@@ -5,6 +5,7 @@
 use server::error::AppError;
 use server::store::account::{Account, register};
 use server::store::playlist::TrackRef;
+use server::store::history::PlayRef;
 use server::store::{db, history};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -357,7 +358,7 @@ async fn recording_for_an_unknown_account_fails() {
 
 /// 补记听了多久(#157):`record` 给的 id 认哪一行,写完能在库里查到。
 #[tokio::test]
-async fn report_listened_fills_in_the_row() {
+async fn settle_fills_in_the_row() {
     let mut tx = tx().await;
     let account =
         make_account(&mut tx, "hs_listened").await;
@@ -366,8 +367,12 @@ async fn report_listened_fills_in_the_row() {
         history::record(&mut tx, account.id, &track("1"))
             .await
             .expect("记录应该成功");
-    history::report_listened(
-        &mut tx, account.id, id, 9_000, 200_000,
+    history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::Event(id),
+        9_000,
+        200_000,
     )
     .await
     .expect("补记应该成功");
@@ -385,7 +390,7 @@ async fn report_listened_fills_in_the_row() {
 
 /// 别人的那一行按不存在回答,不是 403 —— 与歌单归属检查同一个理由。
 #[tokio::test]
-async fn report_listened_is_scoped_to_the_account() {
+async fn settle_is_scoped_to_the_account() {
     let mut tx = tx().await;
     let mine =
         make_account(&mut tx, "hs_lst_scope_a").await;
@@ -396,12 +401,132 @@ async fn report_listened_is_scoped_to_the_account() {
         history::record(&mut tx, theirs.id, &track("1"))
             .await
             .expect("记录应该成功");
-    let result = history::report_listened(
-        &mut tx, mine.id, id, 1_000, 2_000,
+    let result = history::settle(
+        &mut tx,
+        mine.id,
+        &PlayRef::Event(id),
+        1_000,
+        2_000,
     )
     .await;
 
     assert!(matches!(result, Err(AppError::NotFound)));
+}
+
+/// 听过的口径(用户 2026-11-10):过半或满 240 秒,先到哪条算哪条;时长未知只看后一条。
+#[test]
+fn heard_is_half_the_track_or_four_minutes() {
+    assert!(!history::is_heard(99_999, 200_000));
+    assert!(history::is_heard(100_000, 200_000));
+    assert!(!history::is_heard(239_999, 600_000));
+    assert!(history::is_heard(240_000, 600_000));
+    assert!(!history::is_heard(239_999, 0));
+    assert!(history::is_heard(240_000, 0));
+}
+
+/// 听够了才记成听过,只记一次;没听够、只起播的都不算。
+#[tokio::test]
+async fn settle_marks_heard_once_and_only_past_the_threshold() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "hs_heard").await;
+
+    let short =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .unwrap();
+    let skipped = history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::Event(short),
+        30_000,
+        200_000,
+    )
+    .await
+    .unwrap();
+    history::record(&mut tx, account.id, &track("2"))
+        .await
+        .unwrap();
+    let full =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .unwrap();
+    let first = history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::Event(full),
+        150_000,
+        200_000,
+    )
+    .await
+    .unwrap();
+    let again = history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::Event(full),
+        200_000,
+        200_000,
+    )
+    .await
+    .unwrap();
+
+    let heard: Vec<String> = sqlx::query_scalar(
+        "SELECT track_id FROM heard_tracks WHERE account_id = $1",
+    )
+    .bind(account.id)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        (skipped, first, again, heard),
+        (None, Some(track("1")), None, vec!["1".to_owned()])
+    );
+}
+
+/// 组里没有行号:认这首最近的一次起播,两次补记取大的。
+#[tokio::test]
+async fn settle_latest_of_a_track_keeps_the_larger_report() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "hs_latest").await;
+
+    let older =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .unwrap();
+    let latest =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .unwrap();
+    history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::Event(latest),
+        120_000,
+        200_000,
+    )
+    .await
+    .unwrap();
+    history::settle(
+        &mut tx,
+        account.id,
+        &PlayRef::LatestOf(track("1")),
+        5_000,
+        200_000,
+    )
+    .await
+    .unwrap();
+
+    let rows: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT id, listened_ms FROM play_events
+         WHERE account_id = $1 ORDER BY id",
+    )
+    .bind(account.id)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(older, None), (latest, Some(120_000))]
+    );
 }
 
 /// 电台的听过过滤(#159):只认本账号的事件,顺序照给进来的那批。

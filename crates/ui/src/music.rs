@@ -175,6 +175,9 @@ struct Deck {
     /// 正在计的这一段播放挂在哪条服务端事件行上(#157)。换歌或停下时
     /// 取走它去补记听了多久,取不到(还没报上起播、或已经报过)就不补。
     current_play: Rc<RefCell<Option<CurrentPlay>>>,
+    /// 这一段播放累计听了多久,补记时报给服务端判「听过」(见 [`report::ListenClock`])。
+    /// 起播时清零,自动续播的轮询每秒记一次。
+    listen_clock: Rc<std::cell::Cell<ListenClock>>,
     /// 电台起播的是哪一批、续取在不在路上(见 `radio`,#159)。
     radio: radio::Radio,
 }
@@ -246,6 +249,7 @@ pub fn bind(
         volume_save: Default::default(),
         cover_turn: Default::default(),
         current_play: Rc::new(RefCell::new(None)),
+        listen_clock: Rc::default(),
         radio: radio::Radio::default(),
     };
 

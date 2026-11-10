@@ -13,6 +13,50 @@ pub(super) struct CurrentPlay {
     pub(super) duration_ms: i64,
 }
 
+/// 这一段播放**累计**听了多久(用户 2026-11-10:听过 = 听满一半或 240 秒,算的是
+/// 真听的时间)。播放器只给位置,而位置被跳转改写过就不再是听了多久 —— 往后拖到
+/// 结尾再切走,位置说「听完了」,耳朵只听了几秒。
+///
+/// 所以每次轮询只把**正常走过**的那一小段累加进来:位置往回走(往回拖、重放)
+/// 或一下跳得比 [`ListenClock::MAX_STEP`] 还远(往前拖)的那一下不算,只把起点挪过去。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct ListenClock {
+    listened: core::time::Duration,
+    last: core::time::Duration,
+}
+
+impl ListenClock {
+    /// 两次读位置之间,正常播放最多能走多远。轮询一秒一次,留出主线程卡顿的余量。
+    const MAX_STEP: core::time::Duration =
+        core::time::Duration::from_secs(3);
+
+    /// 读到此刻的位置,把正常走过的那一段记上。
+    #[must_use]
+    pub(super) fn observe(
+        self,
+        position: core::time::Duration,
+    ) -> Self {
+        let walked = position.saturating_sub(self.last);
+        let listened = if position > self.last
+            && walked <= Self::MAX_STEP
+        {
+            self.listened + walked
+        } else {
+            self.listened
+        };
+        Self {
+            listened,
+            last: position,
+        }
+    }
+
+    /// 累计听了多少毫秒。
+    pub(super) fn listened_ms(self) -> i64 {
+        i64::try_from(self.listened.as_millis())
+            .unwrap_or(i64::MAX)
+    }
+}
+
 /// 起播上报的判据:声音真的出来那一刻报一次,同一次播放不重复报。
 ///
 /// `last` 是上一次记住的身份,由调用方跨帧持有。返回 `Some` 就是这一帧要报的

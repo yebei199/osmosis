@@ -6,7 +6,6 @@ use std::time::Duration;
 use similar_asserts::assert_eq;
 use sqlx::PgConnection;
 
-use server::store::history;
 use server::store::playlist::TrackRef;
 use server::store::prefetch::{self, Job, Unfinished};
 use server::store::radio;
@@ -181,9 +180,8 @@ async fn unheard_radio_tracks_are_claimed_first() {
     )
     .await
     .unwrap();
-    history::record(&mut tx, owner.id, &heard)
-        .await
-        .unwrap();
+    crate::routes::testing::hear(&mut tx, owner.id, &heard)
+        .await;
 
     let mut claimed = Vec::new();
     while let Some(job) =

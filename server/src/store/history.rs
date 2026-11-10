@@ -1,8 +1,12 @@
 //! 播放事件与最近播放。
 //!
 //! 起播即追加一条,不等声音真的出来之后再补;`listened_ms`/`duration_ms`
-//! 两列(#157)例外于「只增不改」—— 切歌/播完/停止时客户端补一次,补不上
+//! 两列(#157)例外于「只增不改」—— 切歌/播完/停止时补一次,补不上
 //! (进程被杀)就留 NULL,算不出完播也算不出跳过,接受(见 `docs/adr/0016`)。
+//!
+//! 「听过」不是起播:补记那一刻听够了([`is_heard`])才记进 `heard_tracks`,
+//! 永久有效。电台、日推、预取、未听池问的都是它([`heard_sql`]);最近播放与
+//! 统计仍问起播事件。
 //!
 //! 「最近播放」「最常听」这类东西都是**查询时**的聚合,不存在独立的统计表。
 //! 口径想改就改,因为原始事件都在。
@@ -30,30 +34,95 @@ pub async fn record(
     .await?)
 }
 
-/// 补记这一次播放听了多久。只认自己账号的行,别人的行按不存在回答
-/// (与 [`crate::store::playlist::rename`] 同一个理由)。
-pub async fn report_listened(
+/// 累计听满这么久就算听过,不管这首多长(用户 2026-11-10 定)。
+pub const HEARD_AFTER_MS: i64 = 240_000;
+
+/// 听过的判据:累计听了时长的一半以上,或满 [`HEARD_AFTER_MS`],先到哪条算哪条。
+/// 时长未知(0)时只看后一条。
+#[must_use]
+pub fn is_heard(listened_ms: i64, duration_ms: i64) -> bool {
+    listened_ms >= HEARD_AFTER_MS
+        || (duration_ms > 0
+            && listened_ms.saturating_mul(2) >= duration_ms)
+}
+
+/// `row` 那一行(带 `account_id`、`platform`、`track_id` 三列)的账号听过这一首。
+/// 电台、日推、预取、未听池都用这一句,「听过」只有这一个定义。
+pub(crate) fn heard_sql(row: &str) -> String {
+    format!(
+        "EXISTS (
+             SELECT 1 FROM heard_tracks AS h
+             WHERE h.account_id = {row}.account_id
+               AND h.platform = {row}.platform
+               AND h.track_id = {row}.track_id
+         )"
+    )
+}
+
+/// 补记听了多久的是哪一次播放。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlayRef {
+    /// 起播上报交回的那一行(独奏)。
+    Event(i64),
+    /// 这首最近的一次起播(组里:起播由服务端记,手上没有行号)。
+    LatestOf(TrackRef),
+}
+
+/// 补记一次播放听了多久,并判它听没听过。新听过的交回那一首,已经听过或没听够的交 `None`。
+///
+/// 只认自己账号的行,别人的行按不存在回答(与 [`crate::store::playlist::rename`]
+/// 同一个理由)。同一行补记两次取大的:组里出声设备与服务端可能各报一次。
+pub async fn settle(
     conn: &mut PgConnection,
     account_id: i64,
-    play_event_id: i64,
+    play: &PlayRef,
     listened_ms: i64,
     duration_ms: i64,
-) -> Result<(), AppError> {
-    let done = sqlx::query(
-        "UPDATE play_events SET listened_ms = $3, duration_ms = $4
-         WHERE id = $2 AND account_id = $1",
+) -> Result<Option<TrackRef>, AppError> {
+    let (event, track) = match play {
+        PlayRef::Event(id) => (Some(*id), None),
+        PlayRef::LatestOf(track) => (None, Some(track)),
+    };
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "UPDATE play_events
+         SET listened_ms = GREATEST(listened_ms, $4),
+             duration_ms = $5
+         WHERE account_id = $1 AND id = COALESCE($2, (
+             SELECT max(id) FROM play_events
+             WHERE account_id = $1
+               AND platform = $3 AND track_id = $6
+         ))
+         RETURNING platform, track_id, listened_ms",
     )
     .bind(account_id)
-    .bind(play_event_id)
+    .bind(event)
+    .bind(track.map(|track| track.platform.as_str()))
     .bind(listened_ms)
     .bind(duration_ms)
-    .execute(conn)
+    .bind(track.map(|track| track.track_id.as_str()))
+    .fetch_optional(&mut *conn)
     .await?;
 
-    if done.rows_affected() == 0 {
+    let Some((platform, track_id, listened_ms)) = row else {
         return Err(AppError::NotFound);
+    };
+    if !is_heard(listened_ms, duration_ms) {
+        return Ok(None);
     }
-    Ok(())
+    let fresh = sqlx::query(
+        "INSERT INTO heard_tracks (account_id, platform, track_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(account_id)
+    .bind(&platform)
+    .bind(&track_id)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0;
+
+    Ok(fresh.then_some(TrackRef { platform, track_id }))
 }
 
 /// `tracks` 里这个账号「听过或表过态」的那些,顺序照 `tracks`。电台要丢掉它们:

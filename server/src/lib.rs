@@ -9,6 +9,7 @@
 pub mod bangdream;
 pub mod error;
 pub mod gate;
+pub mod heard;
 pub mod objects;
 pub mod quality;
 pub mod store;

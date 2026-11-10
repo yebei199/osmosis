@@ -17,15 +17,13 @@ use server::bangdream::{
 use server::error;
 use server::error::Failure;
 use server::store::account::Account;
+use server::heard;
+use server::store::history::{self, PlayRef};
 use server::store::playlist::TrackRef;
-use server::store::radio;
-use server::store::{daily, history};
 
 use super::for_account;
 use super::likes::PageQuery;
-use crate::routes::catalog::radio::{
-    spawn_top_up, tell_radio_changed,
-};
+use crate::routes::catalog::radio::spawn_top_up;
 use crate::routes::catalog::search::remember_details;
 use crate::routes::play::archive;
 use crate::{AppState, conn, fail};
@@ -54,45 +52,37 @@ pub(crate) async fn record_play(
         .await
         .map_err(|err| error::map_error(&err))?;
 
-    // 电台或日推里的一首听过了:各台要把它挪进「已听过」(#186)
-    let listed =
-        radio::holds(&mut conn, account.id, &track)
-            .await
-            .map_err(|err| error::map_error(&err))?
-            || daily::holds(&mut conn, account.id, &track)
-                .await
-                .map_err(|err| error::map_error(&err))?;
-    if listed {
-        tell_radio_changed(&state, account.id);
-        spawn_top_up(&state, account.clone());
-    }
-
+    // 起播不算听过:电台与日推的「已听过」等补记听了多久时再判(见 `server::heard`)。
     // 声音已经出来了,这首值得存:后台去,不等它(#126)
     archive::spawn_keep(&state, account, track);
 
     Ok(Json(PlayedAckDto { id }))
 }
 
-/// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157)。
+/// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157),听够了就算听过。
 ///
 /// 切歌、播完、停止时客户端各发一次;进程被杀时这条永远不会发生,那一行
-/// 的 `listened_ms`/`duration_ms` 留 NULL,算不出完播也算不出跳过,接受。
+/// 的 `listened_ms`/`duration_ms` 留 NULL,算不出完播也算不出跳过,也不算听过,接受。
+/// 电台或日推里的一首因此听过了,各台把它挪进「已听过」(#186),存量少了就补。
 pub(crate) async fn report_listened(
     State(state): State<AppState>,
     account: Account,
     Path(play_event_id): Path<i64>,
     Json(body): Json<ListenedDto>,
 ) -> Result<StatusCode, Failure> {
-    let mut conn = conn(&state.pool).await?;
-    history::report_listened(
-        &mut conn,
+    let listed = heard::settle(
+        &state.pool,
+        &state.roster,
         account.id,
-        play_event_id,
+        &PlayRef::Event(play_event_id),
         body.listened_ms,
         body.duration_ms,
     )
     .await
     .map_err(|err| error::map_error(&err))?;
+    if listed {
+        spawn_top_up(&state, account);
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

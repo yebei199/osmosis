@@ -135,13 +135,12 @@ async fn the_sweep_keeps_only_liked_and_recent_tracks() {
     )
     .await
     .unwrap();
-    server::store::history::record(
+    crate::routes::testing::hear(
         &mut tx,
         f.account.id,
         &netease(&heard),
     )
-    .await
-    .unwrap();
+    .await;
     sqlx::query(
         "UPDATE stored_tracks
          SET last_played_at = now() - interval '4 days'
@@ -401,13 +400,12 @@ async fn ranks_follow_liked_then_daily_then_playlists() {
     }
     assert_eq!(ranks, vec![0, 1, 2, ledger::UNKEPT]);
 
-    server::store::history::record(
+    crate::routes::testing::hear(
         &mut tx,
         f.account.id,
         &netease(&id(2)),
     )
-    .await
-    .unwrap();
+    .await;
     assert_eq!(
         ledger::rank(&mut tx, "netease", &id(2))
             .await

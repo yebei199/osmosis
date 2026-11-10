@@ -805,3 +805,25 @@ impl server::objects::Objects for MemoryObjects {
         format!("memory://{key}")
     }
 }
+
+/// 这个账号把 `track` 完整听了一遍:起播一次,补记听满整首,算听过(见 `server::heard`)。
+pub(crate) async fn hear(
+    conn: &mut sqlx::PgConnection,
+    account_id: i64,
+    track: &server::store::playlist::TrackRef,
+) {
+    use server::store::history::{self, PlayRef};
+
+    let event = history::record(conn, account_id, track)
+        .await
+        .expect("记起播");
+    history::settle(
+        conn,
+        account_id,
+        &PlayRef::Event(event),
+        200_000,
+        200_000,
+    )
+    .await
+    .expect("补记听完");
+}

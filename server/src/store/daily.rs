@@ -6,6 +6,7 @@
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::history;
 use crate::store::liked;
 use crate::store::playlist::TrackRef;
 use crate::store::radio::Entry;
@@ -71,15 +72,11 @@ pub async fn list(
 ) -> Result<Vec<Entry>, AppError> {
     let rows: Vec<(String, String, bool)> =
         sqlx::query_as(&format!(
-            "SELECT d.platform, d.track_id, EXISTS (
-                 SELECT 1 FROM play_events AS pe
-                 WHERE pe.account_id = d.account_id
-                   AND pe.platform = d.platform
-                   AND pe.track_id = d.track_id
-             )
+            "SELECT d.platform, d.track_id, {heard}
              FROM daily_picks AS d
              WHERE d.account_id = $1 AND NOT {liked}
              ORDER BY d.day DESC, d.id",
+            heard = history::heard_sql("d"),
             liked = liked::of_account_sql("d"),
         ))
         .bind(account_id)

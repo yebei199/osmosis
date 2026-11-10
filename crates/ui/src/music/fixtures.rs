@@ -247,6 +247,7 @@ fn make_deck_window() -> (super::MainWindow, super::Deck) {
         volume_save: Default::default(),
         cover_turn: Default::default(),
         current_play: Rc::new(RefCell::new(None)),
+        listen_clock: Rc::default(),
         radio: Default::default(),
     };
 

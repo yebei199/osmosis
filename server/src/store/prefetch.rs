@@ -9,6 +9,7 @@ use std::time::Duration;
 use sqlx::PgConnection;
 
 use crate::error::AppError;
+use crate::store::history;
 use crate::store::playlist::TrackRef;
 
 /// 一个被领走的任务。
@@ -134,7 +135,7 @@ pub async fn claim(
     platform: &str,
     lease: Duration,
 ) -> Result<Option<Job>, AppError> {
-    Ok(sqlx::query_as(
+    Ok(sqlx::query_as(&format!(
         "UPDATE prefetch_jobs
          SET run_after = now() + $1::bigint * interval '1 second',
              attempts = attempts + 1
@@ -145,28 +146,20 @@ pub async fn claim(
                  SELECT 1 FROM daily_picks AS d
                  WHERE d.platform = prefetch_jobs.platform
                    AND d.track_id = prefetch_jobs.track_id
-                   AND NOT EXISTS (
-                       SELECT 1 FROM play_events AS pe
-                       WHERE pe.account_id = d.account_id
-                         AND pe.platform = d.platform
-                         AND pe.track_id = d.track_id
-                   )
+                   AND NOT {heard_daily}
              ), (
                  SELECT min(r.id) FROM radio_tracks AS r
                  WHERE r.platform = prefetch_jobs.platform
                    AND r.track_id = prefetch_jobs.track_id
-                   AND NOT EXISTS (
-                       SELECT 1 FROM play_events AS pe
-                       WHERE pe.account_id = r.account_id
-                         AND pe.platform = r.platform
-                         AND pe.track_id = r.track_id
-                   )
+                   AND NOT {heard_radio}
              ) NULLS LAST, enqueued_at, track_id
              LIMIT 1
              FOR UPDATE SKIP LOCKED
          )
          RETURNING platform, track_id, account_id, attempts",
-    )
+        heard_daily = history::heard_sql("d"),
+        heard_radio = history::heard_sql("r"),
+    ))
     .bind(seconds(lease))
     .bind(platform)
     .fetch_optional(conn)

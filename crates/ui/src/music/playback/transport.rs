@@ -38,6 +38,7 @@ pub(in crate::music) fn play_current(
     // 放到哪了。切歌与自动续播都会经过这里,所以「切歌」与「播完」两种
     // 都在这里报出去。
     report_previous_listened(deck);
+    deck.listen_clock.take();
 
     // **旧歌立刻停。** 界面下面几行就要换成新歌了,让耳朵继续听上一首是自相矛盾
     // ——「封面换了但还在放上一首」正是这么来的。备好了的话这一停是零长度的。
@@ -363,6 +364,9 @@ pub(in crate::music) fn start_auto_advance(
                 .is_some_and(audio::StreamHealth::gave_up);
             let state = deck.playback.borrow().state().clone();
 
+            // 听了多久也搭这趟车:只记正常走过的那一段(见 `ListenClock`)。
+            deck.listen_clock
+                .set(deck.listen_clock.get().observe(position));
             // 进度搭这趟车,不另起一个定时器:位置已经在上面取过了,
             // 而两个定时器意味着两套"现在放到哪"的说法。
             push_progress(&ui, &deck, &state, position);
@@ -467,13 +471,16 @@ pub(in crate::music) fn start_auto_advance(
     Box::leak(Box::new(timer));
 }
 
-/// 上一段播放听了多久,报给服务端(#157)。**调用方必须在 `player.stop()`
-/// 之前调这个** —— 停完之后 `position()` 读到的是清零后的状态。
+/// 上一段播放累计听了多久,报给服务端(#157);服务端据此判这首听没听过。
+/// **调用方必须在 `player.stop()` 之前调这个** —— 停完之后 `position()` 读到的是
+/// 清零后的状态,最后那不到一秒就记不上。
 ///
 /// 手上没有挂着的事件行(还没报上起播、或已经报过一次)就什么都不做 ——
 /// `take()` 保证同一段播放只报一次,不会因为连着两次切歌各报一遍半截的数字。
 #[cfg(not(target_arch = "wasm32"))]
-fn report_previous_listened(deck: &Deck) {
+pub(in crate::music) fn report_previous_listened(
+    deck: &Deck,
+) {
     let Some(current) =
         deck.current_play.borrow_mut().take()
     else {
@@ -482,9 +489,10 @@ fn report_previous_listened(deck: &Deck) {
     let Ok(player) = deck.player.as_ref() else {
         return;
     };
-    let listened_ms =
-        i64::try_from(player.position().as_millis())
-            .unwrap_or(i64::MAX);
+    let clock =
+        deck.listen_clock.get().observe(player.position());
+    deck.listen_clock.set(clock);
+    let listened_ms = clock.listened_ms();
     slint::spawn_local(async move {
         if let Err(error) = api::report_listened(
             current.id,

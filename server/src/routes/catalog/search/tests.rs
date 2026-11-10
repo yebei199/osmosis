@@ -161,13 +161,12 @@ async fn yesterdays_unheard_picks_stay() {
     .execute(&mut *conn)
     .await
     .unwrap();
-    server::store::history::record(
+    crate::routes::testing::hear(
         &mut conn,
         account.id,
         &old(4),
     )
-    .await
-    .unwrap();
+    .await;
     server::store::liked::set(
         &mut conn,
         account.id,

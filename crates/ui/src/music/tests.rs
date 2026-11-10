@@ -109,6 +109,22 @@ fn pixels(side: u32) -> crate::viz::CoverPixels {
     }
 }
 
+/// 听了多久只累加正常走过的那几段:往前拖、往回拖的那一下都不算。
+#[test]
+fn the_listen_clock_skips_seeks() {
+    use core::time::Duration;
+    let secs = Duration::from_secs;
+
+    let clock = [1, 2, 3, 150, 151, 20, 21]
+        .into_iter()
+        .fold(ListenClock::default(), |clock, at| {
+            clock.observe(secs(at))
+        });
+
+    // 0→1→2→3 记 3 秒,3→150 是往前拖,150→151 记 1 秒,151→20 往回拖,20→21 记 1 秒
+    assert_eq!(clock.listened_ms(), 5_000);
+}
+
 /// 出声那一刻报一次,之后放着的每一秒都不再报。
 ///
 /// 轮询每秒经过这里一次,不去重的话一首三分钟的歌会报出一百八十次播放。
