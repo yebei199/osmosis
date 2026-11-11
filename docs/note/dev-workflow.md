@@ -91,7 +91,7 @@ ABIS="arm64-v8a armeabi-v7a x86_64" just android-build
 - 完整编译流程见 [`build-apk.md`](build-apk.md)。
 
 `settings.gradle` 把阿里云的 maven 镜像排在 `google()` / `mavenCentral()` 之前:直连
-Google Maven 时 gradle 会挑到国内被黑洞的 IP,每次构建白等几分钟 TCP 超时(实测同一个
+Google Maven 时 gradle 会挑到连不上的 IP,每次构建白等几分钟 TCP 超时(在新加坡实测同一个
 AGP pom,阿里云 0.05s,直连 3.9s;整体构建 6min → 2min46s)。清华和 USTC 没有 Maven
 镜像,故不可用。原仓库保留在后面作兜底。
 
