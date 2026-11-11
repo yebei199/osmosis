@@ -48,9 +48,8 @@ export component SettingsPage inherits Flickable {
         spacing: 0px;
         padding-top: root.width < Layout.compact ? Layout.page-top-compact : Layout.page-top;
         // 控制条压在页面底部,「检查更新」是这一页常见的最后一个可点项。
-        padding-bottom: root.bar-visible
-            ? BarMetrics.page-reserve
-            : Space.xl;
+        // 页尾本来的那段空气另算:条在时整段 page-reserve 都是额外的。
+        padding-bottom: Space.xl + (root.bar-visible ? BarMetrics.page-reserve : 0px);
 
         Text {
             text: "设置";

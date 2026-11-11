@@ -122,7 +122,7 @@ fn opening_an_artist_replaces_the_search_layer() {
     ui.global::<Library>()
         .set_open_playlist_name("本兮".into());
 
-    assert!(present(&ui, "MusicPage::playlist-header"));
+    assert!(present(&ui, "MusicPage::back"));
     assert!(present(&ui, "MusicPage::track-list"));
     assert!(!present(&ui, "MusicPage::artist-list"));
     assert!(!present(&ui, "MusicPage::search-tabs"));

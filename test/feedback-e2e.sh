@@ -196,7 +196,7 @@ start_playing
 
 case "$MODE" in
   verdict)
-    press "RoundControl::touch" "更多"
+    press "IconButton::touch" "更多"
     sleep 1
 
     before=$(feedback_count)

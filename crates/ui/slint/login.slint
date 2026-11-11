@@ -8,7 +8,8 @@
 
 
 import { Button, ButtonKind, Sheet, TextField } from "widgets.slint";
-import { Theme, Space, TextSize } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
+import { Theme, Space, TextSize, Weight, Tracking } from "theme.slint";
 
 export component LoginPage inherits Rectangle {
     // 正在等服务端答复。按钮据此变灰,免得连点发出两次注册。
@@ -30,21 +31,75 @@ export component LoginPage inherits Rectangle {
     background: Theme.window;
 
     Sheet {
-        width: min(root.width - 48px, 360px);
-        height: form.preferred-height + 48px;
+        width: min(root.width - 32px, 380px);
+        height: form.preferred-height;
         x: (root.width - self.width) / 2;
         y: max(root.safe-top, root.safe-top + (root.height - root.safe-top - self.height) / 2);
 
         form := VerticalLayout {
             padding: Space.xl;
+            padding-top: Space.xxl;
             spacing: Space.md;
             alignment: start;
 
-            Text {
-                text: root.registering ? "注册" : "登录";
-                color: Theme.text;
-                font-size: TextSize.headline;
-                horizontal-alignment: center;
+            // 与侧栏顶上同一个品牌行:实心的强调色圆叠一只空心圆,后面是名字。
+            // 没有侧栏的这一页上,它是唯一能认出「这是哪个应用」的地方。
+            HorizontalLayout {
+                alignment: center;
+                spacing: 10px;
+                accessible-role: none;
+                Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    Rectangle {
+                        x: 0px;
+                        y: 4px;
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        background: Theme.accent;
+                    }
+                    Rectangle {
+                        x: 8px;
+                        y: 4px;
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        border-width: 2px;
+                        border-color: Theme.text;
+                    }
+                }
+                Text {
+                    text: "Osmosis";
+                    font-size: TextSize.title;
+                    font-weight: Weight.bold;
+                    letter-spacing: -0.2px;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                }
+            }
+
+            VerticalLayout {
+                padding-top: Space.sm;
+                padding-bottom: Space.xs;
+                spacing: Space.xs;
+                Text {
+                    text: root.registering ? "注册" : "登录";
+                    color: Theme.text;
+                    font-size: TextSize.display-compact;
+                    font-weight: Weight.bold;
+                    letter-spacing: Tracking.display-compact;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.registering
+                        ? "注册需要邀请码。红心、歌单和播放组都跟着账号走"
+                        : "红心、歌单和播放组都跟着账号走";
+                    color: Theme.text-dim;
+                    font-size: TextSize.small;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
             }
 
             username := TextField {
@@ -69,16 +124,30 @@ export component LoginPage inherits Rectangle {
             }
 
             // 失败说明。有话说才占位置 —— 常驻一个空行会把布局撑得莫名其妙。
-            if root.error-text != "": error := Text {
-                text: root.error-text;
-                color: Theme.text;
-                font-size: TextSize.small;
-                wrap: word-wrap;
-                horizontal-alignment: center;
+            // 图标用 danger,字仍是正文色:红字压在深底上读不清,颜色只给那个圆标。
+            if root.error-text != "": HorizontalLayout {
+                spacing: Space.sm;
+                VerticalLayout {
+                    alignment: start;
+                    padding-top: 1px;
+                    Icon {
+                        size: 18px;
+                        source: Icons.warning-circle-fill;
+                        colorize: Theme.danger;
+                    }
+                }
+                error := Text {
+                    horizontal-stretch: 1;
+                    text: root.error-text;
+                    color: Theme.text;
+                    font-size: TextSize.small;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
             }
 
             Button {
-                height: 40px;
+                kind: ButtonKind.primary;
                 // 字走 `text` 属性而不是塞子 Text:Button 的无障碍标签
                 // 绑的是这个属性,子 Text 画得出来、读屏却念不出 —— 真机驱动
                 // 曾因此只能从截图上量坐标点它。
@@ -92,16 +161,25 @@ export component LoginPage inherits Rectangle {
             }
 
             switch-mode := TouchArea {
-                height: 24px;
+                height: 32px;
+                mouse-cursor: pointer;
 
-                Text {
-                    text: root.registering
-                        ? "已有账号?去登录"
-                        : "没有账号?去注册";
-                    color: Theme.text-dim;
-                    font-size: TextSize.small;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    Text {
+                        text: root.registering ? "已有账号?" : "没有账号?";
+                        color: Theme.text-dim;
+                        font-size: TextSize.small;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.registering ? "去登录" : "去注册";
+                        color: switch-mode.has-hover ? Theme.text : Theme.accent-ink;
+                        font-size: TextSize.small;
+                        font-weight: Weight.semibold;
+                        vertical-alignment: center;
+                    }
                 }
 
                 clicked => { root.registering = !root.registering; }

@@ -242,7 +242,7 @@ export component PlayerBar inherits Rectangle {
                 }
                 VerticalLayout {
                     alignment: center;
-                    PlayLens {
+                    play-lens := PlayLens {
                         is-playing: Player.is-playing;
                         ratio: Player.progress-ratio;
                         cover: Viz.cover-art;

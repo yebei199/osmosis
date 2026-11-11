@@ -775,31 +775,6 @@ export component GlassPill inherits Rectangle {
     @children
 }
 
-// 一张分组卡:kicker 标题 + 内容。设置页与个人主页共用。
-export component SectionCard inherits Rectangle {
-    in property <string> kicker;
-
-    background: Theme.surface;
-    border-radius: Radius.md;
-    border-width: 1px;
-    border-color: Theme.press;
-
-    VerticalLayout {
-        padding: Space.lg;
-        spacing: Space.md;
-
-        Text {
-            text: root.kicker;
-            font-weight: 700;
-            font-size: TextSize.small;
-            color: Theme.accent;
-        }
-
-        @children
-    }
-}
-
-
 // 底栏一格:图标垫在一颗 56×30 的药丸位上,下面一行小字。选中那格的药丸由 app.slint
 // 画(GPU 构建是 navglass,否则 GlassPill),格子自己不画选中底。
 // 几何与 app.slint 的 nav-pip-* 对齐:药丸中心在格顶下 23px。
@@ -850,66 +825,51 @@ export component NavItem inherits Rectangle {
 }
 
 
-// 圆形播放控制键:玻璃底 + 线条图标。悬停浮亮,按下微缩。
-// 图标画法同 NavItem:SVG path 内嵌,viewbox 24×24,不引外部资源。
-export component RoundControl inherits Rectangle {
+// 对话框里的一行动作:图标 + 字,悬停垫 hover。无障碍标签默认就是字。
+// 曲目菜单、「不喜欢」的原因、屏蔽哪个标签都是它 —— 此前四处各写一套
+// 「悬停整块变强调色」的矩形,一屏能亮起四块绿,违反「绿只给重点」。
+export component MenuItem inherits Rectangle {
+    in property <string> text;
+    in property <string> label: root.text;
     in property <image> icon;
-    // 读屏软件念的那句。图标是一段 path,没有它这颗键对外只是"一个按钮"。
-    // 无头测试也靠它把同一排的几颗键分开(元素 id 分不开,它们是同一个组件)。
-    in property <string> label;
-    // 这颗键有"拨没拨"的状态吗(随机键有,上一首没有)。有的话对外报成
-    // checkbox —— button 说不出状态,读屏软件念不出"已开"。
-    in property <bool> checkable: false;
-    in property <bool> checked: false;
-    in property <length> diameter: 44px;
-    // 底色透明:垫在别的画面上时用(见 ControlCluster 的播放键),
-    // 只留按下/悬停那一点点提示,不糊住下面。
-    in property <bool> transparent-base: false;
-    // 垫在图标下的一张画(#69 起是 glass 变体的按钮底)。空图即没有,
-    // 素底照常。shader 自带圆形 alpha 裁切,这里不必再 clip。
-    in property <image> backdrop;
     callback clicked;
 
-    width: root.diameter;
-    height: root.diameter;
-    border-radius: self.width / 2;
-    background: touch.pressed ? Theme.accent.darker(0.2).with-alpha(0.31)
-        : (touch.has-hover ? Theme.press
-            : (root.transparent-base ? transparent : Theme.line));
-    border-width: 1px;
-    border-color: touch.has-hover ? Theme.accent.with-alpha(0.4) : Theme.press;
-    animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
+    height: 44px;
+    border-radius: Radius.sm;
+    background: touch.pressed ? Theme.press : touch.has-hover ? Theme.hover : transparent;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
 
-    if root.backdrop.width > 0: Image {
-        width: 100%;
-        height: 100%;
-        source: root.backdrop;
-    }
-
-    Icon {
-        size: root.diameter * 0.5;
-        source: root.icon;
-        // 拨开了的键用强调色 —— 那是这一排里唯一"有状态"的东西。
-        colorize: root.checked ? Theme.accent-ink
-            : (touch.has-hover ? Theme.text : Theme.text-dim);
+    HorizontalLayout {
+        padding-left: Space.md;
+        padding-right: Space.md;
+        spacing: Space.md;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Icon {
+                size: 20px;
+                source: root.icon;
+                colorize: Theme.text-dim;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: Theme.text;
+            font-size: TextSize.body;
+            vertical-alignment: center;
+            overflow: elide;
+        }
     }
 
     touch := TouchArea {
-        clicked => { root.clicked(); }
-
-        // 屏幕阅读器要认得出这是个能按的东西;顺带让无头测试点得动它。
-        //
-        // 角色恒为 button,即使随机键其实是个开关:slint 要求 `accessible-role`
-        // 是**常量表达式**,按 `checkable` 分叉编译不过。有状态那颗因此报成
-        // 「带 checked 的按钮」,读屏软件念得出开没开,只是不会说"复选框"。
+        mouse-cursor: pointer;
+        // 无头测试只认无障碍动作,裸 TouchArea 在那里点不动(见 crates/ui/tests/banner.rs)。
         accessible-role: button;
         accessible-label: root.label;
-        accessible-checkable: root.checkable;
-        accessible-checked: root.checked;
         accessible-action-default => { root.clicked(); }
+        clicked => { root.clicked(); }
     }
 }
-
 
 // 浮在页面上的一块:登录表单、删除确认这类对话框。raised 底、overlay 那档阴影。
 export component Sheet inherits Rectangle {

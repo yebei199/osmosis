@@ -169,7 +169,7 @@ fn the_play_page_blocks_pointer_input_to_the_retained_shell()
             assert!(
                 testing::ElementHandle::find_by_element_id(
                     &ui,
-                    "MusicPage::playlist-header",
+                    "MusicPage::back",
                 )
                 .next()
                 .is_some(),
@@ -348,7 +348,7 @@ fn the_first_playlist_opens_through_a_real_pointer_click() {
         assert!(
             testing::ElementHandle::find_by_element_id(
                 &ui,
-                "MusicPage::playlist-header"
+                "MusicPage::back"
             )
             .next()
             .is_some(),

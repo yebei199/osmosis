@@ -678,7 +678,7 @@ def last_output_reconnect(world):
         timeout=60 * 1.25 + 10,
     )
     wait_until(
-        lambda: world.one.ui.find("RoundControl::touch", "\u64ad\u653e"),
+        lambda: world.one.ui.find("PlayerBar::play-lens", "\u64ad\u653e"),
         "reconnected paused target",
     )
     world.silent(*world.clients)

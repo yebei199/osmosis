@@ -8,7 +8,9 @@
 
 import { ListView } from "std-widgets.slint";
 import { ArtistRow } from "types.slint";
-import { Theme, Radius, Motion, Space, TextSize, Type } from "theme.slint";
+import { Theme, Radius, Motion, Space, TextSize } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
+import { Shell } from "globals/shell.slint";
 
 export component ArtistList inherits ListView {
     in property <[ArtistRow]> artists;
@@ -17,15 +19,14 @@ export component ArtistList inherits ListView {
 
     vertical-stretch: 1;
 
-    for row[i] in root.artists: Rectangle {
-        height: 56px;
+    for row[i] in root.artists: line := Rectangle {
+        // 与曲目行同一套:不画框,宽版式悬停垫 hover。
+        property <bool> hovered: touch.has-hover && !Shell.compact;
+        height: Shell.compact ? 64px : 56px;
 
-        // 与曲目行同一条:ListView 没有 spacing,4px 的间隔靠卡片上下各让 2px。
         Rectangle {
-            y: 2px;
-            height: 52px;
-            background: touch.has-hover ? Theme.press : Theme.hover;
             border-radius: Radius.sm;
+            background: line.hovered ? Theme.hover : transparent;
             animate background { duration: Motion.fast; easing: Motion.ease; }
         }
 
@@ -35,21 +36,35 @@ export component ArtistList inherits ListView {
         }
 
         HorizontalLayout {
-            padding-left: Space.md;
-            padding-right: Space.md;
+            padding-left: Space.sm;
+            padding-right: Space.sm;
             spacing: Space.md;
+
+            // 平台不给歌手头像,这里只画一枚圆形的占位:列表左缘与歌单、曲目对齐。
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 20px;
+                    background: Theme.surface;
+                    Icon {
+                        size: 20px;
+                        source: Icons.user;
+                        colorize: Theme.text-faint;
+                    }
+                }
+            }
 
             VerticalLayout {
                 horizontal-stretch: 1;
                 alignment: center;
-                spacing: Space.xs;
+                spacing: 3px;
 
-                // 歌手名来自平台,是任意 CJK/日文 —— 不指定 font-family,
-                // 落到系统字体(与曲目行同一个理由)。
                 Text {
                     text: row.name;
                     color: Theme.text;
-                    font-size: TextSize.body;
+                    font-size: TextSize.row;
                     overflow: elide;
                 }
                 Text {
@@ -57,6 +72,15 @@ export component ArtistList inherits ListView {
                     color: Theme.text-dim;
                     font-size: TextSize.small;
                     overflow: elide;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    size: 18px;
+                    source: Icons.caret-right;
+                    colorize: Theme.text-faint;
                 }
             }
         }

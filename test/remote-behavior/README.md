@@ -83,7 +83,7 @@ pytest JUnit，分别复制为 `results/projection-junit.xml` 与 `results/junit
 wrapper 报告的 PID 必须等于实际持有的命令 PID，才用于音频绑定和停止。pasta 仅接入
 已核对的本轮 namespace，不自行创建 PID namespace。lavapipe 通过现有 SLINT_WGPU_CPU
 开关允许软件 adapter，没有修改渲染生产逻辑。
-登录在真实 LoginPage 内要求唯一可见的登录 HoverButton，并点击该按钮唯一可见的 touch。
+登录在真实 LoginPage 内要求唯一可见的登录 Button，并点击该按钮唯一可见的 touch。
 标签属于按钮根，touch 承接实际点击。每个客户端保留填值前的原始 MCP 子树与提交按钮
 根/touch 的属性、句柄和唯一性记录，账户填值不进入证据。
 

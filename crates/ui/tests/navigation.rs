@@ -160,7 +160,7 @@ fn liked_and_settings_show_their_own_pages() {
     find(&ui, "SideNavRow::touch", "设置")
         .invoke_accessible_default_action();
     assert!(!present(&ui, "MusicPage::track-list"));
-    assert!(present(&ui, "SettingsPage::logout-touch"));
+    assert!(present(&ui, "SettingsPage::logout-button"));
 }
 
 /// 紧凑版式底栏五格,标签是全名;侧栏不在。
@@ -189,7 +189,7 @@ fn more_opens_a_flat_panel_that_jumps_and_closes() {
         .invoke_accessible_default_action();
     assert_eq!(ui.global::<Shell>().get_destination(), 8);
     assert!(!present(&ui, "MorePanel::item"), "点完该收起");
-    assert!(present(&ui, "SettingsPage::logout-touch"));
+    assert!(present(&ui, "SettingsPage::logout-button"));
     assert_eq!(
         find(&ui, "NavItem::touch", "更多")
             .accessible_checked(),

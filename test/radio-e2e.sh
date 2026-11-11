@@ -217,7 +217,7 @@ if [ "$MODE" != heart ]; then
   go_to 电台
 else
   [ -n "$who" ] || { echo "heart: 要先在放一首歌(它是种子)" >&2; exit 1; }
-  press "RoundControl::touch" "更多"
+  press "IconButton::touch" "更多"
   sleep 1
   press "DrawerRow::touch" "从这首开电台"
 fi
@@ -381,7 +381,7 @@ if [ "$MODE" = heart ] && [ "$start_count" -gt 2 ] && [ "$PORT" = "${ANDROID_MCP
 fi
 for n in $(seq 1 "$MAX_NEXT"); do
   [ -z "$grown" ] && [ -z "$told" ] || break
-  press "RoundControl::touch" "下一首"
+  press "IconButton::touch" "下一首"
   echo "  按了第 $n 下「下一首」"
   # 续取由每秒一趟的轮询发起,只在放着的时候走;等它问完平台、发布新的一版
   wait_growth 15
@@ -406,7 +406,7 @@ if [ "$MODE" = group ]; then
     row=$(group_row)
     at=$(echo "$row" | cut -d: -f3)
     [ -n "$at" ] && [ "$at" -ge "$start_count" ] && break
-    press "RoundControl::touch" "下一首"
+    press "IconButton::touch" "下一首"
     sleep 4
   done
   row=$(group_row)

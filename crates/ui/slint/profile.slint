@@ -4,8 +4,9 @@
 // 没有数据源(事件流只记起播,不记听了多久),这里是本月播放次数;
 // 「口味画像」的流派维度同样无数据,已定改为常听歌手 —— 不编数字。
 
-import { Theme, Type, Radius, Space, TextSize } from "theme.slint";
-import { SectionCard, Button } from "widgets.slint";
+import { Theme, Radius, Space, TextSize, Weight, Tracking, Layout, Elevation } from "theme.slint";
+import { Card, CardRow, SectionLabel, Button, ButtonKind } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
 import { OutputStrip } from "controls.slint";
 import { BarMetrics } from "playerbar.slint";
 import { ArtistRankRow, DeviceRow } from "types.slint";
@@ -16,21 +17,28 @@ component StatCard inherits Rectangle {
     in property <string> label;
     // 副色板序号,每张卡不同。
     in property <int> tint;
+    in property <bool> narrow;
 
     background: Theme.surface;
-    border-radius: Radius.md;
-    border-width: 1px;
-    border-color: Theme.press;
+    border-radius: Radius.lg;
+    border-width: Theme.dark ? 0px : 1px;
+    border-color: Theme.line;
+    inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+    inner-shadow-color: Theme.dark ? Theme.edge : transparent;
+    drop-shadow-offset-y: Elevation.card-y;
+    drop-shadow-blur: Elevation.card-blur;
+    drop-shadow-color: Elevation.card-color;
     horizontal-stretch: 1;
 
     VerticalLayout {
-        padding: Space.lg;
+        padding: root.narrow ? Space.md : Space.lg;
         spacing: Space.xs;
 
         Text {
             text: root.value;
-            font-size: TextSize.display;
-            font-weight: 700;
+            font-size: root.narrow ? TextSize.headline : TextSize.display-compact;
+            font-weight: Weight.bold;
+            letter-spacing: Tracking.display-compact;
             color: Theme.hues-bright[root.tint];
         }
         Text {
@@ -69,15 +77,17 @@ export component ProfilePage inherits Flickable {
     // padding-bottom。
     in property <bool> bar-visible;
 
-    content-height: column.preferred-height + 52px;
+    property <bool> narrow: root.width < Layout.compact;
+
+    content-height: column.preferred-height;
 
     column := VerticalLayout {
-        // 宽窗口里居中(MEO-1878):贴左摆的话,720px 之外的右半边全是空白。
-        x: max(26px, (root.width - self.width) / 2);
-        y: 26px;
-        width: min(root.width - 52px, 720px);
+        // 宽窗口里居中(MEO-1878),与设置页同一列宽。
+        x: max(Layout.page-x-compact, (root.width - self.width) / 2);
+        width: min(root.width - Layout.page-x-compact * 2, Layout.column-max);
         alignment: start;
-        spacing: Space.md;
+        spacing: 0px;
+        padding-top: root.narrow ? Layout.page-top-compact : Layout.page-top;
         // 控制条压在页面底部,而这一页的最后一行正是「输出设备」——
         // 那两颗芯片是**进遥控器模式的唯一入口**。不为条留出这一块的话,
         // 它们看得见、点不着,而 Flickable 也救不回来:可滚的余量比条身
@@ -86,11 +96,9 @@ export component ProfilePage inherits Flickable {
         //
         // 留在 padding 而不是 content-height 上:padding 进 preferred-height,
         // 于是 content-height 那一行不必知道这回事,两处不会各算一遍。
-        padding-bottom: root.bar-visible
-            ? BarMetrics.page-reserve
-            : 0;
+        padding-bottom: Space.xl + (root.bar-visible ? BarMetrics.page-reserve : 0px);
 
-        // 头像 + 名字。头像是副色板渐变占位:账号没有头像这回事,先不装有。
+        // 头像 + 名字。账号没有头像这回事,画一枚强调色圆底的人形,不装有。
         HorizontalLayout {
             spacing: Space.lg;
             alignment: start;
@@ -98,147 +106,185 @@ export component ProfilePage inherits Flickable {
             VerticalLayout {
                 alignment: center;
                 Rectangle {
-                    width: 64px;
-                    height: 64px;
+                    width: root.narrow ? 56px : 72px;
+                    height: self.width;
                     border-radius: Radius.pill;
-                    background: @linear-gradient(150deg, Theme.hues-bright[3], Theme.hues-deep[3]);
+                    background: Theme.accent;
+                    Icon {
+                        size: parent.width * 0.5;
+                        source: Icons.user-fill;
+                        colorize: Theme.accent-text;
+                    }
                 }
             }
             VerticalLayout {
                 alignment: center;
-                // 账号名是用户起的任意文本,不指定字体、走系统回退。
+                spacing: 2px;
+                // 账号名是用户起的任意文本。
                 Text {
                     text: root.username;
-                    font-size: TextSize.headline;
-                    font-weight: 700;
-                    color: Theme.text;
-                }
-            }
-        }
-
-        if root.error-text != "": Text {
-            text: root.error-text;
-            font-size: TextSize.small;
-            color: Theme.text-dim;
-        }
-
-        if root.loaded: stats-row := HorizontalLayout {
-            spacing: Space.md;
-
-            StatCard {
-                value: root.month-plays;
-                label: "本月播放";
-                tint: 0;
-            }
-            StatCard {
-                value: root.distinct-tracks;
-                label: "听过";
-                tint: 1;
-            }
-            StatCard {
-                value: root.streak-days;
-                label: "连续在听";
-                tint: 2;
-            }
-        }
-
-        if root.loaded && root.top-artists.length > 0: SectionCard {
-            kicker: "常听歌手";
-
-            for artist[i] in root.top-artists: HorizontalLayout {
-                spacing: Space.md;
-
-                // 歌手名来自平台,任意 CJK,走系统字体。
-                Text {
-                    width: 96px;
-                    text: artist.name;
-                    font-size: TextSize.small;
+                    font-size: root.narrow ? TextSize.display-compact : TextSize.display;
+                    font-weight: Weight.bold;
+                    letter-spacing: root.narrow ? Tracking.display-compact : Tracking.display;
                     color: Theme.text;
                     overflow: elide;
                 }
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
-                    Rectangle {
-                        height: 9px;
-                        border-radius: Radius.pill;
-                        background: Theme.hover;
+                Text {
+                    text: "个人";
+                    font-size: TextSize.small;
+                    color: Theme.text-dim;
+                }
+            }
+        }
+
+        if root.error-text != "": VerticalLayout {
+            padding-top: Space.lg;
+            Text {
+                text: root.error-text;
+                font-size: TextSize.small;
+                color: Theme.text-dim;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.loaded: VerticalLayout {
+            padding-top: Space.xl;
+            stats-row := HorizontalLayout {
+                spacing: root.narrow ? Space.sm : Space.md;
+
+                StatCard {
+                    value: root.month-plays;
+                    label: "本月播放";
+                    tint: 0;
+                    narrow: root.narrow;
+                }
+                StatCard {
+                    value: root.distinct-tracks;
+                    label: "听过";
+                    tint: 1;
+                    narrow: root.narrow;
+                }
+                StatCard {
+                    value: root.streak-days;
+                    label: "连续在听";
+                    tint: 2;
+                    narrow: root.narrow;
+                }
+            }
+        }
+
+        if root.loaded && root.top-artists.length > 0: VerticalLayout {
+            padding-top: Space.xl;
+            SectionLabel { text: "常听歌手"; }
+            Rectangle { height: 10px; }
+            Card {
+                pad-y: Space.md;
+                for artist[i] in root.top-artists: HorizontalLayout {
+                    height: 44px;
+                    spacing: Space.md;
+
+                    Text {
+                        width: root.narrow ? 88px : 140px;
+                        text: artist.name;
+                        font-size: TextSize.row;
+                        color: Theme.text;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
                         Rectangle {
-                            x: 0;
-                            width: parent.width * artist.ratio;
-                            height: parent.height;
+                            height: 6px;
                             border-radius: Radius.pill;
-                            background: @linear-gradient(90deg, Theme.hues-deep[i], Theme.hues-bright[i]);
+                            background: Theme.press;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * artist.ratio;
+                                height: parent.height;
+                                border-radius: Radius.pill;
+                                background: @linear-gradient(90deg, Theme.hues-deep[i], Theme.hues-bright[i]);
+                            }
                         }
                     }
-                }
-                Text {
-                    text: artist.plays-text;
-                    font-size: TextSize.caption;
-                    color: Theme.text-faint;
+                    Text {
+                        min-width: 48px;
+                        text: artist.plays-text;
+                        font-size: TextSize.small;
+                        color: Theme.text-faint;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
 
         // 网易云绑定。点播要的凭据在这里绑,绑定按账号走(docs/adr/0017)——
         // 桌面绑好,手机上登同一个账号就已经是绑好的。
-        SectionCard {
-            kicker: "网易云";
-
-            if root.netease-bound: HorizontalLayout {
-                spacing: Space.md;
-
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
-                    // 昵称来自平台,任意 CJK,走系统字体。
-                    netease-name := Text {
-                        text: root.netease-nickname;
-                        font-size: TextSize.body;
-                        color: Theme.text;
-                        overflow: elide;
+        VerticalLayout {
+            padding-top: Space.xl;
+            SectionLabel { text: "网易云"; }
+            Rectangle { height: 10px; }
+            Card {
+                if root.netease-bound: netease-name := CardRow {
+                    title: root.netease-nickname;
+                    detail: "已绑定。点播用的凭据跟着账号走";
+                    last: true;
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            kind: ButtonKind.secondary;
+                            small: true;
+                            text: "解绑";
+                            clicked => { root.unbind-netease(); }
+                        }
                     }
                 }
-                Button {
-                    text: "解绑";
-                    width: 96px;
-                    height: 40px;
-                    clicked => { root.unbind-netease(); }
-                }
-            }
 
-            if !root.netease-bound: VerticalLayout {
-                spacing: Space.sm;
-                alignment: start;
+                if !root.netease-bound: VerticalLayout {
+                    padding-top: Space.lg;
+                    padding-bottom: Space.lg;
+                    spacing: Space.md;
+                    alignment: start;
 
-                // 码是黑白定死的,不跟主题走:扫码器认的是对比度,
-                // 深色底上的浅色码有一半的机器扫不出来。
-                // 没有码(还在取、或者取失败)就不占位:空着 180px 的方块,
-                // 卡片中间就是一大块空白,只剩底下一行报错(MEO-1878)。
-                if root.netease-qr.width > 0: netease-code := Image {
-                    width: 180px;
-                    height: 180px;
-                    image-fit: contain;
-                    // 每个模块是整数个像素,缩放要保持方块边界锐利
-                    image-rendering: pixelated;
-                    source: root.netease-qr;
-                    accessible-role: image;
-                    accessible-label: "网易云登录二维码";
-                }
+                    // 码是黑白定死的,不跟主题走:扫码器认的是对比度,
+                    // 深色底上的浅色码有一半的机器扫不出来。白底一圈也是为此。
+                    // 没有码(还在取、或者取失败)就不占位:空着 180px 的方块,
+                    // 卡片中间就是一大块空白,只剩底下一行报错(MEO-1878)。
+                    if root.netease-qr.width > 0: HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            width: 196px;
+                            height: 196px;
+                            border-radius: Radius.md;
+                            background: white;
+                            netease-code := Image {
+                                width: 180px;
+                                height: 180px;
+                                image-fit: contain;
+                                // 每个模块是整数个像素,缩放要保持方块边界锐利
+                                image-rendering: pixelated;
+                                source: root.netease-qr;
+                                accessible-role: image;
+                                accessible-label: "网易云登录二维码";
+                            }
+                        }
+                    }
 
-                Text {
-                    text: root.netease-hint;
-                    font-size: TextSize.small;
-                    color: Theme.text-dim;
-                    wrap: word-wrap;
-                }
+                    Text {
+                        text: root.netease-hint;
+                        font-size: TextSize.body;
+                        color: Theme.text;
+                        wrap: word-wrap;
+                    }
 
-                if root.on-phone: Text {
-                    // 文案照 issue #96 原样写,不自行改写
-                    text: "用另一台已登录网易云的手机扫";
-                    font-size: TextSize.small;
-                    color: Theme.text-faint;
-                    wrap: word-wrap;
+                    if root.on-phone: Text {
+                        // 文案照 issue #96 原样写,不自行改写
+                        text: "用另一台已登录网易云的手机扫";
+                        font-size: TextSize.small;
+                        color: Theme.text-dim;
+                        wrap: word-wrap;
+                    }
                 }
             }
         }
@@ -250,19 +296,28 @@ export component ProfilePage inherits Flickable {
         // 于是冷启动、还没放过歌时根本选不了被控设备,而产品规则正是
         // 「点歌之前先选」(#102 之五)。这里是同一个 `OutputStrip`,
         // 同一个回调,不是第二套说法。
-        SectionCard {
-            kicker: "输出设备";
+        VerticalLayout {
+            padding-top: Space.xl;
+            SectionLabel { text: "输出设备"; }
+            Rectangle { height: 10px; }
+            Card {
+                VerticalLayout {
+                    padding-top: Space.lg;
+                    padding-bottom: Space.lg;
+                    spacing: Space.sm;
+                    output-strip := OutputStrip {
+                        caption: false;
+                        devices: root.devices;
+                        current: root.output-current;
+                        set-output(id) => { root.set-output(id); }
+                    }
 
-            output-strip := OutputStrip {
-                devices: root.devices;
-                current: root.output-current;
-                set-output(id) => { root.set-output(id); }
-            }
-
-            if root.devices.length == 0: Text {
-                text: "没有其他设备";
-                font-size: TextSize.small;
-                color: Theme.text-faint;
+                    if root.devices.length == 0: Text {
+                        text: "没有其他设备";
+                        font-size: TextSize.small;
+                        color: Theme.text-faint;
+                    }
+                }
             }
         }
     }

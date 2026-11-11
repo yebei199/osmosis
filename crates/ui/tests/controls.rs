@@ -19,7 +19,7 @@ fn present(ui: &MainWindow, id: &str) -> bool {
 
 /// 控制条上那颗随机键。
 ///
-/// 按无障碍标签找而不是按元素 id:那一排四颗键都是同一个 `RoundControl`,
+/// 按无障碍标签找而不是按元素 id:那一排几颗键都是同一个 `IconButton`,
 /// 元素 id 分不开它们,而标签本来就是为了让人分得开才有的。
 fn shuffle_key(ui: &MainWindow) -> testing::ElementHandle {
     modes_face(ui);

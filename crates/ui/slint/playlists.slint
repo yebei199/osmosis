@@ -8,22 +8,25 @@
 
 import { ListView } from "std-widgets.slint";
 import { PlaylistRow } from "types.slint";
-import { Theme, Radius, Motion, Space, TextSize, Type } from "theme.slint";
+import { Theme, Radius, Motion, Space, TextSize } from "theme.slint";
+import { Tag } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { Shell } from "globals/shell.slint";
 
 export component PlaylistList inherits ListView {
     in property <[PlaylistRow]> playlists;
 
     callback open(string, int);
 
-    for row[i] in root.playlists: Rectangle {
-        height: 60px;
+    for row[i] in root.playlists: line := Rectangle {
+        // 与曲目行同一套:行本身不画框,只在宽版式悬停时垫一层 hover。
+        // 触屏没有悬停,紧凑版式不留这一档。
+        property <bool> hovered: touch.has-hover && !Shell.compact;
+        height: Shell.compact ? 72px : 64px;
 
-        // 与曲目行同一条:ListView 没有 spacing,4px 的间隔靠卡片上下各让 2px。
         Rectangle {
-            y: 2px;
-            height: 56px;
-            background: touch.has-hover ? Theme.press : Theme.hover;
             border-radius: Radius.sm;
+            background: line.hovered ? Theme.hover : transparent;
             animate background { duration: Motion.fast; easing: Motion.ease; }
         }
 
@@ -35,8 +38,8 @@ export component PlaylistList inherits ListView {
         }
 
         HorizontalLayout {
-            padding-left: Space.md;
-            padding-right: Space.md;
+            padding-left: Space.sm;
+            padding-right: Space.sm;
             spacing: Space.md;
 
             // 封面。取不到就是一块占位色 —— 留个空洞会让整列参差不齐,
@@ -44,10 +47,10 @@ export component PlaylistList inherits ListView {
             VerticalLayout {
                 alignment: center;
                 Rectangle {
-                    width: 40px;
-                    height: 40px;
+                    width: 48px;
+                    height: 48px;
                     border-radius: Radius.sm;
-                    background: Theme.line;
+                    background: Theme.surface;
                     clip: true;
 
                     if row.cover.width > 0: Image {
@@ -56,24 +59,30 @@ export component PlaylistList inherits ListView {
                         image-fit: cover;
                         source: row.cover;
                     }
+                    if row.cover.width == 0: Icon {
+                        size: 22px;
+                        source: Icons.playlist;
+                        colorize: Theme.text-faint;
+                    }
                 }
             }
 
             VerticalLayout {
                 horizontal-stretch: 1;
                 alignment: center;
-                spacing: Space.xs;
+                spacing: 3px;
 
-                // 歌单名来自平台或用户,是任意 CJK —— 不指定 font-family,
-                // 落到系统字体(与曲目行同一个理由)。
                 Text {
                     text: row.name;
                     color: Theme.text;
-                    font-size: TextSize.body;
+                    font-size: TextSize.row;
                     overflow: elide;
                 }
+                // 来源写在副标题里:同名的本地歌单与收藏来的歌单看上去一样,
+                // 但能做的事不同 —— 不标的话,删除键出现在哪一行全靠猜。
                 Text {
-                    text: row.subtitle;
+                    text: (row.source == 0 ? "红心" : row.source == 2 ? "本地" : "平台")
+                        + " · " + row.subtitle;
                     color: Theme.text-dim;
                     font-size: TextSize.small;
                     overflow: elide;
@@ -85,29 +94,16 @@ export component PlaylistList inherits ListView {
             // 少了改名/删除才不显得像坏了。本地歌单没有徽标。
             if row.source != 2: VerticalLayout {
                 alignment: center;
-                Rectangle {
-                    width: badge.preferred-width + 16px;
-                    height: 22px;
-                    border-radius: Radius.pill;
-                    background: Theme.press;
-                    badge := Text {
-                        text: "只读";
-                        color: Theme.text-faint;
-                        font-size: TextSize.caption;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
+                Tag { text: "只读"; }
             }
 
-            // 来源标记。同名的本地歌单与收藏来的歌单看上去一样,
-            // 但能做的事不同 —— 不标的话,删除键出现在哪一行全靠猜。
-            Text {
-                text: row.source == 0 ? "红心"
-                    : row.source == 2 ? "本地" : "平台";
-                color: Theme.text-faint;
-                font-size: TextSize.caption;
-                vertical-alignment: center;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    size: 18px;
+                    source: Icons.caret-right;
+                    colorize: Theme.text-faint;
+                }
             }
         }
     }

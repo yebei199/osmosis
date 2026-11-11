@@ -16,7 +16,7 @@ def navigation_ui(drawer_open=True, close_works=True):
     def find(element_id, label=None, prefix=False):
         if element_id == "SideNavRow::touch" and label == "已下载":
             return "downloads"
-        if element_id == "RoundControl::touch":
+        if element_id == "IconButton::touch":
             if label == "收起更多" and state["drawer"]:
                 return "close"
             if label == "更多" and not state["drawer"]:
@@ -270,7 +270,7 @@ def test_open_drawer_checks_state_without_replaying(already_open, works, monkeyp
     state = {"open": already_open}
 
     def find(element_id, label=None, prefix=False):
-        if element_id == "RoundControl::touch" and label == (
+        if element_id == "IconButton::touch" and label == (
             "收起更多" if state["open"] else "更多"
         ):
             return "toggle"

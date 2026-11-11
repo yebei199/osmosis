@@ -26,6 +26,14 @@ LABELS = {
     "downloads": "\u5df2\u4e0b\u8f7d",
 }
 
+# 控制条上的键:播放 / 暂停是封面透镜,其余(上下一首、更多)是 IconButton。
+PLAY_KEY = "PlayerBar::play-lens"
+BAR_KEY = "IconButton::touch"
+
+
+def transport_key(operation):
+    return PLAY_KEY if operation in ("pause", "resume") else BAR_KEY
+
 
 class RejectedHandleError(RuntimeError):
     """MCP 明确在动作派发之前拒绝了失效句柄。"""
@@ -218,7 +226,7 @@ class UI:
             "query_element_descendants",
             elementHandle=button,
             findAll=True,
-            queryStack=[{"matchElementId": "HoverButton::touch"}],
+            queryStack=[{"matchElementId": "Button::touch"}],
         ).get("elementHandles", [])
         visible = [touch for touch in touches if self.visible(touch)]
         if len(visible) != 1:
@@ -304,7 +312,7 @@ class UI:
     def transport(self, operation):
         self.close_playback_options()
         try:
-            handle = self.must("RoundControl::touch", LABELS[operation])
+            handle = self.must(transport_key(operation), LABELS[operation])
         except TimeoutError:
             tree = self.call("get_element_tree", elementHandle=self.root, maxElements=1000)
             (self.client.directory / "transport-failure-tree.json").write_text(
@@ -354,8 +362,8 @@ class UI:
             any(item.get("typeName") == "PlayerBar" for item in element["typeNamesAndIds"])
             for element in tree["elements"]
         ), "empty local queue presented a playback entry"
-        assert not self.find("RoundControl::touch", LABELS["resume"])
-        assert not self.find("RoundControl::touch", LABELS["pause"])
+        assert not self.find(PLAY_KEY, LABELS["resume"])
+        assert not self.find(PLAY_KEY, LABELS["pause"])
 
     # 成功恢复后用户不应继续看到请求失败横幅；音频判据先执行。
     def no_error_banner(self):
@@ -387,9 +395,7 @@ class UI:
 
     # 只对确认关闭的开关发动作；成功后等展开，不用重复点击纠正状态。
     def open_playback_options(self):
-        toggle = self.find("RoundControl::touch", "收起更多") or self.must(
-            "RoundControl::touch", "更多"
-        )
+        toggle = self.find(BAR_KEY, "收起更多") or self.must(BAR_KEY, "更多")
         if self.call("get_element_properties", elementHandle=toggle).get(
             "accessibleChecked", False
         ):
@@ -397,7 +403,7 @@ class UI:
         self.activate(toggle)
 
         def opened():
-            toggle = self.find("RoundControl::touch", "收起更多")
+            toggle = self.find(BAR_KEY, "收起更多")
             return (
                 toggle is not None
                 and self.call("get_element_properties", elementHandle=toggle).get(
@@ -409,13 +415,13 @@ class UI:
 
     # 遮罩会消费条外的第一次点击，先走真实关闭按钮并确认状态再离开。
     def close_playback_options(self):
-        close = self.find("RoundControl::touch", "收起更多")
+        close = self.find(BAR_KEY, "收起更多")
         if close is None:
             return
         self.activate(close, pointer=True)
 
         def closed():
-            more = self.find("RoundControl::touch", "更多")
+            more = self.find(BAR_KEY, "更多")
             return more is not None and not self.call(
                 "get_element_properties", elementHandle=more
             ).get("accessibleChecked", False)

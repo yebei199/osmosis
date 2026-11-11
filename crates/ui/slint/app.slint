@@ -21,7 +21,7 @@ import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { NavItem, IconButton, Button, TextField, GlassPill } from "widgets.slint";
+import { NavItem, IconButton, Button, ButtonKind, TextField, GlassPill, MenuItem, Sheet } from "widgets.slint";
 import { Icon, Icons } from "icons.slint";
 import { PlayerBar, BarMetrics } from "playerbar.slint";
 import { Theme, Type, Motion, Space, Radius, TextSize, Layout, Weight, Elevation } from "theme.slint";
@@ -907,25 +907,41 @@ export component MainWindow inherits Window {
             }
         }
 
+        // ── 「不喜欢」:选一个原因,建一条屏蔽规则(#161) ──
         if Library.dislike-open: dislike-mask := Rectangle {
-            width: 100%; height: 100%; background: #00000088;
+            width: 100%;
+            height: 100%;
+            background: Theme.scrim;
             TouchArea { clicked => { Library.dislike-open = false; } }
-            Rectangle {
+            Sheet {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: min(parent.width - 24px, 390px);
-                height: dislike-body.preferred-height + 28px;
-                background: Theme.surface; border-radius: Radius.md;
+                width: min(parent.width - 32px, 400px);
+                height: dislike-body.preferred-height;
                 TouchArea { }
                 dislike-body := VerticalLayout {
-                    padding: Space.md; spacing: 10px;
-                    Text { text: Library.dislike-pick-artist ? "选择歌手" : "不喜欢"; color: Theme.text; font-size: TextSize.title; }
-                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "不想再听这个歌手"; clicked => { Library.choose-dislike(0); } }
-                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "不想再听这首歌（含其他版本）"; clicked => { Library.choose-dislike(1); } }
-                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "太难听了"; clicked => { Library.choose-dislike(2); } }
-                    for artist[index] in Library.dislike-artists: Button {
+                    padding: Space.lg;
+                    spacing: Space.xs;
+                    Text {
+                        text: Library.dislike-pick-artist ? "选择歌手" : "不喜欢";
+                        color: Theme.text;
+                        font-size: TextSize.title;
+                        font-weight: Weight.bold;
+                    }
+                    Text {
+                        text: "选一个原因。规则可以在「已屏蔽」里恢复";
+                        color: Theme.text-dim;
+                        font-size: TextSize.small;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Space.sm; }
+                    if !Library.dislike-pick-artist: MenuItem { icon: Icons.user; text: "不想再听这个歌手"; clicked => { Library.choose-dislike(0); } }
+                    if !Library.dislike-pick-artist: MenuItem { icon: Icons.music-notes; text: "不想再听这首歌（含其他版本）"; clicked => { Library.choose-dislike(1); } }
+                    if !Library.dislike-pick-artist: MenuItem { icon: Icons.thumbs-down; text: "太难听了"; clicked => { Library.choose-dislike(2); } }
+                    for artist[index] in Library.dislike-artists: MenuItem {
                         visible: Library.dislike-pick-artist;
-                        width: 100%; height: 48px; text: artist;
+                        icon: Icons.user;
+                        text: artist;
                         clicked => { Library.choose-dislike-artist(index); }
                     }
                 }
@@ -934,161 +950,81 @@ export component MainWindow inherits Window {
 
         // ── 曲目行的长按菜单 ──
         // 压在所有页之上、铺满整块:菜单开着的时候底下不该还点得动,而「点别处
-        // 关掉」也正是靠这一整块接住的。只有一项是有意的 —— 这一期就下载一件事,
-        // 为它先造一套通用菜单,是给一个不存在的第二项付账。
+        // 关掉」也正是靠这一整块接住的。
         if Library.track-menu-id != ""
             && !Library.tag-picker-open
             && !Library.block-tag-picker-open
             && !Library.dislike-open: track-menu := Rectangle {
             width: 100%;
             height: 100%;
-            background: #000000.with-alpha(0.5);
+            background: Theme.scrim;
 
             TouchArea {
                 clicked => { Library.track-menu-id = ""; }
             }
 
-            Rectangle {
+            Sheet {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: min(parent.width - 48px, 360px);
-                height: menu-body.preferred-height + 28px;
-                background: Theme.surface;
-                border-radius: Radius.md;
-                border-width: 1px;
-                border-color: Theme.press;
+                width: min(parent.width - 32px, 360px);
+                height: menu-body.preferred-height;
 
                 // 挡住底下那块「点别处关掉」的区域 —— 没有它,点菜单自己也会把菜单关掉。
                 TouchArea { }
 
                 menu-body := VerticalLayout {
-                    padding: Space.md;
-                    spacing: Space.sm;
+                    padding: Space.sm;
+                    spacing: 0px;
 
                     Text {
+                        height: 40px;
+                        x: Space.md;
                         text: Library.track-menu-title;
-                        font-size: TextSize.body;
+                        font-size: TextSize.small;
+                        font-weight: Weight.semibold;
                         color: Theme.text-dim;
+                        vertical-alignment: center;
                         overflow: elide;
                     }
 
-                    Rectangle {
-                        height: 44px;
-                        border-radius: Radius.sm;
-                        background: download-touch.has-hover
-                            ? Theme.accent : Theme.hover;
-                        animate background { duration: Motion.fast; easing: Motion.ease; }
-
-                        download-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            // 无头测试只认无障碍动作,裸 TouchArea 在那里点不动
-                            // (见 crates/ui/tests/banner.rs)。
-                            accessible-role: button;
-                            accessible-label: "下载";
-                            accessible-action-default => { download-touch.clicked(); }
-                            clicked => {
-                                Library.download-track(Library.track-menu-id);
-                                Library.track-menu-id = "";
-                            }
-                        }
-
-                        Text {
-                            text: "下载";
-                            font-size: TextSize.body;
-                            color: download-touch.has-hover
-                                ? Theme.accent-text : Theme.text;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                    MenuItem {
+                        icon: Icons.download-simple;
+                        text: "下载";
+                        clicked => {
+                            Library.download-track(Library.track-menu-id);
+                            Library.track-menu-id = "";
                         }
                     }
-
                     // 标签(#158):打开选择器之前先把菜单藏起来,track-menu-id
                     // 留着不清 —— 选择器就靠它知道现在打的是哪一首。
-                    Rectangle {
-                        height: 44px;
-                        border-radius: Radius.sm;
-                        background: tag-touch.has-hover
-                            ? Theme.accent : Theme.hover;
-                        animate background { duration: Motion.fast; easing: Motion.ease; }
-
-                        tag-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            accessible-role: button;
-                            accessible-label: "标签";
-                            accessible-action-default => { tag-touch.clicked(); }
-                            clicked => {
-                                Library.open-tag-picker();
-                                Library.tag-picker-open = true;
-                            }
-                        }
-
-                        Text {
-                            text: "标签…";
-                            font-size: TextSize.body;
-                            color: tag-touch.has-hover
-                                ? Theme.accent-text : Theme.text;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                    MenuItem {
+                        icon: Icons.tag;
+                        text: "标签…";
+                        label: "标签";
+                        clicked => {
+                            Library.open-tag-picker();
+                            Library.tag-picker-open = true;
                         }
                     }
-
                     // 屏蔽(#161):屏蔽是规则,不是踩。命中的歌在所有列表里隐藏,
-                    // 队列与电台跳过;设置页「已屏蔽」里能恢复。
-                    Rectangle {
-                        height: 44px;
-                        border-radius: Radius.sm;
-                        background: block-track-touch.has-hover
-                            ? Theme.accent : Theme.hover;
-                        animate background { duration: Motion.fast; easing: Motion.ease; }
-
-                        block-track-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            accessible-role: button;
-                            accessible-label: "不喜欢…";
-                            accessible-action-default => { block-track-touch.clicked(); }
-                            clicked => {
-                                Library.open-dislike(Library.track-menu-id);
-                                Library.track-menu-id = "";
-                            }
-                        }
-
-                        Text {
-                            text: "不喜欢…";
-                            font-size: TextSize.body;
-                            color: block-track-touch.has-hover
-                                ? Theme.accent-text : Theme.text;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                    // 队列与电台跳过;「已屏蔽」页里能恢复。
+                    MenuItem {
+                        icon: Icons.thumbs-down;
+                        text: "不喜欢…";
+                        clicked => {
+                            Library.open-dislike(Library.track-menu-id);
+                            Library.track-menu-id = "";
                         }
                     }
-
                     // 选哪个标签来屏蔽。列表与标签选择器同一张 all-tags,
                     // 开之前一样先喊 open-tag-picker 把它填上。
-                    Rectangle {
-                        height: 44px;
-                        border-radius: Radius.sm;
-                        background: block-tag-touch.has-hover
-                            ? Theme.accent : Theme.hover;
-                        animate background { duration: Motion.fast; easing: Motion.ease; }
-
-                        block-tag-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            accessible-role: button;
-                            accessible-label: "屏蔽标签";
-                            accessible-action-default => { block-tag-touch.clicked(); }
-                            clicked => {
-                                Library.open-tag-picker();
-                                Library.block-tag-picker-open = true;
-                            }
-                        }
-
-                        Text {
-                            text: "屏蔽 tag…";
-                            font-size: TextSize.body;
-                            color: block-tag-touch.has-hover
-                                ? Theme.accent-text : Theme.text;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                    MenuItem {
+                        icon: Icons.prohibit;
+                        text: "屏蔽标签…";
+                        label: "屏蔽标签";
+                        clicked => {
+                            Library.open-tag-picker();
+                            Library.block-tag-picker-open = true;
                         }
                     }
                 }
@@ -1102,7 +1038,7 @@ export component MainWindow inherits Window {
         if Library.block-tag-picker-open: block-tag-picker := Rectangle {
             width: 100%;
             height: 100%;
-            background: #000000.with-alpha(0.5);
+            background: Theme.scrim;
 
             TouchArea {
                 clicked => {
@@ -1111,26 +1047,23 @@ export component MainWindow inherits Window {
                 }
             }
 
-            Rectangle {
+            Sheet {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: min(parent.width - 48px, 360px);
-                height: min(parent.height - 96px, block-tag-body.preferred-height + 28px);
-                background: Theme.surface;
-                border-radius: Radius.md;
-                border-width: 1px;
-                border-color: Theme.press;
+                width: min(parent.width - 32px, 360px);
+                height: min(parent.height - 96px, block-tag-body.preferred-height);
 
                 TouchArea { }
 
                 block-tag-body := VerticalLayout {
-                    padding: Space.md;
+                    padding: Space.lg;
                     spacing: Space.sm;
 
                     Text {
                         text: "屏蔽哪个标签";
-                        font-size: TextSize.body;
-                        color: Theme.text-dim;
+                        font-size: TextSize.title;
+                        font-weight: Weight.bold;
+                        color: Theme.text;
                     }
 
                     if Library.all-tags.length == 0: Text {
@@ -1142,32 +1075,14 @@ export component MainWindow inherits Window {
                     ListView {
                         height: min(Library.all-tags.length * 44px, 220px);
 
-                        for row[i] in Library.all-tags: Rectangle {
-                            height: 40px;
-                            border-radius: Radius.sm;
-                            background: block-row-touch.has-hover ? Theme.hover : transparent;
-
-                            block-row-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button;
-                                accessible-label: "屏蔽标签 " + row.name;
-                                accessible-action-default => { block-row-touch.clicked(); }
-                                clicked => {
-                                    Library.block-tag(row.name);
-                                    Library.block-tag-picker-open = false;
-                                    Library.track-menu-id = "";
-                                }
-                            }
-
-                            Text {
-                                x: 8px;
-                                width: parent.width - 16px;
-                                height: parent.height;
-                                text: row.name;
-                                color: Theme.text;
-                                font-size: TextSize.body;
-                                overflow: elide;
-                                vertical-alignment: center;
+                        for row[i] in Library.all-tags: MenuItem {
+                            icon: Icons.tag;
+                            text: row.name;
+                            label: "屏蔽标签 " + row.name;
+                            clicked => {
+                                Library.block-tag(row.name);
+                                Library.block-tag-picker-open = false;
+                                Library.track-menu-id = "";
                             }
                         }
                     }
@@ -1182,7 +1097,7 @@ export component MainWindow inherits Window {
         if Library.tag-picker-open: tag-picker := Rectangle {
             width: 100%;
             height: 100%;
-            background: #000000.with-alpha(0.5);
+            background: Theme.scrim;
 
             TouchArea {
                 clicked => {
@@ -1191,25 +1106,27 @@ export component MainWindow inherits Window {
                 }
             }
 
-            Rectangle {
+            Sheet {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: min(parent.width - 48px, 360px);
-                height: min(parent.height - 96px, picker-body.preferred-height + 28px);
-                background: Theme.surface;
-                border-radius: Radius.md;
-                border-width: 1px;
-                border-color: Theme.press;
+                width: min(parent.width - 32px, 360px);
+                height: min(parent.height - 96px, picker-body.preferred-height);
 
                 TouchArea { }
 
                 picker-body := VerticalLayout {
-                    padding: Space.md;
+                    padding: Space.lg;
                     spacing: Space.sm;
 
                     Text {
-                        text: "标签 · " + Library.track-menu-title;
-                        font-size: TextSize.body;
+                        text: "标签";
+                        font-size: TextSize.title;
+                        font-weight: Weight.bold;
+                        color: Theme.text;
+                    }
+                    Text {
+                        text: Library.track-menu-title;
+                        font-size: TextSize.small;
                         color: Theme.text-dim;
                         overflow: elide;
                     }
@@ -1218,9 +1135,12 @@ export component MainWindow inherits Window {
                         height: min(Library.all-tags.length * 44px, 220px);
 
                         for row[i] in Library.all-tags: Rectangle {
-                            height: 40px;
+                            height: 44px;
+                            border-radius: Radius.sm;
+                            background: row-touch.has-hover ? Theme.hover : transparent;
 
                             row-touch := TouchArea {
+                                mouse-cursor: pointer;
                                 accessible-role: checkbox;
                                 accessible-label: row.name;
                                 accessible-checkable: true;
@@ -1232,23 +1152,22 @@ export component MainWindow inherits Window {
                             }
 
                             HorizontalLayout {
-                                padding-left: Space.xs;
-                                padding-right: Space.xs;
-                                spacing: Space.sm;
+                                padding-left: Space.md;
+                                padding-right: Space.md;
+                                spacing: Space.md;
 
                                 // 勾选框:矢量图标,不用 Unicode 符号 —— ☐ 在安卓字体里没有,
                                 // ☑ 又被 emoji 字体接走,两端画出来的东西对不上(#158 F-001)。
-                                // 与抽屉那排图标芯片同一种做法:关着透底描边,开着填强调色。
                                 VerticalLayout {
                                     alignment: center;
                                     Rectangle {
-                                        width: 18px;
-                                        height: 18px;
-                                        border-radius: Radius.sm;
+                                        width: 20px;
+                                        height: 20px;
+                                        border-radius: Radius.xs;
                                         background: row.applied ? Theme.accent : transparent;
-                                        border-width: 1.5px;
-                                        border-color: row.applied ? Theme.accent : Theme.press;
-                                        animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
+                                        border-width: row.applied ? 0px : 1.5px;
+                                        border-color: Theme.line-strong;
+                                        animate background { duration: Motion.fast; easing: Motion.ease; }
 
                                         if row.applied: Icon {
                                             size: 14px;
@@ -1280,30 +1199,15 @@ export component MainWindow inherits Window {
                                 self.text = "";
                             }
                         }
-                        Rectangle {
-                            width: 56px;
-                            border-radius: Radius.sm;
-                            background: create-tag-touch.has-hover
-                                ? Theme.accent : Theme.hover;
-
-                            create-tag-touch := TouchArea {
-                                mouse-cursor: pointer;
-                                accessible-role: button;
-                                accessible-label: "新建";
-                                accessible-action-default => { create-tag-touch.clicked(); }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                kind: ButtonKind.secondary;
+                                text: "新建";
                                 clicked => {
                                     Library.create-track-tag(new-tag-name.text);
                                     new-tag-name.text = "";
                                 }
-                            }
-
-                            Text {
-                                text: "新建";
-                                font-size: TextSize.body;
-                                color: create-tag-touch.has-hover
-                                    ? Theme.accent-text : Theme.text;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
                             }
                         }
                     }

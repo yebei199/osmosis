@@ -387,7 +387,7 @@ echo "$(date -Iseconds) 源实际输出流已关闭,本轮 PID=$source_pid"
 
 # 遥控暂停也必须落在同一组,证明源端已是遥控器。
 refresh
-act "$(labelled "RoundControl::touch" "暂停")"
+act "$(labelled "PlayerBar::play-lens" "暂停")"
 for _ in $(seq 1 10); do
  [ "$(sql "SELECT playing FROM play_groups WHERE account_id=$ACCOUNT_ID;")" = f ] && break
  sleep 1

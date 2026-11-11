@@ -239,6 +239,8 @@ export component OutputStrip inherits VerticalLayout {
     spacing: Space.xs;
 
     HorizontalLayout {
+        // 芯片靠左排:拉伸分配的话,一台设备也会被摆到行的正中间。
+        alignment: start;
         spacing: Space.sm;
 
         if root.caption: VerticalLayout {

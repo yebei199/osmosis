@@ -181,7 +181,6 @@ fn assert_clear(ui: &MainWindow) {
         "TextField",
         "NavItem",
         "SideNavRow",
-        "RoundControl",
         "IconButton",
         "Button",
     ] {

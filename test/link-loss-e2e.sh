@@ -227,10 +227,10 @@ form_group() {
   until_true 30 "OUT 在出声" playing "$OUT"
 }
 
-# ⏯ 那颗键:控制条上标签是「暂停」或「播放」的 RoundControl。
+# ⏯ 那颗键:控制条上标签是「暂停」或「播放」的封面透镜。
 play_key() {
   local h
-  for h in $(handles "$1" RoundControl::touch); do
+  for h in $(handles "$1" PlayerBar::play-lens); do
     [[ "$(label_of "$1" "$h")" == 暂停* || "$(label_of "$1" "$h")" == 播放* ]] && { echo "$h"; return; }
   done
   return 1

@@ -1,4 +1,4 @@
-import { ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 import { Palette } from "std-widgets.slint";
 
 import { Theme, Type, Space, TextSize, Radius, Layout, Weight, Tracking } from "theme.slint";
@@ -53,23 +53,20 @@ export component DownloadManager inherits Rectangle {
             spacing: Space.sm;
             keyword := TextField {
                 horizontal-stretch: 1;
+                icon: Icons.magnifying-glass;
                 placeholder: "搜索歌名、歌手或文件名";
                 enabled: !Downloads.busy;
                 edited => { Downloads.search(self.text); }
             }
             refresh-button := Button {
-                width: 64px;
+                kind: ButtonKind.secondary;
+                icon: Icons.arrow-clockwise;
                 text: "刷新";
                 enabled: !Downloads.busy;
                 clicked => { Downloads.refresh(); }
             }
         }
-        total-text := Text {
-            text: Downloads.total;
-            accessible-label: self.text;
-            color: Theme.text-dim;
-            font-size: TextSize.small;
-        }
+        // 总数在页头那行事实里(`facts`),这里不再重复一行。
         if Downloads.note != "": Text {
             text: Downloads.note;
             accessible-label: self.text;
@@ -81,12 +78,14 @@ export component DownloadManager inherits Rectangle {
             Text {
                 text: Downloads.busy ? "等待系统删除确认" : "已选择 " + Downloads.selected-count + " 首";
                 color: Theme.text-dim;
+                font-size: TextSize.small;
                 horizontal-stretch: 1;
                 vertical-alignment: center;
             }
             delete-button := Button {
-                width: 100px;
-                height: 40px;
+                kind: ButtonKind.secondary;
+                small: true;
+                icon: Icons.trash;
                 text: "删除所选";
                 enabled: Downloads.selected-count > 0 && !Downloads.busy;
                 clicked => { Downloads.confirming = true; }
@@ -99,68 +98,73 @@ export component DownloadManager inherits Rectangle {
             vertical-alignment: center;
             vertical-stretch: 1;
         }
-        if Downloads.rows.length > 0: ScrollView {
+        // ListView 而不是 ScrollView + 布局:后者的内容按整宽排,竖向滚动条一出现
+        // 右缘那一列(文件大小)就被它压住,还多出一条横向滚动条。
+        if Downloads.rows.length > 0: ListView {
             vertical-stretch: 1;
-            content-width: self.width;
-            VerticalLayout {
-                spacing: Space.xs;
-                for row in Downloads.rows: Rectangle {
-                    height: 64px;
-                    background: row.selected ? Theme.accent.with-alpha(0.15) : Theme.hover;
-                    border-radius: Radius.sm;
-                    HorizontalLayout {
-                        padding: Space.sm;
-                        spacing: Space.sm;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon {
-                                source: row.selected ? Icons.check-circle-fill : Icons.circle;
-                                colorize: row.selected ? Theme.accent-ink : Theme.text-faint;
-                            }
+            // 与曲目行同一套:行不画框,选中垫 accent-wash,宽版式悬停垫 hover。
+            for row in Downloads.rows: Rectangle {
+                height: 64px;
+                background: row.selected ? Theme.accent-wash
+                    : entry-touch.has-hover && !Shell.compact ? Theme.hover : transparent;
+                border-radius: Radius.sm;
+                HorizontalLayout {
+                    padding: Space.sm;
+                    spacing: Space.sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            source: row.selected ? Icons.check-circle-fill : Icons.circle;
+                            colorize: row.selected ? Theme.accent-ink : Theme.text-faint;
                         }
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            Text { text: row.title; color: Theme.text; overflow: elide; }
-                            Text { text: row.artist == "" ? row.file-name : row.artist; color: Theme.text-dim; font-size: TextSize.small; overflow: elide; }
-                        }
-                        Text { text: row.size; color: Theme.text-dim; font-size: TextSize.small; vertical-alignment: center; }
                     }
-                    entry-touch := TouchArea {
-                        enabled: !Downloads.busy;
-                        accessible-role: checkbox;
-                        accessible-label: row.file-name;
-                        accessible-checked: row.selected;
-                        accessible-action-default => { Downloads.toggle(row.id); }
-                        clicked => { Downloads.toggle(row.id); }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 3px;
+                        Text { text: row.title; color: Theme.text; font-size: TextSize.row; overflow: elide; }
+                        Text { text: row.artist == "" ? row.file-name : row.artist; color: Theme.text-dim; font-size: TextSize.small; overflow: elide; }
                     }
+                    Text { text: row.size; color: Theme.text-faint; font-size: TextSize.small; vertical-alignment: center; }
+                }
+                entry-touch := TouchArea {
+                    enabled: !Downloads.busy;
+                    accessible-role: checkbox;
+                    accessible-label: row.file-name;
+                    accessible-checked: row.selected;
+                    accessible-action-default => { Downloads.toggle(row.id); }
+                    clicked => { Downloads.toggle(row.id); }
                 }
             }
         }
     }
     // 覆层截获输入，确认前不会向平台发删除请求。
     if Downloads.confirming: confirmation := Rectangle {
-        background: #00000088;
+        background: Theme.scrim;
         TouchArea {}
         Sheet {
-            width: min(parent.width - 24px, 360px);
-            height: 180px;
+            width: min(parent.width - 32px, 380px);
+            height: confirm-body.preferred-height;
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2);
-            VerticalLayout {
-                padding: Space.lg;
-                spacing: Space.md;
+            confirm-body := VerticalLayout {
+                padding: Space.xl;
+                spacing: Space.sm;
                 Text {
                     text: "删除选中的 " + Downloads.selected-count + " 首歌曲？";
                     color: Theme.text;
                     wrap: word-wrap;
                     font-size: TextSize.title;
+                    font-weight: Weight.bold;
                 }
                 Text { text: "本机文件将被删除，无法撤销。"; color: Theme.text-dim; wrap: word-wrap; font-size: TextSize.small; }
+                Rectangle { height: Space.sm; }
                 HorizontalLayout {
                     spacing: Space.sm;
-                    cancel-button := Button { width: (parent.width - 8px) / 2; height: 40px; text: "取消"; clicked => { Downloads.confirming = false; } }
+                    alignment: end;
+                    cancel-button := Button { kind: ButtonKind.secondary; text: "取消"; clicked => { Downloads.confirming = false; } }
                     confirm-button := Button {
-                        width: (parent.width - 8px) / 2; height: 40px; text: "确认删除";
+                        kind: ButtonKind.primary; text: "确认删除";
                         enabled: !Downloads.busy && Downloads.selected-count > 0;
                         clicked => { Downloads.confirming = false; Downloads.delete-selected(); }
                     }
@@ -356,10 +360,11 @@ export component MusicPage inherits VerticalLayout {
         spacing: Shell.compact ? Space.md : 18px;
         HorizontalLayout {
             spacing: 0px;
-            alignment: start;
             // 歌名是任意 CJK:Osmosis Sans 按标准字符集裁过,生僻字走系统字体回退。
+            // 框先吃满,长到 720px 封顶,余下的给后面那块空白 —— `alignment: start`
+            // 会让它缩回自己的 preferred 宽度,只剩一颗放大镜。
             keyword := TextField {
-                horizontal-stretch: 1;
+                horizontal-stretch: 1000;
                 max-width: 720px;
                 large: true;
                 icon: Icons.magnifying-glass;
@@ -368,6 +373,7 @@ export component MusicPage inherits VerticalLayout {
                 accepted => { Player.search(self.text); }
             }
             if Shell.compact && Shell.group-banner != "": Rectangle { width: 56px; }
+            Rectangle { horizontal-stretch: 1; }
         }
         // 搜索结果的三个页签。与搜索框同进同出 ——
         // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。

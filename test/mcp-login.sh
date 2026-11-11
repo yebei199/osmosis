@@ -52,7 +52,7 @@ print(json.dumps({"elementHandle": json.loads(sys.argv[1]), "value": os.environ[
 ' "$pass")" >/dev/null
 
 btn=$(call query_element_descendants \
-  "{\"elementHandle\":$win,\"findAll\":true,\"queryStack\":[{\"matchDescendants\":true},{\"matchElementId\":\"HoverButton::touch\"}]}" \
+  "{\"elementHandle\":$win,\"findAll\":true,\"queryStack\":[{\"matchDescendants\":true},{\"matchElementId\":\"Button::touch\"}]}" \
   | python3 -c 'import json,sys; hs=json.load(sys.stdin).get("elementHandles") or []; print(json.dumps(hs[0]) if hs else "")')
 [ -n "$btn" ] || { echo "找不到登录按钮" >&2; exit 1; }
 call click_element "{\"elementHandle\":$btn}" >/dev/null

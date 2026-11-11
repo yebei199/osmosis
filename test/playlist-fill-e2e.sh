@@ -97,7 +97,7 @@ for h in query(root, matchElementAccessibleRole="Button"):
 nav = by_id("MusicPage::music-bar") or by_id("MusicPage::music-rail")
 cells = query(nav[0], matchElementTypeNameOrBase="TouchArea")
 click(cells[1] if by_id("MusicPage::music-bar") else cells[2])
-if by_id("MusicPage::playlist-header"):
+if by_id("MusicPage::back"):
     click(by_id("MusicPage::back")[0])
 
 ok = expect("MusicPage::playlist-list", BARE + SPACING)
