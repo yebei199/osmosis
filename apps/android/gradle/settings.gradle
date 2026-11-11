@@ -1,6 +1,7 @@
 // 镜像放在 google()/mavenCentral() 之前:gradle 按声明顺序挨个试,命中即止。
 //
-// 直连 Google Maven 会让每次 APK 构建白白多花几分钟:在新加坡实测 dl.google.com 的
+// 用户在洛杉矶,深圳有几台 VPS,proxy 给这些 VPS 用;不能据此推断本机或测试的位置。
+// 当时直连 Google Maven 会让 APK 构建多花几分钟:记录中 dl.google.com 的
 // 部分 IP 连不上(抓到过 SYN-SENT 到 74.125.68.136:443 一直挂着),gradle 只能干等
 // TCP 超时。实测同一个 AGP pom,阿里云 0.05s,直连 3.9s。
 //
