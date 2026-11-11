@@ -397,11 +397,24 @@ export component TextField inherits Rectangle {
                 size: root.large ? 22px : 20px;
             }
         }
+        // TextInput 自己不横滚：字比格子长时整串往右溢出，一长串密码点会画出框外。
+        // 这一格最小宽归零、裁边，输入框随光标左右挪(同标准库 LineEdit 的做法)。
         Rectangle {
             horizontal-stretch: 1;
+            min-width: 0px;
+            clip: true;
             input := TextInput {
-                width: 100%;
+                property <length> scroll-x;
+                x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll-x));
+                width: max(parent.width - self.text-cursor-width, self.preferred-width);
                 height: 100%;
+                cursor-position-changed(cursor) => {
+                    if cursor.x + self.scroll-x < 0px {
+                        self.scroll-x = -cursor.x;
+                    } else if cursor.x + self.scroll-x > parent.width - self.text-cursor-width {
+                        self.scroll-x = parent.width - cursor.x - self.text-cursor-width;
+                    }
+                }
                 enabled: root.enabled;
                 input-type: root.input-type;
                 color: Theme.text;
