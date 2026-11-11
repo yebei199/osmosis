@@ -1,8 +1,8 @@
-//! 导航水滴选中器的几何。无头跑,与 controls.rs 同一套路。
+//! 导航玻璃药丸的几何。无头跑,与 controls.rs 同一套路。
 //!
-//! 视觉在 render3d 那侧、没有 GPU 可测,这里钉的是喂给它的那组数:
-//! 条有多长、格心在哪、三球有没有拉开。算错一格不会报错,只会让水滴
-//! 停在隔壁那一项上。
+//! 视觉在 render3d 那侧(或 Slint 的 GlassPill 兜底),这里钉的是喂给它的那组数:
+//! 条有多长、格心在哪、药丸走动时两条边有没有拉开。算错一格不会报错,
+//! 只会让药丸停在隔壁那一项上。
 
 use std::time::Duration;
 
@@ -49,27 +49,22 @@ fn row_span(ui: &MainWindow, label: &str) -> (f32, f32) {
     )
     .next()
     .expect("侧栏一行都没有");
-    // 第一行离条首是 nav-pad(8px):用它反推条首,不依赖状态条有多高。
-    let origin = top.absolute_position().y - 8.0;
+    // 第一行离条首是上内边距 22px 加品牌那 50px:用它反推条首,不依赖状态条有多高。
+    let origin = top.absolute_position().y - 72.0;
     let y = row.absolute_position().y - origin;
     (y, y + row.size().height)
 }
 
-/// 读一遍三球位置。Slint 的 animate 要属性**先被求值过**才有旧值可动:
+/// 读一遍药丸两条边。Slint 的 animate 要属性**先被求值过**才有旧值可动:
 /// 真机上渲染循环每帧都读,测试里得自己补这一下,否则切换只会瞬移。
 fn observe(ui: &MainWindow) {
-    let _ = (
-        ui.get_nav_lead(),
-        ui.get_nav_lag(),
-        ui.get_nav_drop(),
-        ui.get_nav_ball(),
-    );
+    let _ = (ui.get_nav_lead(), ui.get_nav_lag());
 }
 
 fn go(ui: &MainWindow, destination: i32) {
     observe(ui);
     ui.global::<Shell>().set_destination(destination);
-    // 最慢那颗是 680ms,给足时间让三球都到位。
+    // 慢的那条边是 620ms,给足时间让两条都到位。
     testing::mock_elapsed_time(Duration::from_millis(900));
 }
 
@@ -81,7 +76,7 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
     assert!(!ui.get_nav_horizontal(), "宽版式该是竖条");
     assert_eq!(
         ui.get_nav_strip_w(),
-        168.0,
+        224.0,
         "宽版式的条宽就是侧栏宽"
     );
 
@@ -102,9 +97,9 @@ fn the_bottom_bar_reports_a_horizontal_strip() {
     );
 }
 
-/// 水滴落在当前选中格上;「更多」里的目的地落在第五格。
+/// 药丸落在当前选中格上;「更多」里的目的地落在第五格。
 #[test]
-fn the_droplet_lands_on_the_selected_bottom_item() {
+fn the_pill_lands_on_the_selected_bottom_item() {
     let ui = nav_window();
     ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
@@ -117,14 +112,14 @@ fn the_droplet_lands_on_the_selected_bottom_item() {
         let lead = ui.get_nav_lead();
         assert!(
             lead > left && lead < right,
-            "目的地 {destination} 的头球该落在第 {slot} 格 {left}..{right},实得 {lead}"
+            "目的地 {destination} 的药丸该落在第 {slot} 格 {left}..{right},实得 {lead}"
         );
     }
 }
 
-/// 侧栏轨道上七行(两组之间隔一段),水滴落在选中那一行上。
+/// 侧栏轨道上十行(三组,组间隔一段,沉底那组贴着栏底),药丸落在选中那一行上。
 #[test]
-fn the_droplet_lands_on_the_selected_sidebar_row() {
+fn the_pill_lands_on_the_selected_sidebar_row() {
     let ui = nav_window();
 
     for (label, destination) in [
@@ -134,6 +129,9 @@ fn the_droplet_lands_on_the_selected_sidebar_row() {
         ("我的歌单", 1),
         ("最近播放", 3),
         ("已下载", 5),
+        ("个人", 7),
+        ("已屏蔽", 9),
+        ("设置", 8),
         ("每日推荐", 0),
     ] {
         go(&ui, destination);
@@ -141,46 +139,17 @@ fn the_droplet_lands_on_the_selected_sidebar_row() {
         let lead = ui.get_nav_lead();
         assert!(
             lead > top && lead < bottom,
-            "「{label}」的头球该落在 {top}..{bottom},实得 {lead}"
+            "「{label}」的药丸该落在 {top}..{bottom},实得 {lead}"
+        );
+        assert_eq!(
+            lead,
+            ui.get_nav_lag(),
+            "到位之后两条边该重合"
         );
     }
 }
 
-/// 侧栏沉底那两行退出水滴轨道(#71 的规则沿用):选中个人/设置时水滴停在
-/// 轨道最后一行(已下载)上并缩没,不滑到栏底;切回来又长出来。
-#[test]
-fn the_droplet_melts_away_for_the_bottom_rows() {
-    let ui = nav_window();
-
-    go(&ui, 5);
-    assert!(
-        ui.get_nav_ball() > 0.9,
-        "停在已下载时水滴该是满的,实得 {}",
-        ui.get_nav_ball()
-    );
-    let on_downloads = ui.get_nav_lead();
-
-    go(&ui, 8);
-    assert_eq!(
-        ui.get_nav_ball(),
-        0.0,
-        "选中设置时水滴该缩没"
-    );
-    assert_eq!(
-        ui.get_nav_lead(),
-        on_downloads,
-        "水滴不该滑到栏底,该停在轨道最后一行上"
-    );
-
-    go(&ui, 0);
-    assert!(
-        ui.get_nav_ball() > 0.9,
-        "切回轨道上的目的地该重新长出来,实得 {}",
-        ui.get_nav_ball()
-    );
-}
-
-/// 底栏五格全在轨道上:紧凑版式里停在设置,水滴照走到「更多」那格。
+/// 底栏五格全在轨道上:紧凑版式里停在设置,药丸照走到「更多」那格。
 #[test]
 fn the_bottom_bar_keeps_all_five_slots_on_the_track() {
     let ui = nav_window();
@@ -189,15 +158,11 @@ fn the_bottom_bar_keeps_all_five_slots_on_the_track() {
 
     go(&ui, 8);
 
-    assert!(
-        ui.get_nav_ball() > 0.9,
-        "底栏五格都在轨道上,水滴不该缩没"
-    );
     let (left, right) = item_span(&ui, 4);
     let lead = ui.get_nav_lead();
     assert!(
         lead > left && lead < right,
-        "底栏的头球该落在第五格 {left}..{right},实得 {lead}"
+        "底栏的药丸该落在第五格 {left}..{right},实得 {lead}"
     );
 }
 
@@ -230,24 +195,23 @@ fn the_bottom_rows_are_checkable_tabs() {
     assert_eq!(row().accessible_checked(), Some(true));
 }
 
-/// 三球中途仍拉得开:切换的半途读三个位置,头球最靠前、小水滴最靠后。
-/// 颈就是这个先后差被 smin 连出来的,时长差没了就退化成一整块平移。
+/// 走动的半途药丸被拉长:快的那条边已经冲在前面,慢的还落在后面。
+/// 时长差没了就退化成一整块平移,没有那一下拉伸。
 #[test]
-fn the_three_balls_stay_strung_out_mid_transition() {
+fn the_pill_stretches_mid_transition() {
     let ui = nav_window();
     ui.global::<Shell>().set_compact(true);
     let _ = item_span(&ui, 0);
 
-    // 从最左边一格往最右边走,只走一小段:头球 240ms、尾球 440ms、小水滴 680ms。
+    // 从最左边一格往最右边走,只走一小段:快边 420ms、慢边 620ms。
     observe(&ui);
     ui.global::<Shell>().set_destination(8);
     testing::mock_elapsed_time(Duration::from_millis(120));
 
     let lead = ui.get_nav_lead();
     let lag = ui.get_nav_lag();
-    let drop = ui.get_nav_drop();
     assert!(
-        lead > lag && lag > drop,
-        "往右走的半途该是头球在前、小水滴在后,实得 {lead} / {lag} / {drop}"
+        lead > lag,
+        "往右走的半途该是快边在前,实得 {lead} / {lag}"
     );
 }

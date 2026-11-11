@@ -41,6 +41,8 @@ export global Viz {
     in-out property <bool> viz-pointer-active: false;
 
     in property <image> cover-art;
+    // 同一张封面缩小糊开(imagery/cover.rs 的 blurred_of),播放页铺满当背景光。
+    in property <image> cover-blur;
     // 正在播的歌名与歌手,play_current 推送。任意 CJK,不指定子集字体。
     in property <string> now-title;
     in property <string> now-artists;

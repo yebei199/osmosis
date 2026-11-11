@@ -25,6 +25,7 @@ fn row(id: &str) -> TrackRow {
         cover: slint::Image::default(),
         header: false,
         collapsed: false,
+        number: 0,
     }
 }
 

@@ -51,7 +51,8 @@ fn daily_with(rows: Vec<TrackRow>) -> MainWindow {
     ));
     player.set_chips(ModelRc::new(VecModel::from(vec![
         FacetChip {
-            text: "有歌词 2".into(),
+            text: "有歌词".into(),
+            count: "2".into(),
             chosen: false,
         },
     ])));
@@ -72,24 +73,46 @@ fn labelled(ui: &MainWindow, label: &str) -> usize {
     .count()
 }
 
-/// 分组条摆出每一种分组;筛选那一排默认收着。
+/// 分组是一颗选择型 chip,点开才就地摆出每一种分法;筛选 chips 常驻同一排。
 #[test]
 fn the_bar_offers_every_grouping() {
     let ui = daily_with(vec![song("1")]);
 
+    assert_eq!(count(&ui, "FacetBar::grouping-select"), 1);
+    assert_eq!(count(&ui, "FacetBar::grouping-pill"), 0);
+    assert_eq!(count(&ui, "FacetBar::chip-pill"), 1);
+    assert_eq!(labelled(&ui, "有歌词 2"), 1);
+
+    testing::ElementHandle::find_by_element_id(
+        &ui,
+        "FacetBar::grouping-select",
+    )
+    .next()
+    .expect("分组那颗 chip 该在")
+    .invoke_accessible_default_action();
     assert_eq!(count(&ui, "FacetBar::grouping-pill"), 3);
-    assert_eq!(count(&ui, "FacetBar::filter-toggle"), 1);
-    assert_eq!(count(&ui, "FacetBar::chip-pill"), 0);
 }
 
-/// 选了 chip 时筛选那一排常驻,否则看不见筛了什么。
+/// 选中的 chip 报得出自己被选着。
 #[test]
-fn chosen_chips_keep_the_filter_row_open() {
+fn a_chosen_chip_reads_as_checked() {
     let ui = daily_with(vec![song("1")]);
+    ui.global::<Player>().set_chips(ModelRc::new(
+        VecModel::from(vec![FacetChip {
+            text: "有歌词".into(),
+            count: "2".into(),
+            chosen: true,
+        }]),
+    ));
     ui.global::<Player>().set_chosen_count(1);
 
-    assert_eq!(count(&ui, "FacetBar::chip-pill"), 1);
-    assert_eq!(labelled(&ui, "筛选 · 1"), 1);
+    let chip = testing::ElementHandle::find_by_element_id(
+        &ui,
+        "FacetBar::chip-pill",
+    )
+    .next()
+    .expect("chip 该在");
+    assert_eq!(chip.accessible_checked(), Some(true));
 }
 
 /// 堆头读得出堆名与首数,但没有红心键 —— 它不是一首歌。
@@ -108,7 +131,8 @@ fn no_bar_when_the_view_has_no_facets() {
     let ui = daily_with(vec![song("1")]);
     ui.global::<Player>().set_facets_enabled(false);
 
-    assert_eq!(count(&ui, "FacetBar::filter-toggle"), 0);
+    assert_eq!(count(&ui, "FacetBar::grouping-select"), 0);
+    assert_eq!(count(&ui, "FacetBar::chip-pill"), 0);
 }
 
 /// 筛空了说「没有符合筛选的歌」,不摆开局的空状态。

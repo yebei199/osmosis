@@ -1,0 +1,92 @@
+// 图标:Phosphor Icons 2.1(MIT,许可在 icons/LICENSE),一族线条。
+//
+// 常态一律 Regular 粗细(24px 下 1.5px 笔画);Fill 只表示状态 —— 当前目的地、点亮的红心、
+// 播放暂停切歌、出错。每一个都是单色 SVG,上色走 Image.colorize,所以颜色仍只来自
+// theme.slint。界面上不许用 Unicode 字形当图标(♥ ♡ ✓ ‹ × 都不行:字体里不一定有,
+// 有的话也和这一族对不上)。尺寸只用 16 / 18 / 20 / 22 / 24。
+
+import { Theme } from "theme.slint";
+
+export global Icons {
+    out property <image> arrow-clockwise: @image-url("../icons/arrow-clockwise.svg");
+    out property <image> arrow-left: @image-url("../icons/arrow-left.svg");
+    out property <image> calendar-blank-fill: @image-url("../icons/calendar-blank-fill.svg");
+    out property <image> calendar-blank: @image-url("../icons/calendar-blank.svg");
+    out property <image> caret-down: @image-url("../icons/caret-down.svg");
+    out property <image> caret-left: @image-url("../icons/caret-left.svg");
+    out property <image> caret-right: @image-url("../icons/caret-right.svg");
+    out property <image> caret-up: @image-url("../icons/caret-up.svg");
+    out property <image> check-circle-fill: @image-url("../icons/check-circle-fill.svg");
+    out property <image> check-circle: @image-url("../icons/check-circle.svg");
+    out property <image> check: @image-url("../icons/check.svg");
+    out property <image> circle: @image-url("../icons/circle.svg");
+    out property <image> clock-counter-clockwise-fill: @image-url("../icons/clock-counter-clockwise-fill.svg");
+    out property <image> clock-counter-clockwise: @image-url("../icons/clock-counter-clockwise.svg");
+    out property <image> clock: @image-url("../icons/clock.svg");
+    out property <image> cloud-arrow-down: @image-url("../icons/cloud-arrow-down.svg");
+    out property <image> desktop: @image-url("../icons/desktop.svg");
+    out property <image> device-mobile: @image-url("../icons/device-mobile.svg");
+    out property <image> devices: @image-url("../icons/devices.svg");
+    out property <image> dots-three-fill: @image-url("../icons/dots-three-fill.svg");
+    out property <image> dots-three: @image-url("../icons/dots-three.svg");
+    out property <image> download-simple-fill: @image-url("../icons/download-simple-fill.svg");
+    out property <image> download-simple: @image-url("../icons/download-simple.svg");
+    out property <image> gear-six-fill: @image-url("../icons/gear-six-fill.svg");
+    out property <image> gear-six: @image-url("../icons/gear-six.svg");
+    out property <image> headphones: @image-url("../icons/headphones.svg");
+    out property <image> heart-fill: @image-url("../icons/heart-fill.svg");
+    out property <image> heart: @image-url("../icons/heart.svg");
+    out property <image> list-bullets: @image-url("../icons/list-bullets.svg");
+    out property <image> magnifying-glass-fill: @image-url("../icons/magnifying-glass-fill.svg");
+    out property <image> magnifying-glass: @image-url("../icons/magnifying-glass.svg");
+    out property <image> minus: @image-url("../icons/minus.svg");
+    out property <image> music-notes: @image-url("../icons/music-notes.svg");
+    out property <image> music-note: @image-url("../icons/music-note.svg");
+    out property <image> pause-fill: @image-url("../icons/pause-fill.svg");
+    out property <image> pause: @image-url("../icons/pause.svg");
+    out property <image> pencil-simple: @image-url("../icons/pencil-simple.svg");
+    out property <image> play-fill: @image-url("../icons/play-fill.svg");
+    out property <image> playlist-fill: @image-url("../icons/playlist-fill.svg");
+    out property <image> playlist: @image-url("../icons/playlist.svg");
+    out property <image> play: @image-url("../icons/play.svg");
+    out property <image> plus: @image-url("../icons/plus.svg");
+    out property <image> prohibit-fill: @image-url("../icons/prohibit-fill.svg");
+    out property <image> prohibit: @image-url("../icons/prohibit.svg");
+    out property <image> queue: @image-url("../icons/queue.svg");
+    out property <image> radio-fill: @image-url("../icons/radio-fill.svg");
+    out property <image> radio: @image-url("../icons/radio.svg");
+    out property <image> repeat-once: @image-url("../icons/repeat-once.svg");
+    out property <image> repeat: @image-url("../icons/repeat.svg");
+    out property <image> shuffle: @image-url("../icons/shuffle.svg");
+    out property <image> skip-back-fill: @image-url("../icons/skip-back-fill.svg");
+    out property <image> skip-back: @image-url("../icons/skip-back.svg");
+    out property <image> skip-forward-fill: @image-url("../icons/skip-forward-fill.svg");
+    out property <image> skip-forward: @image-url("../icons/skip-forward.svg");
+    out property <image> sliders-horizontal: @image-url("../icons/sliders-horizontal.svg");
+    out property <image> speaker-high: @image-url("../icons/speaker-high.svg");
+    out property <image> speaker-low: @image-url("../icons/speaker-low.svg");
+    out property <image> speaker-x: @image-url("../icons/speaker-x.svg");
+    out property <image> squares-four: @image-url("../icons/squares-four.svg");
+    out property <image> tag: @image-url("../icons/tag.svg");
+    out property <image> thumbs-down-fill: @image-url("../icons/thumbs-down-fill.svg");
+    out property <image> thumbs-down: @image-url("../icons/thumbs-down.svg");
+    out property <image> thumbs-up-fill: @image-url("../icons/thumbs-up-fill.svg");
+    out property <image> thumbs-up: @image-url("../icons/thumbs-up.svg");
+    out property <image> trash: @image-url("../icons/trash.svg");
+    out property <image> user-fill: @image-url("../icons/user-fill.svg");
+    out property <image> user: @image-url("../icons/user.svg");
+    out property <image> warning-circle-fill: @image-url("../icons/warning-circle-fill.svg");
+    out property <image> warning-circle: @image-url("../icons/warning-circle.svg");
+    out property <image> x-circle: @image-url("../icons/x-circle.svg");
+    out property <image> x: @image-url("../icons/x.svg");
+}
+
+// 一颗图标。默认 20px、次要字色;要表示状态的地方换 Fill 那一张并上 accent-ink。
+export component Icon inherits Image {
+    in property <length> size: 20px;
+    width: root.size;
+    height: root.size;
+    colorize: Theme.text-dim;
+    image-fit: contain;
+    accessible-role: none;
+}

@@ -1,9 +1,9 @@
 import { Palette } from "std-widgets.slint";
 
-import { Theme, Type, Motion, Radius, TextSize, Space } from "theme.slint";
+import { Theme, Type, Motion, Radius, TextSize, Space, Weight, Tracking } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
 import { LyricRow } from "types.slint";
-import { OutlinedText } from "widgets.slint";
-import { PlayerBar } from "playerbar.slint";
+import { PlayerBar, BarMetrics } from "playerbar.slint";
 import { LyricsPage } from "lyrics.slint";
 import { QueuePage } from "queue.slint";
 import { Player } from "globals/player.slint";
@@ -27,18 +27,17 @@ export component PlayPage inherits FocusScope {
     // 控制条内缩,由窗口根给 —— 全应用一个数。
     in property <length> bar-inset: 24px;
 
-    // 歌词块的几何量,逻辑像素。**这里是唯一真相**:歌词摆位与遮挡层的裁剪
-    // 负偏移都从这几个值算,别在别处重抄。
-    //
-    // 歌词块的高度**钉死**,不随文本长度变。平台会把整段词压成「一行」(实测见过
-    // 198 字符的行),放任折行会撑破布局、压到控制条上;超出的部分省略号收掉。
-    out property <length> viz-lyric-line-h: Shell.compact ? 84px : 120px;
-    out property <length> viz-lyric-tr-h: Shell.compact ? 40px : 46px;
-    out property <length> viz-lyric-h: root.viz-lyric-line-h + 10px + root.viz-lyric-tr-h;
-    // 背景仍用全窗口几何，文字只在状态条下方的可用区域居中。
-    out property <length> viz-lyric-y: root.safe-top + (root.height - root.safe-top - root.viz-lyric-h) / 2 + 60px;
-    // 歌名与歌手在歌词块上方,与它一起居中成一组。
-    out property <length> viz-title-y: root.viz-lyric-y - 96px;
+    property <length> text-x: Shell.compact ? root.safe-left + 20px : root.width * 0.585;
+    property <length> text-w: Shell.compact
+        ? root.width - root.safe-left - root.safe-right - 40px
+        : min(root.width * 0.36, 560px);
+    // 宽版式:歌名在上三成处;紧凑版式:压在控制条上方那一截。
+    property <length> title-y: Shell.compact
+        ? root.height - root.safe-bottom - 120px - root.lyric-block-h - 96px
+        : root.safe-top + root.height * 0.13;
+    // 内联歌词显示几行:宽版式上下各三行,紧凑版式上下各一行。
+    property <int> lyric-reach: Shell.compact ? 1 : 3;
+    property <length> lyric-block-h: Shell.compact ? 140px : 380px;
 
     // 抢焦点是这层能收到按键的前提 —— 焦点留在搜索框上的话,下面那个
     // key-pressed 一次都不会触发。
@@ -59,9 +58,27 @@ export component PlayPage inherits FocusScope {
     }
 
   Rectangle {
-    // 纯深色底。反馈 warp 曾铺在这里当全屏背景,现在收进了播放键 ——
-    // 封面点云自己就有颜色,再叠两圈青紫只是把主体糊掉。
+    // 深色底上铺一层糊开的封面(每首歌在后台算一次,imagery/cover.rs),
+    // 让整页带上这首歌的颜色,而不是一片黑。
     background: Theme.immersive;
+    if Viz.cover-blur.width > 0: Image {
+        width: 100%;
+        height: 100%;
+        image-fit: cover;
+        source: Viz.cover-blur;
+        opacity: 0.42;
+    }
+    Rectangle {
+        background: @linear-gradient(180deg, #060c0966 0%, #060c09b3 70%, #060c09f2 100%);
+    }
+
+  // 点云与它的标注卡:宽版式让到左边、给右边的歌名与歌词腾地方;紧凑版式往上提,
+  // 字摆在它下面。整层一起挪,标注卡与遮挡层仍逐像素对得上点云。
+  scene := Rectangle {
+    x: Shell.compact ? 0px : -root.width * 0.2;
+    y: Shell.compact ? -root.height * 0.14 : 0px;
+    width: root.width;
+    height: root.height;
 
     // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
     // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
@@ -75,13 +92,6 @@ export component PlayPage inherits FocusScope {
         animate opacity { duration: Motion.medium; easing: Motion.ease; }
     }
 
-    // §8 的扫描线与噪点 2026-08-13 定为去除(#74):复古质感与产品方向不合。
-    // vignette 留下 —— 它是把注意力拢回中心的手段,与复古无关。
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        background: @radial-gradient(circle, transparent 55%, Theme.scrim.with-alpha(0.20) 100%);
-    }
 
     // 世界空间标注卡(docs/note/vision.md「下一面旗子」)。锚点是封面点云上的
     // 一个局部点,点云被拖着自转时它跟着转,卡片于是跟着物体走而不是钉在画面
@@ -141,6 +151,14 @@ export component PlayPage inherits FocusScope {
             }
         }
     }
+  }
+
+    // vignette:把注意力拢回中心。
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: @radial-gradient(circle, transparent 55%, #00000047 100%);
+    }
 
     // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
     // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
@@ -159,112 +177,122 @@ export component PlayPage inherits FocusScope {
         }
     }
 
-    // 歌名与歌手:歌词块上方。平台数据任意 CJK,不指定子集字体。
-    // 歌词页打开时整组让位 —— 它们与歌词页画在同一片区域,留着就是两层字
-    // 叠在一起(小米13 真机实拍)。
-    if !Viz.lyrics-page-open: play-title := OutlinedText {
-        y: root.viz-title-y;
-        width: 100%;
-        height: 42px;
+    // ── 文字:宽版式在右边一栏,紧凑版式在点云下面 ──
+    // 歌名、歌手、内联歌词。都画在粒子之上(docs/adr/0010 的「歌词是例外」),
+    // 歌词页打开时整组让位 —— 它们与歌词页画在同一片区域,留着就是两层字叠在一起
+    // (小米13 真机实拍)。
+    if !Viz.lyrics-page-open: play-title := Text {
+        x: root.text-x;
+        y: root.title-y;
+        width: root.text-w;
         text: Viz.now-title;
-        text-color: Theme.immersive-text;
-        // display 字体只有拉丁字形;中文歌名按字形回退,得到的是
-        // 「拉丁 display + 中文系统字」的混排,与设计稿一致。
-        font-size: Shell.compact ? TextSize.headline : TextSize.display;
+        color: Theme.immersive-text;
+        font-size: Shell.compact ? TextSize.hero-compact : TextSize.hero;
+        font-weight: Weight.bold;
+        letter-spacing: Shell.compact ? Tracking.hero-compact : Tracking.hero;
+        overflow: elide;
     }
-    if !Viz.lyrics-page-open: OutlinedText {
-        y: root.viz-title-y + 46px;
-        width: 100%;
-        height: 20px;
-        text: Viz.now-artists;
-        text-color: Theme.immersive-dim;
-        font-size: TextSize.body;
+    if !Viz.lyrics-page-open: HorizontalLayout {
+        x: root.text-x;
+        y: root.title-y + (Shell.compact ? 46px : 66px);
+        width: root.text-w;
+        height: 24px;
+        spacing: 10px;
+        Text {
+            text: Viz.now-artists;
+            color: Theme.immersive-dim;
+            font-size: TextSize.title;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // 取直链/开流的那几秒:点下去了、正在办。
+        if Player.now-loading: Text {
+            text: "加载中…";
+            color: Theme.immersive-accent;
+            font-size: TextSize.small;
+            vertical-alignment: center;
+        }
     }
 
-    // 队列页的入口(#109 AC-15)。与歌名歌手同一条规矩:歌词页或队列页
-    // 打开时整个让位 —— 它们画在同一片区域,留着就是两层字叠在一起。
-    //
-    // 摆在歌手行下面那一档,不进控制条的抽屉:抽屉是「这一首」的操作,
-    // 而队列是「后面还有哪些」。
+    // 左上角那一句「正在播放 · 3 / 30」,同时是队列页的入口(#109 AC-15)。
+    // 歌词页或队列页打开时让位 —— 它们画在同一片区域。
     if !Viz.lyrics-page-open && !Viz.queue-page-open
             && Viz.queue-total > 0: queue-entry := Rectangle {
-        y: root.viz-title-y + 72px;
-        width: 92px;
-        height: 26px;
-        x: (root.width - self.width) / 2;
-        background: Theme.press;
+        x: root.safe-left + (Shell.compact ? 20px : 48px);
+        y: root.safe-top + (Shell.compact ? 14px : 36px);
+        width: queue-row.preferred-width + 16px;
+        height: 32px;
         border-radius: Radius.pill;
+        background: queue-entry-touch.has-hover ? #ffffff14 : transparent;
 
-        Text {
-            text: "队列 · " + Viz.queue-total;
-            color: Theme.immersive-dim;
-            font-size: TextSize.small;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            width: 100%;
-            height: 100%;
+        queue-row := HorizontalLayout {
+            x: 8px;
+            spacing: 10px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    size: 18px;
+                    source: Icons.music-notes;
+                    colorize: Theme.immersive-dim;
+                }
+            }
+            Text {
+                text: "正在播放 · 队列 " + Viz.queue-total + " 首";
+                color: Theme.immersive-dim;
+                font-size: TextSize.caption;
+                font-weight: Weight.semibold;
+                letter-spacing: Tracking.cjk-label;
+                vertical-alignment: center;
+            }
         }
 
         queue-entry-touch := TouchArea {
+            mouse-cursor: pointer;
             clicked => { Viz.queue-page-open = true; }
         }
     }
 
-    // 取直链/开流的那几秒:点下去了、正在办。
-    // 只在加载时存在 —— 常驻一个空文本会让播放页每帧多一层要合成的东西,
-    // 而这一层还压在点云上。文案硬编码中文,走子集字体。
-    if Player.now-loading && !Viz.lyrics-page-open: OutlinedText {
-        y: root.viz-title-y + 70px;
-        width: 100%;
-        height: 18px;
-        text: "加载中…";
-        text-color: Theme.immersive-accent;
-        font-size: TextSize.small;
-    }
-
-    // 歌词:当前行 + 译文,居中排在歌名下方;画在粒子之上,不参与深度合成
-    // (docs/adr/0010 的「歌词是例外」)。播放页的深度卡片是上面那块标注卡。
-    // 取不到歌词或还在前奏时为空串,这块自然让位(粒子也就没有可穿的字)。
-    // 这块同时是歌词页的入口(#73):点它横向滑出整页歌词。
-    if Viz.lyric-line != "" && !Viz.lyrics-page-open: lyric-entry := Rectangle {
-        y: root.viz-lyric-y;
-        height: root.viz-lyric-h;
+    // 内联歌词:当前行大而亮,往外每一行淡一档、小一档。点它横向滑出整页歌词(#73)。
+    // 取不到歌词或还在前奏时那一窗是空的,这块自然让位。
+    if Viz.lyric-rows.length > 0 && !Viz.lyrics-page-open: lyric-entry := Rectangle {
+        x: root.text-x;
+        y: root.title-y + (Shell.compact ? 92px : 140px);
+        width: root.text-w;
+        height: root.lyric-block-h;
+        clip: true;
 
         TouchArea {
+            mouse-cursor: pointer;
             clicked => { Viz.lyrics-page-open = true; }
         }
 
         VerticalLayout {
-            height: 100%;
-            alignment: start;
-            spacing: Space.sm;
-
-        // 手机宽度上 30px 会把一行英文歌词截掉一半(小米13 真机实测),故紧凑版式
-        // 收一档。折行让整句读得完,高度钉死则让超长的「一行」不至于撑破布局。
-        OutlinedText {
-            width: root.width - 32px;
-            x: 16px;
-            height: root.viz-lyric-line-h;
-            text: Viz.lyric-line;
-            text-color: Theme.immersive-text.brighter(0.1);
-            font-size: Shell.compact ? TextSize.headline : TextSize.display;
-            // 歌词字大,描边跟着粗一档才压得住 —— 细描边在 30px 的笔画上
-            // 只是一圈灰边,拉不开对比。
-            outline: 2px;
-            wrap: word-wrap;
-        }
-        OutlinedText {
-            width: root.width - 32px;
-            x: 16px;
-            height: root.viz-lyric-tr-h;
-            text: Viz.lyric-translation;
-            text-color: Theme.immersive-dim.brighter(0.1);
-            font-size: Shell.compact ? TextSize.body : TextSize.title;
-            // 顶对齐而非居中:定高 + elide 时,居中裁的是**中间那一截** ——
-            // 开头没了、结尾省略号,读起来是断头话(issue #21 实拍)。顶对齐让
-            // 溢出只从末尾省略,至少从头读得起。代价是单行译文比居中低不到 10px。
-            vertical-alignment: top;
-            wrap: word-wrap;
+            alignment: Shell.compact ? start : center;
+            spacing: Shell.compact ? 6px : 14px;
+            for row in Viz.lyric-rows: VerticalLayout {
+                visible: Math.abs(row.offset) <= root.lyric-reach;
+                height: Math.abs(row.offset) <= root.lyric-reach ? self.preferred-height : 0px;
+                spacing: 4px;
+                Text {
+                    text: row.text;
+                    color: Theme.immersive-text;
+                    opacity: row.offset == 0 ? 1.0
+                        : Math.abs(row.offset) == 1 ? 0.55
+                        : Math.abs(row.offset) == 2 ? 0.4 : 0.25;
+                    font-size: row.offset == 0
+                        ? (Shell.compact ? TextSize.lyric-compact : TextSize.lyric)
+                        : (Shell.compact ? TextSize.title : 20px);
+                    font-weight: row.offset == 0 ? Weight.bold : Weight.semibold;
+                    wrap: row.offset == 0 ? word-wrap : no-wrap;
+                    overflow: elide;
+                    animate font-size, opacity { duration: Motion.medium; easing: Motion.ease; }
+                }
+                if row.offset == 0 && row.translation != "": Text {
+                    text: row.translation;
+                    color: Theme.immersive-dim;
+                    font-size: TextSize.small;
+                    overflow: elide;
+                }
             }
         }
     }
@@ -325,7 +353,7 @@ export component PlayPage inherits FocusScope {
     player-bar := PlayerBar {
         immersive: true;
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - root.safe-bottom - 24px;
+        y: parent.height - self.height - root.safe-bottom - BarMetrics.bottom-gap;
         // 与壳里那根同一个内缩常量,不再各给各的(docs/adr/0029)。
         width-cap: parent.width - root.bar-inset * 2;
     }

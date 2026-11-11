@@ -207,7 +207,7 @@ def test_dislike_rows_use_one_atomic_snapshot():
 
 def daily(ui):
     ui.music()
-    ui.activate(ui.must("WallView::view-list-btn"))
+    ui.activate(ui.must("WallToggle::view-list-btn"))
     wait_until(lambda: rows(ui), "daily list ready")
 
 

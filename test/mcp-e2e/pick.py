@@ -75,7 +75,7 @@ def hide_keyboard(client, env):
 def show_view(client, mode):
     """等待列表/卡墙真正出现，不能用按钮高亮代替。"""
     escape(client)
-    toggle = "WallView::view-wall-btn" if mode == "wall" else "WallView::view-list-btn"
+    toggle = "WallToggle::view-wall-btn" if mode == "wall" else "WallToggle::view-list-btn"
     button = client.by_id(toggle)
     if mode == "wall":
         # 开关要等这一批歌到了才出现:切到每日推荐会重取一次推荐,立刻查会扑空。

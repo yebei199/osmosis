@@ -1,13 +1,779 @@
-// 界面的通用零件:按钮、导航项、圆键、描边字、日月开关、入口卡片。
+// 界面的通用零件:按钮的三个层级、图标键、chip、分段控件、输入框、开关、卡片、
+// 分组标题、页头、空状态、键帽、小标签。
 //
 // 这些组件不认识本应用的任何状态 —— 全靠 in 属性与回调说话,所以既能被主窗口
 // 用,也能被播放页覆层用。与页面分开,是为了让「页面在摆什么」与「零件长什么样」
-// 不必在同一屏里读。
+// 不必在同一屏里读。规格见 docs/design.md「零件」。
 
-import { Theme, Radius, Space, TextSize, Motion, Elevation } from "theme.slint";
-
+import { Theme, Glass, Radius, Space, TextSize, Weight, Tracking, Motion, Elevation } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
+export { Icon, Icons }
 import { OutlinedText, DayNightSwitch } from "textfx.slint";
 export { OutlinedText, DayNightSwitch }
+
+// 按钮的层级。一屏最多一颗 primary;其余动作用 secondary,不抢眼的用 ghost。
+export enum ButtonKind { primary, secondary, ghost }
+
+// 药丸按钮。40px 高(small 32px),图标可选。
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <ButtonKind> kind: ButtonKind.secondary;
+    in property <bool> small: false;
+    // 能不能按。灰掉**并且**不发回调 —— 只灰不挡的话,连点一个"正在提交"的
+    // 按钮照样会发出第二次请求,而那次请求的失败会盖掉第一次的成功。
+    in property <bool> enabled: true;
+    // 读屏念的那句,默认就是字。
+    in property <string> label: root.text;
+    callback clicked;
+
+    property <bool> down: root.enabled && touch.pressed;
+    property <color> ink: root.kind == ButtonKind.primary ? Theme.accent-text
+        : root.kind == ButtonKind.ghost ? (touch.has-hover ? Theme.text : Theme.text-dim)
+        : Theme.text;
+
+    height: root.small ? 32px : 40px;
+    min-width: self.height;
+    preferred-width: row.preferred-width;
+    border-radius: Radius.pill;
+    opacity: root.enabled ? 1.0 : 0.45;
+    background: root.kind == ButtonKind.primary ? Theme.accent
+        : root.kind == ButtonKind.secondary ? Theme.surface
+        : touch.has-hover ? Theme.hover : transparent;
+    border-width: root.kind == ButtonKind.secondary ? 1px : 0px;
+    border-color: Theme.line-strong;
+    // 主按钮:上沿一道白高光,下方一团同色的光。
+    inner-shadow-offset-y: root.kind == ButtonKind.primary ? 1px : 0px;
+    inner-shadow-color: root.kind == ButtonKind.primary ? #ffffff47 : transparent;
+    drop-shadow-offset-y: root.kind == ButtonKind.primary ? 6px : 0px;
+    drop-shadow-blur: root.kind == ButtonKind.primary ? 16px : 0px;
+    drop-shadow-spread: root.kind == ButtonKind.primary ? -8px : 0px;
+    drop-shadow-color: root.kind == ButtonKind.primary ? Theme.accent : transparent;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+
+    content := Rectangle {
+        transform-scale: root.down ? 0.95 : 1.0;
+        animate transform-scale { duration: Motion.press; easing: Motion.press-ease; }
+        row := HorizontalLayout {
+            padding-left: root.kind == ButtonKind.ghost ? Space.md : (root.small ? 14px : 18px);
+            padding-right: self.padding-left;
+            spacing: Space.sm;
+            alignment: center;
+            if root.icon.width > 0: VerticalLayout {
+                alignment: center;
+                Icon {
+                    source: root.icon;
+                    size: root.small ? 16px : 18px;
+                    colorize: root.ink;
+                }
+            }
+            Text {
+                text: root.text;
+                color: root.ink;
+                font-size: root.small ? TextSize.small : TextSize.body;
+                font-weight: Weight.semibold;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
+    }
+
+    // 屏幕阅读器要认得出这是个能按的东西,而不是一块画着字的矩形;
+    // 顺带让无头测试点得动它。
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+}
+
+// 圆形图标键:36px 透明底、次要字色;solid 是 44px 的强调色实心圆(紧凑版式的播放、
+// 最佳匹配卡上的播放)。
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    // 读屏念的那句。图标没有字,没有它这颗键对外只是"一个按钮";
+    // 无头测试也靠它把同一排的几颗键分开。
+    in property <string> label;
+    in property <length> diameter: root.solid ? 44px : 36px;
+    in property <length> icon-size: root.solid ? 22px : 20px;
+    in property <bool> solid: false;
+    in property <color> ink: root.solid ? Theme.accent-text : Theme.text-dim;
+    // 有「拨没拨」的状态(抽屉键开着没有)。
+    in property <bool> checkable: false;
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: Radius.pill;
+    opacity: root.enabled ? 1.0 : 0.4;
+    background: root.solid ? Theme.accent
+        : root.checked ? Theme.press
+        : touch.has-hover ? Theme.hover : transparent;
+    drop-shadow-offset-y: root.solid ? 8px : 0px;
+    drop-shadow-blur: root.solid ? 18px : 0px;
+    drop-shadow-spread: root.solid ? -8px : 0px;
+    drop-shadow-color: root.solid ? Theme.accent : transparent;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+
+    Icon {
+        source: root.icon;
+        size: root.icon-size;
+        colorize: root.ink;
+        transform-scale: touch.pressed ? 0.88 : 1.0;
+        animate transform-scale { duration: Motion.press; easing: Motion.press-ease; }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.enabled) { root.clicked(); } }
+
+        // 角色恒为 button,即使它有状态:slint 要求 `accessible-role` 是常量表达式。
+        // 有状态那颗因此报成「带 checked 的按钮」,读屏念得出开没开。
+        accessible-role: button;
+        accessible-label: root.label;
+        accessible-enabled: root.enabled;
+        accessible-checkable: root.checkable;
+        accessible-checked: root.checked;
+        accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+// chip 的三种:筛选(选中时 accent 底 + 勾)、开关(surface 底,读着像开关不像筛选)、
+// 选择(带向下的箭头,点开换值)。
+export enum ChipKind { filter, toggle, select }
+
+// 32px 高的药丸 chip,1px 描边。计数用更淡的小一号字跟在后面。
+// 紧凑版式下触摸区 44px(docs/design.md「版式」),画出来的仍是 32px 那一条。
+export component Chip inherits Rectangle {
+    in property <string> text;
+    // 跟在字后面的计数,空串不画。
+    in property <string> count;
+    // 选择型 chip 的前缀(「分组」)。
+    in property <string> key;
+    in property <image> icon;
+    in property <ChipKind> kind: ChipKind.filter;
+    in property <bool> selected;
+    in property <bool> checkable: true;
+    in property <bool> enabled: true;
+    in property <bool> touch-tall: false;
+    // 读屏念的那句,默认是字加计数。
+    in property <string> label: root.count == "" ? root.text : root.text + " " + root.count;
+    // 只给读屏的补充说明,不上屏。
+    in property <string> description;
+    callback clicked;
+
+    property <bool> on: root.selected && root.kind != ChipKind.select;
+
+    height: root.touch-tall ? 44px : 32px;
+    width: row.preferred-width;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checkable && root.selected;
+    accessible-enabled: root.enabled;
+    accessible-description: root.description;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+    opacity: root.enabled ? 1 : 0.5;
+
+    pill := Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: 32px;
+        border-radius: Radius.pill;
+        background: root.on ? Theme.accent-wash
+            : root.kind == ChipKind.toggle ? Theme.surface
+            : touch.has-hover ? Theme.hover : transparent;
+        border-width: 1px;
+        border-color: root.on ? Theme.accent-line : Theme.line-strong;
+        transform-scale: touch.pressed ? 0.94 : 1.0;
+        animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
+        animate transform-scale { duration: Motion.press; easing: Motion.press-ease; }
+    }
+    row := HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        spacing: 6px;
+        alignment: center;
+        if root.on || root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Icon {
+                source: root.on ? Icons.check : root.icon;
+                size: 16px;
+                colorize: root.on ? Theme.accent-ink : Theme.text-dim;
+            }
+        }
+        if root.key != "": Text {
+            text: root.key;
+            color: Theme.text-faint;
+            font-size: TextSize.small;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.text;
+            color: root.on ? Theme.accent-ink
+                : root.kind == ChipKind.filter ? Theme.text-dim : Theme.text;
+            font-size: TextSize.small;
+            font-weight: root.on ? Weight.semibold : Weight.regular;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        if root.count != "": Text {
+            text: root.count;
+            color: root.on ? Theme.accent-ink.with-alpha(0.75) : Theme.text-faint;
+            font-size: TextSize.caption;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        if root.kind == ChipKind.select: VerticalLayout {
+            alignment: center;
+            Icon {
+                source: Icons.caret-down;
+                size: 16px;
+                colorize: Theme.text;
+            }
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// 分段控件的一格。
+export struct Segment {
+    label: string,
+    icon: image,
+}
+
+// 分段控件:sunken 的槽,选中那格是 raised 加一道上沿高光。替代标准库的 Material 控件。
+export component Segmented inherits Rectangle {
+    in property <[Segment]> items;
+    in property <int> current;
+    // 只摆图标(紧凑版式的卡墙/列表切换)。
+    in property <bool> icons-only: false;
+    callback selected(int);
+
+    height: 38px;
+    width: row.preferred-width;
+    border-radius: Radius.pill;
+    background: Theme.sunken;
+    border-width: 1px;
+    border-color: Theme.line;
+
+    row := HorizontalLayout {
+        padding: 3px;
+        spacing: 0px;
+        for item[i] in root.items: segment := Rectangle {
+            property <bool> on: i == root.current;
+            height: 32px;
+            border-radius: Radius.pill;
+            background: self.on ? Theme.raised : transparent;
+            inner-shadow-offset-y: self.on && Theme.dark ? 1px : 0px;
+            inner-shadow-color: self.on && Theme.dark ? Theme.edge : transparent;
+            drop-shadow-offset-y: self.on ? (Theme.dark ? 2px : 1px) : 0px;
+            drop-shadow-blur: self.on ? (Theme.dark ? 6px : 3px) : 0px;
+            drop-shadow-spread: self.on && Theme.dark ? -2px : 0px;
+            drop-shadow-color: self.on ? (Theme.dark ? #00000073 : #1428162e) : transparent;
+            animate background { duration: Motion.fast; easing: Motion.ease; }
+            accessible-role: tab;
+            accessible-label: item.label;
+            accessible-checkable: true;
+            accessible-checked: self.on;
+            accessible-action-default => { root.selected(i); }
+
+            HorizontalLayout {
+                padding-left: root.icons-only ? 9px : 14px;
+                padding-right: self.padding-left;
+                spacing: 6px;
+                alignment: center;
+                if item.icon.width > 0: VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        source: item.icon;
+                        size: 16px;
+                        colorize: segment.on ? Theme.text : Theme.text-faint;
+                    }
+                }
+                if !root.icons-only: Text {
+                    text: item.label;
+                    color: segment.on ? Theme.text : Theme.text-faint;
+                    font-size: TextSize.small;
+                    font-weight: Weight.semibold;
+                    vertical-alignment: center;
+                }
+            }
+            seg-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.selected(i); }
+            }
+        }
+    }
+}
+
+// 键帽:「Enter」「Esc」。
+export component Kbd inherits Rectangle {
+    in property <string> text;
+    width: key.preferred-width + 14px;
+    height: 20px;
+    border-radius: Radius.xs;
+    background: Theme.sunken;
+    border-width: 1px;
+    border-color: Theme.line-strong;
+    key := Text {
+        text: root.text;
+        color: Theme.text-dim;
+        font-size: TextSize.caption;
+        font-weight: Weight.semibold;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+// 输入框:Rectangle 里一个 TextInput,不是标准库的 LineEdit(那套 Material 外观与这一族不搭)。
+// 聚焦时 1.5px 的 accent-line 描边;有字时右端一颗清除键。
+export component TextField inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <InputType> input-type: InputType.text;
+    // 搜索框那种大号(52px、17px 字);否则 44px、15px 字。
+    in property <bool> large: false;
+    // 回车键帽提示(「按 Enter 搜索」),只在宽版式上摆。
+    in property <bool> enter-hint: false;
+    in property <bool> clearable: true;
+    out property <bool> has-focus: input.has-focus;
+    callback accepted(string);
+    callback edited(string);
+
+    public function focus-input() { input.focus(); }
+    public function clear() { input.text = ""; root.edited(""); }
+
+    // 读屏与无头测试按元素 id 找到的是这一层,值的读写也在这一层。
+    accessible-role: text-input;
+    accessible-value: root.text;
+    accessible-placeholder-text: root.placeholder;
+    accessible-enabled: root.enabled;
+    accessible-action-set-value(value) => {
+        input.text = value;
+        root.edited(value);
+    }
+
+    height: root.large ? 52px : 44px;
+    border-radius: Radius.pill;
+    background: Theme.surface;
+    border-width: input.has-focus ? 1.5px : 1px;
+    border-color: input.has-focus ? Theme.accent-line : Theme.line-strong;
+    opacity: root.enabled ? 1 : 0.5;
+    animate border-color { duration: Motion.fast; easing: Motion.ease; }
+
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 18px;
+        padding-right: Space.sm;
+        spacing: Space.md;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Icon {
+                source: root.icon;
+                size: root.large ? 22px : 20px;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            input := TextInput {
+                width: 100%;
+                height: 100%;
+                enabled: root.enabled;
+                input-type: root.input-type;
+                color: Theme.text;
+                selection-background-color: Theme.accent-wash;
+                selection-foreground-color: Theme.text;
+                font-size: root.large ? TextSize.title : TextSize.row;
+                vertical-alignment: center;
+                single-line: true;
+                accepted => { root.accepted(self.text); }
+                edited => { root.edited(self.text); }
+            }
+            if input.text == "": Text {
+                width: 100%;
+                height: 100%;
+                text: root.placeholder;
+                color: Theme.text-faint;
+                font-size: input.font-size;
+                vertical-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+        if root.enter-hint && input.text != "": HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+            Text {
+                text: "按";
+                color: Theme.text-faint;
+                font-size: TextSize.caption;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                Kbd { text: "Enter"; }
+            }
+            Text {
+                text: "搜索";
+                color: Theme.text-faint;
+                font-size: TextSize.caption;
+                vertical-alignment: center;
+            }
+        }
+        if root.clearable && input.text != "" && root.enabled: VerticalLayout {
+            alignment: center;
+            IconButton {
+                icon: Icons.x-circle;
+                label: "清除";
+                diameter: 32px;
+                icon-size: 18px;
+                ink: Theme.text-faint;
+                clicked => { root.clear(); input.focus(); }
+            }
+        }
+    }
+}
+
+// 小标签:「歌手」「只读」。
+export component Tag inherits Rectangle {
+    in property <string> text;
+    width: tag.preferred-width + 16px;
+    height: 22px;
+    border-radius: Radius.xs;
+    background: Theme.press;
+    tag := Text {
+        text: root.text;
+        color: Theme.text-dim;
+        font-size: TextSize.micro;
+        font-weight: Weight.semibold;
+        letter-spacing: 0.5px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+// 开关:44×26。关着是 press 的槽配最淡的钮,开着是 accent 的槽配 accent-text 的钮,
+// 钮走 spring。a11y 在组件根上:无头测试按元素 id 找到的是这一层。
+export component Switch inherits Rectangle {
+    in property <bool> on;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    width: 44px;
+    height: 26px;
+    border-radius: Radius.pill;
+    background: root.on ? Theme.accent : Theme.press;
+    border-width: root.on ? 0px : 1px;
+    border-color: Theme.line-strong;
+    opacity: root.enabled ? 1 : 0.5;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.on;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.toggled(); } }
+
+    knob := Rectangle {
+        x: root.on ? 21px : 3px;
+        y: 3px;
+        width: 20px;
+        height: 20px;
+        border-radius: Radius.pill;
+        background: Theme.dark ? (root.on ? Theme.accent-text : Theme.text-faint) : #ffffff;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-blur: 3px;
+        drop-shadow-color: #00000066;
+        animate x { duration: Motion.spring; easing: Motion.spring-ease; }
+        animate background { duration: Motion.fast; easing: Motion.ease; }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.enabled) { root.toggled(); } }
+    }
+}
+
+// 卡片:surface 底、圆角 20、card 那档阴影;浅色下多一圈细线。设置页与个人页的分组装在里面。
+export component Card inherits Rectangle {
+    in property <length> pad-x: 20px;
+    in property <length> pad-y: 4px;
+    background: Theme.surface;
+    border-radius: Radius.lg;
+    border-width: Theme.dark ? 0px : 1px;
+    border-color: Theme.line;
+    inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+    inner-shadow-color: Theme.dark ? Theme.edge : transparent;
+    drop-shadow-offset-y: Elevation.card-y;
+    drop-shadow-blur: Elevation.card-blur;
+    drop-shadow-color: Elevation.card-color;
+
+    VerticalLayout {
+        padding-left: root.pad-x;
+        padding-right: root.pad-x;
+        padding-top: root.pad-y;
+        padding-bottom: root.pad-y;
+        spacing: 0px;
+        @children
+    }
+}
+
+// 卡片里的一行:标题 + 一行说明,右边放控件。两行之间一道细线(最后一行不画)。
+export component CardRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> last: false;
+    in property <length> row-min: 64px;
+
+    min-height: max(root.row-min, body.preferred-height);
+
+    body := HorizontalLayout {
+        padding-top: Space.md;
+        padding-bottom: Space.md;
+        spacing: Space.lg;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 3px;
+            if root.title != "": Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: TextSize.row;
+                wrap: word-wrap;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: Theme.text-dim;
+                font-size: TextSize.small;
+                wrap: word-wrap;
+            }
+        }
+        @children
+    }
+    if !root.last: Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+// 卡片上方的分组名:「外观」「账号」。12px、600、放开的中文字距、最淡的字色。
+export component SectionLabel inherits Text {
+    color: Theme.text-faint;
+    font-size: TextSize.caption;
+    font-weight: Weight.semibold;
+    letter-spacing: Tracking.cjk-label;
+}
+
+// 区块标题:「最佳匹配」「歌曲」,右边可选一个「全部 24 >」。
+export component SectionHeader inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> more;
+    callback more-clicked();
+    spacing: Space.md;
+    Text {
+        horizontal-stretch: 1;
+        text: root.title;
+        color: Theme.text;
+        font-size: TextSize.title;
+        font-weight: Weight.bold;
+        letter-spacing: Tracking.title;
+        vertical-alignment: center;
+    }
+    if root.more != "": more := Rectangle {
+        width: more-row.preferred-width;
+        accessible-role: button;
+        accessible-label: root.more;
+        accessible-action-default => { root.more-clicked(); }
+        more-row := HorizontalLayout {
+            spacing: Space.xxs;
+            Text {
+                text: root.more;
+                color: Theme.text-dim;
+                font-size: TextSize.small;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                Icon { source: Icons.caret-right; size: 16px; }
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.more-clicked(); }
+        }
+    }
+}
+
+// 页头的说明行:几段事实,中间一个 3px 的小圆点隔开。
+export component FactsLine inherits HorizontalLayout {
+    in property <[string]> facts;
+    spacing: Space.sm;
+    alignment: start;
+    for fact[i] in root.facts: HorizontalLayout {
+        spacing: Space.sm;
+        if i > 0: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 3px;
+                height: 3px;
+                border-radius: Radius.pill;
+                background: Theme.text-faint;
+            }
+        }
+        Text {
+            text: fact;
+            color: Theme.text-dim;
+            font-size: TextSize.small;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// 空状态:88px 的图标圆盘套两圈光晕,一句标题,一句话说怎么把这一页填上,一颗次要按钮
+// 去能填上它的地方。页头(标题 + 说明行)照常留在上面。
+export component EmptyState inherits VerticalLayout {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> body;
+    in property <string> action;
+    in property <image> action-icon;
+    in property <bool> compact: false;
+    callback act();
+
+    alignment: center;
+    spacing: 0px;
+
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 88px + 44px;
+            height: self.width;
+            // 外圈光晕
+            Rectangle {
+                border-radius: Radius.pill;
+                background: Theme.dark ? #d6ffde06 : transparent;
+            }
+            Rectangle {
+                x: 12px;
+                y: 12px;
+                width: parent.width - 24px;
+                height: self.width;
+                border-radius: Radius.pill;
+                background: Theme.hover;
+            }
+            disc := Rectangle {
+                x: 22px;
+                y: 22px;
+                width: 88px;
+                height: 88px;
+                border-radius: Radius.pill;
+                background: Theme.surface;
+                border-width: Theme.dark ? 0px : 1px;
+                border-color: Theme.line;
+                inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+                inner-shadow-color: Theme.dark ? Theme.edge : transparent;
+                Icon {
+                    source: root.icon;
+                    size: 36px;
+                    colorize: Theme.accent-ink;
+                }
+            }
+        }
+    }
+    Rectangle { height: root.compact ? 6px : 10px; }
+    Text {
+        text: root.title;
+        color: Theme.text;
+        font-size: root.compact ? TextSize.title : TextSize.headline;
+        font-weight: Weight.bold;
+        letter-spacing: Tracking.headline;
+        horizontal-alignment: center;
+        accessible-role: text;
+        accessible-label: self.text;
+    }
+    Rectangle { height: 10px; }
+    if root.body != "": Text {
+        text: root.body;
+        color: Theme.text-dim;
+        font-size: root.compact ? TextSize.small : TextSize.body;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+    if root.action != "": Rectangle { height: Space.xl; }
+    if root.action != "": HorizontalLayout {
+        alignment: center;
+        empty-action := Button {
+            text: root.action;
+            icon: root.action-icon;
+            kind: ButtonKind.secondary;
+            clicked => { root.act(); }
+        }
+    }
+}
+
+// 一块玻璃(docs/design.md「材质」:只用在播放键、在放那一行的缩略图、导航指示器)。
+// 上下渐变的底 + 1px 边 + 上沿内高光 + 一道投影 + 左上角一个椭圆高光 + 一团极淡的强调色。
+// 椭圆高光是一个正方形的径向渐变子元素再沿 y 压扁(Slint 的径向渐变只有正圆)。
+export component GlassPill inherits Rectangle {
+    // 高光的宽,默认取自身宽度的六成。
+    in property <length> spec-w: root.width * 0.6;
+    in property <float> spec-opacity: 0.6;
+    in property <bool> tinted: true;
+    border-radius: Radius.sm;
+    background: @linear-gradient(180deg, Glass.top 0%, Glass.bottom 100%);
+    border-width: 1px;
+    border-color: Glass.rim;
+    inner-shadow-offset-y: 1px;
+    inner-shadow-color: Glass.hi;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-blur: 16px;
+    drop-shadow-spread: -6px;
+    drop-shadow-color: Glass.shadow;
+    clip: true;
+
+    if root.tinted: Rectangle {
+        x: -14px;
+        y: (parent.height - self.height) / 2;
+        width: 72px;
+        height: 72px;
+        background: @radial-gradient(circle, Glass.tint 0%, transparent 70%);
+    }
+    Rectangle {
+        x: 10px;
+        y: -5px - (self.width - 14px) / 2;
+        width: root.spec-w;
+        height: self.width;
+        transform-scale-y: 14px / max(1px, self.width);
+        opacity: root.spec-opacity;
+        background: @radial-gradient(circle, Glass.spec 0%, transparent 70%);
+    }
+    @children
+}
 
 // 一张分组卡:kicker 标题 + 内容。设置页与个人主页共用。
 export component SectionCard inherits Rectangle {
@@ -33,109 +799,44 @@ export component SectionCard inherits Rectangle {
     }
 }
 
-// 带悬浮抬起效果的按钮:悬停时背景变亮、阴影变大变柔,呈现出凸起的
-// 观感;按下时变暗下沉。全部带动画过渡。
-//
-// 触摸设备上没有"悬停但未按下"这个状态,因此只会看到按下时的下沉效果。
-// 这是刻意的优雅降级,不是缺陷:slint 在触摸按下时同样会置 has-hover,
-// 但优先级更高的 `down` 分支盖住了它。
-export component HoverButton inherits Rectangle {
-    in property <string> text;
-    // 能不能按。灰掉**并且**不发回调 —— 只灰不挡的话,连点一个"正在提交"的
-    // 按钮照样会发出第二次请求,而那次请求的失败会盖掉第一次的成功。
-    in property <bool> enabled: true;
-    callback clicked;
 
-    property <bool> hovered: root.enabled && touch.has-hover;
-    property <bool> down: root.enabled && touch.pressed;
-
-    height: 56px;
-    width: 220px;
-    border-radius: Radius.md;
-    opacity: root.enabled ? 1.0 : 0.5;
-    background: down ? Theme.accent.darker(0.55) : hovered ? Theme.accent.darker(0.25) : Theme.accent.darker(0.4);
-    drop-shadow-color: Theme.accent.darker(0.4).with-alpha(0.5);
-    drop-shadow-blur: down ? 4px : hovered ? 24px : 10px;
-    drop-shadow-offset-y: down ? 1px : hovered ? 8px : 3px;
-    animate background, drop-shadow-blur, drop-shadow-offset-y {
-        duration: Motion.fast;
-        easing: Motion.ease;
-    }
-
-    Text {
-        text: root.text;
-        color: Theme.accent-text;
-        font-size: TextSize.title;
-        font-weight: 600;
-    }
-
-    touch := TouchArea {
-        clicked => {
-            if (root.enabled) {
-                root.clicked();
-            }
-        }
-    }
-
-    // 屏幕阅读器要认得出这是个能按的东西,而不是一块画着字的矩形。
-    // 顺带让无头测试点得动它 —— 在此之前测试只能验「键在不在」,
-    // 验不了「按下去发生什么」,于是二次确认那类逻辑没有任何东西盖着。
-    accessible-role: button;
-    accessible-label: root.text;
-    accessible-enabled: root.enabled;
-    accessible-action-default => {
-        if (root.enabled) {
-            root.clicked();
-        }
-    }
-}
-
-// 导航栏的一项:矢量线条图标 + 英文标签,竖排。选中时背景高亮、图标与文字变亮。
-// 图标用 Path 内嵌(不引外部资源);标签用英文,免得中文落到无 CJK 的默认字体上变豆腐。
-//
-// 不写死高度:竖排侧栏里由使用处给 68px,横排底栏里由布局撑满栏高。
+// 底栏一格:图标垫在一颗 56×30 的药丸位上,下面一行小字。选中那格的药丸由 app.slint
+// 画(GPU 构建是 navglass,否则 GlassPill),格子自己不画选中底。
+// 几何与 app.slint 的 nav-pip-* 对齐:药丸中心在格顶下 23px。
 export component NavItem inherits Rectangle {
     in property <string> label;
     // 读屏念的那句。底栏上显示简称(「推荐」),对外仍报全名(「每日推荐」)。
     in property <string> a11y-label: root.label;
-    in property <string> icon;
+    in property <image> icon;
+    in property <image> icon-on: root.icon;
     in property <bool> active;
-    // 选中高亮是否已由背后的 GPU 液态玻璃提供。为真时(GPU 构建)自己让开 active 底,
-    // 免得和玻璃叠两遍;为假时(非 GPU 兜底)照旧自己画 active 高亮。hover 两种情况都只留极淡一层。
-    in property <bool> gpu-selected;
     callback clicked;
 
-    border-radius: Radius.md;
-    background: root.gpu-selected
-        ? (touch.has-hover ? Theme.press : transparent)
-        : (active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
-    animate background { duration: Motion.fast; easing: Motion.ease; }
-
-    VerticalLayout {
-        alignment: center;
-        spacing: Space.xs;
-
-        HorizontalLayout {
-            alignment: center;
-            Path {
-                width: 26px;
-                height: 26px;
-                viewbox-width: 24;
-                viewbox-height: 24;
-                commands: root.icon;
-                stroke: active ? Theme.accent : Theme.text-dim;
-                stroke-width: 1.8px;
-                fill: transparent;
-            }
+    Rectangle {
+        y: 8px;
+        width: 56px;
+        height: 30px;
+        border-radius: Radius.pill;
+        background: touch.has-hover && !root.active ? Theme.hover : transparent;
+        animate background { duration: Motion.fast; easing: Motion.ease; }
+        Icon {
+            size: 22px;
+            source: root.active ? root.icon-on : root.icon;
+            colorize: root.active ? Theme.accent-ink : Theme.text-faint;
         }
+    }
 
-        Text {
-            text: root.label;
-            color: active ? Theme.text : Theme.text-dim;
-            font-size: TextSize.small;
-            font-weight: active ? 700 : 500;
-            horizontal-alignment: center;
-        }
+    Text {
+        y: 42px;
+        width: 100%;
+        height: 15px;
+        text: root.label;
+        color: root.active ? Theme.text : Theme.text-faint;
+        font-size: TextSize.micro;
+        font-weight: root.active ? Weight.semibold : Weight.regular;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
     }
 
     touch := TouchArea {
@@ -148,10 +849,11 @@ export component NavItem inherits Rectangle {
     }
 }
 
-// 圆形播放控制键:玻璃底 + Path 图标。悬停浮亮,按下微缩。
+
+// 圆形播放控制键:玻璃底 + 线条图标。悬停浮亮,按下微缩。
 // 图标画法同 NavItem:SVG path 内嵌,viewbox 24×24,不引外部资源。
 export component RoundControl inherits Rectangle {
-    in property <string> icon;
+    in property <image> icon;
     // 读屏软件念的那句。图标是一段 path,没有它这颗键对外只是"一个按钮"。
     // 无头测试也靠它把同一排的几颗键分开(元素 id 分不开,它们是同一个组件)。
     in property <string> label;
@@ -184,21 +886,12 @@ export component RoundControl inherits Rectangle {
         source: root.backdrop;
     }
 
-    Path {
-        width: root.diameter * 0.5;
-        height: root.diameter * 0.5;
-        viewbox-width: 24;
-        viewbox-height: 24;
-        commands: root.icon;
-        // 拨开了的键用强调色画图标 —— 那是这一排里唯一"有状态"的东西,
-        // 光靠悬停变亮说不出"它现在是开着的"。
-        stroke: root.checked ? Theme.accent
-            : (touch.has-hover ? Theme.accent-ink : Theme.accent-ink.darker(0.15));
-        stroke-width: 1.6px;
-        // 播放/暂停这类实心图形靠 fill;线条图形把 fill 关掉即可(这里统一填充,
-        // 图标本身都画成闭合形)。
-        fill: root.checked ? Theme.accent
-            : (touch.has-hover ? Theme.accent-ink : Theme.accent-ink.darker(0.15));
+    Icon {
+        size: root.diameter * 0.5;
+        source: root.icon;
+        // 拨开了的键用强调色 —— 那是这一排里唯一"有状态"的东西。
+        colorize: root.checked ? Theme.accent-ink
+            : (touch.has-hover ? Theme.text : Theme.text-dim);
     }
 
     touch := TouchArea {
@@ -216,6 +909,7 @@ export component RoundControl inherits Rectangle {
         accessible-action-default => { root.clicked(); }
     }
 }
+
 
 // 浮在页面上的一块:登录表单、删除确认这类对话框。raised 底、overlay 那档阴影。
 export component Sheet inherits Rectangle {

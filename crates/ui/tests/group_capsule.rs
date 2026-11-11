@@ -178,11 +178,12 @@ fn assert_clear(ui: &MainWindow) {
     );
     for kind in [
         "TouchArea",
-        "LineEdit",
+        "TextField",
         "NavItem",
         "SideNavRow",
         "RoundControl",
-        "HoverButton",
+        "IconButton",
+        "Button",
     ] {
         for other in testing::ElementHandle::find_by_element_type_name(ui, kind) {
             // 输入探针只记录指针，没有点击动作；胶囊自身不计为遮挡。
@@ -379,23 +380,26 @@ fn the_wide_capsule_avoids_navigation_even_in_a_short_window()
             assert_clear(&ui);
             let capsule =
                 element(&ui, "MainWindow::group-capsule");
-            // 侧栏 168 宽,胶囊 44,水平居中。
-            assert_eq!(capsule.absolute_position().x, 62.0);
-            // nav-pad 8 + 七行 × (行高 + 4) + 分组间隔 18 + 8。
-            // 行高平时 44,窗口矮时收到排得下十行加胶囊。
+            // 侧栏 224 宽,胶囊 44,水平居中。
+            assert_eq!(capsule.absolute_position().x, 90.0);
+            // 上内边距 22 + 品牌 50 + 七行 × (行高 + 2) + 分组间隔 20 + 12。
+            // 行高平时 40,窗口矮时收到排得下十行加胶囊。
             let slot = ui.get_nav_slot_h();
             assert_eq!(
                 capsule.absolute_position().y,
-                8.0 + 7.0 * (slot + 4.0) + 18.0 + 8.0
+                22.0 + 50.0
+                    + 7.0 * (slot + 2.0)
+                    + 20.0
+                    + 12.0
             );
             if height == 800.0 {
-                assert_eq!(slot, 44.0, "够高时行高不变");
+                assert_eq!(slot, 40.0, "够高时行高不变");
             }
         }
     }
 }
 
-/// 34px旧行升为44px，独奏时占满原宽，有组时仅头部横向让出56px。
+/// 独奏时页头标题占满原宽，有组时仅头部横向让出56px。
 #[test]
 fn the_compact_header_reserves_a_slot_only_while_a_group_exists()
  {
@@ -403,10 +407,6 @@ fn the_compact_header_reserves_a_slot_only_while_a_group_exists()
     let ui = window(420.0, 800.0);
     let full_width =
         element(&ui, "MusicPage::page-title").size().width;
-    assert_eq!(
-        element(&ui, "MusicPage::page-title").size().height,
-        44.0
-    );
     collapse(&ui);
     assert_eq!(
         element(&ui, "MusicPage::page-title").size().width,

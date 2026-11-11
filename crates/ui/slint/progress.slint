@@ -5,6 +5,7 @@
 // (音量是例外:每动一下就该听见,那正是人调音量时在等的反馈。)
 
 import { Theme, Space, Radius, Motion, Type, TextSize } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
 
 
 // 进度条:已放到哪、还能拖。
@@ -47,8 +48,8 @@ export component ProgressBar inherits Rectangle {
         spacing: Space.xs;
 
         groove := Rectangle {
-            height: 4px;
-            background: Theme.press;
+            height: root.slim ? 3px : 4px;
+            background: Theme.line-strong;
             border-radius: Radius.pill;
             // 细轨档平时隐身,指过来或拖着才现形 —— 环形键已经报着进度,
             // 这条只在要精确落点的那一刻出现。
@@ -61,6 +62,18 @@ export component ProgressBar inherits Rectangle {
                 height: parent.height;
                 background: Theme.accent;
                 border-radius: Radius.pill;
+            }
+            // 把手:悬停或拖着时才出现,9px 的圆点。
+            if seek-touch.has-hover || root.dragging: Rectangle {
+                width: 9px;
+                height: 9px;
+                x: parent.width * clamp(root.shown, 0.0, 1.0) - self.width / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4.5px;
+                background: Theme.text;
+                drop-shadow-offset-y: 1px;
+                drop-shadow-blur: 3px;
+                drop-shadow-color: #00000080;
             }
         }
 
@@ -100,18 +113,21 @@ export component ProgressBar inherits Rectangle {
 //
 // 不常驻滑块:控制条宽版一排的最小宽度已经约 470px,而手机内容区只有 ~360px
 // (那正是紧凑版拆两行的原因)。再塞一条常驻滑块进去,两种版式都要重排。
+// 抽屉里那份(`expanded` + `fill`)是一整行:小喇叭、拉满的滑块、大喇叭、数字。
 export component VolumeControl inherits HorizontalLayout {
     in property <float> volume;
     // 滑块常驻。抽屉里有横向空间,不必让人先点开喇叭再拖 —— 那一层
     // 折叠是当初为一排塞不下才有的,抽屉里没有那个约束。
     in property <bool> expanded: false;
+    // 滑块拉满这一行,后面跟大喇叭和数字(抽屉那一行)。
+    in property <bool> fill: false;
     // 读屏念的名字。输出设备那一排每台一个,得念得出是哪一台的(#151)。
     in property <string> label: "音量";
     callback changed(float);
 
     property <bool> open: false;
 
-    spacing: Space.xs;
+    spacing: root.fill ? Space.md : Space.xs;
 
     VerticalLayout {
         alignment: center;
@@ -119,15 +135,13 @@ export component VolumeControl inherits HorizontalLayout {
             width: 32px;
             height: 32px;
             border-radius: Radius.pill;
-            background: speaker.has-hover ? Theme.press : transparent;
+            background: speaker.has-hover ? Theme.hover : transparent;
 
-            Text {
-                // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
-                text: root.volume <= 0.001 ? "🔇"
-                    : root.volume < 0.5 ? "🔈" : "🔊";
-                font-size: TextSize.body;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            // 三态:静音 / 小声 / 大声。都一样的话,调完了看不出调没调。
+            Icon {
+                source: root.volume <= 0.001 ? Icons.speaker-x
+                    : root.volume < 0.5 || root.fill ? Icons.speaker-low : Icons.speaker-high;
+                colorize: Theme.text-dim;
             }
 
             speaker := TouchArea {
@@ -135,8 +149,7 @@ export component VolumeControl inherits HorizontalLayout {
                 clicked => { root.open = !root.open; }
 
                 // 屏幕阅读器要认得出这是个能按的东西;顺带让无头测试点得动它 ——
-                // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"
-                // (同 widgets.slint 里的 HoverButton)。
+                // 少了这一段,测试只能验"键在不在",验不了"点开之后展开没有"。
                 accessible-role: button;
                 accessible-label: root.label;
                 accessible-expandable: true;
@@ -150,24 +163,39 @@ export component VolumeControl inherits HorizontalLayout {
 
     if root.open || root.expanded: VerticalLayout {
         alignment: center;
+        horizontal-stretch: root.fill ? 1 : 0;
 
         slider := Rectangle {
-            width: 92px;
+            min-width: 92px;
+            max-width: root.fill ? 100000px : 92px;
+            horizontal-stretch: 1;
             height: 20px;
 
             Rectangle {
                 y: (parent.height - 4px) / 2;
                 height: 4px;
-                background: Theme.press;
+                background: Theme.line-strong;
                 border-radius: Radius.pill;
 
                 Rectangle {
                     x: 0;
                     width: parent.width * clamp(root.volume, 0.0, 1.0);
                     height: parent.height;
-                    background: Theme.accent;
+                    background: Theme.text;
                     border-radius: Radius.pill;
                 }
+            }
+            // 把手:白色的圆,压一道影。
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                x: parent.width * clamp(root.volume, 0.0, 1.0) - self.width / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: 8px;
+                background: #ffffff;
+                drop-shadow-offset-y: 2px;
+                drop-shadow-blur: 6px;
+                drop-shadow-color: #00000073;
             }
 
             // 音量没有「松手才生效」的问题:每动一下就该听见,
@@ -184,6 +212,22 @@ export component VolumeControl inherits HorizontalLayout {
                 }
             }
         }
+    }
+
+    if root.fill: VerticalLayout {
+        alignment: center;
+        Icon {
+            source: Icons.speaker-high;
+            colorize: Theme.text-dim;
+        }
+    }
+    if root.fill: Text {
+        width: 28px;
+        text: round(clamp(root.volume, 0.0, 1.0) * 100);
+        color: Theme.text-dim;
+        font-size: TextSize.small;
+        horizontal-alignment: right;
+        vertical-alignment: center;
     }
 }
 

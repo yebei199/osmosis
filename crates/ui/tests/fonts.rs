@@ -5,7 +5,7 @@
 //! 歌名、歌手名是平台给的任意文字,不在这里守:子集按标准字符集裁,不按今天的曲库裁,
 //! 漏字看 `just font-subset` 末尾那行覆盖报告。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const WEIGHTS: [u16; 3] = [400, 600, 700];
 
@@ -100,5 +100,61 @@ fn digits_are_tabular() {
             widths.windows(2).all(|w| w[0] == w[1]),
             "{name} 的数字宽度不一:{widths:?}"
         );
+    }
+}
+
+fn slint_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            slint_sources(&path, out);
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "slint")
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// `.slint` 字符串字面量里的每个非 ASCII 字,桌面那三件都画得出来 ——
+/// 硬编码文案不该靠系统字体回退。
+#[test]
+fn desktop_faces_cover_every_hardcoded_string() {
+    let mut files = Vec::new();
+    slint_sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("slint"),
+        &mut files,
+    );
+    let mut text = String::new();
+    for file in files {
+        let source =
+            std::fs::read_to_string(&file).unwrap();
+        for line in source.lines() {
+            let code =
+                line.split("//").next().unwrap_or("");
+            for (i, part) in code.split('"').enumerate() {
+                if i % 2 == 1 {
+                    text.extend(
+                        part.chars()
+                            .filter(|c| !c.is_ascii()),
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        !text.is_empty(),
+        "没扫到任何中文文案,扫描坏了"
+    );
+    for w in WEIGHTS {
+        let name =
+            format!("fonts/desktop/osmosis-sans-{w}.ttf");
+        let bytes = font(&name);
+        let face =
+            ttf_parser::Face::parse(&bytes, 0).unwrap();
+        let lost = missing(&face, text.chars());
+        assert!(lost.is_empty(), "{name} 缺字形:{lost:?}");
     }
 }

@@ -1,4 +1,5 @@
-import { Theme, Type, Space, Radius, TextSize } from "theme.slint";
+import { Theme, Type, Space, Radius, TextSize, Motion, Weight } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
 import { Library } from "globals/library.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
@@ -10,76 +11,94 @@ import { Shell } from "globals/shell.slint";
 //
 // 两块合在一处:开关与场区共用同一组 wall-* 判据,分开放会让「墙什么时候在」
 // 有两个说法。
-export component WallView inherits VerticalLayout {
-    // #66 列表 ⇄ 卡墙的二选一开关。只在每日推荐分区、
-    // GPU 构建下出现 —— 别的分区没有墙可切。
-    if Shell.wall-supported
-        && Shell.destination == 0
-        && Library.open-playlist-name == ""
-        && Player.tracks.length > 0:
-    HorizontalLayout {
-        alignment: end;
-        spacing: Space.xs;
-        height: 26px;
 
-        view-list-btn := Rectangle {
-            width: 56px;
-            border-radius: Radius.pill;
-            background: Shell.view-wall
-                ? Theme.surface : Theme.accent;
-            accessible-role: button;
-            accessible-label: "列表视图";
-            accessible-action-default => {
-                Shell.set-view-wall(false);
-            }
-            Text {
-                text: "列表";
-                font-size: TextSize.small;
-                color: Shell.view-wall
-                    ? Theme.text-dim
-                    : Theme.accent-text;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    Shell.set-view-wall(false);
-                }
+// 列表 ⇄ 卡墙的一格。两格是同一个分段控件(docs/design.md「分段」),
+// 各自带元素 id,端到端脚本与无头测试按 id 点它们。
+component ViewSegment inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> on;
+    in property <bool> icon-only;
+    callback chosen;
+
+    height: 32px;
+    width: seg-row.preferred-width;
+    border-radius: Radius.pill;
+    background: root.on ? Theme.raised : transparent;
+    inner-shadow-offset-y: root.on && Theme.dark ? 1px : 0px;
+    inner-shadow-color: root.on && Theme.dark ? Theme.edge : transparent;
+    drop-shadow-offset-y: root.on ? (Theme.dark ? 2px : 1px) : 0px;
+    drop-shadow-blur: root.on ? (Theme.dark ? 6px : 3px) : 0px;
+    drop-shadow-spread: root.on && Theme.dark ? -2px : 0px;
+    drop-shadow-color: root.on ? (Theme.dark ? #00000073 : #1428162e) : transparent;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+    accessible-role: button;
+    accessible-label: root.label + "视图";
+    accessible-checkable: true;
+    accessible-checked: root.on;
+    accessible-action-default => { root.chosen(); }
+
+    seg-row := HorizontalLayout {
+        padding-left: root.icon-only ? 9px : 14px;
+        padding-right: self.padding-left;
+        spacing: 6px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                source: root.icon;
+                size: 16px;
+                colorize: root.on ? Theme.text : Theme.text-faint;
             }
         }
-        view-wall-btn := Rectangle {
-            width: 56px;
-            border-radius: Radius.pill;
-            background: Shell.view-wall
-                ? Theme.accent : Theme.surface;
-            accessible-role: button;
-            accessible-label: "卡墙视图";
-            accessible-action-default => {
+        if !root.icon-only: Text {
+            text: root.label;
+            color: root.on ? Theme.text : Theme.text-faint;
+            font-size: TextSize.small;
+            font-weight: Weight.semibold;
+            vertical-alignment: center;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(); }
+    }
+}
+
+// #66 列表 ⇄ 卡墙的二选一开关,摆在日推页头的动作区。只在每日推荐分区、
+// GPU 构建下出现(条件在摆它的地方)—— 别的分区没有墙可切。紧凑版式只摆图标。
+export component WallToggle inherits Rectangle {
+    width: toggle-row.preferred-width;
+    height: 38px;
+    border-radius: Radius.pill;
+    background: Theme.sunken;
+    border-width: 1px;
+    border-color: Theme.line;
+
+    toggle-row := HorizontalLayout {
+        padding: 3px;
+        view-wall-btn := ViewSegment {
+            label: "卡墙";
+            icon: Icons.squares-four;
+            icon-only: Shell.compact;
+            on: Shell.view-wall;
+            chosen => {
                 // 卡墙只筛选、不分组(#160):切过去先清掉分组
                 Player.set-grouping(0);
                 Shell.set-view-wall(true);
             }
-            Text {
-                text: "卡墙";
-                font-size: TextSize.small;
-                color: Shell.view-wall
-                    ? Theme.accent-text
-                    : Theme.text-dim;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    // 卡墙只筛选、不分组(#160):切过去先清掉分组
-                    Player.set-grouping(0);
-                    Shell.set-view-wall(true);
-                }
-            }
+        }
+        view-list-btn := ViewSegment {
+            label: "列表";
+            icon: Icons.list-bullets;
+            icon-only: Shell.compact;
+            on: !Shell.view-wall;
+            chosen => { Shell.set-view-wall(false); }
         }
     }
+}
 
+// 卡墙场区本身。开关在页头(WallToggle)。
+export component WallView inherits VerticalLayout {
     // #66 卡墙场区:纹理由 render3d 画,这里只摆图、
     // 收指针。硬规则 8:TouchArea 只写镜像与喊回调,
     // 命中测试在 Rust(wall_drive.rs)。
@@ -120,7 +139,7 @@ export component WallView inherits VerticalLayout {
             y: 0;
             text: "拖动翻找 · 点两下播放 · 滚轮上下";
             font-size: TextSize.caption;
-            color: Theme.text-dim;
+            color: Theme.text-faint;
         }
         wall-touch := TouchArea {
             moved => {

@@ -5,7 +5,7 @@
 // 「口味画像」的流派维度同样无数据,已定改为常听歌手 —— 不编数字。
 
 import { Theme, Type, Radius, Space, TextSize } from "theme.slint";
-import { SectionCard, HoverButton } from "widgets.slint";
+import { SectionCard, Button } from "widgets.slint";
 import { OutputStrip } from "controls.slint";
 import { BarMetrics } from "playerbar.slint";
 import { ArtistRankRow, DeviceRow } from "types.slint";
@@ -199,7 +199,7 @@ export component ProfilePage inherits Flickable {
                         overflow: elide;
                     }
                 }
-                HoverButton {
+                Button {
                     text: "解绑";
                     width: 96px;
                     height: 40px;

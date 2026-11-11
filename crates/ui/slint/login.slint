@@ -6,9 +6,8 @@
 // 注册与登录共用这一个页面,靠 `registering` 切换 —— 两者只差一个邀请码输入框,
 // 各写一遍布局与错误区,改一处必然漏另一处。
 
-import { LineEdit } from "std-widgets.slint";
 
-import { HoverButton, Sheet } from "widgets.slint";
+import { Button, ButtonKind, Sheet, TextField } from "widgets.slint";
 import { Theme, Space, TextSize } from "theme.slint";
 
 export component LoginPage inherits Rectangle {
@@ -48,22 +47,22 @@ export component LoginPage inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            username := LineEdit {
-                placeholder-text: "用户名";
+            username := TextField {
+                placeholder: "用户名";
                 // 回车直接提交:表单只有两三个框,让人去够按钮是多余的一步
                 accepted => { root.submit(); }
             }
 
-            password := LineEdit {
-                placeholder-text: "密码";
+            password := TextField {
+                placeholder: "密码";
                 input-type: InputType.password;
                 accepted => { root.submit(); }
             }
 
             // 邀请码只在注册时出现。服务面向公网,没有它任何人都能开户
             // (见 docs/adr/0017)。
-            if root.registering: LineEdit {
-                placeholder-text: "邀请码";
+            if root.registering: TextField {
+                placeholder: "邀请码";
                 text: root.invite-value;
                 edited => { root.invite-value = self.text; }
                 accepted => { root.submit(); }
@@ -78,9 +77,9 @@ export component LoginPage inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            HoverButton {
+            Button {
                 height: 40px;
-                // 字走 `text` 属性而不是塞子 Text:HoverButton 的无障碍标签
+                // 字走 `text` 属性而不是塞子 Text:Button 的无障碍标签
                 // 绑的是这个属性,子 Text 画得出来、读屏却念不出 —— 真机驱动
                 // 曾因此只能从截图上量坐标点它。
                 text: root.busy

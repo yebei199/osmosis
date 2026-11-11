@@ -1,9 +1,9 @@
 //! 导航液态玻璃选中器的边界逻辑(宽版式侧栏 / 紧凑版式底栏)。
 //!
-//! 视觉(metaball 融合、极光介质、边缘折射)由 render3d 的独立 wgpu pass + shader 画,
-//! Slint 只出 hover/点击/选区与几何。选中块的 metaball 靠**三个动画位置**做出来:
-//! `lead`(快)、`lag`(慢)与 `drop`(最慢)都朝当前选中槽中心移动,行走时前后拉开,
-//! shader 对三个圆角矩形取 smooth-union 拉出胶着的颈;静止时重合成单块。
+//! 视觉(玻璃药丸与导航的底)由 render3d 的独立 wgpu pass + shader 画,
+//! Slint 只出 hover/点击/选区与几何。药丸靠**两个动画位置**拉伸:
+//! `lead`(快)与 `lag`(慢)都朝当前选中槽中心移动,行走时前后拉开,
+//! shader 画出两者之间那颗被拉长的药丸;静止时重合成一颗。
 //! 两种版式共用这一套,差别只在移动轴:侧栏沿 y,底栏沿 x。唯一真相在 app.slint。
 //!
 //! 这块背景**只在切目的地 的转场期间重渲**:转场结束后 Slint 继续合成最后一帧纹理,
@@ -24,25 +24,21 @@ pub struct NavGlassControls {
     /// 导航条纹理尺寸(= 目标纹理尺寸)。
     pub strip_w: f32,
     pub strip_h: f32,
-    /// 三颗球中心在**移动轴**上的位置,相对条首:头(快)/尾(慢)/小水滴(最慢)。
-    /// 三条各自时长的动画朝同一个目标走,天然拉开先后(§11 的追随系数,
-    /// 这里用 Slint animate 的时长差实现,不逐帧积分)。
+    /// 药丸两条边各自跟着的中心在**移动轴**上的位置,相对条首:lead 快、lag 慢。
+    /// 两条各自时长的动画朝同一个目标走,走动时药丸被拉长,到位后重合。
     pub lead: f32,
     pub lag: f32,
-    pub drop: f32,
-    /// 三颗球在**固定轴**上的中心。侧栏取栏宽的一半;底栏的图标被手势条 inset
-    /// 顶上去了,取的是除掉那段之后的一半,不是纹理正中。
+    /// 药丸中心在**固定轴**上的位置。侧栏取栏宽的一半;底栏取图标那一带的中线,
+    /// 手势条 inset 不算。
     pub cross: f32,
-    /// 移动轴上一格的长度(侧栏是项高,底栏是等分出来的格宽),选中块的参考尺寸。
+    /// 药丸静止时沿移动轴的长度:侧栏是行高,底栏是图标底下那颗 56px 的底。
     pub slot: f32,
-    /// 固定轴上的**可用厚度**。侧栏是栏宽;底栏是图标那一带的高,不含手势条
-    /// inset —— 拿整张纹理的高当厚度,水滴会压到手势条上去。
+    /// 药丸在固定轴上的厚度:侧栏是行宽,底栏是 30px。
     pub thick: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。同一套数学,轴对调(#70)。
     pub horizontal: bool,
-    /// 三球的整体缩放,1 常态、0 缩没。侧栏沉底那两行(个人、设置)不在轨道上、
-    /// 不在轨道上,选中它们时水滴化掉,免得上面还亮着一格。
-    pub ball: f32,
+    /// 物理像素 / 逻辑像素。高光与阴影的尺寸按逻辑像素写。
+    pub scale: f32,
     /// 深色主题。导航背景是自绘的,采不到背后的像素,主题只能这样传进去。
     pub dark: bool,
 }
@@ -64,27 +60,25 @@ pub struct NavGlassControls {
 pub fn nav_transition_active(
     lead: f32,
     lag: f32,
-    drop: f32,
-    last: Option<(f32, f32, f32)>,
+    last: Option<(f32, f32)>,
 ) -> bool {
     match last {
         // 首帧:还没有静止态纹理,必渲一次。
         None => true,
         // 有一个位置相对上一帧变了 = 转场还在走(含刚点下时进度跳变);都没变则跳过。
-        Some(prev) => (lead, lag, drop) != prev,
+        Some(prev) => (lead, lag) != prev,
     }
 }
 
-/// 选中器的跨帧省电门:上一帧的三球逻辑位置、条的物理尺寸、明暗与球体缩放。
+/// 选中器的跨帧省电门:上一帧药丸两条边的逻辑位置、条的物理尺寸与明暗。
 ///
-/// 这四样都进判据 —— 静止时 Slint 复用上一帧 `nav-bg`,漏掉哪一样,那一样变了
+/// 这三样都进判据 —— 静止时 Slint 复用上一帧 `nav-bg`,漏掉哪一样,那一样变了
 /// 画面就不跟,要等下一次切目的地 才补上。
 #[derive(Default)]
 pub struct NavSelector {
-    last_ll: Option<(f32, f32, f32)>,
+    last_ll: Option<(f32, f32)>,
     last_size: Option<(f32, f32)>,
     last_dark: Option<bool>,
-    last_ball: Option<f32>,
 }
 
 impl NavSelector {
@@ -100,13 +94,12 @@ impl NavSelector {
             -> Option<slint::Image>,
     ) -> bool {
         // ── 导航液态玻璃选中器(宽版式侧栏 / 紧凑版式底栏)──
-        // 常驻,与下面播放页视觉的门相互独立:只在切目的地 的 metaball 还在走
-        // (三球位置相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
+        // 常驻,与下面播放页视觉的门相互独立:只在切目的地 的药丸还在走
+        // (两条边相对上一帧变化)或条尺寸变化时重渲,静止时 Slint 复用上一帧 nav-bg。
         // 轴的事全在 .slint 那侧算完,这里只搬数(#70)。
         if ui.get_nav_visible() {
             let lead = ui.get_nav_lead();
             let lag = ui.get_nav_lag();
-            let drop = ui.get_nav_drop();
             let strip_w =
                 (ui.get_nav_strip_w() * scale).max(1.0);
             let strip_h =
@@ -119,18 +112,12 @@ impl NavSelector {
             let dark = ui.global::<Theme>().get_dark();
             let theme_changed =
                 self.last_dark != Some(dark);
-            // 球体缩放同理:切到侧栏沉底那两行时槽位不动、只有它在变
-            // (#71),不认它的话水滴就化不掉,停在原地不动。
-            let ball = ui.get_nav_ball();
-            let ball_changed = self.last_ball != Some(ball);
             if nav_transition_active(
                 lead,
                 lag,
-                drop,
                 self.last_ll,
             ) || size_changed
                 || theme_changed
-                || ball_changed
             {
                 if let Some(img) =
                     (nav_frame)(&NavGlassControls {
@@ -138,20 +125,18 @@ impl NavSelector {
                         strip_h,
                         lead: lead * scale,
                         lag: lag * scale,
-                        drop: drop * scale,
                         cross: ui.get_nav_cross() * scale,
                         slot: ui.get_nav_slot() * scale,
                         thick: ui.get_nav_thick() * scale,
                         horizontal: ui.get_nav_horizontal(),
-                        ball,
+                        scale,
                         dark,
                     })
                 {
                     ui.set_nav_bg(img);
                 }
-                self.last_ll = Some((lead, lag, drop));
+                self.last_ll = Some((lead, lag));
                 self.last_dark = Some(dark);
-                self.last_ball = Some(ball);
                 self.last_size = Some((strip_w, strip_h));
                 return true;
             }
@@ -169,56 +154,43 @@ mod tests {
     /// 首帧:last 为 None 时必须重渲,好让侧栏首屏就有静止态纹理。
     #[test]
     fn first_frame_forces_render() {
-        assert!(nav_transition_active(
-            10.0, 10.0, 10.0, None
-        ));
+        assert!(nav_transition_active(10.0, 10.0, None));
     }
 
-    /// 转场进行中:三球任一相对上一帧变化(还在走)时重渲。
+    /// 转场进行中:两条边任一相对上一帧变化(还在走)时重渲。
     #[test]
     fn moving_position_triggers_render() {
         // 只有 lead 在动
         assert!(nav_transition_active(
             12.0,
             8.0,
-            8.0,
-            Some((10.0, 8.0, 8.0))
+            Some((10.0, 8.0))
         ));
-        // 只有 lag 在动
+        // 只有 lag 在动 —— 它慢,常常是最后一个到的。
         assert!(nav_transition_active(
             12.0,
             9.0,
-            8.0,
-            Some((12.0, 8.0, 8.0))
-        ));
-        // 只有小水滴还在走 —— 它最慢,常常是最后一个到的。
-        assert!(nav_transition_active(
-            12.0,
-            12.0,
-            10.0,
-            Some((12.0, 12.0, 9.0))
+            Some((12.0, 8.0))
         ));
     }
 
-    /// 稳定期:三球都与上一帧相等(转场结束/未切)时跳过,复用上一帧纹理。
+    /// 稳定期:两条边都与上一帧相等(转场结束/未切)时跳过,复用上一帧纹理。
     #[test]
     fn settled_positions_skip_render() {
         assert!(!nav_transition_active(
             10.0,
             10.0,
-            10.0,
-            Some((10.0, 10.0, 10.0))
+            Some((10.0, 10.0))
         ));
     }
 
-    /// 转场结束那一帧:三球刚齐齐抵达终点、仍不同于上帧 → 重渲一次拿到最终静止态。
+    /// 转场结束那一帧:两条边刚齐齐抵达终点、仍不同于上帧 → 重渲一次拿到最终静止态。
     #[test]
     fn final_settling_frame_still_renders_once() {
         assert!(nav_transition_active(
             10.0,
             10.0,
-            10.0,
-            Some((11.0, 9.0, 8.0))
+            Some((11.0, 9.0))
         ));
     }
 
@@ -249,7 +221,7 @@ mod tests {
         ui.global::<Session>().set_logged_in(true);
         ui.global::<Shell>().set_compact(false);
         ui.global::<Shell>().set_destination(0);
-        // 三球是 animate 属性:先读一遍建立静止态,免得首帧读到的是半路的值。
+        // 两条边是 animate 属性:先读一遍建立静止态,免得首帧读到的是半路的值。
         i_slint_backend_testing::mock_elapsed_time(
             Duration::from_millis(900),
         );
@@ -339,7 +311,7 @@ mod tests {
         );
     }
 
-    /// 换了明暗要重渲,哪怕三球一动没动。
+    /// 换了明暗要重渲,哪怕药丸一动没动。
     ///
     /// 侧栏背景是这条 pass 自绘的,采不到背后的像素。不认主题的话,拨完
     /// 深色开关侧栏仍是旧配色,要等下一次切目的地才跟上。
@@ -363,48 +335,39 @@ mod tests {
         );
     }
 
-    /// 水滴化掉那一下也要重渲,哪怕槽位没动。
-    ///
-    /// 切到侧栏沉底那两行(#71)时三球停在原处,只有球体缩放在变。
-    /// 不认它的话水滴就化不掉,停在最后一格主项上不动。
+    /// 沉底那组(个人、已屏蔽、设置)也在轨道上:指示器走过去,不再化掉。
     #[test]
-    fn melting_the_droplet_alone_still_renders() {
+    fn the_account_rows_are_on_the_track() {
         let ui = nav_window();
-        // 从轨道最后一行(已下载)出发:沉底那两行的水滴就停在这一行上。
         ui.global::<Shell>().set_destination(5);
         i_slint_backend_testing::mock_elapsed_time(
             Duration::from_millis(900),
         );
         let renders = Renders::default();
         let mut selector = NavSelector::default();
-
         selector.tick(&ui, 1.0, &mut renders.recorder());
         let before = renders.last();
-        assert_eq!(
-            before.ball, 1.0,
-            "停在已下载时水滴是满的"
-        );
 
-        // 7 是个人 —— 沉底那组不在水滴轨道上,槽位不动、只有它缩没。
+        // 7 是个人,侧栏沉底那一组的第一行。
         ui.global::<Shell>().set_destination(7);
         i_slint_backend_testing::mock_elapsed_time(
             Duration::from_millis(900),
         );
         selector.tick(&ui, 1.0, &mut renders.recorder());
-
         let after = renders.last();
         assert_eq!(renders.count(), 2);
-        assert_eq!(after.ball, 0.0);
-        assert_eq!(
-            (after.lead, after.lag, after.drop),
-            (before.lead, before.lag, before.drop),
-            "三球本就没动 —— 这一帧是缩放触发的,不是位置"
+        assert!(
+            after.lead > before.lead
+                && after.lag > before.lag,
+            "指示器该往下走到沉底那组:{} → {}",
+            before.lead,
+            after.lead
         );
     }
 
     /// 只有缩放系数变了(窗口挪到另一块屏)也要重渲。
     ///
-    /// 三球位置存的是逻辑像素,换屏时它们一个字都不变;不认条的物理尺寸的话,
+    /// 两条边存的是逻辑像素,换屏时它们一个字都不变;不认条的物理尺寸的话,
     /// 侧栏会一直沿用旧 DPI 那张纹理,直到下一次切目的地。
     #[test]
     fn a_scale_change_alone_still_renders() {

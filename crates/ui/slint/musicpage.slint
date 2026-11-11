@@ -1,18 +1,18 @@
 import { ScrollView } from "std-widgets.slint";
 import { Palette } from "std-widgets.slint";
 
-import { Theme, Type, Space, TextSize, Radius } from "theme.slint";
+import { Theme, Type, Space, TextSize, Radius, Layout, Weight, Tracking } from "theme.slint";
 import { TrackRow, PlaylistRow, ArtistRow } from "types.slint";
-import { HoverButton, Sheet } from "widgets.slint";
+import { Button, ButtonKind, Chip, ChipKind, IconButton, Sheet, TextField, FactsLine, EmptyState } from "widgets.slint";
 import { Destinations, SearchTabBar } from "musicnav.slint";
-import { FacetBar, Pill, TrackList } from "tracklist.slint";
+import { FacetBar, FilteredEmpty, TrackList, TrackHeader } from "tracklist.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { WallView } from "wallview.slint";
-import { LineEdit } from "std-widgets.slint";
+import { WallView, WallToggle } from "wallview.slint";
 import { Library } from "globals/library.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
+import { Icon, Icons } from "icons.slint";
 import { Viz } from "globals/viz.slint";
 import { BarMetrics } from "playerbar.slint";
 
@@ -51,13 +51,13 @@ export component DownloadManager inherits Rectangle {
         spacing: Space.sm;
         HorizontalLayout {
             spacing: Space.sm;
-            keyword := LineEdit {
+            keyword := TextField {
                 horizontal-stretch: 1;
-                placeholder-text: "搜索歌名、歌手或文件名";
+                placeholder: "搜索歌名、歌手或文件名";
                 enabled: !Downloads.busy;
                 edited => { Downloads.search(self.text); }
             }
-            refresh-button := HoverButton {
+            refresh-button := Button {
                 width: 64px;
                 text: "刷新";
                 enabled: !Downloads.busy;
@@ -84,7 +84,7 @@ export component DownloadManager inherits Rectangle {
                 horizontal-stretch: 1;
                 vertical-alignment: center;
             }
-            delete-button := HoverButton {
+            delete-button := Button {
                 width: 100px;
                 height: 40px;
                 text: "删除所选";
@@ -111,11 +111,12 @@ export component DownloadManager inherits Rectangle {
                     HorizontalLayout {
                         padding: Space.sm;
                         spacing: Space.sm;
-                        Text {
-                            width: 24px;
-                            text: row.selected ? "✓" : "○";
-                            color: Theme.accent-ink;
-                            vertical-alignment: center;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                source: row.selected ? Icons.check-circle-fill : Icons.circle;
+                                colorize: row.selected ? Theme.accent-ink : Theme.text-faint;
+                            }
                         }
                         VerticalLayout {
                             horizontal-stretch: 1;
@@ -157,8 +158,8 @@ export component DownloadManager inherits Rectangle {
                 Text { text: "本机文件将被删除，无法撤销。"; color: Theme.text-dim; wrap: word-wrap; font-size: TextSize.small; }
                 HorizontalLayout {
                     spacing: Space.sm;
-                    cancel-button := HoverButton { width: (parent.width - 8px) / 2; height: 40px; text: "取消"; clicked => { Downloads.confirming = false; } }
-                    confirm-button := HoverButton {
+                    cancel-button := Button { width: (parent.width - 8px) / 2; height: 40px; text: "取消"; clicked => { Downloads.confirming = false; } }
+                    confirm-button := Button {
                         width: (parent.width - 8px) / 2; height: 40px; text: "确认删除";
                         enabled: !Downloads.busy && Downloads.selected-count > 0;
                         clicked => { Downloads.confirming = false; Downloads.delete-selected(); }
@@ -174,8 +175,13 @@ export component DownloadManager inherits Rectangle {
 //
 // 属性面全在 global 里,这一页因此不从窗口根接一个字段 —— 拆出来时
 // 一处转发都不必写(见 docs/adr/0027)。
+//
+// 版式(docs/design.md「页面」):页头是大标题 + 一行事实 + 右边的动作(卡墙/列表、播放),
+// 下面一排 chips,再下面是列表;宽版式多一行表头。
 export component MusicPage inherits VerticalLayout {
-    padding: Space.lg;
+    padding-left: Shell.compact ? Layout.page-x-compact : Layout.page-x;
+    padding-right: self.padding-left;
+    padding-top: Shell.compact ? Layout.page-top-compact : Layout.page-top;
     // 控制条不在这一页里 —— 它是窗口持有的那一根,一个实例管所有目的地
     // (app.slint,docs/adr/0029)。条在时页底让出它那一块,免得列表最后
     // 几行藏在条底下;条不在就一分不留,凭空的空白看起来就是渲染坏了
@@ -183,7 +189,7 @@ export component MusicPage inherits VerticalLayout {
     padding-bottom: Player.has-track && !Shell.play-page-open
         ? BarMetrics.page-reserve
         : 16px;
-    spacing: Space.md;
+    spacing: 0px;
 
     // 每次进这一页都触发(切页时整块重建)。当天还没拉过推荐就
     // 替用户拉一次 —— 空着一页只有一行「点一首歌开始」不是个好开局。
@@ -191,25 +197,190 @@ export component MusicPage inherits VerticalLayout {
     // 已下载的列表由切过来那一下的 load_section 刷新,这里不重复喊。
     init => { if (!Downloads.active) { Player.music-shown(); } }
 
-    // 紧凑版式没有侧栏,页头写当前目的地的全名:从「更多」进来时底栏亮的是
-    // 「更多」,不写的话看不出自己在哪一页。
-    if Shell.compact: HorizontalLayout {
-        spacing: 0px;
-        // 44px 与播放组胶囊同高:胶囊收起后就落在这一行的右端。
-        page-title := Text {
-            horizontal-stretch: 1;
-            height: 44px;
-            text: Destinations.label-of(Shell.destination);
-            accessible-role: text;
-            accessible-label: self.text;
-            font-weight: 700;
-            font-size: TextSize.headline;
-            color: Theme.text;
-            vertical-alignment: center;
+    // 这一页摆不摆一列歌(列表或卡墙)。页头的「播放」、表头、chips 都看它。
+    property <bool> detail: Library.open-playlist-name != "";
+    property <bool> song-view: root.detail
+        || Shell.destination == 0
+        || Shell.destination == 3
+        || Shell.destination == 4
+        || Shell.destination == 6
+        || (Shell.destination == 2 && Library.search-tab == 0);
+    property <bool> list-shown: Player.tracks.length > 0 && root.song-view && !Shell.wall-visible;
+    // 页头那一行事实:几首、日推几点换批、此刻在放什么。
+    property <bool> counted: root.song-view && Player.track-count > 0;
+    property <string> count-fact: Player.track-count + " 首";
+    property <bool> daily-page: Shell.destination == 0 && !root.detail;
+    property <[string]> facts: Downloads.active ? [Downloads.total]
+        : root.daily-page
+            ? (root.counted ? [root.count-fact, "早上 6 点换一批"] : ["早上 6 点换一批"])
+            : root.counted ? [root.count-fact]
+            : [];
+
+    // ── 页头 ──
+    // 搜索页没有大标题,搜索框就是它的页头。
+    if Shell.destination != 2 || root.detail: page-header := HorizontalLayout {
+        spacing: Space.xl;
+
+        // 详情那一层(歌单、歌手)左边一颗返回键。
+        if root.detail: VerticalLayout {
+            alignment: center;
+            back := IconButton {
+                icon: Icons.caret-left;
+                label: "返回";
+                icon-size: 22px;
+                clicked => { Library.close-playlist(); }
+            }
         }
-        // 组状态存在时只让头部横向避开胶囊，独奏仍占满这一行。
-        if Shell.group-banner != "": Rectangle { width: 56px; }
+        // 详情页那张封面。比列表里那张大一档,但不铺满 —— 这一层的主体是曲目,不是图。
+        if root.detail && Library.open-playlist-cover.width > 0 && !Shell.compact: Rectangle {
+            width: 72px;
+            height: 72px;
+            border-radius: Radius.md;
+            clip: true;
+            Image {
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+                source: Library.open-playlist-cover;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: Shell.compact ? 6px : Space.sm;
+
+            // 改名时标题就地变成输入框。另开一层对话框的话,
+            // 那一层要盖住的正是「原来叫什么」。
+            if !Library.renaming: page-title := Text {
+                text: root.detail ? Library.open-playlist-name : Destinations.label-of(Shell.destination);
+                accessible-role: text;
+                accessible-label: self.text;
+                font-size: Shell.compact ? TextSize.display-compact : TextSize.display;
+                font-weight: Weight.bold;
+                letter-spacing: Shell.compact ? Tracking.display-compact : Tracking.display;
+                color: Theme.text;
+                overflow: elide;
+            }
+            if Library.renaming: rename-box := TextField {
+                text: Library.open-playlist-name;
+                accepted => {
+                    Library.rename-playlist(self.text);
+                    Library.renaming-for = "";
+                }
+            }
+            if root.facts.length > 0: FactsLine { facts: root.facts; }
+        }
+
+        // 动作区:卡墙/列表、播放;详情页的改名、删除、屏蔽歌手。
+        HorizontalLayout {
+            alignment: end;
+            spacing: 10px;
+            if Shell.wall-supported
+                && Shell.destination == 0
+                && !root.detail
+                && Player.tracks.length > 0: VerticalLayout {
+                alignment: end;
+                WallToggle { }
+            }
+            // 改名与删除只给本地歌单 —— 平台那两种的真相
+            // 不在这边,摆上去只会让人点了才知道。
+            if Library.open-playlist-local: VerticalLayout {
+                alignment: end;
+                rename-button := Button {
+                    kind: ButtonKind.ghost;
+                    text: Library.renaming ? "取消" : "改名";
+                    icon: Icons.pencil-simple;
+                    clicked => {
+                        Library.renaming-for =
+                            Library.renaming ? "" : Library.open-playlist-name;
+                        Library.confirming-for = "";
+                    }
+                }
+            }
+            if Library.open-playlist-local: VerticalLayout {
+                alignment: end;
+                delete-button := Button {
+                    kind: ButtonKind.ghost;
+                    // 点两下才真删:一下就删的话,手指滑一下
+                    // 就没了一个歌单,而歌单没有回收站。
+                    text: Library.confirming-delete ? "确认删除?" : "删除";
+                    icon: Icons.trash;
+                    clicked => {
+                        if (Library.confirming-delete) {
+                            Library.delete-playlist();
+                            Library.confirming-for = "";
+                        } else {
+                            Library.confirming-for =
+                                Library.open-playlist-name;
+                            Library.renaming-for = "";
+                        }
+                    }
+                }
+            }
+            // 歌手页才有(#161)。按名字屏蔽:曲目上只带歌手名,不带 id。
+            // 两个名字对得上才算歌手页 —— 点开歌单时标题就换了。
+            if Library.open-artist-name != ""
+                && Library.open-artist-name == Library.open-playlist-name: VerticalLayout {
+                alignment: end;
+                block-artist-button := Button {
+                    kind: ButtonKind.ghost;
+                    text: "屏蔽该歌手";
+                    icon: Icons.prohibit;
+                    clicked => { Library.block-artist(Library.open-artist-name); }
+                }
+            }
+            if Player.tracks.length > 0 && root.song-view: VerticalLayout {
+                alignment: end;
+                if !Shell.compact: play-all := Button {
+                    kind: ButtonKind.primary;
+                    text: "播放";
+                    icon: Icons.play-fill;
+                    clicked => { Player.play-all(); }
+                }
+                if Shell.compact: play-all-compact := IconButton {
+                    solid: true;
+                    icon: Icons.play-fill;
+                    label: "播放";
+                    clicked => { Player.play-all(); }
+                }
+            }
+        }
+        // 紧凑版式里播放组胶囊收起后落在这一行的右端,有组时让出它那一块
+        // (56px,其中一截是这一行的间距)。
+        if Shell.compact && Shell.group-banner != "": Rectangle { width: 56px - Space.xl; }
     }
+
+    // ── 搜索页的页头:大号搜索框 + 结果页签 ──
+    if Shell.destination == 2 && !root.detail: VerticalLayout {
+        spacing: Shell.compact ? Space.md : 18px;
+        HorizontalLayout {
+            spacing: 0px;
+            alignment: start;
+            // 歌名是任意 CJK:Osmosis Sans 按标准字符集裁过,生僻字走系统字体回退。
+            keyword := TextField {
+                horizontal-stretch: 1;
+                max-width: 720px;
+                large: true;
+                icon: Icons.magnifying-glass;
+                enter-hint: !Shell.compact;
+                placeholder: "搜歌名、歌手或歌单";
+                accepted => { Player.search(self.text); }
+            }
+            if Shell.compact && Shell.group-banner != "": Rectangle { width: 56px; }
+        }
+        // 搜索结果的三个页签。与搜索框同进同出 ——
+        // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
+        search-tabs := SearchTabBar {
+            current: Library.search-tab;
+            counts: [Player.tracks.length, Library.found-artists.length, Library.found-playlists.length];
+            selected(tab) => {
+                Library.select-search-tab(tab);
+            }
+        }
+    }
+
+    Rectangle { height: Shell.compact ? Space.lg : Space.xl; }
 
     HorizontalLayout {
         vertical-stretch: 1;
@@ -223,232 +394,63 @@ export component MusicPage inherits VerticalLayout {
             horizontal-stretch: 1;
             spacing: Space.md;
 
-            // 搜索框只在搜索分区出现 —— 其余三个分区没有关键词可填,
-            // 常驻一个空框会让人以为那三页也要先搜一下。
-            // 进了歌手详情也收起来:那一层有自己的标题行与返回键。
-            if Shell.destination == 2
-                && Library.open-playlist-name == "":
-            HorizontalLayout {
-                spacing: Space.sm;
-
-                // 歌名是任意 CJK,不能指定子集字体,
-                // 否则输入的字大多不在子集里,直接是豆腐块。
-                keyword := LineEdit {
-                    horizontal-stretch: 1;
-                    placeholder-text: "搜索";
-                    accepted => { Player.search(self.text); }
-                }
-                HoverButton {
-                    width: Shell.compact ? 60px : 84px;
-                    text: "Go";
-                    clicked => { Player.search(keyword.text); }
-                }
-            }
-
-            // 搜索结果的三个页签。与搜索框同进同出 ——
-            // 没搜过时它们也在,那是有意的:告诉人这一页能搜三类东西。
-            if Shell.destination == 2
-                && Library.open-playlist-name == "":
-            search-tabs := SearchTabBar {
-                current: Library.search-tab;
-                selected(tab) => {
-                    Library.select-search-tab(tab);
-                }
-            }
-
-            // 播放状态行。文案是硬编码中文,走子集字体;
-            // 高度钉死,免得文案变长把下面的列表顶来顶去。
-            Text {
-                text: Player.playback-text;
-                color: Theme.text-dim;
-                font-size: TextSize.small;
-                height: 20px;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-
-            // 详情那一层的标题行 + 返回。歌单与歌手共用 ——
-            // 两者摊开之后都是「一批歌」,再造一套标题行只会
-            // 让返回键有两种写法。
-            // 与列表**互斥**:两个都在的话,返回键该收哪一层
-            // 就说不清了。
-            if Library.open-playlist-name != "":
-            playlist-header := HorizontalLayout {
-                spacing: Space.sm;
-                height: 28px;
-
-                back := TouchArea {
-                    width: 28px;
-
-                    Text {
-                        text: "‹";
-                        color: Theme.text-dim;
-                        font-size: TextSize.headline;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-
-                    clicked => { Library.close-playlist(); }
-                }
-
-                // 详情页那张封面。比列表里那张大一档,
-                // 但不铺满 —— 这一层的主体是曲目,不是图。
-                if Library.open-playlist-cover.width > 0:
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 28px;
-                        height: 28px;
-                        border-radius: Radius.sm;
-                        clip: true;
-
-                        Image {
-                            width: 100%;
-                            height: 100%;
-                            image-fit: cover;
-                            source: Library.open-playlist-cover;
-                        }
-                    }
-                }
-
-                // 改名时标题就地变成输入框。另开一层对话框的话,
-                // 那一层要盖住的正是「原来叫什么」。
-                if !Library.renaming: Text {
-                    text: Library.open-playlist-name;
-                    color: Theme.text;
-                    font-size: TextSize.body;
-                    horizontal-stretch: 1;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                if Library.renaming: rename-box := LineEdit {
-                    horizontal-stretch: 1;
-                    text: Library.open-playlist-name;
-                    accepted => {
-                        Library.rename-playlist(self.text);
-                        Library.renaming-for = "";
-                    }
-                }
-
-                // 改名与删除只给本地歌单 —— 平台那两种的真相
-                // 不在这边,摆上去只会让人点了才知道。
-                if Library.open-playlist-local:
-                rename-button := HoverButton {
-                    width: 56px;
-                    text: Library.renaming ? "取消" : "改名";
-                    clicked => {
-                        Library.renaming-for =
-                            Library.renaming ? "" : Library.open-playlist-name;
-                        Library.confirming-for = "";
-                    }
-                }
-                if Library.open-playlist-local:
-                delete-button := HoverButton {
-                    width: Library.confirming-delete ? 96px : 56px;
-                    // 点两下才真删:一下就删的话,手指滑一下
-                    // 就没了一个歌单,而歌单没有回收站。
-                    text: Library.confirming-delete ? "确认删除?" : "删除";
-                    clicked => {
-                        if (Library.confirming-delete) {
-                            Library.delete-playlist();
-                            Library.confirming-for = "";
-                        } else {
-                            Library.confirming-for =
-                                Library.open-playlist-name;
-                            Library.renaming-for = "";
-                        }
-                    }
-                }
-                // 歌手页才有(#161)。按名字屏蔽:曲目上只带歌手名,不带 id。
-                // 两个名字对得上才算歌手页 —— 点开歌单时标题就换了。
-                if Library.open-artist-name != ""
-                    && Library.open-artist-name == Library.open-playlist-name:
-                // 小胶囊而不是 HoverButton:那个定高 56px、18px 字,塞进 28px 的
-                // 标题行会溢出去压住下面的分组条
-                block-artist-button := Rectangle {
-                    width: block-artist-label.preferred-width + 24px;
-                    border-radius: Radius.pill;
-                    background: block-artist-touch.has-hover ? Theme.hover : Theme.hover;
-                    border-width: 1px;
-                    border-color: Theme.line;
-                    accessible-role: button;
-                    accessible-label: "屏蔽该歌手";
-                    accessible-action-default => {
-                        Library.block-artist(Library.open-artist-name);
-                    }
-
-                    block-artist-label := Text {
-                        text: "屏蔽该歌手";
-                        font-size: TextSize.small;
-                        color: Theme.text-dim;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    block-artist-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            Library.block-artist(Library.open-artist-name);
-                        }
-                    }
-                }
-            }
-
             // 「把刚才那批加进来」。只在本地歌单详情、且刚才
             // 确实有一批歌时出现 —— 进歌单那一刻 Player.tracks 就被
             // 换掉了,所以那一批由 Rust 在打开前存下来。
             if Library.open-playlist-local
                 && Library.add-batch-text != "":
-            add-batch-row := HoverButton {
-                // 不写宽度就是 HoverButton 默认的定宽 220px,而列里
-                // 一个定宽子元素会把整列的宽度上限锁成 220 —— 横屏下
-                // 曲目标题全被挤成「…」(#130)。
-                width: 100%;
-                height: 30px;
-                text: Library.add-batch-text;
-                clicked => { Library.add-batch(); }
+            add-batch-row := HorizontalLayout {
+                alignment: start;
+                Button {
+                    kind: ButtonKind.secondary;
+                    small: true;
+                    icon: Icons.plus;
+                    text: Library.add-batch-text;
+                    clicked => { Library.add-batch(); }
+                }
             }
 
-            // 平台给不出详情的那几首。摆在列表末尾:它说的是
-            // 「上面那批之外还有」,不是一个可点的条目。
+            // 平台给不出详情的那几首。它说的是「这批之外还有」,不是一个可点的条目。
             if Library.unavailable-note != "":
             unavailable-row := Text {
-                height: 30px;
                 text: Library.unavailable-note;
-                color: Theme.text-dim;
-                vertical-alignment: center;
+                color: Theme.text-faint;
+                font-size: TextSize.small;
             }
 
             // 新建歌单。摆在列表那一层的顶上 ——
             // 名字由回调带出来,因为这个输入框在 `if` 里,
             // Rust 引用不到它。
-            // 行高不写死,跟着 LineEdit 走:它实际 56px 高,钉成 32px
-            // 就溢出来压住列表首行(#130)。
-            if Shell.destination == 1
-                && Library.open-playlist-name == "":
+            if Shell.destination == 1 && !root.detail:
             new-playlist-row := HorizontalLayout {
                 spacing: Space.sm;
 
-                new-name := LineEdit {
+                new-name := TextField {
                     horizontal-stretch: 1;
-                    placeholder-text: "新建歌单";
+                    max-width: 420px;
+                    icon: Icons.plus;
+                    placeholder: "新建歌单";
                     accepted => {
                         Library.create-playlist(self.text);
                         self.text = "";
                     }
                 }
-                HoverButton {
-                    width: 56px;
-                    text: "新建";
-                    clicked => {
-                        Library.create-playlist(new-name.text);
-                        new-name.text = "";
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        kind: ButtonKind.secondary;
+                        text: "新建";
+                        clicked => {
+                            Library.create-playlist(new-name.text);
+                            new-name.text = "";
+                        }
                     }
                 }
+                Rectangle { horizontal-stretch: 1; }
             }
 
             // 歌单分区的列表那一层。
-            if Shell.destination == 1
-                && Library.open-playlist-name == "":
+            if Shell.destination == 1 && !root.detail:
             playlist-list := PlaylistList {
                 vertical-stretch: 1;
                 playlists: Library.playlists;
@@ -458,8 +460,7 @@ export component MusicPage inherits VerticalLayout {
             }
 
             // 搜索的歌手页签。
-            if Shell.destination == 2
-                && Library.open-playlist-name == ""
+            if Shell.destination == 2 && !root.detail
                 && Library.search-tab == 1:
             artist-list := ArtistList {
                 artists: Library.found-artists;
@@ -470,8 +471,7 @@ export component MusicPage inherits VerticalLayout {
 
             // 搜索的歌单页签。与「我的歌单」同一个组件、
             // 不同的一份数据 —— 点开走的也是同一条路。
-            if Shell.destination == 2
-                && Library.open-playlist-name == ""
+            if Shell.destination == 2 && !root.detail
                 && Library.search-tab == 2:
             found-playlist-list := PlaylistList {
                 vertical-stretch: 1;
@@ -481,57 +481,56 @@ export component MusicPage inherits VerticalLayout {
                 }
             }
 
-            // 曲目列表。四种情况摆它:每日推荐、最近播放、
-            // 搜索的歌曲页签,以及任何一层详情(歌单或歌手)——
             // 电台区(#186):账号一份的共享歌单。「加载新歌」让服务端追加一批,
             // 哪台加的所有设备都刷新;「已听过」切去摆听过的那些,还能点。
             // 摆在空状态之上:「已听过」里一首都没有时,切回去的键不能跟着消失。
-            if Shell.destination == 4
-                && Library.open-playlist-name == "":
+            if Shell.destination == 4 && !root.detail:
             radio-row := HorizontalLayout {
                 spacing: Space.sm;
                 alignment: start;
 
-                // 药丸,与分组条同一形状(MEO-1878)。「加载新歌」是本页的主动作,实心;
-                // 「已听过」是视图切换,切过去时亮起。
-                radio-load-more := Pill {
+                radio-load-more := Button {
+                    kind: ButtonKind.secondary;
+                    small: true;
+                    icon: Icons.plus;
                     text: Player.radio-loading ? "加载中" : "加载新歌";
-                    selected: true;
-                    checkable: false;
                     enabled: !Player.radio-loading;
                     clicked => { Player.radio-load-more(); }
                 }
-                radio-heard := Pill {
-                    text: Player.radio-heard ? "未听过" : "已听过";
+                radio-heard := Chip {
+                    kind: ChipKind.toggle;
+                    icon: Icons.headphones;
+                    text: "已听过";
                     selected: Player.radio-heard;
-                    checkable: false;
                     clicked => { Player.radio-toggle-heard(); }
                 }
             }
 
-            // 日推和电台同一套:没听的摆主列表,听过的切到这里看。
-            if Shell.destination == 0
-                && Library.open-playlist-name == "":
-            daily-row := HorizontalLayout {
-                spacing: Space.sm;
-                alignment: start;
-
-                daily-heard := Pill {
-                    text: Player.daily-heard ? "未听过" : "已听过";
-                    selected: Player.daily-heard;
-                    checkable: false;
-                    clicked => { Player.daily-toggle-heard(); }
-                }
+            // 分组条与筛选(#160):凡是摆一批歌单类曲目的地方都有 —— 日推、最近、
+            // 电台、某个歌单、某位歌手。搜索结果不是歌单,不挂。卡墙在它下面,
+            // 于是卡墙也能筛;选了分组 Rust 会把卡墙切回列表。
+            // 日推的「已听过」开关排在这一行的最前面(与电台那颗同一个用法)。
+            if (Player.facets-enabled
+                && (root.detail
+                    || Shell.destination == 0
+                    || Shell.destination == 3
+                    || Shell.destination == 4
+                    || Shell.destination == 6))
+                || (Shell.destination == 0 && !root.detail):
+            facet-bar := FacetBar {
+                show-groups: Player.facets-enabled;
+                daily-heard-toggle: Shell.destination == 0 && !root.detail;
             }
 
-            // 空状态:该有一批歌的地方一首都没有。大标题 +
-            // 一个真动作(拉一批推荐);设计稿里的「打开本地
-            // 文件夹」等入口等功能存在了再上(硬规则 8)。
+            if Player.chosen-count > 0 && Player.tracks.length == 0: filtered-empty := FilteredEmpty { }
+
+            // 空状态:该有一批歌的地方一首都没有。图标、一句标题、一句怎么填上它,
+            // 一颗次要按钮去能填上它的地方。设计稿里的「打开本地文件夹」等入口
+            // 等功能存在了再上(硬规则 8)。
             if Shell.music-empty:
             empty-state := VerticalLayout {
                 vertical-stretch: 1;
                 alignment: center;
-                spacing: Space.md;
 
                 // 这个视图还一份都没有、正在取:说「在路上」,不说「一首都没有」,
                 // 也不摆换一批推荐 —— 那会把人从正在进的视图拽走(#137 ④)。
@@ -544,96 +543,51 @@ export component MusicPage inherits VerticalLayout {
                     horizontal-alignment: center;
                 }
 
-                if !Player.tracks-loading: Text {
-                    text: "点一首歌开始";
-                    font-weight: 700;
-                    font-size: TextSize.display;
-                    color: Theme.text;
-                    horizontal-alignment: center;
-                }
-                if !Player.tracks-loading: Text {
-                    text: "点云在待机,选一首它就活过来";
-                    font-size: TextSize.small;
-                    color: Theme.text-dim;
-                    horizontal-alignment: center;
-                }
-                if !Player.tracks-loading: HorizontalLayout {
-                    alignment: center;
-                    empty-daily := Rectangle {
-                        // 定宽:光带纹理的尺寸在 lib.rs 有一份镜像,跟着 preferred-width
-                        // 走的话两边会各算各的。
-                        width: 150px;
-                        height: 38px;
-                        border-radius: Radius.pill;
-                        clip: true;
-                        background: empty-daily-touch.has-hover
-                            ? Theme.accent.darker(0.2) : Theme.accent;
-                        accessible-role: button;
-                        accessible-label: "换一批推荐";
-                        accessible-action-default => { Player.daily(); }
-
-                        // §9:光带纹理垫底(ribbon 绿板)。
-                        if Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0: Image {
-                            width: 100%;
-                            height: 100%;
-                            source: Shell.empty-daily-bg;
-                        }
-
-                        empty-daily-label := Text {
-                            text: "换一批推荐";
-                            font-size: TextSize.body;
-                            // 光带底是深的,字换近白;关掉开关回 accent 实底的深墨。
-                            color: Shell.aurora-buttons-on && Shell.empty-daily-bg.width > 0
-                                ? Theme.immersive-text : Theme.accent-text;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        empty-daily-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { Player.daily(); }
-                            changed has-hover => {
-                                Shell.empty-daily-hover = self.has-hover;
-                            }
-                            moved => {
-                                Shell.empty-daily-px = self.mouse-x / max(self.width, 1px);
-                                Shell.empty-daily-py = 1 - self.mouse-y / max(self.height, 1px);
-                            }
+                if !Player.tracks-loading: EmptyState {
+                    compact: Shell.compact;
+                    icon: root.detail ? Icons.playlist
+                        : Shell.destination == 6 ? Icons.heart
+                        : Shell.destination == 3 ? Icons.clock-counter-clockwise
+                        : Shell.destination == 2 ? Icons.magnifying-glass
+                        : Icons.calendar-blank;
+                    title: root.detail ? "这里还没有歌"
+                        : Shell.destination == 6 ? "还没有喜欢的歌"
+                        : Shell.destination == 3 ? "还没有播放记录"
+                        : Shell.destination == 2 ? "没有找到歌"
+                        : "点一首歌开始";
+                    body: root.detail ? "在别的列表里长按一首歌,可以把它加进来。"
+                        : Shell.destination == 6 ? "在列表里点红心,歌会收进这里。"
+                        : Shell.destination == 3 ? "放过的歌会按时间排在这里。"
+                        : Shell.destination == 2 ? "换个关键词,或者搜歌手和歌单。"
+                        : "点云在待机,选一首它就活过来。";
+                    action: Shell.destination == 0 && !root.detail ? "换一批推荐"
+                        : Shell.destination == 6 || Shell.destination == 3 ? "去每日推荐挑歌"
+                        : "";
+                    action-icon: Shell.destination == 0 ? Icons.arrow-clockwise : Icons.calendar-blank;
+                    act => {
+                        if (Shell.destination == 0) {
+                            Player.daily();
+                        } else {
+                            Destinations.go(0);
                         }
                     }
                 }
             }
 
-            // 分组条与筛选(#160):凡是摆一批歌单类曲目的地方都有 —— 日推、最近、
-            // 电台、某个歌单、某位歌手。搜索结果不是歌单,不挂。卡墙在它下面,
-            // 于是卡墙也能筛;选了分组 Rust 会把卡墙切回列表。
-            if Player.facets-enabled
-                && (Library.open-playlist-name != ""
-                    || Shell.destination == 0
-                    || Shell.destination == 3
-                    || Shell.destination == 4
-                    || Shell.destination == 6):
-            facet-bar := FacetBar { }
-
             // 墙只在每日推荐分区才有东西可摆。别处也实例化的话,
-            // 空的它仍占一格 12px 间距,列表底下凭空多一条缝(#130)。
+            // 空的它仍占一格间距,列表底下凭空多一条缝(#130)。
             if Shell.wall-supported
                 && Shell.destination == 0
-                && Library.open-playlist-name == "":
+                && !root.detail:
             WallView { }
 
+            // 宽版式的表头,与行同一套列宽。
+            if root.list-shown && Shell.wide: TrackHeader { }
 
             // 它们都是「一批歌」。墙可见时列表让位 ——
             // 同一批卡的两种摆法,不同时出现。一首都没有时让位给上面的
             // 空状态:两个都在的话各分一截,下半页是一张空列表(#116)。
-            if Player.tracks.length > 0
-                && (Library.open-playlist-name != ""
-                    || Shell.destination == 0
-                    || Shell.destination == 3
-                    || Shell.destination == 4
-                    || Shell.destination == 6
-                    || (Shell.destination == 2
-                        && Library.search-tab == 0))
-                && !Shell.wall-visible:
+            if root.list-shown:
             track-list := TrackList {
                 vertical-stretch: 1;
                 tracks: Player.tracks;
@@ -644,9 +598,6 @@ export component MusicPage inherits VerticalLayout {
                 scroll-done <=> Player.list-scroll-done;
                 changed content-y => { Player.list-scroll-y = self.content-y; }
                 init => { Player.list-scroll-y = self.content-y; }
-                // 最近播放画成时间轴,别的分区还是平列表。
-                timeline: Shell.destination == 3
-                    && Library.open-playlist-name == "";
                 // 只有本地歌单的内容能移出去
                 removable: Library.open-playlist-local;
                 play(id) => { Player.play(id); }

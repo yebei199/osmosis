@@ -63,14 +63,13 @@ pub fn show_to_profile(ui: &MainWindow, text: String) {
 /// 而点它还顺手把这句话清掉。
 pub fn banner_without_link(ui: &MainWindow, text: String) {
     ui.global::<Shell>().set_banner_destination(NOWHERE);
-    ui.global::<Shell>().set_banner_text(text.into());
+    put(ui, &text);
 }
 
 /// 落一句提示,并说明它点下去去哪一页。
 fn show_at(ui: &MainWindow, text: String, tab: i32) {
     ui.global::<Shell>().set_banner_destination(tab);
-    ui.global::<Shell>()
-        .set_banner_text(text.clone().into());
+    put(ui, &text);
 
     let weak = ui.as_weak();
     slint::Timer::single_shot(NOTICE_LIFETIME, move || {
@@ -81,6 +80,35 @@ fn show_at(ui: &MainWindow, text: String, tab: i32) {
             ui.global::<Shell>().set_banner_text(slint::SharedString::new());
         }
     });
+}
+
+/// 写横幅:整句,以及从它拆出的标题与细节(提示卡上分两行画)。
+fn put(ui: &MainWindow, text: &str) {
+    let (title, detail) = split(text);
+    let shell = ui.global::<Shell>();
+    shell.set_banner_title(title.into());
+    shell.set_banner_detail(detail.into());
+    shell.set_banner_text(text.into());
+}
+
+/// 一句提示拆成标题与细节:第一个冒号之前是「出了什么事」,之后是原因。
+///
+/// 提示几乎都是 `format!("{what}: {err}")` 拼的,冒号就是那道缝;没有冒号的
+/// 整句当标题。全角与半角冒号都认 —— 文案两种都写过。
+fn split(text: &str) -> (&str, &str) {
+    text.find([':', '：'])
+        .map(|i| {
+            let (head, tail) = text.split_at(i);
+            let tail = tail
+                .char_indices()
+                .nth(1)
+                .map_or("", |(j, _)| &tail[j..]);
+            (head.trim(), tail.trim())
+        })
+        .filter(|(head, tail)| {
+            !head.is_empty() && !tail.is_empty()
+        })
+        .unwrap_or((text, ""))
 }
 
 #[cfg(test)]
@@ -171,5 +199,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 冒号前是标题、冒号后是细节;没有冒号或冒号挨着边的,整句当标题。
+    #[test]
+    fn a_notice_splits_at_its_first_colon() {
+        assert_eq!(
+            super::split("取歌单失败: 上游超时: 502"),
+            ("取歌单失败", "上游超时: 502")
+        );
+        assert_eq!(
+            super::split("下不了：只有试听片段"),
+            ("下不了", "只有试听片段")
+        );
+        assert_eq!(
+            super::split("声音没了"),
+            ("声音没了", "")
+        );
+        assert_eq!(super::split("失败:"), ("失败:", ""));
     }
 }

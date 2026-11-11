@@ -32,6 +32,10 @@ export global Shell {
     // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
     // in-out:关闭按钮由这一侧清空,不必为「关掉一条提示」往 Rust 回一趟。
     in-out property <string> banner-text;
+    // 同一句话拆成的标题与细节(「取歌单失败」/「上游超时」),由 notice.rs 写。
+    // 标题为空时界面把整句当标题 —— 不经 notice.rs 的写者也照样显示得出来。
+    in property <string> banner-title;
+    in property <string> banner-detail;
     // 这句提示点下去该去哪个目的地(destination 的编号),-1 = 点不了。
     //
     // 「网易云没绑」那一句要能直达个人页:说出问题却不给去处,用户只能自己

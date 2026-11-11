@@ -40,11 +40,15 @@ export struct TrackRow {
     header: bool,
     // 这个堆头折着,底下的歌不摆。
     collapsed: bool,
+    // 宽版式行首的序号,从 1 起,堆头不占号。0 = 不标(队列页那种不编号的列表)。
+    number: int,
 }
 
-// 筛选条上的一个 chip(#160)。text 已格式化好(「有歌词 12」)。
+// 筛选条上的一个 chip(#160):取值(「有歌词」)与这一值下有几首(「12」),
+// 两段分开画,计数是淡色的小字。
 export struct FacetChip {
     text: string,
+    count: string,
     chosen: bool,
 }
 

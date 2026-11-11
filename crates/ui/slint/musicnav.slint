@@ -6,8 +6,9 @@
 // 编号沿用原音乐分区的 id(0 每日推荐、1 我的歌单、2 搜索、3 最近播放、4 电台、
 // 5 已下载),后加的接着排(6 我喜欢、7 个人、8 设置、9 已屏蔽)。编号与摆放顺序分开:
 // Rust 侧与测试里按编号判目的地的地方有几十处,插队会让它们全体挪位。
-import { Theme, Radius, Motion, Space, Type, TextSize } from "theme.slint";
+import { Theme, Radius, Motion, Space, Type, TextSize, Weight, Elevation } from "theme.slint";
 import { Shell } from "globals/shell.slint";
+import { Icon, Icons } from "icons.slint";
 
 export struct Destination {
     // 编号,即 Shell.destination 的取值。
@@ -16,27 +17,29 @@ export struct Destination {
     label: string,
     // 底栏上显示的字。底栏一格只有窗口宽的五分之一,四个字摆不下。
     short: string,
-    icon: string,
+    // 常态的线条图标与选中时的实心图标(Phosphor 的 Regular 与 Fill)。
+    icon: image,
+    icon-on: image,
 }
 
 export global Destinations {
     // 侧栏三组,从上到下。分组之间只留视觉间隔,没有父级页面。
     out property <[Destination]> listen: [
-        { id: 0, label: "每日推荐", short: "推荐", icon: "M4 6 L20 6 L20 20 L4 20 Z M4 10 L20 10 M8 3 L8 7 M16 3 L16 7" },
-        { id: 4, label: "电台", short: "电台", icon: "M4 9 L20 9 L20 20 L4 20 Z M7 9 L17 4 M14 14.5 A2.5 2.5 0 1 1 19 14.5 A2.5 2.5 0 1 1 14 14.5 M7 13 L11 13 M7 16 L11 16" },
-        { id: 2, label: "搜索", short: "搜索", icon: "M10.5 4 A6.5 6.5 0 1 1 10.5 17 A6.5 6.5 0 1 1 10.5 4 M15.5 15.5 L20 20" },
+        { id: 0, label: "每日推荐", short: "推荐", icon: Icons.calendar-blank, icon-on: Icons.calendar-blank-fill },
+        { id: 4, label: "电台", short: "电台", icon: Icons.radio, icon-on: Icons.radio-fill },
+        { id: 2, label: "搜索", short: "搜索", icon: Icons.magnifying-glass, icon-on: Icons.magnifying-glass-fill },
     ];
     out property <[Destination]> library: [
-        { id: 6, label: "我喜欢", short: "我喜欢", icon: "M12 20 C5 15 3 11.5 3 8.5 C3 6 5 4 7.5 4 C9.5 4 11 5.2 12 7 C13 5.2 14.5 4 16.5 4 C19 4 21 6 21 8.5 C21 11.5 19 15 12 20 Z" },
-        { id: 1, label: "我的歌单", short: "歌单", icon: "M4 6 L20 6 M4 11 L20 11 M4 16 L13 16 M17 14 L17 20 L21 18" },
-        { id: 3, label: "最近播放", short: "最近", icon: "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 M12 7 L12 12 L15.5 14" },
-        { id: 5, label: "已下载", short: "已下载", icon: "M12 4 L12 15 M7 10 L12 15 L17 10 M5 19 L19 19" },
+        { id: 6, label: "我喜欢", short: "我喜欢", icon: Icons.heart, icon-on: Icons.heart-fill },
+        { id: 1, label: "我的歌单", short: "歌单", icon: Icons.playlist, icon-on: Icons.playlist-fill },
+        { id: 3, label: "最近播放", short: "最近", icon: Icons.clock-counter-clockwise, icon-on: Icons.clock-counter-clockwise-fill },
+        { id: 5, label: "已下载", short: "已下载", icon: Icons.download-simple, icon-on: Icons.download-simple-fill },
     ];
     // 沉底那组。
     out property <[Destination]> account: [
-        { id: 7, label: "个人", short: "个人", icon: "M12 4 A4 4 0 1 1 12 12 A4 4 0 1 1 12 4 M4 20 C4 16 8 14 12 14 C16 14 20 16 20 20" },
-        { id: 9, label: "已屏蔽", short: "已屏蔽", icon: "M12 3 A9 9 0 1 1 12 21 A9 9 0 1 1 12 3 M5.6 5.6 L18.4 18.4" },
-        { id: 8, label: "设置", short: "设置", icon: "M12 9 A3 3 0 1 1 12 15 A3 3 0 1 1 12 9 M12 2 L12 5 M12 19 L12 22 M2 12 L5 12 M19 12 L22 12 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M19.1 4.9 L17 7 M7 17 L4.9 19.1" },
+        { id: 7, label: "个人", short: "个人", icon: Icons.user, icon-on: Icons.user-fill },
+        { id: 9, label: "已屏蔽", short: "已屏蔽", icon: Icons.prohibit, icon-on: Icons.prohibit-fill },
+        { id: 8, label: "设置", short: "设置", icon: Icons.gear-six, icon-on: Icons.gear-six-fill },
     ];
 
     // 紧凑版式底栏的四格与「更多」面板里的六项,从上面三组里取,标签不另抄一份。
@@ -44,7 +47,7 @@ export global Destinations {
     out property <[Destination]> more: [listen[1], library[2], library[3], account[0], account[1], account[2]];
     out property <Destination> more-entry: {
         id: -1, label: "更多", short: "更多",
-        icon: "M4 12 A1.6 1.6 0 1 1 7.2 12 A1.6 1.6 0 1 1 4 12 M10.4 12 A1.6 1.6 0 1 1 13.6 12 A1.6 1.6 0 1 1 10.4 12 M16.8 12 A1.6 1.6 0 1 1 20 12 A1.6 1.6 0 1 1 16.8 12",
+        icon: Icons.dots-three, icon-on: Icons.dots-three,
     };
 
     in-out property <bool> more-open: false;
@@ -76,49 +79,42 @@ export global Destinations {
     }
 }
 
-// 侧栏一行:图标 + 全名。选中态由背后的水滴提供(GPU 构建),否则自己画底。
+// 侧栏一行:图标 + 全名。选中态由背后那颗玻璃药丸提供(app.slint 的 nav-lead / nav-lag),
+// 行自己只画悬停那一层淡底,不画选中底 —— 画了就和药丸叠两遍。
 export component SideNavRow inherits Rectangle {
     in property <Destination> item;
     in property <bool> active;
-    in property <bool> gpu-selected;
     callback clicked;
 
     border-radius: Radius.sm;
-    background: root.gpu-selected
-        ? (touch.has-hover ? Theme.press : transparent)
-        : (root.active ? Theme.raised : (touch.has-hover ? Theme.hover : transparent));
+    background: touch.has-hover && !root.active ? Theme.hover : transparent;
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
     HorizontalLayout {
         padding-left: Space.md;
-        padding-right: Space.sm;
+        padding-right: Space.md;
         spacing: Space.md;
 
         VerticalLayout {
             alignment: center;
-            Path {
-                width: 20px;
-                height: 20px;
-                viewbox-width: 24;
-                viewbox-height: 24;
-                commands: root.item.icon;
-                stroke: root.active ? Theme.accent : Theme.text-dim;
-                stroke-width: 1.8px;
-                fill: transparent;
+            Icon {
+                source: root.active ? root.item.icon-on : root.item.icon;
+                colorize: root.active ? Theme.accent-ink : Theme.text-faint;
             }
         }
         Text {
             horizontal-stretch: 1;
             text: root.item.label;
-            color: root.active ? Theme.text : Theme.text-dim;
+            color: root.active || touch.has-hover ? Theme.text : Theme.text-dim;
             font-size: TextSize.body;
-            font-weight: root.active ? 700 : 500;
+            font-weight: root.active ? Weight.semibold : Weight.regular;
             vertical-alignment: center;
             overflow: elide;
         }
     }
 
     touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
         accessible-role: tab;
         accessible-label: root.item.label;
@@ -128,70 +124,75 @@ export component SideNavRow inherits Rectangle {
     }
 }
 
-// 「更多」面板:贴着底栏上沿的一块平铺,五项一行。点一项直达并收起;
+// 「更多」面板:贴着底栏上沿的一张浮起的卡,六项一行。点一项直达并收起;
 // 点面板外面也收起。不常驻,所以不是第二根导航条。
 export component MorePanel inherits Rectangle {
-    background: Theme.scrim.with-alpha(0.4);
+    background: Theme.scrim;
 
     TouchArea {
         clicked => { Destinations.more-open = false; }
     }
 
     Rectangle {
-        x: 12px;
-        width: parent.width - 24px;
-        height: 92px;
-        y: parent.height - self.height - 12px;
-        background: Theme.surface;
-        border-radius: Radius.md;
-        border-width: 1px;
+        x: Space.sm;
+        width: parent.width - Space.sm * 2;
+        height: grid.preferred-height;
+        y: parent.height - self.height - Space.sm;
+        background: Theme.raised;
+        border-radius: Radius.lg;
+        drop-shadow-offset-y: Elevation.overlay-y;
+        drop-shadow-blur: Elevation.overlay-blur;
+        drop-shadow-spread: Elevation.overlay-spread;
+        drop-shadow-color: Elevation.overlay-color;
+        border-width: Theme.dark ? 0px : 1px;
         border-color: Theme.line;
+        inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+        inner-shadow-color: Theme.edge;
 
         // 吞掉面板上的点击,免得落到下面那层收起面板。
         TouchArea {}
 
-        HorizontalLayout {
+        grid := VerticalLayout {
             padding: Space.sm;
-            spacing: Space.xs;
 
-            for entry in Destinations.more: Rectangle {
-                horizontal-stretch: 1;
-                border-radius: Radius.md;
-                background: Shell.destination == entry.id ? Theme.raised
-                    : (item.has-hover ? Theme.hover : transparent);
+            HorizontalLayout {
+                spacing: Space.xs;
+                for entry in Destinations.more: Rectangle {
+                    horizontal-stretch: 1;
+                    height: 68px;
+                    border-radius: Radius.md;
+                    background: Shell.destination == entry.id ? Theme.accent-wash
+                        : (item.has-hover ? Theme.hover : transparent);
 
-                VerticalLayout {
-                    alignment: center;
-                    spacing: Space.xs;
-                    HorizontalLayout {
+                    VerticalLayout {
                         alignment: center;
-                        Path {
-                            width: 22px;
-                            height: 22px;
-                            viewbox-width: 24;
-                            viewbox-height: 24;
-                            commands: entry.icon;
-                            stroke: Shell.destination == entry.id ? Theme.accent : Theme.text-dim;
-                            stroke-width: 1.8px;
-                            fill: transparent;
+                        spacing: Space.xs;
+                        HorizontalLayout {
+                            alignment: center;
+                            Icon {
+                                size: 22px;
+                                source: Shell.destination == entry.id ? entry.icon-on : entry.icon;
+                                colorize: Shell.destination == entry.id ? Theme.accent-ink : Theme.text-dim;
+                            }
+                        }
+                        Text {
+                            text: entry.label;
+                            color: Shell.destination == entry.id ? Theme.text : Theme.text-dim;
+                            font-size: TextSize.caption;
+                            font-weight: Shell.destination == entry.id ? Weight.semibold : Weight.regular;
+                            horizontal-alignment: center;
+                            overflow: elide;
                         }
                     }
-                    Text {
-                        text: entry.label;
-                        color: Shell.destination == entry.id ? Theme.text : Theme.text-dim;
-                        font-size: TextSize.small;
-                        horizontal-alignment: center;
-                        overflow: elide;
-                    }
-                }
 
-                item := TouchArea {
-                    clicked => { Destinations.go(entry.id); }
-                    accessible-role: tab;
-                    accessible-label: entry.label;
-                    accessible-checkable: true;
-                    accessible-checked: Shell.destination == entry.id;
-                    accessible-action-default => { Destinations.go(entry.id); }
+                    item := TouchArea {
+                        clicked => { Destinations.go(entry.id); }
+                        accessible-role: tab;
+                        accessible-label: entry.label;
+                        accessible-checkable: true;
+                        accessible-checked: Shell.destination == entry.id;
+                        accessible-action-default => { Destinations.go(entry.id); }
+                    }
                 }
             }
         }
@@ -214,35 +215,59 @@ export global SearchTabs {
     ];
 }
 
+// 下划线页签:字 + 淡色计数,选中那个加粗、底下一道强调色的线。
 export component SearchTabBar inherits Rectangle {
     in property <int> current;
+    // 每一类搜到几条,与 SearchTabs.items 同序。没搜过时都是 0,不画。
+    in property <[int]> counts;
 
     callback selected(int);
 
-    height: 30px;
-    background: Theme.hover;
-    border-radius: Radius.sm;
+    height: 42px;
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
 
     HorizontalLayout {
-        padding: Space.xs;
-        spacing: Space.xs;
+        alignment: start;
+        spacing: Shell.compact ? 22px : 28px;
 
-        for item[i] in SearchTabs.items: Rectangle {
-            horizontal-stretch: 1;
-            border-radius: Radius.sm;
-            background: root.current == i ? Theme.accent.with-alpha(0.2) : transparent;
-            animate background { duration: Motion.fast; easing: Motion.ease; }
+        for item[i] in SearchTabs.items: tab-cell := Rectangle {
+            width: tab-row.preferred-width;
+            accessible-role: tab;
+            accessible-label: item.label;
+            accessible-checkable: true;
+            accessible-checked: root.current == i;
+            accessible-action-default => { root.selected(i); }
 
-            TouchArea {
-                clicked => { root.selected(i); }
+            tab-row := HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: item.label;
+                    color: root.current == i ? Theme.text : Theme.text-dim;
+                    font-size: TextSize.body;
+                    font-weight: root.current == i ? Weight.semibold : Weight.regular;
+                    vertical-alignment: center;
+                }
+                if root.counts[i] > 0: Text {
+                    text: root.counts[i];
+                    color: Theme.text-faint;
+                    font-size: TextSize.caption;
+                    vertical-alignment: center;
+                }
             }
-
-            Text {
-                text: item.label;
-                color: root.current == i ? Theme.accent-ink : Theme.text-dim;
-                font-size: TextSize.small;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            if root.current == i: Rectangle {
+                y: parent.height - 2px;
+                height: 2px;
+                border-radius: 1px;
+                background: Theme.accent;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.selected(i); }
             }
         }
     }

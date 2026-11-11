@@ -55,15 +55,17 @@ impl LyricPush {
         }
     }
 
-    /// 歌词页整窗,只在换窗或换歌时重建。
+    /// 歌词那一窗(歌词页,以及播放页上内联的那几行),只在换窗或换歌时重建。
     pub(crate) fn tick_window(
         &mut self,
         ui: &MainWindow,
         lyrics: &LyricFeed,
     ) {
-        // ── 歌词页整窗 ──
-        // 只在歌词页展开时算:收起时那一窗谁也看不见。
-        if ui.global::<Viz>().get_lyrics_page_open() {
+        // ── 歌词整窗 ──
+        // 播放页开着就算:内联歌词读的也是这一窗。收起时谁也看不见。
+        if ui.global::<Viz>().get_lyrics_page_open()
+            || ui.global::<Shell>().get_play_page_open()
+        {
             let browse =
                 ui.global::<Viz>().get_lyric_browse();
             match lyrics.window(browse) {

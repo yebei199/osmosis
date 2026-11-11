@@ -43,11 +43,35 @@ fn cover_pixels(
 }
 
 /// 后台解出来的一张封面:原尺寸像素(UI 线程包成 `slint::Image`)、
-/// 点云用的缩小像素、极光用的三个主色。全都能过线程。
+/// 播放页背景用的糊图、点云用的缩小像素、极光用的三个主色。全都能过线程。
 pub struct DecodedCover {
     pub full: SharedPixelBuffer<Rgba8Pixel>,
+    pub blurred: SharedPixelBuffer<Rgba8Pixel>,
     pub pixels: CoverPixels,
     pub colors: Option<[[u8; 3]; 3]>,
+}
+
+/// 播放页背景那张糊图的边长。缩到这么小再糊一遍,界面放大铺满时
+/// 双线性插值把它抹成一片柔光 —— 每首歌只算一次,不进渲染循环,不要 shader。
+pub const BLURRED_SIZE: u32 = 48;
+
+/// 封面缩小再高斯糊一遍。
+fn blurred_of(
+    decoded: &image::DynamicImage,
+) -> SharedPixelBuffer<Rgba8Pixel> {
+    let small = decoded
+        .resize_exact(
+            BLURRED_SIZE,
+            BLURRED_SIZE,
+            image::imageops::FilterType::Triangle,
+        )
+        .to_rgba8();
+    let soft = image::imageops::blur(&small, 3.0);
+    SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        soft.as_raw(),
+        BLURRED_SIZE,
+        BLURRED_SIZE,
+    )
 }
 
 /// 同时在解的封面数上限的那道门。
@@ -136,6 +160,7 @@ fn decode_detached(bytes: &[u8]) -> Option<DecodedCover> {
             w,
             h,
         ),
+        blurred: blurred_of(&decoded),
         pixels,
         colors,
     })

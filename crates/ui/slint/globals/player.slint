@@ -15,7 +15,9 @@ export global Player {
     in property <bool> tracks-loading: false;
     // 曲目列表一行多高:歌与堆头。列表照它摆,Rust 照它算第几行在哪(换模型时
     // 把眼前那一行钉住、打开日推时滚到在放的那一行),两边只有这一份数。
-    out property <length> track-row-height: 56px;
+    // 歌那一行随版式变(Layout.row-h / row-h-compact),由 app.slint 跟着版式写;
+    // 这里引不了 Shell(Shell 引着这里)。
+    in-out property <length> track-row-height: 56px;
     out property <length> pile-row-height: 44px;
     // 音乐页曲目列表滚到哪(ListView 的 content-y,往下滚为负)。列表自己写,
     // Rust 只读。
@@ -87,6 +89,10 @@ export global Player {
     callback music-shown();
     // 放某首歌。参数是 TrackRow 的 id。
     callback play(string);
+    // 页头的「播放」:从当前这一批的第一首放起。
+    callback play-all();
+    // 当前这一批有几首(筛过之后;堆头不算)。页头那句「N 首」读它。
+    in property <int> track-count: 0;
     // 某一行滑进了可见区,它要这张封面。参数是 TrackRow 的 cover-url ——
     // 列表虚拟化之后,「哪一行现在是哪一首」只有界面知道(见 tracklist.slint)。
     callback needs-cover(string);

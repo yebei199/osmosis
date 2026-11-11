@@ -41,6 +41,7 @@ fn one_track(ui: &MainWindow) {
             cover: slint::Image::default(),
             header: false,
             collapsed: false,
+            number: 1,
         }]),
     ));
 }
@@ -141,16 +142,16 @@ fn the_track_list_spans_the_column_in_landscape() {
 
     let content = element(&ui, "MainWindow::content");
     let list = element(&ui, "MusicPage::track-list");
-    // 页面右 padding 16px,列表的右边就是内容区右边往里 16px。
+    // 宽版式的内容面板右边让出 8px 的 gutter,页面再有 32px 的页边距。
     assert_eq!(
         right(&list),
-        right(&content) - 16.0,
+        right(&content) - 8.0 - 32.0,
         "曲目列表宽 {},没铺满内容列",
         list.size().width
     );
 }
 
-/// 宽屏(MEO-1878):歌手与专辑各占一列,专辑格写的是专辑名。
+/// 宽屏(MEO-1878):专辑单占一列,在歌名(连着下面那行歌手)的右边。
 #[test]
 fn wide_layout_splits_the_row_into_columns() {
     let ui = music_page(1400.0, 900.0, 0);
@@ -158,16 +159,15 @@ fn wide_layout_splits_the_row_into_columns() {
     one_track(&ui);
 
     let album = element(&ui, "TrackList::album-cell");
-    let artists = element(&ui, "TrackList::artists-cell");
+    let title = element(&ui, "TrackList::title-cell");
     assert!(
         album.size().width > 100.0,
         "专辑列太窄:{}",
         album.size().width
     );
     assert!(
-        artists.absolute_position().x
-            < album.absolute_position().x,
-        "歌手列该在专辑列左边"
+        right(&title) < album.absolute_position().x,
+        "专辑列该在歌名列右边"
     );
 }
 
@@ -201,8 +201,9 @@ fn music_page_is_capped_and_centered() {
         "宽 {}",
         page.size().width
     );
-    let left_gap = page.absolute_position().x - 168.0;
-    let right_gap = 1900.0 - right(&page);
+    // 侧栏 224 宽;内容面板右边让出 8px 的 gutter。
+    let left_gap = page.absolute_position().x - 224.0;
+    let right_gap = 1900.0 - 8.0 - right(&page);
     assert!(
         (left_gap - right_gap).abs() < 1.0,
         "左 {left_gap} 右 {right_gap}"
@@ -213,7 +214,8 @@ fn music_page_is_capped_and_centered() {
 fn assert_column_centered(dest: i32, id: &str) {
     let ui = music_page(1900.0, 900.0, dest);
     let column = element(&ui, id);
-    let page_left = 168.0 + (1900.0 - 168.0 - 1400.0) / 2.0;
+    let page_left =
+        224.0 + (1900.0 - 224.0 - 8.0 - 1400.0) / 2.0;
     let left_gap = column.absolute_position().x - page_left;
     let right_gap = page_left + 1400.0 - right(&column);
     assert!(
@@ -232,8 +234,8 @@ fn profile_page_centers_its_column() {
     assert_column_centered(7, "ProfilePage::column");
 }
 
-/// 列宽按 4:3:3 分,不随文字长短走:歌名歌手很长、专辑是「—」时,
-/// 专辑列仍与歌手列一样宽。实测曾是歌手 228px、专辑 17px。
+/// 列宽按 3:2 分,不随文字长短走:歌名歌手很长、专辑是「—」时,
+/// 专辑列仍是歌名列的三分之二。实测曾是整行缩到文字最小宽。
 #[test]
 fn wide_columns_follow_the_ratio_not_the_text() {
     let ui = music_page(1400.0, 900.0, 0);
@@ -248,19 +250,18 @@ fn wide_columns_follow_the_ratio_not_the_text() {
     }])));
 
     let album = element(&ui, "TrackList::album-cell");
-    let artists = element(&ui, "TrackList::artists-cell");
-    // 行要铺满列表:1232px 的内容区里,专辑那 3/10 至少两百多像素。
-    // 实测曾经整行缩到文字最小宽,两列各 113px。
+    let title = element(&ui, "TrackList::title-cell");
     assert!(
         album.size().width > 250.0,
         "专辑列只有 {}",
         album.size().width
     );
     assert!(
-        (album.size().width - artists.size().width).abs()
-            < 1.0,
-        "歌手 {} 专辑 {}",
-        artists.size().width,
+        (album.size().width * 1.5 - title.size().width)
+            .abs()
+            < 1.5,
+        "歌名 {} 专辑 {}",
+        title.size().width,
         album.size().width
     );
 }

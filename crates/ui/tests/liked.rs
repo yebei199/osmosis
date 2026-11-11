@@ -33,6 +33,7 @@ fn row(id: &str, liked: bool) -> TrackRow {
         cover: slint::Image::default(),
         header: false,
         collapsed: false,
+        number: 0,
     }
 }
 

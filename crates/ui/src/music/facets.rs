@@ -137,15 +137,24 @@ impl FacetState {
         &self,
         loading: Option<&str>,
     ) -> Vec<TrackRow> {
+        let mut number = 0;
         let rows: Vec<TrackRow> = self
             .arranged()
             .into_iter()
             .map(|line| match line {
-                Line::Track(index) => to_rows(
-                    std::slice::from_ref(&self.all[index]),
-                    loading,
-                )
-                .remove(0),
+                Line::Track(index) => {
+                    number += 1;
+                    TrackRow {
+                        number,
+                        ..to_rows(
+                            std::slice::from_ref(
+                                &self.all[index],
+                            ),
+                            loading,
+                        )
+                        .remove(0)
+                    }
+                }
                 Line::Header {
                     label,
                     count,
@@ -175,11 +184,8 @@ impl FacetState {
             .chips
             .iter()
             .map(|chip| FacetChip {
-                text: format!(
-                    "{} {}",
-                    chip.label, chip.count
-                )
-                .into(),
+                text: chip.label.clone().into(),
+                count: chip.count.to_string().into(),
                 chosen: self.chosen.contains(&(
                     chip.facet,
                     chip.label.clone(),
@@ -246,6 +252,10 @@ pub(super) fn relayout(ui: &MainWindow, deck: &Deck) {
     deck.facets.borrow_mut().days =
         !ui.global::<Shell>().get_view_wall();
     let batch = deck.facets.borrow().batch();
+    // 页头那句「N 首」:筛过之后、折起的堆也算(与点播排进队列的是同一批)。
+    ui.global::<Player>().set_track_count(
+        i32::try_from(batch.len()).unwrap_or(i32::MAX),
+    );
     *deck.tracks.borrow_mut() = batch;
     let loading =
         loading_id(deck.playback.borrow().state())

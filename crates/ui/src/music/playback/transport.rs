@@ -71,6 +71,8 @@ pub(in crate::music) fn play_current(
     );
     ui.global::<Viz>()
         .set_cover_art(slint::Image::default());
+    ui.global::<Viz>()
+        .set_cover_blur(slint::Image::default());
 
     // 歌词也随歌换:先清空(旧歌词配新歌比空着更误导),取到再整批换上。
     // 取不到不影响播放 —— 没歌词是正常状态,不是故障(见 crates/contract)。
@@ -137,6 +139,9 @@ pub(in crate::music) fn play_current(
                 }
                 ui.global::<Viz>().set_cover_art(
                     slint::Image::from_rgba8(decoded.full),
+                );
+                ui.global::<Viz>().set_cover_blur(
+                    slint::Image::from_rgba8(decoded.blurred),
                 );
                 // 一张图四个去处:封面卡、点云、媒体控件,以及极光的三团光斑。
                 // `Arc` 免掉后面几个各拷一份兆级字节。
@@ -282,6 +287,8 @@ fn push_stopped(ui: &MainWindow, deck: &Deck) {
     if ui.global::<Player>().get_now_id().as_str() != id {
         ui.global::<Viz>()
             .set_cover_art(slint::Image::default());
+        ui.global::<Viz>()
+            .set_cover_blur(slint::Image::default());
         deck.cover.clear(ui);
         deck.lyrics.replace(Vec::new());
         ui.global::<Viz>()

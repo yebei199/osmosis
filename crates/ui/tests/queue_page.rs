@@ -42,6 +42,7 @@ fn queue_window(rows: usize) -> MainWindow {
             cover: Default::default(),
             header: false,
             collapsed: false,
+            number: 0,
         })
         .collect();
     ui.global::<Viz>().set_queue_total(rows.len() as i32);

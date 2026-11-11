@@ -81,12 +81,11 @@ fn main() {
                 strip_h: n.strip_h,
                 lead: n.lead,
                 lag: n.lag,
-                drop: n.drop,
                 cross: n.cross,
                 slot: n.slot,
                 thick: n.thick,
                 horizontal: n.horizontal,
-                ball: n.ball,
+                scale: n.scale,
                 dark: n.dark,
             }))
         },

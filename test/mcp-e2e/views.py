@@ -147,7 +147,7 @@ def step_enter(args, out):
     section(args, 0)
     # GPU 构建的推荐分区默认是卡墙,曲目行不在元素树里;切到列表才读得到歌名
     as_list = wait_for(
-        "推荐分区", lambda: handles(args, "WallView::view-list-btn") or sample(args)["titles"]
+        "推荐分区", lambda: handles(args, "WallToggle::view-list-btn") or sample(args)["titles"]
     )
     if isinstance(as_list, list) and as_list and isinstance(as_list[0], dict):
         click(args, as_list[0])

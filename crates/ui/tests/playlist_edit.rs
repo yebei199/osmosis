@@ -52,6 +52,7 @@ fn one_track(ui: &MainWindow) {
             cover: slint::Image::default(),
             header: false,
             collapsed: false,
+            number: 0,
         }]),
     ));
 }

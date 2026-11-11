@@ -357,6 +357,8 @@ fn row(
         duration: format_duration(track.duration_ms).into(),
         loading: false,
         liked: false,
+        // 队列页不编号:它的次序本身就是看点,行首再标一列是重复。
+        number: 0,
         cover_url: track
             .cover
             .clone()

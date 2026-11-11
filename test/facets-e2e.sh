@@ -105,13 +105,16 @@ wait_for() {
 # 按「歌手」分组(分组条第 2 颗:第 1 颗是「不分组」),读出分了几堆。
 group_by_artist() {
   local pill
+  # 分组是一颗选择型 chip,点开才摆出几种分法
+  act "$(handle "FacetBar::grouping-select")"
+  sleep 1
   pill=$(handle "FacetBar::grouping-pill" 1)
   must "$pill" "分组条的「歌手」"
   [ "$(prop "$pill" accessibleLabel)" = 歌手 ] \
     || { echo "分组条第 2 颗不是「歌手」,读到「$(prop "$pill" accessibleLabel)」" >&2; exit 1; }
   act "$pill"
   sleep 1
-  prop "$pill" accessibleDescription | sed 's/ 堆$//'
+  prop "$(handle "FacetBar::grouping-select")" accessibleDescription | sed 's/ 堆$//'
 }
 
 win=$(call list_windows '{}' | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["windowHandles"][0]))')
@@ -136,7 +139,7 @@ case "$MODE" in
     must "$liked" "歌单列表第一行(「我喜欢的」)"
     act "$liked"
     wait_for "TrackList::touch" yes
-    wait_for "FacetBar::grouping-pill" yes
+    wait_for "FacetBar::grouping-select" yes
     # 列表先摆缓存那份,网络那份回来会再换一次;等它稳住
     sleep 5
     got=$(group_by_artist)
@@ -153,29 +156,27 @@ case "$MODE" in
     ;;
   wall)
     reset 每日推荐
-    wall_btn=$(handle "WallView::view-wall-btn")
+    wall_btn=$(handle "WallToggle::view-wall-btn")
     must "$wall_btn" "卡墙开关(非 GPU 构建没有卡墙)"
     act "$wall_btn"
     wait_for "WallView::wall-area" yes
-    wait_for "FacetBar::grouping-pill" yes
+    wait_for "FacetBar::grouping-select" yes
 
-    # 卡墙能筛:打开筛选、选第一个 chip,卡墙还在
-    act "$(handle "FacetBar::filter-toggle")"
-    sleep 1
+    # 卡墙能筛:选第一个 chip(chips 常驻分组条),卡墙还在
     # chip 的模型每按一次就重建,句柄随之失效:先读标签,按完重新取
     chip=$(handle "FacetBar::chip-pill" 0)
     must "$chip" "第一个筛选 chip"
     label=$(prop "$chip" accessibleLabel)
     act "$chip"
     sleep 2
-    [ "$(prop "$(handle "FacetBar::filter-toggle")" accessibleLabel)" = "筛选 · 1" ] \
-      || { echo "wall: 失败 —— 按了「$label」,筛选开关没报「筛选 · 1」" >&2; exit 1; }
+    [ "$(prop "$(handle "FacetBar::chip-pill" 0)" accessibleChecked)" = True ] \
+      || { echo "wall: 失败 —— 按了「$label」,它没报选中" >&2; exit 1; }
     [ -n "$(handle "WallView::wall-area")" ] \
       || { echo "wall: 失败 —— 筛选之后卡墙没了" >&2; exit 1; }
     echo "  卡墙上筛「$label」:卡墙还在"
     act "$(handle "FacetBar::chip-pill" 0)"
     sleep 1
-    [ "$(prop "$(handle "FacetBar::filter-toggle")" accessibleLabel)" = "筛选" ] \
+    [ "$(prop "$(handle "FacetBar::chip-pill" 0)" accessibleChecked)" != True ] \
       || { echo "wall: 失败 —— 再按一次「$label」没取消" >&2; exit 1; }
 
     # 一选分组就切回列表
@@ -185,13 +186,12 @@ case "$MODE" in
     echo "  卡墙上选「歌手」:切回列表,分了 $piles 堆"
 
     # 再切回卡墙,分组清掉
-    act "$(handle "WallView::view-wall-btn")"
+    act "$(handle "WallToggle::view-wall-btn")"
     wait_for "WallView::wall-area" yes
-    none=$(handle "FacetBar::grouping-pill" 0)
-    [ "$(prop "$none" accessibleChecked)" = True ] \
+    none=$(handle "FacetBar::grouping-select")
+    [ "$(prop "$none" accessibleLabel)" = 不分组 ] \
       || { echo "wall: 失败 —— 切回卡墙后分组没清(「不分组」没选中)" >&2; exit 1; }
     echo "  切回卡墙:分组回到「不分组」"
-    act "$(handle "FacetBar::filter-toggle")"
     ;;
   *) echo "用法: $0 liked|wall" >&2; exit 2 ;;
 esac

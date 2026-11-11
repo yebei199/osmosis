@@ -16,27 +16,26 @@ pub struct NavParams {
     /// 导航条纹理尺寸(= 目标纹理尺寸)。
     pub strip_w: f32,
     pub strip_h: f32,
-    /// 三颗球中心在移动轴上的位置,相对条首:头(快)/尾(慢)/小水滴(最慢)。
-    /// 追随系数不同,同一个目标位置天然拉开先后(§11)。
+    /// 药丸两条边各自跟着的中心在移动轴上的位置,相对条首:lead 快、lag 慢。
+    /// 两者拉开时药丸被拉长,重合时就是一颗药丸。
     pub lead: f32,
     pub lag: f32,
-    pub drop: f32,
-    /// 三颗球在固定轴上的中心。侧栏是栏宽一半,底栏由 ui 侧按 inset 算好。
+    /// 药丸中心在固定轴上的位置。
     pub cross: f32,
-    /// 移动轴上一格的长度(侧栏是项高,底栏是格宽),用来定块的半尺寸/圆角/融合半径。
+    /// 药丸静止时沿移动轴的长度(侧栏是行高,底栏是那颗 56px 的底)。
     pub slot: f32,
-    /// 固定轴上的可用厚度(侧栏是栏宽,底栏是图标那一带的高,不含手势条 inset)。
+    /// 药丸在固定轴上的厚度(侧栏是行宽,底栏是 30px)。
     pub thick: f32,
     /// 移动轴是 x(手机底栏)还是 y(宽版式侧栏)。
     pub horizontal: bool,
-    /// 三球的整体缩放,1 常态、0 缩没(侧栏底部两颗圆钮不在轨道上,#71)。
-    pub ball: f32,
-    /// 深色主题。导航背景由本 shader 自绘,所以主题得穿进 uniform ——
+    /// 物理像素 / 逻辑像素。
+    pub scale: f32,
+    /// 深色主题。导航的底由本 shader 自绘,所以主题得穿进 uniform ——
     /// 采不到背后的像素,没法"跟着背景走"。
     pub dark: bool,
 }
 
-/// uniform 缓冲字节数。对齐到 16 的整数倍(navglass.wgsl 的 Params 实占 52 字节,余下填 0)。
+/// uniform 缓冲字节数。对齐到 16 的整数倍(navglass.wgsl 的 Params 实占 56 字节,余下填 0)。
 const UBO_BYTES: u64 = 64;
 
 /// 导航选中器的 wgpu pass:持有管线与一张随尺寸重建的离屏目标纹理,渲染一帧后返回其
@@ -199,38 +198,29 @@ impl NavGlassPass {
             self.target = Some((tex, w, h));
         }
 
-        // 组 uniform(物理像素):三球沿移动轴走,固定轴上停在 cross;块的半尺寸
-        // 一边按格长、一边按条的厚度取,轴对调时两者互换(#70)。
-        let thick = p.thick.max(1.0);
-        let ball = |pos: f32| {
+        // 组 uniform(物理像素):药丸沿移动轴走,固定轴上停在 cross;
+        // 半尺寸一边按长、一边按厚,轴对调时两者互换(#70)。
+        let pos = |at: f32| {
             if p.horizontal {
-                [pos, p.cross]
+                [at, p.cross]
             } else {
-                [p.cross, pos]
+                [p.cross, at]
             }
         };
-        // ball 是整体缩放:0 时半尺寸归零,SDF 退化成一个点,画面上只剩自绘背景。
-        let s = p.ball.clamp(0.0, 1.0);
-        // 融合半径按短边取:底栏一格比条厚得多(手机上 91 对 64),按格宽算出来的
-        // 融合半径比条本身还宽,三球会糊成一团淌出格外。
-        // 也跟着 ball 缩:不缩的话球都没了、颈还在,收尾那几帧会剩一团糊影。
-        let smooth_k =
-            (p.slot.min(thick) * 0.9 * s).max(0.001);
-        // smin 把等值面往外推约 k/4(三球同心时 h=0.5,场值整体低 k/4),所以
-        // 半尺寸先扣掉这一圈,画出来才是这里写的这个框。不扣的话球会胀出格外:
-        // 侧栏里表现为胶囊顶满栏宽,底栏里表现为贴着屏幕边。
-        let grow = smooth_k * 0.25;
-        let box_half =
-            |v: f32| (v * 0.42 * s - grow).max(1.0);
+        let along = (p.slot * 0.5).max(1.0);
+        let across = (p.thick * 0.5).max(1.0);
         let half = if p.horizontal {
-            [box_half(p.slot), box_half(thick)]
+            [along, across]
         } else {
-            [box_half(thick), box_half(p.slot)]
+            [across, along]
         };
-        let radius = half[0].min(half[1]) * 0.6;
-        let lead = ball(p.lead);
-        let lag = ball(p.lag);
-        let drop = ball(p.drop);
+        let radius = if p.horizontal {
+            half[1]
+        } else {
+            10.0 * p.scale
+        };
+        let lead = pos(p.lead);
+        let lag = pos(p.lag);
         // 一行一个 uniform,与 shader 里 UBO 的字段逐行对照 —— 那边是 vec2,
         // 这边就并排两个标量。rustfmt 会把它摊成一行一个数,对照关系随之消失,
         // 所以在这里按住它。全仓唯一一处。
@@ -239,12 +229,11 @@ impl NavGlassPass {
             w as f32, h as f32, // tex_size
             lead[0], lead[1], // lead
             lag[0], lag[1], // lag
-            drop[0], drop[1], // drop
             half[0], half[1], // half
-            radius, smooth_k, // radius, smooth_k
+            radius, p.scale, // radius, scale
             if p.dark { 1.0 } else { 0.0 }, // dark
             if p.horizontal { 1.0 } else { 0.0 }, // horizontal
-            0.0, 0.0, // 尾部对齐填充
+            0.0, 0.0, 0.0, 0.0, // 尾部对齐填充
         ];
         let mut bytes =
             Vec::with_capacity(UBO_BYTES as usize);

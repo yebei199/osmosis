@@ -529,6 +529,7 @@ mod tests {
             cover: slint::Image::default(),
             header: false,
             collapsed: false,
+            number: 0,
         }
     }
 

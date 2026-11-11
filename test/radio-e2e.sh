@@ -260,10 +260,6 @@ chip_named() {
   done
 }
 if [ "$MODE" = filter ] || [ "$MODE" = dry ]; then
-  toggle=$(nth "$root" "FacetBar::filter-toggle")
-  must "$toggle" "筛选开关"
-  act "$toggle"
-  sleep 1
   IFS=, read -ra wanted <<< "$CHIPS"
   for want in "${wanted[@]}"; do
     chip=$(chip_named "$want")

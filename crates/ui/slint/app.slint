@@ -7,7 +7,7 @@ import "@osmosis-fonts/osmosis-sans-600.ttf";
 import "@osmosis-fonts/osmosis-sans-700.ttf";
 
 // 原生文本输入:热调 3D 场景参数用。不自己搓文本编辑(光标/选区/IME),用 Slint 自带的。
-import { LineEdit, ListView, Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
 
 
 // 通用零件与控制条各自搬去了一个文件,本文件因此只剩「主窗口在摆什么」。
@@ -21,9 +21,10 @@ import { Library } from "globals/library.slint";
 import { Session } from "globals/session.slint";
 import { PlaylistList } from "playlists.slint";
 import { ArtistList } from "artists.slint";
-import { NavItem, RoundControl, HoverButton } from "widgets.slint";
+import { NavItem, IconButton, Button, TextField, GlassPill } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
 import { PlayerBar, BarMetrics } from "playerbar.slint";
-import { Theme, Type, Motion, Space, Radius, TextSize, Layout } from "theme.slint";
+import { Theme, Type, Motion, Space, Radius, TextSize, Layout, Weight, Elevation } from "theme.slint";
 // 再导出一次:全局要从**入口文件**导出,slint 才会给 Rust 生成访问器
 // (crates/ui/src/theme.rs 靠 `ui.global::<Theme>()` 写那一位布尔值)。
 export { Theme }
@@ -81,7 +82,7 @@ export component MainWindow inherits Window {
     // 控制条左右内缩。**同一时刻全应用一个数** —— 此前三个调用点各给各的
     // (16 / 24 / 32px),切页时条的边沿在跳(docs/adr/0029)。
     // 随宽度收是另一回事:手机上 24px 的内缩会从本就不够的文字区里再拿走 48px。
-    out property <length> bar-inset: Shell.compact ? 12px : 24px;
+    out property <length> bar-inset: Shell.compact ? 8px : 24px;
     // 帧率,由 Rust 测量并推送。仅在 `Shell.show-fps` 为真时被推送。
     // fluid 正在播放胶囊(#68):条身背景由 aurora 管线渲好推进来,空图即素底
     // (无 GPU 渐进降级)。胶囊把自己的逻辑尺寸回写,Rust 按它渲物理像素。
@@ -100,6 +101,11 @@ export component MainWindow inherits Window {
     // in-out 而不是私有:无头测试里 `set_size` 不驱动 `width`,版式因此推不出来。
     // 开放它之后测试能直接给定版式,验的是「这个版式该摆哪个导航」——
     // 「宽度推出版式」那半由下面两行自己保证,不在测试覆盖内。
+    // 曲目行高跟着版式走:紧凑版式的行更高,封面更大(Layout.row-h-compact)。
+    property <bool> compact-rows: Shell.compact;
+    changed compact-rows => {
+        Player.track-row-height = self.compact-rows ? Layout.row-h-compact : Layout.row-h;
+    }
     init => { Shell.compact = root.width < Layout.compact; Shell.wide = root.width >= Layout.wide; }
     changed width => { Shell.compact = root.width < Layout.compact; Shell.wide = root.width >= Layout.wide; }
     // 内容区的最大宽度(MEO-1878)。再宽就两侧居中留白:歌名列被拉到上千像素,
@@ -128,37 +134,44 @@ export component MainWindow inherits Window {
     // 歌名与歌手在歌词块上方,与它一起居中成一组。
     // 正在播的封面(已解码)。取不到 / 解不出时为空图 —— 控制条上的小图用它。
 
-    // ── 「液态玻璃 metaball 选中器」(宽版式侧栏 / 紧凑版式底栏)──
-    // 视觉由 render3d 的独立 wgpu pass 画进 nav-bg(见 crates/render3d/src/navglass),Slint 只出
-    // 几何与交互。槽位常量是**唯一真相**:布局与选中块位置都从这里算,不各写各的。
-    // 两种版式同一套数学,差别只在移动轴:侧栏沿 y,底栏沿 x(#70,handoff §11)。
-    property <length> nav-pad: 8px;
-    property <length> nav-gap: 4px;
-    // 侧栏分组之间的间隔(每日推荐那组 | 我喜欢那组)。
-    property <length> nav-group-gap: 18px;
-    // 单个导航项高,也是选中块的参考高。out:Rust 读它定块尺寸。
-    // 平时 44px;窗口矮到排不下十行加组胶囊时(最小高 520)一起收,而不是让沉底组压上胶囊。
-    // 124px 是行之外的全部:上下内边距、十行的间距、分组间隔、胶囊与它的留白。
-    out property <length> nav-slot-h: max(36px, min(44px, (root.height
-        - root.safe-area-insets.top - root.safe-area-insets.bottom - 124px)
+    // ── 导航指示器(宽版式侧栏 / 紧凑版式底栏)──
+    // 一颗玻璃药丸(docs/design.md「材质」),GPU 构建里由 render3d 的 navglass pass 连同导航的底
+    // 一起画进 nav-bg;没有 GPU 时退回下面那颗 Slint 画的 GlassPill。两边读同一组几何。
+    // 槽位常量是**唯一真相**:布局与指示器位置都从这里算,不各写各的。
+    // 两种版式同一套数学,差别只在移动轴:侧栏沿 y,底栏沿 x(#70)。
+    //
+    // 侧栏:上 22、左右 12、下 16 的内边距;品牌一行 24px 高,下面空 26px;一行 40px,
+    // 行距 2px,组与组之间 20px。
+    property <length> nav-pad-top: 22px;
+    property <length> nav-pad-x: 12px;
+    property <length> nav-pad-bottom: 16px;
+    property <length> nav-brand-h: 50px;
+    property <length> nav-gap: 2px;
+    property <length> nav-group-gap: 20px;
+    // 单个导航项高。窗口矮到排不下十行时一起收(最小高 520),而不是让沉底组压上去。
+    // 180px 是行之外的全部:内边距、品牌、十行的间距、两处分组间隔。
+    out property <length> nav-slot-h: max(32px, min(40px, (root.height
+        - root.safe-area-insets.top - root.safe-area-insets.bottom - 180px)
         / (Destinations.listen.length + Destinations.library.length + Destinations.account.length)));
-    // 侧栏纹理尺寸(逻辑像素)。Rust 每帧乘缩放系数得物理像素当目标纹理尺寸。
-    // 带字的侧栏:最长的名字是四个字,加图标与内边距。
-    out property <length> nav-w: 168px;
-    // 侧栏纹理跟随状态条下方的页面高度，底部安全区仍由主行消化。
+    // 侧栏宽(Layout.nav-w)。out:Rust 读它定纹理尺寸。
+    out property <length> nav-w: Layout.nav-w;
+    // 侧栏纹理跟随状态条下方的页面高度,底部安全区仍由主行消化。
     out property <length> nav-h: page-stack.height
         - root.safe-area-insets.bottom;
     // 底栏(紧凑版式)的横条几何。宽由布局回写 —— 五格等分要它,而它随窗口变;
     // 高是图标那 64px 加手势条 inset,背景要铺到手势条底下。
     in-out property <length> nav-bar-w: 0px;
-    out property <length> nav-bar-h: 64px + root.safe-area-insets.bottom;
-    property <length> nav-bar-gap: 4px;
-    property <length> nav-bar-pad-left: root.safe-area-insets.left + 8px;
-    property <length> nav-bar-pad-right: root.safe-area-insets.right + 8px;
+    out property <length> nav-bar-h: Layout.tab-h + root.safe-area-insets.bottom;
+    property <length> nav-bar-pad-left: root.safe-area-insets.left;
+    property <length> nav-bar-pad-right: root.safe-area-insets.right;
     // 五格:四个目的地加「更多」(Destinations.bar 的长度 + 1)。
     property <int> nav-bar-count: Destinations.bar.length + 1;
-    property <length> nav-slot-w: (root.nav-bar-w - root.nav-bar-pad-left - root.nav-bar-pad-right
-        - (root.nav-bar-count - 1) * root.nav-bar-gap) / root.nav-bar-count;
+    property <length> nav-slot-w: (root.nav-bar-w - root.nav-bar-pad-left - root.nav-bar-pad-right)
+        / root.nav-bar-count;
+    // 底栏里那颗玻璃底:56×30,中心在格子上方 23px 处(图标那一带)。
+    property <length> nav-pip-w: 56px;
+    property <length> nav-pip-h: 30px;
+    property <length> nav-pip-cy: 23px;
 
     // ── seam 出参:轴无关的一组数,Rust 照单喂 shader,不判版式 ──
     // 底栏的宽度没量出来之前不渲(首帧布局还没跑),避免拿 0 当条长。
@@ -166,33 +179,34 @@ export component MainWindow inherits Window {
     out property <bool> nav-horizontal: Shell.compact;
     out property <length> nav-strip-w: Shell.compact ? root.nav-bar-w : root.nav-w;
     out property <length> nav-strip-h: Shell.compact ? root.nav-bar-h : root.nav-h;
-    // 移动轴上一格的长度:侧栏是项高,底栏是等分出来的格宽。
-    out property <length> nav-slot: Shell.compact ? root.nav-slot-w : root.nav-slot-h;
-    // 固定轴上的可用厚度与中心:侧栏是整条栏宽;底栏是图标那一带的高,
-    // 手势条那段不算 —— 把 inset 算进厚度的话,水滴会压到手势条上去。
-    out property <length> nav-thick: Shell.compact
-        ? root.nav-bar-h - root.safe-area-insets.bottom
-        : root.nav-w;
-    out property <length> nav-cross: root.nav-thick / 2;
+    // 药丸静止时沿移动轴的长度与在固定轴上的厚度,以及固定轴上的中心。
+    out property <length> nav-slot: Shell.compact ? root.nav-pip-w : root.nav-slot-h;
+    out property <length> nav-thick: Shell.compact ? root.nav-pip-h : root.nav-w - root.nav-pad-x * 2;
+    out property <length> nav-cross: Shell.compact ? root.nav-pip-cy : root.nav-w / 2;
 
-    // 侧栏的轨道:上面两组七行(Destinations.listen 与 library),摆放顺序即轨道下标。
-    // 沉底那组(个人、已屏蔽、设置)不在轨道上(#71 的规则沿用):选中它们时水滴停在最后
-    // 一格(已下载)上并缩没,那几行自己画选中底。
+    // 侧栏的轨道:三组十行,摆放顺序即轨道下标。沉底那组(个人、已屏蔽、设置)也在轨道上 ——
+    // 它贴着底,位置从栏底往上数。
     property <int> nav-listen-count: Destinations.listen.length;
+    property <int> nav-library-count: Destinations.library.length;
     property <int> nav-track-index: Shell.destination == 0 ? 0
         : Shell.destination == 4 ? 1
         : Shell.destination == 2 ? 2
         : Shell.destination == 6 ? 3
         : Shell.destination == 1 ? 4
         : Shell.destination == 3 ? 5
-        : 6;
-    property <length> nav-target-y: root.nav-pad
-        + root.nav-track-index * (root.nav-slot-h + root.nav-gap)
-        + (root.nav-track-index >= root.nav-listen-count ? root.nav-group-gap + root.nav-gap : 0px)
-        + root.nav-slot-h / 2;
-    // 球体缩放:1 是常态,0 是缩没。底栏五格全在轨道上,所以只有侧栏会缩。
-    out property <float> nav-ball: Shell.compact || Shell.destination < 7 ? 1.0 : 0.0;
-    animate nav-ball { duration: Motion.medium; easing: Motion.ease; }
+        : Shell.destination == 5 ? 6
+        : Shell.destination == 7 ? 7
+        : Shell.destination == 9 ? 8
+        : 9;
+    property <int> nav-top-count: root.nav-listen-count + root.nav-library-count;
+    property <length> nav-target-y: root.nav-track-index < root.nav-top-count
+        ? root.nav-pad-top + root.nav-brand-h
+            + root.nav-track-index * (root.nav-slot-h + root.nav-gap)
+            + (root.nav-track-index >= root.nav-listen-count ? root.nav-group-gap - root.nav-gap : 0px)
+            + root.nav-slot-h / 2
+        : root.nav-h - root.nav-pad-bottom
+            - (Destinations.account.length - (root.nav-track-index - root.nav-top-count)) * (root.nav-slot-h + root.nav-gap)
+            + root.nav-gap + root.nav-slot-h / 2;
     // 底栏的格:四个目的地按 Destinations.bar 的顺序,其余都落在「更多」那一格。
     property <int> nav-bar-index: Shell.destination == 0 ? 0
         : Shell.destination == 2 ? 1
@@ -200,25 +214,20 @@ export component MainWindow inherits Window {
         : Shell.destination == 1 ? 3
         : 4;
     property <length> nav-target-x: root.nav-bar-pad-left
-        + root.nav-bar-index * (root.nav-slot-w + root.nav-bar-gap) + root.nav-slot-w / 2;
+        + root.nav-bar-index * root.nav-slot-w + root.nav-slot-w / 2;
     property <length> nav-target: Shell.compact ? root.nav-target-x : root.nav-target-y;
-    // 播放组胶囊在宽版式侧栏里的纵向位置:轨道七行之下留 8px。
-    property <length> nav-capsule-y: root.nav-pad
-        + (Destinations.listen.length + Destinations.library.length) * (root.nav-slot-h + root.nav-gap)
-        + root.nav-group-gap + 8px;
-    // metaball 的头(快)/尾(慢):都朝 nav-target 动,快慢不同 → 行走时一前一后被 shader
-    // 的 smooth-union 拉出胶着的颈,静止时重合成单块。out:Rust 每帧读这三个动画值喂 shader。
-    // 用三个不同时长的 animate,避开「同一处理器里 progress 先置 0 再置 1 会被合并、动不起来」那个坑。
+    // 播放组胶囊在宽版式侧栏里的纵向位置:上面两组七行之下留 8px。
+    property <length> nav-capsule-y: root.nav-pad-top + root.nav-brand-h
+        + root.nav-top-count * (root.nav-slot-h + root.nav-gap)
+        + root.nav-group-gap + Space.md;
+    // 药丸的两条边各跟一个弹簧:lead(快)那条先到,lag(慢)那条后到,走动时药丸被拉长、
+    // 两头冲过头再落定(Motion.lead / Motion.trail)。out:Rust 每帧读这两个动画值喂 shader。
     out property <length> nav-lead: root.nav-target;
     out property <length> nav-lag: root.nav-target;
-    // 第三颗:小水滴,最慢的那份(§11 三球;系数差用时长差实现)。
-    out property <length> nav-drop: root.nav-target;
-    // 三颗球的时长必须两两拉开,收进同一档就成了两颗叠在一起(nav_glass 测试钉着)。
-    animate nav-lead { duration: Motion.medium; easing: Motion.ease; }
-    animate nav-lag { duration: Motion.spring; easing: Motion.ease; }
-    animate nav-drop { duration: Motion.spring * 1.4; easing: Motion.ease; }
-    // render3d 每帧(转场期间)渲出的导航背景纹理。非 GPU 构建恒为空图(width 0),
-    // 两种版式都退回 Slint 平底 + NavItem 自带高亮。
+    animate nav-lead { duration: Motion.lead; easing: Motion.lead-ease; }
+    animate nav-lag { duration: Motion.trail; easing: Motion.lead-ease; }
+    // render3d 在转场期间渲出的导航纹理(底 + 药丸)。非 GPU 构建恒为空图(width 0),
+    // 两种版式都退回 Slint 的平底 + GlassPill。
     in-out property <image> nav-bg;
     // 用关键词搜歌。
     // 设置页的主题三档(0 深 1 浅 2 跟随系统),选了喊一声,值由 Rust 写回。
@@ -283,15 +292,23 @@ export component MainWindow inherits Window {
                 padding-right: 16px + root.safe-area-insets.right;
                 alignment: center;
                 VerticalLayout {
-                    max-width: 420px;
+                    max-width: 460px;
                     horizontal-stretch: 1;
                     spacing: Space.sm;
+                    // 提示卡(docs/design.md「提示」):危险色的圆底图标、一行标题、可选的一段细节。
+                    // 标题与细节由 notice.rs 从同一句话里拆出;绕过它直接写文案的,整句当标题。
                     if Shell.banner-text != "": banner := Rectangle {
-                        height: 44px;
+                        height: toast-body.preferred-height;
                         background: Theme.raised;
-                        border-radius: Radius.sm;
-                        border-width: 1px;
-                        border-color: Theme.danger;
+                        border-radius: Radius.lg;
+                        border-width: Theme.dark ? 0px : 1px;
+                        border-color: Theme.line;
+                        inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+                        inner-shadow-color: Theme.edge;
+                        drop-shadow-offset-y: Elevation.overlay-y;
+                        drop-shadow-blur: Elevation.overlay-blur;
+                        drop-shadow-spread: Elevation.overlay-spread;
+                        drop-shadow-color: Elevation.overlay-color;
 
                         // 有去处的提示可以点整块。摆在内容**之前**,于是右边那颗关闭键仍在它
                         // 上面 —— 反过来的话,想关掉提示会变成跳页。
@@ -302,6 +319,7 @@ export component MainWindow inherits Window {
                             accessible-role: button;
                             accessible-label: Shell.banner-text;
                             accessible-action-default => { jump.clicked(); }
+                            mouse-cursor: pointer;
                             clicked => {
                                 Destinations.go(Shell.banner-destination);
                                 Shell.banner-text = "";
@@ -309,29 +327,65 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        HorizontalLayout {
-                            padding-left: Space.md;
-                            padding-right: Space.xs;
-                            spacing: Space.xs;
+                        toast-body := HorizontalLayout {
+                            padding-left: Space.lg;
+                            padding-right: Space.md;
+                            padding-top: Space.lg;
+                            padding-bottom: 14px;
+                            spacing: Space.md;
+                            alignment: stretch;
 
-                            Text {
-                            text: Shell.banner-text;
-                            accessible-role: text;
-                            accessible-label: Shell.banner-text;
-                                // 文案是硬编码中文,与状态行同一套子集字体。
-                                font-size: TextSize.small;
-                                color: Theme.text;
-                                vertical-alignment: center;
+                            VerticalLayout {
+                                alignment: start;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: 16px;
+                                    background: Theme.danger-wash;
+                                    Icon {
+                                        size: 18px;
+                                        source: Icons.warning-circle;
+                                        colorize: Theme.danger;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
                                 horizontal-stretch: 1;
-                                overflow: elide;
+                                spacing: 2px;
+                                Text {
+                                    min-height: 32px;
+                                    text: Shell.banner-title != "" ? Shell.banner-title : Shell.banner-text;
+                                    // 读屏念整句,标题只是它的头一截。
+                                    accessible-role: text;
+                                    accessible-label: Shell.banner-text;
+                                    font-size: TextSize.body;
+                                    font-weight: Weight.semibold;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                                if Shell.banner-title != "" && Shell.banner-detail != "": Text {
+                                    text: Shell.banner-detail;
+                                    accessible-role: none;
+                                    font-size: TextSize.small;
+                                    color: Theme.text-dim;
+                                    wrap: word-wrap;
+                                }
                             }
 
                             // 关掉。清空文案就等于收起,不必回 Rust 绕一圈。
-                            RoundControl {
-                                diameter: 32px;
-                                transparent-base: true;
-                                icon: "M7 7 L17 17 M17 7 L7 17";
-                                clicked => { Shell.banner-text = ""; }
+                            VerticalLayout {
+                                alignment: start;
+                                padding-top: 2px;
+                                IconButton {
+                                    diameter: 28px;
+                                    icon-size: 16px;
+                                    icon: Icons.x;
+                                    ink: Theme.text-faint;
+                                    label: "关闭提示";
+                                    clicked => { Shell.banner-text = ""; }
+                                }
                             }
                         }
                     }
@@ -439,16 +493,15 @@ export component MainWindow inherits Window {
                         padding-bottom: Shell.compact ? 0 : root.safe-area-insets.bottom;
 
                         // ── 侧栏(宽版式)──
-                        // ponytail: 深色底不铺到左刘海底下(padding-left 已经把它推开了)。桌面 inset 恒 0、
-                        // 安卓竖屏没有左 inset,只有「横屏 + 左刘海」这一种情况会露一条底色,不值得为它
-                        // 把侧栏也拆成「背景铺满 + 内部 padding」。
+                        // 窗口底色上的一列:品牌、两组目的地、沉底的账户组。选中项背后是一颗玻璃药丸
+                        // (docs/design.md「材质」)—— GPU 构建由 navglass 连底带丸画进 nav-bg,
+                        // 否则由下面的 GlassPill 画;两者读同一组 nav-lead / nav-lag。
+                        // ponytail: 底色不铺到左刘海底下(padding-left 已经把它推开了)。只有「横屏 +
+                        // 左刘海」会露一条窗口底色,而这一列本来就是窗口底色。
                         if !Shell.compact: Rectangle {
                             width: root.nav-w;
-                            // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
-                            background: Theme.base;
+                            background: Theme.window;
 
-                            // GPU 液态玻璃选中器:转场时 render3d 渲进 nav-bg,盖在平底之上、图标之下。
-                            // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
                             Image {
                                 source: root.nav-bg;
                                 width: 100%;
@@ -456,41 +509,94 @@ export component MainWindow inherits Window {
                                 image-fit: fill;
                             }
 
-                            VerticalLayout {
-                                padding: root.nav-pad;
-                                spacing: root.nav-gap;
+                            if root.nav-bg.width == 0: GlassPill {
+                                x: root.nav-pad-x;
+                                width: root.nav-thick;
+                                y: min(root.nav-lead, root.nav-lag) - root.nav-slot / 2;
+                                height: abs(root.nav-lead - root.nav-lag) + root.nav-slot;
+                                spec-w: 120px;
+                            }
 
-                                for item in Destinations.listen: SideNavRow {
-                                    height: root.nav-slot-h;
-                                    item: item;
-                                    active: Shell.destination == item.id;
-                                    // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
-                                    gpu-selected: root.nav-bg.width > 0;
-                                    clicked => { Destinations.go(item.id); }
+                            VerticalLayout {
+                                padding-top: root.nav-pad-top;
+                                padding-left: root.nav-pad-x;
+                                padding-right: root.nav-pad-x;
+                                padding-bottom: root.nav-pad-bottom;
+                                spacing: 0px;
+
+                                // 品牌:实心的强调色圆叠一只空心圆,后面是名字。
+                                HorizontalLayout {
+                                    height: root.nav-brand-h;
+                                    padding-left: Space.md;
+                                    padding-bottom: root.nav-brand-h - 24px;
+                                    spacing: 10px;
+                                    accessible-role: none;
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        Rectangle {
+                                            x: 0px;
+                                            y: 4px;
+                                            width: 16px;
+                                            height: 16px;
+                                            border-radius: 8px;
+                                            background: Theme.accent;
+                                        }
+                                        Rectangle {
+                                            x: 8px;
+                                            y: 4px;
+                                            width: 16px;
+                                            height: 16px;
+                                            border-radius: 8px;
+                                            border-width: 2px;
+                                            border-color: Theme.text;
+                                        }
+                                    }
+                                    Text {
+                                        text: "Osmosis";
+                                        font-size: TextSize.title;
+                                        font-weight: Weight.bold;
+                                        letter-spacing: -0.2px;
+                                        color: Theme.text;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    spacing: root.nav-gap;
+                                    for item in Destinations.listen: SideNavRow {
+                                        height: root.nav-slot-h;
+                                        item: item;
+                                        active: Shell.destination == item.id;
+                                        clicked => { Destinations.go(item.id); }
+                                    }
                                 }
 
                                 // 分组间隔:只是视觉上的一口气,不是父级页面。
-                                // 高度与 nav-target-y 里的 nav-group-gap 是同一个数。
+                                // 与 nav-target-y 里的 nav-group-gap 是同一个数。
                                 Rectangle { height: root.nav-group-gap; }
 
-                                for item in Destinations.library: SideNavRow {
-                                    height: root.nav-slot-h;
-                                    item: item;
-                                    active: Shell.destination == item.id;
-                                    gpu-selected: root.nav-bg.width > 0;
-                                    clicked => { Destinations.go(item.id); }
+                                VerticalLayout {
+                                    spacing: root.nav-gap;
+                                    for item in Destinations.library: SideNavRow {
+                                        height: root.nav-slot-h;
+                                        item: item;
+                                        active: Shell.destination == item.id;
+                                        clicked => { Destinations.go(item.id); }
+                                    }
                                 }
 
                                 // 把沉底组压到底。
                                 Rectangle { vertical-stretch: 1; }
 
-                                // 沉底那组不在水滴轨道上,自己画选中底。
-                                for item in Destinations.account: SideNavRow {
-                                    height: root.nav-slot-h;
-                                    item: item;
-                                    active: Shell.destination == item.id;
-                                    gpu-selected: false;
-                                    clicked => { Destinations.go(item.id); }
+                                VerticalLayout {
+                                    spacing: root.nav-gap;
+                                    for item in Destinations.account: SideNavRow {
+                                        height: root.nav-slot-h;
+                                        item: item;
+                                        active: Shell.destination == item.id;
+                                        clicked => { Destinations.go(item.id); }
+                                    }
                                 }
                             }
                         }
@@ -499,83 +605,114 @@ export component MainWindow inherits Window {
                         content := Rectangle {
                             horizontal-stretch: 1;
 
-                            // 内容的底。整窗的极光光斑已退场(docs/design.md「材质」):分隔靠面板,不靠一片绿。
-                            Rectangle {
+                            // 内容面板(docs/design.md「表面」):宽版式在窗口底色上浮起一块圆角面板,
+                            // 上、右、下各让出一道 gutter;紧凑版式铺满,不起角。页头那片 header-wash
+                            // 从面板顶往下淡出,页面自己不再画底。
+                            panel := Rectangle {
+                                x: 0px;
+                                y: Shell.compact ? 0px : Layout.gutter;
+                                width: parent.width - (Shell.compact ? 0px : Layout.gutter);
+                                height: parent.height - (Shell.compact ? 0px : Layout.gutter * 2);
                                 background: Theme.base;
-                            }
+                                border-radius: Shell.compact ? 0px : Radius.lg;
+                                clip: true;
+                                drop-shadow-offset-y: Shell.compact ? 0px : Elevation.card-y;
+                                drop-shadow-blur: Shell.compact ? 0px : Elevation.card-blur;
+                                drop-shadow-color: Shell.compact ? transparent : Elevation.card-color;
+                                inner-shadow-offset-y: Shell.compact ? 0px : 1px;
+                                inner-shadow-color: Shell.compact ? transparent : Theme.edge;
 
-                            // 个人主页(目的地 7)。进页即取统计,判断在 Rust 侧。
-                            if Shell.destination == 7: ProfilePage {
-                                width: min(parent.width, root.content-max-w);
-                                x: (parent.width - self.width) / 2;
-                                height: 100%;
-                                // 与下面摆控制条那一行是同一个条件 —— 条在不在,
-                                // 决定这一页底部要不要多留出它那一块。
-                                bar-visible: Player.has-track && !Shell.play-page-open;
-                                init => { Profile.shown(); }
-                                username: Profile.username;
-                                loaded: Profile.loaded;
-                                error-text: Profile.error;
-                                month-plays: Profile.month-plays;
-                                distinct-tracks: Profile.distinct-tracks;
-                                streak-days: Profile.streak-days;
-                                top-artists: Profile.artists;
-                                devices: Shell.devices;
-                                output-current: Shell.output-id;
-                                set-output(id) => { Shell.set-output(id); }
-                                netease-bound: Profile.netease-bound;
-                                netease-nickname: Profile.netease-nickname;
-                                netease-qr: Profile.netease-qr;
-                                netease-hint: Profile.netease-hint;
-                                // 手机扫不了自己屏幕上的码,那一句提示只在安卓上说
-                                on-phone: Shell.platform == "android";
-                                unbind-netease => { Profile.unbind-netease(); }
-                            }
+                                Rectangle {
+                                    y: 0px;
+                                    height: 260px;
+                                    background: @linear-gradient(180deg, Theme.header-wash 0%, Theme.base 100%);
+                                }
 
-                            // 设置(目的地 8,侧栏沉底最后一行)。
-                            if Shell.destination == 8: SettingsPage {
-                                width: min(parent.width, root.content-max-w);
-                                x: (parent.width - self.width) / 2;
-                                height: 100%;
-                                // 与下面摆控制条那一行是同一个条件,理由同个人页。
-                                bar-visible: Player.has-track && !Shell.play-page-open;
-                                about-line: Profile.about-line;
-                                tier-line: Profile.tier-line;
-                                update-status: Profile.update-status;
-                                update-action: Profile.update-action;
-                                update-requested => { Profile.update-requested(); }
-                                aurora-on: Shell.aurora-buttons-on;
-                                aurora-toggled => { Shell.aurora-buttons-toggled(); }
-                                theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
-                                logout => { Session.logout(); }
-                            }
+                                // 个人主页(目的地 7)。进页即取统计,判断在 Rust 侧。
+                                if Shell.destination == 7: ProfilePage {
+                                    width: min(parent.width, root.content-max-w);
+                                    x: (parent.width - self.width) / 2;
+                                    height: 100%;
+                                    // 与下面摆控制条那一行是同一个条件 —— 条在不在,
+                                    // 决定这一页底部要不要多留出它那一块。
+                                    bar-visible: Player.has-track && !Shell.play-page-open;
+                                    init => { Profile.shown(); }
+                                    username: Profile.username;
+                                    loaded: Profile.loaded;
+                                    error-text: Profile.error;
+                                    month-plays: Profile.month-plays;
+                                    distinct-tracks: Profile.distinct-tracks;
+                                    streak-days: Profile.streak-days;
+                                    top-artists: Profile.artists;
+                                    devices: Shell.devices;
+                                    output-current: Shell.output-id;
+                                    set-output(id) => { Shell.set-output(id); }
+                                    netease-bound: Profile.netease-bound;
+                                    netease-nickname: Profile.netease-nickname;
+                                    netease-qr: Profile.netease-qr;
+                                    netease-hint: Profile.netease-hint;
+                                    // 手机扫不了自己屏幕上的码,那一句提示只在安卓上说
+                                    on-phone: Shell.platform == "android";
+                                    unbind-netease => { Profile.unbind-netease(); }
+                                }
 
-                            // 已屏蔽(目的地 9)。规则按原因分组,在这里恢复。
-                            if Shell.destination == 9: BlockedPage {
-                                width: min(parent.width, root.content-max-w);
-                                x: (parent.width - self.width) / 2;
-                                height: 100%;
-                                bar-visible: Player.has-track && !Shell.play-page-open;
-                            }
+                                // 设置(目的地 8,侧栏沉底最后一行)。
+                                if Shell.destination == 8: SettingsPage {
+                                    width: min(parent.width, root.content-max-w);
+                                    x: (parent.width - self.width) / 2;
+                                    height: 100%;
+                                    // 与下面摆控制条那一行是同一个条件,理由同个人页。
+                                    bar-visible: Player.has-track && !Shell.play-page-open;
+                                    about-line: Profile.about-line;
+                                    tier-line: Profile.tier-line;
+                                    update-status: Profile.update-status;
+                                    update-action: Profile.update-action;
+                                    update-requested => { Profile.update-requested(); }
+                                    aurora-on: Shell.aurora-buttons-on;
+                                    aurora-toggled => { Shell.aurora-buttons-toggled(); }
+                                    theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
+                                    logout => { Session.logout(); }
+                                }
 
-                            // 其余七个目的地共用音乐页。整页可滚,不裹玻璃卡片 ——
-                            // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
-                            if Shell.destination < 7: music-page := MusicPage {
-                                width: min(parent.width, root.content-max-w);
-                                height: 100%;
-                                x: (parent.width - self.width) / 2;
+                                // 已屏蔽(目的地 9)。规则按原因分组,在这里恢复。
+                                if Shell.destination == 9: BlockedPage {
+                                    width: min(parent.width, root.content-max-w);
+                                    x: (parent.width - self.width) / 2;
+                                    height: 100%;
+                                    bar-visible: Player.has-track && !Shell.play-page-open;
+                                }
+
+                                // 其余七个目的地共用音乐页。整页可滚,不裹玻璃卡片 ——
+                                // 列表要吃满可用高度,套进定宽卡片在手机上只剩三四行可见。
+                                if Shell.destination < 7: music-page := MusicPage {
+                                    width: min(parent.width, root.content-max-w);
+                                    height: 100%;
+                                    x: (parent.width - self.width) / 2;
+                                }
+
                             }
 
                             // 控制条:窗口持有、跨目的地常驻(CONTEXT.md「控制条」)。
                             // **一个实例管所有目的地** —— 不是每页各摆一根:各摆一根就有各自的
                             // 容器内缩与各自的形态,而那正是用户点名的「不统一」(docs/adr/0029)。
                             // 播放页开着时让位:覆层整个盖住这一层,它自己带一根同样的条。
+                            // 条下面那一截列表渐隐进面板底色:条浮在上面时,最后几行不硬生生被切断。
+                            if Player.has-track && !Shell.play-page-open: Rectangle {
+                                x: panel.x;
+                                width: panel.width;
+                                y: panel.y + panel.height - self.height;
+                                height: Shell.compact ? 230px : 190px;
+                                border-radius: panel.border-radius;
+                                background: @linear-gradient(180deg, Theme.base.with-alpha(0) 0%, Theme.base 62%, Theme.base 100%);
+                            }
+
+                            // 条按面板居中落位,不按内容区:宽版式的面板右边让出了一道 gutter。
                             if Player.has-track && !Shell.play-page-open: PlayerBar {
-                                x: (parent.width - self.width) / 2;
+                                x: panel.x + (panel.width - self.width) / 2;
                                 // 间隙与 BarMetrics.bottom-gap 是同一个数:页面按它留空,
                                 // 条按它落位,两边对不上就会差出一条缝或者压住一行。
-                                y: parent.height - self.height - BarMetrics.bottom-gap;
-                                width-cap: parent.width - root.bar-inset * 2;
+                                y: panel.y + panel.height - self.height - BarMetrics.bottom-gap;
+                                width-cap: panel.width - root.bar-inset * 2;
                             }
 
                             // 「更多」面板:盖在内容区上,贴着底栏上沿。只在紧凑版式出现。
@@ -598,39 +735,50 @@ export component MainWindow inherits Window {
                     }
 
                     // ── 底栏(紧凑版式)──
-                    // 背景铺满到屏幕底边,内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的
-                    // edge-to-edge 一致:手势条底下是导航栏的深色,不是一条露出来的窗口底色。
+                    // 窗口底色,顶上一道细线;五格里选中那格的图标垫一颗玻璃小药丸。背景铺满到屏幕底边,
+                    // 内部 padding-bottom 把图标顶到手势条之上 —— 与 MainActivity 的 edge-to-edge 一致。
                     if Shell.compact: bottom-bar := Rectangle {
                         height: root.nav-bar-h;
-                        // 兜底平底:非 GPU 构建就是这层纯色 + NavItem 自带高亮。
-                        background: Theme.base;
+                        background: Theme.window;
                         // 横条几何回写给 seam:五格等分要窗口宽,而它随窗口变(#70)。
                         init => { root.nav-bar-w = self.width; }
                         changed width => { root.nav-bar-w = self.width; }
 
-                        // GPU 水滴选中器:与侧栏同一条 pass,只是移动轴换成 x。
-                        // 非 GPU 构建 nav-bg 为空(width 0),这个 Image 不显示,露出上面的平底。
+                        // GPU 构建:navglass 连底带丸画进 nav-bg,与侧栏同一条 pass,移动轴换成 x。
                         Image {
                             source: root.nav-bg;
                             width: 100%;
                             height: 100%;
                             image-fit: fill;
                         }
+                        Rectangle {
+                            y: 0px;
+                            height: 1px;
+                            background: Theme.line;
+                        }
+                        if root.nav-bg.width == 0: GlassPill {
+                            x: min(root.nav-lead, root.nav-lag) - root.nav-slot / 2;
+                            width: abs(root.nav-lead - root.nav-lag) + root.nav-slot;
+                            y: root.nav-cross - root.nav-thick / 2;
+                            height: root.nav-thick;
+                            border-radius: Radius.pill;
+                            spec-w: 40px;
+                            spec-opacity: 0.7;
+                        }
 
                         HorizontalLayout {
                             padding-left: root.nav-bar-pad-left;
                             padding-right: root.nav-bar-pad-right;
                             padding-bottom: root.safe-area-insets.bottom;
-                            spacing: root.nav-bar-gap;
+                            spacing: 0px;
 
                             for item in Destinations.bar: NavItem {
                                 horizontal-stretch: 1;
                                 label: item.short;
                                 a11y-label: item.label;
                                 icon: item.icon;
+                                icon-on: item.icon-on;
                                 active: Shell.destination == item.id;
-                                // GPU 构建里选中高亮由水滴提供,压掉自带 active 底,免得叠两遍。
-                                gpu-selected: root.nav-bg.width > 0;
                                 clicked => { Destinations.go(item.id); }
                             }
                             // 「更多」:当前页在面板里时它亮着,再点一下收起面板。
@@ -639,8 +787,8 @@ export component MainWindow inherits Window {
                                 label: Destinations.more-entry.short;
                                 a11y-label: Destinations.more-entry.label;
                                 icon: Destinations.more-entry.icon;
+                                icon-on: Destinations.more-entry.icon-on;
                                 active: Destinations.in-more;
-                                gpu-selected: root.nav-bg.width > 0;
                                 clicked => { Destinations.more-open = !Destinations.more-open; }
                             }
                         }
@@ -674,17 +822,10 @@ export component MainWindow inherits Window {
                 clicked => { root.group-panel-open = true; }
             }
             // 双设备图标用语义色，在深浅主题共用同一轮廓。
-            group-icon := Path {
-                x: 10px;
-                y: 10px;
-                width: 24px;
-                height: 24px;
-                viewbox-width: 24;
-                viewbox-height: 24;
-                commands: "M2 4 H15 V14 H2 Z M6 18 H11 M8.5 14 V18 M17 9 H22 V21 H17 Z";
-                fill: transparent;
-                stroke: Theme.accent-ink;
-                stroke-width: 2px;
+            group-icon := Icon {
+                size: 24px;
+                source: Icons.devices;
+                colorize: Theme.accent-ink;
             }
         }
 
@@ -751,7 +892,7 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                    HoverButton {
+                    Button {
                         width: 100%;
                         height: 44px;
                         text: Shell.group-joinable ? "加入播放组" : "退出组";
@@ -778,10 +919,10 @@ export component MainWindow inherits Window {
                 dislike-body := VerticalLayout {
                     padding: Space.md; spacing: 10px;
                     Text { text: Library.dislike-pick-artist ? "选择歌手" : "不喜欢"; color: Theme.text; font-size: TextSize.title; }
-                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "不想再听这个歌手"; clicked => { Library.choose-dislike(0); } }
-                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "不想再听这首歌（含其他版本）"; clicked => { Library.choose-dislike(1); } }
-                    if !Library.dislike-pick-artist: HoverButton { width: 100%; height: 48px; text: "太难听了"; clicked => { Library.choose-dislike(2); } }
-                    for artist[index] in Library.dislike-artists: HoverButton {
+                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "不想再听这个歌手"; clicked => { Library.choose-dislike(0); } }
+                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "不想再听这首歌（含其他版本）"; clicked => { Library.choose-dislike(1); } }
+                    if !Library.dislike-pick-artist: Button { width: 100%; height: 48px; text: "太难听了"; clicked => { Library.choose-dislike(2); } }
+                    for artist[index] in Library.dislike-artists: Button {
                         visible: Library.dislike-pick-artist;
                         width: 100%; height: 48px; text: artist;
                         clicked => { Library.choose-dislike-artist(index); }
@@ -1108,13 +1249,10 @@ export component MainWindow inherits Window {
                                         border-color: row.applied ? Theme.accent : Theme.press;
                                         animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
-                                        if row.applied: Path {
-                                            width: 12px;
-                                            height: 12px;
-                                            viewbox-width: 24;
-                                            viewbox-height: 24;
-                                            commands: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z";
-                                            fill: Theme.accent-text;
+                                        if row.applied: Icon {
+                                            size: 14px;
+                                            source: Icons.check;
+                                            colorize: Theme.accent-text;
                                         }
                                     }
                                 }
@@ -1133,9 +1271,9 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: Space.sm;
 
-                        new-tag-name := LineEdit {
+                        new-tag-name := TextField {
                             horizontal-stretch: 1;
-                            placeholder-text: "新建标签";
+                            placeholder: "新建标签";
                             accepted => {
                                 Library.create-track-tag(self.text);
                                 self.text = "";

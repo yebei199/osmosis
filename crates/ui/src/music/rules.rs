@@ -257,6 +257,8 @@ pub(super) fn to_rows(
             // 红心状态由 push_rows 接着用 liked::mark 填 —— 这里没有那个集合,
             // 而把它传进来会让这个纯格式化函数多认识一样东西。
             liked: false,
+            // 序号由 facets 按摆放次序编(堆头不占号)。
+            number: 0,
             // 平台没给封面就是空串,那一行永远画占位色(见 tracklist.slint)。
             cover_url: track
                 .cover

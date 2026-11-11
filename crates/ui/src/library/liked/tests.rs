@@ -288,6 +288,7 @@ fn track_row(id: &str) -> crate::TrackRow {
         cover: slint::Image::default(),
         header: false,
         collapsed: false,
+        number: 0,
     }
 }
 

@@ -4,80 +4,161 @@
 // 跨形态复用的零件:环形键迷你条与完整条都用,输出设备区在抽屉与个人页里。
 
 import { DeviceRow } from "types.slint";
-import { Theme, Radius, Motion, TextSize, Space, Type } from "theme.slint";
+import { Theme, Glass, Radius, Motion, TextSize, Space, Type, Weight } from "theme.slint";
 import { Shell } from "globals/shell.slint";
-import { HoverButton, RoundControl, OutlinedText } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { Button, OutlinedText } from "widgets.slint";
 
 import { ProgressBar, VolumeControl } from "progress.slint";
 export { ProgressBar, VolumeControl }
 
-// 环形进度播放键:外圈 conic 进度环(进度本身就是环,不再要常驻细线),
-// 内圈实心圆 + 播放/暂停图标。尺寸两档:条身 48/40,播放页 60/50
-// (docs/design.md「播放条」)。
-export component RingControl inherits Rectangle {
+// 播放透镜(docs/design.md「播放键」):一颗玻璃球压在当前封面上 —— 圆里画放大到 190%
+// 的封面,压一层暗,上左一抹高光、右下一抹反光,中间白色的播放/暂停。外面 4px
+// 是一圈 conic 进度环,走过的弧是强调色,两头是圆的端帽。
+// 折射不靠 shader:放大的封面就是透镜(设计稿的「无 shader 折射」)。
+// 按下缩到 0.9,悬停时朝指针偏 ≤ 4px —— 都是声明式 animate,静止时不出帧。
+export component PlayLens inherits Rectangle {
     in property <bool> is-playing;
     // 已放到全曲的几分之几,0..=1。与 ProgressBar 同一个来源(progress.rs 夹好)。
     in property <float> ratio: 0;
-    in property <length> diameter: 48px;
-    in property <length> inner-diameter: 40px;
-    // 播放键里那圈随音乐跳动的画面(反馈 warp)。空图退回纯色内圈 ——
-    // 音乐页不接它,没 GPU 的构建也不接。
-    in property <image> pulse;
+    in property <image> cover;
+    in property <length> diameter: 52px;
     callback toggle();
 
-    width: root.diameter;
-    height: root.diameter;
-    border-radius: self.width / 2;
-    // 进度环:走过的弧是 accent,剩下的弧是弱叠加。conic 从 12 点起顺时针。
-    background: @conic-gradient(
-        Theme.accent 0deg,
-        Theme.accent clamp(root.ratio, 0.0, 1.0) * 360deg,
-        Theme.press clamp(root.ratio, 0.0, 1.0) * 360deg,
-        Theme.press 360deg);
+    property <float> arc: clamp(root.ratio, 0.0, 1.0);
+    property <length> ring-w: 2.5px;
+    property <length> ring-d: root.diameter + 8px;
 
-    inner := Rectangle {
-        width: root.inner-diameter;
-        height: root.inner-diameter;
-        border-radius: self.width / 2;
-        background: Theme.surface;
-        clip: true;
+    width: root.ring-d;
+    height: root.ring-d;
+    accessible-role: button;
+    accessible-label: root.is-playing ? "暂停" : "播放";
+    accessible-action-default => { root.toggle(); }
 
-        if root.pulse.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            image-fit: cover;
-            source: root.pulse;
+    body := Rectangle {
+        width: root.ring-d;
+        height: root.ring-d;
+        transform-scale: touch.pressed ? 0.9 : 1.0;
+        animate transform-scale { duration: Motion.press; easing: Motion.press-ease; }
+        x: touch.has-hover ? clamp((touch.mouse-x - root.ring-d / 2) * 0.15, -4px, 4px) : 0px;
+        animate x { duration: Motion.lean; easing: Motion.lean-ease; }
+
+        // 进度环:conic 从 12 点起顺时针,里面挖空成 2.5px 的一圈。
+        Rectangle {
+            border-radius: self.width / 2;
+            background: @conic-gradient(
+                Theme.accent 0deg,
+                Theme.accent root.arc * 360deg,
+                Theme.line-strong root.arc * 360deg,
+                Theme.line-strong 360deg);
+            Rectangle {
+                x: root.ring-w;
+                y: root.ring-w;
+                width: parent.width - root.ring-w * 2;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: Theme.raised;
+            }
+        }
+        // 弧的两个端帽:一颗在 12 点,一颗跟着弧尾走。
+        if root.arc > 0: Rectangle {
+            x: (root.ring-d - root.ring-w) / 2;
+            y: 0px;
+            width: root.ring-w;
+            height: root.ring-w;
+            border-radius: root.ring-w / 2;
+            background: Theme.accent;
+        }
+        if root.arc > 0: Rectangle {
+            property <length> r: (root.ring-d - root.ring-w) / 2;
+            x: root.ring-d / 2 + self.r * sin(root.arc * 360deg) - root.ring-w / 2;
+            y: root.ring-d / 2 - self.r * cos(root.arc * 360deg) - root.ring-w / 2;
+            width: root.ring-w;
+            height: root.ring-w;
+            border-radius: root.ring-w / 2;
+            background: Theme.accent;
         }
 
-        RoundControl {
-            diameter: parent.width;
-            // 环里的内圈自己是底,再叠一层灰底会把环糊成同心圆;
-            // 接了 warp 时同理,不糊住画面。
-            transparent-base: true;
-            // ▶ 或 ⏸,随播放状态换。
-            icon: root.is-playing
-                ? "M8 5 L10.5 5 L10.5 19 L8 19 Z M13.5 5 L16 5 L16 19 L13.5 19 Z"
-                : "M8 5 L19 12 L8 19 Z";
-            label: root.is-playing ? "暂停" : "播放";
-            clicked => { root.toggle(); }
+        // 玻璃球。
+        ball := Rectangle {
+            x: 4px;
+            y: 4px;
+            width: root.diameter;
+            height: root.diameter;
+            border-radius: self.width / 2;
+            clip: true;
+            background: @linear-gradient(150deg, Theme.hues-bright[0], Theme.hues-deep[0]);
+            drop-shadow-offset-y: 6px;
+            drop-shadow-blur: 14px;
+            drop-shadow-spread: -4px;
+            drop-shadow-color: Glass.shadow;
+
+            if root.cover.width > 0: Image {
+                // 放大到 190%,焦点在 50% / 42%(往上偏 8%)。
+                width: root.diameter * 1.9;
+                height: self.width;
+                x: (root.diameter - self.width) / 2;
+                y: (root.diameter - self.height) * 0.42;
+                image-fit: ImageFit.cover;
+                source: root.cover;
+            }
+            Rectangle { background: #040a064d; }
+            // 球底那一圈暗:向下压的内阴影。
+            Rectangle {
+                border-radius: self.width / 2;
+                inner-shadow-offset-y: -8px;
+                inner-shadow-blur: 14px;
+                inner-shadow-spread: -6px;
+                inner-shadow-color: #0000008c;
+                border-width: 1px;
+                border-color: Glass.rim;
+            }
+            // 左上的高光与右下的反光:方的径向渐变压扁成椭圆。
+            Rectangle {
+                width: root.diameter * 0.77;
+                height: self.width;
+                x: 3px;
+                y: -2px + root.diameter * 0.173 - self.height / 2;
+                transform-scale-y: 0.45;
+                background: @radial-gradient(circle, #ffffff99 0%, transparent 70%);
+            }
+            Rectangle {
+                width: root.diameter * 0.58;
+                height: self.width;
+                x: root.diameter - self.width - 1px;
+                y: root.diameter - root.diameter * 0.115 - self.height / 2;
+                transform-scale-y: 0.4;
+                background: @radial-gradient(circle, #ffffff47 0%, transparent 70%);
+            }
+            Icon {
+                size: root.diameter >= 60px ? 28px : 24px;
+                source: root.is-playing ? Icons.pause-fill : Icons.play-fill;
+                colorize: #ffffff;
+            }
         }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggle(); }
     }
 }
 
-// 一颗输出设备芯片。选中的那颗填强调色 —— 与抽屉里的开关同一套表达:
-// 状态由填充底色说,不由文字明暗说。
+// 一颗输出设备芯片(docs/design.md「chip」):选中那颗是强调色的淡底加一个勾 ——
+// 状态由填充说,不由文字明暗说。
 component OutputChip inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
     callback clicked();
 
-    width: chip-label.preferred-width + 24px;
-    height: 30px;
+    width: chip-row.preferred-width;
+    height: 32px;
     border-radius: Radius.pill;
-    background: root.selected
-        ? Theme.accent
-        : (touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.hover);
-    animate background { duration: Motion.fast; easing: Motion.ease; }
+    background: root.selected ? Theme.accent-wash
+        : touch.has-hover ? Theme.hover : transparent;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent-line : Theme.line-strong;
+    animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -91,13 +172,27 @@ component OutputChip inherits Rectangle {
         accessible-action-default => { root.clicked(); }
     }
 
-    // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,不指定 font-family。
-    chip-label := Text {
-        text: root.label;
-        color: root.selected ? Theme.accent-text : Theme.text;
-        font-size: TextSize.small;
-        vertical-alignment: center;
-        horizontal-alignment: center;
+    chip-row := HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        spacing: 6px;
+        if root.selected: VerticalLayout {
+            alignment: center;
+            Icon {
+                size: 15px;
+                source: Icons.check;
+                colorize: Theme.accent-ink;
+            }
+        }
+        // 设备名由对端自报,可能是任意 CJK —— 与歌名同理,生僻字走系统字体回退。
+        chip-label := Text {
+            text: root.label;
+            color: root.selected ? Theme.accent-ink : Theme.text-dim;
+            font-size: TextSize.small;
+            font-weight: root.selected ? Weight.semibold : Weight.regular;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
     }
 }
 
@@ -111,15 +206,13 @@ component MemberToggle inherits Rectangle {
     width: 24px;
     height: 24px;
     border-radius: Radius.pill;
-    background: touch.has-hover ? Theme.accent.darker(0.2).with-alpha(0.4) : Theme.hover;
+    background: touch.has-hover ? Theme.press : Theme.hover;
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
-    Text {
-        text: root.member ? "−" : "+";
-        color: root.member ? Theme.accent : Theme.text-faint;
-        font-size: TextSize.body;
-        vertical-alignment: center;
-        horizontal-alignment: center;
+    Icon {
+        size: 16px;
+        source: root.member ? Icons.minus : Icons.plus;
+        colorize: root.member ? Theme.accent-ink : Theme.text-faint;
     }
 
     touch := TouchArea {
@@ -139,6 +232,8 @@ export component OutputStrip inherits VerticalLayout {
     in property <[DeviceRow]> devices;
     // 当前选中的设备 id。空串 = 本机。
     in property <string> current;
+    // 前面那个「输出」小字。抽屉那一行自己有标签,不再重复。
+    in property <bool> caption: true;
     callback set-output(string);
 
     spacing: Space.xs;
@@ -146,7 +241,7 @@ export component OutputStrip inherits VerticalLayout {
     HorizontalLayout {
         spacing: Space.sm;
 
-        VerticalLayout {
+        if root.caption: VerticalLayout {
             alignment: center;
             Text {
                 text: "输出";

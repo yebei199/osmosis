@@ -15,9 +15,10 @@
 // 三面轮换随棱柱一起退场(#83 not planned):它是给棱柱当面的,棱柱撤回后
 // 只剩代价 —— 每面内容不一样多、宽度就不一样,翻一次面条变一次长。
 
-import { Theme, Type, Elevation, Radius, Motion, Space, TextSize } from "theme.slint";
-import { RoundControl } from "widgets.slint";
-import { RingControl } from "controls.slint";
+import { Theme, Type, Elevation, Radius, Motion, Space, TextSize, Layout, Weight } from "theme.slint";
+import { IconButton } from "widgets.slint";
+import { Icon, Icons } from "icons.slint";
+import { PlayLens } from "controls.slint";
 import { ProgressBar } from "progress.slint";
 import { Drawer, DrawerMetrics } from "drawer.slint";
 import { Player } from "globals/player.slint";
@@ -32,17 +33,17 @@ import { Viz } from "globals/viz.slint";
 // 在底部留出这么多,否则最后一行内容就压在条底下 —— 看得见、点不着,而
 // Flickable 也滚不出来:能滚的余量少于条身高度时,那一段永远够不到(#108 AC-8)。
 export global BarMetrics {
-    // 条身高度。**唯一的一份** —— PlayerBar 自己的 `bar-h` 也读这里,
-    // 免得页面按一个数留空、条按另一个数画。
-    out property <length> bar-h: 62px;
-    // 条底到页面底的间隙,与 app.slint 摆条那一行的 22px 是同一个数。
-    out property <length> bottom-gap: 22px;
+    // 条身高度(Layout.bar-h / bar-h-compact)。**唯一的一份** —— PlayerBar 自己的
+    // `bar-h` 也读这里,免得页面按一个数留空、条按另一个数画。
+    out property <length> bar-h: Shell.compact ? Layout.bar-h-compact : Layout.bar-h;
+    // 条底到面板底的间隙,与 app.slint 摆条那一行是同一个数。
+    out property <length> bottom-gap: Shell.compact ? 8px : 20px;
     // 页面底部该留的空:条身 + 上下两头的空气。
     out property <length> page-reserve: self.bar-h + self.bottom-gap * 2;
 }
 
 export component PlayerBar inherits Rectangle {
-    // 覆层里那份。只影响:回写哪一槽、抽屉里有没有视觉预设。不碰几何。
+    // 覆层里那份。只影响:回写哪一槽、配色走不走沉浸色。不碰几何。
     in property <bool> immersive: false;
     // 可用宽度的上限,由调用点按容器给。
     in property <length> width-cap: 100000px;
@@ -50,32 +51,19 @@ export component PlayerBar inherits Rectangle {
     // 抽屉开着没有。私有于界面:Rust 不关心用户把抽屉拉没拉开。
     property <bool> drawer-open: false;
 
-    // ── 唯一的一套尺寸 ──
+    // ── 唯一的一套尺寸(docs/design.md「播放条」)──
     property <length> bar-h: BarMetrics.bar-h;
-    property <length> cover-size: 44px;
-    property <length> key-size: 40px;
-    property <length> ring-size: 48px;
-    property <length> ring-inner: 40px;
-    // 间距随可用宽度收 —— **控件尺寸不变**。手机上 360px 减去内缩只剩 336px,
-    // 而封面 44 + 三键 120 + 环 48 已经吃掉 212;间距按宽版的 10px 排,
-    // 文字区只剩 20px(实拍确认,一个字都放不下)。收的是空白,不是键:
-    // 键一小,同一根条在不同页上就又长得不一样了,那正是这次要消灭的东西。
-    property <length> pad-x: Shell.compact ? 8px : 10px;
-    property <length> gap: Shell.compact ? 6px : 10px;
-    // 固定开销:内边距 + 封面 + 三颗键 + 抽屉键 + 各段间距。
-    // 曲名那一列拿走剩下的,窄到放不下就省略号收尾。
-    property <length> fixed-w: root.pad-x * 2 + root.cover-size
-        + root.key-size * 3 + root.ring-size + root.gap * 6;
-    property <length> drawer-gap: 8px;
-    // 文字区的让位顺序:**曲名 > 时间 > 歌手**。
-    // 窄到只放得下一样时留曲名 —— 「在放哪首」比「第几秒」要紧,而位置
-    // 本来就有下缘那道进度轨在报。放不下就整格收起,不留一个被切成「…」的读数。
-    property <length> time-w: 78px;
-    property <length> min-title-w: 96px;
-    property <bool> show-time: root.width
-        >= root.fixed-w + root.min-title-w + root.time-w + root.gap;
+    property <length> cover-size: Shell.compact ? 46px : 48px;
+    property <length> lens-size: Shell.compact ? 46px : 52px;
+    property <length> key-size: Shell.compact ? 34px : 36px;
+    property <length> pad-left: Shell.compact ? 8px : 12px;
+    property <length> pad-right: Shell.compact ? 8px : 14px;
+    property <length> gap: Shell.compact ? 10px : 14px;
+    property <length> drawer-gap: 10px;
+    // 时间读数让位:紧凑版式不摆,窄到放不下也不摆。曲名永远优先。
+    property <bool> show-time: !Shell.compact;
 
-    width: min(root.fixed-w + 320px, root.width-cap);
+    width: min(Layout.bar-w, root.width-cap);
     // 抽屉在 `if` 里,引用不到它的 height,所以高度从同一个 global 取 ——
     // 不是在这里抄一遍行高(ADR 0028 那次就是抄出来的债)。
     property <length> drawer-h: DrawerMetrics.total-h;
@@ -83,19 +71,22 @@ export component PlayerBar inherits Rectangle {
         ? root.drawer-h + root.drawer-gap + root.bar-h
         : root.bar-h;
 
-    // 抽屉开着时,点条外任意处收起。
+    // 抽屉开着时,一层压暗的幕布盖住整个窗口;点条外任意处收起。
     //
     // **必须声明在最前面。** slint 里后声明即在上层,命中测试也从上往下走;
     // 这块盖住整根条的 TouchArea 一旦排在后面,随机、循环、音量乃至主条上的
     // 上下曲全都点不动 —— 每一次点击都被它吃成「收起抽屉」。
     // 无障碍动作那条路不过命中测试,所以这个 bug 能骗过一整组按标签点的测试
     // (真按一下的探针见 tests/player_bar.rs 的 click_at)。
-    if root.drawer-open: TouchArea {
+    if root.drawer-open: Rectangle {
         x: -4000px;
         y: -4000px;
         width: 8000px;
         height: 8000px;
-        clicked => { root.drawer-open = false; }
+        background: Theme.scrim;
+        TouchArea {
+            clicked => { root.drawer-open = false; }
+        }
     }
 
     // ── 抽屉:摆在主条**上方**,所以条身长高时向上长,底边不动 ──
@@ -112,7 +103,7 @@ export component PlayerBar inherits Rectangle {
         can-download: Player.now-id != "";
         download-state: Shell.download-text;
         liked: Player.now-liked;
-        // 三态赞踩(#157),挨着喜欢那一行:红心管收藏,这两行管评价。
+        // 三态赞踩(#157),挨着喜欢:红心管收藏,这两块管评价。
         feedback: Player.now-feedback;
         feedback-toggled(v) => {
             if (v < 0) { root.drawer-open = false; Library.open-dislike(Player.now-id); }
@@ -126,6 +117,7 @@ export component PlayerBar inherits Rectangle {
         }
         shuffle-toggled => { Player.shuffle-toggled(); }
         loop-cycled => { Player.loop-cycled(); }
+        loop-set(mode) => { Player.loop-mode-set(mode); }
         volume-changed(v) => { Player.volume-changed(v); }
         set-output(id) => { Shell.set-output(id); }
     }
@@ -136,11 +128,14 @@ export component PlayerBar inherits Rectangle {
         width: 100%;
         height: root.bar-h;
         border-radius: self.height / 2;
-        background: Theme.surface.with-alpha(0.9);
-        border-width: 1px;
-        border-color: Theme.edge;
-        drop-shadow-blur: Elevation.float-blur;
+        background: root.immersive ? Theme.immersive-raised : Theme.raised;
+        border-width: Theme.dark || root.immersive ? 0px : 1px;
+        border-color: Theme.line;
+        inner-shadow-offset-y: Theme.dark || root.immersive ? 1px : 0px;
+        inner-shadow-color: root.immersive ? #ffffff14 : Theme.edge;
         drop-shadow-offset-y: Elevation.float-y;
+        drop-shadow-blur: Elevation.float-blur;
+        drop-shadow-spread: Elevation.float-spread;
         drop-shadow-color: Elevation.float-color;
 
         // 尺寸回写给 GPU 背景通道。覆层那份走另一槽 —— 两条可能同时在场,
@@ -149,26 +144,19 @@ export component PlayerBar inherits Rectangle {
         changed width => { root.mirror-size(); }
         changed height => { root.mirror-size(); }
 
-        if root.backdrop.width > 0: Image {
-            width: 100%;
-            height: 100%;
-            source: root.backdrop;
-        }
-
         HorizontalLayout {
-            padding-left: root.pad-x;
-            padding-right: root.pad-x;
+            padding-left: root.pad-left;
+            padding-right: root.pad-right;
             spacing: root.gap;
 
             // 封面兼任播放页的进出口:条外点它展开,覆层里点它收起。
-            // 一个入口管两个方向,专用的 ▲/▼ 键因此退场 —— 手机上那一颗
-            // 值 40px,全给了曲名。
+            // 覆层里那份压一层暗、叠一个向下的箭头,说明「点这里收起」。
             VerticalLayout {
                 alignment: center;
                 cover := Rectangle {
                     width: root.cover-size;
                     height: root.cover-size;
-                    border-radius: Radius.sm;
+                    border-radius: self.width / 2;
                     clip: true;
 
                     // 无障碍属性长在封面本身,而不是底下那层 TouchArea ——
@@ -187,13 +175,17 @@ export component PlayerBar inherits Rectangle {
                         image-fit: ImageFit.cover;
                         source: Viz.cover-art;
                     }
-                    // 指过来时压一层,让「它是可以点的」看得出来。
                     Rectangle {
                         width: 100%;
                         height: 100%;
-                        background: cover-touch.has-hover
-                            ? Theme.accent.with-alpha(0.22) : transparent;
+                        background: root.immersive ? #00000073
+                            : cover-touch.has-hover ? #00000040 : transparent;
                         animate background { duration: Motion.fast; easing: Motion.ease; }
+                    }
+                    if root.immersive || cover-touch.has-hover: Icon {
+                        size: 20px;
+                        source: root.immersive ? Icons.caret-down : Icons.caret-up;
+                        colorize: #ffffff;
                     }
 
                     cover-touch := TouchArea {
@@ -205,115 +197,123 @@ export component PlayerBar inherits Rectangle {
                 }
             }
 
-            // 正在放什么。这一列是唯一会让位的东西,让位顺序见上面的 show-time:
-            // 曲名 > 时间 > 歌手。此前时间跟歌手串成一行,末尾先被吃掉,
-            // 手机上永远看不见读数;而给时间一个不让位的槽又会把曲名压成
-            // 一个「…」——两次实拍才试出这个顺序。
+            // 正在放什么:曲名一行,歌手与时间一行。窄了让位的是这一列,不是按键。
             VerticalLayout {
                 alignment: center;
-                spacing: Space.xs;
+                spacing: 2px;
                 horizontal-stretch: 1;
+                min-width: 0px;
 
+                title := Text {
+                    text: Viz.now-title;
+                    color: root.immersive ? Theme.immersive-text : Theme.text;
+                    font-size: TextSize.body;
+                    font-weight: Weight.semibold;
+                    overflow: elide;
+                }
                 HorizontalLayout {
                     spacing: Space.sm;
-                    title := Text {
-                        horizontal-stretch: 1;
-                        text: Viz.now-title;
-                        color: Theme.text;
-                        font-size: TextSize.body;
-                        font-weight: 600;
+                    Text {
+                        horizontal-stretch: 0;
+                        min-width: 0px;
+                        text: Viz.now-artists;
+                        color: root.immersive ? Theme.immersive-dim : Theme.text-dim;
+                        font-size: TextSize.small;
                         overflow: elide;
                     }
                     // 缓冲时这一格是唯一说明「还在动」的东西,提亮。
-                    // 两种文案都走等宽:读数逐秒跳,变宽字体会让整行左右抖。
                     if root.show-time: clock := Text {
                         horizontal-stretch: 0;
-                        min-width: root.time-w;
                         text: Player.buffering ? "缓冲中…" : Player.progress-text;
-                        color: Player.buffering ? Theme.accent : Theme.text-dim;
+                        color: Player.buffering ? Theme.accent-ink
+                            : root.immersive ? Theme.immersive-faint : Theme.text-faint;
                         font-size: TextSize.small;
-                        vertical-alignment: bottom;
                     }
-                }
-                Text {
-                    text: Viz.now-artists;
-                    color: Theme.text-dim;
-                    font-size: TextSize.small;
-                    overflow: elide;
+                    Rectangle { horizontal-stretch: 1; }
                 }
             }
 
-            VerticalLayout {
-                alignment: center;
-                RoundControl {
-                    diameter: root.key-size;
-                    icon: root.prev-icon;
-                    label: "上一首";
-                    clicked => { Player.prev-track(); }
+            HorizontalLayout {
+                spacing: Shell.compact ? 0px : 6px;
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        diameter: root.key-size;
+                        icon-size: 22px;
+                        ink: root.immersive ? Theme.immersive-text : Theme.text;
+                        icon: Icons.skip-back-fill;
+                        label: "上一首";
+                        clicked => { Player.prev-track(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    PlayLens {
+                        is-playing: Player.is-playing;
+                        ratio: Player.progress-ratio;
+                        cover: Viz.cover-art;
+                        diameter: root.lens-size;
+                        toggle => { Player.toggle-play(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        diameter: root.key-size;
+                        icon-size: 22px;
+                        ink: root.immersive ? Theme.immersive-text : Theme.text;
+                        icon: Icons.skip-forward-fill;
+                        label: "下一首";
+                        clicked => { Player.next-track(); }
+                    }
                 }
             }
-            VerticalLayout {
-                alignment: center;
-                RingControl {
-                    is-playing: Player.is-playing;
-                    ratio: Player.progress-ratio;
-                    diameter: root.ring-size;
-                    inner-diameter: root.ring-inner;
-                    // 环里那圈随音乐翻涌的画面。#87 把它改成常驻之前,
-                    // 只有播放页开着时才有图,别处空图退回纯色内圈。
-                    pulse: Viz.viz-bg;
-                    toggle => { Player.toggle-play(); }
+
+            HorizontalLayout {
+                spacing: 2px;
+                // 喜欢:宽版式常驻在条上,紧凑版式进抽屉。
+                if !Shell.compact: VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        diameter: 36px;
+                        icon-size: 20px;
+                        icon: Player.now-liked ? Icons.heart-fill : Icons.heart;
+                        ink: Player.now-liked ? Theme.accent-ink
+                            : root.immersive ? Theme.immersive-dim : Theme.text-dim;
+                        label: Player.now-liked ? "取消喜欢" : "喜欢";
+                        enabled: Player.now-id != "";
+                        clicked => { Library.toggle-liked(Player.now-id, !Player.now-liked); }
+                    }
                 }
-            }
-            VerticalLayout {
-                alignment: center;
-                RoundControl {
-                    diameter: root.key-size;
-                    icon: root.next-icon;
-                    label: "下一首";
-                    clicked => { Player.next-track(); }
-                }
-            }
-            // 抽屉键:随机、循环、音量、输出设备都在里面。
-            VerticalLayout {
-                alignment: center;
-                more := RoundControl {
-                    diameter: root.key-size;
-                    icon: root.more-icon;
-                    label: root.drawer-open ? "收起更多" : "更多";
-                    checkable: true;
-                    checked: root.drawer-open;
-                    backdrop: root.immersive ? Shell.viz-glass-bg : root.no-image;
-                    clicked => { root.drawer-open = !root.drawer-open; }
+                // 抽屉键:随机、循环、音量、输出设备都在里面。
+                VerticalLayout {
+                    alignment: center;
+                    more := IconButton {
+                        diameter: 36px;
+                        icon-size: 20px;
+                        icon: root.drawer-open ? Icons.caret-down : Icons.caret-up;
+                        ink: root.immersive ? Theme.immersive-text : Theme.text-dim;
+                        label: root.drawer-open ? "收起更多" : "更多";
+                        checkable: true;
+                        checked: root.drawer-open;
+                        clicked => { root.drawer-open = !root.drawer-open; }
+                    }
                 }
             }
         }
 
-        // 精确拖动的细轨:贴着条身下缘。环报进度,它管落点。
-        // **恒常驻**:此前只在紧凑版式钉住,而桌面上要指过来才现形 ——
-        // 同一根条两种行为,正是这次要消灭的东西。
+        // 精确拖动的细轨:贴着条身下缘,从曲名那一列起,到抽屉键前收住。
+        // 环报进度,它管落点。**恒常驻**:触屏没有悬停。
         track := ProgressBar {
             slim: true;
             pinned: true;
-            x: 28px;
-            width: parent.width - 56px;
-            y: parent.height - self.height - 1px;
+            x: root.pad-left + root.cover-size + 16px;
+            width: parent.width - self.x - (Shell.compact ? 28px : 36px);
+            y: parent.height - self.height + (Shell.compact ? 2px : 1px);
             ratio: Player.progress-ratio;
             seek(at) => { Player.seek(at); }
         }
     }
-
-    // 覆层那份读另一槽,两条同时在场时各渲各的底。
-    property <image> backdrop: root.immersive
-        ? Shell.viz-bar-bg
-        : Shell.bar-fluid-bg;
-    // 空图常量:某些位置要显式地「没有图」,而 slint 没有 image 字面量。
-    property <image> no-image;
-
-    property <string> prev-icon: "M7 5 L7 19 M9 5 L9 19 M19 5 L11 12 L19 19 Z";
-    property <string> next-icon: "M5 5 L13 12 L5 19 Z M15 5 L15 19 M17 5 L17 19";
-    // ⋯:三个点,「还有更多」最不容易认错的画法。
-    property <string> more-icon: "M6 10 A2 2 0 1 1 6 14 A2 2 0 1 1 6 10 Z M12 10 A2 2 0 1 1 12 14 A2 2 0 1 1 12 10 Z M18 10 A2 2 0 1 1 18 14 A2 2 0 1 1 18 10 Z";
 
     function mirror-size() {
         if (root.immersive) {

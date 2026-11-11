@@ -25,6 +25,7 @@ fn row(id: &str) -> TrackRow {
         cover: slint::Image::default(),
         header: false,
         collapsed: false,
+        number: 0,
     }
 }
 
@@ -60,14 +61,14 @@ fn the_view_toggle_asks_without_flipping() {
         seen.set(i32::from(to_wall));
     });
 
-    invoke(&ui, "WallView::view-list-btn");
+    invoke(&ui, "WallToggle::view-list-btn");
     assert_eq!(asked.get(), 0, "列表键该报 false");
     assert!(
         !ui.global::<Shell>().get_view_wall(),
         "意图值该由 Rust 写,控件不自己置位(默认已是列表,#144)"
     );
 
-    invoke(&ui, "WallView::view-wall-btn");
+    invoke(&ui, "WallToggle::view-wall-btn");
     assert_eq!(asked.get(), 1, "卡墙键该报 true");
 }
 
@@ -87,8 +88,8 @@ fn a_pointer_click_on_the_view_toggle_asks_too() {
     });
 
     for (id, want) in [
-        ("WallView::view-list-btn", 0),
-        ("WallView::view-wall-btn", 1),
+        ("WallToggle::view-list-btn", 0),
+        ("WallToggle::view-wall-btn", 1),
     ] {
         testing::ElementHandle::find_by_element_id(&ui, id)
             .next()
@@ -148,7 +149,7 @@ fn unsupported_builds_fall_back_to_the_list() {
     assert_eq!(
         testing::ElementHandle::find_by_element_id(
             &ui,
-            "WallView::view-wall-btn",
+            "WallToggle::view-wall-btn",
         )
         .count(),
         0,

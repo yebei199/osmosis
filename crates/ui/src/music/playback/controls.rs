@@ -19,6 +19,22 @@ pub(in crate::music) fn bind_play(
     ui: &MainWindow,
     deck: &Deck,
 ) {
+    // 页头的「播放」:从这一批的第一首放起,走的是与点一行同一条路。
+    let first = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_play_all(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let Some(id) = first
+            .tracks
+            .borrow()
+            .first()
+            .map(|track| track.id.clone())
+        else {
+            return;
+        };
+        ui.global::<Player>().invoke_play(id.into());
+    });
+
     let deck = deck.clone();
     let weak = ui.as_weak();
 

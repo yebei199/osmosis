@@ -1,124 +1,129 @@
-// 控制条的抽屉:向上展开的开关面板(docs/adr/0029)。
+// 控制条的抽屉:向上展开的一张卡(docs/adr/0029,docs/design.md「抽屉」)。
 //
-// 主条只留高频核心,其余住这里。每行都是「图标 + 名字 + 状态文字」——
-// **开关的状态由填充底色表达,不由图标明暗表达**。此前那套失效得很彻底:
-// 深色档下 `accent` 与 `accent-ink` 是同一个 #8fc46a,开与关的唯一差别是
-// 图标暗 15%,谁也看不出随机到底开着没有(用户点名)。
-//
-// 抽屉里有的是横向空间,所以三态直接写字:「循环: 列表」比让人辨认图标里
-// 那个小小的 1 靠谱得多。
+// 上面一排五块动作磁贴(喜欢、点赞、不喜欢、下载、从这首开电台),下面四行设置:
+// 随机(开关)、循环(三段)、音量(滑块)、输出(设备 chips)。
+// **状态由填充底色表达,不由图标明暗表达** —— 开着的磁贴是强调色的淡底加一圈线,
+// 开关与分段各有各的填充;三态直接写字,不让人辨认图标里那个小小的 1。
 
-import { Theme, Type, Radius, Motion, Space, TextSize, Elevation } from "theme.slint";
+import { Theme, Type, Radius, Motion, Space, TextSize, Elevation, Weight } from "theme.slint";
 import { DeviceRow } from "types.slint";
 import { OutputStrip } from "controls.slint";
 import { VolumeControl } from "progress.slint";
+import { Icon, Icons } from "icons.slint";
+import { Switch, Segmented, Segment } from "widgets.slint";
+import { Shell } from "globals/shell.slint";
 
 // 抽屉的行度量。抽出成 global 是因为**条身要在抽屉实例化之前就知道它有多高**:
 // 抽屉长在一个 `if` 里,而条件子元素在 slint 里既引用不到、也不给父元素贡献
 // preferred 尺寸(ADR 0028 已经为这条栽过一次)。让两边读同一个数,
 // 好过在条身里再抄一遍行高。
 export global DrawerMetrics {
-    out property <length> row-h: 44px;
-    out property <length> strip-h: 38px;
-    out property <length> pad: 8px;
-    out property <length> gap: 2px;
+    // 内边距:宽版式 20,紧凑版式 16。
+    out property <length> pad: Shell.compact ? 16px : 20px;
+    // 动作磁贴的高。
+    out property <length> tile-h: Shell.compact ? 68px : 72px;
+    // 磁贴与设置行之间。
+    out property <length> gap: 8px;
+    // 设置行的高(随机、循环、音量、输出)。
+    out property <length> row-h: 52px;
 
-    // 模式两行 + 喜欢一行 + 赞踩两行 + 下载一行 + 电台一行 + 音量一行 + 输出设备一行。
-    // **到处都是这个数** —— 抽屉在播放页里与在别处一样高、一样几行,
-    // 否则「展开」在两处就不是同一件事了。
-    out property <length> total-h: self.pad * 2
-        + self.row-h * 8
-        + self.strip-h
-        + self.gap * 8;
+    // 一排磁贴 + 四行。**到处都是这个数** —— 抽屉在播放页里与在别处一样高、
+    // 一样几行,否则「展开」在两处就不是同一件事了。
+    out property <length> total-h: self.pad * 2 + self.tile-h + self.gap + self.row-h * 4;
 }
 
-// 一行开关。整行可点,开着时图标那颗芯片填强调色、图标反白。
+// 抽屉里一个可点的东西:磁贴(`tile`)或一整行的标签区。整块可点;
+// 读屏念的那句含状态 —— 三态开关光靠 checked 说不清自己是哪一态。
 export component DrawerRow inherits Rectangle {
-    in property <string> icon;
-    // 这一行叫什么(左侧文字)。
+    in property <image> icon;
+    // 磁贴下面那行字 / 行左边的名字。
     in property <string> title;
-    // 此刻是什么状态(右侧文字)。开关类写「开 / 关」,三态类写具体那一态。
+    // 行名字右边那句说明(「关着:按列表顺序放」)。磁贴不画它。
     in property <string> state;
-    // 读屏念的那句。含状态 —— 三态开关光靠 checked 说不清自己是哪一态。
     in property <string> label;
     in property <bool> checked: false;
-    // 这一行是开关还是动作。动作那种没有"开着没有"可言 —— 读屏把它念成
+    // 这一块是开关还是动作。动作那种没有"开着没有"可言 —— 读屏把它念成
     // 一个复选框的话,用户会以为按下去会留在按下的状态。
     in property <bool> checkable: true;
+    in property <bool> tile: false;
+    in property <bool> enabled: true;
 
     callback clicked();
 
-    height: DrawerMetrics.row-h;
-    border-radius: Radius.sm;
-    background: touch.has-hover ? Theme.hover : transparent;
+    border-radius: root.tile ? Radius.md : 0px;
+    background: root.tile
+        ? (root.checked ? Theme.accent-wash : touch.has-hover ? Theme.press : Theme.hover)
+        : transparent;
+    border-width: root.tile && root.checked ? 1px : 0px;
+    border-color: Theme.accent-line;
+    opacity: root.enabled ? 1.0 : 0.4;
     animate background { duration: Motion.fast; easing: Motion.ease; }
 
-    HorizontalLayout {
-        padding-left: Space.sm;
-        padding-right: Space.md;
-        spacing: Space.md;
-
-        // 图标芯片:开着填强调色、图标反白;关着透底描边。
-        // 这是本行唯一的状态视觉,不靠图标自身的明暗。
-        VerticalLayout {
+    if root.tile: VerticalLayout {
+        alignment: center;
+        spacing: 7px;
+        HorizontalLayout {
             alignment: center;
-            chip := Rectangle {
-                width: 32px;
-                height: 32px;
-                border-radius: Radius.sm;
-                background: root.checked ? Theme.accent : transparent;
-                border-width: 1px;
-                border-color: root.checked ? Theme.accent : Theme.press;
-                animate background, border-color { duration: Motion.fast; easing: Motion.ease; }
-
-                Path {
-                    width: 18px;
-                    height: 18px;
-                    viewbox-width: 24;
-                    viewbox-height: 24;
-                    commands: root.icon;
-                    // 填在强调色上要能读出来 —— accent-text 就是为这个存在的。
-                    stroke: root.checked ? Theme.accent-text : Theme.text-dim;
-                    stroke-width: 1.6px;
-                    fill: root.checked ? Theme.accent-text : Theme.text-dim;
-                }
+            Icon {
+                size: 22px;
+                source: root.icon;
+                colorize: root.checked ? Theme.accent-ink : Theme.text;
+                transform-scale: touch.pressed ? 0.88 : 1.0;
+                animate transform-scale { duration: Motion.press; easing: Motion.press-ease; }
             }
         }
+        Text {
+            text: root.title;
+            color: root.checked ? Theme.accent-ink : Theme.text-dim;
+            font-size: Shell.compact ? TextSize.micro : TextSize.caption;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
 
+    if !root.tile: HorizontalLayout {
+        padding-left: Space.xs;
+        spacing: 14px;
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 1;
             Text {
+                width: 64px;
                 text: root.title;
                 color: Theme.text;
                 font-size: TextSize.body;
-                overflow: elide;
             }
         }
-
         VerticalLayout {
             alignment: center;
+            horizontal-stretch: 1;
             state-text := Text {
                 text: root.state;
-                color: root.checked ? Theme.accent : Theme.text-faint;
+                color: Theme.text-faint;
                 font-size: TextSize.small;
+                overflow: elide;
             }
         }
     }
 
     touch := TouchArea {
         mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        clicked => { if (root.enabled) { root.clicked(); } }
 
         accessible-role: button;
         accessible-label: root.label;
         accessible-checkable: root.checkable;
         accessible-checked: root.checked;
-        accessible-action-default => { root.clicked(); }
+        accessible-action-default => { if (root.enabled) { root.clicked(); } }
     }
 }
 
-// 抽屉本体。行的顺序按使用频率:模式在上,声音居中,设备与特效沉底。
+// 设置行之间的那道细线。
+component RowLine inherits Rectangle {
+    height: 1px;
+    background: Theme.line;
+}
+
+// 抽屉本体。
 export component Drawer inherits Rectangle {
     in property <bool> shuffle-on;
     // 0 关 / 1 列表 / 2 单曲。int 镜像的理由同 Player 那边:
@@ -129,15 +134,15 @@ export component Drawer inherits Rectangle {
     // 当前输出设备的 id,空串 = 本机(docs/adr/0030)。
     in property <string> output-current;
 
-    // 手上有没有一首歌可下。没有时那一行灰着 —— 摆一个按了没反应的键,
+    // 手上有没有一首歌可下。没有时那几块灰着 —— 摆一个按了没反应的键,
     // 比不摆更让人以为功能坏了。
     in property <bool> can-download;
-    // 下载这一行右侧的状态文字:空串 / 「下载中 42%」/ 「已保存」。
+    // 下载那块的状态:空串 / 「下载中 42%」/ 「已保存」。有字时替掉「下载」二字。
     in property <string> download-state;
-    // 正在放的这首红心没有。没在放歌时那一行灰着,理由同下载。
+    // 正在放的这首红心没有。
     in property <bool> liked;
     // 正在放的这首赞踩(#157):1 赞、-1 踩、0 没表态。独立于红心 ——
-    // 红心管收藏,这两行管评价,挨着喜欢那一行摆。
+    // 红心管收藏,这两块管评价,挨着喜欢摆。
     in property <int> feedback: 0;
 
     callback like-toggled();
@@ -149,167 +154,205 @@ export component Drawer inherits Rectangle {
     callback radio-clicked();
     callback shuffle-toggled();
     callback loop-cycled();
+    // 循环直接拨到某一态(分段那三格)。
+    callback loop-set(int);
     callback volume-changed(float);
     callback set-output(string);
 
-    border-radius: Radius.md;
-    background: Theme.surface.with-alpha(0.96);
-    border-width: 1px;
-    border-color: Theme.edge;
-    drop-shadow-blur: Elevation.float-blur;
-    drop-shadow-offset-y: Elevation.float-y;
-    drop-shadow-color: Elevation.float-color;
+    border-radius: Shell.compact ? 24px : Radius.xl;
+    background: Theme.raised;
+    border-width: Theme.dark ? 0px : 1px;
+    border-color: Theme.line;
+    inner-shadow-offset-y: Theme.dark ? 1px : 0px;
+    inner-shadow-color: Theme.edge;
+    drop-shadow-offset-y: Elevation.overlay-y;
+    drop-shadow-blur: Elevation.overlay-blur;
+    drop-shadow-spread: Elevation.overlay-spread;
+    drop-shadow-color: Elevation.overlay-color;
 
     height: DrawerMetrics.total-h;
 
+    // 吞掉卡上的空白点击,免得落到条外那层「点外面收起」上。
+    TouchArea { }
+
     VerticalLayout {
         padding: DrawerMetrics.pad;
-        spacing: DrawerMetrics.gap;
+        spacing: 0px;
 
-        DrawerRow {
-            icon: root.shuffle-icon;
-            title: "随机";
-            state: root.shuffle-on ? "开" : "关";
-            label: "随机播放";
-            checked: root.shuffle-on;
-            clicked => { root.shuffle-toggled(); }
-        }
+        HorizontalLayout {
+            height: DrawerMetrics.tile-h;
+            spacing: Shell.compact ? 6px : Space.sm;
 
-        DrawerRow {
-            icon: root.loop-mode == 2 ? root.loop-one-icon : root.loop-icon;
-            title: "循环";
-            state: root.loop-name;
-            // 三态写进标签:checked 只说得出开没开,说不出列表还是单曲。
-            label: "循环: " + root.loop-name;
-            checked: root.loop-mode > 0;
-            clicked => { root.loop-cycled(); }
-        }
-
-        // 喜欢:正在放的这一首进不进红心。曲目行的红心是同一件事的另一个入口,
-        // 两处读同一个集合,点哪边另一边都跟着变(ui/src/library/liked.rs)。
-        DrawerRow {
-            icon: root.heart-icon;
-            title: "喜欢";
-            state: root.liked ? "已喜欢" : "";
-            label: "喜欢这一首";
-            checked: root.liked;
-            opacity: root.can-download ? 1.0 : 0.4;
-            clicked => {
-                if (root.can-download) { root.like-toggled(); }
+            // 喜欢:正在放的这一首进不进红心。曲目行的红心是同一件事的另一个入口,
+            // 两处读同一个集合,点哪边另一边都跟着变(ui/src/library/liked.rs)。
+            DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: root.liked ? Icons.heart-fill : Icons.heart;
+                title: root.liked ? "已喜欢" : "喜欢";
+                label: "喜欢这一首";
+                checked: root.liked;
+                enabled: root.can-download;
+                clicked => { root.like-toggled(); }
+            }
+            // 三态赞踩(#157)。元素 id 保留 `feedback-up`/`feedback-down`(#157 F-004),
+            // e2e 脚本按这两个 id 找。
+            feedback-up := DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: root.feedback == 1 ? Icons.thumbs-up-fill : Icons.thumbs-up;
+                title: root.feedback == 1 ? "已点赞" : "点赞";
+                label: root.feedback == 1 ? "取消点赞" : "点赞";
+                checked: root.feedback == 1;
+                enabled: root.can-download;
+                clicked => { root.feedback-toggled(1); }
+            }
+            feedback-down := DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: Icons.thumbs-down;
+                title: "不喜欢";
+                label: "不喜欢";
+                checked: false;
+                enabled: root.can-download;
+                clicked => { root.feedback-toggled(-1); }
+            }
+            // 下载:把正在放的这一首存到本机(统一 mp3)。曲目行的「更多」菜单是同一件事
+            // 的另一个入口,两处都在,播放页因此没有独占的操作。
+            DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: Icons.download-simple;
+                title: root.download-state != "" ? root.download-state : "下载";
+                label: "下载这一首";
+                checkable: false;
+                enabled: root.can-download;
+                clicked => { root.download-clicked(); }
+            }
+            // 从这首开电台(#159):以正在放的这首为种子开心动模式,队列换成它推的歌。
+            DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: Icons.radio;
+                title: "从这首开电台";
+                label: "从这首开电台";
+                checkable: false;
+                enabled: root.can-download;
+                clicked => { root.radio-clicked(); }
             }
         }
 
-        // 三态赞踩(#157),挨着喜欢那一行:红心管收藏,这两行管评价。
-        // 元素 id 保留 `feedback-up`/`feedback-down`(#157 F-004,从播放页
-        // 常驻三键搬进来之前的名字),e2e 脚本按这两个 id 找。
-        feedback-up := DrawerRow {
-            icon: root.thumb-up-icon;
-            title: "点赞";
-            state: root.feedback == 1 ? "已点赞" : "";
-            label: root.feedback == 1 ? "取消点赞" : "点赞";
-            checked: root.feedback == 1;
-            opacity: root.can-download ? 1.0 : 0.4;
-            clicked => {
-                if (root.can-download) { root.feedback-toggled(1); }
-            }
-        }
-        feedback-down := DrawerRow {
-            icon: root.thumb-down-icon;
-            title: "不喜欢";
-            state: "";
-            label: "不喜欢";
-            checked: false;
-            opacity: root.can-download ? 1.0 : 0.4;
-            clicked => {
-                if (root.can-download) { root.feedback-toggled(-1); }
-            }
-        }
+        Rectangle { height: DrawerMetrics.gap; }
 
-        // 下载:把正在放的这一首存到本机(统一 mp3)。摆在这里而不是主条上 ——
-        // 主条只放高频核心,其余住抽屉(README「playerbar.slint」)。曲目行长按
-        // 菜单是同一件事的另一个入口,两处都在,播放页因此没有独占的操作。
-        DrawerRow {
-            icon: root.download-icon;
-            title: "下载";
-            state: root.download-state;
-            label: "下载这一首";
-            checkable: false;
-            opacity: root.can-download ? 1.0 : 0.4;
-            clicked => {
-                if (root.can-download) { root.download-clicked(); }
+        // 随机:整行可点,右边的开关是同一件事。
+        HorizontalLayout {
+            height: DrawerMetrics.row-h;
+            padding-right: Space.xs;
+            DrawerRow {
+                horizontal-stretch: 1;
+                title: "随机";
+                state: root.shuffle-on ? "开着:随机顺序放" : "关着:按列表顺序放";
+                label: "随机播放";
+                checked: root.shuffle-on;
+                clicked => { root.shuffle-toggled(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                Switch {
+                    on: root.shuffle-on;
+                    label: "随机开关";
+                    toggled => { root.shuffle-toggled(); }
+                }
             }
         }
+        RowLine { }
 
-        // 从这首开电台(#159):以正在放的这首为种子开心动模式,队列换成它推的歌。
-        // 没在放歌时灰着,理由同下载。
-        DrawerRow {
-            icon: root.radio-icon;
-            title: "从这首开电台";
-            state: "";
-            label: "从这首开电台";
-            checkable: false;
-            opacity: root.can-download ? 1.0 : 0.4;
-            clicked => {
-                if (root.can-download) { root.radio-clicked(); }
+        // 循环:名字那一块点一下换到下一态,右边三格直接拨到某一态。
+        HorizontalLayout {
+            height: DrawerMetrics.row-h - 1px;
+            padding-right: Space.xs;
+            DrawerRow {
+                horizontal-stretch: 1;
+                title: "循环";
+                state: "";
+                // 三态写进标签:checked 只说得出开没开,说不出列表还是单曲。
+                label: "循环: " + root.loop-name;
+                checked: root.loop-mode > 0;
+                clicked => { root.loop-cycled(); }
+            }
+            VerticalLayout {
+                alignment: center;
+                Segmented {
+                    items: [
+                        { label: "关" },
+                        { label: "列表", icon: Icons.repeat },
+                        { label: "单曲", icon: Icons.repeat-once },
+                    ];
+                    current: root.loop-mode;
+                    selected(i) => { root.loop-set(i); }
+                }
             }
         }
+        RowLine { }
 
         // 音量:抽屉里有地方,滑块常驻,不必再点开一层。
         HorizontalLayout {
-            height: DrawerMetrics.row-h;
-            padding-left: Space.sm;
-            padding-right: Space.md;
-            spacing: Space.md;
+            height: DrawerMetrics.row-h - 1px;
+            padding-left: Space.xs;
+            padding-right: Space.xs;
+            spacing: 14px;
             VerticalLayout {
                 alignment: center;
-                horizontal-stretch: 1;
                 Text {
+                    width: 64px;
                     text: "音量";
                     color: Theme.text;
                     font-size: TextSize.body;
                 }
             }
-            VerticalLayout {
-                alignment: center;
-                VolumeControl {
-                    expanded: true;
-                    volume: root.volume;
-                    changed(v) => { root.volume-changed(v); }
-                }
+            VolumeControl {
+                horizontal-stretch: 1;
+                expanded: true;
+                fill: true;
+                volume: root.volume;
+                changed(v) => { root.volume-changed(v); }
             }
         }
+        RowLine { }
 
-        // 视觉预设那一行连同它的选择列表一起退场:名册里只剩「封面」一档
-        // (另外五档让粒子离开封面平面,那张图就散了 —— 见 globals/viz.slint),
-        // 于是它是一个选不动的选择器,还偏偏只长在播放页,成了两处抽屉唯一的差别。
-        // 加档时把行与列表一起加回来,并且加在**这里** —— 抽屉到处一样。
-
-        // 输出设备:点歌之前先选它。
+        // 输出设备:点歌之前先选它。设备多了往左划。
         HorizontalLayout {
-            padding-left: Space.sm;
-            padding-right: Space.md;
-            padding-top: Space.xs;
-            padding-bottom: Space.xs;
-            alignment: start;
-            OutputStrip {
-                devices: root.devices;
-                current: root.output-current;
-                set-output(id) => { root.set-output(id); }
+            height: DrawerMetrics.row-h - 1px;
+            padding-left: Space.xs;
+            spacing: 14px;
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    width: Shell.compact ? 40px : 64px;
+                    text: "输出";
+                    color: Theme.text;
+                    font-size: TextSize.body;
+                }
+            }
+            Flickable {
+                horizontal-stretch: 1;
+                content-width: max(self.width, outputs.preferred-width);
+                outputs := HorizontalLayout {
+                    alignment: end;
+                    VerticalLayout {
+                        alignment: center;
+                        OutputStrip {
+                            caption: false;
+                            devices: root.devices;
+                            current: root.output-current;
+                            set-output(id) => { root.set-output(id); }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // 图标一律内嵌 SVG path,viewbox 24×24,不引外部资源。
-    property <string> shuffle-icon: "M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm0.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z";
-    property <string> heart-icon: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
-    // 标准 Material 24dp 图标(与之前播放页常驻三键用的是同一对 path)。
-    property <string> thumb-up-icon: "M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z";
-    property <string> thumb-down-icon: "M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05C1.05 11.5 1 11.74 1 12v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z";
-    // 电台:一座发射塔两道波。
-    property <string> radio-icon: "M12 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm-1 5h2l2 7h-2l-.5-2h-1l-.5 2H9l2-7zM7.05 7.05l1.41 1.41a5 5 0 0 0 0 7.08l-1.41 1.41a7 7 0 0 1 0-9.9zm9.9 0a7 7 0 0 1 0 9.9l-1.41-1.41a5 5 0 0 0 0-7.08l1.41-1.41zM4.22 4.22l1.42 1.42a9 9 0 0 0 0 12.72l-1.42 1.42a11 11 0 0 1 0-15.56zm15.56 0a11 11 0 0 1 0 15.56l-1.42-1.42a9 9 0 0 0 0-12.72l1.42-1.42z";
-    property <string> download-icon: "M12 3v10.55l3.29-3.26 1.42 1.42L12 16.4l-4.71-4.69 1.42-1.42L12 13.55V3h0zM5 18h14v2H5z";
-    property <string> loop-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z";
-    property <string> loop-one-icon: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z";
     property <string> loop-name: root.loop-mode == 0 ? "关"
         : (root.loop-mode == 1 ? "列表" : "单曲");
 }

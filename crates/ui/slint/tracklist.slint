@@ -8,9 +8,11 @@
 
 import { ListView } from "std-widgets.slint";
 import { TrackRow } from "types.slint";
-import { Theme, Radius, Motion, Space, TextSize, Type, Layout } from "theme.slint";
+import { Theme, Glass, Radius, Motion, Space, TextSize, Type, Layout, Weight, Tracking } from "theme.slint";
 import { Player } from "globals/player.slint";
 import { Shell } from "globals/shell.slint";
+import { Icon, Icons } from "icons.slint";
+import { Chip, ChipKind } from "widgets.slint";
 
 // ListView 而不是 Flickable + for:后者会把整批歌全部实例化,而歌单详情能到
 // 近千行 —— 每行还要配一张封面的话,那就是上千张图同时在内存里。
@@ -62,33 +64,25 @@ export component TrackList inherits ListView {
 
     vertical-stretch: 1;
 
-    // 加载中的那一行自己亮起来,并在行尾标出来。这是用户
-    // 手指底下唯一看得见的反馈 —— 没有它,网络一慢人就会连点。
-    for row[i] in root.tracks: Rectangle {
-        // 堆头(#160)比歌矮一截,没有卡片底,读起来是分隔而不是又一首歌。
+    // 一行(docs/design.md「曲目行」):不再是一格一格的卡片,只在悬停时铺一层淡底。
+    // 宽版式:序号 | 封面 | 歌名/歌手 | 专辑 | 红心 | 时长 | 更多;紧凑版式:
+    // 封面 | 歌名/歌手 | 红心与更多。正在放的那一行歌名换强调色,封面变成透镜。
+    for row[i] in root.tracks: line := Rectangle {
         height: row.header ? Player.pile-row-height : Player.track-row-height;
-        // 行宽钉在可见宽度上。ListView 按行的 preferred 宽排视口,宽屏三列的
+        // 行宽钉在可见宽度上。ListView 按行的 preferred 宽排视口,宽屏多列的
         // preferred 归零之后,不钉的话整行缩成文字最小宽(MEO-1878)。
         width: root.visible-width;
 
         // 就是它在响 —— 与 root.current 绑的那一首比对,空串不算(见上面
-        // `current` 的注释)。background/border/无障碍态共用同一个判断,
-        // 别各写一遍。
+        // `current` 的注释)。
         property <bool> is-current: root.current != "" && row.id == root.current;
+        property <bool> hovered: touch.has-hover && !Shell.compact;
 
-        // ListView 把行贴着排,没有 spacing —— 原来那 4px 的间隔改由卡片
-        // 上下各让 2px 让出来,行本身仍占满一整格。先声明所以画在最底下。
         Rectangle {
-            y: 2px;
-            height: 52px;
-            background: row.header ? transparent
-                : row.loading ? Theme.accent.with-alpha(0.15)
-                : (parent.is-current
-                    ? Theme.accent.with-alpha(0.22)
-                    : (touch.has-hover ? Theme.press : Theme.hover));
             border-radius: Radius.sm;
-            border-width: row.loading || parent.is-current ? 1px : 0;
-            border-color: Theme.accent.with-alpha(0.4);
+            background: row.header ? transparent
+                : row.loading ? Theme.accent-wash
+                : line.hovered ? Theme.hover : transparent;
             animate background { duration: Motion.fast; easing: Motion.ease; }
         }
 
@@ -133,7 +127,7 @@ export component TrackList inherits ListView {
             accessible-label: row.header ? row.title + " " + row.duration : row.title;
             accessible-checkable: true;
             // 堆头报的是「展开着」,歌报的是「正在放」
-            accessible-checked: row.header ? !row.collapsed : parent.is-current;
+            accessible-checked: row.header ? !row.collapsed : line.is-current;
             pointer-event(event) => {
                 if (event.kind == PointerEventKind.down) {
                     parent.pressing = true;
@@ -146,7 +140,7 @@ export component TrackList inherits ListView {
             }
             // 读屏与 MCP 的默认动作走这里,和手指点是同一条逻辑(#168)。
             accessible-action-default => { parent.activate(); }
-            accessible-action-expand => { parent.open-menu(); }
+            accessible-action-expand => { line.open-menu(); }
             clicked => { parent.activate(); }
         }
 
@@ -154,46 +148,75 @@ export component TrackList inherits ListView {
             interval: 450ms;
             running: parent.pressing && !row.header;
             triggered => {
-                parent.open-menu();
+                line.open-menu();
             }
         }
 
-        HorizontalLayout {
-            padding-left: Space.md;
-            padding-right: Space.md;
-            spacing: Space.md;
-
-            // 时间轴那一列:竖线贯穿整行,圆点盖在线上。
-            if root.timeline && !row.header: Rectangle {
-                width: 20px;
-
-                Rectangle {
-                    x: (parent.width - 2px) / 2;
-                    width: 2px;
-                    height: 100%;
-                    background: Theme.press;
+        // 堆头(日推的推荐日、分组的一堆):粗体小字,右边一句几首,再一个折叠箭头。
+        if row.header: HorizontalLayout {
+            padding-left: Shell.compact ? Space.xs : Space.md;
+            padding-right: Shell.compact ? Space.xs : Space.md;
+            padding-top: Shell.compact ? 14px : 18px;
+            spacing: 10px;
+            Text {
+                text: row.title;
+                color: Theme.text;
+                font-size: TextSize.small;
+                font-weight: Weight.bold;
+                letter-spacing: 0.6px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: row.duration;
+                color: Theme.text-faint;
+                font-size: TextSize.caption;
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    size: 14px;
+                    source: row.collapsed ? Icons.caret-right : Icons.caret-down;
+                    colorize: Theme.text-faint;
                 }
-                Rectangle {
-                    width: i == 0 ? 12px : 8px;
-                    height: self.width;
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: self.width / 2;
-                    background: i == 0 ? Theme.accent : Theme.press;
-                    // 最新那条的光晕:一圈半透明的强调色描边。
-                    border-width: i == 0 ? 4px : 0;
-                    border-color: Theme.accent.with-alpha(0.18);
+            }
+        }
+
+        if !row.header: HorizontalLayout {
+            padding-left: Shell.compact ? Space.xs : Space.md;
+            padding-right: Shell.compact ? Space.xs : Space.md;
+            spacing: 14px;
+
+            // 序号。悬停换成播放三角,正在放的那一行是强调色。
+            if !Shell.compact: Rectangle {
+                width: 32px;
+                if !line.hovered: Text {
+                    width: 100%;
+                    height: 100%;
+                    text: row.number > 0 ? "\{row.number}" : "";
+                    color: line.is-current ? Theme.accent-ink : Theme.text-faint;
+                    font-size: TextSize.small;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                if line.hovered: Icon {
+                    x: parent.width - self.width;
+                    size: 16px;
+                    source: Icons.play-fill;
+                    colorize: Theme.text;
                 }
             }
 
             // 封面。取不到就是一块占位色 —— 留个空洞会让整列参差不齐,
             // 而封面取不到是常态(与歌单行同一条规矩,见 playlists.slint)。
-            if !row.header: VerticalLayout {
+            VerticalLayout {
                 alignment: center;
                 cover-slot := Rectangle {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: Radius.sm;
+                    width: Shell.compact ? 48px : 40px;
+                    height: self.width;
+                    border-radius: Radius.xs;
                     background: Theme.line;
                     clip: true;
 
@@ -203,48 +226,63 @@ export component TrackList inherits ListView {
                         image-fit: cover;
                         source: row.cover;
                     }
+                    // 正在放:封面压暗成透镜,上面三根强调色的电平条。电平条是静态的 ——
+                    // 循环动画会让空闲时也在出帧(docs/adr/0035)。暂停时三根都落到底。
+                    if line.is-current: Rectangle {
+                        background: #040a066b;
+                        border-radius: Radius.xs;
+                        border-width: 1px;
+                        border-color: Glass.rim;
+                        Rectangle {
+                            x: 2px;
+                            y: -3px - (self.width - 12px) / 2;
+                            width: 34px;
+                            height: self.width;
+                            transform-scale-y: 12px / 34px;
+                            background: @radial-gradient(circle, #ffffff5c 0%, transparent 70%);
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 2.5px;
+                            for bar in [8px, 14px, 10px]: VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 3px;
+                                    height: Player.is-playing ? bar : 3px;
+                                    border-radius: 1.5px;
+                                    background: Theme.accent;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // 宽屏(MEO-1878)拆成 歌名 | 歌手 | 专辑 三列,比例 4:3:3;
-            // 中等与紧凑宽度仍是歌名上、歌手下的两行。
-            VerticalLayout {
-                horizontal-stretch: Shell.wide ? 4 : 1;
-                // 宽屏的三列按比例分,不按文字长短分:preferred 归零,宽度全由 stretch
-                // 决定(否则长歌名长歌手吃掉整行,「—」的专辑列只剩十几像素)。
-                preferred-width: Shell.wide ? 0px : self.min-width;
+            // 歌名在上、歌手在下。宽版式右边多一列专辑(比例 1.5 : 1)。
+            title-cell := VerticalLayout {
+                horizontal-stretch: 3;
+                preferred-width: 0px;
                 alignment: center;
-                spacing: Space.xs;
+                spacing: 2px;
 
-                // 歌名与歌手来自平台,是任意 CJK/日文 ——
-                // 不指定 font-family,走根窗口的 Type.body;中日文字形由系统字体补。
-                // web 端 wasm 里没有系统字体,那边会是豆腐块,
-                // 已知缺口,见 README「音乐链路」。
+                // 歌名与歌手来自平台,是任意 CJK/日文;Osmosis Sans 按标准字符集裁过,
+                // 漏的生僻字走系统字体回退。
                 Text {
                     text: row.title;
-                    color: row.header ? Theme.text-dim : Theme.text;
-                    font-size: row.header ? TextSize.small : TextSize.body;
-                    font-weight: row.header ? 700 : 400;
+                    color: line.is-current ? Theme.accent-ink : Theme.text;
+                    font-size: TextSize.row;
+                    font-weight: line.is-current ? Weight.semibold : Weight.regular;
                     overflow: elide;
                 }
-                if !row.header && !Shell.wide: Text {
+                Text {
                     text: row.artists;
                     color: Theme.text-dim;
                     font-size: TextSize.small;
                     overflow: elide;
                 }
             }
-            if Shell.wide && !row.header: artists-cell := Text {
-                horizontal-stretch: 3;
-                preferred-width: 0px;
-                text: row.artists;
-                color: Theme.text-dim;
-                font-size: TextSize.small;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            if Shell.wide && !row.header: album-cell := Text {
-                horizontal-stretch: 3;
+            if Shell.wide: album-cell := Text {
+                horizontal-stretch: 2;
                 preferred-width: 0px;
                 text: row.album;
                 color: Theme.text-dim;
@@ -252,16 +290,21 @@ export component TrackList inherits ListView {
                 vertical-alignment: center;
                 overflow: elide;
             }
-            // 红心。两态画得不一样 —— 都一样的话,点了也不知道成没成。
-            if !row.header: heart := TouchArea {
-                width: 32px;
 
-                Text {
-                    text: row.liked ? "♥" : "♡";
-                    color: row.liked ? Theme.accent-ink : Theme.text-faint;
-                    font-size: TextSize.title;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+            // 红心。宽版式:红了常亮,没红只在悬停时出现;紧凑版式只摆红了的。
+            // 两态画得不一样 —— 都一样的话,点了也不知道成没成。
+            if !Shell.compact || row.liked: heart := TouchArea {
+                width: 32px;
+                mouse-cursor: pointer;
+                accessible-role: button;
+                accessible-label: row.liked ? "取消喜欢" : "喜欢";
+                accessible-action-default => { root.toggle-liked(row.id, !row.liked); }
+
+                Icon {
+                    size: 18px;
+                    source: row.liked ? Icons.heart-fill : Icons.heart;
+                    colorize: row.liked ? Theme.accent-ink : Theme.text-faint;
+                    opacity: row.liked || line.hovered ? 1 : 0;
                 }
 
                 // 不冒泡到整行那个 TouchArea —— 否则点红心的同时会把这首歌
@@ -272,177 +315,207 @@ export component TrackList inherits ListView {
             }
 
             // 移出歌单。只在本地歌单详情里出现。
-            if root.removable && !row.header: remove-hit := TouchArea {
+            if root.removable: remove-hit := TouchArea {
                 width: 28px;
+                mouse-cursor: pointer;
 
-                Text {
-                    text: "−";
-                    color: Theme.text-dim;
-                    font-size: TextSize.title;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                Icon {
+                    size: 18px;
+                    source: Icons.minus;
+                    colorize: Theme.text-faint;
                 }
 
                 // 同红心:不冒泡到整行,否则移除的同时会把这首放出来
                 clicked => { root.remove(row.id); }
             }
 
-            // 时长让位给「加载中」:两个都摆会把歌名挤窄,
-            // 而正在加载时时长不是用户在等的信息。
-            Text {
+            // 时长让位给「加载中」:正在加载时时长不是用户在等的信息。
+            // 紧凑版式不摆时长,只在加载时摆那一句。
+            if !Shell.compact || row.loading: Text {
                 text: row.loading ? "加载中…" : row.duration;
-                color: row.loading ? Theme.accent-ink.darker(0.15) : Theme.text-dim;
+                color: row.loading ? Theme.accent-ink : Theme.text-faint;
                 font-size: TextSize.small;
                 vertical-alignment: center;
-                // 宽屏里时长是一整列,定宽右对齐,各行的数字才竖着对齐。
-                width: Shell.wide && !row.header ? Layout.duration-col : self.preferred-width;
-                horizontal-alignment: Shell.wide && !row.header ? right : left;
+                width: Shell.compact ? self.preferred-width : Layout.duration-col;
+                horizontal-alignment: right;
             }
 
-            // 堆头的折叠指示:展开朝下,折起朝右。画成矢量,不用 ▾ 这类字形 ——
-            // 系统字体不一定有它(#158 的勾选框吃过这个亏)。
-            if row.header: VerticalLayout {
+            // 更多:与长按是同一个菜单。宽版式悬停才出现,紧凑版式常驻。
+            more-hit := TouchArea {
+                width: Shell.compact ? 32px : 28px;
+                mouse-cursor: pointer;
+                accessible-role: button;
+                accessible-label: "更多操作";
+                accessible-action-default => { line.open-menu(); }
+                Icon {
+                    size: Shell.compact ? 18px : 20px;
+                    source: Icons.dots-three;
+                    colorize: Shell.compact ? Theme.text-faint : Theme.text-dim;
+                    opacity: Shell.compact || line.hovered ? 1 : 0;
+                }
+                clicked => { line.open-menu(); }
+            }
+        }
+    }
+}
+
+// 宽版式列表的表头:与行同一套列宽,只有序号、标题、专辑与时钟图标四格有字。
+export component TrackHeader inherits Rectangle {
+    height: 34px;
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+    HorizontalLayout {
+        padding-left: Space.md;
+        padding-right: Space.md;
+        spacing: 14px;
+        Text {
+            width: 32px;
+            text: "#";
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            font-size: TextSize.micro;
+            font-weight: Weight.semibold;
+            color: Theme.text-faint;
+        }
+        Rectangle { width: 40px; }
+        Text {
+            horizontal-stretch: 3;
+            preferred-width: 0px;
+            text: "标题";
+            vertical-alignment: center;
+            font-size: TextSize.micro;
+            font-weight: Weight.semibold;
+            letter-spacing: Tracking.cjk-label;
+            color: Theme.text-faint;
+        }
+        Text {
+            horizontal-stretch: 2;
+            preferred-width: 0px;
+            text: "专辑";
+            vertical-alignment: center;
+            font-size: TextSize.micro;
+            font-weight: Weight.semibold;
+            letter-spacing: Tracking.cjk-label;
+            color: Theme.text-faint;
+        }
+        Rectangle { width: 32px; }
+        HorizontalLayout {
+            width: Layout.duration-col;
+            alignment: end;
+            VerticalLayout {
                 alignment: center;
-                Path {
-                    width: 10px;
-                    height: 10px;
-                    viewbox-width: 10;
-                    viewbox-height: 10;
-                    commands: row.collapsed ? "M 3 1 L 7 5 L 3 9" : "M 1 3 L 5 7 L 9 3";
-                    stroke: Theme.text-dim;
-                    stroke-width: 1.5px;
+                Icon {
+                    size: 15px;
+                    source: Icons.clock;
+                    colorize: Theme.text-faint;
                 }
             }
         }
+        Rectangle { width: 28px; }
     }
 }
 
 // ── 分组条与筛选 chips(#160) ──
 //
-// 两排可横滑的药丸:上排「筛选」开关 + 分组方式,下排是 chip(开着筛选或已选了
-// 几个时才出现 —— 手机上两排常驻太占地方)。分堆、筛选、每个 chip 数几首都在
-// Rust(app_core::facets),这里只摆、只喊回调。
-
-// 一颗药丸。紧凑版式下触摸区 44px 高(docs/design.md「版式」),画出来的仍是
-// 细细一条 —— 44px 的实心药丸一排下来像一行按钮。
-//
-// 电台页的「加载新歌」「已听过」也用它(MEO-1878):同一页上两种按钮形状
-// 读着像两个应用。那两颗是动作不是开关,checkable 关掉。
-export component Pill inherits Rectangle {
-    in property <string> text;
-    in property <bool> selected;
-    in property <bool> checkable: true;
-    in property <bool> enabled: true;
-    // 只给读屏的补充说明,不上屏。
-    in property <string> description;
-    callback clicked;
-
-    height: Shell.compact ? 44px : 32px;
-    width: label.preferred-width + 24px;
-    accessible-role: button;
-    accessible-label: root.text;
-    accessible-checkable: root.checkable;
-    accessible-checked: root.checkable && root.selected;
-    accessible-enabled: root.enabled;
-    accessible-description: root.description;
-    accessible-action-default => { if (root.enabled) { root.clicked(); } }
-    opacity: root.enabled ? 1 : 0.5;
-
-    Rectangle {
-        y: (parent.height - self.height) / 2;
-        height: 28px;
-        border-radius: Radius.pill;
-        background: root.selected
-            ? Theme.accent
-            : (touch.has-hover ? Theme.press : Theme.surface);
-    }
-    label := Text {
-        // 药丸自己已经报了标签,字不再报一遍
-        accessible-role: none;
-        text: root.text;
-        font-size: TextSize.small;
-        color: root.selected ? Theme.accent-text : Theme.text-dim;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    touch := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
+// 一排可横滑的 chips(docs/design.md「工具条」):日推的「已听过」开关、分组方式、
+// 再是各个筛选 chip。分组是一颗选择型 chip,点开就地摆出几种分法。分堆、筛选、
+// 每个 chip 数几首都在 Rust(app_core::facets),这里只摆、只喊回调。
 
 // 横滑行右缘的渐隐:还有内容在右边。只是提示,不挡点击。
 component OverflowFade inherits Rectangle {
-    width: 40px;
+    width: 48px;
     background: @linear-gradient(90deg, Theme.base.with-alpha(0) 0%, Theme.base 100%);
 }
 
-export component FacetBar inherits VerticalLayout {
-    // 筛选那一排开着。已选了 chip 时不论开关都摆着,否则看不见筛了什么。
-    in-out property <bool> filters-open: false;
-    property <length> row-height: Shell.compact ? 44px : 32px;
-
-    spacing: Space.xs;
-
-    // 两排都能横滑,但手机上看不出来:最后一颗被齐刷刷切掉,像是没有了。
-    // 右边还有没露出来的药丸时,盖一道渐隐提示「还能往左划」(MEO-1878)。
+// chips 之间的竖线分隔。
+component ChipSeparator inherits VerticalLayout {
+    alignment: center;
+    padding-left: 6px;
+    padding-right: 6px;
     Rectangle {
-    height: root.row-height;
-    groups-flick := Flickable {
-        // 显式铺满:不写的话 Flickable 把药丸那一排的宽当成自己的上限报给
-        // 外层,整列(连同底下的列表)被卡在那一排的宽度上(MEO-1878)。
-        width: 100%;
-        height: 100%;
-        content-width: groups.preferred-width;
-        groups := HorizontalLayout {
-            spacing: Space.xs;
-            filter-toggle := Pill {
-                text: Player.chosen-count > 0
-                    ? "筛选 · " + Player.chosen-count
-                    : "筛选";
-                selected: root.filters-open || Player.chosen-count > 0;
-                clicked => { root.filters-open = !root.filters-open; }
-            }
-            for label[i] in Player.grouping-labels: grouping-pill := Pill {
-                text: label;
-                selected: Player.grouping == i;
-                description: Player.grouping == i && i > 0
-                    ? Player.pile-count + " 堆" : "";
-                clicked => { Player.set-grouping(i); }
-            }
-        }
+        width: 1px;
+        height: 20px;
+        background: Theme.line-strong;
     }
-    if groups-flick.content-x > groups-flick.width - groups-flick.content-width + 1px: OverflowFade { x: parent.width - self.width; }
-    }
+}
 
-    if root.filters-open || Player.chosen-count > 0: Rectangle {
-    height: root.row-height;
-    chips-flick := Flickable {
-        // 显式铺满:不写的话 Flickable 把药丸那一排的宽当成自己的上限报给
+export component FacetBar inherits Rectangle {
+    // 摆分组与筛选那几颗(这个视图有 facets)。
+    in property <bool> show-groups: true;
+    // 行首摆日推的「已听过」开关。
+    in property <bool> daily-heard-toggle: false;
+    // 分组那颗选择型 chip 展开着:几种分法就地摆在它后面。
+    in-out property <bool> grouping-open: false;
+
+    height: Shell.compact ? 44px : 32px;
+
+    // 手机上看不出这一排能横滑:最后一颗被齐刷刷切掉,像是没有了。
+    // 右边还有没露出来的 chip 时,盖一道渐隐提示「还能往左划」(MEO-1878)。
+    flick := Flickable {
+        // 显式铺满:不写的话 Flickable 把 chips 那一排的宽当成自己的上限报给
         // 外层,整列(连同底下的列表)被卡在那一排的宽度上(MEO-1878)。
         width: 100%;
         height: 100%;
         content-width: chip-row.preferred-width;
         chip-row := HorizontalLayout {
-            spacing: Space.xs;
-            for chip[i] in Player.chips: chip-pill := Pill {
-                text: chip.text;
-                selected: chip.chosen;
-                clicked => { Player.toggle-chip(i); }
+            spacing: Space.sm;
+            if root.daily-heard-toggle: daily-heard := Chip {
+                kind: ChipKind.toggle;
+                touch-tall: Shell.compact;
+                icon: Icons.headphones;
+                text: "已听过";
+                selected: Player.daily-heard;
+                clicked => { Player.daily-toggle-heard(); }
+            }
+            if root.daily-heard-toggle && root.show-groups: ChipSeparator { }
+            if root.show-groups: grouping-select := Chip {
+                kind: ChipKind.select;
+                touch-tall: Shell.compact;
+                key: "分组";
+                text: Player.grouping-labels[Player.grouping];
+                checkable: false;
+                description: Player.grouping > 0 ? Player.pile-count + " 堆" : "";
+                clicked => { root.grouping-open = !root.grouping-open; }
+            }
+            if root.show-groups && root.grouping-open: HorizontalLayout {
+                spacing: Space.xs;
+                for label[i] in Player.grouping-labels: grouping-pill := Chip {
+                    touch-tall: Shell.compact;
+                    text: label;
+                    selected: Player.grouping == i;
+                    clicked => {
+                        Player.set-grouping(i);
+                        root.grouping-open = false;
+                    }
+                }
+            }
+            if root.show-groups: HorizontalLayout {
+                spacing: Space.sm;
+                for chip[i] in Player.chips: chip-pill := Chip {
+                    touch-tall: Shell.compact;
+                    text: chip.text;
+                    count: chip.count;
+                    selected: chip.chosen;
+                    clicked => { Player.toggle-chip(i); }
+                }
             }
         }
     }
-    if chips-flick.content-x > chips-flick.width - chips-flick.content-width + 1px: chips-fade := OverflowFade { x: parent.width - self.width; }
+    if flick.content-x > flick.width - flick.content-width + 1px: chips-fade := OverflowFade {
+        x: parent.width - self.width;
+        height: parent.height;
     }
+}
 
-    // 筛空了:说清楚是筛选的结果,不摆开局那句「点一首歌开始」。
-    if Player.chosen-count > 0 && Player.tracks.length == 0: filtered-empty := Text {
-        text: "没有符合筛选的歌";
-        accessible-role: text;
-        accessible-label: self.text;
-        font-size: TextSize.small;
-        color: Theme.text-dim;
-        horizontal-alignment: center;
-    }
+// 筛空了:说清楚是筛选的结果,不摆开局那句「点一首歌开始」。
+export component FilteredEmpty inherits Text {
+    text: "没有符合筛选的歌";
+    accessible-role: text;
+    accessible-label: self.text;
+    font-size: TextSize.small;
+    color: Theme.text-dim;
+    horizontal-alignment: center;
 }
