@@ -425,11 +425,6 @@ export component TrackHeader inherits Rectangle {
 // 每个 chip 数几首都在 Rust(app_core::facets),这里只摆、只喊回调。
 
 // 横滑行右缘的渐隐:还有内容在右边。只是提示,不挡点击。
-component OverflowFade inherits Rectangle {
-    width: 48px;
-    background: @linear-gradient(90deg, Theme.base.with-alpha(0) 0%, Theme.base 100%);
-}
-
 // chips 之间的竖线分隔。
 component ChipSeparator inherits VerticalLayout {
     alignment: center;
@@ -452,14 +447,19 @@ export component FacetBar inherits Rectangle {
 
     height: Shell.compact ? 44px : 32px;
 
-    // 手机上看不出这一排能横滑:最后一颗被齐刷刷切掉,像是没有了。
-    // 右边还有没露出来的 chip 时,盖一道渐隐提示「还能往左划」(MEO-1878)。
+    // 这一排探进页面右边距，一直滑到页面边缘才被切：手机上最后一颗被屏幕边切开，
+    // 一看就知道还能往左划(MEO-1878)。不盖渐隐：页头底色是一道竖向渐变，
+    // 横向渐隐配不上它的颜色，在筛选条末端压出一块深色方块。
+    property <length> bleed: Shell.compact ? Layout.page-x-compact : Layout.page-x;
     flick := Flickable {
-        // 显式铺满:不写的话 Flickable 把 chips 那一排的宽当成自己的上限报给
+        // 显式给宽:不写的话 Flickable 把 chips 那一排的宽当成自己的上限报给
         // 外层,整列(连同底下的列表)被卡在那一排的宽度上(MEO-1878)。
-        width: 100%;
+        // x 要写:给了宽而不写 x,Slint 会把它在父元素里居中，整排左移半个 bleed。
+        x: 0px;
+        width: parent.width + root.bleed;
         height: 100%;
-        content-width: chip-row.preferred-width;
+        // 末尾留出同样一截，最后一颗滑到底时与页面内容右缘对齐。
+        content-width: chip-row.preferred-width + root.bleed;
         chip-row := HorizontalLayout {
             spacing: Space.sm;
             if root.daily-heard-toggle: daily-heard := Chip {
@@ -503,10 +503,6 @@ export component FacetBar inherits Rectangle {
                 }
             }
         }
-    }
-    if flick.content-x > flick.width - flick.content-width + 1px: chips-fade := OverflowFade {
-        x: parent.width - self.width;
-        height: parent.height;
     }
 }
 
