@@ -1,7 +1,7 @@
 //! 播放页可视化的 seam 数据:UI 侧攒好的一帧控制量,POD,不涉 wgpu 类型。
 //!
 //! 与 [`crate::SceneControls`] / [`crate::NavGlassControls`] 同一个镜像分离模式:
-//! apps/* 在 seam 处把它平凡拷给 render3d 的 `WarpPass`,ui 与 render3d 互不依赖。
+//! apps/* 在 seam 处把它平凡拷给 render3d 的点云场景,ui 与 render3d 互不依赖。
 
 /// 音频载荷字节数:512 频谱 + 512 波形(`audio::spectrum` 的布局,
 /// 与 render3d 的 `AUDIO_BYTES` 手工对齐 —— 三个 crate 互不依赖)。
@@ -20,19 +20,10 @@ pub struct VizControls {
     pub pointer: VizPointer,
     /// 当前视觉预设的编号,见 `.slint` 的 `viz-preset`。越界由消费方兜底。
     pub preset: i32,
-    /// 这一帧要不要重渲 warp(环形播放键里那圈随音乐翻涌的画面)。
-    ///
-    /// warp 是反馈式的:同一个时钟再渲一遍,画面照样往前流。所以定格与暂停时
-    /// 不能靠「时钟不走」冻住它,只能不渲(#153)。为假时 warp 返回空图,
-    /// ui 不去动 `viz-bg`,上一帧的图原样挂着。
-    pub needs_warp: bool,
     /// 这一帧要不要那套 3D 场景(封面点云 + 标注卡 + 遮挡层)。
     ///
-    /// **warp 与场景就此分家**(#87):环形播放键里那圈随音乐翻涌的画面来自
-    /// warp,而 warp 是一张 192×192 的独立 fragment pass,每帧一趟、开销可忽略;
     /// 场景是 9216 个立方体的 bevy 全绘,而且**与卡墙互斥** —— `render_viz_frame`
-    /// 进门就把墙的相机关掉。所以不能靠「一起渲」把彩虹环带到播放页之外:
-    /// 那会连带把音乐页的卡墙渲没。为假时只出 warp,场景那三样返回空。
+    /// 进门就把墙的相机关掉。所以只在播放页开着时渲,否则音乐页的卡墙会被渲没。
     pub needs_scene: bool,
     /// 这一帧要不要遮挡层。
     ///
@@ -95,15 +86,13 @@ pub struct VizCover {
 /// 而 `CoverFeed` 是两端共用的。
 pub type CoverPixels = VizCover;
 
-/// 一帧播放页视觉:三张图,外加标注卡这一帧的挂点。
+/// 一帧播放页视觉:两张图,外加标注卡这一帧的挂点。
 ///
-/// 覆层按「warp → 粒子 → 标注卡 → 遮挡层(裁到卡片)→ 控制簇」五层合成
+/// 覆层按「糊封面背景 → 粒子 → 标注卡 → 遮挡层(裁到卡片)→ 控制簇」五层合成
 /// (docs/adr/0010)。无 bevy 的端把场景与遮挡给成空图(width 0),
-/// 覆层自动退回第一步的 warp 形态,.slint 里零平台判断。
+/// 覆层自动退回只有糊封面背景的形态,.slint 里零平台判断。
 pub struct VizImages {
-    /// 反馈 warp 背景,铺满整窗。
-    pub warp: slint::Image,
-    /// 粒子场景,透明底,叠在 warp 之上。
+    /// 粒子场景,透明底,叠在糊封面背景之上。
     pub scene: slint::Image,
     /// 遮挡层:只含比标注卡锚点更近的片元,由 .slint 裁到卡片矩形。
     pub occluder: slint::Image,

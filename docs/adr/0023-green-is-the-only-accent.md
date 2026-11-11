@@ -1,6 +1,6 @@
 # 绿是唯一的强调色,accent-text 反转为深墨
 
-日期:2026-08-11。状态:已采纳。
+日期:2026-08-11。状态:已采纳;取值与 `accent-text` 一条由 [`0039`](0039-accent-text-follows-the-accents-lightness.md) 修订。
 
 ## 背景
 

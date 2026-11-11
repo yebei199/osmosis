@@ -43,7 +43,7 @@ export global BarMetrics {
 }
 
 export component PlayerBar inherits Rectangle {
-    // 覆层里那份。只影响:回写哪一槽、配色走不走沉浸色。不碰几何。
+    // 覆层里那份。只影响配色走不走沉浸色,不碰几何。
     in property <bool> immersive: false;
     // 可用宽度的上限,由调用点按容器给。
     in property <length> width-cap: 100000px;
@@ -137,12 +137,6 @@ export component PlayerBar inherits Rectangle {
         drop-shadow-blur: Elevation.float-blur;
         drop-shadow-spread: Elevation.float-spread;
         drop-shadow-color: Elevation.float-color;
-
-        // 尺寸回写给 GPU 背景通道。覆层那份走另一槽 —— 两条可能同时在场,
-        // 共用一槽会互相踩掉对方的尺寸。
-        init => { root.mirror-size(); }
-        changed width => { root.mirror-size(); }
-        changed height => { root.mirror-size(); }
 
         HorizontalLayout {
             padding-left: root.pad-left;
@@ -312,16 +306,6 @@ export component PlayerBar inherits Rectangle {
             y: parent.height - self.height + (Shell.compact ? 2px : 1px);
             ratio: Player.progress-ratio;
             seek(at) => { Player.seek(at); }
-        }
-    }
-
-    function mirror-size() {
-        if (root.immersive) {
-            Shell.viz-bar-w = capsule.width;
-            Shell.viz-bar-h = capsule.height;
-        } else {
-            Shell.bar-w = capsule.width;
-            Shell.bar-h = capsule.height;
         }
     }
 }

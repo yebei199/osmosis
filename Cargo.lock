@@ -8556,6 +8556,7 @@ dependencies = [
  "syncplay",
  "tempfile",
  "ttf-parser",
+ "unicat-switch-slint",
  "web-time",
 ]
 
@@ -8564,6 +8565,16 @@ name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
+
+[[package]]
+name = "unicat-switch-slint"
+version = "0.1.0"
+source = "git+https://github.com/yebei199/unicat-switch?rev=0c69ee0eb008a72cfa75777527a7dbc17c74ebe5#0c69ee0eb008a72cfa75777527a7dbc17c74ebe5"
+dependencies = [
+ "png",
+ "slint",
+ "slint-build",
+]
 
 [[package]]
 name = "unicode-bidi"

@@ -92,16 +92,8 @@ fn android_main(app: slint::android::AndroidApp) {
     // 加 ui 依赖、把它从「产帧的 3D 桥」抬成「驱动整个 app」,越过 SRP。入口 crate 本就
     // 同时依赖 ui 与 render3d,是接 seam 的天然组合根。
     let scene = render3d::Scene::new();
-    // 导航选中器与播放页 warp 的独立 wgpu pass,复用 scene 的共享 device/queue。
+    // 导航选中器的独立 wgpu pass,复用 scene 的共享 device/queue。
     let mut nav = render3d::NavGlassPass::new(
-        scene.device(),
-        scene.queue(),
-    );
-    let mut warp = render3d::WarpPass::new(
-        scene.device(),
-        scene.queue(),
-    );
-    let mut btns = render3d::AuroraBtnPass::new(
         scene.device(),
         scene.queue(),
     );
@@ -130,7 +122,6 @@ fn android_main(app: slint::android::AndroidApp) {
         move |v, w, h| {
             // 场景那一趟只在播放页开着时走(#87):它是 9216 个立方体的全绘,
             // 而且进门就把卡墙的相机关掉 —— 常驻会把音乐页的墙渲没。
-            // warp 是 192×192 一张独立小图,每帧照出,环形键的彩虹靠它。
             let (viz_scene, occluder, anchor) =
                 if v.needs_scene {
                     scene
@@ -172,44 +163,9 @@ fn android_main(app: slint::android::AndroidApp) {
                     )
                 };
             Some(ui::VizImages {
-                // warp 是反馈式的,再渲一遍画面就往前流:暂停与定格时不渲(#153)。
-                warp: if v.needs_warp {
-                    warp.render_frame(
-                        v.time,
-                        &v.audio,
-                        render3d::WARP_SIDE,
-                        render3d::WARP_SIDE,
-                    )
-                } else {
-                    slint::Image::default()
-                },
                 scene: viz_scene,
                 occluder,
                 anchor,
-            })
-        },
-        // 光带按钮:与上面两条同一个 seam 模式,逐字段平凡拷。
-        move |b| {
-            btns.render_frame(&render3d::AuroraBtnParams {
-                time: b.time,
-                slots: b
-                    .slots
-                    .iter()
-                    .map(|s| render3d::AuroraBtnSlot {
-                        w: s.w,
-                        h: s.h,
-                        radius: s.radius,
-                        seed: s.seed,
-                        speed: s.speed,
-                        amp: s.amp,
-                        mode: s.mode,
-                        bands: s.bands,
-                        variant: s.variant,
-                        progress: s.progress,
-                        pointer: s.pointer,
-                        colors: s.colors,
-                    })
-                    .collect(),
             })
         },
         // 卡墙(#66):同一个 seam 模式,位姿与封面逐字段平凡拷。

@@ -1,5 +1,5 @@
 //! 主条本身:一根条到处一样、窄了让位的是曲名、封面兼任播放页的进出口,
-//! 以及两处条各自把尺寸回写给自己那一槽。
+//! 以及播放页那根与页内同尺寸。
 
 use super::*;
 
@@ -264,27 +264,26 @@ fn the_time_readout_appears_once() {
     );
 }
 
-// ============ 尺寸回写(两处槽不合并)============
+// ============ 播放页那根条与页内同尺寸 ============
 
-/// 条身把尺寸回写给 GPU 背景通道;播放页覆层那份走另一槽 ——
-/// 两条可以同时在场,共用一槽会互相踩掉对方的尺寸。
+/// 播放页覆层上的条与页内那根同高:两处读同一份 `BarMetrics`。条身的 GPU 背景
+/// 随环形极光一起退役(docs/adr/0038),尺寸回写的两个槽也就没了,这里钉的是
+/// 两处仍是同一个数。
 #[test]
-fn each_bar_mirrors_its_size_into_its_own_slot() {
+fn the_play_page_bar_matches_the_page_bar() {
     let ui = playing_app();
     ui.global::<Shell>().set_destination(0);
-    let _ = key(&ui, "上一首");
-
-    assert!(
-        ui.global::<Shell>().get_bar_w() > 0.0,
-        "页内那条该把宽度回写,实得 {}",
-        ui.global::<Shell>().get_bar_w()
-    );
-    assert!(ui.global::<Shell>().get_bar_h() > 0.0);
+    let (_, _, _, page_h) =
+        bar_box(&ui).expect("页内该有条");
 
     ui.global::<Shell>().set_play_page_open(true);
-    let _ = key(&ui, "收起播放页");
+    let heights: Vec<f32> = ids(&ui, "PlayerBar::capsule")
+        .iter()
+        .map(|h| h.size().height)
+        .collect();
+    assert!(!heights.is_empty(), "播放页覆层上该有条");
     assert!(
-        ui.global::<Shell>().get_viz_bar_w() > 0.0,
-        "覆层那条该把尺寸回写给自己那一槽"
+        heights.iter().all(|h| *h == page_h),
+        "播放页的条高 {heights:?} 与页内 {page_h} 不一致"
     );
 }

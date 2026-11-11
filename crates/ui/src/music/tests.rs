@@ -413,7 +413,6 @@ fn starting_a_track_wipes_what_the_previous_one_left_behind()
     ]);
     ui.global::<Viz>().set_lyric_line("上一首的词".into());
     ui.global::<Viz>().set_lyric_translation("旧译".into());
-    ui.global::<Shell>().set_aurora_cover_active(true);
 
     play_current(&ui, &deck);
 
@@ -435,9 +434,10 @@ fn starting_a_track_wipes_what_the_previous_one_left_behind()
         0,
         "封面卡该先空着,等新图到了再摆"
     );
-    assert!(
-        !ui.global::<Shell>().get_aurora_cover_active(),
-        "极光该退回主题绿,旧色配新歌一样是误导"
+    assert_eq!(
+        ui.global::<Viz>().get_cover_blur().size().width,
+        0,
+        "播放页的糊封面背景也该先空着,旧色配新歌一样是误导"
     );
     assert!(
         matches!(

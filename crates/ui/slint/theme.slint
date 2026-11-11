@@ -18,6 +18,8 @@
 // 强调色的三种状态由 `accent` 派生(`darker`),不各给一个 token:那是同一个
 // 决定的三个亮度,分开写迟早会有一个忘了改。
 
+import { Shell } from "globals/shell.slint";
+
 // 界面只有一族字:Osmosis Sans = Figtree(拉丁与数字,tnum 冻进去了)+ Noto Sans CJK SC
 // (汉字、假名、谚文),构建期合并成一个族名(crates/ui/fonts/build.py,docs/design.md「字体」)。
 // 一个族名的意义:Slint 不必为中文走进系统回退链 —— 这台桌面上那条链的第一个中文字体是
@@ -261,8 +263,9 @@ export global Layout {
 // `runtime::pace` 那条唤醒路驱动。`calm` 是设置页「动态效果」关掉的样子:
 // 所有弹簧临界阻尼、200ms 落定,不回弹。
 export global Motion {
-    // 「动态效果」关着。**只有 Rust 写它**(真相在 api::settings)。
-    in property <bool> calm: false;
+    // 「动态效果」关着。跟着 Shell.motion-on 走(真相在 api::settings,motion.rs 写回);
+    // 不导出给 Rust 写 —— Motion 带 easing 属性,进公开 API 会报「easing 不支持」。
+    out property <bool> calm: !Shell.motion-on;
 
     // 悬停的底色、颜色变化。
     out property <duration> fast: 160ms;

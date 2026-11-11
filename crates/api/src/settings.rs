@@ -49,9 +49,9 @@ pub struct Settings {
     /// 与音量同一条理由跟着设备走:同一个账号在办公室的亮屏和床上的暗屏,
     /// 想要的不是同一套。
     pub theme: ThemeMode,
-    /// 动态极光按钮(handoff-shaders.md §9)。关掉就是纯色实底,功能不变;
-    /// 跟着设备走 —— 这是台性能偏好,不是账号偏好。
-    pub aurora_buttons: bool,
+    /// 动态效果。关掉就是减弱动效:弹簧临界阻尼不回弹、封面透镜静止;
+    /// 跟着设备走 —— 这是台性能与口味偏好,不是账号偏好。
+    pub motion: bool,
 }
 
 impl Default for Settings {
@@ -59,7 +59,7 @@ impl Default for Settings {
         Self {
             volume: DEFAULT_VOLUME,
             theme: ThemeMode::Dark,
-            aurora_buttons: true,
+            motion: true,
         }
     }
 }
@@ -67,13 +67,15 @@ impl Default for Settings {
 /// 落盘格式的原样镜像,只在解析时用。
 ///
 /// 与 `Settings` 分开是为了迁移:琥珀年代存的是 `dark` 布尔,三值枚举
-/// 落地后是 `theme` 字符串。两个字段都认,`theme` 优先。
+/// 落地后是 `theme` 字符串。两个字段都认,`theme` 优先。「动态效果」接替了
+/// 「动态极光按钮」的 `aurora_buttons`:关过极光的人多半也不要回弹,照搬它的值。
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawSettings {
     volume: Option<f32>,
     dark: Option<bool>,
     theme: Option<ThemeMode>,
+    motion: Option<bool>,
     aurora_buttons: Option<bool>,
 }
 
@@ -95,8 +97,11 @@ pub fn parse(raw: &str) -> Settings {
             Some(false) => ThemeMode::Light,
             _ => ThemeMode::Dark,
         }),
-        // 老文件没有这个字段:默认开,与 Settings::default 一致。
-        aurora_buttons: raw.aurora_buttons.unwrap_or(true),
+        // 新字段优先;没有就沿用极光开关;都没有默认开,与 Settings::default 一致。
+        motion: raw
+            .motion
+            .or(raw.aurora_buttons)
+            .unwrap_or(true),
     }
 }
 
@@ -203,18 +208,34 @@ mod tests {
         );
     }
 
-    /// 动态极光按钮的开关存得住,老文件没有这个字段时默认开。
+    /// 动态效果的开关存得住,老文件没有这个字段时默认开。
     #[test]
-    fn the_aurora_toggle_survives_and_defaults_on() {
+    fn the_motion_toggle_survives_and_defaults_on() {
         let settings = Settings {
-            aurora_buttons: false,
+            motion: false,
             ..Settings::default()
         };
         assert_eq!(parse(&render(&settings)), settings);
 
         assert!(
-            parse(r#"{"volume":0.3}"#).aurora_buttons,
+            parse(r#"{"volume":0.3}"#).motion,
             "老文件该默认开"
+        );
+    }
+
+    /// 关过「动态极光按钮」的老文件,动态效果也是关的;新字段在时以新字段为准。
+    #[test]
+    fn the_old_aurora_switch_carries_over() {
+        assert!(
+            !parse(r#"{"aurora_buttons":false}"#).motion,
+            "关过极光的人不该被重新打开回弹"
+        );
+        assert!(
+            parse(
+                r#"{"aurora_buttons":false,"motion":true}"#
+            )
+            .motion,
+            "新字段优先"
         );
     }
 

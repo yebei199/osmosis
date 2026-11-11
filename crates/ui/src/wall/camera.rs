@@ -4,7 +4,7 @@ use super::*;
 
 /// 卡墙相机:任意方向拖动平移(带惯性),拖动速度顺带把整墙微微转一下。
 ///
-/// 全部按帧收敛(与 `aurora_btn::ButtonAnim` 同风格,不带 dt):
+/// 全部按帧收敛(不带 dt):
 /// 60fps 下惯性阻尼 0.92 的手感即设计稿标定值。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WallCam {

@@ -9,7 +9,7 @@
 
 - **桌面 / android 入口硬依赖它**,web / ios 永不碰 —— 由 `xtask boundaries` 守住。
   曾经它是个 `bevy-3d` feature,那时有个 3D 演示页可关;演示页删掉之后播放页的粒子、
-  warp 与导航选中器全长在这里,关掉就只剩静态版式,开关遂取消(见 `docs/adr/0011`)。
+  卡墙与导航选中器全长在这里,关掉就只剩静态版式,开关遂取消(见 `docs/adr/0011`)。
 - `ui` 对 bevy / wgpu 一无所知:本 crate 把渲染结果作为 `slint::Image`
   经 `ui::run_with_renderers` 的 seam 交过去(见 `crates/ui`)。
 - 要加新 shader 前先看
@@ -55,20 +55,6 @@ inset 顶上去了,不在纹理正中);半尺寸一边按格长、一边按条�
 - 分工:玻璃视觉在 shader;图标、标签、hover/点击仍由 Slint 画在上面。非 GPU 构建 `nav-bg`
   为空,两种版式都退回 Slint 平底 + `NavItem` 自带高亮(渐进增强)。
 
-## 光带按钮(`aurorabtn.rs` + `aurorabtn.wgsl`)
-
-设计稿 §9/§10 的动态按钮背景,与 navglass 同构:共享 device 上不经 bevy 的独立
-fragment pass,每颗按钮渲进一张自己的离屏纹理,包装成 `slint::Image` 由 Slint 合成。
-五个变体(ribbon / nebula / fluid / glass / progress)共用一个 shader、一条管线,
-按 uniform 里的 `variant` 分支;当前界面接了两颗(Home 空槽 nebula、空状态 ribbon)。
-
-- **合批**:一条 pipeline、一个 uniform 缓冲(动态偏移,每槽 256 字节对齐)、一次
-  submit。每颗按钮一张纹理是有意的:尺寸互不相同,拼图集省不了带宽,反而让 Slint
-  侧多一套裁剪坐标。
-- **活跃期内每帧重渲**,无人触摸满 10 秒定格,不在屏幕上的槽不进合批(`docs/adr/0035`)。
-  hover 振幅的收敛数学在 `ui::aurora_btn::ButtonAnim`。设置页可整体关掉(`api::settings` 的 `aurora_buttons`),
-  关掉退回 Slint 纯色实底。
-
 ## 音乐页卡墙(`wall.rs`)
 
 音乐页主视图(adr/0025):曲目封面卡在深度上散开,拖动往任意方向翻找、双击
@@ -96,21 +82,8 @@ dolly 进播放页。几何与动力学的真相全在 `ui::wall`,那边把每�
   换了设备依然在。代价是安卓上没有投影:它的峰值 alpha 0.42 整段低于门槛,
   被 alpha 测试丢掉;圆角也从软边变硬边,描边不受影响。
 
-## 播放页反馈 warp 视觉(`warp.rs` + `warp.wgsl`)
-
-播放页(见 `CONTEXT.md`「播放页」与 `docs/adr/0010`)的全屏视觉,同样是**不经 bevy** 的
-独立 fragment pass,但比 navglass 多两样:**两张目标纹理 ping-pong**(反馈机制每帧要采样
-上一帧:朝中心缩、随低频转、按 decay 压暗,再叠新内容 —— 拖影与隧道感全来自这一步),
-以及一张 512×2 的**音频纹理**(照 Shadertoy 约定:第一行频谱、第二行波形,由
-`audio::spectrum` 在 CPU 上算好、apps 在 seam 处每帧送来,shader 侧采样代码与
-Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
-
-- 新内容是两圈极坐标可视化:外圈频谱环、内圈波形环,余弦调色板取紫/蓝/青一段与
-  应用 aurora 同调;反馈能量用软限幅压住,不然高亮区几帧就烧成纯白。
-- 门在 ui 侧(`docs/adr/0035`):warp 只在放歌且活跃期内渲(`VizControls::needs_warp`),
-  暂停与定格都不渲 —— 它是反馈式的,同一个时钟再渲一遍画面照样往前流;场景在播放页
-  展开的活跃期内渲。`time` 由 ui 的播放页时钟给,定格与重开都从定格处继续。
-- 两张目标纹理各自只导入 Slint 一次,每帧只翻转「画哪张、采哪张」。
+播放页曾有一条反馈式 warp pass(全屏拖影 + 频谱环),环形播放键的彩虹圈也是它;
+两者连同光带按钮那条 pass 已随 `docs/adr/0038` 删除,播放页最底层换成 ui 侧算好的糊封面。
 
 ## 播放页封面点云(`cloud.rs` + `cloud.wgsl` + `Scene`)
 
@@ -118,7 +91,7 @@ Shadertoy 素材互通,见 `docs/note/visualization-surface-and-audio.md`)。
 每颗取封面上对应像素的颜色,整片随声音起伏。行为照抄参照物 Mineradio 的
 `02-visual/00-pointer-cover-particles.js`,预设逐档转写(issue #26)。
 `render_viz_frame` 是本 crate 里 bevy 侧唯一的驱动入口;主相机清屏透明,场景图叠在
-warp 背景之上。
+糊封面背景之上。
 
 关键结构决策在 [`docs/adr/0012`](../../docs/adr/0012-cover-point-cloud-is-one-mesh-in-the-bevy-scene.md):
 点云是 bevy 场景里的**一个 mesh**,不是三万多个实体,也不是又一个独立 wgpu pass。

@@ -1,5 +1,5 @@
 //! 守卫(#143):控制条浮在页签上面,每一页都得**自己记得**在底部
-//! 留出 `BarMetrics.page-reserve`(条身 62 + 上下间隙各 22 = 106px)。
+//! 留出 `BarMetrics.page-reserve`(条身 72 + 上下间隙各 20 = 112px)。
 //! 个人页、音乐页、设置页各自踩过一次这个坑,前三条测试把这三页钉住。
 //!
 //! 这三条测试本身**认不出**将来新加的目的地 —— 新页不在这份清单里,
@@ -17,8 +17,8 @@ use ui::Player;
 use ui::Session;
 use ui::Shell;
 
-/// `BarMetrics.page-reserve`:条身 62 + 上下两段 22。
-const BAR_RESERVE: f32 = 62.0 + 22.0 * 2.0;
+/// `BarMetrics.page-reserve`:条身 72 + 上下两段 20。
+const BAR_RESERVE: f32 = 72.0 + 20.0 * 2.0;
 
 fn present(ui: &MainWindow, id: &str) -> bool {
     testing::ElementHandle::find_by_element_id(ui, id)
@@ -127,10 +127,10 @@ fn music_page_reserves_room_for_the_bar() {
 
     // 音乐页没条时底部本就留 16px(常规页边距),不是 0 —— 差值因此是
     // `page-reserve - 16px`,不是整段 `BAR_RESERVE`(见 musicpage.slint
-    // 的 padding-bottom)。这里只钉「条身那 62px 至少留出来了」,
+    // 的 padding-bottom)。这里只钉「条身那 72px 至少留出来了」,
     // 忘了整段留空(差值退回 0)照样会挂。
     assert!(
-        with - without >= 62.0,
+        with - without >= 72.0,
         "音乐页忘了照 BarMetrics.page-reserve 留空"
     );
 }

@@ -31,7 +31,7 @@ slint = { workspace = true, features = [
     "renderer-software",
     "unstable-wgpu-29",
 ] }
-# 硬依赖:播放页的粒子场、warp 与导航选中器全在它里面,没有它界面就只剩静态版式。
+# 硬依赖:播放页的粒子场、卡墙与导航选中器全在它里面,没有它界面就只剩静态版式。
 # 运行期要 vulkan(见仓库根的 slint.nix)。
 render3d.workspace = true
 

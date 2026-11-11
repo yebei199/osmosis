@@ -96,8 +96,6 @@ pub(in crate::music) fn play_current(
     // 点云仍是上一首;而封面取不到时(CDN 会过期、有的歌根本没有封面)它会
     // **一直**是上一首(见 `docs/adr/0014` 与 `CONTEXT.md`「封面点云」)。
     deck.cover.clear(ui);
-    // 极光的封面色同理:旧色配新歌比主题绿更误导(aurora.rs)。
-    crate::shader::aurora::reset(ui);
     // 媒体控件那份同理:锁屏上挂着上一首的封面,比空着更误导。
     deck.media.clear_art();
 
@@ -115,7 +113,7 @@ pub(in crate::music) fn play_current(
         let turns = deck.cover_turn.clone();
         slint::spawn_local(async move {
             // 拿不到或解不出就保持空图:封面 CDN 会过期,失败是常态(见 cover.rs)。
-            // 同一次解码喂几处:界面的封面卡、点云的采样纹理、极光的三个主色。
+            // 同一次解码喂几处:界面的封面卡、播放页的糊背景、点云的采样纹理。
             // 解码与取色在后台线程上做,UI 线程只剩把像素包成图那一下。
             let still_this_track = move || {
                 turns.load(std::sync::atomic::Ordering::SeqCst) == turn
@@ -143,10 +141,9 @@ pub(in crate::music) fn play_current(
                 ui.global::<Viz>().set_cover_blur(
                     slint::Image::from_rgba8(decoded.blurred),
                 );
-                // 一张图四个去处:封面卡、点云、媒体控件,以及极光的三团光斑。
+                // 一张图三个去处:封面卡、点云、媒体控件。
                 // `Arc` 免掉后面几个各拷一份兆级字节。
                 let pixels = Arc::new(decoded.pixels);
-                crate::shader::aurora::feed_colors(&ui, decoded.colors);
                 cover.replace(&ui, pixels.clone());
                 media.set_art(pixels);
                 crate::media::push(&ui, &playback, &media);

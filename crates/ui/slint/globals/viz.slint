@@ -1,17 +1,14 @@
 import { LyricRow, TrackRow } from "../types.slint";
 
-// 播放页视觉的状态面:三张每帧推来的纹理、标注卡的锚点、预设与指针。
+// 播放页视觉的状态面:糊封面背景、两张每帧推来的纹理、标注卡的锚点、预设与指针。
 //
 // **不含窗口几何派生的那几条**(歌词块高度、控制条高度、标题纵位) —— 它们要读
 // root.height 与 safe-area-insets,而 global 拿不到窗口上下文,那批留在 MainWindow。
 // 这条界线与代价见 docs/adr/0027。
 export global Viz {
-    // warp 视觉纹理,render3d 的 WarpPass 每帧推送(见 crates/render3d/src/warp.rs)。
-    // 无 GPU 的端(web / ios)恒为空图(width == 0),覆层退回纯色底,`.slint` 里
-    // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
-    in property <image> viz-bg;
     // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
-    // 空图时覆层退回第一步的 warp 形态 —— 同一个「余端 graceful 缺省」。
+    // 无 GPU 的端恒为空图(width == 0),覆层只剩糊封面背景,`.slint` 里
+    // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> viz-scene;
     in property <image> viz-occluder;
     // 世界空间标注卡的挂点:封面点云上的一点,由 render3d 每帧投回视口

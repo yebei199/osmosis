@@ -12,7 +12,7 @@ import { Viz } from "globals/viz.slint";
 
 // 播放页:盖住包括导航在内的整个窗口的全屏沉浸层(CONTEXT.md「播放页」)。
 //
-// 五层合成:warp 背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
+// 五层合成:糊封面背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
 // 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
 // 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
 // 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
@@ -80,7 +80,7 @@ export component PlayPage inherits FocusScope {
     width: root.width;
     height: root.height;
 
-    // 封面点云:透明底,叠在 warp 上。远侧粒子在这层被歌词盖住,
+    // 封面点云:透明底,叠在糊封面背景上。远侧粒子在这层被歌词盖住,
     // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
     if Viz.viz-scene.width > 0: Image {
         width: 100%;

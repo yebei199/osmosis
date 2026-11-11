@@ -4,7 +4,7 @@ import { Library } from "library.slint";
 import { Player } from "player.slint";
 import { Session } from "session.slint";
 
-// 窗口级的状态面:当前目的地、调试读数、GPU 纹理槽、设备名册、卡墙、封面取色与横幅。
+// 窗口级的状态面:当前目的地、调试读数、GPU 纹理槽、设备名册、卡墙、动效开关与横幅。
 //
 // **不含导航几何**(nav-* 那一整簇) —— 它们要读
 // root.width / root.height / safe-area-insets,global 拿不到窗口上下文,
@@ -15,18 +15,6 @@ export global Shell {
     in property <bool> show-fps: false;
     // 当前编译目标的平台名(wasm / android / linux / …),由 Rust 推送。
     in property <string> platform;
-
-    in property <image> bar-fluid-bg;
-    in-out property <length> bar-w: 0px;
-    in-out property <length> bar-h: 0px;
-    // 播放页主控条的底(#69):平时 fluid,缓冲时同一槽换成 progress 变体、
-    // 进度实时喂,那道呼吸亮边就是「还在动」的信号。尺寸同样由 .slint 回写,
-    // 覆层不在场时是 0,那一槽整个不进合批。
-    in property <image> viz-bar-bg;
-    in-out property <length> viz-bar-w: 0px;
-    in-out property <length> viz-bar-h: 0px;
-    // 播放页次要动作(视觉预设、收起)共用的 glass 底。两颗同尺寸,渲一张够。
-    in property <image> viz-glass-bg;
 
     // 横幅的文案:断流,以及所有一次性提示(某次请求失败了、名字没填)。
     // 空字符串 = 不显示(见 docs/adr/0013 与 ui/src/notice.rs)。
@@ -86,12 +74,10 @@ export global Shell {
     // 横幅上的「加入」:本机加进正在出声的那几台,原有的不动。
     callback join-group();
 
-    in-out property <bool> aurora-buttons-on: true;
-    callback aurora-buttons-toggled();
-    in property <image> empty-daily-bg;
-    in-out property <bool> empty-daily-hover: false;
-    in-out property <float> empty-daily-px: 0.72;
-    in-out property <float> empty-daily-py: 0.5;
+    // 动态效果(减弱动效的反面):真相在 api::settings,motion.rs 写回。
+    // 开关只喊一声 motion-toggled,值由 Rust 翻好再推回来。
+    in-out property <bool> motion-on: true;
+    callback motion-toggled();
     // #66 卡墙(adr/0025):每日推荐分区的一种视图,列表是另一种。
     // wall-supported 由 Rust 在 GPU 构建里置真;view-wall 是用户意图,
     // wall-showing 是显示态 —— 切列表要等塌回动画落地才熄,由
@@ -122,11 +108,6 @@ export global Shell {
     callback wall-confirm();
     // 列表 ⇄ 卡墙。目标由 Rust 记,塌回插值走完才真正换视图。
     callback set-view-wall(bool);
-    // §4 封面取色喂极光:三团光斑的封面主色与开关,由 aurora.rs 写。
-    in property <bool> aurora-cover-active: false;
-    in property <color> aurora-cover-warm;
-    in property <color> aurora-cover-deep;
-    in property <color> aurora-cover-soft;
 
     // 当前在哪个一级目的地。编号见 musicnav.slint 的 Destinations;
     // 启动落在每日推荐(MEO-1876)。
@@ -136,8 +117,7 @@ export global Shell {
 
     in-out property <bool> play-page-open: false;
 
-    // 音乐页列表该有一批歌、却一首都没有(空状态)。musicpage.slint 照它摆空状态,
-    // Rust 照它判「换一批推荐」那颗光带按钮在不在屏幕上 —— 一份判据两处读。
+    // 音乐页列表该有一批歌、却一首都没有(空状态)。musicpage.slint 照它摆空状态。
     // 筛空了不算:那时该说「没有符合的歌」,不是摆开局的「点一首歌开始」(#160)。
     out property <bool> music-empty: Player.tracks.length == 0
         && Player.chosen-count == 0
@@ -146,13 +126,6 @@ export global Shell {
             || destination == 3
             || destination == 6
             || (destination == 2 && Library.search-tab == 0));
-    // 光带按钮此刻在不在屏幕上(#153):看不见的不画。播放页是盖满全窗的覆层。
-    // 已下载、个人、设置不摆音乐列表,空状态也就不在。
-    out property <bool> empty-daily-shown: Session.logged-in
-        && destination != 5 && destination < 7
-        && music-empty
-        && !Player.tracks-loading
-        && !play-page-open;
 
     // 按需渲染的三个入口(#153,docs/adr/0035)。渲染循环只在有东西在动时要下一帧,
     // 不经 Slint 属性就改了画面的那些到达,必须从这里叫醒它 —— Rust 侧在 runtime::pace。
@@ -166,8 +139,6 @@ export global Shell {
     callback theme-mode-selected(int);
     // 系统明暗变了。由下面的观察器转发,Rust 在跟随系统档时重解 Theme.dark。
     callback system-scheme-changed();
-    // §9 光带按钮:开关(真相在 api::settings,aurora_btn.rs 写)、两颗按钮的
-    // 纹理,以及 hover/指针的镜像(元素写,Rust 每帧读去喂 shader)。
     // 进了个人主页。统计取一次还是每次都取,判断在 Rust 侧(profile.rs)。
     out property <bool> system-prefers-dark: Palette.color-scheme != ColorScheme.light;
     changed system-prefers-dark => { system-scheme-changed(); }

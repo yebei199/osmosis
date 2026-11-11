@@ -46,9 +46,6 @@ pub use music::{
 
 // 喂给 GPU 装饰层的 seam 数据与数学。
 mod shader;
-pub use shader::aurora_btn::{
-    AuroraBtnControls, AuroraBtnSlotControls,
-};
 pub use shader::nav_glass::NavGlassControls;
 
 // 卡墙的几何与交互动力学,纯数学、无 GPU 可测(adr/0025);
@@ -61,6 +58,8 @@ pub use wall::drive::{
 
 // 明暗主题。颜色在 slint/theme.slint,这里只管那一位布尔值住在哪。
 mod theme;
+// 「动态效果」开关与设置页的日夜开关(unicat-switch)。
+mod motion;
 // 设置页的档位与应用内升级。安装器由平台入口注入,同下载落点的接缝形状。
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
@@ -139,7 +138,7 @@ fn build_ui(
     pages::profile::bind(&ui);
     #[cfg(not(target_arch = "wasm32"))]
     update::bind(&ui);
-    shader::aurora_btn::bind(&ui);
+    motion::bind(&ui);
 
     let (viz_source, lyrics, cover, frames) =
         music::bind(&ui, media);
@@ -183,7 +182,7 @@ pub fn set_state_dir(dir: std::path::PathBuf) {
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
 ///
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
-/// 播放页覆层退回没有粒子与 warp 的形态,`.slint` 里零平台判断(见 [`VizImages`])。
+/// 播放页覆层退回没有粒子的形态,`.slint` 里零平台判断(见 [`VizImages`])。
 pub fn run() {
     // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
     let (ui, _pace, _viz_source, _lyrics, _cover, _frames) =

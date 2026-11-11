@@ -1,0 +1,16 @@
+// 设置页那颗日夜开关(unicat-switch,用户自己的仓库,git 依赖钉在一个 rev 上)的接线面。
+//
+// 开关的像素在 CPU 上画:Rust 侧的 `unicat_switch_slint::Driver` 持有弹簧、拖动、猫与天色,
+// 只在弹簧还在动时开一只 16ms 的定时器,每一拍把 `tick` 加一 —— 属性变了,Slint 才重画这一块;
+// 弹簧停了定时器就停,空闲时一帧都不出(docs/adr/0035)。状态住在 global 里(docs/adr/0027),
+// 绑定在 ui/src/motion.rs。
+import { SwitchFrame, SwitchInput, SwitchCommit } from "@unicat/unicat-switch.slint";
+
+export global DayNight {
+    // 驱动器每拍加一,界面据此重新要一帧。
+    in property <int> tick;
+    // 画一帧:画布与内边距是物理像素。
+    pure callback render(width: int, height: int, pad: int, scale: float, night: bool, tick: int) -> SwitchFrame;
+    // 指针事件;松手时说要不要拨、拨到哪一边。
+    callback input(kind: SwitchInput, x: length) -> SwitchCommit;
+}

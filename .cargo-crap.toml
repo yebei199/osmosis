@@ -1,6 +1,6 @@
 # CRAP 闸门的豁免名单(`cargo crap` 自动读本文件,不带参数调用也生效)。
 #
-# 名单的目的不是把闸门刷绿,而是**留住信号**:这六个永远过不去的条目一旦常驻
+# 名单的目的不是把闸门刷绿,而是**留住信号**:这五个永远过不去的条目一旦常驻
 # 报告,新长出来的真问题就淹在里面没人看得见。每一条都写清"为什么测不了",
 # 前提变了就该删掉对应行 —— 比如哪天真给渲染搭起了无头 GPU 测试。
 #
@@ -10,7 +10,7 @@
 # 加之前先问一遍:是真的够不着,还是只是还没找到缝。
 
 allow = [
-    # ── 真的要 GPU:这四个各自持有 wgpu device 并往离屏纹理上画 ──
+    # ── 真的要 GPU:这三个各自持有 wgpu device 并往离屏纹理上画 ──
     # 生产路径里的 bevy App 是用 Slint 交出来的真实 adapter 建的
     # (crates/render3d/src/scene.rs 的 `DefaultPlugins.set(RenderPlugin{..})`),
     # 拿不到 adapter 就连 App 都建不起来。用软件光栅器倒是能跑,但那是给一个
@@ -18,7 +18,6 @@ allow = [
     # 真机截图复核(见 docs/lesson 与 CONTEXT.md 里的设备验证约定)。
     "Scene::render_viz_frame",
     "Scene::drive_and_finish",
-    "AuroraBtnPass::render_frame",
     "NavGlassPass::render_frame",
 
     # ── host 上的覆盖率采集物理上看不见它 ──

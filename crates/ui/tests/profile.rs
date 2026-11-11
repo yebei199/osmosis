@@ -197,8 +197,8 @@ fn the_player_bar_does_not_eat_the_bottom_of_the_profile() {
 
     let reserved = with - without;
     assert!(
-        reserved >= 62.0,
-        "控制条 62px 高,底部至少要为它留这么多,实留 {reserved}"
+        reserved >= 72.0,
+        "控制条 72px 高,底部至少要为它留这么多,实留 {reserved}"
     );
 }
 
@@ -217,7 +217,7 @@ fn the_reserved_space_clears_the_gap_under_the_bar_too() {
     let reserved = column_height(&ui) - without;
 
     assert!(
-        reserved > 62.0,
+        reserved > 72.0,
         "条底到页面底那段间隙也压着内容,留空要比条身高,实留 {reserved}"
     );
 }

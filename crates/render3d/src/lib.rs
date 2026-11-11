@@ -21,16 +21,8 @@
 // AsBindGroup 的 SystemParam 推导经 wgpu 的 Send/Sync 链超过默认的 128 层。
 #![recursion_limit = "256"]
 
-mod aurorabtn;
 mod navglass;
-pub use aurorabtn::{
-    AuroraBtnParams, AuroraBtnPass, AuroraBtnSlot,
-};
-
 pub use navglass::{NavGlassPass, NavParams};
-
-mod warp;
-pub use warp::{AUDIO_BYTES, WARP_SIDE, WarpPass};
 
 mod cloud;
 

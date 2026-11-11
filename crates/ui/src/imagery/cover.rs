@@ -43,12 +43,11 @@ fn cover_pixels(
 }
 
 /// 后台解出来的一张封面:原尺寸像素(UI 线程包成 `slint::Image`)、
-/// 播放页背景用的糊图、点云用的缩小像素、极光用的三个主色。全都能过线程。
+/// 播放页背景用的糊图、点云用的缩小像素。全都能过线程。
 pub struct DecodedCover {
     pub full: SharedPixelBuffer<Rgba8Pixel>,
     pub blurred: SharedPixelBuffer<Rgba8Pixel>,
     pub pixels: CoverPixels,
-    pub colors: Option<[[u8; 3]; 3]>,
 }
 
 /// 播放页背景那张糊图的边长。缩到这么小再糊一遍,界面放大铺满时
@@ -126,7 +125,7 @@ impl DecodeGate {
 /// 封面同时最多解几张。当前这首只有一张,留一个给「上一首还没解完」。
 static DECODING: DecodeGate = DecodeGate::new(2);
 
-/// 在后台线程上解一张封面(#137 ⑥),连同极光要的三个主色。
+/// 在后台线程上解一张封面(#137 ⑥)。
 ///
 /// `wanted` 在拿到名额之后问一次:排队这段时间里用户可能已经切走了,那就
 /// 不白解。回到 UI 线程之后调用方仍要再校验一次身份 —— 解码期间也可能切走。
@@ -145,7 +144,7 @@ pub async fn decode_off_thread(
     .flatten()
 }
 
-/// 把一段图片字节(jpeg/png)解成原尺寸像素、点云像素与主色。字节不是图时
+/// 把一段图片字节(jpeg/png)解成原尺寸像素、糊图与点云像素。字节不是图时
 /// 返回 `None` —— 直链过期的 HTML 页、截断的下载都走这条。不碰 `slint::Image`,
 /// 所以能在后台线程上跑。
 fn decode_detached(bytes: &[u8]) -> Option<DecodedCover> {
@@ -153,7 +152,6 @@ fn decode_detached(bytes: &[u8]) -> Option<DecodedCover> {
     let full = decoded.to_rgba8();
     let (w, h) = full.dimensions();
     let pixels = cover_pixels(&decoded, &full);
-    let colors = crate::shader::aurora::colors_of(&pixels);
     Some(DecodedCover {
         full: SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
             full.as_raw(),
@@ -162,7 +160,6 @@ fn decode_detached(bytes: &[u8]) -> Option<DecodedCover> {
         ),
         blurred: blurred_of(&decoded),
         pixels,
-        colors,
     })
 }
 
@@ -460,7 +457,7 @@ mod tests {
         }
     }
 
-    /// 后台解出来的是能过线程的像素与主色,`slint::Image` 留给 UI 线程包一下。
+    /// 后台解出来的是能过线程的像素,`slint::Image` 留给 UI 线程包一下。
     #[test]
     fn a_cover_decodes_off_the_ui_thread() {
         fn must_cross_threads<T: Send>(_: &T) {}

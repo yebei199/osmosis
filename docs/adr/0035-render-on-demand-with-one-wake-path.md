@@ -1,7 +1,8 @@
 # 按需渲染,唤醒只走一处
 
 日期:2026-09-27。状态:已采纳(#153)。取代 `docs/change_log/2026-08-11/always-on-rendering.md`
-的「前台恒满帧」。
+的「前台恒满帧」。光环与光带两条随 [`0038`](0038-the-play-key-is-a-cover-lens-not-a-shader.md)
+失效:播放页之外不再有常驻的环境动效。
 
 ## 背景
 

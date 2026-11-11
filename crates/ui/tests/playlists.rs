@@ -123,8 +123,8 @@ fn blank_below(ui: &MainWindow, id: &str) -> f32 {
 
 /// 页边距 16 加上一格布局间距 12:没有控制条时,列表底下最多空这么多。
 const BARE_BLANK: f32 = 16.0 + 12.0;
-/// `BarMetrics.page-reserve`:条身 62 + 上下两段 22。
-const BAR_RESERVE: f32 = 62.0 + 22.0 * 2.0;
+/// `BarMetrics.page-reserve`:条身 72 + 上下两段 20。
+const BAR_RESERVE: f32 = 72.0 + 20.0 * 2.0;
 
 /// 没有控制条时,歌单列表一直铺到页底 —— 页尾不再垫一块写死的 100px。
 #[test]

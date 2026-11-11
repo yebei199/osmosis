@@ -172,15 +172,15 @@ fn the_loop_button_labels_all_three_states() {
     assert!(loop_key(&ui, "循环: 单曲").is_some());
 }
 
-/// **日月开关退场**:控制簇里找不到它,主题唯一入口是设置页的三值选择。
+/// **日夜开关不在控制簇**:主题唯一入口是设置页。
 /// 设置页(#61)落地后它本就该撤;第五颗循环键进场把紧凑行挤爆,正式送走。
 #[test]
 fn the_day_night_switch_is_gone_from_the_cluster() {
     let ui = wide_page();
 
     assert!(
-        !present(&ui, "DayNightSwitch::touch"),
-        "日月开关该已从控制簇退场,主题去设置页拨"
+        !present(&ui, "SettingsPage::theme-switch"),
+        "日夜开关该只在设置页,主题去设置页拨"
     );
 }
 

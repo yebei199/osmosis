@@ -1,44 +1,14 @@
 // 设置页:分组卡片流(docs/design.md「页面清单」)。
 //
-// 只摆背后真有东西的组:外观(日月开关 + 跟随系统)、账号(退出登录)、
-// 快捷键、关于。设计稿里的「缓存与存储」等大小统计与 shader 落地后再上,
-// 没有数据源的卡不上屏(硬规则 8)。
+// 只摆背后真有东西的组:外观(日夜开关、跟随系统、动态效果)、账号(退出登录)、
+// 快捷键、关于。没有数据源的卡不上屏(硬规则 8)。
 
-import { Theme, Type, Radius, Motion, Space, TextSize } from "theme.slint";
-import { SectionCard, DayNightSwitch } from "widgets.slint";
+import { Theme, Type, Radius, Motion, Space, TextSize, Weight, Tracking, Layout } from "theme.slint";
+import { Card, CardRow, SectionLabel, Switch, Button, ButtonKind, Kbd } from "widgets.slint";
 import { BarMetrics } from "playerbar.slint";
-
-// 胶囊开关:aurora 与「跟随系统」共用。a11y 在组件根上,
-// 无头测试按元素 id 找到的是这一层,挂在里面的 TouchArea 上就点不动了。
-component PillToggle inherits Rectangle {
-    in property <bool> on;
-    in property <string> label;
-    callback toggled();
-
-    width: 44px;
-    height: 26px;
-    border-radius: Radius.pill;
-    background: root.on ? Theme.accent : Theme.press;
-    animate background { duration: Motion.fast; easing: Motion.ease; }
-    accessible-role: checkbox;
-    accessible-label: root.label;
-    accessible-checked: root.on;
-    accessible-action-default => { root.toggled(); }
-
-    Rectangle {
-        x: root.on ? parent.width - 22px : 4px;
-        y: 4px;
-        width: 18px;
-        height: 18px;
-        border-radius: Radius.pill;
-        background: root.on ? Theme.accent-text : Theme.text-dim;
-        animate x { duration: Motion.fast; easing: Motion.ease; }
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.toggled(); }
-    }
-}
+import { DayNight } from "globals/daynight.slint";
+import { Icon, Icons } from "icons.slint";
+import { UnicatSwitch } from "@unicat/unicat-switch.slint";
 
 export component SettingsPage inherits Flickable {
     // 「Osmosis 0.1.16 · Slint + Bevy」,由 Rust 拼好推进来。
@@ -48,11 +18,14 @@ export component SettingsPage inherits Flickable {
     in property <string> update-status;
     in property <string> update-action;
     callback update-requested();
-    // 动态极光按钮的开关状态(真相在 api::settings,Rust 写回)。
-    in property <bool> aurora-on;
-    callback aurora-toggled();
+    // 「动态效果」开着没有(真相在 api::settings,Rust 写回)。关掉就是减弱动效:
+    // 弹簧临界阻尼、不回弹,透镜静止,日夜开关的弹簧也一起收。
+    in property <bool> motion-on;
+    callback motion-toggled();
     // 主题三档:选了喊一声(0 深 1 浅 2 跟随系统),值由 Rust 写回 Theme.mode。
     callback theme-mode-selected(int);
+    // 账号那一行的用户名。
+    in property <string> username;
     // 退出登录:清会话是 Rust 的活,这里只喊。
     callback logout();
 
@@ -60,220 +33,181 @@ export component SettingsPage inherits Flickable {
     // (见 profile.slint 同名属性)。
     in property <bool> bar-visible;
 
-    content-height: column.preferred-height + 52px;
+    content-height: column.preferred-height;
+
+    // 日夜开关自己记着 night(拨动时它先翻自己,再喊 toggled)。主题从别处变了
+    // (跟随系统、Rust 写回)时,把它对回 Theme.dark —— 绑定在第一次拨动后就断了。
+    property <bool> dark-mirror: Theme.dark;
+    changed dark-mirror => { theme-switch.night = self.dark-mirror; }
 
     column := VerticalLayout {
-        // 宽窗口里居中(MEO-1878):贴左摆的话,640px 之外的右半边全是空白。
-        x: max(26px, (root.width - self.width) / 2);
-        y: 26px;
-        width: min(root.width - 52px, 640px);
+        // 宽窗口里居中(MEO-1878):贴左摆的话,一列之外的右半边全是空白。
+        x: max(Layout.page-x-compact, (root.width - self.width) / 2);
+        width: min(root.width - Layout.page-x-compact * 2, Layout.column-max);
         alignment: start;
-        spacing: Space.md;
+        spacing: 0px;
+        padding-top: root.width < Layout.compact ? Layout.page-top-compact : Layout.page-top;
         // 控制条压在页面底部,「检查更新」是这一页常见的最后一个可点项。
-        // 留在 padding 而不是 content-height 上,理由同 profile.slint。
         padding-bottom: root.bar-visible
             ? BarMetrics.page-reserve
-            : 0;
+            : Space.xl;
 
         Text {
             text: "设置";
-            font-weight: 700;
-            font-size: TextSize.display;
+            font-weight: Weight.bold;
+            font-size: root.width < Layout.compact ? TextSize.display-compact : TextSize.display;
+            letter-spacing: root.width < Layout.compact ? Tracking.display-compact : Tracking.display;
             color: Theme.text;
         }
 
-        SectionCard {
-            kicker: "外观";
-
-            // 日月开关是主题区的主视觉(从控制簇迁来,#68):拨=显式明/暗。
-            // 跟随系统时它显示当前生效态,拨动即退出跟随。
-            HorizontalLayout {
-                spacing: Space.md;
-
+        Rectangle { height: Space.xl; }
+        SectionLabel { text: "外观"; }
+        Rectangle { height: 10px; }
+        Card {
+            // 日夜开关是这一组的主视觉:拨 = 显式明 / 暗。跟随系统时它显示当前生效态,
+            // 拨动即退出跟随。
+            CardRow {
+                title: "主题";
+                detail: Theme.dark ? "现在是夜晚。拨一下天就亮了,跟随系统打开时由系统决定。"
+                    : "现在是白天。拨一下就入夜,跟随系统打开时由系统决定。";
+                row-min: 104px;
                 VerticalLayout {
                     alignment: center;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: "深浅主题";
-                        font-size: TextSize.small;
-                        color: Theme.text;
-                    }
-                }
-                theme-switch := DayNightSwitch {
-                    night: Theme.dark;
-                    label: "深浅主题";
-                    toggled => {
-                        root.theme-mode-selected(Theme.dark ? 1 : 0);
+                    theme-switch := UnicatSwitch {
+                        // 设计稿 196 宽 / 紧凑 140 宽;高按组件自己的 315:143 外框比例。
+                        width: root.width < Layout.compact ? 140px : 196px;
+                        height: self.width * 143 / 315;
+                        night: Theme.dark;
+                        label: "深浅主题";
+                        tick: DayNight.tick;
+                        render(w, h, pad, scale, night, tick) => {
+                            return DayNight.render(w, h, pad, scale, night, tick);
+                        }
+                        input(kind, x) => {
+                            return DayNight.input(kind, x);
+                        }
+                        toggled(night) => {
+                            root.theme-mode-selected(night ? 0 : 1);
+                        }
                     }
                 }
             }
-
-            HorizontalLayout {
-                spacing: Space.md;
-
+            CardRow {
+                title: "跟随系统";
+                detail: "目前只有桌面端能读到系统设置";
                 VerticalLayout {
                     alignment: center;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: "跟随系统";
-                        font-size: TextSize.small;
-                        color: Theme.text;
-                    }
-                }
-                follow-toggle := PillToggle {
-                    on: Theme.mode == 2;
-                    label: "跟随系统";
-                    // 退出跟随时落在当前生效的那档,外观不跳变。
-                    toggled => {
-                        root.theme-mode-selected(Theme.mode == 2
-                            ? (Theme.dark ? 0 : 1)
-                            : 2);
+                    follow-toggle := Switch {
+                        on: Theme.mode == 2;
+                        label: "跟随系统";
+                        // 退出跟随时落在当前生效的那档,外观不跳变。
+                        toggled => {
+                            root.theme-mode-selected(Theme.mode == 2
+                                ? (Theme.dark ? 0 : 1)
+                                : 2);
+                        }
                     }
                 }
             }
-            Text {
-                text: "跟随系统当前只在桌面端生效,其他端按深色处理";
-                font-size: TextSize.caption;
-                color: Theme.text-faint;
-            }
-
-            HorizontalLayout {
-                spacing: Space.md;
-
+            CardRow {
+                title: "动态效果";
+                detail: "关掉后弹簧不再回弹,封面镜头静止,省电";
+                last: true;
                 VerticalLayout {
                     alignment: center;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: "动态极光按钮";
-                        font-size: TextSize.small;
-                        color: Theme.text;
+                    motion-toggle := Switch {
+                        on: root.motion-on;
+                        label: "动态效果";
+                        toggled => { root.motion-toggled(); }
                     }
                 }
-                aurora-toggle := PillToggle {
-                    on: root.aurora-on;
-                    label: "动态极光按钮";
-                    toggled => { root.aurora-toggled(); }
-                }
-            }
-            Text {
-                text: "关掉就是纯色实底,不跑任何 shader";
-                font-size: TextSize.caption;
-                color: Theme.text-faint;
             }
         }
 
-        SectionCard {
-            kicker: "账号";
-
+        Rectangle { height: Space.xl; }
+        SectionLabel { text: "账号"; }
+        Rectangle { height: 10px; }
+        Card {
             HorizontalLayout {
-                spacing: Space.md;
-
-                // 中点两侧的空由 spacing 给,不靠字形:字形与空格的宽随字体变,
-                // 420 下读着像挤在一起(MEO-1878)。
-                signed-in := HorizontalLayout {
-                    alignment: start;
-                    horizontal-stretch: 1;
-                    spacing: Space.sm;
-                    for part in ["已登录", "·", "本设备"]: Text {
-                        text: part;
-                        font-size: TextSize.small;
-                        color: part == "·" ? Theme.text-dim : Theme.text;
-                        vertical-alignment: center;
+                padding-top: 14px;
+                padding-bottom: 14px;
+                spacing: 14px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 20px;
+                        background: Theme.accent;
+                        Icon {
+                            size: 22px;
+                            source: Icons.user-fill;
+                            colorize: Theme.accent-text;
+                        }
                     }
                 }
-                logout-button := Rectangle {
-                    width: logout-label.preferred-width + 32px;
-                    height: 34px;
-                    border-radius: Radius.pill;
-                    background: logout-touch.has-hover ? Theme.hover : Theme.hover;
-                    border-width: 1px;
-                    border-color: Theme.line;
-                    // a11y 在根上,理由同 ThemeSegment。
-                    accessible-role: button;
-                    accessible-label: "退出登录";
-                    accessible-action-default => { root.logout(); }
-
-                    logout-label := Text {
-                        text: "退出登录";
-                        font-size: TextSize.small;
-                        color: Theme.text-dim;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                signed-in := VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    spacing: 2px;
+                    Text {
+                        text: root.username == "" ? "已登录" : root.username;
+                        color: Theme.text;
+                        font-size: TextSize.row;
+                        overflow: elide;
                     }
-                    logout-touch := TouchArea {
-                        mouse-cursor: pointer;
+                    Text {
+                        text: "已登录 · 本设备";
+                        color: Theme.text-dim;
+                        font-size: TextSize.small;
+                        overflow: elide;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    logout-button := Button {
+                        kind: ButtonKind.secondary;
+                        small: true;
+                        text: "退出登录";
                         clicked => { root.logout(); }
                     }
                 }
             }
         }
 
-        SectionCard {
-            kicker: "快捷键";
-
-            HorizontalLayout {
-                Text {
-                    horizontal-stretch: 1;
-                    text: "收起播放页";
-                    font-size: TextSize.small;
-                    color: Theme.text;
-                }
-                Text {
-                    text: "Esc / Back";
-                    font-size: TextSize.small;
-                    color: Theme.text-dim;
+        Rectangle { height: Space.xl; }
+        SectionLabel { text: "快捷键"; }
+        Rectangle { height: 10px; }
+        Card {
+            CardRow {
+                title: "收起播放页";
+                last: true;
+                HorizontalLayout {
+                    spacing: Space.sm;
+                    alignment: end;
+                    VerticalLayout { alignment: center; Kbd { text: "Esc"; } }
+                    VerticalLayout { alignment: center; Kbd { text: "Back"; } }
                 }
             }
         }
 
-        SectionCard {
-            kicker: "关于";
-
-            Text {
-                text: root.about-line;
-                font-size: TextSize.small;
-                color: Theme.text-dim;
+        Rectangle { height: Space.xl; }
+        SectionLabel { text: "关于"; }
+        Rectangle { height: 10px; }
+        Card {
+            CardRow {
+                title: root.about-line;
+                detail: root.tier-line;
             }
-            Text {
-                text: root.tier-line;
-                font-size: TextSize.small;
-                color: Theme.text-dim;
-            }
-
-            HorizontalLayout {
-                spacing: Space.md;
-
-                VerticalLayout {
+            CardRow {
+                detail: root.update-status;
+                last: true;
+                if root.update-action != "": VerticalLayout {
                     alignment: center;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: root.update-status;
-                        font-size: TextSize.small;
-                        color: Theme.text;
-                        wrap: word-wrap;
-                    }
-                }
-                if root.update-action != "": update-button := Rectangle {
-                    width: update-label.preferred-width + 32px;
-                    height: 34px;
-                    border-radius: Radius.pill;
-                    background: update-touch.has-hover ? Theme.hover : Theme.hover;
-                    border-width: 1px;
-                    border-color: Theme.line;
-                    // a11y 在根上,理由同退出登录。
-                    accessible-role: button;
-                    accessible-label: root.update-action;
-                    accessible-action-default => { root.update-requested(); }
-
-                    update-label := Text {
+                    update-button := Button {
+                        kind: ButtonKind.secondary;
+                        small: true;
                         text: root.update-action;
-                        font-size: TextSize.small;
-                        color: Theme.text-dim;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    update-touch := TouchArea {
-                        mouse-cursor: pointer;
                         clicked => { root.update-requested(); }
                     }
                 }

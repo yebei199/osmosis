@@ -34,7 +34,7 @@ pub(crate) fn spawn_camera(
         .spawn((
             Camera3d::default(),
             Camera {
-                // 粒子图要叠在 warp 背景上,没画到的像素必须透明。
+                // 粒子图要叠在播放页的背景上,没画到的像素必须透明。
                 clear_color: ClearColorConfig::Custom(
                     Color::NONE,
                 ),

@@ -27,8 +27,8 @@ fn invoke(ui: &MainWindow, id: &str) {
         .invoke_accessible_default_action();
 }
 
-/// **日月开关是主题区的主视觉**(#68,从控制簇迁来):拨一下报与当前
-/// 相反的显式档(0 深 1 浅),不自己置位 —— 档位真相在 api::settings。
+/// **日夜开关是主题区的主视觉**(#68,从控制簇迁来;现在是 unicat-switch):
+/// 拨一下报与当前相反的显式档(0 深 1 浅) —— 档位真相在 api::settings。
 #[test]
 fn the_theme_switch_asks_for_the_opposite_mode() {
     let ui = settings_page();
@@ -43,9 +43,8 @@ fn the_theme_switch_asks_for_the_opposite_mode() {
     );
 
     let dark = ui.global::<ui::Theme>().get_dark();
-    // 开关的 a11y 动作在其内部 TouchArea 上;控制簇那颗已退场,
-    // 全应用只剩设置页这一颗,按组件内元素 id 找不会歧义。
-    invoke(&ui, "DayNightSwitch::touch");
+    // unicat-switch 的 a11y 默认动作挂在组件根上(checkbox),按设置页给它的 id 找。
+    invoke(&ui, "SettingsPage::theme-switch");
     assert_eq!(
         asked.get(),
         if dark { 1 } else { 0 },
@@ -83,25 +82,23 @@ fn the_follow_system_toggle_reports_mode_two() {
     );
 }
 
-/// 动态极光按钮的开关也只喊一声,值由 Rust 写回(aurora_btn.rs)。
+/// 「动态效果」的开关也只喊一声,值由 Rust 写回(motion.rs)。
 #[test]
-fn the_aurora_toggle_asks_without_flipping() {
+fn the_motion_toggle_asks_without_flipping() {
     let ui = settings_page();
-    ui.global::<Shell>().set_aurora_buttons_on(true);
+    ui.global::<Shell>().set_motion_on(true);
 
     let asked = std::rc::Rc::new(std::cell::Cell::new(0));
     let counter = asked.clone();
-    ui.global::<Shell>().on_aurora_buttons_toggled(
-        move || {
-            counter.set(counter.get() + 1);
-        },
-    );
+    ui.global::<Shell>().on_motion_toggled(move || {
+        counter.set(counter.get() + 1);
+    });
 
-    invoke(&ui, "SettingsPage::aurora-toggle");
+    invoke(&ui, "SettingsPage::motion-toggle");
 
     assert_eq!(asked.get(), 1, "拨一下该喊一声");
     assert!(
-        ui.global::<Shell>().get_aurora_buttons_on(),
+        ui.global::<Shell>().get_motion_on(),
         "值该纹丝不动 —— 写它是 Rust 的活"
     );
 }
@@ -173,8 +170,8 @@ fn the_player_bar_does_not_eat_the_bottom_of_settings() {
 
     let reserved = with - without;
     assert!(
-        reserved >= 62.0,
-        "控制条 62px 高,底部至少要为它留这么多,实留 {reserved}"
+        reserved >= 72.0,
+        "控制条 72px 高,底部至少要为它留这么多,实留 {reserved}"
     );
 }
 

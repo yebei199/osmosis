@@ -22,16 +22,13 @@ type NavFn =
     dyn FnMut(&NavGlassControls) -> Option<slint::Image>;
 type VizFn =
     dyn FnMut(&VizControls, u32, u32) -> Option<VizImages>;
-type BtnFn =
-    dyn FnMut(&AuroraBtnControls) -> Vec<slint::Image>;
 type WallFn =
     dyn FnMut(&WallControls) -> Option<slint::Image>;
 
-/// 平台入口注进来的五个渲染闭包(各自的约定见 [`run_with_renderers`])。
+/// 平台入口注进来的四个渲染闭包(各自的约定见 [`run_with_renderers`])。
 pub(crate) struct Renderers {
     pub(crate) nav: Box<NavFn>,
     pub(crate) viz: Box<VizFn>,
-    pub(crate) btn: Box<BtnFn>,
     pub(crate) wall: Box<WallFn>,
     pub(crate) prewarm: Box<dyn FnMut() -> bool>,
 }
@@ -60,7 +57,6 @@ pub(crate) struct FrameLoop {
     renderers: Renderers,
     pace: Rc<Pace>,
     nav: crate::shader::nav_glass::NavSelector,
-    band: crate::shader::aurora_btn::ButtonBand,
     /// 卡墙状态:回调(点击/滚轮)与渲染循环共享同一份。
     wall: Rc<RefCell<WallDrive>>,
     prewarm: crate::wall::Prewarm,
@@ -101,7 +97,6 @@ impl FrameLoop {
             renderers,
             pace,
             nav: Default::default(),
-            band: Default::default(),
             wall,
             prewarm: Default::default(),
             prewarm_tick,
@@ -144,12 +139,6 @@ impl FrameLoop {
             ),
             ambient: false,
         };
-        demand |= self.band.tick(
-            ui,
-            scale,
-            live,
-            &mut self.renderers.btn,
-        );
         demand |= self.wall_frame(ui, now, live);
         self.lyric.tick_line(ui, &self.lyrics);
         self.lyric.tick_window(ui, &self.lyrics);
@@ -205,16 +194,14 @@ impl FrameLoop {
         }
     }
 
-    /// warp 与播放页场景。
+    /// 播放页场景(封面点云 + 标注卡 + 遮挡层)。
     ///
-    /// **两道门,不是一道**(#87):warp 那张 192×192 的小图只要手上有歌就在 ——
-    /// 环形播放键里那圈画面靠它,而键在每一页上都有。场景那一趟(封面点云 +
-    /// 标注卡 + 遮挡层)只在播放页开着时走:它是 9216 个立方体的全绘,而且与卡墙
-    /// 互斥 —— render_viz_frame 进门就把墙的相机关掉。
+    /// 只在播放页开着时走:它是 9216 个立方体的全绘,而且与卡墙互斥 ——
+    /// render_viz_frame 进门就把墙的相机关掉。播放页之外没有任何跟着音乐动的画面
+    /// (环形播放键的极光已退役,见 `docs/adr/0038`),放着歌也不要帧。
     ///
-    /// 按需渲染的规矩(#153):光环只在放歌且活跃时动,暂停与定格都静止(推翻
-    /// 「暂停照样动」);点云在播放页开着的活跃期内动。定格时有封面在等、或纹理
-    /// 还没有,照样渲一帧。
+    /// 按需渲染的规矩(#153):点云在播放页开着的活跃期内动。定格时有封面在等、
+    /// 或纹理还没有,照样渲一帧。
     fn viz_frame(
         &mut self,
         ui: &MainWindow,
@@ -232,19 +219,16 @@ impl FrameLoop {
         };
         let wants_scene =
             ui.global::<Shell>().get_play_page_open();
-        let playing = player.get_is_playing();
         let vz = ui.global::<Viz>();
-        let needs_warp = (playing && live)
-            || vz.get_viz_bg().size().width == 0;
         let needs_scene = wants_scene
             && (live
                 || self.cover.pending()
                 || vz.get_viz_scene().size().width == 0);
         let ambient = Demand {
             busy: false,
-            ambient: playing || wants_scene,
+            ambient: wants_scene,
         };
-        if !needs_warp && !needs_scene {
+        if !needs_scene {
             // 定格期间的时间不补:恢复那一帧从定格处接着走。
             self.viz.last = None;
             return ambient;
@@ -260,14 +244,10 @@ impl FrameLoop {
                 time: self.viz.time,
                 audio,
                 // 换歌那一帧才有动作(清空/换图),取走即回到"没消息"。
-                // **只在渲场景那一帧取走**:不渲场景时取走等于把待处理的换封面
+                // 只有渲场景的帧才走到这里:不渲场景时取走等于把待处理的换封面
                 // 消息丢进垃圾桶,等播放页真开时点云还挂着上一首的封面
                 // (CONTEXT.md「封面点云」那个 bug 的同一个坑)。
-                cover: if needs_scene {
-                    self.cover.take()
-                } else {
-                    Default::default()
-                },
+                cover: self.cover.take(),
                 pointer: VizPointer {
                     x: vz.get_viz_pointer_x(),
                     y: vz.get_viz_pointer_y(),
@@ -275,7 +255,6 @@ impl FrameLoop {
                     active: vz.get_viz_pointer_active(),
                 },
                 preset: vz.get_viz_preset(),
-                needs_warp,
                 needs_scene,
                 // 深度卡片是标注卡,它在画面里才需要遮挡层。用**上一帧**的锚点
                 // 开关:锚点是这一帧渲染的产物,而这个开关是它的输入。差一帧看
@@ -288,22 +267,14 @@ impl FrameLoop {
         ) else {
             return ambient;
         };
-        if needs_warp {
-            vz.set_viz_bg(imgs.warp);
+        vz.set_viz_scene(imgs.scene);
+        vz.set_viz_occluder(imgs.occluder);
+        self.viz.anchor = imgs.anchor;
+        if let Some((x, y)) = imgs.anchor {
+            vz.set_viz_anchor_x(x);
+            vz.set_viz_anchor_y(y);
         }
-        // 场景那几样只在渲了场景时写 —— 没渲时写空图是白白的属性变更通知。
-        if needs_scene {
-            vz.set_viz_scene(imgs.scene);
-            vz.set_viz_occluder(imgs.occluder);
-            self.viz.anchor = imgs.anchor;
-            if let Some((x, y)) = imgs.anchor {
-                vz.set_viz_anchor_x(x);
-                vz.set_viz_anchor_y(y);
-            }
-            vz.set_viz_anchor_visible(
-                imgs.anchor.is_some(),
-            );
-        }
+        vz.set_viz_anchor_visible(imgs.anchor.is_some());
         Demand {
             busy: true,
             ambient: ambient.ambient,
@@ -320,10 +291,9 @@ impl FrameLoop {
 /// (省电门 [`crate::shader::nav_glass::nav_transition_active`],再叠一道尺寸变化判定兜住窗口缩放)。
 /// 返回 `None` 则这一帧不更新 `nav-bg`。
 ///
-/// `viz_frame` 驱动播放页视觉(见 `render3d::WarpPass` 与 `Scene::render_viz_frame`):
-/// 以 [`VizControls`](播放页时钟 + 音频纹理字节)和窗口**物理像素**尺寸调用,
-/// 返回的三张图分别推到 `viz-bg` / `viz-scene` / `viz-occluder`。`needs_warp` 与
-/// `needs_scene` 为假的那一半不必渲。
+/// `viz_frame` 驱动播放页视觉(见 `Scene::render_viz_frame`):以 [`VizControls`]
+/// (播放页时钟 + 音频纹理字节)和窗口**物理像素**尺寸调用,只在播放页开着时调;
+/// 返回的两张图分别推到 `viz-scene` / `viz-occluder`。
 ///
 /// `wall_prewarm` 在卡墙还没露过面时隔一会儿调一次(见 `render3d::Scene::prewarm_wall`
 /// 与 [`crate::wall::Prewarm`]),返回 `true` 表示管线都编好了,之后不再调。
@@ -344,10 +314,6 @@ pub fn run_with_renderers(
         u32,
         u32,
     ) -> Option<VizImages>
-    + 'static,
-    btn_frame: impl FnMut(
-        &AuroraBtnControls,
-    ) -> Vec<slint::Image>
     + 'static,
     wall_frame: impl FnMut(
         &WallControls,
@@ -377,7 +343,6 @@ pub fn run_with_renderers(
         Renderers {
             nav: Box::new(nav_frame),
             viz: Box::new(viz_frame),
-            btn: Box::new(btn_frame),
             wall: Box::new(wall_frame),
             prewarm: Box::new(wall_prewarm),
         },
@@ -447,9 +412,7 @@ mod tests {
     /// 各渲染器被调了几次、最后一份播放页控制量长什么样。
     #[derive(Default)]
     struct Calls {
-        btn: Cell<usize>,
         wall: Cell<usize>,
-        warp: Cell<usize>,
         scene: Cell<usize>,
         /// 最后一次交给场景的封面动作:0 无、1 清空、2 换图。
         cover: Cell<u8>,
@@ -468,28 +431,17 @@ mod tests {
                 }
             }
         };
-        let (c_btn, c_wall, c_viz) =
-            (calls.clone(), calls.clone(), calls.clone());
+        let (c_wall, c_viz) =
+            (calls.clone(), calls.clone());
         let (i_wall, i_viz) =
             (image.clone(), image.clone());
         Renderers {
             nav: Box::new(|_| None),
-            btn: Box::new(move |controls| {
-                c_btn.btn.set(c_btn.btn.get() + 1);
-                controls
-                    .slots
-                    .iter()
-                    .map(|_| drawn())
-                    .collect()
-            }),
             wall: Box::new(move |_| {
                 c_wall.wall.set(c_wall.wall.get() + 1);
                 Some(i_wall())
             }),
             viz: Box::new(move |v, _, _| {
-                if v.needs_warp {
-                    c_viz.warp.set(c_viz.warp.get() + 1);
-                }
                 if v.needs_scene {
                     c_viz.scene.set(c_viz.scene.get() + 1);
                     c_viz.cover.set(match v.cover {
@@ -499,11 +451,6 @@ mod tests {
                     });
                 }
                 Some(VizImages {
-                    warp: if v.needs_warp {
-                        i_viz()
-                    } else {
-                        slint::Image::default()
-                    },
                     scene: if v.needs_scene {
                         i_viz()
                     } else {
@@ -517,13 +464,12 @@ mod tests {
         }
     }
 
-    /// 登录、停在首页、光带开着的一扇无头窗口,外加它的帧驱动与节拍。
+    /// 登录、停在首页的一扇无头窗口,外加它的帧驱动与节拍。
     fn setup()
     -> (MainWindow, FrameLoop, Rc<Pace>, Rc<Calls>) {
         i_slint_backend_testing::init_no_event_loop();
         let ui = MainWindow::new().expect("建不出主窗口");
         ui.global::<Session>().set_logged_in(true);
-        ui.global::<Shell>().set_aurora_buttons_on(true);
         let pace = pace::bind(&ui);
         let calls = Rc::new(Calls::default());
         let frame_loop = FrameLoop::new(
@@ -551,29 +497,33 @@ mod tests {
     fn a_still_home_page_stops_asking_for_frames() {
         let (ui, mut frame_loop, _, calls) = setup();
 
-        assert!(
-            frame_loop.frame(&ui, Instant::now()),
-            "刚开局是活跃期,星云要一直动"
-        );
+        frame_loop.frame(&ui, Instant::now());
         let later = idle();
         frame_loop.frame(&ui, later);
-        let rendered = calls.btn.get();
+        let rendered = calls.wall.get() + calls.scene.get();
 
         assert!(
             !frame_loop.frame(&ui, later),
             "静止了还在要帧"
         );
         assert_eq!(
-            calls.btn.get(),
+            calls.wall.get() + calls.scene.get(),
             rendered,
             "静止了还在渲"
         );
+    }
+
+    /// 播放页开着、手上有歌:点云的那一扇。
+    fn open_play_page(ui: &MainWindow) {
+        ui.global::<Player>().set_has_track(true);
+        ui.global::<Shell>().set_play_page_open(true);
     }
 
     /// 定格之后任何输入立即恢复满帧。
     #[test]
     fn user_input_resumes_frames() {
         let (ui, mut frame_loop, _, _) = setup();
+        open_play_page(&ui);
         frame_loop.frame(&ui, idle());
         assert!(!frame_loop.frame(&ui, idle()));
 
@@ -581,47 +531,53 @@ mod tests {
 
         assert!(
             frame_loop.frame(&ui, Instant::now()),
-            "摸了一下,环境动效该回来"
+            "摸了一下,点云该回来"
         );
     }
 
-    /// 播放中十秒没人碰:光环与流体胶囊定格,不再要帧;活跃期内它们一直在动。
+    /// 播放页上十秒没人碰:点云定格,不再要帧;活跃期内它一直在动。
     #[test]
-    fn playing_ambient_motion_stops_after_the_idle_limit() {
+    fn the_point_cloud_stops_after_the_idle_limit() {
+        let (ui, mut frame_loop, _, calls) = setup();
+        open_play_page(&ui);
+        ui.global::<Player>().set_is_playing(true);
+
+        frame_loop.frame(&ui, Instant::now());
+        assert!(frame_loop.frame(&ui, Instant::now()));
+        assert!(
+            calls.scene.get() >= 2,
+            "活跃期内点云每帧都该渲"
+        );
+
+        frame_loop.frame(&ui, idle());
+        let frozen = calls.scene.get();
+        assert!(!frame_loop.frame(&ui, idle()));
+        assert_eq!(
+            calls.scene.get(),
+            frozen,
+            "定格了点云还在渲"
+        );
+    }
+
+    /// 播放页之外放着歌也不要帧,哪怕正在活跃期里:环形播放键的极光退役后,
+    /// 那里没有跟着音乐动的画面了(`docs/adr/0038`)。
+    #[test]
+    fn playing_off_the_play_page_asks_for_no_frames() {
         let (ui, mut frame_loop, _, calls) = setup();
         ui.global::<Player>().set_has_track(true);
         ui.global::<Player>().set_is_playing(true);
 
         frame_loop.frame(&ui, Instant::now());
-        assert!(frame_loop.frame(&ui, Instant::now()));
-        let warps = calls.warp.get();
-        assert!(warps >= 2, "活跃期内光环每帧都该渲");
-
-        frame_loop.frame(&ui, idle());
-        let frozen = calls.warp.get();
-        assert!(!frame_loop.frame(&ui, idle()));
-        assert_eq!(
-            calls.warp.get(),
-            frozen,
-            "定格了光环还在渲"
-        );
-    }
-
-    /// 暂停时光环静止,哪怕正在活跃期里(推翻「暂停照样动」)。
-    /// 已经有一张图挂着,就一次都不渲 —— warp 是反馈式的,再渲一遍画面就会流动。
-    #[test]
-    fn a_paused_ring_does_not_advance() {
-        let (ui, mut frame_loop, _, calls) = setup();
-        ui.global::<Player>().set_has_track(true);
-        ui.global::<Viz>().set_viz_bg(drawn());
-
-        frame_loop.frame(&ui, Instant::now());
         frame_loop.frame(&ui, Instant::now());
 
         assert_eq!(
-            calls.warp.get(),
+            calls.scene.get(),
             0,
-            "暂停时光环不该推进"
+            "播放页没开,点云不该渲"
+        );
+        assert!(
+            !frame_loop.frame(&ui, idle()),
+            "播放页之外放着歌还在要帧"
         );
     }
 
@@ -667,11 +623,11 @@ mod tests {
     fn a_texture_that_is_not_ready_keeps_frames_coming() {
         let (ui, mut frame_loop, _, calls) = setup();
         calls.blank.set(true);
-        ui.global::<Player>().set_has_track(true);
+        open_play_page(&ui);
 
         assert!(
             frame_loop.frame(&ui, idle()),
-            "光环纹理还没到手,不该停帧"
+            "点云纹理还没到手,不该停帧"
         );
 
         calls.blank.set(false);
