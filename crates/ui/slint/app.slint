@@ -281,6 +281,14 @@ export component MainWindow inherits Window {
             }
         }
 
+        // 手机的状态栏那一条铺页头的底色：面板顶部从 header-wash 起渐变，这一条留窗口底色
+        // 就是页头上方一道黑边。宽版式顶上本来就是窗口底色的侧栏与 gutter,不铺。
+        if Session.logged-in && Shell.compact && !Shell.play-page-open: Rectangle {
+            y: 0px;
+            height: root.safe-area-insets.top;
+            background: Theme.header-wash;
+        }
+
         // 顶部安全区只在窗口布局消化一次，状态条按实际高度让位。
         VerticalLayout {
             padding-top: root.safe-area-insets.top;
