@@ -80,6 +80,7 @@ async fn play(
             event,
             listened_ms,
             200_000,
+            false,
         )
         .await
         .expect("补记听了多久");

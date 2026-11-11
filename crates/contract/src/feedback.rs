@@ -65,4 +65,8 @@ pub struct PlayedAckDto {
 pub struct ListenedDto {
     pub listened_ms: i64,
     pub duration_ms: i64,
+    /// 这一次播放到此结束了(切走、放完、停下),不是放着时的检查点。
+    /// 结束了的播放不管听了多久都算听过(用户 2026-11-11)。旧客户端不带它,按检查点算。
+    #[serde(default)]
+    pub ended: bool,
 }

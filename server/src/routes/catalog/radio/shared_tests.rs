@@ -193,6 +193,7 @@ async fn listen(
         Json(ListenedDto {
             listened_ms,
             duration_ms: 200_000,
+            ended: false,
         }),
     )
     .await

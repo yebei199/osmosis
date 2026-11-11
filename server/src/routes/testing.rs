@@ -818,7 +818,7 @@ pub(crate) async fn hear(
         .await
         .expect("记起播");
     history::settle(
-        conn, account_id, event, 200_000, 200_000,
+        conn, account_id, event, 200_000, 200_000, false,
     )
     .await
     .expect("补记听完");

@@ -513,7 +513,8 @@ pub(in crate::music) fn start_auto_advance(
 #[cfg(not(target_arch = "wasm32"))]
 const CHECKPOINT_EVERY: u32 = 15;
 
-/// 上一段播放累计听了多久,报给服务端(#157);服务端据此判这首听没听过。
+/// 上一段播放累计听了多久,报给服务端(#157),并说明这一段结束了 —— 结束了的播放
+/// 不管听了多久都算听过(用户 2026-11-11)。
 /// **调用方必须在 `player.stop()` 之前调这个** —— 停完之后 `position()` 读到的是
 /// 清零后的状态,最后那不到一秒就记不上。
 ///
@@ -528,7 +529,7 @@ pub(in crate::music) fn report_previous_listened(
     else {
         return;
     };
-    send_listened(current, listened_now(deck));
+    send_listened(current, listened_now(deck), true);
 }
 
 /// 在放的这一段到此刻累计听了多久,补记给服务端,事件行留在手上:检查点(每 15 秒、
@@ -540,7 +541,7 @@ pub(in crate::music) fn report_listened_so_far(
 ) -> Option<api::PlayProgressDto> {
     let current = (*deck.current_play.borrow())?;
     let listened_ms = listened_now(deck);
-    send_listened(current, listened_ms);
+    send_listened(current, listened_ms, false);
     Some(api::PlayProgressDto {
         play_event_id: current.id,
         listened_ms,
@@ -561,12 +562,17 @@ fn listened_now(deck: &Deck) -> i64 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn send_listened(play: CurrentPlay, listened_ms: i64) {
+fn send_listened(
+    play: CurrentPlay,
+    listened_ms: i64,
+    ended: bool,
+) {
     slint::spawn_local(async move {
         if let Err(error) = api::report_listened(
             play.id,
             listened_ms,
             play.duration_ms,
+            ended,
         )
         .await
         {

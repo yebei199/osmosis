@@ -42,12 +42,13 @@ pub async fn heard_among(
 
 /// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157)。
 ///
-/// 放着时每个检查点(15 秒一次、暂停时)报一次累计,切歌、播完、停止时再报一次;
-/// 服务端同一行取大的。进程被杀只丢最后一个检查点之后的那一小段。
+/// 放着时每个检查点(15 秒一次、暂停时)报一次累计,切歌、播完、停止时再报一次
+/// (`ended`);服务端同一行取大的。进程被杀只丢最后一个检查点之后的那一小段。
 pub async fn report_listened(
     play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
+    ended: bool,
 ) -> Result<(), ApiError> {
     platform::send_no_content(
         reqwest::Method::PATCH,
@@ -58,6 +59,7 @@ pub async fn report_listened(
         Some(ListenedDto {
             listened_ms,
             duration_ms,
+            ended,
         }),
     )
     .await

@@ -672,6 +672,7 @@ async fn publish(
             ended.play_event_id,
             ended.listened_ms,
             ended.duration_ms,
+            true,
         )
         .await
     {

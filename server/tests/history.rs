@@ -367,7 +367,7 @@ async fn settle_fills_in_the_row() {
             .await
             .expect("记录应该成功");
     history::settle(
-        &mut tx, account.id, id, 9_000, 200_000,
+        &mut tx, account.id, id, 9_000, 200_000, false,
     )
     .await
     .expect("补记应该成功");
@@ -396,9 +396,10 @@ async fn settle_is_scoped_to_the_account() {
         history::record(&mut tx, theirs.id, &track("1"))
             .await
             .expect("记录应该成功");
-    let result =
-        history::settle(&mut tx, mine.id, id, 1_000, 2_000)
-            .await;
+    let result = history::settle(
+        &mut tx, mine.id, id, 1_000, 2_000, false,
+    )
+    .await;
 
     assert!(matches!(result, Err(AppError::NotFound)));
 }
@@ -426,7 +427,7 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
             .await
             .unwrap();
     let skipped = history::settle(
-        &mut tx, account.id, short, 30_000, 200_000,
+        &mut tx, account.id, short, 30_000, 200_000, false,
     )
     .await
     .unwrap();
@@ -438,12 +439,12 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
             .await
             .unwrap();
     let first = history::settle(
-        &mut tx, account.id, full, 150_000, 200_000,
+        &mut tx, account.id, full, 150_000, 200_000, false,
     )
     .await
     .unwrap();
     let again = history::settle(
-        &mut tx, account.id, full, 200_000, 200_000,
+        &mut tx, account.id, full, 200_000, 200_000, false,
     )
     .await
     .unwrap();
@@ -466,6 +467,34 @@ async fn settle_marks_heard_once_and_only_past_the_threshold()
     );
 }
 
+/// 结束了的播放不管听了多久都算听过(用户 2026-11-11:切到下一首就挪进「已听过」);
+/// 同样几秒钟,还在放的检查点不算。
+#[tokio::test]
+async fn an_ended_play_is_heard_however_short() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "hs_ended").await;
+
+    let event =
+        history::record(&mut tx, account.id, &track("1"))
+            .await
+            .unwrap();
+    let checkpoint = history::settle(
+        &mut tx, account.id, event, 3_000, 200_000, false,
+    )
+    .await
+    .unwrap();
+    let ended = history::settle(
+        &mut tx, account.id, event, 3_000, 200_000, true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        (checkpoint, ended),
+        (None, Some(track("1")))
+    );
+}
+
 /// 同一行补记几次取大的(独奏在放时隔一阵报一次累计);别的行不动。
 #[tokio::test]
 async fn settle_keeps_the_larger_report_of_its_own_row() {
@@ -482,11 +511,12 @@ async fn settle_keeps_the_larger_report_of_its_own_row() {
             .unwrap();
     history::settle(
         &mut tx, account.id, latest, 120_000, 200_000,
+        false,
     )
     .await
     .unwrap();
     history::settle(
-        &mut tx, account.id, latest, 5_000, 200_000,
+        &mut tx, account.id, latest, 5_000, 200_000, false,
     )
     .await
     .unwrap();
@@ -550,6 +580,7 @@ async fn heard_among_answers_only_heard_tracks() {
         .unwrap();
         history::settle(
             &mut tx, account.id, event, listened, 200_000,
+            false,
         )
         .await
         .unwrap();

@@ -15,7 +15,8 @@ use crate::syncplay::signaling::{
     self, AccountId, SharedRoster,
 };
 
-/// 补记 `play_event_id` 那一次播放听了 `listened_ms`(这首长 `duration_ms`)。
+/// 补记 `play_event_id` 那一次播放听了 `listened_ms`(这首长 `duration_ms`);
+/// `ended` 见 [`history::settle`]。
 ///
 /// 返回这一下有没有让电台或日推里的一首变成听过 —— 调用方据此看要不要补歌。
 pub async fn settle(
@@ -25,6 +26,7 @@ pub async fn settle(
     play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
+    ended: bool,
 ) -> Result<bool, AppError> {
     let mut conn = pool.acquire().await?;
     let Some(track) = history::settle(
@@ -33,6 +35,7 @@ pub async fn settle(
         play_event_id,
         listened_ms,
         duration_ms,
+        ended,
     )
     .await?
     else {

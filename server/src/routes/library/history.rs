@@ -59,7 +59,7 @@ pub(crate) async fn record_play(
     Ok(Json(PlayedAckDto { id }))
 }
 
-/// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157),听够了就算听过。
+/// `PATCH /played/{id}/listened` —— 补记这一次播放听了多久(#157);播放结束了或听够了就算听过。
 ///
 /// 切歌、播完、停止时客户端各发一次;进程被杀时这条永远不会发生,那一行
 /// 的 `listened_ms`/`duration_ms` 留 NULL,算不出完播也算不出跳过,也不算听过,接受。
@@ -77,6 +77,7 @@ pub(crate) async fn report_listened(
         play_event_id,
         body.listened_ms,
         body.duration_ms,
+        body.ended,
     )
     .await
     .map_err(|err| error::map_error(&err))?;

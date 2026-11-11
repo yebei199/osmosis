@@ -4,7 +4,7 @@
 //! 两列(#157)例外于「只增不改」—— 放着时每个检查点补一次累计,切歌/播完/停止时
 //! 再补一次,同一行取大的;进程被杀只丢最后一个检查点之后的那一小段(见 `docs/adr/0016`)。
 //!
-//! 「听过」不是起播:补记那一刻听够了([`is_heard`])才记进 `heard_tracks`,
+//! 「听过」不是起播:这一次播放结束了,或放着时就听够了([`is_heard`]),才记进 `heard_tracks`,
 //! 永久有效。电台、日推、预取、未听池问的都是它([`heard_sql`]);最近播放与
 //! 统计仍问起播事件。
 //!
@@ -34,7 +34,7 @@ pub async fn record(
     .await?)
 }
 
-/// 累计听满这么久就算听过,不管这首多长(用户 2026-11-10 定)。
+/// 还在放的这一次累计听满这么久就算听过,不管这首多长(用户 2026-11-10 定)。
 pub const HEARD_AFTER_MS: i64 = 240_000;
 
 /// 听过的判据:累计听了时长的一半以上,或满 [`HEARD_AFTER_MS`],先到哪条算哪条。
@@ -65,6 +65,9 @@ pub(crate) fn heard_sql(row: &str) -> String {
 /// 补记 `play_event_id` 那一次播放听了多久,并判它听没听过。新听过的交回那一首,
 /// 已经听过或没听够的交 `None`。
 ///
+/// `ended`:这一次播放结束了(切走、放完、停下)。结束了的不管听了多久都算听过
+/// (用户 2026-11-11:切到下一首就挪进「已听过」);还在放的检查点按 [`is_heard`] 判。
+///
 /// 只认自己账号的行,别人的行按不存在回答(与 [`crate::store::playlist::rename`]
 /// 同一个理由)。同一行补记几次取大的:独奏在放的过程中隔一阵报一次累计。
 pub async fn settle(
@@ -73,6 +76,7 @@ pub async fn settle(
     play_event_id: i64,
     listened_ms: i64,
     duration_ms: i64,
+    ended: bool,
 ) -> Result<Option<TrackRef>, AppError> {
     let row: Option<(String, String, i64)> =
         sqlx::query_as(
@@ -93,7 +97,7 @@ pub async fn settle(
     else {
         return Err(AppError::NotFound);
     };
-    if !is_heard(listened_ms, duration_ms) {
+    if !ended && !is_heard(listened_ms, duration_ms) {
         return Ok(None);
     }
     let fresh = sqlx::query(
