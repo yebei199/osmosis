@@ -155,8 +155,9 @@ export component SettingsPage inherits Flickable {
                         font-size: TextSize.row;
                         overflow: elide;
                     }
+                    // 用户名要等个人页取过统计才有;没有时标题已经说了「已登录」,这里不再重复。
                     Text {
-                        text: "已登录 · 本设备";
+                        text: root.username == "" ? "本设备" : "已登录 · 本设备";
                         color: Theme.text-dim;
                         font-size: TextSize.small;
                         overflow: elide;
