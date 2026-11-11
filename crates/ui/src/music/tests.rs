@@ -790,7 +790,9 @@ fn chip_index(ui: &MainWindow, text: &str) -> i32 {
     ui.global::<Player>()
         .get_chips()
         .iter()
-        .position(|chip| chip.text == text)
+        .position(|chip| {
+            format!("{} {}", chip.text, chip.count) == text
+        })
         .map(|at| at as i32)
         .unwrap_or_else(|| {
             panic!("没有「{text}」这个 chip")
