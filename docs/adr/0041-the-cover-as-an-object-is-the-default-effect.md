@@ -1,6 +1,6 @@
 # 封面实物是播放页的默认效果,标注卡与遮挡层退役
 
-日期:2026-11-12。状态:已采纳。取代 [`0014`](0014-one-visual-preset-with-the-seam-left-in-place.md);
+日期:2026-11-12。状态:已采纳(用户同日确认效果入口留在播放页右上角,不进抽屉)。取代 [`0014`](0014-one-visual-preset-with-the-seam-left-in-place.md);
 修订 [`0010`](0010-play-page-decoration-in-3d-function-in-2d.md) 的「粒子从卡片前后穿过」与
 「深度卡片现在是标注卡」两节、[`0012`](0012-cover-point-cloud-is-one-mesh-in-the-bevy-scene.md)
 的「自动同时进两台相机、白拿遮挡设施」。
