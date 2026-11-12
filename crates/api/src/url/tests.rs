@@ -92,3 +92,25 @@ fn track_ids_are_escaped_in_paths() {
             .ends_with("/playlists/platform/a%2Fb/tracks")
     );
 }
+
+/// 排序键:默认的加入时间不上地址(缓存键与老服务端都不受影响),另两种挂查询串。
+#[test]
+fn sorted_url_leaves_the_default_alone() {
+    use contract::TrackSortDto;
+
+    let base = playlist_tracks_url("3");
+    assert_eq!(
+        sorted_url(base.clone(), TrackSortDto::Added),
+        base
+    );
+    assert!(
+        sorted_url(base.clone(), TrackSortDto::Score)
+            .ends_with(
+                "/playlists/local/3/tracks?sort=score"
+            )
+    );
+    assert!(
+        sorted_url(base, TrackSortDto::Plays)
+            .ends_with("/tracks?sort=plays")
+    );
+}

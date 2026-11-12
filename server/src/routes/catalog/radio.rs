@@ -10,7 +10,8 @@
 //!
 //! 共享歌单一次补 [`REFILL`] 首:私人 FM 一回只给 3 首,听得久的账号几乎全被上面的
 //! 过滤丢光,只靠它歌单会被抽干(线上见过未听 0 首、已听 401 首)。FM 问满还不够,
-//! 就以最近听过的歌为种子接心动模式,再不够接当天日推;一个来源失败不挡下一个。
+//! 就接心动模式,再不够接当天日推;一个来源失败不挡下一个。心动的种子先从喜爱度最高的
+//! 那几首里轮着取(ADR 0042),一首都没有才退回最近听过的(见 [`heart_seeds`])。
 //!
 //! 新歌多半还没探过歌词,每批都当场探一次(见 [`probe_lyrics`]),不等后台队列:
 //! 不带筛选的起播那一批也探,电台区一摆出来就有「有歌词」可选。
@@ -42,6 +43,7 @@ use server::bangdream::{
 use server::error::{self, Failure};
 use server::store::account::{self, Account};
 use server::store::cache;
+use server::store::facets;
 use server::store::history;
 use server::store::lyric::{self, LyricKind};
 use server::store::playlist::TrackRef;
@@ -85,8 +87,12 @@ const STOCK_EVERY: Duration = Duration::from_secs(1800);
 static TOPPING_UP: LazyLock<Mutex<HashSet<i64>>> =
     LazyLock::new(Mutex::default);
 
-/// 补歌时 FM 不够,以几首听过的歌为种子接心动模式。心动一回给几十首,一两回足够。
+/// 补歌时 FM 不够,以几首歌为种子接心动模式。心动一回给几十首,一两回足够。
 const REFILL_SEEDS: usize = 2;
+
+/// 心动种子从喜爱度最高的这么多首里轮着取。只取最高的两首的话,每次补歌问的都是
+/// 同一对种子,平台回的也是同一批 —— 全是已经进过歌单的,一回就白问了。
+const SEED_POOL: usize = 20;
 
 /// 补歌最多花多久。客户端读超时 10 秒,而平台问一回就要一两秒:到点不再开新的一问,
 /// 手上有多少交多少,留出时间给还在路上的那一问。
@@ -379,27 +385,82 @@ async fn load_more(
     shared_list(state, account.id).await
 }
 
-/// 补歌的来源,先问的在前:私人 FM,以最近听过的歌为种子的心动模式,当天日推。
+/// 补歌的来源,先问的在前:私人 FM,以 `seeds` 为种子的心动模式,当天日推。
 /// 红心歌单 id 问不到时心动没法问,跳过它。
 fn refill_sources(
     liked_playlist: Option<String>,
-    heard: &[TrackDto],
+    seeds: Vec<String>,
 ) -> Vec<Source> {
     let mut sources = vec![Source::Fm {
         liked_playlist: liked_playlist.clone(),
     }];
     if let Some(playlist_id) = &liked_playlist {
-        sources.extend(
-            heard.iter().rev().take(REFILL_SEEDS).map(
-                |track| Source::Heart {
-                    seed: track.id.clone(),
-                    playlist_id: playlist_id.clone(),
-                },
-            ),
-        );
+        sources.extend(seeds.into_iter().map(|seed| {
+            Source::Heart {
+                seed,
+                playlist_id: playlist_id.clone(),
+            }
+        }));
     }
     sources.push(Source::Daily { liked_playlist });
     sources
+}
+
+/// 心动模式的 [`REFILL_SEEDS`] 首种子。
+///
+/// 先从 `favourites`(喜爱度从高到低,只取前 [`SEED_POOL`] 首)里取,起点随 `turn`
+/// 轮转 —— 调用方给歌单已有几首,每补一次就挪一格,于是一次次补歌问的是不同的种子,
+/// 而特别喜欢的那几首总排在池子前头。不够的拿最近听过的(`heard` 里靠后的)补;
+/// 两样都空就没有种子,心动这一路整个跳过。
+fn heart_seeds(
+    favourites: &[String],
+    turn: usize,
+    heard: &[TrackDto],
+) -> Vec<String> {
+    let pool =
+        &favourites[..favourites.len().min(SEED_POOL)];
+    let rotated = pool
+        .iter()
+        .cycle()
+        .skip(turn % pool.len().max(1))
+        .take(pool.len());
+    let recent = heard.iter().rev().map(|track| &track.id);
+    let mut seeds: Vec<String> = Vec::new();
+    for seed in rotated.chain(recent) {
+        if seeds.len() == REFILL_SEEDS {
+            break;
+        }
+        if !seeds.contains(seed) {
+            seeds.push(seed.clone());
+        }
+    }
+    seeds
+}
+
+/// 喜爱度最高的那几首(红心与赞过的里挑,见 [`facets::top_scored`])。问不到只记日志,
+/// 种子退回最近听过的:补歌不该因为排个序失败就停。
+async fn favourites(
+    state: &AppState,
+    account_id: i64,
+) -> Vec<String> {
+    let found = match state.pool.acquire().await {
+        Ok(mut conn) => facets::top_scored(
+            &mut conn, account_id, SEED_POOL,
+        )
+        .await
+        .map_err(|err| format!("{err:?}")),
+        Err(err) => Err(err.to_string()),
+    };
+    match found {
+        Ok(top) => top
+            .into_iter()
+            .map(|track| track.track_id)
+            .collect(),
+        Err(err) => {
+            tracing::warn!(%err, "取喜爱度最高的歌失败,心动种子退回最近听过的");
+            Vec::new()
+        }
+    }
 }
 
 /// 依次问各来源,攒够 [`REFILL`] 首为止。一个来源失败只记日志,全都一首没给才报错。
@@ -412,11 +473,14 @@ async fn refill(
     let liked_playlist =
         netease_liked_id(state, account).await.ok();
     let deadline = Instant::now() + REFILL_BUDGET;
+    let seeds = heart_seeds(
+        &favourites(state, account.id).await,
+        before.tracks.len() + before.heard.len(),
+        &before.heard,
+    );
     let mut known = before.tracks.clone();
     let mut failed = None;
-    for source in
-        refill_sources(liked_playlist, &before.heard)
-    {
+    for source in refill_sources(liked_playlist, seeds) {
         let room = REFILL.saturating_sub(
             known.len() - before.tracks.len(),
         );

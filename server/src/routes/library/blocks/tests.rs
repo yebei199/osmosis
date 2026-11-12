@@ -380,6 +380,9 @@ async fn blocking_a_track_clears_it_everywhere() {
             crate::routes::library::likes::liked(
                 State(state),
                 account,
+                axum::extract::Query(
+                    crate::routes::library::SortQuery::default(),
+                ),
             )
             .await
             .expect("读我喜欢")

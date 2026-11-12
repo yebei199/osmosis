@@ -3,7 +3,7 @@
 //! 上游由 `routes::testing` 的假 gRPC 服务扮演,库是真的。读与点心的测试
 //! 故意配一个连不上的上游:它们一旦去问网易云就会失败,而不是悄悄照样绿。
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use similar_asserts::assert_eq;
 
@@ -20,6 +20,7 @@ use super::{
     import_liked, like_track, liked, liked_ids,
     unlike_track,
 };
+use crate::routes::library::SortQuery;
 
 /// 网易云红心歌单里摆着这几首,`ids` 按平台给的次序(最近加的在前)。
 /// `with_details` 是平台随歌单详情带回来的那几首。
@@ -72,11 +73,14 @@ async fn liked_reads_our_own_copy_without_netease() {
         &state,
         testing::unreachable_upstream(),
     );
-    let tracks =
-        liked(State(offline.clone()), account.clone())
-            .await
-            .expect("读自家的「我的喜欢」不该要网易云")
-            .0;
+    let tracks = liked(
+        State(offline.clone()),
+        account.clone(),
+        Query(SortQuery::default()),
+    )
+    .await
+    .expect("读自家的「我的喜欢」不该要网易云")
+    .0;
     assert_eq!(
         tracks.tracks,
         vec![
@@ -120,11 +124,14 @@ async fn import_keeps_tracks_the_platform_has_no_details_for()
             .0;
     assert_eq!(imported.total, 2);
 
-    let tracks =
-        liked(State(state.clone()), account.clone())
-            .await
-            .expect("该取得到")
-            .0;
+    let tracks = liked(
+        State(state.clone()),
+        account.clone(),
+        Query(SortQuery::default()),
+    )
+    .await
+    .expect("该取得到")
+    .0;
     assert_eq!(
         tracks.tracks,
         vec![expected_dto(&shown, "还在的")]

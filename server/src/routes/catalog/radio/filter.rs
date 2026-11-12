@@ -15,6 +15,10 @@ const FEW_PLAYS: u32 = 5;
 const MANY_PLAYS: u32 = 20;
 const LOW_SKIP: u8 = 20;
 const HIGH_SKIP: u8 = 50;
+// 喜爱度分档(ADR 0042):与 `crate::score` 的锚对齐,每一档恰好是一个锚加减修正。
+const LOVED_FROM: i16 = 600;
+const LIKED_FROM: i16 = 200;
+const DISLIKED_TO: i16 = -200;
 
 /// 这首歌在这个维度下是哪几个 chip。
 pub(crate) fn labels(
@@ -56,10 +60,11 @@ pub(crate) fn labels(
             }
             Some(_) => "跳过 >50%",
         }),
-        FacetDto::Verdict => one(match facets.verdict {
-            Some(verdict) if verdict > 0 => "赞",
-            Some(_) => "踩",
-            None => "未表态",
+        FacetDto::Score => one(match facets.score {
+            s if s >= LOVED_FROM => "特别喜欢",
+            s if s >= LIKED_FROM => "喜欢",
+            s if s > DISLIKED_TO => "一般",
+            _ => "不喜欢",
         }),
         FacetDto::Tag if facets.tags.is_empty() => {
             one("无标签")
@@ -153,10 +158,11 @@ mod tests {
             tracks
                 .push(with(&|t| t.facets.skip_rate = rate));
         }
-        for verdict in [None, Some(1), Some(-1)] {
-            tracks.push(with(&|t| {
-                t.facets.verdict = verdict
-            }));
+        for score in [
+            -1000, -799, -200, -199, 0, 199, 200, 599, 600,
+            1000,
+        ] {
+            tracks.push(with(&|t| t.facets.score = score));
         }
         tracks.push(with(&|t| {
             t.facets.tags = vec!["夜".into(), "雨".into()];
@@ -172,7 +178,7 @@ mod tests {
             (FacetDto::Lyric, Facet::Lyric),
             (FacetDto::Plays, Facet::Plays),
             (FacetDto::SkipRate, Facet::SkipRate),
-            (FacetDto::Verdict, Facet::Verdict),
+            (FacetDto::Score, Facet::Score),
             (FacetDto::Tag, Facet::Tag),
         ];
         assert_eq!(pairs.len(), Facet::CHIPS.len());

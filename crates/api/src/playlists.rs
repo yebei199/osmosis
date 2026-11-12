@@ -1,13 +1,15 @@
 //! 歌单的读写,以及红心与订阅的开关。
 
 use contract::{
-    PlaylistDto, PlaylistsDto, TrackIdsDto, TracksDto,
+    PlaylistDto, PlaylistsDto, TrackIdsDto, TrackSortDto,
+    TracksDto,
 };
 use serde::Serialize;
 
 use crate::url::{
     liked_url, platform_playlist_tracks_url,
-    playlist_tracks_url, playlist_url, subscription_url,
+    playlist_tracks_url, playlist_url, sorted_url,
+    subscription_url,
 };
 use crate::{ApiError, base_url, cache, platform};
 
@@ -63,18 +65,22 @@ pub async fn delete_playlist(
     .await
 }
 
-/// `GET /playlists/local/{id}/tracks` —— 本地歌单的曲目。
+/// `GET /playlists/local/{id}/tracks?sort=` —— 本地歌单的曲目,按 `sort` 排好。
 pub async fn playlist_tracks(
     id: &str,
+    sort: TrackSortDto,
 ) -> Result<TracksDto, ApiError> {
-    cache::fetch(playlist_tracks_url(id)).await
+    cache::fetch(sorted_url(playlist_tracks_url(id), sort))
+        .await
 }
 
-/// 上一次 [`playlist_tracks`] 取到的那份。不碰网络。
+/// 上一次 [`playlist_tracks`] 按同一种排序取到的那份。不碰网络。
 pub async fn cached_playlist_tracks(
     id: &str,
+    sort: TrackSortDto,
 ) -> Option<TracksDto> {
-    cache::recall(playlist_tracks_url(id)).await
+    cache::recall(sorted_url(playlist_tracks_url(id), sort))
+        .await
 }
 
 /// `GET /playlists/platform/{id}/tracks` —— 平台歌单的曲目。

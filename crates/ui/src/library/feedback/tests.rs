@@ -29,6 +29,28 @@ fn toggling_sets_cancels_and_overwrites() {
     assert_eq!(now_feedback(&ui), 0, "再点一次踩也该取消");
 }
 
+/// 特别喜欢(ADR 0042)与赞踩同一套点法:点它亮,点赞降回赞,再点赞取消。
+#[test]
+fn love_is_one_more_level_with_the_same_toggle() {
+    let ui = window();
+    bind(&ui);
+    ui.global::<Player>().set_now_id("1".into());
+
+    ui.global::<Library>().invoke_toggle_feedback(2);
+    assert_eq!(now_feedback(&ui), 2, "特别喜欢该当场亮");
+
+    ui.global::<Library>().invoke_toggle_feedback(1);
+    assert_eq!(now_feedback(&ui), 1, "点赞该换成赞");
+
+    ui.global::<Library>().invoke_toggle_feedback(2);
+    ui.global::<Library>().invoke_toggle_feedback(2);
+    assert_eq!(
+        now_feedback(&ui),
+        0,
+        "再点一次特别喜欢该取消"
+    );
+}
+
 /// 手上没有正在放的歌,点键不该动 `now-feedback`。
 #[test]
 fn toggling_without_a_track_is_a_noop() {

@@ -82,6 +82,18 @@ pub(crate) fn playlist_tracks_url(id: &str) -> String {
     format!("{}/tracks", playlist_url(id))
 }
 
+/// 歌单类地址带上排序键(ADR 0042)。加入时间是默认,不写:地址与加排序之前
+/// 一模一样,本地缓存里旧的那份照样认得,老服务端也不会因为不认识的参数拒绝。
+pub(crate) fn sorted_url(
+    url: String,
+    sort: contract::TrackSortDto,
+) -> String {
+    match sort {
+        contract::TrackSortDto::Added => url,
+        other => format!("{url}?sort={}", other.as_query()),
+    }
+}
+
 /// 平台歌单曲目的地址。
 pub(crate) fn platform_playlist_tracks_url(
     id: &str,

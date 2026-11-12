@@ -9,12 +9,44 @@ pub(crate) mod likes;
 pub(crate) mod playlists;
 pub(crate) mod tags;
 
-use contract::TracksDto;
+use contract::{TrackDto, TrackSortDto, TracksDto};
+use serde::Deserialize;
 use server::error::AppError;
 use server::store::{blocks as block_rules, facets};
 use sqlx::PgConnection;
 
 use crate::AppState;
+
+/// 「我的喜欢」与本地歌单的 `?sort=`。不带就是加入时间,老客户端照旧。
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct SortQuery {
+    #[serde(default)]
+    pub(crate) sort: TrackSortDto,
+}
+
+/// 按 `sort` 重排(`docs/adr/0021`:展示次序由后端定)。稳定排序:同分的保持
+/// 进来时的加入次序,所以「加入时间」是另两种的第二排序键。
+///
+/// 排的是 [`for_account`] 填好的聚合,得在它之后调。聚合没填上(只记了日志)时
+/// 全是 0,排了等于没排 —— 降级成加入时间,不报错。
+pub(crate) fn sorted(
+    mut found: TracksDto,
+    sort: TrackSortDto,
+) -> TracksDto {
+    let key: fn(&TrackDto) -> i64 = match sort {
+        TrackSortDto::Added => return found,
+        TrackSortDto::Score => {
+            |track: &TrackDto| i64::from(track.facets.score)
+        }
+        TrackSortDto::Plays => |track: &TrackDto| {
+            i64::from(track.facets.play_count)
+        },
+    };
+    found
+        .tracks
+        .sort_by_key(|track| std::cmp::Reverse(key(track)));
+    found
+}
 
 /// 歌单类接口交出去之前的最后一道:填上账号级聚合(#160),再滤掉命中
 /// 屏蔽规则的、把滤掉几首记进 `hidden`(#161)。所有返回曲目列表的路由都走它,
@@ -53,3 +85,6 @@ async fn shape(
         block_rules::drop_hits(&rules, &mut found.tracks);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

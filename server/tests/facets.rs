@@ -87,7 +87,7 @@ async fn play(
     }
 }
 
-/// 五样都从各自的表里聚合回来。
+/// 每一样都从各自的表里聚合回来。
 #[tokio::test]
 async fn every_facet_is_aggregated() {
     let mut tx = tx().await;
@@ -146,6 +146,8 @@ async fn every_facet_is_aggregated() {
         TrackFacetsDto {
             play_count: 4,
             verdict: Some(-1),
+            // 踩的锚 -600,三次没听完的播放再往下压 111(算法见 server::score 的测试)
+            score: -711,
             skip_rate: Some(33),
             lyric_kind: Some(LyricKindDto::Translated),
             tags: vec!["夜".to_owned(), "雨".to_owned()],
@@ -211,4 +213,57 @@ async fn a_thousand_tracks_fill_quickly() {
         took < Duration::from_millis(500),
         "千首聚合用了 {took:?}"
     );
+}
+
+/// 特别喜欢是锚里最高的一档;听完的播放只在档内往上推(ADR 0042)。
+#[tokio::test]
+async fn a_loved_track_scores_above_a_liked_one() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "fc_love").await;
+    let (loved, liked) = ("fc_love_1", "fc_love_2");
+    feedback::set(&mut tx, account.id, &key(loved), 2)
+        .await
+        .expect("特别喜欢");
+    feedback::set(&mut tx, account.id, &key(liked), 1)
+        .await
+        .expect("点赞");
+    play(&mut tx, &account, liked, Some(200_000)).await;
+
+    let mut tracks = vec![track(loved), track(liked)];
+    facets::fill(&mut tx, account.id, &mut tracks)
+        .await
+        .expect("聚合");
+
+    assert_eq!(tracks[0].facets.verdict, Some(2));
+    assert_eq!(tracks[0].facets.score, 800);
+    // 一次听完:0.2·tanh(1/3) ≈ 0.064
+    assert_eq!(tracks[1].facets.score, 464);
+}
+
+/// 心动种子的候选:红心与赞过、特别喜欢过的,喜爱度为正的才要,高的在前。
+#[tokio::test]
+async fn top_scored_prefers_loved_and_skips_the_rest() {
+    let mut tx = tx().await;
+    let account = make_account(&mut tx, "fc_top").await;
+    let id = |n: u32| format!("fc_top_{n}");
+    feedback::set(&mut tx, account.id, &key(&id(1)), 1)
+        .await
+        .expect("点赞");
+    feedback::set(&mut tx, account.id, &key(&id(2)), 2)
+        .await
+        .expect("特别喜欢");
+    feedback::set(&mut tx, account.id, &key(&id(3)), -1)
+        .await
+        .expect("点踩");
+    // 没表态、听完了好几遍:喜爱度为正,但不是候选
+    for _ in 0..5 {
+        play(&mut tx, &account, &id(4), Some(200_000))
+            .await;
+    }
+
+    let top = facets::top_scored(&mut tx, account.id, 10)
+        .await
+        .expect("取种子");
+
+    assert_eq!(top, vec![key(&id(2)), key(&id(1))]);
 }

@@ -103,7 +103,7 @@ export component PlayerBar inherits Rectangle {
         can-download: Player.now-id != "";
         download-state: Shell.download-text;
         liked: Player.now-liked;
-        // 三态赞踩(#157),挨着喜欢:红心管收藏,这两块管评价。
+        // 赞踩与特别喜欢(#157、ADR 0042),挨着喜欢:红心管收藏,这几块管评价。
         feedback: Player.now-feedback;
         feedback-toggled(v) => {
             if (v < 0) { root.drawer-open = false; Library.open-dislike(Player.now-id); }

@@ -525,6 +525,7 @@ export component MusicPage inherits VerticalLayout {
                 || (Shell.destination == 0 && !root.detail):
             facet-bar := FacetBar {
                 show-groups: Player.facets-enabled;
+                show-sort: Player.facets-enabled && Player.sort-enabled;
                 daily-heard-toggle: Shell.destination == 0 && !root.detail;
             }
 

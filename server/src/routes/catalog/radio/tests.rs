@@ -572,3 +572,39 @@ async fn an_unfiltered_pull_probes_lyrics_too() {
         Some(LyricKindDto::Lyric)
     );
 }
+
+/// 心动种子(ADR 0042):喜爱度最高的那几首里轮着取,不够拿最近听过的补。
+#[test]
+fn heart_seeds_rotate_through_the_favourites() {
+    use super::heart_seeds;
+
+    let owned = |ids: &[&str]| -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    };
+    let favourites = owned(&["爱1", "爱2", "爱3"]);
+    let heard = vec![
+        testing::expected_dto("旧", "旧"),
+        testing::expected_dto("新", "新"),
+    ];
+
+    assert_eq!(
+        heart_seeds(&favourites, 0, &heard),
+        owned(&["爱1", "爱2"])
+    );
+    assert_eq!(
+        heart_seeds(&favourites, 2, &heard),
+        owned(&["爱3", "爱1"]),
+        "补一次挪一格,绕回池子开头"
+    );
+    assert_eq!(
+        heart_seeds(&favourites[..1], 5, &heard),
+        owned(&["爱1", "新"]),
+        "只有一首最爱:另一颗种子用最近听过的"
+    );
+    assert_eq!(
+        heart_seeds(&[], 7, &heard),
+        owned(&["新", "旧"]),
+        "没有最爱:退回最近听过的"
+    );
+    assert!(heart_seeds(&[], 0, &[]).is_empty());
+}

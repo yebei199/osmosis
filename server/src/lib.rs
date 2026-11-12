@@ -12,5 +12,6 @@ pub mod gate;
 pub mod heard;
 pub mod objects;
 pub mod quality;
+pub mod score;
 pub mod store;
 pub mod syncplay;

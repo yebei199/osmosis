@@ -3,11 +3,12 @@
 use contract::{
     ArtistSearchDto, FacetPickDto, HealthDto, LyricDto,
     PROTOCOL_VERSION, PlaySourceDto, PlaylistSearchDto,
-    RadioListDto, SearchDto, TracksDto,
+    RadioListDto, SearchDto, TrackSortDto, TracksDto,
 };
 
 use crate::url::{
     artist_tracks_url, lyric_url, play_url, search_url,
+    sorted_url,
 };
 use crate::{ApiError, base_url, cache, platform};
 
@@ -200,21 +201,23 @@ pub async fn radio_more(
     .await
 }
 
-/// `GET /liked` —— 我喜欢的音乐,取第一页。
-///
-/// 服务端不带 limit 时用它自己的默认页大小,客户端不必知道那个数字。
-/// 成功的那份记进本地缓存。
-pub async fn liked() -> Result<TracksDto, ApiError> {
-    cache::fetch(liked_page_url()).await
+/// `GET /liked?sort=` —— 我喜欢的音乐,全量,按 `sort` 排好(服务端排,ADR 0021)。
+/// 成功的那份记进本地缓存,每种排序各一份。
+pub async fn liked(
+    sort: TrackSortDto,
+) -> Result<TracksDto, ApiError> {
+    cache::fetch(liked_page_url(sort)).await
 }
 
-/// 上一次 [`liked`] 取到的那份。不碰网络。
-pub async fn cached_liked() -> Option<TracksDto> {
-    cache::recall(liked_page_url()).await
+/// 上一次 [`liked`] 按同一种排序取到的那份。不碰网络。
+pub async fn cached_liked(
+    sort: TrackSortDto,
+) -> Option<TracksDto> {
+    cache::recall(liked_page_url(sort)).await
 }
 
-fn liked_page_url() -> String {
-    format!("{}/liked", base_url())
+fn liked_page_url(sort: TrackSortDto) -> String {
+    sorted_url(format!("{}/liked", base_url()), sort)
 }
 
 /// `GET /lyric/{track_id}`。

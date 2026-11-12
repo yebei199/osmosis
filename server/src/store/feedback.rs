@@ -1,11 +1,12 @@
-//! 每首歌的三态赞踩(#157):独立于红心,红心管收藏,这里管评价。
+//! 每首歌的赞踩(#157):`-1` 踩、`1` 赞、`2` 特别喜欢(ADR 0042),没表态就没有行。
+//! 独立于红心,红心管收藏,这里管评价;它是喜爱度的锚(见 [`crate::score`])。
 
 use sqlx::PgConnection;
 
 use crate::error::AppError;
 use crate::store::playlist::TrackRef;
 
-/// 点赞或点踩:一账号一曲目至多一行,再点已有的那一档就覆盖成新值。
+/// 表一个态:一账号一曲目至多一行,换一档就覆盖成新值。
 pub async fn set(
     conn: &mut PgConnection,
     account_id: i64,

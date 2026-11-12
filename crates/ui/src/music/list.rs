@@ -6,6 +6,25 @@ use crate::Player;
 use crate::Shell;
 use crate::runtime::trace::Action;
 
+/// 歌单此刻选的排序(ADR 0042)。一份,「我的喜欢」与本地歌单共用,换视图留着 ——
+/// 与分组方式同一个理由:按喜爱度翻几个歌单是常见用法。
+#[cfg(not(target_arch = "wasm32"))]
+fn playlist_sort(ui: &MainWindow) -> api::TrackSortDto {
+    crate::library::playlist::sort_from_index(
+        ui.global::<Player>().get_playlist_sort(),
+    )
+}
+
+/// 当前视图能不能换排序:「我的喜欢」与本地歌单能,别的不能。
+#[cfg(not(target_arch = "wasm32"))]
+fn sortable(source: Option<ViewSource>) -> bool {
+    matches!(
+        source,
+        Some(ViewSource::Playlist(source, _))
+            if crate::library::playlist::is_sortable(source)
+    )
+}
+
 /// 把当前打开的那个歌单的曲目重取一遍。
 ///
 /// 加歌、删歌之后走这里:服务端已经变了,而界面上那一批还是改之前的。
@@ -20,14 +39,17 @@ pub(super) fn reload_open_playlist(
         return;
     };
     let weak = ui.as_weak();
+    let sort = playlist_sort(ui);
     fetch_into(
         &weak,
         deck,
         Action::begin("reload"),
         ViewSource::Playlist(source, id.clone()),
         async move {
-            crate::library::playlist::tracks_of(source, &id)
-                .await
+            crate::library::playlist::tracks_of(
+                source, &id, sort,
+            )
+            .await
         },
     );
 }
@@ -119,6 +141,7 @@ pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
             async { api::recent().await },
         ),
         Some(ViewSource::Playlist(source, id)) => {
+            let sort = playlist_sort(ui);
             fetch_into(
                 &weak,
                 deck,
@@ -126,7 +149,7 @@ pub(super) fn reload_view(ui: &MainWindow, deck: &Deck) {
                 ViewSource::Playlist(source, id.clone()),
                 async move {
                     crate::library::playlist::tracks_of(
-                        source, &id,
+                        source, &id, sort,
                     )
                     .await
                 },
@@ -176,6 +199,33 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
             player
                 .set_daily_heard(!player.get_daily_heard());
             fetch_daily(&weak, &toggled);
+        },
+    );
+
+    // 歌单排序(ADR 0042):文案与编号都在 `library::playlist::SORTS`。换一种就把
+    // 此刻这个歌单按新排序重取一遍 —— 次序是服务端排的(ADR 0021),本地不重排。
+    let labels: Vec<slint::SharedString> =
+        crate::library::playlist::SORTS
+            .iter()
+            .map(|(_, label)| (*label).into())
+            .collect();
+    ui.global::<Player>().set_sort_labels(
+        slint::ModelRc::new(slint::VecModel::from(labels)),
+    );
+    let resorted = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_set_playlist_sort(
+        move |index| {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.global::<Player>().get_playlist_sort()
+                == index
+            {
+                return;
+            }
+            ui.global::<Player>().set_playlist_sort(index);
+            if sortable(resorted.views.current_source()) {
+                reload_view(&ui, &resorted);
+            }
         },
     );
 
@@ -245,6 +295,7 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 .into(),
             );
             let cached_id = id.clone();
+            let sort = playlist_sort(&ui);
             fetch_cached_into(
                 &weak,
                 &opened,
@@ -252,13 +303,15 @@ pub(super) fn bind_list(ui: &MainWindow, deck: &Deck) {
                 ViewSource::Playlist(source, id.clone()),
                 async move {
                     crate::library::playlist::cached_tracks_of(
-                        source, &cached_id,
+                        source, &cached_id, sort,
                     )
                     .await
                 },
                 async move {
-                    crate::library::playlist::tracks_of(source, &id)
-                        .await
+                    crate::library::playlist::tracks_of(
+                        source, &id, sort,
+                    )
+                    .await
                 },
             );
         },
@@ -446,6 +499,11 @@ pub(super) fn load_section(
             }
         }
         Section::Liked => {
+            let sort = weak
+                .upgrade()
+                .map_or(api::TrackSortDto::Added, |ui| {
+                    playlist_sort(&ui)
+                });
             fetch_cached_into(
                 weak,
                 deck,
@@ -454,10 +512,12 @@ pub(super) fn load_section(
                 crate::library::playlist::cached_tracks_of(
                     crate::library::playlist::Source::Liked,
                     "",
+                    sort,
                 ),
                 crate::library::playlist::tracks_of(
                     crate::library::playlist::Source::Liked,
                     "",
+                    sort,
                 ),
             );
         }
@@ -879,6 +939,9 @@ pub(super) fn show(
         .views
         .current_source()
         .is_some_and(|source| facets::supports(&source));
+    ui.global::<Player>().set_sort_enabled(sortable(
+        deck.views.current_source(),
+    ));
     deck.facets.borrow_mut().load(found.tracks, enabled);
     // 筛过、排过的那一批进 `deck.tracks`,行连同堆头推上去(#160)
     facets::relayout(ui, deck);

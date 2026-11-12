@@ -1,5 +1,6 @@
-//! 歌单那一面的纯换算:来源枚举、副标题文案、可编辑判据与行的成形。
+//! 歌单那一面的纯换算:来源枚举、副标题文案、可编辑判据、排序键与行的成形。
 
+use api::TrackSortDto;
 use app_core::{PlaylistDto, PlaylistSource, TracksDto};
 
 use crate::PlaylistRow;
@@ -112,15 +113,40 @@ pub fn is_editable(source: Source) -> bool {
     matches!(source, Source::Local)
 }
 
-/// 取某个歌单的曲目。三种来源各走各的路。
+/// 歌单排序的几种,界面编号即下标(ADR 0042)。次序由服务端排(`docs/adr/0021`),
+/// 这里只记用户选了哪种、文案怎么写。
+pub const SORTS: [(TrackSortDto, &str); 3] = [
+    (TrackSortDto::Added, "加入时间"),
+    (TrackSortDto::Score, "喜爱度"),
+    (TrackSortDto::Plays, "播放次数"),
+];
+
+/// 界面编号 → 排序键。认不出的当加入时间:那是服务端的默认,也是老样子。
+pub fn sort_from_index(index: i32) -> TrackSortDto {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| SORTS.get(index))
+        .map_or(TrackSortDto::Added, |(sort, _)| *sort)
+}
+
+/// 这个来源的歌单能不能换排序:「我的喜欢」与本地歌单是我们的,服务端按喜爱度、
+/// 播放次数排得出来;平台歌单那条路不带排序。
+pub fn is_sortable(source: Source) -> bool {
+    matches!(source, Source::Liked | Source::Local)
+}
+
+/// 取某个歌单的曲目。三种来源各走各的路;`sort` 只对能排的两种有意义。
 pub async fn tracks_of(
     source: Source,
     id: &str,
+    sort: TrackSortDto,
 ) -> Result<TracksDto, api::ApiError> {
     match source {
         // 「我喜欢的」没有自己的 id —— 它是账号的属性,不是一个歌单实体
-        Source::Liked => api::liked().await,
-        Source::Local => api::playlist_tracks(id).await,
+        Source::Liked => api::liked(sort).await,
+        Source::Local => {
+            api::playlist_tracks(id, sort).await
+        }
         Source::Platform => {
             api::platform_playlist_tracks(id).await
         }
@@ -131,11 +157,12 @@ pub async fn tracks_of(
 pub async fn cached_tracks_of(
     source: Source,
     id: &str,
+    sort: TrackSortDto,
 ) -> Option<TracksDto> {
     match source {
-        Source::Liked => api::cached_liked().await,
+        Source::Liked => api::cached_liked(sort).await,
         Source::Local => {
-            api::cached_playlist_tracks(id).await
+            api::cached_playlist_tracks(id, sort).await
         }
         Source::Platform => {
             api::cached_platform_playlist_tracks(id).await

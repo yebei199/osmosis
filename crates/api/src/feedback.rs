@@ -1,4 +1,5 @@
-//! 每首歌的三态赞踩(#157):独立于红心,红心管收藏,这里管评价。
+//! 每首歌的赞踩(#157):踩、赞、特别喜欢(ADR 0042),独立于红心 —— 红心管收藏,
+//! 这里管评价。
 
 use contract::{FeedbackDto, SetFeedbackDto};
 
@@ -15,7 +16,7 @@ pub async fn feedback(
     platform::get_json(feedback_url(track_id)).await
 }
 
-/// `PUT /feedback/{track_id}` —— 设成某个值(赞或踩)。
+/// `PUT /feedback/{track_id}` —— 设成某一档(`-1` 踩、`1` 赞、`2` 特别喜欢)。
 pub async fn set_feedback(
     track_id: &str,
     verdict: i16,

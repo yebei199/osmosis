@@ -440,6 +440,10 @@ component ChipSeparator inherits VerticalLayout {
 export component FacetBar inherits Rectangle {
     // 摆分组与筛选那几颗(这个视图有 facets)。
     in property <bool> show-groups: true;
+    // 行首摆排序那颗(ADR 0042):只有「我的喜欢」与本地歌单能换。
+    in property <bool> show-sort: false;
+    // 排序那颗选择型 chip 展开着:几种排法就地摆在它后面,与分组同一个用法。
+    in-out property <bool> sort-open: false;
     // 行首摆日推的「已听过」开关。
     in property <bool> daily-heard-toggle: false;
     // 分组那颗选择型 chip 展开着:几种分法就地摆在它后面。
@@ -471,6 +475,31 @@ export component FacetBar inherits Rectangle {
                 clicked => { Player.daily-toggle-heard(); }
             }
             if root.daily-heard-toggle && root.show-groups: ChipSeparator { }
+            // 排序:次序由服务端排(ADR 0021),选了 Rust 重取一遍这个歌单。
+            if root.show-sort: sort-select := Chip {
+                kind: ChipKind.select;
+                touch-tall: Shell.compact;
+                key: "排序";
+                text: Player.sort-labels[Player.playlist-sort];
+                checkable: false;
+                clicked => {
+                    root.sort-open = !root.sort-open;
+                    root.grouping-open = false;
+                }
+            }
+            if root.show-sort && root.sort-open: HorizontalLayout {
+                spacing: Space.xs;
+                for label[i] in Player.sort-labels: sort-pill := Chip {
+                    touch-tall: Shell.compact;
+                    text: label;
+                    selected: Player.playlist-sort == i;
+                    clicked => {
+                        Player.set-playlist-sort(i);
+                        root.sort-open = false;
+                    }
+                }
+            }
+            if root.show-sort && root.show-groups: ChipSeparator { }
             if root.show-groups: grouping-select := Chip {
                 kind: ChipKind.select;
                 touch-tall: Shell.compact;
@@ -478,7 +507,10 @@ export component FacetBar inherits Rectangle {
                 text: Player.grouping-labels[Player.grouping];
                 checkable: false;
                 description: Player.grouping > 0 ? Player.pile-count + " 堆" : "";
-                clicked => { root.grouping-open = !root.grouping-open; }
+                clicked => {
+                    root.grouping-open = !root.grouping-open;
+                    root.sort-open = false;
+                }
             }
             if root.show-groups && root.grouping-open: HorizontalLayout {
                 spacing: Space.xs;

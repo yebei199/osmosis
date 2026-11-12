@@ -48,7 +48,7 @@ export global Player {
     // 当前这一首在不在红心里。**只有 Rust 写它** —— 真相是红心集合,
     // 这里是投影(见 ui/src/library/liked.rs 的 project_now)。
     in property <bool> now-liked: false;
-    // 当前这一首的赞踩(#157):1 赞、-1 踩、0 没表态。独立于红心 ——
+    // 当前这一首的赞踩(#157):2 特别喜欢、1 赞、-1 踩、0 没表态(ADR 0042)。独立于红心 ——
     // 红心管收藏,这个管评价。**只有 Rust 写它**,真相在服务端的
     // `track_feedback`(见 ui/src/library/feedback.rs)。
     in property <int> now-feedback: 0;
@@ -149,6 +149,16 @@ export global Player {
     callback toggle-chip(int);
     // 参数是堆名。
     callback toggle-pile(string);
+
+    // ── 歌单排序(ADR 0042) ──
+    // 只有「我的喜欢」与本地歌单能换:次序由服务端排(ADR 0021),这里只记选了哪种。
+    // 当前视图能不能换排序。唯一写者是 Rust。
+    in property <bool> sort-enabled: false;
+    // 几种排序的文案(加入时间 / 喜爱度 / 播放次数),由 Rust 给。
+    in property <[string]> sort-labels: [];
+    // 选中的是 sort-labels 的第几项。唯一写者是 Rust(经 set-playlist-sort)。
+    in-out property <int> playlist-sort: 0;
+    callback set-playlist-sort(int);
     // 列表与卡墙换了摆法:行要重排(日推的日子堆头只在列表里有)。
     callback rows-reshaped();
 }

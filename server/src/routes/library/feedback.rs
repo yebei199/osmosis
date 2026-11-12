@@ -1,4 +1,5 @@
-//! 每首歌的三态赞踩(#157)。独立于红心 —— 红心管收藏,这里管评价。
+//! 每首歌的赞踩(#157):踩、赞、特别喜欢(ADR 0042),外加「没表态」= 没有行。
+//! 独立于红心 —— 红心管收藏,这里管评价,是喜爱度的锚。
 
 use axum::{
     Json,
@@ -35,18 +36,18 @@ pub(crate) async fn get_feedback(
     Ok(Json(FeedbackDto { verdict }))
 }
 
-/// `PUT /feedback/{track_id}` —— 点赞或点踩。再点已生效的那一档要改发
-/// `DELETE`,这条只管"设成某个值"。
+/// `PUT /feedback/{track_id}` —— 踩、赞或特别喜欢。再点已生效的那一档要改发
+/// `DELETE`,这条只管"设成某个值";换一档就是覆盖。
 pub(crate) async fn set_feedback(
     State(state): State<AppState>,
     account: Account,
     Path(track_id): Path<String>,
     Json(body): Json<SetFeedbackDto>,
 ) -> Result<StatusCode, Failure> {
-    if body.verdict != 1 && body.verdict != -1 {
+    if !matches!(body.verdict, -1 | 1 | 2) {
         return Err(error::map_error(
             &server::error::AppError::Invalid(
-                "verdict 只能是 1 或 -1",
+                "verdict 只能是 -1、1 或 2",
             ),
         ));
     }

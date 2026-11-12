@@ -1,6 +1,6 @@
 // 控制条的抽屉:向上展开的一张卡(docs/adr/0029,docs/design.md「抽屉」)。
 //
-// 上面一排五块动作磁贴(喜欢、点赞、不喜欢、下载、从这首开电台),下面四行设置:
+// 上面一排六块动作磁贴(喜欢、点赞、特别喜欢、不喜欢、下载、从这首开电台),下面四行设置:
 // 随机(开关)、循环(三段)、音量(滑块)、输出(设备 chips)。
 // **状态由填充底色表达,不由图标明暗表达** —— 开着的磁贴是强调色的淡底加一圈线,
 // 开关与分段各有各的填充;三态直接写字,不让人辨认图标里那个小小的 1。
@@ -141,13 +141,14 @@ export component Drawer inherits Rectangle {
     in property <string> download-state;
     // 正在放的这首红心没有。
     in property <bool> liked;
-    // 正在放的这首赞踩(#157):1 赞、-1 踩、0 没表态。独立于红心 ——
-    // 红心管收藏,这两块管评价,挨着喜欢摆。
+    // 正在放的这首赞踩(#157):2 特别喜欢、1 赞、-1 踩、0 没表态(ADR 0042)。
+    // 独立于红心 —— 红心管收藏,这几块管评价(喜爱度的锚),挨着喜欢摆。
     in property <int> feedback: 0;
 
     callback like-toggled();
-    // 参数是 1(赞)或 -1(踩)。再点已生效的那一档时界面传的还是同一个值,
-    // Rust 据此判断该设还是该取消(与 `ui/src/library/feedback.rs` 同一套)。
+    // 参数是 2(特别喜欢)、1(赞)或 -1(踩)。再点已生效的那一档时界面传的还是
+    // 同一个值,Rust 据此判断该设还是该取消;点另一档就换成那一档
+    // (与 `ui/src/library/feedback.rs` 同一套)。
     callback feedback-toggled(int);
 
     callback download-clicked();
@@ -207,6 +208,18 @@ export component Drawer inherits Rectangle {
                 enabled: root.can-download;
                 clicked => { root.feedback-toggled(1); }
             }
+            // 特别喜欢(ADR 0042):赞的上一档,同一套点法 —— 再点取消,点赞就降回赞。
+            // 一排六块,手机上一块约 47px,四个字(11px)刚好放得下。
+            feedback-love := DrawerRow {
+                tile: true;
+                horizontal-stretch: 1;
+                icon: root.feedback == 2 ? Icons.star-fill : Icons.star;
+                title: "特别喜欢";
+                label: root.feedback == 2 ? "取消特别喜欢" : "特别喜欢";
+                checked: root.feedback == 2;
+                enabled: root.can-download;
+                clicked => { root.feedback-toggled(2); }
+            }
             feedback-down := DrawerRow {
                 tile: true;
                 horizontal-stretch: 1;
@@ -234,7 +247,7 @@ export component Drawer inherits Rectangle {
                 tile: true;
                 horizontal-stretch: 1;
                 icon: Icons.radio;
-                // 磁贴五等分,手机上一块只放得下三个字;完整说法留给读屏。
+                // 磁贴六等分,手机上一块放不下六个字;完整说法留给读屏。
                 title: "开电台";
                 label: "从这首开电台";
                 checkable: false;

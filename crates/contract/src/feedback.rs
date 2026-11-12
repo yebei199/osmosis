@@ -1,4 +1,4 @@
-//! 每首歌的三态赞踩,与一次播放听了多久(#157)。
+//! 每首歌的赞踩(#157,ADR 0042 多了「特别喜欢」),与一次播放听了多久。
 
 use serde::{Deserialize, Serialize};
 
@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
     Deserialize,
 )]
 pub struct SetFeedbackDto {
-    /// `1` 赞,`-1` 踩。取消赞踩改发 `DELETE`,不是把这个字段传成 0 ——
-    /// 三态用"有没有这一行"表达,值域没有第三种取值。
+    /// `-1` 踩,`1` 赞,`2` 特别喜欢(ADR 0042)。取消改发 `DELETE`,不是把这个字段
+    /// 传成 0 —— 未表态用"有没有这一行"表达,值域里没有它。
     pub verdict: i16,
 }
 
-/// `GET /feedback/{track_id}` 的响应体:这首歌此刻的赞踩,没表态过是 `None`。
+/// `GET /feedback/{track_id}` 的响应体:这首歌此刻的赞踩(`-1`/`1`/`2`),没表态过是 `None`。
 #[derive(
     Debug,
     Clone,

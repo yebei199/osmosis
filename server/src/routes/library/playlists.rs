@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use contract::{PlaylistDto, PlaylistsDto, TracksDto};
@@ -23,8 +23,10 @@ use crate::routes::catalog::catalog_cache::{
     cached_tracks, detail_tracks_of, fill_details,
     netease_name, store_first, track_refs_of,
 };
-use crate::routes::library::for_account;
 use crate::routes::library::likes::import_once;
+use crate::routes::library::{
+    SortQuery, for_account, sorted,
+};
 use crate::{AppState, conn, fail};
 
 /// `GET /playlists` —— 我们自己的歌单:置顶的「我的喜欢」,其后是本地歌单。
@@ -164,13 +166,15 @@ pub(crate) async fn delete_playlist(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /playlists/{id}/tracks` —— 本地歌单的曲目,详情由上游补全。
+/// `GET /playlists/local/{id}/tracks?sort=` —— 本地歌单的曲目,详情由上游补全。
+/// 默认按加入时间,也可按喜爱度、播放次数排(见 [`sorted`])。
 ///
 /// 自家只存标识,曲目详情向平台缓存借。
 pub(crate) async fn playlist_tracks(
     State(state): State<AppState>,
     account: Account,
     Path(id): Path<i64>,
+    Query(query): Query<SortQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
     let mut conn = conn(&state.pool).await?;
     let refs = playlist::tracks(&mut conn, account.id, id)
@@ -199,7 +203,10 @@ pub(crate) async fn playlist_tracks(
         unavailable: 0,
         hidden: 0,
     };
-    Ok(Json(for_account(&state, account.id, found).await))
+    Ok(Json(sorted(
+        for_account(&state, account.id, found).await,
+        query.sort,
+    )))
 }
 
 /// 增删曲目的请求体。

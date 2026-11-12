@@ -39,7 +39,7 @@ pub struct TrackDto {
     /// `serde(default)`:老服务端的响应里没有这个字段,新客户端照样解得开。
     #[serde(default)]
     pub album: Option<AlbumRefDto>,
-    /// 这个账号对这首歌的聚合:听过几次、赞踩、跳过率、歌词标记、标签(#160)。
+    /// 这个账号对这首歌的聚合:听过几次、赞踩、喜爱度、跳过率、歌词标记、标签(#160)。
     ///
     /// 只有歌单类接口填它,其余路径(搜索、队列、信令)给默认值,且默认值不上线 ——
     /// 信令有大小上限,没意义的零不该占那份额度。
@@ -64,8 +64,12 @@ pub struct TrackDto {
 pub struct TrackFacetsDto {
     /// 起播过几次。
     pub play_count: u32,
-    /// `1` 赞,`-1` 踩,没表态是 `None`。
+    /// `-1` 踩,`1` 赞,`2` 特别喜欢,没表态是 `None`。抽屉里那几块按它画高亮。
     pub verdict: Option<i16>,
+    /// 喜爱度 ×1000,`-1000..=1000`(ADR 0042):赞踩那一档作锚,播放行为在 ±200 以内
+    /// 修正。没表态也没听过就是 0 —— 那正是「一般」的中点,不必另设「未知」。
+    /// 公式在服务端 `score` 模块,客户端只拿它分档。老服务端不给,读成 0。
+    pub score: i16,
     /// 跳过率,百分数取整。没有一次记下了听多久的播放就是 `None` ——
     /// 算不出来不等于 0%。口径在服务端 `store::facets`。
     pub skip_rate: Option<u8>,
@@ -139,8 +143,46 @@ pub enum FacetDto {
     Lyric,
     Plays,
     SkipRate,
-    Verdict,
+    /// 喜爱度分档(ADR 0042)。线上从前叫 `verdict`(赞 / 踩 / 未表态),老客户端还会
+    /// 这么发,认作同一维;它们带的老 chip 文字对不上新分档,那一维筛不出歌。
+    #[serde(alias = "verdict")]
+    Score,
     Tag,
+}
+
+/// 歌单类列表的排序键(`GET /liked?sort=`、`GET /playlists/local/{id}/tracks?sort=`)。
+/// 次序由服务端排好(`docs/adr/0021`),客户端照摆。不带就是加入时间。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackSortDto {
+    /// 加入时间,最近加的在前。
+    #[default]
+    Added,
+    /// 喜爱度高的在前,同分保持加入时间的次序。
+    Score,
+    /// 起播次数多的在前,同样稳定。
+    Plays,
+}
+
+impl TrackSortDto {
+    /// 查询串里的写法,与 serde 的名字一致。
+    pub fn as_query(self) -> &'static str {
+        match self {
+            Self::Added => "added",
+            Self::Score => "score",
+            Self::Plays => "plays",
+        }
+    }
 }
 
 /// 一首歌有没有歌词(#156 探出来的标记)。

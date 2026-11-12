@@ -144,4 +144,36 @@ mod tests {
             "默认值不该占信令的额度"
         );
     }
+
+    /// 喜爱度那一维从前叫 `verdict`(ADR 0042):老客户端这么发,照样认得。
+    #[test]
+    fn the_old_verdict_facet_reads_as_score() {
+        let pick: FacetPickDto = serde_json::from_str(
+            r#"{"facet":"verdict","label":"赞"}"#,
+        )
+        .expect("老名字该解得开");
+
+        assert_eq!(pick.facet, FacetDto::Score);
+        assert_eq!(
+            serde_json::to_string(&FacetDto::Score)
+                .expect("序列化"),
+            r#""score""#
+        );
+    }
+
+    /// 排序键在查询串里的写法与 serde 的名字是同一份。
+    #[test]
+    fn sort_keys_match_their_wire_names() {
+        for sort in [
+            TrackSortDto::Added,
+            TrackSortDto::Score,
+            TrackSortDto::Plays,
+        ] {
+            assert_eq!(
+                serde_json::to_string(&sort)
+                    .expect("序列化"),
+                format!("\"{}\"", sort.as_query())
+            );
+        }
+    }
 }

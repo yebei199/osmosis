@@ -20,7 +20,8 @@ pub enum Facet {
     Lyric,
     Plays,
     SkipRate,
-    Verdict,
+    /// 喜爱度分档(ADR 0042)。替掉了原先的「赞踩」三堆:赞踩现在是喜爱度的锚。
+    Score,
     Tag,
 }
 
@@ -33,7 +34,7 @@ impl Facet {
         Self::Lyric,
         Self::Plays,
         Self::SkipRate,
-        Self::Verdict,
+        Self::Score,
         Self::Tag,
     ];
 
@@ -43,7 +44,7 @@ impl Facet {
         Self::Lyric,
         Self::Plays,
         Self::SkipRate,
-        Self::Verdict,
+        Self::Score,
         Self::Tag,
     ];
 
@@ -54,7 +55,7 @@ impl Facet {
             Self::Lyric => Some(FacetDto::Lyric),
             Self::Plays => Some(FacetDto::Plays),
             Self::SkipRate => Some(FacetDto::SkipRate),
-            Self::Verdict => Some(FacetDto::Verdict),
+            Self::Score => Some(FacetDto::Score),
             Self::Tag => Some(FacetDto::Tag),
             Self::Artist | Self::Album => None,
         }
@@ -84,7 +85,7 @@ impl Facet {
             Self::Lyric => "歌词",
             Self::Plays => "播放",
             Self::SkipRate => "跳过",
-            Self::Verdict => "赞踩",
+            Self::Score => "喜爱度",
             Self::Tag => "标签",
         }
     }
@@ -112,8 +113,8 @@ impl Facet {
                 SKIP_HIGH,
                 SKIP_UNKNOWN,
             ]),
-            Self::Verdict => {
-                Some(&[UPVOTED, DOWNVOTED, NO_VERDICT])
+            Self::Score => {
+                Some(&[LOVED, LIKED, NEUTRAL, DISLIKED])
             }
             Self::Artist | Self::Album | Self::Tag => None,
         }
@@ -137,6 +138,13 @@ const FEW_PLAYS: u32 = 5;
 const MANY_PLAYS: u32 = 20;
 const LOW_SKIP: u8 = 20;
 const HIGH_SKIP: u8 = 50;
+// 喜爱度分档的边界(×1000,ADR 0042),与服务端 `score` 的锚对齐:锚是 -600 / 0 /
+// 400 / 800,播放行为的修正收在 ±199,所以每一档恰好是一个锚加减修正 —— 分档读出来
+// 就是用户说过的那句话,修正只在档内排先后。踩那一档往上到 -401 为止,边界放在
+// -200 与「一般」对称,中间那段空着。
+const LOVED_FROM: i16 = 600;
+const LIKED_FROM: i16 = 200;
+const DISLIKED_TO: i16 = -200;
 
 const SHORT: &str = "3 分钟以内";
 const MEDIUM: &str = "3–5 分钟";
@@ -152,9 +160,10 @@ const SKIP_LOW: &str = "跳过 <20%";
 const SKIP_MID: &str = "跳过 20–50%";
 const SKIP_HIGH: &str = "跳过 >50%";
 const SKIP_UNKNOWN: &str = "跳过率未知";
-const UPVOTED: &str = "赞";
-const DOWNVOTED: &str = "踩";
-const NO_VERDICT: &str = "未表态";
+const LOVED: &str = "特别喜欢";
+const LIKED: &str = "喜欢";
+const NEUTRAL: &str = "一般";
+const DISLIKED: &str = "不喜欢";
 const UNKNOWN_ARTIST: &str = "未知歌手";
 const NO_ALBUM: &str = "无专辑";
 const NO_TAG: &str = "无标签";
@@ -206,10 +215,11 @@ pub fn keys(track: &TrackDto, facet: Facet) -> Vec<String> {
             Some(rate) if rate <= HIGH_SKIP => SKIP_MID,
             Some(_) => SKIP_HIGH,
         }),
-        Facet::Verdict => one(match facets.verdict {
-            Some(verdict) if verdict > 0 => UPVOTED,
-            Some(_) => DOWNVOTED,
-            None => NO_VERDICT,
+        Facet::Score => one(match facets.score {
+            s if s >= LOVED_FROM => LOVED,
+            s if s >= LIKED_FROM => LIKED,
+            s if s > DISLIKED_TO => NEUTRAL,
+            _ => DISLIKED,
         }),
         Facet::Tag => many(&facets.tags, NO_TAG),
     }
@@ -657,25 +667,33 @@ mod tests {
         );
     }
 
+    /// 喜爱度分四档(ADR 0042),边界值各落一边;每一档恰好是一个锚加减修正。
     #[test]
-    fn verdict_piles_are_up_down_and_undecided() {
-        let judged = |id: &str, verdict: Option<i16>| {
+    fn score_piles_follow_the_spoken_levels() {
+        let scored = |id: &str, score: i16| {
             let mut t = track(id);
-            t.facets.verdict = verdict;
+            t.facets.score = score;
             t
         };
         let tracks = [
-            judged("n", None),
-            judged("d", Some(-1)),
-            judged("u", Some(1)),
+            scored("0", 0),
+            scored("199", 199),
+            scored("-199", -199),
+            scored("200", 200),
+            scored("599", 599),
+            scored("600", 600),
+            scored("999", 999),
+            scored("-200", -200),
+            scored("-799", -799),
         ];
 
         assert_eq!(
-            piles(&tracks, Facet::Verdict),
+            piles(&tracks, Facet::Score),
             vec![
-                pile("赞", &["u"]),
-                pile("踩", &["d"]),
-                pile("未表态", &["n"]),
+                pile("特别喜欢", &["600", "999"]),
+                pile("喜欢", &["200", "599"]),
+                pile("一般", &["0", "199", "-199"]),
+                pile("不喜欢", &["-200", "-799"]),
             ]
         );
     }
@@ -747,19 +765,19 @@ mod tests {
     #[test]
     fn filters_or_within_and_across_facets() {
         let mut a = track("a");
-        a.facets.verdict = Some(1);
+        a.facets.score = 464;
         a.duration_ms = 100_000;
         let mut b = track("b");
-        b.facets.verdict = Some(-1);
+        b.facets.score = -600;
         b.duration_ms = 100_000;
         let mut c = track("c");
-        c.facets.verdict = Some(1);
+        c.facets.score = 464;
         c.duration_ms = 400_000;
         let tracks = [a, b, c];
 
         let chosen: Chosen = [
-            (Facet::Verdict, "赞".to_owned()),
-            (Facet::Verdict, "踩".to_owned()),
+            (Facet::Score, "喜欢".to_owned()),
+            (Facet::Score, "不喜欢".to_owned()),
             (Facet::Duration, "3 分钟以内".to_owned()),
         ]
         .into();

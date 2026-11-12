@@ -149,7 +149,8 @@ pub use playlists::{
 
 pub use contract::{
     NeteaseStatusDto, QrEventDto, QrLoginDto, StatsDto,
-    TRIAL_ONLY, TopArtistDto, download_file_name,
+    TRIAL_ONLY, TopArtistDto, TrackSortDto,
+    download_file_name,
 };
 
 // 队列那一组同理:ui 要发的请求体、要读的响应体,以及两侧共用的那两个上限,

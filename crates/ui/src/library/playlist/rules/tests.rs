@@ -141,3 +141,21 @@ fn the_contract_source_survives_the_trip() {
     assert_eq!(row.subtitle, "12 首");
     assert_eq!(row.source, Source::Local.to_index());
 }
+
+/// 排序的编号来回对得上;认不出的落到加入时间(服务端的默认)。
+#[test]
+fn sort_indices_map_to_keys() {
+    assert_eq!(sort_from_index(0), TrackSortDto::Added);
+    assert_eq!(sort_from_index(1), TrackSortDto::Score);
+    assert_eq!(sort_from_index(2), TrackSortDto::Plays);
+    assert_eq!(sort_from_index(-1), TrackSortDto::Added);
+    assert_eq!(sort_from_index(9), TrackSortDto::Added);
+}
+
+/// 只有我们自己的歌单能换排序:平台歌单那条路不带排序键。
+#[test]
+fn only_our_playlists_are_sortable() {
+    assert!(is_sortable(Source::Liked));
+    assert!(is_sortable(Source::Local));
+    assert!(!is_sortable(Source::Platform));
+}

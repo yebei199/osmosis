@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use contract::{TrackIdsDto, TracksDto};
@@ -24,7 +24,7 @@ use server::store::cache;
 use server::store::liked;
 use server::store::playlist::TrackRef;
 
-use super::for_account;
+use super::{SortQuery, for_account, sorted};
 use crate::routes::catalog::catalog_cache::{
     detail_tracks_of, fill_details, netease_name,
     track_refs_of,
@@ -63,7 +63,8 @@ pub(crate) async fn liked_ids(
     }))
 }
 
-/// `GET /liked` —— 「我的喜欢」,全量,最近加入的在前。
+/// `GET /liked?sort=` —— 「我的喜欢」,全量。默认最近加入的在前,也可按喜爱度、
+/// 播放次数排(见 [`sorted`])。
 ///
 /// 成员关系读自家库;详情向缓存借,缓存里没有的才问平台(常态是一次都不问)。
 /// 平台给不出详情的那首(下架、无权限)仍在「我的喜欢」里,只是这一次显示
@@ -71,6 +72,7 @@ pub(crate) async fn liked_ids(
 pub(crate) async fn liked(
     State(state): State<AppState>,
     account: Account,
+    Query(query): Query<SortQuery>,
 ) -> Result<Json<TracksDto>, Failure> {
     import_once(&state, &account).await;
     let mut conn = conn(&state.pool).await?;
@@ -94,7 +96,10 @@ pub(crate) async fn liked(
         hidden: 0,
         tracks,
     };
-    Ok(Json(for_account(&state, account.id, found).await))
+    Ok(Json(sorted(
+        for_account(&state, account.id, found).await,
+        query.sort,
+    )))
 }
 
 /// `POST /liked/import` 的响应:这次新加了几首,导完一共几首。

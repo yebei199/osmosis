@@ -322,6 +322,53 @@ async fn a_dry_fm_is_refilled_from_heart_mode() {
     );
 }
 
+/// 心动的种子先挑喜爱度最高的(ADR 0042):特别喜欢过的那首压过刚听过的。
+#[tokio::test]
+async fn heart_mode_seeds_from_the_most_loved_track() {
+    let case = "radio_shared_heart_loved";
+    let id = |n| track_id(case, n);
+    let pool = testing::pool().await;
+    let account = testing::fresh_account(&pool, case).await;
+    let mut fake =
+        FakeUpstream::logged_in_with("nuid", Vec::new());
+    fake.playlists =
+        vec![testing::liked_playlist("liked-8")];
+    fake.listed = (10..=REFILL + 20)
+        .map(|n| upstream_track(&id(n), "心动"))
+        .collect();
+    let state = AppState {
+        archive: Some(Archive::new(Arc::new(
+            MemoryObjects::default(),
+        ))),
+        ..testing::state(
+            pool.clone(),
+            testing::serve(fake.clone()).await,
+        )
+    };
+    listen(&state, &account, id(1), 200_000).await;
+    {
+        let mut conn =
+            pool.acquire().await.expect("取连接");
+        let loved = server::store::playlist::TrackRef {
+            platform: "netease".to_owned(),
+            track_id: id(2),
+        };
+        server::store::feedback::set(
+            &mut conn, account.id, &loved, 2,
+        )
+        .await
+        .expect("特别喜欢");
+    }
+
+    // 只看拿什么当种子,补回来的那批歌不在这条的断言里。
+    let _ = more(State(state), account, unfiltered())
+        .await
+        .expect("补歌");
+
+    let asks = fake.heart_asks();
+    assert_eq!(asks[0].seed_track_id, id(2));
+}
+
 /// 不在电台歌单里的歌听完了,不打扰各台。
 #[tokio::test]
 async fn playing_something_else_does_not_notify() {
