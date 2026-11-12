@@ -21,6 +21,10 @@ api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 # debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
 # 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
 local_api := "http://127.0.0.1:3000"
+# 文件系统 socket 跨 Claude 的网络命名空间；父目录只允许当前用户访问。
+pg_state := env('XDG_STATE_HOME', home_directory() / ".local/state") / "osmosis-postgres"
+pg_socket := pg_state / "socket"
+pg_url := "postgres://slint:devonly@localhost/osmosis?host=" + encode_uri_component(pg_socket)
 # 生产平板的 ro.product.model。debug 包拒装到它上面,见 android-not-production。
 production_tablet_model := "NP06J"
 # rollout 要装 release 的设备(ro.product.model):努比亚平板、三星手机。开发机不在名单上。
@@ -193,12 +197,20 @@ font-subset:
 # 起本地 Postgres(容器)。server-dev 与 `cargo test -p server` 都要它。
 # 数据在命名卷里,容器删了也还在。
 pg:
+    @install -d -m 700 {{quote(pg_state)}}
+    @mkdir -p {{quote(pg_socket)}}
     docker start osmosis-pg 2>/dev/null || \
       docker run -d --name osmosis-pg \
         -e POSTGRES_PASSWORD=devonly -e POSTGRES_USER=slint -e POSTGRES_DB=osmosis \
         -p 127.0.0.1:5432:5432 -v osmosis-pgdata:/var/lib/postgresql/data \
+        -v {{quote(pg_socket + ":/var/run/postgresql")}} \
         postgres:17-alpine
-    @docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
+    @timeout 30 docker exec osmosis-pg sh -c 'until pg_isready -U slint -d osmosis >/dev/null 2>&1; do sleep 0.2; done'
+    @test -S {{quote(pg_socket / ".s.PGSQL.5432")}} || { echo 'Postgres 没有共享 socket；旧容器需保留 osmosis-pgdata 卷重建，见 docs/note/dev-workflow.md。' >&2; exit 1; }
+
+# 裸 cargo / psql 用的开发库连接串；server-dev 自动使用，显式 DATABASE_URL 优先。
+pg-url:
+    @printf '%s\n' {{quote(pg_url)}}
 
 # 起本地 RustFS(容器),听过的歌存在这里(#126)。`cargo test -p server` 要它;
 # server-dev 只在设了 S3_ENDPOINT 时才用。镜像与 infra 那份钉同一个 digest,
@@ -217,7 +229,7 @@ rustfs:
 # 依赖 pg:容器停着直接跑会连不上库,报 PoolTimedOut。
 [group('服务端')]
 server-dev: pg
-    cargo run -p server
+    DATABASE_URL="${DATABASE_URL:-{{pg_url}}}" cargo run -p server
 
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
 # 它是独立仓库,自己 clone 一份,位置用 BANG_DREAM_REPO 指出,默认为同级目录。

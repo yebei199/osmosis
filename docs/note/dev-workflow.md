@@ -33,6 +33,44 @@ just shot        # 宽版式
 just shot 420    # 紧凑版式;第二个参数指定开局页,如 `just shot 420 1` 直接进 Music 页
 ```
 
+## 本地 PostgreSQL 与网络隔离
+
+`just pg` 把容器的 `/var/run/postgresql` 挂到
+`${XDG_STATE_HOME:-$HOME/.local/state}/osmosis-postgres/socket`，数据仍在
+`osmosis-pgdata` 命名卷里。父目录权限为 `0700`，只允许当前用户访问；容器入口会调整
+socket 子目录的属主，不要手动改它。宿主的 `127.0.0.1:5432` 也继续保留。
+
+Claude 的网络命名空间有自己的回环网卡，不能直连宿主的 5432；文件系统路径可共享，
+所以 `just server-dev` 默认通过 Unix socket 连接。显式设置的 `DATABASE_URL`
+（包括 `.env` 里的值）优先，不会被覆盖。`just pg-url` 输出 socket 连接串：
+
+```sh
+just server-dev
+# 单独验证数据库，或给裸 cargo 命令指定同一个开发库：
+psql "$(just pg-url)" -c 'select 1'
+DATABASE_URL="$(just pg-url)" cargo test -p server
+```
+
+URL 形如 `postgres://slint:devonly@localhost/osmosis?host=%2Fhome%2F…%2Fsocket`。
+`host` 参数是 socket **目录**的绝对路径，经过 URL 编码；sqlx 不会为这个连接发起 TCP
+或 DNS 请求。上述测试命令留给需要测试时使用，日常开发仍只跑 `just agent-check`。
+
+旧容器不会因 `docker start` 自动得到新挂载。`just pg` 检测不到共享 socket 会立即报错，
+不让服务端等到 `PoolTimedOut`。确认没有其他任务使用开发库后，迁移一次：
+
+```sh
+docker stop osmosis-pg
+docker rename osmosis-pg osmosis-pg-before-unix-socket
+just pg
+psql "$(just pg-url)" -c 'select 1'
+```
+
+新容器沿用原来的 `osmosis-pgdata`，不删卷、不初始化另一份数据。旧容器保持停止，
+不能与新容器同时使用该卷；验证成功后可用 `docker rm osmosis-pg-before-unix-socket`
+清理旧容器。连接串与挂载路径应使用同一用户、同一 `XDG_STATE_HOME`；改变它后也要重建容器。
+
+这只解决 PostgreSQL 连接；bang-dream 的外部 DNS、HTTP 请求仍遵循各自的代理配置。
+
 ## 音乐链路的开发细节
 
 bang-dream 是独立仓库,不挂在本仓库里。跑之前先告诉 just 它在哪
