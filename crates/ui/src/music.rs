@@ -410,6 +410,12 @@ fn dislike_track(
 }
 
 /// 保存规则成功后先走同一条 Next 分派，再移除本机快照里的命中条目。
+///
+/// 组里只切歌、不动本机那份队列:它是服务端某一版的**执行副本**,与
+/// `deck.execution` 的条目号逐位对齐,`group::align` 按条目号找位置、再按位置取歌。
+/// 在这里删掉一首,后面每一首就错开一位 —— 线上出过:屏蔽一个歌手之后,组状态在放
+/// 第 4 条,本机放的却是第 5 条,再点「不喜欢」就落到了耳朵听到的那首上,而切歌判据
+/// 看的是组状态那首,于是屏蔽了也不切。命中的歌在组里由服务端推进时跳过(`blocked_playlist`)。
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_blocks(ui: &MainWindow, deck: &Deck) {
     let current = if deck.group.is_member() {
@@ -422,10 +428,14 @@ fn apply_blocks(ui: &MainWindow, deck: &Deck) {
     }) {
         dispatch(ui, deck, Intent::Next);
     }
-    let changed = deck.queue.borrow_mut().retain(|track| {
-        !crate::library::block::hits(&deck.blocks, track)
-    });
-    if changed && !deck.group.is_member() {
+    let changed = !deck.group.is_member()
+        && deck.queue.borrow_mut().retain(|track| {
+            !crate::library::block::hits(
+                &deck.blocks,
+                track,
+            )
+        });
+    if changed {
         let queue = deck.queue.borrow();
         let (tracks, index) =
             (queue.tracks().to_vec(), queue.index());

@@ -1438,3 +1438,41 @@ fn a_new_playback_version_keeps_the_notice_collapsed() {
         .is_some()
     );
 }
+
+/// 组里屏蔽一首不在放的歌:本机那份执行副本一首都不删,条目号与歌仍逐位对得上。
+/// 删了的话后面每一首错开一位,组状态放第 12 条时本机放的是下一条(线上 2026-11-13)。
+#[test]
+fn blocking_in_the_group_keeps_the_execution_copy_aligned()
+{
+    let (ui, deck) = deck_window();
+    wire(&ui, &deck);
+    let tracks: Vec<TrackDto> = ["a", "b", "x"]
+        .iter()
+        .map(|id| track_with_id(id))
+        .collect();
+    deck.queue.borrow_mut().replace(tracks, 0);
+    deck.execution.adopt(7, 2, vec![10, 11, 12]);
+    deck.group.assume(Some(state(&["me"], true)));
+    deck.blocks.borrow_mut().push(app_core::BlockRuleDto {
+        id: "blocked-a".into(),
+        kind: app_core::BlockKind::Track,
+        value: "a".into(),
+        label: "歌 a".into(),
+    });
+
+    apply_blocks(&ui, &deck);
+
+    assert!(
+        deck.group.intents().is_empty(),
+        "在放的没被屏蔽,不切歌"
+    );
+    let index = deck
+        .execution
+        .index_of(12)
+        .expect("条目 12 在副本里");
+    assert_eq!(
+        deck.queue.borrow().tracks()[index].id,
+        "x",
+        "条目号 12 对应的仍是组状态在放的那首"
+    );
+}
