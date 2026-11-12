@@ -26,8 +26,6 @@ struct CloudParams {
     plane_scale: f32,
     // 物体类预设(滚筒/星球/唱片)的尺度倍数,按相机距离对齐。
     object_scale: f32,
-    // 当前预设的下标:0 封面、1 滚筒、2 星球、3 虚空、4 唱片、5 星河。
-    preset: u32,
     // 封面纹理有没有内容。0 时走默认渐变色,点云在没有封面时不消失。
     has_cover: f32,
     // 片元 alpha 的丢弃门槛。桌面走软边(近 0),安卓走硬边(0.5),
@@ -210,8 +208,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let k = params.intensity * 1.6;
     let s = params.plane_scale;
 
-    // 只剩「封面」一档,所以这里没有分支。`params.preset` 仍然传进来:
-    // 那条 seam 留着,加档时把 switch 加回来即可(见 docs/adr/0014)。
+    // 只剩「封面」一档,所以这里没有分支。子预设那条 seam 已随 docs/adr/0041 收掉:
+    // 播放页的顶层选择是「效果」(封面实物 / 点云),点云自己不再分档。
     let place = place_cover(base, vertex.uv, rand, t, k, s);
     var local = place.local;
 

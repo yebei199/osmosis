@@ -1,5 +1,7 @@
 //! 播放页封面点云的**纯计算**:频段拆分与点云网格的顶点数据。
 //!
+//! 点云是播放页的第二个效果,不是默认档(默认是封面实物,见 `sleeve.rs` 与 `docs/adr/0041`)。
+//!
 //! 运动学不在这里 —— 三万多颗粒子的位移全在 `cloud.wgsl` 的顶点着色器里
 //! (见 `docs/adr/0012`),CPU 每帧只更新几个 uniform。本模块只回答两件事:
 //! 频谱行怎么拆成三段电平,以及那份烘一次就不动的顶点缓冲长什么样。
@@ -26,7 +28,7 @@ mod spin;
 mod transition;
 
 pub(crate) use mesh::{
-    CloudVertices, band_levels, cloud_vertices,
+    CloudVertices, Levels, band_levels, cloud_vertices,
 };
 
 pub(crate) use spin::Spin;
@@ -90,24 +92,6 @@ pub(crate) fn object_scale(width: u32, height: u32) -> f32 {
 /// 才有意思;原版那档是给「UI 后面一块矩形」调的。面板上限是 1.6。
 const INTENSITY: f32 = 1.36;
 
-/// 视觉预设的个数。与 `cloud.wgsl` 里的分支手工对齐。
-///
-/// **只剩 0「封面」一档。** 曾经的滚筒/星球/虚空/唱片/星河已删 —— 粒子离开封面
-/// 平面之后那张图就散了,而点云存在的理由正是封面本身(见 `docs/adr/0014`)。
-/// 编号这条 seam 留着,加档时这里加数、着色器里把 switch 加回来。
-pub(crate) const PRESET_COUNT: i32 = 1;
-
-/// 界面给的预设编号 → 着色器认得的下标。越界回默认档。
-///
-/// 编号来自 `.slint`,是跨层的外部输入;给个不存在的档不该画出一片空白。
-pub(crate) fn preset_index(requested: i32) -> u32 {
-    if (0..PRESET_COUNT).contains(&requested) {
-        requested as u32
-    } else {
-        0
-    }
-}
-
 /// 片元 alpha 的丢弃门槛与混合模式,分平台。
 ///
 /// 桌面走软边发光圆点(几乎不丢弃 + `Blend`);安卓走硬边(0.5 + `Mask`)——
@@ -142,8 +126,6 @@ pub(crate) struct CloudParams {
     pub plane_scale: f32,
     /// 物体类预设的尺度倍数,见 [`OBJECT_SCALE`] 与 [`narrow_viewport_scale`]。
     pub object_scale: f32,
-    /// 当前视觉预设的下标,见 [`preset_index`]。
-    pub preset: u32,
     pub has_cover: f32,
     pub alpha_cutoff: f32,
     /// 圆点半径,世界单位。见 [`CELL_WORLD`] / [`POINT_FILL`]。
@@ -165,7 +147,6 @@ impl Default for CloudParams {
             intensity: INTENSITY,
             plane_scale: PLANE_SCALE,
             object_scale: OBJECT_SCALE,
-            preset: 0,
             has_cover: 0.0,
             alpha_cutoff: ALPHA_CUTOFF,
             point_radius: CELL_WORLD * POINT_FILL * 0.5,
@@ -178,8 +159,8 @@ impl Default for CloudParams {
 
 /// 点云的自定义材质:顶点位移 + 软边圆点全在 `cloud.wgsl` 里。
 ///
-/// 走 bevy 的材质管线(而不是自起一个 wgpu pass)是为了自动同时进两台相机,
-/// 白拿既有的遮挡设施 —— 理由见 `docs/adr/0012`。
+/// 走 bevy 的材质管线(而不是自起一个 wgpu pass):点云是 bevy 场景里的一个 mesh,
+/// 与封面实物共用同一台相机、同一套可见性开关 —— 理由见 `docs/adr/0012`。
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub(crate) struct CloudMaterial {
     #[uniform(0)]

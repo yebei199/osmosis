@@ -39,6 +39,28 @@ pub enum ThemeMode {
     System,
 }
 
+/// 播放页的效果。
+///
+/// 落盘写名字不写编号:编号是界面那一侧的排列顺序,改了顺序不该把老用户的选择换成别的。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum VizEffect {
+    /// 封面实物:一块印着封面的薄封套。默认。
+    #[default]
+    Object,
+    /// 封面点云。
+    Cloud,
+}
+
 /// 这台设备上的设置。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Settings {
@@ -52,6 +74,8 @@ pub struct Settings {
     /// 动态效果。关掉就是减弱动效:弹簧临界阻尼不回弹、封面透镜静止;
     /// 跟着设备走 —— 这是台性能与口味偏好,不是账号偏好。
     pub motion: bool,
+    /// 播放页的效果。跟着设备走:手机上可能想要轻一点的那个,桌面上未必。
+    pub viz_effect: VizEffect,
 }
 
 impl Default for Settings {
@@ -60,6 +84,7 @@ impl Default for Settings {
             volume: DEFAULT_VOLUME,
             theme: ThemeMode::Dark,
             motion: true,
+            viz_effect: VizEffect::Object,
         }
     }
 }
@@ -77,6 +102,9 @@ struct RawSettings {
     theme: Option<ThemeMode>,
     motion: Option<bool>,
     aurora_buttons: Option<bool>,
+    /// 按字符串收,不直接收枚举:哪天删掉一个效果,老文件里那个名字不该让整份
+    /// 设置解析失败、把音量一起冲回默认。认不得的名字落默认效果。
+    viz_effect: Option<String>,
 }
 
 /// 把文本解析成设置。**任何解析不了的东西都退回默认值**。
@@ -102,6 +130,15 @@ pub fn parse(raw: &str) -> Settings {
             .motion
             .or(raw.aurora_buttons)
             .unwrap_or(true),
+        viz_effect: raw
+            .viz_effect
+            .and_then(|name| {
+                serde_json::from_value(
+                    serde_json::Value::String(name),
+                )
+                .ok()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -237,6 +274,32 @@ mod tests {
             .motion,
             "新字段优先"
         );
+    }
+
+    /// 播放页效果的选择存得住;老文件没有这个字段时是默认的封面实物。
+    #[test]
+    fn the_viz_effect_survives_and_defaults_to_the_object()
+    {
+        let settings = Settings {
+            viz_effect: VizEffect::Cloud,
+            ..Settings::default()
+        };
+        assert_eq!(parse(&render(&settings)), settings);
+        assert_eq!(
+            parse(r#"{"volume":0.3}"#).viz_effect,
+            VizEffect::Object
+        );
+    }
+
+    /// **边界:认不得的效果名。** 只落回默认效果,别的设置原样保住 ——
+    /// 删掉一个效果不该把用户调好的音量一起冲掉。
+    #[test]
+    fn an_unknown_viz_effect_falls_back_alone() {
+        let parsed = parse(
+            r#"{"volume":0.3,"viz_effect":"hologram"}"#,
+        );
+        assert_eq!(parsed.viz_effect, VizEffect::Object);
+        assert!((parsed.volume - 0.3).abs() < f32::EPSILON);
     }
 
     /// 没有设置文件时给默认值,不是错误 —— 第一次启动走的就是这条路。

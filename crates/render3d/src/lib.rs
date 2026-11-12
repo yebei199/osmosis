@@ -9,10 +9,9 @@
 //!   绝不调 `App::run()` —— 事件循环永远归 Slint。
 //! - bevy 与 Slint 共享同一 wgpu 大版本(现为 29),纹理类型才是同一个,才能被 Slint 采样。
 //!
-//! 每帧产出**两张**图:粒子场本身,以及一张只含「比标注卡更近」的片元的遮挡层
-//! (见 [`spawn_occluder_camera`])。UI 侧把二者夹着卡片叠三层,卡片就被粒子
-//! 逐像素挡住 —— 深度正确的 UI。被标注的物体是 `marker` 那枚绕轨道走的方块;
-//! 点云当不了它,理由写在 [`CLOUD_ORIGIN`] 下面那段。
+//! 播放页每帧产出**一张**图:当前效果(封面实物或封面点云,见 `effect`)画在透明底上,
+//! UI 侧把它铺满整窗、叠在糊封面背景之上。曾经还有一张「遮挡层」与一枚被标注的方块,
+//! 已随 `docs/adr/0041` 删除。
 //!
 //! 用法(见 `apps/desktop`):先 [`Scene::new`](Scene::new) —— 它顺带配好 Slint 的 wgpu 后端,
 //! 必须在建窗口**之前**调 —— 再把 `move || scene.render_viz_frame()` 交给
@@ -25,9 +24,10 @@ mod navglass;
 pub use navglass::{NavGlassPass, NavParams};
 
 mod cloud;
+mod effect;
+mod sleeve;
 
 mod foil;
-mod marker;
 mod wall;
 pub use wall::{
     WallCamera, WallCard, WallCover, WallFrame,

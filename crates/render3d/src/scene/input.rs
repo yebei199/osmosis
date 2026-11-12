@@ -8,14 +8,15 @@ use bevy::prelude::*;
 use bevy::platform::time::Instant;
 
 use super::Scene;
+use crate::effect::Effect;
 use crate::seam::Pointer;
 use crate::wall;
 
 impl Scene {
-    /// 把这一帧的指针状态变成涟漪与拖动。
+    /// 把这一帧的指针状态变成拖动,交给当前那个效果。
     ///
-    /// 指针**按住**时是拖动(转点云),没按住时划过就起涟漪 —— 与原版一致:
-    /// `orbit.rotating` 那一支只转,不转的时候才 `queueParticlePointerFrame`。
+    /// 指针**按住**时是拖动:点云跟着转、松手后滑行(`cloud::Spin`);封面实物跟着偏、
+    /// 松手后弹回原位(`sleeve::motion::Tilt`)。没按住、或指针离开,就是松手。
     pub(crate) fn apply_pointer(
         &mut self,
         pointer: &Pointer,
@@ -23,42 +24,55 @@ impl Scene {
     ) {
         if !pointer.active {
             self.last_pointer = None;
-            self.spin.coast(delta);
+            self.release_pointer(delta);
             return;
         }
         let previous = self.last_pointer;
         self.last_pointer = Some((pointer.x, pointer.y));
 
-        if pointer.down {
-            // 拖动量按**物理像素**算,不然同一段手势在不同窗口大小下转得不一样多。
-            if let Some((px, py)) = previous {
-                let dx =
-                    (pointer.x - px) * self.size.0 as f32;
-                let dy =
-                    (pointer.y - py) * self.size.1 as f32;
-                self.spin.drag(dx, dy, delta);
-            }
+        if !pointer.down {
+            self.release_pointer(delta);
             return;
         }
+        // 拖动量按**物理像素**算,不然同一段手势在不同窗口大小下转得不一样多。
+        // 刚按下那一帧没有上一点可减:点云什么也不做,封面实物记一笔「按住了」,
+        // 弹簧这一帧起就不再往回拉。
+        let (dx, dy) =
+            previous.map_or((0.0, 0.0), |(px, py)| {
+                (
+                    (pointer.x - px) * self.size.0 as f32,
+                    (pointer.y - py) * self.size.1 as f32,
+                )
+            });
+        match self.effect {
+            Effect::Sleeve => {
+                self.sleeve.drag(dx, dy, delta)
+            }
+            Effect::Cloud => {
+                if previous.is_some() {
+                    self.spin.drag(dx, dy, delta);
+                }
+            }
+        }
+    }
 
-        self.spin.coast(delta);
+    /// 没在拖:点云按惯性滑,封面实物交给弹簧。
+    fn release_pointer(&mut self, delta: f32) {
+        match self.effect {
+            Effect::Sleeve => self.sleeve.release(),
+            Effect::Cloud => self.spin.coast(delta),
+        }
     }
 
     /// 卡墙的一帧(docs/adr/0025):位姿与相机由 `ui::wall` 算好传入,
-    /// 这里摆进场景、渲一帧、交回纹理。与点云互斥 —— 本入口把点云的
-    /// 两台相机关掉,只亮卡墙那台。省电门在 ui 侧,静止的墙不会调到这。
+    /// 这里摆进场景、渲一帧、交回纹理。与播放页互斥 —— 本入口把播放页的
+    /// 相机关掉,只亮卡墙那台。省电门在 ui 侧,静止的墙不会调到这。
     pub fn render_wall_frame(
         &mut self,
         frame: &wall::WallFrame,
     ) -> slint::Image {
         self.wall.set_active(&mut self.app, true);
-        for cam in [self.camera, self.occluder_camera] {
-            if let Some(mut c) =
-                self.app.world_mut().get_mut::<Camera>(cam)
-            {
-                c.is_active = false;
-            }
-        }
+        self.deactivate_viz_camera();
         self.wall.apply(&mut self.app, frame);
         super::probed_update(&mut self.app, "卡墙");
         self.wall.finish(&self.app)
@@ -82,13 +96,7 @@ impl Scene {
                 )
             });
         self.wall.set_active(&mut self.app, true);
-        for cam in [self.camera, self.occluder_camera] {
-            if let Some(mut c) =
-                self.app.world_mut().get_mut::<Camera>(cam)
-            {
-                c.is_active = false;
-            }
-        }
+        self.deactivate_viz_camera();
         self.wall.apply(
             &mut self.app,
             &wall::WallFrame::prewarm(),
@@ -108,5 +116,16 @@ impl Scene {
                 .saturating_sub(ready_at_start),
         );
         true
+    }
+
+    /// 关掉播放页那台相机:卡墙在渲时它不能也渲,不然两边抢同一帧。
+    fn deactivate_viz_camera(&mut self) {
+        if let Some(mut camera) = self
+            .app
+            .world_mut()
+            .get_mut::<Camera>(self.camera)
+        {
+            camera.is_active = false;
+        }
     }
 }

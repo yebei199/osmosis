@@ -2,34 +2,6 @@ use similar_asserts::assert_eq;
 
 use super::*;
 
-// ── 视觉预设 ──────────────────────────────────────────────────────
-
-/// 每一档都保住自己的下标 —— 加档时着色器按下标分支,错一位就画成另一个预设。
-/// 现在只有一档,这条守的是"默认档的下标必须是 0"。
-#[test]
-fn every_preset_keeps_its_index() {
-    for i in 0..PRESET_COUNT {
-        assert_eq!(
-            preset_index(i),
-            i as u32,
-            "第 {i} 档下标被改了"
-        );
-    }
-}
-
-/// 越界的编号回默认档 —— 编号来自 `.slint`,是跨层的外部输入,
-/// 给个不存在的档不该画出一片空白。
-#[test]
-fn an_out_of_range_preset_falls_back_to_the_default() {
-    for i in [-1, -100, PRESET_COUNT, PRESET_COUNT + 7] {
-        assert_eq!(
-            preset_index(i),
-            0,
-            "编号 {i} 该回默认档"
-        );
-    }
-}
-
 // ── 窄视口 ────────────────────────────────────────────────────────
 
 /// 横屏与方屏不收:物体类预设按相机距离取景,横向够宽就不必动。

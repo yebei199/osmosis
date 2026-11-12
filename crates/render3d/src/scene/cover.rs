@@ -1,4 +1,8 @@
-//! 换封面:旧图淡出、新图重建点云,以及没有封面时的清空。
+//! 换封面:两个效果都收 —— 点云换色渐变,封面实物交接或显影 —— 以及没有封面时的清空。
+//!
+//! 当前没在显示的那个效果也照收:切过去时才不会挂着上一首。纹理只传一次,两边共用
+//! 同一个句柄;旧纹理随最后一个句柄放掉而释放,不手动删 —— 点云的「上一首」与封面实物
+//! 退场那张各自引用着它,谁先放手都不该把另一边的图抽走。
 
 use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
@@ -9,17 +13,21 @@ use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat,
 };
 
+use bevy::camera::visibility::NoFrustumCulling;
+
 use super::{CLOUD_ORIGIN, Scene};
 use crate::cloud;
 
 impl Scene {
-    /// 换歌那一刻:点云退回渐变,不挂着上一首的封面等新图。
+    /// 换歌那一刻:不挂着上一首的封面等新图。
     ///
-    /// 只把 `has_cover` 落回 0 —— 着色器据此走默认渐变色,纹理本身留着不动:
-    /// 换下一首时 [`Self::apply_cover`] 会把它轮成「上一首」,渐变过渡还要用。
+    /// 点云只把 `has_cover` 落回 0 —— 着色器据此走默认渐变色,纹理本身留着不动:
+    /// 换下一首时 [`Self::apply_cover`] 会把它轮成「上一首」,渐变过渡还要用。不起过渡:
+    /// 这不是"换到另一张封面",而是"暂时没有封面",没有可渐变的两端。
     ///
-    /// 不起过渡:这不是"换到另一张封面",而是"暂时没有封面",没有可渐变的两端。
+    /// 封面实物把印着上一首的那张甩走,落位一张空封套(见 `Sleeve::clear`)。
     pub(crate) fn clear_cover(&mut self) {
+        self.sleeve.clear(&mut self.app);
         let Some(handle) = self.cloud_material.clone()
         else {
             return;
@@ -35,11 +43,10 @@ impl Scene {
         }
     }
 
-    /// 换歌:把新封面的像素传成纹理挂上点云,旧的那张退成「上一首」,
-    /// 并起一次过渡(颜色渐变 + burst)。
+    /// 换歌:把新封面的像素传成纹理,交给两个效果。
     ///
     /// 尺寸不合法(0 边、字节数与宽高对不上)就整帧忽略 —— 像素来自跨 crate 的
-    /// seam,坏载荷不该让点云黑掉,更不该 panic。
+    /// seam,坏载荷不该让画面黑掉,更不该 panic。
     pub(crate) fn apply_cover(
         &mut self,
         width: u32,
@@ -58,10 +65,6 @@ impl Scene {
             );
             return;
         }
-        let Some(handle) = self.cloud_material.clone()
-        else {
-            return;
-        };
 
         let image = Image::new(
             Extent3d {
@@ -71,7 +74,7 @@ impl Scene {
             },
             TextureDimension::D2,
             rgba.to_vec(),
-            // 封面是 sRGB 编码的;按线性读会整体发暗,点云的颜色就不是封面的颜色了。
+            // 封面是 sRGB 编码的;按线性读会整体发暗,画出来的就不是封面的颜色了。
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
@@ -81,7 +84,17 @@ impl Scene {
             .resource_mut::<Assets<Image>>()
             .add(image);
 
-        // 旧的那张退成「上一首」,渐变期间还看得见;再旧的那张这时才没人要。
+        self.sleeve.show(&mut self.app, next.clone());
+        self.cloud_show(next);
+    }
+
+    /// 点云那一侧:新封面挂上去,旧的那张退成「上一首」,并起一次过渡
+    /// (颜色渐变 + burst)。再旧的那张这时没人要了,随句柄放掉。
+    fn cloud_show(&mut self, next: Handle<Image>) {
+        let Some(handle) = self.cloud_material.clone()
+        else {
+            return;
+        };
         let rotated = {
             let mut materials = self
                 .app
@@ -97,19 +110,13 @@ impl Scene {
             material.prev_cover = previous.clone();
             material.cover = next;
             material.params.has_cover = 1.0;
-            (previous, stale)
+            previous != stale
         };
 
-        // `stale == previous` 只在首曲成立:两者都还是那张占位图。此时既没有
-        // 可渐变的旧封面(否则第一首歌会从一片纯白淡入),占位图也还挂在
-        // `prev_cover` 上,不能释放。
-        let (previous, stale) = rotated;
-        if stale != previous {
+        // 「上一首」与「再上一首」是同一张只在首曲成立:两者都还是那张占位图。
+        // 此时没有可渐变的旧封面,否则第一首歌会从一片纯白淡入。
+        if rotated {
             self.transition.start();
-            self.app
-                .world_mut()
-                .resource_mut::<Assets<Image>>()
-                .remove(&stale);
         }
     }
 
@@ -148,6 +155,7 @@ impl Scene {
                 cover,
             });
 
+        let visibility = self.cloud_visibility();
         self.root = self
             .app
             .world_mut()
@@ -155,6 +163,10 @@ impl Scene {
                 Mesh3d(mesh),
                 MeshMaterial3d(material.clone()),
                 Transform::from_translation(CLOUD_ORIGIN),
+                visibility,
+                // 相机移轴之后,bevy 的视锥仍按不移轴的那一幅算(见 `camera::lens`);
+                // 点云只有一个实体,不剔也不值一提。
+                NoFrustumCulling,
             ))
             .id();
         self.cloud_material = Some(material);

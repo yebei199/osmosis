@@ -19,17 +19,18 @@ pub struct Pointer {
     pub active: bool,
 }
 
-/// 点云封面这一帧的去向。镜像 `ui::viz::CoverUpdate`。
+/// 封面这一帧的去向。镜像 `ui::viz::CoverUpdate`。两个效果都收它,当前没在显示的那个也收 ——
+/// 切过去时才不会挂着旧封面。
 ///
 /// 三态而不是 `Option`:换歌与拿到新封面是两件事,中间隔着几百毫秒的网络,
-/// 而封面常常根本拿不到。两者挤进一个 `Option`,点云就会一直挂着上一首
+/// 而封面常常根本拿不到。两者挤进一个 `Option`,画面就会一直挂着上一首
 /// (见 `docs/adr/0014`)。
 #[derive(Clone, Copy, Debug, Default)]
 pub enum CoverUpdate<'a> {
     /// 没有新消息,保持现状。绝大多数帧都是这个。
     #[default]
     Unchanged,
-    /// 换歌了,退回渐变。
+    /// 换歌了,退回空白(点云是默认渐变,封面实物是一张没印字的空封套)。
     Clear,
     /// 新封面到了:(宽, 高, RGBA8)。
     Show(u32, u32, &'a [u8]),
@@ -45,21 +46,15 @@ pub struct VizFrame<'a> {
     pub time: f32,
     /// `spectrum` 布局的载荷,频谱行在前。只用前 512 字节拆频段。
     pub audio: &'a [u8],
-    /// 这一帧点云的封面该怎么办。平帧恒为 [`CoverUpdate::Unchanged`]。
+    /// 这一帧封面该怎么办。平帧恒为 [`CoverUpdate::Unchanged`]。
     pub cover: CoverUpdate<'a>,
     /// 视觉区里的指针。
     pub pointer: Pointer,
-    /// 视觉预设的编号,越界回默认档。
-    pub preset: i32,
-    /// 这一帧要不要遮挡层。
-    ///
-    /// 遮挡层是逐像素深度合成的那一半(见 [`spawn_occluder_camera`]):有一张
-    /// **深度卡片**要被场景挡住时才需要它。现在那张卡片是标注卡,挂在 `marker`
-    /// 的前表面上,所以这里跟着「锚点在不在画面里」走。歌词不算,它画在粒子之上
-    /// (见 `docs/adr/0010` 的「歌词是例外」)。
-    ///
-    /// 为假时那台相机整个关掉,不渲、不导入纹理。
-    pub needs_occluder: bool,
+    /// 播放页效果的编号:0 封面实物(默认)、1 点云。越界回默认(见 `effect::Effect`)。
+    pub effect: i32,
+    /// 紧凑版式(窗宽 < 600 逻辑像素)。主体在宽版式偏左、紧凑版式偏上,
+    /// 由相机移轴做(见 `camera::lens`),场景图本身铺满整窗。
+    pub compact: bool,
     /// 窗口的物理像素尺寸。与当前纹理不同就按需重建(动态分辨率),0 尺寸忽略。
     pub width: u32,
     pub height: u32,

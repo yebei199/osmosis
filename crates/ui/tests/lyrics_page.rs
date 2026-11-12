@@ -206,24 +206,6 @@ fn the_translation_toggle_exists_only_with_translation_data()
     );
 }
 
-/// 歌词页打开时世界空间标注卡不在元素树里 —— 点云已退成背景光,
-/// 卡片再浮着就是标一个看不见的物体。
-#[test]
-fn the_annotation_card_hides_while_lyrics_are_open() {
-    let ui = play_window();
-    ui.global::<Viz>().set_viz_anchor_visible(true);
-    assert!(
-        element(&ui, "PlayPage::viz-anchor-card").is_some(),
-        "播放页该有标注卡"
-    );
-
-    ui.global::<Viz>().set_lyrics_page_open(true);
-    assert!(
-        element(&ui, "PlayPage::viz-anchor-card").is_none(),
-        "歌词页打开后标注卡该让位"
-    );
-}
-
 /// 拖动改变的是浏览偏移,不碰播放进度。
 #[test]
 fn dragging_browses_without_touching_playback() {

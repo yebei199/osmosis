@@ -12,8 +12,9 @@ impl Scene {
     /// 按新尺寸重建离屏目标纹理,把相机的 RenderTarget 指过去,释放旧纹理。
     ///
     /// 相机的投影长宽比由 bevy 每帧依据渲染目标尺寸自动更新,无需在此处理;**距离**也不必动 ——
-    /// 粒子场是铺满视野的环境效果,竖视口不后撤,让粒子自然溢出画面上下(见
-    /// [`BASE_CAMERA_POS`])。重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
+    /// 点云是铺满视野的环境效果,竖视口不后撤(见 `camera::BASE_CAMERA_POS`),封面实物自己
+    /// 按视口收尺寸。移轴镜头跟着尺寸走,下一帧由 `apply_lens` 重算。
+    /// 重建后 `image` 置空,下一帧重新把新纹理导入 Slint。
     pub(crate) fn resize(
         &mut self,
         width: u32,
@@ -28,33 +29,15 @@ impl Scene {
                 new_target.clone().into(),
             ));
 
-        // 遮挡层必须与场景图同尺寸同视角,否则两层对不上,遮挡会整体错位。
-        let new_occluder =
-            make_target(&mut self.app, width, height);
-        self.app
-            .world_mut()
-            .entity_mut(self.occluder_camera)
-            .insert(RenderTarget::Image(
-                new_occluder.clone().into(),
-            ));
-
         let old =
             std::mem::replace(&mut self.target, new_target);
-        let old_occluder = std::mem::replace(
-            &mut self.occluder_target,
-            new_occluder,
-        );
-        let mut images = self
-            .app
+        self.app
             .world_mut()
-            .resource_mut::<Assets<Image>>();
-        images.remove(&old);
-        images.remove(&old_occluder);
+            .resource_mut::<Assets<Image>>()
+            .remove(&old);
 
         self.size = (width, height);
         self.image = None;
         self.image_key = None;
-        self.occluder_image = None;
-        self.occluder_key = None;
     }
 }

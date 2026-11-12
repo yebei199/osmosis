@@ -23,11 +23,10 @@ use bevy::render::texture::GpuImage;
 use bevy::window::{ExitCondition, WindowPlugin};
 use slint::wgpu_29::wgpu;
 
-use crate::camera::{
-    BASE_CAMERA_POS, spawn_camera, spawn_occluder_camera,
-};
+use crate::camera::{Lens, spawn_camera};
+use crate::effect::Effect;
 use crate::seam::SharedTexture;
-use crate::{cloud, marker, wall};
+use crate::{cloud, sleeve, wall};
 
 mod cover;
 mod input;
@@ -44,45 +43,19 @@ pub(crate) const PERF_WINDOW: u32 = 120;
 
 /// 点云自己在世界里的位置。
 ///
-/// 相机在 z = 8(见 [`BASE_CAMERA_POS`]),点云往镜头前挪这一截才有现在的取景大小。
+/// 相机在 z = 8(见 `camera::BASE_CAMERA_POS`),点云往镜头前挪这一截才有现在的取景大小。
+/// 宽版式偏左、紧凑版式偏上不在这里做,在相机的移轴镜头里做(见 `camera::lens`):
+/// 挪世界里的位置会让点云被斜着看,移轴则与从前「整张图平移」逐像素相同。
 ///
-/// 这个数原先叫 `CARD_ANCHOR`,一个常量同时当「点云放哪」与「深度卡片挂哪」用
-/// (`76d3b73` 换成封面点云时借了 `71ce2f9` 的常量)。两者重合意味着锚点正落在
-/// 点云正中心,也就是半数粒子在卡片前面 —— 恰恰是那份文档说过不能落的地方。
-/// `needs_occluder` 一直恒假,这笔账在屏幕上从没露过面。现在拆开:点云的位置在
-/// 这里,卡片的锚点跟着 `marker` 走。
+/// 这个数原先叫 `CARD_ANCHOR`,一个常量同时当「点云放哪」与「深度卡片挂哪」用;
+/// 卡片与它的遮挡层已随 `docs/adr/0041` 删除,剩下的只是点云的位置。
 pub(crate) const CLOUD_ORIGIN: Vec3 =
     Vec3::new(0.0, 0.0, 1.8);
 
-// 标注卡挂在标记体的前表面上,几何全在 `marker` 模块里。
-//
-// 曾经挂在封面平面上(点云 root 的局部坐标 (0.8, 0.8, 0)),想让它跟着拖动自转走。
-// 真机上那张卡片一像素都看不见:锚点落在平面上,意味着半数粒子比它更近、全被画进
-// 遮挡层,把卡片整块糊掉 —— 正是 `CLOUD_ORIGIN` 那段历史里警告过的同一个错。
-//
-// 而且这不是调个数能解决的。要卡片读得成,锚点得抬到粒子位移峰值(1.2~1.5)之上;
-// 要它刚性挂在点云上还留在画面里,它到旋转中心的距离又不能超过竖屏可见半宽 1.156。
-// 两个条件互斥。结论是点云当不了被标注物 —— 它没有「一个东西」可指,于是有了
-// `marker`:一枚自己绕轨道走的方块,深度确定、边界可指,遮挡不必等人来拖。
-
-// 编译期钉死轨道与封面平面的关系:远端要贴着平面(粒子才穿得过去),
-// 近端要离开平面(卡片才读得成)。两边都是常量,不必进单测。
-const _: () = assert!(
-    marker::ORBIT_CENTER.z - marker::ORBIT_RADIUS
-        > CLOUD_ORIGIN.z
-);
-const _: () = assert!(
-    marker::ORBIT_CENTER.z + marker::ORBIT_RADIUS
-        < BASE_CAMERA_POS.z
-);
-
-/// 空遮挡层对应的深度清除值:近平面。反向 Z 下没有片元比近平面更近,这一层因此全空。
-pub(crate) const EMPTY_OCCLUDER_DEPTH: f32 = 1.0;
-
 /// 一个自持的 bevy 离屏渲染场景。
 ///
-/// 持有 bevy `App`、离屏目标图的句柄、粒子实体,以及一次性包装好的
-/// [`slint::Image`]。整个对象只在 Slint 的主线程上被
+/// 持有 bevy `App`、离屏目标图的句柄、两个效果(封面实物、封面点云)各自那一摊,
+/// 以及一次性包装好的 [`slint::Image`]。整个对象只在 Slint 的主线程上被
 /// [`render_viz_frame`](Scene::render_viz_frame) 驱动。
 pub struct Scene {
     app: App,
@@ -93,13 +66,17 @@ pub struct Scene {
     target: Handle<Image>,
     /// 点云实体。首帧 despawn 占位实体后重建。
     root: Entity,
-    /// 被标注的那枚方块(见 `marker`)。每帧沿轨道挪一次,卡片锚在它前表面上。
-    marker: Entity,
+    /// 封面实物那一摊(台面、封套、倒影、地面),见 `sleeve.rs`。
+    sleeve: sleeve::Sleeve,
+    /// 当前显示的效果。另一个整摊藏着,一帧不画。
+    effect: Effect,
+    /// 相机当前装的镜头,与新算出的不同才写回(见 `camera::lens`)。
+    lens: Option<Lens>,
     /// 点云材质的句柄:每帧改它的 uniform(时间、三段电平),几何一动不动。
     cloud_material: Option<Handle<cloud::CloudMaterial>>,
     /// 换歌过渡(颜色渐变 + burst)。按播放页时钟推进。
     transition: cloud::TrackTransition,
-    /// 拖动带来的点云自转与松手后的惯性。
+    /// 拖动带来的点云自转与松手后的惯性。封面实物的拖动在它自己那一摊里(回弹而非滑行)。
     spin: cloud::Spin,
     /// 上一帧的指针状态,用来算这一帧拖了多少。
     last_pointer: Option<(f32, f32)>,
@@ -107,10 +84,6 @@ pub struct Scene {
     last_time: Option<f32>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
-    /// 遮挡层的离屏目标图:同一个场景,但只留比卡片锚点更近的片元,其余透明。
-    occluder_target: Handle<Image>,
-    /// 画遮挡层的第二台相机(见 [`spawn_occluder_camera`])。
-    occluder_camera: Entity,
     /// 点云是否已经建好。首帧为假,建一次之后几何固定,只有 uniform 每帧在换。
     cloud_built: bool,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
@@ -119,10 +92,6 @@ pub struct Scene {
     image: Option<slint::Image>,
     /// `image` 里那张对应的 (宽, 高)。尺寸一变纹理就换了身份,得重新导入。
     image_key: Option<(u32, u32)>,
-    /// 遮挡层纹理包装成的 Image 及其 (宽, 高)。缓存理由同 `image`:纹理身份稳定就只包一次。
-    /// 这一层不过玻璃 pass,故 key 里没有那个开关。
-    occluder_image: Option<slint::Image>,
-    occluder_key: Option<(u32, u32)>,
     /// 已驱动的帧数。仅用于诊断:纹理迟迟不就绪时给一次告警。
     frames: u32,
     /// bevy `app.update()` 的耗时累加器(毫秒)。每 [`PERF_WINDOW`] 帧算一次均值打日志
@@ -251,6 +220,11 @@ impl Scene {
         app.add_plugins(MaterialPlugin::<
             cloud::CloudMaterial,
         >::default());
+        // 封面实物(播放页的默认效果)的材质,同一套内嵌路数。
+        bevy::asset::embedded_asset!(app, "sleeve.wgsl");
+        app.add_plugins(MaterialPlugin::<
+            sleeve::SleeveMaterial,
+        >::default());
         // 卡墙上「正在放的那一张」的闪卡材质,同一套内嵌路数。
         bevy::asset::embedded_asset!(app, "foil.wgsl");
         app.add_plugins(MaterialPlugin::<
@@ -263,20 +237,13 @@ impl Scene {
         // 5) 摆相机(渲染进离屏目标图),建一个空的占位实体。
         //    点云首帧由 rebuild_viz_content 建出来。
         let camera = spawn_camera(&mut app, &target);
-        // 6) 遮挡层:第二张目标图 + 第二台相机,合成顺序上排在卡片之后(见其文档)。
-        let occluder_target =
-            make_target(&mut app, WIDTH, HEIGHT);
-        let occluder_camera = spawn_occluder_camera(
-            &mut app,
-            &occluder_target,
-        );
         let root = app
             .world_mut()
             .spawn(Transform::default())
             .id();
-        // 被标注的方块。不挂 RenderLayers,于是它在默认层上:点云的两台相机
-        // 看得见,卡墙那台(layer 1)看不见。
-        let marker = marker::spawn(&mut app);
+        // 6) 封面实物:几百个顶点,建一次不再动。不挂 RenderLayers,于是在默认层上:
+        //    播放页的相机看得见,卡墙那台(layer 1)看不见。
+        let sleeve = sleeve::Sleeve::spawn(&mut app);
         // 7) 卡墙:自己的相机与目标,初始不激活(见 wall.rs)。
         let wall_scene = wall::WallScene::new(&mut app);
 
@@ -289,21 +256,19 @@ impl Scene {
             queue: queue.clone(),
             target,
             root,
-            marker,
+            sleeve,
+            effect: Effect::default(),
+            lens: None,
             cloud_material: None,
             transition: cloud::TrackTransition::default(),
             spin: cloud::Spin::default(),
             last_pointer: None,
             last_time: None,
             camera,
-            occluder_target,
-            occluder_camera,
             cloud_built: false,
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
-            occluder_image: None,
-            occluder_key: None,
             perf: 0.0,
             frames: 0,
             wall: wall_scene,

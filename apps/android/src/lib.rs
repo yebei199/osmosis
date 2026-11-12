@@ -120,13 +120,13 @@ fn android_main(app: slint::android::AndroidApp) {
             }))
         },
         move |v, w, h| {
-            // 场景那一趟只在播放页开着时走(#87):它是 9216 个立方体的全绘,
+            // 场景那一趟只在播放页开着时走(#87):它是一整帧 bevy 全绘,
             // 而且进门就把卡墙的相机关掉 —— 常驻会把音乐页的墙渲没。
-            let (viz_scene, occluder, anchor) =
-                if v.needs_scene {
-                    scene
-                .borrow_mut()
-                .render_viz_frame(&render3d::VizFrame {
+            if !v.needs_scene {
+                return Some(slint::Image::default());
+            }
+            Some(scene.borrow_mut().render_viz_frame(
+                &render3d::VizFrame {
                     time: v.time,
                     audio: &v.audio,
                     cover: match &v.cover {
@@ -150,23 +150,12 @@ fn android_main(app: slint::android::AndroidApp) {
                         down: v.pointer.down,
                         active: v.pointer.active,
                     },
-                    preset: v.preset,
-                    needs_occluder: v.needs_occluder,
+                    effect: v.effect,
+                    compact: v.compact,
                     width: w,
                     height: h,
-                })
-                } else {
-                    (
-                        slint::Image::default(),
-                        slint::Image::default(),
-                        None,
-                    )
-                };
-            Some(ui::VizImages {
-                scene: viz_scene,
-                occluder,
-                anchor,
-            })
+                },
+            ))
         },
         // 卡墙(#66):同一个 seam 模式,位姿与封面逐字段平凡拷。
         move |c| {

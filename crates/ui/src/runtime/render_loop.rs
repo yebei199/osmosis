@@ -20,8 +20,11 @@ use crate::*;
 
 type NavFn =
     dyn FnMut(&NavGlassControls) -> Option<slint::Image>;
-type VizFn =
-    dyn FnMut(&VizControls, u32, u32) -> Option<VizImages>;
+type VizFn = dyn FnMut(
+    &VizControls,
+    u32,
+    u32,
+) -> Option<slint::Image>;
 type WallFn =
     dyn FnMut(&WallControls) -> Option<slint::Image>;
 
@@ -38,8 +41,6 @@ pub(crate) struct Renderers {
 struct VizClock {
     time: f32,
     last: Option<Instant>,
-    /// 上一帧标注卡的视口锚点。既是下一帧遮挡层的开关,也是"锚点消失了"的判据。
-    anchor: Option<(f32, f32)>,
 }
 
 impl VizClock {
@@ -194,13 +195,13 @@ impl FrameLoop {
         }
     }
 
-    /// 播放页场景(封面点云 + 标注卡 + 遮挡层)。
+    /// 播放页场景(当前效果:封面实物或封面点云)。
     ///
-    /// 只在播放页开着时走:它是 9216 个立方体的全绘,而且与卡墙互斥 ——
+    /// 只在播放页开着时走:它是一整帧 bevy 全绘,而且与卡墙互斥 ——
     /// render_viz_frame 进门就把墙的相机关掉。播放页之外没有任何跟着音乐动的画面
     /// (环形播放键的极光已退役,见 `docs/adr/0038`),放着歌也不要帧。
     ///
-    /// 按需渲染的规矩(#153):点云在播放页开着的活跃期内动。定格时有封面在等、
+    /// 按需渲染的规矩(#153):场景在播放页开着的活跃期内动。定格时有封面在等、
     /// 或纹理还没有,照样渲一帧。
     fn viz_frame(
         &mut self,
@@ -239,13 +240,13 @@ impl FrameLoop {
             self.viz.last = None;
         }
         let size = ui.window().size();
-        let Some(imgs) = (self.renderers.viz)(
+        let Some(scene) = (self.renderers.viz)(
             &VizControls {
                 time: self.viz.time,
                 audio,
                 // 换歌那一帧才有动作(清空/换图),取走即回到"没消息"。
                 // 只有渲场景的帧才走到这里:不渲场景时取走等于把待处理的换封面
-                // 消息丢进垃圾桶,等播放页真开时点云还挂着上一首的封面
+                // 消息丢进垃圾桶,等播放页真开时还挂着上一首的封面
                 // (CONTEXT.md「封面点云」那个 bug 的同一个坑)。
                 cover: self.cover.take(),
                 pointer: VizPointer {
@@ -254,27 +255,16 @@ impl FrameLoop {
                     down: vz.get_viz_pointer_down(),
                     active: vz.get_viz_pointer_active(),
                 },
-                preset: vz.get_viz_preset(),
+                effect: vz.get_viz_effect(),
+                compact: ui.global::<Shell>().get_compact(),
                 needs_scene,
-                // 深度卡片是标注卡,它在画面里才需要遮挡层。用**上一帧**的锚点
-                // 开关:锚点是这一帧渲染的产物,而这个开关是它的输入。差一帧看
-                // 不出来,换来的是卡片转出画面时那第二遍全场景绘制立刻停。
-                needs_occluder: needs_scene
-                    && self.viz.anchor.is_some(),
             },
             size.width,
             size.height,
         ) else {
             return ambient;
         };
-        vz.set_viz_scene(imgs.scene);
-        vz.set_viz_occluder(imgs.occluder);
-        self.viz.anchor = imgs.anchor;
-        if let Some((x, y)) = imgs.anchor {
-            vz.set_viz_anchor_x(x);
-            vz.set_viz_anchor_y(y);
-        }
-        vz.set_viz_anchor_visible(imgs.anchor.is_some());
+        vz.set_viz_scene(scene);
         Demand {
             busy: true,
             ambient: ambient.ambient,
@@ -292,8 +282,8 @@ impl FrameLoop {
 /// 返回 `None` 则这一帧不更新 `nav-bg`。
 ///
 /// `viz_frame` 驱动播放页视觉(见 `Scene::render_viz_frame`):以 [`VizControls`]
-/// (播放页时钟 + 音频纹理字节)和窗口**物理像素**尺寸调用,只在播放页开着时调;
-/// 返回的两张图分别推到 `viz-scene` / `viz-occluder`。
+/// (播放页时钟 + 音频纹理字节 + 效果与版式)和窗口**物理像素**尺寸调用,只在播放页
+/// 开着时调;返回的场景图推到 `viz-scene`。
 ///
 /// `wall_prewarm` 在卡墙还没露过面时隔一会儿调一次(见 `render3d::Scene::prewarm_wall`
 /// 与 [`crate::wall::Prewarm`]),返回 `true` 表示管线都编好了,之后不再调。
@@ -313,7 +303,7 @@ pub fn run_with_renderers(
         &VizControls,
         u32,
         u32,
-    ) -> Option<VizImages>
+    ) -> Option<slint::Image>
     + 'static,
     wall_frame: impl FnMut(
         &WallControls,
@@ -450,14 +440,10 @@ mod tests {
                         CoverUpdate::Show(_) => 2,
                     });
                 }
-                Some(VizImages {
-                    scene: if v.needs_scene {
-                        i_viz()
-                    } else {
-                        slint::Image::default()
-                    },
-                    occluder: slint::Image::default(),
-                    anchor: None,
+                Some(if v.needs_scene {
+                    i_viz()
+                } else {
+                    slint::Image::default()
                 })
             }),
             prewarm: Box::new(|| true),

@@ -191,8 +191,9 @@ android 侧 `SLINT_MCP_PORT` 是构建期的 —— APK 由系统启动,进程�
   逻辑坐标乘 scale)。
 - 选探针前确认它头顶没有东西:侧栏和光带按钮被 `nav-bg` 等导入纹理盖着,而这些纹理只在 GPU
   构建里非空,于是「非 GPU 构建生效、GPU 构建不生效」可能只是探针被盖住。内容区的实底元素安全。
-- 遮挡是否生效看卡片那 1px 边框在不在(`magick dist/shot.png -format "%[pixel:p{x,y}]" info:`),
-  不看观感:粒子挡住卡片与玻璃透出粒子肉眼分不开。看不出效果时先确认取景,再怀疑管线。
+- 量像素用 `magick dist/shot.png -format "%[pixel:p{x,y}]" info:`,不看观感。看不出效果时先确认
+  取景(移轴镜头、当前效果是哪一个),再怀疑管线。(曾经这里记的是「遮挡层看卡片边框」,
+  标注卡与遮挡层已随 `docs/adr/0041` 删除。)
 - 元素在不在,以 `crates/ui/tests/` 里 `find_by_element_id` 为准;MCP 只证明「你连的那份树里没有」。
   会话启动时桌面没跑,工具列表里只剩 `slint-android`(1080x2400、scale 2.75),很容易当成桌面;
   拿 `adb shell wm size` 对一下。

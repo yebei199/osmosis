@@ -1,6 +1,6 @@
 import { Palette } from "std-widgets.slint";
 
-import { Theme, Type, Motion, Radius, TextSize, Space, Weight, Tracking } from "theme.slint";
+import { Theme, Type, Motion, Radius, TextSize, Space, Weight, Tracking, Elevation } from "theme.slint";
 import { Icon, Icons } from "icons.slint";
 import { LyricRow } from "types.slint";
 import { PlayerBar, BarMetrics } from "playerbar.slint";
@@ -12,10 +12,9 @@ import { Viz } from "globals/viz.slint";
 
 // 播放页:盖住包括导航在内的整个窗口的全屏沉浸层(CONTEXT.md「播放页」)。
 //
-// 五层合成:糊封面背景 → 封面点云 → 标注卡 → 遮挡层(裁到标注卡)→ 控制簇。
-// 标注卡是深度卡片:遮挡层只含比它更近的粒子,盖上来就是「粒子从卡前面掠过」。
-// 歌名与歌词不走这条,它们画在粒子之上(docs/adr/0010 的「歌词是例外」)。
-// 功能(控制簇)永远在最上层 2D、点得到 —— docs/adr/0010。
+// 三层合成:糊封面背景 → 3D 场景(封面实物或封面点云,铺满整窗)→ 字与控制簇。
+// 歌名与歌词画在场景之上(docs/adr/0010 的「歌词是例外」);功能(控制簇)永远在
+// 最上层 2D、点得到 —— docs/adr/0010。场景里不再有深度卡片(docs/adr/0041)。
 //
 // 安全区由外面传进来:`safe-area-insets` 只有 `Window` 有,组件拿不到。
 // 其余状态一律走 global,不从窗口根转发(见 docs/adr/0027)。
@@ -51,7 +50,12 @@ export component PlayPage inherits FocusScope {
     // 全屏沉浸层,那不是任何人对返回的预期。
     key-pressed(event) => {
         if (event.text == Key.Back || event.text == Key.Escape) {
-            Shell.play-page-open = false;
+            // 效果菜单开着就先收菜单:返回先离开最上面那一层。
+            if (Viz.effect-menu-open) {
+                Viz.effect-menu-open = false;
+            } else {
+                Shell.play-page-open = false;
+            }
             return accept;
         }
         return reject;
@@ -72,86 +76,19 @@ export component PlayPage inherits FocusScope {
         background: @linear-gradient(180deg, #060c0966 0%, #060c09b3 70%, #060c09f2 100%);
     }
 
-  // 点云与它的标注卡:宽版式让到左边、给右边的歌名与歌词腾地方;紧凑版式往上提,
-  // 字摆在它下面。整层一起挪,标注卡与遮挡层仍逐像素对得上点云。
-  scene := Rectangle {
-    x: Shell.compact ? 0px : -root.width * 0.2;
-    y: Shell.compact ? -root.height * 0.14 : 0px;
-    width: root.width;
-    height: root.height;
-
-    // 封面点云:透明底,叠在糊封面背景上。远侧粒子在这层被歌词盖住,
-    // 近侧粒子由下面的遮挡层重新盖回字之上 —— 深度由此闭环。
-    if Viz.viz-scene.width > 0: Image {
+    // 3D 场景:透明底,叠在糊封面背景上,**铺满整窗**。主体在宽版式偏左(右边一栏
+    // 给歌名与歌词)、紧凑版式偏上(字摆在下面),由 render3d 的相机移轴做,不在这里
+    // 平移整张图 —— 平移出去的那一边会没有任何 3D 内容,出界的东西在那条边上被硬切
+    // (docs/adr/0041)。
+    if Viz.viz-scene.width > 0: scene-image := Image {
         width: 100%;
         height: 100%;
         image-fit: fill;
         source: Viz.viz-scene;
-        // 歌词页打开时退成背景光:整页字压在一片满亮的粒子上读不动(#73)。
+        // 歌词页打开时退成背景光:整页字压在满亮的场景上读不动(#73)。
         opacity: Viz.lyrics-page-open ? 0.3 : 1.0;
         animate opacity { duration: Motion.medium; easing: Motion.ease; }
     }
-
-
-    // 世界空间标注卡(docs/note/vision.md「下一面旗子」)。锚点是封面点云上的
-    // 一个局部点,点云被拖着自转时它跟着转,卡片于是跟着物体走而不是钉在画面
-    // 某处。转出画面就整块收起,不贴边钳制 —— 粘在屏幕边缘的卡片是在假装
-    // 自己还指着那个物体。
-    // 歌词页打开时整块让位:点云已退成背景光,卡片再浮着就是标一个
-    // 看不见的物体。
-    if Viz.viz-anchor-visible && !Viz.lyrics-page-open: Rectangle {
-        width: 100%;
-        height: 100%;
-
-        viz-anchor-card := Rectangle {
-            // 中心挂在锚点上:挂左上角的话卡片整体偏出半个身位,就指不准了。
-            //
-            // 再钳进窗口内。锚点在画面里不等于卡片在画面里 —— 锚点是卡片的
-            // 中心,它贴着边时卡片已经探出去半个身位了(真机实拍切掉过右边
-            // 约 20%)。轨道半径按竖屏算过,正常不会碰到这道钳位;窗口更窄时
-            // 它兜住,代价是卡片在极端处会与锚点脱开一点。
-            x: Math.clamp(Viz.viz-anchor-x * root.width - self.width / 2,
-                          0px, max(0px, root.width - self.width));
-            y: Math.clamp(Viz.viz-anchor-y * root.height - self.height / 2,
-                          0px, max(0px, root.height - self.height));
-            width: Shell.compact ? 132px : 160px;
-            height: 36px;
-            border-radius: Radius.sm;
-            background: Theme.immersive.with-alpha(0.62);
-            border-width: 1px;
-            border-color: Theme.immersive-text.with-alpha(0.22);
-
-            Text {
-                width: parent.width - 20px;
-                text: Viz.now-title;
-                color: Theme.immersive-text;
-                font-size: TextSize.small;
-                horizontal-alignment: center;
-                overflow: elide;
-            }
-        }
-
-        // 遮挡层裁到卡片自己。那张图铺的是整个视口,只有卡片这一块该露出来,
-        // 不裁就是把整幅点云盖在播放页上。图内偏移取负的卡片位置,于是它与
-        // 下面那层点云逐像素对齐,卡片被更近的粒子挡住(docs/adr/0010)。
-        if Viz.viz-occluder.width > 0: viz-anchor-occluder := Rectangle {
-            x: viz-anchor-card.x;
-            y: viz-anchor-card.y;
-            width: viz-anchor-card.width;
-            height: viz-anchor-card.height;
-            clip: true;
-
-            Image {
-                x: -parent.x;
-                y: -parent.y;
-                width: root.width;
-                height: root.height;
-                image-fit: fill;
-                source: Viz.viz-occluder;
-            }
-        }
-    }
-  }
 
     // vignette:把注意力拢回中心。
     Rectangle {
@@ -160,7 +97,7 @@ export component PlayPage inherits FocusScope {
         background: @radial-gradient(circle, transparent 55%, #00000047 100%);
     }
 
-    // 手机上点云铺满整屏，顶上那行与下面的歌名、歌词直接压在亮粒子上读不动：
+    // 手机上场景铺满整屏，顶上那行与下面的歌名、歌词直接压在亮的画面上读不动：
     // 上沿、下半截各压一层暗。宽版式字在右侧暗处，不压。
     if Shell.compact: Rectangle {
         width: 100%;
@@ -173,8 +110,8 @@ export component PlayPage inherits FocusScope {
             Theme.immersive.with-alpha(0.95) 100%);
     }
 
-    // 视觉区的指针:位置归一化后交给点云(见 crates/render3d::cloud),
-    // **不**收起播放页 —— 点这里是在拨弄粒子,收起走控制簇里的向下三角。
+    // 视觉区的指针:位置归一化后交给当前效果(点云跟着转、封面实物偏转回弹,见
+    // crates/render3d),**不**收起播放页 —— 点这里是在拨弄画面,收起走控制簇里的向下三角。
     // 压在视觉之上、内容之下;控制键各有自己的 TouchArea,不会误触到这层。
     TouchArea {
         moved => {
@@ -262,6 +199,47 @@ export component PlayPage inherits FocusScope {
         queue-entry-touch := TouchArea {
             mouse-cursor: pointer;
             clicked => { Viz.queue-page-open = true; }
+        }
+    }
+
+    // 效果切换(docs/adr/0041):右上角一枚药丸写着当前效果的名字,点开是一列带字的行。
+    // 与左上角的队列入口对称、同高同底。歌词页或队列页打开时让位 —— 它们画在同一片区域。
+    if !Viz.lyrics-page-open && !Viz.queue-page-open: effect-entry := Rectangle {
+        x: root.width - root.safe-right - (Shell.compact ? 20px : 48px) - self.width;
+        y: root.safe-top + (Shell.compact ? 14px : 36px);
+        width: effect-row.preferred-width + 16px;
+        height: 32px;
+        border-radius: Radius.pill;
+        background: effect-entry-touch.has-hover || Viz.effect-menu-open
+            ? Theme.immersive-text.with-alpha(0.08) : transparent;
+        accessible-role: button;
+        accessible-label: "视觉效果:" + Viz.viz-effect-names[Viz.viz-effect];
+        accessible-action-default => { Viz.effect-menu-open = !Viz.effect-menu-open; }
+
+        effect-row := HorizontalLayout {
+            x: 8px;
+            spacing: 10px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    size: 18px;
+                    source: Icons.sliders-horizontal;
+                    colorize: Theme.immersive-dim;
+                }
+            }
+            Text {
+                text: Viz.viz-effect-names[Viz.viz-effect];
+                color: Theme.immersive-dim;
+                font-size: TextSize.caption;
+                font-weight: Weight.semibold;
+                letter-spacing: Tracking.cjk-label;
+                vertical-alignment: center;
+            }
+        }
+
+        effect-entry-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { Viz.effect-menu-open = !Viz.effect-menu-open; }
         }
     }
 
@@ -371,9 +349,82 @@ export component PlayPage inherits FocusScope {
         width-cap: parent.width - root.bar-inset * 2;
     }
 
-    // 视觉预设的选择列表已退场:名册里只剩「封面」一档,列表里那一项恒高亮、
-    // 点了等于不点,而开它的那一行只长在播放页 —— 那是两处抽屉唯一的差别。
-    // 加档时列表连同抽屉里那一行一起回来,并且回到抽屉里(drawer.slint)。
+    // 效果菜单:挂在右上角那枚药丸下面,一档一行、带字,当前那一档用强调绿加一个勾
+    // (绿是唯一的强调色,docs/adr/0023)。点一行就切过去并收起;点菜单外任意处只收起,
+    // 不穿透到下面 —— 那一下是「算了」,不是「顺手拨一下画面」。
+    // 排在控制条之后,于是压在一切之上。
+    if Viz.effect-menu-open: TouchArea {
+        clicked => { Viz.effect-menu-open = false; }
+    }
+    if Viz.effect-menu-open: effect-menu := Rectangle {
+        x: root.width - root.safe-right - (Shell.compact ? 20px : 48px) - self.width;
+        y: root.safe-top + (Shell.compact ? 14px : 36px) + 40px;
+        width: 184px;
+        height: effect-options.preferred-height;
+        border-radius: Radius.md;
+        background: Theme.immersive-raised;
+        border-width: 1px;
+        border-color: Theme.immersive-line;
+        drop-shadow-offset-y: Elevation.overlay-y;
+        drop-shadow-blur: Elevation.overlay-blur;
+        drop-shadow-spread: Elevation.overlay-spread;
+        drop-shadow-color: Elevation.overlay-color;
+
+        effect-options := VerticalLayout {
+            padding: 6px;
+            spacing: 2px;
+            for name[index] in Viz.viz-effect-names: effect-option := Rectangle {
+                // 触摸目标不低于 44px(docs/design.md「版式」)。
+                height: 44px;
+                border-radius: Radius.sm;
+                background: option-touch.has-hover ? Theme.immersive-text.with-alpha(0.08) : transparent;
+                accessible-role: button;
+                accessible-label: name;
+                accessible-checkable: true;
+                accessible-checked: index == Viz.viz-effect;
+                accessible-action-default => {
+                    Viz.viz-effect = index;
+                    Viz.effect-menu-open = false;
+                    Viz.viz-effect-chosen(index);
+                }
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 10px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: name;
+                        color: index == Viz.viz-effect ? Theme.immersive-accent : Theme.immersive-text;
+                        font-size: TextSize.body;
+                        font-weight: index == Viz.viz-effect ? Weight.semibold : Weight.regular;
+                        vertical-alignment: center;
+                    }
+                    if index == Viz.viz-effect: VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            size: 18px;
+                            source: Icons.check;
+                            colorize: Theme.immersive-accent;
+                        }
+                    }
+                }
+
+                option-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        Viz.viz-effect = index;
+                        Viz.effect-menu-open = false;
+                        Viz.viz-effect-chosen(index);
+                    }
+                }
+            }
+        }
+    }
+
+    // 效果切换曾经是「视觉预设」的选择列表,收在抽屉里(docs/adr/0014、0029)。它回来时
+    // 落在播放页右上角而不是抽屉:选的是这一页自己的样子,只在这一页上看得见效果,
+    // 放进全应用共用的抽屉,在别的页面上就是一行点了看不出变化的设置(docs/adr/0041)。
     //
     // 三态赞踩(#157)不在这里:第一版做过播放页常驻三键,用户看过四状态截图后
     // 定了换个位置 —— 收进「更多」抽屉,挨着已有的喜欢那一行(#157 F-004,

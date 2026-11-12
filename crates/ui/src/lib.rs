@@ -16,7 +16,7 @@ pub use app_core::LoopMode;
 mod viz;
 pub use viz::{
     CoverUpdate, VIZ_AUDIO_BYTES, VizControls, VizCover,
-    VizImages, VizPointer,
+    VizPointer,
 };
 
 // 封面的解码与两套缓存。只在原生 target 上编,理由见模块开头。
@@ -139,6 +139,8 @@ fn build_ui(
     #[cfg(not(target_arch = "wasm32"))]
     update::bind(&ui);
     motion::bind(&ui);
+    // 播放页效果的选择跟着设备走,与主题、动态效果同一处落盘。
+    viz::effect::bind(&ui);
 
     let (viz_source, lyrics, cover, frames) =
         music::bind(&ui, media);
@@ -182,7 +184,7 @@ pub fn set_state_dir(dir: std::path::PathBuf) {
 /// 创建窗口、绑定领域状态,然后运行事件循环直到窗口关闭。
 ///
 /// 各平台入口在初始化好渲染后端后调用。不带 bevy 的端(web / ios)走这里:
-/// 播放页覆层退回没有粒子的形态,`.slint` 里零平台判断(见 [`VizImages`])。
+/// 播放页覆层退回只有糊封面背景的形态(`viz-scene` 恒为空图),`.slint` 里零平台判断。
 pub fn run() {
     // 这条路上的端(web / iOS)还没有系统媒体控件的实现。
     let (ui, _pace, _viz_source, _lyrics, _cover, _frames) =

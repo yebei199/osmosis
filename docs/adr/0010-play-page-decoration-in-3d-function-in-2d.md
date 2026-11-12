@@ -1,6 +1,8 @@
 # 播放页:装饰入 3D、功能留 2D
 
-日期:2026-07-28。状态:已采纳;合成的最底层由 warp 换成糊封面([`0038`](0038-the-play-key-is-a-cover-lens-not-a-shader.md))。
+日期:2026-07-28。状态:已采纳;合成的最底层由 warp 换成糊封面([`0038`](0038-the-play-key-is-a-cover-lens-not-a-shader.md));
+「粒子从卡片前后穿过」那一档与「深度卡片现在是标注卡」一节已退役,标注卡与遮挡层删除
+([`0041`](0041-the-cover-as-an-object-is-the-default-effect.md))。「装饰在 3D、功能在 2D」与等价路径前提照旧。
 
 ## 背景
 

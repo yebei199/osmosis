@@ -1,37 +1,29 @@
 import { LyricRow, TrackRow } from "../types.slint";
 
-// 播放页视觉的状态面:糊封面背景、两张每帧推来的纹理、标注卡的锚点、预设与指针。
+// 播放页视觉的状态面:糊封面背景、每帧推来的场景图、效果的选择与指针。
 //
 // **不含窗口几何派生的那几条**(歌词块高度、控制条高度、标题纵位) —— 它们要读
 // root.height 与 safe-area-insets,而 global 拿不到窗口上下文,那批留在 MainWindow。
 // 这条界线与代价见 docs/adr/0027。
 export global Viz {
-    // 播放页粒子场景(透明底)与其遮挡层,render3d 的 viz 模式每帧推送。
+    // 播放页的 3D 场景(透明底,铺满整窗),render3d 每帧推送。
     // 无 GPU 的端恒为空图(width == 0),覆层只剩糊封面背景,`.slint` 里
     // 零平台判断 —— 这就是「余端 graceful 缺省」的落点。
     in property <image> viz-scene;
-    in property <image> viz-occluder;
-    // 世界空间标注卡的挂点:封面点云上的一点,由 render3d 每帧投回视口
-    // (见 crates/render3d 的 CARD_ANCHOR_LOCAL),归一到 0..1、左上原点。
-    in property <float> viz-anchor-x;
-    in property <float> viz-anchor-y;
-    // 锚点这一帧在不在画面里。为假时整块卡片不实例化 —— 只把它挪到界外不算数,
-    // 界外的元素照样参与布局与命中测试。
-    in property <bool> viz-anchor-visible;
 
-    // 当前视觉预设的编号。名字见 viz-preset-names,与 render3d 的着色器分支
-    // 手工对齐 —— 那边按下标分支,加档时两处都要动。
-    //
-    // **暂时没有界面能改它。** 名册只剩「封面」一档 —— 另外五档让粒子离开封面
-    // 平面,那张图就散了,而点云存在的理由正是封面本身(见 docs/adr/0014)。
-    // 一个只有一项的选择器选不动任何东西,却让播放页的抽屉比别处多一行,
-    // 所以选择列表连同那一行一起退场(docs/adr/0029)。加回第二档时,
-    // 界面加在抽屉里(slint/drawer.slint),而不是再长一处播放页专属的浮层。
-    in-out property <int> viz-preset: 0;
-    in-out property <[string]> viz-preset-names: ["封面"];
+    // 播放页的效果:0 封面实物(默认)、1 点云。编号与 render3d 的 `Effect::from_index`、
+    // crates/ui/src/viz/effect.rs 的落盘映射手工对齐 —— 三处按下标说话,加档时一起动。
+    // 启动时由 Rust 从设置文件恢复;菜单里点一档就直接改它,下一帧生效(docs/adr/0041)。
+    in-out property <int> viz-effect: 0;
+    out property <[string]> viz-effect-names: ["封面实物", "点云"];
+    // 效果菜单开着。Esc / 返回先收它,再收播放页。
+    in-out property <bool> effect-menu-open: false;
+    // 菜单里选了一档(已经写进 viz-effect)。Rust 侧只管落盘。
+    callback viz-effect-chosen(int);
+
     // 视觉区里的指针,位置归一到 0..1(左上原点)。Rust 每帧在 seam 处读它,
-    // 换算成点云平面上的坐标推给涟漪(见 crates/render3d::cloud)。
-    // `active` 在指针离开时落回假 —— 指针不在了就不该还有一处粒子被顶着。
+    // 换算成拖动量交给当前效果(点云转、封面实物偏转回弹,见 crates/render3d)。
+    // `active` 在指针离开时落回假 —— 指针不在了就当松手。
     in-out property <float> viz-pointer-x: 0.5;
     in-out property <float> viz-pointer-y: 0.5;
     in-out property <bool> viz-pointer-down: false;

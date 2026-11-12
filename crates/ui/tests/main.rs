@@ -26,5 +26,5 @@ mod settings_page;
 mod status_strips;
 mod theme;
 mod thumbnail;
-mod viz_anchor;
+mod viz_effect;
 mod wall_view;

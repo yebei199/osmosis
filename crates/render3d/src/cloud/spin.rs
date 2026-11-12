@@ -18,7 +18,7 @@ const SPIN_DAMPING: f32 = 0.90;
 /// 拖动带来的点云自转,外加松手后的惯性。
 ///
 /// 转的是**点云自己**而不是相机 —— 原版就是把 `gestureRotation` 加到
-/// `particles.rotation` 上。相机一动,遮挡层那台就得跟着动,两层还得逐像素对齐;
+/// `particles.rotation` 上。相机是两个效果共用的,转它会把封面实物一起带着转;
 /// 转物体没有这个牵连。
 #[derive(Default)]
 pub(crate) struct Spin {
