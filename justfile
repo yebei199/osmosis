@@ -233,9 +233,19 @@ server-dev: pg
 
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
 # 它是独立仓库,自己 clone 一份,位置用 BANG_DREAM_REPO 指出,默认为同级目录。
+#
+# 在 Claude 的隔离网络里(只有回环网卡、唯一出口是代理)自动打开 bang-dream 的
+# BANG_DREAM_NETEASE_PROXY:它默认直连网易、自己发 UDP DNS,那里一个请求都发不出去。
+# 判据是当前网络命名空间就是 claude-network 记下的那一个;普通终端里行为不变。
 [group('服务端')]
 bang-dream repo=env('BANG_DREAM_REPO', '../bang-dream'):
-    cd {{repo}} && go run ./cmd/bang-dream
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ns_file="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-network/namespace.json"
+    if [ -r "$ns_file" ] && [ "$(jq -r .net "$ns_file")" = "$(readlink /proc/self/ns/net)" ]; then
+        export BANG_DREAM_NETEASE_PROXY=1
+    fi
+    cd {{repo}} && exec go run ./cmd/bang-dream
 
 # 网易云扫码登录,凭据写进 bang-dream 的 data/credentials.json。
 # 登录态是全服务一份的,登一次就够,过期了再来
