@@ -39,8 +39,10 @@ skip() { summary+=("skip  $1"); }
 
 cert_ok() {
     local got
+    # 只认「certificate SHA-256 digest:」后面那串,不认前缀:apksigner 37 把
+    # 「Signer #1 」改成了「V2 Signer: 」,钉死前缀那版在 v0.3.3 上读出空值。
     got=$(nix shell nixpkgs#apksigner -c apksigner verify --print-certs "$1" \
-        | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+        | sed -n 's/^.*[Ss]igner.*certificate SHA-256 digest: \([0-9a-f]\{64\}\)$/\1/p' | head -n1)
     [ "$got" = "$RELEASE_CERT_SHA256" ] && return 0
     echo "签名证书 ${got:-<读不出>} 不是约定的 $RELEASE_CERT_SHA256" >&2
     return 1
