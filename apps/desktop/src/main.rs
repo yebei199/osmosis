@@ -13,6 +13,9 @@ mod log_file;
 mod mpris;
 mod single_instance;
 
+/// 与 `assets/io.github.osmosis.desktop` 的文件名 stem 同名(xdg 约定)。
+const APP_ID: &str = "io.github.osmosis";
+
 fn main() {
     // 这里占下 log 的全局 logger 之后,bevy 的 LogPlugin 就装不上它那个 log 到
     // tracing 的桥接,启动时会报一条 "Could not set global logger",属于预期。
@@ -52,8 +55,12 @@ fn main() {
     }
 
     // Scene::new 会配置 Slint 的 wgpu 后端,必须在 ui 建窗口之前发生 —— 故先建它。
-    // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
     let scene = render3d::Scene::new();
+    // 平台由 Scene::new 选定,建窗口前报 app_id:窗口管理器靠它认出窗口、对上 .desktop。
+    if let Err(err) = slint::set_xdg_app_id(APP_ID) {
+        log::warn!("设置 xdg app_id 失败: {err}");
+    }
+    // 下面这段与 apps/android **逐字相同**,故意不抽(理由见 android 那边)。
     // 导航选中器的独立 wgpu pass,复用 scene 的共享 device/queue。
     let mut nav = render3d::NavGlassPass::new(
         scene.device(),

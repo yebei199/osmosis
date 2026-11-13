@@ -9,6 +9,7 @@ Exec=osmosis-desktop
 Icon=io.github.osmosis
 Terminal=false
 Categories=AudioVideo;Audio;Player;
+# 窗口的 app_id 也是这个 stem(apps/desktop/src/main.rs 的 APP_ID)。
 # MPRIS 的 DesktopEntry 属性报的就是这个文件的 stem(见 apps/desktop/src/mpris.rs)。
 # 改文件名要同时改那边 —— 报一个找不到的 id,外壳上就只剩一行没有图标的文字。
-StartupWMClass=osmosis-desktop
+StartupWMClass=io.github.osmosis
