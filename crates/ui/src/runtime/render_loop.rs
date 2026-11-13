@@ -143,8 +143,12 @@ impl FrameLoop {
         demand |= self.wall_frame(ui, now, live);
         self.lyric.tick_line(ui, &self.lyrics);
         self.lyric.tick_window(ui, &self.lyrics);
-        demand |= self.viz_frame(ui, now, live);
-        demand.next_frame(live)
+        // 播放页另算活跃:设置页选了「放歌时一直动」,放歌期间不定格(封面实物跟着节拍动)。
+        let viz_live = live
+            || (self.pace.while_playing()
+                && ui.global::<Player>().get_is_playing());
+        let viz = self.viz_frame(ui, now, viz_live);
+        demand.next_frame(live) || viz.next_frame(viz_live)
     }
 
     /// 卡墙(#66)。
@@ -457,6 +461,8 @@ mod tests {
         let ui = MainWindow::new().expect("建不出主窗口");
         ui.global::<Session>().set_logged_in(true);
         let pace = pace::bind(&ui);
+        // bind 会读本机的设置文件;测试钉在默认档,不随开发机上存的档位变。
+        pace.set_idle(Some(AMBIENT_IDLE));
         let calls = Rc::new(Calls::default());
         let frame_loop = FrameLoop::new(
             &ui,
@@ -477,7 +483,7 @@ mod tests {
         Instant::now() + AMBIENT_IDLE * 2
     }
 
-    /// 首页静止十秒以后:画完最后一帧就不再要下一帧,Slint 进入空闲 ——
+    /// 首页静止一个定格时长以后:画完最后一帧就不再要下一帧,Slint 进入空闲 ——
     /// 这正是手机前台发烫的那一处(#153)。
     #[test]
     fn a_still_home_page_stops_asking_for_frames() {
@@ -521,7 +527,7 @@ mod tests {
         );
     }
 
-    /// 播放页上十秒没人碰:点云定格,不再要帧;活跃期内它一直在动。
+    /// 播放页上一个定格时长没人碰:点云定格,不再要帧;活跃期内它一直在动。
     #[test]
     fn the_point_cloud_stops_after_the_idle_limit() {
         let (ui, mut frame_loop, _, calls) = setup();
@@ -543,6 +549,35 @@ mod tests {
             frozen,
             "定格了点云还在渲"
         );
+    }
+
+    /// 设置页选了「放歌时一直动」:放着歌就过了定格时长也照样出帧;暂停了照常定格。
+    #[test]
+    fn while_playing_keeps_the_play_page_moving() {
+        let (ui, mut frame_loop, pace, calls) = setup();
+        pace.set_idle(None);
+        open_play_page(&ui);
+        ui.global::<Player>().set_is_playing(true);
+        frame_loop.frame(&ui, Instant::now());
+
+        let before = calls.scene.get();
+        assert!(
+            frame_loop.frame(&ui, idle()),
+            "放着歌该一直要帧"
+        );
+        assert!(
+            calls.scene.get() > before,
+            "放着歌播放页该接着渲"
+        );
+
+        ui.global::<Player>().set_is_playing(false);
+        frame_loop.frame(&ui, idle());
+        let paused = calls.scene.get();
+        assert!(
+            !frame_loop.frame(&ui, idle()),
+            "暂停了该定格"
+        );
+        assert_eq!(calls.scene.get(), paused);
     }
 
     /// 播放页之外放着歌也不要帧,哪怕正在活跃期里:环形播放键的极光退役后,

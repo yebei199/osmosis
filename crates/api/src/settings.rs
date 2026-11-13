@@ -61,6 +61,32 @@ pub enum VizEffect {
     Cloud,
 }
 
+/// 多久没碰界面,常驻的环境动效(播放页、播放键光环、星云)就定格。
+///
+/// 落盘写名字不写编号,理由同 [`VizEffect`]。默认 30 秒(用户 2026-11-13 从 10 秒放宽)。
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+)]
+pub enum AmbientIdle {
+    #[serde(rename = "10s")]
+    Seconds10,
+    #[default]
+    #[serde(rename = "30s")]
+    Seconds30,
+    #[serde(rename = "60s")]
+    Seconds60,
+    /// 放歌时播放页一直动,暂停才定格;其余环境动效按默认的 30 秒。
+    #[serde(rename = "while_playing")]
+    WhilePlaying,
+}
+
 /// 这台设备上的设置。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Settings {
@@ -76,6 +102,8 @@ pub struct Settings {
     pub motion: bool,
     /// 播放页的效果。跟着设备走:手机上可能想要轻一点的那个,桌面上未必。
     pub viz_effect: VizEffect,
+    /// 环境动效多久不碰就定格。跟着设备走:手机上省电,桌面上可以一直动。
+    pub ambient_idle: AmbientIdle,
 }
 
 impl Default for Settings {
@@ -85,6 +113,7 @@ impl Default for Settings {
             theme: ThemeMode::Dark,
             motion: true,
             viz_effect: VizEffect::Object,
+            ambient_idle: AmbientIdle::Seconds30,
         }
     }
 }
@@ -105,6 +134,8 @@ struct RawSettings {
     /// 按字符串收,不直接收枚举:哪天删掉一个效果,老文件里那个名字不该让整份
     /// 设置解析失败、把音量一起冲回默认。认不得的名字落默认效果。
     viz_effect: Option<String>,
+    /// 同 `viz_effect`:按字符串收,认不得落默认,不连带冲掉别的设置。
+    ambient_idle: Option<String>,
 }
 
 /// 把文本解析成设置。**任何解析不了的东西都退回默认值**。
@@ -132,6 +163,15 @@ pub fn parse(raw: &str) -> Settings {
             .unwrap_or(true),
         viz_effect: raw
             .viz_effect
+            .and_then(|name| {
+                serde_json::from_value(
+                    serde_json::Value::String(name),
+                )
+                .ok()
+            })
+            .unwrap_or_default(),
+        ambient_idle: raw
+            .ambient_idle
             .and_then(|name| {
                 serde_json::from_value(
                     serde_json::Value::String(name),
@@ -289,6 +329,37 @@ mod tests {
             parse(r#"{"volume":0.3}"#).viz_effect,
             VizEffect::Object
         );
+    }
+
+    /// 定格时长四档都存得住;老文件没有这个字段、或写着认不得的名字时落 30 秒,
+    /// 别的设置原样保住。
+    #[test]
+    fn the_ambient_idle_survives_and_defaults_to_thirty_seconds()
+     {
+        for idle in [
+            AmbientIdle::Seconds10,
+            AmbientIdle::Seconds30,
+            AmbientIdle::Seconds60,
+            AmbientIdle::WhilePlaying,
+        ] {
+            let settings = Settings {
+                ambient_idle: idle,
+                ..Settings::default()
+            };
+            assert_eq!(parse(&render(&settings)), settings);
+        }
+        assert_eq!(
+            parse(r#"{"volume":0.3}"#).ambient_idle,
+            AmbientIdle::Seconds30
+        );
+        let parsed = parse(
+            r#"{"volume":0.3,"ambient_idle":"forever"}"#,
+        );
+        assert_eq!(
+            parsed.ambient_idle,
+            AmbientIdle::Seconds30
+        );
+        assert!((parsed.volume - 0.3).abs() < f32::EPSILON);
     }
 
     /// **边界:认不得的效果名。** 只落回默认效果,别的设置原样保住 ——

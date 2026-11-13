@@ -4,7 +4,7 @@
 // 快捷键、关于。没有数据源的卡不上屏(硬规则 8)。
 
 import { Theme, Type, Radius, Motion, Space, TextSize, Weight, Tracking, Layout } from "theme.slint";
-import { Card, CardRow, SectionLabel, Switch, Button, ButtonKind, Kbd } from "widgets.slint";
+import { Card, CardRow, SectionLabel, Switch, Button, ButtonKind, Kbd, Segmented } from "widgets.slint";
 import { BarMetrics } from "playerbar.slint";
 import { DayNight } from "globals/daynight.slint";
 import { Icon, Icons } from "icons.slint";
@@ -22,6 +22,9 @@ export component SettingsPage inherits Flickable {
     // 弹簧临界阻尼、不回弹,透镜静止,日夜开关的弹簧也一起收。
     in property <bool> motion-on;
     callback motion-toggled();
+    // 「动效定格」:多久不碰界面,播放页等环境动效就定格。语义见 Shell.ambient-idle。
+    in property <int> ambient-idle;
+    callback ambient-idle-chosen(int);
     // 主题三档:选了喊一声(0 深 1 浅 2 跟随系统),值由 Rust 写回 Theme.mode。
     callback theme-mode-selected(int);
     // 账号那一行的用户名。
@@ -111,13 +114,30 @@ export component SettingsPage inherits Flickable {
             CardRow {
                 title: "动态效果";
                 detail: "关掉后弹簧不再回弹,封面镜头静止,省电";
-                last: true;
                 VerticalLayout {
                     alignment: center;
                     motion-toggle := Switch {
                         on: root.motion-on;
                         label: "动态效果";
                         toggled => { root.motion-toggled(); }
+                    }
+                }
+            }
+            CardRow {
+                title: "动效定格";
+                detail: "多久不碰界面,播放页等动效就停下省电";
+                last: true;
+                VerticalLayout {
+                    alignment: center;
+                    Segmented {
+                        items: [
+                            { label: "10 秒" },
+                            { label: "30 秒" },
+                            { label: "1 分钟" },
+                            { label: "放歌时一直动" },
+                        ];
+                        current: root.ambient-idle;
+                        selected(index) => { root.ambient-idle-chosen(index); }
                     }
                 }
             }

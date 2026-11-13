@@ -78,6 +78,10 @@ export global Shell {
     // 开关只喊一声 motion-toggled,值由 Rust 翻好再推回来。
     in-out property <bool> motion-on: true;
     callback motion-toggled();
+    // 设置页「动效定格」那四格的当前档:0 十秒、1 三十秒(默认)、2 一分钟、3 放歌时一直动。
+    // 真相在 api::settings,Rust(runtime/pace.rs)恢复并写回;这里点下只喊一声。
+    in-out property <int> ambient-idle: 1;
+    callback ambient-idle-chosen(int);
     // #66 卡墙(adr/0025):每日推荐分区的一种视图,列表是另一种。
     // wall-supported 由 Rust 在 GPU 构建里置真;view-wall 是用户意图,
     // wall-showing 是显示态 —— 切列表要等塌回动画落地才熄,由

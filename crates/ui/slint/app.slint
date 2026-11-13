@@ -677,6 +677,8 @@ export component MainWindow inherits Window {
                                     update-requested => { Profile.update-requested(); }
                                     motion-on: Shell.motion-on;
                                     motion-toggled => { Shell.motion-toggled(); }
+                                    ambient-idle: Shell.ambient-idle;
+                                    ambient-idle-chosen(index) => { Shell.ambient-idle-chosen(index); }
                                     username: Profile.username;
                                     theme-mode-selected(mode) => { Shell.theme-mode-selected(mode); }
                                     logout => { Session.logout(); }

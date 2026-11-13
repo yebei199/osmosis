@@ -18,10 +18,15 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 use web_time::Instant;
 
+use api::settings::AmbientIdle;
+
 use crate::{MainWindow, Shell};
 
-/// 连续多久没有用户输入,常驻的环境动效(流体胶囊、播放键光环、点云、星云)就定格。
-pub const AMBIENT_IDLE: Duration = Duration::from_secs(10);
+/// 连续多久没有用户输入,常驻的环境动效(流体胶囊、播放键光环、播放页、星云)就定格。
+///
+/// 这是默认档;设置页能改成 10 秒、1 分钟,或「放歌时一直动」(见 [`Pace::set_idle`])。
+/// 原先是 10 秒:播放页的封面实物跟着节拍动,10 秒就定住,用户 2026-11-13 放宽到 30 秒。
+pub const AMBIENT_IDLE: Duration = Duration::from_secs(30);
 
 /// 换歌、换封面之后环境动效再走多久。点云的换歌渐变是 0.9 秒
 /// (render3d 的 `COLOR_FADE_SECS`),余下的留给封面纹理上传那一两帧。
@@ -55,6 +60,11 @@ impl core::ops::BitOrAssign for Demand {
 #[derive(Debug)]
 pub struct Pace {
     live_until: Cell<Instant>,
+    /// 一次输入之后活多久。
+    idle: Cell<Duration>,
+    /// 放歌时播放页不定格(设置页「放歌时一直动」)。只管播放页:别的环境动效
+    /// 不跟着音乐走,一直动只是耗电。
+    while_playing: Cell<bool>,
 }
 
 impl Pace {
@@ -62,12 +72,25 @@ impl Pace {
     pub fn new(now: Instant) -> Self {
         Self {
             live_until: Cell::new(now + AMBIENT_IDLE),
+            idle: Cell::new(AMBIENT_IDLE),
+            while_playing: Cell::new(false),
         }
     }
 
-    /// 用户动了:环境动效从 `now` 起再活 [`AMBIENT_IDLE`]。
+    /// 换定格时长。`None` 是「放歌时一直动」:播放页跟着播放走,其余按默认档。
+    pub fn set_idle(&self, idle: Option<Duration>) {
+        self.idle.set(idle.unwrap_or(AMBIENT_IDLE));
+        self.while_playing.set(idle.is_none());
+    }
+
+    /// 放歌时播放页是不是不定格。
+    pub fn while_playing(&self) -> bool {
+        self.while_playing.get()
+    }
+
+    /// 用户动了:环境动效从 `now` 起再活一个定格时长。
     pub fn touch(&self, now: Instant) {
-        self.extend(now + AMBIENT_IDLE);
+        self.extend(now + self.idle.get());
     }
 
     /// 状态变了、要一小段过渡:放行到 `now + SETTLE`,不缩短已有的活跃期。
@@ -92,6 +115,7 @@ impl Pace {
 /// 三个回调都顺手请求一次重绘:活跃期只有在有帧的时候才被读到。
 pub fn bind(ui: &MainWindow) -> Rc<Pace> {
     let pace = Rc::new(Pace::new(Instant::now()));
+    bind_idle(ui, &pace);
     let redraw = {
         let weak = ui.as_weak();
         move || {
@@ -117,6 +141,70 @@ pub fn bind(ui: &MainWindow) -> Rc<Pace> {
     }
     shell.on_wake(redraw);
     pace
+}
+
+/// 设置页的「动效定格」:启动时从 `api::settings` 恢复,选了就生效并落盘。
+///
+/// 编号是界面上 `Segmented` 的顺序,落盘写名字([`AmbientIdle`]),两者的对照只在
+/// [`idle_at`] / [`index_of`] 这一处。
+fn bind_idle(ui: &MainWindow, pace: &Rc<Pace>) {
+    let chosen = api::settings::load().ambient_idle;
+    pace.set_idle(duration_of(chosen));
+    ui.global::<Shell>().set_ambient_idle(index_of(chosen));
+    let (weak, pace) = (ui.as_weak(), pace.clone());
+    ui.global::<Shell>().on_ambient_idle_chosen(
+        move |index| {
+            let idle = idle_at(index);
+            pace.set_idle(duration_of(idle));
+            // 当作一次输入:新时长从这一刻算起,选了「放歌时一直动」的那一下画面也接着走。
+            pace.touch(Instant::now());
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Shell>()
+                    .set_ambient_idle(index);
+                ui.window().request_redraw();
+            }
+            api::settings::save(&api::settings::Settings {
+                ambient_idle: idle,
+                ..api::settings::load()
+            });
+        },
+    );
+}
+
+/// 档位 → 定格时长。`None` 是「放歌时一直动」。
+fn duration_of(idle: AmbientIdle) -> Option<Duration> {
+    match idle {
+        AmbientIdle::Seconds10 => {
+            Some(Duration::from_secs(10))
+        }
+        AmbientIdle::Seconds30 => {
+            Some(Duration::from_secs(30))
+        }
+        AmbientIdle::Seconds60 => {
+            Some(Duration::from_secs(60))
+        }
+        AmbientIdle::WhilePlaying => None,
+    }
+}
+
+/// 档位 → 界面上的编号(`settings.slint` 里那四格的顺序)。
+fn index_of(idle: AmbientIdle) -> i32 {
+    match idle {
+        AmbientIdle::Seconds10 => 0,
+        AmbientIdle::Seconds30 => 1,
+        AmbientIdle::Seconds60 => 2,
+        AmbientIdle::WhilePlaying => 3,
+    }
+}
+
+/// 界面上的编号 → 档位。越界落默认的 30 秒。
+fn idle_at(index: i32) -> AmbientIdle {
+    match index {
+        0 => AmbientIdle::Seconds10,
+        2 => AmbientIdle::Seconds60,
+        3 => AmbientIdle::WhilePlaying,
+        _ => AmbientIdle::Seconds30,
+    }
 }
 
 /// 用户动了,但指针没挪(光标不动的滚轮、读屏动作)。`.slint` 的输入探针只认
@@ -153,11 +241,11 @@ mod tests {
         assert!(pace.live(t0 + AMBIENT_IDLE - MS));
         assert!(
             !pace.live(t0 + AMBIENT_IDLE),
-            "整整十秒没人碰,环境动效该定格了"
+            "整个定格时长没人碰,环境动效该定格了"
         );
     }
 
-    /// 定格之后任何输入立即恢复,并且从那一刻起重新计满十秒。
+    /// 定格之后任何输入立即恢复,并且从那一刻起重新计满一个定格时长。
     #[test]
     fn user_input_revives_ambient_motion() {
         let t0 = Instant::now();
@@ -170,6 +258,48 @@ mod tests {
         assert!(pace.live(later));
         assert!(pace.live(later + AMBIENT_IDLE - MS));
         assert!(!pace.live(later + AMBIENT_IDLE));
+    }
+
+    /// 设置页换了档:下一次输入起按新时长算;「放歌时一直动」只标记播放页,
+    /// 其余动效仍按默认档。
+    #[test]
+    fn the_chosen_idle_applies_from_the_next_input() {
+        let t0 = Instant::now();
+        let pace = Pace::new(t0);
+        let ten = Duration::from_secs(10);
+
+        pace.set_idle(Some(ten));
+        pace.touch(t0 + AMBIENT_IDLE * 3);
+        let t1 = t0 + AMBIENT_IDLE * 3;
+        assert!(pace.live(t1 + ten - MS));
+        assert!(!pace.live(t1 + ten));
+        assert!(!pace.while_playing());
+
+        pace.set_idle(None);
+        assert!(pace.while_playing());
+        let t2 = t1 + AMBIENT_IDLE * 3;
+        pace.touch(t2);
+        assert!(pace.live(t2 + AMBIENT_IDLE - MS));
+        assert!(!pace.live(t2 + AMBIENT_IDLE));
+    }
+
+    /// 四档在编号与名字之间来回不走样,越界落默认。
+    #[test]
+    fn every_idle_choice_round_trips_through_its_index() {
+        for idle in [
+            AmbientIdle::Seconds10,
+            AmbientIdle::Seconds30,
+            AmbientIdle::Seconds60,
+            AmbientIdle::WhilePlaying,
+        ] {
+            assert_eq!(idle_at(index_of(idle)), idle);
+        }
+        assert_eq!(idle_at(-1), AmbientIdle::Seconds30);
+        assert_eq!(idle_at(9), AmbientIdle::Seconds30);
+        assert_eq!(
+            duration_of(AmbientIdle::default()),
+            Some(AMBIENT_IDLE)
+        );
     }
 
     /// 换歌换封面只放行一小段:走完过渡就定格,不当成一次完整的输入。
