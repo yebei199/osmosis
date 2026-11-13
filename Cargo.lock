@@ -8569,7 +8569,7 @@ checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 [[package]]
 name = "unicat-switch-slint"
 version = "0.1.0"
-source = "git+https://github.com/yebei199/unicat-switch?rev=0c69ee0eb008a72cfa75777527a7dbc17c74ebe5#0c69ee0eb008a72cfa75777527a7dbc17c74ebe5"
+source = "git+https://github.com/yebei199/unicat-switch?rev=3d1a689ddfe4079317eec0875c7c68d2a18218eb#3d1a689ddfe4079317eec0875c7c68d2a18218eb"
 dependencies = [
  "png",
  "slint",

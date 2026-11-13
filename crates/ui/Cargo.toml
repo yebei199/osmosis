@@ -43,13 +43,13 @@ blake3 = { version = "1", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # 设置页的日夜开关(用户自己的仓库),像素在 CPU 上画。它依赖 crates.io 的 slint 1.18,
 # 由根 Cargo.toml 的 [patch.crates-io] 统一到同一份 fork —— Cargo.lock 里只有一个 slint。
-unicat-switch-slint = { git = "https://github.com/yebei199/unicat-switch", rev = "0c69ee0eb008a72cfa75777527a7dbc17c74ebe5" }
+unicat-switch-slint = { git = "https://github.com/yebei199/unicat-switch", rev = "3d1a689ddfe4079317eec0875c7c68d2a18218eb" }
 
 # 渲染后端由平台入口 crate(apps/*)追加到 slint 的 feature 上,这里不选。
 [build-dependencies]
 slint-build.workspace = true
-# 只为 `library_path()`:`@unicat/unicat-switch.slint` 的所在目录,与上面同一个 rev。
-unicat-switch-slint = { git = "https://github.com/yebei199/unicat-switch", rev = "0c69ee0eb008a72cfa75777527a7dbc17c74ebe5" }
+# `@unicat` 的目录不靠 build-dependency 取:上面那份运行时依赖经 `links` 交给 build.rs
+# (DEP_UNICAT_SWITCH_LIBRARY_PATH),理由见 build.rs。
 
 # 只用来在测试里查子集字体的 cmap。slint 自己也依赖它,不引入新的下载。
 [dev-dependencies]

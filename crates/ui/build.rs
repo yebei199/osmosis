@@ -37,7 +37,13 @@ fn main() {
                 ("osmosis-fonts".to_owned(), fonts),
                 (
                     "unicat".to_owned(),
-                    unicat_switch_slint::library_path(),
+                    // unicat-switch-slint 的 build.rs 经 `links` 交过来的目录。不把它当
+                    // build-dependency 引:那会另编一份 slint 特性不同的副本,
+                    // SLINT_LIVE_PREVIEW=1 下那份生成热重载代码、自己却没开
+                    // `live-preview`,`just desktop-dev` 编不过(17 个 E0433)。
+                    std::env::var_os("DEP_UNICAT_SWITCH_LIBRARY_PATH")
+                        .map(std::path::PathBuf::from)
+                        .expect("unicat-switch-slint 经 links 给出 library_path"),
                 ),
             ]),
         )
