@@ -13,7 +13,7 @@
 # complete 不必等一整首播完:拖到曲尾前几秒,让它自己走完最后那一段就够了 ——
 # 验的是「切歌那一刻算出的比例对不对」,不是「等待本身要多久」。
 #
-# 前提同 test/pick-e2e.sh:应用起着并已登录、just server-dev 与 osmosis-pg 在跑、
+# 前提:应用起着并已登录、just server-dev 与 osmosis-pg 在跑、
 # 每日推荐有歌。
 set -euo pipefail
 

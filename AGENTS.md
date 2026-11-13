@@ -27,7 +27,7 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
 | `apps/web`、`apps/ios` | 废弃,不是 workspace 成员;新代码不必兼容它们 |
 | `server/` | axum 后端,把 bang-dream(独立仓库)的 gRPC 翻成 HTTP/JSON;`proto/` 是上游契约副本,`migrations/` 是 Postgres |
 | `xtask/` | 构建逻辑(`cargo xtask android`、`boundaries`) |
-| `test/` | 端到端脚本、`headless/`(无头 sway 夹具)、`mcp-e2e/`、`remote-behavior/` |
+| `test/` | 端到端脚本、`headless/`(无头 sway 夹具) |
 | `release/` | `just rollout`:把已发布版本推到各设备与 nixos_config |
 | `docs/note/` | 操作手册与调查记录;日常命令和验证的坑在 [`dev-workflow.md`](docs/note/dev-workflow.md) |
 
@@ -36,7 +36,7 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
 - **门禁是 `just ci`**,逐字对应 `.github/workflows/ci.yml`(fmt、nextest+clippy `-D warnings`、
   android 交叉 clippy、boundaries)。CI 只在非 draft PR 和手动触发时跑,
   直接 push 任何分支(含 master)都没有 CI。`ci-test` 依赖 Docker 里的 Postgres(`just pg`)
-  与 RustFS(`just rustfs`)。`test/remote-behavior/` 与 `test/mcp-e2e/`(`just mcp-e2e`)不在其中,
+  与 RustFS(`just rustfs`)。`test/` 下的端到端脚本不在其中,
   按需手动跑。
 - **开发时只跑快速检查，测试留给夜里的 CI**:改完跑 `just agent-check`(cargo check
   `--all-targets`,带 `-p server` 等点名非默认成员)。`just agent-test`、`just ci*`、整套服务端测试

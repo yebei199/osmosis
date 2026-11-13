@@ -20,7 +20,7 @@
     test/pick-bench.py drive --port 8091 --output device --out remote.jsonl   # 遥控名字带 device 的那台
     test/pick-bench.py report --picks picks.jsonl --log app.log
 
-前提同 pick-e2e.sh:应用起着、已登录,server-dev 与 osmosis-pg 在跑。
+前提:应用起着、已登录,server-dev 与 osmosis-pg 在跑。
 卡顿行要 OSMOSIS_STALL 打开才有(桌面运行期,APK 构建期)。
 """
 
@@ -133,7 +133,7 @@ def tap(port, win, mode, index):
     if mode == "list":
         mcp(port, "click_element", {"elementHandle": must(port, win, "TrackList::touch", index)})
         return
-    # 卡墙的卡画在 3D 纹理里,按坐标点不稳,走无障碍动作(见 pick-e2e.sh)。
+    # 卡墙的卡画在 3D 纹理里,按坐标点不稳,走无障碍动作。
     area = must(port, win, "WallView::wall-area")
     for _ in range(index + 1):
         mcp(port, "invoke_accessibility_action", {"elementHandle": area, "action": "Increment"})

@@ -237,7 +237,7 @@ android 侧 `SLINT_MCP_PORT` 是构建期的 —— APK 由系统启动,进程�
   拿 `adb shell wm size` 对一下。
 - MCP 客户端没连上时,端点就是普通 HTTP:`POST http://127.0.0.1:8091/mcp` 发 JSON-RPC
   (`Accept: application/json, text/event-stream`),参数名 camelCase。
-- 端到端脚本按元素 id 找控件,断言落在库里的行、量出的尺寸或状态上;样板是 `test/pick-e2e.sh`。
+- 端到端脚本按元素 id 找控件,断言落在库里的行、量出的尺寸或状态上;样板是 `test/radio-e2e.sh`。
 
 ### `.slint` 热重载
 

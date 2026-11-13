@@ -4,9 +4,9 @@
 pasta 的独立网络命名空间里连上它,用 grim 抓像素。用户的 niri 桌面上不出现窗口、不抢焦点,
 声音进 `test/null-sink.ts` 的 null sink,可以和用户桌面上的开发实例并存,也能无人值守。
 
-`just shot`、`just desktop-dev`、`test/mcp-e2e` 的测试夹具都经这里起实例。
+`just shot`、`just desktop-dev` 都经这里起实例。
 
-不负责:应用本身的渲染;像素比较(在 `test/mcp-e2e/visual.py`);构建二进制(调用方先编)。
+不负责:应用本身的渲染;构建二进制(调用方先编)。
 
 依赖:`slint.nix` 提供的 sway、pasta(passt)、grim 和应用的动态库,所以要在
 `nix-shell slint.nix` 里跑;PipeWire;一块可读写的 `/dev/dri/renderD*`(自动挑非 nvidia 的,

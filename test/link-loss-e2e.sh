@@ -161,7 +161,7 @@ play_locally() {
   before=$(plays)
   go_on "$dev" 每日推荐; sleep 1.5
   click "$dev" "$(handles "$dev" WallToggle::view-list-btn | head -1)"; sleep 1.5
-  # 同一行正在放时再点是多余的点击,不会重新起播 —— 两行轮着点,见 pick-e2e.sh。
+  # 同一行正在放时再点是多余的点击,不会重新起播 —— 两行轮着点。
   for idx in 1 2; do
     # 点一下就起播。别连点两下:2026-09-23 在 ns 桌面实例上实测,同一行连点两下
     # 什么都没放,状态回到「点一首歌开始」(#111 回报里记为待裁决发现)。

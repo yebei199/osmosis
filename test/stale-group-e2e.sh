@@ -153,7 +153,7 @@ sounding() {
 refusals() { sed 's/\x1b\[[0-9;]*m//g' "$SERVER_LOG" | grep "/group/outputs" | grep -c "status=400" || true; }
 
 if [ "$MODE" = dead ]; then
-  # 每日推荐是列表(形状照 test/pick-e2e.sh 的 reset)
+  # 每日推荐是列表
   go_to 每日推荐
   for _ in $(seq 1 15); do
     sleep 1

@@ -1,88 +1,10 @@
 # test —— 端到端脚本与浏览器侧的对照页
 
-## mcp-e2e/: 公共 MCP 库与 pytest 样板
-
-库负责连接、动态 id / 无障碍标签选择、等待断言与失败产物，旧 pick/views 入口调用同一实现。
-默认样板只替换外部音乐提供方：复用 remote-behavior/media.py 的确定音源和真实 gRPC，桌面、
-生产 server、Postgres、MCP 点击与查库断言均真实执行。每个 app 用例独立创建容器、账号和状态目录，
-准备互不相交的日推、系统「我的喜欢」及另一个歌单；结束或初始化失败时按资源身份清理。
-不会修改 .env 中的真实账号，也不把协议替身测试当成产品 UI 验收。
-
-fixture 桌面开在 test/headless/ 的无头显示里（MEO-1900）：用户桌面不出窗口、不抢焦点，
-MCP 从 pasta 网络命名空间转发到随机宿主端口，所以和用户开着的 8091 实例并存。
-截图（视觉断言与失败产物）取无头合成器的像素（Client.pixels），不走 MCP take_screenshot，
-可以后台或无人值守跑。
-
-所有 fixture 桌面启动前都调用 test/null-sink.ts，并用返回的节点名设置 PIPEWIRE_NODE。
-共享 null sink 幂等且不由 fixture 删除，不从真实声卡出声、不改系统默认输出。测试验证幂等性和子进程的真实环境。
-
-前提：Linux 桌面会话、PipeWire（pw-cli、pw-dump）、Docker，以及已缓存的 postgres:17-alpine 镜像。
-server 用随机宿主端口，pasta 把应用命名空间里烘进去的 127.0.0.1:3000 接过去，所以宿主的 3000
-被别的开发后端占着也照跑（MEO-1900）；app 用例串行运行，不杀其他会话。
-依赖由 uv.lock 固定。`just mcp-e2e` 先按 desktop-dev 的调试信息和 feature 构建指纹更新桌面及 server。
-
-```sh
-# 只跑库、像素机制、资源生命周期和迁移判据：
-uv run --project test/mcp-e2e pytest test/mcp-e2e/test_client.py test/mcp-e2e/test_visual.py test/mcp-e2e/test_local_app.py test/mcp-e2e/test_scenarios.py -m 'not app'
-# 隔离环境验证真实列表、卡墙和 views；配方负责构建，不访问真实网易：
-just mcp-e2e 'test/mcp-e2e/test_scenarios.py::test_pick[list]' 'test/mcp-e2e/test_scenarios.py::test_pick[wall]' test/mcp-e2e/test_scenarios.py::test_views
-# 可选真实上游模式：调用者先起后端、GPU debug 桌面并登录到音乐页，不进入默认验收：
-uv run --project test/mcp-e2e pytest test/mcp-e2e/test_scenarios.py -m app --mcp-live --mcp-url http://127.0.0.1:8091/mcp
-```
-
-真实上游模式要求推荐有至少两首、系统「我的喜欢」与另一个歌单非空，账号没有其他端续播；
-数据库环境沿旧 pick 入口的 PG_CONTAINER / PG_DB。网易网络、凭据与人工维护的数据可能使它失败，
-这种失败不阻塞默认隔离验收。曾在当前代理会话观察到外部 DNS operation not permitted、连接
-no route to host，这只说明该次会话的访问结果，不能推断整台机器的网络状况。
-
-新增用例放在本目录的 test_*.py，声明 mcp 参数即可使用公共 fixture；需要隔离真实应用时标记
-pytest.mark.app，并用 scenario_env 将数据库断言指向本轮容器。测试逻辑不要直接构造被测的播放结果。
-
-```python
-import pytest
-
-@pytest.mark.app
-def test_daily_wall(mcp):
-    # 每次操作重新定位；等待只重试读取，点击本身只发送一次。
-    mcp.by_label("每日推荐", role="Button").click()
-    mcp.by_id("WallView::wall-area").handle()
-```
-
-标签选择使用 mcp.by_label("每日推荐")；标题和按钮同名时加 role="Button"。
-属性读取用 properties()，外部真相源用 mcp_client.expect 的 equals 参数作有界断言。
-分区只认无障碍标签，样板不依赖 Home、NavItem 下标或 MusicRail/MusicBar 组件名。
-views 默认覆盖 enter/ABA；relogin 留在旧 CLI 兼容路径，等 S1 后再迁。
-
-pytest 失败自动保存 screenshot.png 与 element-tree.json，采集错误另存 capture-errors.txt，
-不覆盖原断言。视觉断言 mcp.expect_screenshot(baseline_path, tmp_path) 超限还保存 diff.png。
---mcp-artifacts 指定每轮独立产物的父目录；`just mcp-e2e` 从 MCP_ARTIFACTS 环境变量取它。
-插件入口是 mcp_pytest；其他目录复用时将库目录放入 PYTHONPATH 并用 -p mcp_pytest。
-
-像素规则是任一 RGBA 通道差 > 8 算变化，变化像素占比 > 0.1% 判失败，等于阈值通过。
-缺基准、尺寸变化直接失败，不自动接受新图；失败输出差异图，缺基准时没有可比较图。
-正式基准等 S3 合回后生成，本轮只在测试临时目录造图。GPU 不稳时，用相同的软件渲染配置、
-窗口尺寸和状态采集 actual.png，S3 收尾复核阈值后再显式执行唯一的基准重生成命令：
-
-```sh
-uv run --project test/mcp-e2e python test/mcp-e2e/visual.py update actual.png test/mcp-e2e/baselines/example.png
-```
-
-创建正式 baselines 目录前先补职责 README。更新命令只复制已校验图片，不启动应用、不切渲染器；
-采图使用 mcp.screenshot(actual_path)。本轮仓库没有正式基准，故意改变临时截图的 pytest 子进程
-验证了非零退出及三份失败产物，不能将它表述为真实产品 UI 已经通过。
-
 ## headless/ —— 桌面实例开在看不见的显示里
 
-`just shot`、`just desktop-dev` 和上面的夹具都经它起实例；检查脚本
+`just shot`、`just desktop-dev` 都经它起实例；检查脚本
 `bun test/headless/check.ts`（在 slint.nix 环境里跑）判焦点不变、无新窗口、无真实音频链路、
 GPU 纹理在、与已有实例并存、AI 会话守卫。见 [headless/README.md](headless/README.md)。
-
-## remote-behavior/ —— 三个真实客户端的遥控音频验收
-
-独立 Linux 显示、namespace、数据库及音频服务，MCP 驱动列表、卡墙和遥控操作，
-实际 PCM 区分曲目与时间位置。覆盖恢复和生命周期回归，四个独立变异证明故障灵敏度。
-不在 `just ci` 与 CI 里，入口 `run.sh` 按需手动跑；缺依赖和采集失败均非零。
-环境、入口及证明边界见 [remote-behavior/README.md](remote-behavior/README.md)。
 
 ## null-sink.ts —— 测试和开发实例一律不从真实声卡出声
 
@@ -125,7 +47,7 @@ pc1 播放器位置推进、源端停止本机音频,最后从源端遥控暂停
 
 ## mcp-login.sh —— 把界面登进去
 
-端到端脚本(如 `pick-e2e.sh`)把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
+端到端脚本(如 `radio-e2e.sh`)把「已登录」写成前提却没人负责满足它,于是每次跑之前都要人手点一遍。
 这份脚本补上那一步,可重复跑(已登录时直接返回)。
 
 ```sh
@@ -197,61 +119,9 @@ nixos_config 换成临时 git 仓库加本地裸远端,断言:签名不对不上
 离线设备进汇总、设备上读回的 APK 哈希要对、nixos_config 不干净或 prefetch 对不上就不动、
 镜像要含 arm64。几秒跑完,改了 `release/` 就跑一遍。
 
-## pick-e2e.sh —— 点一首歌,真的起播了、只发布了一次吗
-
-跑之前:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录
-(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑,每日推荐有歌。
-
-```sh
-test/pick-e2e.sh list       # 列表那条路
-test/pick-e2e.sh wall       # 卡墙那条路(要 GPU 构建)
-test/pick-e2e.sh search     # 搜索那条路:搜 KEYWORD(缺省「晴天」),点一行结果
-test/pick-e2e.sh queue      # 队列页那条路:展开播放页、打开队列,点一行(要已经在放)
-```
-
-两条用户路径各跑一遍,每条都把同一首**连点三下**。判据两样,都查库:`play_events`
-恰好多一行(有设备真的起播了);各设备队列的 `revision` 之和涨 1(新的一批只发布了一次),
-或者不涨但 `play_queue_reports` 记了一个新检查点(这一批早已同步上去,#137 ③ 之后
-同一批不再重复发布)。两次以上就是连点又在重复发布。
-
-**组内**(#142):设 `OTHER_PORT` 为组里另一台的 MCP 端口,两台事先已在同一个组里
-(输出设备那一排按「+」)。组里点歌只改服务端的全局状态,判据换成:`play_events` 恰好
-+1(服务端记的)、`play_groups.version` 恰好 +1(连点三下只发一次意图),并且 30 秒内
-**两台**控制条上的曲名(`PlayerBar::title`)都换成库里全局状态那一条的曲名。四条入口
-在两台上各跑一遍,就是「组里任何一台从任何入口点歌,两台都换过去」:
-
-```sh
-OTHER_PORT=8090 test/pick-e2e.sh list     # 在桌面上点,手机跟着换
-PORT=8090 OTHER_PORT=8091 test/pick-e2e.sh queue   # 在手机的队列页点,桌面跟着换
-```
-
-元素一律从窗口根用 `query_element_descendants` 按 id 找:`find_elements_by_id` 找不到 `if` /
-`for` 里长出来的元素(搜索框、分区条、播放页的队列入口),只会返回空。真机上填完搜索框
-软键盘会盖住结果、吃掉第一下点击,脚本在键盘真的开着时(`dumpsys input_method` 的
-`mInputShown=true`)按一次返回收起它;真机端口不是 8090 时设 `ANDROID_MCP_PORT`。adb 用哪条
-命令由 `ADB` 给(缺省 `adb`):桌面实例在 namespace 里时够不到宿主的 adb,要写成能够到的
-命令,够不到就直接失败,不静默跳过。
-
-每一项从已打开的音乐页起步，先收起播放页、按标签选这一项要的分区;队列页那一项看播放页与队列页
-是不是已经开着,开着就直接用。所以连着跑四项(`list → wall → search → queue`)与单独跑
-一项结果一样,不依赖上一项留下的页面。
-
-卡墙的卡画在 3D 纹理里,按坐标点第二下未必还命中同一张;脚本走场区上的无障碍动作
-(`Increment` 挪选中、`Default_` 播选中的那张),读屏用户走的也是这条。
-
-**同一账号下只能有被测的那一台在放。** `play_events` 只记账号不记设备,脚本等起播的
-那一分钟里,另一台实例的自动续播(或者被测这台自己那首刚好放完)也会让它 +1,于是
-「起播 +1、发布 +0、检查点无」其实是点击被丢了、账算到了别处。2026-09-24 手机卡墙那条
-就这样误判过两次:一次是开着的桌面实例在续播,一次是点中在放的那首后原曲放完续播了。
-判不准时对一眼被测那台的日志里有没有新的 `act#… play begin`。
-
-「起播 +1、发布 +0」先看应用日志里是不是 `队列数到上限了`:每台新设备(包括每个隔离的
-测试实例)占账号一个队列槽,满 10 个就发布不上去。脚本判失败是对的,那是真问题。
-窗口在锁屏或屏外时合成器一秒只给一帧,动画与相机慢到几十秒,脚本的等待按这个放宽过。
-
 ## feedback-e2e.sh —— 三态赞踩,以及切歌补记听了多久(#157)
 
-前提同 `pick-e2e.sh`。
+前提:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑。
 
 ```sh
 test/feedback-e2e.sh verdict    # 点赞 track_feedback +1、改点踩同一行变 -1、再点一次消失
@@ -281,7 +151,7 @@ test/radio-e2e.sh filter   # 电台区选「有歌词」再点歌,续进来的�
 test/radio-e2e.sh dry      # 选得窄到续不出,界面要出「按当前筛选暂时找不到新歌」
 ```
 
-形状照 `pick-e2e.sh`:MCP 驱动、按无障碍标签找控件(分区条插进电台之后,按位置找会全体
+MCP 驱动、按无障碍标签找控件(分区条插进电台之后,按位置找会全体
 错位),断言走数据库。起播后按「下一首」(心动一批上百首,先从队列页点到队尾)直到队列剩
 最后一首,判据三条:`play_events` 多了一行、这台设备队列最新一版的条目数涨了、那一版里
 每一首开电台之前都不在该账号的 `play_events` 里。
@@ -291,7 +161,7 @@ test/radio-e2e.sh dry      # 选得窄到续不出,界面要出「按当前筛�
 `lyric_kind` 是 lyric / translated(`CHIPS` 不是默认的「有歌词」时只列出来不判)。
 `dry` 的判据是横幅出了那句提示、队列没涨;`CHIPS` 不够窄居然续上了就退 3,换更窄的再跑。
 
-前提比 `pick-e2e.sh` 多一条:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
+除了应用起着、已登录、`just server-dev` 与 `osmosis-pg` 在跑,还要:bang-dream 要是带 `GetPersonalFm` / `GetIntelligenceList`
 的那一版,网易云要绑着。
 
 ## stale-group-e2e.sh —— 挂在旧组上还能点歌、还能建组吗(#165)
@@ -326,7 +196,7 @@ radio 与 outlets 走 HTTP:拿 `.env` 的 `TEST_USERNAME` / `TEST_PASSWORD` 登�
 
 ## pick-bench.py —— 点一首歌到出声花了多久(#137)
 
-前提同 `pick-e2e.sh`。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。
+前提:应用起着(`just desktop-dev` 或 `just mcp-android`)、已登录(`test/mcp-login.sh`),`just server-dev` 与 `osmosis-pg` 在跑。卡顿读数要 `OSMOSIS_STALL`(桌面运行期带上,APK 构建期带上)。
 
 ```sh
 osmosis-desktop 2>&1 | test/pick-bench.py stamp > app.log     # 桌面日志每行加 epoch 秒
@@ -350,20 +220,6 @@ test/pick-bench.py report --picks list.jsonl --log app.log [--clock-offset 秒]
 - **队列槽满了**。`队列数到上限了` 时发布当场 409,大队列那组等于没发布,数字偏低。
 - **本机还在组里**。在组里点歌改的是组的全局状态,出声的是组里的出声设备;要量本机
   自己的起播,先按横幅上的「退出」回到独奏(#142)。
-
-## views-e2e.py —— 进「我喜欢的」时别的视图的歌冒不冒出来(#137 ④)
-
-```sh
-test/views-e2e.py --port 8091 --out views.jsonl                 # 桌面
-test/views-e2e.py --port 8090 --out views.jsonl --steps enter,aba   # 小米
-```
-
-三步:先记下每日推荐那一批再进我的歌单 → 我喜欢的(`enter`);我喜欢的 → 另一个歌单 →
-我喜欢的、中间不等加载(`aba`);设置页退出、`mcp-login.sh` 登回来再进(`relogin`)。
-每一步最后一次点击之后连续采样列表前几行的无障碍标签(曲目行的标签就是歌名),判据是
-每次采样要么是加载态的空列表,要么每一首都属于收尾时那一批 —— 一次越界就失败。
-不点任何一首歌,不出声。首启无缓存与有缓存各跑一遍:前者用全新的状态目录(安卓是
-清掉应用数据),后者原样重启。
 
 ## playlist-fill-e2e.sh —— 歌单页铺满了吗
 

@@ -437,19 +437,6 @@ mcp-android: local-backend-up android-not-production mcp-forward android-reverse
     {{just_executable()}} dev-adb install -r {{apk}}
     {{just_executable()}} dev-adb shell am start -n io.github.osmosis/.MainActivity
 
-# test/mcp-e2e 的 pytest 用例(见 test/README.md)。不带参数跑整个目录,带参数是 pytest 节点,
-# 如 `just mcp-e2e 'test/mcp-e2e/test_scenarios.py::test_pick[list]'`。
-# 先按 desktop-dev 的构建指纹编桌面与 server:夹具起的是 target/debug 里那份,不先编就验到旧二进制。
-[group('mcp')]
-[positional-arguments]
-mcp-e2e *tests:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    nix-shell slint.nix --run 'env -u OSMOSIS_API_BASE SLINT_EMIT_DEBUG_INFO=1 SLINT_LIVE_PREVIEW=1 cargo build --locked -p app-desktop --features mcp,slint/live-preview'
-    cargo build --locked -p server
-    [[ $# -gt 0 ]] || set -- test/mcp-e2e
-    uv run --project test/mcp-e2e pytest "$@" --mcp-artifacts "${MCP_ARTIFACTS:-test/mcp-e2e/results/artifacts}"
-
 # 杀掉所有跑着的桌面实例。三处静默失败等着:
 #
 # 1. 进程名是 `osmosis-desktop`([[bin]] name),不是包名 `app-desktop`。拿包名去
