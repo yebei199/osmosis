@@ -21,6 +21,8 @@ api_base := env('OSMOSIS_API_BASE', "https://music.cryptorust.uk")
 # debug 构建连的本机后端,即 crates/api 里 base_url() 的缺省值。只给 local-backend-up 探活用,
 # 不往构建里传:dev 配方反而要把 OSMOSIS_API_BASE 清掉(env -u),见 desktop-dev。
 local_api := "http://127.0.0.1:3000"
+# 带网易云凭据的那份 bang-dream;~/RustroverProjects/bang-dream 那份没有 data/,起来了也取不到歌。
+bang_dream_repo := env('BANG_DREAM_REPO', home_directory() / "projects/bang_dream")
 # 文件系统 socket 跨 Claude 的网络命名空间；父目录只允许当前用户访问。
 pg_state := env('XDG_STATE_HOME', home_directory() / ".local/state") / "osmosis-postgres"
 pg_socket := pg_state / "socket"
@@ -231,14 +233,47 @@ rustfs:
 server-dev: pg
     DATABASE_URL="${DATABASE_URL:-{{pg_url}}}" cargo run -p server
 
+# 一条命令起整套本地开发:bang-dream、服务端(连带 Postgres)、桌面端开到真实窗口。
+# 已在应答的后端不重起;后端日志写到 target/dev-logs/,终端里只留桌面端。Ctrl-C 一起收掉。
+# 先等服务端应答再编桌面端:两个 cargo 构建不并行(本机一次只跑一个构建)。
+# 给人用的入口 —— 会开到真实显示上,AI 会话里用 `just desktop-dev`(无头)。
+[group('三端')]
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    logs=target/dev-logs
+    mkdir -p "$logs"
+    # 收整个进程组:`go run` 不保证把信号转给它起的 bang-dream,只杀直接子进程会留孤儿。
+    # 进来之前就在跑的后端不在这个组里,不受影响。
+    trap 'trap - EXIT; kill 0 2>/dev/null' EXIT
+    if ! (exec 3<>/dev/tcp/127.0.0.1/50051) 2>/dev/null; then
+        just bang-dream > "$logs/bang-dream.log" 2>&1 &
+        echo "bang-dream 已在后台起,日志 $logs/bang-dream.log"
+    fi
+    if ! curl -sf -o /dev/null --max-time 2 {{local_api}}/health; then
+        just server-dev > "$logs/server.log" 2>&1 &
+        server=$!
+        echo "服务端在后台编译、启动,日志 $logs/server.log"
+        until curl -sf -o /dev/null --max-time 2 {{local_api}}/health; do
+            if ! kill -0 "$server" 2>/dev/null; then
+                echo "服务端没起来,日志最后几行:" >&2
+                tail -n 20 "$logs/server.log" >&2
+                exit 1
+            fi
+            sleep 2
+        done
+    fi
+    echo "后端就绪,起桌面端"
+    OSMOSIS_SHOW_WINDOW=1 just desktop-dev
+
 # 起 bang-dream 音乐聚合层(gRPC,127.0.0.1:50051)。server-dev 依赖它。
-# 它是独立仓库,自己 clone 一份,位置用 BANG_DREAM_REPO 指出,默认为同级目录。
+# 它是独立仓库,位置用 BANG_DREAM_REPO 指出,默认是带网易云凭据(data/credentials)的那份。
 #
 # 在 Claude 的隔离网络里(只有回环网卡、唯一出口是代理)自动打开 bang-dream 的
 # BANG_DREAM_NETEASE_PROXY:它默认直连网易、自己发 UDP DNS,那里一个请求都发不出去。
 # 判据是当前网络命名空间就是 claude-network 记下的那一个;普通终端里行为不变。
 [group('服务端')]
-bang-dream repo=env('BANG_DREAM_REPO', '../bang-dream'):
+bang-dream repo=bang_dream_repo:
     #!/usr/bin/env bash
     set -euo pipefail
     ns_file="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-network/namespace.json"
@@ -250,7 +285,7 @@ bang-dream repo=env('BANG_DREAM_REPO', '../bang-dream'):
 # 网易云扫码登录,凭据写进 bang-dream 的 data/credentials.json。
 # 登录态是全服务一份的,登一次就够,过期了再来
 [group('服务端')]
-bang-dream-login repo=env('BANG_DREAM_REPO', '../bang-dream'):
+bang-dream-login repo=bang_dream_repo:
     cd {{repo}} && go run ./cmd/qrlogin
 
 # 把一个已发布的 release 推到所有设备:pc3 编 APK 并补进 Release 资产、覆盖安装到
@@ -343,9 +378,10 @@ local-backend-up:
     set -euo pipefail
     if curl -sf -o /dev/null --max-time 2 {{local_api}}/health; then exit 0; fi
     echo "{{local_api}} 上没有 server 在应答,拒绝构建 —— debug 包连的就是它,起来了也点不了歌。" >&2
-    echo "按顺序起(各占一个终端):" >&2
+    echo "一条命令起整套(后端 + 桌面端开窗口):just dev" >&2
+    echo "或者按顺序分开起(各占一个终端):" >&2
     echo "  just bang-dream     # gRPC 聚合层,127.0.0.1:50051。仓库位置取 BANG_DREAM_REPO," >&2
-    echo "                      # 当前 ${BANG_DREAM_REPO:-未设,默认 ../bang-dream};要指向带 data/credentials 的那份 checkout" >&2
+    echo "                      # 当前 {{bang_dream_repo}};要指向带 data/credentials 的那份 checkout" >&2
     echo "  just server-dev     # 连带起 Postgres 容器,监听 3000" >&2
     exit 1
 
