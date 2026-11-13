@@ -75,7 +75,7 @@ tempfile = "3"
 # 而是回一句"格式无法识别",指向完全错误的方向。
 # 不开 recording(要 rtrb)、不开 dither(要 rand),播放用不上。
 # 缺 m4a/aac:网易云个别档位会给,到时候加 "mp4"。
-rodio = { version = "0.22", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "flac", "wav"] }
 stream-download = { version = "0.24", default-features = false, features = ["http", "temp-storage"] }
 
 # bevy 只用来做离屏 3D 渲染,共享 Slint 的 wgpu-29 device。

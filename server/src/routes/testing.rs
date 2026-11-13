@@ -132,11 +132,11 @@ async fn sweep_stale_runs(conn: &mut sqlx::PgConnection) {
         ("platform_tracks", "track_id"),
         ("stored_tracks", "track_id"),
     ] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} \
              WHERE {column} ~ '^t[0-9]+p[0-9]+-' \
                AND substring({column} from '^t([0-9]+)p')::bigint < $1"
-        ))
+        )))
         .bind(i64::try_from(cutoff).expect("时间戳越界"))
         .execute(&mut *conn)
         .await

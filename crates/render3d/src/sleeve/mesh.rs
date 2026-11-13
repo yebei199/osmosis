@@ -190,8 +190,10 @@ pub(crate) fn mirrored(source: Vertices) -> Vertices {
         uvs: source.uvs,
         indices: source
             .indices
-            .chunks_exact(3)
-            .flat_map(|t| [t[0], t[2], t[1]])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[a, b, c]| [a, c, b])
             .collect(),
     }
 }

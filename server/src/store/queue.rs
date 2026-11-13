@@ -790,7 +790,7 @@ async fn reclaim_orphans(
     tx: &mut Tx<'_>,
     account_id: i64,
 ) -> Result<(), AppError> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM play_queues
          WHERE id IN (
              SELECT q.id FROM play_queues q
@@ -807,7 +807,7 @@ async fn reclaim_orphans(
              ORDER BY q.updated_at
              LIMIT {CLEANUP_BATCH}
          )"
-    ))
+    )))
     .bind(account_id)
     .execute(&mut **tx)
     .await?;

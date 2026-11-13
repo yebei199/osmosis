@@ -165,12 +165,25 @@ fn verify(
     expected: &str,
 ) -> Result<(), String> {
     use sha2::Digest as _;
+    use std::io::Read as _;
 
+    // digest 0.11 起哈希器不再实现 io::Write,按块喂。
     let actual =
         std::fs::File::open(path).and_then(|mut file| {
             let mut hasher = sha2::Sha256::new();
-            std::io::copy(&mut file, &mut hasher)?;
-            Ok(format!("{:x}", hasher.finalize()))
+            let mut buf = [0_u8; 64 * 1024];
+            loop {
+                let n = file.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+            Ok(hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>())
         });
     let why = match actual {
         Ok(actual) if actual == expected => return Ok(()),

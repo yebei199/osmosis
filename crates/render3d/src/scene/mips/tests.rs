@@ -75,7 +75,9 @@ fn each_level_averages_the_one_above() {
 fn a_flat_image_stays_flat_at_every_level() {
     let pixel = [200, 17, 99, 255];
     let (data, _) = with_mips(37, 21, &flat(37, 21, pixel));
-    for chunk in data.chunks_exact(4) {
-        assert_eq!(chunk, &pixel[..]);
+    let (chunks, rest) = data.as_chunks::<4>();
+    assert!(rest.is_empty());
+    for chunk in chunks {
+        assert_eq!(chunk, &pixel);
     }
 }

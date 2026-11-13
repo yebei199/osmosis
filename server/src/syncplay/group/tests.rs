@@ -891,10 +891,12 @@ mod persistence {
             std::process::id()
         );
         assert!(schema.len() <= 63, "schema不得被PG截断");
-        sqlx::query(&format!("CREATE SCHEMA {schema}"))
-            .execute(&admin)
-            .await
-            .expect("创建本次独有schema");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema}"
+        )))
+        .execute(&admin)
+        .await
+        .expect("创建本次独有schema");
         let pool = PgPoolOptions::new()
             .max_connections(3)
             .connect_lazy_with(options.options([(
@@ -916,8 +918,8 @@ mod persistence {
         .catch_unwind()
         .await;
         pool.close().await;
-        let cleaned = sqlx::query(&format!(
-            "DROP SCHEMA {schema} CASCADE"
+        let cleaned = sqlx::query(sqlx::AssertSqlSafe(
+            format!("DROP SCHEMA {schema} CASCADE"),
         ))
         .execute(&admin)
         .await;

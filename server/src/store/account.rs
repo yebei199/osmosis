@@ -8,10 +8,6 @@
 
 use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::{
-        SaltString,
-        rand_core::{OsRng, RngCore},
-    },
 };
 use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
@@ -181,10 +177,9 @@ pub async fn logout(
 fn hash_password(
     password: &str,
 ) -> Result<String, AppError> {
-    let salt = SaltString::generate(&mut OsRng);
-
+    // 盐由 argon2 从系统随机源现取(password-hash 0.6 起的默认做法)。
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|_| AppError::Invalid("密码无法哈希"))
 }
@@ -202,7 +197,8 @@ fn verify_password(password: &str, stored: &str) -> bool {
 /// 生成一个新的会话 token,十六进制。
 fn new_token() -> String {
     let mut bytes = [0_u8; TOKEN_BYTES];
-    OsRng.fill_bytes(&mut bytes);
+    // 与旧的 OsRng::fill_bytes 一样:系统随机源坏了就没有安全的 token 可发。
+    getrandom::fill(&mut bytes).expect("系统随机源不可用");
 
     to_hex(&bytes)
 }

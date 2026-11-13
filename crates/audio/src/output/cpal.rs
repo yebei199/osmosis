@@ -44,33 +44,28 @@ impl ErrorBurst {
     /// 和真实 cpal 回调共用的错误入口；成功块编号用于打断错误串。
     fn record(
         &mut self,
-        error: ::cpal::StreamError,
+        error: ::cpal::Error,
         shared: &SyncShared,
         broken: &AtomicBool,
         now: i64,
         block: u64,
     ) {
-        if matches!(
-            error,
-            ::cpal::StreamError::BufferUnderrun
-        ) {
+        let kind = error.kind();
+        if kind == ::cpal::ErrorKind::Xrun {
             self.count = 0;
             shared.underrun(now);
             return;
         }
         shared.other_error();
         if matches!(
-            error,
-            ::cpal::StreamError::DeviceNotAvailable
-                | ::cpal::StreamError::StreamInvalidated
+            kind,
+            ::cpal::ErrorKind::DeviceNotAvailable
+                | ::cpal::ErrorKind::StreamInvalidated
         ) {
             broken.store(true, Ordering::Relaxed);
             return;
         }
-        if matches!(
-            error,
-            ::cpal::StreamError::BackendSpecific { .. }
-        ) {
+        if kind == ::cpal::ErrorKind::BackendError {
             if self.count == 0
                 || block != self.block
                 || now.saturating_sub(self.since)
@@ -206,7 +201,7 @@ fn start(
     let mut burst = ErrorBurst::default();
     let stream = device
         .build_output_stream(
-            config,
+            *config,
             move |data: &mut [f32], info: &::cpal::OutputCallbackInfo| {
                 if reported.load(Ordering::Relaxed) == TID_UNKNOWN {
                     // SAFETY: 无参数，只读本线程的线程号;只在第一块调一次
@@ -220,8 +215,8 @@ fn start(
                 // 也不在回调里报错。
                 let delay = ts
                     .playback
-                    .duration_since(&ts.callback)
-                    .map_or(0, |d| d.as_nanos() as i64);
+                    .duration_since(ts.callback)
+                    .as_nanos() as i64;
                 let frames = data.len() as u64 / channels;
                 shared.block(now + delay, frames);
                 if !fill(&source, data) {
@@ -311,13 +306,11 @@ mod tests {
     use similar_asserts::assert_eq;
 
     /// 使用真正的 cpal 后端错误类型复现 POLLERR 回调。
-    fn pollerr() -> ::cpal::StreamError {
-        ::cpal::StreamError::BackendSpecific {
-            err: ::cpal::BackendSpecificError {
-                description:
-                    "alsa::poll() returned POLLERR".into(),
-            },
-        }
+    fn pollerr() -> ::cpal::Error {
+        ::cpal::Error::with_message(
+            ::cpal::ErrorKind::BackendError,
+            "alsa::poll() returned POLLERR",
+        )
     }
 
     /// 同一秒内持续报错必须标坏；偶发单次和 xrun 保持现有行为。
@@ -347,7 +340,7 @@ mod tests {
         broken.store(false, Ordering::Relaxed);
         for _ in 0..100 {
             burst.record(
-                ::cpal::StreamError::BufferUnderrun,
+                ::cpal::ErrorKind::Xrun.into(),
                 &shared,
                 &broken,
                 10_000_000,
@@ -390,7 +383,7 @@ mod tests {
         assert!(!broken.load(Ordering::Relaxed));
         for _ in 0..20 {
             burst.record(
-                ::cpal::StreamError::BufferUnderrun,
+                ::cpal::ErrorKind::Xrun.into(),
                 &shared,
                 &broken,
                 22_000_000_000,
@@ -413,8 +406,8 @@ mod tests {
     #[test]
     fn invalid_devices_still_request_immediate_reopen() {
         for error in [
-            ::cpal::StreamError::DeviceNotAvailable,
-            ::cpal::StreamError::StreamInvalidated,
+            ::cpal::ErrorKind::DeviceNotAvailable.into(),
+            ::cpal::ErrorKind::StreamInvalidated.into(),
         ] {
             let shared = SyncShared::new();
             let broken = AtomicBool::new(false);

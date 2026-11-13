@@ -1,0 +1,140 @@
+{
+  "rust:argon2": {
+    "version": "0.6.0",
+    "verdict": "upgrade",
+    "reason": "RustCrypto 新一代,改动小",
+    "date": "2026-11-13"
+  },
+  "rust:bevy": {
+    "version": "0.20.1",
+    "verdict": "decline",
+    "reason": "要等 slint fork 跟上 bevy 0.20 的 wgpu 版本,共享 device 必须同版本",
+    "date": "2026-11-13"
+  },
+  "rust:cpal": {
+    "version": "0.18.2",
+    "verdict": "upgrade",
+    "reason": "音频栈单独做一笔,要真机听",
+    "date": "2026-11-13"
+  },
+  "rust:libc": {
+    "version": "0.2.191",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:log": {
+    "version": "0.4.35",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:prost": {
+    "version": "0.14.6",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:reqwest": {
+    "version": "0.13.5",
+    "verdict": "decline",
+    "reason": "0.13 的 rustls 强制 aws-lc 与 rustls-platform-verifier,安卓要 JNI 胶水;我们刻意用 ring+webpki 根,换来的新功能用不上",
+    "date": "2026-11-13"
+  },
+  "rust:rodio": {
+    "version": "0.23.0",
+    "verdict": "upgrade",
+    "reason": "音频栈单独做一笔,要真机听",
+    "date": "2026-11-13"
+  },
+  "rust:rusqlite": {
+    "version": "0.42.0",
+    "verdict": "decline",
+    "reason": "sqlx 锁 libsqlite3-sys <0.38,同锁文件 links 冲突;先停 0.39,sqlx 放宽后再升(漏洞登记在 .cargo/audit.toml)",
+    "date": "2026-11-13"
+  },
+  "rust:rusty-s3": {
+    "version": "0.11.0",
+    "verdict": "upgrade",
+    "reason": "改动小",
+    "date": "2026-11-13"
+  },
+  "rust:serde_json": {
+    "version": "1.0.154",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:sha2": {
+    "version": "0.11.1",
+    "verdict": "upgrade",
+    "reason": "RustCrypto 新一代,改动小",
+    "date": "2026-11-13"
+  },
+  "rust:sqlx": {
+    "version": "0.9.0",
+    "verdict": "upgrade",
+    "reason": "跟上主线,服务端查询单独做一笔",
+    "date": "2026-11-13"
+  },
+  "rust:stream-download": {
+    "version": "0.24.5",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tokio": {
+    "version": "1.54.1",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tokio-tungstenite": {
+    "version": "0.30.0",
+    "verdict": "decline",
+    "reason": "跟 axum 用同一版(axum 0.8 带 0.29),升了编两份",
+    "date": "2026-11-13"
+  },
+  "rust:tokio-util": {
+    "version": "0.7.20",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tonic": {
+    "version": "0.14.9",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tonic-prost": {
+    "version": "0.14.9",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tonic-prost-build": {
+    "version": "0.14.9",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:tower-http": {
+    "version": "0.7.1",
+    "verdict": "decline",
+    "reason": "reqwest 0.12 带 tower-http 0.6,升了 server 编两份;随 reqwest 一起升",
+    "date": "2026-11-13"
+  },
+  "rust:unicode-normalization": {
+    "version": "0.1.26",
+    "verdict": "upgrade",
+    "reason": "兼容升级;tokio 顺带修 unsound 公告",
+    "date": "2026-11-13"
+  },
+  "rust:zbus": {
+    "version": "6.2.1",
+    "verdict": "decline",
+    "reason": "i-slint-backend-winit 拉 zbus 5,升 6 会编两份;等 slint 换 6 再跟",
+    "date": "2026-11-13"
+  }
+}

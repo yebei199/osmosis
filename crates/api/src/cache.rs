@@ -76,7 +76,9 @@ impl Cache {
             tx.pragma_update(
                 None,
                 "user_version",
-                done + 1,
+                // rusqlite 0.39 起 usize 不再是 ToSql;迁移条数远小于 i64 上限。
+                i64::try_from(done + 1)
+                    .map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;

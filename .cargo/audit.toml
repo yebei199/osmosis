@@ -16,4 +16,10 @@ ignore = [
     # Wayland 协议 XML,不是运行期外部输入 —— 攻击面在这里不存在。
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+
+    # RUSTSEC-2026-0459 libsqlite3-sys 打包的 SQLite <3.54 读到未初始化页缓存,修复在 0.39(rusqlite 0.41+)。
+    # sqlx 0.8/0.9/main 都锁 libsqlite3-sys <0.38,它的 sqlite 部分不编译,却照样进锁文件、按 links 卡住
+    # rusqlite,只能停在 0.39。触发要往应用私有状态目录放一对构造好的库文件与 -wal,能写那里已无需此洞。
+    # sqlx 放宽范围后升 rusqlite 并删此行(2026-11-13 用户定)。
+    "RUSTSEC-2026-0459",
 ]

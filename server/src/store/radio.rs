@@ -58,14 +58,14 @@ pub async fn list(
     account_id: i64,
 ) -> Result<Vec<Entry>, AppError> {
     let rows: Vec<(String, String, bool)> =
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT r.platform, r.track_id, {heard}
              FROM radio_tracks AS r
              WHERE r.account_id = $1 AND NOT {liked}
              ORDER BY r.id",
             heard = history::heard_sql("r"),
             liked = liked::of_account_sql("r"),
-        ))
+        )))
         .bind(account_id)
         .fetch_all(conn)
         .await?;
@@ -85,7 +85,7 @@ pub async fn unheard_total(
     conn: &mut PgConnection,
     account_id: i64,
 ) -> Result<usize, AppError> {
-    let total: i64 = sqlx::query_scalar(&format!(
+    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT count(*) FROM (
              SELECT account_id, platform, track_id FROM radio_tracks
              UNION
@@ -94,7 +94,7 @@ pub async fn unheard_total(
          WHERE m.account_id = $1 AND NOT {liked} AND NOT {heard}",
         heard = history::heard_sql("m"),
         liked = liked::of_account_sql("m"),
-    ))
+    )))
     .bind(account_id)
     .fetch_one(conn)
     .await?;

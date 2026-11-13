@@ -29,7 +29,7 @@ tower-service = "0.3"
 
 # 自己开声卡流(见 src/output):rodio 的设备把 cpal 回调里的时间戳丢了,而同步播放
 # 要的正是它(#137 ⑤)。与 rodio 用的是同一个 cpal,不多一份。
-cpal = "0.17"
+cpal = "0.18"
 # CLOCK_MONOTONIC 的原始读数:AAudio 的时间戳用的就是这个钟,`Instant` 不给出纪元。
 libc = "0.2"
 

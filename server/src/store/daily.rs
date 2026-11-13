@@ -32,7 +32,7 @@ pub async fn add(
         })
         .unzip();
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO daily_picks (account_id, platform, track_id, day)
          SELECT $1, platform, track_id, {TODAY}
          FROM unnest($2::text[], $3::text[]) WITH ORDINALITY
@@ -41,7 +41,7 @@ pub async fn add(
          ON CONFLICT (account_id, platform, track_id)
          DO UPDATE SET day = EXCLUDED.day, id = EXCLUDED.id
          WHERE daily_picks.day <> EXCLUDED.day"
-    ))
+    )))
     .bind(account_id)
     .bind(platforms)
     .bind(ids)
@@ -56,12 +56,12 @@ pub async fn has_today(
     conn: &mut PgConnection,
     account_id: i64,
 ) -> Result<bool, AppError> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS (
              SELECT 1 FROM daily_picks
              WHERE account_id = $1 AND day = {TODAY}
          )"
-    ))
+    )))
     .bind(account_id)
     .fetch_one(conn)
     .await?)
@@ -73,14 +73,14 @@ pub async fn list(
     account_id: i64,
 ) -> Result<Vec<Entry>, AppError> {
     let rows: Vec<(String, String, bool, String)> =
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT d.platform, d.track_id, {heard}, d.day::text
              FROM daily_picks AS d
              WHERE d.account_id = $1 AND NOT {liked}
              ORDER BY d.day DESC, d.id",
             heard = history::heard_sql("d"),
             liked = liked::of_account_sql("d"),
-        ))
+        )))
         .bind(account_id)
         .fetch_all(conn)
         .await?;

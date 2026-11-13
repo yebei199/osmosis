@@ -37,10 +37,10 @@ pub async fn find(
     track_id: &str,
     quality: &str,
 ) -> Result<Option<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM stored_tracks
          WHERE platform = $1 AND track_id = $2 AND quality = $3"
-    ))
+    )))
     .bind(platform)
     .bind(track_id)
     .bind(quality)
@@ -206,10 +206,10 @@ pub async fn expired(
     conn: &mut PgConnection,
     quality: &str,
 ) -> Result<Vec<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM stored_tracks WHERE {}",
         expired_sql()
-    ))
+    )))
     .bind(quality)
     .fetch_all(conn)
     .await?)
@@ -224,7 +224,7 @@ pub async fn copy_unliked_by_others(
     track_id: &str,
     quality: &str,
 ) -> Result<Option<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM stored_tracks
          WHERE platform = $1 AND track_id = $2 AND quality = $3
            AND NOT EXISTS (
@@ -234,7 +234,7 @@ pub async fn copy_unliked_by_others(
                  AND lt.platform = $1 AND lt.track_id = $2
            )",
         liked = liked::SYSTEM,
-    ))
+    )))
     .bind(platform)
     .bind(track_id)
     .bind(quality)
@@ -247,7 +247,7 @@ pub async fn copy_unliked_by_others(
 pub async fn pool(
     conn: &mut PgConnection,
 ) -> Result<Vec<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM stored_tracks
          WHERE NOT {liked} AND {pool}
          ORDER BY stored_at, track_id",
@@ -259,7 +259,7 @@ pub async fn pool(
             "stored_tracks.platform",
             "stored_tracks.track_id"
         ),
-    ))
+    )))
     .fetch_all(conn)
     .await?)
 }
@@ -273,11 +273,11 @@ pub async fn forget_if_expired(
     track: &StoredTrack,
     quality: &str,
 ) -> Result<(), AppError> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "DELETE FROM stored_tracks
          WHERE platform = $2 AND track_id = $3 AND quality = $4 AND {}",
         expired_sql()
-    ))
+    )))
     .bind(quality)
     .bind(&track.platform)
     .bind(&track.track_id)
@@ -294,10 +294,10 @@ pub async fn rank(
     platform: &str,
     track_id: &str,
 ) -> Result<i32, AppError> {
-    Ok(sqlx::query_scalar(&format!(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {}",
         rank_sql("$1", "$2")
-    ))
+    )))
     .bind(platform)
     .bind(track_id)
     .fetch_one(conn)
@@ -309,7 +309,7 @@ pub async fn yielding_to(
     conn: &mut PgConnection,
     rank: i32,
 ) -> Result<Vec<StoredTrack>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM (
              SELECT *, {rank_of} AS rank FROM stored_tracks
          ) AS ranked
@@ -319,7 +319,7 @@ pub async fn yielding_to(
             "stored_tracks.platform",
             "stored_tracks.track_id"
         ),
-    ))
+    )))
     .bind(rank)
     .fetch_all(conn)
     .await?)

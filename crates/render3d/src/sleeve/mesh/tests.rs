@@ -37,9 +37,8 @@ fn assert_well_formed(v: &Vertices, what: &str) {
 /// 背面剔除照常开着,绕序错一处就是一块面在屏幕上消失;倒影那份是镜像出来的,
 /// 镜像会把绕序翻过来,这条同时守着「翻回去」那一步。
 fn assert_faces_outward(v: &Vertices, what: &str) {
-    for t in v.indices.chunks_exact(3) {
-        let [a, b, c] = [t[0], t[1], t[2]]
-            .map(|i| v.positions[i as usize]);
+    for t in v.indices.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|i| v.positions[i as usize]);
         let face = cross(sub(b, a), sub(c, a));
         if dot(face, face) < 1e-14 {
             // 圆角极小处的退化三角形没有方向可言。

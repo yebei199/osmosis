@@ -81,13 +81,13 @@ pub async fn enqueue(
         })
         .unzip();
 
-    Ok(sqlx::query(&format!(
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO prefetch_jobs (platform, track_id, account_id)
          SELECT DISTINCT t.platform, t.track_id, $2::bigint
          FROM unnest($3::text[], $4::text[]) AS t (platform, track_id)
          WHERE {NOT_STORED}
          {REQUEUE}"
-    ))
+    )))
     .bind(quality)
     .bind(account_id)
     .bind(platforms)
@@ -105,7 +105,7 @@ pub async fn enqueue_all_liked(
     conn: &mut PgConnection,
     quality: &str,
 ) -> Result<u64, AppError> {
-    Ok(sqlx::query(&format!(
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO prefetch_jobs (platform, track_id, account_id)
          SELECT DISTINCT ON (t.platform, t.track_id)
                 t.platform, t.track_id, p.account_id
@@ -114,7 +114,7 @@ pub async fn enqueue_all_liked(
          WHERE p.system = $2 AND {NOT_STORED}
          ORDER BY t.platform, t.track_id, p.account_id
          {REQUEUE}"
-    ))
+    )))
     .bind(quality)
     .bind(crate::store::liked::SYSTEM)
     .execute(conn)
@@ -135,7 +135,7 @@ pub async fn claim(
     platform: &str,
     lease: Duration,
 ) -> Result<Option<Job>, AppError> {
-    Ok(sqlx::query_as(&format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE prefetch_jobs
          SET run_after = now() + $1::bigint * interval '1 second',
              attempts = attempts + 1
@@ -159,7 +159,7 @@ pub async fn claim(
          RETURNING platform, track_id, account_id, attempts",
         heard_daily = history::heard_sql("d"),
         heard_radio = history::heard_sql("r"),
-    ))
+    )))
     .bind(seconds(lease))
     .bind(platform)
     .fetch_optional(conn)

@@ -91,7 +91,7 @@ pub async fn fill(
         })
         .unzip();
 
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH asked AS (
              SELECT DISTINCT platform, track_id
              FROM unnest($2::text[], $3::text[]) AS a (platform, track_id)
@@ -136,7 +136,7 @@ pub async fn fill(
          LEFT JOIN track_feedback f
            ON f.account_id = $1
           AND f.platform = a.platform AND f.track_id = a.track_id",
-    ))
+    )))
     .bind(account_id)
     .bind(platforms)
     .bind(ids)
@@ -178,7 +178,7 @@ pub async fn top_scored(
     account_id: i64,
     limit: usize,
 ) -> Result<Vec<TrackRef>, AppError> {
-    let rows: Vec<Scored> = sqlx::query_as(&format!(
+    let rows: Vec<Scored> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "WITH asked AS (
              SELECT lt.platform, lt.track_id
              FROM local_playlist_tracks lt
@@ -206,7 +206,7 @@ pub async fn top_scored(
          LEFT JOIN track_feedback f
            ON f.account_id = $1
           AND f.platform = a.platform AND f.track_id = a.track_id",
-    ))
+    )))
     .bind(account_id)
     .bind(liked::SYSTEM)
     .fetch_all(conn)

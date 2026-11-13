@@ -36,9 +36,9 @@ pub async fn load(
     conn: &mut PgConnection,
     account_id: i64,
 ) -> Result<Option<Group>, AppError> {
-    let row: Option<Row> = sqlx::query_as(&format!(
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM play_groups WHERE account_id = $1"
-    ))
+    )))
     .bind(account_id)
     .fetch_optional(conn)
     .await?;
@@ -65,13 +65,14 @@ pub async fn lock(
     .bind(account_id)
     .execute(&mut **tx)
     .await?;
-    let row: Row = sqlx::query_as(&format!(
-        "SELECT {COLUMNS} FROM play_groups
+    let row: Row =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM play_groups
          WHERE account_id = $1 FOR UPDATE"
-    ))
-    .bind(account_id)
-    .fetch_one(&mut **tx)
-    .await?;
+        )))
+        .bind(account_id)
+        .fetch_one(&mut **tx)
+        .await?;
     let incomplete = (row.3.is_some()
         || row.4.is_some()
         || row.5.is_some())
