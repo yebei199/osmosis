@@ -4,6 +4,11 @@
 「进两台相机、白拿遮挡设施」随遮挡层删除而失效([`0041`](0041-the-cover-as-an-object-is-the-default-effect.md))。
 「一个 mesh、一个自定义材质」不变。相关 issue:#22。
 
+下文的「183×183」「三万多颗」「顶点缓冲固定」都已过时:网格早降到封面 96×96(见 `cloud.rs` 的
+`CLOUD_GRID`),2026-11-13 起封面之外再按视口铺一圈同格距的方块,网格大小随视口长宽比与版式变,
+视口变了且稳住才重烘一次([`0041`](0041-the-cover-as-an-object-is-the-default-effect.md) 第六节)。
+仍是一个 mesh、一次 draw call,CPU 平帧仍只换 uniform。
+
 ## 背景
 
 播放页的可视化主体换成**封面点云**(见 `CONTEXT.md`):封面按网格采样成三万多颗

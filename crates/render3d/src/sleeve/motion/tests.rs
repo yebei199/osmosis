@@ -8,7 +8,7 @@ const FRAME: f32 = 1.0 / 60.0;
 #[test]
 fn idle_breathing_stays_within_a_few_degrees() {
     for step in 0..2000 {
-        let (pitch, yaw) = idle(step as f32 * 0.1);
+        let (pitch, yaw) = idle(step as f32 * 0.1, 1.0);
         assert!(yaw.abs() <= IDLE_YAW + 1e-6);
         assert!(pitch.abs() <= IDLE_PITCH + 1e-6);
     }
@@ -17,9 +17,22 @@ fn idle_breathing_stays_within_a_few_degrees() {
 /// 呼吸真的在动 —— 一个恒为零的 `idle` 会让上面那条照样全绿。
 #[test]
 fn idle_breathing_moves() {
-    let a = idle(0.0);
-    let b = idle(IDLE_YAW_PERIOD / 4.0);
+    let a = idle(0.0, 1.0);
+    let b = idle(IDLE_YAW_PERIOD / 4.0, 1.0);
     assert!((a.1 - b.1).abs() > IDLE_YAW * 0.5);
+}
+
+/// 摆幅倍数只放大幅度、不改相位:同一时刻两档的角度成比例 ——
+/// 响度涨落时姿态是平滑放大的,不会跳到另一处。
+#[test]
+fn idle_amplitude_scales_without_shifting_the_phase() {
+    for step in 0..50 {
+        let t = step as f32 * 0.37;
+        let (p1, y1) = idle(t, 1.0);
+        let (p2, y2) = idle(t, 2.0);
+        assert!((p2 - 2.0 * p1).abs() < 1e-6, "t = {t}");
+        assert!((y2 - 2.0 * y1).abs() < 1e-6, "t = {t}");
+    }
 }
 
 // ── 拖动与回弹 ────────────────────────────────────────────────────

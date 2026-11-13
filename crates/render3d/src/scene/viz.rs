@@ -1,5 +1,6 @@
 //! 可视化每一帧:选效果、装镜头、推进 bevy、等 GPU 落盘、把结果包成一张 slint 图。
 
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 // BSN(next-gen 场景系统,bevy_scene feature)的 bsn! 宏、Scene/SceneList、
 // World::spawn_scene 都已在 bevy::prelude 里,无需额外 use。见 rebuild_content。
@@ -58,7 +59,7 @@ impl Scene {
         }
 
         if !self.cloud_built {
-            self.rebuild_viz_content();
+            self.rebuild_viz_content(compact);
             self.cloud_built = true;
         }
         self.set_effect(Effect::from_index(effect));
@@ -91,6 +92,8 @@ impl Scene {
                     time,
                     delta,
                     bass: levels.bass,
+                    mid: levels.mid,
+                    treble: levels.treble,
                     width: self.size.0,
                     height: self.size.1,
                     compact,
@@ -98,7 +101,8 @@ impl Scene {
             ),
             Effect::Cloud => {
                 self.sleeve.settle(&mut self.app);
-                self.drive_cloud(time, levels);
+                self.refit_cloud(compact);
+                self.drive_cloud(time, levels, compact);
             }
         }
 
@@ -156,13 +160,64 @@ impl Scene {
         }
     }
 
-    /// 点云的一帧:几何一动不动,只换材质那一块 uniform —— 九千多个方块的位移在
+    /// 视口变了、点云的场不再配得上它时,等它稳住再换一份网格(见 `cloud::Refit`)。
+    ///
+    /// 只换 `Mesh3d`:实体、材质、两张封面与换歌过渡都不动,重烘那一帧画面上只是
+    /// 外圈多了或少了几列方块。只在点云露面时看 —— 藏着的时候视口怎么变都不花这份工,
+    /// 切过来后由这里补上。
+    fn refit_cloud(&mut self, compact: bool) {
+        let now = Instant::now();
+        let waited =
+            self.refit_checked.map_or(0.0, |then| {
+                now.duration_since(then).as_secs_f32()
+            });
+        self.refit_checked = Some(now);
+        let need = cloud::Field::for_viewport(
+            self.size.0,
+            self.size.1,
+            compact,
+        );
+        let Some(field) =
+            self.cloud_refit.step(need, waited)
+        else {
+            return;
+        };
+        let mesh = self
+            .app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(cloud::build_cloud_mesh(
+                cloud::cloud_vertices(field),
+            ));
+        self.app
+            .world_mut()
+            .entity_mut(self.root)
+            .insert(Mesh3d(mesh));
+        log::info!(
+            "render3d: 点云场重烘 {}x{} = {} 颗({}x{})",
+            field.columns(),
+            field.rows(),
+            field.cubes(),
+            self.size.0,
+            self.size.1,
+        );
+    }
+
+    /// 点云的一帧:几何一动不动,只换材质那一块 uniform —— 一两万个方块的位移在
     /// 顶点着色器里算(见 docs/adr/0012)。拖动转的是点云自己,不是相机。
     fn drive_cloud(
         &mut self,
         time: f32,
         levels: cloud::Levels,
+        compact: bool,
     ) {
+        // 外圈往视口边淡下去,淡到哪儿由视口在封面 uv 里的四边定;0 尺寸那一帧沿用上次的。
+        let bounds = cloud::Framing::of_viewport(
+            self.size.0,
+            self.size.1,
+            compact,
+        )
+        .map(|window| window.cover_uv());
         let color_mix = self.transition.color_mix();
         let burst = self.transition.burst();
         let object_scale =
@@ -182,6 +237,9 @@ impl Scene {
             material.params.burst = burst;
             // 物体类预设在竖屏会左右出画,按长宽比再收一档(见 cloud.rs)。
             material.params.object_scale = object_scale;
+            if let Some(bounds) = bounds {
+                material.params.bounds = bounds;
+            }
         }
 
         let (pitch, yaw) = self.spin.angles();

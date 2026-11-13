@@ -35,7 +35,7 @@ fn short_spectrum_yields_zero_levels_not_panic() {
 /// 每颗粒子出 24 个顶点、36 个索引(六面各四顶点两三角),总数对得上网格。
 #[test]
 fn every_particle_gets_one_cube() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     let particles = CLOUD_GRID * CLOUD_GRID;
     assert_eq!(
         v.positions.len(),
@@ -51,7 +51,7 @@ fn every_particle_gets_one_cube() {
 /// 面内不一致就得插值,立方体的棱会被抹圆,看着像颗骰子而不是方块。
 #[test]
 fn each_cube_face_carries_one_outward_normal() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     let mut seen = Vec::new();
     for face in 0..6 {
         let base = face * 4;
@@ -95,7 +95,7 @@ fn each_cube_face_carries_one_outward_normal() {
 /// 相邻像素的插值,点云边缘会糊出一圈不属于封面的颜色。
 #[test]
 fn cover_uvs_stay_inside_the_texture() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     // 边界那一格恰好落在 margin 上,而 v 是 `1 - g·texel` 减出来的 ——
     // 减法丢掉几位精度,断言得留容差,否则测的是浮点而不是行为。
     let margin = 0.5 / CLOUD_GRID as f32 - f32::EPSILON;
@@ -113,7 +113,7 @@ fn cover_uvs_stay_inside_the_texture() {
 /// 两者反向,所以 v 必须翻。这条钉的是那一次翻转。
 #[test]
 fn the_cover_is_not_upside_down() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     // 第一行格点(gy=0)在画面最下方,该采到封面的**下**边(v 接近 1)。
     assert!(
         v.uvs[0][1] > 0.99,
@@ -133,7 +133,7 @@ fn the_cover_is_not_upside_down() {
 /// 否则一颗粒子的各个角会被算到不同位置,立方体会被撕开。
 #[test]
 fn one_particle_shares_its_uv_and_random() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     for cube in 0..CLOUD_GRID * CLOUD_GRID {
         let base = cube * CUBE_VERTICES;
         for offset in 1..CUBE_VERTICES {
@@ -162,7 +162,7 @@ fn one_particle_shares_its_uv_and_random() {
 /// 才是八个。
 #[test]
 fn corner_offsets_cover_the_cube() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     for cube in 0..CLOUD_GRID * CLOUD_GRID {
         let base = cube * CUBE_VERTICES;
         let mut seen: Vec<_> = v.corners
@@ -197,7 +197,7 @@ fn corner_offsets_cover_the_cube() {
 /// 基准位铺满点云平面且共面(z=0):x/y 覆盖 ±PLANE_SIZE/2 且不越界。
 #[test]
 fn base_positions_fill_the_plane() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     let half = PLANE_SIZE / 2.0;
     let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
     let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
@@ -235,7 +235,7 @@ fn base_positions_fill_the_plane() {
 /// 索引全部指向存在的顶点 —— 越界索引在 GPU 上是未定义行为,不是报错。
 #[test]
 fn indices_reference_existing_vertices() {
-    let v = cloud_vertices();
+    let v = cloud_vertices(Field::default());
     let count = v.positions.len() as u32;
     for i in &v.indices {
         assert!(
@@ -243,4 +243,92 @@ fn indices_reference_existing_vertices() {
             "索引 {i} 越界(共 {count} 个顶点)"
         );
     }
+}
+
+// ── 铺满视口的外圈 ────────────────────────────────────────────────
+
+/// 一个两边不对称的场(像宽版式那样右边补得多)。
+fn lopsided() -> Field {
+    Field {
+        left: 3,
+        right: 11,
+        bottom: 2,
+        top: 5,
+    }
+}
+
+/// uv 落在封面 0..1 之内的就是封面那一块的方块。
+fn on_cover(uv: [f32; 2]) -> bool {
+    uv.iter().all(|c| (0.0..=1.0).contains(c))
+}
+
+/// 场大了,方块数跟着格数走,每颗还是一个完整的立方体。
+#[test]
+fn a_wider_field_adds_whole_cubes() {
+    let field = lopsided();
+    let v = cloud_vertices(field);
+    assert_eq!(
+        v.positions.len(),
+        field.cubes() * CUBE_VERTICES
+    );
+    assert_eq!(
+        v.indices.len(),
+        field.cubes() * CUBE_INDICES
+    );
+    let count = v.positions.len() as u32;
+    assert!(v.indices.iter().all(|i| *i < count));
+}
+
+/// 封面那一块原封不动:场变大之后,uv 在封面里的那些方块与只有封面时逐颗相同 ——
+/// 同一个基准位、同一个 uv、同一个随机数,顺序也一样。点云在原来那块地方看着不变。
+#[test]
+fn the_cover_square_is_untouched_by_the_field() {
+    let plain = cloud_vertices(Field::default());
+    let wide = cloud_vertices(lopsided());
+    let cubes = |v: &CloudVertices| -> Vec<_> {
+        (0..v.positions.len() / CUBE_VERTICES)
+            .map(|cube| cube * CUBE_VERTICES)
+            .filter(|&at| on_cover(v.uvs[at]))
+            .map(|at| {
+                (
+                    v.positions[at],
+                    v.uvs[at],
+                    v.tangents[at][3],
+                )
+            })
+            .collect()
+    };
+    let inner = cubes(&wide);
+    assert_eq!(inner.len(), CLOUD_GRID * CLOUD_GRID);
+    assert_eq!(inner, cubes(&plain));
+}
+
+/// 外圈与封面同一套格点:相邻两格的间距不变(方块不被拉宽),外圈的 uv 越出 0..1。
+#[test]
+fn the_outer_ring_continues_the_same_lattice() {
+    let field = lopsided();
+    let v = cloud_vertices(field);
+    let step = PLANE_SIZE / (CLOUD_GRID as f32 - 1.0);
+    let first = v.positions[0];
+    let next = v.positions[CUBE_VERTICES];
+    assert!((next[0] - first[0] - step).abs() < 1e-5);
+    // 第一颗在左下角,封面之外。
+    assert!(!on_cover(v.uvs[0]), "{:?}", v.uvs[0]);
+    assert!(
+        (first[0]
+            + PLANE_SIZE * 0.5
+            + field.left as f32 * step)
+            .abs()
+            < 1e-4,
+        "左下角那颗在 {first:?}"
+    );
+    let outer = (0..field.cubes())
+        .filter(|cube| {
+            !on_cover(v.uvs[cube * CUBE_VERTICES])
+        })
+        .count();
+    assert_eq!(
+        outer,
+        field.cubes() - CLOUD_GRID * CLOUD_GRID
+    );
 }

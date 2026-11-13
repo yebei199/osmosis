@@ -73,6 +73,18 @@ pub(crate) fn spawn_camera(
         .id()
 }
 
+/// 主轴离窗口中心偏多少 (x 往左, y 往上),以窗宽 / 窗高为单位:宽版式横移、紧凑版式纵移。
+///
+/// 镜头([`lens`])与点云的场(`cloud::Framing`)都按它算视口框住了哪一块,
+/// 两边不各写一份。
+pub(crate) fn shifts(compact: bool) -> Vec2 {
+    if compact {
+        Vec2::new(0.0, COMPACT_SHIFT)
+    } else {
+        Vec2::new(WIDE_SHIFT, 0.0)
+    }
+}
+
 /// 一台相机的「镜头」:子视图(移轴)与竖直视野。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Lens {
@@ -99,11 +111,10 @@ pub(crate) fn lens(
     height: u32,
     compact: bool,
 ) -> Lens {
-    let (shift_x, shift_y) = if compact {
-        (0.0, COMPACT_SHIFT)
-    } else {
-        (WIDE_SHIFT, 0.0)
-    };
+    let Vec2 {
+        x: shift_x,
+        y: shift_y,
+    } = shifts(compact);
     if width == 0 || height == 0 {
         return Lens {
             sub_view: None,

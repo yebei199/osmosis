@@ -9,6 +9,10 @@
 // 原版的几何是照它那块 4.8 的平面、6.6 的相机半径调的。铺满画面的两档(封面、星河)
 // 按平面倍数搬,物体类三档(滚筒、星球、唱片)按相机距离搬 —— 后者是被取景的一个
 // 物体,按平面倍数放大会大到糊在镜头上。
+//
+// 封面那 96×96 格之外还有一圈铺满视口的方块(cloud/field.rs)。它们的 uv 越出 0..1,
+// 这里认的就是这个:颜色取封面边缘外延、糊过的那一份(`haze`),压暗并往视口边淡下去,
+// 起伏也弱一档 —— 满屏是方块,主体仍是中间那张清楚的封面。
 
 #import bevy_pbr::mesh_functions
 #import bevy_pbr::mesh_view_bindings::view
@@ -37,6 +41,8 @@ struct CloudParams {
     color_mix: f32,
     // 换歌脉冲强度:1 = 刚换,0 = 已归位。
     burst: f32,
+    // 视口在封面 uv 里的四边 (u 左, v 上, u 右, v 下)。封面本身是 0..1。
+    bounds: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CloudParams;
@@ -92,6 +98,47 @@ const RIPPLE_SLOTS: u32 = 12u;
 // 给立方体分面用的固定光向(世界空间,已归一)。偏上偏右前方 —— 顶面最亮、
 // 正面居中、背面与底面压暗,方块的体积就出来了。不是物理光照,只是分面。
 const CUBE_LIGHT: vec3<f32> = vec3<f32>(0.4045, 0.8090, 0.4264);
+
+// ── 封面外的那一圈 ─────────────────────────────────────────────────────
+
+// 外圈起伏是封面那块的多少。弱一档:外圈是衬底,动得一样大就抢了主体;而且离主轴
+// 远的方块往后一退,透视会把它往里拉出一道缝(cloud/field.rs 按这个幅度留了余量)。
+// 不是一刀切:离封面边越远越弱,在约 14 格外降到这一档,封面边上两边的起伏是连着的。
+const OUTER_MOTION: f32 = 0.35;
+// 外圈的亮度:紧贴封面那一格、与视口边上那一格。封面边上明显暗一档,主体的轮廓
+// 才立得住;到视口边几乎沉进背景,不在窗口边上切出一道亮边。
+const OUTER_DIM_NEAR: f32 = 0.5;
+const OUTER_DIM_FAR: f32 = 0.12;
+// 淡出距离的下限,uv 单位(约 24 格)。宽版式上下只多出三四格,按实际距离淡的话
+// 一出封面就黑了;给个下限,那两条边上的方块只淡一点点。
+const MIN_REACH: f32 = 0.25;
+// 外圈取第几级 mip:最高一级(1×1)往下数这么多级,即 8×8 那一档 —— 一块方块的颜色
+// 是封面边上一大片的平均。越往外再糊一级。
+const HAZE_BELOW_TOP: f32 = 3.0;
+
+// 这一格在封面外多远(uv 单位,两轴分开),封面内为 0。
+fn beyond_cover(uv: vec2<f32>) -> vec2<f32> {
+    return max(abs(uv - vec2<f32>(0.5)) - vec2<f32>(0.5), vec2<f32>(0.0));
+}
+
+// 外圈的淡出程度:0 紧贴封面,1 到了视口边。按这一格所在那一侧、封面边到视口边的
+// 距离归一,两轴取大的那个(角上那一片随离得更远的那条边)。
+fn field_fade(uv: vec2<f32>, beyond: vec2<f32>) -> f32 {
+    let reach = vec2<f32>(
+        select(-params.bounds.x, params.bounds.z - 1.0, uv.x > 0.5),
+        select(-params.bounds.y, params.bounds.w - 1.0, uv.y > 0.5));
+    let f = beyond / max(reach, vec2<f32>(MIN_REACH));
+    return clamp(max(f.x, f.y), 0.0, 1.0);
+}
+
+// 封面边缘外延、糊过的颜色:uv 夹回封面边上,取高几级的 mip。夹回去就是「边缘外延」——
+// 封面右边那一列的颜色往右一路铺开;高级 mip 让它是一片色而不是一条条拉丝。
+// 没有 mip 的图(占位图只有 1 级)取到的就是第 0 级,不出错。
+fn haze(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>, fade: f32) -> vec3<f32> {
+    let top = f32(textureNumLevels(tex)) - 1.0;
+    let level = clamp(top - HAZE_BELOW_TOP + fade, 0.0, top);
+    return textureSampleLevel(tex, samp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), level).rgb;
+}
 
 // ── simplex 噪声(照搬原版顶点着色器里那一份)────────────────────────────
 
@@ -208,9 +255,15 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     let k = params.intensity * 1.6;
     let s = params.plane_scale;
 
+    // 封面外那一圈:离封面多远、淡到哪儿、起伏弱多少。封面内三者都是「不变」。
+    let beyond = beyond_cover(vertex.uv);
+    let outer = max(beyond.x, beyond.y) > 0.0;
+    let fade = field_fade(vertex.uv, beyond);
+    let motion = mix(1.0, OUTER_MOTION, smoothstep(0.0, 0.15, length(beyond)));
+
     // 只剩「封面」一档,所以这里没有分支。子预设那条 seam 已随 docs/adr/0041 收掉:
     // 播放页的顶层选择是「效果」(封面实物 / 点云),点云自己不再分档。
-    let place = place_cover(base, vertex.uv, rand, t, k, s);
+    let place = place_cover(base, vertex.uv, rand, t, k * motion, s);
     var local = place.local;
 
     // 换歌脉冲:整片朝外炸开一点再归位,外加一点纵深上的散开。
@@ -225,9 +278,11 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // §1 换歌过渡的另外两段(docs/design/handoff-shaders.md):全局进度
     // 就是 color_mix(start 归 0,900ms 计满),不另加 uniform。
     // 错峰:每颗按到封面中心的距离推迟自己的相位 —— 中心先落、边缘后落。
+    // 封面那块的距离在 0..1(角上是 1),外圈接着往外涨,封顶 1.7:外圈比封面的角
+    // 更晚落,但最远那一格也还留四成的进度走完自己那一段。
     let tr = clamp(params.color_mix, 0.0, 1.0);
-    let center_d = clamp(
-        length(place.uv - vec2<f32>(0.5)) * 1.4142, 0.0, 1.0);
+    let center_d = min(
+        length(place.uv - vec2<f32>(0.5)) * 1.4142, 1.7);
     let phase_delay = center_d * 0.35;
     let tp = clamp(
         (tr - phase_delay) / max(1.0 - phase_delay, 0.001),
@@ -248,16 +303,30 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // 颜色:有封面就采封面,没有就走原版的默认渐变(紫 → 粉/青)。
     // 换歌时在新旧两张封面之间按**这一颗自己的**错峰相位 mix ——
     // 先落位的先换色,颜色跟着形体走,不是全场同一刻硬切。
+    // 外圈取糊过的那一份(`haze`),封面那块照旧取第 0 级。两张都采只在换歌渐变期间:
+    // 平帧上「上一首」那张整个用不着,外圈那一两万次采样不该白付一半。
     let sample_uv = clamp(place.uv, vec2(0.0012), vec2(0.9988));
-    let new_color = textureSampleLevel(
-        cover_texture, cover_sampler, sample_uv, 0.0).rgb;
-    let prev_color = textureSampleLevel(
-        prev_cover_texture, prev_cover_sampler, sample_uv, 0.0).rgb;
+    var new_color: vec3<f32>;
+    var prev_color: vec3<f32>;
+    if outer {
+        new_color = haze(cover_texture, cover_sampler, place.uv, fade);
+        prev_color = new_color;
+        if tp < 1.0 {
+            prev_color = haze(prev_cover_texture, prev_cover_sampler, place.uv, fade);
+        }
+    } else {
+        new_color = textureSampleLevel(
+            cover_texture, cover_sampler, sample_uv, 0.0).rgb;
+        prev_color = textureSampleLevel(
+            prev_cover_texture, prev_cover_sampler, sample_uv, 0.0).rgb;
+    }
     let cover_color = mix(prev_color, new_color, tp);
+    // 默认渐变按夹回封面里的 uv 取:外圈越出 0..1 的 uv 直接代进 mix 会外推出负的颜色。
+    let gradient_uv = clamp(place.uv, vec2<f32>(0.0), vec2<f32>(1.0));
     let fallback = mix(
         vec3<f32>(0.36, 0.28, 0.72),
-        mix(vec3<f32>(0.85, 0.55, 0.95), vec3<f32>(0.45, 0.78, 0.95), place.uv.x),
-        place.uv.y);
+        mix(vec3<f32>(0.85, 0.55, 0.95), vec3<f32>(0.45, 0.78, 0.95), gradient_uv.x),
+        gradient_uv.y);
     let sampled = mix(fallback, cover_color, params.has_cover);
     // `cover` 是「这一颗取多少封面色」:封面档取满,黑胶盘面取零(它的颜色全在
     // tint 里),星河档取一点点当底色。tint 恒是乘子,于是两端都说得通。
@@ -267,6 +336,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
         + (params.mid + params.treble) * 0.05
         + params.burst * 0.40
         + place.glow;
+    // 外圈压暗,往视口边沉下去。封面边上那一步是有意的:主体的轮廓要立得住。
+    if outer {
+        color *= mix(OUTER_DIM_NEAR, OUTER_DIM_FAR, smoothstep(0.0, 1.0, fade));
+    }
 
     // 立方体在**模型空间**展开,不做 billboard。方片时代是反过来的:在视图空间
     // 摊开四个角,粒子才永远正对镜头、永远是正圆。立方体要的恰恰相反 —— 有朝向、

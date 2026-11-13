@@ -1,4 +1,5 @@
 //! 封面实物的运动学:呼吸、拖动回弹、换歌那一下的交接,以及台面随视口的尺寸。
+//! 跟着音乐的那几样(鼓点那一下、随响度放大的摆幅、高频的闪光)在 [`super::beat`]。
 //!
 //! 全是纯函数与小状态机,不碰 bevy 的 ECS —— 角度、进度与尺寸在这里算好,
 //! `Sleeve::drive` 只把它们写进 `Transform` 与材质。时间一律按播放页时钟走
@@ -12,7 +13,8 @@ use crate::camera::{BASE_CAMERA_POS, BASE_FOV};
 
 // ── 呼吸 ──────────────────────────────────────────────────────────────
 
-/// 呼吸的左右摆幅,约 ±3°。再大就不是「放在那儿的一个东西」,而是在晃。
+/// 呼吸的左右摆幅,约 ±3°:安静的段落就是这一档。再大就不是「放在那儿的一个东西」,
+/// 而是在晃 —— 响的段落放大它,但放大的上限由 [`super::beat::Sway`] 封着。
 const IDLE_YAW: f32 = PI / 60.0;
 
 /// 呼吸的前后摆幅,约 ±2°。比左右小一档:前后倾会让顶边忽大忽小,同样的角度更显眼。
@@ -22,14 +24,19 @@ const IDLE_PITCH: f32 = PI / 90.0;
 const IDLE_YAW_PERIOD: f32 = 11.0;
 const IDLE_PITCH_PERIOD: f32 = 15.0;
 
-/// 这一刻的呼吸姿态 (pitch, yaw),弧度。
+/// 这一刻的呼吸姿态 (pitch, yaw),弧度。`amplitude` 是摆幅的倍数,1 就是上面那两档。
 ///
-/// 只跟时间走,不跟声音走:「随音乐」只经光(见 `sleeve.wgsl` 的边缘光),
-/// 几何一动不动 —— 一张封套跟着鼓点抖,看着像坏了而不是在听歌。
-pub(crate) fn idle(time: f32) -> (f32, f32) {
+/// 相位只跟时间走,声音只经 `amplitude` 改摆幅(见 [`super::beat::Sway`]):响度平滑过
+/// 好几秒,摆幅是慢慢涨落的,不会跟着某一下鼓点抖。
+pub(crate) fn idle(
+    time: f32,
+    amplitude: f32,
+) -> (f32, f32) {
     let yaw = IDLE_YAW
+        * amplitude
         * (2.0 * PI * time / IDLE_YAW_PERIOD).sin();
     let pitch = IDLE_PITCH
+        * amplitude
         * (2.0 * PI * time / IDLE_PITCH_PERIOD + 1.0).sin();
     (pitch, yaw)
 }

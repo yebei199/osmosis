@@ -4,9 +4,12 @@
 //! 一座「台面」(stage)实体挂着全部东西:封套、它的倒影、换歌时退场的那一张与其倒影、
 //! 地面。台面随视口整体缩放并往前倾一点(见 `motion`),里面的几何建一次就不动。
 //!
-//! 随音乐动的**只有光**:低频点亮封套倒角那一圈边缘光(`sleeve.wgsl`)。几何不跟鼓点
-//! 抖 —— 那是点云的语言;一张实物封套跟着节拍晃,看着像坏了。它自己的运动只有三种:
-//! 很慢的呼吸、拖动后回弹、换歌时旧的甩走新的落位。
+//! 随音乐动的是**事件,不是电平**(`beat`):低频的每一下起音把封套往前顶一点、点一下头,
+//! 临界阻尼的弹簧 200ms 内收回去;中频平滑过好几秒的响度只放大呼吸的摆幅;高频的起音
+//! 只让正面的光泽闪一下。低频的电平本身仍点亮倒角那一圈边缘光(`sleeve.wgsl`)。
+//! 没有一样逐帧跟着电平走 —— 那是点云的语言,一张实物封套持续地跟着电平抖,看着像坏了。
+//! 它自己的运动另有三种:很慢的呼吸、拖动后回弹、换歌时旧的甩走新的落位;鼓点与摆幅
+//! 叠在它们上面,换歌那 0.8s 里不起新的鼓点。
 //!
 //! 半透明分平台(`docs/adr/0012` 记的 Adreno 坑):桌面上倒影与地面走 `Blend`;
 //! 安卓上走 `Mask` 加 4×4 有序抖动 —— 按透明度丢掉一部分像素,留下的是不透明的,
@@ -21,6 +24,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
+pub(crate) mod beat;
 pub(crate) mod mesh;
 pub(crate) mod motion;
 
@@ -59,6 +63,8 @@ pub(crate) struct SleeveParams {
     pub glow: f32,
     /// 台面缩放:一个台面单位合多少世界单位。倒影的淡出距离按它换算。
     pub scale: f32,
+    /// 高频起音的那一闪,0..=1:正面的光泽跟着亮一下(见 [`beat::Spark`])。
+    pub spark: f32,
 }
 
 /// 封面实物的材质:封套、倒影、地面共用一份着色器,按 `kind` 分支。
@@ -131,6 +137,14 @@ pub(crate) struct Sleeve {
     reveal: motion::Reveal,
     /// 退场那张封套正面的显影程度,交接开始那一刻从在场那张抄过去。
     outgoing_reveal: f32,
+    /// 低频起音 → 鼓点那一下。
+    bass_onset: beat::Onset,
+    kick: beat::Kick,
+    /// 中频响度 → 呼吸的摆幅。
+    sway: beat::Sway,
+    /// 高频起音 → 光泽闪一下。
+    treble_onset: beat::Onset,
+    spark: beat::Spark,
 }
 
 /// 驱动封面实物一帧要的输入。
@@ -139,8 +153,10 @@ pub(crate) struct Drive {
     pub time: f32,
     /// 距上一帧的秒数(播放页时钟)。
     pub delta: f32,
-    /// 这一帧的低频电平,0..=1。
+    /// 这一帧的三段电平,各 0..=1(见 `cloud::band_levels`)。
     pub bass: f32,
+    pub mid: f32,
+    pub treble: f32,
     /// 离屏目标的物理像素尺寸,台面按它缩放。
     pub width: u32,
     pub height: u32,
@@ -274,6 +290,13 @@ impl Sleeve {
             glow: motion::Glow::default(),
             reveal: motion::Reveal::default(),
             outgoing_reveal: 0.0,
+            bass_onset: beat::Onset::new(beat::BASS_ONSET),
+            kick: beat::Kick::default(),
+            sway: beat::Sway::default(),
+            treble_onset: beat::Onset::new(
+                beat::TREBLE_ONSET,
+            ),
+            spark: beat::Spark::default(),
         }
     }
 
@@ -365,8 +388,16 @@ impl Sleeve {
     ///
     /// 运动只在台面露面时推进(`drive` 只为当前效果调)。不收尾的话,用户在点云上
     /// 换了几首歌再切回来,会看到一张早该退场的封套这时才被甩出去。
+    ///
+    /// 跟音乐的那几样一并清零:藏着时起音检测的平均没在跟,切回来拿过期的平均比,
+    /// 第一帧就是一次假鼓点。
     pub(crate) fn settle(&mut self, app: &mut App) {
         self.reveal.settle();
+        self.bass_onset.reset();
+        self.treble_onset.reset();
+        self.kick = beat::Kick::default();
+        self.sway = beat::Sway::default();
+        self.spark = beat::Spark::default();
         if !self.exchange.running() {
             return;
         }
@@ -420,6 +451,21 @@ impl Sleeve {
         self.glow.follow(frame.bass, frame.delta);
         self.reveal.advance(frame.delta);
 
+        // 起音检测每帧都喂,换歌期间也喂 —— 平均得一直跟着;只是交接那 0.8s 里
+        // 不把起音变成推力:一张正在落位的封套再被顶一下,两个运动搅在一起就乱了。
+        let hit =
+            self.bass_onset.detect(frame.bass, frame.delta);
+        if !self.exchange.running() {
+            self.kick.strike(hit);
+        }
+        self.kick.step(frame.delta);
+        self.sway.follow(frame.mid, frame.delta);
+        let flick = self
+            .treble_onset
+            .detect(frame.treble, frame.delta);
+        self.spark.strike(flick);
+        self.spark.step(frame.delta);
+
         let scale = motion::stage_scale(
             frame.width,
             frame.height,
@@ -438,13 +484,19 @@ impl Sleeve {
         };
 
         let (idle_pitch, idle_yaw) =
-            motion::idle(frame.time);
+            motion::idle(frame.time, self.sway.amplitude());
         let (drag_pitch, drag_yaw) = self.tilt.angles();
         let (pitch, yaw) =
             (idle_pitch + drag_pitch, idle_yaw + drag_yaw);
         let e = self.exchange.progress();
         let running = self.exchange.running();
-        let now = pose(motion::incoming(e), pitch, yaw);
+        // 鼓点只落在在场那张上:点头叠在呼吸与拖动之上,往前顶由缩放做(见 `beat::KICK_GROW`)。
+        // 退场那张已经在被甩走,不跟拍子。
+        let push = self.kick.push();
+        let nod = pitch + beat::KICK_NOD * push;
+        let mut now = pose(motion::incoming(e), nod, yaw);
+        now.scale =
+            Vec3::splat(1.0 + beat::KICK_GROW * push);
         let old = pose(motion::outgoing(e), pitch, yaw);
 
         // 地面平面的世界表示:台面的 +y 转到世界里,过地面上那一点。
@@ -479,7 +531,8 @@ impl Sleeve {
         }
 
         let glow = self.glow.level();
-        let tilt = Vec2::new(yaw, pitch);
+        let spark = self.spark.level();
+        let tilt = Vec2::new(yaw, nod);
         let placeholder = self.placeholder.clone();
         let mut materials =
             world.resource_mut::<Assets<SleeveMaterial>>();
@@ -497,6 +550,7 @@ impl Sleeve {
                     p.cover = cover;
                     p.glow = glow;
                     p.scale = scale;
+                    p.spark = spark;
                 }
             };
         let facing = |local: &Transform| {

@@ -2,9 +2,10 @@
 //!
 //! 点云是播放页的第二个效果,不是默认档(默认是封面实物,见 `sleeve.rs` 与 `docs/adr/0041`)。
 //!
-//! 运动学不在这里 —— 三万多颗粒子的位移全在 `cloud.wgsl` 的顶点着色器里
-//! (见 `docs/adr/0012`),CPU 每帧只更新几个 uniform。本模块只回答两件事:
-//! 频谱行怎么拆成三段电平,以及那份烘一次就不动的顶点缓冲长什么样。
+//! 运动学不在这里 —— 一两万颗方块的位移全在 `cloud.wgsl` 的顶点着色器里
+//! (见 `docs/adr/0012`),CPU 每帧只更新几个 uniform。本模块只回答三件事:
+//! 频谱行怎么拆成三段电平、那份顶点缓冲长什么样、以及视口要它铺多大
+//! ([`Field`]:只在视口真的变了、并且稳住之后才重烘,从不逐帧)。
 //!
 //! 行为模型照抄 Mineradio 的封面粒子系统(源码
 //! `public/js/modules/02-visual/00-pointer-cover-particles.js`)的 **preset 0
@@ -21,11 +22,15 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
+mod field;
+
 mod mesh;
 
 mod spin;
 
 mod transition;
+
+pub(crate) use field::{Field, Framing, Refit};
 
 pub(crate) use mesh::{
     CloudVertices, Levels, band_levels, cloud_vertices,
@@ -35,7 +40,19 @@ pub(crate) use spin::Spin;
 
 pub(crate) use transition::TrackTransition;
 
-/// 点云网格边长:每行每列各 96 颗,共 9216 颗。
+/// 点云自己在世界里的位置。
+///
+/// 相机在 z = 8(见 `camera::BASE_CAMERA_POS`),点云往镜头前挪这一截才有现在的取景大小。
+/// 宽版式偏左、紧凑版式偏上不在这里做,在相机的移轴镜头里做(见 `camera::lens`):
+/// 挪世界里的位置会让点云被斜着看,移轴则与从前「整张图平移」逐像素相同。
+///
+/// 这个数原先叫 `CARD_ANCHOR`,一个常量同时当「点云放哪」与「深度卡片挂哪」用;
+/// 卡片与它的遮挡层已随 `docs/adr/0041` 删除,剩下的只是点云的位置。
+pub(crate) const CLOUD_ORIGIN: Vec3 =
+    Vec3::new(0.0, 0.0, 1.8);
+
+/// 封面那一块的网格边长:每行每列各 96 颗,共 9216 颗。封面之外还有铺满视口的
+/// 一圈(见 [`Field`]),格距与这里相同。
 ///
 /// 曾经是 384,追的是「格距小到眼睛自己会拼」—— 结果拼得太好了:那不是
 /// 像素画,是一张打了网点的照片。像素画的重点恰恰在**格子看得见**,一格就是一个
@@ -48,8 +65,13 @@ pub(crate) const CLOUD_GRID: usize = 96;
 /// 点云平面在世界里的边长,同原版。
 ///
 /// 曾经放大到 12 让它溢出视口,但铺满四边之后点云不再像「一张图」,只像一层贴在
-/// 屏幕上的网点。收回原版这一档:画面中间一块有边界的封面,四周留给背景。
+/// 屏幕上的网点。收回原版这一档:画面中间一块有边界的封面。
 /// 圆点大小按格距走(见 [`CELL_WORLD`]),平面缩回来点也跟着变细。
+///
+/// 四周不再留空(那在宽版式右边是一整条光秃秃的背景):封面之外按同一格距接着铺,
+/// 但那一圈取的是封面边缘外延、糊过的颜色,压暗并向视口边淡下去(见 [`Field`] 与
+/// `cloud.wgsl` 的 `haze`)—— 满屏是方块,主体仍是中间那张清楚的封面,不会退回
+/// 「贴在屏幕上的网点」。
 pub(crate) const PLANE_SIZE: f32 = 4.8;
 
 /// 原版的平面边长。位移的绝对幅度都是照它调的,平面放大后要同比放大位移
@@ -105,7 +127,7 @@ const ALPHA_CUTOFF: f32 = 0.01;
 ///
 /// 钉像素尺寸的话,视口一变点与缝的比例就跑掉了(窗口拉大 → 格距变大 → 点相对变小,
 /// 点云散成一片看不出图)。格距与点径同在世界单位里,投影之后比例恒定。
-const CELL_WORLD: f32 =
+pub(crate) const CELL_WORLD: f32 =
     PLANE_SIZE / (CLOUD_GRID as f32 - 1.0);
 
 /// 立方体边长占一格的比例。
@@ -134,6 +156,9 @@ pub(crate) struct CloudParams {
     pub color_mix: f32,
     /// 换歌脉冲强度:粒子外扩再归位。同上。
     pub burst: f32,
+    /// 视口在封面 uv 里的四边 (u 左, v 上, u 右, v 下),封面本身是 0..1。
+    /// 封面外那一圈按它往视口边淡下去,见 [`Framing::cover_uv`]。
+    pub bounds: Vec4,
 }
 
 /// 静止、无封面的一帧参数:常量项按原版默认档,音频项全零。
@@ -153,6 +178,8 @@ impl Default for CloudParams {
             // 没有「上一首」可渐变,直接全新。
             color_mix: 1.0,
             burst: 0.0,
+            // 视口正好框住封面:外圈没有可淡的距离,首帧之前用不上。
+            bounds: Vec4::new(0.0, 0.0, 1.0, 1.0),
         }
     }
 }

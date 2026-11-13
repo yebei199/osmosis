@@ -15,8 +15,10 @@ use bevy::render::render_resource::{
 
 use bevy::camera::visibility::NoFrustumCulling;
 
-use super::{CLOUD_ORIGIN, Scene};
+use super::Scene;
+use super::mips::with_mips;
 use crate::cloud;
+use crate::cloud::CLOUD_ORIGIN;
 
 impl Scene {
     /// 换歌那一刻:不挂着上一首的封面等新图。
@@ -66,18 +68,23 @@ impl Scene {
             return;
         }
 
-        let image = Image::new(
+        let (pixels, levels) =
+            with_mips(width, height, rgba);
+        let mut image = Image::new_uninit(
             Extent3d {
                 width,
                 height,
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            rgba.to_vec(),
             // 封面是 sRGB 编码的;按线性读会整体发暗,画出来的就不是封面的颜色了。
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
+        // 整条 mip 链一起传:点云外圈要一份糊过的封面(见 `cloud.wgsl` 的 `haze`),
+        // 取高几级的 mip 就是。各级首尾相接、逐级减半,正是 wgpu 按 mip 顺序读的布局。
+        image.texture_descriptor.mip_level_count = levels;
+        image.data = Some(pixels);
         let next = self
             .app
             .world_mut()
@@ -120,12 +127,21 @@ impl Scene {
         }
     }
 
-    /// 重建播放页封面点云:despawn 旧内容,把 [`cloud::CLOUD_GRID`]² 颗粒子烘成
-    /// **一份** mesh,配一份自定义材质,spawn 成单个实体。
+    /// 重建播放页封面点云:despawn 旧内容,把封面那 [`cloud::CLOUD_GRID`]² 颗加上
+    /// 铺满当前视口的外圈烘成**一份** mesh,配一份自定义材质,spawn 成单个实体。
     ///
     /// 位移不在这里 —— 几何建好就不动,每帧只有材质的 uniform 在换
-    /// (见 `docs/adr/0012`)。
-    pub(crate) fn rebuild_viz_content(&mut self) {
+    /// (见 `docs/adr/0012`);视口变了由 `refit_cloud` 只换网格。
+    pub(crate) fn rebuild_viz_content(
+        &mut self,
+        compact: bool,
+    ) {
+        let field = cloud::Field::for_viewport(
+            self.size.0,
+            self.size.1,
+            compact,
+        );
+        self.cloud_refit = cloud::Refit::new(field);
         self.app
             .world_mut()
             .entity_mut(self.root)
@@ -136,7 +152,7 @@ impl Scene {
             .world_mut()
             .resource_mut::<Assets<Mesh>>()
             .add(cloud::build_cloud_mesh(
-                cloud::cloud_vertices(),
+                cloud::cloud_vertices(field),
             ));
         // 还没有封面时的占位图:`has_cover` 为 0,着色器走默认渐变色 ——
         // 点云在没有封面时不该消失。取到封面后由 `apply_cover` 换掉。
@@ -172,9 +188,10 @@ impl Scene {
         self.cloud_material = Some(material);
 
         log::info!(
-            "render3d: 封面点云重建完成,{0}x{0} = {1} 颗",
-            cloud::CLOUD_GRID,
-            cloud::CLOUD_GRID * cloud::CLOUD_GRID,
+            "render3d: 封面点云重建完成,{}x{} = {} 颗",
+            field.columns(),
+            field.rows(),
+            field.cubes(),
         );
     }
 }

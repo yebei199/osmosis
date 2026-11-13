@@ -2,7 +2,8 @@
 //
 // 顶点走 bevy 默认的网格着色器(位置、法线、uv),这里只有片元。光是写死的一盏
 // 柔和主光加半球环境光,不接 bevy 的光照管线 —— 那要阴影、prepass 与一整套 PBR 绑定,
-// 而这里要的只是「一个被一盏灯照着的纸板」。随音乐动的只有倒角那一圈边缘光。
+// 而这里要的只是「一个被一盏灯照着的纸板」。光里跟着音乐的有两样:低频推亮倒角那一圈
+// 边缘光,高频的起音让正面的光泽闪一下(`spark`)。几何上的鼓点在 CPU 侧(sleeve/beat.rs)。
 //
 // 半透明分平台(见 crates/render3d/src/sleeve.rs):`dither` 为 1 时用 4×4 有序抖动
 // 代替混合 —— Adreno 上 Blend 整片不显示(docs/adr/0012)。
@@ -29,6 +30,8 @@ struct SleeveParams {
     glow: f32,
     // 一个台面单位合多少世界单位。
     scale: f32,
+    // 高频起音的那一闪,0..1。
+    spark: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SleeveParams;
@@ -114,14 +117,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 一道很淡的斜向光泽,位置随封套的偏转滑过正面 —— 拿在手里转一下,
     // 光在纸面上走一段。只在正面,亮处减半,不把浅色封面推到过曝。
+    // 高频起音时这道光闪一下:光带本身亮起来,再给整个正面铺一层很薄的光,
+    // 像一盏灯晃过亮面纸。只是光,封套不动。
     let diag = (uv.x + uv.y) * 0.5;
     let center = 0.28 + params.tilt.x * 2.6 - params.tilt.y * 1.8;
     let off = (diag - center) / 0.11;
     let lum = dot(face, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let sheen = exp(-off * off) * 0.06 * (1.0 - 0.6 * lum) * front;
+    let spark = clamp(params.spark, 0.0, 1.0);
+    let sheen = (exp(-off * off) * (0.06 + 0.14 * spark) + 0.035 * spark)
+        * (1.0 - 0.6 * lum) * front;
 
     // 边缘光:掠射处(法线与视线近乎垂直)最亮,只落在倒角与纸边上。
-    // 低频把它推亮 —— 这是封面实物唯一跟着音乐动的东西。
+    // 低频的电平把它推亮 —— 平滑过的,跟的是一段低音的厚薄,不是某一下鼓(那一下在几何上)。
     let ndv = clamp(dot(n, v), 0.0, 1.0);
     let grazing = 1.0 - ndv;
     let rim = grazing * grazing * (1.0 - front);

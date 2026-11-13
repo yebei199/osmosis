@@ -2,7 +2,7 @@
 //!
 //! 两者都不碰 GPU 资源,只出数组;上传交给 [`super::build_cloud_mesh`]。
 
-use super::{CLOUD_GRID, PLANE_SIZE};
+use super::{CLOUD_GRID, Field, PLANE_SIZE};
 
 /// 频谱行按低/中/高拆出的三段电平,各自归一到 0..=1。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -129,9 +129,16 @@ const CUBE_FACES: [([f32; 3], [[f32; 3]; 4]); 6] = [
     ),
 ];
 
-/// 烘出点云 mesh 的顶点数据。建一次就不动,之后每帧只更新 uniform。
-pub(crate) fn cloud_vertices() -> CloudVertices {
-    let particles = CLOUD_GRID * CLOUD_GRID;
+/// 烘出点云 mesh 的顶点数据:封面那 96×96 格,外加 `field` 往四边补的那一圈。
+/// 视口没变就不重烘,之后每帧只更新 uniform。
+///
+/// 外圈与封面同一套格点、同一条 uv 式子,只是格号越出了 0..96 —— uv 于是越出 0..1,
+/// 着色器认的就是这个(见 `cloud.wgsl` 的 `haze`),不另加顶点属性:一颗方块已经是
+/// 24 个顶点乘四个属性,场大了两倍多,不该再每颗多背一份。
+pub(crate) fn cloud_vertices(
+    field: Field,
+) -> CloudVertices {
+    let particles = field.cubes();
     let mut positions =
         Vec::with_capacity(particles * CUBE_VERTICES);
     let mut uvs =
@@ -145,44 +152,52 @@ pub(crate) fn cloud_vertices() -> CloudVertices {
 
     let grid = CLOUD_GRID as f32;
     let texel = 1.0 / grid;
+    // 格号范围:封面是 0..96,外圈往负数与 96 以上伸。上限 256 格一边,i32 绰绰有余。
+    let span = |before: u32, after: u32| {
+        -(before as i32)..(CLOUD_GRID as i32 + after as i32)
+    };
 
-    for i in 0..particles {
-        let gx = (i % CLOUD_GRID) as f32;
-        let gy = (i / CLOUD_GRID) as f32;
-        // 取格心而不是格点边缘:贴边会采到相邻像素的插值,点云边缘会糊出
-        // 一圈不属于封面的颜色。
-        //
-        // v 要翻:格点的 y 越大越靠画面**上**方,而纹理的 v 越大越靠图的**下**边。
-        // 不翻的话封面在点云里是倒的 —— 桌面上一眼看不出(很多封面上下差别不大),
-        // 但天空在下、地面在上的那些一翻就穿帮。
-        let uv =
-            [(gx + 0.5) * texel, 1.0 - (gy + 0.5) * texel];
-        let base = [
-            (gx / (grid - 1.0) - 0.5) * PLANE_SIZE,
-            (gy / (grid - 1.0) - 0.5) * PLANE_SIZE,
-            0.0,
-        ];
-        let rand = hash01(i);
+    for row in span(field.bottom, field.top) {
+        for column in span(field.left, field.right) {
+            let (gx, gy) = (column as f32, row as f32);
+            // 取格心而不是格点边缘:贴边会采到相邻像素的插值,点云边缘会糊出
+            // 一圈不属于封面的颜色。
+            //
+            // v 要翻:格点的 y 越大越靠画面**上**方,而纹理的 v 越大越靠图的**下**边。
+            // 不翻的话封面在点云里是倒的 —— 桌面上一眼看不出(很多封面上下差别不大),
+            // 但天空在下、地面在上的那些一翻就穿帮。
+            let uv = [
+                (gx + 0.5) * texel,
+                1.0 - (gy + 0.5) * texel,
+            ];
+            let base = [
+                (gx / (grid - 1.0) - 0.5) * PLANE_SIZE,
+                (gy / (grid - 1.0) - 0.5) * PLANE_SIZE,
+                0.0,
+            ];
+            let rand = hash01(cell_key(column, row));
 
-        for (normal, face) in CUBE_FACES {
-            let first = u32::try_from(positions.len())
-                .expect("点云顶点数远小于 u32 上限");
-            for corner in face {
-                positions.push(base);
-                uvs.push(uv);
-                corners.push(corner);
-                tangents.push([
-                    normal[0], normal[1], normal[2], rand,
+            for (normal, face) in CUBE_FACES {
+                let first = u32::try_from(positions.len())
+                    .expect("点云顶点数远小于 u32 上限");
+                for corner in face {
+                    positions.push(base);
+                    uvs.push(uv);
+                    corners.push(corner);
+                    tangents.push([
+                        normal[0], normal[1], normal[2],
+                        rand,
+                    ]);
+                }
+                indices.extend_from_slice(&[
+                    first,
+                    first + 1,
+                    first + 2,
+                    first,
+                    first + 2,
+                    first + 3,
                 ]);
             }
-            indices.extend_from_slice(&[
-                first,
-                first + 1,
-                first + 2,
-                first,
-                first + 2,
-                first + 3,
-            ]);
         }
     }
 
@@ -193,6 +208,22 @@ pub(crate) fn cloud_vertices() -> CloudVertices {
         tangents,
         indices,
     }
+}
+
+/// 一格的散列键:封面那一块沿用原来的「行 × 96 + 列」,场变大变小时封面上每颗方块
+/// 拿到的随机数不变,看着与只有封面时一模一样;外圈按 (列, 行) 另取一段不重叠的键,
+/// 场重烘前后同一格也还是同一个数。
+fn cell_key(column: i32, row: i32) -> usize {
+    let grid = CLOUD_GRID as i32;
+    if (0..grid).contains(&column)
+        && (0..grid).contains(&row)
+    {
+        return (row * grid + column) as usize;
+    }
+    // 偏移 1024 让格号非负(一边最多补 256 格),每行留 4096 个位置。
+    CLOUD_GRID * CLOUD_GRID
+        + (row + 1024) as usize * 4096
+        + (column + 1024) as usize
 }
 
 /// 下标 → [0,1) 的确定性散列(乘法混淆 + 移位)。

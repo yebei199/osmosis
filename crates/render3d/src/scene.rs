@@ -30,6 +30,7 @@ use crate::{cloud, sleeve, wall};
 
 mod cover;
 mod input;
+mod mips;
 mod target;
 mod viz;
 
@@ -40,17 +41,6 @@ pub(crate) const HEIGHT: u32 = 240;
 
 /// 每帧耗时日志的采样窗口(帧)。约两秒一行,够看趋势又不刷屏。
 pub(crate) const PERF_WINDOW: u32 = 120;
-
-/// 点云自己在世界里的位置。
-///
-/// 相机在 z = 8(见 `camera::BASE_CAMERA_POS`),点云往镜头前挪这一截才有现在的取景大小。
-/// 宽版式偏左、紧凑版式偏上不在这里做,在相机的移轴镜头里做(见 `camera::lens`):
-/// 挪世界里的位置会让点云被斜着看,移轴则与从前「整张图平移」逐像素相同。
-///
-/// 这个数原先叫 `CARD_ANCHOR`,一个常量同时当「点云放哪」与「深度卡片挂哪」用;
-/// 卡片与它的遮挡层已随 `docs/adr/0041` 删除,剩下的只是点云的位置。
-pub(crate) const CLOUD_ORIGIN: Vec3 =
-    Vec3::new(0.0, 0.0, 1.8);
 
 /// 一个自持的 bevy 离屏渲染场景。
 ///
@@ -84,8 +74,14 @@ pub struct Scene {
     last_time: Option<f32>,
     /// 渲染到离屏图的相机。尺寸变化时要改它的 RenderTarget 指向新纹理。
     camera: Entity,
-    /// 点云是否已经建好。首帧为假,建一次之后几何固定,只有 uniform 每帧在换。
+    /// 点云是否已经建好。首帧为假,建一次之后几何只随视口重烘(`cloud_refit`),
+    /// 平常只有 uniform 每帧在换。
     cloud_built: bool,
+    /// 点云的场铺了多大、视口变了之后什么时候重烘(见 `cloud::Refit`)。
+    cloud_refit: cloud::Refit,
+    /// 上一次看场的墙上时间。重烘的「稳住多久」按墙上时间算,不按播放页时钟 ——
+    /// 后者在门关着时不走,拖完窗口就可能永远等不到。
+    refit_checked: Option<Instant>,
     /// 当前离屏纹理尺寸。UI 传入的面板尺寸与它不同就重建纹理(动态分辨率)。
     size: (u32, u32),
     /// 首帧(或重建后)渲染出纹理才 `Some`。为空时返回空图,UI 的 `viz-scene.width > 0` 守卫据此不显示。
@@ -266,6 +262,10 @@ impl Scene {
             last_time: None,
             camera,
             cloud_built: false,
+            cloud_refit: cloud::Refit::new(
+                cloud::Field::default(),
+            ),
+            refit_checked: None,
             size: (WIDTH, HEIGHT),
             image: None,
             image_key: None,
