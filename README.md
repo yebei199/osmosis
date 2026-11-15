@@ -150,4 +150,4 @@ axum 只转控制消息,不碰音频。原先的 WebRTC 同播已删(#137,
 
 AGPL-3.0-only,外加 AGPL 第 7 条允许的附加条款:所有衍生作品(无论是否修改)须保留署名
 `Based on Osmosis by yebei199 - https://github.com/yebei199/osmosis`,有界面的须在其「关于」或法律声明处显示;
-修改版须标明已修改,且不得冒称原版 Osmosis。详见 [LICENSE](LICENSE)。
+修改版须标明已修改,且不得冒称原版 Osmosis。详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
