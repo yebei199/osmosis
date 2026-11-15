@@ -219,6 +219,11 @@ export component SettingsPage inherits Flickable {
                 title: root.about-line;
                 detail: root.tier-line;
             }
+            // AGPL 第 7(b) 条要求的法律声明,LICENSE 里的署名条款依据它。
+            CardRow {
+                title: "Osmosis © 2026 yebei199 · AGPL-3.0 · Source: https://github.com/yebei199/osmosis";
+                detail: "Based on Osmosis by yebei199 - https://github.com/yebei199/osmosis。本程序不提供任何担保 (provided without warranty)。";
+            }
             CardRow {
                 detail: root.update-status;
                 last: true;

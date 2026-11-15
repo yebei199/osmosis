@@ -2,7 +2,7 @@
 name = "syncplay"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "设备之间的信令客户端:同账号名册与遥控器模式"
 
 [dependencies]

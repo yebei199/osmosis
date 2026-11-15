@@ -2,7 +2,7 @@
 name = "app-web"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Web 平台入口:编译为 wasm,由浏览器加载"
 
 [lib]

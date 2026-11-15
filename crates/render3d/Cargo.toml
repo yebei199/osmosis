@@ -2,7 +2,7 @@
 name = "render3d"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "3D 桥:bevy 在共享 wgpu-29 device 上离屏渲染,产出 slint::Image 交给 UI 合成"
 
 [dependencies]

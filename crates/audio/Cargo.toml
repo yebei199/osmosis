@@ -2,7 +2,7 @@
 name = "audio"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "音频播放能力层:把一条直链变成声音,并吸收各端音频后端的差异"
 
 [dependencies]

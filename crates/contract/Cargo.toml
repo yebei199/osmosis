@@ -2,7 +2,7 @@
 name = "contract"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "客户端与服务端之间在网络上传输的数据的形状"
 
 # #181 两端共享规范化；允许序列化与 Unicode 纯计算依赖，不做 IO。

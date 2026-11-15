@@ -2,7 +2,7 @@
 name = "server"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "后端:与客户端共享 contract,并把 bang-dream 的 gRPC 翻译成 HTTP/JSON"
 
 [dependencies]

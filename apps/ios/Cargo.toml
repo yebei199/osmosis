@@ -2,7 +2,7 @@
 name = "app-ios"
 version.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "iOS 平台入口:被 Xcode 工程链接的 staticlib"
 
 [lib]
