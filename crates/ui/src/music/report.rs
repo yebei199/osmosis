@@ -143,12 +143,10 @@ pub(super) async fn prepare(
     let source = match api::play_source(&track.id).await {
         Ok(source) => source,
         Err(error) => {
-            // 状态行那句话点不了,而这一种失败的解法是去个人页扫码 ——
-            // 所以额外弹一条带去处的通知。别的失败不弹:状态行已经说过
-            // 一遍,再弹一条只是同一件事说两次。
-            if crate::pages::account::netease_unbound(
-                &error,
-            ) && let Some(ui) =
+            // 点播失败一律弹通知:状态行只在设备组面板里,平时看不见,
+            // 只靠它的话界面看起来就是卡住了(取地址被网易风控时正是这样)。
+            // 网易云没绑的那一种由 `report_failure` 换成带去处的通知。
+            if let Some(ui) =
                 notice.and_then(|weak| weak.upgrade())
             {
                 crate::pages::account::report_failure(
