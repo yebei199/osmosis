@@ -490,6 +490,8 @@ pub(in crate::music) fn start_auto_advance(
                         .borrow()
                         .as_ref()
                         .is_some_and(|(id, _)| *id == next.id)
+                        || deck.prefetch_failed.borrow().as_ref()
+                            == Some(&next.id)
                 });
             if let Some(next) = next
                 && should_prefetch(

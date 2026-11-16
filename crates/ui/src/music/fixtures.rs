@@ -238,6 +238,7 @@ fn make_deck_window() -> (super::MainWindow, super::Deck) {
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(Cell::new(false)),
+        prefetch_failed: Rc::new(RefCell::new(None)),
         seeking: Rc::new(RefCell::new(None)),
         execution: crate::music::Execution::default(),
         queue_mirror: Default::default(),

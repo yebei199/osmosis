@@ -63,7 +63,12 @@ pub(in crate::music) fn start_prefetch(
                     Some((track.id, (decoded, health)));
             }
             Err(error) => {
-                log::debug!("预取没成,照常走: {error}");
+                log::info!(
+                    "预取没成,这首不再预取: {}: {error}",
+                    track.title
+                );
+                *deck.prefetch_failed.borrow_mut() =
+                    Some(track.id);
             }
         }
     })

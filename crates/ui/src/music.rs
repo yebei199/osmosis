@@ -148,6 +148,9 @@ struct Deck {
     prefetched: Prefetched,
     /// 预取是不是正在路上。少了它,轮询每秒都会再起一条下载。
     prefetching: Rc<std::cell::Cell<bool>>,
+    /// 上一次预取没成的那一首。少了它,取不到地址(如网易风控)时轮询每秒都会再问
+    /// 一遍,一首歌能刷出上百次请求。只拦预取:真放到这首时照常再取一次。
+    prefetch_failed: Rc<RefCell<Option<String>>>,
     /// 当前这一路的跳转状态。跳转是异步的 —— `player.seek()` 只把请求送出去,
     /// 真正取字节在解码线程上,成没成要问这里(见 `audio::SeekState`)。
     /// 每首歌一个,换歌时跟着换。
@@ -251,6 +254,7 @@ pub fn bind(
         stream: Rc::new(RefCell::new(None)),
         prefetched: Rc::new(RefCell::new(None)),
         prefetching: Rc::new(std::cell::Cell::new(false)),
+        prefetch_failed: Rc::new(RefCell::new(None)),
         seeking: Rc::new(RefCell::new(None)),
         execution: Execution::default(),
         queue_mirror: queuepage::QueueMirror::default(),
