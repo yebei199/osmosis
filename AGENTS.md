@@ -60,6 +60,9 @@ Cargo workspace,依赖方向严格单向(`cargo xtask boundaries` 检查,ADR 000
   `api_base`(生产)。两者不能一样。没烘地址的构建把登录态存在 `osmosis-dev/`,装机版在 `osmosis/`。
 - **`server` 不在 default-members**,本机 3000 上可能跑着几天前的进程;新路由 404 时界面只说
   「查询失败」。
+- **网易接口出怪错(风控、陌生错误码、接口失效)先查上游 issue**:协议在 bang-dream,跟着
+  api-enhanced、SPlayer-Next 等上游走，我们不自己逆向维护(用户原话「我们才不自己维护」)。
+  先看生产日志里 bang-dream 报的原话，再搜上游;做法见 bang-dream `AGENTS.md`「平台接口异常先查上游 issue」。
 - **应用内嵌 MCP**:桌面 8091、真机 8090(真机端口经 `option_env!` 烧进 APK),`.mcp.json` 两条
   各指一台。只有 debug 档(`just desktop-dev`、`just mcp-android`)带元素调试信息;release 包里
   元素树是空的。
