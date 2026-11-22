@@ -922,6 +922,16 @@ pub(super) fn show(
     deck: &Deck,
     mut found: TracksDto,
 ) {
+    let player = ui.global::<Player>();
+    let heard_view = match deck.views.current_source() {
+        Some(ViewSource::DailyHeard) => true,
+        Some(ViewSource::Radio) => player.get_radio_heard(),
+        _ => false,
+    };
+    player.set_heard_sort_visible(heard_view);
+    if heard_view && player.get_heard_oldest_first() {
+        found.tracks.reverse();
+    }
     let before = found.tracks.len();
     found.tracks.retain(|track| {
         !crate::library::block::hits(&deck.blocks, track)

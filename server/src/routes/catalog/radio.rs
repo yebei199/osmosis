@@ -410,7 +410,7 @@ fn refill_sources(
 ///
 /// 先从 `favourites`(喜爱度从高到低,只取前 [`SEED_POOL`] 首)里取,起点随 `turn`
 /// 轮转 —— 调用方给歌单已有几首,每补一次就挪一格,于是一次次补歌问的是不同的种子,
-/// 而特别喜欢的那几首总排在池子前头。不够的拿最近听过的(`heard` 里靠后的)补;
+/// 而特别喜欢的那几首总排在池子前头。不够的拿最近听过的(`heard` 按最近在前排列)补;
 /// 两样都空就没有种子,心动这一路整个跳过。
 fn heart_seeds(
     favourites: &[String],
@@ -424,7 +424,7 @@ fn heart_seeds(
         .cycle()
         .skip(turn % pool.len().max(1))
         .take(pool.len());
-    let recent = heard.iter().rev().map(|track| &track.id);
+    let recent = heard.iter().map(|track| &track.id);
     let mut seeds: Vec<String> = Vec::new();
     for seed in rotated.chain(recent) {
         if seeds.len() == REFILL_SEEDS {

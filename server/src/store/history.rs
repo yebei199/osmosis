@@ -62,6 +62,13 @@ pub(crate) fn heard_sql(row: &str) -> String {
     )
 }
 
+/// 已听过列表按最近一次起播排序。h 是账号的 heard_tracks 行；旧记录可用首次听过时间兜底。
+pub(crate) const LAST_HEARD_PLAY_SQL: &str = "COALESCE((
+    SELECT p.played_at FROM play_events AS p
+    WHERE (p.account_id, p.platform, p.track_id) = (h.account_id, h.platform, h.track_id)
+    ORDER BY p.id DESC LIMIT 1
+), h.heard_at)";
+
 /// 补记 `play_event_id` 那一次播放听了多久,并判它听没听过。新听过的交回那一首,
 /// 已经听过或没听够的交 `None`。
 ///

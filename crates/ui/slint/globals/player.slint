@@ -121,6 +121,9 @@ export global Player {
     // 电台区切到「已听过」/切回来。
     callback radio-toggle-heard();
     // 电台区此刻摆的是不是已听过的那些。唯一写者是 Rust。
+    in property <bool> heard-sort-visible;
+    in-out property <bool> heard-oldest-first;
+    callback reverse-heard-order();
     in property <bool> radio-heard: false;
     // 日推区切到「已听过」/切回来,和电台区同一个用法。
     callback daily-toggle-heard();

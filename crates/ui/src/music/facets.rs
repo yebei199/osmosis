@@ -249,8 +249,10 @@ fn header_row(
 
 /// 按当前状态重排一遍:队列那一批、列表的行、分组条。
 pub(super) fn relayout(ui: &MainWindow, deck: &Deck) {
-    deck.facets.borrow_mut().days =
-        !ui.global::<Shell>().get_view_wall();
+    deck.facets.borrow_mut().days = !ui
+        .global::<Shell>()
+        .get_view_wall()
+        && !ui.global::<Player>().get_heard_sort_visible();
     let batch = deck.facets.borrow().batch();
     // 页头那句「N 首」:筛过之后、折起的堆也算(与点播排进队列的是同一批)。
     ui.global::<Player>().set_track_count(
@@ -279,6 +281,22 @@ pub(super) fn bind(ui: &MainWindow, deck: &Deck) {
         ModelRc::new(VecModel::from(labels)),
     );
 
+    let sorted = deck.clone();
+    let weak = ui.as_weak();
+    ui.global::<Player>().on_reverse_heard_order(
+        move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let player = ui.global::<Player>();
+            if player.get_heard_sort_visible() {
+                player.set_heard_oldest_first(
+                    !player.get_heard_oldest_first(),
+                );
+                sorted.facets.borrow_mut().all.reverse();
+                relayout(&ui, &sorted);
+                scroll::scroll_to(&ui, 0.0);
+            }
+        },
+    );
     let grouped = deck.clone();
     let weak = ui.as_weak();
     ui.global::<Player>().on_set_grouping(move |index| {

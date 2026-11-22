@@ -59,11 +59,12 @@ pub async fn list(
 ) -> Result<Vec<Entry>, AppError> {
     let rows: Vec<(String, String, bool)> =
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT r.platform, r.track_id, {heard}
+            "SELECT r.platform, r.track_id, h.heard_at IS NOT NULL
              FROM radio_tracks AS r
+             LEFT JOIN heard_tracks AS h USING (account_id, platform, track_id)
              WHERE r.account_id = $1 AND NOT {liked}
-             ORDER BY r.id",
-            heard = history::heard_sql("r"),
+             ORDER BY {last_play} DESC NULLS LAST, r.id",
+            last_play = history::LAST_HEARD_PLAY_SQL,
             liked = liked::of_account_sql("r"),
         )))
         .bind(account_id)

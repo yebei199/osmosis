@@ -475,6 +475,14 @@ export component FacetBar inherits Rectangle {
                 clicked => { Player.daily-toggle-heard(); }
             }
             if root.daily-heard-toggle && root.show-groups: ChipSeparator { }
+            if Player.heard-sort-visible && root.show-groups: Chip {
+                kind: ChipKind.select;
+                touch-tall: Shell.compact;
+                key: "收听时间";
+                text: Player.heard-oldest-first ? "最早听过在前" : "最近听过在前";
+                checkable: false;
+                clicked => { Player.reverse-heard-order(); }
+            }
             // 排序:次序由服务端排(ADR 0021),选了 Rust 重取一遍这个歌单。
             if root.show-sort: sort-select := Chip {
                 kind: ChipKind.select;

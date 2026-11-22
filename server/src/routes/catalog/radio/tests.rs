@@ -583,8 +583,8 @@ fn heart_seeds_rotate_through_the_favourites() {
     };
     let favourites = owned(&["爱1", "爱2", "爱3"]);
     let heard = vec![
-        testing::expected_dto("旧", "旧"),
         testing::expected_dto("新", "新"),
+        testing::expected_dto("旧", "旧"),
     ];
 
     assert_eq!(
