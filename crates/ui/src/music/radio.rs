@@ -504,6 +504,11 @@ pub(in crate::music) fn ran_dry(deck: &Deck) {
     }
 }
 
+/// 用户已重新起播，正在路上的补歌只追加，不能打断正在重听的歌。
+pub(in crate::music) fn resumed_playback(deck: &Deck) {
+    deck.radio.inner.borrow_mut().stalled = 0;
+}
+
 /// 电台在等新歌。用户点了别的歌,这一批不归它了,也就不等了。
 pub(in crate::music) fn stalled(deck: &Deck) -> bool {
     deck.radio.inner.borrow().stalled > 0

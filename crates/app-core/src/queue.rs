@@ -8,12 +8,9 @@
 //! 洗牌的随机种子由调用方传入:本 crate 要能编到 wasm 且保持确定性可测,
 //! 不引 `rand` —— `ui` 那侧用 `RandomState` 造种子,一行的事。
 
-use core::time::Duration;
+use std::collections::VecDeque;
 
 use contract::TrackDto;
-
-/// 「上一首」在这一首放过多久之后改成回到开头(与组里服务端的 `RESTART_AFTER_US` 同值)。
-pub const RESTART_AFTER: Duration = Duration::from_secs(3);
 
 /// 循环模式。三态与 MPRIS 的 `LoopStatus`(None/Playlist/Track)
 /// 及安卓 `REPEAT_MODE` 一一对应,上报时无损。
@@ -40,6 +37,10 @@ pub struct Queue {
     order: Vec<usize>,
     /// 在 `order` 里的位置。`order` 非空时恒有效。
     cursor: usize,
+    /// 手动回退走实际经过的曲目，包括自动续播跨过若干项的情况。
+    previous: VecDeque<usize>,
+    /// 已经放完，游标仍留在队尾供电台追加。回退先重放最后出声的那首。
+    exhausted: bool,
     /// 这一批洗过没有。
     ///
     /// 真相住在这儿而不是界面上:接进系统媒体控件之后,拨开关的人可能在锁屏、
@@ -76,6 +77,8 @@ impl Queue {
             tracks,
             order,
             cursor,
+            previous: VecDeque::new(),
+            exhausted: false,
             shuffled: false,
             loop_mode: LoopMode::Off,
             round: 0,
@@ -159,6 +162,11 @@ impl Queue {
                 next_cursor
                     .min(self.order.len().saturating_sub(1))
             });
+        self.previous = self
+            .previous
+            .iter()
+            .filter_map(|i| indices[*i])
+            .collect();
         self.tracks = kept;
         true
     }
@@ -179,6 +187,13 @@ impl Queue {
     /// (曾有一个压 `should_implement_trait` 的 `#[expect]`;clippy 1.97 起
     /// 带参数的 `next` 不再触发那条 lint,expect 落空反而变成错误,遂删。)
     pub fn next(&mut self, seed: u64) -> Option<&TrackDto> {
+        self.next_skipping(seed, |_| false)
+    }
+
+    fn step_next(
+        &mut self,
+        seed: u64,
+    ) -> Option<&TrackDto> {
         if self.cursor + 1 >= self.order.len() {
             if self.loop_mode != LoopMode::All
                 || self.order.is_empty()
@@ -198,10 +213,17 @@ impl Queue {
         &mut self,
         seed: u64,
     ) -> Option<&TrackDto> {
+        self.advance_auto_skipping(seed, |_| false)
+    }
+
+    fn step_auto(
+        &mut self,
+        seed: u64,
+    ) -> Option<&TrackDto> {
         if self.loop_mode == LoopMode::One {
             return self.current();
         }
-        self.next(seed)
+        self.step_next(seed)
     }
 
     /// 手动「下一首」,跳过 `skip` 认出的那些(#161):屏蔽规则可能是这批歌
@@ -211,7 +233,7 @@ impl Queue {
         seed: u64,
         skip: impl Fn(&TrackDto) -> bool,
     ) -> Option<&TrackDto> {
-        self.skipping(seed, skip, Self::next)
+        self.skipping(seed, skip, Self::step_next)
     }
 
     /// 自动推进,跳过 `skip` 认出的那些。单曲循环时正放着的这首被屏蔽了,
@@ -221,7 +243,7 @@ impl Queue {
         seed: u64,
         skip: impl Fn(&TrackDto) -> bool,
     ) -> Option<&TrackDto> {
-        self.skipping(seed, skip, Self::advance_auto)
+        self.skipping(seed, skip, Self::step_auto)
     }
 
     /// 先走 `first` 一步,落在被跳过的歌上就改走「下一首」接着找。最多试一整批:
@@ -232,14 +254,31 @@ impl Queue {
         skip: impl Fn(&TrackDto) -> bool,
         first: fn(&mut Self, u64) -> Option<&TrackDto>,
     ) -> Option<&TrackDto> {
+        let origin = (!self.exhausted
+            && self.current().is_some())
+        .then(|| self.index());
         let mut step = first;
+        let mut found = false;
         for _ in 0..=self.tracks.len() {
-            if !skip(step(self, seed)?) {
-                return self.current();
+            let Some(track) = step(self, seed) else {
+                break;
+            };
+            if !skip(track) {
+                found = true;
+                break;
             }
-            step = Self::next;
+            step = Self::step_next;
         }
-        None
+        if let Some(index) = origin
+            && (!found || index != self.index())
+        {
+            if self.previous.len() >= self.tracks.len() {
+                self.previous.pop_front();
+            }
+            self.previous.push_back(index);
+        }
+        self.exhausted = !found;
+        if found { self.current() } else { None }
     }
 
     /// 回卷:列表循环在队尾之后开新一轮。
@@ -304,36 +343,40 @@ impl Queue {
     /// 手动「上一首」,与组里服务端那份同一条规则(`server::syncplay::group::timeline`
     /// 的 `step`,两边各写一份,服务端有对拍测试钉住):
     ///
-    /// - 这一首已经放过 [`RESTART_AFTER`]:回到这一首开头;
-    /// - 否则退到刚才放过的那首(走 `order`,随机时也对),跳过 `skip` 认出的
-    ///   (屏蔽规则可能是装进队列之后才建的);列表循环在队首回卷到队尾;
+    /// - 先退到刚才实际放过的那首；刚建批、没有经过的记录时按队列次序退。
+    ///   往回跳过屏蔽，列表循环在队首回卷到队尾；
     /// - 往回再没有可放的(队首、其余都被跳过):回到这一首开头。
     ///
     /// 交出的是接下来该从头放的那首 —— 回到开头时就是当前这首。空批是 `None`。
     pub fn back(
         &mut self,
-        played: Duration,
         skip: impl Fn(&TrackDto) -> bool,
     ) -> Option<&TrackDto> {
         let len = self.order.len();
-        if played <= RESTART_AFTER {
-            for offset in 1..=len {
-                let Some(at) = self
-                    .cursor
-                    .checked_sub(offset)
-                    .or_else(|| {
-                        (self.loop_mode == LoopMode::All)
-                            .then(|| {
-                                self.cursor + len - offset
-                            })
-                    })
-                else {
-                    break;
-                };
-                if !skip(&self.tracks[self.order[at]]) {
-                    self.cursor = at;
-                    break;
-                }
+        self.exhausted = false;
+        while let Some(index) = self.previous.pop_back() {
+            if !skip(&self.tracks[index]) {
+                self.cursor = self
+                    .order
+                    .iter()
+                    .position(|slot| *slot == index)?;
+                return self.current();
+            }
+        }
+        for offset in 1..=len {
+            let Some(at) = self
+                .cursor
+                .checked_sub(offset)
+                .or_else(|| {
+                    (self.loop_mode == LoopMode::All)
+                        .then(|| self.cursor + len - offset)
+                })
+            else {
+                break;
+            };
+            if !skip(&self.tracks[self.order[at]]) {
+                self.cursor = at;
+                break;
             }
         }
         self.current()
@@ -394,7 +437,9 @@ impl Queue {
             .order
             .iter()
             .position(|slot| *slot == index)?;
+        self.previous.clear();
         self.cursor = at;
+        self.exhausted = false;
         self.current()
     }
 

@@ -24,6 +24,7 @@ pub(in crate::music) fn play_current(
     else {
         return;
     };
+    radio::resumed_playback(deck);
     let action =
         crate::runtime::trace::Action::begin("play");
 

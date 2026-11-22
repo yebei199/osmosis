@@ -135,11 +135,7 @@ fn empty_batch_yields_nothing() {
 
     assert!(queue.current().is_none());
     assert!(queue.next(0).is_none());
-    assert!(
-        queue
-            .back(core::time::Duration::ZERO, |_| false)
-            .is_none()
-    );
+    assert!(queue.back(|_| false).is_none());
     queue.shuffle(1); // 不该 panic
     queue.unshuffle();
 }

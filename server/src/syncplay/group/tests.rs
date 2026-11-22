@@ -103,7 +103,7 @@ fn pause_and_resume_keep_the_position() {
     assert_eq!(now(&group).position_us, 10 * SEC as u64);
 }
 
-/// 下一首照次序;不循环时队尾的下一首不动,上一首放过三秒就回到开头。
+/// 下一首照次序;不循环时队尾的下一首不动,上一首总是退一首。
 #[test]
 fn next_and_prev_follow_the_order() {
     let mut group = group();
@@ -136,13 +136,32 @@ fn next_and_prev_follow_the_order() {
     group.step("phone", &list(), -1, later).unwrap();
     assert_eq!(
         now(&group).entry_id,
-        2,
-        "放过三秒就回到开头"
+        1,
+        "新歌已经播了几秒，仍能一次退回去点喜欢"
     );
     assert_eq!(
         now(&group).anchor_wall_us,
         later + START_WAIT_US
     );
+}
+
+/// 队尾刚放完，先找回可以补点红心的最后一首，再按才退到它前面。
+#[test]
+fn previous_after_the_queue_finishes_replays_the_last_track()
+ {
+    let mut group = group();
+    group.step("phone", &list(), 1, SEC).unwrap();
+    group.step("phone", &list(), 1, 2 * SEC).unwrap();
+    let version = group.version;
+    group
+        .advance("pc", &list(), 3, version, 110 * SEC)
+        .unwrap();
+    assert!(!now(&group).playing);
+    group.step("phone", &list(), -1, 111 * SEC).unwrap();
+    assert_eq!(now(&group).entry_id, 3);
+    assert!(now(&group).playing);
+    group.step("phone", &list(), -1, 112 * SEC).unwrap();
+    assert_eq!(now(&group).entry_id, 2);
 }
 
 /// 列表循环时队尾接回队头。
@@ -724,12 +743,6 @@ fn halting_at_the_tail_ends_the_play() {
 /// 拿客户端那份当标尺,所有位置、循环、屏蔽、放了多久的组合都对一遍,漂了就红。
 #[test]
 fn prev_matches_the_solo_rule_in_app_core() {
-    use core::time::Duration;
-
-    assert_eq!(
-        app_core::RESTART_AFTER,
-        Duration::from_micros(RESTART_AFTER_US)
-    );
     let track = |id: i64| app_core::TrackDto {
         artist_identities: Vec::new(),
         platform: "netease".to_owned(),
@@ -790,19 +803,10 @@ fn prev_matches_the_solo_rule_in_app_core() {
                         }
                     });
                     let solo = queue
-                        .back(
-                            Duration::from_micros(
-                                played as u64,
-                            ),
-                            |track| {
-                                Some(
-                                    track
-                                        .id
-                                        .parse()
-                                        .unwrap(),
-                                ) == blocked
-                            },
-                        )
+                        .back(|track| {
+                            Some(track.id.parse().unwrap())
+                                == blocked
+                        })
                         .map(|track| {
                             track.id.parse::<i64>().unwrap()
                         });

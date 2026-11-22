@@ -658,18 +658,11 @@ pub(in crate::music) fn execute(
             ui.global::<Player>().set_is_playing(true);
         }
         Command::Next => advance(ui, deck),
-        // 规则在 `app_core::Queue::back`:放过一会儿就回到开头,否则退一首,
-        // 往回也跳过屏蔽的;队首(不循环)重放这一首 —— 与组里服务端同一条
         Command::Prev => {
-            let played =
-                deck.player.as_ref().as_ref().map_or(
-                    core::time::Duration::ZERO,
-                    |player| player.position(),
-                );
             let moved = deck
                 .queue
                 .borrow_mut()
-                .back(played, |track| {
+                .back(|track| {
                     crate::library::block::hits(
                         &deck.blocks,
                         track,

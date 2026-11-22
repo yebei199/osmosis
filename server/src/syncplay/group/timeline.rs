@@ -28,9 +28,6 @@ pub const START_WAIT_US: i64 = 3_000_000;
 /// 还没有一台报放完(都卡住了、报丢了)时才自己推进。
 pub const ADVANCE_GRACE_US: i64 = 5_000_000;
 
-/// 「上一首」在这一首放过多久之后改成回到开头。
-pub const RESTART_AFTER_US: u64 = 3_000_000;
-
 /// 组里此刻放的是什么。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Now {
@@ -311,7 +308,6 @@ impl Group {
     }
 
     /// 下一首(`step` = 1)或上一首(-1)。到头又不循环时:下一首不动,上一首回到开头。
-    /// 「上一首」在这一首已经放过 [`RESTART_AFTER_US`] 时也是回到开头。
     pub fn step(
         &mut self,
         device: &str,
@@ -321,16 +317,16 @@ impl Group {
     ) -> Result<(), Refusal> {
         self.member(device)?;
         let now = self.now_mut()?;
-        let duration =
-            list.duration_of(now.entry_id).unwrap_or(0);
-        let played = now.position_at(at, duration);
-        let target =
-            if step < 0 && played > RESTART_AFTER_US {
-                Some(now.entry_id)
-            } else {
-                now.neighbour(list, step)
-            };
-        match target {
+        if step < 0
+            && !now.playing
+            && list.duration_of(now.entry_id)
+                == Some(now.position_us)
+            && !list.is_blocked(now.entry_id)
+        {
+            now.start(now.entry_id, at + START_WAIT_US);
+            return Ok(());
+        }
+        match now.neighbour(list, step) {
             Some(entry_id) => {
                 now.start(entry_id, at + START_WAIT_US)
             }

@@ -1,5 +1,3 @@
-use core::time::Duration;
-
 use similar_asserts::assert_eq;
 
 use super::*;
@@ -93,24 +91,26 @@ fn back_returns_to_the_track_just_played() {
     queue.next(0);
 
     assert_eq!(
-        queue
-            .back(Duration::ZERO, |_| false)
-            .map(|t| t.id.clone()),
+        queue.back(|_| false).map(|t| t.id.clone()),
         Some("1".to_owned())
     );
 }
 
-/// 这一首放过三秒以上:「上一首」回到这一首开头,不换歌。
+/// 自动续播跨过已听曲目后，回退只经过刚才实际播放的曲目。
 #[test]
-fn back_after_a_while_restarts_the_current_track() {
-    let mut queue = Queue::new(batch(4), 2);
-
-    assert_eq!(
+fn back_after_skipping_or_exhaustion_replays_the_last_track()
+ {
+    let mut queue = Queue::new(batch(5), 1);
+    queue.advance_auto_skipping(0, |track| track.id == "2");
+    assert_eq!(queue.index(), 3);
+    assert!(
         queue
-            .back(Duration::from_secs(4), |_| false)
-            .map(|t| t.id.clone()),
-        Some("2".to_owned())
+            .advance_auto_skipping(0, |track| track.id
+                == "4")
+            .is_none()
     );
+    assert_eq!(queue.back(|_| false).unwrap().id, "3");
+    assert_eq!(queue.back(|_| false).unwrap().id, "1");
 }
 
 /// 往回也跳过屏蔽的;往回全被跳过就回到这一首开头。
@@ -119,15 +119,11 @@ fn back_skips_blocked_tracks() {
     let mut queue = Queue::new(batch(4), 3);
 
     assert_eq!(
-        queue
-            .back(Duration::ZERO, |t| t.id == "2")
-            .map(|t| t.id.clone()),
+        queue.back(|t| t.id == "2").map(|t| t.id.clone()),
         Some("1".to_owned())
     );
     assert_eq!(
-        queue
-            .back(Duration::ZERO, |t| t.id != "1")
-            .map(|t| t.id.clone()),
+        queue.back(|t| t.id != "1").map(|t| t.id.clone()),
         Some("1".to_owned())
     );
 }
@@ -137,17 +133,13 @@ fn back_skips_blocked_tracks() {
 fn back_at_the_start_wraps_only_when_looping_all() {
     let mut queue = Queue::new(batch(3), 0);
     assert_eq!(
-        queue
-            .back(Duration::ZERO, |_| false)
-            .map(|t| t.id.clone()),
+        queue.back(|_| false).map(|t| t.id.clone()),
         Some("0".to_owned())
     );
 
     queue.set_loop_mode(LoopMode::All);
     assert_eq!(
-        queue
-            .back(Duration::ZERO, |_| false)
-            .map(|t| t.id.clone()),
+        queue.back(|_| false).map(|t| t.id.clone()),
         Some("2".to_owned())
     );
 }
@@ -170,9 +162,7 @@ fn next_at_the_end_returns_none_and_stays() {
 fn back_on_an_empty_queue_is_none() {
     let mut queue = Queue::default();
 
-    assert!(
-        queue.back(Duration::ZERO, |_| false).is_none()
-    );
+    assert!(queue.back(|_| false).is_none());
 }
 
 /// 换一批就整个换队列:cursor 重置,旧批消失。
